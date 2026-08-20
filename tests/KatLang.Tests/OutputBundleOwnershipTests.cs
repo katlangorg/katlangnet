@@ -1,3 +1,5 @@
+using System.Numerics;
+
 namespace KatLang.Tests;
 
 /// <summary>
@@ -225,7 +227,7 @@ public class OutputBundleOwnershipTests
             [new Expr.Call(new Expr.Resolve("F"), [new Expr.Num(41)])]);
         var run = Evaluator.RunFlat(new Expr.AlgorithmExpr(program));
         Assert.False(run.IsError, run.IsError ? run.Error.ToString() : null);
-        Assert.Equal(new[] { 42m }, run.Value);
+        Assert.Equal(new Decimal128[] { 42m }, run.Value);
     }
 
     [Fact]
@@ -240,7 +242,7 @@ public class OutputBundleOwnershipTests
 
         var run = Evaluator.RunFlat(new Expr.AlgorithmExpr(root));
         Assert.False(run.IsError);
-        Assert.Equal(new[] { 2m }, run.Value);
+        Assert.Equal(new Decimal128[] { 2m }, run.Value);
 
         Assert.Equal(before, root.Output.ToArray());
     }

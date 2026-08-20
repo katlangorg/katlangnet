@@ -997,7 +997,7 @@ The contract this target rests on — written down in `Utf16LexerContractTests`,
 | U+2028, U+2029, U+0085, VT, FF, NBSP | `char.IsWhiteSpace` is true, so they separate tokens and cost one column — but none starts a line. |
 | U+200B, U+200D, U+FEFF | Category `Cf`, **not** whitespace: they become bad tokens. A BOM mid-file is a diagnostic, not trivia. |
 | Non-ASCII letters | Identifier characters (Latvian, Greek, Cyrillic, ideographic, and letter-like symbols). |
-| Non-ASCII decimal digits | Start a number token (`char.IsDigit` is true) that `decimal.TryParse` then rejects under the invariant culture. |
+| Non-ASCII decimal digits | Start a number token (`char.IsDigit` is true) that `Decimal128.TryParse` then rejects under the invariant culture. |
 | String literals | Single quotes, **no escape sequences at all**; ended by `'`, `'\n'` or `'\r'`. |
 | Comments | `#` to `'\n'` or `'\r'`. There is no block-comment form. |
 

@@ -1,10 +1,13 @@
+using System.Numerics;
+
 namespace KatLang;
 
 /// <summary>
 /// Tokenizes a KatLang source string into a list of tokens.
 /// Digit-leading base-10 numeric literals may include a fractional part, a lowercase
 /// <c>e</c> exponent with an optional sign, and underscore separators within digit runs.
-/// The C# runtime stores numeric values as <c>decimal</c>; the Lean core intentionally
+/// The C# runtime stores numeric values as IEEE 754 <c>Decimal128</c> (parsed directly,
+/// with no narrower intermediate representation); the Lean core intentionally
 /// models numeric semantics abstractly with <c>Int</c>. Comments start with <c>#</c>.
 /// </summary>
 public static class Lexer
@@ -110,9 +113,15 @@ public static class Lexer
                     { i = savedI; col = savedCol; } // no digit after 'e' — backtrack
                 }
 
-                // Strip digit separators before parsing
+                // Strip digit separators before parsing. Source text parses DIRECTLY
+                // into Decimal128 — no narrower intermediate representation. A finite
+                // literal with more than 34 significant digits rounds to the nearest
+                // representable value (IEEE round-half-even); only a literal whose
+                // magnitude exceeds the Decimal128 range (parses to an infinity) is a
+                // too-large diagnostic.
                 var text = source[start..i].Replace("_", "");
-                if (decimal.TryParse(text, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var value))
+                if (Decimal128.TryParse(text, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var value)
+                    && Decimal128.IsFinite(value))
                 {
                     tokens.Add(Token.CreateNumber(value, start, i - start, startLine, startCol));
                 }

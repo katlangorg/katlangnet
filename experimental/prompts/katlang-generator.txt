@@ -310,6 +310,7 @@ Numeric literals:
 - A decimal needs digits on both sides of the dot: write `0.5` (not `.5`) and `5.0` (not `5.`).
 - Digit separators are allowed between digits: `1_000_000`.
 - Scientific notation uses a lowercase `e`: `1e6`, `1.5e-3`. Uppercase `E` is not valid.
+- Numbers are IEEE 754 Decimal128: 34 significant decimal digits, exponent range about ±6144. `NaN`, `Infinity`, and `-0` are ordinary values (from `Math.Sqrt(-1)`, overflow, etc.); division by a zero-valued divisor is still an error.
 
 Multiple outputs:
     1, 2, 3
@@ -858,16 +859,16 @@ Use `open Math` only when multiple Math members are used and readability clearly
 
 Multi-argument Math members (always supply every argument):
 - `Math.Log(value, base)` / `Log(value, base)` is the logarithm of `value` in the given `base`; it is not a one-argument natural log.
-- `Math.Pow(x, y)` / `Pow(x, y)` raises `x` to the power `y` and is floating-point-backed. It is not identical to `^`. Prefer `^` for ordinary powers, especially integer exponents: `^` with an integer exponent uses exact decimal arithmetic (so `2 ^ 10` is exactly `1024` and `10 ^ 27` is exact), while a fractional exponent (`2 ^ 0.5`) is approximate, and `Math.Pow` is always float-backed. In precision-sensitive finance or integer-exponent formulas, prefer `^` when the exponent is integral; use `Math.Pow` mainly when a Math-member style is specifically wanted or the formula naturally calls for it.
+- `Math.Pow(x, y)` / `Pow(x, y)` raises `x` to the power `y` and is identical to `^` (they share one implementation): an integer exponent of magnitude up to ~9.2e18 uses exact arithmetic (so `2 ^ 10` is exactly `1024` and `10 ^ 27` is exact), while a fractional exponent (`2 ^ 0.5`) or an astronomically large integer exponent is a 34-digit approximation. Prefer `^` for ordinary powers; use `Math.Pow` when a Math-member style is specifically wanted or the formula naturally calls for it.
 - `Math.Atan2(y, x)` / `Atan2(y, x)` is the two-argument arctangent in standard `atan2(y, x)` order (`y` first, then `x`).
 
 Single-argument logarithms:
 - `Math.Ln(x)` / `Ln(x)` is the natural logarithm (base e).
 - `Math.Lg(x)` / `Lg(x)` is the base-10 logarithm.
 
-`Round` always takes two arguments: `Round(x, digits)` / `Math.Round(x, digits)`. `digits` is the integer number of digits after the decimal point and must be in `0..28`; use `0` for integer rounding. Midpoints round away from zero, so `Math.Round(1.225, 2)` is `1.23`.
+`Round` always takes two arguments: `Round(x, digits)` / `Math.Round(x, digits)`. `digits` is the integer number of digits after the decimal point and must be `>= 0`; use `0` for integer rounding. Midpoints round away from zero, so `Math.Round(1.225, 2)` is `1.23`.
 
-Use `Math.Random(start, end)` for decimal random numbers and `Math.RandomInt(start, end)` for whole-number random values. Both produce values in the half-open range `[start; end)`, meaning `start <= value < end`.
+Use `Math.Random(start, end)` for decimal random numbers and `Math.RandomInt(start, end)` for whole-number random values (uniform; bounds must be whole numbers within `±1e34`). Both produce values in the half-open range `[start; end)`, meaning `start <= value < end`.
 Examples: `Math.Random(0, 1)` gives a decimal value where `0 <= value < 1`; `Math.RandomInt(1, 7)` gives an integer-like dice roll from `1` through `6`.
 Always provide both bounds. Do not generate bare or empty-call forms such as `Math.Random`, `Math.Random()`, `Math.RandomInt`, or `Math.RandomInt()`, and do not generate old spellings such as `Math.Rand`, `Math.Rand()`, or `Math.RandInt`.
 

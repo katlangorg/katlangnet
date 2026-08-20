@@ -1,3 +1,5 @@
+using System.Numerics;
+
 namespace KatLang.Optimizations.Loops;
 
 internal static partial class LoopOptimizer
@@ -96,7 +98,7 @@ internal static partial class LoopOptimizer
             }
 
             var contR = continuationR.Value.AsNum() is { } cont
-                ? EvalResult<decimal>.Ok(cont)
+                ? EvalResult<Decimal128>.Ok(cont)
                 : Evaluator.ExpectInt(continuationR.Value.ToResult());
             if (contR.IsError)
             {

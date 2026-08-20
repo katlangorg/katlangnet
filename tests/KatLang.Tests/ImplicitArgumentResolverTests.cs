@@ -1,3 +1,4 @@
+using System.Numerics;
 namespace KatLang.Tests;
 
 public class ImplicitArgumentResolverTests
@@ -5,7 +6,7 @@ public class ImplicitArgumentResolverTests
     private static Algorithm Resolve(string source)
         => SourceProvenance.ParseValid(source).Root;
 
-    private static EvalResult<IReadOnlyList<decimal>> Eval(string source)
+    private static EvalResult<IReadOnlyList<Decimal128>> Eval(string source)
         => Evaluator.RunFlat(new Expr.AlgorithmExpr(Resolve(source)));
 
     /// <summary>
@@ -21,7 +22,7 @@ public class ImplicitArgumentResolverTests
         return result.Value.Value;
     }
 
-    private static void AssertEval(string source, params decimal[] expected)
+    private static void AssertEval(string source, params Decimal128[] expected)
     {
         var result = Eval(source);
         if (result.IsError)

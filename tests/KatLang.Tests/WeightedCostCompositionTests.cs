@@ -1,3 +1,4 @@
+using System.Numerics;
 namespace KatLang.Tests;
 
 /// <summary>
@@ -385,7 +386,7 @@ public class WeightedCostCompositionTests
     private static EntryPointOutcome Describe(EvalResult<Evaluator.CountedRootProgramResult> result)
         => result.IsError ? new(true, result.Error, null) : new(false, null, result.Value.Output.Value);
 
-    private static EntryPointOutcome Describe(EvalResult<IReadOnlyList<decimal>> result)
+    private static EntryPointOutcome Describe(EvalResult<IReadOnlyList<Decimal128>> result)
         => result.IsError ? new(true, result.Error, null) : new(false, null, null);
 
     /// <summary>Every guarded evaluator entry point, applied to one tree.</summary>

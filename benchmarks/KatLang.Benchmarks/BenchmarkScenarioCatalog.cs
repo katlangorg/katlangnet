@@ -1,4 +1,5 @@
 using System.Reflection;
+using System.Numerics;
 
 namespace KatLang.Benchmarks;
 
@@ -10,7 +11,7 @@ internal sealed class BenchmarkScenario
 		string description,
 		string origin,
 		string source,
-		decimal[] expectedAtoms,
+		Decimal128[] expectedAtoms,
 		Algorithm preparedRoot)
 	{
 		Id = id;
@@ -32,7 +33,7 @@ internal sealed class BenchmarkScenario
 
 	public string Source { get; }
 
-	public decimal[] ExpectedAtoms { get; }
+	public Decimal128[] ExpectedAtoms { get; }
 
 	public Algorithm PreparedRoot { get; }
 }
@@ -265,7 +266,7 @@ internal static class BenchmarkScenarioCatalog
 		string description,
 		string origin,
 		string resourceName,
-		decimal[] expectedAtoms)
+		Decimal128[] expectedAtoms)
 	{
 		var source = ReadResourceText(resourceName);
 		var parseResult = Parser.Parse(source);
@@ -280,7 +281,7 @@ internal static class BenchmarkScenarioCatalog
 				$"Benchmark scenario '{id}' failed to parse:{Environment.NewLine}{string.Join(Environment.NewLine, parseErrors)}");
 		}
 
-		IReadOnlyList<decimal> fullRunAtoms;
+		IReadOnlyList<Decimal128> fullRunAtoms;
 		try
 		{
 			fullRunAtoms = KatLangEngine.EvaluateToAtoms(source);
@@ -314,8 +315,8 @@ internal static class BenchmarkScenarioCatalog
 	private static void AssertExpectedAtoms(
 		string id,
 		string stage,
-		IReadOnlyList<decimal> expectedAtoms,
-		IReadOnlyList<decimal> actualAtoms)
+		IReadOnlyList<Decimal128> expectedAtoms,
+		IReadOnlyList<Decimal128> actualAtoms)
 	{
 		if (expectedAtoms.SequenceEqual(actualAtoms))
 		{

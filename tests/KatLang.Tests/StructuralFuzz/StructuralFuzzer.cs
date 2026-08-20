@@ -1,3 +1,4 @@
+using System.Numerics;
 namespace KatLang.Tests.StructuralFuzz;
 
 /// <summary>
@@ -51,8 +52,8 @@ public struct SplitMix64(ulong seed)
 internal sealed class ProgramBuilder
 {
     private readonly Dictionary<Sym, string> _names = [];
-    private readonly List<decimal> _mustContain = [];
-    private readonly List<decimal> _mustNotContain = [];
+    private readonly List<Decimal128> _mustContain = [];
+    private readonly List<Decimal128> _mustNotContain = [];
     private int _nextSym;
     private int _nextName;
     private int _sentinel;
@@ -71,7 +72,7 @@ internal sealed class ProgramBuilder
 
     public string NameOf(Sym sym) => _names[sym];
 
-    public decimal NextSentinel()
+    public Decimal128 NextSentinel()
     {
         var value = StructuralProgram.FirstSentinel + _sentinel++;
         if (_sentinel >= 49)
@@ -79,11 +80,11 @@ internal sealed class ProgramBuilder
         return value;
     }
 
-    public decimal NextTripwireAtom() => StructuralProgram.FirstTripwire + 40 + (_tripwire++ % 20);
+    public Decimal128 NextTripwireAtom() => StructuralProgram.FirstTripwire + 40 + (_tripwire++ % 20);
 
-    public void ExpectContains(decimal sentinel) => _mustContain.Add(sentinel);
+    public void ExpectContains(Decimal128 sentinel) => _mustContain.Add(sentinel);
 
-    public void ExpectAbsent(decimal sentinel) => _mustNotContain.Add(sentinel);
+    public void ExpectAbsent(Decimal128 sentinel) => _mustNotContain.Add(sentinel);
 
     public StructuralProgram Finish(MScope root)
         => new(root, new Dictionary<Sym, string>(_names), _mustContain.ToList(), _mustNotContain.ToList());
@@ -185,7 +186,7 @@ public static class StructuralCorpus
                     b.ExpectContains(condTrue ? thenSentinel : elseSentinel);
                     b.ExpectAbsent(condTrue ? elseSentinel : thenSentinel);
 
-                    MExpr Branch(decimal sentinel, string name)
+                    MExpr Branch(Decimal128 sentinel, string name)
                     {
                         if (!braceBranches)
                             return new MExpr.Atom(sentinel);
@@ -255,7 +256,7 @@ public static class StructuralCorpus
                         var family = b.NewSym();
 
                         var clauses = new List<MClause>();
-                        var sentinels = new List<decimal>();
+                        var sentinels = new List<Decimal128>();
                         foreach (var literal in literals)
                         {
                             var sentinel = b.NextSentinel();
@@ -263,7 +264,7 @@ public static class StructuralCorpus
                             clauses.Add(new MClause(new MPattern.Literal(literal), new MExpr.Atom(sentinel)));
                         }
 
-                        decimal? catchAllSentinel = null;
+                        Decimal128? catchAllSentinel = null;
                         if (withCatchAll)
                         {
                             var binder = binderShadow ? b.NewShadowOf(outer) : b.NewSym();
@@ -795,7 +796,7 @@ public static class StructuralCorpus
         }
 
         Sym? familySym = null;
-        decimal familyLiteral = 0m;
+        Decimal128 familyLiteral = 0m;
         if (rng.Chance(50))
         {
             familySym = b.NewSym();
@@ -835,7 +836,7 @@ public static class StructuralCorpus
                 case 2:
                 {
                     features.Add("if");
-                    var cond = (decimal)rng.Next(3);
+                    var cond = (Decimal128)rng.Next(3);
                     var thenS = b.NextSentinel();
                     var elseS = b.NextSentinel();
                     b.ExpectContains(cond != 0m ? thenS : elseS);

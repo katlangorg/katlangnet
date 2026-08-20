@@ -1,3 +1,4 @@
+using System.Numerics;
 using KatLang;
 
 namespace KatLang.ParserFuzz;
@@ -15,12 +16,13 @@ namespace KatLang.ParserFuzz;
 /// </summary>
 internal static class EvaluatorEligibility
 {
-    // Bounds for the terminating campaign.
+    // Bounds for the terminating campaign. Literal bounds are Decimal128 because
+    // they cap KatLang numeric literal values (Expr.Num carries Decimal128).
     private const int MaxSourceLength = 8192;
     private const int MaxAstNodes = 5000;
-    private const decimal MaxRepeatLiteral = 100;
-    private const decimal MaxRangeLiteral = 1000;
-    private const decimal MaxPowLiteral = 1000;
+    private static readonly Decimal128 MaxRepeatLiteral = 100;
+    private static readonly Decimal128 MaxRangeLiteral = 1000;
+    private static readonly Decimal128 MaxPowLiteral = 1000;
 
     private static readonly HashSet<string> NonDeterministicNames =
         new(StringComparer.Ordinal) { "Random", "RandomInt" };
@@ -144,7 +146,7 @@ internal static class EvaluatorEligibility
                 case Expr.NativeCall: HasNativeOrRandom = true; break;
                 case Expr.Unary(_, var o): Ex(o); break;
                 case Expr.Binary(var op, var l, var r):
-                    if (op == BinaryOp.Pow && r is Expr.Num pn && Math.Abs(pn.Value) > MaxPowLiteral) HasLargePow = true;
+                    if (op == BinaryOp.Pow && r is Expr.Num pn && Decimal128.Abs(pn.Value) > MaxPowLiteral) HasLargePow = true;
                     Ex(l); Ex(r); break;
                 case Expr.Index(var t, var s): Ex(t); Ex(s); break;
                 case Expr.SequenceSpread(var o): Ex(o); break;
@@ -192,13 +194,13 @@ internal static class EvaluatorEligibility
             }
         }
 
-        private static bool BoundedLiterals(OutputBundle args, decimal max)
+        private static bool BoundedLiterals(OutputBundle args, Decimal128 max)
         {
             bool sawLiteral = true_(args, max, out bool tooBig);
             return sawLiteral && !tooBig;
         }
 
-        private static bool true_(OutputBundle args, decimal max, out bool tooBig)
+        private static bool true_(OutputBundle args, Decimal128 max, out bool tooBig)
         {
             bool saw = false;
             bool big = false;
@@ -212,7 +214,7 @@ internal static class EvaluatorEligibility
                 {
                     case Expr.Num n:
                         saw = true;
-                        if (Math.Abs(n.Value) > max) big = true;
+                        if (Decimal128.Abs(n.Value) > max) big = true;
                         break;
                     case Expr.Unary(_, var o): Walk(o); break;
                     case Expr.Binary(_, var l, var r): Walk(l); Walk(r); break;

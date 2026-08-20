@@ -352,8 +352,13 @@ internal static class ExprNameRenderer
                 break;
 
             case ExprNameMode.IndexSelector:
+                // IsNegative matches exactly the literals whose text renders with a
+                // leading minus (including -0 and -Infinity), which is what needs
+                // parenthesizing in selector position; NaN renders unsigned.
                 if (node is Expr.Unary or Expr.Call or Expr.DotCall or Expr.Index
-                    or Expr.SequenceSpread or Expr.Num { Value: < 0 })
+                    or Expr.SequenceSpread
+                    || (node is Expr.Num negativeLiteral
+                        && System.Numerics.Decimal128.IsNegative(negativeLiteral.Value)))
                 {
                     return PushParenthesized(pending, node);
                 }

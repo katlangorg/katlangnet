@@ -1,3 +1,4 @@
+using System.Numerics;
 using KatLang.Rendering;
 
 namespace KatLang.Formatting;
@@ -44,7 +45,7 @@ public sealed class BoundedOutputWriter
     /// the run's <c>DisplayDecimals</c> property exactly like canonical
     /// display.
     /// </summary>
-    public bool AppendAtom(decimal value)
+    public bool AppendAtom(Decimal128 value)
         => _core.Append(ValueTextRenderer.FormatAtom(value, _displayOptions));
 
     /// <summary>Appends repeated spaces (indentation); each space is charged.</summary>

@@ -1,3 +1,4 @@
+using System.Numerics;
 namespace KatLang.Tests;
 
 /// <summary>
@@ -322,7 +323,7 @@ public class CommentSyntaxTests
         Assert.True(parse.HasErrors);
         Assert.Contains(parse.Diagnostics, diagnostic => diagnostic.Span == new SourceSpan(2, 1, 2, 1));
         Assert.Equal(
-            new decimal[] { 1, 2 },
+            new Decimal128[] { 1, 2 },
             parse.Root.Output.OfType<Expr.Num>().Select(number => number.Value));
     }
 

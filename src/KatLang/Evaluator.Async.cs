@@ -1,3 +1,4 @@
+using System.Numerics;
 using System.Runtime.CompilerServices;
 using KatLang.Evaluation;
 using KatLang.Evaluation.Caching;
@@ -176,7 +177,7 @@ public static partial class Evaluator
     /// <see cref="RunFlatAsync(Expr, EvaluationLimits?, CancellationToken)"/> for the
     /// contract.
     /// </summary>
-    public static Task<EvalResult<IReadOnlyList<decimal>>> RunFlatAsync(Expr expr)
+    public static Task<EvalResult<IReadOnlyList<Decimal128>>> RunFlatAsync(Expr expr)
         => RunFlatAsync(expr, limits: null);
 
     /// <summary>
@@ -184,7 +185,7 @@ public static partial class Evaluator
     /// <see cref="RunFlatAsync(Expr, EvaluationLimits?, CancellationToken)"/> for the
     /// contract.
     /// </summary>
-    public static Task<EvalResult<IReadOnlyList<decimal>>> RunFlatAsync(Expr expr, EvaluationLimits? limits)
+    public static Task<EvalResult<IReadOnlyList<Decimal128>>> RunFlatAsync(Expr expr, EvaluationLimits? limits)
         => RunFlatAsync(expr, limits, cancellationToken: default);
 
     /// <summary>
@@ -198,7 +199,7 @@ public static partial class Evaluator
     /// or the bounded host projection. The exception is delivered through the returned
     /// task and carries that token.
     /// </exception>
-    public static async Task<EvalResult<IReadOnlyList<decimal>>> RunFlatAsync(
+    public static async Task<EvalResult<IReadOnlyList<Decimal128>>> RunFlatAsync(
         Expr expr, EvaluationLimits? limits, CancellationToken cancellationToken)
     {
         // MIRROR OF RunFlat(Expr, EvaluationLimits?, CancellationToken) — keep in lock-step.
@@ -209,7 +210,7 @@ public static partial class Evaluator
         // evaluation cannot be followed by an unbounded flattening allocation.
         var limit = (limits ?? EvaluationLimits.Default).EffectiveMaxCollectionItems;
         var result = r.Value.TryToHostAtoms(limit, out var atoms)
-            ? EvalResult<IReadOnlyList<decimal>>.Ok(atoms)
+            ? EvalResult<IReadOnlyList<Decimal128>>.Ok(atoms)
             : new EvalError.CollectionSizeLimitExceeded(limit, limit + 1L);
 
         // Host flattening belongs to this RunFlatAsync operation and may walk a bounded
@@ -891,8 +892,8 @@ public static partial class Evaluator
                         var unaryResult = unaryOp switch
                         {
                             UnaryOp.Minus => -vR.Value,
-                            UnaryOp.Not => vR.Value == 0 ? 1m : 0m,
-                            _ => 0m,
+                            UnaryOp.Not => vR.Value == 0 ? Decimal128.One : Decimal128.Zero,
+                            _ => Decimal128.Zero,
                         };
                         var unaryValue = new Result.Atom(unaryResult);
                         completed = EvalResult<CountedResult>.Ok(new CountedResult(unaryValue, unaryValue.ValueCount()));
@@ -953,7 +954,9 @@ public static partial class Evaluator
                         }
 
                         var n = nR.Value;
-                        if (n < 0 || n != Math.Floor(n))
+                        // IsInteger is false for NaN and the infinities, so a non-finite
+                        // selector is the same out-of-range badIndex as a fractional one.
+                        if (!Decimal128.IsInteger(n) || n < 0)
                         {
                             completed = new EvalError.BadIndex() { Span = frames[top].Node.Span };
                             break;
@@ -2180,7 +2183,13 @@ public static partial class Evaluator
         }
     }
 
-    /// <summary>MIRROR OF <see cref="EvalBuiltinRangeArguments"/> — keep in lock-step.</summary>
+    /// <summary>
+    /// MIRROR OF <see cref="EvalBuiltinRangeArguments"/> — keep in lock-step.
+    /// Only child-evaluation sequencing is twinned; bound VALIDATION is the shared
+    /// <see cref="ValidateRangeBound"/>, so the range safety policy (whole integer,
+    /// magnitude within the exact-unit-step domain) cannot drift between the sync
+    /// and async paths.
+    /// </summary>
     private static async ValueTask<EvalResult<InclusiveRange>> EvalBuiltinRangeArgumentsAsync(
         IReadOnlyList<ResolvedArgumentAlgorithm> args,
         EvalCtx ctx,
@@ -2191,12 +2200,12 @@ public static partial class Evaluator
 
         var startR = await EvalResolvedArgumentValueAsync(args[0], ctx, valEnv).ConfigureAwait(false);
         if (startR.IsError) return startR.Error;
-        var startIntR = ExpectWholeInt(startR.Value, "range start");
+        var startIntR = ValidateRangeBound(startR.Value, "range start");
         if (startIntR.IsError) return startIntR.Error;
 
         var stopR = await EvalResolvedArgumentValueAsync(args[1], ctx, valEnv).ConfigureAwait(false);
         if (stopR.IsError) return stopR.Error;
-        var stopIntR = ExpectWholeInt(stopR.Value, "range stop");
+        var stopIntR = ValidateRangeBound(stopR.Value, "range stop");
         if (stopIntR.IsError) return stopIntR.Error;
 
         return EvalResult<InclusiveRange>.Ok(new InclusiveRange(startIntR.Value, stopIntR.Value));
@@ -2426,7 +2435,7 @@ public static partial class Evaluator
             => handler(bound.PreparedInput.FlattenedItems);
 
         EvalResult<CountedResult> WithPreparedNumericItems(
-            Func<IReadOnlyList<decimal>, EvalResult<CountedResult>> handler)
+            Func<IReadOnlyList<Decimal128>, EvalResult<CountedResult>> handler)
         {
             var numbersR = ExpectPreparedNumericItems(builtin, bound.PreparedInput);
             if (numbersR.IsError) return numbersR.Error;

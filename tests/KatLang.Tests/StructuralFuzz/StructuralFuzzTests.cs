@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Numerics;
 using System.Text.RegularExpressions;
 
 namespace KatLang.Tests.StructuralFuzz;
@@ -132,7 +133,7 @@ public class StructuralFuzzTests
         }
     }
 
-    private static string Token(decimal value) => value.ToString(System.Globalization.CultureInfo.InvariantCulture);
+    private static string Token(Decimal128 value) => value.ToString(System.Globalization.CultureInfo.InvariantCulture);
 
     private static IReadOnlySet<string> AtomTokens(string raw)
         => Regex.Matches(raw, @"\d+(\.\d+)?").Select(m => m.Value).ToHashSet(StringComparer.Ordinal);

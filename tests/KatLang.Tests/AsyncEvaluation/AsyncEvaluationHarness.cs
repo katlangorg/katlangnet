@@ -1,4 +1,5 @@
 using KatLang.Evaluation;
+using System.Numerics;
 using KatLang.Evaluation.Caching;
 
 namespace KatLang.Tests.AsyncEvaluation;
@@ -29,7 +30,7 @@ internal static class AsyncEvaluationHarness
             ? $"err {SemanticExplorerHarness.ErrorCategory(result.Error)}"
             : $"ok raw={SemanticExplorerHarness.Neutral(result.Value)}";
 
-    public static string NeutralOfFlat(EvalResult<IReadOnlyList<decimal>> result)
+    public static string NeutralOfFlat(EvalResult<IReadOnlyList<Decimal128>> result)
         => result.IsError
             ? $"err {SemanticExplorerHarness.ErrorCategory(result.Error)}"
             : $"ok [{string.Join(", ", result.Value)}]";

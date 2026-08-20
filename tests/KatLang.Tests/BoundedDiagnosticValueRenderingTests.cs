@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Numerics;
 using KatLang.Rendering;
 
 namespace KatLang.Tests;
@@ -28,7 +29,7 @@ public class BoundedDiagnosticValueRenderingTests
 
     private const string Marker = DiagnosticValueRenderer.TruncationMarker;
 
-    private static Result Atom(decimal value) => new Result.Atom(value);
+    private static Result Atom(Decimal128 value) => new Result.Atom(value);
 
     private static Result Str(string value) => new Result.Str(value);
 
@@ -99,10 +100,9 @@ public class BoundedDiagnosticValueRenderingTests
             decimal.MinValue.ToString(System.Globalization.CultureInfo.InvariantCulture),
             Format(Atom(decimal.MinValue)));
 
-        var negativeZero = new decimal(0, 0, 0, isNegative: true, scale: 0);
-        Assert.Equal(
-            negativeZero.ToString(System.Globalization.CultureInfo.InvariantCulture),
-            Format(Atom(negativeZero)));
+        // Decimal128 preserves AND displays the sign of a negative zero
+        // (IEEE 754 signed zero); System.Decimal's formatter hid it.
+        Assert.Equal("-0", Format(Atom(Decimal128.NegativeZero)));
     }
 
     [Fact]

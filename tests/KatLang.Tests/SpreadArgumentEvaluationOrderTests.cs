@@ -1,4 +1,5 @@
 using KatLang.Evaluation.Caching;
+using System.Numerics;
 
 namespace KatLang.Tests;
 
@@ -197,7 +198,7 @@ public class SpreadArgumentEvaluationOrderTests
     {
         var result = Eval(source);
         Assert.False(result.IsError, $"Expected `{source}` to succeed but got: {(result.IsError ? result.Error : null)}");
-        Assert.Equal(expected.Select(static value => (decimal)value), result.Value.ToHostAtoms());
+        Assert.Equal(expected.Select(static value => (Decimal128)value), result.Value.ToHostAtoms());
     }
 
     [Fact]

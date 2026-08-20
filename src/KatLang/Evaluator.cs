@@ -1,4 +1,5 @@
 using System.Collections;
+using System.Numerics;
 using System.Runtime.CompilerServices;
 using KatLang.Evaluation;
 using KatLang.Evaluation.Caching;
@@ -936,14 +937,14 @@ public static partial class Evaluator
             : ChildOf(globalScope, alg);
     }
 
-    /// <summary>Coerce a Result to decimal, or raise TypeMismatch for strings, BadArity otherwise. Lean: expectInt.</summary>
-    internal static EvalResult<decimal> ExpectInt(Result r)
+    /// <summary>Coerce a Result to a number, or raise TypeMismatch for strings, BadArity otherwise. Lean: expectInt.</summary>
+    internal static EvalResult<Decimal128> ExpectInt(Result r)
     {
         if (r is Result.Str)
             return new EvalError.TypeMismatch("Expected a number, got a string");
         var v = r.AsNum();
         return v is not null
-            ? EvalResult<decimal>.Ok(v.Value)
+            ? EvalResult<Decimal128>.Ok(v.Value)
             : new EvalError.BadArity();
     }
 
@@ -959,11 +960,11 @@ public static partial class Evaluator
     private static bool ValueEquals(Result left, Result right)
         => Result.ValueComparer.Equals(left, right);
 
-    private static EvalResult<decimal> RequireNumericScalarOperand(BinaryOp op, string side, Result value)
+    private static EvalResult<Decimal128> RequireNumericScalarOperand(BinaryOp op, string side, Result value)
     {
         var number = value.AsNum();
         return number is not null
-            ? EvalResult<decimal>.Ok(number.Value)
+            ? EvalResult<Decimal128>.Ok(number.Value)
             : new EvalError.TypeMismatch(NumericScalarOperandMessage(ExprNameRenderer.BinaryOpText(op), side, value));
     }
 
@@ -998,13 +999,15 @@ public static partial class Evaluator
 
     /// <summary>
     /// Require an exact integer-valued number for integer-only builtins.
-    /// Lean's core uses <c>Int</c> directly, while C# allows decimals and must reject fractional values explicitly.
+    /// Lean's core uses <c>Int</c> directly, while the C# runtime allows fractional
+    /// numbers and must reject them explicitly. <see cref="Decimal128.IsInteger"/> is
+    /// false for NaN and the infinities, so non-finite values are rejected here too.
     /// </summary>
-    private static EvalResult<decimal> ExpectWholeInt(Result r, string description)
+    private static EvalResult<Decimal128> ExpectWholeInt(Result r, string description)
     {
         var valueR = ExpectInt(r);
         if (valueR.IsError) return valueR.Error;
-        if (valueR.Value != Math.Truncate(valueR.Value))
+        if (!Decimal128.IsInteger(valueR.Value))
             return new EvalError.IllegalInEval($"{description} must be an integer");
         return valueR;
     }
@@ -1012,7 +1015,9 @@ public static partial class Evaluator
     /// <summary>
     /// Evaluate and validate the arguments for <c>range(start, stop)</c>.
     /// This is the single range-boundary validation path used by both the
-    /// builtin and sequence-pipeline direct range iteration.
+    /// builtin and sequence-pipeline direct range iteration; the async twin
+    /// shares <see cref="ValidateRangeBound"/> so the safety policy cannot
+    /// drift between execution paths.
     /// </summary>
     private static EvalResult<InclusiveRange> EvalBuiltinRangeArguments(
         IReadOnlyList<ResolvedArgumentAlgorithm> args,
@@ -1024,26 +1029,60 @@ public static partial class Evaluator
 
         var startR = EvalResolvedArgument(args[0], ctx, valEnv);
         if (startR.IsError) return startR.Error;
-        var startIntR = ExpectWholeInt(startR.Value, "range start");
+        var startIntR = ValidateRangeBound(startR.Value, "range start");
         if (startIntR.IsError) return startIntR.Error;
 
         var stopR = EvalResolvedArgument(args[1], ctx, valEnv);
         if (stopR.IsError) return stopR.Error;
-        var stopIntR = ExpectWholeInt(stopR.Value, "range stop");
+        var stopIntR = ValidateRangeBound(stopR.Value, "range stop");
         if (stopIntR.IsError) return stopIntR.Error;
 
         return EvalResult<InclusiveRange>.Ok(new InclusiveRange(startIntR.Value, stopIntR.Value));
     }
 
     /// <summary>
+    /// The ONE range-bound safety policy, shared by every execution path that
+    /// builds an <see cref="InclusiveRange"/> (synchronous evaluation, the async
+    /// twin, and — through the synchronous entry — sequence-pipeline direct range
+    /// iteration): a bound must be an exact integer whose magnitude does not
+    /// exceed <see cref="MaxExactRangeBound"/>, because beyond 1e34 a unit step
+    /// is absorbed (<c>x + 1 == x</c>) and enumeration could never advance while
+    /// the computed cardinality still looked small enough to pass collection
+    /// limits. Pure over the already-evaluated bound value, so no path can
+    /// re-implement (and drift from) the policy.
+    /// </summary>
+    private static EvalResult<Decimal128> ValidateRangeBound(Result value, string description)
+    {
+        var wholeR = ExpectWholeInt(value, description);
+        if (wholeR.IsError) return wholeR.Error;
+        if (Decimal128.Abs(wholeR.Value) > MaxExactRangeBound)
+            return new EvalError.IllegalInEval($"{description} must not exceed 1e34 in magnitude");
+        return wholeR;
+    }
+
+    /// <summary>
+    /// Largest magnitude a <c>range</c> or <c>Math.RandomInt</c> bound may have:
+    /// every integer in <c>[-1e34, 1e34]</c> is exactly representable in
+    /// <see cref="Decimal128"/> and stepping by one is exact throughout, so bounded
+    /// enumeration stays total and faithful and uniform integer sampling is
+    /// well-defined. Beyond 1e34 consecutive integers are no longer representable —
+    /// adding one would be absorbed and a cursor could never advance. Exactly
+    /// ±1e34 is safe as an endpoint because enumeration never steps outward past
+    /// the endpoint it just yielded.
+    /// </summary>
+    private static readonly Decimal128 MaxExactRangeBound = Decimal128.ScaleB(Decimal128.One, 34);
+
+    /// <summary>
     /// Enumerate the validated inclusive integer bounds for <c>range(start, stop)</c>.
     /// The inclusive-bound check runs BEFORE the step, never after: bounds are whole
-    /// numbers, so the cursor lands exactly on <c>Stop</c>, and stepping only while
-    /// strictly inside the bound keeps the enumeration total at the
-    /// <see cref="decimal"/> extremes (<c>range(decimal.MaxValue, decimal.MaxValue)</c>
-    /// must yield its one value, not overflow on a step past the bound).
+    /// numbers within <see cref="MaxExactRangeBound"/>, so every step is exact, the
+    /// cursor lands exactly on <c>Stop</c>, and the enumeration is total. A step that
+    /// fails to advance (unit-step absorption above 1e34) means a caller bypassed
+    /// <see cref="ValidateRangeBound"/>; that is an internal invariant violation and
+    /// fails loud rather than looping forever — the same discipline as the budget
+    /// underflow guards.
     /// </summary>
-    internal static IEnumerable<decimal> EnumerateInclusiveRangeValues(InclusiveRange range)
+    internal static IEnumerable<Decimal128> EnumerateInclusiveRangeValues(InclusiveRange range)
     {
         if (range.Start <= range.Stop)
         {
@@ -1051,7 +1090,10 @@ public static partial class Evaluator
             yield return current;
             while (current < range.Stop)
             {
-                current += 1m;
+                var next = current + Decimal128.One;
+                if (next == current)
+                    throw UnvalidatedRangeBoundInvariantViolation(current);
+                current = next;
                 yield return current;
             }
         }
@@ -1061,26 +1103,30 @@ public static partial class Evaluator
             yield return current;
             while (current > range.Stop)
             {
-                current -= 1m;
+                var next = current - Decimal128.One;
+                if (next == current)
+                    throw UnvalidatedRangeBoundInvariantViolation(current);
+                current = next;
                 yield return current;
             }
         }
     }
 
+    private static InvalidOperationException UnvalidatedRangeBoundInvariantViolation(Decimal128 cursor)
+        => new(
+            $"range enumeration cannot advance from {cursor.ToString(System.Globalization.CultureInfo.InvariantCulture)}: "
+            + "a unit step was absorbed, so the bounds bypassed ValidateRangeBound. "
+            + "Every InclusiveRange producer must validate bounds through that shared policy.");
+
     /// <summary>
     /// Count the values that <see cref="EnumerateInclusiveRangeValues"/> would produce,
-    /// saturating at <see cref="long.MaxValue"/>. The subtraction itself can exceed
-    /// <see cref="decimal.MaxValue"/> for opposite-sign bounds, so that case is
-    /// detected without performing it — any such span is far beyond the saturation
-    /// ceiling anyway.
+    /// saturating at <see cref="long.MaxValue"/>. Bounds are validated to at most 1e34
+    /// in magnitude, so the span (at most 2e34) is always exactly representable.
     /// </summary>
     internal static long CountInclusiveRangeValues(InclusiveRange range)
     {
-        var lo = Math.Min(range.Start, range.Stop);
-        var hi = Math.Max(range.Start, range.Stop);
-        if (lo < 0m && hi > decimal.MaxValue + lo)
-            return long.MaxValue;
-
+        var lo = Decimal128.Min(range.Start, range.Stop);
+        var hi = Decimal128.Max(range.Start, range.Stop);
         var span = hi - lo;
         return span >= long.MaxValue ? long.MaxValue : (long)span + 1;
     }
@@ -2650,7 +2696,7 @@ public static partial class Evaluator
     /// Evaluated bounds for the inclusive integer <c>range(start, stop)</c>
     /// builtin. The bounds have already passed range's whole-integer validation.
     /// </summary>
-    internal readonly record struct InclusiveRange(decimal Start, decimal Stop);
+    internal readonly record struct InclusiveRange(Decimal128 Start, Decimal128 Stop);
 
     /// <summary>
     /// Collected collection input records the bound collection argument's
@@ -2673,7 +2719,7 @@ public static partial class Evaluator
     /// </summary>
     private readonly record struct PreparedSequenceBuiltinInput(
         CollectedSequenceBuiltinInput Collected,
-        IReadOnlyList<decimal>? NumericItems = null)
+        IReadOnlyList<Decimal128>? NumericItems = null)
     {
         public IReadOnlyList<Result> FlattenedItems => Collected.FlattenedItems;
     }
@@ -2695,7 +2741,7 @@ public static partial class Evaluator
 
         public sealed record ValueArg(Result ResultValue) : PreparedSequenceBuiltinSuffixArg;
 
-        public sealed record WholeNumberArg(decimal WholeNumberValue) : PreparedSequenceBuiltinSuffixArg;
+        public sealed record WholeNumberArg(Decimal128 WholeNumberValue) : PreparedSequenceBuiltinSuffixArg;
     }
 
     /// <summary>
@@ -2750,8 +2796,12 @@ public static partial class Evaluator
                     return true;
                 }
 
+            // Literal patterns match by STRUCTURAL numeric equality (Decimal128.Equals:
+            // NaN is one value, quantum ignored) — the same semantics the repeated-binder
+            // arm above and Result.ValueComparer use. The IEEE `==` operator would make a
+            // host-built LitInt(NaN) pattern unable to match anything, including itself.
             case Pattern.LitInt(var n):
-                return result is Result.Atom(var v) && v == n;
+                return result is Result.Atom(var v) && v.Equals(n);
 
             case Pattern.LitString(var s):
                 return result is Result.Str(var sv)
@@ -2855,8 +2905,9 @@ public static partial class Evaluator
                     return true;
                 }
 
+            // Structural numeric equality, mirroring the plain MatchPattern arm.
             case Pattern.LitInt(var n):
-                return result.Value is Result.Atom(var v) && v == n;
+                return result.Value is Result.Atom(var v) && v.Equals(n);
 
             case Pattern.LitString(var s):
                 return result.Value is Result.Str(var sv)
@@ -4283,7 +4334,7 @@ public static partial class Evaluator
                             new EvalError.BadArity());
 
                     var numeric = item.Value.SingleAtomicNumber();
-                    if (numeric is null || numeric.Value != Math.Truncate(numeric.Value))
+                    if (numeric is null || !Decimal128.IsInteger(numeric.Value))
                     {
                         return new EvalError.WithContext(
                             SequenceBuiltinSuffixArgErrorContext(builtin, descriptor),
@@ -4556,11 +4607,11 @@ public static partial class Evaluator
     /// Diagnostics include the 0-based item index after counted top-level
     /// extraction so numeric shape failures are easier to debug.
     /// </summary>
-    private static EvalResult<List<decimal>> CollectSingleAtomicNumbers(
+    private static EvalResult<List<Decimal128>> CollectSingleAtomicNumbers(
         BuiltinId builtin,
         IReadOnlyList<Result> elements)
     {
-        var numbers = new List<decimal>(elements.Count);
+        var numbers = new List<Decimal128>(elements.Count);
         for (var index = 0; index < elements.Count; index++)
         {
             var item = elements[index];
@@ -4575,7 +4626,7 @@ public static partial class Evaluator
             numbers.Add(numeric.Value);
         }
 
-        return EvalResult<List<decimal>>.Ok(numbers);
+        return EvalResult<List<Decimal128>>.Ok(numbers);
     }
 
     private static EvalResult<PreparedSequenceBuiltinInput> PrepareSequenceBuiltinInput(
@@ -4586,7 +4637,7 @@ public static partial class Evaluator
         var validatedItemsR = ApplySequenceBuiltinEmptyPolicy(builtin, metadata, collected);
         if (validatedItemsR.IsError) return validatedItemsR.Error;
 
-        IReadOnlyList<decimal>? numericItems = null;
+        IReadOnlyList<Decimal128>? numericItems = null;
         switch (metadata.ItemShapeConstraint)
         {
             case SequenceBuiltinItemShapeConstraint.Any:
@@ -4766,7 +4817,7 @@ public static partial class Evaluator
                     builtin,
                     $"prepared suffix argument {index + 1} ({descriptor.Name}) did not match metadata kind {DescribeSequenceBuiltinSuffixArgKind(SequenceBuiltinSuffixArgKind.Algorithm)}"));
 
-    private static EvalResult<decimal> ExpectPreparedWholeNumberSuffixArg(
+    private static EvalResult<Decimal128> ExpectPreparedWholeNumberSuffixArg(
         BuiltinId builtin,
         IReadOnlyList<SequenceBuiltinSuffixArgDescriptor> descriptors,
         IReadOnlyList<PreparedSequenceBuiltinSuffixArg> args,
@@ -4778,8 +4829,8 @@ public static partial class Evaluator
             index,
             SequenceBuiltinSuffixArgKind.WholeNumber,
             (descriptor, arg) => arg is PreparedSequenceBuiltinSuffixArg.WholeNumberArg(var value)
-                ? EvalResult<decimal>.Ok(value)
-                : InternalSequenceBuiltinSuffixArgMetadataError<decimal>(
+                ? EvalResult<Decimal128>.Ok(value)
+                : InternalSequenceBuiltinSuffixArgMetadataError<Decimal128>(
                     builtin,
                     $"prepared suffix argument {index + 1} ({descriptor.Name}) did not match metadata kind {DescribeSequenceBuiltinSuffixArgKind(SequenceBuiltinSuffixArgKind.WholeNumber)}"));
 
@@ -4800,12 +4851,12 @@ public static partial class Evaluator
                     builtin,
                     $"prepared suffix argument {index + 1} ({descriptor.Name}) did not match metadata kind {DescribeSequenceBuiltinSuffixArgKind(SequenceBuiltinSuffixArgKind.Value)}"));
 
-    private static EvalResult<IReadOnlyList<decimal>> ExpectPreparedNumericItems(
+    private static EvalResult<IReadOnlyList<Decimal128>> ExpectPreparedNumericItems(
         BuiltinId builtin,
         PreparedSequenceBuiltinInput prepared)
     {
         if (prepared.NumericItems is { } numbers)
-            return EvalResult<IReadOnlyList<decimal>>.Ok(numbers);
+            return EvalResult<IReadOnlyList<Decimal128>>.Ok(numbers);
 
         return new EvalError.WithContext(
             $"internal sequence metadata for {BuiltinDisplayName(builtin)} did not produce numeric items",
@@ -4821,8 +4872,11 @@ public static partial class Evaluator
     /// </summary>
     private static EvalResult<CountedResult> EvalOrderCounted(
         EvalCtx ctx,
-        IReadOnlyList<decimal> numbers)
+        IReadOnlyList<Decimal128> numbers)
     {
+        // Decimal128.CompareTo is a total order over every value, including the IEEE
+        // specials: NaN sorts before every other value (mirroring double), the
+        // infinities take the extremes, and -0 compares equal to 0.
         var sorted = numbers.ToList();
         sorted.Sort();
         return MakeCollectionListResult(ctx, sorted.Select(static value => (Result)new Result.Atom(value)).ToList());
@@ -4837,7 +4891,7 @@ public static partial class Evaluator
     /// </summary>
     private static EvalResult<CountedResult> EvalOrderDescCounted(
         EvalCtx ctx,
-        IReadOnlyList<decimal> numbers)
+        IReadOnlyList<Decimal128> numbers)
     {
         var sorted = numbers.ToList();
         sorted.Sort(static (left, right) => right.CompareTo(left));
@@ -4934,9 +4988,9 @@ public static partial class Evaluator
     private static EvalResult<CountedResult> EvalTakeCounted(
         EvalCtx ctx,
         IReadOnlyList<Result> items,
-        decimal count)
+        Decimal128 count)
     {
-        // Saturate before narrowing: `count` is a validated whole decimal that may
+        // Saturate before narrowing: `count` is a validated whole number that may
         // exceed int.MaxValue, and an oversized count means "all items" by
         // specification, so it must never reach the host (int) conversion.
         IReadOnlyList<Result> taken = count <= 0
@@ -4958,7 +5012,7 @@ public static partial class Evaluator
     private static EvalResult<CountedResult> EvalSkipCounted(
         EvalCtx ctx,
         IReadOnlyList<Result> items,
-        decimal count)
+        Decimal128 count)
     {
         // Saturate before narrowing, mirroring EvalTakeCounted: an oversized count
         // means "skip everything" and must never reach the host (int) conversion.
@@ -4978,17 +5032,18 @@ public static partial class Evaluator
     /// Lean: <c>evalMinCounted</c>.
     /// </summary>
     private static EvalResult<CountedResult> EvalMinCounted(
-        IReadOnlyList<decimal> numbers)
+        IReadOnlyList<Decimal128> numbers)
     {
         if (numbers.Count == 0)
             return new EvalError.BadArity();
 
+        // Decimal128.Min propagates NaN (any NaN element makes the result NaN),
+        // so the outcome never depends on where in the collection a NaN sits —
+        // a bare `<` scan would be order-dependent because every IEEE comparison
+        // against NaN is false.
         var minimum = numbers[0];
         for (var i = 1; i < numbers.Count; i++)
-        {
-            if (numbers[i] < minimum)
-                minimum = numbers[i];
-        }
+            minimum = Decimal128.Min(numbers[i], minimum);
 
         return EvalResult<CountedResult>.Ok(new CountedResult(new Result.Atom(minimum), 1));
     }
@@ -5002,17 +5057,15 @@ public static partial class Evaluator
     /// Lean: <c>evalMaxCounted</c>.
     /// </summary>
     private static EvalResult<CountedResult> EvalMaxCounted(
-        IReadOnlyList<decimal> numbers)
+        IReadOnlyList<Decimal128> numbers)
     {
         if (numbers.Count == 0)
             return new EvalError.BadArity();
 
+        // NaN-propagating for the same reason as EvalMinCounted.
         var maximum = numbers[0];
         for (var i = 1; i < numbers.Count; i++)
-        {
-            if (numbers[i] > maximum)
-                maximum = numbers[i];
-        }
+            maximum = Decimal128.Max(numbers[i], maximum);
 
         return EvalResult<CountedResult>.Ok(new CountedResult(new Result.Atom(maximum), 1));
     }
@@ -5022,27 +5075,18 @@ public static partial class Evaluator
     /// from left to right.
     /// Each element must be exactly one atomic numeric value; sequence values are not
     /// flattened, strings are rejected, and empty collections return <c>0</c>.
-    /// Implementation note: Lean <c>Int</c> is unbounded, but the C# decimal
-    /// runtime can overflow; that overflow remains an implementation-only
-    /// concern and is reported as <see cref="EvalError.NumericOverflow"/>.
+    /// Implementation note: Lean <c>Int</c> is unbounded; the Decimal128 runtime
+    /// follows IEEE 754 — an accumulation past the representable range saturates
+    /// to an infinity instead of raising an error.
     /// Lean: <c>evalSumCounted</c>.
     /// </summary>
-    private static EvalResult<decimal> SumNumbersChecked(IReadOnlyList<decimal> numbers)
+    private static Decimal128 SumNumbers(IReadOnlyList<Decimal128> numbers)
     {
-        decimal total = 0;
-        try
-        {
-            foreach (var numeric in numbers)
-            {
-                total = checked(total + numeric);
-            }
+        Decimal128 total = Decimal128.Zero;
+        foreach (var numeric in numbers)
+            total += numeric;
 
-            return EvalResult<decimal>.Ok(total);
-        }
-        catch (OverflowException)
-        {
-            return new EvalError.NumericOverflow();
-        }
+        return total;
     }
 
     /// <summary>
@@ -5050,13 +5094,8 @@ public static partial class Evaluator
     /// from left to right.
     /// Lean: <c>evalSumCounted</c>.
     /// </summary>
-    private static EvalResult<CountedResult> EvalSumCounted(IReadOnlyList<decimal> numbers)
-    {
-        var totalR = SumNumbersChecked(numbers);
-        if (totalR.IsError) return totalR.Error;
-
-        return EvalResult<CountedResult>.Ok(new CountedResult(new Result.Atom(totalR.Value), 1));
-    }
+    private static EvalResult<CountedResult> EvalSumCounted(IReadOnlyList<Decimal128> numbers)
+        => EvalResult<CountedResult>.Ok(new CountedResult(new Result.Atom(SumNumbers(numbers)), 1));
 
     /// <summary>
     /// Evaluate <c>avg(collection)</c> by averaging the top-level sequence
@@ -5064,24 +5103,156 @@ public static partial class Evaluator
     /// The collection must be non-empty, and each top-level element must be
     /// exactly one atomic numeric value; sequence values are not flattened and strings
     /// are rejected.
-    /// The C# decimal runtime returns the true decimal arithmetic mean
-    /// (total / count). Lean's Int-only core approximates this with truncation
-    /// toward zero (Int.tdiv); that integer approximation is a Lean model
-    /// limitation, not the C# runtime contract.
-    /// Implementation note: the intermediate decimal accumulation can still
-    /// overflow in C#, which is reported as <see cref="EvalError.NumericOverflow"/>.
+    /// The Decimal128 runtime returns the true arithmetic mean (total / count),
+    /// correctly rounded to 34 significant digits. Lean's Int-only core
+    /// approximates this with truncation toward zero (Int.tdiv); that integer
+    /// approximation is a Lean model limitation, not the C# runtime contract.
     /// Lean: <c>evalAvgCounted</c>.
     /// </summary>
-    private static EvalResult<CountedResult> EvalAvgCounted(IReadOnlyList<decimal> numbers)
+    private static EvalResult<CountedResult> EvalAvgCounted(IReadOnlyList<Decimal128> numbers)
     {
         if (numbers.Count == 0)
             return new EvalError.BadArity();
 
-        var totalR = SumNumbersChecked(numbers);
-        if (totalR.IsError) return totalR.Error;
+        var total = SumNumbers(numbers);
+        // Preserve the ordinary left-to-right IEEE result, including explicit
+        // NaN/infinity inputs. Only an overflow created from entirely finite inputs
+        // needs the exact fallback: a finite arithmetic mean is bounded by its
+        // extrema and therefore remains representable even when the intermediate
+        // sum is not (MaxValue averaged with itself is the simplest case).
+        var average = Decimal128.IsFinite(total)
+            || numbers.Any(static number => !Decimal128.IsFinite(number))
+            ? total / numbers.Count
+            : AverageFiniteNumbersExactly(numbers);
 
-        var average = totalR.Value / numbers.Count;
         return EvalResult<CountedResult>.Ok(new CountedResult(new Result.Atom(average), 1));
+    }
+
+    /// <summary>
+    /// Computes the correctly rounded arithmetic mean of finite Decimal128 values
+    /// without a Decimal128-sized intermediate sum. Every finite Decimal128 is an
+    /// integer coefficient times a power-of-ten quantum, so a BigInteger sum at the
+    /// smallest input quantum is exact. The final rational division is rounded once,
+    /// using IEEE round-to-nearest/ties-to-even, to either 34 significant digits or
+    /// the Decimal128 subnormal quantum floor.
+    /// </summary>
+    private static Decimal128 AverageFiniteNumbersExactly(IReadOnlyList<Decimal128> numbers)
+    {
+        var coefficientsByExponent = new Dictionary<int, BigInteger>();
+        var minimumExponent = int.MaxValue;
+
+        foreach (var number in numbers)
+        {
+            if (number == Decimal128.Zero)
+                continue;
+
+            var quantum = Decimal128.GetQuantum(number);
+            var exponent = Decimal128.ILogB(quantum);
+            var coefficient = BigInteger.CreateChecked((Int128)(number / quantum));
+            coefficientsByExponent[exponent] = coefficientsByExponent.TryGetValue(exponent, out var existing)
+                ? existing + coefficient
+                : coefficient;
+            if (exponent < minimumExponent)
+                minimumExponent = exponent;
+        }
+
+        if (coefficientsByExponent.Count == 0)
+            return Decimal128.Zero;
+
+        var exactScaledSum = BigInteger.Zero;
+        foreach (var (exponent, coefficient) in coefficientsByExponent)
+        {
+            if (!coefficient.IsZero)
+                exactScaledSum += coefficient * BigInteger.Pow(10, exponent - minimumExponent);
+        }
+
+        if (exactScaledSum.IsZero)
+            return Decimal128.Zero;
+
+        return RoundScaledRationalToDecimal128(exactScaledSum, numbers.Count, minimumExponent);
+    }
+
+    /// <summary>
+    /// Rounds <paramref name="scaledNumerator"/> / <paramref name="denominator"/>
+    /// times 10^<paramref name="decimalScale"/> directly into Decimal128.
+    /// </summary>
+    private static Decimal128 RoundScaledRationalToDecimal128(
+        BigInteger scaledNumerator,
+        int denominator,
+        int decimalScale)
+    {
+        const int DecimalPrecision = 34;
+        const int MinimumQuantumExponent = -6176;
+
+        var negative = scaledNumerator.Sign < 0;
+        var magnitude = BigInteger.Abs(scaledNumerator);
+        var numeratorDigits = magnitude.ToString(System.Globalization.CultureInfo.InvariantCulture).Length;
+
+        // Division by the positive item count can lower the scientific exponent by
+        // only a handful of places. Start at the numerator's exponent and compare
+        // exactly, avoiding a binary floating-point logarithm in this numeric path.
+        var scientificExponent = numeratorDigits - 1 + decimalScale;
+        while (!ScaledRatioIsAtLeastPowerOfTen(
+                   magnitude,
+                   denominator,
+                   decimalScale,
+                   scientificExponent))
+        {
+            scientificExponent--;
+        }
+
+        var precisionQuantumExponent = scientificExponent - (DecimalPrecision - 1);
+        var targetQuantumExponent = precisionQuantumExponent < MinimumQuantumExponent
+            ? MinimumQuantumExponent
+            : precisionQuantumExponent;
+
+        var scaleShift = decimalScale - targetQuantumExponent;
+        BigInteger quotient;
+        BigInteger remainder;
+        BigInteger roundingDenominator;
+        if (scaleShift >= 0)
+        {
+            var roundingNumerator = magnitude * BigInteger.Pow(10, scaleShift);
+            quotient = BigInteger.DivRem(roundingNumerator, denominator, out remainder);
+            roundingDenominator = denominator;
+        }
+        else
+        {
+            roundingDenominator = denominator * BigInteger.Pow(10, -scaleShift);
+            quotient = BigInteger.DivRem(magnitude, roundingDenominator, out remainder);
+        }
+
+        var doubledRemainder = remainder << 1;
+        if (doubledRemainder > roundingDenominator
+            || (doubledRemainder == roundingDenominator && !quotient.IsEven))
+        {
+            quotient++;
+        }
+
+        if (quotient.IsZero)
+            return negative ? Decimal128.NegativeZero : Decimal128.Zero;
+
+        var tenToPrecision = BigInteger.Pow(10, DecimalPrecision);
+        if (quotient == tenToPrecision)
+        {
+            quotient /= 10;
+            targetQuantumExponent++;
+        }
+
+        var result = Decimal128.ScaleB((Decimal128)(Int128)quotient, targetQuantumExponent);
+        return negative ? -result : result;
+    }
+
+    private static bool ScaledRatioIsAtLeastPowerOfTen(
+        BigInteger magnitude,
+        int denominator,
+        int decimalScale,
+        int power)
+    {
+        var shift = decimalScale - power;
+        return shift >= 0
+            ? magnitude * BigInteger.Pow(10, shift) >= denominator
+            : magnitude >= denominator * BigInteger.Pow(10, -shift);
     }
 
     private static EvalResult<CountedResult> ApplyBuiltinCountedSequence(
@@ -5101,7 +5272,7 @@ public static partial class Evaluator
             => handler(bound.PreparedInput.FlattenedItems);
 
         EvalResult<CountedResult> WithPreparedNumericItems(
-            Func<IReadOnlyList<decimal>, EvalResult<CountedResult>> handler)
+            Func<IReadOnlyList<Decimal128>, EvalResult<CountedResult>> handler)
         {
             var numbersR = ExpectPreparedNumericItems(builtin, bound.PreparedInput);
             if (numbersR.IsError) return numbersR.Error;
@@ -5429,10 +5600,10 @@ public static partial class Evaluator
                     if (countR.IsError) return countR.Error;
                     var nR = ExpectWholeInt(countR.Value, "Repeat count");
                     if (nR.IsError) return nR.Error;
-                    // Domain check BEFORE narrowing: the validated whole decimal may lie
-                    // outside long's range in either direction, so the (long) conversion
-                    // is only safe after rejecting negatives and saturating oversized
-                    // counts (behaviorally identical: both exceed any finite budget).
+                    // Domain check BEFORE narrowing: the validated whole number may lie
+                    // outside long's range, so the (long) conversion is only safe after
+                    // rejecting negatives and saturating oversized counts (behaviorally
+                    // identical: both exceed any finite budget).
                     if (nR.Value < 0) return new EvalError.IllegalInEval("Repeat count must be >= 0");
                     var n = nR.Value >= long.MaxValue ? long.MaxValue : (long)nR.Value;
 
@@ -6065,47 +6236,48 @@ public static partial class Evaluator
         var yR = RequireNumericScalarOperand(op, "right", rightValue);
         if (yR.IsError)
             return new EvalError.WithContext(BinaryOperandContext(op, left, right), yR.Error) { Span = span };
-        decimal x = xR.Value, y = yR.Value;
+        Decimal128 x = xR.Value, y = yR.Value;
+        // Division and modulo by a ZERO-VALUED divisor stay the specified KatLang
+        // error (Lean: Error.divByZero) — the check is on the evaluated value, so
+        // `1 / (1 - 1)`, `1 / -0`, and an underflowed-to-zero divisor all reject,
+        // and the IEEE infinity/NaN outcome is deliberately NOT adopted for any of
+        // them. All other arithmetic follows
+        // Decimal128's IEEE semantics: overflow saturates to an infinity, and
+        // non-finite operands propagate (so Infinity/Infinity is NaN, not an
+        // error). The ordering comparisons are IEEE too: every comparison with a
+        // NaN operand is false, and -0 equals 0.
         if ((op is BinaryOp.Div or BinaryOp.IDiv or BinaryOp.Mod) && y == 0)
             return new EvalError.DivByZero() { Span = span };
 
         if (op == BinaryOp.Pow)
             return EvalPow(span, x, y);
 
-        decimal result;
-        try
+        Decimal128 result = op switch
         {
-            result = op switch
-            {
-                BinaryOp.Add => x + y,
-                BinaryOp.Sub => x - y,
-                BinaryOp.Mul => x * y,
-                BinaryOp.Div => x / y,
-                BinaryOp.IDiv => Math.Truncate(x / y),
-                BinaryOp.Mod => x % y,
-                BinaryOp.Lt => x < y ? 1 : 0,
-                BinaryOp.Gt => x > y ? 1 : 0,
-                BinaryOp.Le => x <= y ? 1 : 0,
-                BinaryOp.Ge => x >= y ? 1 : 0,
-                BinaryOp.Eq => x == y ? 1 : 0,
-                BinaryOp.Ne => x != y ? 1 : 0,
-                BinaryOp.And => x != 0 && y != 0 ? 1 : 0,
-                BinaryOp.Or => x != 0 || y != 0 ? 1 : 0,
-                BinaryOp.Xor => (x != 0) != (y != 0) ? 1 : 0,
-                _ => 0,
-            };
-        }
-        catch (OverflowException)
-        {
-            return new EvalError.NumericOverflow() { Span = span };
-        }
+            BinaryOp.Add => x + y,
+            BinaryOp.Sub => x - y,
+            BinaryOp.Mul => x * y,
+            BinaryOp.Div => x / y,
+            BinaryOp.IDiv => Decimal128.Truncate(x / y),
+            BinaryOp.Mod => x % y,
+            BinaryOp.Lt => x < y ? 1 : 0,
+            BinaryOp.Gt => x > y ? 1 : 0,
+            BinaryOp.Le => x <= y ? 1 : 0,
+            BinaryOp.Ge => x >= y ? 1 : 0,
+            BinaryOp.Eq => x == y ? 1 : 0,
+            BinaryOp.Ne => x != y ? 1 : 0,
+            BinaryOp.And => x != 0 && y != 0 ? 1 : 0,
+            BinaryOp.Or => x != 0 || y != 0 ? 1 : 0,
+            BinaryOp.Xor => (x != 0) != (y != 0) ? 1 : 0,
+            _ => 0,
+        };
 
         return EvalResult<Result>.Ok(new Result.Atom(result));
     }
 
-    /// <summary>Evaluate an expression and coerce to decimal.
+    /// <summary>Evaluate an expression and coerce to a number.
     /// Lean: expectInt over eval (the model has no dedicated wrapper).</summary>
-    private static EvalResult<decimal> EvalInt(
+    private static EvalResult<Decimal128> EvalInt(
         Expr expr, EvalCtx ctx, IReadOnlyList<(string, Result)> valEnv)
     {
         var r = Eval(expr, ctx, valEnv);
@@ -6152,7 +6324,7 @@ public static partial class Evaluator
             : MakeCheckedSequenceCapture(ctx, outputSlotsR.Value);
     }
 
-    internal static EvalResult<(IReadOnlyList<Result> NextStateSlots, decimal Continue)> SplitContSlots(
+    internal static EvalResult<(IReadOnlyList<Result> NextStateSlots, Decimal128 Continue)> SplitContSlots(
         IReadOnlyList<Result> outputSlots)
     {
         if (outputSlots.Count == 0)
@@ -6161,14 +6333,14 @@ public static partial class Evaluator
         if (outputSlots.Count == 1)
         {
             if (outputSlots[0] is Result.Atom(var number))
-                return EvalResult<(IReadOnlyList<Result>, decimal)>.Ok((outputSlots, number));
+                return EvalResult<(IReadOnlyList<Result>, Decimal128)>.Ok((outputSlots, number));
 
             return new EvalError.BadArity();
         }
 
         var contR = ExpectInt(outputSlots[^1]);
         if (contR.IsError) return contR.Error;
-        return EvalResult<(IReadOnlyList<Result>, decimal)>.Ok((outputSlots.Take(outputSlots.Count - 1).ToList(), contR.Value));
+        return EvalResult<(IReadOnlyList<Result>, Decimal128)>.Ok((outputSlots.Take(outputSlots.Count - 1).ToList(), contR.Value));
     }
 
     // ── Builtins ─────────────────────────────────────────────────────────────
@@ -6569,8 +6741,8 @@ public static partial class Evaluator
                     var unaryResult = unaryOp switch
                     {
                         UnaryOp.Minus => -vR.Value,
-                        UnaryOp.Not => vR.Value == 0 ? 1m : 0m,
-                        _ => 0m,
+                        UnaryOp.Not => vR.Value == 0 ? Decimal128.One : Decimal128.Zero,
+                        _ => Decimal128.Zero,
                     };
                     var unaryValue = new Result.Atom(unaryResult);
                     completed = EvalResult<CountedResult>.Ok(new CountedResult(unaryValue, unaryValue.ValueCount()));
@@ -6633,7 +6805,9 @@ public static partial class Evaluator
                     }
 
                     var n = nR.Value;
-                    if (n < 0 || n != Math.Floor(n))
+                    // IsInteger is false for NaN and the infinities, so a non-finite
+                    // selector is the same out-of-range badIndex as a fractional one.
+                    if (!Decimal128.IsInteger(n) || n < 0)
                     {
                         completed = new EvalError.BadIndex() { Span = frame.Node.Span };
                         break;
@@ -7106,7 +7280,7 @@ public static partial class Evaluator
             return InvokeSynchronousHostOperation(hostOperation, argNames, ctx, valEnv);
         }
 
-        var args = new decimal[argNames.Count];
+        var args = new Decimal128[argNames.Count];
         for (var i = 0; i < argNames.Count; i++)
         {
             var val = LookupVal(valEnv, argNames[i]);
@@ -7119,53 +7293,78 @@ public static partial class Evaluator
             args[i] = num.Value;
         }
 
-        decimal result;
-        try
+        // Every math member computes Decimal128 end-to-end — no double round-trip
+        // anywhere, so transcendental results carry Decimal128's full 34-digit
+        // precision. Domain violations follow IEEE: Sqrt(-1) and Ln(-1) are NaN,
+        // Ln(0) is -Infinity, and non-finite inputs propagate. Transcendental
+        // results are quantum-canonicalized (see CanonicalizeMathResult); the
+        // quantum-transparent members (Abs/Ceil/Floor/Round/Sign) keep their
+        // argument-derived quanta exactly as System.Decimal did.
+        Decimal128 result;
+        switch (fnName)
         {
-            switch (fnName)
-            {
-                case "Abs": result = Math.Abs(args[0]); break;
-                case "Ceil": result = Math.Ceiling(args[0]); break;
-                case "Floor": result = Math.Floor(args[0]); break;
-                case "Round":
-                    if (args[1] != Math.Truncate(args[1]))
-                        return new EvalError.IllegalInEval("digits must be an integer");
-                    if (args[1] < 0 || args[1] > 28)
-                        return new EvalError.IllegalInEval("digits must be between 0 and 28");
-                    result = Math.Round(args[0], decimal.ToInt32(args[1]), MidpointRounding.AwayFromZero);
-                    break;
-                case "Sign": result = (decimal)Math.Sign(args[0]); break;
-                case "Sqrt": result = NormalizeDoubleResult(Math.Sqrt((double)args[0])); break;
-                case "Ln": result = NormalizeDoubleResult(Math.Log((double)args[0])); break;
-                case "Lg": result = NormalizeDoubleResult(Math.Log10((double)args[0])); break;
-                case "Sin": result = NormalizeDoubleResult(Math.Sin((double)args[0])); break;
-                case "Asin": result = NormalizeDoubleResult(Math.Asin((double)args[0])); break;
-                case "Cos": result = NormalizeDoubleResult(Math.Cos((double)args[0])); break;
-                case "Acos": result = NormalizeDoubleResult(Math.Acos((double)args[0])); break;
-                case "Tan": result = NormalizeDoubleResult(Math.Tan((double)args[0])); break;
-                case "Atan": result = NormalizeDoubleResult(Math.Atan((double)args[0])); break;
-                case "Atan2": result = NormalizeDoubleResult(Math.Atan2((double)args[0], (double)args[1])); break;
-                case "Pow": result = NormalizeDoubleResult(Math.Pow((double)args[0], (double)args[1])); break;
-                case "Log": result = NormalizeDoubleResult(Math.Log((double)args[0], (double)args[1])); break;
-                case "Random":
-                    if (args[0] >= args[1])
-                        return new EvalError.IllegalInEval("Math.Random start must be less than end");
-                    result = RandomInHalfOpenRange(args[0], args[1]);
-                    break;
-                case "RandomInt":
-                    if (!IsWholeNumber(args[0]) || !IsWholeNumber(args[1]))
-                        return new EvalError.IllegalInEval("Math.RandomInt bounds must be whole numbers");
-                    if (args[0] >= args[1])
-                        return new EvalError.IllegalInEval("Math.RandomInt start must be less than end");
-                    result = Math.Floor(RandomInHalfOpenRange(args[0], args[1]));
-                    break;
-                default:
-                    return new EvalError.IllegalInEval($"unknown native function: {fnName}");
-            }
-        }
-        catch (OverflowException)
-        {
-            return new EvalError.NumericOverflow();
+            case "Abs": result = Decimal128.Abs(args[0]); break;
+            case "Ceil": result = Decimal128.Ceiling(args[0]); break;
+            case "Floor": result = Decimal128.Floor(args[0]); break;
+            case "Round":
+                if (!Decimal128.IsInteger(args[1]))
+                    return new EvalError.IllegalInEval("digits must be an integer");
+                if (args[1] < 0)
+                    return new EvalError.IllegalInEval("digits must be >= 0");
+                // The smallest representable quantum is 1e-6176, so rounding is the
+                // identity for any larger digit count — oversized counts clamp there
+                // before the host (int) narrowing.
+                result = Decimal128.Round(
+                    args[0],
+                    args[1] > 6176 ? 6176 : (int)args[1],
+                    MidpointRounding.AwayFromZero);
+                break;
+            case "Sign":
+                // Decimal128.Sign throws on NaN; the signum of NaN propagates as NaN.
+                result = Decimal128.IsNaN(args[0]) ? Decimal128.NaN : Decimal128.Sign(args[0]);
+                break;
+            case "Sqrt": result = CanonicalizeMathResult(Decimal128.Sqrt(args[0])); break;
+            case "Ln": result = CanonicalizeMathResult(Decimal128.Log(args[0])); break;
+            case "Lg": result = CanonicalizeMathResult(Decimal128.Log10(args[0])); break;
+            case "Sin": result = CanonicalizeMathResult(Decimal128.Sin(args[0])); break;
+            case "Asin": result = CanonicalizeMathResult(Decimal128.Asin(args[0])); break;
+            case "Cos": result = CanonicalizeMathResult(Decimal128.Cos(args[0])); break;
+            case "Acos": result = CanonicalizeMathResult(Decimal128.Acos(args[0])); break;
+            case "Tan": result = CanonicalizeMathResult(Decimal128.Tan(args[0])); break;
+            case "Atan": result = CanonicalizeMathResult(Decimal128.Atan(args[0])); break;
+            case "Atan2": result = CanonicalizeMathResult(Decimal128.Atan2(args[0], args[1])); break;
+            case "Pow":
+                // Math.Pow and the `^` operator share one implementation, so the
+                // exact integer-exponent path and the zero-base rule cannot drift.
+                return EvalPow(span: null, args[0], args[1]);
+            case "Log": result = CanonicalizeMathResult(Decimal128.Log(args[0], args[1])); break;
+            case "Random":
+                if (!Decimal128.IsFinite(args[0]) || !Decimal128.IsFinite(args[1]))
+                    return new EvalError.IllegalInEval("Math.Random bounds must be finite numbers");
+                if (args[0] >= args[1])
+                    return new EvalError.IllegalInEval("Math.Random start must be less than end");
+                if (!Decimal128.IsFinite(args[1] - args[0]))
+                    return new EvalError.IllegalInEval("Math.Random range is too large");
+                result = RandomInHalfOpenRange(args[0], args[1]);
+                break;
+            case "RandomInt":
+                // Uniform INTEGER-domain generation, never a scaled fraction: flooring a
+                // scaled Math.Random draw biases every span that does not divide its
+                // 10^34-point lattice. Bounds are confined to the exact consecutive-integer
+                // domain (|bound| <= 1e34), where every candidate result is exactly
+                // representable and the span is exactly countable — beyond it, uniformity
+                // over "the integers in the interval" is not even well-defined in
+                // Decimal128, so such bounds are rejected rather than silently biased.
+                if (!Decimal128.IsInteger(args[0]) || !Decimal128.IsInteger(args[1]))
+                    return new EvalError.IllegalInEval("Math.RandomInt bounds must be whole numbers");
+                if (Decimal128.Abs(args[0]) > MaxExactRangeBound || Decimal128.Abs(args[1]) > MaxExactRangeBound)
+                    return new EvalError.IllegalInEval("Math.RandomInt bounds must not exceed 1e34 in magnitude");
+                if (args[0] >= args[1])
+                    return new EvalError.IllegalInEval("Math.RandomInt start must be less than end");
+                result = SampleUniformInteger(args[0], args[1], SharedRandomUInt128Source);
+                break;
+            default:
+                return new EvalError.IllegalInEval($"unknown native function: {fnName}");
         }
 
         return EvalResult<Result>.Ok(new Result.Atom(result));
@@ -7269,37 +7468,138 @@ public static partial class Evaluator
         return EvalResult<IReadOnlyList<Result>>.Ok(Array.AsReadOnly(arguments));
     }
 
-    private static bool IsWholeNumber(decimal value) => value == Math.Floor(value);
-
-    private static decimal RandomInHalfOpenRange(decimal start, decimal end)
+    /// <summary>
+    /// IEEE 754 <c>reduce</c> for transcendental math-function results: returns the
+    /// same VALUE represented by its cohort member with the fewest trailing zeros.
+    /// .NET's Decimal128 transcendentals report results at the maximum-precision
+    /// quantum, which is informative only while all 34 digits are significant — an
+    /// inexact result like <c>Sin(1)</c> passes through unchanged, while a
+    /// mathematically exact result like <c>Lg(1000)</c> drops the uninformative
+    /// trailing zeros (<c>3</c>, not <c>3.000…000</c>), matching what the previous
+    /// runtime displayed. Presentation never re-rounds: this canonicalization is
+    /// value-preserving and belongs to the operation, not the formatter. It is
+    /// deliberately NOT applied to ordinary arithmetic or the quantum-transparent
+    /// math members (Abs/Ceil/Floor/Round/Sign), whose argument-derived quanta are
+    /// established KatLang display behavior.
+    /// </summary>
+    private static Decimal128 CanonicalizeMathResult(Decimal128 value)
     {
-        var result = start + ((decimal)Random.Shared.NextDouble() * (end - start));
+        if (!Decimal128.IsFinite(value))
+            return value;
+        if (value == Decimal128.Zero)
+            return Decimal128.IsNegative(value) ? Decimal128.NegativeZero : Decimal128.Zero;
+
+        while (true)
+        {
+            var quantumExponent = Decimal128.ILogB(Decimal128.GetQuantum(value));
+            if (quantumExponent >= 6111)
+                return value; // already at the coarsest representable quantum
+
+            var coarser = Decimal128.Quantize(value, Decimal128.ScaleB(Decimal128.One, quantumExponent + 1));
+            // Coarsening only proceeds while it is exact: a changed value means a
+            // significant digit would be lost, so the previous form is canonical.
+            if (coarser != value || Decimal128.HaveSameQuantum(coarser, value))
+                return value;
+
+            value = coarser;
+        }
+    }
+
+    /// <summary>Exact scale factor 1e-34 for composing full-precision random fractions.</summary>
+    private static readonly Decimal128 RandomUnitFractionScale = Decimal128.ScaleB(Decimal128.One, -34);
+
+    /// <summary>Exclusive bound of each independent 17-digit component draw.</summary>
+    private const long RandomDecimalComponentBound = 100_000_000_000_000_000; // 1e17
+
+    /// <summary>
+    /// Production component source. <see cref="Random.Shared"/> is the runtime's
+    /// thread-safe shared generator; <see cref="Random.NextInt64(long)"/> returns
+    /// a value in <c>[0, maxExclusive)</c> without the modulo-scaling bias that a
+    /// hand-rolled bounded conversion could introduce.
+    /// </summary>
+    private static readonly Func<long, long> SharedRandomInt64Source =
+        static maxExclusive => Random.Shared.NextInt64(maxExclusive);
+
+    /// <summary>
+    /// A uniform random fraction in [0, 1) carrying Decimal128's full 34 significant
+    /// digits: two independent 17-digit draws compose one uniform integer in
+    /// [0, 1e34), scaled exactly by 1e-34. Every arithmetic step is exact, and the
+    /// 1e34 lattice points carry just under 113 bits of entropy —
+    /// <c>Random.NextDouble</c> would cap randomness at double's 53 bits.
+    /// The bounded source is injected at this helper boundary so endpoint and
+    /// composition behavior can be tested deterministically without replacing
+    /// production randomness or introducing mutable global test state.
+    /// </summary>
+    internal static Decimal128 SampleRandomUnitFraction(Func<long, long> nextInt64Exclusive)
+    {
+        ArgumentNullException.ThrowIfNull(nextInt64Exclusive);
+        var high = nextInt64Exclusive(RandomDecimalComponentBound);
+        var low = nextInt64Exclusive(RandomDecimalComponentBound);
+        if ((ulong)high >= (ulong)RandomDecimalComponentBound
+            || (ulong)low >= (ulong)RandomDecimalComponentBound)
+        {
+            throw new InvalidOperationException(
+                "The Math.Random component source returned a value outside its requested half-open bound.");
+        }
+
+        return (((Decimal128)high * RandomDecimalComponentBound) + low) * RandomUnitFractionScale;
+    }
+
+    private static Decimal128 NextRandomUnitFraction()
+        => SampleRandomUnitFraction(SharedRandomInt64Source);
+
+    private static Decimal128 RandomInHalfOpenRange(Decimal128 start, Decimal128 end)
+    {
+        var result = start + (NextRandomUnitFraction() * (end - start));
         return result >= end ? start : result;
     }
 
-    /// <summary>
-    /// Normalize a double result from a native math function before converting to decimal.
-    /// Rounds to 15 significant digits and snaps near-zero values to exactly 0.
-    /// This eliminates floating-point residue (e.g. Sin(Pi) ≈ 1.2e-16 → 0).
-    /// </summary>
-    private static decimal NormalizeDoubleResult(double value)
+    /// <summary>Production 128-bit draw source for <see cref="SampleUniformInteger"/>.</summary>
+    private static readonly Func<UInt128> SharedRandomUInt128Source = NextRandomUInt128;
+
+    private static UInt128 NextRandomUInt128()
     {
-        if (double.IsNaN(value) || double.IsInfinity(value))
-            throw new OverflowException(); // caught by caller → NumericOverflow
+        Span<byte> bytes = stackalloc byte[16];
+        Random.Shared.NextBytes(bytes);
+        return System.Buffers.Binary.BinaryPrimitives.ReadUInt128LittleEndian(bytes);
+    }
 
-        if (value == 0.0)
-            return 0m;
+    /// <summary>
+    /// Uniform integer draw for <c>Math.RandomInt</c> over <c>[start, end)</c>:
+    /// exact Int128 span plus modulo-REJECTION sampling over uniform 128-bit
+    /// draws, so no span carries modulo bias and every integer in the interval is
+    /// reachable with equal probability. Callers validate that both bounds are
+    /// integers within ±1e34 (the exact consecutive-integer domain), so the span
+    /// (at most 2e34) fits Int128 with room to spare and the chosen integer
+    /// converts back to Decimal128 exactly.
+    ///
+    /// <para>The draw source is injected so tests can drive the mapping and
+    /// rejection logic deterministically; production supplies
+    /// <see cref="SharedRandomUInt128Source"/>. Draws at or above the largest
+    /// multiple of the span below 2^128 are redrawn — the acceptance probability
+    /// always exceeds one half, and each draw is independent, so the loop
+    /// terminates with probability one and never biases the accepted values.</para>
+    /// </summary>
+    internal static Decimal128 SampleUniformInteger(Decimal128 start, Decimal128 end, Func<UInt128> nextUInt128)
+    {
+        var startInteger = (Int128)start;
+        var span = (UInt128)((Int128)end - startInteger);
 
-        int digits = 15 - 1 - (int)Math.Floor(Math.Log10(Math.Abs(value)));
-        if (digits < 0) digits = 0;
-        if (digits > 15) digits = 15;
+        // 2^128 mod span, computed without representing 2^128: the count of
+        // rejected top draws. Zero means the span divides 2^128 exactly and no
+        // draw is ever rejected.
+        var rejectedDrawCount = (UInt128.MaxValue % span) + 1;
+        if (rejectedDrawCount == span)
+            rejectedDrawCount = 0;
 
-        var rounded = Math.Round(value, digits);
+        UInt128 draw;
+        do
+        {
+            draw = nextUInt128();
+        }
+        while (rejectedDrawCount != 0 && draw > UInt128.MaxValue - rejectedDrawCount);
 
-        if (Math.Abs(rounded) < 1e-15)
-            return 0m;
-
-        return (decimal)rounded;
+        return (Decimal128)(startInteger + (Int128)(draw % span));
     }
 
     // ── Resolve argument expressions to algorithms (lazy) ───────────────────
@@ -9283,11 +9583,11 @@ public static partial class Evaluator
     /// collection-builtin results surface their numeric contents.
     /// Lean: runFlat → EvalM (List Int).
     /// </summary>
-    public static EvalResult<IReadOnlyList<decimal>> RunFlat(Expr expr)
+    public static EvalResult<IReadOnlyList<Decimal128>> RunFlat(Expr expr)
         => RunFlat(expr, limits: null);
 
     /// <summary>Host-boundary flattening run under explicit resource limits.</summary>
-    public static EvalResult<IReadOnlyList<decimal>> RunFlat(Expr expr, EvaluationLimits? limits)
+    public static EvalResult<IReadOnlyList<Decimal128>> RunFlat(Expr expr, EvaluationLimits? limits)
         => RunFlat(expr, limits, cancellationToken: default);
 
     /// <summary>
@@ -9298,7 +9598,7 @@ public static partial class Evaluator
     /// <exception cref="OperationCanceledException">
     /// <paramref name="cancellationToken"/> was cancelled before or during evaluation.
     /// </exception>
-    public static EvalResult<IReadOnlyList<decimal>> RunFlat(
+    public static EvalResult<IReadOnlyList<Decimal128>> RunFlat(
         Expr expr, EvaluationLimits? limits, CancellationToken cancellationToken)
     {
         var r = Run(expr, limits, cancellationToken);
@@ -9308,7 +9608,7 @@ public static partial class Evaluator
         // evaluation cannot be followed by an unbounded flattening allocation.
         var limit = (limits ?? EvaluationLimits.Default).EffectiveMaxCollectionItems;
         var result = r.Value.TryToHostAtoms(limit, out var atoms)
-            ? EvalResult<IReadOnlyList<decimal>>.Ok(atoms)
+            ? EvalResult<IReadOnlyList<Decimal128>>.Ok(atoms)
             : new EvalError.CollectionSizeLimitExceeded(limit, limit + 1L);
 
         // Host flattening belongs to this RunFlat operation and may walk a bounded but
@@ -9321,64 +9621,74 @@ public static partial class Evaluator
     // ── Utility ──────────────────────────────────────────────────────────────
 
     /// <summary>
-    /// Integer exponents use exact decimal exponentiation by squaring.
-    /// Negative integers are handled as a decimal reciprocal of the positive power.
-    /// Non-integer exponents use approximate <see cref="Math.Pow(double, double)"/> via double,
-    /// then normalize the result using the evaluator's standard floating-point cleanup.
+    /// Shared exponentiation for the <c>^</c> operator and <c>Math.Pow</c>.
+    /// The EXACT-BY-SQUARING guarantee covers integer exponents whose magnitude
+    /// fits the host <see cref="long"/>: those use Decimal128 exponentiation by
+    /// squaring — exact whenever the true power fits 34 significant digits, and
+    /// carrying an integral quantum so <c>2^10</c> stays <c>1024</c>, not
+    /// <c>1024.000…</c>. Negative integer exponents are the reciprocal of the
+    /// positive power. Everything else — fractional, non-finite, and beyond-long
+    /// integral exponents — uses <see cref="Decimal128.Pow"/> and is a 34-digit
+    /// approximation for ordinary finite bases; the IEEE-specified special bases
+    /// (0, ±1, NaN, the infinities, signed zero) still resolve exactly by sign
+    /// and parity there, which <c>Decimal128NumericsTests</c> pins through both
+    /// public spellings. Zero raised to any negative integer exponent stays the
+    /// specified KatLang error rather than the IEEE infinity.
     /// </summary>
-    internal static EvalResult<Result> EvalPow(SourceSpan? span, decimal b, decimal exp)
+    internal static EvalResult<Result> EvalPow(SourceSpan? span, Decimal128 b, Decimal128 exp)
     {
-        try
-        {
-            var powR = DecimalPow(b, exp);
-            if (powR.IsError)
-                return powR.Error with { Span = span };
-            return EvalResult<Result>.Ok(new Result.Atom(powR.Value));
-        }
-        catch (OverflowException)
-        {
-            return new EvalError.NumericOverflow() { Span = span };
-        }
+        if (b == 0 && exp < 0 && Decimal128.IsInteger(exp))
+            return new EvalError.IllegalInEval("zero cannot be raised to a negative integer exponent") { Span = span };
+
+        return EvalResult<Result>.Ok(new Result.Atom(Decimal128Pow(b, exp)));
     }
 
-    private static EvalResult<decimal> DecimalPow(decimal b, decimal exp)
+    private static Decimal128 Decimal128Pow(Decimal128 b, Decimal128 exp)
     {
-        if (exp != decimal.Truncate(exp))
-            return EvalResult<decimal>.Ok(NormalizeDoubleResult(Math.Pow((double)b, (double)exp)));
+        // IsInteger is false for NaN and the infinities, so non-finite exponents
+        // take Decimal128.Pow's IEEE behavior. Integral exponents beyond long also
+        // delegate: IEEE pow fully specifies the special bases (0, ±1, NaN, the
+        // infinities resolve exactly by sign and parity — pinned by tests), and for
+        // any other finite base the true power needs more than 34 digits, so no
+        // squaring loop could deliver exactness either; bases very close to 1 give
+        // genuine finite approximations that Decimal128.Pow computes directly.
+        if (!Decimal128.IsInteger(exp) || Decimal128.Abs(exp) > long.MaxValue)
+            return CanonicalizeMathResult(Decimal128.Pow(b, exp));
 
-        var exponent = decimal.ToInt64(exp);
+        // |exp| <= long.MaxValue, so the narrowing is exact and negation cannot
+        // overflow. For a negative exponent, prefer the by-squaring positive
+        // power followed by one correctly-rounded division. Its intermediate can
+        // overflow even when the reciprocal is still a representable subnormal
+        // (for example 10^-6146), though, because Decimal128's subnormal range
+        // extends farther below zero than its finite range extends above it. In
+        // that one case delegate the original signed exponent to Decimal128.Pow
+        // instead of collapsing the valid reciprocal to zero.
+        var exponent = (long)exp;
         if (exponent < 0)
         {
-            if (b == 0)
-                return new EvalError.IllegalInEval("zero cannot be raised to a negative integer exponent");
-
-            var absExponent = exponent == long.MinValue
-                ? (ulong)long.MaxValue + 1UL
-                : (ulong)(-exponent);
-
-            var positivePower = DecimalPowNonNegative(b, absExponent);
-            if (positivePower == 0)
-                throw new OverflowException();
-            return EvalResult<decimal>.Ok(1m / positivePower);
+            var positivePower = PowNonNegative(b, (ulong)(-exponent));
+            return Decimal128.IsInfinity(positivePower)
+                ? CanonicalizeMathResult(Decimal128.Pow(b, exp))
+                : Decimal128.One / positivePower;
         }
 
-        return EvalResult<decimal>.Ok(DecimalPowNonNegative(b, (ulong)exponent));
+        return PowNonNegative(b, (ulong)exponent);
     }
 
-    private static decimal DecimalPowNonNegative(decimal b, ulong exponent)
+    private static Decimal128 PowNonNegative(Decimal128 b, ulong exponent)
     {
-        decimal result = 1m;
+        Decimal128 result = Decimal128.One;
         var baseVal = b;
         var remainingExponent = exponent;
 
         while (remainingExponent > 0)
         {
             if ((remainingExponent & 1UL) == 1UL)
-                result = checked(result * baseVal);
+                result *= baseVal;
 
             remainingExponent >>= 1;
             if (remainingExponent > 0)
-                baseVal = checked(baseVal * baseVal);
+                baseVal *= baseVal;
         }
 
         return result;

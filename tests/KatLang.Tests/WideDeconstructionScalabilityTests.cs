@@ -1,4 +1,5 @@
 using System.Text;
+using System.Numerics;
 
 namespace KatLang.Tests;
 
@@ -16,7 +17,7 @@ namespace KatLang.Tests;
 /// </summary>
 public class WideDeconstructionScalabilityTests
 {
-    private static decimal[] Atoms(string source) => KatLangEngine.EvaluateToAtoms(source).ToArray();
+    private static Decimal128[] Atoms(string source) => KatLangEngine.EvaluateToAtoms(source).ToArray();
 
     /// <summary>Builds <c>x0, x1, ..., x{n-1} = rhs</c> (n >= 2 targets).</summary>
     private static string WideSource(int n, string rhs)

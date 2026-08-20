@@ -1,3 +1,4 @@
+using System.Numerics;
 namespace KatLang.Tests;
 
 /// <summary>
@@ -12,10 +13,10 @@ namespace KatLang.Tests;
 /// </summary>
 public class DeconstructionBindingTests
 {
-    private static decimal[] Atoms(string source)
+    private static Decimal128[] Atoms(string source)
         => KatLangEngine.EvaluateToAtoms(source).ToArray();
 
-    private static void AssertAtoms(string source, params decimal[] expected)
+    private static void AssertAtoms(string source, params Decimal128[] expected)
         => Assert.Equal(expected, Atoms(source));
 
     private static T AssertEvalError<T>(string source) where T : EvalError

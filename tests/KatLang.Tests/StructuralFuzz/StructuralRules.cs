@@ -1,3 +1,5 @@
+using System.Numerics;
+
 namespace KatLang.Tests.StructuralFuzz;
 
 /// <summary>
@@ -455,7 +457,7 @@ public static class StructuralTransforms
 
             if (calls.Count > 0)
             {
-                var freshLiteral = Enumerable.Range(30, 40).Select(v => (decimal)v)
+                var freshLiteral = Enumerable.Range(30, 40).Select(v => (Decimal128)v)
                     .First(v => !literals.Contains(v) && calls.All(c => ((MExpr.Atom)c.Args[0]).Value != v));
                 var withUnreachable = new List<MClause>(family.Clauses);
                 withUnreachable.Insert(0, new MClause(
@@ -473,7 +475,7 @@ public static class StructuralTransforms
             if (!hasCatchAll && calls.Count > 0)
             {
                 var target = calls[0];
-                var nonMatching = StructuralProgram.NormalAtoms.Concat(Enumerable.Range(50, 20).Select(v => (decimal)v))
+                var nonMatching = StructuralProgram.NormalAtoms.Concat(Enumerable.Range(50, 20).Select(v => (Decimal128)v))
                     .First(v => !literals.Contains(v));
                 candidates.Add(new TransformCandidate(
                     StructuralRule.ForceKnownNonMatchingClause,

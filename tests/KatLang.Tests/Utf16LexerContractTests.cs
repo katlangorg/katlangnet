@@ -227,7 +227,7 @@ public class Utf16LexerContractTests
     public void NonAsciiDecimalDigitsStartANumberTokenThatCannotBeParsed(string text)
     {
         // char.IsDigit is true for every Unicode decimal digit, so the lexer takes the number path;
-        // decimal.TryParse under the invariant culture only accepts ASCII digits, so it then fails.
+        // Decimal128.TryParse under the invariant culture only accepts ASCII digits, so it then fails.
         // The result is a deterministic, positioned diagnostic — but one whose WORDING names the
         // wrong cause. Recorded here rather than changed: the acceptance behaviour is the contract,
         // and rewording a public diagnostic is a separate, reviewed decision.
@@ -245,9 +245,10 @@ public class Utf16LexerContractTests
     [Fact]
     public void AGenuinelyTooLargeLiteralGivesTheSameDiagnostic()
     {
-        // The same message for a genuinely out-of-range literal, which is why the wording above is
-        // indistinguishable from this case rather than merely imprecise.
-        var (_, diagnostics) = Lexer.Tokenize(new string('9', 40));
+        // The same message for a genuinely out-of-range literal (past Decimal128's
+        // finite range, so it parses to an infinity), which is why the wording above
+        // is indistinguishable from this case rather than merely imprecise.
+        var (_, diagnostics) = Lexer.Tokenize(new string('9', 40) + "e6144");
         Assert.Equal("Number literal is too large.", Assert.Single(diagnostics).Message);
     }
 

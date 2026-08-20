@@ -1,3 +1,5 @@
+using System.Numerics;
+
 namespace KatLang;
 
 public enum TokenKind
@@ -63,10 +65,10 @@ public sealed record Token(
     int Length,
     int Line,
     int Column,
-    decimal NumValue = 0,
+    Decimal128 NumValue = default,
     string? StringValue = null)
 {
-    public static Token CreateNumber(decimal value, int position, int length, int line, int column)
+    public static Token CreateNumber(Decimal128 value, int position, int length, int line, int column)
         => new(TokenKind.Number, position, length, line, column, NumValue: value);
 
     public static Token CreateIdentifier(string name, int position, int length, int line, int column)

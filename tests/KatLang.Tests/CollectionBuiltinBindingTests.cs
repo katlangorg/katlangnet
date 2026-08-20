@@ -1,3 +1,4 @@
+using System.Numerics;
 namespace KatLang.Tests;
 
 /// <summary>
@@ -12,10 +13,10 @@ namespace KatLang.Tests;
 /// </summary>
 public class CollectionBuiltinBindingTests
 {
-    private static decimal[] Atoms(string source)
+    private static Decimal128[] Atoms(string source)
         => KatLangEngine.EvaluateToAtoms(source).ToArray();
 
-    private static void AssertAtoms(string source, params decimal[] expected)
+    private static void AssertAtoms(string source, params Decimal128[] expected)
         => Assert.Equal(expected, Atoms(source));
 
     private static void AssertArityError(string source, string signatureDisplay)
@@ -98,7 +99,9 @@ public class CollectionBuiltinBindingTests
         AssertAtoms("count((3, 4, 2, 1, 3, 3))", 6);
         AssertAtoms("min((3, 4, 2, 1, 3, 3))", 1);
         AssertAtoms("max((3, 4, 2, 1, 3, 3))", 4);
-        AssertAtoms("avg((3, 4, 2, 1, 3, 3))", 16m / 6m);
+        // The division must happen in Decimal128 (34 digits); dividing C#
+        // decimals first would produce the old 28-digit quotient.
+        AssertAtoms("avg((3, 4, 2, 1, 3, 3))", (Decimal128)16 / 6);
         AssertAtoms("order((3, 4, 2, 1, 3, 3))", 1, 2, 3, 3, 3, 4);
         AssertAtoms("distinct((3, 4, 2, 1, 3, 3))", 3, 4, 2, 1);
         AssertAtoms("first((1, 2, 3))", 1);

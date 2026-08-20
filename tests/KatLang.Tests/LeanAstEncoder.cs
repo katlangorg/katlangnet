@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Numerics;
 using System.Text;
 
 namespace KatLang.Tests;
@@ -198,7 +199,7 @@ public static class LeanAstEncoder
         _ => throw new NotSupportedException($"Unhandled unary operator '{op}'."),
     };
 
-    private static string EncodeNumber(decimal value)
+    private static string EncodeNumber(Decimal128 value)
         => value < 0
             ? $"({value.ToString(CultureInfo.InvariantCulture)})"
             : value.ToString(CultureInfo.InvariantCulture);

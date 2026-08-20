@@ -1,3 +1,4 @@
+using System.Numerics;
 using KatLang.Tests.LanguageSpec;
 
 namespace KatLang.Tests.Hosting;
@@ -11,9 +12,9 @@ namespace KatLang.Tests.Hosting;
 /// </summary>
 public class HostOperationApiTests
 {
-    private static Result Atom(decimal value) => new Result.Atom(value);
+    private static Result Atom(Decimal128 value) => new Result.Atom(value);
 
-    private static HostOperation SyncConstant(string name, decimal value, Counter? counter = null)
+    private static HostOperation SyncConstant(string name, Decimal128 value, Counter? counter = null)
         => HostOperation.Create(name, (_, _) =>
         {
             counter?.Increment();

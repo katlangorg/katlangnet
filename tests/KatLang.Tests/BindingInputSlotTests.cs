@@ -1,4 +1,5 @@
 using System.Reflection;
+using System.Numerics;
 using KatLang.Runtime;
 
 namespace KatLang.Tests;
@@ -132,7 +133,7 @@ public class BindingInputSlotTests
         Assert.Null(slot.ValueError);
     }
 
-    private static decimal[] AtomValues(IEnumerable<BindingInputSlot> slots)
+    private static Decimal128[] AtomValues(IEnumerable<BindingInputSlot> slots)
         => slots
             .Select(static slot => Assert.IsType<Result.Atom>(slot.Value).Value)
             .ToArray();

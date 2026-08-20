@@ -1,3 +1,4 @@
+using System.Numerics;
 namespace KatLang.Tests;
 
 /// <summary>
@@ -86,7 +87,7 @@ public class ModuleLoaderTests
         };
 
     /// <summary>Helper: parse + evaluate with load elaboration.</summary>
-    private static async Task<EvalResult<IReadOnlyList<decimal>>> EvalWithLoad(
+    private static async Task<EvalResult<IReadOnlyList<Decimal128>>> EvalWithLoad(
         string source, Dictionary<string, string> remoteFiles)
     {
         var result = await ParseWithLoad(source, remoteFiles);

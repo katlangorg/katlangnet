@@ -1,3 +1,5 @@
+using System.Numerics;
+
 namespace KatLang;
 
 internal enum BuiltinCallStyle
@@ -67,7 +69,7 @@ internal enum MathMemberKind
 internal readonly record struct MathMemberDescriptor(
     string Name,
     MathMemberKind Kind,
-    decimal ConstantValue = 0m,
+    Decimal128 ConstantValue = default,
     IReadOnlyList<string>? ParameterNames = null)
 {
     public int Arity => Kind switch
@@ -251,8 +253,10 @@ internal static class BuiltinRegistry
 
     private static readonly MathMemberDescriptor[] MathMemberDescriptors =
     [
-        new("Pi", MathMemberKind.Constant, 3.1415926535897932384626433833m),
-        new("E", MathMemberKind.Constant, 2.7182818284590452353602874714m),
+        // Constants come from Decimal128's own correctly-rounded 34-digit sources —
+        // never from double, System.Math, or a narrower decimal literal.
+        new("Pi", MathMemberKind.Constant, Decimal128.Pi),
+        new("E", MathMemberKind.Constant, Decimal128.E),
         new("Abs", MathMemberKind.UnaryFunction),
         new("Ceil", MathMemberKind.UnaryFunction),
         new("Floor", MathMemberKind.UnaryFunction),

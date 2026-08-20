@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Numerics;
 
 namespace KatLang.Rendering;
 
@@ -99,18 +100,25 @@ internal static class ValueTextRenderer
         }
     }
 
-    internal static string FormatAtom(decimal value, DisplayOptions displayOptions)
+    /// <summary>
+    /// Formats one numeric atom for display. Formatting is presentation only —
+    /// the computed Decimal128 value is never truncated or re-rounded by the
+    /// runtime, so the default rendering shows the value's full precision and
+    /// quantum exactly as computed (invariant culture: <c>NaN</c>,
+    /// <c>Infinity</c>, <c>-Infinity</c>, and <c>-0</c> render literally).
+    /// <c>DisplayDecimals</c> opts into fixed-point presentation; whole numbers
+    /// carrying an integral quantum stay plain there, mirroring the previous
+    /// scale-zero rule.
+    /// </summary>
+    internal static string FormatAtom(Decimal128 value, DisplayOptions displayOptions)
     {
         if (displayOptions.Decimals is not { } decimals)
             return value.ToString(CultureInfo.InvariantCulture);
 
-        if (value == Math.Truncate(value) && DecimalScale(value) == 0)
+        if (Decimal128.IsInteger(value) && Decimal128.GetQuantum(value) >= Decimal128.One)
             return value.ToString(CultureInfo.InvariantCulture);
 
         var format = "F" + decimals.ToString(CultureInfo.InvariantCulture);
         return value.ToString(format, CultureInfo.InvariantCulture);
     }
-
-    private static int DecimalScale(decimal value)
-        => (decimal.GetBits(value)[3] >> 16) & 0xFF;
 }

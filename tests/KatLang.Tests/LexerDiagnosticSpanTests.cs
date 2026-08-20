@@ -14,8 +14,13 @@ public class LexerDiagnosticSpanTests
     private const string NumberTooLargeMessage = "Number literal is too large.";
     private const string UnterminatedStringMessage = "Unterminated string literal.";
 
-    /// <summary>42 digits — far beyond decimal range, so TryParse fails.</summary>
-    private static readonly string OversizedDigits = new('9', 42);
+    /// <summary>
+    /// A 42-character literal whose value exceeds Decimal128's finite range
+    /// (~1e6180 parses to an infinity). 42 digits alone are merely rounded now,
+    /// so the oversized probe needs an exponent to genuinely overflow; the
+    /// length is kept at 42 so the span expectations below stay byte-for-byte.
+    /// </summary>
+    private static readonly string OversizedDigits = new string('9', 37) + "e6144";
 
     private static Diagnostic SingleDiagnostic(
         IReadOnlyList<Diagnostic> diagnostics, string expectedMessage)

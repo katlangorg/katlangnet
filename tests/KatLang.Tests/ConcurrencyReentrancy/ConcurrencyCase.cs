@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Numerics;
 using KatLang.Evaluation.Caching;
 using KatLang.Tests.CountedMatrix;
 
@@ -146,7 +147,7 @@ public static class ConcurrencyHarness
             ? $"err {SemanticExplorerHarness.ErrorCategory(result.Error)}"
             : $"ok raw={SemanticExplorerHarness.Neutral(result.Value)}";
 
-    internal static string EncodeFlat(EvalResult<IReadOnlyList<decimal>> result)
+    internal static string EncodeFlat(EvalResult<IReadOnlyList<Decimal128>> result)
         => result.IsError
             ? $"err {SemanticExplorerHarness.ErrorCategory(result.Error)}"
             : $"ok atoms={string.Join(" ", result.Value.Select(a => a.ToString(CultureInfo.InvariantCulture)))}";

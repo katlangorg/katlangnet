@@ -1,3 +1,4 @@
+using System.Numerics;
 namespace KatLang.Tests;
 
 /// <summary>
@@ -346,7 +347,7 @@ public class SharedValueGraphComplexityTests
     /// requires both to agree — the memoized walks are one shared value-level primitive, so neither
     /// entry point may observe different equality or duplicate detection.
     /// </summary>
-    private static void AssertEval(string source, params decimal[] expected)
+    private static void AssertEval(string source, params Decimal128[] expected)
     {
         var expr = new Expr.AlgorithmExpr(SourceProvenance.ParseValid(source).Root);
 

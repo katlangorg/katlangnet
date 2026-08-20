@@ -1,8 +1,9 @@
+using System.Numerics;
 namespace KatLang.Tests;
 
 public class SequenceSpreadTests
 {
-    private static EvalResult<IReadOnlyList<decimal>> Eval(string source)
+    private static EvalResult<IReadOnlyList<Decimal128>> Eval(string source)
     {
         var parseResult = Parser.Parse(source);
         if (parseResult.HasErrors)
@@ -26,7 +27,7 @@ public class SequenceSpreadTests
         return Evaluator.Run(new Expr.AlgorithmExpr(parseResult.Root));
     }
 
-    private static void AssertEval(string source, params decimal[] expected)
+    private static void AssertEval(string source, params Decimal128[] expected)
     {
         var result = Eval(source);
         if (result.IsError)

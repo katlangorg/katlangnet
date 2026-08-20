@@ -1,4 +1,5 @@
 using KatLang.Evaluation.Caching;
+using System.Numerics;
 using KatLang.Optimizations.Loops;
 
 namespace KatLang.Tests;
@@ -19,7 +20,7 @@ public class CallableBindingPlanParityTests
         return CallableBindingPlan.FromSignature(CallableSignature.FromAlgorithm(name, property.Value));
     }
 
-    private static void AssertEval(string source, params decimal[] expected)
+    private static void AssertEval(string source, params Decimal128[] expected)
     {
         var parseResult = Parser.Parse(source);
         Assert.False(
@@ -85,7 +86,7 @@ public class CallableBindingPlanParityTests
         return (result.Value, diagnostics.GetSnapshot());
     }
 
-    private static Result ResultFromAtoms(params decimal[] expected)
+    private static Result ResultFromAtoms(params Decimal128[] expected)
         => Result.FromItems(expected.Select(static number => new Result.Atom(number)));
 
     private static void AssertResult(Result expected, Result actual)

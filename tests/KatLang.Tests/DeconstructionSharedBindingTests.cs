@@ -1,4 +1,5 @@
 using System.Text;
+using System.Numerics;
 using System.Threading.Tasks;
 
 namespace KatLang.Tests;
@@ -22,10 +23,10 @@ namespace KatLang.Tests;
 /// </summary>
 public class DeconstructionSharedBindingTests
 {
-    private static decimal[] Atoms(string source) => KatLangEngine.EvaluateToAtoms(source).ToArray();
+    private static Decimal128[] Atoms(string source) => KatLangEngine.EvaluateToAtoms(source).ToArray();
 
     /// <summary>Runs <paramref name="source"/> and returns (atoms, number of full deconstruction binds).</summary>
-    private static (decimal[] Atoms, long Binds) RunCountingBinds(string source)
+    private static (Decimal128[] Atoms, long Binds) RunCountingBinds(string source)
         => (Atoms(source), CountFullBinds(source));
 
     /// <summary>

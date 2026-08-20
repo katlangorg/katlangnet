@@ -998,7 +998,7 @@ public class KatLangEngineTests
             A
             """);
 
-        Assert.Equal("3.1415926535897932384626433833", result.ToDisplayString());
+        Assert.Equal("3.141592653589793238462643383279503", result.ToDisplayString());
     }
 
     [Fact]
@@ -1047,7 +1047,7 @@ public class KatLangEngineTests
             Assert.Equal("1.0", KatLangEngine.Run("0.5 + 0.5").ToDisplayString());
             Assert.Equal("[1, (2.5, [3.5])]", KatLangEngine.Run("[1, (2.5, [3.5])]").ToDisplayString());
             Assert.Equal(
-                "3.1415926535897932384626433833",
+                "3.141592653589793238462643383279503",
                 KatLangEngine.Run("Math.Pi").ToDisplayString());
 
             // DisplayDecimals path stays invariant too.
@@ -1113,7 +1113,7 @@ public class KatLangEngineTests
     {
         var result = KatLangEngine.Run("Math.Pi");
 
-        Assert.Equal("3.1415926535897932384626433833", result.ToDisplayString());
+        Assert.Equal("3.141592653589793238462643383279503", result.ToDisplayString());
     }
 
     [Theory]

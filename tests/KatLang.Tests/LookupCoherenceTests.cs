@@ -1,3 +1,4 @@
+using System.Numerics;
 using KatLang.Semantics;
 
 namespace KatLang.Tests;
@@ -485,7 +486,7 @@ public class LookupCoherenceTests
         return tokens
             .Where(static token => token.Kind == TokenKind.Number)
             .Select(static token => token.NumValue)
-            .Where(static value => value >= 100 && decimal.Truncate(value) == value)
+            .Where(static value => value >= 100 && Decimal128.IsInteger(value))
             .Select(static value => (int)value)
             .ToList();
     }

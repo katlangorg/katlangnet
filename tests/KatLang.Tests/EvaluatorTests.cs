@@ -1,4 +1,5 @@
 using KatLang.Evaluation;
+using System.Numerics;
 using KatLang.Evaluation.Caching;
 using KatLang.Optimizations.Loops;
 using KatLang.Optimizations.Sequences;
@@ -7,9 +8,10 @@ namespace KatLang.Tests;
 
 public class EvaluatorTests
 {
-    // Must match the high-precision literals in Evaluator.MathAlgorithm.
-    private const decimal KatPi = 3.1415926535897932384626433833m;
-    private const decimal KatE = 2.7182818284590452353602874714m;
+    // Must match the constants the Math prelude serves (Decimal128's own
+    // correctly-rounded 34-digit values).
+    private static readonly Decimal128 KatPi = Decimal128.Pi;
+    private static readonly Decimal128 KatE = Decimal128.E;
 
     /// <summary>
     /// STRICT-SOURCE: parses, REQUIRES a clean front end, then evaluates.
@@ -39,15 +41,15 @@ public class EvaluatorTests
         return parsed.Root;
     }
 
-    private static EvalResult<IReadOnlyList<decimal>> Eval(string source)
+    private static EvalResult<IReadOnlyList<Decimal128>> Eval(string source)
         => Evaluator.RunFlat(new Expr.AlgorithmExpr(ParseValidRoot(source)));
 
-    private static EvalResult<IReadOnlyList<decimal>> Eval(string source, bool enableLoopOptimization)
+    private static EvalResult<IReadOnlyList<Decimal128>> Eval(string source, bool enableLoopOptimization)
     {
         var full = EvalFull(source, enableLoopOptimization);
         return full.IsError
             ? full.Error
-            : EvalResult<IReadOnlyList<decimal>>.Ok(full.Value.ToHostAtoms());
+            : EvalResult<IReadOnlyList<Decimal128>>.Ok(full.Value.ToHostAtoms());
     }
 
     /// <summary>
@@ -55,7 +57,7 @@ public class EvaluatorTests
     /// Used by tests that need open visibility on user-defined modules
     /// (since all parsed properties default to private).
     /// </summary>
-    private static EvalResult<IReadOnlyList<decimal>> EvalAllPublic(string source)
+    private static EvalResult<IReadOnlyList<Decimal128>> EvalAllPublic(string source)
     {
         var ast = ParseValidRoot(source);
         return Evaluator.RunFlat(new Expr.AlgorithmExpr(MakeAllPublic(ast)));
@@ -100,7 +102,7 @@ public class EvaluatorTests
     private static OutputBundle MakeAllPublicArgs(OutputBundle args)
         => new(args.Select(MakeAllPublicExpr).ToList());
 
-    private static void AssertEval(string source, params decimal[] expected)
+    private static void AssertEval(string source, params Decimal128[] expected)
     {
         var result = Eval(source);
         if (result.IsError)
@@ -109,7 +111,7 @@ public class EvaluatorTests
     }
 
 
-    private static void AssertEvalLoopModes(string source, params decimal[] expected)
+    private static void AssertEvalLoopModes(string source, params Decimal128[] expected)
     {
         var generic = Eval(source, enableLoopOptimization: false);
         if (generic.IsError)
@@ -122,7 +124,7 @@ public class EvaluatorTests
         Assert.Equal(expected, optimized.Value);
     }
 
-    private static Result ResultFromAtoms(params decimal[] expected)
+    private static Result ResultFromAtoms(params Decimal128[] expected)
         => Result.FromItems(expected.Select(static number => new Result.Atom(number)));
 
     private static Result Atom(decimal value) => new Result.Atom(value);
@@ -198,16 +200,30 @@ public class EvaluatorTests
         Assert.Empty(group.Items);
     }
 
-    private static void AssertEvalApprox(string source, decimal expected, int precision = 10)
+    private static void AssertEvalApprox(string source, Decimal128 expected, int decimalPlaces = 10)
     {
         var result = Eval(source);
         if (result.IsError)
             Assert.Fail($"Expected success but got error: {result.Error}");
         Assert.Single(result.Value);
-        Assert.Equal(expected, result.Value[0], precision);
+        AssertApproximatelyEqual(expected, result.Value[0], decimalPlaces);
     }
 
-    private static void AssertEvalAllPublic(string source, params decimal[] expected)
+    /// <summary>
+    /// Tolerance comparison for transcendental results: Decimal128's math is high
+    /// precision but not guaranteed correctly rounded, so expectations allow half a
+    /// unit in the asserted decimal place (the same contract xunit's decimal
+    /// precision overload expressed for the old representation).
+    /// </summary>
+    internal static void AssertApproximatelyEqual(Decimal128 expected, Decimal128 actual, int decimalPlaces)
+    {
+        var tolerance = Decimal128.ScaleB(Decimal128.One, -decimalPlaces) / 2;
+        Assert.True(
+            Decimal128.Abs(expected - actual) <= tolerance,
+            $"Expected {actual} to equal {expected} within {decimalPlaces} decimal places.");
+    }
+
+    private static void AssertEvalAllPublic(string source, params Decimal128[] expected)
     {
         var result = EvalAllPublic(source);
         if (result.IsError)
@@ -390,7 +406,7 @@ public class EvaluatorTests
         return (result, loopDiagnostics.GetSnapshot(), sequenceDiagnostics.GetSnapshot());
     }
 
-    private static void AssertEvalSequenceModes(string source, params decimal[] expected)
+    private static void AssertEvalSequenceModes(string source, params Decimal128[] expected)
     {
         var generic = EvalFull(
             source,
@@ -738,7 +754,7 @@ public class EvaluatorTests
         Assert.IsType<EvalError.BadArity>(error);
     }
 
-    private static void AssertSequenceValueAtoms(Result value, params decimal[] expected)
+    private static void AssertSequenceValueAtoms(Result value, params Decimal128[] expected)
     {
         var group = Assert.IsType<Result.SequenceValue>(value);
         Assert.Equal(expected.Length, group.Items.Count);
@@ -747,7 +763,7 @@ public class EvaluatorTests
             Assert.Equal(expected[i], Assert.IsType<Result.Atom>(group.Items[i]).Value);
     }
 
-    private static void AssertNestedSequenceValueAtoms(Result value, params decimal[][] expectedGroups)
+    private static void AssertNestedSequenceValueAtoms(Result value, params Decimal128[][] expectedGroups)
     {
         var outer = Assert.IsType<Result.SequenceValue>(value);
         Assert.Equal(expectedGroups.Length, outer.Items.Count);
@@ -768,7 +784,7 @@ public class EvaluatorTests
     /// elements are sequence values with the given atom contents — the shape
     /// collection-producing builtins return for kept sequence-valued items.
     /// </summary>
-    private static void AssertListOfSequenceValueAtoms(Result value, params decimal[][] expectedGroups)
+    private static void AssertListOfSequenceValueAtoms(Result value, params Decimal128[][] expectedGroups)
     {
         var outer = Assert.IsType<Result.ListValue>(value);
         Assert.Equal(expectedGroups.Length, outer.Items.Count);
@@ -2554,7 +2570,7 @@ public class EvaluatorTests
     [Fact]
     public void Eval_LoopStage2_PlannedCases_MatchGenericMode()
     {
-        var cases = new (string Source, decimal[] Expected)[]
+        var cases = new (string Source, Decimal128[] Expected)[]
         {
             ("""
                 Step = k + 1
@@ -6378,7 +6394,7 @@ public class EvaluatorTests
     [Fact]
     public void Eval_SequenceReceiverBoundary_YellowstoneSequenceValueHistorySelectionReturnsHistory()
     {
-        var expectedPrefix = new decimal[]
+        var expectedPrefix = new Decimal128[]
         {
             1, 2, 3, 4, 9, 8, 15, 14, 5, 6,
             25, 12, 35, 16, 7, 10, 21, 20, 27, 22,
@@ -6411,7 +6427,7 @@ public class EvaluatorTests
         // `history` holds one grouped sequence value, which is exactly the one
         // collection argument contains(collection, item) expects — the wrapper
         // passes it whole and the collection view opens the lone boundary.
-        var expectedHistory = new decimal[]
+        var expectedHistory = new Decimal128[]
         {
             1, 2, 3, 4, 9, 8, 15, 14, 5, 6,
             25, 12, 35, 16, 7, 10, 21, 20, 27, 22,
@@ -8503,116 +8519,85 @@ public class EvaluatorTests
     public void Eval_MathPow()
         => AssertEval("Math.Pow(2, 10)", 1024);
 
+    // Reference values for these tests are independent 34-digit mathematical
+    // constants (Wolfram-style references), NOT System.Math results — comparing
+    // against double would just re-validate the removed 15-16 digit pipeline.
+    // AssertApproximatelyEqual at 30+ places demonstrates precision far beyond
+    // double while tolerating Decimal128's not-guaranteed-correctly-rounded
+    // final digits.
+
     [Fact]
     public void Eval_MathLn()
-    {
-        var result = Eval("Math.Ln(Math.E)");
-        Assert.True(result.IsOk);
-        Assert.Single(result.Value);
-        Assert.Equal(1.0m, result.Value[0], 10);
-    }
+        => AssertEvalApprox("Math.Ln(Math.E)", 1, decimalPlaces: 32);
 
     [Fact]
     public void Eval_MathLg()
-    {
-        var result = Eval("Math.Lg(1000)");
-        Assert.True(result.IsOk);
-        Assert.Single(result.Value);
-        Assert.Equal(3.0m, result.Value[0], 10);
-    }
+        => AssertEvalApprox("Math.Lg(1000)", 3, decimalPlaces: 32);
 
     [Fact]
     public void Eval_MathLog()
-    {
-        var result = Eval("Math.Log(8, 2)");
-        Assert.True(result.IsOk);
-        Assert.Single(result.Value);
-        Assert.Equal(3.0m, result.Value[0], 10);
-    }
+        => AssertEvalApprox("Math.Log(8, 2)", 3, decimalPlaces: 32);
 
     [Fact]
     public void Eval_MathSin()
-    {
-        var result = Eval("Math.Sin(0)");
-        Assert.True(result.IsOk);
-        Assert.Single(result.Value);
-        Assert.Equal(0.0m, result.Value[0], 10);
-    }
+        => AssertEval("Math.Sin(0)", 0);
 
     [Fact]
     public void Eval_MathCos()
-    {
-        var result = Eval("Math.Cos(0)");
-        Assert.True(result.IsOk);
-        Assert.Single(result.Value);
-        Assert.Equal(1.0m, result.Value[0], 10);
-    }
+        => AssertEval("Math.Cos(0)", 1);
 
     [Fact]
     public void Eval_MathAsin()
-    {
-        var result = Eval("Math.Asin(1)");
-        Assert.True(result.IsOk);
-        Assert.Single(result.Value);
-        Assert.Equal((decimal)(Math.PI / 2), result.Value[0], 10);
-    }
+        // asin(1) = π/2 = 1.570796326794896619231321691639751...
+        => AssertEvalApprox(
+            "Math.Asin(1)",
+            Decimal128.Parse("1.570796326794896619231321691639751", System.Globalization.CultureInfo.InvariantCulture),
+            decimalPlaces: 32);
 
     [Fact]
     public void Eval_MathAcos()
-    {
-        var result = Eval("Math.Acos(1)");
-        Assert.True(result.IsOk);
-        Assert.Single(result.Value);
-        Assert.Equal(0.0m, result.Value[0], 10);
-    }
+        => AssertEvalApprox("Math.Acos(1)", 0, decimalPlaces: 32);
 
     [Fact]
     public void Eval_MathTan()
-    {
-        var result = Eval("Math.Tan(0)");
-        Assert.True(result.IsOk);
-        Assert.Single(result.Value);
-        Assert.Equal(0.0m, result.Value[0], 10);
-    }
+        => AssertEval("Math.Tan(0)", 0);
 
     [Fact]
-    public void Eval_MathTan_NearSingularity_ReturnsLargeValue()
+    public void Eval_MathTan_NearSingularity_ReturnsLargeMagnitude()
     {
-        // Tan(Pi/2) is near a singularity — result is a large finite value.
-        // After normalization, it should still be a large number (not zero or error).
+        // Math.Pi/2 is slightly ABOVE the true π/2 (Pi rounds up in its last
+        // digit), so tan lands just past the singularity: a huge NEGATIVE value
+        // near -1/((Pi - π)/2) ≈ -1.7e34. Under the old double pipeline the
+        // argument only carried ~16 digits, capping the magnitude near 1e16 —
+        // the 1e30 bound proves the full 34-digit argument reached tan.
         var result = Eval("Math.Tan(Math.Pi/2)");
         Assert.True(result.IsOk);
         Assert.Single(result.Value);
-        Assert.True(result.Value[0] > 1_000_000_000_000m, "Tan near singularity should be large");
+        Assert.True(
+            Decimal128.Abs(result.Value[0]) > Decimal128.ScaleB(Decimal128.One, 30),
+            $"Tan near singularity should have huge magnitude, got {result.Value[0]}");
+        Assert.True(Decimal128.IsNegative(result.Value[0]), "Math.Pi/2 sits past the true π/2, so tan is negative");
     }
 
     [Fact]
     public void Eval_MathSin_PiOverSix()
-    {
-        // Verify trig with Pi-derived args: sin(π/6) ≈ 0.5
-        var result = Eval("Math.Sin(Math.Pi/6)");
-        Assert.True(result.IsOk);
-        Assert.Single(result.Value);
-        Assert.Equal(0.5m, result.Value[0], 10);
-    }
+        // sin(π/6) = 0.5; the argument is the rounded Pi/6, so allow the final digits to differ.
+        => AssertEvalApprox("Math.Sin(Math.Pi/6)", Decimal128.Parse("0.5", System.Globalization.CultureInfo.InvariantCulture), decimalPlaces: 32);
 
     [Fact]
     public void Eval_MathAtan()
-    {
-        var result = Eval("Math.Atan(1)");
-        Assert.True(result.IsOk);
-        Assert.Single(result.Value);
-        Assert.Equal((decimal)(Math.PI / 4), result.Value[0], 10);
-    }
+        // atan(1) = π/4 = 0.7853981633974483096156608458198757...
+        => AssertEvalApprox(
+            "Math.Atan(1)",
+            Decimal128.Parse("0.7853981633974483096156608458198757", System.Globalization.CultureInfo.InvariantCulture),
+            decimalPlaces: 32);
 
     [Fact]
     public void Eval_MathAtan2()
-    {
-        var result = Eval("Math.Atan2(1, 1)");
-        Assert.True(result.IsOk);
-        Assert.Single(result.Value);
-        Assert.Equal((decimal)(Math.PI / 4), result.Value[0], 10);
-    }
+        => AssertEvalApprox(
+            "Math.Atan2(1, 1)",
+            Decimal128.Parse("0.7853981633974483096156608458198757", System.Globalization.CultureInfo.InvariantCulture),
+            decimalPlaces: 32);
 
     [Fact]
     public void Eval_MathAtan2_BindsArgumentsInConventionalYXOrder()
@@ -8623,12 +8608,15 @@ public class EvaluatorTests
         var elevated = Eval("Math.Atan2(1, 0)");
         Assert.True(elevated.IsOk);
         Assert.Single(elevated.Value);
-        Assert.Equal((decimal)(Math.PI / 2), elevated.Value[0], 10);
+        AssertApproximatelyEqual(
+            Decimal128.Parse("1.570796326794896619231321691639751", System.Globalization.CultureInfo.InvariantCulture),
+            elevated.Value[0],
+            decimalPlaces: 32);
 
         var flat = Eval("Math.Atan2(0, 1)");
         Assert.True(flat.IsOk);
         Assert.Single(flat.Value);
-        Assert.Equal(0m, flat.Value[0], 10);
+        Assert.Equal(Decimal128.Zero, flat.Value[0]);
     }
 
     // ── Trig normalization (floating-point residue cleanup) ─────────────────
@@ -8691,7 +8679,7 @@ public class EvaluatorTests
         Assert.Single(result.Value);
 
         var value = result.Value[0];
-        Assert.Equal(Math.Floor(value), value);
+        Assert.True(Decimal128.IsInteger(value));
         Assert.True(value >= 1m && value < 7m);
     }
 
@@ -8766,17 +8754,43 @@ public class EvaluatorTests
         Assert.Equal(result.Value[1], result.Value[3]);
     }
 
-    [Fact]
-    public void Eval_MathSin_Pi_ReturnsZero()
-        => AssertEval("Math.Sin(Math.Pi)", 0);
+    // Math.Pi is π rounded to 34 digits (about 1.16e-34 ABOVE the true π), so
+    // sin/tan of it are the tiny negative residual of that rounding, not zero.
+    // The old pipeline snapped anything below 1e-15 to exactly 0 — that
+    // workaround is gone, and the residual is now the honest full-precision
+    // answer. These bounds pin both that it is non-zero and that it is tiny.
 
     [Fact]
-    public void Eval_MathCos_PiOver2_ReturnsZero()
-        => AssertEval("Math.Cos(Math.Pi / 2)", 0);
+    public void Eval_MathSin_Pi_ReturnsTinyRoundingResidual()
+    {
+        var result = Eval("Math.Sin(Math.Pi)");
+        Assert.True(result.IsOk);
+        Assert.Single(result.Value);
+        var residual = result.Value[0];
+        Assert.NotEqual(Decimal128.Zero, residual);
+        Assert.True(Decimal128.IsNegative(residual), "Pi rounds up past π, so sin(Pi) is negative");
+        Assert.True(Decimal128.Abs(residual) < Decimal128.ScaleB(Decimal128.One, -33));
+    }
 
     [Fact]
-    public void Eval_MathTan_Pi_ReturnsZero()
-        => AssertEval("Math.Tan(Math.Pi)", 0);
+    public void Eval_MathCos_PiOver2_ReturnsTinyRoundingResidual()
+    {
+        var result = Eval("Math.Cos(Math.Pi / 2)");
+        Assert.True(result.IsOk);
+        Assert.Single(result.Value);
+        Assert.True(Decimal128.Abs(result.Value[0]) < Decimal128.ScaleB(Decimal128.One, -33));
+    }
+
+    [Fact]
+    public void Eval_MathTan_Pi_ReturnsTinyRoundingResidual()
+    {
+        var result = Eval("Math.Tan(Math.Pi)");
+        Assert.True(result.IsOk);
+        Assert.Single(result.Value);
+        var residual = result.Value[0];
+        Assert.NotEqual(Decimal128.Zero, residual);
+        Assert.True(Decimal128.Abs(residual) < Decimal128.ScaleB(Decimal128.One, -33));
+    }
 
     [Fact]
     public void Eval_MathSin_Zero_ReturnsZero()
@@ -8787,23 +8801,31 @@ public class EvaluatorTests
         => AssertEval("Math.Cos(0)", 1);
 
     [Fact]
-    public void Eval_MathSin_One_ReturnsApproximate()
+    public void Eval_MathSin_One_ReturnsFullPrecision()
     {
-        // Sin(1) ≈ 0.8414709848... — should be a sensible approximate result
+        // sin(1) = 0.8414709848078965066525023216302990... — the result must
+        // carry meaningful digits FAR beyond double's ~16, tolerating only the
+        // final couple of Decimal128 digits.
         var result = Eval("Math.Sin(1)");
         Assert.True(result.IsOk);
         Assert.Single(result.Value);
-        Assert.Equal(0.841470984807897m, result.Value[0], 10);
+        AssertApproximatelyEqual(
+            Decimal128.Parse("0.8414709848078965066525023216302990", System.Globalization.CultureInfo.InvariantCulture),
+            result.Value[0],
+            decimalPlaces: 32);
     }
 
     [Fact]
-    public void Eval_MathSin_Pi_ViaOpen_ReturnsZero()
+    public void Eval_MathSin_Pi_ViaOpen_ReturnsTinyRoundingResidual()
     {
         var source = """
             open Math
             Sin(Pi)
             """;
-        AssertEval(source, 0);
+        var result = Eval(source);
+        Assert.True(result.IsOk);
+        Assert.Single(result.Value);
+        Assert.True(Decimal128.Abs(result.Value[0]) < Decimal128.ScaleB(Decimal128.One, -33));
     }
 
     [Fact]
@@ -13014,8 +13036,12 @@ public class EvaluatorTests
     [Fact]
     public void Eval_Pow_FractionalExponentCases_UseMathPow()
     {
-        AssertEvalApprox("9 ^ 0.5", 3m, precision: 10);
-        AssertEvalApprox("27 ^ 1.5", 140.2961154131m, precision: 10);
+        // 27^1.5 = 81·√3 = 140.2961154130790607757231536619757...
+        AssertEvalApprox("9 ^ 0.5", 3m, decimalPlaces: 30);
+        AssertEvalApprox(
+            "27 ^ 1.5",
+            Decimal128.Parse("140.2961154130790607757231536619757", System.Globalization.CultureInfo.InvariantCulture),
+            decimalPlaces: 30);
     }
 
     [Fact]
@@ -13036,14 +13062,15 @@ public class EvaluatorTests
         AssertEval("79228162514264337593543950335 ^ 1", 79228162514264337593543950335m);
     }
 
-    // ── Numeric overflow ─────────────────────────────────────────────────────
+    // ── Beyond the old decimal range ─────────────────────────────────────────
+    // These inputs overflowed System.Decimal and raised NumericOverflow; with
+    // Decimal128 they are ordinary exact results. Genuine overflow past
+    // Decimal128's range saturates to an infinity — see Decimal128NumericsTests.
 
     [Fact]
-    public void Eval_Pow_Overflow_ReturnsNumericOverflow()
+    public void Eval_Pow_BeyondOldDecimalRange_SucceedsExactly()
     {
-        var err = GetEvalError("10 ^ 30");
-        Assert.NotNull(err);
-        Assert.IsType<EvalError.NumericOverflow>(err);
+        AssertEval("10 ^ 30", Decimal128.Parse("1e30", System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture));
     }
 
     [Fact]
@@ -13053,12 +13080,14 @@ public class EvaluatorTests
     }
 
     [Fact]
-    public void Eval_Mul_Overflow_ReturnsNumericOverflow()
+    public void Eval_Mul_BeyondOldDecimalRange_SucceedsExactly()
     {
-        // decimal.MaxValue is ~7.9e28; multiplying two large values overflows
-        var err = GetEvalError("79228162514264337593543950335 * 2");
-        Assert.NotNull(err);
-        Assert.IsType<EvalError.NumericOverflow>(err);
+        // decimal.MaxValue is ~7.9e28; doubling it overflowed System.Decimal but
+        // is an exact 30-digit Decimal128 value (beyond C#'s decimal literal range,
+        // hence the parse).
+        AssertEval(
+            "79228162514264337593543950335 * 2",
+            Decimal128.Parse("158456325028528675187087900670", System.Globalization.CultureInfo.InvariantCulture));
     }
 
     // â”€â”€ call args wiring (Lean: wireToCaller in user-defined call path) â”€â”€
@@ -13333,7 +13362,7 @@ public class EvaluatorTests
         var flatR = Evaluator.RunFlat(spreadJoin);
         if (flatR.IsError)
             Assert.Fail($"Expected success but got error: {flatR.Error}");
-        Assert.Equal(Enumerable.Repeat(1m, itemCount), flatR.Value);
+        Assert.Equal(Enumerable.Repeat(Decimal128.One, itemCount), flatR.Value);
 
         var countedRoot = new Expr.AlgorithmExpr(new Algorithm.User(
             Parent: null,

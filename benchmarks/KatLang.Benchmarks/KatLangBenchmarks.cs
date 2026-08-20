@@ -1,4 +1,5 @@
 using BenchmarkDotNet.Attributes;
+using System.Numerics;
 using BenchmarkDotNet.Order;
 using KatLang.Evaluation.Caching;
 
@@ -25,19 +26,19 @@ public enum BenchmarkSequencePipelineMode
 internal static class KatLangBenchmarkRunner
 {
 	internal readonly record struct BenchmarkRunWithCacheStats(
-		IReadOnlyList<decimal> Atoms,
+		IReadOnlyList<Decimal128> Atoms,
 		ZeroArgPropertyResultCacheSnapshot CacheStats);
 
-	internal static IReadOnlyList<decimal> RunWithFrontEnd(BenchmarkScenario scenario, BenchmarkCacheMode cacheMode)
+	internal static IReadOnlyList<Decimal128> RunWithFrontEnd(BenchmarkScenario scenario, BenchmarkCacheMode cacheMode)
 		=> RunWithFrontEnd(scenario, cacheMode, BenchmarkLoopMode.Optimized);
 
-	internal static IReadOnlyList<decimal> RunWithFrontEnd(
+	internal static IReadOnlyList<Decimal128> RunWithFrontEnd(
 		BenchmarkScenario scenario,
 		BenchmarkCacheMode cacheMode,
 		BenchmarkLoopMode loopMode)
 		=> RunWithFrontEnd(scenario, cacheMode, loopMode, BenchmarkSequencePipelineMode.Optimized);
 
-	internal static IReadOnlyList<decimal> RunWithFrontEnd(
+	internal static IReadOnlyList<Decimal128> RunWithFrontEnd(
 		BenchmarkScenario scenario,
 		BenchmarkCacheMode cacheMode,
 		BenchmarkLoopMode loopMode,
@@ -52,16 +53,16 @@ internal static class KatLangBenchmarkRunner
 			cache.GetSnapshot());
 	}
 
-	internal static IReadOnlyList<decimal> RunPrepared(BenchmarkScenario scenario, BenchmarkCacheMode cacheMode)
+	internal static IReadOnlyList<Decimal128> RunPrepared(BenchmarkScenario scenario, BenchmarkCacheMode cacheMode)
 		=> RunPrepared(scenario, cacheMode, BenchmarkLoopMode.Optimized);
 
-	internal static IReadOnlyList<decimal> RunPrepared(
+	internal static IReadOnlyList<Decimal128> RunPrepared(
 		BenchmarkScenario scenario,
 		BenchmarkCacheMode cacheMode,
 		BenchmarkLoopMode loopMode)
 		=> RunPrepared(scenario, cacheMode, loopMode, BenchmarkSequencePipelineMode.Optimized);
 
-	internal static IReadOnlyList<decimal> RunPrepared(
+	internal static IReadOnlyList<Decimal128> RunPrepared(
 		BenchmarkScenario scenario,
 		BenchmarkCacheMode cacheMode,
 		BenchmarkLoopMode loopMode,
@@ -182,39 +183,39 @@ public class ParseAndEvaluateBenchmarks
 	public BenchmarkLoopMode LoopMode { get; set; }
 
 	[Benchmark(Baseline = true)]
-	public IReadOnlyList<decimal> RepeatedZeroArgPropertyReuse()
+	public IReadOnlyList<Decimal128> RepeatedZeroArgPropertyReuse()
 		=> KatLangBenchmarkRunner.RunWithFrontEnd(RepeatedZeroArgPropertyReuseScenario, CacheMode, LoopMode);
 
 	[Benchmark]
-	public IReadOnlyList<decimal> ScalarHelperSumCalls()
+	public IReadOnlyList<Decimal128> ScalarHelperSumCalls()
 		=> KatLangBenchmarkRunner.RunWithFrontEnd(ScalarHelperSumCallsScenario, CacheMode, LoopMode);
 
 	[Benchmark]
-	public IReadOnlyList<decimal> NestedPropertyChains()
+	public IReadOnlyList<Decimal128> NestedPropertyChains()
 		=> KatLangBenchmarkRunner.RunWithFrontEnd(NestedPropertyChainsScenario, CacheMode, LoopMode);
 
 	[Benchmark]
-	public IReadOnlyList<decimal> SequenceHeavyBuiltins()
+	public IReadOnlyList<Decimal128> SequenceHeavyBuiltins()
 		=> KatLangBenchmarkRunner.RunWithFrontEnd(SequenceHeavyBuiltinsScenario, CacheMode, LoopMode);
 
 	[Benchmark]
-	public IReadOnlyList<decimal> PropertyRichSharedSubcomputations()
+	public IReadOnlyList<Decimal128> PropertyRichSharedSubcomputations()
 		=> KatLangBenchmarkRunner.RunWithFrontEnd(PropertyRichSharedSubcomputationsScenario, CacheMode, LoopMode);
 
 	[Benchmark]
-	public IReadOnlyList<decimal> RealisticWhileCalculation()
+	public IReadOnlyList<Decimal128> RealisticWhileCalculation()
 		=> KatLangBenchmarkRunner.RunWithFrontEnd(RealisticWhileCalculationScenario, CacheMode, LoopMode);
 
 	[Benchmark]
-	public IReadOnlyList<decimal> GcdWhileLoop()
+	public IReadOnlyList<Decimal128> GcdWhileLoop()
 		=> KatLangBenchmarkRunner.RunWithFrontEnd(GcdWhileLoopScenario, CacheMode, LoopMode);
 
 	[Benchmark]
-	public IReadOnlyList<decimal> RepeatManyIterations()
+	public IReadOnlyList<Decimal128> RepeatManyIterations()
 		=> KatLangBenchmarkRunner.RunWithFrontEnd(RepeatManyIterationsScenario, CacheMode, LoopMode);
 
 	[Benchmark]
-	public IReadOnlyList<decimal> NestedCapturedParentLoop()
+	public IReadOnlyList<Decimal128> NestedCapturedParentLoop()
 		=> KatLangBenchmarkRunner.RunWithFrontEnd(NestedCapturedParentLoopScenario, CacheMode, LoopMode);
 }
 
@@ -241,39 +242,39 @@ public class PreparedEvaluationBenchmarks
 	public BenchmarkLoopMode LoopMode { get; set; }
 
 	[Benchmark(Baseline = true)]
-	public IReadOnlyList<decimal> RepeatedZeroArgPropertyReuse()
+	public IReadOnlyList<Decimal128> RepeatedZeroArgPropertyReuse()
 		=> KatLangBenchmarkRunner.RunPrepared(RepeatedZeroArgPropertyReuseScenario, CacheMode, LoopMode);
 
 	[Benchmark]
-	public IReadOnlyList<decimal> ScalarHelperSumCalls()
+	public IReadOnlyList<Decimal128> ScalarHelperSumCalls()
 		=> KatLangBenchmarkRunner.RunPrepared(ScalarHelperSumCallsScenario, CacheMode, LoopMode);
 
 	[Benchmark]
-	public IReadOnlyList<decimal> NestedPropertyChains()
+	public IReadOnlyList<Decimal128> NestedPropertyChains()
 		=> KatLangBenchmarkRunner.RunPrepared(NestedPropertyChainsScenario, CacheMode, LoopMode);
 
 	[Benchmark]
-	public IReadOnlyList<decimal> SequenceHeavyBuiltins()
+	public IReadOnlyList<Decimal128> SequenceHeavyBuiltins()
 		=> KatLangBenchmarkRunner.RunPrepared(SequenceHeavyBuiltinsScenario, CacheMode, LoopMode);
 
 	[Benchmark]
-	public IReadOnlyList<decimal> PropertyRichSharedSubcomputations()
+	public IReadOnlyList<Decimal128> PropertyRichSharedSubcomputations()
 		=> KatLangBenchmarkRunner.RunPrepared(PropertyRichSharedSubcomputationsScenario, CacheMode, LoopMode);
 
 	[Benchmark]
-	public IReadOnlyList<decimal> RealisticWhileCalculation()
+	public IReadOnlyList<Decimal128> RealisticWhileCalculation()
 		=> KatLangBenchmarkRunner.RunPrepared(RealisticWhileCalculationScenario, CacheMode, LoopMode);
 
 	[Benchmark]
-	public IReadOnlyList<decimal> GcdWhileLoop()
+	public IReadOnlyList<Decimal128> GcdWhileLoop()
 		=> KatLangBenchmarkRunner.RunPrepared(GcdWhileLoopScenario, CacheMode, LoopMode);
 
 	[Benchmark]
-	public IReadOnlyList<decimal> RepeatManyIterations()
+	public IReadOnlyList<Decimal128> RepeatManyIterations()
 		=> KatLangBenchmarkRunner.RunPrepared(RepeatManyIterationsScenario, CacheMode, LoopMode);
 
 	[Benchmark]
-	public IReadOnlyList<decimal> NestedCapturedParentLoop()
+	public IReadOnlyList<Decimal128> NestedCapturedParentLoop()
 		=> KatLangBenchmarkRunner.RunPrepared(NestedCapturedParentLoopScenario, CacheMode, LoopMode);
 }
 
@@ -295,31 +296,31 @@ public class LoopStage2Benchmarks
 	public BenchmarkLoopMode LoopMode { get; set; }
 
 	[Benchmark]
-	public IReadOnlyList<decimal> MinimalRepeatLoop()
+	public IReadOnlyList<Decimal128> MinimalRepeatLoop()
 		=> KatLangBenchmarkRunner.RunPrepared(MinimalRepeatLoopScenario, BenchmarkCacheMode.Stage1, LoopMode);
 
 	[Benchmark]
-	public IReadOnlyList<decimal> MinimalWhileLoop()
+	public IReadOnlyList<Decimal128> MinimalWhileLoop()
 		=> KatLangBenchmarkRunner.RunPrepared(MinimalWhileLoopScenario, BenchmarkCacheMode.Stage1, LoopMode);
 
 	[Benchmark]
-	public IReadOnlyList<decimal> ArithmeticWhileLoop()
+	public IReadOnlyList<Decimal128> ArithmeticWhileLoop()
 		=> KatLangBenchmarkRunner.RunPrepared(ArithmeticWhileLoopScenario, BenchmarkCacheMode.Stage1, LoopMode);
 
 	[Benchmark]
-	public IReadOnlyList<decimal> CapturedParentLoop()
+	public IReadOnlyList<Decimal128> CapturedParentLoop()
 		=> KatLangBenchmarkRunner.RunPrepared(CapturedParentLoopScenario, BenchmarkCacheMode.Stage1, LoopMode);
 
 	[Benchmark]
-	public IReadOnlyList<decimal> NestedRepeatedCallLoop()
+	public IReadOnlyList<Decimal128> NestedRepeatedCallLoop()
 		=> KatLangBenchmarkRunner.RunPrepared(NestedRepeatedCallLoopScenario, BenchmarkCacheMode.Stage1, LoopMode);
 
 	[Benchmark]
-	public IReadOnlyList<decimal> SquareFreeCountInlineLoop()
+	public IReadOnlyList<Decimal128> SquareFreeCountInlineLoop()
 		=> KatLangBenchmarkRunner.RunPrepared(SquareFreeCountInlineLoopScenario, BenchmarkCacheMode.Stage1, LoopMode);
 
 	[Benchmark]
-	public IReadOnlyList<decimal> SquareFreeCountLocalTempLoop()
+	public IReadOnlyList<Decimal128> SquareFreeCountLocalTempLoop()
 		=> KatLangBenchmarkRunner.RunPrepared(SquareFreeCountLocalTempLoopScenario, BenchmarkCacheMode.Stage1, LoopMode);
 }
 
@@ -339,7 +340,7 @@ public class SequencePipelineStage2Benchmarks
 	public BenchmarkSequencePipelineMode SequencePipelineMode { get; set; }
 
 	[Benchmark]
-	public IReadOnlyList<decimal> FilterCountEvenRange()
+	public IReadOnlyList<Decimal128> FilterCountEvenRange()
 		=> KatLangBenchmarkRunner.RunPrepared(
 			FilterCountEvenRangeScenario,
 			BenchmarkCacheMode.Stage1,
@@ -347,7 +348,7 @@ public class SequencePipelineStage2Benchmarks
 			SequencePipelineMode);
 
 	[Benchmark]
-	public IReadOnlyList<decimal> SquareFreeFilterCount1000()
+	public IReadOnlyList<Decimal128> SquareFreeFilterCount1000()
 		=> KatLangBenchmarkRunner.RunPrepared(
 			SquareFreeFilterCount1000Scenario,
 			BenchmarkCacheMode.Stage1,
@@ -355,7 +356,7 @@ public class SequencePipelineStage2Benchmarks
 			SequencePipelineMode);
 
 	[Benchmark]
-	public IReadOnlyList<decimal> SquareFreeFilterCount10000()
+	public IReadOnlyList<Decimal128> SquareFreeFilterCount10000()
 		=> KatLangBenchmarkRunner.RunPrepared(
 			SquareFreeFilterCount10000Scenario,
 			BenchmarkCacheMode.Stage1,
@@ -363,7 +364,7 @@ public class SequencePipelineStage2Benchmarks
 			SequencePipelineMode);
 
 	[Benchmark]
-	public IReadOnlyList<decimal> SquareFreeRepeatCount1000()
+	public IReadOnlyList<Decimal128> SquareFreeRepeatCount1000()
 		=> KatLangBenchmarkRunner.RunPrepared(
 			SquareFreeRepeatCount1000Scenario,
 			BenchmarkCacheMode.Stage1,
@@ -371,7 +372,7 @@ public class SequencePipelineStage2Benchmarks
 			BenchmarkSequencePipelineMode.Optimized);
 
 	[Benchmark]
-	public IReadOnlyList<decimal> SquareFreeRepeatCount10000()
+	public IReadOnlyList<Decimal128> SquareFreeRepeatCount10000()
 		=> KatLangBenchmarkRunner.RunPrepared(
 			SquareFreeRepeatCount10000Scenario,
 			BenchmarkCacheMode.Stage1,

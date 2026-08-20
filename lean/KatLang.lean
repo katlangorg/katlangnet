@@ -5,7 +5,8 @@
 -- the core AST never contains load nodes (see load elaboration section below).
 --
 -- Numeric model:
---   The Lean core uses unbounded Int while the C# runtime uses decimal.
+--   The Lean core uses unbounded Int while the C# runtime uses IEEE 754
+--   Decimal128 (34-significant-digit decimal floating point).
 --   Division-like operations (`/`, `div`, `mod`, and the `avg` builtin)
 --   truncate toward zero (Int.tdiv / Int.tmod) so integer operands agree with
 --   the C# reference, including negative operands (`-7 div 2 = -3`,

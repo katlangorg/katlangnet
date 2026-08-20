@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Numerics;
 using System.Text;
 using KatLang;
 
@@ -77,7 +78,7 @@ internal static class MetamorphicValue
     /// distinct from <see cref="Neutral"/>: this projection has already opened every sequence
     /// and list boundary, so it cannot represent structure and must never be mistaken for it.
     /// </summary>
-    internal static string HostAtoms(IReadOnlyList<decimal> atoms)
+    internal static string HostAtoms(IReadOnlyList<Decimal128> atoms)
     {
         var text = new StringBuilder(2 + (atoms.Count * 3));
         text.Append('A').Append('[');

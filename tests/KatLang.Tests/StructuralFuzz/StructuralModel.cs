@@ -1,4 +1,5 @@
 using System.Text;
+using System.Numerics;
 
 namespace KatLang.Tests.StructuralFuzz;
 
@@ -22,7 +23,7 @@ public readonly record struct Sym(int Id)
 /// </summary>
 public abstract record MExpr
 {
-    public sealed record Atom(decimal Value) : MExpr;
+    public sealed record Atom(Decimal128 Value) : MExpr;
 
     /// <summary>Reference to a declaration/binder by SYMBOL, not by name.</summary>
     public sealed record Ref(Sym Target) : MExpr;
@@ -65,7 +66,7 @@ public abstract record MPattern
 {
     /// <summary>Literal clause pattern, e.g. <c>C(7)</c>. Two distinct literals
     /// are disjoint by construction — the precondition for clause permutation.</summary>
-    public sealed record Literal(decimal Value) : MPattern;
+    public sealed record Literal(Decimal128 Value) : MPattern;
 
     /// <summary>Catch-all binder clause pattern, e.g. <c>C(x)</c>.</summary>
     public sealed record Binder(Sym Symbol) : MPattern;
@@ -73,7 +74,7 @@ public abstract record MPattern
     /// <summary>Top-level arity-2 literal pattern, e.g. <c>C(0, 0)</c>. Used
     /// ONLY by the IntroduceInvalidFamilyShape transform to violate the
     /// uniform-family-arity front-end rule on purpose.</summary>
-    public sealed record LiteralPair(decimal First, decimal Second) : MPattern;
+    public sealed record LiteralPair(Decimal128 First, Decimal128 Second) : MPattern;
 }
 
 public sealed record MClause(MPattern Pattern, MExpr Body);
@@ -114,13 +115,13 @@ public sealed record MScope(IReadOnlyList<MDecl> Decls, IReadOnlyList<MExpr> Row
 public sealed record StructuralProgram(
     MScope Root,
     IReadOnlyDictionary<Sym, string> Names,
-    IReadOnlyList<decimal> MustContainAtoms,
-    IReadOnlyList<decimal> MustNotContainAtoms)
+    IReadOnlyList<Decimal128> MustContainAtoms,
+    IReadOnlyList<Decimal128> MustNotContainAtoms)
 {
-    public static readonly decimal[] NormalAtoms = [0m, 1m, 2m, 7m];
+    public static readonly Decimal128[] NormalAtoms = [0m, 1m, 2m, 7m];
 
-    public const decimal FirstSentinel = 101m;
-    public const decimal FirstTripwire = 666m;
+    public static readonly Decimal128 FirstSentinel = 101m;
+    public static readonly Decimal128 FirstTripwire = 666m;
 
     public string Render() => StructuralRenderer.Render(this);
 
@@ -603,6 +604,6 @@ public static class StructuralRenderer
         }
     }
 
-    private static string FormatAtom(decimal value)
+    private static string FormatAtom(Decimal128 value)
         => value.ToString(System.Globalization.CultureInfo.InvariantCulture);
 }

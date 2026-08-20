@@ -195,7 +195,6 @@ public class LoopPlannedIfDiagnosticParityTests
                 or EvalError.ExplicitParametersRequireOutput
                 or EvalError.MissingOutput
                 or EvalError.SpreadMissingOutput
-                or EvalError.NumericOverflow
                 or EvalError.EvaluationStackExhausted
                 or EvalError.AstCycleDetected => "[]",
             _ => throw new Xunit.Sdk.XunitException(

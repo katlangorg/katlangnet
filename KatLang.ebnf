@@ -434,6 +434,12 @@ ListLiteral     = "[" [ ExpressionList ] "]" ;
 
 NumberLiteral   = Number ;
 Number          = /\d(_*\d)*(\.\d(_*\d)*)?(e[+-]?\d(_*\d)*)?/ ;
+                  (* Values are IEEE 754 Decimal128: source text parses directly
+                     into the 34-significant-digit representation. A finite
+                     literal with more significant digits rounds to nearest
+                     (round-half-even); a literal whose magnitude exceeds the
+                     Decimal128 range (beyond about 9.999e6144) is rejected with
+                     the number-too-large diagnostic. *)
 BindingIdentifier = Identifier ;
 Identifier      = /[A-Za-z_][A-Za-z0-9_]*/ ;
 StringLiteral   = /'([^'\r\n])*'/ ;

@@ -1,3 +1,4 @@
+using System.Numerics;
 using KatLang.Evaluation.Caching;
 
 namespace KatLang.Tests.Hosting;
@@ -13,7 +14,7 @@ public class AsyncHostOperationTests
 {
     private static readonly TimeSpan Timeout = TimeSpan.FromSeconds(45);
 
-    private static Result Atom(decimal value) => new Result.Atom(value);
+    private static Result Atom(Decimal128 value) => new Result.Atom(value);
 
     /// <summary>Bounded await so a wedged run fails the test instead of hanging the suite.</summary>
     private static async Task<T> Complete<T>(Task<T> task)
@@ -641,10 +642,10 @@ public class AsyncHostOperationTests
         var results = await Complete(Task.WhenAll(first, second));
 
         var values = results
-            .Select(r => decimal.Parse(Assert.IsType<RunResult.Success>(r).ToDisplayString()))
+            .Select(r => Decimal128.Parse(Assert.IsType<RunResult.Success>(r).ToDisplayString(), System.Globalization.CultureInfo.InvariantCulture))
             .OrderBy(v => v)
             .ToArray();
-        Assert.Equal(new[] { 10m, 20m }, values);
+        Assert.Equal(new Decimal128[] { 10m, 20m }, values);
         Assert.Equal(2, held.Invocations);
     }
 
@@ -724,7 +725,7 @@ public class AsyncHostOperationTests
                     new Result.SequenceValue([Atom(1), Atom(2)])))),
         };
 
-        Assert.Equal(new[] { 1m, 2m, 3m }, await Complete(KatLangEngine.EvaluateToAtomsAsync("Data*, 3", options)));
+        Assert.Equal(new Decimal128[] { 1m, 2m, 3m }, await Complete(KatLangEngine.EvaluateToAtomsAsync("Data*, 3", options)));
         Assert.Equal("1 2 3", await Complete(KatLangEngine.EvaluateToStringAsync("Data*, 3", options)));
 
         await Assert.ThrowsAsync<KatLangException>(
@@ -733,6 +734,6 @@ public class AsyncHostOperationTests
         // Without any async component the conveniences complete synchronously.
         var syncTask = KatLangEngine.EvaluateToAtomsAsync("1 + 1");
         Assert.True(syncTask.IsCompletedSuccessfully);
-        Assert.Equal(new[] { 2m }, await syncTask);
+        Assert.Equal(new Decimal128[] { 2m }, await syncTask);
     }
 }

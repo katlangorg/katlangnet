@@ -1,3 +1,4 @@
+using System.Numerics;
 namespace KatLang.Tests;
 
 /// <summary>
@@ -12,7 +13,7 @@ namespace KatLang.Tests;
 /// </summary>
 public class LoopStepSpreadContributionTests
 {
-    private static IReadOnlyList<decimal> FlatValues(string source)
+    private static IReadOnlyList<Decimal128> FlatValues(string source)
     {
         var result = Evaluator.RunFlat(new Expr.AlgorithmExpr(SourceProvenance.ParseValid(source).Root));
         if (result.IsError)

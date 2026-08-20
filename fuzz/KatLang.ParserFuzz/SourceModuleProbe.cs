@@ -420,7 +420,10 @@ internal static class SourceModuleProbe
         Console.Out.WriteLine($"CHILD depth n={n}");
         try
         {
-            var result = Parser.Parse(main, dl.Get);
+            Func<string, CancellationToken, ValueTask<string>> downloader =
+                (url, _) => ValueTask.FromResult(dl.Get(url));
+            var result = Parser.ParseAsync(main, new RunOptions { DownloadCode = downloader })
+                .GetAwaiter().GetResult();
             var errs = result.Diagnostics.Count(d => d.Severity == DiagnosticSeverity.Error);
             Console.Out.WriteLine($"RESOURCE peakWorkingSetKb={Process.GetCurrentProcess().PeakWorkingSet64 / 1024} calls={dl.Calls}");
             Console.Out.WriteLine($"OK depth={n} errors={errs}");

@@ -382,7 +382,7 @@ If ANY checklist item fails, fix the output before emitting it.
 ## KatLang Core Model
 
 - A program is a single algorithm: optional `open`, then property definitions and output expression rows. Output rows may be interleaved with property definitions; the conventional style is definitions first, output last.
-- Numeric scalar values are decimal numbers.
+- Numeric scalar values are IEEE 754 Decimal128 numbers: 34 significant decimal digits, exponent range about ±6144. `NaN`, `Infinity`, `-Infinity`, and `-0` are ordinary values (from domain violations like `Math.Sqrt(-1)` or overflow); division by a zero-valued divisor is still an error.
 - String literals (single-quoted) are first-class runtime values.
 - Logical truth is numeric.
 - Algorithms are also first-class values.
@@ -1279,8 +1279,8 @@ BETTER — specific branch first:
 
 - Do not `open Math` for an isolated single use such as one `Math.Sqrt(...)` or one `Math.Pi`; prefer the qualified form instead.
 - Use `open Math` only when multiple Math members are used and it clearly improves readability.
-- `Round` always takes two arguments: `Round(x, digits)` / `Math.Round(x, digits)`, where `digits` is the integer number of digits to keep after the decimal point and must be in `0..28`. Use `0` for integer rounding. Midpoints round away from zero, so `Math.Round(1.225, 2)` is `1.23`.
-- Use `Math.Random(start, end)` for decimal random numbers and `Math.RandomInt(start, end)` for whole-number random values. Both produce values in the half-open range `[start; end)`, meaning `start <= value < end`.
+- `Round` always takes two arguments: `Round(x, digits)` / `Math.Round(x, digits)`, where `digits` is the integer number of digits to keep after the decimal point and must be `>= 0`. Use `0` for integer rounding. Midpoints round away from zero, so `Math.Round(1.225, 2)` is `1.23`.
+- Use `Math.Random(start, end)` for decimal random numbers and `Math.RandomInt(start, end)` for whole-number random values (uniform; bounds must be whole numbers within `±1e34`). Both produce values in the half-open range `[start; end)`, meaning `start <= value < end`.
 - Examples: `Math.Random(0, 1)` gives a decimal value where `0 <= value < 1`; `Math.RandomInt(1, 7)` gives an integer-like dice roll from `1` through `6`.
 - Always provide both bounds. Do not generate bare or empty-call forms such as `Math.Random`, `Math.Random()`, `Math.RandomInt`, or `Math.RandomInt()`, and do not generate old spellings such as `Math.Rand`, `Math.Rand()`, or `Math.RandInt`.
 - After `open Math`, prefer bare names: `Pi`, `E`, `Abs`, `Ceil`, `Floor`, `Round`, `Sign`, `Sqrt`, `Ln`, `Lg`, `Sin`, `Asin`, `Cos`, `Acos`, `Tan`, `Atan`, `Atan2`, `Pow`, `Log`, `Random`, `RandomInt`.
@@ -1288,7 +1288,7 @@ BETTER — specific branch first:
 - Keep Math style consistent within each generated example — do not mix bare and qualified forms.
 - Multi-argument Math members — always supply every argument:
     - `Math.Log(value, base)` / `Log(value, base)` is the logarithm of `value` in the given `base`, not a one-argument natural log.
-    - `Math.Pow(x, y)` / `Pow(x, y)` raises `x` to the power `y`, floating-point-backed. It is not identical to `^`: prefer `^` for ordinary powers, especially integer exponents (`^` with an integer exponent uses exact decimal arithmetic, while a fractional exponent is approximate and `Math.Pow` is always float-backed). Use `Math.Pow` mainly when a Math-member style is specifically wanted.
+    - `Math.Pow(x, y)` / `Pow(x, y)` raises `x` to the power `y` and is identical to `^` (they share one implementation): an integer exponent of magnitude up to ~9.2e18 uses exact arithmetic (`2 ^ 10` is exactly `1024`), while a fractional or astronomically large integer exponent is a 34-digit approximation. Prefer `^` for ordinary powers; use `Math.Pow` when a Math-member style is specifically wanted.
     - `Math.Atan2(y, x)` / `Atan2(y, x)` is the two-argument arctangent in standard `atan2(y, x)` order (`y` first, then `x`).
 - Single-argument logarithms: `Math.Ln(x)` / `Ln(x)` is the natural logarithm (base e); `Math.Lg(x)` / `Lg(x)` is the base-10 logarithm.
 

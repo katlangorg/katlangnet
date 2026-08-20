@@ -178,10 +178,12 @@ KatLang provides two kinds of division. Regular division (`/`) keeps the fractio
 
 **Results:**
 ```
-3.3333333333333333333333333333
+3.333333333333333333333333333333333
 3
 1
 ```
+
+Inexact quotients are correctly rounded to KatLang's 34 significant decimal digits.
 
 The `^` operator raises the left side to the power of the right side.
 
@@ -302,9 +304,11 @@ Math.E
 
 **Results:**
 ```
-3.1415926535897932384626433833
-2.7182818284590452353602874714
+3.141592653589793238462643383279503
+2.718281828459045235360287471352662
 ```
+
+Both constants are correctly rounded to KatLang's full numeric precision of 34 significant decimal digits (IEEE 754 Decimal128).
 
 **Single-argument functions:**
 
@@ -341,9 +345,14 @@ Math.E
 start <= result < end
 ```
 
-Use `Math.Random(0, 1)` for a decimal unit-interval value where `0 <= result < 1`. Use `Math.RandomInt(1, 7)` for an integer-like dice roll where the result is `1`, `2`, `3`, `4`, `5`, or `6`. `Math.RandomInt` requires whole-number bounds, but the returned KatLang number is still represented as a decimal value with no fractional part. Random generation always requires both bounds. `Math.Rand`, `Math.Rand()`, and `Math.RandInt` are not valid random-generation syntax.
+Use `Math.Random(0, 1)` for a decimal unit-interval value where `0 <= result < 1`. Use `Math.RandomInt(1, 7)` for an integer-like dice roll where the result is `1`, `2`, `3`, `4`, `5`, or `6`. `Math.RandomInt` requires whole-number bounds within `±1e34` (the domain where every integer is exactly representable, so the draw can be exactly uniform over the interval), and the returned KatLang number is still represented as a decimal value with no fractional part. Random generation always requires both bounds. `Math.Rand`, `Math.Rand()`, and `Math.RandInt` are not valid random-generation syntax.
 
-Functions that compute via floating-point internally (trig, logarithm, square root, power) normalize their results to 15 significant digits, eliminating insignificant floating-point artifacts. For example, `Math.Sin(Math.Pi)` returns exactly `0` rather than a tiny residual like `1.22e-16`.
+All math functions compute in KatLang's native IEEE 754 Decimal128 arithmetic end-to-end — there is no binary floating-point stage — so trigonometric, logarithmic, root, and power results carry up to 34 significant decimal digits. For example, `Math.Sin(1)` returns `0.841470984807896506652502321630299` rather than a value cut off near 16 digits. Two consequences of this honesty are worth knowing:
+
+- Results are no longer snapped toward "nice" values. `Math.Pi` is π rounded to 34 digits (a hair above the true π), so `Math.Sin(Math.Pi)` returns the tiny residual of that rounding (about `-1.158e-34`), not `0`. `Math.Sin(0)` is still exactly `0`.
+- A mathematically exact result stays clean: `Math.Lg(1000)` is `3` and `Math.Sqrt(144)` is `12`.
+
+Domain violations follow IEEE 754 rather than raising errors: `Math.Sqrt(-1)` and `Math.Ln(-1)` return `NaN`, and `Math.Ln(0)` returns `-Infinity`. Division and modulo by a zero-valued divisor remain ordinary KatLang errors — the check applies to the evaluated value, so `1 / 0`, `1 / (1 - 1)`, and `1 / -0` all report the same division-by-zero diagnostic.
 
 ```
 Math.Sqrt(144)
@@ -2619,8 +2628,8 @@ Circle(5) : 0
 
 **Results:**
 ```
-(78.539816339744830961566084582, 31.415926535897932384626433833)
-78.539816339744830961566084582
+(78.53981633974483096156608458198758, 31.41592653589793238462643383279503)
+78.53981633974483096156608458198758
 ```
 
 ### Loop-Based Example: Sum of a List
@@ -3831,8 +3840,9 @@ Only `public` exported properties are exposed through `load` and `open`.
 
 ## Pitfalls
 
-- **Decimal precision limits:** KatLang uses fixed-precision decimal arithmetic. Extremely large numbers or deeply nested calculations may hit precision boundaries.
-- **Floating-point-backed precision:** trig, logarithm, square root, and power functions compute in double precision and normalize their results to about 15 significant digits, so residuals snap away — `Math.Sin(Math.Pi)` returns exactly `0`. The flip side: do not rely on more than 15 significant digits from these functions, while other irrational results (such as `Math.Sin(1)`) remain approximations.
+- **Numeric precision:** KatLang numbers are IEEE 754 Decimal128 — 34 significant decimal digits with a huge exponent range (about ±6144). Results needing more than 34 significant digits round to the nearest representable value, and arithmetic past the representable range saturates to `Infinity`/`-Infinity` rather than erroring.
+- **No hidden rounding of math functions:** trig, logarithm, root, and power results carry full Decimal128 precision and are never snapped toward "nice" values. `Math.Pi` is π rounded to 34 digits, so `Math.Sin(Math.Pi)` is the tiny residual of that rounding (about `-1.158e-34`), not `0` — compare against a tolerance when testing near-zero trig identities. Irrational results such as `Math.Sin(1)` are approximations at 34 digits, correct to roughly the last digit or two.
+- **IEEE special values:** `NaN`, `Infinity`, `-Infinity`, and `-0` are ordinary numeric values (from domain violations like `Math.Sqrt(-1)`, overflow, or writing `-0`). Ordering comparisons involving `NaN` are always false, while `==`/`!=` use structural value identity (so `NaN == NaN` is `1`). Dividing by any zero-valued divisor (including `-0` and computed zeros) is still an error, not `Infinity`.
 - **Parameter order surprises:** parameter order is determined by first appearance reading left to right. If your expression reads `b - a`, the first parameter is `b`, not `a`. Use Grace (`~`) to override when needed.
 - **`if` arity:** builtin `if` requires three arguments after spread expansion: `if(cond, a, b)`. There is no two-argument form. A grouped value is one argument, so `if(X)` is invalid when `X = 1, 2, 3`; spread it with `if(X*)` to supply the three slots.
 - **`()` vs `{}` confusion:** `(expr)` groups an expression in the current scope. `{expr}` creates a new algorithm with its own parameters. Passing `(a + 1)` as an argument doesn't create a callable — it evaluates `a + 1` immediately in the enclosing scope. Bare `()` is the empty sequence value (a real value); bare `{}` is a no-output body and is not a value. Declarations follow the same split: `open` and property definitions belong to `{ ... }` blocks (or the root) and are parse errors inside `( ... )`.

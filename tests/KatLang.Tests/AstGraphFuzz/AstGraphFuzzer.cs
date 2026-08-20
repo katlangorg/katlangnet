@@ -1,4 +1,5 @@
 using System.Collections.Immutable;
+using System.Numerics;
 using System.Text;
 
 namespace KatLang.Tests.AstGraphFuzz;
@@ -117,7 +118,7 @@ public static class AstGraphFuzzer
     // ── fixed pools (indexes selected by GNode.Aux) ─────────────────────────
 
     /// <summary>Numeric payloads: small, structural stress only.</summary>
-    public static readonly decimal[] Numbers = [0m, 1m, 2m, 3m, 7m, -1m, 0.5m];
+    public static readonly Decimal128[] Numbers = [0m, 1m, 2m, 3m, 7m, -1m, 0.5m];
 
     public static readonly string[] Strings = ["", "a", "kat"];
 

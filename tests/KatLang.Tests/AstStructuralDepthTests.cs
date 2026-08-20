@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Numerics;
 
 namespace KatLang.Tests;
 
@@ -805,7 +806,7 @@ public class AstStructuralDepthTests
     {
         var result = KatLangEngine.Run("a = 1 + 2\na * 10");
         var success = Assert.IsType<RunResult.Success>(result);
-        Assert.Equal(new[] { 30m }, success.Atoms);
+        Assert.Equal(new Decimal128[] { 30m }, success.Atoms);
     }
 
     [Fact]
@@ -814,7 +815,7 @@ public class AstStructuralDepthTests
         var source = string.Join(" + ", Enumerable.Repeat("1", Parser.MaxExpressionChainDepth + 1));
         var result = KatLangEngine.Run(source);
         var success = Assert.IsType<RunResult.Success>(result);
-        Assert.Equal(new[] { (decimal)(Parser.MaxExpressionChainDepth + 1) }, success.Atoms);
+        Assert.Equal(new Decimal128[] { (decimal)(Parser.MaxExpressionChainDepth + 1) }, success.Atoms);
     }
 
     [Fact]
@@ -1983,7 +1984,7 @@ public class AstStructuralDepthProcessTests
             // A 48-deep chain loads AND evaluates to its value on the 1 MiB baseline.
             var moduleResult48 = RunModuleChain(48);
             var moduleSuccess48 = Assert.IsType<RunResult.Success>(moduleResult48);
-            Assert.Equal(new[] { 48m }, moduleSuccess48.Atoms);
+            Assert.Equal(new Decimal128[] { 48m }, moduleSuccess48.Atoms);
 
             // The MAXIMUM permitted chain (64 nested loads) loads through the real
             // loader without any structural or parse failure; its 64-level property
@@ -1994,7 +1995,7 @@ public class AstStructuralDepthProcessTests
             var moduleResult64 = RunModuleChain(64);
             if (moduleResult64 is RunResult.Success success64)
             {
-                Assert.Equal(new[] { 64m }, success64.Atoms);
+                Assert.Equal(new Decimal128[] { 64m }, success64.Atoms);
             }
             else
             {
@@ -2072,7 +2073,7 @@ public class AstStructuralDepthProcessTests
         {
             var result = KatLangEngine.Run(BracketChainSource(brackets));
             var success = Assert.IsType<RunResult.Success>(result);
-            Assert.Equal(new[] { expectedValue }, success.Atoms);
+            Assert.Equal(new Decimal128[] { expectedValue }, success.Atoms);
         }
 
         static void AssertFlatValue(Expr expr, decimal expected)
@@ -2452,13 +2453,13 @@ public class AstStructuralDepthProcessTests
             // At-boundary sources parse and EVALUATE to exact values through the
             // public engine wherever the later structural gates admit them.
             var parenValue = KatLangEngine.Run(Rep("(", 95) + "7" + Rep(")", 95));
-            Assert.Equal(new[] { 7m }, Assert.IsType<RunResult.Success>(parenValue).Atoms);
+            Assert.Equal(new Decimal128[] { 7m }, Assert.IsType<RunResult.Success>(parenValue).Atoms);
             var bracketValue = KatLangEngine.Run(Rep("[", 120) + "3" + Rep("]", 120));
-            Assert.Equal(new[] { 3m }, Assert.IsType<RunResult.Success>(bracketValue).Atoms);
+            Assert.Equal(new Decimal128[] { 3m }, Assert.IsType<RunResult.Success>(bracketValue).Atoms);
             // 296 keeps the engine-wrapped tree just below the evaluation ceiling
             // (296 unary + Num + the two relevant engine wrapping nodes = 299).
             var unaryValue = KatLangEngine.Run(Rep("-", 296) + "1");
-            Assert.Equal(new[] { 1m }, Assert.IsType<RunResult.Success>(unaryValue).Atoms);
+            Assert.Equal(new Decimal128[] { 1m }, Assert.IsType<RunResult.Success>(unaryValue).Atoms);
 
             // The same budget protects every public parse surface: the raw
             // boundary, the elaborating front-end, and the engine.
@@ -2516,7 +2517,7 @@ public class AstStructuralDepthProcessTests
                 "open 'https://katlang.org/deep/m1.kat'\nX1",
                 new RunOptions { DownloadCode = InMemoryDownloader(DeepChainModules(chain: 3, nest: 4)) });
             var shallowSuccess = Assert.IsType<RunResult.Success>(shallowChain);
-            Assert.Equal(new[] { 3m }, shallowSuccess.Atoms);
+            Assert.Equal(new Decimal128[] { 3m }, shallowSuccess.Atoms);
 
             // 3. Downloader failure during a depth-accounted nested load, followed
             // by successful reuse of the SAME loader run: the traversal base is
@@ -2679,7 +2680,7 @@ public class AstStructuralDepthProcessTests
                     DownloadCode = InMemoryDownloader(_ =>
                         "public NB = " + new string('{', 90) + "5" + new string('}', 90)),
                 });
-            Assert.Equal(new[] { 5m }, Assert.IsType<RunResult.Success>(nearBoundary).Atoms);
+            Assert.Equal(new Decimal128[] { 5m }, Assert.IsType<RunResult.Success>(nearBoundary).Atoms);
 
             // 9. A DEEPLY NESTED load site still accepts a SHALLOW module (the debt
             // shrinks the parse budget, it does not close it), while the SAME deep
@@ -2747,7 +2748,7 @@ public class AstStructuralDepthProcessTests
             var reuseShallow = RunEngineSynchronously(
                 "open 'https://katlang.org/deep/reuse.kat'\nRB",
                 new RunOptions { DownloadCode = reuseModules });
-            Assert.Equal(new[] { 9m }, Assert.IsType<RunResult.Success>(reuseShallow).Atoms);
+            Assert.Equal(new Decimal128[] { 9m }, Assert.IsType<RunResult.Success>(reuseShallow).Atoms);
 
             // 12. Source inspection requires one fetch: a module rejected by the
             // debt-reduced parse is downloaded exactly ONCE, rejected BEFORE any

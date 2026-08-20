@@ -139,9 +139,6 @@ public abstract record EvalError
     /// <summary>Spread operand did not produce output.</summary>
     public sealed record SpreadMissingOutput() : EvalError;
 
-    /// <summary>Arithmetic result exceeds the representable decimal range.</summary>
-    public sealed record NumericOverflow() : EvalError;
-
     /// <summary>Top-level program has unresolved implicit parameters (no arguments supplied).</summary>
     public sealed record UnresolvedImplicitParams(IReadOnlyList<string> ParamNames) : EvalError;
 

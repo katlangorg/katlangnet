@@ -1,3 +1,4 @@
+using System.Numerics;
 using System.Text;
 using KatLang.Evaluation.Caching;
 using KatLang.Rendering;
@@ -98,7 +99,7 @@ public abstract record RunResult
     public sealed record Success(
         Algorithm Root,
         Result Value,
-        IReadOnlyList<decimal> Atoms) : RunResult
+        IReadOnlyList<Decimal128> Atoms) : RunResult
     {
         internal int EmittedCount { get; init; } = Value.ValueCount();
 
@@ -520,7 +521,7 @@ public static class KatLangEngine
     /// or the configured evaluation token was cancelled before or during evaluation —
     /// cancellation propagates and is never wrapped in a <see cref="KatLangException"/>.
     /// </exception>
-    public static IReadOnlyList<decimal> EvaluateToAtoms(string source, RunOptions? options = null)
+    public static IReadOnlyList<Decimal128> EvaluateToAtoms(string source, RunOptions? options = null)
     {
         return Run(source, options) switch
         {
@@ -543,7 +544,7 @@ public static class KatLangEngine
     /// Same cancellation contract as <see cref="EvaluateToAtoms"/>; delivered through
     /// the returned task.
     /// </exception>
-    public static async Task<IReadOnlyList<decimal>> EvaluateToAtomsAsync(string source, RunOptions? options = null)
+    public static async Task<IReadOnlyList<Decimal128>> EvaluateToAtomsAsync(string source, RunOptions? options = null)
     {
         // MIRROR OF EvaluateToAtoms — keep in lock-step.
         return await RunAsync(source, options).ConfigureAwait(false) switch
@@ -635,20 +636,14 @@ public static class KatLangEngine
         if (value.Value < 0)
             return DisplayDecimalsError("DisplayDecimals must be a non-negative integer.", span);
 
-        if (value.Value != Math.Truncate(value.Value))
+        if (!Decimal128.IsInteger(value.Value))
             return DisplayDecimalsError("DisplayDecimals must be an integer.", span);
 
         if (value.Value > MaxDisplayDecimals)
             return DisplayDecimalsError($"DisplayDecimals must be between 0 and {MaxDisplayDecimals}.", span);
 
-        try
-        {
-            return EvalResult<DisplayOptions>.Ok(new DisplayOptions(decimal.ToInt32(value.Value), maxDisplayLength));
-        }
-        catch (OverflowException)
-        {
-            return DisplayDecimalsError("DisplayDecimals must fit in a non-negative integer.", span);
-        }
+        // Validated integral and within [0, MaxDisplayDecimals], so the narrowing is exact.
+        return EvalResult<DisplayOptions>.Ok(new DisplayOptions((int)value.Value, maxDisplayLength));
     }
 
     private static EvalError DisplayDecimalsError(string message, SourceSpan? span)

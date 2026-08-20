@@ -1,3 +1,4 @@
+using System.Numerics;
 namespace KatLang.Tests;
 
 /// <summary>
@@ -22,7 +23,7 @@ public class TruthValueNonRegressionTests
         return Evaluator.Run(new Expr.AlgorithmExpr(parseResult.Root));
     }
 
-    private static void AssertEval(string source, params decimal[] expected)
+    private static void AssertEval(string source, params Decimal128[] expected)
     {
         var result = EvalFull(source);
         if (result.IsError)

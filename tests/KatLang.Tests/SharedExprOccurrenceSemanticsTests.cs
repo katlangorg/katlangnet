@@ -1,4 +1,5 @@
 using KatLang.Evaluation.Caching;
+using System.Numerics;
 
 namespace KatLang.Tests;
 
@@ -51,7 +52,7 @@ public class SharedExprOccurrenceSemanticsTests
 
     private static Expr CallSubtree() => new Expr.Call(new Expr.Resolve("G"), OutputBundle.Empty);
 
-    private static void AssertFlat(Expr program, params decimal[] expected)
+    private static void AssertFlat(Expr program, params Decimal128[] expected)
     {
         var result = Evaluator.RunFlat(program);
         if (result.IsError)

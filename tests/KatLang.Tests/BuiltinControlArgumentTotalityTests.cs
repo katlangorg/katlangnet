@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Numerics;
 using KatLang.Evaluation;
 using KatLang.Evaluation.Caching;
 
@@ -28,7 +29,7 @@ public class BuiltinControlArgumentTotalityTests
     private static Expr Program(string source)
         => new Expr.AlgorithmExpr(SourceProvenance.ParseValid(source).Root);
 
-    private static IReadOnlyList<decimal> FlatValues(string source)
+    private static IReadOnlyList<Decimal128> FlatValues(string source)
     {
         var result = Evaluator.RunFlat(Program(source));
         if (result.IsError)

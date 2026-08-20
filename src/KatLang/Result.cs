@@ -1,3 +1,4 @@
+using System.Numerics;
 using System.Runtime.CompilerServices;
 
 namespace KatLang;
@@ -53,8 +54,10 @@ public abstract record Result
 
     /// <summary>
     /// KatLang value-semantic comparer for <see cref="Result"/>.
-    /// Atoms compare by numeric value, strings by exact string value, and
-    /// sequence and list values structurally by ordered child results.
+    /// Atoms compare by <see cref="Decimal128.Equals(Decimal128)"/> value
+    /// semantics (NaN is the same value as NaN; quantum/trailing zeros are
+    /// ignored, so 1.5 and 1.50 are one value), strings by exact string value,
+    /// and sequence and list values structurally by ordered child results.
     /// Different value kinds compare unequal (a list never equals a sequence).
     /// </summary>
     public static IEqualityComparer<Result> ValueComparer { get; } = new ValueSemanticComparer(observations: null);
@@ -69,8 +72,12 @@ public abstract record Result
     internal static IEqualityComparer<Result> CreateObservedValueComparer(ValueTraversalObservations? observations)
         => observations is null ? ValueComparer : new ValueSemanticComparer(observations);
 
-    /// <summary>A single numeric value.</summary>
-    public sealed record Atom(decimal Value) : Result;
+    /// <summary>
+    /// A single numeric value, backed by IEEE 754 <see cref="Decimal128"/>
+    /// (34 significant decimal digits; NaN, infinities, and signed zero are
+    /// representable values, not errors).
+    /// </summary>
+    public sealed record Atom(Decimal128 Value) : Result;
 
     /// <summary>A first-class string value. Lean: Result.str.</summary>
     public sealed record Str(string Value) : Result;
@@ -345,7 +352,7 @@ public abstract record Result
     /// which also opens list boundaries.
     /// Lean: Result.atoms.
     /// </summary>
-    public IReadOnlyList<decimal> ToAtoms()
+    public IReadOnlyList<Decimal128> ToAtoms()
     {
         if (this is Atom(var single))
             return [single];
@@ -355,7 +362,7 @@ public abstract record Result
         // Indexed continuation frames (see the depth note on the class): the
         // collected list is the required output; traversal storage is one
         // suspended frame per open sequence level.
-        var collected = new List<decimal>();
+        var collected = new List<Decimal128>();
         var suspended = new Stack<(IReadOnlyList<Result> Items, int Next)>();
         var items = rootItems;
         var next = 0;
@@ -402,11 +409,11 @@ public abstract record Result
     /// collection as ONE exact immutable list value.
     /// Deliberately separate from <see cref="ToAtoms"/> (truth testing stays
     /// list-opaque) and <see cref="ToHostAtoms"/> (host projection returns
-    /// host decimals), so none of the three contracts can drift through
+    /// host numbers), so none of the three contracts can drift through
     /// shared code.
     /// Lean: <c>Result.languageAtoms</c>.
     /// </summary>
-    public IReadOnlyList<decimal> LanguageAtoms()
+    public IReadOnlyList<Decimal128> LanguageAtoms()
     {
         _ = TryLanguageAtoms(long.MaxValue, out var collected);
         return collected;
@@ -422,12 +429,12 @@ public abstract record Result
     /// bounded by counting the input. Stopping the traversal early keeps the intermediate
     /// list bounded too, which a count-first prepass would not.</para>
     /// </summary>
-    internal bool TryLanguageAtoms(long maxItems, out IReadOnlyList<decimal> atoms)
+    internal bool TryLanguageAtoms(long maxItems, out IReadOnlyList<Decimal128> atoms)
     {
         // Indexed continuation frames (see the depth note on the class): the
         // collected list is the required output; traversal storage is one
         // suspended frame per open structure level.
-        var collected = new List<decimal>();
+        var collected = new List<Decimal128>();
         atoms = collected;
 
         IReadOnlyList<Result> items;
@@ -504,11 +511,11 @@ public abstract record Result
     /// not language semantics: truth testing keeps lists opaque
     /// (<see cref="ToAtoms"/>), the <c>atoms</c> builtin collects through its
     /// own separate collector (<see cref="LanguageAtoms"/>) and returns one
-    /// exact list value rather than host decimals, and no in-language
+    /// exact list value rather than host numbers, and no in-language
     /// conversion between lists and sequences is implied.
     /// Lean: <c>Result.hostAtoms</c>.
     /// </summary>
-    public IReadOnlyList<decimal> ToHostAtoms()
+    public IReadOnlyList<Decimal128> ToHostAtoms()
     {
         _ = TryToHostAtoms(long.MaxValue, out var atoms);
         return atoms;
@@ -523,12 +530,12 @@ public abstract record Result
     /// item slots. It is a separate traversal from the language-level collector on purpose:
     /// the two are distinct contracts and must not drift through shared code.</para>
     /// </summary>
-    internal bool TryToHostAtoms(long maxItems, out IReadOnlyList<decimal> atoms)
+    internal bool TryToHostAtoms(long maxItems, out IReadOnlyList<Decimal128> atoms)
     {
         // Indexed continuation frames (see the depth note on the class): the
         // collected list is the required output; traversal storage is one
         // suspended frame per open structure level.
-        var collected = new List<decimal>();
+        var collected = new List<Decimal128>();
         atoms = collected;
 
         IReadOnlyList<Result> items;
@@ -658,7 +665,7 @@ public abstract record Result
     /// Accepts exactly one atomic numeric value and rejects sequence values and strings.
     /// Lean: <c>Result.singleAtomicNumber?</c>.
     /// </summary>
-    public decimal? SingleAtomicNumber()
+    public Decimal128? SingleAtomicNumber()
     {
         return this switch
         {
@@ -673,7 +680,7 @@ public abstract record Result
     /// List values never coerce to numbers, not even <c>[5]</c>.
     /// Lean: Result.asInt?
     /// </summary>
-    public decimal? AsNum()
+    public Decimal128? AsNum()
     {
         return this switch
         {
@@ -817,7 +824,7 @@ public abstract record Result
     public int? AsIndex()
     {
         var num = AsNum();
-        if (num is null || num < 0 || num > int.MaxValue || num != Math.Floor(num.Value))
+        if (num is null || !Decimal128.IsInteger(num.Value) || num < 0 || num > int.MaxValue)
             return null;
         return (int)num.Value;
     }
@@ -870,8 +877,17 @@ public abstract record Result
             IReadOnlyList<Result> rightItems;
             switch (x, y)
             {
+                // Atom equality uses Decimal128.Equals VALUE semantics, not the IEEE
+                // `==` operator: NaN is the same value as NaN and quantum (trailing
+                // zeros) is ignored, exactly like .NET floating-point collection
+                // semantics. Structural equality must stay a reflexive equivalence
+                // relation — the reference fast path, the expanded-pair memo, and
+                // every hashed consumer (distinct, contains) assume it — and this is
+                // the only choice consistent with GetHashCode. IEEE `NaN != NaN`
+                // ordering behavior belongs to the numeric comparison OPERATORS, not
+                // to structural value identity.
                 case (Atom(var leftValue), Atom(var rightValue)):
-                    return leftValue == rightValue;
+                    return leftValue.Equals(rightValue);
 
                 case (Str(var leftValue), Str(var rightValue)):
                     return StringComparer.Ordinal.Equals(leftValue, rightValue);
@@ -938,8 +954,9 @@ public abstract record Result
                 IReadOnlyList<Result> childRight;
                 switch (left, right)
                 {
+                    // Same Decimal128.Equals value semantics as the top-level atom case.
                     case (Atom(var leftValue), Atom(var rightValue)):
-                        if (leftValue != rightValue) return false;
+                        if (!leftValue.Equals(rightValue)) return false;
                         continue;
 
                     case (Str(var leftValue), Str(var rightValue)):
@@ -991,7 +1008,8 @@ public abstract record Result
             //
             // The equality contract is preserved BY CONSTRUCTION: equal values have the same kind
             // tag and child count and pairwise-equal children, so by induction they fold to the
-            // same hash (equal decimals and ordinal-equal strings already hash equal). Hash VALUES
+            // same hash (Decimal128.Equals-equal numbers and ordinal-equal strings already hash
+            // equal — Decimal128.GetHashCode is quantum-insensitive and NaN-consistent). Hash VALUES
             // are not observable and never were — System.HashCode is seeded per process, so they
             // already differed between runs, and no KatLang result depends on them (distinct keeps
             // input order and uses its set only as a duplicate filter).

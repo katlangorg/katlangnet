@@ -1,4 +1,5 @@
 using System.Collections;
+using System.Numerics;
 
 namespace KatLang.Optimizations.Loops;
 
@@ -26,7 +27,7 @@ internal sealed record LoopPlanTemplate(
 
 internal readonly record struct PlannedLoopValue(
     Result? Value,
-    decimal NumericValue,
+    Decimal128 NumericValue,
     bool HasNumericValue,
     int EmittedCount)
 {
@@ -36,15 +37,15 @@ internal readonly record struct PlannedLoopValue(
     public static PlannedLoopValue FromResult(Result value, int emittedCount)
         => value.AsNum() is { } number
             ? new PlannedLoopValue(value, number, true, emittedCount)
-            : new PlannedLoopValue(value, 0m, false, emittedCount);
+            : new PlannedLoopValue(value, Decimal128.Zero, false, emittedCount);
 
-    public static PlannedLoopValue FromNumeric(decimal value)
+    public static PlannedLoopValue FromNumeric(Decimal128 value)
         => new(null, value, true, 1);
 
     public Result ToResult()
         => Value ?? new Result.Atom(NumericValue);
 
-    public decimal? AsNum()
+    public Decimal128? AsNum()
         => HasNumericValue ? NumericValue : Value?.AsNum();
 }
 

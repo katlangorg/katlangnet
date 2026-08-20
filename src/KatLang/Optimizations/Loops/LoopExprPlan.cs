@@ -1,3 +1,5 @@
+using System.Numerics;
+
 namespace KatLang.Optimizations.Loops;
 
 internal abstract record LoopExprPlan(Expr Source)
@@ -454,8 +456,8 @@ internal static partial class LoopOptimizer
             var unaryResult = op switch
             {
                 UnaryOp.Minus => -value,
-                UnaryOp.Not => value == 0 ? 1m : 0m,
-                _ => 0m,
+                UnaryOp.Not => value == 0 ? Decimal128.One : Decimal128.Zero,
+                _ => Decimal128.Zero,
             };
             return EvalResult<PlannedLoopValue>.Ok(PlannedLoopValue.FromNumeric(unaryResult));
         }
@@ -470,8 +472,8 @@ internal static partial class LoopOptimizer
         var genericUnaryResult = op switch
         {
             UnaryOp.Minus => -valueR.Value,
-            UnaryOp.Not => valueR.Value == 0 ? 1m : 0m,
-            _ => 0m,
+            UnaryOp.Not => valueR.Value == 0 ? Decimal128.One : Decimal128.Zero,
+            _ => Decimal128.Zero,
         };
         return EvalResult<PlannedLoopValue>.Ok(PlannedLoopValue.FromNumeric(genericUnaryResult));
     }
@@ -500,10 +502,15 @@ internal static partial class LoopOptimizer
 
     private static EvalResult<PlannedLoopValue> ApplyPlannedNumericBinary(
         BinaryOp op,
-        decimal x,
-        decimal y,
+        Decimal128 x,
+        Decimal128 y,
         SourceSpan? span)
     {
+        // MIRROR of Evaluator.ApplyBinaryOperator's numeric arm: divide/modulo by a
+        // zero-valued divisor (the evaluated value, signed zeros included) stays the
+        // specified DivByZero error; everything else follows Decimal128's IEEE
+        // semantics (overflow saturates to an infinity, NaN propagates, comparisons
+        // with NaN are false).
         if ((op is BinaryOp.Div or BinaryOp.IDiv or BinaryOp.Mod) && y == 0)
             return new EvalError.DivByZero() { Span = span };
 
@@ -514,33 +521,25 @@ internal static partial class LoopOptimizer
             return EvalResult<PlannedLoopValue>.Ok(PlannedLoopValue.FromResult(powR.Value));
         }
 
-        decimal result;
-        try
+        Decimal128 result = op switch
         {
-            result = op switch
-            {
-                BinaryOp.Add => x + y,
-                BinaryOp.Sub => x - y,
-                BinaryOp.Mul => x * y,
-                BinaryOp.Div => x / y,
-                BinaryOp.IDiv => Math.Truncate(x / y),
-                BinaryOp.Mod => x % y,
-                BinaryOp.Lt => x < y ? 1 : 0,
-                BinaryOp.Gt => x > y ? 1 : 0,
-                BinaryOp.Le => x <= y ? 1 : 0,
-                BinaryOp.Ge => x >= y ? 1 : 0,
-                // Eq/Ne are intentionally absent: equality is handled structurally by
-                // ApplyBinaryOperator in ApplyPlannedBinary and never reaches this path.
-                BinaryOp.And => x != 0 && y != 0 ? 1 : 0,
-                BinaryOp.Or => x != 0 || y != 0 ? 1 : 0,
-                BinaryOp.Xor => (x != 0) != (y != 0) ? 1 : 0,
-                _ => 0,
-            };
-        }
-        catch (OverflowException)
-        {
-            return new EvalError.NumericOverflow() { Span = span };
-        }
+            BinaryOp.Add => x + y,
+            BinaryOp.Sub => x - y,
+            BinaryOp.Mul => x * y,
+            BinaryOp.Div => x / y,
+            BinaryOp.IDiv => Decimal128.Truncate(x / y),
+            BinaryOp.Mod => x % y,
+            BinaryOp.Lt => x < y ? 1 : 0,
+            BinaryOp.Gt => x > y ? 1 : 0,
+            BinaryOp.Le => x <= y ? 1 : 0,
+            BinaryOp.Ge => x >= y ? 1 : 0,
+            // Eq/Ne are intentionally absent: equality is handled structurally by
+            // ApplyBinaryOperator in ApplyPlannedBinary and never reaches this path.
+            BinaryOp.And => x != 0 && y != 0 ? 1 : 0,
+            BinaryOp.Or => x != 0 || y != 0 ? 1 : 0,
+            BinaryOp.Xor => (x != 0) != (y != 0) ? 1 : 0,
+            _ => 0,
+        };
 
         return EvalResult<PlannedLoopValue>.Ok(PlannedLoopValue.FromNumeric(result));
     }

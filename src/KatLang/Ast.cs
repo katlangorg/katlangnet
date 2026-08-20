@@ -1,3 +1,5 @@
+using System.Numerics;
+
 namespace KatLang;
 
 // ── Operators (Lean: BinaryOp, UnaryOp) ─────────────────────────────────────
@@ -358,7 +360,7 @@ public abstract record Expr
     public sealed record Param(string Name) : Expr;
 
     /// <summary>Numeric literal.</summary>
-    public sealed record Num(decimal Value) : Expr;
+    public sealed record Num(Decimal128 Value) : Expr;
 
     /// <summary>String literal. Evaluates to <c>Result.Str</c> (first-class string value).
     /// Also used for compile-time directives (e.g. load URLs) which are eliminated by elaboration.</summary>
@@ -606,7 +608,7 @@ public abstract record Pattern
     }
 
     /// <summary>Matches only <c>Result.Atom(n)</c> where n equals <see cref="Value"/>.</summary>
-    public sealed record LitInt(decimal Value) : Pattern;
+    public sealed record LitInt(Decimal128 Value) : Pattern;
 
     /// <summary>Matches only <c>Result.Str(s)</c> where s equals <see cref="Value"/> (exact string equality).</summary>
     public sealed record LitString(string Value) : Pattern;
@@ -827,8 +829,13 @@ public abstract record Pattern
                     rightToLeft[rightBind.Name] = leftBind.Name;
                     return true;
 
+                // Structural numeric equality (Decimal128.Equals), matching runtime
+                // LitInt matching and the value-consistent fingerprint below: NaN is
+                // one value and quantum is ignored, so a LitInt(NaN) pattern stays
+                // match-equivalent to itself and hashed clause-family comparers keep
+                // a reflexive equality.
                 case (LitInt leftInt, LitInt rightInt):
-                    return leftInt.Value == rightInt.Value;
+                    return leftInt.Value.Equals(rightInt.Value);
 
                 case (LitString leftString, LitString rightString):
                     return string.Equals(leftString.Value, rightString.Value, StringComparison.Ordinal);
@@ -936,8 +943,12 @@ public abstract record Pattern
                         break;
                     case LitInt litInt:
                         Mix(2);
-                        foreach (var component in decimal.GetBits(litInt.Value))
-                            Mix((uint)component);
+                        // Value hash, not representation bits: IsMatchEquivalent compares
+                        // literal patterns by numeric VALUE (quantum-insensitive), so the
+                        // fingerprint must not distinguish equal values spelled with
+                        // different quanta. Decimal128.GetHashCode is exactly that
+                        // value-consistent hash.
+                        Mix(unchecked((uint)litInt.Value.GetHashCode()));
                         break;
                     case LitString litString:
                         Mix(3);

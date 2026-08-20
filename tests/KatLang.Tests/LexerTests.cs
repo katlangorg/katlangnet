@@ -320,7 +320,9 @@ public class LexerTests
     [Fact]
     public void Tokenize_OverflowingNumber_ReportsDiagnosticInsteadOfCrashing()
     {
-        var (tokens, diagnostics) = Lexer.Tokenize("999999999999999999999999999999");
+        // 1e6145 parses to an infinity (past Decimal128's finite range); a
+        // 30-digit integer like the old probe literal is now representable.
+        var (tokens, diagnostics) = Lexer.Tokenize("1e6145");
 
         Assert.Single(diagnostics);
         Assert.Equal(DiagnosticSeverity.Error, diagnostics[0].Severity);
@@ -332,12 +334,26 @@ public class LexerTests
     [Fact]
     public void Tokenize_OverflowingNumber_InExpression_DoesNotCrash()
     {
-        var (tokens, diagnostics) = Lexer.Tokenize("2/999999999999999999999999999999");
+        var (tokens, diagnostics) = Lexer.Tokenize("2/1e6145");
 
         Assert.Single(diagnostics);
         Assert.Contains("too large", diagnostics[0].Message);
         // Tokens: Number(2), Slash, Number(0-placeholder), EOF
         Assert.Equal(4, tokens.Count);
+    }
+
+    [Fact]
+    public void Tokenize_30DigitInteger_IsNowRepresentable()
+    {
+        // This exact literal was System.Decimal's overflow probe; Decimal128
+        // parses it directly and exactly.
+        var (tokens, diagnostics) = Lexer.Tokenize("999999999999999999999999999999");
+
+        Assert.Empty(diagnostics);
+        Assert.Equal(TokenKind.Number, tokens[0].Kind);
+        Assert.Equal(
+            System.Numerics.Decimal128.Parse("999999999999999999999999999999", System.Globalization.CultureInfo.InvariantCulture),
+            tokens[0].NumValue);
     }
 
     // ── Digit separator (_) tests ────────────────────────────────────────────

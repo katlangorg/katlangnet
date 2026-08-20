@@ -1,4 +1,5 @@
 using KatLang.Rendering;
+using System.Numerics;
 
 namespace KatLang.Tests;
 
@@ -18,13 +19,13 @@ public class WideValueRobustnessTests
 
     // ── Language-level coverage at the maximum ordinary breadth ─────────────
 
-    private static EvalResult<IReadOnlyList<decimal>> Eval(string source)
+    private static EvalResult<IReadOnlyList<Decimal128>> Eval(string source)
     {
         var ast = SourceProvenance.ParseValid(source).Root;
         return Evaluator.RunFlat(new Expr.AlgorithmExpr(ast));
     }
 
-    private static void AssertEval(string source, params decimal[] expected)
+    private static void AssertEval(string source, params Decimal128[] expected)
     {
         var result = Eval(source);
         if (result.IsError)
@@ -134,7 +135,7 @@ public class WideValueRobustnessTests
     [Fact]
     public void AtomViewsHandleWideValues()
     {
-        var expected = new decimal[Wide];
+        var expected = new Decimal128[Wide];
         for (var i = 0; i < Wide; i++)
             expected[i] = i;
 

@@ -1,4 +1,5 @@
 using BenchmarkDotNet.Attributes;
+using System.Numerics;
 using BenchmarkDotNet.Order;
 using KatLang.Evaluation.Caching;
 
@@ -55,30 +56,30 @@ public class AsyncEvaluationBenchmarks
     public AsyncBenchmarkMode Mode { get; set; }
 
     [Benchmark(Baseline = true)]
-    public IReadOnlyList<decimal> ScalarHelperSumCalls()
+    public IReadOnlyList<Decimal128> ScalarHelperSumCalls()
         => Execute(ScalarHelperSumCallsScenario);
 
     [Benchmark]
-    public IReadOnlyList<decimal> NestedPropertyChains()
+    public IReadOnlyList<Decimal128> NestedPropertyChains()
         => Execute(NestedPropertyChainsScenario);
 
     [Benchmark]
-    public IReadOnlyList<decimal> SequenceHeavyBuiltins()
+    public IReadOnlyList<Decimal128> SequenceHeavyBuiltins()
         => Execute(SequenceHeavyBuiltinsScenario);
 
     [Benchmark]
-    public IReadOnlyList<decimal> PropertyRichSharedSubcomputations()
+    public IReadOnlyList<Decimal128> PropertyRichSharedSubcomputations()
         => Execute(PropertyRichSharedSubcomputationsScenario);
 
     [Benchmark]
-    public IReadOnlyList<decimal> RepeatManyIterations()
+    public IReadOnlyList<Decimal128> RepeatManyIterations()
         => Execute(RepeatManyIterationsScenario);
 
     [Benchmark]
-    public IReadOnlyList<decimal> SequenceFilterCountEvenRange()
+    public IReadOnlyList<Decimal128> SequenceFilterCountEvenRange()
         => Execute(SequenceFilterCountEvenRangeScenario);
 
-    private IReadOnlyList<decimal> Execute(BenchmarkScenario scenario)
+    private IReadOnlyList<Decimal128> Execute(BenchmarkScenario scenario)
     {
         var root = new Expr.AlgorithmExpr(scenario.PreparedRoot);
         switch (Mode)

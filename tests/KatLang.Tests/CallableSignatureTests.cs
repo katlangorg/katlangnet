@@ -1,4 +1,5 @@
 using KatLang.Semantics;
+using System.Numerics;
 
 namespace KatLang.Tests;
 
@@ -18,7 +19,7 @@ public class CallableSignatureTests
         return CallableSignature.FromAlgorithm(name, property.Value);
     }
 
-    private static void AssertEval(string source, params decimal[] expected)
+    private static void AssertEval(string source, params Decimal128[] expected)
     {
         var parseResult = Parser.Parse(source);
         Assert.False(

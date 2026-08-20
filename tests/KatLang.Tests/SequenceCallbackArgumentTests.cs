@@ -1,3 +1,4 @@
+using System.Numerics;
 namespace KatLang.Tests;
 
 /// <summary>
@@ -16,7 +17,7 @@ public class SequenceCallbackArgumentTests
         return Evaluator.Run(new Expr.AlgorithmExpr(ast));
     }
 
-    private static IReadOnlyList<decimal> Atoms(string source)
+    private static IReadOnlyList<Decimal128> Atoms(string source)
     {
         var r = Eval(source);
         Assert.True(r.IsOk, r.IsError ? r.Error.ToString() : "");
@@ -69,7 +70,7 @@ public class SequenceCallbackArgumentTests
 
     [Fact]
     public void MapSum_OverNumbers_StillWorks()
-        => Assert.Equal(new decimal[] { 9 }, Atoms("Inc(n) = n + 1\n(1, 2, 3).map(Inc).sum"));
+        => Assert.Equal(new Decimal128[] { 9 }, Atoms("Inc(n) = n + 1\n(1, 2, 3).map(Inc).sum"));
 
     [Fact]
     public void MapSum_CallbackArgumentInsideUserCall_StillWorks()
@@ -84,18 +85,18 @@ public class SequenceCallbackArgumentTests
             Sum(*vectors) = Vector(vectors.map(X).sum, vectors.map(Y).sum)
             Sum((Vector(1, 2), Vector(3, 4), Vector(5, 6))*)
             """;
-        Assert.Equal(new decimal[] { 9, 12 }, Atoms(source));
+        Assert.Equal(new Decimal128[] { 9, 12 }, Atoms(source));
     }
 
     [Fact]
     public void Filter_CallbackInsideUserCall_StillWorks()
-        => Assert.Equal(new decimal[] { 2 }, Atoms("GreaterThanOne(n) = n > 1\nId(a) = a\nId((1, 2, 3).filter(GreaterThanOne).count)"));
+        => Assert.Equal(new Decimal128[] { 2 }, Atoms("GreaterThanOne(n) = n > 1\nId(a) = a\nId((1, 2, 3).filter(GreaterThanOne).count)"));
 
     [Fact]
     public void Reduce_CallbackInsideUserCall_StillWorks()
-        => Assert.Equal(new decimal[] { 10 }, Atoms("Add(x, total) = x + total\nId(a) = a\nId(reduce((1, 2, 3, 4), Add, 0))"));
+        => Assert.Equal(new Decimal128[] { 10 }, Atoms("Add(x, total) = x + total\nId(a) = a\nId(reduce((1, 2, 3, 4), Add, 0))"));
 
     [Fact]
     public void Take_ValueSuffixInsideUserCall_StillWorks()
-        => Assert.Equal(new decimal[] { 1, 2 }, Atoms("Id(a) = a\nId(take((1, 2, 3), 2))"));
+        => Assert.Equal(new Decimal128[] { 1, 2 }, Atoms("Id(a) = a\nId(take((1, 2, 3), 2))"));
 }

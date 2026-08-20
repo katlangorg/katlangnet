@@ -1,4 +1,5 @@
 using System.Text;
+using System.Numerics;
 using System.Threading.Tasks;
 
 namespace KatLang.Tests;
@@ -24,7 +25,7 @@ namespace KatLang.Tests;
 /// </summary>
 public class ClauseFamilyScalabilityTests
 {
-    private static decimal[] Atoms(string source) => KatLangEngine.EvaluateToAtoms(source).ToArray();
+    private static Decimal128[] Atoms(string source) => KatLangEngine.EvaluateToAtoms(source).ToArray();
 
     private static IReadOnlyList<Diagnostic> DuplicateBranchDiagnostics(string source)
         => Parser.ParseSyntax(source).Diagnostics

@@ -1,3 +1,4 @@
+using System.Numerics;
 namespace KatLang.Tests;
 
 public class BuiltinRuntimeParityTests
@@ -175,7 +176,7 @@ public class BuiltinRuntimeParityTests
         return Evaluator.Run(new Expr.AlgorithmExpr(root));
     }
 
-    private static void AssertEval(string source, params decimal[] expected)
+    private static void AssertEval(string source, params Decimal128[] expected)
     {
         var result = EvalFull(source);
         if (result.IsError)
