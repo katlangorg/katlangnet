@@ -124,10 +124,17 @@ internal static class PropertyExposureResolver
                     ? PropertyExposure.LocalOnlyCapturedAncestorParameters
                     : PropertyExposure.Exported;
 
-            rewrittenProperties.Add(new Property(property.Name, rewrittenPropertyValue, property.IsPublic, exposure)
+            var rewrittenProperty = new Property(property.Name, rewrittenPropertyValue, property.IsPublic, exposure)
             {
                 DeclarationSpans = property.DeclarationSpans
-            });
+            };
+            // Suggestion collection runs before this authoritative pass. Record
+            // the final classification against both the property record lookup
+            // originally saw and the rewritten record returned to consumers.
+            FinalPropertyExposure.Link(property, rewrittenProperty);
+            FinalPropertyExposure.RecordIfTracked(property, exposure);
+            FinalPropertyExposure.RecordIfTracked(rewrittenProperty, exposure);
+            rewrittenProperties.Add(rewrittenProperty);
         }
 
         var rewrittenOpens = RewriteExprList(

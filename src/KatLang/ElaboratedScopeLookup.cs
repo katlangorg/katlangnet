@@ -25,6 +25,16 @@ internal sealed class ElaboratedPropertyScope
 
 internal readonly record struct PropertyLookupHit(Algorithm Owner, Property Property);
 
+/// <summary>
+/// One spelling that authoritative lexical lookup resolves uniquely. Opened
+/// names carry the exact provider property because their eligibility also
+/// depends on its later final exposure classification; direct lexical names
+/// do not.
+/// </summary>
+internal readonly record struct VisibleLexicalName(
+    string Name,
+    Property? RequiredExportedProperty);
+
 internal static class ElaboratedScopeLookup
 {
     public static ElaboratedPropertyScope CreateScope(Algorithm algorithm, ElaboratedPropertyScope? parentOverride = null)
@@ -178,6 +188,86 @@ internal static class ElaboratedScopeLookup
             return [directHit];
 
         return LookupOpenPropertyMatches(scope, name);
+    }
+
+    /// <summary>
+    /// Enumerates a bounded set of names that the authoritative
+    /// <see cref="LookupLexicalPropertyMatches"/> resolves uniquely from
+    /// <paramref name="scope"/>. Potential spellings are gathered once, then
+    /// validated through that per-name lookup; ambiguous open providers are
+    /// therefore never presented as a resolvable candidate. Returning
+    /// <c>false</c> means the distinct-candidate budget was exceeded and the
+    /// caller should conservatively offer no suggestion.
+    /// </summary>
+    internal static bool TryCollectVisibleLexicalNames(
+        ElaboratedPropertyScope scope,
+        ISet<string> names,
+        int maxCount,
+        int maxNameLength,
+        out IReadOnlyList<VisibleLexicalName> visibleNames)
+    {
+        bool AddPotential(string name)
+        {
+            if (name.Length == 0 || name.Length > maxNameLength || names.Contains(name))
+                return true;
+            if (names.Count >= maxCount)
+                return false;
+            names.Add(name);
+            return true;
+        }
+
+        for (var current = scope; current is not null; current = current.Parent)
+        {
+            foreach (var hit in current.Properties)
+            {
+                if (!AddPotential(hit.Property.Name))
+                {
+                    visibleNames = [];
+                    return false;
+                }
+            }
+
+            HashSet<string>? seenKeys = null;
+            for (var i = 0; i < current.Opens.Count; i++)
+            {
+                var openExpr = current.Opens[i];
+                seenKeys ??= [];
+                if (!seenKeys.Add(OpenTargetDedupKey(openExpr, i)))
+                    continue;
+
+                var targetAlgorithm = ResolveOpenTarget(current, openExpr);
+                if (targetAlgorithm is null)
+                    continue;
+
+                foreach (var property in targetAlgorithm.Properties)
+                {
+                    if (property.IsPublic
+                        && property.Exposure == PropertyExposure.Exported
+                        && !AddPotential(property.Name))
+                    {
+                        visibleNames = [];
+                        return false;
+                    }
+                }
+            }
+        }
+
+        var resolved = new List<VisibleLexicalName>(names.Count);
+        foreach (var name in names)
+        {
+            if (TryLookupDirectLexicalProperty(scope, name) is not null)
+            {
+                resolved.Add(new VisibleLexicalName(name, RequiredExportedProperty: null));
+                continue;
+            }
+
+            var openHits = LookupOpenPropertyMatches(scope, name);
+            if (openHits.Count == 1)
+                resolved.Add(new VisibleLexicalName(name, openHits[0].Property));
+        }
+
+        visibleNames = resolved;
+        return true;
     }
 
     private static ElaboratedPropertyScope? CreateParentScope(ScopeCtx? parent)

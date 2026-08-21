@@ -42,7 +42,16 @@ public static class ParameterDetector
                     structuralRejection, EvaluationLimits.MaxSupportedAstDepth)]);
         }
 
-        return DetectPrevalidated(root);
+        var detected = DetectPrevalidated(root);
+
+        // Unlike the full front-end pipeline, this public single-pass entry
+        // point does not subsequently run PropertyExposureResolver. Its
+        // returned tree's current exposure values are therefore the final
+        // values a direct evaluator call will observe; release any suggestion
+        // gates against that exact tree rather than leaving otherwise-valid
+        // structural/open suggestions permanently pending.
+        FinalPropertyExposure.MarkTreeFinal(detected.Root);
+        return detected;
     }
 
     /// <summary>
@@ -62,8 +71,10 @@ public static class ParameterDetector
         HostOperations? hostOperations = null)
     {
         var diagnostics = new List<Diagnostic>();
-        var preludeScope = ElaboratedScopeLookup.CreateScope(
-            hostOperations?.SemanticPreludeAlgorithm ?? BuiltinRegistry.CreateSemanticPreludeAlgorithm());
+        var preludeAlgorithm = hostOperations?.SemanticPreludeAlgorithm
+            ?? BuiltinRegistry.CreateSemanticPreludeAlgorithm();
+        FinalPropertyExposure.MarkTreeFinal(preludeAlgorithm);
+        var preludeScope = ElaboratedScopeLookup.CreateScope(preludeAlgorithm);
         var processed = ProcessAlgorithm(
             root,
             preludeScope,
@@ -105,15 +116,21 @@ public static class ParameterDetector
         // These should rewrite to Expr.Param but must not become new local params.
         var boundNames = UnionNames(capturedParamNames, alg.Params);
 
+        ImplicitParameterOccurrenceRecorder? provenanceRecorder = null;
         if (hasExplicitParameterList)
         {
             ReportUndeclaredExplicitParameterNames(alg.Output, scope, boundNames, diagnostics);
         }
         else
         {
+            provenanceRecorder = new ImplicitParameterOccurrenceRecorder(
+                scope,
+                alg.Params,
+                capturedParamNames);
             CollectFreeParams(
                 alg.Output, scope, boundNames, paramNames, paramOrder, graceWeights,
-                FreeNameCollection.ImplicitSignature);
+                FreeNameCollection.ImplicitSignature,
+                provenanceRecorder);
 
             if (graceWeights.Count > 0)
                 ApplyGraceReordering(paramOrder, graceWeights);
@@ -146,10 +163,7 @@ public static class ParameterDetector
                 }
                 var processedCond = new Algorithm.Conditional(
                     condAlg.Parent, condAlg.Opens, processedBranches);
-                newProperties.Add(new Property(prop.Name, processedCond, prop.IsPublic, prop.Exposure)
-                {
-                    DeclarationSpans = prop.DeclarationSpans
-                });
+                newProperties.Add(prop.WithValue(processedCond));
             }
             else
             {
@@ -158,10 +172,7 @@ public static class ParameterDetector
                     scope,
                     nestedCapturedParamNames,
                     diagnostics);
-                newProperties.Add(new Property(prop.Name, processedBody, prop.IsPublic, prop.Exposure)
-                {
-                    DeclarationSpans = prop.DeclarationSpans
-                });
+                newProperties.Add(prop.WithValue(processedBody));
             }
         }
 
@@ -170,11 +181,81 @@ public static class ParameterDetector
         foreach (var expr in alg.Output)
             rewrittenOutput.Add(RewriteParams(expr, paramNames, scope, capturedParamNames));
 
-        return algWithProcessedOpens.WithParams(paramOrder) with
+        return algWithProcessedOpens.WithParams(paramOrder, provenanceRecorder?.Provenance) with
         {
             Properties = newProperties,
             Output = rewrittenOutput,
         };
+    }
+
+    /// <summary>
+    /// Records the diagnostic-only origin of each implicit parameter at the
+    /// exact moment <see cref="CollectFreeParams(Expr, ElaboratedPropertyScope, HashSet{string}, HashSet{string}, List{string}, Dictionary{string, int}, FreeNameCollection, ImplicitParameterOccurrenceRecorder?)"/>
+    /// first promotes the unresolved name: its first semantic source
+    /// occurrence span (the same occurrence order the inference itself uses)
+    /// and a conservative near-miss suggestion computed against the SAME
+    /// elaborated scope the promotion decision consulted. Purely observational:
+    /// it changes nothing about which names are promoted or their order.
+    /// </summary>
+    private sealed class ImplicitParameterOccurrenceRecorder
+    {
+        // Suggestions are best-effort diagnostics. Provenance remains complete,
+        // but cap edit-distance/candidate enumeration for adversarial bodies
+        // containing hundreds of distinct unresolved names.
+        private const int MaxSuggestionAttempts = 64;
+
+        private readonly ElaboratedPropertyScope _scope;
+        private readonly IReadOnlyCollection<string> _localParameterNames;
+        private readonly IReadOnlyCollection<string> _capturedParameterNames;
+        private Dictionary<string, ImplicitParameterProvenance>? _provenance;
+        private int _suggestionAttempts;
+
+        /// <summary>
+        /// The statically known receiver algorithm while collecting inside a
+        /// dot edge's member/fallback occurrence; null for bare-name
+        /// occurrences and for receivers with no statically known algorithm.
+        /// Save/restore via <see cref="EnterDotMemberContext"/> so nested
+        /// (host-built) fallback shapes cannot leak the context.
+        /// </summary>
+        private Algorithm? _dotMemberReceiver;
+
+        public ImplicitParameterOccurrenceRecorder(
+            ElaboratedPropertyScope scope,
+            IReadOnlyCollection<string> localParameterNames,
+            IReadOnlyCollection<string> capturedParameterNames)
+        {
+            _scope = scope;
+            _localParameterNames = localParameterNames;
+            _capturedParameterNames = capturedParameterNames;
+        }
+
+        public IReadOnlyDictionary<string, ImplicitParameterProvenance>? Provenance => _provenance;
+
+        public Algorithm? EnterDotMemberContext(Algorithm? knownReceiver)
+        {
+            var previous = _dotMemberReceiver;
+            _dotMemberReceiver = knownReceiver;
+            return previous;
+        }
+
+        public void ExitDotMemberContext(Algorithm? previous) => _dotMemberReceiver = previous;
+
+        public void RecordFirstOccurrence(string name, Expr occurrence)
+        {
+            _provenance ??= new Dictionary<string, ImplicitParameterProvenance>(StringComparer.Ordinal);
+            if (_provenance.ContainsKey(name))
+                return;
+
+            var suggestion = _suggestionAttempts++ < MaxSuggestionAttempts
+                ? NameSuggestions.SuggestVisibleName(
+                    name,
+                    _scope,
+                    _localParameterNames,
+                    _capturedParameterNames,
+                    _dotMemberReceiver)
+                : null;
+            _provenance[name] = new ImplicitParameterProvenance(name, occurrence.Span, suggestion);
+        }
     }
 
     /// <summary>
@@ -357,10 +438,7 @@ public static class ParameterDetector
                 bodyScope,
                 bodyCapturedParamNames,
                 diagnostics);
-            newProperties.Add(new Property(prop.Name, processedProp, prop.IsPublic, prop.Exposure)
-            {
-                DeclarationSpans = prop.DeclarationSpans
-            });
+            newProperties.Add(prop.WithValue(processedProp));
         }
 
         // Rewrite only binder names Resolve → Param; leave all others as-is.
@@ -559,10 +637,11 @@ public static class ParameterDetector
         HashSet<string> paramNames,
         List<string> paramOrder,
         Dictionary<string, int> graceWeights,
-        FreeNameCollection mode)
+        FreeNameCollection mode,
+        ImplicitParameterOccurrenceRecorder? recorder = null)
     {
         foreach (var expr in exprs)
-            CollectFreeParams(expr, scope, extraBoundNames, paramNames, paramOrder, graceWeights, mode);
+            CollectFreeParams(expr, scope, extraBoundNames, paramNames, paramOrder, graceWeights, mode, recorder);
     }
 
     private static void CollectFreeParams(
@@ -572,7 +651,8 @@ public static class ParameterDetector
         HashSet<string> paramNames,
         List<string> paramOrder,
         Dictionary<string, int> graceWeights,
-        FreeNameCollection mode)
+        FreeNameCollection mode,
+        ImplicitParameterOccurrenceRecorder? recorder = null)
     {
         switch (expr)
         {
@@ -600,7 +680,10 @@ public static class ParameterDetector
                     if (!IsBoundName(gracedName, scope, extraBoundNames) && gracedName.Length > 0)
                     {
                         if (paramNames.Add(gracedName))
+                        {
                             paramOrder.Add(gracedName);
+                            recorder?.RecordFirstOccurrence(gracedName, gracedCore);
+                        }
                         // Accumulate weight (multiple references sum up)
                         if (!graceWeights.TryAdd(gracedName, accumulatedWeight))
                             graceWeights[gracedName] += accumulatedWeight;
@@ -608,7 +691,7 @@ public static class ParameterDetector
                 }
                 else
                 {
-                    CollectFreeParams(gracedCore, scope, extraBoundNames, paramNames, paramOrder, graceWeights, mode);
+                    CollectFreeParams(gracedCore, scope, extraBoundNames, paramNames, paramOrder, graceWeights, mode, recorder);
                 }
 
                 break;
@@ -618,38 +701,41 @@ public static class ParameterDetector
                 if (!IsBoundName(name, scope, extraBoundNames) && name.Length > 0)
                 {
                     if (paramNames.Add(name))
+                    {
                         paramOrder.Add(name);
+                        recorder?.RecordFirstOccurrence(name, expr);
+                    }
                 }
                 break;
 
             case Expr.Binary(_, var left, var right):
-                CollectFreeParams(left, scope, extraBoundNames, paramNames, paramOrder, graceWeights, mode);
-                CollectFreeParams(right, scope, extraBoundNames, paramNames, paramOrder, graceWeights, mode);
+                CollectFreeParams(left, scope, extraBoundNames, paramNames, paramOrder, graceWeights, mode, recorder);
+                CollectFreeParams(right, scope, extraBoundNames, paramNames, paramOrder, graceWeights, mode, recorder);
                 break;
 
             case Expr.Unary(_, var operand):
-                CollectFreeParams(operand, scope, extraBoundNames, paramNames, paramOrder, graceWeights, mode);
+                CollectFreeParams(operand, scope, extraBoundNames, paramNames, paramOrder, graceWeights, mode, recorder);
                 break;
 
             case Expr.Index(var target, var selector):
-                CollectFreeParams(target, scope, extraBoundNames, paramNames, paramOrder, graceWeights, mode);
-                CollectFreeParams(selector, scope, extraBoundNames, paramNames, paramOrder, graceWeights, mode);
+                CollectFreeParams(target, scope, extraBoundNames, paramNames, paramOrder, graceWeights, mode, recorder);
+                CollectFreeParams(selector, scope, extraBoundNames, paramNames, paramOrder, graceWeights, mode, recorder);
                 break;
 
             case Expr.SequenceSpread(var operand):
-                CollectFreeParams(operand, scope, extraBoundNames, paramNames, paramOrder, graceWeights, mode);
+                CollectFreeParams(operand, scope, extraBoundNames, paramNames, paramOrder, graceWeights, mode, recorder);
                 break;
 
             case Expr.SequenceConstruct(var left, var right):
-                CollectFreeParams(left, scope, extraBoundNames, paramNames, paramOrder, graceWeights, mode);
-                CollectFreeParams(right, scope, extraBoundNames, paramNames, paramOrder, graceWeights, mode);
+                CollectFreeParams(left, scope, extraBoundNames, paramNames, paramOrder, graceWeights, mode, recorder);
+                CollectFreeParams(right, scope, extraBoundNames, paramNames, paramOrder, graceWeights, mode, recorder);
                 break;
 
             case Expr.ListLiteral(var items):
                 // List-literal elements are transparent to the enclosing
                 // parameter scope, like spread operands and sequence joins.
                 foreach (var item in items)
-                    CollectFreeParams(item, scope, extraBoundNames, paramNames, paramOrder, graceWeights, mode);
+                    CollectFreeParams(item, scope, extraBoundNames, paramNames, paramOrder, graceWeights, mode, recorder);
                 break;
 
             case Expr.DotCall dotCall:
@@ -663,7 +749,7 @@ public static class ParameterDetector
                 // reorder the enclosing algorithm's signature. Thus `a.t(b)`
                 // contributes `a, t, b`, while the direct call `t(a)` keeps its
                 // own source order `t, a`.
-                CollectFreeParams(dotCall.Target, scope, extraBoundNames, paramNames, paramOrder, graceWeights, mode);
+                CollectFreeParams(dotCall.Target, scope, extraBoundNames, paramNames, paramOrder, graceWeights, mode, recorder);
 
                 // A statically impossible fallback — a guaranteed structural
                 // member, a conditional-branch member (a local-only ERROR at
@@ -672,20 +758,33 @@ public static class ParameterDetector
                 // DeclaredNameCheck mode likewise takes no fallback
                 // contribution because a conditional fallback is not a
                 // definite dependency (see FreeNameCollection).
-                if (mode == FreeNameCollection.ImplicitSignature
-                    && GetImplicitSignatureFallbackSelection(dotCall, scope, extraBoundNames)
-                        != LexicalFallbackSelection.Never)
+                if (mode == FreeNameCollection.ImplicitSignature)
                 {
-                    CollectFreeParams(dotCall.EffectiveLexicalFallback, scope, extraBoundNames, paramNames, paramOrder, graceWeights, mode);
+                    var receiverProvider = ResolveDotCallReceiverProvider(dotCall, scope, extraBoundNames);
+                    if (dotCall.GetLexicalFallbackSelection(receiverProvider) != LexicalFallbackSelection.Never)
+                    {
+                        // While collecting the member/fallback occurrence, the
+                        // recorder knows the receiver's statically known
+                        // algorithm (when there is one) so a provenance note
+                        // recorded here can rank the receiver's structural
+                        // members as suggestion candidates. Diagnostic-only:
+                        // the collection itself is unchanged.
+                        var previousReceiver = recorder?.EnterDotMemberContext(
+                            receiverProvider.Kind == StaticStructuralMemberProviderKind.KnownAlgorithm
+                                ? receiverProvider.Algorithm
+                                : null);
+                        CollectFreeParams(dotCall.EffectiveLexicalFallback, scope, extraBoundNames, paramNames, paramOrder, graceWeights, mode, recorder);
+                        recorder?.ExitDotMemberContext(previousReceiver);
+                    }
                 }
                 if (dotCall.Args is { } dotArgs)
-                    CollectFreeParams(dotArgs, scope, extraBoundNames, paramNames, paramOrder, graceWeights, mode);
+                    CollectFreeParams(dotArgs, scope, extraBoundNames, paramNames, paramOrder, graceWeights, mode, recorder);
                 break;
 
             case Expr.Capture(var captureBody):
                 // Captures are transparent: free identifiers bubble up to the
                 // enclosing param scope.
-                CollectFreeParams(captureBody, scope, extraBoundNames, paramNames, paramOrder, graceWeights, mode);
+                CollectFreeParams(captureBody, scope, extraBoundNames, paramNames, paramOrder, graceWeights, mode, recorder);
                 break;
 
             case Expr.AlgorithmExpr:
@@ -693,11 +792,11 @@ public static class ParameterDetector
                 break;
 
             case Expr.Call(var func, var args):
-                CollectFreeParams(func, scope, extraBoundNames, paramNames, paramOrder, graceWeights, mode);
+                CollectFreeParams(func, scope, extraBoundNames, paramNames, paramOrder, graceWeights, mode, recorder);
                 // Argument bundles are transparent: free identifiers inside
                 // argument slots belong to the enclosing algorithm. (A brace
                 // block argument is an AlgorithmExpr slot and owns its names.)
-                CollectFreeParams(args, scope, extraBoundNames, paramNames, paramOrder, graceWeights, mode);
+                CollectFreeParams(args, scope, extraBoundNames, paramNames, paramOrder, graceWeights, mode, recorder);
                 break;
 
             // Num, Param — no free names
@@ -707,9 +806,10 @@ public static class ParameterDetector
     }
 
     /// <summary>
-    /// The MAY-selection classification of one dot edge at implicit-signature
-    /// collection time, resolving a lexical-reference receiver through the
-    /// SAME elaborated scope the collection itself uses. The receiver's
+    /// The receiver provider of one dot edge at implicit-signature collection
+    /// time, resolving a lexical-reference receiver through the SAME
+    /// elaborated scope the collection itself uses; the caller applies the
+    /// shared MAY-selection law to it. The receiver's
     /// provider mirrors the receiver occurrence's own elaboration fate:
     /// a name that will elaborate to a parameter (unbound and therefore
     /// inferred, or a known parameter name not shadowed by a visible
@@ -722,7 +822,7 @@ public static class ParameterDetector
     /// method only supplies the detector's resolution power, exactly like
     /// the editor's provider resolution.
     /// </summary>
-    private static LexicalFallbackSelection GetImplicitSignatureFallbackSelection(
+    private static StaticStructuralMemberProvider ResolveDotCallReceiverProvider(
         Expr.DotCall dotCall,
         ElaboratedPropertyScope scope,
         HashSet<string> extraBoundNames)
@@ -735,7 +835,7 @@ public static class ParameterDetector
             provider = ResolveReceiverNameProvider(receiverName, scope, extraBoundNames);
         }
 
-        return dotCall.GetLexicalFallbackSelection(provider);
+        return provider;
     }
 
     private static StaticStructuralMemberProvider ResolveReceiverNameProvider(

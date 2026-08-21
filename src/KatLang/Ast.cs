@@ -203,8 +203,35 @@ public enum ParameterKind
 
 public sealed record ParameterDeclaration(string Name, SourceSpan? Span = null, ParameterKind Kind = ParameterKind.Normal)
 {
+    private ParameterDeclaration(ParameterDeclaration original)
+        : base()
+    {
+        Name = original.Name;
+        Span = original.Span;
+        Kind = original.Kind;
+        CollectMarkerSpan = original.CollectMarkerSpan;
+        DiagnosticRecordMetadata<ImplicitParameterProvenance>.Copy(original, this);
+    }
+
     /// <summary>Exact span of the source prefix <c>*</c> collect marker, when source-backed.</summary>
     public SourceSpan? CollectMarkerSpan { get; init; }
+
+    /// <summary>
+    /// Diagnostic-only provenance for an implicit parameter that
+    /// <see cref="ParameterDetector"/> inferred from an unresolved identifier;
+    /// <c>null</c> for every explicitly declared or host-built parameter.
+    /// Carries the unresolved name's first semantic source occurrence and an
+    /// optional conservative near-miss suggestion. It never participates in
+    /// name resolution, binding, arity, or evaluation — it only enriches
+    /// eventual arity/unresolved-parameter diagnostics — and has no Lean
+    /// counterpart (wording/provenance metadata, like
+    /// <see cref="EvalError.ArityMismatch.Signature"/>).
+    /// </summary>
+    internal ImplicitParameterProvenance? InferredProvenance
+    {
+        get => DiagnosticRecordMetadata<ImplicitParameterProvenance>.Get(this);
+        init => DiagnosticRecordMetadata<ImplicitParameterProvenance>.Set(this, value);
+    }
 
     public string DisplayName => Kind switch
     {
@@ -215,6 +242,7 @@ public sealed record ParameterDeclaration(string Name, SourceSpan? Span = null, 
     public CaptureParameterPattern ToPattern() => new(Name, Span, Kind)
     {
         CollectMarkerSpan = CollectMarkerSpan,
+        InferredProvenance = InferredProvenance,
     };
 }
 
@@ -286,8 +314,28 @@ public abstract record ParameterPattern
 public sealed record CaptureParameterPattern(string Name, SourceSpan? Span = null, ParameterKind Kind = ParameterKind.Normal)
     : ParameterPattern
 {
+    private CaptureParameterPattern(CaptureParameterPattern original)
+        : base(original)
+    {
+        Name = original.Name;
+        Span = original.Span;
+        Kind = original.Kind;
+        CollectMarkerSpan = original.CollectMarkerSpan;
+        DiagnosticRecordMetadata<ImplicitParameterProvenance>.Copy(original, this);
+    }
+
     /// <summary>Exact span of the source prefix <c>*</c> collect marker, when source-backed.</summary>
     public SourceSpan? CollectMarkerSpan { get; init; }
+
+    /// <summary>
+    /// Diagnostic-only provenance when this capture was inferred from an
+    /// unresolved identifier; see <see cref="ParameterDeclaration.InferredProvenance"/>.
+    /// </summary>
+    internal ImplicitParameterProvenance? InferredProvenance
+    {
+        get => DiagnosticRecordMetadata<ImplicitParameterProvenance>.Get(this);
+        init => DiagnosticRecordMetadata<ImplicitParameterProvenance>.Set(this, value);
+    }
 
     public override string DisplayName => Kind == ParameterKind.Collecting ? $"*{Name}" : Name;
 
@@ -296,6 +344,7 @@ public sealed record CaptureParameterPattern(string Name, SourceSpan? Span = nul
         new(Name, Span, Kind)
         {
             CollectMarkerSpan = CollectMarkerSpan,
+            InferredProvenance = InferredProvenance,
         }
     ];
 }
@@ -329,6 +378,7 @@ public sealed record SequenceValueParameterPattern(IReadOnlyList<ParameterPatter
                         captures.Add(new ParameterDeclaration(capture.Name, capture.Span, capture.Kind)
                         {
                             CollectMarkerSpan = capture.CollectMarkerSpan,
+                            InferredProvenance = capture.InferredProvenance,
                         });
                         break;
                     case SequenceValueParameterPattern group:
@@ -1126,6 +1176,23 @@ public abstract record Algorithm
         _ => this,
     };
 
+    /// <summary>
+    /// <see cref="WithParams(IReadOnlyList{string})"/> with diagnostic-only
+    /// provenance for the parameters that were inferred from unresolved
+    /// identifiers (see <see cref="ImplicitParameterProvenance"/>). Only
+    /// newly created captures consult the map; existing declared patterns are
+    /// preserved untouched, so provenance can never attach to an explicit
+    /// parameter.
+    /// </summary>
+    internal Algorithm WithParams(
+        IReadOnlyList<string> parameters,
+        IReadOnlyDictionary<string, ImplicitParameterProvenance>? inferredProvenance) => this switch
+        {
+            User user => user.WithParameterPatternList(
+                MergeParameterPatterns(user.ParameterPatterns, parameters, inferredProvenance)),
+            _ => this,
+        };
+
     public Algorithm WithParameters(IReadOnlyList<ParameterDeclaration> parameters) => this switch
     {
         User user => user.WithParameterPatternList(ParameterPattern.FromDeclarations(parameters)),
@@ -1160,14 +1227,15 @@ public abstract record Algorithm
 
     internal static IReadOnlyList<ParameterPattern> MergeParameterPatterns(
         IReadOnlyList<ParameterPattern> oldPatterns,
-        IReadOnlyList<string> newParameterNames)
+        IReadOnlyList<string> newParameterNames,
+        IReadOnlyDictionary<string, ImplicitParameterProvenance>? inferredProvenance = null)
     {
         var oldCaptures = ParameterPattern.FlattenCaptures(oldPatterns);
         if (newParameterNames.Take(oldCaptures.Count).SequenceEqual(oldCaptures.Select(static capture => capture.Name)))
         {
             var merged = oldPatterns.ToList();
             foreach (var name in newParameterNames.Skip(oldCaptures.Count))
-                merged.Add(new CaptureParameterPattern(name));
+                merged.Add(CreateMergedCapture(name, inferredProvenance));
             return merged;
         }
 
@@ -1176,10 +1244,20 @@ public abstract record Algorithm
             StringComparer.Ordinal);
         return newParameterNames
             .Select(name => existingByName.TryGetValue(name, out var parameter)
-                ? parameter.ToPattern()
-                : new CaptureParameterPattern(name))
+                ? (ParameterPattern)parameter.ToPattern()
+                : CreateMergedCapture(name, inferredProvenance))
             .ToList();
     }
+
+    private static CaptureParameterPattern CreateMergedCapture(
+        string name,
+        IReadOnlyDictionary<string, ImplicitParameterProvenance>? inferredProvenance)
+        => new(name)
+        {
+            InferredProvenance = inferredProvenance is not null && inferredProvenance.TryGetValue(name, out var provenance)
+                ? provenance
+                : null,
+        };
 
     /// <summary>
     /// Elaborate a whole same-name clause family after all of its clauses are

@@ -94,7 +94,30 @@ public abstract record EvalError
     /// <summary>Parameter count does not match argument count (with counts).</summary>
     public sealed record ArityMismatch(int Expected, int Actual) : EvalError
     {
+        private ArityMismatch(ArityMismatch original)
+            : base(original)
+        {
+            Expected = original.Expected;
+            Actual = original.Actual;
+            Signature = original.Signature;
+            DiagnosticRecordMetadata<IReadOnlyList<ImplicitParameterProvenance>>.Copy(original, this);
+        }
+
         public CallableSignature? Signature { get; init; }
+
+        /// <summary>
+        /// Diagnostic-only provenance of the callee's implicit parameters that
+        /// were inferred from unresolved identifiers (name, original source
+        /// occurrence, optional near-miss suggestion); <c>null</c> when the
+        /// callee has none. Like <see cref="Signature"/>, this is C#-side
+        /// diagnostic metadata with no Lean counterpart — the structured error
+        /// kind and its Lean-modeled payload are unchanged.
+        /// </summary>
+        internal IReadOnlyList<ImplicitParameterProvenance>? InferredImplicitParameters
+        {
+            get => DiagnosticRecordMetadata<IReadOnlyList<ImplicitParameterProvenance>>.Get(this);
+            init => DiagnosticRecordMetadata<IReadOnlyList<ImplicitParameterProvenance>>.Set(this, value);
+        }
     }
 
     /// <summary>A variadic callable did not receive enough items for its fixed parameters.</summary>
@@ -140,7 +163,28 @@ public abstract record EvalError
     public sealed record SpreadMissingOutput() : EvalError;
 
     /// <summary>Top-level program has unresolved implicit parameters (no arguments supplied).</summary>
-    public sealed record UnresolvedImplicitParams(IReadOnlyList<string> ParamNames) : EvalError;
+    public sealed record UnresolvedImplicitParams(IReadOnlyList<string> ParamNames) : EvalError
+    {
+        private UnresolvedImplicitParams(UnresolvedImplicitParams original)
+            : base(original)
+        {
+            ParamNames = original.ParamNames;
+            DiagnosticRecordMetadata<IReadOnlyList<ImplicitParameterProvenance>>.Copy(original, this);
+        }
+
+        /// <summary>
+        /// Diagnostic-only provenance for the subset of <see cref="ParamNames"/>
+        /// that carry inferred-origin metadata (source occurrence and optional
+        /// near-miss suggestion); <c>null</c> when none do (e.g. host-built
+        /// parameter lists). No Lean counterpart — the structured error kind
+        /// and its Lean-modeled payload are unchanged.
+        /// </summary>
+        internal IReadOnlyList<ImplicitParameterProvenance>? InferredImplicitParameters
+        {
+            get => DiagnosticRecordMetadata<IReadOnlyList<ImplicitParameterProvenance>>.Get(this);
+            init => DiagnosticRecordMetadata<IReadOnlyList<ImplicitParameterProvenance>>.Set(this, value);
+        }
+    }
 
     /// <summary>
     /// Evaluation reached the deterministic limit on simultaneously active dynamic

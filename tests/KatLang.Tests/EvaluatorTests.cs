@@ -10343,7 +10343,10 @@ public class EvaluatorTests
         Assert.Equal(0, arity.Actual);
 
         var formatted = KatLangError.FromEvalError(result.Error).Message;
-        Assert.Equal("Property 'A' expects 1 parameter, but was called with 0 arguments.", formatted);
+        Assert.Equal(
+            "Property 'A' expects 1 parameter, but was called with 0 arguments.\n"
+            + "An implicit parameter 'x' was inferred at [1:5].",
+            formatted);
     }
 
     [Fact]

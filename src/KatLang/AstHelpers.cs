@@ -79,10 +79,14 @@ internal static class AstHelpers
     }
 
     internal static Property WithValue(this Property property, Algorithm value)
-        => new(property.Name, value, property.IsPublic, property.Exposure)
+    {
+        var rewritten = new Property(property.Name, value, property.IsPublic, property.Exposure)
         {
             DeclarationSpans = property.DeclarationSpans,
         };
+        FinalPropertyExposure.Link(property, rewritten);
+        return rewritten;
+    }
 
     /// <summary>
     /// The core open-form rule shared by parser and evaluator validation.

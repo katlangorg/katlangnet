@@ -26,10 +26,76 @@ public sealed class KatLangError
 
     public static KatLangError FromEvalError(EvalError error)
     {
-        var message = FormatEvalError(error);
+        var message = AppendInferredImplicitParameterNotes(FormatEvalError(error), error);
         if (error.Span is { } span)
             return new(message, span.StartLineNumber, span.StartColumn, span.EndLineNumber, span.EndColumn);
         return new(message, null, null, null, null);
+    }
+
+    /// <summary>
+    /// Appends the diagnostic notes carried by an arity/unresolved-parameter
+    /// error whose callee parameters were inferred from unresolved identifiers
+    /// (see <see cref="ImplicitParameterProvenance"/>), so the rendered message
+    /// identifies the original misspelled names, their source locations, and
+    /// conservative near-miss suggestions instead of hiding them behind a
+    /// generic count mismatch.
+    /// <list type="bullet">
+    /// <item>Unresolved-implicit-parameter failures already enumerate the
+    /// inferred names, so only suggestions are appended.</item>
+    /// <item>An arity mismatch with a rendered signature already displays the
+    /// parameter names, so only suggestion-bearing notes are appended; the
+    /// signatureless property/value-access phrasing hides the names entirely,
+    /// so every note is rendered with its origin location.</item>
+    /// </list>
+    /// </summary>
+    private static string AppendInferredImplicitParameterNotes(string message, EvalError error)
+    {
+        var terminal = error;
+        while (terminal is EvalError.WithContext withContext)
+            terminal = withContext.Inner;
+
+        switch (terminal)
+        {
+            case EvalError.UnresolvedImplicitParams { InferredImplicitParameters: { Count: > 0 } notes } unresolved:
+                {
+                    var builder = new System.Text.StringBuilder(message);
+                    foreach (var note in notes)
+                    {
+                        if (note.SuggestedName is not { } suggestion)
+                            continue;
+
+                        builder.Append('\n');
+                        builder.Append(unresolved.ParamNames.Count == 1
+                            ? $"Did you mean '{suggestion}'?"
+                            : $"Did you mean '{suggestion}' instead of '{note.Name}'?");
+                    }
+
+                    return builder.ToString();
+                }
+
+            case EvalError.ArityMismatch { InferredImplicitParameters: { Count: > 0 } notes } arity:
+                {
+                    var signatureShown = arity.Signature is not null;
+                    var builder = new System.Text.StringBuilder(message);
+                    foreach (var note in notes)
+                    {
+                        if (signatureShown && note.SuggestedName is null)
+                            continue;
+
+                        builder.Append('\n');
+                        builder.Append(note.Span is { } noteSpan
+                            ? $"An implicit parameter '{note.Name}' was inferred at [{noteSpan.StartLineNumber}:{noteSpan.StartColumn}]."
+                            : $"An implicit parameter '{note.Name}' was inferred from an unresolved name.");
+                        if (note.SuggestedName is { } suggestion)
+                            builder.Append($"\nDid you mean '{suggestion}'?");
+                    }
+
+                    return builder.ToString();
+                }
+
+            default:
+                return message;
+        }
     }
 
     private static string FormatEvalError(EvalError error)
