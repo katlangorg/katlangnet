@@ -80,21 +80,52 @@ public static class SemanticModelBuilder
     public static IReadOnlyList<PropertyInfo> EnumeratePropertyInfos(Algorithm root)
         => Build(root).PropertyInfos;
 
+    /// <summary>
+    /// Builds <see cref="PreludeCatalog.Symbols"/> from the same signature-only
+    /// prelude the semantic model resolves against.
+    /// </summary>
+    internal static IReadOnlyList<VisibleSymbol> CreatePreludeCatalogSymbols()
+        => Builder.CreatePreludeCatalog();
+
+    /// <summary>
+    /// Builds <see cref="PreludeCatalog.DotIntrinsicSymbols"/> (the receiver-only
+    /// <c>.string</c> value intrinsic).
+    /// </summary>
+    internal static IReadOnlyList<VisibleSymbol> CreateDotIntrinsicCatalogSymbols()
+        => Builder.CreateDotIntrinsicCatalog();
+
     private sealed class Builder
     {
         private static readonly Algorithm.User MathAlgorithm = BuiltinRegistry.CreateMathAlgorithm(MathAlgorithmFlavor.SignatureOnly);
         private static readonly Algorithm.User PreludeAlgorithm = BuiltinRegistry.CreateSemanticPreludeAlgorithm(MathAlgorithm);
         private static readonly ScopeFrame PreludeScope = CreatePreludeScope();
-        private static readonly SymbolDefinition StringIntrinsicSymbol = CreateBuiltinSymbol("string", algorithm: null, isPublic: true);
+        private static readonly PropertyInfo StringIntrinsicPropertyInfo = CreateStringIntrinsicPropertyInfo();
+        private static readonly SymbolDefinition StringIntrinsicSymbol = new(
+            "string",
+            SymbolKind.Builtin,
+            AlgorithmValue: null,
+            Declaration: null,
+            IsPublic: true,
+            StringIntrinsicPropertyInfo,
+            StringIntrinsicPropertyInfo);
 
         private readonly List<IdentifierOccurrence> _identifierOccurrences = [];
         private readonly List<DeclarationOccurrence> _declarations = [];
         private readonly List<IdentifierResolution> _identifierResolutions = [];
         private readonly List<PropertyInfo> _propertyInfos = [];
         private readonly HashSet<PropertyInfo> _seenPropertyInfos = new(ReferenceEqualityComparer.Instance);
-        private readonly Dictionary<DeclarationOccurrence, PropertyInfo> _propertyInfoByDeclaration = [];
+        // SourceSpan coordinates are document-local. Two loaded modules may therefore
+        // contain value-equal declaration DTOs even though they denote different
+        // properties; declaration resolution carries the canonical occurrence object,
+        // so this identity map must not collapse those module-local declarations.
+        private readonly Dictionary<DeclarationOccurrence, PropertyInfo> _propertyInfoByDeclaration =
+            new(ReferenceEqualityComparer.Instance);
         private readonly Dictionary<Property, SymbolDefinition> _propertySymbolCache =
             new(ReferenceEqualityComparer.Instance);
+        private readonly Dictionary<Algorithm, IReadOnlyList<VisibleSymbol>> _memberSymbolCache =
+            new(ReferenceEqualityComparer.Instance);
+        private readonly List<ScopeVisibility> _scopeVisibilities = [];
+        private readonly List<ScopeRegionBuilder> _regionStack = [];
 
         public SemanticModel Build(Algorithm root)
         {
@@ -113,6 +144,11 @@ public static class SemanticModelBuilder
                 .OrderBy(static property => property.Declaration?.Span, SpanComparer.Instance)
                 .ThenBy(static property => property.Name, StringComparer.Ordinal)
                 .ToList();
+            var sortedScopeVisibilities = _scopeVisibilities
+                .OrderBy(static scope => scope.Span is null ? 0 : 1)
+                .ThenBy(static scope => scope.NestingDepth)
+                .ThenBy(static scope => scope.Span, SpanComparer.Instance)
+                .ToList();
 
             return new SemanticModel(
                 root,
@@ -120,21 +156,25 @@ public static class SemanticModelBuilder
                 sortedDeclarations,
                 sortedIdentifierResolutions,
                 sortedPropertyInfos,
-                new Dictionary<DeclarationOccurrence, PropertyInfo>(_propertyInfoByDeclaration));
+                new Dictionary<DeclarationOccurrence, PropertyInfo>(
+                    _propertyInfoByDeclaration,
+                    ReferenceEqualityComparer.Instance),
+                sortedScopeVisibilities);
         }
 
         private void VisitAlgorithm(
             Algorithm algorithm,
             ScopeFrame parentScope,
-            IReadOnlyDictionary<string, SymbolDefinition>? extraParameters)
+            IReadOnlyDictionary<string, SymbolDefinition>? extraParameters,
+            SourceSpan? regionSeedSpan = null)
         {
             switch (algorithm)
             {
                 case Algorithm.User user:
-                    VisitUserAlgorithm(user, parentScope, extraParameters);
+                    VisitUserAlgorithm(user, parentScope, extraParameters, regionSeedSpan);
                     break;
                 case Algorithm.Conditional conditional:
-                    VisitConditionalAlgorithm(conditional, parentScope);
+                    VisitConditionalAlgorithm(conditional, parentScope, regionSeedSpan);
                     break;
                 case Algorithm.Builtin:
                     break;
@@ -144,9 +184,12 @@ public static class SemanticModelBuilder
         private void VisitUserAlgorithm(
             Algorithm.User algorithm,
             ScopeFrame parentScope,
-            IReadOnlyDictionary<string, SymbolDefinition>? extraParameters)
+            IReadOnlyDictionary<string, SymbolDefinition>? extraParameters,
+            SourceSpan? regionSeedSpan = null)
         {
             var scope = CreateScope(algorithm, parentScope, extraParameters);
+            var region = OpenScopeRegion(scope, regionSeedSpan, algorithm.IsModuleElaborated);
+            ExtendRegionWithDeclarationAnchors(algorithm, extraParameters);
 
             foreach (var open in algorithm.Opens)
                 VisitOpenExpression(open, scope);
@@ -156,17 +199,26 @@ public static class SemanticModelBuilder
 
             foreach (var expr in algorithm.Output)
                 VisitExpr(expr, scope);
+
+            CloseScopeRegion(region);
         }
 
-        private void VisitConditionalAlgorithm(Algorithm.Conditional algorithm, ScopeFrame parentScope)
+        private void VisitConditionalAlgorithm(
+            Algorithm.Conditional algorithm,
+            ScopeFrame parentScope,
+            SourceSpan? regionSeedSpan = null)
         {
             var scope = CreateScope(algorithm, parentScope, extraParameters: null);
+            var region = OpenScopeRegion(scope, regionSeedSpan);
+            ExtendRegionWithDeclarationAnchors(algorithm, extraParameters: null);
 
             foreach (var open in algorithm.Opens)
                 VisitOpenExpression(open, scope);
 
             foreach (var branch in algorithm.Branches)
                 VisitConditionalBranch(branch, scope);
+
+            CloseScopeRegion(region);
         }
 
         private void VisitConditionalBranch(CondBranch branch, ScopeFrame parentScope)
@@ -292,12 +344,22 @@ public static class SemanticModelBuilder
             if (!ReferenceEquals(owner, MathAlgorithm) && !ReferenceEquals(owner, PreludeAlgorithm))
                 return CreatePropertySymbol(property);
 
-            var symbol = CreateBuiltinSymbol(property.Name, property.Value, property.IsPublic);
+            var symbol = CreateBuiltinSymbol(
+                property.Name,
+                property.Value,
+                property.IsPublic,
+                supportsLexicalDotCall: ReferenceEquals(owner, PreludeAlgorithm)
+                    ? BuiltinRegistry.IsRuntimePreludeName(property.Name)
+                    : null);
             _propertySymbolCache[property] = symbol;
             return symbol;
         }
 
-        private static SymbolDefinition CreateBuiltinSymbol(string name, Algorithm? algorithm, bool isPublic)
+        private static SymbolDefinition CreateBuiltinSymbol(
+            string name,
+            Algorithm? algorithm,
+            bool isPublic,
+            bool? supportsLexicalDotCall = null)
         {
             var propertyInfo = CreatePropertyInfo(
                 name,
@@ -306,7 +368,8 @@ public static class SemanticModelBuilder
                 declaration: null,
                 isPublic,
                 PropertyExposure.Exported,
-                declarationSpans: null);
+                declarationSpans: null,
+                supportsLexicalDotCall: supportsLexicalDotCall);
 
             return new SymbolDefinition(
                 name,
@@ -372,6 +435,8 @@ public static class SemanticModelBuilder
 
         private void VisitOpenExpression(Expr expr, ScopeFrame scope)
         {
+            ExtendCurrentRegion(expr.Span);
+
             switch (expr)
             {
                 case Expr.Resolve resolve:
@@ -421,7 +486,7 @@ public static class SemanticModelBuilder
                     break;
 
                 case Expr.AlgorithmExpr(var algorithm):
-                    VisitAlgorithm(algorithm, PreludeScope, extraParameters: null);
+                    VisitAlgorithm(algorithm, PreludeScope, extraParameters: null, expr.Span);
                     break;
 
                 case Expr.Capture(var captureBody):
@@ -446,6 +511,8 @@ public static class SemanticModelBuilder
 
         private void VisitExpr(Expr expr, ScopeFrame scope)
         {
+            ExtendCurrentRegion(expr.Span);
+
             switch (expr)
             {
                 case Expr.Resolve resolve:
@@ -530,7 +597,7 @@ public static class SemanticModelBuilder
                     break;
 
                 case Expr.AlgorithmExpr(var algorithm):
-                    VisitAlgorithm(algorithm, scope, extraParameters: null);
+                    VisitAlgorithm(algorithm, scope, extraParameters: null, expr.Span);
                     break;
 
                 case Expr.Capture(var captureBody):
@@ -565,7 +632,7 @@ public static class SemanticModelBuilder
                 if (TryResolveDeclaredProperty(targetAlgorithm, dotCall.Name) is { } declaredProperty)
                 {
                     if (declaredProperty.PropertyInfo?.IsExported == true)
-                        return (ClassifyReferenceSymbol(declaredProperty), declaredProperty.Declaration, GetDotMemberPropertyInfo(declaredProperty));
+                        return (ClassifyReferenceSymbol(declaredProperty), declaredProperty.Declaration, declaredProperty.PropertyInfo);
 
                     return (IdentifierClassification.Unresolved, null, null);
                 }
@@ -626,16 +693,17 @@ public static class SemanticModelBuilder
 
                 case Expr.Resolve(var fallbackName)
                     when ResolveLexicalProperty(scope, fallbackName) is { } lexical:
-                    return (ClassifyReferenceSymbol(lexical), lexical.Declaration, GetDotMemberPropertyInfo(lexical));
+                    return (ClassifyReferenceSymbol(lexical), lexical.Declaration, GetLexicalDotFallbackPropertyInfo(lexical));
 
                 default:
                     return (IdentifierClassification.Unresolved, null, null);
             }
         }
 
-        private static PropertyInfo? GetDotMemberPropertyInfo(SymbolDefinition symbol)
-            => symbol.Kind == SymbolKind.Builtin
-                ? symbol.DotPropertyInfo ?? symbol.PropertyInfo
+        private static PropertyInfo? GetLexicalDotFallbackPropertyInfo(SymbolDefinition symbol)
+            => symbol.PropertyInfo?.SupportsLexicalDotCall == true
+                ? symbol.DotPropertyInfo
+                    ?? symbol.PropertyInfo.WithPreferredCallStyle(PropertyCallStyle.Dot)
                 : symbol.PropertyInfo;
 
         private SymbolDefinition? ResolveLexicalProperty(ScopeFrame scope, string name)
@@ -729,11 +797,15 @@ public static class SemanticModelBuilder
             bool isPublic,
             PropertyExposure exposure,
             IReadOnlyList<SourceSpan>? declarationSpans,
-            PropertyCallStyle preferredCallStyle = PropertyCallStyle.Plain)
+            PropertyCallStyle preferredCallStyle = PropertyCallStyle.Plain,
+            bool? supportsLexicalDotCall = null)
         {
+            var supportsDotFallback = supportsLexicalDotCall
+                ?? SupportsLexicalDotCall(algorithm);
+
             if (kind == SymbolKind.Builtin || algorithm is Algorithm.Builtin)
             {
-                var signatures = CreateBuiltinSignatures(name, algorithm);
+                var signatures = CreateBuiltinSignatures(name, algorithm, supportsDotFallback);
                 var preferredSignature = signatures.FirstOrDefault(signature => signature.CallStyle == preferredCallStyle)
                     ?? signatures.FirstOrDefault(signature => signature.CallStyle == PropertyCallStyle.Plain);
 
@@ -748,23 +820,34 @@ public static class SemanticModelBuilder
                 {
                     PreferredCallStyle = preferredSignature?.CallStyle ?? PropertyCallStyle.Plain,
                     Signatures = signatures,
+                    SupportsLexicalDotCall = supportsDotFallback,
                 };
             }
 
             return algorithm switch
             {
                 Algorithm.User user => CreateOrdinaryPropertyInfo(name, user, declaration, isPublic, exposure),
-                Algorithm.Conditional conditional => new PropertyInfo(
+                Algorithm.Conditional conditional => CreateConditionalPropertyInfo(
                     name,
+                    conditional,
                     declaration,
-                    PropertyShape.Conditional,
                     isPublic,
                     exposure,
-                    [],
-                    CreateConditionalBranches(name, conditional, declarationSpans)),
+                    declarationSpans),
                 _ => new PropertyInfo(name, declaration, PropertyShape.Ordinary, isPublic, exposure, [], []),
             };
         }
+
+        private static bool SupportsLexicalDotCall(Algorithm? algorithm)
+            => algorithm switch
+            {
+                Algorithm.User user => user.ParameterPatterns.Count > 0,
+                Algorithm.Conditional { Branches.Count: > 0 } conditional =>
+                    conditional.Branches[0].Pattern.TopLevelArity() > 0,
+                Algorithm.Builtin(var builtin) =>
+                    BuiltinRegistry.GetBuiltin(builtin).PlainSignature.TopLevelParameterCount > 0,
+                _ => false,
+            };
 
         private static PropertyInfo CreateOrdinaryPropertyInfo(
             string name,
@@ -785,6 +868,7 @@ public static class SemanticModelBuilder
                 [])
             {
                 Signatures = CreateOrdinarySignatures(signature, parameters),
+                SupportsLexicalDotCall = signature.TopLevelParameterCount > 0,
             };
         }
 
@@ -833,13 +917,96 @@ public static class SemanticModelBuilder
 
             var signatureParameters = useFlatParameters ? flatParameters : displayParameters;
 
-            return [new PropertySignatureInfo(
-                PropertyCallStyle.Plain,
-                signature.DisplayText,
-                signatureParameters)];
+            var signatures = new List<PropertySignatureInfo>
+            {
+                new(
+                    PropertyCallStyle.Plain,
+                    signature.DisplayText,
+                    signatureParameters),
+            };
+
+            if (signatureParameters.Count > 0)
+                signatures.Add(CreateReceiverInjectedSignature(signature.Name, signatureParameters));
+
+            return Array.AsReadOnly(signatures.ToArray());
         }
 
-        private static IReadOnlyList<PropertySignatureInfo> CreateBuiltinSignatures(string name, Algorithm? algorithm)
+        private static PropertyInfo CreateConditionalPropertyInfo(
+            string name,
+            Algorithm.Conditional algorithm,
+            DeclarationOccurrence? declaration,
+            bool isPublic,
+            PropertyExposure exposure,
+            IReadOnlyList<SourceSpan>? declarationSpans)
+        {
+            var arity = algorithm.Branches.Count == 0
+                ? 0
+                : algorithm.Branches[0].Pattern.TopLevelArity();
+            var parameters = CreateConditionalSignatureParameters(algorithm, arity);
+            var signatures = new List<PropertySignatureInfo>();
+
+            if (arity > 0)
+            {
+                signatures.Add(new PropertySignatureInfo(
+                    PropertyCallStyle.Plain,
+                    CallableSignature.FormatDisplayText(
+                        name,
+                        parameters.Select(static parameter => parameter.DisplayName)),
+                    parameters));
+                signatures.Add(CreateReceiverInjectedSignature(name, parameters));
+            }
+
+            return new PropertyInfo(
+                name,
+                declaration,
+                PropertyShape.Conditional,
+                isPublic,
+                exposure,
+                Parameters: [],
+                CreateConditionalBranches(name, algorithm, declarationSpans))
+            {
+                Signatures = Array.AsReadOnly(signatures.ToArray()),
+                SupportsLexicalDotCall = arity > 0,
+            };
+        }
+
+        private static IReadOnlyList<PropertyParameterInfo> CreateConditionalSignatureParameters(
+            Algorithm.Conditional algorithm,
+            int arity)
+        {
+            if (arity == 0)
+                return [];
+
+            var firstPattern = algorithm.Branches[0].Pattern;
+            IReadOnlyList<Pattern> topLevelPatterns = firstPattern is Pattern.SequenceValue(var items)
+                ? items
+                : [firstPattern];
+            var parameters = new PropertyParameterInfo[arity];
+
+            for (var i = 0; i < arity; i++)
+            {
+                var pattern = topLevelPatterns[i];
+                var name = pattern is Pattern.Bind bind && Lexer.IsValidIdentifier(bind.Name)
+                    ? bind.Name
+                    : arity == 1
+                        ? "value"
+                        : $"argument{i + 1}";
+                parameters[i] = new PropertyParameterInfo(
+                    name,
+                    PropertyParameterKind.ConditionalBinder,
+                    pattern is Pattern.Bind binder ? binder.NameSpan : null)
+                {
+                    IsCollecting = pattern is Pattern.Bind { ParameterKind: ParameterKind.Collecting },
+                };
+            }
+
+            return Array.AsReadOnly(parameters);
+        }
+
+        private static IReadOnlyList<PropertySignatureInfo> CreateBuiltinSignatures(
+            string name,
+            Algorithm? algorithm,
+            bool supportsLexicalDotCall)
         {
             var plainSignature = CreateBuiltinCallableSignature(name, algorithm, PropertyCallStyle.Plain);
             var plainParameters = CreatePropertyParameters(plainSignature, PropertyParameterKind.Explicit);
@@ -850,21 +1017,21 @@ public static class SemanticModelBuilder
             {
                 new(
                     PropertyCallStyle.Plain,
-                    FormatBuiltinSignature(plainSignature, PropertyCallStyle.Plain),
+                    plainSignature.DisplayText,
                     plainParameters),
             };
 
-            var dotSignature = CreateBuiltinCallableSignature(name, algorithm, PropertyCallStyle.Dot);
-            var dotParameters = CreatePropertyParameters(dotSignature, PropertyParameterKind.Explicit);
-            if (!dotParameters.SequenceEqual(plainParameters))
+            if (supportsLexicalDotCall)
             {
+                var dotSignature = CreateBuiltinCallableSignature(name, algorithm, PropertyCallStyle.Dot);
+                var dotParameters = CreatePropertyParameters(dotSignature, PropertyParameterKind.Explicit);
                 signatures.Add(new PropertySignatureInfo(
                     PropertyCallStyle.Dot,
-                    FormatBuiltinSignature(dotSignature, PropertyCallStyle.Dot),
+                    FormatReceiverInjectedSignature(name, plainParameters[0].Name, dotParameters),
                     dotParameters));
             }
 
-            return signatures;
+            return Array.AsReadOnly(signatures.ToArray());
         }
 
         private static IReadOnlyList<PropertyParameterInfo> CreateBuiltinParameters(
@@ -881,16 +1048,20 @@ public static class SemanticModelBuilder
             PropertyCallStyle callStyle)
         {
             if (algorithm is Algorithm.User user)
+            {
+                var parameters = callStyle == PropertyCallStyle.Dot
+                    ? user.Parameters.Skip(1)
+                    : user.Parameters;
                 return CallableSignature.FromParameterDeclarations(
                     name,
-                    user.Parameters,
+                    [.. parameters],
                     CallableParameterSource.Builtin);
+            }
 
             if (algorithm is not Algorithm.Builtin(var builtin))
                 return new CallableSignature(name, []);
 
-            return CallableSignature.FromBuiltin(
-                builtin,
+            return BuiltinRegistry.GetBuiltin(builtin).GetToolingSignature(
                 callStyle == PropertyCallStyle.Dot ? BuiltinCallStyle.Dot : BuiltinCallStyle.Plain);
         }
 
@@ -909,21 +1080,27 @@ public static class SemanticModelBuilder
                 .ToList();
         }
 
-        private static string FormatBuiltinSignature(
-            CallableSignature signature,
-            PropertyCallStyle callStyle)
+        private static PropertySignatureInfo CreateReceiverInjectedSignature(
+            string name,
+            IReadOnlyList<PropertyParameterInfo> plainParameters)
         {
-            var parameterList = string.Join(", ", signature.Parameters.Select(parameter => parameter.DisplayName));
+            var dotParameters = Array.AsReadOnly(plainParameters.Skip(1).ToArray());
+            return new PropertySignatureInfo(
+                PropertyCallStyle.Dot,
+                FormatReceiverInjectedSignature(name, plainParameters[0].Name, dotParameters),
+                dotParameters);
+        }
 
-            // Dot-call syntax injects the receiver as the fixed `collection`
-            // argument, so the receiver placeholder mirrors that parameter
-            // name: `collection.take(count)`, `collection.count`.
-            return callStyle switch
-            {
-                PropertyCallStyle.Dot when signature.Parameters.Count == 0 => $"collection.{signature.Name}",
-                PropertyCallStyle.Dot => $"collection.{signature.Name}({parameterList})",
-                _ => signature.DisplayText,
-            };
+        private static string FormatReceiverInjectedSignature(
+            string name,
+            string receiverName,
+            IReadOnlyList<PropertyParameterInfo> parameters)
+        {
+            var receiverDisplay = Lexer.IsValidIdentifier(receiverName) ? receiverName : "value";
+            var parameterList = string.Join(", ", parameters.Select(static parameter => parameter.DisplayName));
+            return parameters.Count == 0
+                ? $"{receiverDisplay}.{name}"
+                : $"{receiverDisplay}.{name}({parameterList})";
         }
 
         private static PropertyParameterKind ToPropertyParameterKind(CallableParameterSource source)
@@ -1018,11 +1195,340 @@ public static class SemanticModelBuilder
             return declaration;
         }
 
+        // ── Scope visibility (editor completion) ────────────────────────────
+
+        private ScopeRegionBuilder OpenScopeRegion(ScopeFrame scope, SourceSpan? seedSpan, bool isModuleRoot = false)
+        {
+            var isRoot = _regionStack.Count == 0;
+
+            // A loaded module's spans are positioned in the MODULE's source text,
+            // so no span inside its subtree may become a current-document scope
+            // region or extend an enclosing document hull. The document root is
+            // never suppressed: a host analyzing a module directly makes that
+            // module's text the current document.
+            var suppressed = !isRoot
+                && (isModuleRoot || _regionStack[^1].Suppressed);
+
+            var region = new ScopeRegionBuilder(scope, isRoot, suppressed, _regionStack.Count);
+            region.Extend(seedSpan);
+            _regionStack.Add(region);
+            return region;
+        }
+
+        private void CloseScopeRegion(ScopeRegionBuilder region)
+        {
+            _regionStack.RemoveAt(_regionStack.Count - 1);
+
+            if (region.Suppressed)
+                return;
+
+            // A nested scope's content is part of the enclosing scope's source
+            // extent, so the hull folds outward before the region is emitted.
+            if (_regionStack.Count > 0)
+                _regionStack[^1].Extend(region.Hull);
+
+            // The root region is addressable without a span. A nested scope with
+            // no source anchor at all (possible only in host-built trees) has no
+            // position a cursor could reach, so it is not emitted.
+            if (region.IsRoot)
+                _scopeVisibilities.Add(new ScopeVisibility(
+                    Span: null,
+                    ComputeVisibleSymbols(region.Scope),
+                    region.NestingDepth));
+            else if (region.Hull is { } hull)
+                _scopeVisibilities.Add(new ScopeVisibility(
+                    hull,
+                    ComputeVisibleSymbols(region.Scope),
+                    region.NestingDepth));
+        }
+
+        private void ExtendCurrentRegion(SourceSpan? span)
+        {
+            if (_regionStack.Count > 0 && !_regionStack[^1].Suppressed)
+                _regionStack[^1].Extend(span);
+        }
+
+        private void ExtendRegionWithDeclarationAnchors(
+            Algorithm algorithm,
+            IReadOnlyDictionary<string, SymbolDefinition>? extraParameters)
+        {
+            foreach (var property in algorithm.Properties)
+            {
+                foreach (var span in property.DeclarationSpans)
+                    ExtendCurrentRegion(span);
+            }
+
+            foreach (var parameter in algorithm.ExplicitParameters)
+                ExtendCurrentRegion(parameter.Span);
+
+            if (extraParameters is null)
+                return;
+
+            foreach (var symbol in extraParameters.Values)
+                ExtendCurrentRegion(symbol.Declaration?.Span);
+        }
+
+        /// <summary>
+        /// Computes the resolved visible-name set for one scope: the ownership-first
+        /// direct chain (each level's parameters and own properties, an inner level
+        /// deciding a name before any outer level), then open-provided public
+        /// exported members level by level with the evaluator's first-occurrence
+        /// open dedup and same-level ambiguity suppression — mirroring
+        /// <see cref="ElaboratedScopeLookup.LookupLexicalPropertyMatches"/> so every
+        /// emitted symbol agrees with what identifier resolution selects for that
+        /// name in this scope. Prelude names participate in shadowing but are
+        /// emitted once through <see cref="PreludeCatalog.Symbols"/>, not per scope.
+        /// </summary>
+        private IReadOnlyList<VisibleSymbol> ComputeVisibleSymbols(ScopeFrame scope)
+        {
+            var decided = new HashSet<string>(StringComparer.Ordinal);
+            var symbols = new List<VisibleSymbol>();
+
+            for (var frame = scope; frame is not null; frame = frame.Parent)
+            {
+                var isPrelude = ReferenceEquals(frame, PreludeScope);
+
+                foreach (var (name, symbol) in frame.Parameters)
+                {
+                    if (!decided.Add(name))
+                        continue;
+
+                    symbols.Add(new VisibleSymbol(
+                        name,
+                        ClassifyParameterSymbol(symbol),
+                        symbol.Declaration,
+                        Property: null));
+                }
+
+                // Own properties come from the same per-level hit list lexical
+                // lookup scans, first occurrence winning like the lookup does.
+                foreach (var hit in frame.PropertyScope.Properties)
+                {
+                    var name = hit.Property.Name;
+                    if (isPrelude)
+                    {
+                        // Prelude names still decide shadowing: a direct prelude
+                        // name keeps opens from providing it (direct-anywhere
+                        // beats open-anywhere), and the catalog emits it instead.
+                        decided.Add(name);
+                        continue;
+                    }
+
+                    var symbol = CreateLookupPropertySymbol(hit.Owner, hit.Property);
+
+                    // Synthetic properties (deconstruction's hoisted shared RHS)
+                    // have no declaration site and are never source-visible names.
+                    if (symbol.Declaration is null)
+                        continue;
+
+                    if (!decided.Add(name))
+                        continue;
+
+                    symbols.Add(CreateVisibleSymbol(name, symbol));
+                }
+            }
+
+            for (var propertyScope = scope.PropertyScope; propertyScope is not null; propertyScope = propertyScope.Parent)
+                CollectOpenProvidedSymbols(propertyScope, decided, symbols);
+
+            symbols.Sort(static (left, right) => string.CompareOrdinal(left.Name, right.Name));
+            return symbols;
+        }
+
+        /// <summary>
+        /// Adds one scope level's open-provided names, mirroring
+        /// <see cref="ElaboratedScopeLookup.LookupOpenPropertyMatches"/>: written
+        /// named targets dedup first-occurrence-wins by open spelling, inline
+        /// blocks never dedup, only public exported members are provided, and a
+        /// name supplied by two distinct providers at the same level is ambiguous —
+        /// it resolves to nothing there, so it is suppressed rather than offered.
+        /// </summary>
+        private void CollectOpenProvidedSymbols(
+            ElaboratedPropertyScope propertyScope,
+            HashSet<string> decided,
+            List<VisibleSymbol> symbols)
+        {
+            if (propertyScope.Opens.Count == 0)
+                return;
+
+            HashSet<string>? seenKeys = null;
+            Dictionary<string, SymbolDefinition?>? levelProviders = null;
+
+            for (var i = 0; i < propertyScope.Opens.Count; i++)
+            {
+                var openExpr = propertyScope.Opens[i];
+                seenKeys ??= [];
+                if (!seenKeys.Add(ElaboratedScopeLookup.OpenTargetDedupKey(openExpr, i)))
+                    continue;
+
+                var targetAlgorithm = ElaboratedScopeLookup.ResolveOpenTarget(propertyScope, openExpr);
+                if (targetAlgorithm is null)
+                    continue;
+
+                var providedNames = new HashSet<string>(StringComparer.Ordinal);
+                foreach (var property in targetAlgorithm.Properties)
+                {
+                    if (!property.IsPublic || property.Exposure != PropertyExposure.Exported)
+                        continue;
+
+                    // One provider supplies each of its names once (a duplicate
+                    // within one provider is the first-declaration lookup rule),
+                    // and a name already decided directly is never open-provided.
+                    if (decided.Contains(property.Name) || !providedNames.Add(property.Name))
+                        continue;
+
+                    levelProviders ??= new(StringComparer.Ordinal);
+                    levelProviders[property.Name] = levelProviders.TryGetValue(property.Name, out _)
+                        ? null // second distinct provider at this level: ambiguous
+                        : CreateLookupPropertySymbol(targetAlgorithm, property);
+                }
+            }
+
+            if (levelProviders is null)
+                return;
+
+            foreach (var (name, symbol) in levelProviders)
+            {
+                decided.Add(name);
+                if (symbol is not null)
+                    symbols.Add(CreateVisibleSymbol(name, symbol));
+            }
+        }
+
+        private VisibleSymbol CreateVisibleSymbol(string name, SymbolDefinition symbol)
+            => new(
+                name,
+                ClassifyReferenceSymbol(symbol),
+                symbol.Declaration,
+                symbol.PropertyInfo,
+                CreateMemberSymbols(symbol.AlgorithmValue));
+
+        /// <summary>
+        /// One-level structural dot-member surface of an algorithm-valued symbol,
+        /// with the same exposure filter as <see cref="ResolveDotMember"/>:
+        /// exported members only, public-vs-private deliberately ignored because
+        /// structural dot access reaches private members. Conditional-valued
+        /// members stay listed (a clause family is an ordinary dot target);
+        /// properties declared inside clause bodies are not dot-reachable and are
+        /// never listed. Member symbols carry no members of their own.
+        /// </summary>
+        private IReadOnlyList<VisibleSymbol> CreateMemberSymbols(Algorithm? algorithmValue)
+        {
+            if (algorithmValue is not Algorithm.User user || user.Properties.Count == 0)
+                return [];
+
+            if (_memberSymbolCache.TryGetValue(user, out var cached))
+                return cached;
+
+            List<VisibleSymbol>? members = null;
+            var seen = new HashSet<string>(StringComparer.Ordinal);
+
+            foreach (var property in user.Properties)
+            {
+                if (property.DeclarationSpans.Count == 0 || !seen.Add(property.Name))
+                    continue;
+
+                var symbol = CreateLookupPropertySymbol(user, property);
+                if (symbol.PropertyInfo?.IsExported != true)
+                    continue;
+
+                members ??= [];
+                members.Add(new VisibleSymbol(
+                    property.Name,
+                    ClassifyReferenceSymbol(symbol),
+                    symbol.Declaration,
+                    symbol.PropertyInfo));
+            }
+
+            if (members is null)
+            {
+                _memberSymbolCache[user] = [];
+                return [];
+            }
+
+            members.Sort(static (left, right) => string.CompareOrdinal(left.Name, right.Name));
+            var result = Array.AsReadOnly(members.ToArray());
+            _memberSymbolCache[user] = result;
+            return result;
+        }
+
+        public static IReadOnlyList<VisibleSymbol> CreatePreludeCatalog()
+        {
+            var symbols = new List<VisibleSymbol>(PreludeAlgorithm.Properties.Count);
+            foreach (var property in PreludeAlgorithm.Properties)
+            {
+                var symbol = CreateBuiltinSymbol(
+                    property.Name,
+                    property.Value,
+                    property.IsPublic,
+                    BuiltinRegistry.IsRuntimePreludeName(property.Name));
+                symbols.Add(new VisibleSymbol(
+                    property.Name,
+                    IdentifierClassification.Builtin,
+                    Declaration: null,
+                    symbol.PropertyInfo,
+                    CreateMathMemberCatalog(property.Value)));
+            }
+
+            symbols.Sort(static (left, right) => string.CompareOrdinal(left.Name, right.Name));
+            return Array.AsReadOnly(symbols.ToArray());
+        }
+
+        private static IReadOnlyList<VisibleSymbol> CreateMathMemberCatalog(Algorithm? algorithmValue)
+        {
+            if (!ReferenceEquals(algorithmValue, MathAlgorithm))
+                return [];
+
+            var members = new List<VisibleSymbol>(MathAlgorithm.Properties.Count);
+            foreach (var property in MathAlgorithm.Properties)
+            {
+                var symbol = CreateBuiltinSymbol(property.Name, property.Value, property.IsPublic);
+                members.Add(new VisibleSymbol(
+                    property.Name,
+                    IdentifierClassification.Builtin,
+                    Declaration: null,
+                    symbol.PropertyInfo));
+            }
+
+            members.Sort(static (left, right) => string.CompareOrdinal(left.Name, right.Name));
+            return Array.AsReadOnly(members.ToArray());
+        }
+
+        public static IReadOnlyList<VisibleSymbol> CreateDotIntrinsicCatalog()
+        {
+            return [new VisibleSymbol(
+                "string",
+                IdentifierClassification.Builtin,
+                Declaration: null,
+                StringIntrinsicPropertyInfo)];
+        }
+
+        private static PropertyInfo CreateStringIntrinsicPropertyInfo()
+            // `.string` is receiver-only — no plain-call form exists — so its one
+            // signature surface is the dot style with no written arguments.
+            => new(
+                "string",
+                Declaration: null,
+                PropertyShape.Builtin,
+                IsPublic: true,
+                PropertyExposure.Exported,
+                Parameters: [],
+                ConditionalBranches: [])
+            {
+                PreferredCallStyle = PropertyCallStyle.Dot,
+                Signatures = [new PropertySignatureInfo(PropertyCallStyle.Dot, "value.string", [])],
+                SupportsLexicalDotCall = false,
+            };
+
         private static ScopeFrame CreatePreludeScope()
         {
             var properties = new Dictionary<string, SymbolDefinition>(StringComparer.Ordinal);
             foreach (var property in PreludeAlgorithm.Properties)
-                properties[property.Name] = CreateBuiltinSymbol(property.Name, property.Value, property.IsPublic);
+                properties[property.Name] = CreateBuiltinSymbol(
+                    property.Name,
+                    property.Value,
+                    property.IsPublic,
+                    BuiltinRegistry.IsRuntimePreludeName(property.Name));
 
             return new ScopeFrame(
                 parent: null,
@@ -1071,6 +1577,65 @@ public static class SemanticModelBuilder
         public IReadOnlyDictionary<string, SymbolDefinition> Parameters { get; }
 
         public ElaboratedPropertyScope PropertyScope { get; }
+    }
+
+    /// <summary>
+    /// Accumulates the source hull of one scope's content while the builder walks
+    /// it: the union of every span observed inside the scope, seeded with the
+    /// wrapping algorithm expression's span when the scope came from one (brace
+    /// blocks in expression position keep their exact <c>{ ... }</c> extent;
+    /// unwrapped property bodies get the hull of their declaration anchors and
+    /// content spans).
+    /// </summary>
+    private sealed class ScopeRegionBuilder
+    {
+        public ScopeRegionBuilder(ScopeFrame scope, bool isRoot, bool suppressed, int nestingDepth)
+        {
+            Scope = scope;
+            IsRoot = isRoot;
+            Suppressed = suppressed;
+            NestingDepth = nestingDepth;
+        }
+
+        public ScopeFrame Scope { get; }
+
+        public bool IsRoot { get; }
+
+        public int NestingDepth { get; }
+
+        /// <summary>
+        /// True inside a load-elaborated module subtree: spans there belong to the
+        /// module's source text, so the region neither emits nor folds outward.
+        /// </summary>
+        public bool Suppressed { get; }
+
+        public SourceSpan? Hull { get; private set; }
+
+        public void Extend(SourceSpan? span)
+        {
+            if (span is null || Suppressed)
+                return;
+
+            if (Hull is null)
+            {
+                Hull = span;
+                return;
+            }
+
+            var startsEarlier = span.StartLineNumber < Hull.StartLineNumber
+                || (span.StartLineNumber == Hull.StartLineNumber && span.StartColumn < Hull.StartColumn);
+            var endsLater = span.EndLineNumber > Hull.EndLineNumber
+                || (span.EndLineNumber == Hull.EndLineNumber && span.EndColumn > Hull.EndColumn);
+
+            if (!startsEarlier && !endsLater)
+                return;
+
+            Hull = new SourceSpan(
+                startsEarlier ? span.StartLineNumber : Hull.StartLineNumber,
+                startsEarlier ? span.StartColumn : Hull.StartColumn,
+                endsLater ? span.EndLineNumber : Hull.EndLineNumber,
+                endsLater ? span.EndColumn : Hull.EndColumn);
+        }
     }
 
     private sealed class SpanComparer : IComparer<SourceSpan?>

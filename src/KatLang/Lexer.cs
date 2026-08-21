@@ -12,12 +12,30 @@ namespace KatLang;
 /// </summary>
 public static class Lexer
 {
+    private static readonly (string Name, TokenKind Kind)[] KeywordDefinitions =
+    [
+        ("div", TokenKind.KeywordDiv),
+        ("mod", TokenKind.KeywordMod),
+        ("and", TokenKind.KeywordAnd),
+        ("or", TokenKind.KeywordOr),
+        ("xor", TokenKind.KeywordXor),
+        ("not", TokenKind.KeywordNot),
+        ("public", TokenKind.KeywordPublic),
+        ("open", TokenKind.KeywordOpen),
+    ];
+
+    private static readonly IReadOnlyDictionary<string, TokenKind> Keywords =
+        KeywordDefinitions.ToDictionary(
+            static keyword => keyword.Name,
+            static keyword => keyword.Kind,
+            StringComparer.Ordinal);
+
     /// <summary>
     /// Whether <paramref name="text"/> is lexed as one identifier token rather than a
     /// keyword. Kept on the lexer so host-facing signature validation cannot drift from
     /// the language's identifier and keyword rules.
     /// </summary>
-    internal static bool IsValidIdentifier(string text)
+    public static bool IsValidIdentifier(string text)
     {
         if (text.Length == 0 || (!char.IsLetter(text[0]) && text[0] != '_'))
             return false;
@@ -31,19 +49,20 @@ public static class Lexer
         return ClassifyIdentifierOrKeyword(text) == TokenKind.Identifier;
     }
 
+    /// <summary>
+    /// The reserved keyword spellings, exactly the words
+    /// <see cref="ClassifyIdentifierOrKeyword"/> refuses to lex as identifiers.
+    /// Editor tooling reads this instead of hardcoding the keyword set. Both
+    /// this list and identifier classification are derived from the one
+    /// keyword-definition table above.
+    /// </summary>
+    public static IReadOnlyList<string> KeywordNames { get; } =
+        Array.AsReadOnly(KeywordDefinitions.Select(static keyword => keyword.Name).ToArray());
+
     private static TokenKind ClassifyIdentifierOrKeyword(string text)
-        => text switch
-        {
-            "div" => TokenKind.KeywordDiv,
-            "mod" => TokenKind.KeywordMod,
-            "and" => TokenKind.KeywordAnd,
-            "or" => TokenKind.KeywordOr,
-            "xor" => TokenKind.KeywordXor,
-            "not" => TokenKind.KeywordNot,
-            "public" => TokenKind.KeywordPublic,
-            "open" => TokenKind.KeywordOpen,
-            _ => TokenKind.Identifier,
-        };
+        => Keywords.TryGetValue(text, out var keywordKind)
+            ? keywordKind
+            : TokenKind.Identifier;
 
     public static (IReadOnlyList<Token> Tokens, IReadOnlyList<Diagnostic> Diagnostics) Tokenize(string source)
     {

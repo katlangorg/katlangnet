@@ -164,8 +164,10 @@ internal static class ElaboratedScopeLookup
     /// <summary>
     /// Canonical dedup key for one written <c>open</c> target, matching
     /// <c>Evaluator.ResolveAllOpens</c> and Lean <c>resolveAllOpens</c>.
+    /// Shared with the semantic model's scope-visibility enumeration so
+    /// completion applies the same first-occurrence-wins rule as resolution.
     /// </summary>
-    private static string OpenTargetDedupKey(Expr openExpr, int index)
+    internal static string OpenTargetDedupKey(Expr openExpr, int index)
         => openExpr is Expr.AlgorithmExpr or Expr.Capture
             ? $"(inline#{index})"
             : Evaluator.OpenExprName(openExpr);

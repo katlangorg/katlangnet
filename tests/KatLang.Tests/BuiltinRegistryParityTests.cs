@@ -94,17 +94,23 @@ public class BuiltinRegistryParityTests
         {
             var semanticPlain = BuiltinRegistryParitySnapshot.SemanticBuiltinParameterNames(builtin.Id, PropertyCallStyle.Plain);
             var semanticDot = BuiltinRegistryParitySnapshot.SemanticBuiltinParameterNames(builtin.Id, PropertyCallStyle.Dot);
+            var expectedPlain = builtin.ToolingPlainSignature.Parameters
+                .Select(static parameter => parameter.DisplayName)
+                .ToArray();
+            var expectedDot = builtin.ToolingDotSignature.Parameters
+                .Select(static parameter => parameter.DisplayName)
+                .ToArray();
 
-            if (!builtin.PlainParameterNames.SequenceEqual(semanticPlain, StringComparer.Ordinal))
+            if (!expectedPlain.SequenceEqual(semanticPlain, StringComparer.Ordinal))
             {
                 failures.Add(
-                    $"Semantic plain-call metadata for builtin '{builtin.Name}' does not match BuiltinRegistry. Expected: {FormatParameterList(builtin.PlainParameterNames)}. Actual: {FormatParameterList(semanticPlain)}.");
+                    $"Semantic plain-call metadata for builtin '{builtin.Name}' does not match BuiltinRegistry's tooling surface. Expected: {FormatParameterList(expectedPlain)}. Actual: {FormatParameterList(semanticPlain)}.");
             }
 
-            if (!builtin.DotParameterNames.SequenceEqual(semanticDot, StringComparer.Ordinal))
+            if (!expectedDot.SequenceEqual(semanticDot, StringComparer.Ordinal))
             {
                 failures.Add(
-                    $"Semantic dot-call metadata for builtin '{builtin.Name}' does not match BuiltinRegistry. Expected: {FormatParameterList(builtin.DotParameterNames)}. Actual: {FormatParameterList(semanticDot)}.");
+                    $"Semantic dot-call metadata for builtin '{builtin.Name}' does not match BuiltinRegistry's tooling surface. Expected: {FormatParameterList(expectedDot)}. Actual: {FormatParameterList(semanticDot)}.");
             }
         }
 
@@ -120,6 +126,8 @@ public class BuiltinRegistryParityTests
         {
             AddValidationFailure(failures, builtin.PlainSignature);
             AddValidationFailure(failures, builtin.DotSignature);
+            AddValidationFailure(failures, builtin.ToolingPlainSignature);
+            AddValidationFailure(failures, builtin.ToolingDotSignature);
         }
 
         AssertNoFailures(failures);

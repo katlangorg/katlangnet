@@ -88,6 +88,7 @@
 - Synthetic constructs must not invent source spans.
 - If editor-visible behavior changes, update `src/KatLang/Semantics/` and `tests/KatLang.Tests/SemanticModelTests.cs` together.
 - Preserve exact source-span invariants for hover, references, go-to-definition, classification, and callable-property metadata.
+- Scope visibility is completion's semantic source: `SemanticModel.ScopeVisibilities` / `GetVisibleSymbolsAt` and `PreludeCatalog` must enumerate exactly what ownership-first lookup resolves — same shadowing, open dedup, same-level open ambiguity suppression, and direct-beats-open prelude precedence as `ElaboratedScopeLookup`. Scope regions are source-span hulls; a load-elaborated module subtree (`Algorithm.User.IsModuleElaborated`, set by `ModuleLoader`) emits no regions because its spans belong to the module's source text. Builtin names/signatures for editors come from `PreludeCatalog`, never hardcoded lists.
 
 ## Testing Expectations
 

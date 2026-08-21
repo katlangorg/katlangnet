@@ -1036,6 +1036,12 @@ public sealed class ModuleLoader
             // Cancellation never commits a partial module. This check also observes cancellation
             // requested during parsing or recursive elaboration before the cache write.
             _sourceProcessingCancellationToken.ThrowIfCancellationRequested();
+
+            // Mark the module root for editor tooling BEFORE caching so cache hits
+            // splice the same marked instance: spans inside the module belong to
+            // the module's source text, not the loading document's.
+            if (elaborated is Algorithm.User moduleRoot)
+                elaborated = moduleRoot with { IsModuleElaborated = true };
             _cache[normalizedUrl] = elaborated;
 
             return new Expr.AlgorithmExpr(elaborated) { Span = span };

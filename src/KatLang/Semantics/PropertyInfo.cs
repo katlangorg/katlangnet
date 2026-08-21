@@ -50,10 +50,30 @@ public sealed record PropertyParameterInfo(string Name, PropertyParameterKind Ki
 /// <summary>
 /// Editor-facing metadata for one callable signature surface.
 /// </summary>
-public sealed record PropertySignatureInfo(
-    PropertyCallStyle CallStyle,
-    string DisplayText,
-    IReadOnlyList<PropertyParameterInfo> Parameters);
+public sealed record PropertySignatureInfo
+{
+    public PropertySignatureInfo(
+        PropertyCallStyle CallStyle,
+        string DisplayText,
+        IReadOnlyList<PropertyParameterInfo> Parameters)
+    {
+        this.CallStyle = CallStyle;
+        this.DisplayText = DisplayText;
+        this.Parameters = Snapshot(Parameters);
+    }
+
+    public PropertyCallStyle CallStyle { get; }
+
+    public string DisplayText { get; }
+
+    public IReadOnlyList<PropertyParameterInfo> Parameters { get; }
+
+    private static IReadOnlyList<PropertyParameterInfo> Snapshot(
+        IReadOnlyList<PropertyParameterInfo> parameters)
+        => parameters.Count == 0
+            ? Array.Empty<PropertyParameterInfo>()
+            : Array.AsReadOnly(parameters.ToArray());
+}
 
 /// <summary>
 /// Editor-facing summary of one conditional branch head.
@@ -61,10 +81,26 @@ public sealed record PropertySignatureInfo(
 /// head. When the AST only preserves the declared property name span, that
 /// exact declaration span is exposed here.
 /// </summary>
-public sealed record ConditionalBranchInfo(
-    string HeadText,
-    SourceSpan? HeadSpan,
-    IReadOnlyList<string> BinderNames);
+public sealed record ConditionalBranchInfo
+{
+    public ConditionalBranchInfo(
+        string HeadText,
+        SourceSpan? HeadSpan,
+        IReadOnlyList<string> BinderNames)
+    {
+        this.HeadText = HeadText;
+        this.HeadSpan = HeadSpan;
+        this.BinderNames = BinderNames.Count == 0
+            ? Array.Empty<string>()
+            : Array.AsReadOnly(BinderNames.ToArray());
+    }
+
+    public string HeadText { get; }
+
+    public SourceSpan? HeadSpan { get; }
+
+    public IReadOnlyList<string> BinderNames { get; }
+}
 
 /// <summary>
 /// Property-centered semantic information for one resolved declaration target.
@@ -74,20 +110,68 @@ public sealed record ConditionalBranchInfo(
 /// <see cref="Parameters"/> reflects the preferred surface for the current
 /// usage and <see cref="Signatures"/> retains any alternate callable forms.
 /// </summary>
-public sealed record PropertyInfo(
-    string Name,
-    DeclarationOccurrence? Declaration,
-    PropertyShape Shape,
-    bool IsPublic,
-    PropertyExposure Exposure,
-    IReadOnlyList<PropertyParameterInfo> Parameters,
-    IReadOnlyList<ConditionalBranchInfo> ConditionalBranches)
+public sealed record PropertyInfo
 {
+    private IReadOnlyList<PropertyParameterInfo> _parameters;
+    private IReadOnlyList<PropertySignatureInfo> _signatures = [];
+
+    public PropertyInfo(
+        string Name,
+        DeclarationOccurrence? Declaration,
+        PropertyShape Shape,
+        bool IsPublic,
+        PropertyExposure Exposure,
+        IReadOnlyList<PropertyParameterInfo> Parameters,
+        IReadOnlyList<ConditionalBranchInfo> ConditionalBranches)
+    {
+        this.Name = Name;
+        this.Declaration = Declaration;
+        this.Shape = Shape;
+        this.IsPublic = IsPublic;
+        this.Exposure = Exposure;
+        _parameters = Snapshot(Parameters);
+        this.ConditionalBranches = ConditionalBranches.Count == 0
+            ? Array.Empty<ConditionalBranchInfo>()
+            : Array.AsReadOnly(ConditionalBranches.ToArray());
+    }
+
+    public string Name { get; }
+
+    public DeclarationOccurrence? Declaration { get; }
+
+    public PropertyShape Shape { get; }
+
+    public bool IsPublic { get; }
+
+    public PropertyExposure Exposure { get; }
+
+    public IReadOnlyList<PropertyParameterInfo> Parameters
+    {
+        get => _parameters;
+        init => _parameters = Snapshot(value);
+    }
+
+    public IReadOnlyList<ConditionalBranchInfo> ConditionalBranches { get; }
+
     public bool IsExported => Exposure == PropertyExposure.Exported;
+
+    /// <summary>
+    /// Whether ordinary lexical dot-call fallback may inject a receiver into
+    /// this callable. This is false for zero-parameter properties and for
+    /// front-end-only catalog entries such as <c>load</c>. An explicit dot
+    /// intrinsic signature is a separate capability.
+    /// </summary>
+    public bool SupportsLexicalDotCall { get; init; }
 
     public PropertyCallStyle PreferredCallStyle { get; init; } = PropertyCallStyle.Plain;
 
-    public IReadOnlyList<PropertySignatureInfo> Signatures { get; init; } = [];
+    public IReadOnlyList<PropertySignatureInfo> Signatures
+    {
+        get => _signatures;
+        init => _signatures = value.Count == 0
+            ? Array.Empty<PropertySignatureInfo>()
+            : Array.AsReadOnly(value.ToArray());
+    }
 
     public string DisplaySignature => GetDisplaySignature(PreferredCallStyle);
 
@@ -126,6 +210,12 @@ public sealed record PropertyInfo(
         => CallableSignature.FormatDisplayText(
             name,
             parameters.Select(static parameter => parameter.DisplayName));
+
+    private static IReadOnlyList<PropertyParameterInfo> Snapshot(
+        IReadOnlyList<PropertyParameterInfo> parameters)
+        => parameters.Count == 0
+            ? Array.Empty<PropertyParameterInfo>()
+            : Array.AsReadOnly(parameters.ToArray());
 }
 
 internal static class ConditionalBranchHeadFormatter

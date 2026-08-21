@@ -1927,4 +1927,484 @@ public class SemanticModelTests
         protected override void VisitDotMemberIdentifier(Expr.DotCall expr, SourceSpan span)
             => DotMembers.Add(expr.Name);
     }
+
+    // ── Scope visibility (completion) ───────────────────────────────────────
+
+    private static IReadOnlyList<string> SymbolNames(ScopeVisibility scope)
+        => scope.Symbols.Select(static symbol => symbol.Name).ToList();
+
+    private static VisibleSymbol SingleSymbol(ScopeVisibility scope, string name)
+        => Assert.Single(scope.Symbols, symbol => symbol.Name == name);
+
+    [Fact]
+    public void ScopeVisibility_RootListsPropertiesAndImplicitParameters()
+    {
+        var model = BuildModel("Alpha = 1\nBeta = Alpha + missing\nBeta");
+
+        var root = model.FindScopeAt(3, 1);
+        Assert.Null(root.Span);
+        Assert.Equal(["Alpha", "Beta"], SymbolNames(root));
+        Assert.Equal(IdentifierClassification.PropertyReference, SingleSymbol(root, "Alpha").Classification);
+
+        // `missing` is an implicit parameter of Beta's BODY scope, not a root name.
+        var betaBody = model.FindScopeAt(2, 10);
+        Assert.NotNull(betaBody.Span);
+        Assert.Equal(
+            IdentifierClassification.ImplicitParameterReference,
+            SingleSymbol(betaBody, "missing").Classification);
+    }
+
+    [Fact]
+    public void ScopeVisibility_NestedScopeAppliesOwnershipFirstShadowing()
+    {
+        var model = BuildModel(
+            """
+            X = 1
+            F(a) = {
+              Inner = a + 1
+              X = 5
+              Inner + X
+            }
+            F(3)
+            """);
+
+        var body = model.FindScopeAt(5, 5);
+        Assert.Equal(["F", "Inner", "X", "a"], SymbolNames(body));
+
+        // The inner X shadows the root X: exactly one entry, declared on line 4.
+        var x = SingleSymbol(body, "X");
+        Assert.Equal(4, x.Declaration!.Span.StartLineNumber);
+        Assert.Equal(IdentifierClassification.ExplicitParameterReference, SingleSymbol(body, "a").Classification);
+
+        // At root, X is the line-1 declaration and the parameter is not visible.
+        var root = model.FindScopeAt(7, 1);
+        Assert.Equal(1, SingleSymbol(root, "X").Declaration!.Span.StartLineNumber);
+        Assert.DoesNotContain(root.Symbols, symbol => symbol.Name is "a" or "Inner");
+    }
+
+    [Fact]
+    public void ScopeVisibility_UserPropertyShadowsBuiltinInMergedView()
+    {
+        var model = BuildModel("sum = 5\nsum");
+
+        var visible = model.GetVisibleSymbolsAt(2, 1);
+        var sum = Assert.Single(visible, symbol => symbol.Name == "sum");
+        Assert.Equal(IdentifierClassification.PropertyReference, sum.Classification);
+
+        // Unshadowed prelude names merge in exactly once.
+        Assert.Single(visible, symbol => symbol.Name == "count");
+        Assert.Single(visible, symbol => symbol.Name == "Math");
+    }
+
+    [Fact]
+    public void ScopeVisibility_OpenProvidesExportedMembersOnly()
+    {
+        var model = BuildModel(
+            """
+            Lib = {
+              public Tax = 0.21
+              Hidden = 5
+              public Rate = 1
+            }
+            Use = {
+              open Lib
+              Tax + Rate
+            }
+            Use
+            """);
+
+        var use = model.FindScopeAt(8, 5);
+        Assert.Equal(IdentifierClassification.PropertyReference, SingleSymbol(use, "Tax").Classification);
+        Assert.Single(use.Symbols, symbol => symbol.Name == "Rate");
+        Assert.DoesNotContain(use.Symbols, symbol => symbol.Name == "Hidden");
+
+        // Inside Lib itself, Hidden is an ordinary directly-visible property.
+        var lib = model.FindScopeAt(3, 5);
+        Assert.Single(lib.Symbols, symbol => symbol.Name == "Hidden");
+    }
+
+    [Fact]
+    public void ScopeVisibility_OpenDedupAndSameLevelAmbiguityMatchLookup()
+    {
+        var model = BuildModel(
+            """
+            A = {
+              public X = 1
+              public Only = 2
+            }
+            B = {
+              public X = 3
+            }
+            U = {
+              open A, A, B
+              1
+            }
+            U
+            """);
+
+        var u = model.FindScopeAt(10, 3);
+
+        // `open A, A` dedups first-occurrence-wins, so A is ONE provider and
+        // `Only` is offered; X has two distinct providers (A and B) at the same
+        // level, is ambiguous exactly like lexical lookup, and is suppressed.
+        Assert.Single(u.Symbols, symbol => symbol.Name == "Only");
+        Assert.DoesNotContain(u.Symbols, symbol => symbol.Name == "X");
+    }
+
+    [Fact]
+    public void ScopeVisibility_DirectPreludeBeatsOpenProvidedName()
+    {
+        var model = BuildModel(
+            """
+            Lib = {
+              public sum = 42
+            }
+            U = {
+              open Lib
+              1
+            }
+            U
+            """);
+
+        // Direct-anywhere beats open-anywhere: the prelude `sum` wins, so the
+        // scope emits no `sum` entry and the merged view shows the builtin.
+        var u = model.FindScopeAt(6, 3);
+        Assert.DoesNotContain(u.Symbols, symbol => symbol.Name == "sum");
+
+        var mergedSum = Assert.Single(model.GetVisibleSymbolsAt(6, 3), symbol => symbol.Name == "sum");
+        Assert.Equal(IdentifierClassification.Builtin, mergedSum.Classification);
+    }
+
+    [Fact]
+    public void VisibleSymbol_MembersListStructuralDotSurface()
+    {
+        var model = BuildModel(
+            """
+            F(a) = {
+              public L = a + 1
+              public V = 2
+              W = 3
+              L + V + W
+            }
+            F(3)
+            """);
+
+        // Structural dot ignores public/private (W stays) but never exposes a
+        // local-only property (L captures the ancestor parameter `a`).
+        var f = SingleSymbol(model.FindScopeAt(7, 1), "F");
+        Assert.Equal(["V", "W"], f.Members.Select(static member => member.Name).ToList());
+        Assert.All(f.Members, static member => Assert.Empty(member.Members));
+    }
+
+    [Fact]
+    public void ScopeVisibility_ConditionalClauseBodyBindsBinders()
+    {
+        var model = BuildModel(
+            """
+            Fib(0) = 0
+            Fib(1) = 1
+            Fib(n) = Fib(n - 1) + Fib(n - 2)
+            Fib(10)
+            """);
+
+        var clauseBody = model.FindScopeAt(3, 15);
+        Assert.Equal(
+            IdentifierClassification.ConditionalBinderReference,
+            SingleSymbol(clauseBody, "n").Classification);
+        Assert.Single(clauseBody.Symbols, symbol => symbol.Name == "Fib");
+
+        // Literal-clause bodies bind nothing.
+        Assert.DoesNotContain(model.FindScopeAt(4, 1).Symbols, symbol => symbol.Name == "n");
+    }
+
+    [Fact]
+    public void ScopeVisibility_BraceArgumentBlockKeepsExactExtent()
+    {
+        var model = BuildModel("K = a.t\nK(7, {x + 1})");
+
+        var brace = model.FindScopeAt(2, 8);
+        AssertSpan(brace.Span!, 2, 6, 2, 12);
+        Assert.Equal(
+            IdentifierClassification.ImplicitParameterReference,
+            SingleSymbol(brace, "x").Classification);
+
+        // K's one-line body scope carries its implicit parameters.
+        var kBody = model.FindScopeAt(1, 6);
+        Assert.Single(kBody.Symbols, symbol => symbol.Name == "a");
+        Assert.Single(kBody.Symbols, symbol => symbol.Name == "t");
+    }
+
+    [Fact]
+    public void ScopeVisibility_ModuleElaboratedSubtreeEmitsNoRegions()
+    {
+        var module =
+            """
+            public Tax = 0.21
+            public Deep = {
+              public Inner = 1
+              Inner
+            }
+            Helper = 9
+            """;
+        var model = BuildModel(
+            "open 'https://katlang.org/lib.kat'\nTax + 1",
+            new Dictionary<string, string> { ["https://katlang.org/lib.kat"] = module });
+
+        // Module spans belong to the module's source text: no region may claim
+        // current-document positions, so only the root scope exists here.
+        var root = Assert.Single(model.ScopeVisibilities);
+        Assert.Null(root.Span);
+
+        // The module's exported names are still visible (with members), and the
+        // non-exported Helper is not.
+        var deep = SingleSymbol(root, "Deep");
+        Assert.Equal(["Inner"], deep.Members.Select(static member => member.Name).ToList());
+        Assert.Single(root.Symbols, symbol => symbol.Name == "Tax");
+        Assert.DoesNotContain(root.Symbols, symbol => symbol.Name == "Helper");
+    }
+
+    [Fact]
+    public void ScopeVisibility_DeconstructionSyntheticsNeverSurface()
+    {
+        var model = BuildModel("x, *y = (1, 2, 3)\nx");
+
+        var root = model.FindScopeAt(2, 1);
+        Assert.Single(root.Symbols, symbol => symbol.Name == "x");
+        Assert.Single(root.Symbols, symbol => symbol.Name == "y");
+        Assert.DoesNotContain(root.Symbols, symbol => symbol.Name.StartsWith('$'));
+    }
+
+    [Fact]
+    public void PreludeCatalog_CoversPreludeWithSignatures()
+    {
+        var names = PreludeCatalog.Symbols.Select(static symbol => symbol.Name).ToList();
+
+        // Every BuiltinId spelling plus load and Math, no duplicates.
+        foreach (var builtin in Enum.GetValues<BuiltinId>())
+            Assert.Contains(builtin.ToString(), names);
+        Assert.Contains("load", names);
+        Assert.Contains("Math", names);
+        Assert.Equal(names.Count, names.Distinct(StringComparer.Ordinal).Count());
+
+        var count = Assert.Single(PreludeCatalog.Symbols, symbol => symbol.Name == "count");
+        Assert.Equal("count(collection)", count.Property!.GetDisplaySignature(PropertyCallStyle.Plain));
+        Assert.Equal("collection.count", count.Property!.GetDisplaySignature(PropertyCallStyle.Dot));
+        Assert.NotNull(count.Property!.FindSignature(PropertyCallStyle.Dot));
+
+        // Every runtime callable follows the same receiver-injection rule.
+        var ifSymbol = Assert.Single(PreludeCatalog.Symbols, symbol => symbol.Name == "if");
+        Assert.Equal(
+            "condition.if(whenTrue, whenFalse)",
+            ifSymbol.Property!.FindSignature(PropertyCallStyle.Dot)!.DisplayText);
+
+        var atoms = Assert.Single(PreludeCatalog.Symbols, symbol => symbol.Name == "atoms");
+        Assert.Equal("value.atoms", atoms.Property!.FindSignature(PropertyCallStyle.Dot)!.DisplayText);
+
+        var range = Assert.Single(PreludeCatalog.Symbols, symbol => symbol.Name == "range");
+        Assert.Equal("start.range(stop)", range.Property!.FindSignature(PropertyCallStyle.Dot)!.DisplayText);
+
+        var whileSymbol = Assert.Single(PreludeCatalog.Symbols, symbol => symbol.Name == "while");
+        Assert.Equal("while(step, *init)", whileSymbol.Property!.GetDisplaySignature(PropertyCallStyle.Plain));
+        Assert.Equal("step.while(*init)", whileSymbol.Property!.GetDisplaySignature(PropertyCallStyle.Dot));
+        Assert.True(whileSymbol.Property.GetParameters(PropertyCallStyle.Dot).Single().IsCollecting);
+
+        var repeat = Assert.Single(PreludeCatalog.Symbols, symbol => symbol.Name == "repeat");
+        Assert.Equal("repeat(step, count, *init)", repeat.Property!.GetDisplaySignature(PropertyCallStyle.Plain));
+        Assert.Equal("step.repeat(count, *init)", repeat.Property!.GetDisplaySignature(PropertyCallStyle.Dot));
+
+        // `load` is front-end sugar, not a runtime lexical callable. It must
+        // never be offered as the fallback in `receiver.load(...)`.
+        var load = Assert.Single(PreludeCatalog.Symbols, symbol => symbol.Name == "load");
+        Assert.False(load.Property!.SupportsLexicalDotCall);
+        Assert.Null(load.Property.FindSignature(PropertyCallStyle.Dot));
+
+        var math = Assert.Single(PreludeCatalog.Symbols, symbol => symbol.Name == "Math");
+        Assert.NotEmpty(math.Members);
+        var sqrt = Assert.Single(math.Members, member => member.Name == "Sqrt");
+        Assert.Equal("Sqrt(x)", sqrt.Property!.GetDisplaySignature(PropertyCallStyle.Plain));
+        Assert.Single(math.Members, member => member.Name == "Pi");
+    }
+
+    [Fact]
+    public void Build_DotFallbackConsumesFirstParameterForUserAndConditionalCallables()
+    {
+        var ordinary = BuildModel(
+            "Transform(value, suffix) = value\nF(x) = x.Transform('!')");
+        var ordinaryFallback = PropertyAt(ordinary, 2, 12);
+        Assert.Equal(PropertyCallStyle.Dot, ordinaryFallback.PreferredCallStyle);
+        Assert.Equal("value.Transform(suffix)", ordinaryFallback.DisplaySignature);
+        Assert.Equal(["suffix"], ordinaryFallback.Parameters.Select(static parameter => parameter.Name).ToList());
+
+        var conditional = BuildModel(
+            "Choose(0, x) = x\nChoose(n, x) = n\nF(value) = value.Choose(1)");
+        var conditionalFallback = PropertyAt(conditional, 3, 18);
+        Assert.Equal(PropertyShape.Conditional, conditionalFallback.Shape);
+        Assert.True(conditionalFallback.SupportsLexicalDotCall);
+        Assert.Equal(PropertyCallStyle.Dot, conditionalFallback.PreferredCallStyle);
+        Assert.Equal("argument1.Choose(x)", conditionalFallback.DisplaySignature);
+        Assert.Equal(["x"], conditionalFallback.Parameters.Select(static parameter => parameter.Name).ToList());
+
+        var zero = SingleProperty(BuildModel("Zero = 1\nZero"), "Zero");
+        Assert.False(zero.SupportsLexicalDotCall);
+        Assert.Null(zero.FindSignature(PropertyCallStyle.Dot));
+    }
+
+    [Fact]
+    public void Build_StructuralMemberKeepsPlainSignatureWhileFallbackUsesDotSignature()
+    {
+        var model = BuildModel(
+            "M = { public Transform(value, suffix) = value }\nM.Transform\nTransform(value, suffix) = value\nF(x) = x.Transform('!')");
+
+        var structural = PropertyAt(model, 2, 3);
+        Assert.Equal(PropertyCallStyle.Plain, structural.PreferredCallStyle);
+        Assert.Equal("Transform(value, suffix)", structural.DisplaySignature);
+
+        var fallback = PropertyAt(model, 4, 12);
+        Assert.Equal(PropertyCallStyle.Dot, fallback.PreferredCallStyle);
+        Assert.Equal("value.Transform(suffix)", fallback.DisplaySignature);
+    }
+
+    [Fact]
+    public void FindScopeAt_EqualHullsUseLexicalDepthNotCollectionOrder()
+    {
+        var span = new SourceSpan(1, 1, 1, 5);
+        var outer = new ScopeVisibility(
+            span,
+            [new VisibleSymbol("Outer", IdentifierClassification.PropertyReference, null, null)],
+            NestingDepth: 1);
+        var inner = new ScopeVisibility(
+            span,
+            [new VisibleSymbol("Inner", IdentifierClassification.PropertyReference, null, null)],
+            NestingDepth: 2);
+        var parsed = Parser.Parse("1");
+        var model = new SemanticModel(
+            parsed.Root,
+            [],
+            [],
+            [],
+            [],
+            new Dictionary<DeclarationOccurrence, PropertyInfo>(),
+            [outer, inner, new ScopeVisibility(null, [], NestingDepth: 0)]);
+
+        Assert.Equal("Inner", Assert.Single(model.FindScopeAt(1, 3).Symbols).Name);
+    }
+
+    [Fact]
+    public void PublicSemanticDtosSnapshotInputCollections()
+    {
+        var parameterInputs = new List<PropertyParameterInfo>
+        {
+            new("value", PropertyParameterKind.Explicit, null),
+        };
+        var signatureInputs = new List<PropertySignatureInfo>
+        {
+            new(PropertyCallStyle.Plain, "F(value)", parameterInputs),
+        };
+        var property = new PropertyInfo(
+            "F",
+            null,
+            PropertyShape.Ordinary,
+            false,
+            PropertyExposure.Exported,
+            parameterInputs,
+            [])
+        {
+            Signatures = signatureInputs,
+        };
+        var memberInputs = new List<VisibleSymbol>
+        {
+            new("M", IdentifierClassification.PropertyReference, null, null),
+        };
+        var symbol = new VisibleSymbol(
+            "F",
+            IdentifierClassification.PropertyReference,
+            null,
+            property,
+            memberInputs);
+        var symbolInputs = new List<VisibleSymbol> { symbol };
+        var scope = new ScopeVisibility(null, symbolInputs);
+
+        parameterInputs.Clear();
+        signatureInputs.Clear();
+        memberInputs.Clear();
+        symbolInputs.Clear();
+
+        Assert.Single(property.Parameters);
+        Assert.Single(property.Signatures);
+        Assert.Single(property.Signatures[0].Parameters);
+        Assert.Single(symbol.Members);
+        Assert.Single(scope.Symbols);
+    }
+
+    [Fact]
+    public void FindPropertyByDeclaration_DoesNotCollapseEqualModuleLocalCoordinates()
+    {
+        var span = new SourceSpan(1, 1, 1, 1);
+        var firstDeclaration = new DeclarationOccurrence("X", span, OccurrenceKind.PropertyDefinition);
+        var secondDeclaration = new DeclarationOccurrence("X", span, OccurrenceKind.PropertyDefinition);
+        Assert.Equal(firstDeclaration, secondDeclaration);
+
+        var first = new PropertyInfo(
+            "First",
+            firstDeclaration,
+            PropertyShape.Ordinary,
+            false,
+            PropertyExposure.Exported,
+            [],
+            []);
+        var second = new PropertyInfo(
+            "Second",
+            secondDeclaration,
+            PropertyShape.Ordinary,
+            false,
+            PropertyExposure.Exported,
+            [],
+            []);
+        var parsed = Parser.Parse("1");
+        var properties = new Dictionary<DeclarationOccurrence, PropertyInfo>(ReferenceEqualityComparer.Instance)
+        {
+            [firstDeclaration] = first,
+            [secondDeclaration] = second,
+        };
+        var model = new SemanticModel(parsed.Root, [], [], [], [], properties, []);
+
+        Assert.Same(first, model.FindPropertyByDeclaration(firstDeclaration));
+        Assert.Same(second, model.FindPropertyByDeclaration(secondDeclaration));
+        Assert.Null(model.FindPropertyByDeclaration(
+            new DeclarationOccurrence("X", span, OccurrenceKind.PropertyDefinition)));
+    }
+
+    [Fact]
+    public void PreludeCatalog_DotIntrinsicsAndKeywords()
+    {
+        var stringIntrinsic = Assert.Single(PreludeCatalog.DotIntrinsicSymbols);
+        Assert.Equal("string", stringIntrinsic.Name);
+        var signature = Assert.Single(stringIntrinsic.Property!.Signatures);
+        Assert.Equal(PropertyCallStyle.Dot, signature.CallStyle);
+        Assert.Equal("value.string", signature.DisplayText);
+
+        Assert.Equal(
+            ["div", "mod", "and", "or", "xor", "not", "public", "open"],
+            PreludeCatalog.KeywordNames);
+    }
+
+    [Fact]
+    public void GetVisibleSymbolsAt_NamesAreUnique()
+    {
+        var model = BuildModel(
+            """
+            sum = 5
+            F(a) = {
+              count = a
+              count + 1
+            }
+            F(2)
+            """);
+
+        foreach (var (line, column) in new[] { (1, 1), (4, 5), (6, 1) })
+        {
+            var names = model.GetVisibleSymbolsAt(line, column).Select(static symbol => symbol.Name).ToList();
+            Assert.Equal(names.Count, names.Distinct(StringComparer.Ordinal).Count());
+        }
+    }
 }

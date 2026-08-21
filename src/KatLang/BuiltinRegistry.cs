@@ -88,7 +88,9 @@ internal sealed class BuiltinDescriptor
         int? fixedArity,
         IReadOnlyList<CallableParameter> plainParameters,
         IReadOnlyList<CallableParameter> dotParameters,
-        SequenceBuiltinMetadata? sequenceMetadata = null)
+        SequenceBuiltinMetadata? sequenceMetadata = null,
+        IReadOnlyList<CallableParameter>? toolingPlainParameters = null,
+        IReadOnlyList<CallableParameter>? toolingDotParameters = null)
     {
         Id = id;
         Name = id.ToString();
@@ -99,8 +101,12 @@ internal sealed class BuiltinDescriptor
         DotParameterNames = dotParameters.Select(static parameter => parameter.DisplayName).ToArray();
         PlainSignature = new CallableSignature(Name, plainParameters);
         DotSignature = new CallableSignature(Name, dotParameters);
+        ToolingPlainSignature = new CallableSignature(Name, toolingPlainParameters ?? plainParameters);
+        ToolingDotSignature = new CallableSignature(Name, toolingDotParameters ?? dotParameters);
         PlainSignature.ValidateOrThrow();
         DotSignature.ValidateOrThrow();
+        ToolingPlainSignature.ValidateOrThrow();
+        ToolingDotSignature.ValidateOrThrow();
         SequenceMetadata = sequenceMetadata;
     }
 
@@ -113,6 +119,15 @@ internal sealed class BuiltinDescriptor
     public CallableSignature PlainSignature { get; }
 
     public CallableSignature DotSignature { get; }
+
+    /// <summary>
+    /// Editor-facing callable surfaces. These normally equal the runtime
+    /// signatures; loop builtins use a collecting <c>*init</c> display while
+    /// retaining their stricter runtime minimum of one initial-state slot.
+    /// </summary>
+    public CallableSignature ToolingPlainSignature { get; }
+
+    public CallableSignature ToolingDotSignature { get; }
 
     public IReadOnlyList<CallableParameter> PlainParameters { get; }
 
@@ -165,6 +180,9 @@ internal sealed class BuiltinDescriptor
 
     public CallableSignature GetSignature(BuiltinCallStyle callStyle)
         => callStyle == BuiltinCallStyle.Dot ? DotSignature : PlainSignature;
+
+    public CallableSignature GetToolingSignature(BuiltinCallStyle callStyle)
+        => callStyle == BuiltinCallStyle.Dot ? ToolingDotSignature : ToolingPlainSignature;
 }
 
 internal enum MathAlgorithmFlavor
@@ -226,8 +244,8 @@ internal static class BuiltinRegistry
     private static readonly BuiltinDescriptor[] Builtins =
     [
         Fixed(BuiltinId.@if, "condition", "whenTrue", "whenFalse"),
-        Fixed(BuiltinId.@while, "step", "initialState"),
-        Fixed(BuiltinId.@repeat, "step", "count", "initialState"),
+        Loop(BuiltinId.@while, "step"),
+        Loop(BuiltinId.@repeat, "step", "count"),
         Fixed(BuiltinId.@atoms, "value"),
         Fixed(BuiltinId.@range, "start", "stop"),
         Sequence(BuiltinId.@filter, FilterSequenceMetadata),
@@ -290,6 +308,15 @@ internal static class BuiltinRegistry
 
     public static IReadOnlyList<string> ParameterDetectorPreludeNames { get; } =
         BuiltinNames.Concat(SemanticPreludeExtraNames).ToArray();
+
+    /// <summary>
+    /// Whether a semantic-prelude name also exists in the runtime prelude and
+    /// can therefore participate in ordinary lexical dot-call fallback.
+    /// Front-end-only <c>load</c> deliberately returns false.
+    /// </summary>
+    public static bool IsRuntimePreludeName(string name)
+        => Builtins.Any(descriptor => descriptor.Name == name)
+            || RuntimePreludeExtraNames.Contains(name, StringComparer.Ordinal);
 
     public static IReadOnlyList<MathMemberDescriptor> MathMembers => MathMemberDescriptors;
 
@@ -439,7 +466,30 @@ internal static class BuiltinRegistry
         var parameters = parameterNames.Select(static name => new CallableParameter(
             name,
             Source: CallableParameterSource.Builtin)).ToArray();
-        return new(id, parameterNames.Length, parameters, parameters);
+        return new(id, parameterNames.Length, parameters, parameters.Skip(1).ToArray());
+    }
+
+    private static BuiltinDescriptor Loop(BuiltinId id, params string[] fixedParameterNames)
+    {
+        var runtimeParameters = fixedParameterNames
+            .Append("initialState")
+            .Select(static name => new CallableParameter(name, Source: CallableParameterSource.Builtin))
+            .ToArray();
+        var toolingParameters = fixedParameterNames
+            .Select(static name => new CallableParameter(name, Source: CallableParameterSource.Builtin))
+            .Append(new CallableParameter(
+                "init",
+                ParameterKind.Collecting,
+                CallableParameterSource.Builtin))
+            .ToArray();
+
+        return new(
+            id,
+            runtimeParameters.Length,
+            runtimeParameters,
+            runtimeParameters.Skip(1).ToArray(),
+            toolingPlainParameters: toolingParameters,
+            toolingDotParameters: toolingParameters.Skip(1).ToArray());
     }
 
     private static BuiltinDescriptor Sequence(BuiltinId id, SequenceBuiltinMetadata metadata)

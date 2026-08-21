@@ -1286,6 +1286,18 @@ public abstract record Algorithm
         internal bool IsAssignmentDeconstructionHelper { get; init; }
 
         /// <summary>
+        /// True for a module root spliced into the tree by load elaboration.
+        /// Tooling-only provenance metadata: source spans inside a loaded module
+        /// are positioned in the MODULE's source text, so editor scope regions
+        /// derived from spans must not treat them as current-document positions
+        /// (the semantic model suppresses scope-region emission for the whole
+        /// marked subtree; identifier occurrences keep their existing per-span
+        /// source-text filtering downstream). Not part of the Lean model — no
+        /// observable evaluation semantics depend on it.
+        /// </summary>
+        internal bool IsModuleElaborated { get; init; }
+
+        /// <summary>
         /// Stable per-deconstruction identity token shared by all N target helpers of one
         /// <c>x0, ..., x{N-1} = RHS</c> (a fresh token per deconstruction, assigned at parse).
         /// The run-scoped deconstruction binding cache groups the N helpers by this token so the

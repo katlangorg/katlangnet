@@ -73,19 +73,27 @@ public sealed class SemanticModel
         IReadOnlyList<DeclarationOccurrence> declarations,
         IReadOnlyList<IdentifierResolution> identifierResolutions,
         IReadOnlyList<PropertyInfo> propertyInfos,
-        IReadOnlyDictionary<DeclarationOccurrence, PropertyInfo> propertiesByDeclaration)
+        IReadOnlyDictionary<DeclarationOccurrence, PropertyInfo> propertiesByDeclaration,
+        IReadOnlyList<ScopeVisibility>? scopeVisibilities = null)
     {
         Root = root;
-        IdentifierOccurrences = identifierOccurrences;
-        Declarations = declarations;
-        IdentifierResolutions = identifierResolutions;
-        PropertyInfos = propertyInfos;
-        _propertiesByDeclaration = new Dictionary<DeclarationOccurrence, PropertyInfo>(propertiesByDeclaration);
+        IdentifierOccurrences = Array.AsReadOnly(identifierOccurrences.ToArray());
+        Declarations = Array.AsReadOnly(declarations.ToArray());
+        IdentifierResolutions = Array.AsReadOnly(identifierResolutions.ToArray());
+        PropertyInfos = Array.AsReadOnly(propertyInfos.ToArray());
+        ScopeVisibilities = Array.AsReadOnly(
+            (scopeVisibilities ?? [new ScopeVisibility(Span: null, Symbols: [])]).ToArray());
+        // Declaration coordinates are local to their source document. Preserve
+        // canonical occurrence identity so equal name/span DTOs from different
+        // loaded modules cannot overwrite one another.
+        _propertiesByDeclaration = new Dictionary<DeclarationOccurrence, PropertyInfo>(
+            propertiesByDeclaration,
+            ReferenceEqualityComparer.Instance);
         _propertiesByName = propertyInfos
             .GroupBy(static property => property.Name, StringComparer.Ordinal)
             .ToDictionary(
                 static group => group.Key,
-                static group => (IReadOnlyList<PropertyInfo>)group.ToList(),
+                static group => (IReadOnlyList<PropertyInfo>)Array.AsReadOnly(group.ToArray()),
                 StringComparer.Ordinal);
     }
 
@@ -125,6 +133,88 @@ public sealed class SemanticModel
     public IReadOnlyList<PropertyInfo> PropertyInfos { get; }
 
     /// <summary>
+    /// The lexical scope regions of this program with their resolved visible-name
+    /// sets, root first. Regions are the source hulls of scope content, so nested
+    /// scopes appear as contained spans; each region's symbols already apply
+    /// shadowing, open dedup/ambiguity, and direct-beats-open precedence, and
+    /// exclude prelude names (see <see cref="PreludeCatalog.Symbols"/>).
+    /// </summary>
+    public IReadOnlyList<ScopeVisibility> ScopeVisibilities { get; }
+
+    /// <summary>
+    /// Finds the innermost scope region containing the supplied position, falling
+    /// back to the root scope for positions outside every nested region.
+    /// </summary>
+    public ScopeVisibility FindScopeAt(int lineNumber, int column)
+    {
+        ScopeVisibility? root = null;
+        ScopeVisibility? best = null;
+
+        foreach (var scope in ScopeVisibilities)
+        {
+            if (scope.Span is null)
+            {
+                root ??= scope;
+                continue;
+            }
+
+            if (!Contains(scope.Span, lineNumber, column))
+                continue;
+
+            if (best is null
+                || scope.NestingDepth > best.NestingDepth
+                || (scope.NestingDepth == best.NestingDepth && IsInnerSpan(scope.Span, best.Span!)))
+                best = scope;
+        }
+
+        return best ?? root ?? new ScopeVisibility(Span: null, Symbols: []);
+    }
+
+    /// <summary>
+    /// The full effective visible-name set at the supplied position: the innermost
+    /// scope's resolved symbols followed by the prelude names they do not shadow.
+    /// Dot-only intrinsics (<see cref="PreludeCatalog.DotIntrinsicSymbols"/>) are
+    /// not bare-name-visible and are deliberately excluded.
+    /// </summary>
+    public IReadOnlyList<VisibleSymbol> GetVisibleSymbolsAt(int lineNumber, int column)
+    {
+        var scope = FindScopeAt(lineNumber, column);
+        var result = new List<VisibleSymbol>(scope.Symbols.Count + PreludeCatalog.Symbols.Count);
+        result.AddRange(scope.Symbols);
+
+        var shadowed = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var symbol in scope.Symbols)
+            shadowed.Add(symbol.Name);
+
+        foreach (var symbol in PreludeCatalog.Symbols)
+        {
+            if (!shadowed.Contains(symbol.Name))
+                result.Add(symbol);
+        }
+
+        return Array.AsReadOnly(result.ToArray());
+    }
+
+    /// <summary>
+    /// True when <paramref name="candidate"/> is the more deeply nested of two
+    /// containing scope hulls: it starts later, or starts identically and ends
+    /// earlier. Well-formed scope hulls nest, so this picks the innermost region.
+    /// </summary>
+    private static bool IsInnerSpan(SourceSpan candidate, SourceSpan current)
+    {
+        var byStart = candidate.StartLineNumber != current.StartLineNumber
+            ? candidate.StartLineNumber.CompareTo(current.StartLineNumber)
+            : candidate.StartColumn.CompareTo(current.StartColumn);
+        if (byStart != 0)
+            return byStart > 0;
+
+        var byEnd = candidate.EndLineNumber != current.EndLineNumber
+            ? candidate.EndLineNumber.CompareTo(current.EndLineNumber)
+            : candidate.EndColumn.CompareTo(current.EndColumn);
+        return byEnd < 0;
+    }
+
+    /// <summary>
     /// Finds the first identifier resolution whose span contains the supplied position.
     /// </summary>
     public IdentifierResolution? FindResolutionAt(int lineNumber, int column)
@@ -151,7 +241,9 @@ public sealed class SemanticModel
 
     /// <summary>
     /// Finds the property-centered semantic object associated with a specific
-    /// declaration occurrence.
+    /// declaration occurrence. The occurrence must be the canonical instance
+    /// returned by this model; source coordinates alone are not a cross-module
+    /// declaration identity.
     /// </summary>
     public PropertyInfo? FindPropertyByDeclaration(DeclarationOccurrence declaration)
         => _propertiesByDeclaration.TryGetValue(declaration, out var property)
