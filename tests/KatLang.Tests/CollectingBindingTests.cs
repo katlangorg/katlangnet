@@ -679,4 +679,29 @@ public class CollectingBindingTests
         Assert.Contains(value, set);
         Assert.Contains(equivalent, set);
     }
+
+    // ── Mutation campaign 2026-08-22: two suffix parameters after a collector ──
+    // Every pre-campaign mixed-collecting case used exactly ONE suffix parameter,
+    // where suffix layout arithmetic is degenerate (its index term is always 0).
+    // This pins the two-suffix shape for the direct call AND the flat-callback row
+    // form. NOTE: it does NOT reach Evaluator's BindCallableArguments suffix
+    // arithmetic (mutants 1504/1505 survive it) — those bind through a path this
+    // campaign did not identify and remain UNPINNED.
+    [Fact]
+    public void MixedCollecting_WithTwoSuffixParameters_BindsEachSuffixByPosition()
+    {
+        // Direct call.
+        var direct = EvaluateAllModes("Take(*mid, a, b) = (mid, a, b)\nTake(1, 2, 3, 4)");
+        AssertSemanticallyEqual(Seq(List(Atom(1), Atom(2)), Atom(3), Atom(4)), direct);
+
+        // Flat CALLBACK rows go through BindFlatCollectingSlots ->
+        // BindItemsToFlatCollectingLayout, where the suffix arithmetic lives.
+        var callback = EvaluateAllModes(
+            "Rows = (1, 2, 3, 4), (5, 6, 7, 8)\nF(*mid, a, b) = (mid, a, b)\nRows.map(F)");
+        AssertSemanticallyEqual(
+            List(
+                Seq(List(Atom(1), Atom(2)), Atom(3), Atom(4)),
+                Seq(List(Atom(5), Atom(6)), Atom(7), Atom(8))),
+            callback);
+    }
 }

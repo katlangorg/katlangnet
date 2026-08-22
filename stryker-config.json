@@ -1,0 +1,22 @@
+{
+  "stryker-config": {
+    "project": "KatLang.csproj",
+    "test-projects": [ "tests/KatLang.Tests/KatLang.Tests.csproj" ],
+    "mutate": [
+      "**/Result.cs",
+      "**/ParameterDetector.cs",
+      "**/ImplicitArgumentResolver.cs",
+      "**/NameSuggestions.cs",
+      "**/PropertyExposureResolver.cs",
+      "**/PropertyDependencyGraph.cs",
+      "**/Signatures/CallableBindingPlan.cs",
+      "**/Evaluator.cs{53380..112769}{130208..167482}{318924..411371}"
+    ],
+    "coverage-analysis": "perTest",
+    "concurrency": 14,
+    "mutation-level": "Standard",
+    "reporters": [ "json", "html", "dots" ],
+    "break-on-initial-test-failure": false,
+    "additional-timeout": 30000
+  }
+}

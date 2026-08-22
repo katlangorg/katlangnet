@@ -380,6 +380,72 @@ public class ImplicitParameterDiagnosticsTests
         Assert.DoesNotContain("Did you mean", message, StringComparison.Ordinal);
     }
 
+    // ── Mutation-campaign 2026-08-22: candidate-collection budget/dedup gaps ──
+    // These pin TryCollectVisibleLexicalNames' CONSERVATIVE contract, which the
+    // pre-campaign suite left unobserved: three surviving mutants (Stryker
+    // 978/991/1009) changed candidate-collection outcomes without failing a test.
+
+    /// <summary>
+    /// Budget exhaustion must suppress the suggestion ENTIRELY, including an
+    /// otherwise-available structural member candidate. Structural candidates are
+    /// collected BEFORE the lexical sweep, so a mutant that reports budget failure
+    /// as success (returning true with an empty name list instead of false) still
+    /// has 'Value' in hand and would suggest it. The pre-existing budget test uses
+    /// a BARE name, where candidates is empty either way and the two agree.
+    /// </summary>
+    [Fact]
+    public void CandidateBudgetExceeded_SuppressesEvenAnAvailableStructuralSuggestion()
+    {
+        var definitions = string.Join(
+            '\n',
+            Enumerable.Range(0, 513).Select(static index => $"Candidate{index} = {index}"));
+        var (message, error) = FailWithParity(
+            $"{definitions}\nM = {{ public Value = 42 }}\nM.Valeu");
+
+        Assert.Null(SingleNote(error).SuggestedName);
+        Assert.DoesNotContain("Did you mean", message, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Same conservative rule when the budget is exhausted while sweeping an
+    /// OPENED target's exported properties rather than direct lexical ones.
+    /// </summary>
+    [Fact]
+    public void CandidateBudgetExceededThroughOpen_SuppressesEvenAnAvailableStructuralSuggestion()
+    {
+        var members = string.Join(
+            '\n',
+            Enumerable.Range(0, 513).Select(static index => $"  public Opened{index} = {index}"));
+        var (message, error) = FailWithParity(
+            $"open Lib\nLib = {{\n{members}\n}}\nM = {{ public Value = 42 }}\nM.Valeu");
+
+        Assert.Null(SingleNote(error).SuggestedName);
+        Assert.DoesNotContain("Did you mean", message, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// A name visible at TWO scope levels is collected once; the repeat sighting is
+    /// an ordinary skip, NOT budget exhaustion. A mutant that reports the duplicate
+    /// as a collection failure silently suppresses every suggestion in any program
+    /// where a name is shadowed — the common case this test pins.
+    /// </summary>
+    [Fact]
+    public void NameVisibleAtTwoScopeLevels_StillYieldsSuggestion()
+    {
+        var (message, error) = FailWithParity(
+            """
+            Value = 1
+            Wrapper = {
+              Value = 2
+              Valeu
+            }
+            Wrapper
+            """);
+
+        Assert.Equal("Value", SingleNote(error).SuggestedName);
+        Assert.Contains("Did you mean 'Value'?", message, StringComparison.Ordinal);
+    }
+
     [Fact]
     public void BareNameSuggestion_SuppressesAmbiguousOpenedCandidate()
     {
@@ -716,4 +782,34 @@ public class ImplicitParameterDiagnosticsTests
     [InlineData("alfa", "alpha", 2)]
     public void OptimalStringAlignmentDistance_MatchesExpected(string a, string b, int expected)
         => Assert.Equal(expected, NameSuggestions.OptimalStringAlignmentDistance(a, b));
+// Pins first-occurrence provenance when ONE inferred name occurs TWICE inside a single
+// node -- a shape no pre-campaign test had. NOTE: the span these assert comes from the
+// detector's RecordFirstOccurrence recorder, NOT from FindResolveSpan; the `??` chains
+// there (mutants 1117/1127) are a FALLBACK used only when no recorder ran, and remain
+// UNPINNED by these tests.
+
+    [Fact]
+    public void ImplicitParameterProvenance_TakesFirstOccurrenceAcrossBinaryOperands()
+    {
+        // `xx` occurs on BOTH operands; provenance must point at the FIRST.
+        var (_, error) = FailWithParity("K = xx + xx\nK");
+
+        var note = SingleNote(error);
+        Assert.Equal("xx", note.Name);
+        Assert.NotNull(note.Span);
+        Assert.Equal(1, note.Span!.StartLineNumber);
+        Assert.Equal(5, note.Span!.StartColumn);
+    }
+
+    [Fact]
+    public void ImplicitParameterProvenance_TakesCalleeOccurrenceBeforeArgument()
+    {
+        // `xx` is both the callee and its own argument; the callee occurrence is first.
+        var (_, error) = FailWithParity("K = xx(xx)\nK");
+
+        var note = SingleNote(error);
+        Assert.Equal("xx", note.Name);
+        Assert.NotNull(note.Span);
+        Assert.Equal(5, note.Span!.StartColumn);
+    }
 }

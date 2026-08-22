@@ -254,4 +254,26 @@ public class WideValueRobustnessTests
             allocated < 64_000,
             $"bounded display of a wide flat value allocated {allocated} bytes");
     }
+
+    // ── Mutation campaign 2026-08-22: bounded atoms cap boundary ────────────
+    // `Result.cs` `collected.Count >= maxItems` -> `>` survived: the existing bounded
+    // test uses a value far OVER the cap, so the boundary itself never bites.
+    [Fact]
+    public void BoundedLanguageAtoms_CapBoundaryIsExact()
+    {
+        // SCALAR root: the `case Atom` arm carries its own cap check, distinct from
+        // the traversal loop's. A zero cap must reject the single atom outright.
+        var scalar = Evaluator.Run(new Expr.AlgorithmExpr(SourceProvenance.ParseValid("7").Root));
+        Assert.False(scalar.IsError);
+        Assert.False(scalar.Value.TryLanguageAtoms(0, out _), "a zero cap must reject even one atom");
+        Assert.True(scalar.Value.TryLanguageAtoms(1, out var one), "exactly at the cap must succeed");
+        Assert.Single(one);
+
+        // Sequence root: the in-loop cap, one atom over.
+        var seq = Evaluator.Run(new Expr.AlgorithmExpr(SourceProvenance.ParseValid("(1, 2, 3)").Root));
+        Assert.False(seq.IsError);
+        Assert.True(seq.Value.TryLanguageAtoms(3, out var atCap), "exactly at the cap must succeed");
+        Assert.Equal(3, atCap.Count);
+        Assert.False(seq.Value.TryLanguageAtoms(2, out _), "one atom over the cap must fail");
+    }
 }

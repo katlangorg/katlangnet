@@ -832,4 +832,27 @@ public class ParameterDetectorTests
                 || args.Any(output => ContainsResolve(output, name)),
             _ => false,
         };
+
+    // ── Mutation campaign 2026-08-22: rewritten-node span preservation ──────
+    // ParameterDetector REBUILDS these node shapes when a free name is promoted to
+    // an implicit parameter. Every `{ Span = expr.Span }` on those rebuilds could be
+    // deleted without a single test failing (34 surviving + ~15 no-coverage mutants),
+    // yet `expr.Span` feeds evaluator diagnostic attachment and the semantic model.
+    [Theory]
+    [InlineData("K = x:0", typeof(Expr.Index))]
+    [InlineData("K = -x", typeof(Expr.Unary))]
+    [InlineData("K = x + 1", typeof(Expr.Binary))]
+    [InlineData("K = [x]", typeof(Expr.ListLiteral))]
+    [InlineData("K = x*", typeof(Expr.SequenceSpread))]
+    public void ImplicitParameterRewrite_PreservesRewrittenNodeSpan(string definition, Type expectedShape)
+    {
+        var parsed = SourceProvenance.ParseValid(definition + "\nK");
+        var k = Assert.IsType<Algorithm.User>(parsed.Root.Properties[0].Value);
+        Assert.Equal(["x"], k.Params);
+
+        var body = Assert.Single(k.Output);
+        Assert.IsType(expectedShape, body);
+        Assert.NotNull(body.Span);
+        Assert.Equal(1, body.Span!.StartLineNumber);
+    }
 }
