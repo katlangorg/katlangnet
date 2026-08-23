@@ -3,10 +3,12 @@
     <Project Path="benchmarks/KatLang.Benchmarks/KatLang.Benchmarks.csproj" />
   </Folder>
   <Folder Name="/src/">
+    <Project Path="KatLang.CLI/KatLang.CLI.csproj" />
     <Project Path="src/DemoApp/DemoApp.csproj" />
     <Project Path="src/KatLang/KatLang.csproj" />
   </Folder>
   <Folder Name="/tests/">
+    <Project Path="tests/KatLang.CLI.Tests/KatLang.CLI.Tests.csproj" />
     <Project Path="tests/KatLang.Formatting.PublicApi.Tests/KatLang.Formatting.PublicApi.Tests.csproj" />
     <Project Path="tests/KatLang.Tests/KatLang.Tests.csproj" />
   </Folder>
