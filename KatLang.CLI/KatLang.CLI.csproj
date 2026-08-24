@@ -13,8 +13,13 @@
     <Description>Command-line interface for the KatLang language.</Description>
   </PropertyGroup>
 
-  <Target Name="RenameKatLangPublishedExecutable" AfterTargets="Publish" Condition="'$(OS)' == 'Windows_NT'">
-    <Move SourceFiles="$(PublishDir)KatLang.CLI.exe" DestinationFiles="$(PublishDir)katlang.exe" Condition="Exists('$(PublishDir)KatLang.CLI.exe')" />
+  <Target Name="RenameKatLangPublishedExecutable" AfterTargets="Publish">
+    <Move SourceFiles="$(PublishDir)KatLang.CLI.exe" DestinationFiles="$(PublishDir)katlang.exe"
+		  Condition="$([System.String]::Copy('$(RuntimeIdentifier)').StartsWith('win-')) AND Exists('$(PublishDir)KatLang.CLI.exe')" />
+	<Move
+      SourceFiles="$(PublishDir)KatLang.CLI"
+      DestinationFiles="$(PublishDir)katlang"
+      Condition="$([System.String]::Copy('$(RuntimeIdentifier)').StartsWith('linux-')) AND Exists('$(PublishDir)KatLang.CLI')" />
   </Target>
 
   <ItemGroup>
