@@ -813,7 +813,7 @@ public static class ParameterDetector
     /// provider mirrors the receiver occurrence's own elaboration fate:
     /// a name that will elaborate to a parameter (unbound and therefore
     /// inferred, or a known parameter name not shadowed by a visible
-    /// non-builtin property — the <see cref="ShouldRewriteAsParam"/>
+    /// non-prelude property — the <see cref="ShouldRewriteAsParam"/>
     /// decision) is a runtime value; a name resolving to exactly one visible
     /// property is that property's statically known algorithm; an ambiguous
     /// name stays an unresolved reference. The Never/Conditional/Always
@@ -844,7 +844,7 @@ public static class ParameterDetector
         HashSet<string> extraBoundNames)
     {
         if (!IsBoundName(name, scope, extraBoundNames)
-            || (extraBoundNames.Contains(name) && !HasVisibleNonBuiltinPropertyName(scope, name)))
+            || (extraBoundNames.Contains(name) && !HasVisibleNonPreludePropertyName(scope, name)))
         {
             return new(StaticStructuralMemberProviderKind.RuntimeParameter);
         }
@@ -918,7 +918,7 @@ public static class ParameterDetector
         ElaboratedPropertyScope scope,
         HashSet<string> capturedParamNames)
         => localParamNames.Contains(name)
-            || (capturedParamNames.Contains(name) && !HasVisibleNonBuiltinPropertyName(scope, name));
+            || (capturedParamNames.Contains(name) && !HasVisibleNonPreludePropertyName(scope, name));
 
     /// <summary>
     /// Rewrites <see cref="Expr.Resolve"/> to <see cref="Expr.Param"/> for detected parameter names.
@@ -1090,9 +1090,32 @@ public static class ParameterDetector
     private static bool HasVisiblePropertyName(ElaboratedPropertyScope scope, string name)
         => ElaboratedScopeLookup.LookupLexicalPropertyMatches(scope, name).Count > 0;
 
-    private static bool HasVisibleNonBuiltinPropertyName(ElaboratedPropertyScope scope, string name)
-        => ElaboratedScopeLookup.LookupLexicalPropertyMatches(scope, name)
-            .Any(static hit => hit.Property.Value is not Algorithm.Builtin);
+    /// <summary>
+    /// Whether a visible property hit can shadow a captured ancestor PARAMETER
+    /// of the same name. Only a NON-PRELUDE hit can: the prelude is the scope
+    /// chain's root (see <see cref="RootPreludeScope"/>), always FARTHER than
+    /// any capturing algorithm's parameter, so ownership-first resolution
+    /// selects the parameter over every prelude property — builtins and the
+    /// prelude's <see cref="Algorithm.User"/>-valued members (<c>Math</c>, host
+    /// operations, and the Math member aliases such as <c>sin</c> and
+    /// <c>pi</c>) uniformly. <c>F(e) = {e + 1}</c> therefore binds the
+    /// parameter, not <c>Math.E</c>. The first direct hit in the
+    /// ownership-first walk decides (mirroring
+    /// <see cref="ElaboratedScopeLookup.LookupLexicalPropertyMatches"/>); a
+    /// direct hit at any nearer level, and any open-provided hit, may win at
+    /// runtime and keeps the name a lexical reference.
+    /// </summary>
+    private static bool HasVisibleNonPreludePropertyName(ElaboratedPropertyScope scope, string name)
+    {
+        if (ElaboratedScopeLookup.TryLookupDirectLexicalProperty(scope, name) is { } directHit)
+        {
+            var preludeScope = RootPreludeScope(scope);
+            return preludeScope.Properties.Count == 0
+                || !ReferenceEquals(directHit.Owner, preludeScope.Properties[0].Owner);
+        }
+
+        return ElaboratedScopeLookup.LookupOpenPropertyMatches(scope, name).Count > 0;
+    }
 
     /// <summary>
     /// Finds the <see cref="SourceSpan"/> of the first <see cref="Expr.Resolve"/> with the given name

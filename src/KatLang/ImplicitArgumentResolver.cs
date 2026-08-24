@@ -92,8 +92,14 @@ public static class ImplicitArgumentResolver
 
         // Build local param map
         var localParamMap = BuildPropertyParamMap(alg.Properties);
+        // The sibling-order channel consults the same Math-alias shadow knowledge
+        // this pass's own visibleParamMap carries (ancestor property names here,
+        // sibling names inside the builder), so dependency ordering and the
+        // rewriting below cannot disagree about which calls are alias calls.
         var dependencyGraph = alg is Algorithm.User userAlgorithm
-            ? PropertyDependencyGraphBuilder.Build(userAlgorithm)
+            ? PropertyDependencyGraphBuilder.Build(
+                userAlgorithm,
+                preludeNameShadowedByCaller: parentParamMap.ContainsKey)
             : PropertyDependencyGraph.Empty;
 
         // Visible map = parent + local (local overrides). When there are no local properties —
@@ -514,22 +520,49 @@ public static class ImplicitArgumentResolver
         switch (expr)
         {
             case Expr.Resolve(var name):
-                if (!inCallPosition
-                    && paramMap.TryGetValue(name, out var ps)
-                    && ps.Parameters.Count > 0)
+                if (inCallPosition)
+                    break;
+
+                if (paramMap.TryGetValue(name, out var ps))
                 {
-                    if (seen.Add(name))
+                    if (ps.Parameters.Count > 0 && seen.Add(name))
                         deps.Add((name, ps));
+                }
+                else if (BuiltinRegistry.TryGetMathAliasFacts(name, out var bareAliasFacts)
+                    && seen.Add(bareAliasFacts.CanonicalKey))
+                {
+                    // A bare Math ALIAS in value position lifts exactly like the
+                    // bare canonical `Math.X` spelling (the DotCall arm below),
+                    // from the same registry facts. The canonical key dedups the
+                    // two spellings into ONE lifted dependency. Any visible user
+                    // property — even a zero-parameter one — shadows the alias
+                    // through the paramMap branch above.
+                    deps.Add((bareAliasFacts.CanonicalKey, bareAliasFacts.Signature));
                 }
                 break;
 
-            case Expr.Call(var func, _):
+            case Expr.Call(var func, var callArgs):
                 // func: if it's a direct Resolve, it's explicitly called - mark as call position.
                 // Otherwise recurse normally (e.g. Prop target is not in call position).
                 if (func is Expr.Resolve)
+                {
                     CollectImplicitDeps(func, paramMap, seen, deps, inCallPosition: true);
+
+                    // A Math-alias call has the SAME registry-proven strict-value
+                    // argument contract as the written `Math.X(...)` dot shape
+                    // (the DotCall arm below): its argument slots are ordinary
+                    // value positions and contribute implicit dependencies.
+                    // Ordinary neutral call arguments contribute none.
+                    if (TryGetUnshadowedMathAliasCallee(func, paramMap, out var callAliasFacts)
+                        && callAliasFacts.HasStrictValueArguments)
+                    {
+                        CollectArgumentImplicitDeps(callArgs, paramMap, seen, deps);
+                    }
+                }
                 else
+                {
                     CollectImplicitDeps(func, paramMap, seen, deps, inCallPosition: false);
+                }
                 break;
 
             case Expr.Binary(_, var left, var right):
@@ -571,7 +604,7 @@ public static class ImplicitArgumentResolver
                 // DotCall target is in algorithm position (resolveAlg, not eval).
                 CollectImplicitDeps(dotCall.Target, paramMap, seen, deps, inCallPosition: true);
                 if (dotCall.Args is { } dotArgs
-                    && dotCall.HasRegistryProvenStrictValueArguments())
+                    && dotCall.HasRegistryProvenStrictValueArguments(paramMap.ContainsKey))
                 {
                     CollectArgumentImplicitDeps(dotArgs, paramMap, seen, deps);
                 }
@@ -600,6 +633,34 @@ public static class ImplicitArgumentResolver
     {
         foreach (var argExpr in args)
             CollectImplicitDeps(argExpr, paramMap, seen, deps, inCallPosition: false);
+    }
+
+    /// <summary>
+    /// Binding-aware Math-alias classification for one written name expression:
+    /// the registry facts apply ONLY when ordinary resolution actually reaches
+    /// the prelude alias. Any visible user property — local or ancestor, which
+    /// is exactly what <paramref name="paramMap"/> carries — shadows the alias,
+    /// and a parameter reference is an <see cref="Expr.Param"/> after detection,
+    /// so a surviving bare <see cref="Expr.Resolve"/> outside the map can only
+    /// resolve to the prelude. A user-defined <c>sin</c> therefore stays an
+    /// ordinary neutral callable; a call is never classified as Math merely
+    /// because its text is <c>sin</c>. Dependency collection and rewriting both
+    /// consult THIS one test, so they cannot disagree about processing order.
+    /// </summary>
+    private static bool TryGetUnshadowedMathAliasCallee(
+        Expr callee,
+        Dictionary<string, CallableSignature> paramMap,
+        [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out MathCallableFacts? facts)
+    {
+        if (callee is Expr.Resolve(var name)
+            && !paramMap.ContainsKey(name)
+            && BuiltinRegistry.TryGetMathAliasFacts(name, out facts))
+        {
+            return true;
+        }
+
+        facts = null;
+        return false;
     }
 
     /// <summary>
@@ -635,6 +696,27 @@ public static class ImplicitArgumentResolver
                     var implicitArgs = OutputBundle.From(BuildImplicitCallArguments(ps.ParameterPatterns, callerParameterPatterns, sourceBindingKinds));
                     return new Expr.Call(new Expr.Resolve(name) { Span = expr.Span }, implicitArgs) { Span = expr.Span };
                 }
+
+                // Bare Math ALIAS in value position: lift exactly like the bare
+                // canonical `Math.X` arm below, from the same registry facts.
+                // Constants (`pi`, `e`) carry no facts and stay bare references.
+                if (!inCallPosition
+                    && TryGetUnshadowedMathAliasCallee(expr, paramMap, out var bareAliasFacts))
+                {
+                    if (requireExistingParameters
+                        && (existingParameterNames is null
+                            || !CanBuildImplicitCallArgumentsFromExistingParameters(
+                                bareAliasFacts.Signature.ParameterPatterns,
+                                callerParameterPatterns,
+                                existingParameterNames)))
+                    {
+                        return expr;
+                    }
+
+                    var aliasArgs = OutputBundle.From(BuildImplicitCallArguments(
+                        bareAliasFacts.Signature.ParameterPatterns, callerParameterPatterns, sourceBindingKinds));
+                    return new Expr.Call(new Expr.Resolve(name) { Span = expr.Span }, aliasArgs) { Span = expr.Span };
+                }
                 return expr;
 
             case Expr.Call(var func, var args):
@@ -651,7 +733,15 @@ public static class ImplicitArgumentResolver
                         requireExistingParameters,
                         existingParameterNames);
 
-                var newArgs = ProcessArgumentBundle(args, paramMap);
+                // A Math-alias call shares the written `Math.X(...)` dot shape's
+                // registry-proven strict-value argument contract (the DotCall arm
+                // below): its argument slots are ordinary value positions and
+                // lift. Every other call keeps NEUTRAL argument processing so
+                // bare higher-order references survive.
+                var newArgs = TryGetUnshadowedMathAliasCallee(func, paramMap, out var callAliasFacts)
+                    && callAliasFacts.HasStrictValueArguments
+                    ? ProcessValueDemandingArgumentBundle(args, paramMap)
+                    : ProcessArgumentBundle(args, paramMap);
                 return new Expr.Call(newFunc, newArgs) { Span = expr.Span };
 
             case Expr.Binary(var op, var left, var right):
@@ -713,7 +803,7 @@ public static class ImplicitArgumentResolver
                 {
                     Target = RewriteImplicitCalls(dotCall.Target, paramMap, callerParameterPatterns, sourceBindingKinds, inCallPosition: true, requireExistingParameters, existingParameterNames),
                     Args = dotCall.Args is { } dotArgs
-                        ? dotCall.HasRegistryProvenStrictValueArguments()
+                        ? dotCall.HasRegistryProvenStrictValueArguments(paramMap.ContainsKey)
                             ? ProcessValueDemandingArgumentBundle(dotArgs, paramMap)
                             : ProcessArgumentBundle(dotArgs, paramMap)
                         : null,
@@ -760,8 +850,11 @@ public static class ImplicitArgumentResolver
     /// and lifting would destroy the bare reference. Value-context processing
     /// is a property of the consumer, not of the argument.
     ///
-    /// <para>The current value-demanding consumer is the Math member family
-    /// (<see cref="AstHelpers.HasRegistryProvenStrictValueArguments"/>): the builtin registry proves every
+    /// <para>The current value-demanding consumer is the Math member family in
+    /// BOTH of its spellings — the written <c>Math.X(...)</c> dot shape
+    /// (<see cref="AstHelpers.HasRegistryProvenStrictValueArguments"/>) and an
+    /// unshadowed prelude-alias call (<see cref="TryGetUnshadowedMathAliasCallee"/>),
+    /// which resolve to the same <see cref="MathCallableFacts"/>: the builtin registry proves every
     /// Math member consumes strictly numeric values, so no higher-order
     /// channel exists to preserve. Other strict builtins (<c>sum</c>,
     /// <c>count</c>, ...) do NOT currently receive value-context lifting —
@@ -797,10 +890,16 @@ public static class ImplicitArgumentResolver
                 Args: null,
             }
             && !paramMap.ContainsKey(ownerName)
-            && BuiltinRegistry.TryGetBuiltinCallableSignature(ownerName, memberName, out signature)
-            && signature.Parameters.Count > 0)
+            && ownerName == "Math"
+            && BuiltinRegistry.TryGetMathMemberFacts(memberName, out var facts)
+            && facts.Signature.Parameters.Count > 0)
         {
-            callableKey = $"{ownerName}.{memberName}";
+            // The canonical spelling and its prelude alias use the SAME
+            // descriptor-projected identity and signature. Do not reconstruct
+            // the key from text here: that would create a second convention
+            // capable of drifting from MathCallableFacts.CanonicalKey.
+            callableKey = facts.CanonicalKey;
+            signature = facts.Signature;
             return true;
         }
 

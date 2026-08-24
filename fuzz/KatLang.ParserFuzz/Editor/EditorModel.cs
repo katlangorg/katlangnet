@@ -44,6 +44,7 @@ internal static class EditorModel
         var names = new HashSet<string>(StringComparer.Ordinal);
         foreach (var name in BuiltinRegistry.BuiltinNames) names.Add(name);
         foreach (var name in BuiltinRegistry.MathMemberNames) names.Add(name);
+        foreach (var name in BuiltinRegistry.MathAliasNames) names.Add(name);
         names.Add("Math");
         names.Add("string");
         // `spread` is deliberately NOT here: since the star syntax landed it is an ordinary

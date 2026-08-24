@@ -254,7 +254,7 @@ Do not invent unsupported display forms. None of these exist:
 - Avoid shadowing builtin/prelude names with parameters, binders, or helper placeholders. No name is hard-reserved at the parser level; the builtin/prelude names below are syntactically shadowable, but shadowing them is unsafe because it can break lookup, collection pipelines, or intended builtin calls. Do not generate code that shadows them.
 
 Avoid shadowing these parameter or helper names:
-`if`, `while`, `repeat`, `range`, `filter`, `map`, `count`, `contains`, `first`, `last`, `distinct`, `take`, `skip`, `min`, `max`, `sum`, `avg`, `reduce`, `order`, `orderDesc`, `atoms`, `load`, `Math`.
+`if`, `while`, `repeat`, `range`, `filter`, `map`, `count`, `contains`, `first`, `last`, `distinct`, `take`, `skip`, `min`, `max`, `sum`, `avg`, `reduce`, `order`, `orderDesc`, `atoms`, `load`, `Math`, and the lowercase Math aliases `pi`, `e`, `abs`, `ceil`, `floor`, `round`, `sign`, `sqrt`, `ln`, `lg`, `sin`, `asin`, `cos`, `acos`, `tan`, `atan`, `atan2`, `pow`, `log`, `random`, `randomInt`. In particular, avoid `e` as an inferred/free variable because it now resolves to Euler's number; an explicit parameter such as `F(e) = ...` remains valid when shadowing is intended.
 
 Use alternatives:
 - `total` instead of `sum`
@@ -847,32 +847,36 @@ Use true conditional algorithms for literal/mixed structural matching or named a
 
 # 13. Math
 
-Prefer qualified Math calls for isolated use:
-    Math.Sqrt(x)
-    Math.Abs(x)
-    Math.Pi
+Every Math member has one predefined lower-camel-case prelude binding pointing to the SAME canonical function, not a copy:
+`pi`, `e`, `abs`, `ceil`, `floor`, `round`, `sign`, `sqrt`, `ln`, `lg`, `sin`, `asin`, `cos`, `acos`, `tan`, `atan`, `atan2`, `pow`, `log`, `random`, `randomInt`
+for `Math.Pi`, `Math.E`, `Math.Abs`, `Math.Ceil`, `Math.Floor`, `Math.Round`, `Math.Sign`, `Math.Sqrt`, `Math.Ln`, `Math.Lg`, `Math.Sin`, `Math.Asin`, `Math.Cos`, `Math.Acos`, `Math.Tan`, `Math.Atan`, `Math.Atan2`, `Math.Pow`, `Math.Log`, `Math.Random`, `Math.RandomInt`.
 
-Do not `open Math` for a single isolated Math member.
+Prefer the lowercase aliases in ordinary formulas; they need no `open Math` and never generate one implicitly:
+    cos(0.123)
+    sin(pi / 2)
+    round(sqrt(2), 10)
 
-Use `open Math` only when multiple Math members are used and readability clearly improves. After `open Math`, use bare names consistently:
+Keep `Math.X` (`Math.Sqrt(x)`, `Math.Pi`) as the qualified form for disambiguation — for example next to a local definition of the same name. The aliases are prelude bindings, not members of `Math`: `Math.cos(1)` is invalid; inside `Math` only the canonical PascalCase names exist. User definitions shadow aliases (after `sin(x) = ...`, `sin` is the user's callable), and an explicit parameter such as `F(e) = e + 1` uses the parameter, not Euler's number. Avoid alias names — especially free/inferred `e` — as variable or helper names unless shadowing is intended; explicit parameters remain valid.
+
+Do not `open Math` merely to shorten spellings (the aliases already do that). Use `open Math` only when the canonical PascalCase bare names are specifically wanted and readability clearly improves; it exposes only the PascalCase names:
 `Pi`, `E`, `Abs`, `Ceil`, `Floor`, `Round`, `Sign`, `Sqrt`, `Ln`, `Lg`, `Sin`, `Asin`, `Cos`, `Acos`, `Tan`, `Atan`, `Atan2`, `Pow`, `Log`, `Random`, `RandomInt`.
 
 Multi-argument Math members (always supply every argument):
-- `Math.Log(value, base)` / `Log(value, base)` is the logarithm of `value` in the given `base`; it is not a one-argument natural log.
-- `Math.Pow(x, y)` / `Pow(x, y)` raises `x` to the power `y` and is identical to `^` (they share one implementation): an integer exponent of magnitude up to ~9.2e18 uses exact arithmetic (so `2 ^ 10` is exactly `1024` and `10 ^ 27` is exact), while a fractional exponent (`2 ^ 0.5`) or an astronomically large integer exponent is a 34-digit approximation. Prefer `^` for ordinary powers; use `Math.Pow` when a Math-member style is specifically wanted or the formula naturally calls for it.
-- `Math.Atan2(y, x)` / `Atan2(y, x)` is the two-argument arctangent in standard `atan2(y, x)` order (`y` first, then `x`).
+- `log(value, base)` / `Math.Log(value, base)` is the logarithm of `value` in the given `base`; it is not a one-argument natural log.
+- `pow(x, y)` / `Math.Pow(x, y)` raises `x` to the power `y` and is identical to `^` (they share one implementation): an integer exponent of magnitude up to ~9.2e18 uses exact arithmetic (so `2 ^ 10` is exactly `1024` and `10 ^ 27` is exact), while a fractional exponent (`2 ^ 0.5`) or an astronomically large integer exponent is a 34-digit approximation. Prefer `^` for ordinary powers; use `pow`/`Math.Pow` when a Math-member style is specifically wanted or the formula naturally calls for it.
+- `atan2(y, x)` / `Math.Atan2(y, x)` is the two-argument arctangent in standard `atan2(y, x)` order (`y` first, then `x`).
 
 Single-argument logarithms:
-- `Math.Ln(x)` / `Ln(x)` is the natural logarithm (base e).
-- `Math.Lg(x)` / `Lg(x)` is the base-10 logarithm.
+- `ln(x)` / `Math.Ln(x)` is the natural logarithm (base e).
+- `lg(x)` / `Math.Lg(x)` is the base-10 logarithm.
 
-`Round` always takes two arguments: `Round(x, digits)` / `Math.Round(x, digits)`. `digits` is the integer number of digits after the decimal point and must be `>= 0`; use `0` for integer rounding. Midpoints round away from zero, so `Math.Round(1.225, 2)` is `1.23`.
+`round` always takes two arguments: `round(x, digits)` / `Math.Round(x, digits)`. `digits` is the integer number of digits after the decimal point and must be `>= 0`; use `0` for integer rounding. Midpoints round away from zero, so `round(1.225, 2)` is `1.23`.
 
-Use `Math.Random(start, end)` for decimal random numbers and `Math.RandomInt(start, end)` for whole-number random values (uniform; bounds must be whole numbers within `±1e34`). Both produce values in the half-open range `[start; end)`, meaning `start <= value < end`.
-Examples: `Math.Random(0, 1)` gives a decimal value where `0 <= value < 1`; `Math.RandomInt(1, 7)` gives an integer-like dice roll from `1` through `6`.
-Always provide both bounds. Do not generate bare or empty-call forms such as `Math.Random`, `Math.Random()`, `Math.RandomInt`, or `Math.RandomInt()`, and do not generate old spellings such as `Math.Rand`, `Math.Rand()`, or `Math.RandInt`.
+Use `random(start, end)` / `Math.Random(start, end)` for decimal random numbers and `randomInt(start, end)` / `Math.RandomInt(start, end)` for whole-number random values (uniform; bounds must be whole numbers within `±1e34`). Both produce values in the half-open range `[start; end)`, meaning `start <= value < end`.
+Examples: `random(0, 1)` gives a decimal value where `0 <= value < 1`; `randomInt(1, 7)` gives an integer-like dice roll from `1` through `6`.
+Always provide both bounds. Do not generate bare or empty-call forms such as `random`, `random()`, `Math.Random`, `Math.Random()`, `Math.RandomInt`, or `Math.RandomInt()`, and do not generate old spellings such as `Math.Rand`, `Math.Rand()`, or `Math.RandInt`.
 
-Do not mix bare Math names and qualified `Math.X` style in the same generated program.
+Keep ONE Math spelling style within the same generated program — all lowercase aliases, all qualified `Math.X`, or all opened PascalCase names — never mixed.
 
 # 14. open, load, and visibility
 
@@ -1020,7 +1024,7 @@ Numeric, operator, and literal correctness:
 - `/` vs `div` is chosen intentionally (`/` keeps fractions, `div` truncates toward zero);
 - `avg` returns the decimal arithmetic mean and is used freely for fractional means (it equals `sum(x) / count(x)` for numeric values);
 - display-precision requests use a top-level `DisplayDecimals = n`;
-- Math arities are correct, especially `Log(value, base)`, `Pow(x, y)`, `Atan2(y, x)`, `Round(x, digits)`, `Random(start, end)`, and `RandomInt(start, end)`;
+- Math arities are correct in every spelling, especially `log(value, base)`, `pow(x, y)`, `atan2(y, x)`, `round(x, digits)`, `random(start, end)`, and `randomInt(start, end)` (identically for the `Math.X` forms);
 - numeric literals use lowercase `e`, digits on both sides of the dot, and optional `_` separators;
 - strings are single-line, single-quoted literals with no invented escapes or double quotes.
 

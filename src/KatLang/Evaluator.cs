@@ -5701,7 +5701,9 @@ public static partial class Evaluator
     /// <summary>
     /// Prelude algorithm providing builtin operations in scope by default.
     /// Lean: preludeAlg. Builtins are injected into the initial call stack.
-    /// All builtins and Math are public for use in opened contexts.
+    /// All builtins, Math, and the lower-camel-case Math member aliases
+    /// (`pi`, `sin`, ... — synthetic properties sharing the canonical member
+    /// algorithm instances) are public for use in opened contexts.
     /// </summary>
     private static readonly Algorithm.User PreludeAlg = BuiltinRegistry.CreateRuntimePreludeAlgorithm(MathAlgorithm);
 

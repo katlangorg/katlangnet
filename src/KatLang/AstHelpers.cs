@@ -124,12 +124,21 @@ internal static class AstHelpers
 
     /// <summary>
     /// Whether registry facts prove that this dot edge's written arguments are
-    /// strict values rather than neutral higher-order argument slots. Only a
-    /// structural Math member has that consumer contract.
+    /// strict values rather than neutral higher-order argument slots. Only an
+    /// UNSHADOWED structural Math member has that consumer contract: callers
+    /// supply their ordinary-resolution shadow predicate so a locally defined
+    /// <c>Math</c> never acquires builtin facts merely from its spelling. The
+    /// prelude-alias call spelling (<c>sin(...)</c>) shares the same
+    /// <see cref="MathCallableFacts"/> through its consumers' corresponding
+    /// binding-aware classification, so the two spellings cannot drift.
     /// </summary>
-    internal static bool HasRegistryProvenStrictValueArguments(this Expr.DotCall dotCall)
+    internal static bool HasRegistryProvenStrictValueArguments(
+        this Expr.DotCall dotCall,
+        Func<string, bool>? isPreludeNameShadowed = null)
         => dotCall.Target is Expr.Resolve { Name: "Math" }
-            && BuiltinRegistry.IsMathFunctionMember(dotCall.Name);
+            && !(isPreludeNameShadowed?.Invoke("Math") ?? false)
+            && BuiltinRegistry.TryGetMathMemberFacts(dotCall.Name, out var facts)
+            && facts.HasStrictValueArguments;
 
     /// <summary>
     /// Classifies an expression by the GENERAL algorithm-position capability

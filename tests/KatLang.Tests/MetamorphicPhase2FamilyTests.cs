@@ -464,6 +464,7 @@ public class MetamorphicPhase2FamilyTests
             Assert.StartsWith(MetamorphicTables.NamePrefix, name, StringComparison.Ordinal);
             Assert.DoesNotContain(name, KatLang.BuiltinRegistry.BuiltinNames);
             Assert.DoesNotContain(name, KatLang.BuiltinRegistry.MathMemberNames);
+            Assert.DoesNotContain(name, KatLang.BuiltinRegistry.MathAliasNames);
         }
 
         Assert.Equal(generated.Length, generated.Distinct(StringComparer.Ordinal).Count());

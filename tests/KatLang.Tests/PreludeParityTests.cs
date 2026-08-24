@@ -33,9 +33,11 @@ namespace KatLang.Tests;
 /// <item><c>load</c> exists ONLY in the semantic prelude — default parse/run
 /// entry points reject unresolved <c>load</c>, so only elaboration-enabled
 /// paths may see it.</item>
-/// <item><c>Math</c> members share names, visibility, and parameter names, but
-/// the runtime flavor carries an executable body (a native call, or a literal
-/// for a constant) where the signature-only flavor carries none.</item>
+/// <item><c>Math</c> members and their root prelude aliases share names,
+/// visibility, and parameter names across flavors, but the runtime flavor
+/// carries an executable body (a native call, or a literal for a constant)
+/// where the signature-only flavor carries none. Within each flavor, every
+/// alias shares its canonical member's algorithm by reference.</item>
 /// </list>
 /// </para>
 /// </summary>
@@ -171,6 +173,37 @@ public class PreludeParityTests
             Assert.True(
                 member.Value.Output.Count == 0,
                 $"Signature-only Math.{member.Name} must carry no body, got {member.Value.Output.Count} output expression(s).");
+        }
+    }
+
+    [Fact]
+    public void MathAliasesPreserveFlavorParityAndCanonicalValueIdentity()
+    {
+        var runtime = Runtime();
+        var semantic = Semantic();
+        var runtimeMath = Assert.IsType<Algorithm.User>(MathOf(runtime));
+        var semanticMath = Assert.IsType<Algorithm.User>(MathOf(semantic));
+
+        foreach (var member in BuiltinRegistry.MathMembers)
+        {
+            var runtimeCanonical = Assert.Single(
+                runtimeMath.Properties, property => property.Name == member.Name);
+            var semanticCanonical = Assert.Single(
+                semanticMath.Properties, property => property.Name == member.Name);
+            var runtimeAlias = Assert.Single(
+                runtime.Properties, property => property.Name == member.PreludeAlias);
+            var semanticAlias = Assert.Single(
+                semantic.Properties, property => property.Name == member.PreludeAlias);
+
+            Assert.Same(runtimeCanonical.Value, runtimeAlias.Value);
+            Assert.Same(semanticCanonical.Value, semanticAlias.Value);
+            Assert.Equal(runtimeAlias.IsPublic, semanticAlias.IsPublic);
+            Assert.Equal(runtimeAlias.Exposure, semanticAlias.Exposure);
+            Assert.Equal(
+                runtimeAlias.Value.Parameters.Select(static parameter => parameter.Name),
+                semanticAlias.Value.Parameters.Select(static parameter => parameter.Name));
+            Assert.Single(runtimeAlias.Value.Output);
+            Assert.Empty(semanticAlias.Value.Output);
         }
     }
 

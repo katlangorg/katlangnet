@@ -95,7 +95,9 @@ public static class PreludeCatalog
     /// All prelude names visible in every scope unless shadowed: the builtins
     /// (<c>if</c>, <c>while</c>, <c>map</c>, ...), <c>Math</c> (whose
     /// <see cref="VisibleSymbol.Members"/> carry the Math member signatures),
-    /// and <c>load</c>. Runtime-callable entries expose plain and dot signatures
+    /// <c>load</c>, and the lower-camel-case Math member aliases (<c>pi</c>,
+    /// <c>sin</c>, ... — each carrying its canonical member's signature).
+    /// Runtime-callable entries expose plain and dot signatures
     /// through <see cref="PropertyInfo.Signatures"/>; the front-end-only
     /// <c>load</c> entry exposes only its plain source form.
     /// </summary>

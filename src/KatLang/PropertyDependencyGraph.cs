@@ -125,7 +125,8 @@ internal static class PropertyDependencyGraphBuilder
     public static PropertyDependencyGraph Build(
         Algorithm.User algorithm,
         IEnumerable<string>? ancestorOwnedNames = null,
-        IEnumerable<string>? locallyOwnedNames = null)
+        IEnumerable<string>? locallyOwnedNames = null,
+        Func<string, bool>? preludeNameShadowedByCaller = null)
     {
         var propertyNameToIndex = new Dictionary<string, int>(StringComparer.Ordinal);
         for (var i = 0; i < algorithm.Properties.Count; i++)
@@ -138,6 +139,20 @@ internal static class PropertyDependencyGraphBuilder
         var ancestorOwnedForProperties = CreateNameSet(ancestorOwnedNames);
         ancestorOwnedForProperties.UnionWith(ownedHere);
 
+        // Whether a prelude name is shadowed at this level through ordinary
+        // resolution: siblings, this algorithm's own parameters, and
+        // the caller-supplied ancestor knowledge (the implicit-argument
+        // resolver passes its visible property map's membership test). Math
+        // alias calls and canonical `Math.X` calls both consult this so the
+        // sibling-order channel has the SAME binding knowledge as rewriting. A
+        // PREDICATE, not a materialized union: copying the ancestor map's keys
+        // per Build call is O(ancestor properties) for every processed
+        // property value and made wide flat scopes quadratic.
+        bool PreludeNameShadowed(string name)
+            => siblingNames.Contains(name)
+                || ownedHere.Contains(name)
+                || (preludeNameShadowedByCaller?.Invoke(name) ?? false);
+
         var nodes = new PropertyDependencyNode[algorithm.Properties.Count];
         for (var i = 0; i < algorithm.Properties.Count; i++)
         {
@@ -145,6 +160,7 @@ internal static class PropertyDependencyGraphBuilder
             var siblingDependencyIndices = CollectSiblingDependencyIndices(
                 property.Value.Output,
                 siblingNames,
+                PreludeNameShadowed,
                 propertyNameToIndex,
                 i);
             var summarySeed = CollectSummarySeed(
@@ -486,12 +502,13 @@ internal static class PropertyDependencyGraphBuilder
     private static IReadOnlyList<int> CollectSiblingDependencyIndices(
         IReadOnlyList<Expr> expressions,
         HashSet<string> siblingNames,
+        Func<string, bool> preludeNameShadowed,
         IReadOnlyDictionary<string, int> propertyNameToIndex,
         int propertyIndex)
     {
         var dependencyIndices = new HashSet<int>();
         foreach (var expression in expressions)
-            CollectSiblingDependencyIndices(expression, siblingNames, propertyNameToIndex, dependencyIndices, propertyIndex, inCallPosition: false);
+            CollectSiblingDependencyIndices(expression, siblingNames, preludeNameShadowed, propertyNameToIndex, dependencyIndices, propertyIndex, inCallPosition: false);
 
         return dependencyIndices.OrderBy(static idx => idx).ToArray();
     }
@@ -499,6 +516,7 @@ internal static class PropertyDependencyGraphBuilder
     private static void CollectSiblingDependencyIndices(
         Expr expr,
         HashSet<string> siblingNames,
+        Func<string, bool> preludeNameShadowed,
         IReadOnlyDictionary<string, int> propertyNameToIndex,
         HashSet<int> dependencyIndices,
         int propertyIndex,
@@ -516,53 +534,67 @@ internal static class PropertyDependencyGraphBuilder
                 }
                 break;
 
-            case Expr.Call(var function, _):
-                CollectSiblingDependencyIndices(function, siblingNames, propertyNameToIndex, dependencyIndices, propertyIndex, inCallPosition: true);
+            case Expr.Call(var function, var callArgs):
+                CollectSiblingDependencyIndices(function, siblingNames, preludeNameShadowed, propertyNameToIndex, dependencyIndices, propertyIndex, inCallPosition: true);
+
+                // An unshadowed Math-ALIAS call has the same registry-proven
+                // strict-value argument contract as the written `Math.X(...)`
+                // dot shape (the DotCall arm below): the resolver lifts its
+                // argument slots as value positions, so those slots contribute
+                // the same sibling processing-order dependencies here. Ordinary
+                // neutral call arguments contribute none.
+                if (function is Expr.Resolve(var calleeName)
+                    && BuiltinRegistry.TryGetMathAliasFacts(calleeName, out var aliasFacts)
+                    && aliasFacts.HasStrictValueArguments
+                    && !preludeNameShadowed(calleeName))
+                {
+                    CollectArgumentSiblingDependencyIndices(callArgs, siblingNames, preludeNameShadowed, propertyNameToIndex, dependencyIndices, propertyIndex);
+                }
                 break;
 
             case Expr.Binary(_, var left, var right):
-                CollectSiblingDependencyIndices(left, siblingNames, propertyNameToIndex, dependencyIndices, propertyIndex, false);
-                CollectSiblingDependencyIndices(right, siblingNames, propertyNameToIndex, dependencyIndices, propertyIndex, false);
+                CollectSiblingDependencyIndices(left, siblingNames, preludeNameShadowed, propertyNameToIndex, dependencyIndices, propertyIndex, false);
+                CollectSiblingDependencyIndices(right, siblingNames, preludeNameShadowed, propertyNameToIndex, dependencyIndices, propertyIndex, false);
                 break;
 
             case Expr.Unary(_, var operand):
-                CollectSiblingDependencyIndices(operand, siblingNames, propertyNameToIndex, dependencyIndices, propertyIndex, false);
+                CollectSiblingDependencyIndices(operand, siblingNames, preludeNameShadowed, propertyNameToIndex, dependencyIndices, propertyIndex, false);
                 break;
 
             case Expr.Index(var target, var selector):
-                CollectSiblingDependencyIndices(target, siblingNames, propertyNameToIndex, dependencyIndices, propertyIndex, false);
-                CollectSiblingDependencyIndices(selector, siblingNames, propertyNameToIndex, dependencyIndices, propertyIndex, false);
+                CollectSiblingDependencyIndices(target, siblingNames, preludeNameShadowed, propertyNameToIndex, dependencyIndices, propertyIndex, false);
+                CollectSiblingDependencyIndices(selector, siblingNames, preludeNameShadowed, propertyNameToIndex, dependencyIndices, propertyIndex, false);
                 break;
 
             case Expr.SequenceSpread(var operand):
-                CollectSiblingDependencyIndices(operand, siblingNames, propertyNameToIndex, dependencyIndices, propertyIndex, false);
+                CollectSiblingDependencyIndices(operand, siblingNames, preludeNameShadowed, propertyNameToIndex, dependencyIndices, propertyIndex, false);
                 break;
 
             case Expr.SequenceConstruct(var left, var right):
-                CollectSiblingDependencyIndices(left, siblingNames, propertyNameToIndex, dependencyIndices, propertyIndex, false);
-                CollectSiblingDependencyIndices(right, siblingNames, propertyNameToIndex, dependencyIndices, propertyIndex, false);
+                CollectSiblingDependencyIndices(left, siblingNames, preludeNameShadowed, propertyNameToIndex, dependencyIndices, propertyIndex, false);
+                CollectSiblingDependencyIndices(right, siblingNames, preludeNameShadowed, propertyNameToIndex, dependencyIndices, propertyIndex, false);
                 break;
 
             case Expr.ListLiteral(var listItems):
                 foreach (var item in listItems)
-                    CollectSiblingDependencyIndices(item, siblingNames, propertyNameToIndex, dependencyIndices, propertyIndex, false);
+                    CollectSiblingDependencyIndices(item, siblingNames, preludeNameShadowed, propertyNameToIndex, dependencyIndices, propertyIndex, false);
                 break;
 
             case Expr.DotCall(var target, _, null):
-                CollectSiblingDependencyIndices(target, siblingNames, propertyNameToIndex, dependencyIndices, propertyIndex, false);
+                CollectSiblingDependencyIndices(target, siblingNames, preludeNameShadowed, propertyNameToIndex, dependencyIndices, propertyIndex, false);
                 break;
 
             case Expr.DotCall dotCall:
-                CollectSiblingDependencyIndices(dotCall.Target, siblingNames, propertyNameToIndex, dependencyIndices, propertyIndex, inCallPosition: true);
+                CollectSiblingDependencyIndices(dotCall.Target, siblingNames, preludeNameShadowed, propertyNameToIndex, dependencyIndices, propertyIndex, inCallPosition: true);
                 if (dotCall.Args is { } args
-                    && dotCall.HasRegistryProvenStrictValueArguments())
+                    && dotCall.HasRegistryProvenStrictValueArguments(preludeNameShadowed))
                 {
-                    CollectArgumentSiblingDependencyIndices(args, siblingNames, propertyNameToIndex, dependencyIndices, propertyIndex);
+                    CollectArgumentSiblingDependencyIndices(args, siblingNames, preludeNameShadowed, propertyNameToIndex, dependencyIndices, propertyIndex);
                 }
                 break;
 
             case Expr.Grace(var inner, _):
-                CollectSiblingDependencyIndices(inner, siblingNames, propertyNameToIndex, dependencyIndices, propertyIndex, inCallPosition);
+                CollectSiblingDependencyIndices(inner, siblingNames, preludeNameShadowed, propertyNameToIndex, dependencyIndices, propertyIndex, inCallPosition);
                 break;
 
             case Expr.AlgorithmExpr or Expr.Capture:
@@ -576,6 +608,7 @@ internal static class PropertyDependencyGraphBuilder
     private static void CollectArgumentSiblingDependencyIndices(
         OutputBundle args,
         HashSet<string> siblingNames,
+        Func<string, bool> preludeNameShadowed,
         IReadOnlyDictionary<string, int> propertyNameToIndex,
         HashSet<int> dependencyIndices,
         int propertyIndex)
@@ -585,6 +618,7 @@ internal static class PropertyDependencyGraphBuilder
             CollectSiblingDependencyIndices(
                 expression,
                 siblingNames,
+                preludeNameShadowed,
                 propertyNameToIndex,
                 dependencyIndices,
                 propertyIndex,

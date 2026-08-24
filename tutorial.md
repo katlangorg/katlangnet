@@ -10,6 +10,7 @@
    - [Comparison Operators](#comparison-operators)
    - [Logical Operators](#logical-operators)
    - [Math Constants and Functions](#math-constants-and-functions)
+   - [Lowercase Math Aliases](#lowercase-math-aliases)
    - [Display Decimal Places](#display-decimal-places)
 4. [Multiple Outputs](#multiple-outputs)
 5. [Properties](#properties)
@@ -370,6 +371,61 @@ Math.Log(100, 10)
 1
 2
 ```
+
+### Lowercase Math Aliases
+
+Every `Math` member also has one predefined lower-camel-case prelude binding, so ordinary formulas can drop the `Math.` prefix:
+
+```
+cos(0.123)
+sin(pi / 2)
+round(sqrt(2), 10)
+```
+
+**Results:**
+```
+0.9924450321351935702938185222573315
+1
+1.4142135624
+```
+
+The complete alias table:
+
+| Canonical | Alias | Canonical | Alias |
+|---|---|---|---|
+| `Math.Pi` | `pi` | `Math.Cos(x)` | `cos(x)` |
+| `Math.E` | `e` | `Math.Acos(x)` | `acos(x)` |
+| `Math.Abs(x)` | `abs(x)` | `Math.Tan(x)` | `tan(x)` |
+| `Math.Ceil(x)` | `ceil(x)` | `Math.Atan(x)` | `atan(x)` |
+| `Math.Floor(x)` | `floor(x)` | `Math.Atan2(y, x)` | `atan2(y, x)` |
+| `Math.Round(x, digits)` | `round(x, digits)` | `Math.Pow(x, y)` | `pow(x, y)` |
+| `Math.Sign(x)` | `sign(x)` | `Math.Log(x, y)` | `log(x, y)` |
+| `Math.Sqrt(x)` | `sqrt(x)` | `Math.Random(start, end)` | `random(start, end)` |
+| `Math.Ln(x)` | `ln(x)` | `Math.RandomInt(start, end)` | `randomInt(start, end)` |
+| `Math.Lg(x)` | `lg(x)` | | |
+| `Math.Sin(x)` | `sin(x)` | | |
+| `Math.Asin(x)` | `asin(x)` | | |
+
+An alias binding points to the SAME function, not a copy: `pi` points to `Math.Pi`, and `sin(x)` computes exactly `Math.Sin(x)` with the same parameters, precision, domain behavior, and errors. `Math.X` remains the canonical qualified spelling; the aliases are synthetic ordinary prelude bindings resolved by the ordinary name-resolution rules:
+
+- Your own definitions win. A local property `sin(x) = x * 10`, an explicit parameter `F(sin) = ...`, or an ancestor definition shadows the alias, and your `sin` behaves like any ordinary callable.
+- The aliases are prelude bindings, not members of `Math`: `Math.cos(1)` is still invalid — inside `Math` only the canonical PascalCase names exist.
+- `open Math` still exposes only the canonical PascalCase names (`Cos`, `Pi`, ...); it is never needed for the aliases and is not implied by them.
+- Aliases work everywhere ordinary names work: as values (`K = cos` infers `K(x)`), through dot-call fallback (`v.cos` is `cos(v)`), and as higher-order references (`Apply(cos, 0)`).
+
+**Compatibility note:** because the alias names are now part of the prelude vocabulary, a bare `pi`, `e`, `abs`, `ceil`, `floor`, `round`, `sign`, `sqrt`, `ln`, `lg`, `sin`, `asin`, `cos`, `acos`, `tan`, `atan`, `atan2`, `pow`, `log`, `random`, or `randomInt` that previously did not resolve to anything is no longer inferred as an implicit parameter — it resolves to the Math alias instead. In particular, a free `e` such as `F = e + 1` now means `Math.E + 1`. Explicit parameters remain valid and shadow the alias normally:
+
+```
+F(e) = e + 1
+F(5)
+```
+
+**Result:**
+```
+6
+```
+
+**Style:** prefer the lowercase aliases in ordinary formulas, keep `Math.X` as the qualified form for disambiguation (for example next to a local definition of the same name), and use one spelling style consistently within an example.
 
 ### Display Decimal Places
 

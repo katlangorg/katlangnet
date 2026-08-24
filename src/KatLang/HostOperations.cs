@@ -1,3 +1,5 @@
+using System.Collections.Frozen;
+
 namespace KatLang;
 
 /// <summary>
@@ -99,8 +101,8 @@ public sealed class HostOperation
     /// invocation and exception contracts.
     /// </summary>
     /// <param name="name">Operation name: a valid KatLang identifier (not a language
-    /// keyword) that is not a reserved prelude name (a builtin name, <c>Math</c>, or
-    /// <c>load</c>).</param>
+    /// keyword) that is not a reserved prelude name (a builtin name, <c>Math</c>,
+    /// <c>load</c>, or a Math member alias such as <c>pi</c> or <c>sin</c>).</param>
     /// <param name="implementation">Receives the evaluated argument values (one per
     /// declared parameter, in order) and the run's evaluation cancellation token, and
     /// returns the operation's non-null KatLang value.</param>
@@ -123,8 +125,8 @@ public sealed class HostOperation
     /// completes. See the class documentation for the invocation and exception contracts.
     /// </summary>
     /// <param name="name">Operation name: a valid KatLang identifier (not a language
-    /// keyword) that is not a reserved prelude name (a builtin name, <c>Math</c>, or
-    /// <c>load</c>).</param>
+    /// keyword) that is not a reserved prelude name (a builtin name, <c>Math</c>,
+    /// <c>load</c>, or a Math member alias such as <c>pi</c> or <c>sin</c>).</param>
     /// <param name="implementation">Receives the evaluated argument values (one per
     /// declared parameter, in order) and the run's evaluation cancellation token, and
     /// returns the operation's non-null KatLang value. It must not block the calling
@@ -158,7 +160,8 @@ public sealed class HostOperation
         {
             throw new ArgumentException(
                 $"Host operation name '{name}' is reserved by the KatLang prelude " +
-                "(builtin names, 'Math', and 'load' cannot be redefined by host operations).",
+                "(builtin names, 'Math', 'load', and the Math member aliases such as " +
+                "'pi' and 'sin' cannot be redefined by host operations).",
                 nameof(name));
         }
 
@@ -213,13 +216,16 @@ public sealed class HostOperations
     internal const string NativeNamePrefix = "host:";
 
     /// <summary>
-    /// Names host operations may not use: redefining a builtin, <c>Math</c>, or
-    /// <c>load</c> would make one prelude declare the same name twice.
+    /// Names host operations may not use: redefining a builtin, <c>Math</c>,
+    /// <c>load</c>, or a Math member alias (<c>pi</c>, <c>sin</c>, ...) would
+    /// make one prelude declare the same name twice. Derived from the semantic
+    /// prelude's actual property inventory, so new prelude vocabulary is
+    /// reserved automatically.
     /// </summary>
     internal static readonly IReadOnlySet<string> ReservedPreludeNames =
-        new HashSet<string>(
-            BuiltinRegistry.CreateSemanticPreludeAlgorithm().Properties.Select(static property => property.Name),
-            StringComparer.Ordinal);
+        BuiltinRegistry.CreateSemanticPreludeAlgorithm().Properties
+            .Select(static property => property.Name)
+            .ToFrozenSet(StringComparer.Ordinal);
 
     private readonly Dictionary<string, HostOperation> _operationsByNativeName;
 
