@@ -46,9 +46,10 @@ public class MathAliasResolutionTests
     [Fact]
     public void BareAliasReference_LiftsLikeCanonicalMathMember()
     {
-        // `K = cos` infers K(x) exactly like `K = Math.Cos`.
-        Assert.Equal(["x"], ElaboratedPropertyParams("K = cos\nK(0)", "K"));
-        Assert.Equal(["x"], ElaboratedPropertyParams("K = Math.Cos\nK(0)", "K"));
+        // `K = cos` infers K(radians) exactly like `K = Math.Cos` — the lifted
+        // signature carries the member's declared parameter names.
+        Assert.Equal(["radians"], ElaboratedPropertyParams("K = cos\nK(0)", "K"));
+        Assert.Equal(["radians"], ElaboratedPropertyParams("K = Math.Cos\nK(0)", "K"));
         AssertAliasAgreesWithCanonical("K = cos\nK(0)", "K = Math.Cos\nK(0)");
 
         Assert.Equal(["x"], ElaboratedPropertyParams("K = exp\nK(1)", "K"));

@@ -321,9 +321,9 @@ The constant is correctly rounded to KatLang's full numeric precision of 34 sign
 | `Math.Exp(x)` | Natural exponential (e raised to the power `x`; `Math.Exp(0)` is exactly `1`) |
 | `Math.Ln(x)` | Natural logarithm |
 | `Math.Lg(x)` | Base-10 logarithm |
-| `Math.Sin(x)` | Sine (radians) |
-| `Math.Cos(x)` | Cosine (radians) |
-| `Math.Tan(x)` | Tangent (radians) |
+| `Math.Sin(radians)` | Sine (radians) |
+| `Math.Cos(radians)` | Cosine (radians) |
+| `Math.Tan(radians)` | Tangent (radians) |
 | `Math.Asin(x)` | Arc sine |
 | `Math.Acos(x)` | Arc cosine |
 | `Math.Atan(x)` | Arc tangent |
@@ -332,9 +332,9 @@ The constant is correctly rounded to KatLang's full numeric precision of 34 sign
 
 | Function | Description |
 |---|---|
-| `Math.Round(x, digits)` | Round to `digits` places after the decimal point |
+| `Math.Round(value, digits)` | Round `value` to `digits` places after the decimal point |
 | `Math.Pow(x, y)` | x raised to power y (floating-point) |
-| `Math.Log(x, y)` | Logarithm of x with base y |
+| `Math.Log(value, base)` | Logarithm of `value` in the given `base` |
 | `Math.Atan2(y, x)` | Arc tangent of `y / x`, in standard atan2 argument order (`y` first, then `x`) |
 | `Math.Random(start, end)` | Decimal random number in `[start; end)`, so `start <= x < end` |
 | `Math.RandomInt(start, end)` | Whole-number random value in `[start; end)`, so `start <= x < end` |
@@ -392,25 +392,25 @@ The complete alias table:
 
 | Canonical | Alias | Canonical | Alias |
 |---|---|---|---|
-| `Math.Pi` | `pi` | `Math.Cos(x)` | `cos(x)` |
+| `Math.Pi` | `pi` | `Math.Cos(radians)` | `cos(radians)` |
 | `Math.Exp(x)` | `exp(x)` | `Math.Acos(x)` | `acos(x)` |
-| `Math.Abs(x)` | `abs(x)` | `Math.Tan(x)` | `tan(x)` |
+| `Math.Abs(x)` | `abs(x)` | `Math.Tan(radians)` | `tan(radians)` |
 | `Math.Ceil(x)` | `ceil(x)` | `Math.Atan(x)` | `atan(x)` |
 | `Math.Floor(x)` | `floor(x)` | `Math.Atan2(y, x)` | `atan2(y, x)` |
-| `Math.Round(x, digits)` | `round(x, digits)` | `Math.Pow(x, y)` | `pow(x, y)` |
-| `Math.Sign(x)` | `sign(x)` | `Math.Log(x, y)` | `log(x, y)` |
+| `Math.Round(value, digits)` | `round(value, digits)` | `Math.Pow(x, y)` | `pow(x, y)` |
+| `Math.Sign(x)` | `sign(x)` | `Math.Log(value, base)` | `log(value, base)` |
 | `Math.Sqrt(x)` | `sqrt(x)` | `Math.Random(start, end)` | `random(start, end)` |
 | `Math.Ln(x)` | `ln(x)` | `Math.RandomInt(start, end)` | `randomInt(start, end)` |
 | `Math.Lg(x)` | `lg(x)` | | |
-| `Math.Sin(x)` | `sin(x)` | | |
+| `Math.Sin(radians)` | `sin(radians)` | | |
 | `Math.Asin(x)` | `asin(x)` | | |
 
-An alias binding points to the SAME function, not a copy: `pi` points to `Math.Pi`, and `sin(x)` computes exactly `Math.Sin(x)` with the same parameters, precision, domain behavior, and errors. `Math.X` remains the canonical qualified spelling; the aliases are synthetic ordinary prelude bindings resolved by the ordinary name-resolution rules:
+An alias binding points to the SAME function, not a copy: `pi` points to `Math.Pi`, and `sin(radians)` computes exactly `Math.Sin(radians)` with the same parameters, precision, domain behavior, and errors. `Math.X` remains the canonical qualified spelling; the aliases are synthetic ordinary prelude bindings resolved by the ordinary name-resolution rules:
 
 - Your own definitions win. A local property `sin(x) = x * 10`, an explicit parameter `F(sin) = ...`, or an ancestor definition shadows the alias, and your `sin` behaves like any ordinary callable.
 - The aliases are prelude bindings, not members of `Math`: `Math.cos(1)` is still invalid — inside `Math` only the canonical PascalCase names exist.
 - `open Math` still exposes only the canonical PascalCase names (`Cos`, `Pi`, ...); it is never needed for the aliases and is not implied by them.
-- Aliases work everywhere ordinary names work: as values (`K = cos` infers `K(x)`), through dot-call fallback (`v.cos` is `cos(v)`), and as higher-order references (`Apply(cos, 0)`).
+- Aliases work everywhere ordinary names work: as values (`K = cos` infers `K(radians)`), through dot-call fallback (`v.cos` is `cos(v)`), and as higher-order references (`Apply(cos, 0)`).
 
 **Compatibility note:** because the alias names are now part of the prelude vocabulary, a bare `pi`, `exp`, `abs`, `ceil`, `floor`, `round`, `sign`, `sqrt`, `ln`, `lg`, `sin`, `asin`, `cos`, `acos`, `tan`, `atan`, `atan2`, `pow`, `log`, `random`, or `randomInt` that previously did not resolve to anything is no longer inferred as an implicit parameter — it resolves to the Math alias instead. For example, a free `pi` such as `F = pi + 1` now means `Math.Pi + 1`. (`e` and `Math.E` are NOT part of this vocabulary: the Euler constant was replaced by the `Math.Exp` / `exp` function, so `e` is an ordinary identifier.) Explicit parameters remain valid and shadow the aliases normally:
 

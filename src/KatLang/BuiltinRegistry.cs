@@ -322,6 +322,10 @@ internal static class BuiltinRegistry
     // Every Math member declares its ONE predefined lower-camel-case prelude alias
     // explicitly — never derived by lowercasing — so future collisions, acronyms,
     // exclusions, renames, and deprecations stay deliberate, reviewed decisions.
+    // ParameterNames are equally authoritative: they name the member's runtime
+    // parameters AND every editor-facing signature (hover, completion, alias
+    // target displays), so domain-specific names (`radians`, `digits`) belong
+    // here, never in editor layers.
     private static readonly IReadOnlyList<MathMemberDescriptor> MathMemberDescriptors = ValidateMathMemberMetadata(
     [
         // Constants come from Decimal128's own correctly-rounded 34-digit sources —
@@ -331,31 +335,32 @@ internal static class BuiltinRegistry
         new("Abs", MathMemberKind.UnaryFunction, "abs"),
         new("Ceil", MathMemberKind.UnaryFunction, "ceil"),
         new("Floor", MathMemberKind.UnaryFunction, "floor"),
-        new("Round", MathMemberKind.BinaryFunction, "round"),
+        new("Round", MathMemberKind.BinaryFunction, "round", ParameterNames: ["value", "digits"]),
         new("Sign", MathMemberKind.UnaryFunction, "sign"),
         new("Sqrt", MathMemberKind.UnaryFunction, "sqrt"),
         new("Ln", MathMemberKind.UnaryFunction, "ln"),
         new("Lg", MathMemberKind.UnaryFunction, "lg"),
-        new("Sin", MathMemberKind.UnaryFunction, "sin"),
+        new("Sin", MathMemberKind.UnaryFunction, "sin", ParameterNames: ["radians"]),
         new("Asin", MathMemberKind.UnaryFunction, "asin"),
-        new("Cos", MathMemberKind.UnaryFunction, "cos"),
+        new("Cos", MathMemberKind.UnaryFunction, "cos", ParameterNames: ["radians"]),
         new("Acos", MathMemberKind.UnaryFunction, "acos"),
-        new("Tan", MathMemberKind.UnaryFunction, "tan"),
+        new("Tan", MathMemberKind.UnaryFunction, "tan", ParameterNames: ["radians"]),
         new("Atan", MathMemberKind.UnaryFunction, "atan"),
         new("Atan2", MathMemberKind.BinaryFunction, "atan2", ParameterNames: ["y", "x"]),
         new("Pow", MathMemberKind.BinaryFunction, "pow"),
-        new("Log", MathMemberKind.BinaryFunction, "log"),
+        new("Log", MathMemberKind.BinaryFunction, "log", ParameterNames: ["value", "base"]),
         new("Random", MathMemberKind.BinaryFunction, "random", ParameterNames: ["start", "end"]),
         new("RandomInt", MathMemberKind.BinaryFunction, "randomInt", ParameterNames: ["start", "end"]),
     ]);
 
     /// <summary>
     /// Fail-loud gate on the hand-maintained Math member table, run while the
-    /// registry initializes: canonical names and required aliases must be valid
-    /// identifiers and ordinally unique within their respective sets, and no
-    /// alias may collide with a builtin name, <c>Math</c>, or <c>load</c> (the
-    /// rest of the prelude vocabulary IS the alias set itself, covered by
-    /// uniqueness).
+    /// registry initializes: canonical names, required aliases, and explicit
+    /// parameter names must be valid identifiers and ordinally unique in their
+    /// respective scopes; explicit parameter counts must match member arity;
+    /// and no alias may collide with a canonical member, builtin name,
+    /// <c>Math</c>, or <c>load</c> (the rest of the prelude vocabulary IS the
+    /// alias set itself, covered by uniqueness).
     /// </summary>
     private static IReadOnlyList<MathMemberDescriptor> ValidateMathMemberMetadata(MathMemberDescriptor[] members)
     {
@@ -374,7 +379,6 @@ internal static class BuiltinRegistry
     {
         var reserved = new HashSet<string>(reservedNames, StringComparer.Ordinal);
         var seenMemberNames = new HashSet<string>(StringComparer.Ordinal);
-        var seenAliases = new HashSet<string>(StringComparer.Ordinal);
         foreach (var member in members)
         {
             if (string.IsNullOrEmpty(member.Name) || !Lexer.IsValidIdentifier(member.Name))
@@ -385,6 +389,29 @@ internal static class BuiltinRegistry
                 throw new InvalidOperationException(
                     $"Math member name '{member.Name}' is declared more than once.");
 
+            if (member.ParameterNames is not { } parameterNames)
+                continue;
+
+            if (parameterNames.Count != member.Arity)
+                throw new InvalidOperationException(
+                    $"Math member '{member.Name}' declares {parameterNames.Count} parameter names for arity {member.Arity}.");
+
+            var seenParameterNames = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var parameterName in parameterNames)
+            {
+                if (string.IsNullOrEmpty(parameterName) || !Lexer.IsValidIdentifier(parameterName))
+                    throw new InvalidOperationException(
+                        $"Math member '{member.Name}' declares parameter name '{parameterName}', which is not a valid KatLang identifier.");
+
+                if (!seenParameterNames.Add(parameterName))
+                    throw new InvalidOperationException(
+                        $"Math member '{member.Name}' declares parameter name '{parameterName}' more than once.");
+            }
+        }
+
+        var seenAliases = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var member in members)
+        {
             if (string.IsNullOrEmpty(member.PreludeAlias) || !Lexer.IsValidIdentifier(member.PreludeAlias))
                 throw new InvalidOperationException(
                     $"Math member '{member.Name}' declares prelude alias '{member.PreludeAlias}', which is not a valid KatLang identifier.");
@@ -392,6 +419,10 @@ internal static class BuiltinRegistry
             if (!seenAliases.Add(member.PreludeAlias))
                 throw new InvalidOperationException(
                     $"Math member '{member.Name}' declares prelude alias '{member.PreludeAlias}', which another Math member already uses.");
+
+            if (seenMemberNames.Contains(member.PreludeAlias))
+                throw new InvalidOperationException(
+                    $"Math member '{member.Name}' declares prelude alias '{member.PreludeAlias}', which collides with a canonical Math member name.");
 
             if (reserved.Contains(member.PreludeAlias))
                 throw new InvalidOperationException(
@@ -465,6 +496,26 @@ internal static class BuiltinRegistry
             || RuntimePreludeExtraNames.Contains(name, StringComparer.Ordinal);
 
     public static IReadOnlyList<MathMemberDescriptor> MathMembers => MathMemberDescriptors;
+
+    /// <summary>
+    /// The Math members keyed by their predefined prelude alias, derived from
+    /// the SAME explicit per-member metadata as prelude construction — never a
+    /// second hand-maintained map. Alias names are validated unique and
+    /// disjoint from every canonical member name, builtin name, <c>Math</c>,
+    /// and <c>load</c>, so an alias spelling identifies exactly one member.
+    /// </summary>
+    private static readonly IReadOnlyDictionary<string, MathMemberDescriptor> MathMembersByPreludeAlias =
+        MathMemberDescriptors.ToFrozenDictionary(static member => member.PreludeAlias, StringComparer.Ordinal);
+
+    /// <summary>
+    /// Resolves a predefined prelude-alias spelling (<c>sin</c>, <c>pi</c>, ...)
+    /// to its Math member descriptor. Covers constants and functions alike,
+    /// unlike the function-only <see cref="TryGetMathAliasFacts"/>.
+    /// Binding-neutral: the caller must first establish through ordinary
+    /// resolution that the written name actually reaches the prelude alias.
+    /// </summary>
+    internal static bool TryGetMathMemberByPreludeAlias(string aliasName, out MathMemberDescriptor member)
+        => MathMembersByPreludeAlias.TryGetValue(aliasName, out member);
 
     public static IReadOnlyList<string> MathMemberNames { get; } = Array.AsReadOnly(MathMemberDescriptors
         .Select(static member => member.Name)

@@ -76,6 +76,17 @@ public sealed record PropertySignatureInfo
 }
 
 /// <summary>
+/// Editor-facing identity of the canonical qualified member behind a predefined
+/// prelude alias. <see cref="QualifiedName"/> is the canonical structural
+/// spelling (<c>Math.Sin</c>); <see cref="DisplaySignature"/> is that member's
+/// declared signature in qualified form (<c>Math.Sin(radians)</c> — for a
+/// constant just the qualified name, <c>Math.Pi</c>). Both derive from the same
+/// registry metadata that constructs the prelude, so they can never drift from
+/// the alias's own callable surface.
+/// </summary>
+public sealed record PropertyAliasTargetInfo(string QualifiedName, string DisplaySignature);
+
+/// <summary>
 /// Editor-facing summary of one conditional branch head.
 /// <see cref="HeadSpan"/> is the best available source anchor for the branch
 /// head. When the AST only preserves the declared property name span, that
@@ -162,6 +173,17 @@ public sealed record PropertyInfo
     /// intrinsic signature is a separate capability.
     /// </summary>
     public bool SupportsLexicalDotCall { get; init; }
+
+    /// <summary>
+    /// When this property is a predefined prelude ALIAS for a canonical
+    /// qualified member (the lower-camel-case Math bindings — <c>sin</c> for
+    /// <c>Math.Sin</c>), the canonical target's identity; otherwise
+    /// <see langword="null"/>. Only the synthetic prelude alias bindings carry
+    /// this: canonical <c>Math.X</c> members and any source-declared property
+    /// that shadows an alias spelling do not, so a non-null value certifies the
+    /// resolved symbol IS the prelude alias.
+    /// </summary>
+    public PropertyAliasTargetInfo? AliasTarget { get; init; }
 
     public PropertyCallStyle PreferredCallStyle { get; init; } = PropertyCallStyle.Plain;
 

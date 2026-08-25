@@ -371,6 +371,21 @@ public static class SemanticModelBuilder
                 declarationSpans: null,
                 supportsLexicalDotCall: supportsLexicalDotCall);
 
+            // Builtin symbols come only from registry-constructed prelude and Math
+            // surfaces, and alias spellings are registry-validated disjoint from
+            // every canonical member, builtin, `Math`, and `load` name — so a
+            // builtin symbol spelled like a Math prelude alias IS that alias
+            // binding. Source-declared shadows never reach this path (they build
+            // ordinary property symbols), so AliasTarget certifies prelude
+            // resolution.
+            if (BuiltinRegistry.TryGetMathMemberByPreludeAlias(name, out var aliasedMember))
+            {
+                propertyInfo = propertyInfo with
+                {
+                    AliasTarget = CreateMathAliasTarget(aliasedMember, propertyInfo),
+                };
+            }
+
             return new SymbolDefinition(
                 name,
                 SymbolKind.Builtin,
@@ -379,6 +394,27 @@ public static class SemanticModelBuilder
                 isPublic,
                 propertyInfo,
                 propertyInfo.WithPreferredCallStyle(PropertyCallStyle.Dot));
+        }
+
+        /// <summary>
+        /// The canonical-member identity carried by a prelude alias's property
+        /// info. The display signature reuses the alias's own plain-signature
+        /// parameter list — the shared canonical algorithm's declared names — so
+        /// <c>sin</c> yields <c>Math.Sin(radians)</c> and the constant
+        /// <c>pi</c> yields <c>Math.Pi</c>.
+        /// </summary>
+        private static PropertyAliasTargetInfo CreateMathAliasTarget(
+            MathMemberDescriptor member,
+            PropertyInfo aliasPropertyInfo)
+        {
+            var qualifiedName = $"Math.{member.Name}";
+            var parameters = aliasPropertyInfo.FindSignature(PropertyCallStyle.Plain)?.Parameters
+                ?? aliasPropertyInfo.Parameters;
+            return new PropertyAliasTargetInfo(
+                qualifiedName,
+                CallableSignature.FormatDisplayText(
+                    qualifiedName,
+                    parameters.Select(static parameter => parameter.DisplayName)));
         }
 
         private SymbolDefinition CreateParameterSymbol(

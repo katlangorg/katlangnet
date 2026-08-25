@@ -185,11 +185,11 @@ public class MathAliasEvaluationTests
     }
 
     [Theory]
-    [InlineData("sin(1, 2)", "sin(x)", 1, 2)]
+    [InlineData("sin(1, 2)", "sin(radians)", 1, 2)]
     [InlineData("exp(1, 2)", "exp(x)", 1, 2)]
-    [InlineData("round(2)", "round(x, y)", 2, 1)]
+    [InlineData("round(2)", "round(value, digits)", 2, 1)]
     [InlineData("atan2(1)", "atan2(y, x)", 2, 1)]
-    [InlineData("log(8)", "log(x, y)", 2, 1)]
+    [InlineData("log(8)", "log(value, base)", 2, 1)]
     [InlineData("random(0)", "random(start, end)", 2, 1)]
     [InlineData("randomInt(0)", "randomInt(start, end)", 2, 1)]
     [InlineData("pi(1)", "pi", 0, 1)]

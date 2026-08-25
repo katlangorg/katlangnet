@@ -251,8 +251,8 @@ public class BuiltinRegistryParityTests
     public void RegistryBuiltinCallableSignature_ExposesKnownOwnerMemberMetadataOnly()
     {
         Assert.True(BuiltinRegistry.TryGetBuiltinCallableSignature("Math", "Round", out var roundSignature));
-        Assert.Equal("Round(x, y)", roundSignature!.DisplayText);
-        Assert.Equal(["x", "y"], roundSignature.ParameterNames);
+        Assert.Equal("Round(value, digits)", roundSignature!.DisplayText);
+        Assert.Equal(["value", "digits"], roundSignature.ParameterNames);
 
         Assert.True(BuiltinRegistry.TryGetBuiltinCallableSignature("Math", "Abs", out var absSignature));
         Assert.Equal("Abs(x)", absSignature!.DisplayText);

@@ -252,12 +252,12 @@ public class ImplicitArgumentResolverTests
         var root = Resolve(source);
 
         var roundB = root.Properties.Single(p => p.Name == "RoundB").Value;
-        Assert.Equal(["x", "y"], roundB.Params);
+        Assert.Equal(["value", "digits"], roundB.Params);
 
         var dotCall = Assert.IsType<Expr.DotCall>(Assert.Single(roundB.Output));
         Assert.NotNull(dotCall.Args);
         Assert.Equal("Round", dotCall.Name);
-        Assert.Equal(["x", "y"], dotCall.Args
+        Assert.Equal(["value", "digits"], dotCall.Args
             .Select(expr => Assert.IsType<Expr.Param>(expr).Name)
             .ToArray());
     }

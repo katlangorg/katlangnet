@@ -295,12 +295,31 @@ public class MathAliasRegistryTests
             Assert.False(BuiltinRegistry.TryGetMathAliasFacts(member.Name, out _));
         }
 
-        Assert.Equal("round(x, y)", GetAliasFacts("round").Signature.DisplayText);
+        Assert.Equal("round(value, digits)", GetAliasFacts("round").Signature.DisplayText);
         Assert.Equal("exp(x)", GetAliasFacts("exp").Signature.DisplayText);
+        Assert.Equal("sin(radians)", GetAliasFacts("sin").Signature.DisplayText);
         Assert.Equal("atan2(y, x)", GetAliasFacts("atan2").Signature.DisplayText);
-        Assert.Equal("log(x, y)", GetAliasFacts("log").Signature.DisplayText);
+        Assert.Equal("log(value, base)", GetAliasFacts("log").Signature.DisplayText);
         Assert.Equal("random(start, end)", GetAliasFacts("random").Signature.DisplayText);
         Assert.Equal("randomInt(start, end)", GetAliasFacts("randomInt").Signature.DisplayText);
+    }
+
+    [Fact]
+    public void DescriptorDerivedAliasLookup_CoversEveryDescriptorAndNoOtherSpelling()
+    {
+        foreach (var expected in BuiltinRegistry.MathMembers)
+        {
+            Assert.True(BuiltinRegistry.TryGetMathMemberByPreludeAlias(expected.PreludeAlias, out var actual));
+            Assert.Equal(expected, actual);
+
+            // The lookup is alias-only: canonical names and case variants do
+            // not acquire alias identity under KatLang's ordinal name rules.
+            Assert.False(BuiltinRegistry.TryGetMathMemberByPreludeAlias(expected.Name, out _));
+            Assert.False(BuiltinRegistry.TryGetMathMemberByPreludeAlias(
+                expected.PreludeAlias.ToUpperInvariant(), out _));
+        }
+
+        Assert.False(BuiltinRegistry.TryGetMathMemberByPreludeAlias("notAMathAlias", out _));
     }
 
     private static MathCallableFacts GetAliasFacts(string alias)
@@ -343,6 +362,32 @@ public class MathAliasRegistryTests
             () => BuiltinRegistry.ValidateMathMemberMetadataCore(
                 [Member("Sin", "sin"), Member("Cos", "sin")], reserved));
         Assert.Contains("another Math member already uses", duplicate.Message);
+
+        var canonicalCollision = Assert.Throws<InvalidOperationException>(
+            () => BuiltinRegistry.ValidateMathMemberMetadataCore(
+                [Member("Sin", "Cos"), Member("Cos", "cos")], reserved));
+        Assert.Contains("collides with a canonical Math member name", canonicalCollision.Message);
+
+        var wrongParameterCount = Assert.Throws<InvalidOperationException>(
+            () => BuiltinRegistry.ValidateMathMemberMetadataCore(
+                [new MathMemberDescriptor(
+                    "Round", MathMemberKind.BinaryFunction, "round", ParameterNames: ["value"])],
+                reserved));
+        Assert.Contains("1 parameter names for arity 2", wrongParameterCount.Message);
+
+        var invalidParameterName = Assert.Throws<InvalidOperationException>(
+            () => BuiltinRegistry.ValidateMathMemberMetadataCore(
+                [new MathMemberDescriptor(
+                    "Round", MathMemberKind.BinaryFunction, "round", ParameterNames: ["value", "not valid"])],
+                reserved));
+        Assert.Contains("not a valid KatLang identifier", invalidParameterName.Message);
+
+        var duplicateParameterName = Assert.Throws<InvalidOperationException>(
+            () => BuiltinRegistry.ValidateMathMemberMetadataCore(
+                [new MathMemberDescriptor(
+                    "Round", MathMemberKind.BinaryFunction, "round", ParameterNames: ["value", "value"])],
+                reserved));
+        Assert.Contains("parameter name 'value' more than once", duplicateParameterName.Message);
 
         Assert.False(Lexer.IsValidIdentifier("Math.Sin"));
 

@@ -872,7 +872,7 @@ Single-argument logarithms:
 - `ln(x)` / `Math.Ln(x)` is the natural logarithm (base e).
 - `lg(x)` / `Math.Lg(x)` is the base-10 logarithm.
 
-`round` always takes two arguments: `round(x, digits)` / `Math.Round(x, digits)`. `digits` is the integer number of digits after the decimal point and must be `>= 0`; use `0` for integer rounding. Midpoints round away from zero, so `round(1.225, 2)` is `1.23`.
+`round` always takes two arguments: `round(value, digits)` / `Math.Round(value, digits)`. `digits` is the integer number of digits after the decimal point and must be `>= 0`; use `0` for integer rounding. Midpoints round away from zero, so `round(1.225, 2)` is `1.23`.
 
 Use `random(start, end)` / `Math.Random(start, end)` for decimal random numbers and `randomInt(start, end)` / `Math.RandomInt(start, end)` for whole-number random values (uniform; bounds must be whole numbers within `±1e34`). Both produce values in the half-open range `[start; end)`, meaning `start <= value < end`.
 Examples: `random(0, 1)` gives a decimal value where `0 <= value < 1`; `randomInt(1, 7)` gives an integer-like dice roll from `1` through `6`.
@@ -1026,7 +1026,7 @@ Numeric, operator, and literal correctness:
 - `/` vs `div` is chosen intentionally (`/` keeps fractions, `div` truncates toward zero);
 - `avg` returns the decimal arithmetic mean and is used freely for fractional means (it equals `sum(x) / count(x)` for numeric values);
 - display-precision requests use a top-level `DisplayDecimals = n`;
-- Math arities are correct in every spelling, especially `log(value, base)`, `pow(x, y)`, `atan2(y, x)`, `round(x, digits)`, `random(start, end)`, and `randomInt(start, end)` (identically for the `Math.X` forms);
+- Math arities are correct in every spelling, especially `log(value, base)`, `pow(x, y)`, `atan2(y, x)`, `round(value, digits)`, `random(start, end)`, and `randomInt(start, end)` (identically for the `Math.X` forms);
 - numeric literals use lowercase `e`, digits on both sides of the dot, and optional `_` separators;
 - strings are single-line, single-quoted literals with no invented escapes or double quotes.
 
