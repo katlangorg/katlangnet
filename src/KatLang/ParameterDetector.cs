@@ -1098,8 +1098,8 @@ public static class ParameterDetector
     /// selects the parameter over every prelude property — builtins and the
     /// prelude's <see cref="Algorithm.User"/>-valued members (<c>Math</c>, host
     /// operations, and the Math member aliases such as <c>sin</c> and
-    /// <c>pi</c>) uniformly. <c>F(e) = {e + 1}</c> therefore binds the
-    /// parameter, not <c>Math.E</c>. The first direct hit in the
+    /// <c>pi</c>) uniformly. <c>F(pi) = {pi + 1}</c> therefore binds the
+    /// parameter, not <c>Math.Pi</c>. The first direct hit in the
     /// ownership-first walk decides (mirroring
     /// <see cref="ElaboratedScopeLookup.LookupLexicalPropertyMatches"/>); a
     /// direct hit at any nearer level, and any open-provided hit, may win at

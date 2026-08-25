@@ -8,10 +8,9 @@ namespace KatLang.Tests;
 
 public class EvaluatorTests
 {
-    // Must match the constants the Math prelude serves (Decimal128's own
-    // correctly-rounded 34-digit values).
+    // Must match the constant the Math prelude serves (Decimal128's own
+    // correctly-rounded 34-digit value).
     private static readonly Decimal128 KatPi = Decimal128.Pi;
-    private static readonly Decimal128 KatE = Decimal128.E;
 
     /// <summary>
     /// STRICT-SOURCE: parses, REQUIRES a clean front end, then evaluates.
@@ -8407,13 +8406,25 @@ public class EvaluatorTests
     }
 
     [Fact]
-    public void Eval_MathE_ReturnsMathE()
+    public void Eval_MathExp_ReturnsNaturalExponential()
     {
-        var result = Eval("Math.E");
+        // The oracle is Decimal128.Exp itself — Math.Exp is wired directly to
+        // it, never through double or a stored constant.
+        var result = Eval("Math.Exp(1)");
         Assert.True(result.IsOk);
         Assert.Single(result.Value);
-        Assert.Equal(KatE, result.Value[0]);
+        Assert.Equal(Decimal128.Exp(Decimal128.One), result.Value[0]);
     }
+
+    [Fact]
+    public void Eval_RemovedMathE_UsesOrdinaryClosedMemberFailure()
+        => AssertUnknownDotMember(ClosedMemberProbe("", "Math.E"), "E");
+
+    [Theory]
+    [InlineData("Math.Exp()", 0)]
+    [InlineData("Math.Exp(1, 2)", 2)]
+    public void Eval_MathExp_RequiresOneArgument(string source, int actual)
+        => AssertEvalFailsWithArityMismatch(source, expected: 1, actual);
 
     [Fact]
     public void Eval_MathPi_InExpression()
@@ -8425,12 +8436,12 @@ public class EvaluatorTests
     }
 
     [Fact]
-    public void Eval_MathE_InExpression()
+    public void Eval_MathExp_InExpression()
     {
-        var result = Eval("Math.E + 1");
+        var result = Eval("Math.Exp(1) + 1");
         Assert.True(result.IsOk);
         Assert.Single(result.Value);
-        Assert.Equal(KatE + 1, result.Value[0]);
+        Assert.Equal(Decimal128.Exp(Decimal128.One) + 1, result.Value[0]);
     }
 
     [Fact]
@@ -8528,7 +8539,7 @@ public class EvaluatorTests
 
     [Fact]
     public void Eval_MathLn()
-        => AssertEvalApprox("Math.Ln(Math.E)", 1, decimalPlaces: 32);
+        => AssertEvalApprox("Math.Ln(Math.Exp(1))", 1, decimalPlaces: 32);
 
     [Fact]
     public void Eval_MathLg()
@@ -8868,16 +8879,16 @@ public class EvaluatorTests
     }
 
     [Fact]
-    public void Eval_Open_MathE()
+    public void Eval_Open_MathExp()
     {
         var source = """
             open Math
-            E
+            Exp(1)
             """;
         var result = Eval(source);
         Assert.True(result.IsOk);
         Assert.Single(result.Value);
-        Assert.Equal(KatE, result.Value[0]);
+        Assert.Equal(Decimal128.Exp(Decimal128.One), result.Value[0]);
     }
 
     [Fact]

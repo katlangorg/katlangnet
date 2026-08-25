@@ -1,8 +1,8 @@
 using KatLang;
 
 var source = """
-    K=a.t
-    K(7, {x+1})
+    doNotSin=Math.Sin
+    doNotSin(1.23) #Remember Jesus
     """;
 
 switch (await KatLangEngine.RunAsync(source, new RunOptions { DownloadCode = DownloadCode }))

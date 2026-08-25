@@ -140,7 +140,7 @@ public class FormattingOptionsTests
     [Fact]
     public void DisplayDecimals_AppliesToEveryFormatter()
     {
-        const string source = "DisplayDecimals = 2\n\n(Math.Pi, Math.E)";
+        const string source = "DisplayDecimals = 2\n\n(Math.Pi, Math.Exp(1))";
         var run = KatLangEngine.Run(source);
         var options = new OutputFormattingOptions { NewLine = "\n" };
 

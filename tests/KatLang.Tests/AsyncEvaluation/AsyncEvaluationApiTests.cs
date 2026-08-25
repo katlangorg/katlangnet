@@ -24,6 +24,7 @@ public class AsyncEvaluationApiTests
         "[1, [2], ()]",
         "A = 1, 2, 3\nA",
         "A = 1, 2, 3\nA.sum",
+        "Math.Exp(1)\nexp(-1)",
         "F(x) = x * 2\nF(21)",
         "F(x) = x * 2\n[1, 2, 3].map(F)",
         "Step(n, acc) = (n + 1, acc + n)\nrepeat(Step, 5, 0, 0)",

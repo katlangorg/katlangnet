@@ -7387,6 +7387,7 @@ public static partial class Evaluator
                 result = Decimal128.IsNaN(args[0]) ? Decimal128.NaN : Decimal128.Sign(args[0]);
                 break;
             case "Sqrt": result = CanonicalizeMathResult(Decimal128.Sqrt(args[0])); break;
+            case "Exp": result = CanonicalizeMathResult(Decimal128.Exp(args[0])); break;
             case "Ln": result = CanonicalizeMathResult(Decimal128.Log(args[0])); break;
             case "Lg": result = CanonicalizeMathResult(Decimal128.Log10(args[0])); break;
             case "Sin": result = CanonicalizeMathResult(Decimal128.Sin(args[0])); break;

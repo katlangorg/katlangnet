@@ -19,7 +19,7 @@ public class MathAliasRegistryTests
         new Dictionary<string, string>(StringComparer.Ordinal)
         {
             ["Pi"] = "pi",
-            ["E"] = "e",
+            ["Exp"] = "exp",
             ["Abs"] = "abs",
             ["Ceil"] = "ceil",
             ["Floor"] = "floor",
@@ -296,6 +296,7 @@ public class MathAliasRegistryTests
         }
 
         Assert.Equal("round(x, y)", GetAliasFacts("round").Signature.DisplayText);
+        Assert.Equal("exp(x)", GetAliasFacts("exp").Signature.DisplayText);
         Assert.Equal("atan2(y, x)", GetAliasFacts("atan2").Signature.DisplayText);
         Assert.Equal("log(x, y)", GetAliasFacts("log").Signature.DisplayText);
         Assert.Equal("random(start, end)", GetAliasFacts("random").Signature.DisplayText);

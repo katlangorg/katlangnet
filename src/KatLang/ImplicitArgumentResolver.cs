@@ -699,7 +699,7 @@ public static class ImplicitArgumentResolver
 
                 // Bare Math ALIAS in value position: lift exactly like the bare
                 // canonical `Math.X` arm below, from the same registry facts.
-                // Constants (`pi`, `e`) carry no facts and stay bare references.
+                // The constant (`pi`) carries no facts and stays a bare reference.
                 if (!inCallPosition
                     && TryGetUnshadowedMathAliasCallee(expr, paramMap, out var bareAliasFacts))
                 {

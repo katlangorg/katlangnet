@@ -47,6 +47,8 @@ public class MathAliasEvaluationTests
     [InlineData("round(2.34567, 2)", "Math.Round(2.34567, 2)")]
     [InlineData("sign(-3)", "Math.Sign(-3)")]
     [InlineData("sqrt(2)", "Math.Sqrt(2)")]
+    [InlineData("exp(0.5)", "Math.Exp(0.5)")]
+    [InlineData("exp(-2)", "Math.Exp(-2)")]
     [InlineData("ln(2)", "Math.Ln(2)")]
     [InlineData("lg(1000)", "Math.Lg(1000)")]
     [InlineData("sin(1)", "Math.Sin(1)")]
@@ -68,6 +70,7 @@ public class MathAliasEvaluationTests
     [InlineData("round(2.345, 2)", "2.35")]
     [InlineData("sign(-3)", "-1")]
     [InlineData("sqrt(4)", "2")]
+    [InlineData("exp(0)", "1")]
     [InlineData("ln(1)", "0")]
     [InlineData("lg(1000)", "3")]
     [InlineData("sin(0)", "0")]
@@ -85,26 +88,73 @@ public class MathAliasEvaluationTests
             EvalSingle(source));
 
     [Fact]
-    public void ConstantAliases_AreExactlyTheCanonicalConstants()
+    public void PiAlias_IsExactlyTheCanonicalConstant()
     {
         Assert.Equal(EvalSingle("Math.Pi"), EvalSingle("pi"));
-        Assert.Equal(EvalSingle("Math.E"), EvalSingle("e"));
         Assert.Equal(Decimal128.Zero, EvalSingle("pi - Math.Pi"));
-        Assert.Equal(Decimal128.Zero, EvalSingle("e - Math.E"));
         Assert.Equal(EvalSingle("Math.Sin(Math.Pi / 2)"), EvalSingle("sin(pi / 2)"));
     }
 
     [Fact]
-    public void ConstantAliases_PropertyStyleAndExplicitCallAgree()
+    public void PiAlias_PropertyStyleAndExplicitCallAgree()
     {
         // The `A` vs `A()` distinction only controls the zero-argument cache;
         // both spellings observe the same constant.
         Assert.Equal(EvalSingle("pi"), EvalSingle("pi()"));
-        Assert.Equal(EvalSingle("e"), EvalSingle("e()"));
     }
 
     [Fact]
-    public void ConstantAliases_PreservePropertyCacheVersusExplicitCallSemantics()
+    public void ExpAliasAndCanonical_MatchDecimal128ExpDirectly()
+    {
+        // Math.Exp is wired directly to Decimal128.Exp — never through double,
+        // System.Math, Pow, or a stored constant — so the language result IS
+        // the oracle's value for representative positive and negative inputs.
+        // exp(0) = 1 exactly.
+        foreach (var (source, input) in new (string Source, string Input)[]
+        {
+            ("0", "0"),
+            ("-0", "-0"),
+            ("1", "1"),
+            ("0.5", "0.5"),
+            ("-1", "-1"),
+            ("-2.25", "-2.25"),
+            ("10", "10"),
+        })
+        {
+            var oracle = Decimal128.Exp(
+                Decimal128.Parse(input, System.Globalization.CultureInfo.InvariantCulture));
+            Assert.Equal(oracle, EvalSingle($"Math.Exp({source})"));
+            Assert.Equal(oracle, EvalSingle($"exp({source})"));
+        }
+
+        Assert.Equal(Decimal128.One, EvalSingle("Math.Exp(0)"));
+        Assert.Equal(Decimal128.One, EvalSingle("exp(0)"));
+    }
+
+    [Fact]
+    public void RemovedEulerConstant_IsNoLongerAvailable()
+    {
+        // The replacement is intentional and alias-free: `Math.E` has no
+        // structural member and no lexical fallback (`E` is a free name), and
+        // bare `e` is an ordinary identifier again — both surface as ordinary
+        // unresolved implicit parameters, never as a retained constant.
+        var canonicalError = SourceProvenance.ParseValid("Math.E")
+            .ExpectEvaluationError<EvalError.UnresolvedImplicitParams>();
+        Assert.Equal(["E"], canonicalError.ParamNames);
+        Assert.Null(Assert.Single(canonicalError.InferredImplicitParameters!).SuggestedName);
+
+        var aliasError = SourceProvenance.ParseValid("e")
+            .ExpectEvaluationError<EvalError.UnresolvedImplicitParams>();
+        Assert.Equal(["e"], aliasError.ParamNames);
+        Assert.Null(Assert.Single(aliasError.InferredImplicitParameters!).SuggestedName);
+
+        var expressionError = SourceProvenance.ParseValid("e + 1")
+            .ExpectEvaluationError<EvalError.UnresolvedImplicitParams>();
+        Assert.Equal(["e"], expressionError.ParamNames);
+    }
+
+    [Fact]
+    public void PiAlias_PreservesPropertyCacheVersusExplicitCallSemantics()
     {
         var propertyCache = new RunScopedZeroArgPropertyResultCache();
         var propertyResult = Evaluator.Run(
@@ -136,6 +186,7 @@ public class MathAliasEvaluationTests
 
     [Theory]
     [InlineData("sin(1, 2)", "sin(x)", 1, 2)]
+    [InlineData("exp(1, 2)", "exp(x)", 1, 2)]
     [InlineData("round(2)", "round(x, y)", 2, 1)]
     [InlineData("atan2(1)", "atan2(y, x)", 2, 1)]
     [InlineData("log(8)", "log(x, y)", 2, 1)]
@@ -159,7 +210,24 @@ public class MathAliasEvaluationTests
         Assert.True(Decimal128.IsNaN(EvalSingle("Math.Sqrt(-1)")));
         Assert.True(Decimal128.IsNegativeInfinity(EvalSingle("ln(0)")));
         Assert.True(Decimal128.IsNegativeInfinity(EvalSingle("Math.Ln(0)")));
+        Assert.True(Decimal128.IsPositiveInfinity(EvalSingle("exp(20000)")));
+        Assert.True(Decimal128.IsPositiveInfinity(EvalSingle("Math.Exp(20000)")));
         AssertAliasAgreesWithCanonical("asin(2)", "Math.Asin(2)");
+    }
+
+    [Fact]
+    public void Exp_PropagatesIeeeNonFiniteInputs()
+    {
+        // Overflow produces +Infinity; applying Exp to +Infinity keeps it.
+        Assert.True(Decimal128.IsPositiveInfinity(EvalSingle("Math.Exp(Math.Exp(20000))")));
+        Assert.True(Decimal128.IsPositiveInfinity(EvalSingle("exp(exp(20000))")));
+
+        // Ln(0) supplies -Infinity and Sqrt(-1) supplies NaN without requiring
+        // host-only literals for the special values.
+        Assert.Equal(Decimal128.Zero, EvalSingle("Math.Exp(Math.Ln(0))"));
+        Assert.Equal(Decimal128.Zero, EvalSingle("exp(ln(0))"));
+        Assert.True(Decimal128.IsNaN(EvalSingle("Math.Exp(Math.Sqrt(-1))")));
+        Assert.True(Decimal128.IsNaN(EvalSingle("exp(sqrt(-1))")));
     }
 
     [Fact]

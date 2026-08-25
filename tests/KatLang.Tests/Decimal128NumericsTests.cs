@@ -96,10 +96,16 @@ public class Decimal128NumericsTests
         => Assert.Equal(N("1.414213562373095048801688724209698"), EvalSingle("Math.Sqrt(2)"));
 
     [Fact]
-    public void Exp_ViaPow_Carries34DigitPrecision()
-        // exp(1) through the language surface: E is the constant, so probe e^1
-        // via Pow with a fractional-exponent forcing (0.5 doubling).
-        => AssertApprox("Math.Pow(Math.E, 0.5) ^ 2", N("2.718281828459045235360287471352662"), 30);
+    public void Exp_One_Carries34DigitPrecision()
+        // Math.Exp is wired directly to Decimal128.Exp — never through double,
+        // Pow, or a stored constant — so exp(1) reproduces e's 34-digit
+        // expansion to transcendental tolerance.
+        => AssertApprox("Math.Exp(1)", N("2.718281828459045235360287471352662"), 32);
+
+    [Fact]
+    public void Exp_HalfSquared_Carries34DigitPrecision()
+        // exp(0.5)^2 composes two transcendental draws and still lands on e.
+        => AssertApprox("Math.Exp(0.5) ^ 2", N("2.718281828459045235360287471352662"), 30);
 
     [Fact]
     public void Ln_Two_Carries34DigitPrecision()
@@ -267,8 +273,10 @@ public class Decimal128NumericsTests
         => Assert.Equal(N("3.141592653589793238462643383279503"), EvalSingle("Math.Pi"));
 
     [Fact]
-    public void E_IsTheCorrectlyRounded34DigitValue()
-        => Assert.Equal(N("2.718281828459045235360287471352662"), EvalSingle("Math.E"));
+    public void Exp_Zero_IsExactlyOne()
+        // exp(0) = 1 is exact in Decimal128.Exp; the identity survives the
+        // language surface and quantum canonicalization unchanged.
+        => Assert.Equal(N("1"), EvalSingle("Math.Exp(0)"));
 
     [Fact]
     public void Constants_CarryPrecisionBeyondDouble()

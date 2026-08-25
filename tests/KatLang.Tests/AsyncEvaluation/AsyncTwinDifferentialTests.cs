@@ -52,6 +52,10 @@ public class AsyncTwinDifferentialTests
     public async Task ExplorerCase_AsyncTwinPath_MatchesSyncOutcomeAndGenericCounters(string caseId)
         => await AssertTwinPathMatches(ExplorerById[caseId].Source);
 
+    [Fact]
+    public async Task MathExp_AsyncTwinPath_MatchesSyncOutcomeAndGenericCounters()
+        => await AssertTwinPathMatches("Math.Exp(1)\nexp(-1)");
+
     [Theory]
     [MemberData(nameof(SpecCaseIds))]
     public async Task LanguageSpecCase_GenuineSuspensionAtEveryPropertyAccess_ChangesNothing(string caseId)

@@ -51,6 +51,10 @@ public class MathAliasResolutionTests
         Assert.Equal(["x"], ElaboratedPropertyParams("K = Math.Cos\nK(0)", "K"));
         AssertAliasAgreesWithCanonical("K = cos\nK(0)", "K = Math.Cos\nK(0)");
 
+        Assert.Equal(["x"], ElaboratedPropertyParams("K = exp\nK(1)", "K"));
+        Assert.Equal(["x"], ElaboratedPropertyParams("K = Math.Exp\nK(1)", "K"));
+        AssertAliasAgreesWithCanonical("K = exp\nK(1)", "K = Math.Exp\nK(1)");
+
         Assert.Equal(["y", "x"], ElaboratedPropertyParams("K = atan2\nK(1, 2)", "K"));
         AssertAliasAgreesWithCanonical("K = atan2\nK(1, 2)", "K = Math.Atan2\nK(1, 2)");
 
@@ -111,6 +115,7 @@ public class MathAliasResolutionTests
     public void LocalProperty_ShadowsAlias()
     {
         Assert.Equal(30, EvalSingle("sin(x) = x * 10\nsin(3)"));
+        Assert.Equal(30, EvalSingle("exp(x) = x * 10\nexp(3)"));
         Assert.Equal(4, EvalSingle("pi = 3\npi + 1"));
 
         // Ancestor property shadowing: the user's `sin` stays an ordinary
@@ -134,22 +139,23 @@ public class MathAliasResolutionTests
     }
 
     [Fact]
-    public void ExplicitParameter_ShadowsAlias_IncludingE()
+    public void ExplicitParameter_ShadowsAlias()
     {
-        Assert.Equal(6, EvalSingle("F(e) = e + 1\nF(5)"));
         Assert.Equal(42, EvalSingle("F(sin) = sin\nF(42)"));
         Assert.Equal(7, EvalSingle("F(pi) = pi + 2\nF(5)"));
         Assert.Equal(8, EvalSingle("F(round) = round + 3\nF(5)"));
+        Assert.Equal(6, EvalSingle("F(exp) = exp + 1\nF(5)"));
+        Assert.Equal(6, EvalSingle("F(e) = e + 1\nF(5)"));
     }
 
     [Fact]
     public void CapturedAncestorParameter_ShadowsAlias()
     {
-        // The nested brace scope captures the OUTER parameter `e`; the prelude
+        // The nested brace scope captures the OUTER parameter; the prelude
         // alias (the scope chain's root) never outranks a nearer parameter.
-        Assert.Equal(6, EvalSingle("F(e) = {e + 1}\nF(5)"));
         Assert.Equal(9, EvalSingle("F(sin) = {sin * 3}\nF(3)"));
         Assert.Equal(8, EvalSingle("F(round) = {round + 3}\nF(5)"));
+        Assert.Equal(6, EvalSingle("F(pi) = {pi + 1}\nF(5)"));
     }
 
     [Theory]
@@ -183,24 +189,29 @@ public class MathAliasResolutionTests
     }
 
     [Fact]
-    public void DeconstructionBindings_ShadowConstantAliases()
-        => Assert.Equal(5, EvalSingle("e, pi = (2, 3)\ne + pi"));
+    public void DeconstructionBindings_ShadowAliases()
+        => Assert.Equal(5, EvalSingle("pi, sqrt = (2, 3)\npi + sqrt"));
 
     [Fact]
     public void AliasNames_AreNotInferredAsImplicitParameters()
     {
-        foreach (var source in new[] { "cos(1)", "pi", "e + 1", "sin(pi / 2)" })
+        foreach (var source in new[] { "cos(1)", "pi", "exp(1)", "sin(pi / 2)" })
         {
             var provenance = SourceProvenance.ParseValid(source);
             Assert.Empty(provenance.Root.Params);
         }
 
-        // The documented compatibility effect: `F = e + 1` now means Math.E + 1
-        // instead of inferring `e` as a parameter; `F(e) = e + 1` still
+        // The documented compatibility effect: `F = pi + 1` means Math.Pi + 1
+        // instead of inferring `pi` as a parameter; `F(pi) = pi + 1` still
         // requests the parameter explicitly.
-        Assert.Empty(ElaboratedPropertyParams("F = e + 1\nF", "F"));
-        Assert.Equal(EvalSingle("Math.E + 1"), EvalSingle("F = e + 1\nF"));
-        Assert.Equal(["e"], ElaboratedPropertyParams("F(e) = e + 1\nF(1)", "F"));
+        Assert.Empty(ElaboratedPropertyParams("F = pi + 1\nF", "F"));
+        Assert.Equal(EvalSingle("Math.Pi + 1"), EvalSingle("F = pi + 1\nF"));
+        Assert.Equal(["pi"], ElaboratedPropertyParams("F(pi) = pi + 1\nF(1)", "F"));
+
+        // The REMOVED `e` binding is ordinary vocabulary again: a free `e` is
+        // an implicit parameter exactly like any other unresolved name.
+        Assert.Equal(["e"], SourceProvenance.ParseValid("e + 1").Root.Params);
+        Assert.Equal(["E"], SourceProvenance.ParseValid("Math.E").Root.Params);
     }
 
     [Fact]
@@ -222,6 +233,7 @@ public class MathAliasResolutionTests
         Assert.Equal(EvalSingle("Math.Cos(0.5)"), EvalSingle("v = 0.5\nv.cos"));
         Assert.Equal(EvalSingle("Math.Cos(0.5)"), EvalSingle("F = x.cos\nF(0.5)"));
         Assert.Equal(EvalSingle("Math.Atan2(1, 2)"), EvalSingle("F = y.atan2(2)\nF(1)"));
+        Assert.Equal(EvalSingle("Math.Exp(0.5)"), EvalSingle("F = x.exp\nF(0.5)"));
     }
 
     [Fact]
@@ -243,6 +255,7 @@ public class MathAliasResolutionTests
     {
         Assert.Equal(1, EvalSingle("open Math\nCos(0)"));
         Assert.Equal(EvalSingle("Math.Pi"), EvalSingle("open Math\nPi"));
+        Assert.Equal(EvalSingle("Math.Exp(1)"), EvalSingle("open Math\nExp(1)"));
 
         // The aliases keep working alongside an explicit `open Math`.
         var both = EvalFlat("open Math\ncos(0), Cos(0)");

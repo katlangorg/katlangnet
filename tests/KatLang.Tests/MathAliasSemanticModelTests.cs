@@ -51,12 +51,22 @@ public class MathAliasSemanticModelTests
         Assert.Equal("random(start, end)", CatalogSymbol("random").Property!.GetDisplaySignature(PropertyCallStyle.Plain));
         Assert.Equal("randomInt(start, end)", CatalogSymbol("randomInt").Property!.GetDisplaySignature(PropertyCallStyle.Plain));
         Assert.Equal("sqrt(x)", CatalogSymbol("sqrt").Property!.GetDisplaySignature(PropertyCallStyle.Plain));
+        Assert.Equal("exp(x)", CatalogSymbol("exp").Property!.GetDisplaySignature(PropertyCallStyle.Plain));
         Assert.Equal("pow(x, y)", CatalogSymbol("pow").Property!.GetDisplaySignature(PropertyCallStyle.Plain));
 
         // Constants are zero-parameter property-like entries.
         Assert.Empty(CatalogSymbol("pi").Property!.Parameters);
-        Assert.Empty(CatalogSymbol("e").Property!.Parameters);
         Assert.Empty(CatalogSymbol("pi").Property!.Signatures);
+
+        // The REPLACED Euler constant left no catalog residue: no lowercase
+        // `e` binding and no canonical `E` member survive anywhere.
+        Assert.DoesNotContain(PreludeCatalog.Symbols, symbol => symbol.Name == "e");
+        var math = CatalogSymbol("Math");
+        Assert.DoesNotContain(math.Members, member => member.Name == "E");
+        Assert.Equal(
+            "Exp(x)",
+            Assert.Single(math.Members, member => member.Name == "Exp")
+                .Property!.GetDisplaySignature(PropertyCallStyle.Plain));
     }
 
     [Fact]
@@ -70,6 +80,9 @@ public class MathAliasSemanticModelTests
 
         var atan2 = CatalogSymbol("atan2").Property!;
         Assert.Equal("y.atan2(x)", atan2.FindSignature(PropertyCallStyle.Dot)!.DisplayText);
+
+        var exp = CatalogSymbol("exp").Property!;
+        Assert.Equal("x.exp", exp.FindSignature(PropertyCallStyle.Dot)!.DisplayText);
 
         // `load` remains the front-end-only contrast case.
         Assert.False(CatalogSymbol("load").Property!.SupportsLexicalDotCall);
@@ -138,11 +151,11 @@ public class MathAliasSemanticModelTests
     }
 
     [Fact]
-    public void ExplicitParameterE_ShadowsAliasInResolution()
+    public void ExplicitParameterPi_ShadowsAliasInResolution()
     {
-        var model = BuildModel("F(e) = e + 1\nF(5)");
+        var model = BuildModel("F(pi) = pi + 1\nF(5)");
 
-        var resolution = ResolutionAt(model, 1, 8);
+        var resolution = ResolutionAt(model, 1, 9);
         Assert.Equal(OccurrenceKind.ParameterReference, resolution.Occurrence.Kind);
         Assert.Equal(IdentifierClassification.ExplicitParameterReference, resolution.Classification);
         Assert.NotNull(resolution.ResolvedDeclaration);

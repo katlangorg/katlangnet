@@ -300,16 +300,14 @@ KatLang provides a built-in `Math` namespace with common constants and functions
 **Constants:**
 ```
 Math.Pi
-Math.E
 ```
 
 **Results:**
 ```
 3.141592653589793238462643383279503
-2.718281828459045235360287471352662
 ```
 
-Both constants are correctly rounded to KatLang's full numeric precision of 34 significant decimal digits (IEEE 754 Decimal128).
+The constant is correctly rounded to KatLang's full numeric precision of 34 significant decimal digits (IEEE 754 Decimal128). There is no `Math.E` constant: Euler's number is obtained through the natural exponential function, `Math.Exp(1)`.
 
 **Single-argument functions:**
 
@@ -320,6 +318,7 @@ Both constants are correctly rounded to KatLang's full numeric precision of 34 s
 | `Math.Floor(x)` | Floor (round down) |
 | `Math.Sign(x)` | Sign: -1, 0, or 1 |
 | `Math.Sqrt(x)` | Square root |
+| `Math.Exp(x)` | Natural exponential (e raised to the power `x`; `Math.Exp(0)` is exactly `1`) |
 | `Math.Ln(x)` | Natural logarithm |
 | `Math.Lg(x)` | Base-10 logarithm |
 | `Math.Sin(x)` | Sine (radians) |
@@ -394,7 +393,7 @@ The complete alias table:
 | Canonical | Alias | Canonical | Alias |
 |---|---|---|---|
 | `Math.Pi` | `pi` | `Math.Cos(x)` | `cos(x)` |
-| `Math.E` | `e` | `Math.Acos(x)` | `acos(x)` |
+| `Math.Exp(x)` | `exp(x)` | `Math.Acos(x)` | `acos(x)` |
 | `Math.Abs(x)` | `abs(x)` | `Math.Tan(x)` | `tan(x)` |
 | `Math.Ceil(x)` | `ceil(x)` | `Math.Atan(x)` | `atan(x)` |
 | `Math.Floor(x)` | `floor(x)` | `Math.Atan2(y, x)` | `atan2(y, x)` |
@@ -413,10 +412,10 @@ An alias binding points to the SAME function, not a copy: `pi` points to `Math.P
 - `open Math` still exposes only the canonical PascalCase names (`Cos`, `Pi`, ...); it is never needed for the aliases and is not implied by them.
 - Aliases work everywhere ordinary names work: as values (`K = cos` infers `K(x)`), through dot-call fallback (`v.cos` is `cos(v)`), and as higher-order references (`Apply(cos, 0)`).
 
-**Compatibility note:** because the alias names are now part of the prelude vocabulary, a bare `pi`, `e`, `abs`, `ceil`, `floor`, `round`, `sign`, `sqrt`, `ln`, `lg`, `sin`, `asin`, `cos`, `acos`, `tan`, `atan`, `atan2`, `pow`, `log`, `random`, or `randomInt` that previously did not resolve to anything is no longer inferred as an implicit parameter — it resolves to the Math alias instead. In particular, a free `e` such as `F = e + 1` now means `Math.E + 1`. Explicit parameters remain valid and shadow the alias normally:
+**Compatibility note:** because the alias names are now part of the prelude vocabulary, a bare `pi`, `exp`, `abs`, `ceil`, `floor`, `round`, `sign`, `sqrt`, `ln`, `lg`, `sin`, `asin`, `cos`, `acos`, `tan`, `atan`, `atan2`, `pow`, `log`, `random`, or `randomInt` that previously did not resolve to anything is no longer inferred as an implicit parameter — it resolves to the Math alias instead. For example, a free `pi` such as `F = pi + 1` now means `Math.Pi + 1`. (`e` and `Math.E` are NOT part of this vocabulary: the Euler constant was replaced by the `Math.Exp` / `exp` function, so `e` is an ordinary identifier.) Explicit parameters remain valid and shadow the aliases normally:
 
 ```
-F(e) = e + 1
+F(pi) = pi + 1
 F(5)
 ```
 
@@ -435,7 +434,7 @@ Define the top-level property `DisplayDecimals` to control how many digits after
 DisplayDecimals = 6
 
 Math.Pi
-Math.E
+Math.Exp(1)
 ```
 
 **Results:**
@@ -481,7 +480,7 @@ Formatting applies recursively to numeric leaves in displayed structures:
 ```
 DisplayDecimals = 2
 
-(Math.Pi, Math.E)
+(Math.Pi, Math.Exp(1))
 ```
 
 **Results:**

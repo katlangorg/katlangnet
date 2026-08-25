@@ -238,7 +238,7 @@ For `FlatState((*history, previous), current)`, the call shape is `FlatState((1,
 
 Example:
     DisplayDecimals = 2
-    (Math.Pi, Math.E)            # (3.14, 2.72)
+    (Math.Pi, Math.Exp(1))       # (3.14, 2.72)
 
 Do not invent unsupported display forms. None of these exist:
     value.displayDecimals(n)
@@ -254,7 +254,7 @@ Do not invent unsupported display forms. None of these exist:
 - Avoid shadowing builtin/prelude names with parameters, binders, or helper placeholders. No name is hard-reserved at the parser level; the builtin/prelude names below are syntactically shadowable, but shadowing them is unsafe because it can break lookup, collection pipelines, or intended builtin calls. Do not generate code that shadows them.
 
 Avoid shadowing these parameter or helper names:
-`if`, `while`, `repeat`, `range`, `filter`, `map`, `count`, `contains`, `first`, `last`, `distinct`, `take`, `skip`, `min`, `max`, `sum`, `avg`, `reduce`, `order`, `orderDesc`, `atoms`, `load`, `Math`, and the lowercase Math aliases `pi`, `e`, `abs`, `ceil`, `floor`, `round`, `sign`, `sqrt`, `ln`, `lg`, `sin`, `asin`, `cos`, `acos`, `tan`, `atan`, `atan2`, `pow`, `log`, `random`, `randomInt`. In particular, avoid `e` as an inferred/free variable because it now resolves to Euler's number; an explicit parameter such as `F(e) = ...` remains valid when shadowing is intended.
+`if`, `while`, `repeat`, `range`, `filter`, `map`, `count`, `contains`, `first`, `last`, `distinct`, `take`, `skip`, `min`, `max`, `sum`, `avg`, `reduce`, `order`, `orderDesc`, `atoms`, `load`, `Math`, and the lowercase Math aliases `pi`, `exp`, `abs`, `ceil`, `floor`, `round`, `sign`, `sqrt`, `ln`, `lg`, `sin`, `asin`, `cos`, `acos`, `tan`, `atan`, `atan2`, `pow`, `log`, `random`, `randomInt`. (`e` is an ORDINARY identifier — there is no `Math.E` constant and no `e` binding; Euler's number is `exp(1)` / `Math.Exp(1)`.)
 
 Use alternatives:
 - `total` instead of `sum`
@@ -848,18 +848,20 @@ Use true conditional algorithms for literal/mixed structural matching or named a
 # 13. Math
 
 Every Math member has one predefined lower-camel-case prelude binding pointing to the SAME canonical function, not a copy:
-`pi`, `e`, `abs`, `ceil`, `floor`, `round`, `sign`, `sqrt`, `ln`, `lg`, `sin`, `asin`, `cos`, `acos`, `tan`, `atan`, `atan2`, `pow`, `log`, `random`, `randomInt`
-for `Math.Pi`, `Math.E`, `Math.Abs`, `Math.Ceil`, `Math.Floor`, `Math.Round`, `Math.Sign`, `Math.Sqrt`, `Math.Ln`, `Math.Lg`, `Math.Sin`, `Math.Asin`, `Math.Cos`, `Math.Acos`, `Math.Tan`, `Math.Atan`, `Math.Atan2`, `Math.Pow`, `Math.Log`, `Math.Random`, `Math.RandomInt`.
+`pi`, `exp`, `abs`, `ceil`, `floor`, `round`, `sign`, `sqrt`, `ln`, `lg`, `sin`, `asin`, `cos`, `acos`, `tan`, `atan`, `atan2`, `pow`, `log`, `random`, `randomInt`
+for `Math.Pi`, `Math.Exp`, `Math.Abs`, `Math.Ceil`, `Math.Floor`, `Math.Round`, `Math.Sign`, `Math.Sqrt`, `Math.Ln`, `Math.Lg`, `Math.Sin`, `Math.Asin`, `Math.Cos`, `Math.Acos`, `Math.Tan`, `Math.Atan`, `Math.Atan2`, `Math.Pow`, `Math.Log`, `Math.Random`, `Math.RandomInt`.
+
+There is NO `Math.E` constant and no `e` binding: Euler's number is `exp(1)` / `Math.Exp(1)`, and `exp(x)` / `Math.Exp(x)` is the natural exponential (`exp(0)` is exactly `1`). Never generate `Math.E` or a bare `e`.
 
 Prefer the lowercase aliases in ordinary formulas; they need no `open Math` and never generate one implicitly:
     cos(0.123)
     sin(pi / 2)
     round(sqrt(2), 10)
 
-Keep `Math.X` (`Math.Sqrt(x)`, `Math.Pi`) as the qualified form for disambiguation — for example next to a local definition of the same name. The aliases are prelude bindings, not members of `Math`: `Math.cos(1)` is invalid; inside `Math` only the canonical PascalCase names exist. User definitions shadow aliases (after `sin(x) = ...`, `sin` is the user's callable), and an explicit parameter such as `F(e) = e + 1` uses the parameter, not Euler's number. Avoid alias names — especially free/inferred `e` — as variable or helper names unless shadowing is intended; explicit parameters remain valid.
+Keep `Math.X` (`Math.Sqrt(x)`, `Math.Pi`) as the qualified form for disambiguation — for example next to a local definition of the same name. The aliases are prelude bindings, not members of `Math`: `Math.cos(1)` is invalid; inside `Math` only the canonical PascalCase names exist. User definitions shadow aliases (after `sin(x) = ...`, `sin` is the user's callable), and an explicit parameter such as `F(pi) = pi + 1` uses the parameter, not the constant. Avoid alias names as variable or helper names unless shadowing is intended; explicit parameters remain valid.
 
 Do not `open Math` merely to shorten spellings (the aliases already do that). Use `open Math` only when the canonical PascalCase bare names are specifically wanted and readability clearly improves; it exposes only the PascalCase names:
-`Pi`, `E`, `Abs`, `Ceil`, `Floor`, `Round`, `Sign`, `Sqrt`, `Ln`, `Lg`, `Sin`, `Asin`, `Cos`, `Acos`, `Tan`, `Atan`, `Atan2`, `Pow`, `Log`, `Random`, `RandomInt`.
+`Pi`, `Exp`, `Abs`, `Ceil`, `Floor`, `Round`, `Sign`, `Sqrt`, `Ln`, `Lg`, `Sin`, `Asin`, `Cos`, `Acos`, `Tan`, `Atan`, `Atan2`, `Pow`, `Log`, `Random`, `RandomInt`.
 
 Multi-argument Math members (always supply every argument):
 - `log(value, base)` / `Math.Log(value, base)` is the logarithm of `value` in the given `base`; it is not a one-argument natural log.

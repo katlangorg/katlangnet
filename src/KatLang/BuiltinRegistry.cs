@@ -327,7 +327,7 @@ internal static class BuiltinRegistry
         // Constants come from Decimal128's own correctly-rounded 34-digit sources —
         // never from double, System.Math, or a narrower decimal literal.
         new("Pi", MathMemberKind.Constant, "pi", Decimal128.Pi),
-        new("E", MathMemberKind.Constant, "e", Decimal128.E),
+        new("Exp", MathMemberKind.UnaryFunction, "exp"),
         new("Abs", MathMemberKind.UnaryFunction, "abs"),
         new("Ceil", MathMemberKind.UnaryFunction, "ceil"),
         new("Floor", MathMemberKind.UnaryFunction, "floor"),
@@ -484,7 +484,7 @@ internal static class BuiltinRegistry
 
     /// <summary>
     /// Callable facts for the prelude-alias spelling (<c>sin</c>, <c>pow</c>,
-    /// ...) of a Math FUNCTION member. Constants (<c>pi</c>, <c>e</c>) yield no
+    /// ...) of a Math FUNCTION member. The constant (<c>pi</c>) yields no
     /// facts. Binding-neutral: the caller must first establish through ordinary
     /// resolution that the written name actually reaches the prelude alias.
     /// </summary>

@@ -937,7 +937,7 @@ public class KatLangEngineTests
             """
             DisplayDecimals = 3
 
-            (Math.Pi, Math.E)
+            (Math.Pi, Math.Exp(1))
             """);
 
         Assert.Equal("(3.142, 2.718)", result.ToDisplayString());
@@ -950,7 +950,7 @@ public class KatLangEngineTests
             """
             DisplayDecimals = 2
 
-            (Math.Pi, (Math.E, Math.Pi * 10))
+            (Math.Pi, (Math.Exp(1), Math.Pi * 10))
             """);
 
         Assert.Equal("(3.14, (2.72, 31.42))", result.ToDisplayString());
@@ -1009,7 +1009,7 @@ public class KatLangEngineTests
             DisplayDecimals = 2
 
             Math.Pi
-            Math.E
+            Math.Exp(1)
             """);
 
         Assert.Equal("3.14 2.72", text);
@@ -1072,7 +1072,7 @@ public class KatLangEngineTests
             DisplayDecimals = 4
 
             Math.Pi
-            Math.E
+            Math.Exp(1)
             """);
 
         Assert.Equal(Lines("3.1416", "2.7183"), result.ToDisplayString());
