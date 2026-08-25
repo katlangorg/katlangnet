@@ -12,14 +12,25 @@
     <Version>$(KatLangVersion)</Version>
     <Description>Command-line interface for the KatLang language.</Description>
   </PropertyGroup>
+	
+  <PropertyGroup Condition="'$(Configuration)' == 'Release'">
+    <OptimizationPreference>Speed</OptimizationPreference>
+    <CopyOutputSymbolsToPublishDirectory>false</CopyOutputSymbolsToPublishDirectory>
+  </PropertyGroup>
 
   <Target Name="RenameKatLangPublishedExecutable" AfterTargets="Publish">
     <Move SourceFiles="$(PublishDir)KatLang.CLI.exe" DestinationFiles="$(PublishDir)katlang.exe"
 		  Condition="$([System.String]::Copy('$(RuntimeIdentifier)').StartsWith('win-')) AND Exists('$(PublishDir)KatLang.CLI.exe')" />
+	<Exec
+	  Command="powershell -NoProfile -NonInteractive -Command &quot;Compress-Archive -LiteralPath '$(PublishDir)katlang.exe' -DestinationPath '$(PublishDir)katlang-cli-$(Version)-$(RuntimeIdentifier).zip' -CompressionLevel Optimal -Force&quot;"
+	  Condition="$([System.String]::Copy('$(RuntimeIdentifier)').StartsWith('win-')) AND Exists('$(PublishDir)katlang.exe')" />
 	<Move
       SourceFiles="$(PublishDir)KatLang.CLI"
       DestinationFiles="$(PublishDir)katlang"
       Condition="$([System.String]::Copy('$(RuntimeIdentifier)').StartsWith('linux-')) AND Exists('$(PublishDir)KatLang.CLI')" />
+	<Exec
+	  Command="tar -czf &quot;$(PublishDir)katlang-cli-$(Version)-$(RuntimeIdentifier).tar.gz&quot; -C &quot;$(PublishDir)&quot; katlang"
+	  Condition="'$(RuntimeIdentifier)' == 'linux-x64' AND Exists('$(PublishDir)katlang')" />
   </Target>
 
   <ItemGroup>
