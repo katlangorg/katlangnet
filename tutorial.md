@@ -1,36 +1,40 @@
 # KatLang Tutorial
 
+Learn KatLang from a first calculation through collections, higher-order algorithms, pattern matching, and module loading. The examples are meant to be run as you read; most show their exact result immediately below the source.
+
 ## Contents
 
-1. [What KatLang Is](#what-katlang-is)
-2. [Your First KatLang Program](#your-first-katlang-program)
+1. [How to Use This Tutorial](#how-to-use-this-tutorial)
+2. [What KatLang Is](#what-katlang-is)
+3. [Your First KatLang Program](#your-first-katlang-program)
    - [Comments](#comments)
-3. [Values and Arithmetic](#values-and-arithmetic)
+4. [Values and Arithmetic](#values-and-arithmetic)
    - [Arithmetic Operators](#arithmetic-operators)
    - [Comparison Operators](#comparison-operators)
    - [Logical Operators](#logical-operators)
    - [Math Constants and Functions](#math-constants-and-functions)
    - [Lowercase Math Aliases](#lowercase-math-aliases)
    - [Display Decimal Places](#display-decimal-places)
-4. [Multiple Outputs](#multiple-outputs)
-5. [Properties](#properties)
+5. [Multiple Outputs](#multiple-outputs)
+6. [Properties](#properties)
    - [Calls Return One Value](#calls-return-one-value)
    - [Zero-Parameter Property Caching](#zero-parameter-property-caching)
    - [Algorithm Output](#algorithm-output)
    - [The Empty Sequence Value](#the-empty-sequence-value)
-    - [Sequence Values and Count](#sequence-values-and-count)
+   - [Sequence Values and Count](#sequence-values-and-count)
    - [Output Selection](#output-selection)
    - [Dot-Call Syntax](#dot-call-syntax)
-   - [Grace with DotCall](#grace-with-dotcall)
+   - [Dot Members and Implicit Parameters](#dot-members-and-implicit-parameters)
+   - [Grace with Dot Calls](#grace-with-dot-calls)
    - [Name Resolution](#name-resolution)
-6. [String Literals](#string-literals)
+7. [String Literals](#string-literals)
    - [String Equality](#string-equality)
    - [Number to String Conversion](#number-to-string-conversion)
-7. [Parameters](#parameters)
+8. [Parameters](#parameters)
    - [Collecting Explicit Parameters](#collecting-explicit-parameters)
-   - [Reordering Parameters with Grace~ operator](#reordering-parameters-with-grace-operator)
-8. [Conditionals](#conditionals)
-9. [Repetition](#repetition)
+   - [Reordering Parameters with Grace](#reordering-parameters-with-grace)
+9. [Conditionals](#conditionals)
+10. [Collections and Repetition](#collections-and-repetition)
     - [Inclusive Integer Lists: `range`](#inclusive-integer-lists-range)
     - [Selection: `filter`](#selection-filter)
     - [Mapping: `map`](#mapping-map)
@@ -48,53 +52,78 @@
     - [Summation: `sum`](#summation-sum)
     - [Average: `avg`](#average-avg)
     - [Reduction: `reduce`](#reduction-reduce)
-   - [Fixed Loop: `repeat`](#fixed-loop-repeat)
-   - [Conditional Loop: `while`](#conditional-loop-while)
-10. [Practical Examples](#practical-examples)
+    - [Fixed Loop: `repeat`](#fixed-loop-repeat)
+    - [Conditional Loop: `while`](#conditional-loop-while)
+11. [Practical Examples](#practical-examples)
     - [Reusable Calculation with Parameters](#reusable-calculation-with-parameters)
     - [Multi-Output Example](#multi-output-example)
     - [Loop-Based Example: Sum of a List](#loop-based-example-sum-of-a-list)
     - [Fibonacci Sequence](#fibonacci-sequence)
-11. [Higher-Order Algorithms](#higher-order-algorithms)
+12. [Higher-Order Algorithms](#higher-order-algorithms)
     - [Algorithm as Argument](#algorithm-as-argument)
-    - [Algorithms vs grouped expressions](#algorithms-vs-grouped-expressions)
-12. [Spread with the Postfix Star](#spread-with-the-postfix-star)
+    - [Algorithms vs. Grouped Expressions](#algorithms-vs-grouped-expressions)
+13. [Spread with the Postfix Star](#spread-with-the-postfix-star)
     - [Capture Parentheses](#capture-parentheses)
     - [Repeated Spread Is Composition](#repeated-spread-is-composition)
     - [Value and Supply at a Glance](#value-and-supply-at-a-glance)
-13. [Lists](#lists)
+14. [Lists](#lists)
     - [Lists versus Sequence Values](#lists-versus-sequence-values)
     - [Indexing Lists](#indexing-lists)
     - [Spreading Lists](#spreading-lists)
     - [Lists in Calls and Deconstruction](#lists-in-calls-and-deconstruction)
     - [Lists and Collection Builtins](#lists-and-collection-builtins)
-14. [Atoms](#atoms)
-    - [Opening one level vs flattening](#opening-one-level-vs-flattening)
-15. [Conditional Algorithms](#conditional-algorithms)
+15. [Atoms](#atoms)
+    - [Opening One Level vs. Flattening](#opening-one-level-vs-flattening)
+16. [Conditional Algorithms](#conditional-algorithms)
     - [Basic Pattern Matching](#basic-pattern-matching)
     - [Nested Sequence-Value Patterns](#nested-sequence-value-patterns)
     - [The K Combinator: Ignoring a Parameter](#the-k-combinator-ignoring-a-parameter)
     - [Mixing Literals and Variables](#mixing-literals-and-variables)
     - [String Patterns](#string-patterns)
     - [Non-Exhaustive Patterns](#non-exhaustive-patterns)
-16. [Loading and `open`](#loading-and-open)
+17. [Loading and `open`](#loading-and-open)
     - [Loading External Algorithms](#loading-external-algorithms)
     - [`open`: Import Properties Directly](#open-import-properties-directly)
     - [Visibility](#visibility)
-17. [Pitfalls](#pitfalls)
-18. [Full Reference](#full-reference)
+18. [Pitfalls](#pitfalls)
+19. [Full Reference](#full-reference)
     - [Operators](#operators)
     - [Builtin Algorithms, Intrinsics, and Keywords](#builtin-algorithms-intrinsics-and-keywords)
 
 ---
 
+## How to Use This Tutorial
+
+If KatLang is new to you, read through [Practical Examples](#practical-examples) in order. That path introduces calculations, output, properties, parameters, conditionals, collections, and loops without requiring the advanced sections. Run the examples in the [KatLang online playground](https://katlang.org) and change their inputs to see how the result changes.
+
+After that, continue with [Higher-Order Algorithms](#higher-order-algorithms), [Spread with the Postfix Star](#spread-with-the-postfix-star), [Lists](#lists), and [Conditional Algorithms](#conditional-algorithms) when you need those features. [Pitfalls](#pitfalls) and the [Full Reference](#full-reference) are designed for lookup rather than a first reading.
+
+Examples labelled **Result** produce one top-level output. **Results** shows several top-level output rows in order. An example labelled **Error** is intentionally invalid and demonstrates a diagnostic.
+
+---
+
 ## What KatLang Is
 
-KatLang is a language designed for calculations. You write expressions, give them names, and combine them — that's it.
+KatLang is a language designed for calculations. A program is a root algorithm: it can define named calculations and produce values. You write expressions, give calculations names, and combine them.
 
-One thing to know upfront: **everything is an algorithm**. A bare number like `42` is an algorithm that produces one value. An output sequence like `1, 2, 3` produces three values. A named formula is an algorithm that belongs to its parent. There are no statements or side effects — just algorithms that evaluate to sequences of values.
+All computation is expressed through algorithms, but algorithms and values are not interchangeable. An expression such as `42` produces a number value. A body such as `1, 2, 3` emits three output slots. Parentheses capture output slots into one sequence value, while braces create a nested algorithm and a new lexical scope. Named algorithms are called **properties** because they belong to a parent algorithm.
 
 Most simple formulas do not need declared parameters — KatLang figures them out. Any name you use that isn't defined as a property automatically becomes a parameter unless the algorithm has an explicit parameter list.
+
+The core forms are:
+
+| Form | Meaning |
+|---|---|
+| `42` | One number value |
+| `1, 2, 3` | Three output slots |
+| `(1, 2, 3)` | One sequence value containing three items |
+| `[1, 2, 3]` | One exact list value containing three items |
+| `Total = price * quantity` | A property whose unresolved names become parameters |
+| `Total(12, 4)` | An explicit call |
+| `{ expression }` | A nested algorithm with its own scope |
+| `value*` | Spread one sequence or list boundary into the surrounding slots |
+
+The opening chapters focus on numbers, output slots, sequence values, properties, and calls. Lists, braces, spread, and their exact boundary rules are developed later.
 
 ---
 
@@ -496,6 +525,8 @@ Per-value formatting such as `value.displayDecimals(n)` and `displayDecimals(val
 
 ## Multiple Outputs
 
+> **Core idea:** commas, allowed adjacency, and output rows create separate slots. Parentheses capture slots into one sequence value; square brackets capture them into one exact list value.
+
 A KatLang algorithm can produce more than one value. Use commas to list multiple outputs:
 
 <!-- spec:supply-three-rows -->
@@ -666,6 +697,8 @@ Use(1*, Tail)  # bad arity: spreading the scalar 1 yields one item, so only two 
 ---
 
 ## Properties
+
+> **Core idea:** a property definition gives an algorithm a name but does not itself produce output. Expression rows produce output; reading or calling a property crosses a one-value boundary.
 
 An algorithm can be given a name using `=`. Named algorithms are called **properties**, because a named algorithm always belongs to its parent algorithm. By convention, property names use PascalCase.
 
@@ -1191,9 +1224,11 @@ K(Obj)
 
 `K` keeps arity 1: `V` resolves structurally on whatever `x` turns out to be, and reaches the lexical fallback only when the receiver has no such member.
 
-### Grace with DotCall
+<a id="grace-with-dotcall"></a>
 
-[Grace](#reordering-parameters-with-grace-operator) and ordinary dot syntax compose without creating another call form. `receiver~.Name(args...)` is postfix Grace on the bare receiver name followed by ordinary dot. `receiver.~Name(args...)` is ordinary dot with prefix Grace on the participating member/fallback name. In both cases `~` can change inferred parameter order only; it never changes structural-first member selection or lexical fallback execution:
+### Grace with Dot Calls
+
+[Grace](#reordering-parameters-with-grace) and ordinary dot syntax compose without creating another call form. `receiver~.Name(args...)` is postfix Grace on the bare receiver name followed by ordinary dot. `receiver.~Name(args...)` is ordinary dot with prefix Grace on the participating member/fallback name. In both cases `~` can change inferred parameter order only; it never changes structural-first member selection or lexical fallback execution:
 
 <!-- spec:grace-dot-keeps-structural-precedence -->
 ```
@@ -1383,6 +1418,8 @@ Only numeric values are supported. Applying `.string` to a non-numeric value (su
 
 ## Parameters
 
+> **Core idea:** in an algorithm without an explicit parameter list, unresolved names become parameters in first-occurrence order. An explicit parameter list fixes the accepted names and their order.
+
 **Rule:** in an algorithm without an explicit parameter list, any identifier that is not defined as a property in the current algorithm becomes an implicit parameter.
 
 Parameters are named in camelCase by convention to distinguish them from PascalCase property names.
@@ -1557,7 +1594,7 @@ Mean(1, 2, 3)
 2
 ```
 
-`(1, 2, 3).Mean` supplies the written rows `1`, `2`, `3` to the collector (`Vector = [1, 2, 3]`), exactly like the flat call `Mean(1, 2, 3)`. The receiver is still ONE segment for arity and for fixed parameters: with `F(first, *middle, last)`, `(1, 2).F(9)` binds `first = (1, 2)` whole (fixed parameters bind the receiver's one captured value), and `(1, 2).F` is an arity error — the receiver's item count never satisfies fixed-parameter arity. An extra written boundary survives as one item (`((1, 2)).CollectMany` collects `[(1, 2)]`), the empty receiver supplies nothing (`().CollectMany` collects `[]`), and exact lists stay opaque (`[1, 2].CollectMany` collects `[[1, 2]]`). Direct calls are unchanged: a written argument slot always reifies to one value, so `CollectMany((1, 2, 3))` still collects `[(1, 2, 3)]`. The [graced source](#grace-with-dotcall) `S~.Mean` is the same ordinary dot edge with frontend-only Grace on `S`, so it keeps the same one-segment receiver behavior and raw-supply rule (a written group is not a valid postfix-Grace operand).
+`(1, 2, 3).Mean` supplies the written rows `1`, `2`, `3` to the collector (`Vector = [1, 2, 3]`), exactly like the flat call `Mean(1, 2, 3)`. The receiver is still ONE segment for arity and for fixed parameters: with `F(first, *middle, last)`, `(1, 2).F(9)` binds `first = (1, 2)` whole (fixed parameters bind the receiver's one captured value), and `(1, 2).F` is an arity error — the receiver's item count never satisfies fixed-parameter arity. An extra written boundary survives as one item (`((1, 2)).CollectMany` collects `[(1, 2)]`), the empty receiver supplies nothing (`().CollectMany` collects `[]`), and exact lists stay opaque (`[1, 2].CollectMany` collects `[[1, 2]]`). Direct calls are unchanged: a written argument slot always reifies to one value, so `CollectMany((1, 2, 3))` still collects `[(1, 2, 3)]`. The [graced source](#grace-with-dot-calls) `S~.Mean` is the same ordinary dot edge with frontend-only Grace on `S`, so it keeps the same one-segment receiver behavior and raw-supply rule (a written group is not a valid postfix-Grace operand).
 
 A function signature may contain fixed and collecting parameters. When a parameter list has two or more parameters and one of them is a collecting parameter, the collecting parameter may appear at the front, middle, or end. Fixed parameters before it bind from the front, fixed parameters after it bind from the back, and the collecting parameter collects the remaining middle slots (possibly zero) as one exact immutable list. The supplied items are the call argument slots: a bare argument supplies one slot (a stored sequence value is one slot, not opened), and only an explicit spread opens a sequence value into separate slots:
 
@@ -1767,13 +1804,15 @@ Final
 
 (The capture into `Final` keeps the projected accumulator one report row; a bare `Step.repeat(...):0` as the lone root row would spread the projection across rows — see the lone-root projection rule in [Output Selection](#output-selection).)
 
-`(*history)` opens the single sequence-value state slot and collects its items as the exact list `history`. Inside `(history*, previous + 1)`, the spread `history*` opens that one list boundary into its immediate items (see [Opening one level vs flattening](#opening-one-level-vs-flattening)), so each step rebuilds one flat accumulator sequence value beside the new value: `(1, 2)` → `(1, 2, 3)` → `(1, 2, 3, 4)`. The accumulator grows flat while remaining a single state slot beside `previous + 1`. The comma after the spread is required — `history* previous` would be the multiplication `history * previous` — and it is what places `previous + 1` beside the spread history items.
+`(*history)` opens the single sequence-value state slot and collects its items as the exact list `history`. Inside `(history*, previous + 1)`, the spread `history*` opens that one list boundary into its immediate items (see [Opening One Level vs. Flattening](#opening-one-level-vs-flattening)), so each step rebuilds one flat accumulator sequence value beside the new value: `(1, 2)` → `(1, 2, 3)` → `(1, 2, 3, 4)`. The accumulator grows flat while remaining a single state slot beside `previous + 1`. The comma after the spread is required — `history* previous` would be the multiplication `history * previous` — and it is what places `previous + 1` beside the spread history items.
 
 Only one collecting binding is allowed in each comma-separated pattern level, collecting bindings must be explicit, and they cannot use the Grace `~` reordering operator. The collect marker must be directly attached to its binding name: `*items` is a collecting binding, while `* items` is an error.
 
-### Reordering Parameters with Grace~ operator
+<a id="reordering-parameters-with-grace-operator"></a>
 
-Sometimes the natural reading order of parameters in a definition does not match the intended calling convention. The Grace`~` operator shifts a parameter's position.
+### Reordering Parameters with Grace
+
+Sometimes the natural reading order of parameters in a definition does not match the intended calling convention. Grace (`~`) shifts a parameter's position.
 
 Prefix `~x` moves `x` one position earlier in the parameter list. Postfix `x~` moves `x` one position later. Grace applies only to a bare parameter/name occurrence — `~x` and `x~` are the two supported forms. Attaching `~` to anything else (a parenthesized expression, a call result, a dot result, a list, a literal) is an error: `(x + y)~`, `f(x)~`, and `5~` are rejected, and parentheses never smuggle an expression into Grace (`(x)~` is rejected too). A marker written before a call, `~f(x)`, is grace on the callee name `f` itself — the call applies to the graced name, exactly like the postfix `f~(x)` idiom.
 
@@ -1863,7 +1902,11 @@ This makes a direct `if(X*)` behave the same as a user-defined wrapper such as `
 
 ---
 
-## Repetition
+<a id="repetition"></a>
+
+## Collections and Repetition
+
+> **Core idea:** collection builtins receive one collection value. Use `range`, `filter`, `map`, and the other collection operations for data transformations; use `repeat` or `while` when a calculation must carry state between steps.
 
 ### Inclusive Integer Lists: `range`
 
@@ -2721,6 +2764,8 @@ Fib.repeat(10, 0, 1) : 0
 
 ## Higher-Order Algorithms
 
+> **Core idea:** pass a named algorithm or a brace algorithm when a caller expects a callable. Parentheses create a value grouping, so they deliberately suppress callable identity.
+
 An algorithm can accept another algorithm as an argument and call it. This is how you write generic, reusable computation patterns.
 
 ### Algorithm as Argument
@@ -2778,7 +2823,7 @@ Grouping is different: parentheses capture a *value*, and a captured value never
 
 Sequence builtins `filter`, `map`, and `reduce` are a special higher-order case. Their per-item callback argument behaves like `S:i` for the traversed sequence `S`, so sequence-value current items expose their immediate members without recursive flattening. This rule is local to those builtins; ordinary higher-order calls such as `Apply(Increment)` still use ordinary argument binding.
 
-### Algorithms vs grouped expressions
+### Algorithms vs. Grouped Expressions
 
 The distinction between braces, parentheses, and square brackets is critical. Their roles are:
 
@@ -2857,6 +2902,8 @@ Add(1, 2)
 ---
 
 ## Spread with the Postfix Star
+
+> **Core idea:** postfix `*` opens exactly one sequence or list boundary and supplies those items to the surrounding context. It is explicit, one level deep, and different from multiplication and the prefix collect marker.
 
 Expression spreading is written with the postfix star — the **spread marker**. A spread expression `value*` evaluates `value` exactly once and contributes the items of its evaluated value to the surrounding item supply (output rows, call argument slots, or list/sequence elements), opening exactly ONE item-producing boundary. Conceptually `spread : Value → Supply` — a spread expression does not return or create a sequence or list by itself; the RECEIVER decides what the supplied items become. A sequence value or an exact [list value](#lists) supplies its contained items; an atom or string supplies itself as one item. The marker attaches to any completed expression — `items*`, `Calculate(x)*`, `(a + b)*`, `[1, 2]*`, `()*`, `[]*` — and repeated attached stars compose through an intermediate capture: `value**` means `(value*)*` (see [Repeated Spread Is Composition](#repeated-spread-is-composition)).
 
@@ -3165,6 +3212,8 @@ A = [[1, 2], [3, 4]]
 ---
 
 ## Lists
+
+> **Core idea:** `[items]` creates one exact immutable list. Unlike a sequence value, a list keeps its boundary even when it is empty or contains only one item.
 
 Square brackets construct an **exact immutable list value** — KatLang's second collection kind, complementing sequence values:
 
@@ -3565,7 +3614,7 @@ Because the result is an ordinary exact list, it composes directly with every co
 
 The call boundary is unchanged: `atoms(value)` takes exactly one argument, an unspread list is one argument, `atoms(1, 2)` is an arity error, and `atoms([1, 2]*)` spreads two ordinary arguments — also an arity error (regroup with `atoms(([1, 2]*))` if you need to pass spread items as one value). Only explicit caller-site spread turns the result into an item supply: `atoms(A)*` contributes the collected atoms to the surrounding items. Finally, `atoms` does not define truthiness — its result is a list like any other, so `if(atoms((1, 2)), a, b)` is invalid, and truth testing still ignores list values entirely.
 
-### Opening one level vs flattening
+### Opening One Level vs. Flattening
 
 KatLang keeps three operations distinct, so pick the one that matches your intent:
 

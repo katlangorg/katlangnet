@@ -29,8 +29,8 @@
       DestinationFiles="$(PublishDir)katlang"
       Condition="$([System.String]::Copy('$(RuntimeIdentifier)').StartsWith('linux-')) AND Exists('$(PublishDir)KatLang.CLI')" />
 	<Exec
-	  Command="tar -czf &quot;$(PublishDir)katlang-cli-$(Version)-$(RuntimeIdentifier).tar.gz&quot; -C &quot;$(PublishDir)&quot; katlang"
-	  Condition="'$(RuntimeIdentifier)' == 'linux-x64' AND Exists('$(PublishDir)katlang')" />
+	  Command="tar --format=ustar --owner=0 --group=0 --numeric-owner --mode=0755 -czf &quot;$(PublishDir)katlang-cli-$(Version)-$(RuntimeIdentifier).tar.gz&quot; -C &quot;$(PublishDir)&quot; katlang"
+	  Condition="$([System.String]::Copy('$(RuntimeIdentifier)').StartsWith('linux-')) AND Exists('$(PublishDir)katlang')" />
   </Target>
 
   <ItemGroup>
