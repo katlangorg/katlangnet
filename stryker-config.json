@@ -10,9 +10,10 @@
       "**/PropertyExposureResolver.cs",
       "**/PropertyDependencyGraph.cs",
       "**/Signatures/CallableBindingPlan.cs",
-      "**/Evaluator.cs{53380..112769}{130208..167482}{318924..411371}"
+      "**/Evaluator.cs{53560..113305}{130744..168018}{319630..412667}"
     ],
     "coverage-analysis": "perTest",
+    "test-case-filter": "FullyQualifiedName!~AstStructuralDepth&FullyQualifiedName!~ParserExpressionChainDepth&FullyQualifiedName!~ParserNestingDepth&FullyQualifiedName!~ParserGraceScanDepth&FullyQualifiedName!~AstGraphFuzzProcess&FullyQualifiedName!~AstGraphFuzzBoundary&FullyQualifiedName!~AsyncStackDepth&FullyQualifiedName!~EvaluationLimitsProcess&FullyQualifiedName!~WeightedCostCompositionProcess",
     "concurrency": 14,
     "mutation-level": "Standard",
     "reporters": [ "json", "html", "dots" ],

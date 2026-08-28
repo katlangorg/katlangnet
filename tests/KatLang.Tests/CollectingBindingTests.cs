@@ -683,10 +683,13 @@ public class CollectingBindingTests
     // ── Mutation campaign 2026-08-22: two suffix parameters after a collector ──
     // Every pre-campaign mixed-collecting case used exactly ONE suffix parameter,
     // where suffix layout arithmetic is degenerate (its index term is always 0).
-    // This pins the two-suffix shape for the direct call AND the flat-callback row
-    // form. NOTE: it does NOT reach Evaluator's BindCallableArguments suffix
-    // arithmetic (mutants 1504/1505 survive it) — those bind through a path this
-    // campaign did not identify and remain UNPINNED.
+    // This pins the two-suffix shape for the direct call AND the callback row
+    // form across all evaluation modes. The PRIMARY pin of the counted patterned
+    // suffix arithmetic is the dedicated CountedFamily_MapCallback... test below;
+    // this one is additional cross-mode coverage. CallableBindingPlanParityTests
+    // routes the same shape through loop-step binding, which reaches
+    // BindCallableArguments (flat collecting layout) and the plain
+    // BindParameterPatternList (patterned steps).
     [Fact]
     public void MixedCollecting_WithTwoSuffixParameters_BindsEachSuffixByPosition()
     {
@@ -694,8 +697,9 @@ public class CollectingBindingTests
         var direct = EvaluateAllModes("Take(*mid, a, b) = (mid, a, b)\nTake(1, 2, 3, 4)");
         AssertSemanticallyEqual(Seq(List(Atom(1), Atom(2)), Atom(3), Atom(4)), direct);
 
-        // Flat CALLBACK rows go through BindFlatCollectingSlots ->
-        // BindItemsToFlatCollectingLayout, where the suffix arithmetic lives.
+        // Callback rows bind through BindCountedCallbackParameterPatternList ->
+        // BindCountedParameterPatternList under counted evaluation, where the
+        // counted suffix arithmetic lives.
         var callback = EvaluateAllModes(
             "Rows = (1, 2, 3, 4), (5, 6, 7, 8)\nF(*mid, a, b) = (mid, a, b)\nRows.map(F)");
         AssertSemanticallyEqual(
@@ -703,5 +707,29 @@ public class CollectingBindingTests
                 Seq(List(Atom(1), Atom(2)), Atom(3), Atom(4)),
                 Seq(List(Atom(5), Atom(6)), Atom(7), Atom(8))),
             callback);
+    }
+
+    // DEDICATED counted-family pin (primary evidence for the counted patterned
+    // suffix arithmetic — the "3315" Stryker survivor). RunCounted is invoked
+    // directly, so the route does not depend on EvaluateAllModes retaining its
+    // counted mode: a flat map callee with a top-level collecting parameter binds
+    // each iterated row through BindCountedCallbackParameterPatternList ->
+    // BindCountedParameterPatternList, whose suffix loop must bind a and b by
+    // position AFTER the collector (both suffix-arithmetic mutants there fail
+    // this test independently; verified by injection 2026-08-28).
+    [Fact]
+    public void CountedFamily_MapCallbackCollectingWithTwoSuffixes_BindsBothSuffixesByPosition()
+    {
+        var root = SourceProvenance.ParseValid(
+            "Rows = (1, 2, 3, 4), (5, 6, 7, 8)\nF(*mid, a, b) = (mid.count, a, b)\nRows.map(F)").Root;
+
+        var counted = Evaluator.RunCounted(new Expr.AlgorithmExpr(root));
+
+        Assert.True(counted.IsOk, counted.IsError ? counted.Error.ToString() : "");
+        AssertSemanticallyEqual(
+            List(
+                Seq(Atom(2), Atom(3), Atom(4)),
+                Seq(Atom(2), Atom(7), Atom(8))),
+            counted.Value.Value);
     }
 }

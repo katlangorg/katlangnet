@@ -27,6 +27,18 @@ public class RandomFractionSamplingTests
         return result;
     }
 
+    [Fact]
+    public void NullComponentSource_IsRejected()
+        => Assert.Throws<ArgumentNullException>(() => Evaluator.SampleRandomUnitFraction(null!));
+
+    [Theory]
+    [InlineData(-1, 0)]
+    [InlineData(ComponentBound, 0)]
+    [InlineData(0, -1)]
+    [InlineData(0, ComponentBound)]
+    public void ComponentSource_MustHonorEachRequestedHalfOpenBound(long high, long low)
+        => Assert.Throws<InvalidOperationException>(() => Sample(high, low));
+
     [Theory]
     [InlineData(0, 0, "0")]
     [InlineData(0, 1, "1e-34")]
@@ -56,6 +68,38 @@ public class RandomFractionSamplingTests
         // A binary64/NextDouble-style path cannot retain a 1e-34 change near 1.
         Assert.NotEqual(highOnly, withLowestLowDigit);
         Assert.Equal(N("1e-34"), withLowestLowDigit - highOnly);
+    }
+
+    [Theory]
+    [InlineData("2", "6", "0", "2")]
+    [InlineData("2", "6", "0.25", "3")]
+    [InlineData("2", "6", "0.5", "4")]
+    [InlineData("-7", "5", "0.75", "2")]
+    public void UnitFractionScaling_MapsIntoTheRequestedRange(
+        string start,
+        string end,
+        string unitFraction,
+        string expected)
+        => Assert.Equal(
+            N(expected),
+            Evaluator.ScaleRandomUnitFractionToHalfOpenRange(
+                N(start), N(end), N(unitFraction)));
+
+    [Fact]
+    public void UnitFractionScaling_RoundsAnAccidentalUpperEndpointBackToStart()
+    {
+        // The production source is one-exclusive. This guard protects the
+        // half-open contract even if Decimal128 range scaling rounds upward.
+        Assert.Equal(
+            N("2"),
+            Evaluator.ScaleRandomUnitFractionToHalfOpenRange(N("2"), N("6"), Decimal128.One));
+    }
+
+    [Fact]
+    public void ProductionUInt128Source_IsNotStuckAtZero()
+    {
+        var draws = Enumerable.Range(0, 16).Select(_ => Evaluator.NextRandomUInt128()).ToArray();
+        Assert.Contains(draws, draw => draw != UInt128.Zero);
     }
 
     [Fact]

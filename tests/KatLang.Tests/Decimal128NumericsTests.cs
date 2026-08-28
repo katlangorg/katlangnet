@@ -562,6 +562,63 @@ public class Decimal128NumericsTests
         Assert.Contains("digits", error.Reason);
     }
 
+    [Fact]
+    public void Round_ClampsBeforeNarrowingAnExtremeDigitCount()
+    {
+        Assert.Equal(Decimal128.Epsilon, EvalSingle("Math.Round(1e-6176, 1e34)"));
+        Assert.Equal(6176, Evaluator.ClampRoundDigits(N("6177")));
+        Assert.Equal(6176, Evaluator.ClampRoundDigits(N("1e34")));
+    }
+
+    [Fact]
+    public void CanonicalizeMathResult_CoarsestQuantumIsAlreadyTerminal()
+    {
+        var value = Decimal128.Quantize(
+            Decimal128.MaxValue,
+            Decimal128.ScaleB(Decimal128.One, 6111));
+
+        var canonical = Evaluator.CanonicalizeMathResult(value);
+
+        Assert.Equal(value, canonical);
+        Assert.True(Decimal128.HaveSameQuantum(value, canonical));
+    }
+
+    [Fact]
+    public void CanonicalizeMathResult_TrailingZeroAtCoarsestQuantumTerminatesUnchanged()
+    {
+        // 1e6112 stores as coefficient 10 at the COARSEST quantum 1e6111, so
+        // value-exact coarsening is blocked only by the exponent ceiling. The
+        // loop's termination there rests on ScaleB clamping the target quantum
+        // at 6111 (Quantize then returns the same value at the same quantum);
+        // this pins that premise, which replaced the former explicit
+        // `quantumExponent >= 6111` guard.
+        var value = Decimal128.ScaleB(Decimal128.One, 6112);
+        Assert.Equal(6111, Decimal128.ILogB(Decimal128.GetQuantum(value)));
+
+        var canonical = Evaluator.CanonicalizeMathResult(value);
+
+        Assert.Equal(value, canonical);
+        Assert.True(Decimal128.HaveSameQuantum(value, canonical));
+    }
+
+    [Theory]
+    [InlineData("Math.Random(0 - (9e6144 * 10), 1)")]
+    [InlineData("Math.Random(0, 9e6144 * 10)")]
+    public void Random_RejectsEitherNonFiniteBound(string source)
+    {
+        var error = Assert.IsType<EvalError.IllegalInEval>(EvalError(source));
+        Assert.Contains("bounds must be finite", error.Reason);
+    }
+
+    [Fact]
+    public void Random_RejectsFiniteBoundsWhoseDifferenceOverflows()
+    {
+        const string max = "9999999999999999999999999999999999e6111";
+        var error = Assert.IsType<EvalError.IllegalInEval>(
+            EvalError($"Math.Random(0 - {max}, {max})"));
+        Assert.Contains("range is too large", error.Reason);
+    }
+
     // ── Quantum-preserving display (formatting is presentation only) ─────────
 
     [Fact]

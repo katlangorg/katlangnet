@@ -407,6 +407,42 @@ public class CallableBindingPlanParityTests
     }
 
     [Fact]
+    public void FlatVariadicTwoSuffixes_UserCallAndLoopStepBindBothSuffixesByPosition()
+    {
+        // With two suffixes, the suffix loop's index term is no longer the
+        // degenerate zero used by all earlier parity cases. The user call and
+        // loop-step path must bind a=40 and b=50 in declaration order while
+        // collecting exactly the two middle slots.
+        AssertUserCallAndLoopStepParity(
+            userSource:
+            """
+            Shape(first, *middle, a, b) = first, middle.count, a, b
+            Shape(10, 20, 30, 40, 50)
+            """,
+            loopSource:
+            """
+            Step(first, *middle, a, b) = first, middle.count, a, b
+            Step.repeat(1, 10, 20, 30, 40, 50)
+            """,
+            expected: ResultFromAtoms(10, 2, 40, 50));
+    }
+
+    [Fact]
+    public void PatternedVariadicTwoSuffixes_LoopStepBindsBothSuffixesByPosition()
+    {
+        // Patterned loop steps bind through the plain BindParameterPatternList
+        // (verified by mutant injection); the COUNTED patterned binder's suffix
+        // arithmetic is pinned by the dedicated CountedFamily_MapCallback...
+        // test in CollectingBindingTests.
+        AssertEval(
+            """
+            Step((first, *middle, a, b)) = first, middle.count, a, b
+            Step.repeat(1, (10, 20, 30, 40, 50))
+            """,
+            10, 2, 40, 50);
+    }
+
+    [Fact]
     public void FlatVariadicCountedCapture_UserCallAndLoopStepExposeSameCount()
     {
         // The spread call supplies three slots exactly like the three loop state

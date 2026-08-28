@@ -608,6 +608,11 @@ public static partial class Evaluator
         return null;
     }
 
+    internal static SourceSpan? PreferExpressionSpan(
+        SourceSpan? expressionSpan,
+        IReadOnlyList<Expr> output)
+        => expressionSpan ?? FirstSpan(output);
+
     // ── Lexical lookup (direct — no opens, used for open resolution) ────────
 
     /// <summary>
@@ -1736,7 +1741,7 @@ public static partial class Evaluator
                         algorithmBindings.Add((
                             capture.Name,
                             input.Algorithm,
-                            input.ValueError is { IsResourceLimit: true } ? input.ValueError : null));
+                            RetainResourceLimitForAlgorithmBinding(input.ValueError)));
                     }
 
                     if (input.Value is null && (!allowAlgorithmBindings || input.Algorithm is null))
@@ -2223,13 +2228,13 @@ public static partial class Evaluator
         {
             // The caller context owns the value evaluation and its
             // explicit-slot view (argument bundles have no scope of their own).
-            var captureSpan = argExpr.Span ?? FirstSpan(captureBody);
+            var captureSpan = PreferExpressionSpan(argExpr.Span, captureBody);
             var capturePreparedR = WithSpan(captureSpan, EvalCapturePreparedCore(captureBody, ctx, valEnv));
             if (capturePreparedR.IsError) return capturePreparedR.Error;
 
-            var captureCounted = isDotReceiverSegment
-                ? capturePreparedR.Value.Counted
-                : ReCountValueBoundary(capturePreparedR.Value.Counted);
+            var captureCounted = PrepareCallArgumentBoundaryCount(
+                capturePreparedR.Value.Counted,
+                isDotReceiverSegment);
             return EvalResult<PreparedCallArgumentEvaluation>.Ok(new(
                 captureCounted,
                 capturePreparedR.Value.OutputSlots));
@@ -2240,13 +2245,13 @@ public static partial class Evaluator
             var wired = WireToCaller(ctx, algorithm);
             if (wired.Params.Count == 0)
             {
-                var blockSpan = argExpr.Span ?? FirstSpan(wired.Output);
+                var blockSpan = PreferExpressionSpan(argExpr.Span, wired.Output);
                 var preparedR = WithSpan(blockSpan, EvalAlgOutputPreparedCore(wired, ctx, valEnv));
                 if (preparedR.IsError) return preparedR.Error;
 
-                var counted = isDotReceiverSegment
-                    ? preparedR.Value.Counted
-                    : ReCountValueBoundary(preparedR.Value.Counted);
+                var counted = PrepareCallArgumentBoundaryCount(
+                    preparedR.Value.Counted,
+                    isDotReceiverSegment);
                 return EvalResult<PreparedCallArgumentEvaluation>.Ok(new(
                     counted,
                     preparedR.Value.OutputSlots));
@@ -2260,6 +2265,11 @@ public static partial class Evaluator
             ? evaluatedR.Error
             : EvalResult<PreparedCallArgumentEvaluation>.Ok(new(evaluatedR.Value, null));
     }
+
+    internal static CountedResult PrepareCallArgumentBoundaryCount(
+        CountedResult counted,
+        bool isDotReceiverSegment)
+        => isDotReceiverSegment ? counted : ReCountValueBoundary(counted);
 
     private static bool IsInjectedDotReceiverSegment(
         CallArgumentAssembly argumentAssembly,
@@ -2276,13 +2286,13 @@ public static partial class Evaluator
         // leading argument segment (no value-boundary re-count), for both the
         // capture form and a zero-parameter scoped block.
         if (receiver is Expr.Capture(var captureBody))
-            return WithSpan(receiver.Span ?? FirstSpan(captureBody), EvalCaptureCountedCore(captureBody, ctx, valEnv));
+            return WithSpan(PreferExpressionSpan(receiver.Span, captureBody), EvalCaptureCountedCore(captureBody, ctx, valEnv));
 
         if (receiver is Expr.AlgorithmExpr(var algorithm))
         {
             var wired = WireToCaller(ctx, algorithm);
             if (wired.Params.Count == 0)
-                return WithSpan(receiver.Span ?? FirstSpan(wired.Output), EvalAlgOutputCounted(wired, ctx, valEnv));
+                return WithSpan(PreferExpressionSpan(receiver.Span, wired.Output), EvalAlgOutputCounted(wired, ctx, valEnv));
         }
 
         return EvalCounted(receiver, ctx, valEnv);
@@ -2387,6 +2397,9 @@ public static partial class Evaluator
             .WithCountedParamEnv(Concat(countedBindings, ShadowCountedParamEnv(ctx.CountedParamEnv, shadowed)));
     }
 
+    internal static EvalError? RetainResourceLimitForAlgorithmBinding(EvalError? valueError)
+        => valueError is { IsResourceLimit: true } ? valueError : null;
+
     private static EvalResult<FlatFixedUserCallBindings> BindFlatFixedUserCallArguments(
         Algorithm callee,
         CallDiagnosticName calleeName,
@@ -2433,7 +2446,7 @@ public static partial class Evaluator
                 algBindings.Add((
                     parameterNames[i],
                     slot.Algorithm,
-                    slot.ValueError is { IsResourceLimit: true } ? slot.ValueError : null));
+                    RetainResourceLimitForAlgorithmBinding(slot.ValueError)));
             }
 
             if (slot.Value is not null)
@@ -4176,7 +4189,7 @@ public static partial class Evaluator
     {
         if (expr is Expr.Capture(var captureBody))
         {
-            var captureSpan = expr.Span ?? FirstSpan(captureBody);
+            var captureSpan = PreferExpressionSpan(expr.Span, captureBody);
             var captureR = WithSpan(captureSpan, EvalCaptureValue(captureBody, ctx, valEnv));
             if (captureR.IsError)
                 return IsMissingOutputError(captureR.Error)
@@ -4189,7 +4202,7 @@ public static partial class Evaluator
         if (expr is Expr.AlgorithmExpr(var alg))
         {
             var wired = WireToCaller(ctx, alg);
-            var blockSpan = expr.Span ?? FirstSpan(wired.Output);
+            var blockSpan = PreferExpressionSpan(expr.Span, wired.Output);
             if (wired.Params.Count != 0)
                 return MissingImplicitArguments<IReadOnlyList<Result>>(wired, blockSpan);
 
@@ -7014,6 +7027,17 @@ public static partial class Evaluator
 
     // ── Main eval ───────────────────────────────────────────────────────────
 
+    /// <summary>
+    /// Test seams for exact diagnostic-span contracts on one prebuilt expression.
+    /// Each call gets a fresh empty context (own budget); no structural preflight
+    /// runs, so callers own the depth of what they build.
+    /// </summary>
+    internal static EvalResult<Result> EvalExpressionForTesting(Expr expr)
+        => Eval(expr, EvalCtx.Empty, []);
+
+    internal static EvalResult<CountedResult> EvalCountedExpressionForTesting(Expr expr)
+        => EvalCounted(expr, EvalCtx.Empty, []);
+
     /// <summary>Lean: eval → EvalM Result.</summary>
     private static EvalResult<Result> Eval(
         Expr expr,
@@ -7112,13 +7136,13 @@ public static partial class Evaluator
                 {
                     var wired = WireToCaller(ctx, alg);
                     if (wired.Params.Count == 0)
-                        return WithSpan(expr.Span ?? FirstSpan(wired.Output), EvalAlgOutput(wired, ctx, valEnv));
-                    var blockSpan = expr.Span ?? FirstSpan(wired.Output);
+                        return WithSpan(PreferExpressionSpan(expr.Span, wired.Output), EvalAlgOutput(wired, ctx, valEnv));
+                    var blockSpan = PreferExpressionSpan(expr.Span, wired.Output);
                     return MissingImplicitArguments<Result>(wired, blockSpan);
                 }
 
             case Expr.Capture(var captureBody):
-                return WithSpan(expr.Span ?? FirstSpan(captureBody), EvalCaptureValue(captureBody, ctx, valEnv));
+                return WithSpan(PreferExpressionSpan(expr.Span, captureBody), EvalCaptureValue(captureBody, ctx, valEnv));
 
             case Expr.Resolve(var name):
                 {
@@ -7127,10 +7151,7 @@ public static partial class Evaluator
 
                     var resolvedR = LookupLexical(ctx.CallStack[0], name, ctx);
                     if (resolvedR.IsError)
-                    {
-                        var err = resolvedR.Error;
-                        return err.Span is null ? err with { Span = expr.Span } : err;
-                    }
+                        return AtSpanIfMissing(resolvedR.Error, expr.Span);
 
                     if (ConditionalValueAccessError(name, resolvedR.Value.ResolvedAlgorithm) is { } conditionalError)
                         return conditionalError with { Span = expr.Span };
@@ -7251,12 +7272,12 @@ public static partial class Evaluator
                     var wired = WireToCaller(ctx, alg);
                     if (wired.Params.Count == 0)
                     {
-                        var blockR = WithSpan(expr.Span ?? FirstSpan(wired.Output), EvalAlgOutput(wired, ctx, valEnv));
+                        var blockR = WithSpan(PreferExpressionSpan(expr.Span, wired.Output), EvalAlgOutput(wired, ctx, valEnv));
                         if (blockR.IsError) return blockR.Error;
                         return EvalResult<CountedResult>.Ok(new CountedResult(blockR.Value, blockR.Value.ValueCount()));
                     }
 
-                    var blockSpan = expr.Span ?? FirstSpan(wired.Output);
+                    var blockSpan = PreferExpressionSpan(expr.Span, wired.Output);
                     return MissingImplicitArguments<CountedResult>(wired, blockSpan);
                 }
 
@@ -7265,7 +7286,7 @@ public static partial class Evaluator
                     // A capture in value position is a value boundary: the body's
                     // supply is captured to one canonical value and re-counted as
                     // that value's ValueCount.
-                    var captureR = WithSpan(expr.Span ?? FirstSpan(captureBody), EvalCaptureValue(captureBody, ctx, valEnv));
+                    var captureR = WithSpan(PreferExpressionSpan(expr.Span, captureBody), EvalCaptureValue(captureBody, ctx, valEnv));
                     if (captureR.IsError) return captureR.Error;
                     return EvalResult<CountedResult>.Ok(new CountedResult(captureR.Value, captureR.Value.ValueCount()));
                 }
@@ -7277,10 +7298,7 @@ public static partial class Evaluator
 
                     var resolvedR = LookupLexical(ctx.CallStack[0], name, ctx);
                     if (resolvedR.IsError)
-                    {
-                        var err = resolvedR.Error;
-                        return err.Span is null ? err with { Span = expr.Span } : err;
-                    }
+                        return AtSpanIfMissing(resolvedR.Error, expr.Span);
 
                     if (ConditionalValueAccessError(name, resolvedR.Value.ResolvedAlgorithm) is { } conditionalError)
                         return conditionalError with { Span = expr.Span };
@@ -7379,7 +7397,7 @@ public static partial class Evaluator
                 // before the host (int) narrowing.
                 result = Decimal128.Round(
                     args[0],
-                    args[1] > 6176 ? 6176 : (int)args[1],
+                    ClampRoundDigits(args[1]),
                     MidpointRounding.AwayFromZero);
                 break;
             case "Sign":
@@ -7433,6 +7451,9 @@ public static partial class Evaluator
 
         return EvalResult<Result>.Ok(new Result.Atom(result));
     }
+
+    internal static int ClampRoundDigits(Decimal128 digits)
+        => (int)Decimal128.Min(digits, 6176);
 
     /// <summary>
     /// Invokes a SYNCHRONOUS host operation at its wrapper-body evaluation site. Runs
@@ -7546,7 +7567,7 @@ public static partial class Evaluator
     /// math members (Abs/Ceil/Floor/Round/Sign), whose argument-derived quanta are
     /// established KatLang display behavior.
     /// </summary>
-    private static Decimal128 CanonicalizeMathResult(Decimal128 value)
+    internal static Decimal128 CanonicalizeMathResult(Decimal128 value)
     {
         if (!Decimal128.IsFinite(value))
             return value;
@@ -7556,9 +7577,6 @@ public static partial class Evaluator
         while (true)
         {
             var quantumExponent = Decimal128.ILogB(Decimal128.GetQuantum(value));
-            if (quantumExponent >= 6111)
-                return value; // already at the coarsest representable quantum
-
             var coarser = Decimal128.Quantize(value, Decimal128.ScaleB(Decimal128.One, quantumExponent + 1));
             // Coarsening only proceeds while it is exact: a changed value means a
             // significant digit would be lost, so the previous form is canonical.
@@ -7613,15 +7631,21 @@ public static partial class Evaluator
         => SampleRandomUnitFraction(SharedRandomInt64Source);
 
     private static Decimal128 RandomInHalfOpenRange(Decimal128 start, Decimal128 end)
+        => ScaleRandomUnitFractionToHalfOpenRange(start, end, NextRandomUnitFraction());
+
+    internal static Decimal128 ScaleRandomUnitFractionToHalfOpenRange(
+        Decimal128 start,
+        Decimal128 end,
+        Decimal128 unitFraction)
     {
-        var result = start + (NextRandomUnitFraction() * (end - start));
+        var result = start + (unitFraction * (end - start));
         return result >= end ? start : result;
     }
 
     /// <summary>Production 128-bit draw source for <see cref="SampleUniformInteger"/>.</summary>
     private static readonly Func<UInt128> SharedRandomUInt128Source = NextRandomUInt128;
 
-    private static UInt128 NextRandomUInt128()
+    internal static UInt128 NextRandomUInt128()
     {
         Span<byte> bytes = stackalloc byte[16];
         Random.Shared.NextBytes(bytes);

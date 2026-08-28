@@ -720,20 +720,20 @@ public static partial class Evaluator
                     if (wired.Params.Count == 0)
                     {
                         var blockR = WithSpan(
-                            expr.Span ?? FirstSpan(wired.Output),
+                            PreferExpressionSpan(expr.Span, wired.Output),
                             await EvalAlgOutputValueAsync(wired, ctx, valEnv).ConfigureAwait(false));
                         if (blockR.IsError) return blockR.Error;
                         return EvalResult<CountedResult>.Ok(new CountedResult(blockR.Value, blockR.Value.ValueCount()));
                     }
 
-                    var blockSpan = expr.Span ?? FirstSpan(wired.Output);
+                    var blockSpan = PreferExpressionSpan(expr.Span, wired.Output);
                     return MissingImplicitArguments<CountedResult>(wired, blockSpan);
                 }
 
             case Expr.Capture(var captureBody):
                 {
                     var captureR = WithSpan(
-                        expr.Span ?? FirstSpan(captureBody),
+                        PreferExpressionSpan(expr.Span, captureBody),
                         await EvalCaptureValueAsync(captureBody, ctx, valEnv).ConfigureAwait(false));
                     if (captureR.IsError) return captureR.Error;
                     return EvalResult<CountedResult>.Ok(new CountedResult(captureR.Value, captureR.Value.ValueCount()));
@@ -746,10 +746,7 @@ public static partial class Evaluator
 
                     var resolvedR = LookupLexical(ctx.CallStack[0], name, ctx);
                     if (resolvedR.IsError)
-                    {
-                        var err = resolvedR.Error;
-                        return err.Span is null ? err with { Span = expr.Span } : err;
-                    }
+                        return AtSpanIfMissing(resolvedR.Error, expr.Span);
 
                     if (ConditionalValueAccessError(name, resolvedR.Value.ResolvedAlgorithm) is { } conditionalError)
                         return conditionalError with { Span = expr.Span };
@@ -1896,13 +1893,13 @@ public static partial class Evaluator
     {
         if (includeExplicitSequenceValueItems && argExpr is Expr.Capture(var captureBody))
         {
-            var captureSpan = argExpr.Span ?? FirstSpan(captureBody);
+            var captureSpan = PreferExpressionSpan(argExpr.Span, captureBody);
             var capturePreparedR = WithSpan(captureSpan, await EvalCapturePreparedCoreAsync(captureBody, ctx, valEnv).ConfigureAwait(false));
             if (capturePreparedR.IsError) return capturePreparedR.Error;
 
-            var captureCounted = isDotReceiverSegment
-                ? capturePreparedR.Value.Counted
-                : ReCountValueBoundary(capturePreparedR.Value.Counted);
+            var captureCounted = PrepareCallArgumentBoundaryCount(
+                capturePreparedR.Value.Counted,
+                isDotReceiverSegment);
             return EvalResult<PreparedCallArgumentEvaluation>.Ok(new(
                 captureCounted,
                 capturePreparedR.Value.OutputSlots));
@@ -1913,13 +1910,13 @@ public static partial class Evaluator
             var wired = WireToCaller(ctx, algorithm);
             if (wired.Params.Count == 0)
             {
-                var blockSpan = argExpr.Span ?? FirstSpan(wired.Output);
+                var blockSpan = PreferExpressionSpan(argExpr.Span, wired.Output);
                 var preparedR = WithSpan(blockSpan, await EvalAlgOutputPreparedCoreAsync(wired, ctx, valEnv).ConfigureAwait(false));
                 if (preparedR.IsError) return preparedR.Error;
 
-                var counted = isDotReceiverSegment
-                    ? preparedR.Value.Counted
-                    : ReCountValueBoundary(preparedR.Value.Counted);
+                var counted = PrepareCallArgumentBoundaryCount(
+                    preparedR.Value.Counted,
+                    isDotReceiverSegment);
                 return EvalResult<PreparedCallArgumentEvaluation>.Ok(new(
                     counted,
                     preparedR.Value.OutputSlots));
@@ -1941,13 +1938,13 @@ public static partial class Evaluator
         IReadOnlyList<(string, Result)> valEnv)
     {
         if (receiver is Expr.Capture(var captureBody))
-            return WithSpan(receiver.Span ?? FirstSpan(captureBody), await EvalCaptureCountedCoreAsync(captureBody, ctx, valEnv).ConfigureAwait(false));
+            return WithSpan(PreferExpressionSpan(receiver.Span, captureBody), await EvalCaptureCountedCoreAsync(captureBody, ctx, valEnv).ConfigureAwait(false));
 
         if (receiver is Expr.AlgorithmExpr(var algorithm))
         {
             var wired = WireToCaller(ctx, algorithm);
             if (wired.Params.Count == 0)
-                return WithSpan(receiver.Span ?? FirstSpan(wired.Output), await EvalAlgOutputCountedCoreAsync(wired, ctx, valEnv).ConfigureAwait(false));
+                return WithSpan(PreferExpressionSpan(receiver.Span, wired.Output), await EvalAlgOutputCountedCoreAsync(wired, ctx, valEnv).ConfigureAwait(false));
         }
 
         return await EvalCountedAsync(receiver, ctx, valEnv).ConfigureAwait(false);
@@ -2072,7 +2069,7 @@ public static partial class Evaluator
                 algBindings.Add((
                     parameterNames[i],
                     slot.Algorithm,
-                    slot.ValueError is { IsResourceLimit: true } ? slot.ValueError : null));
+                    RetainResourceLimitForAlgorithmBinding(slot.ValueError)));
             }
 
             if (slot.Value is not null)
@@ -3295,7 +3292,7 @@ public static partial class Evaluator
     {
         if (expr is Expr.Capture(var captureBody))
         {
-            var captureSpan = expr.Span ?? FirstSpan(captureBody);
+            var captureSpan = PreferExpressionSpan(expr.Span, captureBody);
             var captureR = WithSpan(captureSpan, await EvalCaptureValueAsync(captureBody, ctx, valEnv).ConfigureAwait(false));
             if (captureR.IsError)
                 return IsMissingOutputError(captureR.Error)
@@ -3308,7 +3305,7 @@ public static partial class Evaluator
         if (expr is Expr.AlgorithmExpr(var alg))
         {
             var wired = WireToCaller(ctx, alg);
-            var blockSpan = expr.Span ?? FirstSpan(wired.Output);
+            var blockSpan = PreferExpressionSpan(expr.Span, wired.Output);
             if (wired.Params.Count != 0)
                 return MissingImplicitArguments<IReadOnlyList<Result>>(wired, blockSpan);
 

@@ -391,11 +391,21 @@ public class ParameterDetectorTests
     [Fact]
     public void Detect_AccumulatedGraceWeights_SumAcrossReferences()
     {
-        // First-appearance order: [a, b]
-        // ~a appears once (weight -1), then a~ appears once (weight +1)
-        // Total weight for a: -1 + 1 = 0 â†’ no movement
-        var ast = ParseAndDetect("~a + b + a~");
-        Assert.Equal(["a", "b"], ast.Params);
+        // First-appearance order: [b, a, c]. Two postfix occurrences must ADD:
+        // a has total weight +2 and moves across c to the end. Subtracting the
+        // second occurrence instead would cancel the first and leave [b, a, c].
+        var ast = ParseAndDetect("b + a~ + c + a~");
+        Assert.Equal(["b", "c", "a"], ast.Params);
+    }
+
+    [Fact]
+    public void Detect_OppositeGraceWeights_CancelAcrossReferences()
+    {
+        // First-appearance order: [b, a, c]. ~a (-1) then a~ (+1) sum to weight
+        // 0, so the order is unchanged. Flipping the sign of the second
+        // occurrence would accumulate -2 and move a to the front instead.
+        var ast = ParseAndDetect("b + ~a + c + a~");
+        Assert.Equal(["b", "a", "c"], ast.Params);
     }
 
     [Fact]
@@ -731,6 +741,28 @@ public class ParameterDetectorTests
         Assert.All(diags, d => Assert.Equal(DiagnosticSeverity.Error, d.Severity));
         Assert.Contains(diags, d => d.Message.Contains("a"));
         Assert.Contains(diags, d => d.Message.Contains("b"));
+    }
+
+    [Fact]
+    public void ConditionalDiagnostic_FirstRepeatedNameComesFromBinaryLeftOperand()
+    {
+        var error = Assert.Single(ParseAndDetectDiagnostics("F(1, a) = missing + missing"));
+        Assert.Equal(new SourceSpan(1, 11, 1, 17), error.Span);
+    }
+
+    [Fact]
+    public void ConditionalDiagnostic_FirstRepeatedNameComesFromCallCallee()
+    {
+        var error = Assert.Single(ParseAndDetectDiagnostics("F(1, a) = missing(missing)"));
+        Assert.Equal(new SourceSpan(1, 11, 1, 17), error.Span);
+    }
+
+    [Fact]
+    public void ConditionalDiagnostic_NameOnlyInCallArgumentUsesArgumentSpan()
+    {
+        var source = "Known(x) = x\nF(1, a) = Known(missing)";
+        var error = Assert.Single(ParseAndDetectDiagnostics(source));
+        Assert.Equal(new SourceSpan(2, 17, 2, 23), error.Span);
     }
 
     [Fact]

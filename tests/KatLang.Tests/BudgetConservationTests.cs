@@ -43,6 +43,23 @@ namespace KatLang.Tests;
 /// </summary>
 public class BudgetConservationTests
 {
+    [Fact]
+    public void AlgorithmBinding_RetainsOnlyResourceLimitValueFailures()
+    {
+        var limit = new EvalError.EvaluationStepLimitExceeded(17)
+        {
+            Span = new SourceSpan(2, 3, 2, 8),
+        };
+        var wrappedLimit = new EvalError.WithContext(
+            new PropertyEvaluationContext("Probe"),
+            limit);
+
+        Assert.Same(limit, Evaluator.RetainResourceLimitForAlgorithmBinding(limit));
+        Assert.Same(wrappedLimit, Evaluator.RetainResourceLimitForAlgorithmBinding(wrappedLimit));
+        Assert.Null(Evaluator.RetainResourceLimitForAlgorithmBinding(new EvalError.DivByZero()));
+        Assert.Null(Evaluator.RetainResourceLimitForAlgorithmBinding(null));
+    }
+
     // `f(k)` needs k + 1 nested invocations: f(k), f(k-1), ... f(0).
     private const string CountDown = "f(0) = 0\nf(n) = f(n - 1)\n";
 

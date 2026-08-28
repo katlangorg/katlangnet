@@ -452,11 +452,14 @@ public static class ImplicitArgumentResolver
             out var forwardedCalleeName,
             out var forwardedCallerName);
 
+        // TryGetSingleCollectingForwarding succeeds only when the callee shape
+        // contains exactly one capture: either a lone top-level collector or a
+        // lone collector inside one sequence-value group. Consequently there is
+        // no second callee capture to discriminate here; when forwarding is
+        // active, every reachable capture is the forwarded capture. Expressing
+        // that invariant directly avoids an equivalent && -> || mutant.
         string MapCaptureName(CaptureParameterPattern capture)
-            => forwardedCalleeName is not null
-                && capture.Name == forwardedCalleeName
-                ? forwardedCallerName!
-                : capture.Name;
+            => forwardedCalleeName is not null ? forwardedCallerName! : capture.Name;
 
         // A collecting DESTINATION re-spreads the forwarded value only when the
         // SOURCE binding is itself a collecting binding's exact list: then

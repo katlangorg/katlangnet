@@ -223,6 +223,15 @@ public class RandomIntSamplingTests
         Assert.Equal(N("9999999999999999999999999999999999"), Assert.Single(result.Value));
     }
 
+    [Fact]
+    public void NegativeLowerBoundAtTheExactIntegerBoundary_IsAccepted()
+    {
+        var result = Evaluator.RunFlat(new Expr.AlgorithmExpr(
+            SourceProvenance.ParseValid("Math.RandomInt(0 - 1e34, (0 - 1e34) + 1)").Root));
+        Assert.False(result.IsError);
+        Assert.Equal(N("-1e34"), Assert.Single(result.Value));
+    }
+
     [Theory]
     [InlineData("Math.RandomInt(Math.Sqrt(-1), 2)")]
     [InlineData("Math.RandomInt(0, 9e6144 * 10)")]

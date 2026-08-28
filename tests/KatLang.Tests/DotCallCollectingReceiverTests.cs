@@ -334,6 +334,32 @@ public class DotCallCollectingReceiverTests
         // like an inline group.
         => AssertResult(CollectDef + "{1, 2, 3}.Collect", List(Atom(1), Atom(2), Atom(3)));
 
+    [Fact]
+    public void PatternedBraceBlockReceiver_PreservesRawSupplyForTopLevelCollector()
+        // Repeating the fixed suffix name selects patterned binding, while the
+        // top-level collector still consumes the injected receiver segment's
+        // raw three-row supply.
+        => AssertResult(
+            """
+            CollectChecked(*items, marker, marker) = items
+            {1, 2, 3}.CollectChecked(9, 9)
+            """,
+            List(Atom(1), Atom(2), Atom(3)));
+
+    [Fact]
+    public void PreparedArgumentBoundary_RecountsOnlyOrdinarySegments()
+    {
+        var raw = new Evaluator.CountedResult(Seq(Atom(1), Atom(2), Atom(3)), EmittedCount: 3);
+
+        var receiver = Evaluator.PrepareCallArgumentBoundaryCount(raw, isDotReceiverSegment: true);
+        var ordinary = Evaluator.PrepareCallArgumentBoundaryCount(raw, isDotReceiverSegment: false);
+
+        Assert.Equal(3, receiver.EmittedCount);
+        Assert.Equal(1, ordinary.EmittedCount);
+        Assert.True(Result.ValueComparer.Equals(raw.Value, receiver.Value));
+        Assert.True(Result.ValueComparer.Equals(raw.Value, ordinary.Value));
+    }
+
     // ── G. Counted projection receivers ─────────────────────────────────────
 
     [Fact]
