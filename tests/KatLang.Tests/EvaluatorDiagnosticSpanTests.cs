@@ -119,6 +119,39 @@ public class EvaluatorDiagnosticSpanTests
         Assert.Null(noFallback.Error.Span);
     }
 
+    [Theory]
+    [InlineData(UnaryOp.Minus, false)]
+    [InlineData(UnaryOp.Minus, true)]
+    [InlineData(UnaryOp.Not, false)]
+    [InlineData(UnaryOp.Not, true)]
+    public void UnaryStringFailure_UsesTheExactUnaryExpressionSpan(UnaryOp op, bool counted)
+    {
+        var expr = new Expr.Unary(op, new Expr.StringLiteral("text")) { Span = InnerSpan };
+
+        var error = Assert.IsType<EvalError.TypeMismatch>(RunError(expr, counted));
+        Assert.Equal(InnerSpan, error.Span);
+
+        var rendered = KatLangError.FromEvalError(error);
+        Assert.Equal(((int?)11, (int?)4, (int?)11, (int?)14),
+            (rendered.StartLine, rendered.StartColumn, rendered.EndLine, rendered.EndColumn));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void NestedUnary_DoesNotOverwriteAnAlreadyPresentInnerStringSpan(bool counted)
+    {
+        var inner = new Expr.Unary(UnaryOp.Minus, new Expr.StringLiteral("text")) { Span = InnerSpan };
+        var outer = new Expr.Unary(UnaryOp.Not, inner) { Span = OuterSpan };
+
+        var error = Assert.IsType<EvalError.TypeMismatch>(RunError(outer, counted));
+        Assert.Equal(InnerSpan, error.Span);
+
+        var rendered = KatLangError.FromEvalError(error);
+        Assert.Equal(((int?)11, (int?)4, (int?)11, (int?)14),
+            (rendered.StartLine, rendered.StartColumn, rendered.EndLine, rendered.EndColumn));
+    }
+
     [Fact]
     public void PreferExpressionSpan_UsesTheExpressionBeforeItsFirstOutputFallback()
     {

@@ -448,9 +448,11 @@ internal static partial class LoopOptimizer
         PlannedLoopValue operand,
         SourceSpan? span)
     {
-        if (operand.EmittedCount == 0)
-            return EvalResult<PlannedLoopValue>.Ok(PlannedLoopValue.FromResult(Result.SequenceValue.TakeOwnership([]), 0));
-
+        // MIRROR of Evaluator.ApplyUnaryOperator's numeric arm: a numeric operand
+        // stays in the unboxed planned representation. Every other operand kind —
+        // empty transparency, the span-stamped string rejection, and the UNSPANNED
+        // numeric-conversion failure — delegates to the shared operator application
+        // so the planned strategy cannot drift from the generic error/span policy.
         if (operand.AsNum() is { } value)
         {
             var unaryResult = op switch
@@ -462,20 +464,9 @@ internal static partial class LoopOptimizer
             return EvalResult<PlannedLoopValue>.Ok(PlannedLoopValue.FromNumeric(unaryResult));
         }
 
-        var result = operand.ToResult();
-        if (result is Result.Str)
-            return new EvalError.TypeMismatch("Unary operator is not supported for strings") { Span = span };
-
-        var valueR = Evaluator.ExpectInt(result);
-        if (valueR.IsError) return valueR.Error with { Span = valueR.Error.Span ?? span };
-
-        var genericUnaryResult = op switch
-        {
-            UnaryOp.Minus => -valueR.Value,
-            UnaryOp.Not => valueR.Value == 0 ? Decimal128.One : Decimal128.Zero,
-            _ => Decimal128.Zero,
-        };
-        return EvalResult<PlannedLoopValue>.Ok(PlannedLoopValue.FromNumeric(genericUnaryResult));
+        var resultR = Evaluator.ApplyUnaryOperator(op, operand.ToResult(), span);
+        if (resultR.IsError) return resultR.Error;
+        return EvalResult<PlannedLoopValue>.Ok(PlannedLoopValue.FromResult(resultR.Value));
     }
 
     private static EvalResult<PlannedLoopValue> ApplyPlannedBinary(

@@ -878,40 +878,11 @@ public static partial class Evaluator
                         }
 
                         hasPendingChild = false;
-                        var operandValue = pendingChild.Value;
-
-                        // Empty result propagation through unary operators.
-                        if (operandValue is Result.SequenceValue(var uItems) && uItems.Count == 0)
-                        {
-                            var empty = Result.SequenceValue.TakeOwnership([]);
-                            completed = EvalResult<CountedResult>.Ok(new CountedResult(empty, empty.ValueCount()));
-                            break;
-                        }
-
-                        if (operandValue is Result.Str)
-                        {
-                            completed = new EvalError.TypeMismatch("Unary operator is not supported for strings")
-                            {
-                                Span = frames[top].Node.Span,
-                            };
-                            break;
-                        }
-
-                        var vR = ExpectInt(operandValue);
-                        if (vR.IsError)
-                        {
-                            completed = vR.Error;
-                            break;
-                        }
-
-                        var unaryResult = unaryOp switch
-                        {
-                            UnaryOp.Minus => -vR.Value,
-                            UnaryOp.Not => vR.Value == 0 ? Decimal128.One : Decimal128.Zero,
-                            _ => Decimal128.Zero,
-                        };
-                        var unaryValue = new Result.Atom(unaryResult);
-                        completed = EvalResult<CountedResult>.Ok(new CountedResult(unaryValue, unaryValue.ValueCount()));
+                        var unaryR = ApplyUnaryOperator(unaryOp, pendingChild.Value, frames[top].Node.Span);
+                        completed = unaryR.IsError
+                            ? unaryR.Error
+                            : EvalResult<CountedResult>.Ok(new CountedResult(
+                                unaryR.Value, unaryR.Value.ValueCount()));
                         break;
                     }
 

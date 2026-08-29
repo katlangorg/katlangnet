@@ -6345,6 +6345,39 @@ public static partial class Evaluator
             (required, actual) => VariadicLoopStateArityMismatch(step, required, actual, loopName));
     }
 
+    /// <summary>
+    /// Applies a unary operator to one evaluated operand value. This is the SINGLE
+    /// unary application semantics and error/span policy, shared by the generic
+    /// expression-spine machine, its async twin, and the planned loop evaluator's
+    /// non-numeric arm, so evaluation strategies cannot drift: the empty sequence
+    /// value propagates through unchanged, the string rejection is stamped with the
+    /// unary expression's span, and the numeric-conversion failure
+    /// (<see cref="ExpectInt"/>) is returned UNSPANNED — the innermost error's span
+    /// is public structured state, so only the surrounding evaluation boundaries may
+    /// attach one (<see cref="AtSpanIfMissing"/>). Lean: the <c>.unary</c> arm of
+    /// <c>eval</c>.
+    /// </summary>
+    internal static EvalResult<Result> ApplyUnaryOperator(UnaryOp op, Result operandValue, SourceSpan? span)
+    {
+        // Empty result propagation through unary operators.
+        if (operandValue is Result.SequenceValue(var items) && items.Count == 0)
+            return EvalResult<Result>.Ok(Result.SequenceValue.TakeOwnership([]));
+
+        if (operandValue is Result.Str)
+            return new EvalError.TypeMismatch("Unary operator is not supported for strings") { Span = span };
+
+        var vR = ExpectInt(operandValue);
+        if (vR.IsError) return vR.Error;
+
+        var value = op switch
+        {
+            UnaryOp.Minus => -vR.Value,
+            UnaryOp.Not => vR.Value == 0 ? Decimal128.One : Decimal128.Zero,
+            _ => Decimal128.Zero,
+        };
+        return EvalResult<Result>.Ok(new Result.Atom(value));
+    }
+
     internal static EvalResult<Result> ApplyBinaryOperator(
         BinaryOp op,
         Expr left,
@@ -6864,40 +6897,11 @@ public static partial class Evaluator
                     }
 
                     hasPendingChild = false;
-                    var operandValue = pendingChild.Value;
-
-                    // Empty result propagation through unary operators.
-                    if (operandValue is Result.SequenceValue(var uItems) && uItems.Count == 0)
-                    {
-                        var empty = Result.SequenceValue.TakeOwnership([]);
-                        completed = EvalResult<CountedResult>.Ok(new CountedResult(empty, empty.ValueCount()));
-                        break;
-                    }
-
-                    if (operandValue is Result.Str)
-                    {
-                        completed = new EvalError.TypeMismatch("Unary operator is not supported for strings")
-                        {
-                            Span = frame.Node.Span,
-                        };
-                        break;
-                    }
-
-                    var vR = ExpectInt(operandValue);
-                    if (vR.IsError)
-                    {
-                        completed = vR.Error;
-                        break;
-                    }
-
-                    var unaryResult = unaryOp switch
-                    {
-                        UnaryOp.Minus => -vR.Value,
-                        UnaryOp.Not => vR.Value == 0 ? Decimal128.One : Decimal128.Zero,
-                        _ => Decimal128.Zero,
-                    };
-                    var unaryValue = new Result.Atom(unaryResult);
-                    completed = EvalResult<CountedResult>.Ok(new CountedResult(unaryValue, unaryValue.ValueCount()));
+                    var unaryR = ApplyUnaryOperator(unaryOp, pendingChild.Value, frame.Node.Span);
+                    completed = unaryR.IsError
+                        ? unaryR.Error
+                        : EvalResult<CountedResult>.Ok(new CountedResult(
+                            unaryR.Value, unaryR.Value.ValueCount()));
                     break;
                 }
 
