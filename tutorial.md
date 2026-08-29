@@ -223,7 +223,25 @@ The `^` operator raises the left side to the power of the right side.
 
 **Result:** `1024`
 
-Operator precedence follows standard math rules: `^` binds tightest, then `*`, `/`, `div`, `mod`, then `+` and `-`. Parentheses override precedence.
+`^` binds tighter than the prefix `-`, so a leading minus negates the whole power — parenthesize the base to raise a negative value. The exponent side accepts a negated value directly, and `^` chains group from the right:
+
+<!-- spec:power-unary-precedence -->
+```
+-2 ^ 2
+(-2) ^ 2
+2 ^ 3 ^ 2
+```
+
+**Results:**
+```
+-4
+4
+512
+```
+
+`2 ^ -2` is `0.25` — no parentheses are needed around a negated exponent (`2 ^ (-2)` means the same). The same rule applies to fractional exponents: `-2 ^ 0.5` negates the positive-base power (`-1.414…`), while `(-2) ^ 0.5` raises the negative base itself (a fractional power of a negative number is `NaN`).
+
+Operator precedence follows standard math rules: `^` binds tightest, then prefix `-` and `not`, then `*`, `/`, `div`, `mod`, then `+` and `-`. Parentheses override precedence.
 
 ```
 2 + 3 * 4
@@ -4024,7 +4042,9 @@ Only `public` exported properties are exposed through `load` and `open`.
 
 | Operator | Description | Precedence |
 |---|---|---|
-| `^` | Power (right-associative) | Highest |
+| `^` | Power (right-associative; binds tighter than the prefix operators on the left, so `-2 ^ 2` is `-(2 ^ 2)` and a negative base needs parentheses: `(-2) ^ 2`. The exponent side accepts a prefix operator directly: `2 ^ -2`) | Highest |
+| `not` | Logical negation (prefix; between `^` and the multiplicative operators) | |
+| `-` | Arithmetic negation (prefix; between `^` and the multiplicative operators) | |
 | `*`, `/`, `div`, `mod` | Multiplication, division, integer division, modulo | |
 | `+`, `-` | Addition, subtraction | |
 | `<`, `>`, `<=`, `>=` | Ordering comparison, numeric scalar operands only (returns 1 or 0) | |
@@ -4032,8 +4052,6 @@ Only `public` exported properties are exposed through `load` and `open`.
 | `and` | Logical and | |
 | `xor` | Logical exclusive or | |
 | `or` | Logical or | Lowest |
-| `not` | Logical negation (prefix) | — |
-| `-` | Arithmetic negation (prefix) | — |
 | `:` | Output selection (zero-based index over a sequence or exact list target, one-level content projection) | Postfix |
 | `.` | Dot-call / property access | Postfix |
 | `*` (prefix, directly attached) | Collect marker (binding positions only: `*name` collects the matched segment as one exact list) | — |

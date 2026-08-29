@@ -113,6 +113,42 @@ public static class LanguageSpecCorpus
         },
         new()
         {
+            Id = "power-unary-precedence",
+            Category = "arithmetic",
+            Source = "-2 ^ 2\n(-2) ^ 2\n2 ^ 3 ^ 2",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "-4\n4\n512",
+            ExpectedRaw = "S[-4, 4, 512]",
+            ExpectedEmittedCount = 3,
+            LeanProgram = LProg([],
+            [
+                ".unary .minus (.binary .pow (.num 2) (.num 2))",
+                ".binary .pow (.unary .minus (.num 2)) (.num 2)",
+                ".binary .pow (.num 2) (.binary .pow (.num 3) (.num 2))",
+            ]),
+            Probes =
+            [
+                // The exponent side re-enters the unary level, so a negated
+                // exponent needs no parentheses (Decimal128-only results).
+                new SpecProbe("2 ^ -2", "ok raw=0.25 n=1"),
+                new SpecProbe("-2 ^ -2", "ok raw=-0.25 n=1"),
+                // The unary tier sits between the multiplicative tier and `^`.
+                new SpecProbe("1 + -2 ^ 2", "ok raw=-3 n=1"),
+                new SpecProbe("2 * -3 ^ 2", "ok raw=-18 n=1"),
+                // Combined associativity: a unary base negates the whole
+                // right-associative chain; a unary exponent applies to the
+                // whole tail it introduces.
+                new SpecProbe("-2 ^ 3 ^ 2", "ok raw=-512 n=1"),
+                new SpecProbe("2 ^ -2 ^ 2", "ok raw=0.0625 n=1"),
+                // `not` shares the prefix-unary tier.
+                new SpecProbe("not 0 ^ 0", "ok raw=0 n=1"),
+                new SpecProbe("2 ^ not 0", "ok raw=2 n=1"),
+            ],
+            IncludeInGeneratorPrompt = true,
+            Explanation = "`^` binds tighter than prefix `-`/`not` on the left, so `-2 ^ 2` negates the power: `-(2 ^ 2)`. Parenthesize the base to raise a negative value: `(-2) ^ 2`. The exponent side accepts a unary value directly (`2 ^ -2` is `0.25`), and `^` chains group from the right.",
+        },
+        new()
+        {
             Id = "property-access-and-call",
             Category = "arithmetic",
             Source = "# Define a property:\nAnswer = 42\n\n# Property-style access:\nAnswer\n\n# Explicit zero-parameter call:\nAnswer()",

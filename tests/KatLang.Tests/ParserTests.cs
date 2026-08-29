@@ -2567,6 +2567,208 @@ public class ParserTests
         Assert.Equal(4, ((Expr.Num)inner.Right).Value);
     }
 
+    // ── Power vs prefix-unary precedence ────────────────────────────────────
+    // `^` binds tighter than the prefix unary operators on the LEFT (the
+    // base), while the exponent re-enters the unary level: `-2 ^ 2` is
+    // `-(2 ^ 2)`, `2 ^ -2` stays valid, and `^` stays right-associative.
+
+    private static Expr ParseSingleOutput(string source)
+    {
+        var result = Parser.ParseSyntax(source);
+        Assert.False(result.HasErrors, string.Join(Environment.NewLine, result.Diagnostics.Select(d => d.Message)));
+        return Assert.Single(result.Root.Output);
+    }
+
+    private static Expr.Binary AssertPow(Expr expr)
+    {
+        var binary = Assert.IsType<Expr.Binary>(expr);
+        Assert.Equal(BinaryOp.Pow, binary.Op);
+        return binary;
+    }
+
+    private static Expr AssertUnary(Expr expr, UnaryOp op)
+    {
+        var unary = Assert.IsType<Expr.Unary>(expr);
+        Assert.Equal(op, unary.Op);
+        return unary.Operand;
+    }
+
+    private static void AssertNum(Expr expr, decimal expected)
+        => Assert.Equal(expected, Assert.IsType<Expr.Num>(expr).Value);
+
+    [Fact]
+    public void Parse_PowerWithUnaryMinusBase_NegatesTheWholePower()
+    {
+        // -2 ^ 2 = Unary(Minus, Binary(Pow, 2, 2))
+        var pow = AssertPow(AssertUnary(ParseSingleOutput("-2 ^ 2"), UnaryOp.Minus));
+        AssertNum(pow.Left, 2);
+        AssertNum(pow.Right, 2);
+    }
+
+    [Fact]
+    public void Parse_PowerWithParenthesizedNegativeBase_KeepsUnaryBase()
+    {
+        // (-2) ^ 2 = Binary(Pow, Unary(Minus, 2), 2) — a lone parenthesized
+        // expression unwraps at parse time, so the unary lands in base position.
+        var pow = AssertPow(ParseSingleOutput("(-2) ^ 2"));
+        AssertNum(AssertUnary(pow.Left, UnaryOp.Minus), 2);
+        AssertNum(pow.Right, 2);
+    }
+
+    [Fact]
+    public void Parse_PowerWithUnaryMinusExponent_StaysValid()
+    {
+        // 2 ^ -2 = Binary(Pow, 2, Unary(Minus, 2))
+        var pow = AssertPow(ParseSingleOutput("2 ^ -2"));
+        AssertNum(pow.Left, 2);
+        AssertNum(AssertUnary(pow.Right, UnaryOp.Minus), 2);
+    }
+
+    [Fact]
+    public void Parse_PowerWithUnaryBaseAndUnaryExponent_NegatesThePowerOverTheUnaryExponent()
+    {
+        // -2 ^ -2 = Unary(Minus, Binary(Pow, 2, Unary(Minus, 2)))
+        var pow = AssertPow(AssertUnary(ParseSingleOutput("-2 ^ -2"), UnaryOp.Minus));
+        AssertNum(pow.Left, 2);
+        AssertNum(AssertUnary(pow.Right, UnaryOp.Minus), 2);
+    }
+
+    [Fact]
+    public void Parse_PowerChain_RemainsRightAssociative()
+    {
+        // 2 ^ 3 ^ 2 = Binary(Pow, 2, Binary(Pow, 3, 2))
+        var outer = AssertPow(ParseSingleOutput("2 ^ 3 ^ 2"));
+        AssertNum(outer.Left, 2);
+        var inner = AssertPow(outer.Right);
+        AssertNum(inner.Left, 3);
+        AssertNum(inner.Right, 2);
+    }
+
+    [Fact]
+    public void Parse_UnaryMinusOverPowerChain_NegatesTheWholeRightAssociativeChain()
+    {
+        // -2 ^ 3 ^ 2 = Unary(Minus, Binary(Pow, 2, Binary(Pow, 3, 2)))
+        var outer = AssertPow(AssertUnary(ParseSingleOutput("-2 ^ 3 ^ 2"), UnaryOp.Minus));
+        AssertNum(outer.Left, 2);
+        var inner = AssertPow(outer.Right);
+        AssertNum(inner.Left, 3);
+        AssertNum(inner.Right, 2);
+    }
+
+    [Fact]
+    public void Parse_UnaryMinusExponent_AppliesToTheWholeRightAssociativeTail()
+    {
+        // 2 ^ -2 ^ 2 = Binary(Pow, 2, Unary(Minus, Binary(Pow, 2, 2)))
+        var outer = AssertPow(ParseSingleOutput("2 ^ -2 ^ 2"));
+        AssertNum(outer.Left, 2);
+        var inner = AssertPow(AssertUnary(outer.Right, UnaryOp.Minus));
+        AssertNum(inner.Left, 2);
+        AssertNum(inner.Right, 2);
+    }
+
+    [Fact]
+    public void Parse_NotOverPower_NegatesTheWholePower()
+    {
+        // not 0 ^ 0 = Unary(Not, Binary(Pow, 0, 0))
+        var pow = AssertPow(AssertUnary(ParseSingleOutput("not 0 ^ 0"), UnaryOp.Not));
+        AssertNum(pow.Left, 0);
+        AssertNum(pow.Right, 0);
+    }
+
+    [Fact]
+    public void Parse_NotExponent_StaysValid()
+    {
+        // 2 ^ not 0 = Binary(Pow, 2, Unary(Not, 0))
+        var pow = AssertPow(ParseSingleOutput("2 ^ not 0"));
+        AssertNum(pow.Left, 2);
+        AssertNum(AssertUnary(pow.Right, UnaryOp.Not), 0);
+    }
+
+    [Fact]
+    public void Parse_NotVersusComparisonAndLogical_Unchanged()
+    {
+        // The unary tier's relationship with comparisons and logical operators
+        // is NOT changed by the power-precedence rule: `not 1 == 2` stays
+        // `(not 1) == 2`, and `not a and b` stays `(not a) and b`.
+        var eq = Assert.IsType<Expr.Binary>(ParseSingleOutput("not 1 == 2"));
+        Assert.Equal(BinaryOp.Eq, eq.Op);
+        AssertNum(AssertUnary(eq.Left, UnaryOp.Not), 1);
+        AssertNum(eq.Right, 2);
+
+        var and = Assert.IsType<Expr.Binary>(ParseSingleOutput("not 1 and 0"));
+        Assert.Equal(BinaryOp.And, and.Op);
+        AssertNum(AssertUnary(and.Left, UnaryOp.Not), 1);
+        AssertNum(and.Right, 0);
+    }
+
+    [Fact]
+    public void Parse_UnaryPowerInsideAdditiveAndMultiplicative_KeepsUnaryAboveThoseTiers()
+    {
+        // 1 + -2 ^ 2 = Binary(Add, 1, Unary(Minus, Binary(Pow, 2, 2)))
+        var add = Assert.IsType<Expr.Binary>(ParseSingleOutput("1 + -2 ^ 2"));
+        Assert.Equal(BinaryOp.Add, add.Op);
+        AssertNum(add.Left, 1);
+        var addPow = AssertPow(AssertUnary(add.Right, UnaryOp.Minus));
+        AssertNum(addPow.Left, 2);
+        AssertNum(addPow.Right, 2);
+
+        // 2 * -3 ^ 2 = Binary(Mul, 2, Unary(Minus, Binary(Pow, 3, 2)))
+        var mul = Assert.IsType<Expr.Binary>(ParseSingleOutput("2 * -3 ^ 2"));
+        Assert.Equal(BinaryOp.Mul, mul.Op);
+        AssertNum(mul.Left, 2);
+        var mulPow = AssertPow(AssertUnary(mul.Right, UnaryOp.Minus));
+        AssertNum(mulPow.Left, 3);
+        AssertNum(mulPow.Right, 2);
+    }
+
+    [Fact]
+    public void Parse_PowerBaseIsPostfixLevel_CallsIndexingAndGroupsBindFirst()
+    {
+        // Postfix forms complete before `^` takes the base: `A:0 ^ 2` is
+        // `(A:0) ^ 2`, and a parenthesized group is the base it wraps.
+        var indexed = AssertPow(ParseSingleOutput("A = 4, 9\nA:0 ^ 2"));
+        Assert.IsType<Expr.Index>(indexed.Left);
+        AssertNum(indexed.Right, 2);
+
+        var grouped = AssertPow(ParseSingleOutput("(1 + 2) ^ 2"));
+        var sum = Assert.IsType<Expr.Binary>(grouped.Left);
+        Assert.Equal(BinaryOp.Add, sum.Op);
+        AssertNum(grouped.Right, 2);
+    }
+
+    [Fact]
+    public void Parse_ScientificNotationExponentSign_IsLexerLevelAndUnaffected()
+    {
+        // `1e-2` is one numeric literal — the sign inside scientific notation
+        // never involves the unary/power grammar.
+        AssertNum(ParseSingleOutput("1e-2"), 0.01m);
+
+        // And a literal in power position composes normally: 1e-2 ^ 2 is
+        // Binary(Pow, 0.01, 2), with no unary node anywhere.
+        var pow = AssertPow(ParseSingleOutput("1e-2 ^ 2"));
+        AssertNum(pow.Left, 0.01m);
+        AssertNum(pow.Right, 2);
+    }
+
+    [Fact]
+    public void Parse_TrailingCaret_ContinuesAcrossNewline_LeadingCaretDoesNot()
+    {
+        // A trailing `^` continues to its right operand on the following line.
+        var pow = AssertPow(ParseSingleOutput("2 ^\n3"));
+        AssertNum(pow.Left, 2);
+        AssertNum(pow.Right, 3);
+
+        // A trailing `^` with a unary right operand on the next line.
+        var unaryPow = AssertPow(ParseSingleOutput("2 ^\n-3"));
+        AssertNum(AssertUnary(unaryPow.Right, UnaryOp.Minus), 3);
+
+        // A `^`-led line never continues the closed expression on the
+        // previous line — the first row stays `2` and the dangling `^` row
+        // is a parse error.
+        var broken = Parser.ParseSyntax("2\n^ 3");
+        Assert.True(broken.HasErrors);
+    }
+
     [Fact]
     public void Parse_LessEqual_ReturnsBinaryExpr()
     {

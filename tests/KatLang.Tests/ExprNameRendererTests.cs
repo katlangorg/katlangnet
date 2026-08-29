@@ -1,4 +1,5 @@
 using KatLang.Optimizations.Sequences;
+using System.Numerics;
 
 namespace KatLang.Tests;
 
@@ -93,6 +94,119 @@ public class ExprNameRendererTests
         Assert.Equal("[a, b]", Open(new Expr.ListLiteral([a, b])));
         Assert.Equal("[]", Open(new Expr.ListLiteral([])));
         Assert.Equal("(1, 2)", Open(new Expr.SequenceConstruct(new Expr.Num(1), new Expr.Num(2))));
+    }
+
+    [Fact]
+    public void Golden_PowerBaseParenthesization_RendersExactly()
+    {
+        var a = new Expr.Resolve("a");
+        var b = new Expr.Resolve("b");
+
+        // `^` binds tighter than prefix unary on the LEFT, so a unary base —
+        // and a literal that renders with a leading minus — must keep its
+        // parentheses: bare `-a ^ b` reads back as `-(a ^ b)`.
+        Assert.Equal("((-a) ^ b)", Open(new Expr.Binary(BinaryOp.Pow, new Expr.Unary(UnaryOp.Minus, a), b)));
+        Assert.Equal("((not a) ^ b)", Open(new Expr.Binary(BinaryOp.Pow, new Expr.Unary(UnaryOp.Not, a), b)));
+        Assert.Equal("((-2) ^ b)", Open(new Expr.Binary(BinaryOp.Pow, new Expr.Num(-2m), b)));
+
+        // The exponent side is the unary level, so a unary or negative-literal
+        // exponent stays bare — `a ^ -b` reads back with the same AST.
+        Assert.Equal("(a ^ -b)", Open(new Expr.Binary(BinaryOp.Pow, a, new Expr.Unary(UnaryOp.Minus, b))));
+        Assert.Equal("(a ^ -2)", Open(new Expr.Binary(BinaryOp.Pow, a, new Expr.Num(-2m))));
+
+        // Non-negative literal and self-delimiting bases render as before.
+        Assert.Equal("(2 ^ b)", Open(new Expr.Binary(BinaryOp.Pow, new Expr.Num(2m), b)));
+        Assert.Equal(
+            "((a + b) ^ b)",
+            Open(new Expr.Binary(BinaryOp.Pow, new Expr.Binary(BinaryOp.Add, a, b), b)));
+
+        // Negating a whole power keeps the established unary-operand wrapping.
+        Assert.Equal(
+            "-((a ^ b))",
+            Open(new Expr.Unary(UnaryOp.Minus, new Expr.Binary(BinaryOp.Pow, a, b))));
+
+        // DiagnosticName mode renders the chain bare but still wraps a
+        // rebinding power base, keeping capture bundles in their
+        // sequence-value spelling.
+        Assert.Equal(
+            "(-a) ^ b",
+            ExprNameRenderer.RenderBinaryDiagnosticName(BinaryOp.Pow, new Expr.Unary(UnaryOp.Minus, a), b));
+        Assert.Equal(
+            "(-2) ^ b",
+            ExprNameRenderer.RenderBinaryDiagnosticName(BinaryOp.Pow, new Expr.Num(-2m), b));
+        Assert.Equal(
+            "a ^ -b",
+            ExprNameRenderer.RenderBinaryDiagnosticName(BinaryOp.Pow, a, new Expr.Unary(UnaryOp.Minus, b)));
+        Assert.Equal(
+            "2 ^ 3 ^ 2",
+            Diag(new Expr.Binary(
+                BinaryOp.Pow,
+                new Expr.Num(2),
+                new Expr.Binary(BinaryOp.Pow, new Expr.Num(3), new Expr.Num(2)))));
+        Assert.Equal(
+            "(1, 2) ^ b",
+            Diag(new Expr.Binary(BinaryOp.Pow, new Expr.Capture([new Expr.Num(1), new Expr.Num(2)]), b)));
+    }
+
+    [Fact]
+    public void Golden_PowerBaseParenthesization_CoversDecimal128SpecialValues()
+    {
+        var a = new Expr.Resolve("a");
+        var b = new Expr.Resolve("b");
+
+        // Host-built numeric literals can carry values that source literals
+        // cannot spell. Parenthesization follows the rendered sign: negative
+        // zero and negative infinity need a protected power base, while
+        // positive infinity and NaN render without a leading minus.
+        Assert.Equal(
+            "((-0) ^ b)",
+            Open(new Expr.Binary(BinaryOp.Pow, new Expr.Num(Decimal128.NegativeZero), b)));
+        Assert.Equal(
+            "((-Infinity) ^ b)",
+            Open(new Expr.Binary(BinaryOp.Pow, new Expr.Num(Decimal128.NegativeInfinity), b)));
+        Assert.Equal(
+            "(Infinity ^ b)",
+            Open(new Expr.Binary(BinaryOp.Pow, new Expr.Num(Decimal128.PositiveInfinity), b)));
+        Assert.Equal(
+            "(NaN ^ b)",
+            Open(new Expr.Binary(BinaryOp.Pow, new Expr.Num(Decimal128.NaN), b)));
+
+        Assert.Equal(
+            "(-0) ^ b",
+            ExprNameRenderer.RenderBinaryDiagnosticName(
+                BinaryOp.Pow, new Expr.Num(Decimal128.NegativeZero), b));
+        Assert.Equal(
+            "(-Infinity) ^ b",
+            ExprNameRenderer.RenderBinaryDiagnosticName(
+                BinaryOp.Pow, new Expr.Num(Decimal128.NegativeInfinity), b));
+        Assert.Equal(
+            "Infinity ^ b",
+            ExprNameRenderer.RenderBinaryDiagnosticName(
+                BinaryOp.Pow, new Expr.Num(Decimal128.PositiveInfinity), b));
+        Assert.Equal(
+            "NaN ^ b",
+            ExprNameRenderer.RenderBinaryDiagnosticName(
+                BinaryOp.Pow, new Expr.Num(Decimal128.NaN), b));
+
+        // The exponent remains the unary-accepting side, so signed host
+        // literals stay bare there just like the ordinary `a ^ -2` case.
+        Assert.Equal(
+            "(a ^ -0)",
+            Open(new Expr.Binary(BinaryOp.Pow, a, new Expr.Num(Decimal128.NegativeZero))));
+        Assert.Equal(
+            "(a ^ -Infinity)",
+            Open(new Expr.Binary(BinaryOp.Pow, a, new Expr.Num(Decimal128.NegativeInfinity))));
+
+        // Index-selector mode uses the same rendered-sign predicate: signed
+        // values need parentheses because a selector is primary syntax, but
+        // NaN's diagnostic spelling is unsigned even when its IEEE sign bit
+        // is set.
+        Assert.Equal(
+            "a:(-Infinity)",
+            Open(new Expr.Index(a, new Expr.Num(Decimal128.NegativeInfinity))));
+        Assert.Equal(
+            "a:NaN",
+            Open(new Expr.Index(a, new Expr.Num(Decimal128.NaN))));
     }
 
     [Fact]

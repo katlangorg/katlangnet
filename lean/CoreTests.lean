@@ -13496,6 +13496,38 @@ def spreadDiagnosticNameParenthesizesRebindingOperands : Bool :=
 
 #guard spreadDiagnosticNameParenthesizesRebindingOperands
 
+-- `^` binds tighter than prefix unary on the LEFT, so a unary or
+-- negative-literal power BASE keeps parentheses, while the exponent side is
+-- the unary level and renders bare. A bare unary over a power now reads back
+-- correctly (`-a ^ b` IS `-(a ^ b)`), so the unary arm needs no wrapping.
+-- C#: `Golden_PowerBaseParenthesization_RendersExactly`.
+def powerBaseDiagnosticNameParenthesizesRebindingBases : Bool :=
+  (KatLang.exprDiagnosticName (.binary .pow (.unary .minus (.resolve "a")) (.resolve "b"))
+    == "(-a) ^ b") &&
+  (KatLang.exprDiagnosticName (.binary .pow (.unary .not (.resolve "a")) (.resolve "b"))
+    == "(not a) ^ b") &&
+  (KatLang.exprDiagnosticName (.binary .pow (.num (-2)) (.resolve "b")) == "(-2) ^ b") &&
+  -- Exponent side: unary and negative-literal exponents render bare.
+  (KatLang.exprDiagnosticName (.binary .pow (.resolve "a") (.unary .minus (.resolve "b")))
+    == "a ^ -b") &&
+  (KatLang.exprDiagnosticName (.binary .pow (.resolve "a") (.num (-2))) == "a ^ -2") &&
+  -- Non-rebinding bases render as before.
+  (KatLang.exprDiagnosticName (.binary .pow (.num 2) (.resolve "b")) == "2 ^ b") &&
+  -- Unary over a power renders bare and reads back with the same grouping.
+  (KatLang.exprDiagnosticName (.unary .minus (.binary .pow (.resolve "a") (.resolve "b")))
+    == "-a ^ b") &&
+  -- The right-associative chain reads back identically bare.
+  (KatLang.exprDiagnosticName
+      (.binary .pow (.num 2) (.binary .pow (.num 3) (.num 2))) == "2 ^ 3 ^ 2") &&
+  -- The standalone binary-name entry point shares the same arm.
+  (KatLang.binaryExprDiagnosticName .pow (.unary .minus (.resolve "a")) (.resolve "b")
+    == "(-a) ^ b") &&
+  (KatLang.binaryExprDiagnosticName .pow (.num (-2)) (.resolve "b") == "(-2) ^ b") &&
+  (KatLang.binaryExprDiagnosticName .add (.unary .minus (.resolve "a")) (.resolve "b")
+    == "-a + b")
+
+#guard powerBaseDiagnosticNameParenthesizesRebindingBases
+
 -- `openExprName` renders an index with source-faithful `:` rather than falling
 -- back to the generic `(index)` kind word. Leaf kinds this minimal renderer
 -- does not model still print as `(kind)` — a PRE-EXISTING divergence from C#'s

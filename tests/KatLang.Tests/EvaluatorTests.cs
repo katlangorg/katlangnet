@@ -13048,6 +13048,38 @@ public class EvaluatorTests
     }
 
     [Fact]
+    public void Eval_Pow_BindsTighterThanPrefixUnaryOnTheLeft()
+    {
+        // `^` binds tighter than the prefix unary operators on the LEFT (the
+        // base), while the exponent side re-enters the unary level:
+        // `-2 ^ 2` is `-(2 ^ 2)` and `2 ^ -2` stays `2 ^ (-2)`.
+        AssertEval("-2 ^ 2", -4);
+        AssertEval("(-2) ^ 2", 4);
+        AssertEval("2 ^ -2", 0.25m);
+        AssertEval("-2 ^ -2", -0.25m);
+        AssertEval("2 ^ 3 ^ 2", 512);
+        AssertEval("1 + -2 ^ 2", -3);
+        AssertEval("2 * -3 ^ 2", -18);
+        AssertEval("-(2 ^ 2)", -4);
+        AssertEval("(-2) ^ 3", -8);
+        AssertEval("2 ^ (-2)", 0.25m);
+    }
+
+    [Fact]
+    public void Eval_Pow_UnaryAndRightAssociativityCombine()
+    {
+        // A unary base negates the WHOLE right-associative chain, and a unary
+        // exponent applies to the whole tail it introduces.
+        AssertEval("-2 ^ 3 ^ 2", -512);
+        AssertEval("2 ^ -2 ^ 2", 0.0625m);
+
+        // `not` sits in the same prefix-unary tier: `not 0 ^ 0` is
+        // `not (0 ^ 0)`, and a `not` exponent stays valid.
+        AssertEval("not 0 ^ 0", 0);
+        AssertEval("2 ^ not 0", 2);
+    }
+
+    [Fact]
     public void Eval_Pow_FractionalExponentCases_UseMathPow()
     {
         // 27^1.5 = 81·√3 = 140.2961154130790607757231536619757...

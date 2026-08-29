@@ -2430,6 +2430,16 @@ public class AstStructuralDepthProcessTests
             AssertExpressionChainRejected(Rep("1 ^ ", 257) + "1");
             AssertNestingRejected(Rep("1 ^ ", 5_000) + "1");
 
+            // Alternating prefix unary and power is a distinct live-frame
+            // shape under power-over-unary precedence. Each `-1 ^ ` segment
+            // charges two shared units, so 191 segments are admitted and 192
+            // are rejected. Pin the exact boundary on this calibrated 1 MiB
+            // thread as well as in the ordinary in-process boundary suite.
+            AssertParses(Rep("-1 ^ ", 190) + "1");
+            AssertParses(Rep("-1 ^ ", 191) + "1");
+            AssertNestingRejected(Rep("-1 ^ ", 192) + "1");
+            AssertNestingRejected(Rep("-1 ^ ", 5_000) + "1");
+
             // Clause-head patterns: 1 unit/level.
             AssertBoundary(n => "F" + Rep("(", n) + "x" + Rep(")", n) + " = x\nF(1)", 384);
 

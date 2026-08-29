@@ -257,18 +257,30 @@ EqualityExpr    = ComparisonExpr { ( "==" | "!=" ) ComparisonExpr } ;
 ComparisonExpr  = AdditiveExpr { ( "<" | ">" | "<=" | ">=" ) AdditiveExpr } ;
 AdditiveExpr    = MultiplicativeExpr { ( "+" | "-" ) MultiplicativeExpr } ;
 MultiplicativeExpr
-              = PowerExpr { ( "*" | "/" | "div" | "mod" ) PowerExpr } ;
+              = UnaryExpr { ( "*" | "/" | "div" | "mod" ) UnaryExpr } ;
                   (* The "*" alternative applies exactly when the star is NOT
                      a postfix spread marker: any same-line expression-start
                      token after the star selects multiplication regardless
                      of spacing, and an unattached star with no same-line
                      right operand is multiplication whose operand continues
                      on the next line. See SpreadExpression. *)
-PowerExpr       = UnaryExpr [ "^" PowerExpr ] ;
 
 UnaryExpr       = "-" UnaryExpr
                 | "not" UnaryExpr
-                | PostfixExpr ;
+                | PowerExpr ;
+
+PowerExpr       = PostfixExpr [ "^" UnaryExpr ] ;
+                  (* "^" binds tighter than the prefix unary operators on the
+                     LEFT only: the base is a PostfixExpr, so -2 ^ 2 parses
+                     as -(2 ^ 2) and a negative base needs parentheses,
+                     (-2) ^ 2. The exponent re-enters UnaryExpr, so unary
+                     exponents stay valid (2 ^ -2) and "^" stays
+                     right-associative (2 ^ 3 ^ 2 is 2 ^ (3 ^ 2), because a
+                     UnaryExpr exponent ends in another PowerExpr). Like the
+                     binary operators, "^" continues a closed expression on
+                     the same physical line only: a trailing "^" continues to
+                     its right operand on the next line, a "^"-led line never
+                     continues the previous expression. *)
 
 PostfixExpr     = Primary { PostfixOp } ;
 PostfixOp       = ":" Primary   (* indexing is same-physical-line only: a ':'-led

@@ -56,7 +56,11 @@ public sealed class Parser
     // inside each container level, containers inside containers of different kinds)
     // charge the one counter, so their stack costs add exactly like their frames do.
     // Base charges: ParseExpression +1 and ParseUnary +1 (every expression level),
-    // ParsePatternAtom +1 (clause-head pattern nesting). Heavy productions whose
+    // ParsePatternAtom +1 (clause-head pattern nesting). Right-associative `^`
+    // recursion re-enters ParseUnary from ParsePower (which charges nothing of
+    // its own), so a `^` chain holds ONE live unit per level — the same live
+    // accounting the pre-ParsePower right-recursion through ParseExpression
+    // had. Heavy productions whose
     // per-level machinery measurably consumes more native stack carry SURCHARGES
     // (see the *NestingSurcharge constants) so that one unit costs at most ~1.25 KB
     // of Debug parser stack on every shape.
@@ -434,6 +438,12 @@ public sealed class Parser
         TokenKind.LParen or TokenKind.LBrace => new(true, false),
         TokenKind.Colon => new(true, false),
         TokenKind.Tilde => new(true, false),
+        // `^` is parsed by ParsePower rather than the binary loop, so it is
+        // absent from GetBinaryOpInfo and needs its own row with exactly the
+        // loop operators' behavior: a trailing `^` continues to a right
+        // operand on the following line, a `^`-led line never continues the
+        // previous line's closed expression.
+        TokenKind.Caret => new(true, false),
         _ when GetBinaryOpInfo(kind).Precedence > 0 => new(true, false),
         _ => new(false, false),
     };
@@ -2261,15 +2271,21 @@ public sealed class Parser
     //   5: < > <= >=     (comparison, left-associative)
     //   6: + -           (additive, left-associative)
     //   7: * / div mod   (multiplicative, left-associative)
-    //   8: ^             (power, right-associative)
-    //   9: - not         (unary prefix)
+    //   8: - not         (unary prefix)
+    //   9: ^             (power, right-associative; parsed by ParsePower, not
+    //                     the binary loop. Binds tighter than the prefix tier
+    //                     on the LEFT only: the base is postfix-level, while
+    //                     the exponent re-enters the unary level — `-2 ^ 2`
+    //                     is `-(2 ^ 2)`, `2 ^ -2` stays valid.)
     //  10: . : call      (postfix)
 
     private Expr ParseExpression(int minPrecedence = 0)
     {
-        // Also a recursion chokepoint: right-associative operators (notably `^`)
-        // right-recurse through ParseExpression AFTER ParseUnary has returned the
-        // operand, so the ParseUnary guard alone does not bound them.
+        // Also a recursion chokepoint: every expression level enters here once
+        // before descending into the unary/power/postfix layers. (The
+        // right-associative `^` recursion is bounded separately: its exponent
+        // re-enters ParseUnary, whose entry charge stays live across that
+        // recursion — see ParsePower.)
         _nestingDepth++;
         try
         {
@@ -2281,7 +2297,7 @@ public sealed class Parser
 
     private Expr ParseExpressionCore(int minPrecedence = 0)
     {
-        var lhs = minPrecedence <= 9 ? ParseUnary() : ParsePostfix();
+        var lhs = ParseUnary();
 
         while (true)
         {
@@ -2296,9 +2312,10 @@ public sealed class Parser
 
             var operatorToken = Advance(); // consume operator token
 
-            // Right-associative: ^ uses prec (not prec+1) so 2^3^4 = 2^(3^4)
-            var nextMin = op is BinaryOp.Pow ? prec : prec + 1;
-            var rhs = ParseExpression(nextMin);
+            // Every operator in this loop is left-associative (`^` lives in
+            // ParsePower, below the unary level), so the right operand climbs
+            // to the next-higher precedence.
+            var rhs = ParseExpression(prec + 1);
             // CreateBinaryExpression also rejects spread operands: a spread
             // expression is a whole expression-list slot, never a binary
             // operand (`A* + B`, `1 + values*`, and `value* * 2` are errors;
@@ -2327,6 +2344,11 @@ public sealed class Parser
         return GuardExpressionChainDepth(binary, TokenSpan(operatorToken), lhs, rhs);
     }
 
+    // `^` (TokenKind.Caret) is deliberately absent: power binds tighter than
+    // the prefix-unary tier on the left, so it is parsed by ParsePower between
+    // the unary and postfix levels, never by the precedence-climbing loop. Its
+    // physical-line continuation behavior is kept identical to the loop's
+    // binary operators through its own ContinuationPolicy row.
     private static (int Precedence, BinaryOp Op) GetBinaryOpInfo(TokenKind kind) => kind switch
     {
         TokenKind.KeywordOr => (1, BinaryOp.Or),
@@ -2344,7 +2366,6 @@ public sealed class Parser
         TokenKind.Slash => (7, BinaryOp.Div),
         TokenKind.KeywordDiv => (7, BinaryOp.IDiv),
         TokenKind.KeywordMod => (7, BinaryOp.Mod),
-        TokenKind.Caret => (8, BinaryOp.Pow),
         _ => (-1, default),
     };
 
@@ -2353,7 +2374,10 @@ public sealed class Parser
     private Expr ParseUnary()
     {
         // Recursion chokepoint for ALL expression nesting: ParseExpression always
-        // enters through ParseUnary, and `-`/`not` chains self-recurse here.
+        // enters through ParseUnary, `-`/`not` chains self-recurse here, and the
+        // right-associative `^` exponent re-enters here from ParsePower while
+        // this frame's charge is still live — that held charge is what bounds
+        // power chains (one live unit per `^` level; see ParsePower).
         _nestingDepth++;
         try
         {
@@ -2364,10 +2388,15 @@ public sealed class Parser
                 // CreateUnaryExpression also rejects spread operands
                 // (`-values*` is an error; spread the whole expression
                 // instead: `(-values)*`).
+                //
+                // The operand recursion re-enters the whole unary level,
+                // whose non-prefix arm is ParsePower — so `^` binds tighter
+                // than the prefix tier on the left (`-2 ^ 2` is `-(2 ^ 2)`;
+                // write `(-2) ^ 2` to raise the negated base).
                 var start = Advance(); // consume '-' / 'not'
                 return CreateUnaryExpression(start, ParseUnary());
             }
-            return ParsePostfix();
+            return ParsePower();
         }
         finally { _nestingDepth--; }
     }
@@ -2384,6 +2413,51 @@ public sealed class Parser
         operand = RejectMisplacedSpreadOperand(operand);
         var op = operatorToken.Kind == TokenKind.Minus ? UnaryOp.Minus : UnaryOp.Not;
         return new Expr.Unary(op, operand) { Span = MakeSpan(operatorToken) };
+    }
+
+    // ── Power (binds tighter than prefix unary on the left) ─────────────────
+
+    /// <summary>
+    /// Parses the power level: a postfix base optionally followed by
+    /// <c>^ exponent</c>. Grammar: <c>PowerExpr = PostfixExpr [ "^" UnaryExpr ]</c>.
+    ///
+    /// <para>The layer sits BETWEEN the unary and postfix levels so that `^`
+    /// binds tighter than prefix `-`/`not` on the LEFT only: the base is
+    /// postfix-level (`-2 ^ 2` parses in ParseUnary as `-(2 ^ 2)`; write
+    /// `(-2) ^ 2` to raise the negated base), while the exponent re-enters
+    /// <see cref="ParseUnary"/>, keeping unary exponents valid (`2 ^ -2`) and
+    /// `^` right-associative (`2 ^ 3 ^ 2` is `2 ^ (3 ^ 2)`, because the
+    /// exponent's own unary level ends in another ParsePower).</para>
+    ///
+    /// <para>Physical-line rule: `^` continues a closed expression on the same
+    /// physical line only (its ContinuationPolicy row) — a trailing `^`
+    /// continues to its right operand on the following line, and a `^`-led
+    /// line never continues the previous expression.</para>
+    ///
+    /// <para>Nesting accounting: deliberately NO charge of its own. The
+    /// exponent recursion re-enters ParseUnary while the current ParseUnary
+    /// frame's entry charge is still live, so a `^` chain holds one live unit
+    /// per level across two live frames (ParseUnary + ParsePower) — the same
+    /// live-unit-per-level cost the former ParseExpression(8) right-recursion
+    /// had (ParseExpression + ParseExpressionCore), which keeps the
+    /// established power boundary intact: the 256-link expression-chain limit
+    /// is still reached before the recursion budget
+    /// (ParserNestingDepthTests.PowerBoundary_UsesTheEstablishedExpressionChainMaximum).
+    /// Charging here would double-charge every `^` level and shift that
+    /// boundary.</para>
+    /// </summary>
+    private Expr ParsePower()
+    {
+        var lhs = ParsePostfix();
+        if (Current.Kind != TokenKind.Caret || !MayContinueClosedExpression(TokenKind.Caret))
+            return lhs;
+
+        var operatorToken = Advance(); // consume '^'
+        var rhs = ParseUnary();
+        // CreateBinaryExpression applies the shared spread-operand rejection
+        // and the expression-chain depth guard, exactly as for the operators
+        // of the precedence-climbing loop.
+        return CreateBinaryExpression(BinaryOp.Pow, lhs, rhs, operatorToken);
     }
 
     // ── Postfix (dot, colon, call) ──────────────────────────────────────────

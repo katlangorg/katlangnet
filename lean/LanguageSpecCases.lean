@@ -14,11 +14,11 @@ This is bounded differential validation over the Lean-guarded partition,
 not a formal verification of the evaluators.
 
 Partition (machine-checked by the `specCaseIds.length` guard below):
-- specification surface cases: 173
+- specification surface cases: 174
 - excluded parse-level cases (Lean has no surface parser): 6
 - excluded C#-only cases (each carries an explicit reason in the corpus): 1
-- Lean-guarded cases: 166
-- probe observations (C#-only by design): 255
+- Lean-guarded cases: 167
+- probe observations (C#-only by design): 263
 - internal-node cases live in the semantic-explorer corpus, not here: see
   lean/SemanticExplorerCases.lean
 
@@ -102,6 +102,11 @@ def obs (e : Expr) : String :=
 def case_first_program : Expr :=
   .algorithmExpr (alg [] [] [] [.binary .add (.num 2) (.binary .mul (.num 3) (.num 4))])
 #guard obs case_first_program == "ok raw=14 n=1"
+
+-- power-unary-precedence [arithmetic]: -2 ^ 2 \n (-2) ^ 2 \n 2 ^ 3 ^ 2
+def case_power_unary_precedence : Expr :=
+  .algorithmExpr (alg [] [] [] [.unary .minus (.binary .pow (.num 2) (.num 2)), .binary .pow (.unary .minus (.num 2)) (.num 2), .binary .pow (.num 2) (.binary .pow (.num 3) (.num 2))])
+#guard obs case_power_unary_precedence == "ok raw=S[-4, 4, 512] n=3"
 
 -- property-access-and-call [arithmetic]: # Define a property: \n Answer = 42 \n  \n # Property-style access: \n Answer \n  \n # Explicit zero-parameter call: \n Answer()
 def case_property_access_and_call : Expr :=
@@ -928,7 +933,7 @@ def case_list_builtin_collection : Expr :=
   .algorithmExpr (alg [] [] [] [.call (.resolve "count") [(.listLiteral [.num 1, .num 2, .num 3])]])
 #guard obs case_list_builtin_collection == "ok raw=3 n=1"
 
--- 166 canonical Lean-guarded specification cases.
+-- 167 canonical Lean-guarded specification cases.
 
 /--
 Machine-checked Lean-guarded partition count: the id list is built by the
@@ -937,6 +942,7 @@ independently from the corpus partition, so a generation bug fails `lake build`.
 -/
 def specCaseIds : List String := [
   "first-program",
+  "power-unary-precedence",
   "property-access-and-call",
   "output-is-ordinary-property",
   "empty-literal",
@@ -1103,6 +1109,6 @@ def specCaseIds : List String := [
   "list-lone-collecting-assignment",
   "list-builtin-collection"
 ]
-#guard specCaseIds.length == 166
+#guard specCaseIds.length == 167
 
 end LanguageSpecCases

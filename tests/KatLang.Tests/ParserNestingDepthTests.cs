@@ -87,12 +87,37 @@ public class ParserNestingDepthTests
         // Power is parsed right-associatively and charges the cumulative recursion
         // counter, but its completed AST is also an operator chain. The established
         // 256-link chain policy is therefore the first successful-surface boundary.
+        // (ParsePower deliberately holds ONE live unit per `^` level — the
+        // exponent re-enters ParseUnary under the still-live entry charge — so
+        // this boundary is unchanged by the power-vs-unary precedence split.)
         AssertParses(Rep("1 ^ ", Parser.MaxExpressionChainDepth) + "1");
         var oneBeyond = Parser.ParseSyntax(Rep("1 ^ ", Parser.MaxExpressionChainDepth + 1) + "1");
         Assert.True(oneBeyond.HasErrors);
         Assert.True(HasExpressionChainDiagnostic(oneBeyond));
         Assert.False(HasNestingDiagnostic(oneBeyond));
     }
+
+    [Fact]
+    public void AlternatingUnaryPowerBoundary_AtMaximumParses_OneBeyondDiagnoses()
+    {
+        // Under power-over-unary precedence, `-1 ^ -1 ^ ... ^ 1` nests as
+        // `-(1 ^ (-(1 ^ ...)))`: each `-1 ^ ` segment holds TWO live units
+        // (the prefix ParseUnary level plus the exponent's re-entered
+        // ParseUnary level), and the chain guard never accumulates through the
+        // interleaved unary wrappers, so the recursion budget is the first
+        // boundary for this compound shape. Entry and the final operand add
+        // two more units: 2N + 2 <= 384 admits N <= 191 segments.
+        AssertParses(Rep("-1 ^ ", 191) + "1");
+        Assert.True(HasNestingDiagnostic(Parser.ParseSyntax(Rep("-1 ^ ", 192) + "1")));
+    }
+
+    [Fact]
+    public void AlternatingUnaryPower_OverBudget_EmitsNestingDiagnostic()
+        => Assert.True(HasNestingDiagnostic(Parser.ParseSyntax(Rep("-1 ^ ", 5000) + "1")));
+
+    [Fact]
+    public void DeepUnaryExponentTail_OverBudget_EmitsNestingDiagnostic()
+        => Assert.True(HasNestingDiagnostic(Parser.ParseSyntax("2 ^ " + Rep("-", 5000) + "1")));
 
     [Fact]
     public void CallNestingBoundary_AtMaximumParses_OneBeyondDiagnoses()

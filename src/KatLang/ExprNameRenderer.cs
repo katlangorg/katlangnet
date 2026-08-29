@@ -163,8 +163,53 @@ internal static class ExprNameRenderer
         var pending = new Stack<Piece>();
         pending.Push(new Piece(right, ExprNameMode.DiagnosticName));
         pending.Push(new Piece(SpacedBinaryOpText(op)));
-        pending.Push(new Piece(left, ExprNameMode.DiagnosticName));
+        PushBinaryLeftOperand(pending, op, left, ExprNameMode.DiagnosticName);
         return Drain(pending);
+    }
+
+    /// <summary>
+    /// True when <paramref name="expr"/> in POWER-BASE position would rebind if
+    /// rendered bare: `^` binds tighter than prefix unary on the left, so a
+    /// unary base — and a literal whose text renders with a leading minus
+    /// (including -0 and -Infinity; NaN renders unsigned) — must keep its
+    /// parentheses, or `-a ^ b` would read back as `-(a ^ b)`. The exponent
+    /// side is the unary level, so this never applies to right operands.
+    /// Lean: <c>powerBaseNeedsParens</c>.
+    /// </summary>
+    private static bool PowerBaseNeedsParens(Expr expr)
+        => expr is Expr.Unary
+            || (expr is Expr.Num numLiteral
+                && NumericLiteralRendersWithLeadingMinus(numLiteral.Value));
+
+    /// <summary>
+    /// True exactly when Decimal128's invariant diagnostic text begins with a
+    /// minus. <see cref="System.Numerics.Decimal128.IsNegative(System.Numerics.Decimal128)"/>
+    /// also observes the sign bit of NaN, but Decimal128 renders every NaN as
+    /// unsigned <c>NaN</c>, so sign-bit testing alone would add parentheses for
+    /// text that cannot rebind as unary minus.
+    /// </summary>
+    private static bool NumericLiteralRendersWithLeadingMinus(System.Numerics.Decimal128 value)
+        => !System.Numerics.Decimal128.IsNaN(value)
+            && System.Numerics.Decimal128.IsNegative(value);
+
+    /// <summary>
+    /// Pushes a binary node's LEFT operand in <paramref name="mode"/>, adding
+    /// explicit parentheses first when the operator is `^` and the operand
+    /// would rebind as a bare power base (<see cref="PowerBaseNeedsParens"/>).
+    /// The child keeps its surrounding mode so capture/block spellings are
+    /// unchanged inside the added parentheses.
+    /// </summary>
+    private static void PushBinaryLeftOperand(Stack<Piece> pending, BinaryOp op, Expr left, ExprNameMode mode)
+    {
+        if (op is BinaryOp.Pow && PowerBaseNeedsParens(left))
+        {
+            pending.Push(new Piece(")"));
+            pending.Push(new Piece(left, mode));
+            pending.Push(new Piece("("));
+            return;
+        }
+
+        pending.Push(new Piece(left, mode));
     }
 
     private static string CapLeafName(string name)
@@ -316,11 +361,12 @@ internal static class ExprNameRenderer
                     }
 
                     // A top-level binary chain renders bare, without the outer
-                    // parentheses the Open spelling adds.
+                    // parentheses the Open spelling adds. A rebinding power
+                    // base still gets parentheses (PushBinaryLeftOperand).
                     case Expr.Binary(var op, var left, var right):
                         pending.Push(new Piece(right, ExprNameMode.DiagnosticName));
                         pending.Push(new Piece(SpacedBinaryOpText(op)));
-                        pending.Push(new Piece(left, ExprNameMode.DiagnosticName));
+                        PushBinaryLeftOperand(pending, op, left, ExprNameMode.DiagnosticName);
                         return true;
 
                     // The internal SequenceConstruct join renders as one sequence
@@ -352,13 +398,13 @@ internal static class ExprNameRenderer
                 break;
 
             case ExprNameMode.IndexSelector:
-                // IsNegative matches exactly the literals whose text renders with a
-                // leading minus (including -0 and -Infinity), which is what needs
-                // parenthesizing in selector position; NaN renders unsigned.
+                // The shared rendered-sign predicate matches exactly the literals whose
+                // text begins with a minus (including -0 and -Infinity), which is what
+                // needs parenthesizing in selector position; NaN renders unsigned.
                 if (node is Expr.Unary or Expr.Call or Expr.DotCall or Expr.Index
                     or Expr.SequenceSpread
                     || (node is Expr.Num negativeLiteral
-                        && System.Numerics.Decimal128.IsNegative(negativeLiteral.Value)))
+                        && NumericLiteralRendersWithLeadingMinus(negativeLiteral.Value)))
                 {
                     return PushParenthesized(pending, node);
                 }
@@ -393,11 +439,13 @@ internal static class ExprNameRenderer
                         return Append(builder, $"({Evaluator.ExprKind(node)})");
                 }
 
+            // Binary open names self-parenthesize; a rebinding power base
+            // additionally keeps its own parentheses (PushBinaryLeftOperand).
             case Expr.Binary(var op, var left, var right):
                 pending.Push(new Piece(")"));
                 pending.Push(new Piece(right, ExprNameMode.Open));
                 pending.Push(new Piece(SpacedBinaryOpText(op)));
-                pending.Push(new Piece(left, ExprNameMode.Open));
+                PushBinaryLeftOperand(pending, op, left, ExprNameMode.Open);
                 pending.Push(new Piece("("));
                 return true;
 

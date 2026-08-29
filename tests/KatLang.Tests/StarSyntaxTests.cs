@@ -976,6 +976,11 @@ public class StarSyntaxTests
     [InlineData("values = (1, 2)\n-values*")]
     [InlineData("values = (1, 2)\nvalues* * 2")]
     [InlineData("values = (1, 2)\n2 * values*")]
+    // Power constructs through ParsePower rather than the binary loop, but
+    // shares CreateBinaryExpression, so spread base and spread exponent hit
+    // the same targeted rejection.
+    [InlineData("values = (1, 2)\nvalues* ^ 2")]
+    [InlineData("values = (1, 2)\n2 ^ values*")]
     public void SpreadInScalarPosition_ReportsTargetedError(string source)
     {
         var parse = Parser.Parse(source);

@@ -2625,6 +2625,17 @@ def indexSelectorNeedsParens : Expr -> Bool
   | .num v          => decide (v < 0)
   | _               => false
 
+/-- `^` binds tighter than prefix unary on the LEFT (the base), so a unary
+  base — and a literal that renders with a leading minus — must keep its
+  parentheses: bare `-a ^ b` reads back as `-(a ^ b)`. The exponent side
+  re-enters the unary level in source syntax, so this never applies to the
+  right operand (`a ^ -b` renders bare and reads back with the same AST).
+  C#: `ExprNameRenderer.PowerBaseNeedsParens`. -/
+def powerBaseNeedsParens : Expr -> Bool
+  | .unary _ _ => true
+  | .num v     => decide (v < 0)
+  | _          => false
+
 /-- This MINIMAL renderer models only structural reference forms; every other
   kind (`.num`, `.param`, `.binary`, ...) renders as the `(kind)` fallback, so
   C#'s merged `OpenExprName` prints more detail for them. That gap is
@@ -2668,9 +2679,22 @@ partial def exprDiagnosticName : Expr -> String
   | .param name => name
   | .num value => toString value
   | .stringLiteral value => "'" ++ value ++ "'"
+  -- Under power-over-unary precedence, a bare unary operand reads back
+  -- correctly even over a power (`-a ^ b` IS `-(a ^ b)`); binary operands of
+  -- OTHER operators keep this renderer's established bare convention (see the
+  -- index comment below for how it diverges from C# on nested operands).
   | .unary .minus operand => "-" ++ exprDiagnosticName operand
   | .unary .not operand => "not " ++ exprDiagnosticName operand
-  | .binary op left right => exprDiagnosticName left ++ " " ++ op.symbol ++ " " ++ exprDiagnosticName right
+  -- The LEFT operand of `^` is postfix-level in source syntax, so a unary or
+  -- negative-literal base must keep parentheses (`(-a) ^ b`), or the bare
+  -- text would read back as `-(a ^ b)`. C#: `PushBinaryLeftOperand`.
+  | .binary op left right =>
+      let leftName := exprDiagnosticName left
+      let baseName :=
+        match op with
+        | .pow => if powerBaseNeedsParens left then "(" ++ leftName ++ ")" else leftName
+        | _ => leftName
+      baseName ++ " " ++ op.symbol ++ " " ++ exprDiagnosticName right
   -- Source-faithful postfix indexing `target:selector`; operands that would
   -- rebind under the real precedence are parenthesized. This renderer prints
   -- binary bare, so a binary index operand is parenthesized here; C# reaches
@@ -2707,8 +2731,11 @@ partial def exprDiagnosticName : Expr -> String
   | .dotMember target name _ (some _) =>
       exprDiagnosticName target ++ "." ++ name ++ "(...)"
 
+/-- The binary operand-shape name `left op right` — delegates to the `.binary`
+  arm of `exprDiagnosticName` so the two can never disagree (in particular on
+  power-base parenthesization). C#: `ExprNameRenderer.RenderBinaryDiagnosticName`. -/
 def binaryExprDiagnosticName (op : BinaryOp) (left right : Expr) : String :=
-  exprDiagnosticName left ++ " " ++ op.symbol ++ " " ++ exprDiagnosticName right
+  exprDiagnosticName (.binary op left right)
 
 namespace CtxMsg
   def openMsg (k : String)              := s!"while resolving open: {k}"

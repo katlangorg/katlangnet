@@ -293,14 +293,14 @@ Operator precedence, lowest to highest:
 5. `<`, `>`, `<=`, `>=`
 6. `+`, `-`
 7. `*`, `/`, `div`, `mod`
-8. `^`
-9. unary prefix `-` and `not`
+8. unary prefix `-` and `not`
+9. `^`
 10. postfix `.`, `:`, and call application
 
 Associativity and precedence warnings:
-- `^` is right-associative: `2 ^ 3 ^ 2` means `2 ^ (3 ^ 2)`.
+- `^` is right-associative: `2 ^ 3 ^ 2` means `2 ^ (3 ^ 2)`, which is `512`.
 - The comparison and equality levels are left-associative.
-- Unary minus binds tighter than `^`, so `-3 ^ 2` means `(-3) ^ 2` (which is `9`), NOT `-(3 ^ 2)`. To negate a power, write `-(a ^ b)` or `0 - a ^ b`.
+- `^` binds tighter than unary minus on the left, so `-2 ^ 2` means `-(2 ^ 2)` (which is `-4`), NOT `(-2) ^ 2`. Likewise `-2 ^ 0.5` negates the positive-base power. Parentheses are required when the negative value is the power BASE: `(-2) ^ 2` is `4`. The exponent side accepts a unary value directly: `2 ^ -2` is `0.25`. To negate a power, writing `-(a ^ b)` is still fine for visual clarity — it is semantically equivalent to `-a ^ b`.
 - `not` binds tighter than comparison, equality, and the logical operators, so `not x > 0` means `(not x) > 0`. Prefer `not (x > 0)`, or rewrite as a direct comparison such as `x <= 0` or `a != b`.
 - Do not chain comparisons. `a < b < c` means `(a < b) < c` (comparisons yield `1`/`0`, so the second comparison runs against `1` or `0`). Write `a < b and b < c` instead.
 - Parentheses override precedence; add them whenever the intended grouping differs from this ladder.
@@ -1020,7 +1020,7 @@ KatLang validity:
 - explicit heads are used only when they add semantic value.
 
 Numeric, operator, and literal correctness:
-- power negations are parenthesized as `-(a ^ b)` (not `-a ^ b`) when the math means "negate the power";
+- power negation prefers the explicit `-(a ^ b)` for visual clarity (semantically equivalent to `-a ^ b`, since `^` binds tighter than unary minus); a negative power BASE is parenthesized as `(-a) ^ b` — required, because bare `-a ^ b` negates the power;
 - `not` is parenthesized or rewritten as a direct comparison when it must apply to a comparison (`not (x > 0)` or `x <= 0`, never `not x > 0`);
 - no chained comparisons; range tests are written `a < b and b < c`;
 - `/` vs `div` is chosen intentionally (`/` keeps fractions, `div` truncates toward zero);
@@ -1053,7 +1053,7 @@ Idiomatic structure:
 
 === BEGIN GENERATED: katlang-spec-examples (DO NOT EDIT BY HAND) ===
 
-Verified reference examples (53 of the 173-case canonical language specification,
+Verified reference examples (54 of the 174-case canonical language specification,
 tests/KatLang.Tests/LanguageSpec/LanguageSpecCorpus.cs). Every program and expected
 output below is executed against the KatLang engine and (where representable)
 guarded against the Lean model on every build. Treat these as ground truth for the
@@ -1062,6 +1062,17 @@ language behaviors they demonstrate.
 Regenerate this block from the repo root with:
   $env:KATLANG_REGENERATE_LANGUAGE_SPEC = "1"
   dotnet test .\KatLang.slnx --filter LanguageSpecArtifacts
+
+[power-unary-precedence] `^` binds tighter than prefix `-`/`not` on the left, so `-2 ^ 2` negates the power: `-(2 ^ 2)`. Parenthesize the base to raise a negative value: `(-2) ^ 2`. The exponent side accepts a unary value directly (`2 ^ -2` is `0.25`), and `^` chains group from the right.
+
+    -2 ^ 2
+    (-2) ^ 2
+    2 ^ 3 ^ 2
+
+  Displays:
+    -4
+    4
+    512
 
 [output-is-ordinary-property] `Output` and `output` are ordinary identifiers: `Output = 5` defines a regular property named `Output`, and only bare expression rows contribute to algorithm output — a program whose rows are all definitions has no output.
 

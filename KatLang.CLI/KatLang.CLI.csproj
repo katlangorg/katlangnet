@@ -8,7 +8,7 @@
     <PublishAot>true</PublishAot>
     <InvariantGlobalization>true</InvariantGlobalization>
     <IsPackable>false</IsPackable>
-    <KatLangVersion>0.8.179</KatLangVersion>
+    <KatLangVersion>0.8.181</KatLangVersion>
     <Version>$(KatLangVersion)</Version>
     <Description>Command-line interface for the KatLang language.</Description>
   </PropertyGroup>
