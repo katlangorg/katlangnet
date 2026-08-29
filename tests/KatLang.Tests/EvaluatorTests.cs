@@ -3646,6 +3646,78 @@ public class EvaluatorTests
     }
 
     [Fact]
+    public void Eval_Map_NativeCallbackReference_BindsCallbackArguments()
+    {
+        // A native-call wrapper (here the Math alias `abs`) works DIRECTLY as a
+        // flat callback: its body reads the argument name counted-first, the
+        // same dual-view order as Expr.Param, so it sees the callback-bound
+        // element rather than failing with `Unknown name: x`.
+        AssertEval("[1, -2].map(abs)", 1, 2);
+    }
+
+    [Fact]
+    public void Eval_Map_NativeCallbackReference_IgnoresSameNamedAmbientValue()
+    {
+        // The regression that motivated counted-first lookup: an ambient value
+        // named like the native's parameter (`x` here) must never be captured in
+        // place of the callback-bound element. valEnv-only lookup returned
+        // [5, 5] for this program.
+        AssertEval("F(x) = [1, -2].map(abs)\nF(5)", 1, 2);
+    }
+
+    [Fact]
+    public void Eval_Map_NativeCallbackReference_NonXParameterName_BindsElement()
+    {
+        // Same rule for a native whose parameter is not `x`: `sin(radians)`
+        // maps the elements 0 and 1, ignoring the ambient `radians = 0.5`.
+        var direct = Eval("sin(0), sin(1)");
+        Assert.False(direct.IsError);
+        var mapped = Eval("G(radians) = [0, 1].map(sin)\nG(0.5)");
+        Assert.False(mapped.IsError);
+        Assert.Equal(direct.Value, mapped.Value);
+    }
+
+    [Fact]
+    public void Eval_Repeat_NativeStepReference_BindsLoopStateArgument()
+    {
+        // Loop steps bind their state through the same counted funnel as flat
+        // callbacks, so a native-call wrapper works as a step reference too.
+        AssertEval("repeat(abs, 2, -5)", 5);
+
+        // The loop-step binder must also shadow a same-named counted binding
+        // inherited from an enclosing callback before the native body runs.
+        AssertEval("F(x) = repeat(abs, 2, -5)\n[99].map(F)", 5);
+    }
+
+    [Fact]
+    public void Eval_Reduce_TwoParameterNativeCallbackReference_BindsBothArguments()
+    {
+        // Reduce supplies element then accumulator. Both callback-bound values
+        // must beat the enclosing counted x/y bindings when pow's native body
+        // looks up its two declared arguments: 2^1 = 2, then 3^2 = 9.
+        AssertEval("F(x, y) = reduce([2, 3], pow, 1)\nF(100, 200)", 9);
+    }
+
+    [Fact]
+    public void Eval_DirectNativeCall_ValEnvFallback_Unchanged()
+    {
+        // Direct calls bind the native's parameter into the value environment;
+        // the counted-first lookup falls through to it unchanged.
+        AssertEval("abs(-2)", 2);
+        AssertEval("F(x) = abs(x)\nF(-3)", 3);
+    }
+
+    [Fact]
+    public void Eval_DirectNativeCall_InsideCountedCallbackContext_BindsCallArgument()
+    {
+        // A direct native call inside a callback body must NOT read the
+        // caller's counted binding: flat fixed binding shadows the callee's
+        // parameter names out of the counted environment, so `abs(-2)` binds
+        // x = -2 in the value environment even while a counted `x = 5` exists.
+        AssertEval("K(x) = abs(-2)\n[5].map(K)", 2);
+    }
+
+    [Fact]
     public void Eval_Map_RangeArgument_IteratesEmittedItemsForHigherOrderIteration()
     {
         var source = """

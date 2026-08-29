@@ -178,6 +178,30 @@ public static partial class Evaluator
         return null;
     }
 
+    /// <summary>
+    /// Native-wrapper argument lookup, shared by Math-member natives and host
+    /// operations. A wrapper body's argument names are the wrapper's own bound
+    /// parameters, which live in the counted callback-parameter environment when
+    /// the wrapper was invoked through the flat-callback/loop-step funnel and in
+    /// the value environment on direct calls. Counted-first with value fallback is
+    /// the <see cref="Expr.Param"/> dual-view order (minus the algorithm-binding
+    /// tier — native arguments are always value bindings), so a native callback
+    /// reads its actual bound argument and can never capture a same-named ambient
+    /// caller value instead. Direct calls are unaffected: flat fixed binding
+    /// shadows the callee's parameter names out of the caller's counted
+    /// environment before the body evaluates.
+    /// </summary>
+    private static Result? LookupNativeArgument(
+        EvalCtx ctx,
+        IReadOnlyList<(string, Result)> valEnv,
+        string name)
+    {
+        var counted = LookupCountedParam(ctx.CountedParamEnv, name);
+        if (counted is not null)
+            return counted.Value.Value;
+        return LookupVal(valEnv, name);
+    }
+
     internal static IReadOnlyList<(string Name, CountedResult Value)> ShadowCountedParamEnv(
         IReadOnlyList<(string Name, CountedResult Value)> env,
         IEnumerable<string> shadowedNames)
@@ -5887,6 +5911,46 @@ public static partial class Evaluator
 
     // ── Algorithm resolution (full — with opens) ─────────────────────────────
 
+    /// <summary>
+    /// Resolves the canonical qualified spelling of a runtime Math FUNCTION
+    /// (<c>Math.Abs</c>, <c>Math.Pow</c>, ...) to the same native wrapper algorithm
+    /// shared by its lowercase alias and an opened canonical name. General
+    /// argumentless dot calls keep their ordinary zero-parameter thunk identity;
+    /// this exception is gated both by authoritative Math metadata and by the
+    /// resolved member's actual <see cref="Expr.NativeCall"/> body, so a user-defined
+    /// property named <c>Math</c> is not reinterpreted as the prelude module.
+    /// </summary>
+    private static Algorithm? TryResolveQualifiedMathNativeReference(
+        Expr target,
+        string memberName,
+        EvalCtx ctx)
+    {
+        if (target is not Expr.Resolve { Name: "Math" }
+            || !BuiltinRegistry.TryGetMathMemberFacts(memberName, out _))
+        {
+            return null;
+        }
+
+        var targetR = ResolveAlg(target, ctx);
+        if (targetR.IsError)
+            return null;
+
+        var binding = LookupPropBinding(targetR.Value, memberName);
+        if (binding is null || !IsExported(binding))
+            return null;
+
+        var candidate = ChildOf(targetR.Value, binding.Value);
+        if (candidate.Output.Count != 1
+            || candidate.Output[0] is not Expr.NativeCall(var nativeName, var argNames)
+            || !string.Equals(nativeName, memberName, StringComparison.Ordinal)
+            || !candidate.Params.SequenceEqual(argNames, StringComparer.Ordinal))
+        {
+            return null;
+        }
+
+        return candidate;
+    }
+
     /// <summary>Lean: resolveAlg → EvalM Algorithm.</summary>
     private static EvalResult<Algorithm> ResolveAlg(Expr expr, EvalCtx ctx)
     {
@@ -5921,8 +5985,20 @@ public static partial class Evaluator
             case Expr.Resolve(var name):
                 return ResolveNamedAlgorithm(name, expr.Span, ctx);
 
-            case Expr.DotCall:
+            case Expr.DotCall(var target, var memberName, var dotArgs):
                 {
+                    // Math functions have one canonical callable identity across
+                    // `Math.X`, opened `X`, and the predefined alias. In algorithm
+                    // position, return the verified native wrapper itself so the
+                    // callback/loop binder can bind its declared parameters. The
+                    // generic DotCall thunk below remains authoritative for every
+                    // other dotted expression (and for explicit argument lists).
+                    if (dotArgs is null
+                        && TryResolveQualifiedMathNativeReference(target, memberName, ctx) is { } mathNative)
+                    {
+                        return EvalResult<Algorithm>.Ok(mathNative);
+                    }
+
                     // Lean: resolveAlg (.dotCall o n args) — lift to wrapper algorithm;
                     // evalDotCall handles all semantics (builtin property special cases, structural lookup, lexical fallback)
                     var wrapper = new Algorithm.User(
@@ -7364,7 +7440,7 @@ public static partial class Evaluator
         var args = new Decimal128[argNames.Count];
         for (var i = 0; i < argNames.Count; i++)
         {
-            var val = LookupVal(valEnv, argNames[i]);
+            var val = LookupNativeArgument(ctx, valEnv, argNames[i]);
             if (val is null) return new EvalError.UnknownName(argNames[i]);
             var num = val.AsNum();
             if (num is null)
@@ -7481,7 +7557,7 @@ public static partial class Evaluator
         if (ValidateHostOperationNativeSignature(hostOperation, argNames) is { } signatureError)
             return signatureError;
 
-        var argumentsR = CollectHostOperationArguments(argNames, valEnv);
+        var argumentsR = CollectHostOperationArguments(argNames, ctx, valEnv);
         if (argumentsR.IsError) return argumentsR.Error;
 
         var value = implementation(argumentsR.Value, ctx.Budget.CancellationToken);
@@ -7530,12 +7606,16 @@ public static partial class Evaluator
 
     /// <summary>
     /// Collects a host operation's evaluated argument values from the wrapper's bound
-    /// parameter environment, in declaration order, as the read-only snapshot handed to
-    /// host code. Unlike Math natives there is no numeric coercion: host operations
-    /// receive the full KatLang values.
+    /// parameter environments, in declaration order, as the read-only snapshot handed
+    /// to host code. Lookup is the shared counted-first native-argument rule
+    /// (<see cref="LookupNativeArgument"/>), so a flat-callback invocation hands the
+    /// host its callback-bound arguments — never a same-named ambient value. Unlike
+    /// Math natives there is no numeric coercion: host operations receive the full
+    /// KatLang values.
     /// </summary>
     private static EvalResult<IReadOnlyList<Result>> CollectHostOperationArguments(
         IReadOnlyList<string> argNames,
+        EvalCtx ctx,
         IReadOnlyList<(string, Result)> valEnv)
     {
         if (argNames.Count == 0)
@@ -7544,7 +7624,7 @@ public static partial class Evaluator
         var arguments = new Result[argNames.Count];
         for (var i = 0; i < argNames.Count; i++)
         {
-            var value = LookupVal(valEnv, argNames[i]);
+            var value = LookupNativeArgument(ctx, valEnv, argNames[i]);
             if (value is null)
                 return new EvalError.UnknownName(argNames[i]);
             arguments[i] = value;

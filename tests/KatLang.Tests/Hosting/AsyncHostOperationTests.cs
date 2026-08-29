@@ -300,31 +300,73 @@ public class AsyncHostOperationTests
     }
 
     [Fact]
-    public async Task DirectFlatCallbackReference_InheritsTheMathMemberLimitation_Identically()
+    public async Task DirectFlatCallbackReference_BindsCallbackArguments_LikeMathMembers()
     {
-        // A host operation referenced DIRECTLY as a flat map callback fails exactly
-        // like an opened Math member does today ("open Math" + map(Abs)): the flat
-        // callback funnel binds parameters into the counted environment, which a
-        // native-call wrapper body does not read. Host operations deliberately
-        // inherit Math-member behavior; wrap the operation in a user property
-        // (Step(x) = Enrich(x)) for callback positions. If this limitation is ever
-        // lifted, it must be lifted for Math members and host operations together.
+        // A host operation referenced DIRECTLY as a flat map callback works
+        // exactly like an opened Math member: native-call wrapper bodies read
+        // their argument names counted-first (the Expr.Param dual-view order),
+        // so the host receives each callback-bound element — never the ambient
+        // `x = 99` that shares the operation's parameter name. The lift covers
+        // Math members and host operations together.
+        var received = new List<Decimal128>();
         var options = new RunOptions
         {
             HostOperations = HostOperations.Create(
                 HostOperation.CreateAsync(
                     "Enrich",
-                    (args, _) => ValueTask.FromResult(Atom(((Result.Atom)args[0]).Value * 10)),
+                    (args, _) =>
+                    {
+                        var value = ((Result.Atom)args[0]).Value;
+                        lock (received) received.Add(value);
+                        return ValueTask.FromResult(Atom(value * 10));
+                    },
                     "x")),
         };
 
-        var hostFailure = Assert.IsType<RunResult.EvalFailure>(
-            await Complete(KatLangEngine.RunAsync("[1, 2, 3].map(Enrich)", options)));
-        var mathFailure = Assert.IsType<RunResult.EvalFailure>(
-            KatLangEngine.Run("open Math\n[1, 2, 3].map(Abs)"));
+        var hostResult = Assert.IsType<RunResult.Success>(
+            await Complete(KatLangEngine.RunAsync("F(x) = [1, 2, 3].map(Enrich)\nF(99)", options)));
+        var mathResult = Assert.IsType<RunResult.Success>(
+            KatLangEngine.Run("open Math\nF(x) = [1, -2].map(Abs)\nF(99)"));
+        var qualifiedMathResult = Assert.IsType<RunResult.Success>(
+            await Complete(KatLangEngine.RunAsync(
+                "F(x) = [1, -2].map(Math.Abs)\nF(99)",
+                options)));
 
-        Assert.Contains("Unknown name: x", hostFailure.Errors[0].Message, StringComparison.Ordinal);
-        Assert.Contains("Unknown name: x", mathFailure.Errors[0].Message, StringComparison.Ordinal);
+        Assert.Equal("[10, 20, 30]", hostResult.ToDisplayString());
+        Assert.Equal(new Decimal128[] { 1m, 2m, 3m }, received);
+        Assert.Equal("[1, 2]", mathResult.ToDisplayString());
+        Assert.Equal(mathResult.ToDisplayString(), qualifiedMathResult.ToDisplayString());
+    }
+
+    [Fact]
+    public async Task TwoParameterFlatCallback_ReceivesBothCallbackBoundArgumentsInOrder()
+    {
+        var received = new List<(Decimal128 Element, Decimal128 Accumulator)>();
+        var options = new RunOptions
+        {
+            HostOperations = HostOperations.Create(
+                HostOperation.CreateAsync(
+                    "AppendDigit",
+                    (args, _) =>
+                    {
+                        var element = ((Result.Atom)args[0]).Value;
+                        var accumulator = ((Result.Atom)args[1]).Value;
+                        lock (received) received.Add((element, accumulator));
+                        return ValueTask.FromResult<Result>(Atom(accumulator * 10 + element));
+                    },
+                    "element",
+                    "accumulator")),
+        };
+
+        var result = Assert.IsType<RunResult.Success>(
+            await Complete(KatLangEngine.RunAsync(
+                "F(element, accumulator) = reduce([2, 3], AppendDigit, 0)\nF(99, 88)",
+                options)));
+
+        Assert.Equal("23", result.ToDisplayString());
+        Assert.Equal(
+            new (Decimal128 Element, Decimal128 Accumulator)[] { (2m, 0m), (3m, 2m) },
+            received);
     }
 
     [Fact]

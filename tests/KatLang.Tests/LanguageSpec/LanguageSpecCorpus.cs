@@ -3142,5 +3142,26 @@ public static class LanguageSpecCorpus
             LeanExclusionReason = "Decimal mean: the C# runtime uses decimal numerics; the Lean Int core truncates (documented model limitation, tutorial 'Average' section).",
             Explanation = "`avg` returns the decimal mean in the runtime; the Lean Int-core model truncates and is documented as a model limitation, not the runtime contract.",
         },
+        new()
+        {
+            Id = "native-flat-callback-binding",
+            Category = "collection-builtins",
+            Source = "F(x) = [1, -2].map(abs)\nF(5)",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "[1, 2]",
+            ExpectedRaw = "L[1, 2]",
+            ExpectedEmittedCount = 1,
+            LeanExclusionReason = "Math natives (Expr.NativeCall) are a documented unmodeled gap in the Lean core; the counted-first native-argument lookup matches the modeled Expr.Param dual-view order.",
+            Probes =
+            [
+                new SpecProbe("[1, -2].map(abs)", "ok raw=L[1, 2] n=1"),
+                new SpecProbe("[1, -2].map(Math.Abs)", "ok raw=L[1, 2] n=1"),
+                new SpecProbe("G(radians) = [0, 1].map(sin)\nG(0.5) == [sin(0), sin(1)]", "ok raw=1 n=1"),
+                new SpecProbe("abs(-2)", "ok raw=2 n=1"),
+                new SpecProbe("F(x, y) = reduce([2, 3], pow, 1)\nF(100, 200)", "ok raw=9 n=1"),
+            ],
+            IncludeInGeneratorPrompt = true,
+            Explanation = "A math function is an ordinary callable, so its lowercase alias, opened canonical name, and qualified `Math.X` spelling work directly as callbacks: the callback binds its own arguments and never captures same-named values from the surrounding algorithm — the ambient `x = 5` does not leak into `abs`. Direct calls such as `abs(-2)` are unchanged.",
+        },
     ];
 }

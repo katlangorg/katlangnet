@@ -2081,6 +2081,16 @@ X.map(Double)*
 Because sequence-value callback items are projected one level, write `Swap(a, b) = (b, a)` when mapping over sequence-value pairs.
 With that rule, `map(((1, 2), (3, 4)), Swap)` calls `Swap` once per pair and produces the exact list value `[(2, 1), (4, 3)]` (append `*` to open the mapped pairs into an item supply). A single sequence-value argument such as `Values = (1, 2)` followed by `map(Values, Swap)` is opened one level into the two atom items `1` and `2`, so the mapper runs once per atom — a two-parameter callback like `Swap` then fails with an arity error. Use a one-parameter callback for atom items, and reserve `Swap(a, b)` for collections whose items are pairs, as in `map(((1, 2), (3, 4)), Swap)`. The one bound collection may be a grouped sequence value or a lone exact list value — both open one level: `map(range(1, 5), Double)` (the range result is a list), `Values = 1, 2, 3` followed by `map(Values, Double)`, and `map((1, range(2, 4)*), Double)` run once per immediate item.
 
+Math functions and their lowercase aliases are ordinary callables, so they work directly as callbacks: `[1, -2].map(abs)` and `[1, -2].map(Math.Abs)` are both `[1, 2]`, and `[0, 1].map(sin)` maps each element through `sin`. The callback always binds its own per-element argument — a same-named value in the surrounding algorithm is never captured:
+
+<!-- spec:native-flat-callback-binding -->
+```
+F(x) = [1, -2].map(abs)
+F(5)
+```
+
+**Result:** `[1, 2]`
+
 Callbacks with a collecting parameter collect exactly like ordinary calls. A callback whose only parameter is a collecting parameter receives each iterated element as ONE collected slot, so `items` is the one-element list `[element]`, whatever the element's kind:
 
 <!-- spec:callback-variadic-collects -->

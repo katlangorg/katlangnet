@@ -1488,7 +1488,7 @@ public static partial class Evaluator
         if (ValidateHostOperationNativeSignature(hostOperation, argNames) is { } signatureError)
             return signatureError;
 
-        var argumentsR = CollectHostOperationArguments(argNames, valEnv);
+        var argumentsR = CollectHostOperationArguments(argNames, ctx, valEnv);
         if (argumentsR.IsError) return argumentsR.Error;
 
         var value = await hostOperation.AsynchronousImplementation!(

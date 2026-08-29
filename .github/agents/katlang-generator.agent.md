@@ -1528,7 +1528,7 @@ Without trailing output, `Order` has no direct result — use `Order.Total(25, 4
 
 === BEGIN GENERATED: katlang-spec-examples (DO NOT EDIT BY HAND) ===
 
-Verified reference examples (54 of the 174-case canonical language specification,
+Verified reference examples (55 of the 175-case canonical language specification,
 tests/KatLang.Tests/LanguageSpec/LanguageSpecCorpus.cs). Every program and expected
 output below is executed against the KatLang engine and (where representable)
 guarded against the Lean model on every build. Treat these as ground truth for the
@@ -2060,5 +2060,13 @@ Regenerate this block from the repo root with:
 
   Displays:
     3
+
+[native-flat-callback-binding] A math function is an ordinary callable, so its lowercase alias, opened canonical name, and qualified `Math.X` spelling work directly as callbacks: the callback binds its own arguments and never captures same-named values from the surrounding algorithm — the ambient `x = 5` does not leak into `abs`. Direct calls such as `abs(-2)` are unchanged.
+
+    F(x) = [1, -2].map(abs)
+    F(5)
+
+  Displays:
+    [1, 2]
 
 === END GENERATED: katlang-spec-examples ===

@@ -14,11 +14,11 @@ This is bounded differential validation over the Lean-guarded partition,
 not a formal verification of the evaluators.
 
 Partition (machine-checked by the `specCaseIds.length` guard below):
-- specification surface cases: 174
+- specification surface cases: 175
 - excluded parse-level cases (Lean has no surface parser): 6
-- excluded C#-only cases (each carries an explicit reason in the corpus): 1
+- excluded C#-only cases (each carries an explicit reason in the corpus): 2
 - Lean-guarded cases: 167
-- probe observations (C#-only by design): 263
+- probe observations (C#-only by design): 268
 - internal-node cases live in the semantic-explorer corpus, not here: see
   lean/SemanticExplorerCases.lean
 

@@ -327,13 +327,17 @@ operations fall back to the generic loop — pinned by test).
 
 ## Known limitations (documented and pinned)
 
-- Like `open Math` + `[1, 2, 3].map(Abs)` today, a native-call wrapper referenced
-  DIRECTLY as a flat higher-order callback fails with `Unknown name: x` (the flat
-  callback funnel binds parameters into the counted environment, which native-call
-  bodies do not read). Wrap the operation in a user property
-  (`Step(x) = Enrich(x)`) for callback positions. Host operations deliberately
-  inherit Math-member behavior here; any future lift must cover both together
-  (pinned by `DirectFlatCallbackReference_InheritsTheMathMemberLimitation_Identically`).
+- ~~Native-call wrappers referenced DIRECTLY as flat callbacks fail with
+  `Unknown name: x`~~ — LIFTED August 2026: native-call wrapper bodies (Math
+  members and host operations together) now read their declared argument names
+  counted-first with value fallback (`LookupNativeArgument`, the `Expr.Param`
+  dual-view order), so `[1, 2, 3].map(abs)`, `open Math` plus
+  `[1, 2, 3].map(Abs)`, the qualified `[1, 2, 3].map(Math.Abs)`, and a host
+  operation referenced directly as a flat callback bind the callback-bound
+  element. The qualified spelling is gated on the resolved member's actual
+  runtime-native wrapper, leaving general dotted algorithm identity unchanged;
+  a same-named ambient value is never forwarded to host code (pinned by
+  `DirectFlatCallbackReference_BindsCallbackArguments_LikeMathMembers`).
 - Editor semantic models (`src/KatLang/Semantics/`) keep their static prelude: hover/
   resolution does not surface host operations yet. Engine and evaluator behavior is
   complete; semantic-model awareness is deferred until an editor host needs it.

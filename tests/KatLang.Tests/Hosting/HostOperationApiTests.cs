@@ -183,6 +183,92 @@ public class HostOperationApiTests
     }
 
     [Fact]
+    public void FlatCallbackReference_HostReceivesCallbackBoundArguments_NotAmbientValue()
+    {
+        // A synchronous host operation referenced DIRECTLY as a flat map
+        // callback: host-operation argument collection uses the counted-first
+        // native-argument lookup, so the host receives each callback-bound
+        // element — never the ambient `x = 99` that shares the operation's
+        // parameter name (valEnv-only lookup forwarded 99 for every element).
+        var received = new List<Decimal128>();
+        var options = new RunOptions
+        {
+            HostOperations = HostOperations.Create(
+                HostOperation.Create(
+                    "Enrich",
+                    (args, _) =>
+                    {
+                        var value = ((Result.Atom)args[0]).Value;
+                        received.Add(value);
+                        return Atom(value * 10);
+                    },
+                    "x")),
+        };
+
+        var result = Assert.IsType<RunResult.Success>(
+            KatLangEngine.Run("F(x) = [1, 2].map(Enrich)\nF(99)", options));
+
+        Assert.Equal("[10, 20]", result.ToDisplayString());
+        Assert.Equal(new Decimal128[] { 1m, 2m }, received);
+    }
+
+    [Fact]
+    public void DirectCallInsideCountedCallback_HostReceivesExplicitArgument()
+    {
+        var received = new List<Decimal128>();
+        var options = new RunOptions
+        {
+            HostOperations = HostOperations.Create(
+                HostOperation.Create(
+                    "Echo",
+                    (args, _) =>
+                    {
+                        var value = ((Result.Atom)args[0]).Value;
+                        received.Add(value);
+                        return Atom(value);
+                    },
+                    "x")),
+        };
+
+        var result = Assert.IsType<RunResult.Success>(
+            KatLangEngine.Run("F(x) = Echo(-2)\n[99].map(F)", options));
+
+        Assert.Equal("[-2]", result.ToDisplayString());
+        Assert.Equal(new Decimal128[] { -2m }, received);
+    }
+
+    [Fact]
+    public void TwoParameterFlatCallback_HostReceivesBothCallbackBoundArgumentsInOrder()
+    {
+        var received = new List<(Decimal128 Element, Decimal128 Accumulator)>();
+        var options = new RunOptions
+        {
+            HostOperations = HostOperations.Create(
+                HostOperation.Create(
+                    "AppendDigit",
+                    (args, _) =>
+                    {
+                        var element = ((Result.Atom)args[0]).Value;
+                        var accumulator = ((Result.Atom)args[1]).Value;
+                        received.Add((element, accumulator));
+                        return Atom(accumulator * 10 + element);
+                    },
+                    "element",
+                    "accumulator")),
+        };
+
+        var result = Assert.IsType<RunResult.Success>(
+            KatLangEngine.Run(
+                "F(element, accumulator) = reduce([2, 3], AppendDigit, 0)\nF(99, 88)",
+                options));
+
+        Assert.Equal("23", result.ToDisplayString());
+        Assert.Equal(
+            new (Decimal128 Element, Decimal128 Accumulator)[] { (2m, 0m), (3m, 2m) },
+            received);
+    }
+
+    [Fact]
     public void SynchronousOperation_ReceivesTheEvaluationToken_ByIdentity()
     {
         using var cts = new CancellationTokenSource();

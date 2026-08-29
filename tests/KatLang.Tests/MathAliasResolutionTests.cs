@@ -335,15 +335,41 @@ public class MathAliasResolutionTests
     [Fact]
     public void FlatCallbackPosition_AliasAgreesWithCanonicalBareReference()
     {
-        // Native-call wrappers are not directly usable as flat callback
-        // references (documented Math behavior); the alias spelling and the
-        // canonical BARE spelling (via `open Math`) fail identically.
-        var aliasError = SourceProvenance.ParseValid("map([1, -2], abs)").ExpectEvaluationError<EvalError.UnknownName>();
-        var canonicalError = SourceProvenance.ParseValid("open Math\nmap([1, -2], Abs)").ExpectEvaluationError<EvalError.UnknownName>();
-        Assert.Equal(canonicalError.Name, aliasError.Name);
+        // Native-call wrapper bodies read their argument names through the
+        // counted-first dual-view lookup (the same order as Expr.Param), so a
+        // Math member works DIRECTLY as a flat callback reference — identically
+        // through the alias spelling and the canonical BARE spelling (via
+        // `open Math`), and identically to the explicit user-property wrapper.
+        AssertAliasAgreesWithCanonical("map([1, -2], abs)", "open Math\nmap([1, -2], Abs)");
+        Assert.Equal(new Decimal128[] { 1m, 2m }, EvalFlat("map([1, -2], abs)").Value);
+        Assert.Equal(EvalFlat("map([1, -2], Wrap)\nWrap(v) = Math.Abs(v)").Value, EvalFlat("map([1, -2], abs)").Value);
+    }
 
-        // The documented workaround works identically through the alias.
-        Assert.Equal(EvalFlat("map([1, -2], Wrap)\nWrap(v) = Math.Abs(v)").Value, EvalFlat("map([1, -2], Wrap)\nWrap(v) = abs(v)").Value);
+    [Fact]
+    public void FlatCallbackPosition_QualifiedCanonicalMemberAgreesWithAlias()
+    {
+        var alias = EvalFlat("map([1, -2], abs)");
+        var qualified = EvalFlat("map([1, -2], Math.Abs)");
+
+        Assert.False(alias.IsError);
+        Assert.False(qualified.IsError);
+        Assert.Equal(alias.Value, qualified.Value);
+    }
+
+    [Fact]
+    public void FlatCallbackPosition_QualifiedNativeGate_DoesNotReinterpretUserDefinedMath()
+    {
+        // The qualified native exception requires an actual runtime NativeCall
+        // wrapper. A source-defined Math property keeps the same general dotted
+        // zero-parameter algorithm identity as any other user module.
+        var result = EvalFlat("Math = { public Abs(x) = x * 10 }\nmap([1, -2], Math.Abs)");
+
+        var error = result.Error;
+        while (error is EvalError.WithContext(_, var inner))
+            error = inner;
+        var arity = Assert.IsType<EvalError.ArityMismatch>(error);
+        Assert.Equal(0, arity.Expected);
+        Assert.Equal(1, arity.Actual);
     }
 
     [Fact]
