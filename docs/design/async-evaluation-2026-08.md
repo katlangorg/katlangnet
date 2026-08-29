@@ -74,9 +74,21 @@ One decision per run, at the async entry point:
 ### Twin discipline (normative)
 
 - A twin may call: other `*Async` twins; shared helpers verified not to evaluate
-  expressions; and the plain synchronous `Eval` only for proven-leaf dispatch kinds
-  (the `EvalCountedAsync` default case: Num/StringLiteral/NativeCall/illegal — no child
-  evaluation).
+  expressions; and the plain synchronous `Eval` only for proven-leaf dispatch kinds.
+  The sync-delegable leaves are ENUMERATED EXPLICITLY in `EvalCountedAsync` — `Num`,
+  `StringLiteral`, synchronous `NativeCall` (an async host operation is intercepted by
+  the guarded case above the group), and `Grace` (the illegal-in-eval catch-all: a
+  structured error, no child evaluation) — and the dispatch default is a FAIL-LOUD
+  exhaustiveness guard, mirrored in the synchronous `EvalCounted`, so a newly added
+  recursive `Expr` variant can never silently fall through to synchronous child
+  evaluation (it would have passed outcome differentials while bypassing the twin
+  family). `AsyncDispatchExhaustivenessTests` pins the classification by reflection
+  over every concrete `Expr` variant, pins that the declared leaves delegate exactly
+  and touch neither cache seam, and proves per recursive variant (every meaningful
+  child position, `SequenceConstruct` from a host-built tree) that an async-sensitive
+  property access in a child routes through the ASYNC seam with genuine suspension and
+  zero synchronous-seam accesses. Adding an `Expr` variant therefore requires updating
+  BOTH counted dispatches and that suite's declared-policy table.
 - The twins are COUNTED-family mirrors. Where the synchronous family used a
   plain-evaluation wrapper, the twin awaits the counted core and projects its value —
   every such synchronous wrapper is exactly that projection, and the plain/counted

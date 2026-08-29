@@ -433,8 +433,23 @@ internal static class PropertyExposureResolver
                 };
             }
 
-            default:
+            // Intentional leaves: no nested algorithm to reach, so the
+            // expression keeps its exact shape and metadata.
+            case Expr.Resolve:
+            case Expr.Param:
+            case Expr.Num:
+            case Expr.StringLiteral:
+            case Expr.EmptySequence:
+            case Expr.NativeCall:
                 return expr;
+
+            // Exhaustiveness guard, matching AstWalker.VisitExpr: a new Expr
+            // variant must be classified above rather than silently skipping
+            // exposure classification for algorithms nested inside it.
+            default:
+                throw new InvalidOperationException(
+                    $"Unhandled Expr variant in {nameof(PropertyExposureResolver)}.{nameof(RewriteExpr)}: {expr.GetType().Name}. " +
+                    "Classify the new variant explicitly as a recursive rewrite case or an intentional leaf.");
         }
     }
 

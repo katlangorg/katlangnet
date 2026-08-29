@@ -94,6 +94,8 @@ internal sealed class SuspendingAsyncZeroArgPropertyResultCache : IAsyncZeroArgP
     private readonly RunScopedAsyncZeroArgPropertyResultCache _inner = new();
     private readonly List<(int Before, int After)> _threadHops = [];
 
+    public int SyncAccesses { get; private set; }
+
     public int AsyncAccesses { get; private set; }
 
     public IReadOnlyList<(int Before, int After)> ThreadHops => _threadHops;
@@ -103,7 +105,13 @@ internal sealed class SuspendingAsyncZeroArgPropertyResultCache : IAsyncZeroArgP
     public EvalResult<ZeroArgPropertyResult> GetOrEvaluate(
         ZeroArgPropertyExecution execution,
         Func<EvalResult<ZeroArgPropertyResult>> evaluate)
-        => _inner.GetOrEvaluate(execution, evaluate);
+    {
+        // Counted so exhaustiveness suites can assert the twin path never
+        // consults the SYNCHRONOUS seam member (a recursive variant silently
+        // delegated to sync evaluation would reach it through its children).
+        SyncAccesses++;
+        return _inner.GetOrEvaluate(execution, evaluate);
+    }
 
     public async ValueTask<EvalResult<ZeroArgPropertyResult>> GetOrEvaluateAsync(
         ZeroArgPropertyExecution execution,

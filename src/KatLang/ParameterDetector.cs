@@ -373,8 +373,29 @@ public static class ParameterDetector
                     ProcessOpenExpr(function, openParentScope, diagnostics),
                     new OutputBundle(args.Select(argExpr => ProcessExpr(argExpr, openParentScope, [])).ToList())) { Span = expr.Span };
 
-            default:
+            // Intentional leaves: name/literal leaves carry no nested algorithm
+            // to process (a bare Resolve IS the ordinary open-target form), and
+            // operator forms are never valid open targets — the evaluator's
+            // open-form validation rejects them (BadOpenForm) — so a host-built
+            // one passes through unprocessed like a leaf.
+            case Expr.Resolve:
+            case Expr.Param:
+            case Expr.Num:
+            case Expr.StringLiteral:
+            case Expr.EmptySequence:
+            case Expr.NativeCall:
+            case Expr.Unary:
+            case Expr.Binary:
+            case Expr.Index:
                 return expr;
+
+            // Exhaustiveness guard, matching AstWalker.VisitExpr: a new Expr
+            // variant must be classified above (recursive rewrite or
+            // intentional leaf) rather than silently passing through.
+            default:
+                throw new InvalidOperationException(
+                    $"Unhandled Expr variant in {nameof(ParameterDetector)}.{nameof(ProcessOpenExpr)}: {expr.GetType().Name}. " +
+                    "Classify the new variant explicitly as a recursive rewrite case or an intentional leaf.");
         }
     }
 
@@ -595,8 +616,24 @@ public static class ParameterDetector
                     new OutputBundle(rewrittenArgs)) { Span = expr.Span };
             }
 
-            default:
+            // Intentional leaves: a Resolve that failed the guarded binder test
+            // above stays an ordinary lexical reference, and the remaining
+            // leaves contain no binder references to rewrite.
+            case Expr.Resolve:
+            case Expr.Param:
+            case Expr.Num:
+            case Expr.StringLiteral:
+            case Expr.EmptySequence:
+            case Expr.NativeCall:
                 return expr;
+
+            // Exhaustiveness guard, matching AstWalker.VisitExpr: a new Expr
+            // variant must be classified above rather than silently keeping
+            // binder references inside it unrewritten.
+            default:
+                throw new InvalidOperationException(
+                    $"Unhandled Expr variant in {nameof(ParameterDetector)}.{nameof(RewriteBinderRefs)}: {expr.GetType().Name}. " +
+                    "Classify the new variant explicitly as a recursive rewrite case or an intentional leaf.");
         }
     }
 
@@ -799,9 +836,25 @@ public static class ParameterDetector
                 CollectFreeParams(args, scope, extraBoundNames, paramNames, paramOrder, graceWeights, mode, recorder);
                 break;
 
-            // Num, Param — no free names
-            default:
+            // Intentional leaves with no free-name occurrences: literals, the
+            // empty sequence, already-elaborated parameter references, and
+            // native-call bodies (whose argument names are parameter
+            // references by construction).
+            case Expr.Num:
+            case Expr.Param:
+            case Expr.StringLiteral:
+            case Expr.EmptySequence:
+            case Expr.NativeCall:
                 break;
+
+            // Exhaustiveness guard, matching AstWalker.VisitExpr: a new Expr
+            // variant must be classified above rather than silently
+            // contributing no free names (which would silently change the
+            // inferred implicit-parameter signature).
+            default:
+                throw new InvalidOperationException(
+                    $"Unhandled Expr variant in {nameof(ParameterDetector)}.{nameof(CollectFreeParams)}: {expr.GetType().Name}. " +
+                    "Classify the new variant explicitly as a collected case or an intentional leaf.");
         }
     }
 
@@ -1020,8 +1073,24 @@ public static class ParameterDetector
                     new OutputBundle(rewrittenArgs)) { Span = expr.Span };
             }
 
-            default:
+            // Intentional leaves: a Resolve that failed the guarded parameter
+            // test above stays an ordinary lexical reference, and the
+            // remaining leaves contain no parameter references to rewrite.
+            case Expr.Resolve:
+            case Expr.Param:
+            case Expr.Num:
+            case Expr.StringLiteral:
+            case Expr.EmptySequence:
+            case Expr.NativeCall:
                 return expr;
+
+            // Exhaustiveness guard, matching AstWalker.VisitExpr: a new Expr
+            // variant must be classified above rather than silently keeping
+            // detected parameter references inside it unrewritten.
+            default:
+                throw new InvalidOperationException(
+                    $"Unhandled Expr variant in {nameof(ParameterDetector)}.{nameof(RewriteParams)}: {expr.GetType().Name}. " +
+                    "Classify the new variant explicitly as a recursive rewrite case or an intentional leaf.");
         }
     }
 
@@ -1077,7 +1146,17 @@ public static class ParameterDetector
                 LexicalFallback = ProcessExpr(
                     dotCall.EffectiveLexicalFallback, scope, capturedParamNames),
             },
-            _ => expr,
+            // Intentional leaves: bare references and literals rewrite nothing
+            // in a transparent context (parameter classification happened in
+            // the owning algorithm's collection walk).
+            Expr.Resolve or Expr.Param or Expr.Num or Expr.StringLiteral
+                or Expr.EmptySequence or Expr.NativeCall => expr,
+            // Exhaustiveness guard, matching AstWalker.VisitExpr: a new Expr
+            // variant must be classified above rather than silently skipping
+            // nested-algorithm processing.
+            _ => throw new InvalidOperationException(
+                $"Unhandled Expr variant in {nameof(ParameterDetector)}.{nameof(ProcessExpr)}: {expr.GetType().Name}. " +
+                "Classify the new variant explicitly as a recursive rewrite case or an intentional leaf."),
         };
     }
 
@@ -1148,7 +1227,17 @@ public static class ParameterDetector
             Expr.AlgorithmExpr(var alg) => FindResolveSpan(alg.Output, name),
             Expr.Capture(var captureBody) => FindResolveSpan(captureBody, name),
             Expr.Call(var f, var args) => FindResolveSpan(f, name) ?? FindResolveSpan(args, name),
-            _ => null,
+            // Intentional misses: a Resolve spelling a different name (the
+            // guarded arm above is the hit case) and leaves that contain no
+            // written Resolve occurrence.
+            Expr.Resolve or Expr.Param or Expr.Num or Expr.StringLiteral
+                or Expr.EmptySequence or Expr.NativeCall => null,
+            // Exhaustiveness guard, matching AstWalker.VisitExpr: a new Expr
+            // variant must be classified above rather than silently reporting
+            // "no occurrence" for identifiers written inside it.
+            _ => throw new InvalidOperationException(
+                $"Unhandled Expr variant in {nameof(ParameterDetector)}.{nameof(FindResolveSpan)}: {expr.GetType().Name}. " +
+                "Classify the new variant explicitly as a searched case or an intentional miss."),
         };
     }
 }

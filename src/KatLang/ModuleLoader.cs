@@ -621,11 +621,19 @@ public sealed class ModuleLoader
             case Expr.Param:
             case Expr.Num:
             case Expr.StringLiteral:
+            case Expr.EmptySequence:
             case Expr.NativeCall:
                 return expr;
 
+            // Exhaustiveness guard, matching AstWalker.VisitExpr: a new Expr
+            // variant must be classified above (recursive rewrite or leaf)
+            // rather than silently passing through with unelaborated loads
+            // inside it. Keep this switch and the async twin below in
+            // lock-step.
             default:
-                return expr;
+                throw new InvalidOperationException(
+                    $"Unhandled Expr variant in {nameof(ModuleLoader)}.{nameof(ProcessExpr)}: {expr.GetType().Name}. " +
+                    "Classify the new variant explicitly as a recursive rewrite case or an intentional leaf, in both walk twins.");
         }
     }
 
@@ -735,11 +743,18 @@ public sealed class ModuleLoader
             case Expr.Param:
             case Expr.Num:
             case Expr.StringLiteral:
+            case Expr.EmptySequence:
             case Expr.NativeCall:
                 return expr;
 
+            // Exhaustiveness guard — MIRROR OF the synchronous walk's guard,
+            // keep in lock-step: a new Expr variant must be classified above
+            // rather than silently passing through with unelaborated loads
+            // inside it.
             default:
-                return expr;
+                throw new InvalidOperationException(
+                    $"Unhandled Expr variant in {nameof(ModuleLoader)}.{nameof(ProcessExprAsync)}: {expr.GetType().Name}. " +
+                    "Classify the new variant explicitly as a recursive rewrite case or an intentional leaf, in both walk twins.");
         }
     }
 

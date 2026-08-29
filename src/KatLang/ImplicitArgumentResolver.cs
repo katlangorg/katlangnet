@@ -308,8 +308,32 @@ public static class ImplicitArgumentResolver
                     ProcessOpenExpr(function),
                     ProcessArgumentBundle(args, new Dictionary<string, CallableSignature>())) { Span = expr.Span };
 
-            default:
+            // Intentional leaves: name/literal leaves carry no nested algorithm
+            // to process (a bare Resolve IS the ordinary open-target form);
+            // Grace cannot survive parameter detection, which runs first, so a
+            // host-supplied wrapper passes through untouched; and operator
+            // forms are never valid open targets — the evaluator's open-form
+            // validation rejects them (BadOpenForm) — so a host-built one
+            // passes through unprocessed like a leaf.
+            case Expr.Resolve:
+            case Expr.Param:
+            case Expr.Num:
+            case Expr.StringLiteral:
+            case Expr.EmptySequence:
+            case Expr.NativeCall:
+            case Expr.Grace:
+            case Expr.Unary:
+            case Expr.Binary:
+            case Expr.Index:
                 return expr;
+
+            // Exhaustiveness guard, matching AstWalker.VisitExpr: a new Expr
+            // variant must be classified above rather than silently passing
+            // through.
+            default:
+                throw new InvalidOperationException(
+                    $"Unhandled Expr variant in {nameof(ImplicitArgumentResolver)}.{nameof(ProcessOpenExpr)}: {expr.GetType().Name}. " +
+                    "Classify the new variant explicitly as a recursive rewrite case or an intentional leaf.");
         }
     }
 
@@ -623,8 +647,21 @@ public static class ImplicitArgumentResolver
                 // grouped expressions). Neither contributes deps here.
                 break;
 
-            default:
+            // Intentional leaves: no bare callable references to lift.
+            case Expr.Num:
+            case Expr.Param:
+            case Expr.StringLiteral:
+            case Expr.EmptySequence:
+            case Expr.NativeCall:
                 break;
+
+            // Exhaustiveness guard, matching AstWalker.VisitExpr: a new Expr
+            // variant must be classified above rather than silently
+            // contributing no implicit dependencies.
+            default:
+                throw new InvalidOperationException(
+                    $"Unhandled Expr variant in {nameof(ImplicitArgumentResolver)}.{nameof(CollectImplicitDeps)}: {expr.GetType().Name}. " +
+                    "Classify the new variant explicitly as a collected case or an intentional leaf.");
         }
     }
 
@@ -825,8 +862,23 @@ public static class ImplicitArgumentResolver
                     captureBody.Select(row => ProcessExprNested(row, paramMap)).ToList()))
                 { Span = expr.Span };
 
-            default:
+            // Intentional leaves: nothing to lift or rewrite. (A Param is an
+            // already-elaborated parameter reference; the guarded Resolve arms
+            // above handled every liftable name shape.)
+            case Expr.Num:
+            case Expr.Param:
+            case Expr.StringLiteral:
+            case Expr.EmptySequence:
+            case Expr.NativeCall:
                 return expr;
+
+            // Exhaustiveness guard, matching AstWalker.VisitExpr: a new Expr
+            // variant must be classified above rather than silently keeping
+            // bare param-bearing references inside it unlifted.
+            default:
+                throw new InvalidOperationException(
+                    $"Unhandled Expr variant in {nameof(ImplicitArgumentResolver)}.{nameof(RewriteImplicitCalls)}: {expr.GetType().Name}. " +
+                    "Classify the new variant explicitly as a recursive rewrite case or an intentional leaf.");
         }
     }
 
@@ -960,7 +1012,18 @@ public static class ImplicitArgumentResolver
                 Args = dotCall.Args is { } da ? ProcessArgumentBundle(da, paramMap) : null,
             },
             Expr.Grace(var inner, _) => ProcessExprNested(inner, paramMap),
-            _ => expr,
+            // Intentional leaves: bare references stay bare in transparent
+            // contexts (no lifting at this level, so higher-order references
+            // such as Apply(Increment) survive), and literals carry nothing to
+            // process.
+            Expr.Resolve or Expr.Param or Expr.Num or Expr.StringLiteral
+                or Expr.EmptySequence or Expr.NativeCall => expr,
+            // Exhaustiveness guard, matching AstWalker.VisitExpr: a new Expr
+            // variant must be classified above rather than silently skipping
+            // nested-algorithm processing.
+            _ => throw new InvalidOperationException(
+                $"Unhandled Expr variant in {nameof(ImplicitArgumentResolver)}.{nameof(ProcessExprNested)}: {expr.GetType().Name}. " +
+                "Classify the new variant explicitly as a recursive rewrite case or an intentional leaf."),
         };
     }
 }

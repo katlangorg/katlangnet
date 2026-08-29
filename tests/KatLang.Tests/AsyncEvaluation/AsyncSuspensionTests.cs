@@ -65,6 +65,7 @@ public class AsyncSuspensionTests
         // Every construct program touches at least one property, so the async seam was
         // genuinely exercised (each access suspended through the host-side yield).
         Assert.True(cache.AsyncAccesses > 0);
+        Assert.Equal(0, cache.SyncAccesses);
         Assert.Equal(cache.AsyncAccesses, cache.ThreadHops.Count);
     }
 

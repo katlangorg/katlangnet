@@ -37,7 +37,10 @@ namespace KatLang;
 /// <para><b>Twin discipline.</b> A twin may call: other <c>*Async</c> twins; shared
 /// helpers verified not to evaluate expressions; and the plain synchronous
 /// <see cref="Eval"/> only where the dispatched kind is a proven leaf (see
-/// <see cref="EvalCountedAsync"/>'s default case). Twins are COUNTED-family mirrors;
+/// <see cref="EvalCountedAsync"/>'s explicitly enumerated sync-delegable leaf
+/// group; the dispatch default is a fail-loud exhaustiveness guard, so a new
+/// recursive <see cref="Expr"/> variant can never silently fall through to
+/// synchronous child evaluation). Twins are COUNTED-family mirrors;
 /// where the synchronous code used a plain-evaluation wrapper, the twin awaits the
 /// counted core and projects its value — every such wrapper in the synchronous family is
 /// itself exactly that projection (for example <c>EvalAlgOutput</c> →
@@ -792,20 +795,35 @@ public static partial class Evaluator
                 return await EvalAsynchronousHostOperationCountedAsync(
                     hostOperation, nativeArgNames, ctx, valEnv).ConfigureAwait(false);
 
-            default:
+            // SYNC-DELEGABLE LEAVES — the only kinds allowed to run through
+            // the synchronous evaluator on the twin path: none evaluates a
+            // child expression, so delegating to the synchronous Eval here is
+            // exact — the same leaf code the synchronous counted dispatch
+            // runs. Grace is the illegal-in-eval catch-all (a structured
+            // error, no child evaluation). A NativeCall naming an
+            // ASYNCHRONOUS host operation is the one NativeCall that is not a
+            // synchronous leaf; it is intercepted by the guarded case above
+            // and never reaches this delegation. Keep this classification in
+            // lock-step with EvalCounted.
+            case Expr.Num:
+            case Expr.StringLiteral:
+            case Expr.NativeCall:
+            case Expr.Grace:
                 {
-                    // The remaining kinds are LEAVES of the synchronous plain dispatch
-                    // (Num, StringLiteral, NativeCall, and the illegal-in-eval catch-all):
-                    // none evaluates a child expression, so delegating to the synchronous
-                    // Eval here is exact — the same leaf code the synchronous counted
-                    // dispatch runs. (A NativeCall naming an ASYNCHRONOUS host operation
-                    // is the one NativeCall that is not a synchronous leaf; it is
-                    // intercepted by the guarded case above and never reaches this
-                    // delegation.) Every recursive kind is matched by a case above.
                     var resultR = Eval(expr, ctx, valEnv);
                     if (resultR.IsError) return resultR.Error;
                     return EvalResult<CountedResult>.Ok(new CountedResult(resultR.Value, resultR.Value.ValueCount()));
                 }
+
+            // Exhaustiveness guard, matching AstWalker.VisitExpr: a new Expr
+            // variant must be classified above — an explicit twin case, or a
+            // proven non-recursive leaf added to the delegation group — so a
+            // recursive variant can never silently bypass the async twin
+            // family by evaluating its children synchronously.
+            default:
+                throw new InvalidOperationException(
+                    $"Unhandled Expr variant in {nameof(Evaluator)}.{nameof(EvalCountedAsync)}: {expr.GetType().Name}. " +
+                    "Add an explicit async twin case (or classify it as a proven leaf) here and in EvalCounted.");
         }
     }
 

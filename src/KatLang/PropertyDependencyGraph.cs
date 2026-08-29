@@ -478,8 +478,23 @@ internal static class PropertyDependencyGraphBuilder
                 return seed;
             }
 
-            default:
+            // Intentional leaves with no name occurrences: literals, the empty
+            // sequence, and native-call bodies (whose argument names are
+            // parameter references by construction).
+            case Expr.Num:
+            case Expr.StringLiteral:
+            case Expr.EmptySequence:
+            case Expr.NativeCall:
                 return new SummarySeed();
+
+            // Exhaustiveness guard, matching AstWalker.VisitExpr: a new Expr
+            // variant must be classified above rather than silently seeding no
+            // dependencies (which would silently change exposure
+            // classification for properties referencing it).
+            default:
+                throw new InvalidOperationException(
+                    $"Unhandled Expr variant in {nameof(PropertyDependencyGraphBuilder)}.{nameof(CollectSummarySeed)}: {expr.GetType().Name}. " +
+                    "Classify the new variant explicitly as a collected case or an intentional leaf.");
         }
     }
 
@@ -600,8 +615,21 @@ internal static class PropertyDependencyGraphBuilder
             case Expr.AlgorithmExpr or Expr.Capture:
                 break;
 
-            default:
+            // Intentional leaves: no sibling references.
+            case Expr.Num:
+            case Expr.Param:
+            case Expr.StringLiteral:
+            case Expr.EmptySequence:
+            case Expr.NativeCall:
                 break;
+
+            // Exhaustiveness guard, matching AstWalker.VisitExpr: a new Expr
+            // variant must be classified above rather than silently
+            // contributing no processing-order dependencies.
+            default:
+                throw new InvalidOperationException(
+                    $"Unhandled Expr variant in {nameof(PropertyDependencyGraphBuilder)}.{nameof(CollectSiblingDependencyIndices)}: {expr.GetType().Name}. " +
+                    "Classify the new variant explicitly as a collected case or an intentional leaf.");
         }
     }
 

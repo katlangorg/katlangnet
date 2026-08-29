@@ -7409,12 +7409,32 @@ public static partial class Evaluator
                 // The spine machine owns the index-expression span.
                 return EvalExpressionSpineCounted(expr, ctx, valEnv);
 
-            default:
+            // LEAVES of the counted dispatch: none evaluates a child
+            // expression, so delegating to the plain evaluator is exact and
+            // the single-value count projection is total. Grace is the
+            // deliberate illegal-in-eval catch-all (elaboration strips every
+            // written one; a host-built survivor reports
+            // EvalError.IllegalInEval through the plain dispatch). Keep this
+            // classification in lock-step with EvalCountedAsync.
+            case Expr.Num:
+            case Expr.StringLiteral:
+            case Expr.NativeCall:
+            case Expr.Grace:
                 {
                     var resultR = Eval(expr, ctx, valEnv);
                     if (resultR.IsError) return resultR.Error;
                     return EvalResult<CountedResult>.Ok(new CountedResult(resultR.Value, resultR.Value.ValueCount()));
                 }
+
+            // Exhaustiveness guard, matching AstWalker.VisitExpr: a new Expr
+            // variant must be classified above — an explicit counted case, or
+            // a proven leaf added to the delegation group — rather than
+            // silently taking the plain evaluator's value with a single-value
+            // count (which would silently erase multi-item emission).
+            default:
+                throw new InvalidOperationException(
+                    $"Unhandled Expr variant in {nameof(Evaluator)}.{nameof(EvalCounted)}: {expr.GetType().Name}. " +
+                    "Add an explicit counted case (or classify it as a proven leaf) here and in EvalCountedAsync.");
         }
     }
 
