@@ -27,19 +27,24 @@ namespace KatLang;
 /// <para>A value is also a DAG, not a tree: an immutable child may be shared by
 /// many parents (<c>W = [x, x]</c> applied n times reaches n+1 distinct nodes
 /// through 2^n root-to-leaf paths), so a walk whose work is proportional to
-/// PATHS is exponential on legally built values. The three walks a shared node
-/// can blow up — structural equality and structural hashing in
-/// <see cref="ValueComparer"/>, and the <see cref="Normalize"/> rebuild —
-/// therefore memoize by REFERENCE IDENTITY for the duration of ONE top-level
-/// operation: equality expands each ordered <c>(left, right)</c> reference pair
-/// at most once, hashing computes each node's hash at most once, and
-/// normalization computes each node's normal form at most once. That memo is
-/// the one deliberate exception to the O(nesting depth) rule above: it is
-/// O(distinct nodes or pairs actually reached), never O(paths), and it is
-/// allocated lazily on the first nested descent so flat values still allocate
-/// none. Memo state belongs to one call and is discarded with it; no hash,
-/// comparison result, or normal form is ever cached on a
-/// <see cref="Result"/>.</para>
+/// PATHS is exponential on legally built values. Every walk a shared node can
+/// blow up therefore memoizes by REFERENCE IDENTITY for the duration of ONE
+/// top-level operation: structural equality in <see cref="ValueComparer"/>
+/// expands each ordered <c>(left, right)</c> reference pair at most once,
+/// structural hashing computes each node's hash at most once, the
+/// <see cref="Normalize"/> rebuild computes each node's normal form at most
+/// once, the <see cref="TruthValue"/> first-atom search descends each sequence
+/// node at most once, and the bounded atom collectors
+/// (<see cref="TryLanguageAtoms"/>, <see cref="TryToHostAtoms"/>) skip every
+/// structure node a completed descent has proven to contribute no atoms. The
+/// collectors' atom OUTPUT stays per-path by contract, bounded by their
+/// <c>maxItems</c> parameter; the memo is what keeps atomLESS shared subgraphs
+/// — which that bound can never stop — from being re-walked exponentially.
+/// Each memo is the one deliberate exception to the O(nesting depth) rule
+/// above: it is O(distinct nodes or pairs actually reached), never O(paths),
+/// and it is allocated lazily so flat values still allocate none. Memo state
+/// belongs to one call and is discarded with it; no hash, comparison result,
+/// normal form, or atom fact is ever cached on a <see cref="Result"/>.</para>
 ///
 /// <para>A value-PRODUCING walk must also preserve sharing, or it converts a
 /// compact DAG into the exponentially larger tree its paths spell out and hands
@@ -347,9 +352,13 @@ public abstract record Result
     /// Truth-testing numeric flattening: the list of numeric atoms reachable
     /// through SEQUENCE boundaries only. Strings are silently omitted, and
     /// list values are opaque (omitted like strings), so lists never gain a
-    /// truth value. This view backs <see cref="TruthValue"/> and is NOT the
-    /// <c>atoms</c> builtin's collector — that is <see cref="LanguageAtoms"/>,
-    /// which also opens list boundaries.
+    /// truth value. <see cref="TruthValue"/> follows this view but reads only
+    /// its FIRST atom through the memoized <see cref="FirstFlattenedAtom"/>
+    /// search instead of materializing this collection, whose size is one atom
+    /// per PATH and therefore exponential on shared sequence DAGs. This
+    /// materializing whole-collection form is NOT the <c>atoms</c> builtin's
+    /// collector — that is <see cref="LanguageAtoms"/>, which also opens list
+    /// boundaries.
     /// Lean: Result.atoms.
     /// </summary>
     public IReadOnlyList<Decimal128> ToAtoms()
@@ -427,13 +436,27 @@ public abstract record Result
     /// than its input — nesting a value inside itself repeatedly (<c>[A, A]</c>) doubles the
     /// atom count per level while adding only two item slots — so its result cannot be
     /// bounded by counting the input. Stopping the traversal early keeps the intermediate
-    /// list bounded too, which a count-first prepass would not.</para>
+    /// list bounded too, which a count-first prepass would not. The atom bound alone cannot
+    /// bound VISITS, because a shared subgraph that contributes no atoms never advances the
+    /// count; those subgraphs are skipped through the atomless-node memo (see the DAG note
+    /// on the class), so graph visits stay bounded independently of the paths.</para>
     /// </summary>
     internal bool TryLanguageAtoms(long maxItems, out IReadOnlyList<Decimal128> atoms)
+        => TryLanguageAtomsCore(maxItems, observations: null, out atoms);
+
+    /// <summary>
+    /// <see cref="TryLanguageAtoms"/> with a passive observer recording the structural work
+    /// the collection walk performs. The observer changes neither the collected atoms, the
+    /// verdict, the memoization, nor the traversal order, and belongs to one measured
+    /// operation. Used only by the shared-value-graph complexity regressions.
+    /// </summary>
+    internal bool TryLanguageAtomsObserved(
+        long maxItems, ValueTraversalObservations observations, out IReadOnlyList<Decimal128> atoms)
+        => TryLanguageAtomsCore(maxItems, observations, out atoms);
+
+    private bool TryLanguageAtomsCore(
+        long maxItems, ValueTraversalObservations? observations, out IReadOnlyList<Decimal128> atoms)
     {
-        // Indexed continuation frames (see the depth note on the class): the
-        // collected list is the required output; traversal storage is one
-        // suspended frame per open structure level.
         var collected = new List<Decimal128>();
         atoms = collected;
 
@@ -454,15 +477,37 @@ public abstract record Result
                 return true; // strings and any other non-numeric leaves contribute no atoms
         }
 
-        var suspended = new Stack<(IReadOnlyList<Result> Items, int Next)>();
+        observations?.RecordLanguageAtomsStructureExpansion();
+
+        // Indexed continuation frames (see the depth note on the class): the collected list
+        // is the required output, and every open structure keeps its OWN frame — carrying
+        // the node and the collected count at its entry — so a completed structure that
+        // contributed no atoms is recognized and memoized (see the DAG note). Atoms are
+        // deliberately collected per PATH — that is this collector's contract, bounded by
+        // maxItems — so only zero-atom nodes are safe to skip at a later shared occurrence:
+        // skipping them changes no output, and they are exactly the nodes whose revisits the
+        // atom bound can never stop.
+        var suspended = new Stack<(Result Node, IReadOnlyList<Result> Items, int Next, int CollectedAtEntry)>();
+        HashSet<Result>? atomless = null;
+        Result node = this;
         var next = 0;
+        var collectedAtEntry = 0;
 
         while (true)
         {
             if (next >= items.Count)
             {
                 if (suspended.Count == 0) return true;
-                (items, next) = suspended.Pop();
+
+                // The structure completed without contributing an atom, so no later
+                // occurrence can contribute one either: record it and skip it from now on.
+                if (collected.Count == collectedAtEntry)
+                {
+                    atomless ??= new HashSet<Result>(ReferenceEqualityComparer.Instance);
+                    atomless.Add(node);
+                }
+
+                (node, items, next, collectedAtEntry) = suspended.Pop();
                 continue;
             }
 
@@ -476,24 +521,20 @@ public abstract record Result
                     collected.Add(n);
                     break;
                 case SequenceValue(var childItems):
-                    if (childItems.Count > 0)
+                    if (childItems.Count > 0 && (atomless is null || !atomless.Contains(child)))
                     {
-                        // Tail descent: a parent with no children left to
-                        // visit has no continuation worth suspending.
-                        if (next < items.Count)
-                            suspended.Push((items, next));
-                        (items, next) = (childItems, 0);
+                        observations?.RecordLanguageAtomsStructureExpansion();
+                        suspended.Push((node, items, next, collectedAtEntry));
+                        (node, items, next, collectedAtEntry) = (child, childItems, 0, collected.Count);
                     }
 
                     break;
                 case ListValue(var childItems):
-                    if (childItems.Count > 0)
+                    if (childItems.Count > 0 && (atomless is null || !atomless.Contains(child)))
                     {
-                        // Tail descent: a parent with no children left to
-                        // visit has no continuation worth suspending.
-                        if (next < items.Count)
-                            suspended.Push((items, next));
-                        (items, next) = (childItems, 0);
+                        observations?.RecordLanguageAtomsStructureExpansion();
+                        suspended.Push((node, items, next, collectedAtEntry));
+                        (node, items, next, collectedAtEntry) = (child, childItems, 0, collected.Count);
                     }
 
                     break;
@@ -527,14 +568,27 @@ public abstract record Result
     ///
     /// <para>The host projection opens BOTH sequence and list boundaries recursively, so
     /// like <see cref="TryLanguageAtoms"/> it can produce far more atoms than the value has
-    /// item slots. It is a separate traversal from the language-level collector on purpose:
-    /// the two are distinct contracts and must not drift through shared code.</para>
+    /// item slots, and like it the atom bound alone cannot bound VISITS: shared subgraphs
+    /// that contribute no atoms are skipped through the atomless-node memo (see the DAG note
+    /// on the class). It is a separate traversal from the language-level collector on
+    /// purpose: the two are distinct contracts and must not drift through shared code.</para>
     /// </summary>
     internal bool TryToHostAtoms(long maxItems, out IReadOnlyList<Decimal128> atoms)
+        => TryToHostAtomsCore(maxItems, observations: null, out atoms);
+
+    /// <summary>
+    /// <see cref="TryToHostAtoms"/> with a passive observer recording the structural work
+    /// the projection walk performs. The observer changes neither the produced atoms, the
+    /// verdict, the memoization, nor the traversal order, and belongs to one measured
+    /// operation. Used only by the shared-value-graph complexity regressions.
+    /// </summary>
+    internal bool TryToHostAtomsObserved(
+        long maxItems, ValueTraversalObservations observations, out IReadOnlyList<Decimal128> atoms)
+        => TryToHostAtomsCore(maxItems, observations, out atoms);
+
+    private bool TryToHostAtomsCore(
+        long maxItems, ValueTraversalObservations? observations, out IReadOnlyList<Decimal128> atoms)
     {
-        // Indexed continuation frames (see the depth note on the class): the
-        // collected list is the required output; traversal storage is one
-        // suspended frame per open structure level.
         var collected = new List<Decimal128>();
         atoms = collected;
 
@@ -557,15 +611,37 @@ public abstract record Result
                 return true;
         }
 
-        var suspended = new Stack<(IReadOnlyList<Result> Items, int Next)>();
+        observations?.RecordHostAtomsStructureExpansion();
+
+        // Indexed continuation frames (see the depth note on the class): the collected list
+        // is the required output, and every open structure keeps its OWN frame — carrying
+        // the node and the collected count at its entry — so a completed structure that
+        // contributed no atoms is recognized and memoized (see the DAG note). Atoms are
+        // deliberately collected per PATH — that is this projection's contract, bounded by
+        // maxItems — so only zero-atom nodes are safe to skip at a later shared occurrence:
+        // skipping them changes no output, and they are exactly the nodes whose revisits the
+        // atom bound can never stop.
+        var suspended = new Stack<(Result Node, IReadOnlyList<Result> Items, int Next, int CollectedAtEntry)>();
+        HashSet<Result>? atomless = null;
+        Result node = this;
         var next = 0;
+        var collectedAtEntry = 0;
 
         while (true)
         {
             if (next >= items.Count)
             {
                 if (suspended.Count == 0) return true;
-                (items, next) = suspended.Pop();
+
+                // The structure completed without contributing an atom, so no later
+                // occurrence can contribute one either: record it and skip it from now on.
+                if (collected.Count == collectedAtEntry)
+                {
+                    atomless ??= new HashSet<Result>(ReferenceEqualityComparer.Instance);
+                    atomless.Add(node);
+                }
+
+                (node, items, next, collectedAtEntry) = suspended.Pop();
                 continue;
             }
 
@@ -581,24 +657,20 @@ public abstract record Result
                 case Str:
                     break;
                 case SequenceValue(var childItems):
-                    if (childItems.Count > 0)
+                    if (childItems.Count > 0 && (atomless is null || !atomless.Contains(child)))
                     {
-                        // Tail descent: a parent with no children left to
-                        // visit has no continuation worth suspending.
-                        if (next < items.Count)
-                            suspended.Push((items, next));
-                        (items, next) = (childItems, 0);
+                        observations?.RecordHostAtomsStructureExpansion();
+                        suspended.Push((node, items, next, collectedAtEntry));
+                        (node, items, next, collectedAtEntry) = (child, childItems, 0, collected.Count);
                     }
 
                     break;
                 case ListValue(var childItems):
-                    if (childItems.Count > 0)
+                    if (childItems.Count > 0 && (atomless is null || !atomless.Contains(child)))
                     {
-                        // Tail descent: a parent with no children left to
-                        // visit has no continuation worth suspending.
-                        if (next < items.Count)
-                            suspended.Push((items, next));
-                        (items, next) = (childItems, 0);
+                        observations?.RecordHostAtomsStructureExpansion();
+                        suspended.Push((node, items, next, collectedAtEntry));
+                        (node, items, next, collectedAtEntry) = (child, childItems, 0, collected.Count);
                     }
 
                     break;
@@ -633,14 +705,92 @@ public abstract record Result
     /// Returns null when there is no numeric atom to truth-test.
     /// This follows the generic flattened-atoms convention; stricter builtins
     /// such as <c>filter</c> should use <c>SingleAtomicTruthValue()</c>.
+    /// Only the FIRST atom of the <see cref="ToAtoms"/> flattening decides the
+    /// verdict, so this searches for that atom (<see cref="FirstFlattenedAtom"/>)
+    /// instead of materializing the whole per-path collection — on a shared
+    /// sequence DAG the collection is exponential while the search is bounded
+    /// by the distinct sequence nodes (see the DAG note on the class).
     /// Lean: <c>Result.truthValue?</c>.
     /// </summary>
     public bool? TruthValue()
+        => FirstFlattenedAtom(observations: null) is { } first ? first != 0 : null;
+
+    /// <summary>
+    /// <see cref="TruthValue"/> with a passive observer recording the structural work the
+    /// first-atom search performs. The observer changes neither the verdict, the memoization,
+    /// nor the traversal order, and belongs to one measured operation. Used only by the
+    /// shared-value-graph complexity regressions.
+    /// </summary>
+    internal bool? TruthValueObserved(ValueTraversalObservations observations)
+        => FirstFlattenedAtom(observations) is { } first ? first != 0 : null;
+
+    /// <summary>
+    /// First-atom search over the <see cref="ToAtoms"/> view: the identical traversal —
+    /// depth-first, left-to-right, through non-empty SEQUENCE boundaries only, with strings
+    /// and list values opaque — except that it RETURNS at the first atom instead of
+    /// collecting them all. A sequence node this search has already descended is recorded in
+    /// a lazily allocated reference-identity set and skipped at every later shared
+    /// occurrence: the earlier descent completed without returning, so the node contains no
+    /// atom at all, let alone the first one. That keeps the search O(distinct reachable
+    /// sequence nodes) on shared DAGs, never O(paths); reference identity, not value
+    /// equality, keys the set (see the DAG note on the class). Marking on descent is
+    /// equivalent to marking on completion here because every constructible value is acyclic
+    /// — a node can never be re-encountered while its own descent is still open.
+    /// </summary>
+    private Decimal128? FirstFlattenedAtom(ValueTraversalObservations? observations)
     {
-        var atoms = ToAtoms();
-        if (atoms.Count == 0)
+        if (this is Atom(var single))
+            return single;
+        if (this is not SequenceValue(var rootItems))
             return null;
-        return atoms[0] != 0;
+
+        observations?.RecordTruthSearchStructureExpansion();
+
+        // Indexed continuation frames (see the depth note on the class): the search carries
+        // no collected output, so traversal storage is one suspended frame per open sequence
+        // level plus the lazily allocated searched-node set.
+        var suspended = new Stack<(IReadOnlyList<Result> Items, int Next)>();
+        HashSet<Result>? searched = null;
+        var items = rootItems;
+        var next = 0;
+
+        while (true)
+        {
+            if (next >= items.Count)
+            {
+                if (suspended.Count == 0) return null;
+                (items, next) = suspended.Pop();
+                continue;
+            }
+
+            var child = items[next];
+            next++;
+
+            switch (child)
+            {
+                case Atom(var n):
+                    return n;
+                case SequenceValue(var childItems):
+                    if (childItems.Count > 0)
+                    {
+                        searched ??= new HashSet<Result>(ReferenceEqualityComparer.Instance);
+                        if (!searched.Add(child))
+                            break; // already searched through a shared reference: no atom inside
+
+                        observations?.RecordTruthSearchStructureExpansion();
+
+                        // Tail descent: a parent with no children left to
+                        // visit has no continuation worth suspending.
+                        if (next < items.Count)
+                            suspended.Push((items, next));
+                        (items, next) = (childItems, 0);
+                    }
+
+                    break;
+                default:
+                    break; // strings and opaque list values contribute no atoms
+            }
+        }
     }
 
     /// <summary>

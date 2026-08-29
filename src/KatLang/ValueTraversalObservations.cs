@@ -60,4 +60,47 @@ internal sealed class ValueTraversalObservations
 
     internal void RecordNormalizeStructureExpansion()
         => NormalizeStructureExpansionCount = checked(NormalizeStructureExpansionCount + 1);
+
+    /// <summary>
+    /// Number of sequence NODES descended into across the <see cref="Result.TruthValue"/>
+    /// first-atom searches this observer measured: the top-level sequence of each search, plus
+    /// every nested NON-EMPTY sequence value descended into. Leaves, empty sequences, strings, and
+    /// opaque list values record nothing, and a sequence reached again through a second shared
+    /// reference is skipped as already searched, so for ONE search this stays bounded by the
+    /// number of distinct reachable sequence nodes — never the number of expanded tree paths. The
+    /// searched-node set lives for exactly one search, so testing the same value twice observes
+    /// twice the count.
+    /// </summary>
+    public long TruthSearchStructureExpansionCount { get; private set; }
+
+    internal void RecordTruthSearchStructureExpansion()
+        => TruthSearchStructureExpansionCount = checked(TruthSearchStructureExpansionCount + 1);
+
+    /// <summary>
+    /// Number of structure NODES descended into across the <c>Result.TryLanguageAtoms</c>
+    /// collections this observer measured: the top-level structure of each collection, plus every
+    /// nested NON-EMPTY sequence or list value descended into. Leaves and empty structures record
+    /// nothing, and a structure already proven to contribute no atoms is skipped at later shared
+    /// occurrences, so an atomLESS graph stays bounded by its distinct reachable structure nodes —
+    /// never its paths. Atom-BEARING shared nodes are deliberately re-descended per occurrence
+    /// (their atoms are collected per path, under the collector's atom bound), so this count is
+    /// node-bounded only where no atom is contributed.
+    /// </summary>
+    public long LanguageAtomsStructureExpansionCount { get; private set; }
+
+    internal void RecordLanguageAtomsStructureExpansion()
+        => LanguageAtomsStructureExpansionCount = checked(LanguageAtomsStructureExpansionCount + 1);
+
+    /// <summary>
+    /// Number of structure NODES descended into across the <c>Result.TryToHostAtoms</c>
+    /// projections this observer measured, with exactly the
+    /// <see cref="LanguageAtomsStructureExpansionCount"/> accounting: leaves and empty structures
+    /// record nothing, structures proven atomless are skipped at later shared occurrences, and
+    /// atom-bearing shared nodes are deliberately re-descended per occurrence under the
+    /// projection's atom bound.
+    /// </summary>
+    public long HostAtomsStructureExpansionCount { get; private set; }
+
+    internal void RecordHostAtomsStructureExpansion()
+        => HostAtomsStructureExpansionCount = checked(HostAtomsStructureExpansionCount + 1);
 }
