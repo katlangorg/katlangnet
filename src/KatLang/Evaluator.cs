@@ -7581,11 +7581,35 @@ public static partial class Evaluator
         if (argumentsR.IsError) return argumentsR.Error;
 
         var value = implementation(argumentsR.Value, ctx.Budget.CancellationToken);
-        return value is null
+        return EvalResult<Result>.Ok(NormalizeHostOperationValue(hostOperation, value));
+    }
+
+    /// <summary>
+    /// The canonical-value boundary for one SUCCESSFUL host-operation return, shared by
+    /// the synchronous dispatch (<see cref="InvokeSynchronousHostOperation"/>) and the
+    /// async twin's await site (<c>EvalAsynchronousHostOperationCountedAsync</c>) so the
+    /// two paths cannot drift. Host code builds values with the public constructors and
+    /// may hand back representations ordinary KatLang evaluation would have canonicalized
+    /// during construction — a singleton transparent sequence around an atom, redundant
+    /// nested unary sequence structure around the empty sequence — and such raw shapes
+    /// diverge from equal program-produced values at representation-sensitive rules
+    /// (structural equality, visible-empty counting). <see cref="Result.Normalize"/> is
+    /// the ONE existing canonicalization algorithm and is applied here, at the host
+    /// boundary, before the value reaches ANY consumer: the wrapper body's evaluation
+    /// result is derived from this normalized value, so the zero-argument property cache
+    /// (which stores that evaluation outcome) can only ever store the canonical value —
+    /// a cache hit re-serves it without re-normalizing. Normalize is sharing-preserving
+    /// and returns an already-canonical value AS ITSELF (same reference), so canonical
+    /// host returns are untouched; lists and strings keep their exact opacity. Successful
+    /// values only: host exceptions, faulted awaitables, and cancellation propagate
+    /// before this helper runs, and a null return remains the fail-loud host contract
+    /// violation.
+    /// </summary>
+    private static Result NormalizeHostOperationValue(HostOperation hostOperation, Result? value)
+        => value is null
             ? throw new InvalidOperationException(
                 $"Host operation '{hostOperation.Name}' returned null; host operations must return a KatLang value.")
-            : EvalResult<Result>.Ok(value);
-    }
+            : value.Normalize();
 
     /// <summary>
     /// A host operation may be reached only through the synthetic wrapper built by its

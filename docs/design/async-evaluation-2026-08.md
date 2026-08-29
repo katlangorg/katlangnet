@@ -284,6 +284,18 @@ module — rather than inventing a parallel subsystem:
   constructors: `Result.Atom`, `Result.Str`, `Result.SequenceValue`,
   `Result.ListValue`); a null return is a fail-loud `InvalidOperationException` (host
   contract violation). One KatLang-level evaluation = exactly one invocation.
+- **Canonical return values**: a SUCCESSFUL host return is normalized into KatLang's
+  canonical `Result` representation (the existing `Result.Normalize` — sharing-
+  preserving, identity on already-canonical values; lists and strings keep their exact
+  opacity) at the host boundary, BEFORE the value is stored in the zero-argument
+  property cache or consumed by evaluation. Host code can therefore hand back shapes
+  ordinary KatLang construction would have canonicalized (`SequenceValue([Atom(1)])`,
+  nested redundant empty sequences) without diverging from equal program-produced
+  values at representation-sensitive rules (structural equality, visible-empty
+  counting). One shared helper (`Evaluator.NormalizeHostOperationValue`) serves the
+  synchronous dispatch and the async twin's await site, so sync/async cannot drift;
+  failures (host exceptions, faulted awaitables, cancellation, diagnostics) are never
+  routed through normalization.
 - **Suspension (exactly-once)**: an incomplete awaitable from an asynchronous
   operation suspends the whole evaluation spine — no thread is blocked, `RunAsync`
   does not imply background-thread execution, and thread placement of the resumption

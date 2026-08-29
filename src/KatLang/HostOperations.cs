@@ -20,7 +20,13 @@ namespace KatLang;
 /// evaluator entry point). It must return a non-null <see cref="Result"/>; construct
 /// values with the public constructors (<see cref="Result.Atom"/>,
 /// <see cref="Result.Str"/>, <see cref="Result.SequenceValue"/>,
-/// <see cref="Result.ListValue"/>). The delegate is invoked exactly once per KatLang-level
+/// <see cref="Result.ListValue"/>). A successful return value is normalized into
+/// KatLang's canonical <see cref="Result"/> representation (<see cref="Result.Normalize"/> —
+/// redundant unary sequence structure collapses; strings remain unchanged, and an exact
+/// list boundary never collapses even though values inside it normalize recursively) before
+/// it is cached or evaluation continues, so host-produced values behave exactly like equal
+/// program-produced values; an already-canonical value passes through unchanged. The
+/// delegate is invoked exactly once per KatLang-level
 /// evaluation of the operation — a suspension and resumption of an asynchronous operation
 /// never replays it — and a zero-parameter operation accessed property-style
 /// (<c>Data</c>) participates in the ordinary per-run zero-argument property cache, while

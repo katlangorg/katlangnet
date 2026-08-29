@@ -1518,10 +1518,11 @@ public static partial class Evaluator
         // Observation-only — no counter moves, matching every other observation point.
         ctx.Budget.ObserveCancellation();
 
-        return value is null
-            ? throw new InvalidOperationException(
-                $"Host operation '{hostOperation.Name}' returned null; host operations must return a KatLang value.")
-            : EvalResult<CountedResult>.Ok(new CountedResult(value, value.ValueCount()));
+        // Shared canonical-value boundary (null contract included) — see
+        // NormalizeHostOperationValue; a cancelled-while-suspended run was already
+        // honored above, so only genuinely successful values are normalized.
+        var normalized = NormalizeHostOperationValue(hostOperation, value);
+        return EvalResult<CountedResult>.Ok(new CountedResult(normalized, normalized.ValueCount()));
     }
 
     /// <summary>MIRROR OF <see cref="EvalResolvedAlgOutputForValueDemand"/> — keep in lock-step.</summary>
