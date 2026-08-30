@@ -19,20 +19,53 @@ internal static class PropertyExposureResolver
             => RequiredAncestorOwnedParameterNames.SetEquals(other.RequiredAncestorOwnedParameterNames);
     }
 
+    /// <summary>
+    /// Shared subtrees (acyclic DAGs) are legal and DAG-safe: exposure classification of a
+    /// node referenced from several parents matches the equivalent duplicated tree (summary
+    /// seeds are name SETS, so multiplicities never mattered), while the rewrite walk is
+    /// reference-identity memoized per constant-context region — work is bounded by the
+    /// DISTINCT reachable nodes, never the number of root-to-node paths, and the rewritten
+    /// output preserves the input's sharing. Memos are run-local.
+    /// </summary>
     public static Algorithm Resolve(Algorithm root)
+        => Resolve(root, observations: null);
+
+    internal static Algorithm Resolve(Algorithm root, FrontEndTraversalObservations? observations)
         => ProcessAlgorithm(
             root,
             visiblePropertySummaries: new Dictionary<string, AnalysisSummary>(StringComparer.Ordinal),
             ancestorOwnedNames: CreateNameSet(),
             locallyOwnedNames: CreateNameSet(),
-            insideConditionalAlgorithm: false);
+            insideConditionalAlgorithm: false,
+            observations);
+
+    /// <summary>
+    /// Reference-identity memo state for ONE exposure rewrite region — one user algorithm's
+    /// opens/output/property-value processing (the final visible summaries and the children's
+    /// ancestor-owned set are fixed before any of it runs), or one conditional's open list.
+    /// Shared expressions rewrite once and stay shared; <see cref="Algorithms"/> memoizes
+    /// nested-algorithm processing (property values and <see cref="Expr.AlgorithmExpr"/>
+    /// contents run under the identical context: final summaries, the children's
+    /// ancestor-owned names, an empty locally-owned set, the same conditional flag), so two
+    /// properties or wrappers sharing ONE algorithm classify it once. Conditional BRANCH
+    /// bodies are deliberately not memoized: their binder-name context varies per branch.
+    /// </summary>
+    private sealed class ExposureWalkMemos(FrontEndTraversalObservations? observations)
+    {
+        public Dictionary<Expr, Expr>? Rewrites;
+
+        public Dictionary<Algorithm, Algorithm>? Algorithms;
+
+        public readonly FrontEndTraversalObservations? Observations = observations;
+    }
 
     private static Algorithm ProcessAlgorithm(
         Algorithm algorithm,
         IReadOnlyDictionary<string, AnalysisSummary> visiblePropertySummaries,
         HashSet<string> ancestorOwnedNames,
         HashSet<string> locallyOwnedNames,
-        bool insideConditionalAlgorithm)
+        bool insideConditionalAlgorithm,
+        FrontEndTraversalObservations? observations)
         => algorithm switch
         {
             Algorithm.User user => ProcessUserAlgorithm(
@@ -40,13 +73,15 @@ internal static class PropertyExposureResolver
                 visiblePropertySummaries,
                 ancestorOwnedNames,
                 locallyOwnedNames,
-                insideConditionalAlgorithm),
+                insideConditionalAlgorithm,
+                observations),
             Algorithm.Conditional conditional => ProcessConditionalAlgorithm(
                 conditional,
                 visiblePropertySummaries,
                 ancestorOwnedNames,
                 locallyOwnedNames,
-                insideConditionalAlgorithm),
+                insideConditionalAlgorithm,
+                observations),
             _ => algorithm,
         };
 
@@ -55,7 +90,8 @@ internal static class PropertyExposureResolver
         IReadOnlyDictionary<string, AnalysisSummary> visiblePropertySummaries,
         HashSet<string> ancestorOwnedNames,
         HashSet<string> locallyOwnedNames,
-        bool insideConditionalAlgorithm)
+        bool insideConditionalAlgorithm,
+        FrontEndTraversalObservations? observations)
     {
         // A synthetic assignment-deconstruction helper (`x, *y, z = RHS`) is a fully-elaborated
         // leaf: no properties, no opens, and an output that is exactly its own bound Param. It
@@ -107,16 +143,20 @@ internal static class PropertyExposureResolver
         }
 
         var finalVisiblePropertySummaries = MergeVisiblePropertySummaries(visiblePropertySummaries, currentPropertySummaries);
+        // ONE memo bundle spans this algorithm's property-value processing AND its
+        // opens/output rewrite below: all of it runs under the identical, already-final
+        // context (finalVisiblePropertySummaries, ancestorOwnedForChildren, the flag).
+        var memos = new ExposureWalkMemos(observations);
         var rewrittenProperties = new List<Property>(algorithm.Properties.Count);
         for (var propertyIndex = 0; propertyIndex < algorithm.Properties.Count; propertyIndex++)
         {
             var property = algorithm.Properties[propertyIndex];
-            var rewrittenPropertyValue = ProcessAlgorithm(
+            var rewrittenPropertyValue = ProcessSharedNestedAlgorithm(
                 property.Value,
                 finalVisiblePropertySummaries,
                 ancestorOwnedForChildren,
-                CreateNameSet(),
-                insideConditionalAlgorithm);
+                insideConditionalAlgorithm,
+                memos);
 
             var exposure = insideConditionalAlgorithm
                 ? PropertyExposure.LocalOnlyConditionalAlgorithm
@@ -141,12 +181,14 @@ internal static class PropertyExposureResolver
             algorithm.Opens,
             finalVisiblePropertySummaries,
             ancestorOwnedForChildren,
-            insideConditionalAlgorithm);
+            insideConditionalAlgorithm,
+            memos);
         var rewrittenOutput = RewriteExprList(
             algorithm.Output,
             finalVisiblePropertySummaries,
             ancestorOwnedForChildren,
-            insideConditionalAlgorithm);
+            insideConditionalAlgorithm,
+            memos);
 
         return algorithm with
         {
@@ -154,6 +196,34 @@ internal static class PropertyExposureResolver
             Properties = rewrittenProperties,
             Output = OutputBundle.From(rewrittenOutput),
         };
+    }
+
+    /// <summary>
+    /// Region-memoized nested-algorithm processing (property values and
+    /// <see cref="Expr.AlgorithmExpr"/> contents share the identical region context, with a
+    /// fresh empty locally-owned set in both positions — exactly as before).
+    /// </summary>
+    private static Algorithm ProcessSharedNestedAlgorithm(
+        Algorithm algorithm,
+        IReadOnlyDictionary<string, AnalysisSummary> visiblePropertySummaries,
+        HashSet<string> ancestorOwnedForChildren,
+        bool insideConditionalAlgorithm,
+        ExposureWalkMemos memos)
+    {
+        memos.Algorithms ??= new(ReferenceEqualityComparer.Instance);
+        if (!memos.Algorithms.TryGetValue(algorithm, out var rewritten))
+        {
+            rewritten = ProcessAlgorithm(
+                algorithm,
+                visiblePropertySummaries,
+                ancestorOwnedForChildren,
+                CreateNameSet(),
+                insideConditionalAlgorithm,
+                memos.Observations);
+            memos.Algorithms[algorithm] = rewritten;
+        }
+
+        return rewritten;
     }
 
     private static AnalysisSummary SummarizePropertyDependencies(
@@ -190,7 +260,8 @@ internal static class PropertyExposureResolver
         IReadOnlyDictionary<string, AnalysisSummary> visiblePropertySummaries,
         HashSet<string> ancestorOwnedNames,
         HashSet<string> locallyOwnedNames,
-        bool insideConditionalAlgorithm)
+        bool insideConditionalAlgorithm,
+        FrontEndTraversalObservations? observations)
     {
         var ancestorOwnedForChildren = UnionNames(ancestorOwnedNames, locallyOwnedNames);
 
@@ -198,18 +269,23 @@ internal static class PropertyExposureResolver
             algorithm.Opens,
             visiblePropertySummaries,
             ancestorOwnedForChildren,
-            insideConditionalAlgorithm);
+            insideConditionalAlgorithm,
+            new ExposureWalkMemos(observations));
 
         var rewrittenBranches = new List<CondBranch>(algorithm.Branches.Count);
         foreach (var branch in algorithm.Branches)
         {
+            // Branch bodies are deliberately NOT reference-deduplicated: each branch's
+            // pattern binds its own locally-owned names, so a body shared between branches
+            // may legitimately classify differently per branch.
             var binderNames = CreateNameSet(branch.Pattern.BoundNames());
             var rewrittenBody = ProcessAlgorithm(
                 branch.Body,
                 visiblePropertySummaries,
                 ancestorOwnedForChildren,
                 binderNames,
-                insideConditionalAlgorithm: true);
+                insideConditionalAlgorithm: true,
+                observations);
 
             rewrittenBranches.Add(new CondBranch(branch.Pattern, rewrittenBody));
         }
@@ -225,7 +301,8 @@ internal static class PropertyExposureResolver
         IReadOnlyList<Expr> expressions,
         IReadOnlyDictionary<string, AnalysisSummary> visiblePropertySummaries,
         HashSet<string> ancestorOwnedForChildren,
-        bool insideConditionalAlgorithm)
+        bool insideConditionalAlgorithm,
+        ExposureWalkMemos memos)
     {
         var rewritten = new List<Expr>(expressions.Count);
         foreach (var expression in expressions)
@@ -234,7 +311,8 @@ internal static class PropertyExposureResolver
                 expression,
                 visiblePropertySummaries,
                 ancestorOwnedForChildren,
-                insideConditionalAlgorithm));
+                insideConditionalAlgorithm,
+                memos));
         }
 
         return rewritten;
@@ -248,7 +326,30 @@ internal static class PropertyExposureResolver
         Expr expr,
         IReadOnlyDictionary<string, AnalysisSummary> visiblePropertySummaries,
         HashSet<string> ancestorOwnedForChildren,
-        bool insideConditionalAlgorithm)
+        bool insideConditionalAlgorithm,
+        ExposureWalkMemos memos)
+    {
+        // DAG-safety: one rewrite per shared node reference per region; the memo returns
+        // the same rewritten node for every later reach, preserving the input's sharing.
+        if (!AstTraversalDagSafety.HasTraversableExprChildren(expr))
+            return RewriteExprCore(expr, visiblePropertySummaries, ancestorOwnedForChildren, insideConditionalAlgorithm, memos);
+
+        memos.Rewrites ??= new(ReferenceEqualityComparer.Instance);
+        if (memos.Rewrites.TryGetValue(expr, out var rewritten))
+            return rewritten;
+
+        memos.Observations?.RecordExposureRewriteExpansion();
+        rewritten = RewriteExprCore(expr, visiblePropertySummaries, ancestorOwnedForChildren, insideConditionalAlgorithm, memos);
+        memos.Rewrites[expr] = rewritten;
+        return rewritten;
+    }
+
+    private static Expr RewriteExprCore(
+        Expr expr,
+        IReadOnlyDictionary<string, AnalysisSummary> visiblePropertySummaries,
+        HashSet<string> ancestorOwnedForChildren,
+        bool insideConditionalAlgorithm,
+        ExposureWalkMemos memos)
     {
         switch (expr)
         {
@@ -261,7 +362,8 @@ internal static class PropertyExposureResolver
                     grace.Inner,
                     visiblePropertySummaries,
                     ancestorOwnedForChildren,
-                    insideConditionalAlgorithm);
+                    insideConditionalAlgorithm,
+                    memos);
                 return grace with { Inner = rewrittenInner };
             }
 
@@ -271,7 +373,8 @@ internal static class PropertyExposureResolver
                     operand,
                     visiblePropertySummaries,
                     ancestorOwnedForChildren,
-                    insideConditionalAlgorithm);
+                    insideConditionalAlgorithm,
+                    memos);
                 return new Expr.Unary(op, rewrittenOperand) { Span = expr.Span };
             }
 
@@ -281,12 +384,14 @@ internal static class PropertyExposureResolver
                     left,
                     visiblePropertySummaries,
                     ancestorOwnedForChildren,
-                    insideConditionalAlgorithm);
+                    insideConditionalAlgorithm,
+                    memos);
                 var rewrittenRight = RewriteExpr(
                     right,
                     visiblePropertySummaries,
                     ancestorOwnedForChildren,
-                    insideConditionalAlgorithm);
+                    insideConditionalAlgorithm,
+                    memos);
                 return new Expr.Binary(op, rewrittenLeft, rewrittenRight) { Span = expr.Span };
             }
 
@@ -296,12 +401,14 @@ internal static class PropertyExposureResolver
                     target,
                     visiblePropertySummaries,
                     ancestorOwnedForChildren,
-                    insideConditionalAlgorithm);
+                    insideConditionalAlgorithm,
+                    memos);
                 var rewrittenSelector = RewriteExpr(
                     selector,
                     visiblePropertySummaries,
                     ancestorOwnedForChildren,
-                    insideConditionalAlgorithm);
+                    insideConditionalAlgorithm,
+                    memos);
                 return new Expr.Index(rewrittenTarget, rewrittenSelector) { Span = expr.Span };
             }
 
@@ -311,7 +418,8 @@ internal static class PropertyExposureResolver
                     operand,
                     visiblePropertySummaries,
                     ancestorOwnedForChildren,
-                    insideConditionalAlgorithm);
+                    insideConditionalAlgorithm,
+                    memos);
                 return new Expr.SequenceSpread(rewrittenOperand)
                 {
                     Span = expr.Span,
@@ -325,12 +433,14 @@ internal static class PropertyExposureResolver
                     left,
                     visiblePropertySummaries,
                     ancestorOwnedForChildren,
-                    insideConditionalAlgorithm);
+                    insideConditionalAlgorithm,
+                    memos);
                 var rewrittenRight = RewriteExpr(
                     right,
                     visiblePropertySummaries,
                     ancestorOwnedForChildren,
-                    insideConditionalAlgorithm);
+                    insideConditionalAlgorithm,
+                    memos);
                 return new Expr.SequenceConstruct(rewrittenLeft, rewrittenRight) { Span = expr.Span };
             }
 
@@ -343,7 +453,8 @@ internal static class PropertyExposureResolver
                         item,
                         visiblePropertySummaries,
                         ancestorOwnedForChildren,
-                        insideConditionalAlgorithm));
+                        insideConditionalAlgorithm,
+                        memos));
                 }
 
                 return new Expr.ListLiteral(rewrittenItems) { Span = expr.Span };
@@ -351,12 +462,12 @@ internal static class PropertyExposureResolver
 
             case Expr.AlgorithmExpr(var algorithm):
             {
-                var rewrittenAlgorithm = ProcessAlgorithm(
+                var rewrittenAlgorithm = ProcessSharedNestedAlgorithm(
                     algorithm,
                     visiblePropertySummaries,
                     ancestorOwnedForChildren,
-                    CreateNameSet(),
-                    insideConditionalAlgorithm);
+                    insideConditionalAlgorithm,
+                    memos);
                 return new Expr.AlgorithmExpr(rewrittenAlgorithm) { Span = expr.Span };
             }
 
@@ -373,7 +484,8 @@ internal static class PropertyExposureResolver
                         row,
                         visiblePropertySummaries,
                         ancestorOwnedForChildren,
-                        insideConditionalAlgorithm));
+                        insideConditionalAlgorithm,
+                        memos));
                 }
 
                 return new Expr.Capture(new OutputBundle(rewrittenRows)) { Span = expr.Span };
@@ -385,7 +497,8 @@ internal static class PropertyExposureResolver
                     function,
                     visiblePropertySummaries,
                     ancestorOwnedForChildren,
-                    insideConditionalAlgorithm);
+                    insideConditionalAlgorithm,
+                    memos);
                 // Argument bundles own no scope: slots rewrite in the enclosing
                 // context, exactly like capture rows.
                 var rewrittenArgs = new List<Expr>(args.Count);
@@ -395,7 +508,8 @@ internal static class PropertyExposureResolver
                         argExpr,
                         visiblePropertySummaries,
                         ancestorOwnedForChildren,
-                        insideConditionalAlgorithm));
+                        insideConditionalAlgorithm,
+                        memos));
                 }
 
                 return new Expr.Call(rewrittenFunction, new OutputBundle(rewrittenArgs)) { Span = expr.Span };
@@ -407,7 +521,8 @@ internal static class PropertyExposureResolver
                     target,
                     visiblePropertySummaries,
                     ancestorOwnedForChildren,
-                    insideConditionalAlgorithm);
+                    insideConditionalAlgorithm,
+                    memos);
                 OutputBundle? rewrittenArgs = null;
                 if (argsOpt is not null)
                 {
@@ -418,7 +533,8 @@ internal static class PropertyExposureResolver
                             argExpr,
                             visiblePropertySummaries,
                             ancestorOwnedForChildren,
-                            insideConditionalAlgorithm));
+                            insideConditionalAlgorithm,
+                            memos));
                     }
 
                     rewrittenArgs = new OutputBundle(rewrittenSlots);

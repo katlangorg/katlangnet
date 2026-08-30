@@ -53,7 +53,32 @@ public sealed class ModuleLoader
     // The set is cleared at the public elaboration boundary so a reusable loader does
     // not retain every caller-owned input tree for the rest of its lifetime.
     private readonly HashSet<object> _loadBearing = new(ReferenceEqualityComparer.Instance);
-    private readonly LoadBearingMarker _loadBearingMarker;
+
+    // DAG-safety memos of the rewrite walks. Load-free synchronous subtrees are keyed by
+    // LoadContext alone. Load-bearing async-spine nodes additionally key by their effective
+    // live traversal depth (`_nestedTraversalBase + depth`): a near-ceiling load can be rejected
+    // before fetch while the SAME node reached on a shallower path is admissible, so reusing the
+    // rejection across depths would change the pre-memo tree behavior. Routing is per-node
+    // deterministic, and an entry is stored only AFTER the node's processing fully completed
+    // (an async twin that suspends mid-node can never expose a partially processed node as done).
+    // A shared load
+    // CALL node is thereby processed once per constant (node, context, live-depth) region — one
+    // budget charge, diagnostic, and splice there — while a genuinely depth-sensitive second
+    // occurrence is rewritten independently. Distinct load nodes remain independent load sites.
+    // Lazily allocated and cleared with _loadBearing at the public elaboration boundary; the
+    // loader processes one logical elaboration sequentially, so plain fields suffice.
+    private readonly Dictionary<Expr, Expr>?[] _exprWalkMemos = new Dictionary<Expr, Expr>?[4];
+    private readonly Dictionary<Algorithm, Algorithm>?[] _algorithmWalkMemos = new Dictionary<Algorithm, Algorithm>?[4];
+    private readonly Dictionary<Expr, Dictionary<int, Expr>>?[] _loadBearingExprWalkMemos =
+        new Dictionary<Expr, Dictionary<int, Expr>>?[4];
+    private readonly Dictionary<Algorithm, Dictionary<int, Algorithm>>?[] _loadBearingAlgorithmWalkMemos =
+        new Dictionary<Algorithm, Dictionary<int, Algorithm>>?[4];
+
+    /// <summary>
+    /// Passive test-only traversal observer (see <see cref="FrontEndTraversalObservations"/>);
+    /// null in production. Set before <see cref="ElaborateAsync"/> by measuring callers.
+    /// </summary>
+    internal FrontEndTraversalObservations? TraversalObservations { get; set; }
 
     // Run-scoped host-runtime budget: import depth, distinct-module count, per-module and aggregate
     // source length. Its immutable SourceProcessingLimits carry the effective ceilings; the mutable
@@ -233,7 +258,6 @@ public sealed class ModuleLoader
             ? new HashSet<string>(allowedHosts, StringComparer.OrdinalIgnoreCase)
             : new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "katlang.org" };
         _budget = budget ?? new SourceProcessingBudget(null);
-        _loadBearingMarker = new LoadBearingMarker(_loadBearing);
     }
 
     // ── Public API ───────────────────────────────────────────────────────────
@@ -260,6 +284,18 @@ public sealed class ModuleLoader
     /// host-built composition that outgrows the actual thread stack despite the
     /// structural gates is rejected with a structured diagnostic, never a process
     /// crash.</para>
+    ///
+    /// <para><b>Shared subtrees (acyclic DAGs) are legal and DAG-safe:</b> the pre-scan
+    /// and both rewrite walks are reference-identity memoized per elaboration, so work is
+    /// bounded by distinct reachable (node, context) states for load-free regions and distinct
+    /// reachable (node, context, live-depth) states on load-bearing spines — never by blindly
+    /// expanding every root-to-node path. Rewritten output preserves the input's sharing whenever
+    /// its rewrite context is the same. A load call node referenced several times at the same
+    /// context and live depth is ONE load site (processed, budget-charged, diagnosed, and spliced
+    /// once). LoadContext or
+    /// near-ceiling live-depth differences intentionally split the rewrite because they can change
+    /// validity; two distinct load nodes likewise remain two sites even when they name the same URL
+    /// (which the per-URL module cache already downloads only once).</para>
     /// </summary>
     /// <exception cref="OperationCanceledException">
     /// The configured source-processing token was cancelled. Delivered through the returned
@@ -325,6 +361,10 @@ public sealed class ModuleLoader
         finally
         {
             _loadBearing.Clear();
+            Array.Clear(_exprWalkMemos);
+            Array.Clear(_algorithmWalkMemos);
+            Array.Clear(_loadBearingExprWalkMemos);
+            Array.Clear(_loadBearingAlgorithmWalkMemos);
         }
     }
 
@@ -357,12 +397,29 @@ public sealed class ModuleLoader
     /// visits patterns, conditional branches, and stored fallback identities the
     /// rewrite walk leaves untouched), so an UNMARKED node is proof its subtree
     /// elaborates without ever needing to await.
+    ///
+    /// <para><b>DAG-safety:</b> the scan is reference-identity memoized per call. A
+    /// completed node's marked-ness is exactly "its subtree reaches a load", so a
+    /// later reach of the same node object descends nothing: it marks the CURRENT
+    /// root-path (stopping at the first already-marked ancestor) when the node is
+    /// marked, and skips otherwise — every node from which a load is reachable still
+    /// ends up marked, with total work bounded by the distinct nodes and edges rather
+    /// than the number of root-to-node paths.</para>
     /// </summary>
-    private void MarkLoadBearing(Algorithm root) => _loadBearingMarker.VisitAlgorithm(root);
+    private void MarkLoadBearing(Algorithm root)
+        => new LoadBearingMarker(_loadBearing, TraversalObservations).VisitAlgorithm(root);
 
-    private sealed class LoadBearingMarker(HashSet<object> marked) : AstWalker
+    private sealed class LoadBearingMarker(
+        HashSet<object> marked,
+        FrontEndTraversalObservations? observations) : AstWalker
     {
         private readonly List<object> _path = [];
+
+        // Completion-marked visited set: a node is added only after its subtree scan
+        // finished, so its marked-ness is final whenever a later reach consults it
+        // (the graph is acyclic — preflight-gated — so a re-reach during the node's
+        // own scan is impossible).
+        private readonly HashSet<object> _visited = new(ReferenceEqualityComparer.Instance);
 
         protected override bool VisitsExplicitParameterDeclarations => false;
 
@@ -373,6 +430,14 @@ public sealed class ModuleLoader
             // thread below the documented envelope the scan must fail structured,
             // not by overflowing before the walk even starts.
             ThrowIfInsufficientStack();
+            if (_visited.Contains(algorithm))
+            {
+                if (marked.Contains(algorithm))
+                    MarkCurrentPath();
+                return;
+            }
+
+            observations?.RecordLoaderMarkerExpansion();
             _path.Add(algorithm);
             try
             {
@@ -382,26 +447,32 @@ public sealed class ModuleLoader
             {
                 _path.RemoveAt(_path.Count - 1);
             }
+
+            _visited.Add(algorithm);
         }
 
         public override void VisitExpr(Expr expr)
         {
             ThrowIfInsufficientStack();
+            if (_visited.Contains(expr))
+            {
+                if (marked.Contains(expr))
+                    MarkCurrentPath();
+                return;
+            }
+
             if (expr.TryGetUnresolvedLoadArguments(out _))
             {
                 // Mark the load call and its live root-path; elaboration replaces the
                 // whole call, so its argument slots are never walked. The upward stop
                 // at the first already-marked node keeps repeated loads cheap.
                 marked.Add(expr);
-                for (var i = _path.Count - 1; i >= 0; i--)
-                {
-                    if (!marked.Add(_path[i]))
-                        break;
-                }
-
+                MarkCurrentPath();
+                _visited.Add(expr);
                 return;
             }
 
+            observations?.RecordLoaderMarkerExpansion();
             _path.Add(expr);
             try
             {
@@ -410,6 +481,17 @@ public sealed class ModuleLoader
             finally
             {
                 _path.RemoveAt(_path.Count - 1);
+            }
+
+            _visited.Add(expr);
+        }
+
+        private void MarkCurrentPath()
+        {
+            for (var i = _path.Count - 1; i >= 0; i--)
+            {
+                if (!marked.Add(_path[i]))
+                    break;
             }
         }
     }
@@ -437,12 +519,22 @@ public sealed class ModuleLoader
     // cumulative nested-load guard in FetchAndSpliceAsync can judge the LIVE traversal
     // stack — parent frames plus the nested module's own depth — against the measured
     // ceiling. Frame-local by construction: no cleanup is needed on unwind.
+    //
+    // DAG-safety memo checks live INSIDE this frame (and the twins'), never in a wrapper:
+    // an extra method (or async state machine) per recursion level would change the
+    // calibrated one-frame-per-level stack shape this walk's measured envelope rests on.
     private Algorithm ProcessAlgorithm(Algorithm alg, LoadContext context, int depth)
     {
         ThrowIfInsufficientStack();
         _sourceProcessingCancellationToken.ThrowIfCancellationRequested();
 
         if (alg is Algorithm.Builtin) return alg;
+
+        var memo = _algorithmWalkMemos[(int)context] ??= new(ReferenceEqualityComparer.Instance);
+        if (memo.TryGetValue(alg, out var memoized))
+            return memoized;
+
+        TraversalObservations?.RecordLoaderWalkExpansion();
 
         var newOpens = new List<Expr>(alg.Opens.Count);
         foreach (var open in alg.Opens)
@@ -477,13 +569,16 @@ public sealed class ModuleLoader
             Output = newOutput,
         };
 
+        memo[alg] = result;
         return result;
     }
 
     /// <summary>
     /// MIRROR OF <see cref="ProcessAlgorithm"/> — keep in lock-step. Runs only on
     /// load-bearing spines (see <see cref="RouteAlgorithmAsync"/>); each child routes
-    /// back to the synchronous walk the moment its subtree is load-free.
+    /// back to the synchronous walk the moment its subtree is load-free. The memo entry
+    /// is stored only after the (possibly suspending) processing fully completed, from
+    /// INSIDE this one state machine — no wrapper frame may join the recursion spine.
     /// </summary>
     private async ValueTask<Algorithm> ProcessAlgorithmAsync(Algorithm alg, LoadContext context, int depth)
     {
@@ -491,6 +586,20 @@ public sealed class ModuleLoader
         _sourceProcessingCancellationToken.ThrowIfCancellationRequested();
 
         if (alg is Algorithm.Builtin) return alg;
+
+        var memo = _loadBearingAlgorithmWalkMemos[(int)context] ??=
+            new(ReferenceEqualityComparer.Instance);
+        if (!memo.TryGetValue(alg, out var rewritesByDepth))
+        {
+            rewritesByDepth = [];
+            memo[alg] = rewritesByDepth;
+        }
+
+        var effectiveDepth = checked(_nestedTraversalBase + depth);
+        if (rewritesByDepth.TryGetValue(effectiveDepth, out var memoized))
+            return memoized;
+
+        TraversalObservations?.RecordLoaderWalkExpansion();
 
         var newOpens = new List<Expr>(alg.Opens.Count);
         foreach (var open in alg.Opens)
@@ -515,16 +624,22 @@ public sealed class ModuleLoader
             newOutput.Add(await RouteExprAsync(expr, outputCtx, depth + 1).ConfigureAwait(false));
         }
 
-        return alg with
+        var result = alg with
         {
             Opens = newOpens,
             Properties = newProperties,
             Output = newOutput,
         };
+
+        rewritesByDepth[effectiveDepth] = result;
+        return result;
     }
 
     // ── Expression processing (synchronous walk: load-free subtrees) ─────────
 
+    // The DAG-safety memo check lives INSIDE this frame (see ProcessAlgorithm's note): the
+    // switch assigns `result` instead of returning so the memo store shares the one
+    // calibrated frame per level.
     private Expr ProcessExpr(Expr expr, LoadContext context, int depth)
     {
         ThrowIfInsufficientStack();
@@ -539,82 +654,106 @@ public sealed class ModuleLoader
                 "Load-bearing subtrees must route through the async walk.");
         }
 
+        // Childless leaves skip the memo: they rewrite to themselves in O(1) and can never
+        // multiply traversal paths.
+        Dictionary<Expr, Expr>? memo = null;
+        if (AstTraversalDagSafety.HasTraversableExprChildren(expr))
+        {
+            memo = _exprWalkMemos[(int)context] ??= new(ReferenceEqualityComparer.Instance);
+            if (memo.TryGetValue(expr, out var memoized))
+                return memoized;
+
+            TraversalObservations?.RecordLoaderWalkExpansion();
+        }
+
+        Expr result;
         switch (expr)
         {
             case Expr.Call(var func, var args):
-                return new Expr.Call(
+                result = new Expr.Call(
                     ProcessExpr(func, LoadContext.RuntimeExpr, depth + 1),
                     new OutputBundle(args.Select(argExpr => ProcessExpr(argExpr, LoadContext.RuntimeExpr, depth + 1)).ToList()))
                 { Span = expr.Span };
+                break;
 
             case Expr.AlgorithmExpr(var alg):
-                return new Expr.AlgorithmExpr(ProcessAlgorithm(alg, context, depth + 1)) { Span = expr.Span };
+                result = new Expr.AlgorithmExpr(ProcessAlgorithm(alg, context, depth + 1)) { Span = expr.Span };
+                break;
 
             // Capture rows inherit the surrounding load context, exactly like
             // list-literal elements and internal sequence joins: `X = (load('url'), 1)`
             // elaborates where `X = [load('url')]` does.
             case Expr.Capture(var captureBody):
-                return new Expr.Capture(new OutputBundle(
+                result = new Expr.Capture(new OutputBundle(
                     captureBody.Select(row => ProcessExpr(row, context, depth + 1)).ToList()))
                 { Span = expr.Span };
+                break;
 
             case Expr.Binary(var op, var left, var right):
-                return new Expr.Binary(op,
+                result = new Expr.Binary(op,
                     ProcessExpr(left, LoadContext.RuntimeExpr, depth + 1),
                     ProcessExpr(right, LoadContext.RuntimeExpr, depth + 1))
                 { Span = expr.Span };
+                break;
 
             case Expr.Unary(var op, var operand):
-                return new Expr.Unary(op, ProcessExpr(operand, LoadContext.RuntimeExpr, depth + 1))
+                result = new Expr.Unary(op, ProcessExpr(operand, LoadContext.RuntimeExpr, depth + 1))
                 { Span = expr.Span };
+                break;
 
             case Expr.Index(var target, var selector):
-                return new Expr.Index(
+                result = new Expr.Index(
                     ProcessExpr(target, LoadContext.RuntimeExpr, depth + 1),
                     ProcessExpr(selector, LoadContext.RuntimeExpr, depth + 1))
                 { Span = expr.Span };
+                break;
 
             case Expr.SequenceSpread(var operand):
-                return new Expr.SequenceSpread(
+                result = new Expr.SequenceSpread(
                     ProcessExpr(operand, context, depth + 1))
                 {
                     Span = expr.Span,
                     SpreadMarkerSpan = ((Expr.SequenceSpread)expr).SpreadMarkerSpan,
                 };
+                break;
 
             case Expr.SequenceConstruct(var left, var right):
-                return new Expr.SequenceConstruct(
+                result = new Expr.SequenceConstruct(
                     ProcessExpr(left, context, depth + 1),
                     ProcessExpr(right, context, depth + 1))
                 { Span = expr.Span };
+                break;
 
             // List-literal elements inherit the surrounding load context,
             // exactly like capture rows (Expr.Capture) and internal sequence
             // joins: `X = [load('url')]` elaborates where
             // `X = (load('url'), 1)` does.
             case Expr.ListLiteral(var items):
-                return new Expr.ListLiteral(
+                result = new Expr.ListLiteral(
                     items.Select(item => ProcessExpr(item, context, depth + 1)).ToList())
                 { Span = expr.Span };
+                break;
 
             case Expr.DotCall dotCall:
                 // `with` keeps every stored dot-edge fact (member span,
                 // lexical fallback) intact — rebuilding positionally here
                 // silently dropped the elaborated fallback identity for every
                 // module-elaborated tree.
-                return dotCall with
+                result = dotCall with
                 {
                     Target = ProcessExpr(dotCall.Target, dotCall.Args is null ? context : LoadContext.RuntimeExpr, depth + 1),
                     Args = dotCall.Args is { } dotArgs
                         ? new OutputBundle(dotArgs.Select(argExpr => ProcessExpr(argExpr, LoadContext.RuntimeExpr, depth + 1)).ToList())
                         : null,
                 };
+                break;
 
             case Expr.Grace grace:
                 // `with` keeps the stored Grace weight intact — module
                 // elaboration runs BEFORE parameter detection, so the
                 // annotation is still live here.
-                return grace with { Inner = ProcessExpr(grace.Inner, context, depth + 1) };
+                result = grace with { Inner = ProcessExpr(grace.Inner, context, depth + 1) };
+                break;
 
             // Leaf nodes — no transformation needed
             case Expr.Resolve:
@@ -623,7 +762,8 @@ public sealed class ModuleLoader
             case Expr.StringLiteral:
             case Expr.EmptySequence:
             case Expr.NativeCall:
-                return expr;
+                result = expr;
+                break;
 
             // Exhaustiveness guard, matching AstWalker.VisitExpr: a new Expr
             // variant must be classified above (recursive rewrite or leaf)
@@ -635,6 +775,10 @@ public sealed class ModuleLoader
                     $"Unhandled Expr variant in {nameof(ModuleLoader)}.{nameof(ProcessExpr)}: {expr.GetType().Name}. " +
                     "Classify the new variant explicitly as a recursive rewrite case or an intentional leaf, in both walk twins.");
         }
+
+        if (memo is not null)
+            memo[expr] = result;
+        return result;
     }
 
     /// <summary>
@@ -642,14 +786,46 @@ public sealed class ModuleLoader
     /// load-bearing spines; every child routes through <see cref="RouteExprAsync"/> /
     /// <see cref="RouteAlgorithmAsync"/> so load-free children complete inline on the
     /// calibrated synchronous walk. The LINQ projections of the synchronous walk are
-    /// explicit loops here because their element rewrites may await.
+    /// explicit loops here because their element rewrites may await. The DAG-safety memo
+    /// entry is stored from INSIDE this one state machine, only after the (possibly
+    /// suspending) processing fully completed — a shared load CALL node is fetched,
+    /// budget-charged, diagnosed, and spliced exactly once per (node, context, live depth), and no
+    /// wrapper frame joins the recursion spine.
     /// </summary>
     private async ValueTask<Expr> ProcessExprAsync(Expr expr, LoadContext context, int depth)
     {
         ThrowIfInsufficientStack();
 
+        // Childless leaves skip the memo, exactly as in the synchronous walk. Load-bearing
+        // nodes key their rewrite by effective live depth as well as context (see the field
+        // contract): depth can change a descendant load's pre-fetch admission verdict.
+        Dictionary<int, Expr>? rewritesByDepth = null;
+        var effectiveDepth = 0;
+        if (AstTraversalDagSafety.HasTraversableExprChildren(expr))
+        {
+            var memo = _loadBearingExprWalkMemos[(int)context] ??=
+                new(ReferenceEqualityComparer.Instance);
+            if (!memo.TryGetValue(expr, out rewritesByDepth))
+            {
+                rewritesByDepth = [];
+                memo[expr] = rewritesByDepth;
+            }
+
+            effectiveDepth = checked(_nestedTraversalBase + depth);
+            if (rewritesByDepth.TryGetValue(effectiveDepth, out var memoized))
+                return memoized;
+
+            TraversalObservations?.RecordLoaderWalkExpansion();
+        }
+
+        Expr result;
         if (expr.TryGetUnresolvedLoadArguments(out var loadArgs))
-            return await ProcessLoadAsync(loadArgs, context, expr.Span, depth).ConfigureAwait(false);
+        {
+            result = await ProcessLoadAsync(loadArgs, context, expr.Span, depth).ConfigureAwait(false);
+            if (rewritesByDepth is not null)
+                rewritesByDepth[effectiveDepth] = result;
+            return result;
+        }
 
         switch (expr)
         {
@@ -659,59 +835,68 @@ public sealed class ModuleLoader
                 var newArgs = new List<Expr>(args.Count);
                 foreach (var argExpr in args)
                     newArgs.Add(await RouteExprAsync(argExpr, LoadContext.RuntimeExpr, depth + 1).ConfigureAwait(false));
-                return new Expr.Call(newFunc, new OutputBundle(newArgs)) { Span = expr.Span };
+                result = new Expr.Call(newFunc, new OutputBundle(newArgs)) { Span = expr.Span };
+                break;
             }
 
             case Expr.AlgorithmExpr(var alg):
-                return new Expr.AlgorithmExpr(
+                result = new Expr.AlgorithmExpr(
                     await RouteAlgorithmAsync(alg, context, depth + 1).ConfigureAwait(false))
                 { Span = expr.Span };
+                break;
 
             case Expr.Capture(var captureBody):
             {
                 var newRows = new List<Expr>(captureBody.Count);
                 foreach (var row in captureBody)
                     newRows.Add(await RouteExprAsync(row, context, depth + 1).ConfigureAwait(false));
-                return new Expr.Capture(new OutputBundle(newRows)) { Span = expr.Span };
+                result = new Expr.Capture(new OutputBundle(newRows)) { Span = expr.Span };
+                break;
             }
 
             case Expr.Binary(var op, var left, var right):
-                return new Expr.Binary(op,
+                result = new Expr.Binary(op,
                     await RouteExprAsync(left, LoadContext.RuntimeExpr, depth + 1).ConfigureAwait(false),
                     await RouteExprAsync(right, LoadContext.RuntimeExpr, depth + 1).ConfigureAwait(false))
                 { Span = expr.Span };
+                break;
 
             case Expr.Unary(var op, var operand):
-                return new Expr.Unary(op,
+                result = new Expr.Unary(op,
                     await RouteExprAsync(operand, LoadContext.RuntimeExpr, depth + 1).ConfigureAwait(false))
                 { Span = expr.Span };
+                break;
 
             case Expr.Index(var target, var selector):
-                return new Expr.Index(
+                result = new Expr.Index(
                     await RouteExprAsync(target, LoadContext.RuntimeExpr, depth + 1).ConfigureAwait(false),
                     await RouteExprAsync(selector, LoadContext.RuntimeExpr, depth + 1).ConfigureAwait(false))
                 { Span = expr.Span };
+                break;
 
             case Expr.SequenceSpread(var operand):
-                return new Expr.SequenceSpread(
+                result = new Expr.SequenceSpread(
                     await RouteExprAsync(operand, context, depth + 1).ConfigureAwait(false))
                 {
                     Span = expr.Span,
                     SpreadMarkerSpan = ((Expr.SequenceSpread)expr).SpreadMarkerSpan,
                 };
+                break;
 
             case Expr.SequenceConstruct(var left, var right):
-                return new Expr.SequenceConstruct(
+                result = new Expr.SequenceConstruct(
                     await RouteExprAsync(left, context, depth + 1).ConfigureAwait(false),
                     await RouteExprAsync(right, context, depth + 1).ConfigureAwait(false))
                 { Span = expr.Span };
+                break;
 
             case Expr.ListLiteral(var items):
             {
                 var newItems = new List<Expr>(items.Count);
                 foreach (var item in items)
                     newItems.Add(await RouteExprAsync(item, context, depth + 1).ConfigureAwait(false));
-                return new Expr.ListLiteral(newItems) { Span = expr.Span };
+                result = new Expr.ListLiteral(newItems) { Span = expr.Span };
+                break;
             }
 
             case Expr.DotCall dotCall:
@@ -729,14 +914,16 @@ public sealed class ModuleLoader
 
                 // `with` keeps every stored dot-edge fact intact, as in the
                 // synchronous walk.
-                return dotCall with { Target = newTarget, Args = newArgs };
+                result = dotCall with { Target = newTarget, Args = newArgs };
+                break;
             }
 
             case Expr.Grace grace:
-                return grace with
+                result = grace with
                 {
                     Inner = await RouteExprAsync(grace.Inner, context, depth + 1).ConfigureAwait(false),
                 };
+                break;
 
             // Leaf nodes — no transformation needed
             case Expr.Resolve:
@@ -745,7 +932,8 @@ public sealed class ModuleLoader
             case Expr.StringLiteral:
             case Expr.EmptySequence:
             case Expr.NativeCall:
-                return expr;
+                result = expr;
+                break;
 
             // Exhaustiveness guard — MIRROR OF the synchronous walk's guard,
             // keep in lock-step: a new Expr variant must be classified above
@@ -756,6 +944,10 @@ public sealed class ModuleLoader
                     $"Unhandled Expr variant in {nameof(ModuleLoader)}.{nameof(ProcessExprAsync)}: {expr.GetType().Name}. " +
                     "Classify the new variant explicitly as a recursive rewrite case or an intentional leaf, in both walk twins.");
         }
+
+        if (rewritesByDepth is not null)
+            rewritesByDepth[effectiveDepth] = result;
+        return result;
     }
 
     // ── load processing ────────────────────────────────────────────────────────────────

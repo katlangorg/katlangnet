@@ -26,6 +26,15 @@ public static class ImplicitArgumentResolver
     /// <exception cref="ArgumentException">
     /// The root exceeds the structural AST depth limit or contains a reference cycle.
     /// </exception>
+    /// <remarks>
+    /// Shared subtrees (acyclic DAGs) are legal and DAG-safe: a node referenced from several
+    /// parents resolves exactly like the equivalent duplicated tree (dependency collection is
+    /// name-deduplicated, so multiplicities never mattered), while every walk of this pass is
+    /// reference-identity memoized per constant-context region — traversal work is bounded by
+    /// the DISTINCT reachable nodes, never the number of root-to-node paths, and the rewritten
+    /// output preserves the input's sharing. Memos are run-local (created per resolution,
+    /// garbage afterwards).
+    /// </remarks>
     public static Algorithm Resolve(Algorithm root)
     {
         if (AstStructuralPreflight.Check(
@@ -50,9 +59,69 @@ public static class ImplicitArgumentResolver
     /// elaboration ceiling (the front-end pipeline's common gate); it must never
     /// become reachable with an unvalidated host tree.
     /// </summary>
-    internal static Algorithm ResolvePrevalidated(Algorithm root)
+    internal static Algorithm ResolvePrevalidated(
+        Algorithm root,
+        FrontEndTraversalObservations? observations = null)
     {
-        return ProcessAlgorithm(root, parentParamMap: new Dictionary<string, CallableSignature>(), isRoot: true);
+        return ProcessAlgorithm(
+            root, parentParamMap: new Dictionary<string, CallableSignature>(), isRoot: true, observations);
+    }
+
+    /// <summary>
+    /// Reference-identity memo state for the walks of ONE constant rewrite context region —
+    /// either one algorithm's output-rewrite phase (its visible signature map is final once
+    /// the property loop completed) or one algorithm's open-target region (fresh empty
+    /// signature maps throughout). Maps are keyed by the ORIGINAL node reference and split by
+    /// the context dimensions that legitimately change a node's rewrite within the region:
+    /// call position (a callee <see cref="Expr.Resolve"/> stays bare where a value-position
+    /// one lifts) and the value-demanding Math-argument sub-context (which rewrites under an
+    /// empty caller-pattern configuration). Shared input therefore rewrites once per distinct
+    /// (node, position, sub-context) and stays shared in the output.
+    /// <see cref="Algorithms"/> memoizes nested-algorithm processing so two distinct
+    /// <see cref="Expr.AlgorithmExpr"/> wrappers over ONE shared algorithm resolve it once
+    /// (same signature map for every such call inside the region).
+    /// </summary>
+    private sealed class ResolverWalkMemos(FrontEndTraversalObservations? observations)
+    {
+        public Dictionary<Expr, Expr>? ValueRewrites;
+
+        public Dictionary<Expr, Expr>? CalleeRewrites;
+
+        public Dictionary<Expr, Expr>? ValueDemandingValueRewrites;
+
+        public Dictionary<Expr, Expr>? ValueDemandingCalleeRewrites;
+
+        public Dictionary<Expr, Expr>? OpenRewrites;
+
+        public Dictionary<Expr, Expr>? NestedRewrites;
+
+        public Dictionary<Algorithm, Algorithm>? Algorithms;
+
+        public readonly FrontEndTraversalObservations? Observations = observations;
+
+        public Dictionary<Expr, Expr> RewriteMapFor(bool inValueDemandingContext, bool inCallPosition)
+            => inValueDemandingContext
+                ? inCallPosition
+                    ? ValueDemandingCalleeRewrites ??= new(ReferenceEqualityComparer.Instance)
+                    : ValueDemandingValueRewrites ??= new(ReferenceEqualityComparer.Instance)
+                : inCallPosition
+                    ? CalleeRewrites ??= new(ReferenceEqualityComparer.Instance)
+                    : ValueRewrites ??= new(ReferenceEqualityComparer.Instance);
+    }
+
+    /// <summary>
+    /// Reference-identity memo for ONE implicit-dependency collection region (one algorithm's
+    /// output rows; the signature map and the shared seen/deps accumulators are constant).
+    /// Every contribution is seen-set deduplicated, so a revisit of a completed node — split
+    /// by call position, which changes what a node contributes — adds nothing and is skipped.
+    /// </summary>
+    private sealed class DepsWalkMemo(FrontEndTraversalObservations? observations)
+    {
+        public readonly HashSet<Expr> ValueVisited = new(ReferenceEqualityComparer.Instance);
+
+        public HashSet<Expr>? CalleeVisited;
+
+        public readonly FrontEndTraversalObservations? Observations = observations;
     }
 
     /// <summary>
@@ -74,7 +143,8 @@ public static class ImplicitArgumentResolver
     private static Algorithm ProcessAlgorithm(
         Algorithm alg,
         Dictionary<string, CallableSignature> parentParamMap,
-        bool isRoot = false)
+        bool isRoot = false,
+        FrontEndTraversalObservations? observations = null)
     {
         if (alg is Algorithm.Builtin)
             return alg;
@@ -88,7 +158,7 @@ public static class ImplicitArgumentResolver
         if (alg is Algorithm.User { IsAssignmentDeconstructionHelper: true })
             return alg;
 
-        var newOpens = ProcessOpenExprs(alg.Opens);
+        var newOpens = ProcessOpenExprs(alg.Opens, observations);
 
         // Build local param map
         var localParamMap = BuildPropertyParamMap(alg.Properties);
@@ -134,7 +204,7 @@ public static class ImplicitArgumentResolver
                 var processedBranches = new List<CondBranch>(condAlg.Branches.Count);
                 foreach (var branch in condAlg.Branches)
                 {
-                    var processedBody = ProcessAlgorithm(branch.Body, visibleParamMap);
+                    var processedBody = ProcessAlgorithm(branch.Body, visibleParamMap, isRoot: false, observations);
                     processedBranches.Add(new CondBranch(branch.Pattern, processedBody));
                 }
                 var processedCond = new Algorithm.Conditional(
@@ -143,7 +213,13 @@ public static class ImplicitArgumentResolver
             }
             else
             {
-                var processedBody = ProcessAlgorithm(prop.Value, visibleParamMap);
+                // NOTE: property VALUES are deliberately NOT reference-deduplicated in this
+                // pass (unlike ParameterDetector's property loop): visibleParamMap is UPDATED
+                // after each processed property, so two properties sharing one value algorithm
+                // may legitimately observe different sibling signatures. See the front-end
+                // DAG-safety notes in SEMANTIC-ALIGNMENT.md for the residual complexity this
+                // leaves on shared property values.
+                var processedBody = ProcessAlgorithm(prop.Value, visibleParamMap, isRoot: false, observations);
 
                 // Update param maps with the processed, potentially augmented signature.
                 var processedSignature = CallableSignature.FromAlgorithm(prop.Name, processedBody);
@@ -155,6 +231,11 @@ public static class ImplicitArgumentResolver
         }
 
         var newProperties = processedProperties.ToList();
+
+        // ONE memo bundle spans this algorithm's whole output-rewrite phase: the property
+        // loop above has completed, so visibleParamMap's contents are final for every
+        // rewrite below, and all rows share the exact same context (see ResolverWalkMemos).
+        var walkMemos = new ResolverWalkMemos(observations);
 
         if (alg.ExplicitParameterPatterns.Count > 0)
         {
@@ -170,6 +251,8 @@ public static class ImplicitArgumentResolver
                         alg.ParameterPatterns,
                         explicitBindingKinds,
                         inCallPosition: false,
+                        walkMemos,
+                        inValueDemandingContext: false,
                         requireExistingParameters: true,
                         explicitExistingParams));
             }
@@ -183,15 +266,17 @@ public static class ImplicitArgumentResolver
         }
 
         // Collect implicit dependencies from the algorithm's output and lift
-        // them into its parameter list.
+        // them into its parameter list. One deps memo spans all rows (they share
+        // the seen/deps accumulators, so the walk context is one region).
         var deps = new List<(string Name, CallableSignature Signature)>();
         var seen = new HashSet<string>();
+        var depsMemo = new DepsWalkMemo(observations);
         foreach (var expr in alg.Output)
         {
             if (ShouldPreserveBareRootResolve(expr, visibleParamMap, isRoot))
                 continue;
 
-            CollectImplicitDeps(expr, visibleParamMap, seen, deps, inCallPosition: false);
+            CollectImplicitDeps(expr, visibleParamMap, seen, deps, inCallPosition: false, depsMemo);
         }
 
         // Compute lifted parameter patterns: existing patterns first, then new
@@ -232,7 +317,9 @@ public static class ImplicitArgumentResolver
                         visibleParamMap,
                         alg.ParameterPatterns,
                         liftedBindingKinds,
-                        inCallPosition: false));
+                        inCallPosition: false,
+                        walkMemos,
+                        inValueDemandingContext: false));
         }
 
         return alg.WithParameterPatterns(newPatterns) with
@@ -243,23 +330,47 @@ public static class ImplicitArgumentResolver
         };
     }
 
-    private static IReadOnlyList<Expr> ProcessOpenExprs(IReadOnlyList<Expr> opens)
+    private static IReadOnlyList<Expr> ProcessOpenExprs(
+        IReadOnlyList<Expr> opens,
+        FrontEndTraversalObservations? observations)
     {
         if (opens.Count == 0)
             return opens;
 
+        // One memo bundle per open-target region: every walk below runs with a fresh EMPTY
+        // signature map, so the region's rewrite context is constant regardless of which
+        // fresh map instance a call site allocates.
+        var memos = new ResolverWalkMemos(observations);
         var processed = new List<Expr>(opens.Count);
         foreach (var open in opens)
-            processed.Add(ProcessOpenExpr(open));
+            processed.Add(ProcessOpenExpr(open, memos));
         return processed;
     }
 
-    private static Expr ProcessOpenExpr(Expr expr)
+    private static Expr ProcessOpenExpr(Expr expr, ResolverWalkMemos memos)
+    {
+        // DAG-safety: a shared node reference rewrites once per open-target region and stays
+        // shared in the output. Childless leaves skip the memo.
+        if (!AstTraversalDagSafety.HasTraversableExprChildren(expr))
+            return ProcessOpenExprCore(expr, memos);
+
+        memos.OpenRewrites ??= new(ReferenceEqualityComparer.Instance);
+        if (memos.OpenRewrites.TryGetValue(expr, out var rewritten))
+            return rewritten;
+
+        memos.Observations?.RecordResolverRewriteExpansion();
+        rewritten = ProcessOpenExprCore(expr, memos);
+        memos.OpenRewrites[expr] = rewritten;
+        return rewritten;
+    }
+
+    private static Expr ProcessOpenExprCore(Expr expr, ResolverWalkMemos memos)
     {
         switch (expr)
         {
             case Expr.AlgorithmExpr(var algorithm):
-                return new Expr.AlgorithmExpr(ProcessAlgorithm(algorithm, new Dictionary<string, CallableSignature>()))
+                return new Expr.AlgorithmExpr(
+                    ProcessSharedNestedAlgorithm(algorithm, new Dictionary<string, CallableSignature>(), memos))
                 {
                     Span = expr.Span,
                 };
@@ -269,7 +380,7 @@ public static class ImplicitArgumentResolver
                 // with a fresh signature map like every other open target.
                 return new Expr.Capture(new OutputBundle(
                     captureBody
-                        .Select(row => ProcessExprNested(row, new Dictionary<string, CallableSignature>()))
+                        .Select(row => ProcessExprNested(row, new Dictionary<string, CallableSignature>(), memos))
                         .ToList()))
                 {
                     Span = expr.Span,
@@ -280,15 +391,15 @@ public static class ImplicitArgumentResolver
                 // fallback) intact.
                 return dotCall with
                 {
-                    Target = ProcessOpenExpr(dotCall.Target),
+                    Target = ProcessOpenExpr(dotCall.Target, memos),
                     Args = dotCall.Args is { } dotArgs
-                        ? ProcessArgumentBundle(dotArgs, new Dictionary<string, CallableSignature>())
+                        ? ProcessArgumentBundle(dotArgs, new Dictionary<string, CallableSignature>(), memos)
                         : null,
                 };
 
             case Expr.SequenceSpread(var operand):
                 return new Expr.SequenceSpread(
-                    ProcessOpenExpr(operand))
+                    ProcessOpenExpr(operand, memos))
                 {
                     Span = expr.Span,
                     SpreadMarkerSpan = ((Expr.SequenceSpread)expr).SpreadMarkerSpan,
@@ -296,17 +407,17 @@ public static class ImplicitArgumentResolver
 
             case Expr.SequenceConstruct(var left, var right):
                 return new Expr.SequenceConstruct(
-                    ProcessOpenExpr(left),
-                    ProcessOpenExpr(right)) { Span = expr.Span };
+                    ProcessOpenExpr(left, memos),
+                    ProcessOpenExpr(right, memos)) { Span = expr.Span };
 
             case Expr.ListLiteral(var items):
                 return new Expr.ListLiteral(
-                    items.Select(ProcessOpenExpr).ToList()) { Span = expr.Span };
+                    items.Select(item => ProcessOpenExpr(item, memos)).ToList()) { Span = expr.Span };
 
             case Expr.Call(var function, var args):
                 return new Expr.Call(
-                    ProcessOpenExpr(function),
-                    ProcessArgumentBundle(args, new Dictionary<string, CallableSignature>())) { Span = expr.Span };
+                    ProcessOpenExpr(function, memos),
+                    ProcessArgumentBundle(args, new Dictionary<string, CallableSignature>(), memos)) { Span = expr.Span };
 
             // Intentional leaves: name/literal leaves carry no nested algorithm
             // to process (a bare Resolve IS the ordinary open-target form);
@@ -542,7 +653,37 @@ public static class ImplicitArgumentResolver
         Dictionary<string, CallableSignature> paramMap,
         HashSet<string> seen,
         List<(string Name, CallableSignature Signature)> deps,
-        bool inCallPosition)
+        bool inCallPosition,
+        DepsWalkMemo memo)
+    {
+        // DAG-safety: every contribution of this walk is seen-set deduplicated, so a
+        // completed node reference reached again — under the same call-position flavor,
+        // which is the one context dimension that changes what a node contributes — adds
+        // nothing and is skipped. Childless leaves decide in place.
+        if (!AstTraversalDagSafety.HasTraversableExprChildren(expr))
+        {
+            CollectImplicitDepsCore(expr, paramMap, seen, deps, inCallPosition, memo);
+            return;
+        }
+
+        var visited = inCallPosition
+            ? memo.CalleeVisited ??= new(ReferenceEqualityComparer.Instance)
+            : memo.ValueVisited;
+        if (visited.Contains(expr))
+            return;
+
+        memo.Observations?.RecordResolverCollectExpansion();
+        CollectImplicitDepsCore(expr, paramMap, seen, deps, inCallPosition, memo);
+        visited.Add(expr);
+    }
+
+    private static void CollectImplicitDepsCore(
+        Expr expr,
+        Dictionary<string, CallableSignature> paramMap,
+        HashSet<string> seen,
+        List<(string Name, CallableSignature Signature)> deps,
+        bool inCallPosition,
+        DepsWalkMemo memo)
     {
         switch (expr)
         {
@@ -573,7 +714,7 @@ public static class ImplicitArgumentResolver
                 // Otherwise recurse normally (e.g. Prop target is not in call position).
                 if (func is Expr.Resolve)
                 {
-                    CollectImplicitDeps(func, paramMap, seen, deps, inCallPosition: true);
+                    CollectImplicitDeps(func, paramMap, seen, deps, inCallPosition: true, memo);
 
                     // A Math-alias call has the SAME registry-proven strict-value
                     // argument contract as the written `Math.X(...)` dot shape
@@ -583,41 +724,41 @@ public static class ImplicitArgumentResolver
                     if (TryGetUnshadowedMathAliasCallee(func, paramMap, out var callAliasFacts)
                         && callAliasFacts.HasStrictValueArguments)
                     {
-                        CollectArgumentImplicitDeps(callArgs, paramMap, seen, deps);
+                        CollectArgumentImplicitDeps(callArgs, paramMap, seen, deps, memo);
                     }
                 }
                 else
                 {
-                    CollectImplicitDeps(func, paramMap, seen, deps, inCallPosition: false);
+                    CollectImplicitDeps(func, paramMap, seen, deps, inCallPosition: false, memo);
                 }
                 break;
 
             case Expr.Binary(_, var left, var right):
-                CollectImplicitDeps(left, paramMap, seen, deps, false);
-                CollectImplicitDeps(right, paramMap, seen, deps, false);
+                CollectImplicitDeps(left, paramMap, seen, deps, false, memo);
+                CollectImplicitDeps(right, paramMap, seen, deps, false, memo);
                 break;
 
             case Expr.Unary(_, var operand):
-                CollectImplicitDeps(operand, paramMap, seen, deps, false);
+                CollectImplicitDeps(operand, paramMap, seen, deps, false, memo);
                 break;
 
             case Expr.Index(var target, var selector):
-                CollectImplicitDeps(target, paramMap, seen, deps, false);
-                CollectImplicitDeps(selector, paramMap, seen, deps, false);
+                CollectImplicitDeps(target, paramMap, seen, deps, false, memo);
+                CollectImplicitDeps(selector, paramMap, seen, deps, false, memo);
                 break;
 
             case Expr.SequenceSpread(var operand):
-                CollectImplicitDeps(operand, paramMap, seen, deps, false);
+                CollectImplicitDeps(operand, paramMap, seen, deps, false, memo);
                 break;
 
             case Expr.SequenceConstruct(var left, var right):
-                CollectImplicitDeps(left, paramMap, seen, deps, false);
-                CollectImplicitDeps(right, paramMap, seen, deps, false);
+                CollectImplicitDeps(left, paramMap, seen, deps, false, memo);
+                CollectImplicitDeps(right, paramMap, seen, deps, false, memo);
                 break;
 
             case Expr.ListLiteral(var listItems):
                 foreach (var item in listItems)
-                    CollectImplicitDeps(item, paramMap, seen, deps, false);
+                    CollectImplicitDeps(item, paramMap, seen, deps, false, memo);
                 break;
 
             case Expr.DotCall dotCall:
@@ -629,16 +770,16 @@ public static class ImplicitArgumentResolver
                 }
 
                 // DotCall target is in algorithm position (resolveAlg, not eval).
-                CollectImplicitDeps(dotCall.Target, paramMap, seen, deps, inCallPosition: true);
+                CollectImplicitDeps(dotCall.Target, paramMap, seen, deps, inCallPosition: true, memo);
                 if (dotCall.Args is { } dotArgs
                     && dotCall.HasRegistryProvenStrictValueArguments(paramMap.ContainsKey))
                 {
-                    CollectArgumentImplicitDeps(dotArgs, paramMap, seen, deps);
+                    CollectArgumentImplicitDeps(dotArgs, paramMap, seen, deps, memo);
                 }
                 break;
 
             case Expr.Grace(var inner, _):
-                CollectImplicitDeps(inner, paramMap, seen, deps, inCallPosition);
+                CollectImplicitDeps(inner, paramMap, seen, deps, inCallPosition, memo);
                 break;
 
             case Expr.AlgorithmExpr or Expr.Capture:
@@ -669,10 +810,11 @@ public static class ImplicitArgumentResolver
         OutputBundle args,
         Dictionary<string, CallableSignature> paramMap,
         HashSet<string> seen,
-        List<(string Name, CallableSignature Signature)> deps)
+        List<(string Name, CallableSignature Signature)> deps,
+        DepsWalkMemo memo)
     {
         foreach (var argExpr in args)
-            CollectImplicitDeps(argExpr, paramMap, seen, deps, inCallPosition: false);
+            CollectImplicitDeps(argExpr, paramMap, seen, deps, inCallPosition: false, memo);
     }
 
     /// <summary>
@@ -713,6 +855,47 @@ public static class ImplicitArgumentResolver
         IReadOnlyList<ParameterPattern> callerParameterPatterns,
         IReadOnlyDictionary<string, ParameterKind> sourceBindingKinds,
         bool inCallPosition,
+        ResolverWalkMemos memos,
+        bool inValueDemandingContext,
+        bool requireExistingParameters = false,
+        IReadOnlySet<string>? existingParameterNames = null)
+    {
+        // DAG-safety: one rewrite per shared node reference per (region, call position,
+        // value-demanding sub-context); the memo returns the same rewritten node for every
+        // later reach, preserving the input's sharing (see ResolverWalkMemos). A Resolve
+        // leaf participates because value-position resolution may replace it with a fresh Call.
+        // The
+        // inValueDemandingContext flag travels in lock-step with the caller-pattern /
+        // binding-kind configuration, which is what actually distinguishes the sub-context.
+        var hasTraversableChildren = AstTraversalDagSafety.HasTraversableExprChildren(expr);
+        if (!hasTraversableChildren && expr is not Expr.Resolve)
+        {
+            return RewriteImplicitCallsCore(
+                expr, paramMap, callerParameterPatterns, sourceBindingKinds, inCallPosition,
+                memos, inValueDemandingContext, requireExistingParameters, existingParameterNames);
+        }
+
+        var rewriteMap = memos.RewriteMapFor(inValueDemandingContext, inCallPosition);
+        if (rewriteMap.TryGetValue(expr, out var rewritten))
+            return rewritten;
+
+        if (hasTraversableChildren)
+            memos.Observations?.RecordResolverRewriteExpansion();
+        rewritten = RewriteImplicitCallsCore(
+            expr, paramMap, callerParameterPatterns, sourceBindingKinds, inCallPosition,
+            memos, inValueDemandingContext, requireExistingParameters, existingParameterNames);
+        rewriteMap[expr] = rewritten;
+        return rewritten;
+    }
+
+    private static Expr RewriteImplicitCallsCore(
+        Expr expr,
+        Dictionary<string, CallableSignature> paramMap,
+        IReadOnlyList<ParameterPattern> callerParameterPatterns,
+        IReadOnlyDictionary<string, ParameterKind> sourceBindingKinds,
+        bool inCallPosition,
+        ResolverWalkMemos memos,
+        bool inValueDemandingContext,
         bool requireExistingParameters = false,
         IReadOnlySet<string>? existingParameterNames = null)
     {
@@ -764,14 +947,7 @@ public static class ImplicitArgumentResolver
                 // Otherwise recurse into func normally.
                 var newFunc = func is Expr.Resolve
                     ? func
-                    : RewriteImplicitCalls(
-                        func,
-                        paramMap,
-                        callerParameterPatterns,
-                        sourceBindingKinds,
-                        inCallPosition: false,
-                        requireExistingParameters,
-                        existingParameterNames);
+                    : RewriteImplicitCalls(func, paramMap, callerParameterPatterns, sourceBindingKinds, inCallPosition: false, memos, inValueDemandingContext, requireExistingParameters, existingParameterNames);
 
                 // A Math-alias call shares the written `Math.X(...)` dot shape's
                 // registry-proven strict-value argument contract (the DotCall arm
@@ -780,26 +956,26 @@ public static class ImplicitArgumentResolver
                 // bare higher-order references survive.
                 var newArgs = TryGetUnshadowedMathAliasCallee(func, paramMap, out var callAliasFacts)
                     && callAliasFacts.HasStrictValueArguments
-                    ? ProcessValueDemandingArgumentBundle(args, paramMap)
-                    : ProcessArgumentBundle(args, paramMap);
+                    ? ProcessValueDemandingArgumentBundle(args, paramMap, memos)
+                    : ProcessArgumentBundle(args, paramMap, memos);
                 return new Expr.Call(newFunc, newArgs) { Span = expr.Span };
 
             case Expr.Binary(var op, var left, var right):
                 return new Expr.Binary(op,
-                    RewriteImplicitCalls(left, paramMap, callerParameterPatterns, sourceBindingKinds, false, requireExistingParameters, existingParameterNames),
-                    RewriteImplicitCalls(right, paramMap, callerParameterPatterns, sourceBindingKinds, false, requireExistingParameters, existingParameterNames)) { Span = expr.Span };
+                    RewriteImplicitCalls(left, paramMap, callerParameterPatterns, sourceBindingKinds, false, memos, inValueDemandingContext, requireExistingParameters, existingParameterNames),
+                    RewriteImplicitCalls(right, paramMap, callerParameterPatterns, sourceBindingKinds, false, memos, inValueDemandingContext, requireExistingParameters, existingParameterNames)) { Span = expr.Span };
 
             case Expr.Unary(var op, var operand):
-                return new Expr.Unary(op, RewriteImplicitCalls(operand, paramMap, callerParameterPatterns, sourceBindingKinds, false, requireExistingParameters, existingParameterNames)) { Span = expr.Span };
+                return new Expr.Unary(op, RewriteImplicitCalls(operand, paramMap, callerParameterPatterns, sourceBindingKinds, false, memos, inValueDemandingContext, requireExistingParameters, existingParameterNames)) { Span = expr.Span };
 
             case Expr.Index(var target, var selector):
                 return new Expr.Index(
-                    RewriteImplicitCalls(target, paramMap, callerParameterPatterns, sourceBindingKinds, false, requireExistingParameters, existingParameterNames),
-                    RewriteImplicitCalls(selector, paramMap, callerParameterPatterns, sourceBindingKinds, false, requireExistingParameters, existingParameterNames)) { Span = expr.Span };
+                    RewriteImplicitCalls(target, paramMap, callerParameterPatterns, sourceBindingKinds, false, memos, inValueDemandingContext, requireExistingParameters, existingParameterNames),
+                    RewriteImplicitCalls(selector, paramMap, callerParameterPatterns, sourceBindingKinds, false, memos, inValueDemandingContext, requireExistingParameters, existingParameterNames)) { Span = expr.Span };
 
             case Expr.SequenceSpread(var operand):
                 return new Expr.SequenceSpread(
-                    RewriteImplicitCalls(operand, paramMap, callerParameterPatterns, sourceBindingKinds, false, requireExistingParameters, existingParameterNames))
+                    RewriteImplicitCalls(operand, paramMap, callerParameterPatterns, sourceBindingKinds, false, memos, inValueDemandingContext, requireExistingParameters, existingParameterNames))
                 {
                     Span = expr.Span,
                     SpreadMarkerSpan = ((Expr.SequenceSpread)expr).SpreadMarkerSpan,
@@ -807,12 +983,12 @@ public static class ImplicitArgumentResolver
 
             case Expr.SequenceConstruct(var left, var right):
                 return new Expr.SequenceConstruct(
-                    RewriteImplicitCalls(left, paramMap, callerParameterPatterns, sourceBindingKinds, false, requireExistingParameters, existingParameterNames),
-                    RewriteImplicitCalls(right, paramMap, callerParameterPatterns, sourceBindingKinds, false, requireExistingParameters, existingParameterNames)) { Span = expr.Span };
+                    RewriteImplicitCalls(left, paramMap, callerParameterPatterns, sourceBindingKinds, false, memos, inValueDemandingContext, requireExistingParameters, existingParameterNames),
+                    RewriteImplicitCalls(right, paramMap, callerParameterPatterns, sourceBindingKinds, false, memos, inValueDemandingContext, requireExistingParameters, existingParameterNames)) { Span = expr.Span };
 
             case Expr.ListLiteral(var listItems):
                 return new Expr.ListLiteral(
-                    listItems.Select(item => RewriteImplicitCalls(item, paramMap, callerParameterPatterns, sourceBindingKinds, false, requireExistingParameters, existingParameterNames)).ToList())
+                    listItems.Select(item => RewriteImplicitCalls(item, paramMap, callerParameterPatterns, sourceBindingKinds, false, memos, inValueDemandingContext, requireExistingParameters, existingParameterNames)).ToList())
                 { Span = expr.Span };
 
             case Expr.DotCall(var target, var name, null)
@@ -831,7 +1007,7 @@ public static class ImplicitArgumentResolver
                 var liftedDotArgs = OutputBundle.From(BuildImplicitCallArguments(builtinSignature.ParameterPatterns, callerParameterPatterns, sourceBindingKinds));
                 return ((Expr.DotCall)expr) with
                 {
-                    Target = RewriteImplicitCalls(target, paramMap, callerParameterPatterns, sourceBindingKinds, inCallPosition: true, requireExistingParameters, existingParameterNames),
+                    Target = RewriteImplicitCalls(target, paramMap, callerParameterPatterns, sourceBindingKinds, inCallPosition: true, memos, inValueDemandingContext, requireExistingParameters, existingParameterNames),
                     Args = liftedDotArgs,
                 };
 
@@ -841,25 +1017,26 @@ public static class ImplicitArgumentResolver
                 // no implicit-call rewriting; `with` carries it forward.
                 return dotCall with
                 {
-                    Target = RewriteImplicitCalls(dotCall.Target, paramMap, callerParameterPatterns, sourceBindingKinds, inCallPosition: true, requireExistingParameters, existingParameterNames),
+                    Target = RewriteImplicitCalls(dotCall.Target, paramMap, callerParameterPatterns, sourceBindingKinds, inCallPosition: true, memos, inValueDemandingContext, requireExistingParameters, existingParameterNames),
                     Args = dotCall.Args is { } dotArgs
                         ? dotCall.HasRegistryProvenStrictValueArguments(paramMap.ContainsKey)
-                            ? ProcessValueDemandingArgumentBundle(dotArgs, paramMap)
-                            : ProcessArgumentBundle(dotArgs, paramMap)
+                            ? ProcessValueDemandingArgumentBundle(dotArgs, paramMap, memos)
+                            : ProcessArgumentBundle(dotArgs, paramMap, memos)
                         : null,
                 };
 
             case Expr.Grace(var inner, _):
-                return RewriteImplicitCalls(inner, paramMap, callerParameterPatterns, sourceBindingKinds, inCallPosition, requireExistingParameters, existingParameterNames);
+                return RewriteImplicitCalls(inner, paramMap, callerParameterPatterns, sourceBindingKinds, inCallPosition, memos, inValueDemandingContext, requireExistingParameters, existingParameterNames);
 
             case Expr.AlgorithmExpr(var alg):
-                return new Expr.AlgorithmExpr(ProcessAlgorithm(alg, paramMap)) { Span = expr.Span };
+                return new Expr.AlgorithmExpr(
+                    ProcessSharedNestedAlgorithm(alg, paramMap, memos)) { Span = expr.Span };
 
             case Expr.Capture(var captureBody):
                 // Capture rows recurse without lifting at this level, exactly as
                 // the pre-split transparent group algorithm's rows did.
                 return new Expr.Capture(new OutputBundle(
-                    captureBody.Select(row => ProcessExprNested(row, paramMap)).ToList()))
+                    captureBody.Select(row => ProcessExprNested(row, paramMap, memos)).ToList()))
                 { Span = expr.Span };
 
             // Intentional leaves: nothing to lift or rewrite. (A Param is an
@@ -891,8 +1068,29 @@ public static class ImplicitArgumentResolver
     /// </summary>
     private static OutputBundle ProcessArgumentBundle(
         OutputBundle args,
-        Dictionary<string, CallableSignature> paramMap)
-        => new(args.Select(argExpr => ProcessExprNested(argExpr, paramMap)).ToList());
+        Dictionary<string, CallableSignature> paramMap,
+        ResolverWalkMemos memos)
+        => new(args.Select(argExpr => ProcessExprNested(argExpr, paramMap, memos)).ToList());
+
+    /// <summary>
+    /// Region-memoized nested-algorithm processing for transparent contexts and value
+    /// positions: two distinct <see cref="Expr.AlgorithmExpr"/> wrappers over ONE shared
+    /// algorithm resolve it once (the whole region shares one final signature map).
+    /// </summary>
+    private static Algorithm ProcessSharedNestedAlgorithm(
+        Algorithm alg,
+        Dictionary<string, CallableSignature> paramMap,
+        ResolverWalkMemos memos)
+    {
+        memos.Algorithms ??= new(ReferenceEqualityComparer.Instance);
+        if (!memos.Algorithms.TryGetValue(alg, out var processed))
+        {
+            processed = ProcessAlgorithm(alg, paramMap, isRoot: false, memos.Observations);
+            memos.Algorithms[alg] = processed;
+        }
+
+        return processed;
+    }
 
     /// <summary>
     /// Processes an argument bundle whose consumer is VALUE-DEMANDING: each
@@ -920,12 +1118,22 @@ public static class ImplicitArgumentResolver
     /// </summary>
     private static OutputBundle ProcessValueDemandingArgumentBundle(
         OutputBundle args,
-        Dictionary<string, CallableSignature> paramMap)
+        Dictionary<string, CallableSignature> paramMap,
+        ResolverWalkMemos memos)
     {
+        // Every value-demanding bundle in a region rewrites under the same configuration
+        // (empty caller patterns, empty binding kinds, no existing-parameter gate), so the
+        // region's value-demanding memo maps unify them; the flag below keeps the memo
+        // choice in lock-step with that configuration.
         var emptyBindingKinds = BuildSourceBindingKinds([]);
         var rewritten = new List<Expr>(args.Count);
         foreach (var argExpr in args)
-            rewritten.Add(RewriteImplicitCalls(argExpr, paramMap, [], emptyBindingKinds, inCallPosition: false));
+        {
+            rewritten.Add(RewriteImplicitCalls(
+                argExpr, paramMap, [], emptyBindingKinds, inCallPosition: false,
+                memos, inValueDemandingContext: true));
+        }
+
         return new OutputBundle(rewritten);
     }
 
@@ -970,37 +1178,58 @@ public static class ImplicitArgumentResolver
     /// </summary>
     private static Expr ProcessExprNested(
         Expr expr,
-        Dictionary<string, CallableSignature> paramMap)
+        Dictionary<string, CallableSignature> paramMap,
+        ResolverWalkMemos memos)
+    {
+        // DAG-safety: one rewrite per shared node reference per region's transparent
+        // context; the memo returns the same rewritten node for every later reach.
+        if (!AstTraversalDagSafety.HasTraversableExprChildren(expr))
+            return ProcessExprNestedCore(expr, paramMap, memos);
+
+        memos.NestedRewrites ??= new(ReferenceEqualityComparer.Instance);
+        if (memos.NestedRewrites.TryGetValue(expr, out var rewritten))
+            return rewritten;
+
+        memos.Observations?.RecordResolverRewriteExpansion();
+        rewritten = ProcessExprNestedCore(expr, paramMap, memos);
+        memos.NestedRewrites[expr] = rewritten;
+        return rewritten;
+    }
+
+    private static Expr ProcessExprNestedCore(
+        Expr expr,
+        Dictionary<string, CallableSignature> paramMap,
+        ResolverWalkMemos memos)
     {
         return expr switch
         {
             Expr.AlgorithmExpr(var alg) => new Expr.AlgorithmExpr(
-                ProcessAlgorithm(alg, paramMap)) { Span = expr.Span },
+                ProcessSharedNestedAlgorithm(alg, paramMap, memos)) { Span = expr.Span },
             Expr.Capture(var captureBody) => new Expr.Capture(new OutputBundle(
-                captureBody.Select(row => ProcessExprNested(row, paramMap)).ToList()))
+                captureBody.Select(row => ProcessExprNested(row, paramMap, memos)).ToList()))
             { Span = expr.Span },
             Expr.Call(var func, var args) => new Expr.Call(
-                ProcessExprNested(func, paramMap),
-                ProcessArgumentBundle(args, paramMap)) { Span = expr.Span },
+                ProcessExprNested(func, paramMap, memos),
+                ProcessArgumentBundle(args, paramMap, memos)) { Span = expr.Span },
             Expr.Binary(var op, var l, var r) => new Expr.Binary(op,
-                ProcessExprNested(l, paramMap),
-                ProcessExprNested(r, paramMap)) { Span = expr.Span },
+                ProcessExprNested(l, paramMap, memos),
+                ProcessExprNested(r, paramMap, memos)) { Span = expr.Span },
             Expr.Unary(var op, var operand) => new Expr.Unary(op,
-                ProcessExprNested(operand, paramMap)) { Span = expr.Span },
+                ProcessExprNested(operand, paramMap, memos)) { Span = expr.Span },
             Expr.Index(var t, var s) => new Expr.Index(
-                ProcessExprNested(t, paramMap),
-                ProcessExprNested(s, paramMap)) { Span = expr.Span },
+                ProcessExprNested(t, paramMap, memos),
+                ProcessExprNested(s, paramMap, memos)) { Span = expr.Span },
             Expr.SequenceSpread(var operand) => new Expr.SequenceSpread(
-                ProcessExprNested(operand, paramMap))
+                ProcessExprNested(operand, paramMap, memos))
             {
                 Span = expr.Span,
                 SpreadMarkerSpan = ((Expr.SequenceSpread)expr).SpreadMarkerSpan,
             },
             Expr.SequenceConstruct(var l, var r) => new Expr.SequenceConstruct(
-                ProcessExprNested(l, paramMap),
-                ProcessExprNested(r, paramMap)) { Span = expr.Span },
+                ProcessExprNested(l, paramMap, memos),
+                ProcessExprNested(r, paramMap, memos)) { Span = expr.Span },
             Expr.ListLiteral(var items) => new Expr.ListLiteral(
-                items.Select(item => ProcessExprNested(item, paramMap)).ToList())
+                items.Select(item => ProcessExprNested(item, paramMap, memos)).ToList())
             { Span = expr.Span },
             // `with` keeps the stored dot-edge facts (member span, lexical
             // fallback) — a positional rebuild here silently dropped the
@@ -1008,10 +1237,10 @@ public static class ImplicitArgumentResolver
             // rows, and list elements.
             Expr.DotCall dotCall => dotCall with
             {
-                Target = ProcessExprNested(dotCall.Target, paramMap),
-                Args = dotCall.Args is { } da ? ProcessArgumentBundle(da, paramMap) : null,
+                Target = ProcessExprNested(dotCall.Target, paramMap, memos),
+                Args = dotCall.Args is { } da ? ProcessArgumentBundle(da, paramMap, memos) : null,
             },
-            Expr.Grace(var inner, _) => ProcessExprNested(inner, paramMap),
+            Expr.Grace(var inner, _) => ProcessExprNested(inner, paramMap, memos),
             // Intentional leaves: bare references stay bare in transparent
             // contexts (no lifting at this level, so higher-order references
             // such as Apply(Increment) survive), and literals carry nothing to

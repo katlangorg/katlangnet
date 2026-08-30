@@ -131,10 +131,32 @@ internal static class FinalPropertyExposure
     /// Uses the shared exhaustive AST traversal so algorithms embedded in
     /// output/open/call expressions are finalized too, not only algorithms
     /// reachable through named properties and conditional branches.
+    /// Reference-identity memoized: marked trees legally contain shared (acyclic)
+    /// subtrees — detection preserves input sharing — and recording a property's
+    /// stored exposure is idempotent, so revisiting a shared node is pure waste
+    /// (path-exponential on diamond-shaped DAGs without the memo).
     /// </summary>
     private sealed class FinalExposureMarker : AstWalker
     {
+        private readonly HashSet<object> _visited = new(ReferenceEqualityComparer.Instance);
+
         protected override bool VisitsExplicitParameterDeclarations => false;
+
+        public override void VisitAlgorithm(Algorithm algorithm)
+        {
+            if (!_visited.Add(algorithm))
+                return;
+
+            base.VisitAlgorithm(algorithm);
+        }
+
+        public override void VisitExpr(Expr expr)
+        {
+            if (!_visited.Add(expr))
+                return;
+
+            base.VisitExpr(expr);
+        }
 
         protected override void VisitProperty(Property property)
         {

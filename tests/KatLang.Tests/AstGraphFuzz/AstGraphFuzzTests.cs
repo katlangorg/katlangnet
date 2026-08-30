@@ -321,6 +321,102 @@ public class AstGraphFuzzTests
         }
     }
 
+    // ── front-end elaboration differential (M4) ─────────────────────────────
+
+    /// <summary>
+    /// One front-end sweep of a materialized program root: the elaboration passes the
+    /// pipeline runs (detection, implicit-argument resolution, exposure), then evaluation of
+    /// the elaborated result. Captures everything the shared-vs-cloned oracle compares.
+    /// </summary>
+    private sealed record FrontEndOutcome(
+        IReadOnlyList<string> Params,
+        IReadOnlyList<string> Diagnostics,
+        string? ErrorKind,
+        string? ErrorText,
+        Result? Value);
+
+    private static FrontEndOutcome ElaborateAndEvaluate(Expr wrappedProgram)
+    {
+        var root = ((Expr.AlgorithmExpr)wrappedProgram).Algorithm;
+        var (detected, diagnostics) = ParameterDetector.Detect(root);
+        var resolved = ImplicitArgumentResolver.Resolve(detected);
+        var exposed = PropertyExposureResolver.Resolve(resolved);
+
+        var result = Evaluator.Run(new Expr.AlgorithmExpr(exposed));
+        return new FrontEndOutcome(
+            resolved.Params,
+            diagnostics.Select(d => $"{d.Severity}|{d.Message}|{d.Span}").ToList(),
+            result.IsError ? result.Error.GetType().FullName : null,
+            result.IsError ? result.Error.ToString() : null,
+            result.IsError ? null : result.Value);
+    }
+
+    private static void AssertFrontEndOutcomesEquivalent(string context, FrontEndOutcome expected, FrontEndOutcome actual)
+    {
+        Assert.True(
+            expected.Params.SequenceEqual(actual.Params, StringComparer.Ordinal),
+            $"{context}: inferred signature diverged: ({string.Join(", ", expected.Params)}) vs ({string.Join(", ", actual.Params)})");
+        Assert.True(
+            expected.Diagnostics.SequenceEqual(actual.Diagnostics, StringComparer.Ordinal),
+            $"{context}: front-end diagnostics diverged: [{string.Join(" ; ", expected.Diagnostics)}] vs [{string.Join(" ; ", actual.Diagnostics)}]");
+        Assert.True(
+            expected.ErrorKind == actual.ErrorKind,
+            $"{context}: elaborated error kind diverged: {expected.ErrorKind ?? "<ok>"} vs {actual.ErrorKind ?? "<ok>"}");
+        Assert.True(
+            expected.ErrorText == actual.ErrorText,
+            $"{context}: elaborated error text diverged: {expected.ErrorText} vs {actual.ErrorText}");
+        if (expected.Value is not null || actual.Value is not null)
+        {
+            Assert.True(
+                expected.Value is not null && actual.Value is not null
+                    && Result.ValueComparer.Equals(expected.Value, actual.Value),
+                $"{context}: elaborated values diverged");
+        }
+    }
+
+    /// <summary>
+    /// M4 oracle: the FRONT-END passes (ParameterDetector, ImplicitArgumentResolver,
+    /// PropertyExposureResolver, PropertyDependencyGraphBuilder inside them) must elaborate a
+    /// shared graph exactly like its fully expanded clone — same inferred signature (including
+    /// grace-weight ordering, the one per-occurrence-additive fact), same diagnostics, same
+    /// evaluation outcome of the elaborated result — while doing distinct-node-bounded work.
+    /// The complexity half is pinned by <c>FrontEndDagComplexityTests</c>; this campaign pins
+    /// the semantic half across the whole generated corpus (diamonds, uneven sharing, shared
+    /// leaves and composites, repeated argument edges, mixed shared/unique branches).
+    /// </summary>
+    [Fact]
+    public void Campaign_FrontEndElaboration_SharedVsCloned_AgreeEndToEnd()
+    {
+        var seed = CampaignSeed;
+        var comparisons = 0;
+        foreach (var index in CampaignCases())
+        {
+            var graphCase = AstGraphFuzzer.Generate(seed, index);
+            if (AstGraphFuzzer.ExpandedOccurrenceCount(graphCase) > ClonedOccurrenceBound)
+                continue;
+
+            var replay = graphCase.Describe();
+            var shared = ElaborateAndEvaluate(
+                AstGraphFuzzer.WrapInProgram(AstGraphFuzzer.MaterializeShared(graphCase)));
+            var cloned = ElaborateAndEvaluate(
+                AstGraphFuzzer.WrapInProgram(AstGraphFuzzer.MaterializeCloned(graphCase)));
+            AssertFrontEndOutcomesEquivalent($"front-end shared-vs-cloned {replay}", shared, cloned);
+
+            // Determinism: elaborating the same shared graph again reproduces the outcome.
+            var sharedAgain = ElaborateAndEvaluate(
+                AstGraphFuzzer.WrapInProgram(AstGraphFuzzer.MaterializeShared(graphCase)));
+            AssertFrontEndOutcomesEquivalent($"front-end repeat {replay}", shared, sharedAgain);
+            comparisons++;
+        }
+
+        if (CampaignOnlyCase is null)
+        {
+            Assert.True(
+                comparisons >= CampaignCaseCount * 9 / 10,
+                $"only {comparisons}/{CampaignCaseCount} cases were small enough for the front-end differential");
+        }
+    }
+
     // ── per-occurrence evaluation cost ──────────────────────────────────────
 
     /// <summary>

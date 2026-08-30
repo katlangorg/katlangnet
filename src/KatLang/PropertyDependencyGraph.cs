@@ -122,11 +122,52 @@ internal static class PropertyDependencyGraphBuilder
                 && VisiblePropertyDependencyNames.SetEquals(other.VisiblePropertyDependencyNames);
     }
 
+    /// <summary>
+    /// Reference-identity memo state for ONE summary-collection region (one algorithm-level
+    /// analysis, or one <see cref="Build"/> call's top property loop): the ancestor-owned set
+    /// is fixed for the region, and the walk's two context flavors get separate maps — the
+    /// region's PRIMARY (its local summaries and owned-here names) and the TRANSPARENT bundle
+    /// context (empty summaries, empty owned-here — call/dot-call argument bundles and capture
+    /// rows, identical however deeply they nest). Stored seeds follow a CLONE discipline:
+    /// callers mutate returned seeds as accumulators, so the memo keeps a pristine clone and
+    /// every reach (first or later) receives its own mutable copy — semantically identical to
+    /// re-walking the equivalent duplicated tree, because seed contributions are name SETS.
+    /// <see cref="AlgorithmSeeds"/> memoizes whole nested-algorithm summaries for the region's
+    /// (ancestor-owned, empty locally-owned) context — property values and
+    /// <see cref="Expr.AlgorithmExpr"/> contents alike; conditional BRANCH bodies are exempt
+    /// (their binder-name context varies per branch).
+    /// </summary>
+    private sealed class SummaryWalkMemos(FrontEndTraversalObservations? observations)
+    {
+        public Dictionary<Expr, SummarySeed>? PrimarySeeds;
+
+        public Dictionary<Expr, SummarySeed>? TransparentSeeds;
+
+        public Dictionary<Algorithm, SummarySeed>? AlgorithmSeeds;
+
+        public readonly FrontEndTraversalObservations? Observations = observations;
+    }
+
+    /// <summary>
+    /// Reference-identity memo for ONE sibling-dependency collection (one property's rows):
+    /// contributions are an index SET, so a completed node reference — split by call
+    /// position, the one context dimension that changes a node's contribution — is skipped.
+    /// </summary>
+    private sealed class SiblingWalkMemo(FrontEndTraversalObservations? observations)
+    {
+        public readonly HashSet<Expr> ValueVisited = new(ReferenceEqualityComparer.Instance);
+
+        public HashSet<Expr>? CalleeVisited;
+
+        public readonly FrontEndTraversalObservations? Observations = observations;
+    }
+
     public static PropertyDependencyGraph Build(
         Algorithm.User algorithm,
         IEnumerable<string>? ancestorOwnedNames = null,
         IEnumerable<string>? locallyOwnedNames = null,
-        Func<string, bool>? preludeNameShadowedByCaller = null)
+        Func<string, bool>? preludeNameShadowedByCaller = null,
+        FrontEndTraversalObservations? observations = null)
     {
         var propertyNameToIndex = new Dictionary<string, int>(StringComparer.Ordinal);
         for (var i = 0; i < algorithm.Properties.Count; i++)
@@ -153,6 +194,10 @@ internal static class PropertyDependencyGraphBuilder
                 || ownedHere.Contains(name)
                 || (preludeNameShadowedByCaller?.Invoke(name) ?? false);
 
+        // One memo bundle spans the whole Build call: every property value below is
+        // summarized under the same (ancestorOwnedForProperties, empty locally-owned)
+        // context, so two properties sharing ONE value algorithm summarize it once.
+        var buildMemos = new SummaryWalkMemos(observations);
         var nodes = new PropertyDependencyNode[algorithm.Properties.Count];
         for (var i = 0; i < algorithm.Properties.Count; i++)
         {
@@ -162,11 +207,12 @@ internal static class PropertyDependencyGraphBuilder
                 siblingNames,
                 PreludeNameShadowed,
                 propertyNameToIndex,
-                i);
-            var summarySeed = CollectSummarySeed(
+                i,
+                new SiblingWalkMemo(observations));
+            var summarySeed = CollectSharedAlgorithmSummarySeed(
                 property.Value,
                 ancestorOwnedForProperties,
-                CreateNameSet());
+                buildMemos);
             var summarySiblingDependencyIndices = new HashSet<int>();
             var summaryVisiblePropertyDependencyNames = CreateNameSet();
             foreach (var dependencyName in summarySeed.VisiblePropertyDependencyNames)
@@ -189,18 +235,38 @@ internal static class PropertyDependencyGraphBuilder
         return new PropertyDependencyGraph(algorithm.Properties, propertyNameToIndex, nodes);
     }
 
+    /// <summary>
+    /// Region-memoized nested-algorithm summary for the constant
+    /// (<paramref name="ancestorOwnedForChildren"/>, empty locally-owned) context — see the
+    /// clone discipline on <see cref="SummaryWalkMemos"/>.
+    /// </summary>
+    private static SummarySeed CollectSharedAlgorithmSummarySeed(
+        Algorithm algorithm,
+        HashSet<string> ancestorOwnedForChildren,
+        SummaryWalkMemos memos)
+    {
+        memos.AlgorithmSeeds ??= new(ReferenceEqualityComparer.Instance);
+        if (memos.AlgorithmSeeds.TryGetValue(algorithm, out var stored))
+            return stored.Clone();
+
+        var seed = CollectSummarySeed(algorithm, ancestorOwnedForChildren, CreateNameSet(), memos.Observations);
+        memos.AlgorithmSeeds[algorithm] = seed.Clone();
+        return seed;
+    }
+
     private static SummarySeed CollectSummarySeed(
         Algorithm algorithm,
         HashSet<string> ancestorOwnedNames,
-        HashSet<string> locallyOwnedNames)
+        HashSet<string> locallyOwnedNames,
+        FrontEndTraversalObservations? observations)
     {
         switch (algorithm)
         {
             case Algorithm.User user:
-                return CollectSummarySeed(user, ancestorOwnedNames, locallyOwnedNames);
+                return CollectSummarySeed(user, ancestorOwnedNames, locallyOwnedNames, observations);
 
             case Algorithm.Conditional conditional:
-                return CollectSummarySeed(conditional, ancestorOwnedNames, locallyOwnedNames);
+                return CollectSummarySeed(conditional, ancestorOwnedNames, locallyOwnedNames, observations);
 
             default:
                 return new SummarySeed();
@@ -210,7 +276,8 @@ internal static class PropertyDependencyGraphBuilder
     private static SummarySeed CollectSummarySeed(
         Algorithm.User algorithm,
         HashSet<string> ancestorOwnedNames,
-        HashSet<string> locallyOwnedNames)
+        HashSet<string> locallyOwnedNames,
+        FrontEndTraversalObservations? observations)
     {
         // A synthetic assignment-deconstruction helper (`x, *y, z = RHS`) is self-contained: it
         // binds its own N-capture pattern and outputs one of those bound params, capturing no
@@ -238,16 +305,21 @@ internal static class PropertyDependencyGraphBuilder
         // RemoveRequiredAncestorOwnedParameterNames strip below keeps each
         // algorithm's self-owned parameters out of the summary it returns.
 
+        // One memo bundle per algorithm-level analysis region: the property base seeds and
+        // the opens/output walks below all run against this region's fixed ancestor-owned
+        // set (property values and nested AlgorithmExpr contents additionally share the
+        // empty locally-owned algorithm context).
+        var memos = new SummaryWalkMemos(observations);
         var currentPropertySummaries = new Dictionary<string, SummarySeed>(StringComparer.Ordinal);
         var propertyBaseSeeds = new SummarySeed[algorithm.Properties.Count];
         for (var i = 0; i < algorithm.Properties.Count; i++)
         {
             var property = algorithm.Properties[i];
             currentPropertySummaries[property.Name] = new SummarySeed();
-            propertyBaseSeeds[i] = CollectSummarySeed(
+            propertyBaseSeeds[i] = CollectSharedAlgorithmSummarySeed(
                 property.Value,
                 ancestorOwnedForChildren,
-                CreateNameSet());
+                memos);
         }
 
         while (true)
@@ -274,12 +346,16 @@ internal static class PropertyDependencyGraphBuilder
             algorithm.Opens,
             currentPropertySummaries,
             ownedHere,
-            ancestorOwnedForChildren);
+            ancestorOwnedForChildren,
+            memos,
+            inTransparentContext: false);
         seed.UnionWith(CollectSummarySeed(
             algorithm.Output,
             currentPropertySummaries,
             ownedHere,
-            ancestorOwnedForChildren));
+            ancestorOwnedForChildren,
+            memos,
+            inTransparentContext: false));
         seed.RemoveRequiredAncestorOwnedParameterNames(ownedHere);
         return seed;
     }
@@ -308,7 +384,8 @@ internal static class PropertyDependencyGraphBuilder
     private static SummarySeed CollectSummarySeed(
         Algorithm.Conditional algorithm,
         HashSet<string> ancestorOwnedNames,
-        HashSet<string> locallyOwnedNames)
+        HashSet<string> locallyOwnedNames,
+        FrontEndTraversalObservations? observations)
     {
         var ownedHere = CreateNameSet(locallyOwnedNames);
         var ancestorOwnedForChildren = CreateNameSet(ancestorOwnedNames);
@@ -318,14 +395,19 @@ internal static class PropertyDependencyGraphBuilder
             algorithm.Opens,
             new Dictionary<string, SummarySeed>(StringComparer.Ordinal),
             ownedHere,
-            ancestorOwnedForChildren);
+            ancestorOwnedForChildren,
+            new SummaryWalkMemos(observations),
+            inTransparentContext: false);
 
         foreach (var branch in algorithm.Branches)
         {
+            // Branch bodies are deliberately not reference-deduplicated: their binder-name
+            // context varies per branch.
             seed.UnionWith(CollectSummarySeed(
                 branch.Body,
                 ancestorOwnedForChildren,
-                CreateNameSet(branch.Pattern.BoundNames())));
+                CreateNameSet(branch.Pattern.BoundNames()),
+                observations));
         }
 
         return seed;
@@ -335,11 +417,13 @@ internal static class PropertyDependencyGraphBuilder
         IReadOnlyList<Expr> expressions,
         IReadOnlyDictionary<string, SummarySeed> localPropertySummaries,
         HashSet<string> ownedHere,
-        HashSet<string> ancestorOwnedForChildren)
+        HashSet<string> ancestorOwnedForChildren,
+        SummaryWalkMemos memos,
+        bool inTransparentContext)
     {
         var seed = new SummarySeed();
         foreach (var expression in expressions)
-            seed.UnionWith(CollectSummarySeed(expression, localPropertySummaries, ownedHere, ancestorOwnedForChildren));
+            seed.UnionWith(CollectSummarySeed(expression, localPropertySummaries, ownedHere, ancestorOwnedForChildren, memos, inTransparentContext));
 
         return seed;
     }
@@ -348,7 +432,38 @@ internal static class PropertyDependencyGraphBuilder
         Expr expr,
         IReadOnlyDictionary<string, SummarySeed> localPropertySummaries,
         HashSet<string> ownedHere,
-        HashSet<string> ancestorOwnedForChildren)
+        HashSet<string> ancestorOwnedForChildren,
+        SummaryWalkMemos memos,
+        bool inTransparentContext)
+    {
+        // DAG-safety: a shared node reference is summarized once per (region, context
+        // flavor); every reach receives its own mutable CLONE of the pristine stored seed
+        // (see SummaryWalkMemos), which is exactly what re-walking the duplicated tree
+        // would contribute. The inTransparentContext flag travels in lock-step with the
+        // empty summaries/owned-here maps the transparent arms pass. Childless leaves
+        // build their seed in place.
+        if (!AstTraversalDagSafety.HasTraversableExprChildren(expr))
+            return CollectSummarySeedCore(expr, localPropertySummaries, ownedHere, ancestorOwnedForChildren, memos, inTransparentContext);
+
+        var seedMap = inTransparentContext
+            ? memos.TransparentSeeds ??= new(ReferenceEqualityComparer.Instance)
+            : memos.PrimarySeeds ??= new(ReferenceEqualityComparer.Instance);
+        if (seedMap.TryGetValue(expr, out var stored))
+            return stored.Clone();
+
+        memos.Observations?.RecordDependencySeedExpansion();
+        var seed = CollectSummarySeedCore(expr, localPropertySummaries, ownedHere, ancestorOwnedForChildren, memos, inTransparentContext);
+        seedMap[expr] = seed.Clone();
+        return seed;
+    }
+
+    private static SummarySeed CollectSummarySeedCore(
+        Expr expr,
+        IReadOnlyDictionary<string, SummarySeed> localPropertySummaries,
+        HashSet<string> ownedHere,
+        HashSet<string> ancestorOwnedForChildren,
+        SummaryWalkMemos memos,
+        bool inTransparentContext)
     {
         switch (expr)
         {
@@ -363,35 +478,35 @@ internal static class PropertyDependencyGraphBuilder
                     : new SummarySeed(visiblePropertyDependencyNames: [name]);
 
             case Expr.Grace(var inner, _):
-                return CollectSummarySeed(inner, localPropertySummaries, ownedHere, ancestorOwnedForChildren);
+                return CollectSummarySeed(inner, localPropertySummaries, ownedHere, ancestorOwnedForChildren, memos, inTransparentContext);
 
             case Expr.Binary(_, var left, var right):
             {
-                var seed = CollectSummarySeed(left, localPropertySummaries, ownedHere, ancestorOwnedForChildren);
-                seed.UnionWith(CollectSummarySeed(right, localPropertySummaries, ownedHere, ancestorOwnedForChildren));
+                var seed = CollectSummarySeed(left, localPropertySummaries, ownedHere, ancestorOwnedForChildren, memos, inTransparentContext);
+                seed.UnionWith(CollectSummarySeed(right, localPropertySummaries, ownedHere, ancestorOwnedForChildren, memos, inTransparentContext));
                 return seed;
             }
 
             case Expr.Unary(_, var operand):
-                return CollectSummarySeed(operand, localPropertySummaries, ownedHere, ancestorOwnedForChildren);
+                return CollectSummarySeed(operand, localPropertySummaries, ownedHere, ancestorOwnedForChildren, memos, inTransparentContext);
 
             case Expr.Index(var target, var selector):
             {
-                var seed = CollectSummarySeed(target, localPropertySummaries, ownedHere, ancestorOwnedForChildren);
-                seed.UnionWith(CollectSummarySeed(selector, localPropertySummaries, ownedHere, ancestorOwnedForChildren));
+                var seed = CollectSummarySeed(target, localPropertySummaries, ownedHere, ancestorOwnedForChildren, memos, inTransparentContext);
+                seed.UnionWith(CollectSummarySeed(selector, localPropertySummaries, ownedHere, ancestorOwnedForChildren, memos, inTransparentContext));
                 return seed;
             }
 
             case Expr.SequenceSpread(var operand):
             {
-                var seed = CollectSummarySeed(operand, localPropertySummaries, ownedHere, ancestorOwnedForChildren);
+                var seed = CollectSummarySeed(operand, localPropertySummaries, ownedHere, ancestorOwnedForChildren, memos, inTransparentContext);
                 return seed;
             }
 
             case Expr.SequenceConstruct(var left, var right):
             {
-                var seed = CollectSummarySeed(left, localPropertySummaries, ownedHere, ancestorOwnedForChildren);
-                seed.UnionWith(CollectSummarySeed(right, localPropertySummaries, ownedHere, ancestorOwnedForChildren));
+                var seed = CollectSummarySeed(left, localPropertySummaries, ownedHere, ancestorOwnedForChildren, memos, inTransparentContext);
+                seed.UnionWith(CollectSummarySeed(right, localPropertySummaries, ownedHere, ancestorOwnedForChildren, memos, inTransparentContext));
                 return seed;
             }
 
@@ -399,15 +514,15 @@ internal static class PropertyDependencyGraphBuilder
             {
                 var seed = new SummarySeed();
                 foreach (var item in listItems)
-                    seed.UnionWith(CollectSummarySeed(item, localPropertySummaries, ownedHere, ancestorOwnedForChildren));
+                    seed.UnionWith(CollectSummarySeed(item, localPropertySummaries, ownedHere, ancestorOwnedForChildren, memos, inTransparentContext));
                 return seed;
             }
 
             case Expr.AlgorithmExpr(var algorithm):
-                return CollectSummarySeed(
+                return CollectSharedAlgorithmSummarySeed(
                     algorithm,
                     ancestorOwnedForChildren,
-                    CreateNameSet());
+                    memos);
 
             case Expr.Capture(var captureBody):
                 // A capture owns no names: its rows walk with an empty
@@ -418,7 +533,9 @@ internal static class PropertyDependencyGraphBuilder
                     captureBody,
                     new Dictionary<string, SummarySeed>(StringComparer.Ordinal),
                     CreateNameSet(),
-                    ancestorOwnedForChildren);
+                    ancestorOwnedForChildren,
+                    memos,
+                    inTransparentContext: true);
 
             case Expr.Call(var function, var args):
             {
@@ -426,18 +543,20 @@ internal static class PropertyDependencyGraphBuilder
                 // owned-here set and an empty local-summary map — the same
                 // attribution as capture rows (and as the pre-Track-B empty
                 // transparent args wrapper).
-                var seed = CollectSummarySeed(function, localPropertySummaries, ownedHere, ancestorOwnedForChildren);
+                var seed = CollectSummarySeed(function, localPropertySummaries, ownedHere, ancestorOwnedForChildren, memos, inTransparentContext);
                 seed.UnionWith(CollectSummarySeed(
                     args,
                     new Dictionary<string, SummarySeed>(StringComparer.Ordinal),
                     CreateNameSet(),
-                    ancestorOwnedForChildren));
+                    ancestorOwnedForChildren,
+                    memos,
+                    inTransparentContext: true));
                 return seed;
             }
 
             case Expr.DotCall dotCall:
             {
-                var seed = CollectSummarySeed(dotCall.Target, localPropertySummaries, ownedHere, ancestorOwnedForChildren);
+                var seed = CollectSummarySeed(dotCall.Target, localPropertySummaries, ownedHere, ancestorOwnedForChildren, memos, inTransparentContext);
 
                 // The stored lexical-fallback identity is an ordinary
                 // elaborated name expression (Resolve/Param) and participates
@@ -463,7 +582,9 @@ internal static class PropertyDependencyGraphBuilder
                         dotCall.EffectiveLexicalFallback,
                         localPropertySummaries,
                         ownedHere,
-                        ancestorOwnedForChildren));
+                        ancestorOwnedForChildren,
+                        memos,
+                        inTransparentContext));
                 }
 
                 if (dotCall.Args is { } argsOpt)
@@ -472,7 +593,9 @@ internal static class PropertyDependencyGraphBuilder
                         argsOpt,
                         new Dictionary<string, SummarySeed>(StringComparer.Ordinal),
                         CreateNameSet(),
-                        ancestorOwnedForChildren));
+                        ancestorOwnedForChildren,
+                        memos,
+                        inTransparentContext: true));
                 }
 
                 return seed;
@@ -519,11 +642,12 @@ internal static class PropertyDependencyGraphBuilder
         HashSet<string> siblingNames,
         Func<string, bool> preludeNameShadowed,
         IReadOnlyDictionary<string, int> propertyNameToIndex,
-        int propertyIndex)
+        int propertyIndex,
+        SiblingWalkMemo memo)
     {
         var dependencyIndices = new HashSet<int>();
         foreach (var expression in expressions)
-            CollectSiblingDependencyIndices(expression, siblingNames, preludeNameShadowed, propertyNameToIndex, dependencyIndices, propertyIndex, inCallPosition: false);
+            CollectSiblingDependencyIndices(expression, siblingNames, preludeNameShadowed, propertyNameToIndex, dependencyIndices, propertyIndex, inCallPosition: false, memo);
 
         return dependencyIndices.OrderBy(static idx => idx).ToArray();
     }
@@ -535,7 +659,37 @@ internal static class PropertyDependencyGraphBuilder
         IReadOnlyDictionary<string, int> propertyNameToIndex,
         HashSet<int> dependencyIndices,
         int propertyIndex,
-        bool inCallPosition)
+        bool inCallPosition,
+        SiblingWalkMemo memo)
+    {
+        // DAG-safety: contributions are index-set idempotent, so a completed node reference
+        // reached again under the same call-position flavor is skipped (see SiblingWalkMemo).
+        if (!AstTraversalDagSafety.HasTraversableExprChildren(expr))
+        {
+            CollectSiblingDependencyIndicesCore(expr, siblingNames, preludeNameShadowed, propertyNameToIndex, dependencyIndices, propertyIndex, inCallPosition, memo);
+            return;
+        }
+
+        var visited = inCallPosition
+            ? memo.CalleeVisited ??= new(ReferenceEqualityComparer.Instance)
+            : memo.ValueVisited;
+        if (visited.Contains(expr))
+            return;
+
+        memo.Observations?.RecordDependencySiblingExpansion();
+        CollectSiblingDependencyIndicesCore(expr, siblingNames, preludeNameShadowed, propertyNameToIndex, dependencyIndices, propertyIndex, inCallPosition, memo);
+        visited.Add(expr);
+    }
+
+    private static void CollectSiblingDependencyIndicesCore(
+        Expr expr,
+        HashSet<string> siblingNames,
+        Func<string, bool> preludeNameShadowed,
+        IReadOnlyDictionary<string, int> propertyNameToIndex,
+        HashSet<int> dependencyIndices,
+        int propertyIndex,
+        bool inCallPosition,
+        SiblingWalkMemo memo)
     {
         switch (expr)
         {
@@ -550,7 +704,7 @@ internal static class PropertyDependencyGraphBuilder
                 break;
 
             case Expr.Call(var function, var callArgs):
-                CollectSiblingDependencyIndices(function, siblingNames, preludeNameShadowed, propertyNameToIndex, dependencyIndices, propertyIndex, inCallPosition: true);
+                CollectSiblingDependencyIndices(function, siblingNames, preludeNameShadowed, propertyNameToIndex, dependencyIndices, propertyIndex, inCallPosition: true, memo);
 
                 // An unshadowed Math-ALIAS call has the same registry-proven
                 // strict-value argument contract as the written `Math.X(...)`
@@ -563,53 +717,53 @@ internal static class PropertyDependencyGraphBuilder
                     && aliasFacts.HasStrictValueArguments
                     && !preludeNameShadowed(calleeName))
                 {
-                    CollectArgumentSiblingDependencyIndices(callArgs, siblingNames, preludeNameShadowed, propertyNameToIndex, dependencyIndices, propertyIndex);
+                    CollectArgumentSiblingDependencyIndices(callArgs, siblingNames, preludeNameShadowed, propertyNameToIndex, dependencyIndices, propertyIndex, memo);
                 }
                 break;
 
             case Expr.Binary(_, var left, var right):
-                CollectSiblingDependencyIndices(left, siblingNames, preludeNameShadowed, propertyNameToIndex, dependencyIndices, propertyIndex, false);
-                CollectSiblingDependencyIndices(right, siblingNames, preludeNameShadowed, propertyNameToIndex, dependencyIndices, propertyIndex, false);
+                CollectSiblingDependencyIndices(left, siblingNames, preludeNameShadowed, propertyNameToIndex, dependencyIndices, propertyIndex, false, memo);
+                CollectSiblingDependencyIndices(right, siblingNames, preludeNameShadowed, propertyNameToIndex, dependencyIndices, propertyIndex, false, memo);
                 break;
 
             case Expr.Unary(_, var operand):
-                CollectSiblingDependencyIndices(operand, siblingNames, preludeNameShadowed, propertyNameToIndex, dependencyIndices, propertyIndex, false);
+                CollectSiblingDependencyIndices(operand, siblingNames, preludeNameShadowed, propertyNameToIndex, dependencyIndices, propertyIndex, false, memo);
                 break;
 
             case Expr.Index(var target, var selector):
-                CollectSiblingDependencyIndices(target, siblingNames, preludeNameShadowed, propertyNameToIndex, dependencyIndices, propertyIndex, false);
-                CollectSiblingDependencyIndices(selector, siblingNames, preludeNameShadowed, propertyNameToIndex, dependencyIndices, propertyIndex, false);
+                CollectSiblingDependencyIndices(target, siblingNames, preludeNameShadowed, propertyNameToIndex, dependencyIndices, propertyIndex, false, memo);
+                CollectSiblingDependencyIndices(selector, siblingNames, preludeNameShadowed, propertyNameToIndex, dependencyIndices, propertyIndex, false, memo);
                 break;
 
             case Expr.SequenceSpread(var operand):
-                CollectSiblingDependencyIndices(operand, siblingNames, preludeNameShadowed, propertyNameToIndex, dependencyIndices, propertyIndex, false);
+                CollectSiblingDependencyIndices(operand, siblingNames, preludeNameShadowed, propertyNameToIndex, dependencyIndices, propertyIndex, false, memo);
                 break;
 
             case Expr.SequenceConstruct(var left, var right):
-                CollectSiblingDependencyIndices(left, siblingNames, preludeNameShadowed, propertyNameToIndex, dependencyIndices, propertyIndex, false);
-                CollectSiblingDependencyIndices(right, siblingNames, preludeNameShadowed, propertyNameToIndex, dependencyIndices, propertyIndex, false);
+                CollectSiblingDependencyIndices(left, siblingNames, preludeNameShadowed, propertyNameToIndex, dependencyIndices, propertyIndex, false, memo);
+                CollectSiblingDependencyIndices(right, siblingNames, preludeNameShadowed, propertyNameToIndex, dependencyIndices, propertyIndex, false, memo);
                 break;
 
             case Expr.ListLiteral(var listItems):
                 foreach (var item in listItems)
-                    CollectSiblingDependencyIndices(item, siblingNames, preludeNameShadowed, propertyNameToIndex, dependencyIndices, propertyIndex, false);
+                    CollectSiblingDependencyIndices(item, siblingNames, preludeNameShadowed, propertyNameToIndex, dependencyIndices, propertyIndex, false, memo);
                 break;
 
             case Expr.DotCall(var target, _, null):
-                CollectSiblingDependencyIndices(target, siblingNames, preludeNameShadowed, propertyNameToIndex, dependencyIndices, propertyIndex, false);
+                CollectSiblingDependencyIndices(target, siblingNames, preludeNameShadowed, propertyNameToIndex, dependencyIndices, propertyIndex, false, memo);
                 break;
 
             case Expr.DotCall dotCall:
-                CollectSiblingDependencyIndices(dotCall.Target, siblingNames, preludeNameShadowed, propertyNameToIndex, dependencyIndices, propertyIndex, inCallPosition: true);
+                CollectSiblingDependencyIndices(dotCall.Target, siblingNames, preludeNameShadowed, propertyNameToIndex, dependencyIndices, propertyIndex, inCallPosition: true, memo);
                 if (dotCall.Args is { } args
                     && dotCall.HasRegistryProvenStrictValueArguments(preludeNameShadowed))
                 {
-                    CollectArgumentSiblingDependencyIndices(args, siblingNames, preludeNameShadowed, propertyNameToIndex, dependencyIndices, propertyIndex);
+                    CollectArgumentSiblingDependencyIndices(args, siblingNames, preludeNameShadowed, propertyNameToIndex, dependencyIndices, propertyIndex, memo);
                 }
                 break;
 
             case Expr.Grace(var inner, _):
-                CollectSiblingDependencyIndices(inner, siblingNames, preludeNameShadowed, propertyNameToIndex, dependencyIndices, propertyIndex, inCallPosition);
+                CollectSiblingDependencyIndices(inner, siblingNames, preludeNameShadowed, propertyNameToIndex, dependencyIndices, propertyIndex, inCallPosition, memo);
                 break;
 
             case Expr.AlgorithmExpr or Expr.Capture:
@@ -639,7 +793,8 @@ internal static class PropertyDependencyGraphBuilder
         Func<string, bool> preludeNameShadowed,
         IReadOnlyDictionary<string, int> propertyNameToIndex,
         HashSet<int> dependencyIndices,
-        int propertyIndex)
+        int propertyIndex,
+        SiblingWalkMemo memo)
     {
         foreach (var expression in args)
         {
@@ -650,7 +805,8 @@ internal static class PropertyDependencyGraphBuilder
                 propertyNameToIndex,
                 dependencyIndices,
                 propertyIndex,
-                inCallPosition: false);
+                inCallPosition: false,
+                memo);
         }
     }
 
