@@ -34,8 +34,22 @@ namespace KatLang;
 ///
 /// <para>Security: enforces domain allowlist, size limits, cycle detection, and optional
 /// host cancellation during source/module processing.</para>
+///
+/// <para><b>Internal by design (v0.8.188):</b> this is ONE stage of the authoritative
+/// front-end pipeline (<see cref="FrontEndPipeline"/>), not a host-composable API —
+/// the same boundary rule that internalized <see cref="ParameterDetector"/> and
+/// <see cref="ImplicitArgumentResolver"/> in v0.8.187, and this stage is even more
+/// incomplete: an <see cref="ElaborateAsync"/>-only tree has had NO parameter
+/// detection (a spliced module's declared parameter references are still raw
+/// <see cref="Expr.Resolve"/> nodes, so its functions cannot bind their arguments),
+/// no implicit-argument resolution, and no property-exposure finalization (see
+/// <c>FrontEndElaborationBoundaryTests</c>). Hosts get module loading through
+/// <see cref="Parser.ParseAsync"/> / <see cref="KatLangEngine.RunAsync"/> with
+/// <see cref="RunOptions.DownloadCode"/> and <see cref="RunOptions.AllowedHosts"/> —
+/// the complete pipeline, including an in-memory downloader completing
+/// synchronously exactly as it would here.</para>
 /// </summary>
-public sealed class ModuleLoader
+internal sealed class ModuleLoader
 {
     private readonly Func<string, CancellationToken, ValueTask<string>> _downloadCode;
     private readonly CancellationToken _sourceProcessingCancellationToken;
@@ -50,7 +64,7 @@ public sealed class ModuleLoader
     // RouteAlgorithmAsync consult it to decide sync vs async processing per child. Marking is
     // path-complete: every node from which the rewrite walk can reach a load is marked, so the
     // synchronous walk (entered only at unmarked nodes) can never encounter a load.
-    // The set is cleared at the public elaboration boundary so a reusable loader does
+    // The set is cleared at the loader's elaboration boundary so a reusable loader does
     // not retain every caller-owned input tree for the rest of its lifetime.
     private readonly HashSet<object> _loadBearing = new(ReferenceEqualityComparer.Instance);
 
@@ -65,7 +79,7 @@ public sealed class ModuleLoader
     // CALL node is thereby processed once per constant (node, context, live-depth) region — one
     // budget charge, diagnostic, and splice there — while a genuinely depth-sensitive second
     // occurrence is rewritten independently. Distinct load nodes remain independent load sites.
-    // Lazily allocated and cleared with _loadBearing at the public elaboration boundary; the
+    // Lazily allocated and cleared with _loadBearing at the loader's elaboration boundary; the
     // loader processes one logical elaboration sequentially, so plain fields suffice.
     private readonly Dictionary<Expr, Expr>?[] _exprWalkMemos = new Dictionary<Expr, Expr>?[4];
     private readonly Dictionary<Algorithm, Algorithm>?[] _algorithmWalkMemos = new Dictionary<Algorithm, Algorithm>?[4];
@@ -241,8 +255,8 @@ public sealed class ModuleLoader
     /// <summary>
     /// Front-end entry point that threads the run-scoped <see cref="SourceProcessingBudget"/> so
     /// import depth, distinct-module count, and aggregate source are accounted across the whole run.
-    /// The public constructor delegates here with a fresh default budget, so a directly-constructed
-    /// loader still enforces the always-active ceilings.
+    /// The AST-based convenience constructor above delegates here with a fresh default budget, so a
+    /// directly-constructed loader still enforces the always-active ceilings.
     /// </summary>
     internal ModuleLoader(
         List<Diagnostic> diagnostics,
@@ -260,7 +274,7 @@ public sealed class ModuleLoader
         _budget = budget ?? new SourceProcessingBudget(null);
     }
 
-    // ── Public API ───────────────────────────────────────────────────────────
+    // ── Loader entry points ──────────────────────────────────────────────────
 
     /// <summary>
     /// Processes the entire AST, resolving all load calls, awaiting each module download.

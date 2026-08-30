@@ -193,7 +193,7 @@ public sealed class OutputBundle : IReadOnlyList<Expr>
 /// Algorithm parameter metadata.
 /// Source spans are populated for explicit clause binders that elaborate to an
 /// ordinary <see cref="Algorithm.User"/>. Implicit parameters inferred later by
-/// <see cref="ParameterDetector"/> have no source declaration span.
+/// the front end's parameter-detection pass have no source declaration span.
 /// </summary>
 public enum ParameterKind
 {
@@ -217,8 +217,8 @@ public sealed record ParameterDeclaration(string Name, SourceSpan? Span = null, 
     public SourceSpan? CollectMarkerSpan { get; init; }
 
     /// <summary>
-    /// Diagnostic-only provenance for an implicit parameter that
-    /// <see cref="ParameterDetector"/> inferred from an unresolved identifier;
+    /// Diagnostic-only provenance for an implicit parameter that the front
+    /// end's parameter-detection pass inferred from an unresolved identifier;
     /// <c>null</c> for every explicitly declared or host-built parameter.
     /// Carries the unresolved name's first semantic source occurrence and an
     /// optional conservative near-miss suggestion. It never participates in

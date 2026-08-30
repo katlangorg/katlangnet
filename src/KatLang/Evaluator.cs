@@ -9145,6 +9145,13 @@ public static partial class Evaluator
     /// <summary>
     /// Run evaluation on an expression with prelude in scope.
     /// Lean: runResult → EvalM Result.
+    /// <para><b>No front-end elaboration:</b> this lower-level host-AST boundary
+    /// evaluates <paramref name="expr"/> exactly as supplied. It does not parse source,
+    /// load modules, detect parameters, resolve implicit arguments, or finalize property
+    /// exposure metadata. Hosts that need authoritative source elaboration use
+    /// <see cref="Parser.Parse(string)"/> / <see cref="Parser.ParseAsync"/> or
+    /// <see cref="KatLangEngine"/>; a host that constructs an AST owns the correctness
+    /// of its elaboration metadata.</para>
     /// <para><b>Host-AST contract:</b> the expression may be a preconstructed
     /// (host-built) AST. Every entry point first runs a non-recursive structural safety
     /// preflight: a tree whose weighted structural depth exceeds

@@ -4,8 +4,16 @@ namespace KatLang;
 /// Rewrites bare references to algorithms with parameters into explicit <see cref="Expr.Call"/> nodes,
 /// lifting their parameters into the enclosing algorithm's <see cref="Algorithm.Parameters"/> list.
 /// Must run after <see cref="ParameterDetector"/>.
+///
+/// <para><b>Internal by design (v0.8.187):</b> this is ONE stage of the authoritative
+/// front-end pipeline (<see cref="FrontEndPipeline"/>), not a host-composable API — its
+/// output still lacks the <see cref="PropertyExposureResolver"/> finalization the
+/// evaluator's stored-exposure checks rely on (see
+/// <c>FrontEndElaborationBoundaryTests</c>). Hosts elaborate through
+/// <see cref="Parser.Parse(string)"/> / <see cref="Parser.ParseAsync"/> or run through
+/// <see cref="KatLangEngine"/>, which always execute the complete pass sequence.</para>
 /// </summary>
-public static class ImplicitArgumentResolver
+internal static class ImplicitArgumentResolver
 {
     /// <summary>
     /// Processes a root algorithm, resolving all implicit arguments throughout the tree.

@@ -111,8 +111,13 @@ public class ModuleLoaderCancellationTests
         Assert.Equal(0, calls);
     }
 
+    /// <summary>
+    /// The AST-based convenience constructor (internal since v0.8.188, reached
+    /// here through friend access) still wires the downloader and token exactly
+    /// like the budget-threading front-end constructor.
+    /// </summary>
     [Fact]
-    public async Task PublicModuleLoader_ConstructorConfiguresDownloaderAndToken()
+    public async Task StandaloneModuleLoader_ConstructorConfiguresDownloaderAndToken()
     {
         var root = ParseSyntaxRoot(Source);
         var defaultTokenDiagnostics = new List<Diagnostic>();

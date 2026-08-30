@@ -1244,7 +1244,11 @@ public class AstStructuralDepthTests
             + "and to this inventory: " + string.Join(", ", unexpected));
     }
 
-    // ── Public front-end boundaries are gated ───────────────────────────────────
+    // ── Standalone front-end boundaries are gated ───────────────────────────────
+    // (ParameterDetector.Detect / ImplicitArgumentResolver.Resolve are internal
+    // since v0.8.187 and ModuleLoader.ElaborateAsync since v0.8.188 — all reached
+    // here through friend access; the host-AST gating contract of every one of
+    // these standalone entry points is unchanged.)
 
     [Fact]
     public void ParameterDetectorDetect_GatesHostRoots_AtTheExactBoundary()
@@ -1277,13 +1281,13 @@ public class AstStructuralDepthTests
         // observable outcome: diagnostics and the evaluated result).
         var parsed = Parser.ParseSyntax("a = 1\na + 2");
         Assert.False(parsed.HasErrors);
-        var (publicRoot, publicDiags) = ParameterDetector.Detect(parsed.SyntaxRoot);
+        var (standaloneRoot, standaloneDiags) = ParameterDetector.Detect(parsed.SyntaxRoot);
         var (coreRoot, coreDiags) = ParameterDetector.DetectPrevalidated(parsed.SyntaxRoot);
-        Assert.Equal(coreDiags.Count, publicDiags.Count);
-        var publicRun = Evaluator.RunFlat(new Expr.AlgorithmExpr(ImplicitArgumentResolver.ResolvePrevalidated(publicRoot)));
+        Assert.Equal(coreDiags.Count, standaloneDiags.Count);
+        var standaloneRun = Evaluator.RunFlat(new Expr.AlgorithmExpr(ImplicitArgumentResolver.ResolvePrevalidated(standaloneRoot)));
         var coreRun = Evaluator.RunFlat(new Expr.AlgorithmExpr(ImplicitArgumentResolver.ResolvePrevalidated(coreRoot)));
-        Assert.False(publicRun.IsError);
-        Assert.Equal(coreRun.Value, publicRun.Value);
+        Assert.False(standaloneRun.IsError);
+        Assert.Equal(coreRun.Value, standaloneRun.Value);
     }
 
     [Fact]
@@ -2252,19 +2256,21 @@ public class AstStructuralDepthProcessTests
     }
 
     [Fact]
-    public async Task PublicFrontEndBoundaries_RejectDeepHostAsts_InSubprocess()
-        => await RunProbeChild("PublicFrontEndBoundaries_ProbeChild");
+    public async Task StandaloneFrontEndBoundaries_RejectDeepHostAsts_InSubprocess()
+        => await RunProbeChild("StandaloneFrontEndBoundaries_ProbeChild");
 
     /// <summary>
-    /// The public front-end boundary proof, on a dedicated 1 MiB thread: the public
-    /// <c>ParameterDetector.Detect</c>, <c>ImplicitArgumentResolver.Resolve</c>, and
-    /// <c>ModuleLoader.Elaborate</c> APIs accept host-built ASTs directly, so each
-    /// must return its established structured failure — never process death — for
-    /// trees far beyond any CLR-safe recursion depth, while a pre-cancelled loader
-    /// still honors cancellation first.
+    /// The standalone front-end boundary proof, on a dedicated 1 MiB thread: the
+    /// standalone <c>ParameterDetector.Detect</c> and
+    /// <c>ImplicitArgumentResolver.Resolve</c> entry points (internal since
+    /// v0.8.187) and <c>ModuleLoader.ElaborateAsync</c> (internal since v0.8.188)
+    /// accept host-built ASTs directly, so each must return its established
+    /// structured failure — never process death — for trees far beyond any
+    /// CLR-safe recursion depth, while a pre-cancelled loader still honors
+    /// cancellation first.
     /// </summary>
     [Fact]
-    public void PublicFrontEndBoundaries_ProbeChild()
+    public void StandaloneFrontEndBoundaries_ProbeChild()
     {
         if (Environment.GetEnvironmentVariable(ProbeChildEnvironment) != "1")
             return;
@@ -2283,7 +2289,7 @@ public class AstStructuralDepthProcessTests
                     d => d.Message.Contains("structural AST depth limit", StringComparison.Ordinal));
             }
 
-            // Exact boundary through the public API.
+            // Exact boundary through the standalone entry point.
             var (_, atLimitDiags) = ParameterDetector.Detect(
                 new Algorithm.User(null, [], [], [], [AstStructuralDepthTests.UnarySpine(max - 1)]));
             Assert.Empty(atLimitDiags);

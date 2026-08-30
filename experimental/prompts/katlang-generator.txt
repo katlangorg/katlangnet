@@ -919,7 +919,7 @@ Do not put `public` on `open`. Use `public` only when the task requires exported
 Rules:
 - `load` requires exactly one literal single-quoted HTTPS URL.
 - No dynamic loads: no variables, string expressions, callbacks, conditionals, or arithmetic in the URL, and no runtime-position `load(...)` (it is invalid as ordinary output).
-- Module loading may require engine/module-loader configuration and an allowed-host policy (the default allowlist is `katlang.org`).
+- Module loading requires a downloader configured through the asynchronous parser/engine `RunOptions` surface and obeys an allowed-host policy (the default allowlist is `katlang.org`).
 - Do not invent local file loading, double-quoted URLs, or runtime URL construction.
 Invalid:
     Url = 'https://katlang.org/lib.kat'

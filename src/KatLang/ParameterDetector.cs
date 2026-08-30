@@ -10,8 +10,18 @@ namespace KatLang;
 /// Lean spec anchor: <c>shouldTreatAsImplicitParam</c> — uses the full ownership-first
 /// lookup order (local → parent chain → opens) to determine if a name is an implicit parameter.
 /// No casing restriction: any unknown identifier becomes an implicit parameter, regardless of case.
+///
+/// <para><b>Internal by design (v0.8.187):</b> this is ONE stage of the authoritative
+/// front-end pipeline (<see cref="FrontEndPipeline"/>), not a host-composable API.
+/// A host that ran only detection (and implicit-argument resolution) obtained an AST
+/// whose <see cref="Property.Exposure"/> metadata was never finalized by
+/// <see cref="PropertyExposureResolver"/>, and the evaluator trusts that stored flag —
+/// so the partial composition observably diverged from engine-parsed source
+/// (see <c>FrontEndElaborationBoundaryTests</c>). Hosts elaborate through
+/// <see cref="Parser.Parse(string)"/> / <see cref="Parser.ParseAsync"/> or run through
+/// <see cref="KatLangEngine"/>, which always execute the complete pass sequence.</para>
 /// </summary>
-public static class ParameterDetector
+internal static class ParameterDetector
 {
     /// <summary>
     /// Processes a root algorithm, detecting and classifying parameters throughout the tree.
@@ -54,7 +64,7 @@ public static class ParameterDetector
 
         var detected = DetectPrevalidated(root);
 
-        // Unlike the full front-end pipeline, this public single-pass entry
+        // Unlike the full front-end pipeline, this standalone single-pass entry
         // point does not subsequently run PropertyExposureResolver. Its
         // returned tree's current exposure values are therefore the final
         // values a direct evaluator call will observe; release any suggestion

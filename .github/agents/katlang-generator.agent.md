@@ -416,7 +416,7 @@ If ANY checklist item fails, fix the output before emitting it.
       open load('https://katlang.org/lib.kat')       # open list
       open 'https://katlang.org/lib.kat'             # shorthand for open load(...)
 
-  `load` requires exactly one literal single-quoted HTTPS URL. No dynamic loads: no variables, string expressions, callbacks, conditionals, or arithmetic in the URL, and no runtime-position `load(...)` (it is invalid as ordinary output). Module loading may require engine/module-loader configuration and an allowed-host policy (default allowlist: `katlang.org`). Do not invent local file loading, double-quoted URLs, or runtime URL construction:
+  `load` requires exactly one literal single-quoted HTTPS URL. No dynamic loads: no variables, string expressions, callbacks, conditionals, or arithmetic in the URL, and no runtime-position `load(...)` (it is invalid as ordinary output). Module loading requires a downloader configured through the asynchronous parser/engine `RunOptions` surface and obeys an allowed-host policy (default allowlist: `katlang.org`). Do not invent local file loading, double-quoted URLs, or runtime URL construction:
 
       Url = 'https://katlang.org/lib.kat'
       Lib = load(Url)                                # invalid: URL must be a literal, not a variable

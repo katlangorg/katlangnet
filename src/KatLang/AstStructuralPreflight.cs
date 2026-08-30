@@ -95,7 +95,7 @@ internal enum AstConsumerProfile
 /// <para><b>Ceilings.</b> Every FAT-FRAME consumer enforces
 /// <see cref="EvaluationLimits.MaxSupportedAstDepth"/> (see its documentation for the
 /// safety invariant and calibration): the evaluator entry points, front-end
-/// ELABORATION (<c>FrontEndPipeline.FinalizeElaboration</c> plus the public
+/// ELABORATION (<c>FrontEndPipeline.FinalizeElaboration</c> plus the standalone
 /// <c>ParameterDetector.Detect</c> and <c>ImplicitArgumentResolver.Resolve</c>
 /// boundaries), and semantic-model building.
 /// <see cref="EvaluationLimits.MaxAstDepth"/> can only request a lower limit, so no
@@ -148,7 +148,7 @@ internal static class AstStructuralPreflight
     /// <para>Every FAT-FRAME consumer is gated by the evaluation ceiling
     /// (<see cref="EvaluationLimits.MaxSupportedAstDepth"/>) instead: front-end
     /// elaboration (a composed tree of ~500-626 nodes overflows a 1 MiB thread inside
-    /// <c>ParameterDetector.RewriteParams</c>, Debug and Release alike; the public
+    /// <c>ParameterDetector.RewriteParams</c>, Debug and Release alike; the standalone
     /// <c>ParameterDetector.Detect</c> and <c>ImplicitArgumentResolver.Resolve</c>
     /// boundaries gate the same ceiling), semantic-model building (a 640-node spine
     /// overflows a 512 KiB thread; a 300-node one completes within it), and

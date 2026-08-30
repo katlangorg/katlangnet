@@ -243,7 +243,8 @@ public class FrontEndTraversalExhaustivenessTests
         // async switch for leaf variants. Invoke this one private dispatch
         // boundary directly to pin all of its explicit leaf arms as well as its
         // recursive arms; recursive load behavior remains covered through the
-        // public API by ModuleLoader_AsyncWalkNeverSkipsALoadInsideARecursiveChild.
+        // loader's ElaborateAsync boundary by
+        // ModuleLoader_AsyncWalkNeverSkipsALoadInsideARecursiveChild.
         var diagnostics = new List<Diagnostic>();
         var loader = new ModuleLoader(
             diagnostics,

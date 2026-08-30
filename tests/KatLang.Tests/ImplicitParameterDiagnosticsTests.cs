@@ -215,12 +215,13 @@ public class ImplicitParameterDiagnosticsTests
     }
 
     [Fact]
-    public void PublicParameterDetectorPath_FinalizesSuggestionEligibility()
+    public void StandaloneParameterDetectorPath_FinalizesSuggestionEligibility()
     {
-        // ParameterDetector.Detect is a public standalone pass. A caller may
-        // evaluate its returned AST directly, without the full pipeline's
-        // later PropertyExposureResolver; suggestions must agree with the
-        // exposure values that direct evaluation actually observes.
+        // ParameterDetector.Detect is a standalone single-pass entry point
+        // (internal since v0.8.187, reachable here through friend access). A
+        // caller may evaluate its returned AST directly, without the full
+        // pipeline's later PropertyExposureResolver; suggestions must agree
+        // with the exposure values that direct evaluation actually observes.
         var syntax = Parser.ParseSyntax(
             """
             M = { public Value = 42 }
