@@ -9313,25 +9313,6 @@ public static partial class Evaluator
         LoopOptimizationDiagnostics? loopDiagnostics,
         bool enableSequencePipelineOptimization,
         SequencePipelineDiagnostics? sequenceDiagnostics,
-        EvaluationLimits? limits,
-        EvaluationObservations? observations = null,
-        HostOperations? hostOperations = null,
-        CancellationToken cancellationToken = default)
-        => CreateRootCtx(
-            zeroArgPropertyResultCache,
-            enableLoopOptimization,
-            loopDiagnostics,
-            enableSequencePipelineOptimization,
-            sequenceDiagnostics,
-            EvaluationBudget.Create(limits, hostOperations, cancellationToken),
-            observations);
-
-    private static EvalCtx CreateRootCtx(
-        IZeroArgPropertyResultCache zeroArgPropertyResultCache,
-        bool enableLoopOptimization,
-        LoopOptimizationDiagnostics? loopDiagnostics,
-        bool enableSequencePipelineOptimization,
-        SequencePipelineDiagnostics? sequenceDiagnostics,
         EvaluationBudget budget,
         EvaluationObservations? observations = null)
     {
@@ -9394,7 +9375,7 @@ public static partial class Evaluator
     /// evaluation): those consume the tree on the CLR stack, so a host-built tree
     /// deeper than the structural limit would otherwise terminate the process with an
     /// unhandleable <see cref="StackOverflowException"/>. Returns <c>null</c> for safe
-    /// trees; runs before any budget exists and charges nothing to evaluation budgets.
+    /// trees; runs before any evaluation-budget counter can move and charges nothing.
     /// </summary>
     private static EvalError? StructuralPreflight(Expr expr, EvaluationLimits? limits)
     {
@@ -9449,6 +9430,134 @@ public static partial class Evaluator
                 $"Unhandled pre-evaluation violation kind: {unknown.GetType().Name}"),
         };
 
+    /// <summary>
+    /// Outcome of the shared run-entry preparation: either a pre-evaluation rejection
+    /// (<see cref="Error"/> non-null) or a ready root context (<see cref="Ctx"/>).
+    /// <see cref="Budget"/> is the run's fresh budget in BOTH cases, so the observed
+    /// harness entry points can hand back the budget a rejected run would have used.
+    /// </summary>
+    private readonly struct PreparedRun
+    {
+        private readonly EvalCtx _ctx;
+
+        private PreparedRun(EvalError? error, EvaluationBudget budget, EvalCtx ctx)
+        {
+            Error = error;
+            Budget = budget;
+            _ctx = ctx;
+        }
+
+        /// <summary>The structural-preflight or pre-evaluation validation rejection, if any.</summary>
+        internal EvalError? Error { get; }
+
+        /// <summary>The run's fresh <see cref="EvaluationBudget"/>; valid on both outcomes.</summary>
+        internal EvaluationBudget Budget { get; }
+
+        /// <summary>The ready root context. Fail-loud when the preparation was rejected.</summary>
+        internal EvalCtx Ctx
+            => Error is null
+                ? _ctx
+                : throw new InvalidOperationException(
+                    "A rejected run preparation has no evaluation context; check Error first.");
+
+        internal static PreparedRun Rejected(EvalError error, EvaluationBudget budget)
+            => new(error, budget, default);
+
+        internal static PreparedRun Ready(EvalCtx ctx)
+            => new(null, ctx.Budget, ctx);
+    }
+
+    /// <summary>
+    /// Run-entry preparation for the SYNCHRONOUS entry family: the host token is
+    /// observed first (cancellation preempts every pre-evaluation verdict, including a
+    /// misconfiguration rejection), then an asynchronous host-operation configuration is
+    /// rejected before any tree work, then the shared admitted-run sequence runs. The
+    /// async twin family prepares through <c>PrepareAsyncTwinRun</c>, whose guard order
+    /// differs — that ordering difference is each wrapper's contract, so a new entry
+    /// point must choose a wrapper, never call <see cref="PrepareAdmittedRun"/> directly.
+    /// </summary>
+    private static PreparedRun PrepareSynchronousRun(
+        Expr expr,
+        IZeroArgPropertyResultCache zeroArgPropertyResultCache,
+        bool enableLoopOptimization,
+        LoopOptimizationDiagnostics? loopDiagnostics,
+        bool enableSequencePipelineOptimization,
+        SequencePipelineDiagnostics? sequenceDiagnostics,
+        EvaluationLimits? limits,
+        EvaluationObservations? observations,
+        HostOperations? hostOperations,
+        CancellationToken cancellationToken)
+    {
+        // Host cancellation preempts every pre-evaluation verdict: an already-cancelled
+        // token stops the run before the structural preflight spends O(tree) work.
+        cancellationToken.ThrowIfCancellationRequested();
+        ThrowIfAsynchronousHostOperationsOnSynchronousEntry(hostOperations);
+
+        return PrepareAdmittedRun(
+            expr,
+            zeroArgPropertyResultCache,
+            enableLoopOptimization,
+            loopDiagnostics,
+            enableSequencePipelineOptimization,
+            sequenceDiagnostics,
+            limits,
+            observations,
+            hostOperations,
+            cancellationToken);
+    }
+
+    /// <summary>
+    /// The ONE ordered non-evaluating preparation sequence shared by every evaluator
+    /// run entry point, synchronous and async twin alike (none of it awaits):
+    /// fresh run budget, structural safety preflight, Lean-aligned pre-evaluation
+    /// validation, cache argument validation, root context construction. A preflight or
+    /// validation rejection observes the host token (a cancellation requested during
+    /// the rejected pass still escapes as <see cref="OperationCanceledException"/>,
+    /// never as the returned error) and hands the rejection back with the budget.
+    /// Callers reach this only through <see cref="PrepareSynchronousRun"/> or
+    /// <c>PrepareAsyncTwinRun</c>, which own the per-family entry guards and their
+    /// ordering relative to the first token observation.
+    /// </summary>
+    private static PreparedRun PrepareAdmittedRun(
+        Expr expr,
+        IZeroArgPropertyResultCache zeroArgPropertyResultCache,
+        bool enableLoopOptimization,
+        LoopOptimizationDiagnostics? loopDiagnostics,
+        bool enableSequencePipelineOptimization,
+        SequencePipelineDiagnostics? sequenceDiagnostics,
+        EvaluationLimits? limits,
+        EvaluationObservations? observations,
+        HostOperations? hostOperations,
+        CancellationToken cancellationToken)
+    {
+        // Creating the budget is pure field initialization — the structural preflight
+        // still runs before any budget COUNTER can move and charges nothing.
+        var budget = EvaluationBudget.Create(limits, hostOperations, cancellationToken);
+
+        if (StructuralPreflight(expr, limits) is { } structuralError)
+        {
+            budget.ObserveCancellation();
+            return PreparedRun.Rejected(structuralError, budget);
+        }
+
+        if (PreEvaluationValidationError(expr) is { } validationError)
+        {
+            budget.ObserveCancellation();
+            return PreparedRun.Rejected(validationError, budget);
+        }
+
+        ArgumentNullException.ThrowIfNull(zeroArgPropertyResultCache);
+
+        return PreparedRun.Ready(CreateRootCtx(
+            zeroArgPropertyResultCache,
+            enableLoopOptimization,
+            loopDiagnostics,
+            enableSequencePipelineOptimization,
+            sequenceDiagnostics,
+            budget,
+            observations));
+    }
+
     internal static EvalResult<Result> Run(
         Expr expr,
         IZeroArgPropertyResultCache zeroArgPropertyResultCache,
@@ -9461,26 +9570,8 @@ public static partial class Evaluator
         HostOperations? hostOperations = null,
         CancellationToken cancellationToken = default)
     {
-        // Host cancellation preempts every pre-evaluation verdict: an already-cancelled
-        // token stops the run before the structural preflight spends O(tree) work.
-        cancellationToken.ThrowIfCancellationRequested();
-        ThrowIfAsynchronousHostOperationsOnSynchronousEntry(hostOperations);
-
-        if (StructuralPreflight(expr, limits) is { } structuralError)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            return structuralError;
-        }
-
-        if (PreEvaluationValidationError(expr) is { } validationError)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            return validationError;
-        }
-
-        ArgumentNullException.ThrowIfNull(zeroArgPropertyResultCache);
-
-        var ctx = CreateRootCtx(
+        var preparation = PrepareSynchronousRun(
+            expr,
             zeroArgPropertyResultCache,
             enableLoopOptimization,
             loopDiagnostics,
@@ -9490,6 +9581,10 @@ public static partial class Evaluator
             observations,
             hostOperations,
             cancellationToken);
+        if (preparation.Error is { } preparationError)
+            return preparationError;
+
+        var ctx = preparation.Ctx;
         var result = expr is Expr.AlgorithmExpr(var alg)
             ? EvalRootProgram(alg, expr.Span, ctx)
             : Eval(expr, ctx, []);
@@ -9556,37 +9651,27 @@ public static partial class Evaluator
         HostOperations? hostOperations = null,
         CancellationToken cancellationToken = default)
     {
-        cancellationToken.ThrowIfCancellationRequested();
-        ThrowIfAsynchronousHostOperationsOnSynchronousEntry(hostOperations);
-
-        var budget = EvaluationBudget.Create(limits, hostOperations, cancellationToken);
-        if (StructuralPreflight(expr, limits) is { } structuralError)
-        {
-            budget.ObserveCancellation();
-            return (structuralError, budget);
-        }
-
-        if (PreEvaluationValidationError(expr) is { } validationError)
-        {
-            budget.ObserveCancellation();
-            return (validationError, budget);
-        }
-
-        var ctx = CreateRootCtx(
+        var preparation = PrepareSynchronousRun(
+            expr,
             zeroArgPropertyResultCache ?? new RunScopedZeroArgPropertyResultCache(),
             enableLoopOptimization: enableOptimizations,
-            loopDiagnostics: loopDiagnostics,
+            loopDiagnostics,
             enableSequencePipelineOptimization: enableOptimizations,
-            sequenceDiagnostics: sequenceDiagnostics,
-            budget,
-            observations);
+            sequenceDiagnostics,
+            limits,
+            observations,
+            hostOperations,
+            cancellationToken);
+        if (preparation.Error is { } preparationError)
+            return (preparationError, preparation.Budget);
 
+        var ctx = preparation.Ctx;
         var result = expr is Expr.AlgorithmExpr(var alg)
             ? EvalRootProgramCounted(alg, expr.Span, ctx)
             : EvalCounted(expr, ctx, []);
 
-        budget.ObserveCancellation();
-        return (result, budget);
+        ctx.Budget.ObserveCancellation();
+        return (result, ctx.Budget);
     }
 
     internal static EvalResult<CountedResult> RunCounted(
@@ -9596,24 +9681,8 @@ public static partial class Evaluator
         HostOperations? hostOperations = null,
         CancellationToken cancellationToken = default)
     {
-        cancellationToken.ThrowIfCancellationRequested();
-        ThrowIfAsynchronousHostOperationsOnSynchronousEntry(hostOperations);
-
-        if (StructuralPreflight(expr, limits) is { } structuralError)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            return structuralError;
-        }
-
-        if (PreEvaluationValidationError(expr) is { } validationError)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            return validationError;
-        }
-
-        ArgumentNullException.ThrowIfNull(zeroArgPropertyResultCache);
-
-        var ctx = CreateRootCtx(
+        var preparation = PrepareSynchronousRun(
+            expr,
             zeroArgPropertyResultCache,
             enableLoopOptimization: true,
             loopDiagnostics: null,
@@ -9623,6 +9692,10 @@ public static partial class Evaluator
             observations: null,
             hostOperations,
             cancellationToken);
+        if (preparation.Error is { } preparationError)
+            return preparationError;
+
+        var ctx = preparation.Ctx;
         var result = expr is Expr.AlgorithmExpr(var alg)
             ? EvalRootProgramCounted(alg, expr.Span, ctx)
             : EvalCounted(expr, ctx, []);
@@ -9639,25 +9712,8 @@ public static partial class Evaluator
         HostOperations? hostOperations = null,
         CancellationToken cancellationToken = default)
     {
-        cancellationToken.ThrowIfCancellationRequested();
-        ThrowIfAsynchronousHostOperationsOnSynchronousEntry(hostOperations);
-
-        if (StructuralPreflight(expr, limits) is { } structuralError)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            return structuralError;
-        }
-
-        if (PreEvaluationValidationError(expr) is { } validationError)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            return validationError;
-        }
-
-        ArgumentNullException.ThrowIfNull(zeroArgPropertyResultCache);
-        ArgumentException.ThrowIfNullOrWhiteSpace(topLevelPropertyName);
-
-        var ctx = CreateRootCtx(
+        var preparation = PrepareSynchronousRun(
+            expr,
             zeroArgPropertyResultCache,
             enableLoopOptimization: true,
             loopDiagnostics: null,
@@ -9667,7 +9723,12 @@ public static partial class Evaluator
             observations: null,
             hostOperations,
             cancellationToken);
+        if (preparation.Error is { } preparationError)
+            return preparationError;
 
+        ArgumentException.ThrowIfNullOrWhiteSpace(topLevelPropertyName);
+
+        var ctx = preparation.Ctx;
         EvalResult<CountedRootProgramResult> result;
         if (expr is Expr.AlgorithmExpr(var alg))
         {
@@ -9823,19 +9884,27 @@ public static partial class Evaluator
     /// </exception>
     public static EvalResult<IReadOnlyList<Decimal128>> RunFlat(
         Expr expr, EvaluationLimits? limits, CancellationToken cancellationToken)
-    {
-        var r = Run(expr, limits, cancellationToken);
-        if (r.IsError) return r.Error;
+        => ProjectFlatHostAtoms(Run(expr, limits, cancellationToken), limits, cancellationToken);
 
-        // Same rule as the engine: the host projection is bounded, so a successful
-        // evaluation cannot be followed by an unbounded flattening allocation.
+    /// <summary>
+    /// The flat entry family's host-boundary projection, shared by <see cref="RunFlat(Expr, EvaluationLimits?, CancellationToken)"/>
+    /// and <see cref="RunFlatAsync(Expr, EvaluationLimits?, CancellationToken)"/> (it
+    /// awaits nothing). Same rule as the engine: the host projection is bounded, so a
+    /// successful evaluation cannot be followed by an unbounded flattening allocation.
+    /// The trailing observation exists because host flattening belongs to the flat run
+    /// operation and may walk a bounded but wide value graph after core evaluation has
+    /// completed.
+    /// </summary>
+    private static EvalResult<IReadOnlyList<Decimal128>> ProjectFlatHostAtoms(
+        EvalResult<Result> evaluation, EvaluationLimits? limits, CancellationToken cancellationToken)
+    {
+        if (evaluation.IsError) return evaluation.Error;
+
         var limit = (limits ?? EvaluationLimits.Default).EffectiveMaxCollectionItems;
-        var result = r.Value.TryToHostAtoms(limit, out var atoms)
+        var result = evaluation.Value.TryToHostAtoms(limit, out var atoms)
             ? EvalResult<IReadOnlyList<Decimal128>>.Ok(atoms)
             : new EvalError.CollectionSizeLimitExceeded(limit, limit + 1L);
 
-        // Host flattening belongs to this RunFlat operation and may walk a bounded but
-        // wide value graph after core evaluation has completed.
         cancellationToken.ThrowIfCancellationRequested();
         return result;
     }

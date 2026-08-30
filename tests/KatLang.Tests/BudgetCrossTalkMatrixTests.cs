@@ -1440,8 +1440,8 @@ public class BudgetCrossTalkMatrixTests
         var noStepsCharged = Evaluator.Run(direct, new EvaluationLimits { MaxSteps = 1, MaxCollectionItems = 1 });
         Assert.IsType<EvalError.CollectionSizeLimitExceeded>(Innermost(noStepsCharged.Error));
 
-        // The structural preflight runs before any budget exists, so it always precedes
-        // every runtime limit regardless of how tight those are.
+        // The structural preflight runs before any evaluation-budget counter can move,
+        // so it always precedes every runtime limit regardless of how tight those are.
         var deep = new Expr.AlgorithmExpr(new Algorithm.User(null, [], [], [], [UnarySpine(400)]));
         var structuralFirst = Evaluator.Run(deep, new EvaluationLimits { MaxSteps = 1, MaxDepth = 1, MaxAstDepth = 4 });
         Assert.IsType<EvalError.AstDepthLimitExceeded>(Innermost(structuralFirst.Error));

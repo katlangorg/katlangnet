@@ -164,9 +164,7 @@ public static partial class Evaluator
         ArgumentNullException.ThrowIfNull(hostOperations);
         return await RunAsync(
             expr,
-            hostOperations.ContainsAsynchronousOperations
-                ? new RunScopedAsyncZeroArgPropertyResultCache()
-                : new RunScopedZeroArgPropertyResultCache(),
+            CreateRunScopedZeroArgPropertyResultCache(hostOperations),
             limits,
             loopDiagnostics: null,
             sequenceDiagnostics: null,
@@ -204,23 +202,10 @@ public static partial class Evaluator
     /// </exception>
     public static async Task<EvalResult<IReadOnlyList<Decimal128>>> RunFlatAsync(
         Expr expr, EvaluationLimits? limits, CancellationToken cancellationToken)
-    {
-        // MIRROR OF RunFlat(Expr, EvaluationLimits?, CancellationToken) — keep in lock-step.
-        var r = await RunAsync(expr, limits, cancellationToken).ConfigureAwait(false);
-        if (r.IsError) return r.Error;
-
-        // Same rule as the engine: the host projection is bounded, so a successful
-        // evaluation cannot be followed by an unbounded flattening allocation.
-        var limit = (limits ?? EvaluationLimits.Default).EffectiveMaxCollectionItems;
-        var result = r.Value.TryToHostAtoms(limit, out var atoms)
-            ? EvalResult<IReadOnlyList<Decimal128>>.Ok(atoms)
-            : new EvalError.CollectionSizeLimitExceeded(limit, limit + 1L);
-
-        // Host flattening belongs to this RunFlatAsync operation and may walk a bounded
-        // but wide value graph after core evaluation has completed.
-        cancellationToken.ThrowIfCancellationRequested();
-        return result;
-    }
+        => ProjectFlatHostAtoms(
+            await RunAsync(expr, limits, cancellationToken).ConfigureAwait(false),
+            limits,
+            cancellationToken);
 
     // ── Async entry points (internal) ───────────────────────────────────────
 
@@ -264,12 +249,68 @@ public static partial class Evaluator
     }
 
     /// <summary>
+    /// The ONE cache-pairing rule for constructing a run's zero-argument property
+    /// result cache from its host-operation configuration: a configuration containing
+    /// an ASYNCHRONOUS operation routes the run through the async twin path, which
+    /// awaits the property seam — so it is paired with the async-capable run-scoped
+    /// cache; every other configuration (no host operations, or purely synchronous
+    /// ones) keeps the ordinary run-scoped cache and with it the synchronous fast path.
+    /// Every call constructs a FRESH cache belonging to one run alone — the pairing
+    /// rule never introduces sharing.
+    /// <see cref="ThrowIfAsyncHostOperationsWithoutAsyncCapableCache"/> enforces the
+    /// same pairing fail-loud for internal callers that supply their own cache.
+    /// </summary>
+    internal static IZeroArgPropertyResultCache CreateRunScopedZeroArgPropertyResultCache(
+        HostOperations? hostOperations)
+        => hostOperations?.ContainsAsynchronousOperations == true
+            ? new RunScopedAsyncZeroArgPropertyResultCache()
+            : new RunScopedZeroArgPropertyResultCache();
+
+    /// <summary>
+    /// Run-entry preparation for the ASYNC TWIN family — the twin-path counterpart of
+    /// <see cref="PrepareSynchronousRun"/>, sharing the same synchronous
+    /// <see cref="PrepareAdmittedRun"/> sequence (nothing in run preparation awaits).
+    /// The per-family differences are exactly two and live here: the entry guard is the
+    /// cache-pairing ownership check, raised BEFORE the first token observation (an
+    /// internal wiring bug fails loud even under a cancelled token), and the root
+    /// context pins loop optimization and sequence-pipeline fusion OFF — the twin
+    /// family mirrors the generic strategies only, and limit verdicts are
+    /// strategy-independent by the budget architecture (see <c>CreateRootCtx</c>), so
+    /// this is an internal execution-strategy selection, never a semantic one.
+    /// </summary>
+    private static PreparedRun PrepareAsyncTwinRun(
+        Expr expr,
+        IZeroArgPropertyResultCache zeroArgPropertyResultCache,
+        LoopOptimizationDiagnostics? loopDiagnostics,
+        SequencePipelineDiagnostics? sequenceDiagnostics,
+        EvaluationLimits? limits,
+        EvaluationObservations? observations,
+        HostOperations? hostOperations,
+        CancellationToken cancellationToken)
+    {
+        ThrowIfAsyncHostOperationsWithoutAsyncCapableCache(zeroArgPropertyResultCache, hostOperations);
+        cancellationToken.ThrowIfCancellationRequested();
+
+        return PrepareAdmittedRun(
+            expr,
+            zeroArgPropertyResultCache,
+            enableLoopOptimization: false,
+            loopDiagnostics,
+            enableSequencePipelineOptimization: false,
+            sequenceDiagnostics,
+            limits,
+            observations,
+            hostOperations,
+            cancellationToken);
+    }
+
+    /// <summary>
     /// Internal async run: routes to the synchronous pipeline (fast path) or the async
-    /// twin family, per <see cref="RequiresAsyncEvaluationPath"/>. The twin path mirrors
+    /// twin family, per <see cref="RequiresAsyncEvaluationPath"/>. The twin path shares
     /// the internal synchronous
     /// <see cref="Run(Expr, IZeroArgPropertyResultCache, bool, LoopOptimizationDiagnostics?, bool, SequencePipelineDiagnostics?, EvaluationLimits?, EvaluationObservations?, HostOperations?, CancellationToken)"/>
-    /// phase for phase, with optimizations pinned to the generic strategies (see the
-    /// class doc).
+    /// overload's run preparation (through <see cref="PrepareAsyncTwinRun"/>, which pins
+    /// the generic strategies — see the class doc) and differs only in its twin dispatch.
     /// </summary>
     internal static async ValueTask<EvalResult<Result>> RunAsync(
         Expr expr,
@@ -302,24 +343,14 @@ public static partial class Evaluator
                 cancellationToken);
         }
 
-        // MIRROR OF the internal Run(...) twin-phase sequence — keep in lock-step.
-        ThrowIfAsyncHostOperationsWithoutAsyncCapableCache(zeroArgPropertyResultCache, hostOperations);
-        cancellationToken.ThrowIfCancellationRequested();
+        // Twin path: the same shared preparation as the internal synchronous Run(...);
+        // only the dispatch below is twin-specific.
+        var preparation = PrepareAsyncTwinRun(
+            expr, zeroArgPropertyResultCache, loopDiagnostics, sequenceDiagnostics, limits, observations, hostOperations, cancellationToken);
+        if (preparation.Error is { } preparationError)
+            return preparationError;
 
-        if (StructuralPreflight(expr, limits) is { } structuralError)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            return structuralError;
-        }
-
-        if (PreEvaluationValidationError(expr) is { } validationError)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            return validationError;
-        }
-
-        var ctx = CreateAsyncRootCtx(
-            zeroArgPropertyResultCache, loopDiagnostics, sequenceDiagnostics, limits, observations, hostOperations, cancellationToken);
+        var ctx = preparation.Ctx;
         EvalResult<Result> result;
         if (expr is Expr.AlgorithmExpr(var alg))
         {
@@ -338,31 +369,6 @@ public static partial class Evaluator
         return result;
     }
 
-    /// <summary>
-    /// Root context for the async twin path. Loop optimization and sequence-pipeline
-    /// fusion are pinned OFF: the twin family mirrors the generic strategies only, and
-    /// limit verdicts are strategy-independent by the budget architecture, so this is an
-    /// internal execution-strategy selection, never a semantic one.
-    /// </summary>
-    private static EvalCtx CreateAsyncRootCtx(
-        IZeroArgPropertyResultCache zeroArgPropertyResultCache,
-        LoopOptimizationDiagnostics? loopDiagnostics,
-        SequencePipelineDiagnostics? sequenceDiagnostics,
-        EvaluationLimits? limits,
-        EvaluationObservations? observations,
-        HostOperations? hostOperations,
-        CancellationToken cancellationToken)
-        => CreateRootCtx(
-            zeroArgPropertyResultCache,
-            enableLoopOptimization: false,
-            loopDiagnostics,
-            enableSequencePipelineOptimization: false,
-            sequenceDiagnostics,
-            limits,
-            observations,
-            hostOperations,
-            cancellationToken);
-
     /// <summary>Async twin of the internal <see cref="RunCounted(Expr, IZeroArgPropertyResultCache, EvaluationLimits?, HostOperations?, CancellationToken)"/>.</summary>
     internal static async ValueTask<EvalResult<CountedResult>> RunCountedAsync(
         Expr expr,
@@ -376,24 +382,14 @@ public static partial class Evaluator
         if (!RequiresAsyncEvaluationPath(zeroArgPropertyResultCache, hostOperations))
             return RunCounted(expr, zeroArgPropertyResultCache, limits, hostOperations, cancellationToken);
 
-        // MIRROR OF RunCounted — keep in lock-step.
-        ThrowIfAsyncHostOperationsWithoutAsyncCapableCache(zeroArgPropertyResultCache, hostOperations);
-        cancellationToken.ThrowIfCancellationRequested();
+        // Twin path: the same shared preparation as RunCounted; only the dispatch
+        // below is twin-specific.
+        var preparation = PrepareAsyncTwinRun(
+            expr, zeroArgPropertyResultCache, loopDiagnostics: null, sequenceDiagnostics: null, limits, observations: null, hostOperations, cancellationToken);
+        if (preparation.Error is { } preparationError)
+            return preparationError;
 
-        if (StructuralPreflight(expr, limits) is { } structuralError)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            return structuralError;
-        }
-
-        if (PreEvaluationValidationError(expr) is { } validationError)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            return validationError;
-        }
-
-        var ctx = CreateAsyncRootCtx(
-            zeroArgPropertyResultCache, loopDiagnostics: null, sequenceDiagnostics: null, limits, observations: null, hostOperations, cancellationToken);
+        var ctx = preparation.Ctx;
         var result = expr is Expr.AlgorithmExpr(var alg)
             ? await EvalRootProgramCountedAsync(alg, expr.Span, ctx).ConfigureAwait(false)
             : await EvalCountedAsync(expr, ctx, []).ConfigureAwait(false);
@@ -417,25 +413,14 @@ public static partial class Evaluator
         if (!RequiresAsyncEvaluationPath(zeroArgPropertyResultCache, hostOperations))
             return RunCountedWithTopLevelProperty(expr, topLevelPropertyName, zeroArgPropertyResultCache, limits, hostOperations, cancellationToken);
 
-        // MIRROR OF RunCountedWithTopLevelProperty — keep in lock-step.
-        ThrowIfAsyncHostOperationsWithoutAsyncCapableCache(zeroArgPropertyResultCache, hostOperations);
-        cancellationToken.ThrowIfCancellationRequested();
+        // Twin path: the same shared preparation as RunCountedWithTopLevelProperty;
+        // only the dispatch below is twin-specific.
+        var preparation = PrepareAsyncTwinRun(
+            expr, zeroArgPropertyResultCache, loopDiagnostics: null, sequenceDiagnostics: null, limits, observations: null, hostOperations, cancellationToken);
+        if (preparation.Error is { } preparationError)
+            return preparationError;
 
-        if (StructuralPreflight(expr, limits) is { } structuralError)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            return structuralError;
-        }
-
-        if (PreEvaluationValidationError(expr) is { } validationError)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            return validationError;
-        }
-
-        var ctx = CreateAsyncRootCtx(
-            zeroArgPropertyResultCache, loopDiagnostics: null, sequenceDiagnostics: null, limits, observations: null, hostOperations, cancellationToken);
-
+        var ctx = preparation.Ctx;
         EvalResult<CountedRootProgramResult> result;
         if (expr is Expr.AlgorithmExpr(var alg))
         {
@@ -471,9 +456,7 @@ public static partial class Evaluator
         CancellationToken cancellationToken = default)
     {
         var cache = zeroArgPropertyResultCache
-            ?? (hostOperations?.ContainsAsynchronousOperations == true
-                ? new RunScopedAsyncZeroArgPropertyResultCache()
-                : new RunScopedZeroArgPropertyResultCache());
+            ?? CreateRunScopedZeroArgPropertyResultCache(hostOperations);
         if (!RequiresAsyncEvaluationPath(cache, hostOperations))
         {
             return RunCountedObserved(
@@ -488,38 +471,20 @@ public static partial class Evaluator
                 cancellationToken);
         }
 
-        // MIRROR OF RunCountedObserved — keep in lock-step.
-        ThrowIfAsyncHostOperationsWithoutAsyncCapableCache(cache, hostOperations);
-        cancellationToken.ThrowIfCancellationRequested();
+        // Twin path: the same shared preparation as RunCountedObserved; only the
+        // dispatch below is twin-specific.
+        var preparation = PrepareAsyncTwinRun(
+            expr, cache, loopDiagnostics, sequenceDiagnostics, limits, observations, hostOperations, cancellationToken);
+        if (preparation.Error is { } preparationError)
+            return (preparationError, preparation.Budget);
 
-        var budget = EvaluationBudget.Create(limits, hostOperations, cancellationToken);
-        if (StructuralPreflight(expr, limits) is { } structuralError)
-        {
-            budget.ObserveCancellation();
-            return (structuralError, budget);
-        }
-
-        if (PreEvaluationValidationError(expr) is { } validationError)
-        {
-            budget.ObserveCancellation();
-            return (validationError, budget);
-        }
-
-        var ctx = CreateRootCtx(
-            cache,
-            enableLoopOptimization: false,
-            loopDiagnostics,
-            enableSequencePipelineOptimization: false,
-            sequenceDiagnostics,
-            budget,
-            observations);
-
+        var ctx = preparation.Ctx;
         var result = expr is Expr.AlgorithmExpr(var alg)
             ? await EvalRootProgramCountedAsync(alg, expr.Span, ctx).ConfigureAwait(false)
             : await EvalCountedAsync(expr, ctx, []).ConfigureAwait(false);
 
-        budget.ObserveCancellation();
-        return (result, budget);
+        ctx.Budget.ObserveCancellation();
+        return (result, ctx.Budget);
     }
 
     // ── Root program twins ──────────────────────────────────────────────────

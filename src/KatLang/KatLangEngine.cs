@@ -395,15 +395,10 @@ public static class KatLangEngine
                     : []);
         }
 
-        // An asynchronous host-operation configuration routes the run through the
-        // evaluator's async twin path, which awaits the property seam — so it gets the
-        // async-capable run-scoped cache. Every other configuration (including purely
-        // synchronous host operations) keeps the ordinary cache and with it the
-        // synchronous fast path.
-        IZeroArgPropertyResultCache zeroArgPropertyResultCache =
-            hostOperations?.ContainsAsynchronousOperations == true
-                ? new RunScopedAsyncZeroArgPropertyResultCache()
-                : new RunScopedZeroArgPropertyResultCache();
+        // Cache-pairing rule (async-capable cache exactly for asynchronous
+        // host-operation configurations): Evaluator.CreateRunScopedZeroArgPropertyResultCache.
+        var zeroArgPropertyResultCache =
+            Evaluator.CreateRunScopedZeroArgPropertyResultCache(hostOperations);
 
         // One budget for the whole run, exactly as in Run.
         var evalResult = await Evaluator.RunCountedWithTopLevelPropertyAsync(
@@ -677,9 +672,7 @@ public static class KatLangEngine
     {
         var evalResult = await Evaluator.RunCountedAsync(
             new Expr.AlgorithmExpr(root),
-            hostOperations?.ContainsAsynchronousOperations == true
-                ? new RunScopedAsyncZeroArgPropertyResultCache()
-                : new RunScopedZeroArgPropertyResultCache(),
+            Evaluator.CreateRunScopedZeroArgPropertyResultCache(hostOperations),
             limits,
             hostOperations,
             cancellationToken).ConfigureAwait(false);

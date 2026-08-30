@@ -22,7 +22,14 @@ and Phase 4 (async-only source loading) in
 - Internal async entry points (`RunCountedAsync`, `RunCountedWithTopLevelPropertyAsync`,
   `RunCountedObservedAsync`) and the async TWIN FAMILY in `Evaluator.Async.cs` —
   `async ValueTask` mirrors of the counted evaluation family (~70 members), each marked
-  `// MIRROR OF <sync name>`.
+  `// MIRROR OF <sync name>`. (Since v0.8.190 the ENTRY funnels themselves are no
+  longer hand-mirrored: run preparation — entry guards, fresh budget, structural
+  preflight, pre-evaluation validation, root-context construction — is one shared
+  synchronous sequence, `PrepareAdmittedRun`, reached through the per-family wrappers
+  `PrepareSynchronousRun` / `PrepareAsyncTwinRun`, and the run-cache/host-operation
+  pairing rule has one owner, `Evaluator.CreateRunScopedZeroArgPropertyResultCache`.
+  The MIRROR discipline applies to the evaluating twin dispatch, which remains
+  twin-specific; `RunEntryPreparationTests` pins the shared-preparation parity.)
 - The async host-operation seam: `IAsyncZeroArgPropertyResultCache` (internal), with the
   run-scoped reference implementation `RunScopedAsyncZeroArgPropertyResultCache`, plus
   `GetOrBindAsync` on the internal deconstruction-binding cache.
