@@ -532,12 +532,15 @@ public class ModuleLoaderTests
     }
 
     [Fact]
-    public void Load_WithoutDownloader_DefaultPipeline_NoLoadCalls()
+    public async Task Load_WithoutDownloader_LoadFreePublicPathsWorkNormally()
     {
-        // Without load calls, the normal pipeline (no downloadCode) works fine
-        var source = "42";
-        var result = Parser.Parse(source);
-        Assert.False(result.HasErrors);
+        const string Source = "42";
+
+        Assert.False(Parser.Parse(Source).HasErrors);
+        Assert.False((await Parser.ParseAsync(Source)).HasErrors);
+
+        Assert.IsType<RunResult.Success>(KatLangEngine.Run(Source));
+        Assert.IsType<RunResult.Success>(await KatLangEngine.RunAsync(Source));
     }
 
     [Fact]
@@ -547,10 +550,11 @@ public class ModuleLoaderTests
 
         var result = Parser.Parse(source);
 
-        Assert.True(result.HasErrors);
-        Assert.Contains(result.Diagnostics,
-            d => d.Severity == DiagnosticSeverity.Error
-                 && d.Message.Contains("module elaboration is unavailable", StringComparison.OrdinalIgnoreCase));
+        var diagnostic = Assert.Single(result.Diagnostics);
+        Assert.Equal(DiagnosticSeverity.Error, diagnostic.Severity);
+        Assert.Equal(DiagnosticCode.LoadElaborationUnavailable, diagnostic.Code);
+        Assert.Equal(LoadElaborationGuard.ModuleElaborationUnavailableDiagnostic, diagnostic.Message);
+        Assert.Equal(new SourceSpan(1, 7, 1, 46), diagnostic.Span);
     }
 
     [Fact]
@@ -560,10 +564,67 @@ public class ModuleLoaderTests
 
         var result = Parser.Parse(source);
 
-        Assert.True(result.HasErrors);
-        Assert.Contains(result.Diagnostics,
-            d => d.Severity == DiagnosticSeverity.Error
-                 && d.Message.Contains("module elaboration is unavailable", StringComparison.OrdinalIgnoreCase));
+        var diagnostic = Assert.Single(result.Diagnostics);
+        Assert.Equal(DiagnosticSeverity.Error, diagnostic.Severity);
+        Assert.Equal(DiagnosticCode.LoadElaborationUnavailable, diagnostic.Code);
+        Assert.Equal(LoadElaborationGuard.ModuleElaborationUnavailableDiagnostic, diagnostic.Message);
+        Assert.Equal(new SourceSpan(1, 6, 1, 39), diagnostic.Span);
+    }
+
+    [Fact]
+    public async Task Load_WithoutDownloader_AsyncParserAndEngineKeepTheStructuredDiagnostic()
+    {
+        const string Source = "Lib = load('https://katlang.org/demo/lib.kat')";
+
+        var parsed = await Parser.ParseAsync(Source);
+        var diagnostic = Assert.Single(parsed.Diagnostics);
+        Assert.Equal(DiagnosticSeverity.Error, diagnostic.Severity);
+        Assert.Equal(DiagnosticCode.LoadElaborationUnavailable, diagnostic.Code);
+        Assert.Equal(LoadElaborationGuard.ModuleElaborationUnavailableDiagnostic, diagnostic.Message);
+        Assert.Equal(new SourceSpan(1, 7, 1, 46), diagnostic.Span);
+
+        static void AssertEngineProjection(RunResult result)
+        {
+            var failure = Assert.IsType<RunResult.ParseFailure>(result);
+            var error = Assert.Single(failure.Errors);
+            Assert.Equal(KatLangErrorCode.LoadElaborationUnavailable, error.Code);
+            Assert.Equal(LoadElaborationGuard.ModuleElaborationUnavailableDiagnostic, error.Message);
+            Assert.Equal(1, error.StartLine);
+            Assert.Equal(7, error.StartColumn);
+            Assert.Equal(1, error.EndLine);
+            Assert.Equal(46, error.EndColumn);
+            Assert.Null(error.Source);
+            Assert.False(error.IsResourceLimit);
+        }
+
+        AssertEngineProjection(KatLangEngine.Run(Source));
+        AssertEngineProjection(await KatLangEngine.RunAsync(Source));
+    }
+
+    /// <summary>
+    /// M1 completion (v0.8.189): a <see cref="ModuleLoader"/> cannot exist without an
+    /// explicit downloader. The former nullable parameter silently substituted a
+    /// built-in HttpClient fetcher — a hidden second transport beside the ONE
+    /// <c>RunOptions.DownloadCode</c> contract, whose default redirect-following could
+    /// fetch from a host the allowlist check never saw. Both constructors now reject
+    /// null instead of substituting any transport.
+    /// </summary>
+    [Fact]
+    public void ModuleLoader_Constructors_RequireAnExplicitDownloader()
+    {
+        var convenienceException = Assert.Throws<ArgumentNullException>(
+            () => new ModuleLoader([], downloadCode: null!));
+
+        var pipelineException = Assert.Throws<ArgumentNullException>(
+            () => new ModuleLoader(
+                [],
+                downloadCode: null!,
+                allowedHosts: null,
+                budget: new SourceProcessingBudget(null),
+                sourceProcessingCancellationToken: CancellationToken.None));
+
+        Assert.Equal("downloadCode", convenienceException.ParamName);
+        Assert.Equal("downloadCode", pipelineException.ParamName);
     }
 
     [Fact]

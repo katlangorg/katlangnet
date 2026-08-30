@@ -19,6 +19,11 @@ public sealed class RunOptions
     /// <see cref="InvalidOperationException"/> before parsing anything. If this property is null,
     /// the configuration does not provide module elaboration support, so any source that uses
     /// <c>load</c> is rejected by the public parser/run pipeline with a diagnostic.</para>
+    /// <para>KatLang performs no ambient downloading: the library owns no HTTP transport and
+    /// ships no default downloader, so every byte of module source arrives through this
+    /// delegate. <see cref="AllowedHosts"/> governs which source-written load targets KatLang
+    /// hands to the delegate; transport behavior after that — connections, timeouts, and any
+    /// redirect policy — is owned entirely by the host implementation.</para>
     /// </summary>
     public Func<string, CancellationToken, ValueTask<string>>? DownloadCode { get; init; }
 
@@ -59,7 +64,11 @@ public sealed class RunOptions
     public CancellationToken EvaluationCancellationToken { get; init; }
 
     /// <summary>
-    /// Optional set of allowed hostnames for load directives. Defaults to katlang.org only.
+    /// Optional set of allowed hostnames for source-written load targets. KatLang validates
+    /// the original HTTPS URL against this set before passing it to <see cref="DownloadCode"/>;
+    /// it does not observe or recursively validate transport-level redirect destinations.
+    /// Redirect handling and every other transport policy belong to the host-supplied downloader.
+    /// Defaults to katlang.org only.
     /// </summary>
     public IEnumerable<string>? AllowedHosts { get; init; }
 

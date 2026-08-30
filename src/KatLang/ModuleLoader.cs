@@ -13,7 +13,10 @@ namespace KatLang;
 /// </para>
 ///
 /// <para><b>Async-only module acquisition:</b> source text is obtained through ONE
-/// asynchronous contract, <c>Func&lt;string, CancellationToken, ValueTask&lt;string&gt;&gt;</c>.
+/// asynchronous contract, <c>Func&lt;string, CancellationToken, ValueTask&lt;string&gt;&gt;</c>,
+/// which every constructor REQUIRES — the loader owns no transport and ships no default
+/// downloader, so all module bytes (and any transport policy such as redirect handling)
+/// come from the host-supplied delegate.
 /// <see cref="ElaborateAsync"/> genuinely suspends on an incomplete download and resumes
 /// the elaboration at the same logical point when it completes — the downloader is never
 /// re-invoked after a suspension, and there is no synchronous fetching path and no
@@ -32,8 +35,10 @@ namespace KatLang;
 /// calibrated synchronous frames) are spent only where a suspension is possible. Routing
 /// happens per child through <see cref="RouteExprAsync"/> / <see cref="RouteAlgorithmAsync"/>.</para>
 ///
-/// <para>Security: enforces domain allowlist, size limits, cycle detection, and optional
-/// host cancellation during source/module processing.</para>
+/// <para>Security: validates each source-written load target against the configured domain
+/// allowlist before handing it to the downloader, and enforces size limits, cycle detection,
+/// and optional host cancellation during source/module processing. Redirects and all other
+/// transport behavior belong to the host-supplied downloader.</para>
 ///
 /// <para><b>Internal by design (v0.8.188):</b> this is ONE stage of the authoritative
 /// front-end pipeline (<see cref="FrontEndPipeline"/>), not a host-composable API —
@@ -212,11 +217,12 @@ internal sealed class ModuleLoader
     /// </summary>
     /// <param name="diagnostics">Mutable diagnostics list shared with the parser.</param>
     /// <param name="downloadCode">
-    /// Injected asynchronous code fetcher: URL and the configured
+    /// Required host-supplied asynchronous code fetcher: URL and the configured
     /// <paramref name="sourceProcessingCancellationToken"/> → source text. A host with the
     /// source already in memory returns <c>ValueTask.FromResult(text)</c> and the whole
-    /// elaboration completes synchronously. If null, a default HttpClient-based fetcher is used
-    /// with the same token and a ten-second timeout.
+    /// elaboration completes synchronously. The loader owns no transport of its own —
+    /// there is no default downloader, so all fetch behavior, including any redirect
+    /// policy, belongs to this delegate.
     /// </param>
     /// <param name="allowedHosts">
     /// Set of allowed hostnames. Defaults to katlang.org only.
@@ -240,7 +246,7 @@ internal sealed class ModuleLoader
     /// </remarks>
     public ModuleLoader(
         List<Diagnostic> diagnostics,
-        Func<string, CancellationToken, ValueTask<string>>? downloadCode = null,
+        Func<string, CancellationToken, ValueTask<string>> downloadCode,
         IEnumerable<string>? allowedHosts = null,
         CancellationToken sourceProcessingCancellationToken = default)
         : this(
@@ -260,13 +266,17 @@ internal sealed class ModuleLoader
     /// </summary>
     internal ModuleLoader(
         List<Diagnostic> diagnostics,
-        Func<string, CancellationToken, ValueTask<string>>? downloadCode,
+        Func<string, CancellationToken, ValueTask<string>> downloadCode,
         IEnumerable<string>? allowedHosts,
         SourceProcessingBudget? budget,
         CancellationToken sourceProcessingCancellationToken)
     {
+        // No transport is ever substituted: a loader without a real downloader cannot
+        // exist, so no module-loading network request can originate from KatLang itself.
+        ArgumentNullException.ThrowIfNull(downloadCode);
+
         _diagnostics = diagnostics;
-        _downloadCode = downloadCode ?? DefaultDownloadCode;
+        _downloadCode = downloadCode;
         _sourceProcessingCancellationToken = sourceProcessingCancellationToken;
         _allowedHosts = allowedHosts is not null
             ? new HashSet<string>(allowedHosts, StringComparer.OrdinalIgnoreCase)
@@ -1027,7 +1037,9 @@ internal sealed class ModuleLoader
     }
 
     /// <summary>
-    /// Validates that the URL is well-formed and the host is in the allowlist.
+    /// Validates that the source-written URL is well-formed and its host is in the allowlist.
+    /// Transport-level redirects happen, if at all, inside the host downloader and are not
+    /// recursively visible to this policy check.
     /// </summary>
     private bool IsAllowedUrl(string url, SourceSpan? span)
     {
@@ -1317,21 +1329,6 @@ internal sealed class ModuleLoader
     }
 
     private sealed class ModuleElaborationStackException : Exception;
-
-    // ── Default downloader ──────────────────────────────────────────────────
-
-    /// <summary>
-    /// Default asynchronous HTTP downloader using HttpClient. The configured
-    /// source-processing token cancels the request; the client's own ten-second
-    /// timeout surfaces as an ordinary fetch failure when that token is not
-    /// cancelled.
-    /// </summary>
-    private static async ValueTask<string> DefaultDownloadCode(string url, CancellationToken cancellationToken)
-    {
-        using var client = new HttpClient();
-        client.Timeout = TimeSpan.FromSeconds(10);
-        return await client.GetStringAsync(url, cancellationToken).ConfigureAwait(false);
-    }
 
     // ── Error reporting ──────────────────────────────────────────────────────
 

@@ -295,4 +295,35 @@ public class PublicElaborationSurfaceTests
         var failure = Assert.IsType<RunResult.EvalFailure>(run(LocalOnlyWitnessProgram, null));
         Assert.Equal(KatLangErrorCode.LocalOnlyProperty, Assert.Single(failure.Errors).Code);
     }
+
+    /// <summary>
+    /// M1 completion (v0.8.189): every compiled <c>ModuleLoader</c> constructor
+    /// requires the one host-supplied downloader contract. This metadata-level
+    /// pin prevents a downloader-less/optional constructor path from returning;
+    /// friend tests separately prove that explicit null is rejected at runtime
+    /// and that the supplied delegate is the one invoked. This deliberately does
+    /// not ban unrelated <c>System.Net.*</c> metadata from the whole assembly —
+    /// assembly references are neither necessary nor sufficient evidence that
+    /// module transport exists.
+    /// </summary>
+    [Fact]
+    public void ModuleLoader_ConstructorsHaveNoDownloaderlessPath()
+    {
+        var loaderType = KatLangAssembly.GetType(
+            "KatLang.ModuleLoader", throwOnError: true, ignoreCase: false)!;
+        var downloaderType = typeof(Func<string, CancellationToken, ValueTask<string>>);
+        var constructors = loaderType.GetConstructors(
+            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+
+        Assert.NotEmpty(constructors);
+        Assert.All(constructors, constructor =>
+        {
+            var downloader = Assert.Single(
+                constructor.GetParameters(),
+                parameter => parameter.ParameterType == downloaderType);
+            Assert.Equal("downloadCode", downloader.Name);
+            Assert.False(downloader.IsOptional);
+            Assert.False(downloader.HasDefaultValue);
+        });
+    }
 }

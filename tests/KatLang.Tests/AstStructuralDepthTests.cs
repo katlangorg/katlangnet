@@ -15,6 +15,16 @@ namespace KatLang.Tests;
 /// </summary>
 public class AstStructuralDepthTests
 {
+    /// <summary>
+    /// Explicit downloader for loaders whose inputs must never reach a fetch
+    /// (structural rejection, cyclic rejection, load-free trees, pre-cancelled
+    /// tokens). ModuleLoader requires a real downloader — there is no built-in
+    /// fallback transport — and this one additionally proves no fetch happens.
+    /// </summary>
+    internal static ValueTask<string> RejectModuleFetch(string url, CancellationToken cancellationToken)
+        => throw new InvalidOperationException(
+            $"This test's loader must never fetch, but a download of '{url}' was attempted.");
+
     // ── Iterative deep-tree builders (the builders themselves must never recurse) ──
 
     internal static Expr UnarySpine(int totalNodes, IReadOnlyList<SourceSpan?>? spans = null)
@@ -1317,7 +1327,7 @@ public class AstStructuralDepthTests
         // load-free, so the walk is the calibrated SYNCHRONOUS one and the returned
         // ValueTask completes synchronously.
         var diagnostics = new List<Diagnostic>();
-        var loader = new ModuleLoader(diagnostics);
+        var loader = new ModuleLoader(diagnostics, RejectModuleFetch);
         var accepted = await loader.ElaborateAsync(
             new Algorithm.User(null, [], [], [], [UnarySpine(ModuleLoader.MaxTraversalDepth - 1)]));
         Assert.Empty(diagnostics);
@@ -1334,7 +1344,7 @@ public class AstStructuralDepthTests
 
         // Cyclic host roots are rejected before any recursive frame.
         var cyclicDiagnostics = new List<Diagnostic>();
-        var cyclicLoader = new ModuleLoader(cyclicDiagnostics);
+        var cyclicLoader = new ModuleLoader(cyclicDiagnostics, RejectModuleFetch);
         var properties = new List<Property>();
         var cyclic = new Algorithm.User(null, [], [], properties, [new Expr.Num(1)]);
         properties.Add(new Property("Self", cyclic));
@@ -2305,7 +2315,7 @@ public class AstStructuralDepthProcessTests
             // own measured ceiling, boundary-exact. Load-free spines walk
             // synchronously, so the ValueTasks complete synchronously on this thread.
             var loaderDiags = new List<Diagnostic>();
-            var loader = new ModuleLoader(loaderDiags);
+            var loader = new ModuleLoader(loaderDiags, AstStructuralDepthTests.RejectModuleFetch);
             var acceptedRoot = ElaborateSynchronously(loader, new Algorithm.User(
                 null, [], [], [], [AstStructuralDepthTests.UnarySpine(ModuleLoader.MaxTraversalDepth - 1)]));
             Assert.Empty(loaderDiags);
@@ -2332,7 +2342,7 @@ public class AstStructuralDepthProcessTests
             using var cancelled = new CancellationTokenSource();
             cancelled.Cancel();
             var cancelledLoader = new ModuleLoader(
-                [], downloadCode: null, allowedHosts: null, cancelled.Token);
+                [], AstStructuralDepthTests.RejectModuleFetch, allowedHosts: null, cancelled.Token);
             Assert.Throws<OperationCanceledException>(
                 () => ElaborateSynchronously(cancelledLoader, new Algorithm.User(
                     null, [], [], [], [AstStructuralDepthTests.UnarySpine(1_000_000)])));
