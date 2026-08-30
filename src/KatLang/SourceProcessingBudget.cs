@@ -150,11 +150,13 @@ internal static class SourceProcessingDiagnostics
 
     internal static Diagnostic SourceLengthExceeded(int actualLength, int limit)
         => Error(
+            DiagnosticCode.SourceLengthExceeded,
             $"Source length {Quantity(actualLength, "UTF-16 code unit")} exceeds the maximum of {Quantity(limit, "UTF-16 code unit")}.",
             DefaultSpan);
 
     internal static Diagnostic ModuleSourceLengthExceeded(string url, int actualLength, int limit, SourceSpan? span)
         => Error(
+            DiagnosticCode.SourceLengthExceeded,
             $"load: source from '{url}' is {Quantity(actualLength, "UTF-16 code unit")}, over the maximum of {Quantity(limit, "UTF-16 code unit")}.",
             span);
 
@@ -164,6 +166,7 @@ internal static class SourceProcessingDiagnostics
         int limit,
         SourceSpan? span)
         => Error(
+            DiagnosticCode.ModuleImportDepthExceeded,
             $"load: importing '{url}' would reach depth {requestedDepth}, over the maximum of {Quantity(limit, "nested module level")}.",
             span);
 
@@ -174,27 +177,32 @@ internal static class SourceProcessingDiagnostics
         long limit,
         SourceSpan? span)
         => Error(
+            DiagnosticCode.AggregateSourceLengthExceeded,
             $"load: loading '{url}' ({Quantity(sourceLength, "UTF-16 code unit")}) would bring total source to {Quantity(requestedTotal, "UTF-16 code unit")}, over the maximum of {Quantity(limit, "UTF-16 code unit")}.",
             span);
 
     internal static Diagnostic AggregateSourceLengthExceededByProgram(int requestedLength, long limit)
         => Error(
+            DiagnosticCode.AggregateSourceLengthExceeded,
             $"Program source ({Quantity(requestedLength, "UTF-16 code unit")}) exceeds the maximum total source of {Quantity(limit, "UTF-16 code unit")}.",
             DefaultSpan);
 
     internal static Diagnostic ModuleCountExceeded(string url, int requestedCount, int limit, SourceSpan? span)
         => Error(
+            DiagnosticCode.ModuleCountExceeded,
             $"load: loading '{url}' would request distinct module {requestedCount}, over the maximum of {Quantity(limit, "module")}.",
             span);
 
     internal static Diagnostic ModuleNestingTooDeep(string url, int limit, SourceSpan? span)
         => Error(
+            DiagnosticCode.ModuleNestingTooDeep,
             $"load: loading '{url}' at this position would nest module content deeper than the cumulative structural depth limit of {Quantity(limit, "level")}. "
             + "Move the load closer to the top level of its module, or split the module chain into smaller modules.",
             span);
 
     internal static Diagnostic ModuleElaborationStackExhausted(int limit)
         => Error(
+            DiagnosticCode.ModuleElaborationStackExhausted,
             "Module elaboration stopped: the host thread's remaining stack cannot safely walk this composition, "
             + $"although it is within the structural depth limit of {Quantity(limit, "level")}. "
             + "Run source processing on a thread with at least the documented 1 MiB stack, or reduce structural nesting around load directives.",
@@ -203,6 +211,6 @@ internal static class SourceProcessingDiagnostics
     private static string Quantity(long value, string singular)
         => $"{value} {singular}{(value == 1 ? string.Empty : "s")}";
 
-    private static Diagnostic Error(string message, SourceSpan? span)
-        => new(message, DiagnosticSeverity.Error, span ?? DefaultSpan);
+    private static Diagnostic Error(DiagnosticCode code, string message, SourceSpan? span)
+        => new(message, DiagnosticSeverity.Error, span ?? DefaultSpan) { Code = code };
 }

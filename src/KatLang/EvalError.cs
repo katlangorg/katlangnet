@@ -43,13 +43,19 @@ public abstract record EvalError
     /// True for every host resource-limit outcome: runtime or weighted structural
     /// depth, steps, stack headroom, collection size and cumulative items, string size
     /// and cumulative string units, and display. A structural reference cycle is
-    /// malformed host input, not a resource limit.
+    /// malformed host input, not a resource limit. Host cancellation is not an error
+    /// value at all — a cancelled run throws <see cref="OperationCanceledException"/>
+    /// and never produces an <see cref="EvalError"/> — so it is outside this
+    /// classification. The check resolves through <see cref="WithContext"/> wrappers,
+    /// and this is the one authoritative resource-limit classifier
+    /// (<see cref="KatLangError.IsResourceLimit"/> delegates here); it never inspects
+    /// message text.
     /// These stop accumulating call/property context on the way out: the limit is a
     /// property of the RUN, not of any one call on the chain,
     /// so the innermost span is preserved and a depth failure does not report one identical
     /// context frame per active invocation.
     /// </summary>
-    internal bool IsResourceLimit => this switch
+    public bool IsResourceLimit => this switch
     {
         EvaluationDepthExceeded
             or AstDepthLimitExceeded
@@ -63,6 +69,71 @@ public abstract record EvalError
         WithContext(_, var inner) => inner.IsResourceLimit,
         _ => false,
     };
+
+    /// <summary>
+    /// Stable machine-readable classification of this error's semantic family —
+    /// the one authoritative mapping from the concrete <see cref="EvalError"/>
+    /// variants to the public <see cref="KatLangErrorCode"/> facade. Contextual
+    /// <see cref="WithContext"/> wrappers resolve to their innermost error's
+    /// family, so common classification never requires unwrapping. The three
+    /// arity-shape variants (<see cref="ArityMismatch"/>,
+    /// <see cref="VariadicArityMismatch"/>, <see cref="BadArity"/>) deliberately
+    /// share <see cref="KatLangErrorCode.ArityMismatch"/> — one host-facing
+    /// family, distinguishable through the structured error itself. Every other
+    /// variant maps one-to-one. The mapping is fail-loud: an unmapped future
+    /// variant throws instead of silently inheriting
+    /// <see cref="KatLangErrorCode.Unspecified"/>.
+    /// </summary>
+    public KatLangErrorCode Code
+    {
+        get
+        {
+            var terminal = this;
+            while (terminal is WithContext withContext)
+                terminal = withContext.Inner;
+
+            return terminal switch
+            {
+                UnknownName => KatLangErrorCode.UnknownName,
+                UnknownProperty => KatLangErrorCode.UnknownProperty,
+                NotPublicProperty => KatLangErrorCode.NotPublicProperty,
+                LocalOnlyProperty => KatLangErrorCode.LocalOnlyProperty,
+                NotAnAlgorithm => KatLangErrorCode.NotAnAlgorithm,
+                IllegalInOpen => KatLangErrorCode.IllegalInOpen,
+                BadOpenForm => KatLangErrorCode.BadOpenForm,
+                IllegalInEval => KatLangErrorCode.IllegalInEval,
+                AmbiguousOpen => KatLangErrorCode.AmbiguousOpen,
+                ArityMismatch => KatLangErrorCode.ArityMismatch,
+                VariadicArityMismatch => KatLangErrorCode.ArityMismatch,
+                BadArity => KatLangErrorCode.ArityMismatch,
+                TypeMismatch => KatLangErrorCode.TypeMismatch,
+                BadIndex => KatLangErrorCode.BadIndex,
+                DivByZero => KatLangErrorCode.DivisionByZero,
+                NoMatchingBranch => KatLangErrorCode.NoMatchingBranch,
+                BranchArityMismatch => KatLangErrorCode.BranchArityMismatch,
+                BranchOutputArityMismatch => KatLangErrorCode.BranchOutputArityMismatch,
+                DuplicateProperty => KatLangErrorCode.DuplicateProperty,
+                DuplicateBranchPattern => KatLangErrorCode.DuplicateBranchPattern,
+                ExplicitParametersRequireOutput => KatLangErrorCode.ExplicitParametersRequireOutput,
+                MissingOutput => KatLangErrorCode.MissingOutput,
+                SpreadMissingOutput => KatLangErrorCode.SpreadMissingOutput,
+                UnresolvedImplicitParams => KatLangErrorCode.UnresolvedImplicitParams,
+                EvaluationDepthExceeded => KatLangErrorCode.EvaluationDepthExceeded,
+                EvaluationStepLimitExceeded => KatLangErrorCode.EvaluationStepLimitExceeded,
+                CollectionSizeLimitExceeded => KatLangErrorCode.CollectionSizeLimitExceeded,
+                MaterializationLimitExceeded => KatLangErrorCode.MaterializationLimitExceeded,
+                StringSizeLimitExceeded => KatLangErrorCode.StringSizeLimitExceeded,
+                StringMaterializationLimitExceeded => KatLangErrorCode.StringMaterializationLimitExceeded,
+                DisplayLengthLimitExceeded => KatLangErrorCode.DisplayLengthLimitExceeded,
+                EvaluationStackExhausted => KatLangErrorCode.EvaluationStackExhausted,
+                AstDepthLimitExceeded => KatLangErrorCode.AstDepthLimitExceeded,
+                AstCycleDetected => KatLangErrorCode.AstCycleDetected,
+                _ => throw new InvalidOperationException(
+                    $"Unhandled EvalError variant in {nameof(EvalError)}.{nameof(Code)}: {terminal.GetType().Name}. "
+                    + "Map the new variant to a KatLangErrorCode family explicitly."),
+            };
+        }
+    }
 
     /// <summary>Name could not be resolved in any scope.</summary>
     public sealed record UnknownName(string Name) : EvalError;

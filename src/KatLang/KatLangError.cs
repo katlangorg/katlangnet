@@ -2,6 +2,9 @@ namespace KatLang;
 
 /// <summary>
 /// Unified public error type representing both parse and evaluation errors.
+/// <see cref="Message"/> is the human-readable rendering; the supported host
+/// classification channel is <see cref="Code"/> (with <see cref="Source"/> and
+/// <see cref="IsResourceLimit"/> for structured access), never message text.
 /// </summary>
 public sealed class KatLangError
 {
@@ -11,26 +14,131 @@ public sealed class KatLangError
     public int? EndLine { get; }
     public int? EndColumn { get; }
 
-    private KatLangError(string message, int? startLine, int? startColumn, int? endLine, int? endColumn)
+    /// <summary>
+    /// Stable machine-readable classification of this error's semantic family.
+    /// For an evaluation error this is <see cref="EvalError.Code"/> of
+    /// <see cref="Source"/> (contextual wrappers resolve to the underlying
+    /// family); for a front-end error it mirrors the diagnostic's
+    /// <see cref="DiagnosticCode"/>. Errors produced by KatLang itself never
+    /// carry <see cref="KatLangErrorCode.Unspecified"/>; only an error
+    /// projected from an externally constructed diagnostic with an unset code
+    /// does.
+    /// </summary>
+    public KatLangErrorCode Code { get; }
+
+    /// <summary>
+    /// The original structured evaluation error this facade was projected from
+    /// — the same <see cref="EvalError"/> instance, context wrappers included —
+    /// or <c>null</c> for an error originating from a front-end
+    /// <see cref="Diagnostic"/>, whose stable identity is still available
+    /// through <see cref="Code"/>. This preserves the pre-existing public error
+    /// hierarchy exactly; it does not add a deep-immutability guarantee to
+    /// caller-supplied <see cref="IReadOnlyList{T}"/> payloads or reconstruct
+    /// them with different backing identity.
+    /// </summary>
+    public EvalError? Source { get; }
+
+    /// <summary>
+    /// True when this error is a host resource-limit outcome of evaluation.
+    /// Delegates to the one authoritative classifier,
+    /// <see cref="EvalError.IsResourceLimit"/>, so it resolves through
+    /// contextual wrappers and never inspects message text. Front-end errors
+    /// (including source-processing limits, which are diagnostics, not
+    /// evaluation outcomes) are never classified as resource limits, and host
+    /// cancellation throws <see cref="OperationCanceledException"/> instead of
+    /// producing an error value at all.
+    /// </summary>
+    public bool IsResourceLimit => Source?.IsResourceLimit ?? false;
+
+    private KatLangError(
+        string message,
+        int? startLine,
+        int? startColumn,
+        int? endLine,
+        int? endColumn,
+        KatLangErrorCode code,
+        EvalError? source)
     {
         Message = message;
         StartLine = startLine;
         StartColumn = startColumn;
         EndLine = endLine;
         EndColumn = endColumn;
+        Code = code;
+        Source = source;
     }
 
     public static KatLangError FromDiagnostic(Diagnostic diag)
         => new(diag.Message, diag.Span.StartLineNumber, diag.Span.StartColumn,
-               diag.Span.EndLineNumber, diag.Span.EndColumn);
+               diag.Span.EndLineNumber, diag.Span.EndColumn,
+               MapDiagnosticCode(diag.Code), source: null);
 
     public static KatLangError FromEvalError(EvalError error)
     {
         var message = AppendInferredImplicitParameterNotes(FormatEvalError(error), error);
         if (error.Span is { } span)
-            return new(message, span.StartLineNumber, span.StartColumn, span.EndLineNumber, span.EndColumn);
-        return new(message, null, null, null, null);
+            return new(message, span.StartLineNumber, span.StartColumn, span.EndLineNumber, span.EndColumn, error.Code, error);
+        return new(message, null, null, null, null, error.Code, error);
     }
+
+    /// <summary>
+    /// Total mapping from front-end <see cref="DiagnosticCode"/> families to the
+    /// facade <see cref="KatLangErrorCode"/>. The mapping is name-preserving:
+    /// every declared diagnostic family has the same-named facade member
+    /// (mechanically pinned by tests), and <see cref="DiagnosticCode.Unspecified"/>
+    /// maps to <see cref="KatLangErrorCode.Unspecified"/>. An undeclared numeric
+    /// value (an external cast) also maps to Unspecified — the compatibility
+    /// state for host-created diagnostics. A declared future family without an
+    /// explicit arm fails loudly instead of leaking Unspecified from a
+    /// KatLang-produced diagnostic.
+    /// </summary>
+    internal static KatLangErrorCode MapDiagnosticCode(DiagnosticCode code)
+        => code switch
+        {
+            DiagnosticCode.Unspecified => KatLangErrorCode.Unspecified,
+            DiagnosticCode.UnexpectedCharacter => KatLangErrorCode.UnexpectedCharacter,
+            DiagnosticCode.UnterminatedStringLiteral => KatLangErrorCode.UnterminatedStringLiteral,
+            DiagnosticCode.NumberLiteralTooLarge => KatLangErrorCode.NumberLiteralTooLarge,
+            DiagnosticCode.UnexpectedToken => KatLangErrorCode.UnexpectedToken,
+            DiagnosticCode.UnsupportedSemicolon => KatLangErrorCode.UnsupportedSemicolon,
+            DiagnosticCode.NestingTooDeep => KatLangErrorCode.NestingTooDeep,
+            DiagnosticCode.ExpressionChainTooDeep => KatLangErrorCode.ExpressionChainTooDeep,
+            DiagnosticCode.DuplicateProperty => KatLangErrorCode.DuplicateProperty,
+            DiagnosticCode.DeclarationInParentheses => KatLangErrorCode.DeclarationInParentheses,
+            DiagnosticCode.InvalidOpenDeclaration => KatLangErrorCode.InvalidOpenDeclaration,
+            DiagnosticCode.InvalidOpenTargetList => KatLangErrorCode.InvalidOpenTargetList,
+            DiagnosticCode.BadOpenForm => KatLangErrorCode.BadOpenForm,
+            DiagnosticCode.DuplicateBranchPattern => KatLangErrorCode.DuplicateBranchPattern,
+            DiagnosticCode.BranchArityMismatch => KatLangErrorCode.BranchArityMismatch,
+            DiagnosticCode.BranchOutputArityMismatch => KatLangErrorCode.BranchOutputArityMismatch,
+            DiagnosticCode.ClauseVisibilityMismatch => KatLangErrorCode.ClauseVisibilityMismatch,
+            DiagnosticCode.InvalidGraceMarker => KatLangErrorCode.InvalidGraceMarker,
+            DiagnosticCode.InvalidCollectMarker => KatLangErrorCode.InvalidCollectMarker,
+            DiagnosticCode.InvalidCollectingBinding => KatLangErrorCode.InvalidCollectingBinding,
+            DiagnosticCode.MisplacedSpread => KatLangErrorCode.MisplacedSpread,
+            DiagnosticCode.ArityMismatch => KatLangErrorCode.ArityMismatch,
+            DiagnosticCode.ExplicitParametersRequireOutput => KatLangErrorCode.ExplicitParametersRequireOutput,
+            DiagnosticCode.UndeclaredIdentifier => KatLangErrorCode.UndeclaredIdentifier,
+            DiagnosticCode.AstDepthLimitExceeded => KatLangErrorCode.AstDepthLimitExceeded,
+            DiagnosticCode.AstCycleDetected => KatLangErrorCode.AstCycleDetected,
+            DiagnosticCode.SourceLengthExceeded => KatLangErrorCode.SourceLengthExceeded,
+            DiagnosticCode.AggregateSourceLengthExceeded => KatLangErrorCode.AggregateSourceLengthExceeded,
+            DiagnosticCode.ModuleImportDepthExceeded => KatLangErrorCode.ModuleImportDepthExceeded,
+            DiagnosticCode.ModuleCountExceeded => KatLangErrorCode.ModuleCountExceeded,
+            DiagnosticCode.ModuleNestingTooDeep => KatLangErrorCode.ModuleNestingTooDeep,
+            DiagnosticCode.ModuleElaborationStackExhausted => KatLangErrorCode.ModuleElaborationStackExhausted,
+            DiagnosticCode.InvalidLoadDirective => KatLangErrorCode.InvalidLoadDirective,
+            DiagnosticCode.InvalidLoadUrl => KatLangErrorCode.InvalidLoadUrl,
+            DiagnosticCode.LoadCycle => KatLangErrorCode.LoadCycle,
+            DiagnosticCode.LoadFetchFailed => KatLangErrorCode.LoadFetchFailed,
+            DiagnosticCode.InvalidLoadedSource => KatLangErrorCode.InvalidLoadedSource,
+            DiagnosticCode.LoadElaborationUnavailable => KatLangErrorCode.LoadElaborationUnavailable,
+            DiagnosticCode.InternalError => KatLangErrorCode.InternalError,
+            _ when !Enum.IsDefined(code) => KatLangErrorCode.Unspecified,
+            _ => throw new InvalidOperationException(
+                $"Unhandled declared {nameof(DiagnosticCode)} family in {nameof(KatLangError)}: {code}. "
+                + $"Map it to a {nameof(KatLangErrorCode)} family explicitly."),
+        };
 
     /// <summary>
     /// Appends the diagnostic notes carried by an arity/unresolved-parameter

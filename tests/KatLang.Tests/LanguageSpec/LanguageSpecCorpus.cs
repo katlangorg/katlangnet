@@ -815,6 +815,7 @@ public static class LanguageSpecCorpus
             Source = "*a, *b = 1, 2, 3\na",
             Outcome = SpecOutcome.ParseError,
             ExpectedParseDiagnosticFragment = "at most one collecting binding",
+            ExpectedDiagnosticCode = DiagnosticCode.InvalidCollectingBinding,
             Explanation = "A deconstruction pattern allows at most one collecting binding.",
         },
         new()
@@ -1568,6 +1569,7 @@ public static class LanguageSpecCorpus
             Source = "M = {\n    public C = 5\n}\nR = {\n    open (M)\n    C\n}\nR",
             Outcome = SpecOutcome.ParseError,
             ExpectedParseDiagnosticFragment = "a parenthesized group is a captured value, not an algorithm",
+            ExpectedDiagnosticCode = DiagnosticCode.BadOpenForm,
             Probes =
             [
                 new SpecProbe("M = {\n    public C = 5\n}\nR = {\n    open M\n    C\n}\nR", "ok raw=5 n=1"),
@@ -2452,6 +2454,7 @@ public static class LanguageSpecCorpus
             Source = "1 ; 2",
             Outcome = SpecOutcome.ParseError,
             ExpectedParseDiagnosticFragment = "Semicolon is not supported as an expression separator",
+            ExpectedDiagnosticCode = DiagnosticCode.UnsupportedSemicolon,
             IncludeInGeneratorPrompt = true,
             Explanation = "Semicolon is not expression syntax: use comma or adjacency for separate slots, or parentheses for one sequence value.",
         },
@@ -2461,6 +2464,7 @@ public static class LanguageSpecCorpus
             Category = "parser-layout",
             Source = "(3,)",
             Outcome = SpecOutcome.ParseError,
+            ExpectedDiagnosticCode = DiagnosticCode.UnexpectedToken,
             Explanation = "A trailing comma inside parentheses is not a one-item sequence constructor.",
         },
         new()
@@ -2481,6 +2485,7 @@ public static class LanguageSpecCorpus
             Category = "parser-layout",
             Source = "A = (1, 2)\nA* == A*",
             Outcome = SpecOutcome.ParseError,
+            ExpectedDiagnosticCode = DiagnosticCode.MisplacedSpread,
             Explanation = "A spread expression is not a binary operand; spread results feed slots, not operators.",
         },
         new()
@@ -2489,6 +2494,7 @@ public static class LanguageSpecCorpus
             Category = "parser-layout",
             Source = "x = (1, 2)\nx:-1",
             Outcome = SpecOutcome.ParseError,
+            ExpectedDiagnosticCode = DiagnosticCode.UnexpectedToken,
             Explanation = "A negative index selector never forms at parse time.",
         },
         new()

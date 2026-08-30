@@ -957,7 +957,7 @@ public sealed class ModuleLoader
         // 1. Position check: load only allowed in property definitions and open lists
         if (context == LoadContext.RuntimeExpr)
         {
-            ReportError("load not allowed in runtime expression.", span);
+            ReportError(DiagnosticCode.InvalidLoadDirective, "load not allowed in runtime expression.", span);
             return new Expr.Num(0) { Span = span };
         }
 
@@ -974,7 +974,7 @@ public sealed class ModuleLoader
         var normalized = NormalizeUrl(url);
         if (_inProgress.Contains(normalized))
         {
-            ReportError($"load cycle detected: {normalized}", span);
+            ReportError(DiagnosticCode.LoadCycle, $"load cycle detected: {normalized}", span);
             return new Expr.Num(0) { Span = span };
         }
 
@@ -997,7 +997,7 @@ public sealed class ModuleLoader
         // load must have exactly 1 argument slot (the URL)
         if (args.Count != 1)
         {
-            ReportError("load requires exactly 1 argument (a URL string literal).", span);
+            ReportError(DiagnosticCode.InvalidLoadDirective, "load requires exactly 1 argument (a URL string literal).", span);
             return null;
         }
 
@@ -1008,7 +1008,7 @@ public sealed class ModuleLoader
             return url;
 
         // Not a literal — could be Resolve("url"), a variable, or any other expression
-        ReportError("load URL must be a literal (non-dynamic).", span);
+        ReportError(DiagnosticCode.InvalidLoadDirective, "load URL must be a literal (non-dynamic).", span);
         return null;
     }
 
@@ -1019,13 +1019,13 @@ public sealed class ModuleLoader
     {
         if (!Uri.TryCreate(url, UriKind.Absolute, out var uri))
         {
-            ReportError($"load: invalid URL '{url}'.", span);
+            ReportError(DiagnosticCode.InvalidLoadUrl, $"load: invalid URL '{url}'.", span);
             return false;
         }
 
         if (uri.Scheme != "https")
         {
-            ReportError($"load: only HTTPS URLs are allowed (got '{uri.Scheme}').", span);
+            ReportError(DiagnosticCode.InvalidLoadUrl, $"load: only HTTPS URLs are allowed (got '{uri.Scheme}').", span);
             return false;
         }
 
@@ -1040,7 +1040,7 @@ public sealed class ModuleLoader
                 return true;
         }
 
-        ReportError($"load: domain not allowed: '{host}'.", span);
+        ReportError(DiagnosticCode.InvalidLoadUrl, $"load: domain not allowed: '{host}'.", span);
         return false;
     }
 
@@ -1134,13 +1134,13 @@ public sealed class ModuleLoader
                 // exception while reacting to it. Only a still-active host token permits a fetch
                 // diagnostic (including downloader-owned cancellation/timeout exceptions).
                 _sourceProcessingCancellationToken.ThrowIfCancellationRequested();
-                ReportError($"load: failed to fetch '{normalizedUrl}': {ex.Message}", span);
+                ReportError(DiagnosticCode.LoadFetchFailed, $"load: failed to fetch '{normalizedUrl}': {ex.Message}", span);
                 return new Expr.Num(0) { Span = span };
             }
 
             if (source is null)
             {
-                ReportError($"load: fetch for '{normalizedUrl}' returned no source text.", span);
+                ReportError(DiagnosticCode.LoadFetchFailed, $"load: fetch for '{normalizedUrl}' returned no source text.", span);
                 return new Expr.Num(0) { Span = span };
             }
 
@@ -1185,21 +1185,36 @@ public sealed class ModuleLoader
 
             if (syntaxResult.HasErrors)
             {
-                ReportError(
-                    HasStructuralBudgetDiagnostic(syntaxResult)
-                        ? BuildLoadedSourceNestingErrorMessage(normalizedUrl)
-                        : BuildLoadedSourceParseErrorMessage(normalizedUrl, source),
-                    span);
+                if (HasStructuralBudgetDiagnostic(syntaxResult))
+                {
+                    ReportError(
+                        DiagnosticCode.ModuleNestingTooDeep,
+                        BuildLoadedSourceNestingErrorMessage(normalizedUrl),
+                        span);
+                }
+                else
+                {
+                    ReportError(
+                        DiagnosticCode.InvalidLoadedSource,
+                        BuildLoadedSourceParseErrorMessage(normalizedUrl, source),
+                        span);
+                }
+
                 return new Expr.Num(0) { Span = span };
             }
 
-            // Propagate any non-error diagnostics (with context).
+            // Propagate any non-error diagnostics (with context). The prefix is
+            // presentation only; the structured code travels unchanged so the
+            // nested diagnostic keeps its semantic family through the re-wrap.
             foreach (var diag in syntaxResult.Diagnostics)
             {
                 _diagnostics.Add(new Diagnostic(
                     $"[while loading {normalizedUrl}] {diag.Message}",
                     diag.Severity,
-                    diag.Span));
+                    diag.Span)
+                {
+                    Code = diag.Code,
+                });
             }
 
             // Cumulative structural budget, post-parse half: the parent modules' live
@@ -1318,13 +1333,16 @@ public sealed class ModuleLoader
 
     /// <summary>
     /// True when a nested module's parse failed on the parser's cumulative recursion
-    /// budget (which includes this loader's live-frame stack debt), so the failure is
-    /// a position-dependent nesting rejection rather than invalid module content.
+    /// budget (which includes this loader's live-frame stack debt) or on the raw-syntax
+    /// structural depth preflight, so the failure is a position-dependent nesting
+    /// rejection rather than invalid module content. Classified by the diagnostics'
+    /// structured <see cref="DiagnosticCode"/> families, never by message text; the
+    /// per-chain <see cref="DiagnosticCode.ExpressionChainTooDeep"/> budget carries no
+    /// loader stack debt and deliberately stays invalid-content, exactly as before.
     /// </summary>
     private static bool HasStructuralBudgetDiagnostic(SyntaxParseResult syntaxResult)
         => syntaxResult.Diagnostics.Any(
-            d => d.Message.Contains(Parser.NestingTooDeepMessage, StringComparison.Ordinal)
-                || d.Message.Contains("structural AST depth limit", StringComparison.Ordinal));
+            d => d.Code is DiagnosticCode.NestingTooDeep or DiagnosticCode.AstDepthLimitExceeded);
 
     private static string BuildLoadedSourceNestingErrorMessage(string normalizedUrl)
         => $"load: loading '{normalizedUrl}' at this position would nest module source too deeply to parse safely "
@@ -1340,12 +1358,15 @@ public sealed class ModuleLoader
             trimmed.StartsWith("<body", StringComparison.OrdinalIgnoreCase);
     }
 
-    private void ReportError(string message, SourceSpan? span)
+    private void ReportError(DiagnosticCode code, string message, SourceSpan? span)
     {
         _diagnostics.Add(new Diagnostic(
             message,
             DiagnosticSeverity.Error,
-            span ?? new SourceSpan(1, 1, 1, 1)));
+            span ?? new SourceSpan(1, 1, 1, 1))
+        {
+            Code = code,
+        });
     }
 
     private void ReportSourceProcessingDiagnostic(Diagnostic diagnostic)

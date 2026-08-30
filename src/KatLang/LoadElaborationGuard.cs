@@ -17,7 +17,10 @@ internal static class LoadElaborationGuard
             diagnostics.Add(new Diagnostic(
                 ModuleElaborationUnavailableDiagnostic,
                 DiagnosticSeverity.Error,
-                span ?? new SourceSpan(1, 1, 1, 1)));
+                span ?? new SourceSpan(1, 1, 1, 1))
+            {
+                Code = DiagnosticCode.LoadElaborationUnavailable,
+            });
         });
 
         return diagnostics;
@@ -29,7 +32,10 @@ internal static class LoadElaborationGuard
         return new Diagnostic(
             PostElaborationInvariantDiagnostic,
             DiagnosticSeverity.Error,
-            span ?? new SourceSpan(1, 1, 1, 1));
+            span ?? new SourceSpan(1, 1, 1, 1))
+        {
+            Code = DiagnosticCode.InternalError,
+        };
     }
 
     internal static void ThrowIfUnresolvedLoad(Algorithm root, string phaseName)

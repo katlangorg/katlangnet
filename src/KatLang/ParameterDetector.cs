@@ -694,7 +694,10 @@ public static class ParameterDetector
                 diagnostics.Add(new Diagnostic(
                     FormatConditionalBranchUndeclaredIdentifier(freeName, branchName),
                     DiagnosticSeverity.Error,
-                    span ?? new SourceSpan(0, 0, 0, 0)));
+                    span ?? new SourceSpan(0, 0, 0, 0))
+                {
+                    Code = DiagnosticCode.UndeclaredIdentifier,
+                });
             }
         }
 
@@ -785,7 +788,10 @@ public static class ParameterDetector
             diagnostics.Add(new Diagnostic(
                 FormatExplicitParameterUndeclaredIdentifier(freeName),
                 DiagnosticSeverity.Error,
-                span ?? new SourceSpan(0, 0, 0, 0)));
+                span ?? new SourceSpan(0, 0, 0, 0))
+            {
+                Code = DiagnosticCode.UndeclaredIdentifier,
+            });
         }
     }
 

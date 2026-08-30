@@ -435,7 +435,12 @@ internal static class AstStructuralPreflight
                 ? ParseCycleDiagnosticMessage
                 : ParseDepthDiagnosticMessage(limit),
             DiagnosticSeverity.Error,
-            rejection.Span ?? new SourceSpan(1, 1, 1, 1));
+            rejection.Span ?? new SourceSpan(1, 1, 1, 1))
+        {
+            Code = rejection.Kind == AstStructuralViolation.CycleDetected
+                ? DiagnosticCode.AstCycleDetected
+                : DiagnosticCode.AstDepthLimitExceeded,
+        };
 
     internal const string ParseCycleDiagnosticMessage =
         "Program structure contains a reference cycle and cannot be processed safely. "

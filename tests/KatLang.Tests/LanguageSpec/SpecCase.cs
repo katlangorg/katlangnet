@@ -75,12 +75,22 @@ public sealed record SpecCase
     public string? ExpectedErrorCategory { get; init; }
 
     /// <summary>
-    /// Optional stable fragment of a parser diagnostic message. Parser
-    /// diagnostics carry no structured kind today, so use this only for
-    /// deliberately-worded diagnostics (e.g. the semicolon message) and keep
-    /// fragments short enough to survive harmless rewording.
+    /// Optional stable fragment of a parser diagnostic message. The structured
+    /// classification lives in <see cref="ExpectedDiagnosticCode"/>; use the
+    /// fragment additionally for deliberately-worded diagnostics (e.g. the
+    /// semicolon message) and keep fragments short enough to survive harmless
+    /// rewording.
     /// </summary>
     public string? ExpectedParseDiagnosticFragment { get; init; }
+
+    /// <summary>
+    /// Canonical structured family of the expected parser/front-end
+    /// diagnostic (<see cref="Diagnostic.Code"/>). Required when
+    /// <see cref="Outcome"/> is ParseError: at least one error diagnostic of
+    /// the case must carry this code. Like every expectation here it is
+    /// hand-written canonical behavior, never regenerated from observation.
+    /// </summary>
+    public DiagnosticCode? ExpectedDiagnosticCode { get; init; }
 
     /// <summary>
     /// Lean AST construction equivalent to <see cref="Source"/> (the same

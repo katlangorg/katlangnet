@@ -46,6 +46,15 @@ public class LanguageSpecRunnerTests
                     + string.Join(" | ", parsed.Diagnostics.Select(d => d.Message)));
             }
 
+            if (specCase.ExpectedDiagnosticCode is { } expectedCode)
+            {
+                Assert.True(
+                    parsed.Diagnostics.Any(d =>
+                        d.Severity == DiagnosticSeverity.Error && d.Code == expectedCode),
+                    $"{caseId}: no error diagnostic carries code {expectedCode}; got: "
+                    + string.Join(" | ", parsed.Diagnostics.Select(d => $"[{d.Code}] {d.Message}")));
+            }
+
             return;
         }
 
@@ -136,17 +145,26 @@ public class LanguageSpecRunnerTests
                     Assert.True(specCase.ExpectedEmittedCount is not null, $"{specCase.Id}: Evaluates requires ExpectedEmittedCount.");
                     Assert.True(specCase.ExpectedErrorCategory is null, $"{specCase.Id}: Evaluates forbids ExpectedErrorCategory.");
                     Assert.True(specCase.ExpectedParseDiagnosticFragment is null, $"{specCase.Id}: Evaluates forbids ExpectedParseDiagnosticFragment.");
+                    Assert.True(specCase.ExpectedDiagnosticCode is null, $"{specCase.Id}: Evaluates forbids ExpectedDiagnosticCode.");
                     break;
                 case SpecOutcome.EvalError:
                     Assert.True(specCase.ExpectedErrorCategory is not null, $"{specCase.Id}: EvalError requires ExpectedErrorCategory.");
                     Assert.True(specCase.ExpectedDisplay is null && specCase.ExpectedRaw is null && specCase.ExpectedEmittedCount is null,
                         $"{specCase.Id}: EvalError forbids value expectations.");
                     Assert.True(specCase.ExpectedParseDiagnosticFragment is null, $"{specCase.Id}: EvalError forbids ExpectedParseDiagnosticFragment.");
+                    Assert.True(specCase.ExpectedDiagnosticCode is null, $"{specCase.Id}: EvalError forbids ExpectedDiagnosticCode.");
                     break;
                 case SpecOutcome.ParseError:
                     Assert.True(specCase.ExpectedDisplay is null && specCase.ExpectedRaw is null
                         && specCase.ExpectedEmittedCount is null && specCase.ExpectedErrorCategory is null,
                         $"{specCase.Id}: ParseError forbids value/error expectations.");
+                    // Every diagnostic-level case pins its structured family, so
+                    // new parse-error cases cannot regress to message-only
+                    // expectations.
+                    Assert.True(specCase.ExpectedDiagnosticCode is not null,
+                        $"{specCase.Id}: ParseError requires ExpectedDiagnosticCode.");
+                    Assert.True(specCase.ExpectedDiagnosticCode != DiagnosticCode.Unspecified,
+                        $"{specCase.Id}: ExpectedDiagnosticCode must be a deliberate non-default family.");
                     Assert.True(specCase.LeanProgram is null,
                         $"{specCase.Id}: parse-error cases are C#-only (Lean has no surface parser).");
                     break;

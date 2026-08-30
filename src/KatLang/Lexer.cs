@@ -151,7 +151,10 @@ public static class Lexer
                     diagnostics.Add(new Diagnostic(
                         "Number literal is too large.",
                         DiagnosticSeverity.Error,
-                        new SourceSpan(startLine, startCol, line, col - 1)));
+                        new SourceSpan(startLine, startCol, line, col - 1))
+                    {
+                        Code = DiagnosticCode.NumberLiteralTooLarge,
+                    });
                     tokens.Add(Token.CreateNumber(0, start, i - start, startLine, startCol));
                 }
                 continue;
@@ -177,7 +180,10 @@ public static class Lexer
                     diagnostics.Add(new Diagnostic(
                         "Unterminated string literal.",
                         DiagnosticSeverity.Error,
-                        new SourceSpan(startLine, startCol, line, col - 1)));
+                        new SourceSpan(startLine, startCol, line, col - 1))
+                    {
+                        Code = DiagnosticCode.UnterminatedStringLiteral,
+                    });
                 }
                 tokens.Add(Token.CreateStringLiteral(value, start, i - start, startLine, startCol));
                 continue;
@@ -238,7 +244,10 @@ public static class Lexer
                         diagnostics.Add(new Diagnostic(
                             "Unexpected character: '!'. Use 'not' for logical negation.",
                             DiagnosticSeverity.Error,
-                            new SourceSpan(singleLine, singleCol, singleLine, singleCol)));
+                            new SourceSpan(singleLine, singleCol, singleLine, singleCol))
+                        {
+                            Code = DiagnosticCode.UnexpectedCharacter,
+                        });
                     }
                     break;
                 case '(': tokens.Add(Token.Create(TokenKind.LParen,     singleStart, 1, singleLine, singleCol)); break;
@@ -257,7 +266,10 @@ public static class Lexer
                     diagnostics.Add(new Diagnostic(
                         $"Unexpected character: '{c}'.",
                         DiagnosticSeverity.Error,
-                        new SourceSpan(singleLine, singleCol, singleLine, singleCol)));
+                        new SourceSpan(singleLine, singleCol, singleLine, singleCol))
+                    {
+                        Code = DiagnosticCode.UnexpectedCharacter,
+                    });
                     break;
             }
         }
