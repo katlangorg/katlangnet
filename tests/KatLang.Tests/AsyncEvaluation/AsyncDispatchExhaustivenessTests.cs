@@ -84,6 +84,18 @@ public class AsyncDispatchExhaustivenessTests
             .OrderBy(name => name, StringComparer.Ordinal)
             .ToList();
 
+        var unclassified = declared.Except(DeclaredPolicies.Keys, StringComparer.Ordinal).ToList();
+        Assert.True(
+            unclassified.Count == 0,
+            $"Expr variant(s) with no async-dispatch exhaustiveness classification: {string.Join(", ", unclassified)}. "
+            + "Classify each in DeclaredPolicies and give it an explicit case in BOTH counted dispatch twins "
+            + "(EvalCounted / EvalCountedAsync) or a proven-leaf delegation.");
+        var unsampled = declared.Except(VariantSamples.Keys, StringComparer.Ordinal).ToList();
+        Assert.True(
+            unsampled.Count == 0,
+            $"Expr variant(s) with no dispatch-coverage sample: {string.Join(", ", unsampled)}. "
+            + "Add a valid sample to VariantSamples so the twin-path dispatch pins cover the variant.");
+
         Assert.Equal(
             declared,
             DeclaredPolicies.Keys.OrderBy(name => name, StringComparer.Ordinal).ToList());
@@ -317,6 +329,41 @@ public class AsyncDispatchExhaustivenessTests
             ]));
 
         await AssertChildRoutesThroughAsyncSeam(new Expr.AlgorithmExpr(root));
+    }
+
+    /// <summary>
+    /// Param is not structurally composite (its fields are names, not expressions), but
+    /// its AlgEnv branch DEMANDS a bound zero-parameter algorithm's output — a recursive
+    /// child evaluation awaited directly from the dispatch arm. The surface route is a
+    /// semantically erroring eager argument (a semantic value-channel error is never
+    /// retained on the binding, so the forwarded demand re-evaluates the thunk — pinned
+    /// by <c>EvaluationLimitsTests</c>); the demand's re-evaluation must route the
+    /// thunk's property access through the ASYNC seam even though the run ends in the
+    /// synchronous error. Plain <c>Eval</c>'s Param case reproduces the same lookups, so
+    /// a Param arm silently delegated to synchronous evaluation would return the correct
+    /// error — only the seam counters expose the synchronous child evaluation.
+    /// </summary>
+    [Fact]
+    public async Task Param_AlgorithmBoundValueDemand_RoutesThroughTheAsyncSeam()
+    {
+        // Eager argument evaluation accesses Bad (miss) and P, fails semantically, and
+        // leaves an algorithm-only binding; w's value demand inside G re-evaluates the
+        // thunk, accessing P again through the seam before reproducing the error.
+        var ast = AsyncEvaluationHarness.Ast("P = 5\nBad = P + 1 / 0\nG(w) = w\nF(v) = G(v)\nF(Bad)");
+
+        var sync = Evaluator.RunCounted(ast);
+        Assert.True(sync.IsError, "expected the demanded thunk to reproduce the semantic error");
+
+        var cache = new SuspendingAsyncZeroArgPropertyResultCache();
+        var async = await AsyncEvaluationHarness.Complete(
+            Evaluator.RunCountedAsync(ast, cache));
+
+        Assert.Equal(AsyncEvaluationHarness.NeutralOf(sync), AsyncEvaluationHarness.NeutralOf(async));
+        Assert.True(
+            cache.AsyncAccesses >= 3,
+            "expected the eager accesses AND the re-demanded thunk's property access to reach the async seam");
+        Assert.Equal(0, cache.SyncAccesses);
+        Assert.Equal(cache.AsyncAccesses, cache.ThreadHops.Count);
     }
 
     /// <summary>
