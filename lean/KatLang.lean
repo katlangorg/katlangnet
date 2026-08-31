@@ -7,15 +7,26 @@
 -- Numeric model:
 --   The Lean core uses unbounded Int while the C# runtime uses IEEE 754
 --   Decimal128 (34-significant-digit decimal floating point).
---   Division-like operations (`/`, `div`, `mod`, and the `avg` builtin)
---   truncate toward zero (Int.tdiv / Int.tmod) so integer operands agree with
---   the C# reference, including negative operands (`-7 div 2 = -3`,
---   `-7 mod 2 = -1`). Fractional results the decimal runtime can represent
---   are a documented Int-core limitation: `/`-style quotients and the `avg`
---   builtin truncate here (`7 / 2 = 3` and `avg(1, 2) = 1`) but yield decimals
---   in the runtime (`3.5` and `1.5`), and negative exponents with
+--   The integer-valued operations use truncation toward zero (Int.tdiv /
+--   Int.tmod). On the common exact integer subdomain this agrees with the C#
+--   reference, including negative operands (`-7 div 2 = -3`,
+--   `-7 mod 2 = -1`). This is not a blanket "integer source = shared model"
+--   rule: the runtime first performs `div`'s quotient in finite-precision
+--   Decimal128, and large integral arithmetic can round or overflow. Fractional
+--   results the decimal runtime can represent are another documented Int-core
+--   limitation: `/`-style quotients and the `avg` builtin truncate here
+--   (`7 / 2 = 3` and `avg(1, 2) = 1`) but yield decimals in the runtime
+--   (`3.5` and `1.5`), and negative exponents with
 --   |base| >= 2 raise an explicit error instead of silently truncating the
 --   reciprocal to 0 (see `negativeIntPow`).
+--   IEEE special values and range behavior exist only in the runtime: NaN,
+--   ±Infinity, signed zero, overflow to infinity, and gradual underflow
+--   (subnormals and eventual zero) have no Int
+--   counterpart, so the core neither models nor approximates them — they are
+--   pinned as C#-only canonical cases in the executable language spec
+--   (the LanguageSpecCorpus model-divergence family) and stay excluded from
+--   the Lean-guarded corpora. The routing rule for numeric changes is the
+--   "Core numeric semantics" row in src/KatLang/SEMANTIC-ALIGNMENT.md.
 --
 -- Open declarations:
 --   `open` is a DECLARATION keyword, not a property assignment.

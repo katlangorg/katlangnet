@@ -59,8 +59,12 @@ Every case is in exactly one of three partitions (identity enforced by
 - **parse-level** — `Outcome == ParseError`; C#-only because the Lean model
   has no surface parser.
 - **C#-only** — evaluates/errs but has no Lean program; requires an explicit
-  `LeanExclusionReason` (e.g. decimal display semantics outside the Lean Int
-  core, or a Lean encoding not yet authored).
+  `LeanExclusionReason` naming the reviewed model divergence (the
+  Decimal128-vs-Lean-Int numeric family, or the unmodeled Math-native
+  surface; the numeric boundary itself is defined by the "Core numeric
+  semantics" row in `src/KatLang/SEMANTIC-ALIGNMENT.md`). An integer-looking
+  source is not automatically Lean-comparable: Decimal128 precision/range can
+  diverge from unbounded `Int` before the result is observed.
 
 Probes are C#-only auxiliary observations by design and are counted
 separately. Internal-node (`Expr.SequenceConstruct`) cases are owned by the
@@ -196,9 +200,10 @@ with `(1, 2)`, and re-spreading the result (`take(...)*` is the kept pair).
 
 ## 10. Known limitations
 
-- Parser diagnostics have no structured error codes; parse-level cases pin
-  only the outcome plus, sparingly, a message fragment for deliberately
-  worded diagnostics.
+- Parse-level cases pin the structured `DiagnosticCode` family of the
+  expected diagnostic (schema-required since the structured-code work) plus,
+  sparingly, a message fragment for deliberately worded diagnostics; Lean
+  still verifies nothing at parse level.
 - Probes and display expectations are C#-only (Lean has no display layer).
 - The generator harness (`experimental/prompts/katlang-generator-harness.ps1`)
   and its test-case JSON are untracked and outside this system; only the two

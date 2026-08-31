@@ -142,6 +142,26 @@ public static class LanguageSpecCorpus
         },
         new()
         {
+            Id = "integer-division-truncates",
+            Category = "arithmetic",
+            Source = "-7 div 2\n-7 mod 2\n7 div 2",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "-3\n-1\n3",
+            ExpectedRaw = "S[-3, -1, 3]",
+            ExpectedEmittedCount = 3,
+            Probes =
+            [
+                // An exact `/` quotient is the same value in both engines.
+                new SpecProbe("8 / 2", "ok raw=4 n=1"),
+                // Zero to a negative integer power is the specified error in
+                // BOTH numeric models (Lean `negativeIntPow`, C# `EvalPow`).
+                new SpecProbe("0 ^ -1", "err illegalInEval"),
+            ],
+            Notes = "Shared Lean-modeled law on these common exact integer operands: `div`/`mod` truncate toward zero (Lean `Int.tdiv`/`Int.tmod`; C# `Decimal128.Truncate(x / y)`/`%`). This is not a blanket claim about every integral Decimal128 input: a sufficiently large C# `div` quotient can round before truncation. Contrast the C#-only `division-decimal-quotient` case, where a non-exact `/` result diverges from the Int core by design.",
+            Explanation = "Integer division `div` and remainder `mod` truncate toward zero: `-7 div 2` is `-3` and `-7 mod 2` is `-1`. These representative exact integer operations are cross-engine semantics shared with the Lean core model; Decimal128 precision/range remains a separate boundary for large operands.",
+        },
+        new()
+        {
             Id = "property-access-and-call",
             Category = "arithmetic",
             Source = "# Define a property:\nAnswer = 42\n\n# Property-style access:\nAnswer\n\n# Explicit zero-parameter call:\nAnswer()",
@@ -2601,7 +2621,15 @@ public static class LanguageSpecCorpus
             Explanation = "A list is ONE collection argument: `count([1, 2, 3])` and `A.count` count three items through the post-binding one-level collection view. The view is never recursive — a grouped pair of lists counts its two opaque list items (`count(([], []))` is 2), and a nested list stays one item. Spread supplies ordinary argument slots, so `count([1, 2, 3]*)` and the bare two-argument `count([], [])` are arity errors; re-group a spread (`sum(([1, 2, 3]*))`) to pass its items as one collection.",
         },
 
-        // ==================== implementation-only (C# decimal runtime) ====================
+        // ==================== C#-only model divergences ====================
+        // The canonical numeric family for the Decimal128-vs-Lean-Int model
+        // boundary (plus the unmodeled Math-native surface at the end). Each
+        // case pins runtime-contract behavior the Lean Int core cannot
+        // represent and carries the reviewed LeanExclusionReason that keeps it
+        // out of the Lean-guarded partition; the shared integer tier stays
+        // Lean-comparable (see `integer-division-truncates`,
+        // `division-by-zero`). Routing rule: the numeric-semantics row in
+        // src/KatLang/SEMANTIC-ALIGNMENT.md.
         new()
         {
             Id = "avg-decimal-mean",
@@ -2611,8 +2639,125 @@ public static class LanguageSpecCorpus
             ExpectedDisplay = "1.5",
             ExpectedRaw = "1.5",
             ExpectedEmittedCount = 1,
-            LeanExclusionReason = "Decimal mean: the C# runtime uses decimal numerics; the Lean Int core truncates (documented model limitation, tutorial 'Average' section).",
+            LeanExclusionReason = "Decimal mean: the C# runtime performs Decimal128 division and returns `1.5`; the Lean Int core uses `Int.tdiv` and returns `1` (documented model limitation, tutorial 'Average' section).",
             Explanation = "`avg` returns the decimal mean in the runtime; the Lean Int-core model truncates and is documented as a model limitation, not the runtime contract.",
+        },
+        new()
+        {
+            Id = "decimal-fraction-arithmetic",
+            Category = "arithmetic",
+            Source = "0.5 + 0.5",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "1.0",
+            ExpectedRaw = "1.0",
+            ExpectedEmittedCount = 1,
+            LeanExclusionReason = "Fractional Decimal128 literals and values are outside the Lean Int numeric model; LeanAstEncoder refuses fractional numbers by design rather than approximating them, so the program itself has no faithful Lean form.",
+            Probes =
+            [
+                // The classic binary-floating-point failure is exact in decimal
+                // arithmetic.
+                new SpecProbe("0.1 + 0.2 == 0.3", "ok raw=1 n=1"),
+                // Ordinary arithmetic keeps its IEEE quantum; literals keep the
+                // quantum they were written with.
+                new SpecProbe("2.50 * 4", "ok raw=10.00 n=1"),
+                new SpecProbe("1.50", "ok raw=1.50 n=1"),
+            ],
+            Explanation = "Numbers are IEEE 754 Decimal128, so decimal fractions are exact (`0.1 + 0.2 == 0.3` is `1`) and ordinary arithmetic exposes the Decimal128-selected result quantum without canonicalizing it: `0.5 + 0.5` displays `1.0`, not `1`. Quantum affects display, not structural numeric equality; formatting never re-rounds the computed value.",
+        },
+        new()
+        {
+            Id = "division-decimal-quotient",
+            Category = "arithmetic",
+            Source = "1 / 3",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "0.3333333333333333333333333333333333",
+            ExpectedRaw = "0.3333333333333333333333333333333333",
+            ExpectedEmittedCount = 1,
+            LeanExclusionReason = "Non-exact `/` quotients are correctly rounded 34-digit Decimal128 values; the Lean Int core truncates the quotient (`1 / 3 = 0` there) — the documented Int-core limitation in the lean/KatLang.lean numeric-model header, not the runtime contract.",
+            Probes =
+            [
+                new SpecProbe("7 / 2", "ok raw=3.5 n=1"),
+            ],
+            Notes = "The truncating spellings stay cross-engine: see the Lean-comparable `integer-division-truncates` case for `div`/`mod`.",
+            Explanation = "`/` returns the exact decimal quotient, correctly rounded to KatLang's 34 significant digits: `1 / 3` is `0.3333333333333333333333333333333333` and `7 / 2` is `3.5`. Use `div` for the truncated integer quotient.",
+        },
+        new()
+        {
+            Id = "nan-equality-vs-ordering",
+            Category = "arithmetic",
+            Source = "N = (-2) ^ 0.5\nN == (-3) ^ 0.5\nN < 1\nN <= 1\nN > 1\nN >= 1",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "1\n0\n0\n0\n0",
+            ExpectedRaw = "S[1, 0, 0, 0, 0]",
+            ExpectedEmittedCount = 5,
+            LeanExclusionReason = "NaN is a Decimal128 runtime value with no counterpart in the Lean Int numeric model; the equality-vs-ordering split (structural `==` treats NaN as one value, ordering comparisons follow IEEE and are false) is Decimal128-specific by construction.",
+            Probes =
+            [
+                // Structural side: two INDEPENDENTLY computed NaN atoms are one
+                // value (a same-property spelling like `N == N` would compare
+                // the cached result against itself and never reach the atom
+                // rule), so != is 0 and the collection consumers agree with ==.
+                new SpecProbe("N = (-2) ^ 0.5\nN != (-3) ^ 0.5", "ok raw=0 n=1"),
+                new SpecProbe("N = (-2) ^ 0.5\ncontains((1, N), (-3) ^ 0.5)", "ok raw=1 n=1"),
+                new SpecProbe("N = (-2) ^ 0.5\ndistinct((N, (-3) ^ 0.5))", "ok raw=L[NaN] n=1"),
+                // `order`/`orderDesc` use Decimal128's TOTAL order (NaN sorts
+                // before every other value ascending), a third, deliberate
+                // surface distinct from both `==` and the IEEE comparisons.
+                new SpecProbe("N = (-2) ^ 0.5\norder((1, N, -1))", "ok raw=L[NaN, -1, 1] n=1"),
+                new SpecProbe("N = (-2) ^ 0.5\norderDesc((1, N, -1))", "ok raw=L[1, -1, NaN] n=1"),
+                // `min` canonically represents the NaN-propagating min/max
+                // family; Decimal128NumericsTests pins `max` independently.
+                new SpecProbe("N = (-2) ^ 0.5\nmin((3, N, 1))", "ok raw=NaN n=1"),
+                // Truth testing: zero is false, every other atom — NaN
+                // included — is true.
+                new SpecProbe("N = (-2) ^ 0.5\nif(N, 1, 2)", "ok raw=1 n=1"),
+            ],
+            Notes = "`(-2) ^ 0.5` produces NaN through the operator surface alone (a fractional power of a negative base), keeping this case independent of the separately excluded Math-native surface. The equality, `contains`, and `distinct` rows deliberately compare SEPARATELY computed NaN values so each consumer reaches the structural atom rule instead of succeeding through the zero-arg property cache's reference identity.",
+            Explanation = "NaN splits by operation: structural `==`/`!=` (also `contains`/`distinct`) treat NaN as ONE value, so two independently computed NaN results compare equal; the ordering operators follow IEEE, so every `<`/`>`/`<=`/`>=` involving NaN is `0`; and `order`/`orderDesc` sort by the total order, where NaN comes before every other value ascending. `min`/`max` propagate NaN, and NaN is truthy like every non-zero number.",
+        },
+        new()
+        {
+            Id = "overflow-produces-infinity",
+            Category = "arithmetic",
+            Source = "9e6144 * 10",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "Infinity",
+            ExpectedRaw = "Infinity",
+            ExpectedEmittedCount = 1,
+            LeanExclusionReason = "Lean's unbounded Int has no finite range and no Infinity value (`9e6144 * 10` is an ordinary integer there); Decimal128 overflow producing a signed infinity is runtime-only range behavior.",
+            Probes =
+            [
+                new SpecProbe("(0 - 9e6144) * 10", "ok raw=-Infinity n=1"),
+                // Non-finite operands then propagate by IEEE arithmetic:
+                // Infinity - Infinity is NaN, never an error.
+                new SpecProbe("9e6144 * 10 - 9e6144 * 10", "ok raw=NaN n=1"),
+                // An infinity participates in IEEE ordering as the extreme.
+                new SpecProbe("9e6144 * 10 > 9e6144", "ok raw=1 n=1"),
+            ],
+            Explanation = "Arithmetic past Decimal128's finite range (about ±1e6145) produces `Infinity`/`-Infinity` instead of erroring or clamping to a finite boundary, and the infinities then behave by IEEE rules: `Infinity - Infinity` is `NaN`, and an infinity compares beyond every finite value.",
+        },
+        new()
+        {
+            Id = "negative-zero-display",
+            Category = "arithmetic",
+            Source = "-0",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "-0",
+            ExpectedRaw = "-0",
+            ExpectedEmittedCount = 1,
+            LeanExclusionReason = "Decimal128 signed zero is outside the Lean Int numeric model: Int negation of zero is zero, so the Lean form of this program observes `0` where the runtime observes the sign-preserving `-0`.",
+            Probes =
+            [
+                // One structural value: the sign never separates the zeros for
+                // == or the hashed consumers, and IEEE ordering agrees.
+                new SpecProbe("-0 == 0", "ok raw=1 n=1"),
+                new SpecProbe("distinct((-0, 0))", "ok raw=L[-0] n=1"),
+                // Zero-VALUED divisors keep the Lean-modeled error: signed zero
+                // does NOT adopt the IEEE 1/-0 = -Infinity convention.
+                new SpecProbe("1 / -0", "err div0"),
+            ],
+            Notes = "The canonical case keeps the representative signed-zero boundary: construction/display, structural equality (including the hashed `distinct` consumer), and the shared zero-divisor rule. Decimal128NumericsTests retains the denser relational, arithmetic-sign, and truthiness matrix.",
+            Explanation = "`-0` (unary minus on zero — literals are unsigned) is an observable Decimal128 value: it displays with its sign while comparing structurally equal to `0`, and it remains a zero-valued divisor (`1 / -0` is the ordinary division-by-zero error, not `-Infinity`).",
         },
         new()
         {

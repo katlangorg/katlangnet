@@ -237,7 +237,16 @@ public class LanguageSpecRunnerTests
         ];
         string[] expectedModelDivergences =
         [
+            // The Decimal128-vs-Lean-Int numeric family (see the numeric row in
+            // src/KatLang/SEMANTIC-ALIGNMENT.md). If the Lean numeric model
+            // ever grows past Int, these are the exclusions to revisit.
             "avg-decimal-mean",
+            "decimal-fraction-arithmetic",
+            "division-decimal-quotient",
+            "nan-equality-vs-ordering",
+            "negative-zero-display",
+            "overflow-produces-infinity",
+            // The unmodeled Math-native surface.
             "native-flat-callback-binding",
         ];
 
@@ -264,9 +273,9 @@ public class LanguageSpecRunnerTests
     [Fact]
     public void FidelityRatchet_LeanGuardedCoverageCannotSilentlyShrink()
     {
-        const int MinimumEncoderDerivedCases = 167;
+        const int MinimumEncoderDerivedCases = 168;
         const int MaximumHandAuthoredOverrides = 0;
-        const int MaximumCSharpOnlyCases = 2;
+        const int MaximumCSharpOnlyCases = 7;
 
         var derived = Cases.Count(c => c.DerivedLeanProgram is not null);
         var overrides = Cases.Count(c => c.LeanProgramOverride is not null);

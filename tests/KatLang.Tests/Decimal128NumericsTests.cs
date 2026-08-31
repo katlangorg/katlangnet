@@ -339,6 +339,23 @@ public class Decimal128NumericsTests
             Assert.IsType<RunResult.Success>(KatLangEngine.Run("1 / 3")).ToDisplayString());
     }
 
+    [Fact]
+    public void IntegerDivision_TruncatesTheRoundedDecimal128Quotient()
+    {
+        // Both operands are exactly representable integers, but their mathematical
+        // quotient is 2.999… and needs more than 34 significant digits. KatLang's
+        // Decimal128 `div` rule is Truncate(x / y), so the quotient first rounds to
+        // 3 and then truncates to 3. Lean's unbounded Int.tdiv returns 2 instead:
+        // integer-looking source alone is therefore not the numeric model boundary.
+        const string dividend = "9999999999999999999999999999999998";
+        const string divisor = "3333333333333333333333333333333333";
+
+        Assert.Equal(N("3"), EvalSingle($"{dividend} div {divisor}"));
+        Assert.Equal(
+            N("3333333333333333333333333333333332"),
+            EvalSingle($"{dividend} mod {divisor}"));
+    }
+
     // ── Numeric literals parse directly into Decimal128 ──────────────────────
 
     [Fact]
