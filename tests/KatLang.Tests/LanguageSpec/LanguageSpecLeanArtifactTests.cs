@@ -39,7 +39,8 @@ public class LanguageSpecArtifactsTests
         Assert.True(expected == actual,
             $"{ArtifactRelativePath} is out of date with the canonical corpus. " +
             $"Set {RegenerateVariable}=1, rerun this test, review the diff, and run " +
-            "`lake build LanguageSpecCases` to check the Lean side.");
+            "`lake build LanguageSpecCases` to check the Lean side. " +
+            SemanticExplorerLeanArtifactTests.DescribeFirstDifference(expected, actual));
     }
 
     /// <summary>

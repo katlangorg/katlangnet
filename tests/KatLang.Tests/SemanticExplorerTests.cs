@@ -68,28 +68,36 @@ public class SemanticExplorerTests
             + string.Join("\n", lines));
     }
 
+    /// <summary>
+    /// Golden pins of the parser's redundant-parenthesis normalization as it
+    /// reaches the DERIVED Lean corpus text (expected strings hand-written,
+    /// never produced by the encoder): wrappers erased by
+    /// <c>Parser.ShouldUnwrapParenthesizedPrimary</c> must not surface as
+    /// phantom <c>.capture</c> nodes, while each surviving written wrapper
+    /// around an already-captured value contributes exactly one more capture
+    /// boundary.
+    /// </summary>
     [Fact]
-    public void LeanValueEncoder_MirrorsParserParenthesisNormalization()
+    public void DerivedLeanPrograms_MirrorParserParenthesisNormalization()
     {
-        var values = SemanticExplorerCorpus.Values.ToDictionary(v => v.Id, v => v.Value);
+        var cases = SemanticExplorerCorpus.AllCases().ToDictionary(c => c.Id);
 
-        // These written wrappers are erased by Parser.ShouldUnwrapParenthesizedPrimary.
-        Assert.Equal("(.num 1)", values["p1"].LeanExpr);
-        Assert.Equal("(.emptySequence 0)", values["ppe"].LeanExpr);
-        Assert.Equal("(.num 1)", values["pp1"].LeanExpr);
-        Assert.Equal("(.listLiteral [(.num 1)])", values["pl1"].LeanExpr);
+        // Redundant wrappers erased: (1), (()), ((1)), ([1]).
+        Assert.Equal(".algorithmExpr (alg [] [] [] [.num 1])", cases["root__p1"].LeanProgram);
+        Assert.Equal(".algorithmExpr (alg [] [] [] [(.emptySequence 0)])", cases["root__ppe"].LeanProgram);
+        Assert.Equal(".algorithmExpr (alg [] [] [] [.num 1])", cases["root__pp1"].LeanProgram);
+        Assert.Equal(".algorithmExpr (alg [] [] [] [(.listLiteral [.num 1])])", cases["root__pl1"].LeanProgram);
 
         // Multi-item grouping survives, and each additional wrapper around an
         // already-captured value contributes one more Capture boundary.
-        Assert.Equal("(.capture [(.num 1), (.num 2)])", values["p12"].LeanExpr);
+        Assert.Equal(".algorithmExpr (alg [] [] [] [(.capture [.num 1, .num 2])])", cases["root__p12"].LeanProgram);
         Assert.Equal(
-            "(.capture [(.capture [(.capture [(.num 1), (.num 2)])])])",
-            values["ppp12"].LeanExpr);
+            ".algorithmExpr (alg [] [] [] [(.capture [(.capture [(.capture [.num 1, .num 2])])])])",
+            cases["root__ppp12"].LeanProgram);
 
-        var cases = SemanticExplorerCorpus.AllCases().ToDictionary(c => c.Id);
-        Assert.DoesNotContain(".capture [(.num 1)]", cases["seqWrapSolo__n1"].LeanProgram);
+        Assert.DoesNotContain(".capture", cases["seqWrapSolo__n1"].LeanProgram);
         Assert.Contains(
-            ".capture [(.capture [(.num 1), (.num 2)])]",
+            ".capture [(.capture [.num 1, .num 2])]",
             cases["seqWrapSolo__p12"].LeanProgram);
     }
 
@@ -609,6 +617,8 @@ public class SemanticExplorerTests
                     .ToDictionary(g => g.Key, g => g.Count()),
                 leanRepresentable = allCases.Count(c => c.LeanProgram is not null),
                 leanExcludedParseLevel = allCases.Count(c => c.LeanProgram is null),
+                leanExclusionReasons = allCases.Where(c => c.LeanExclusionReason is not null)
+                    .ToDictionary(c => c.Id, c => c.LeanExclusionReason),
                 internalNodeCases = SemanticExplorerCorpus.InternalNodeCases().Count,
             },
             findingCount = findings.Count,

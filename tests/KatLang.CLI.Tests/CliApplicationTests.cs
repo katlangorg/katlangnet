@@ -77,7 +77,7 @@ public sealed class CliApplicationTests
         var result = await Cli.InvokeAsync("--version");
 
         Assert.Equal(Success, result.ExitCode);
-        Assert.Equal("KatLang 0.8.181", result.TrimmedOutput);
+        Assert.Equal("KatLang 0.8.190", result.TrimmedOutput);
     }
 
     [Fact]

@@ -1,11 +1,12 @@
 namespace KatLang.Tests;
 
 /// <summary>
-/// Structural description of a generated semantic-explorer corpus value.
-/// Carries both the written KatLang source form and the equivalent Lean AST
-/// construction, mirroring the C# parser's elaboration: surviving
-/// parenthesized lists are <c>.capture</c> bundles, while redundant parentheses
-/// around atoms, empty sequences, and lists normalize away.
+/// Structural description of a generated semantic-explorer corpus value: the
+/// written KatLang source form only. The equivalent Lean AST construction is
+/// no longer authored here — every case's Lean program is derived from the
+/// source's real elaborated AST through <see cref="LeanAstEncoder"/> (see
+/// <see cref="SemanticExplorerCorpus.AllCases"/>), so parser rules such as
+/// redundant-parenthesis normalization are never re-implemented in test code.
 /// </summary>
 public abstract record ExplorerValue
 {
@@ -35,45 +36,22 @@ public abstract record ExplorerValue
         ListOf l => "[" + string.Join(", ", l.Items.Select(i => i.Source)) + "]",
         _ => throw new InvalidOperationException(),
     };
-
-    /// <summary>
-    /// Lean Expr text for this written value. Multi-item parentheses become
-    /// <c>.capture</c> bundles; a redundant wrap survives only when its inner
-    /// parsed expression is already a capture. Parentheses around atoms,
-    /// empty-sequence nodes, and list literals normalize away, matching
-    /// <c>Parser.ShouldUnwrapParenthesizedPrimary</c>.
-    /// </summary>
-    public string LeanExpr => this switch
-    {
-        Num n => $"(.num {n.Value})",
-        Empty => "(.emptySequence 0)",
-        Seq s => $"(.capture [{string.Join(", ", s.Items.Select(i => i.LeanExpr))}])",
-        Wrap w => w.Inner.ParenthesizedLeanExpr,
-        ListOf l => $"(.listLiteral [{string.Join(", ", l.Items.Select(i => i.LeanExpr))}])",
-        _ => throw new InvalidOperationException(),
-    };
-
-    /// <summary>The Lean expression produced when this value is wrapped in one more pair of parentheses.</summary>
-    public string ParenthesizedLeanExpr
-        => ProducesCapture
-            ? $"(.capture [{LeanExpr}])"
-            : LeanExpr;
-
-    private bool ProducesCapture => this switch
-    {
-        Seq => true,
-        Wrap w => w.Inner.ProducesCapture,
-        _ => false,
-    };
 }
 
-/// <summary>One generated explorer case: a receiver template applied to a value.</summary>
+/// <summary>
+/// One generated explorer case: a receiver template applied to a value.
+/// <see cref="LeanProgram"/> is DERIVED — the Lean encoding of the source's
+/// real elaborated AST (<see cref="LeanAstEncoder.EncodeProgram"/>), never
+/// authored by hand — and is <c>null</c> exactly for the deliberate
+/// parse-error probes (Lean has no surface parser).
+/// </summary>
 public sealed record ExplorerCase(
     string Id,
     string TemplateId,
     string ValueId,
     string Source,
-    string? LeanProgram);
+    string? LeanProgram,
+    string? LeanExclusionReason);
 
 /// <summary>
 /// One direct internal-AST-node case: a program constructed without the
@@ -81,12 +59,14 @@ public sealed record ExplorerCase(
 /// internal nodes such as <see cref="Expr.SequenceConstruct"/> on both sides
 /// of the Lean/C# differential, and to detect accidental exposure of internal
 /// node semantics to surface syntax via the declared surface counterpart.
+/// The Lean text for the case is derived from the SAME constructed AST the C#
+/// side observes (<see cref="LeanAstEncoder.EncodeExpr"/>), so the two sides
+/// cannot drift apart.
 /// </summary>
 public sealed record InternalNodeCase(
     string Id,
     string Description,
     Func<Expr> RootOutput,
-    string LeanRootExpr,
     string SurfaceCounterpart,
     InternalNodeRelation Relation);
 
@@ -116,12 +96,15 @@ public static class SemanticExplorerCorpus
 {
     private static ExplorerValue N(int n) => new ExplorerValue.Num(n);
     private static readonly ExplorerValue E = new ExplorerValue.Empty();
-    private static ExplorerValue S(params ExplorerValue[] items) => new ExplorerValue.Seq(items);
+    private static ExplorerValue S(params ExplorerValue[] items) =>
+        new ExplorerValue.Seq(Array.AsReadOnly(items));
     private static ExplorerValue W(ExplorerValue inner) => new ExplorerValue.Wrap(inner);
-    private static ExplorerValue L(params ExplorerValue[] items) => new ExplorerValue.ListOf(items);
+    private static ExplorerValue L(params ExplorerValue[] items) =>
+        new ExplorerValue.ListOf(Array.AsReadOnly(items));
 
     /// <summary>The bounded value space (deduplicated by source form).</summary>
     public static readonly IReadOnlyList<(string Id, ExplorerValue Value)> Values =
+        Array.AsReadOnly<(string Id, ExplorerValue Value)>(
     [
         ("e", E),                              // ()
         ("n0", N(0)),                          // 0
@@ -152,232 +135,128 @@ public static class SemanticExplorerCorpus
         ("l_p12", L(S(N(1), N(2)))),           // [(1, 2)]
         ("p_l12", S(L(N(1), N(2)), N(3))),     // ([1, 2], 3)
         ("pl1", W(L(N(1)))),                   // ([1])
-    ];
-
-    // ----- Lean program snippets ---------------------------------------------
-
-    private static string LProg(IEnumerable<string> props, IEnumerable<string> outputs)
-        => $".algorithmExpr (alg [] [] [{string.Join(", ", props)}] [{string.Join(", ", outputs)}])";
-
-    private static string LVal(string name, string leanExpr)
-        => $"privateProp \"{name}\" (alg [] [] [] [{leanExpr}])";
-
-    private const string LIdentity = "privateProp \"I\" (alg [\"a\"] [] [] [.param \"a\"])";
-    private const string LFixed = "privateProp \"F\" (alg [\"a\"] [] [] [.param \"a\"])";
-    private const string LCollectingF =
-        "privateProp \"F\" (algWithParameters [{ name := \"a\", kind := .collecting }] [] [] [.param \"a\"])";
-    private const string LCollectingG =
-        "privateProp \"G\" (algWithParameters [{ name := \"a\", kind := .collecting }] [] [] [.param \"a\"])";
-
-    private static string LMixedFront(string bodyParam) =>
-        $"privateProp \"F\" (algWithParameters [{{ name := \"h\" }}, {{ name := \"t\", kind := .collecting }}] [] [] [.param \"{bodyParam}\"])";
-
-    private static string LMixedBack(string bodyParam) =>
-        $"privateProp \"F\" (algWithParameters [{{ name := \"t\", kind := .collecting }}, {{ name := \"z\" }}] [] [] [.param \"{bodyParam}\"])";
-
-    /// <summary>
-    /// Lean encoding of the <c>dotAccess</c> templates' container. The written
-    /// source is <c>A = { X = ... }</c>, whose <c>X</c> the parser elaborates as
-    /// a PRIVATE property, so the Lean side must use <c>privateProp</c> for the
-    /// two sides to run the same program. Structural dot access deliberately
-    /// sees private members on both sides (Lean: the <c>resolveAlgForOpen</c>
-    /// note — <c>open</c> filters to public members, <c>Algorithm.lookupProp</c>
-    /// does not), so these templates also pin that rule. The
-    /// <c>dotAccessPublicMember</c> specials cover the public spelling.
-    /// </summary>
-    private static string LContainer(string leanExpr) =>
-        $"privateProp \"A\" (alg [] [] [privateProp \"X\" (alg [] [] [] [{leanExpr}])] [])";
-
-    private static string LCall(string callee, params string[] args)
-        => $".call (.resolve \"{callee}\") [{string.Join(", ", args)}]";
-
-    /// <summary>
-    /// Parser-elaborated assignment deconstruction: RHS evaluated once into a
-    /// shared property, each target bound through an inline sequence-value
-    /// parameter pattern that opens the shared value (Lean: T:9300-style).
-    /// </summary>
-    private static string LDecon(string rhsLeanExpr, string[] targets, int collectingIndex, string observed)
-    {
-        var captures = targets.Select((t, i) => i == collectingIndex
-            ? $".capture {{ name := \"{t}\", kind := .collecting }}"
-            : $".capture {{ name := \"{t}\" }}");
-        var pattern = $".sequenceValue [{string.Join(", ", captures)}]";
-        var helper = $".algorithmExpr (algWithParameterPatterns [{pattern}] [] [] [.param \"{observed}\"])";
-        return LVal("d", rhsLeanExpr)
-            + ", "
-            + $"privateProp \"{observed}\" (alg [] [] [] [.call ({helper}) [.resolve \"d\"]])";
-    }
+    ]);
 
     // ----- Receiver templates ------------------------------------------------
+    //
+    // Templates declare SOURCE text only. The Lean program of every case is
+    // derived from the source's real elaborated AST by LeanAstEncoder in
+    // AllCases(); a template with a LeanExclusionReason is a deliberate
+    // parse-error probe with no comparable Lean program.
 
     private sealed record Template(
         string Id,
         Func<ExplorerValue, string> Source,
-        Func<ExplorerValue, string?> Lean);
+        string? LeanExclusionReason = null);
 
     private static readonly IReadOnlyList<Template> Templates =
     [
         new("root",
-            v => v.Source,
-            v => LProg([], [v.LeanExpr])),
+            v => v.Source),
         new("capture",
-            v => $"x = {v.Source}\nx",
-            v => LProg([LVal("x", v.LeanExpr)], [".resolve \"x\""])),
+            v => $"x = {v.Source}\nx"),
         new("captureCall",
-            v => $"x = {v.Source}\nx()",
-            v => LProg([LVal("x", v.LeanExpr)], [".call (.resolve \"x\") []"])),
+            v => $"x = {v.Source}\nx()"),
         new("dotAccess",
-            v => $"A = {{\n    X = {v.Source}\n}}\nA.X",
-            v => LProg([LContainer(v.LeanExpr)], [".dotCall (.resolve \"A\") \"X\" none"])),
+            v => $"A = {{\n    X = {v.Source}\n}}\nA.X"),
         new("dotAccessCall",
-            v => $"A = {{\n    X = {v.Source}\n}}\nA.X()",
-            v => LProg([LContainer(v.LeanExpr)], [".dotCall (.resolve \"A\") \"X\" (some [])"])),
+            v => $"A = {{\n    X = {v.Source}\n}}\nA.X()"),
         new("fixed",
-            v => $"F(a) = a\nF({v.Source})",
-            v => LProg([LFixed], [LCall("F", v.LeanExpr)])),
+            v => $"F(a) = a\nF({v.Source})"),
         new("fixedSpread",
-            v => $"F(a) = a\nF({v.Source}*)",
-            v => LProg([LFixed], [LCall("F", $".sequenceSpread {v.LeanExpr}")])),
+            v => $"F(a) = a\nF({v.Source}*)"),
         new("collecting",
-            v => $"F(*a) = a\nF({v.Source})",
-            v => LProg([LCollectingF], [LCall("F", v.LeanExpr)])),
+            v => $"F(*a) = a\nF({v.Source})"),
         new("collectingSpread",
-            v => $"F(*a) = a\nF({v.Source}*)",
-            v => LProg([LCollectingF], [LCall("F", $".sequenceSpread {v.LeanExpr}")])),
+            v => $"F(*a) = a\nF({v.Source}*)"),
         new("collectingViaProp",
-            v => $"F(*a) = a\nx = {v.Source}\nF(x)",
-            v => LProg([LCollectingF, LVal("x", v.LeanExpr)], [LCall("F", ".resolve \"x\"")])),
+            v => $"F(*a) = a\nx = {v.Source}\nF(x)"),
         new("mixed_h",
-            v => $"F(h, *t) = h\nF({v.Source}*)",
-            v => LProg([LMixedFront("h")], [LCall("F", $".sequenceSpread {v.LeanExpr}")])),
+            v => $"F(h, *t) = h\nF({v.Source}*)"),
         new("mixed_t",
-            v => $"F(h, *t) = t\nF({v.Source}*)",
-            v => LProg([LMixedFront("t")], [LCall("F", $".sequenceSpread {v.LeanExpr}")])),
+            v => $"F(h, *t) = t\nF({v.Source}*)"),
         new("mixedBack_t",
-            v => $"F(*t, z) = t\nF({v.Source}*)",
-            v => LProg([LMixedBack("t")], [LCall("F", $".sequenceSpread {v.LeanExpr}")])),
+            v => $"F(*t, z) = t\nF({v.Source}*)"),
         new("mixedBack_z",
-            v => $"F(*t, z) = z\nF({v.Source}*)",
-            v => LProg([LMixedBack("z")], [LCall("F", $".sequenceSpread {v.LeanExpr}")])),
+            v => $"F(*t, z) = z\nF({v.Source}*)"),
         new("deconPair_x",
-            v => $"x, y = {v.Source}\nx",
-            v => LProg([LDecon(v.LeanExpr, ["x", "y"], -1, "x")], [".resolve \"x\""])),
+            v => $"x, y = {v.Source}\nx"),
         new("deconPair_y",
-            v => $"x, y = {v.Source}\ny",
-            v => LProg([LDecon(v.LeanExpr, ["x", "y"], -1, "y")], [".resolve \"y\""])),
+            v => $"x, y = {v.Source}\ny"),
         new("deconPairSpread_x",
-            v => $"x, y = {v.Source}*\nx",
-            v => LProg([LDecon($".sequenceSpread {v.LeanExpr}", ["x", "y"], -1, "x")], [".resolve \"x\""])),
+            v => $"x, y = {v.Source}*\nx"),
         new("deconCollect_t",
-            v => $"h, *t = {v.Source}\nt",
-            v => LProg([LDecon(v.LeanExpr, ["h", "t"], 1, "t")], [".resolve \"t\""])),
+            v => $"h, *t = {v.Source}\nt"),
         new("deconCollectSpread_t",
-            v => $"h, *t = {v.Source}*\nt",
-            v => LProg([LDecon($".sequenceSpread {v.LeanExpr}", ["h", "t"], 1, "t")], [".resolve \"t\""])),
+            v => $"h, *t = {v.Source}*\nt"),
         new("deconPrefix_p",
-            v => $"*p, z = {v.Source}\np",
-            v => LProg([LDecon(v.LeanExpr, ["p", "z"], 0, "p")], [".resolve \"p\""])),
+            v => $"*p, z = {v.Source}\np"),
         new("deconPrefix_z",
-            v => $"*p, z = {v.Source}\nz",
-            v => LProg([LDecon(v.LeanExpr, ["p", "z"], 0, "z")], [".resolve \"z\""])),
+            v => $"*p, z = {v.Source}\nz"),
         new("seqWrapPair",
-            v => $"({v.Source}, 99)",
-            v => LProg([], [$".capture [{v.LeanExpr}, .num 99]"])),
+            v => $"({v.Source}, 99)"),
         new("seqWrapSolo",
-            v => $"({v.Source})",
-            v => LProg([], [v.ParenthesizedLeanExpr])),
+            v => $"({v.Source})"),
         new("spreadRoot",
-            v => $"{v.Source}*",
-            v => LProg([], [$".sequenceSpread {v.LeanExpr}"])),
+            v => $"{v.Source}*"),
         new("spreadInSeq",
-            v => $"({v.Source}*, 99)",
-            v => LProg([], [$".capture [.sequenceSpread {v.LeanExpr}, .num 99]"])),
+            v => $"({v.Source}*, 99)"),
         new("count",
-            v => $"count({v.Source})",
-            v => LProg([], [LCall("count", v.LeanExpr)])),
+            v => $"count({v.Source})"),
         new("countSpread",
-            v => $"count({v.Source}*)",
-            v => LProg([], [LCall("count", $".sequenceSpread {v.LeanExpr}")])),
+            v => $"count({v.Source}*)"),
         new("dotCount",
-            v => $"x = {v.Source}\nx.count",
-            v => LProg([LVal("x", v.LeanExpr)], [".dotCall (.resolve \"x\") \"count\" none"])),
+            v => $"x = {v.Source}\nx.count"),
         new("literalDotCount",
-            v => $"({v.Source}).count",
-            v => LProg([], [$".dotCall {v.ParenthesizedLeanExpr} \"count\" none"])),
+            v => $"({v.Source}).count"),
         new("index0",
-            v => $"x = {v.Source}\nx:0",
-            v => LProg([LVal("x", v.LeanExpr)], [".index (.resolve \"x\") (.num 0)"])),
+            v => $"x = {v.Source}\nx:0"),
         new("index1",
-            v => $"x = {v.Source}\nx:1",
-            v => LProg([LVal("x", v.LeanExpr)], [".index (.resolve \"x\") (.num 1)"])),
+            v => $"x = {v.Source}\nx:1"),
         new("indexBig",
-            v => $"x = {v.Source}\nx:9",
-            v => LProg([LVal("x", v.LeanExpr)], [".index (.resolve \"x\") (.num 9)"])),
+            v => $"x = {v.Source}\nx:9"),
         // `x:-1` is a C#-parser-level rejection (a negative selector never forms);
         // there is no comparable Lean program, so this case is C#-only.
         new("indexNeg",
             v => $"x = {v.Source}\nx:-1",
-            _ => null),
+            LeanExclusionReason:
+                "Negative selectors are rejected by KatLang's surface parser; Lean models only the elaborated AST."),
         new("eqSelf",
-            v => $"x = {v.Source}\nx == x",
-            v => LProg([LVal("x", v.LeanExpr)], [".binary .eq (.resolve \"x\") (.resolve \"x\")"])),
+            v => $"x = {v.Source}\nx == x"),
         new("neqSelf",
-            v => $"x = {v.Source}\nx != x",
-            v => LProg([LVal("x", v.LeanExpr)], [".binary .ne (.resolve \"x\") (.resolve \"x\")"])),
+            v => $"x = {v.Source}\nx != x"),
         new("eqIdentity",
-            v => $"I(a) = a\nx = {v.Source}\nx == I(x)",
-            v => LProg(
-                [LIdentity, LVal("x", v.LeanExpr)],
-                [$".binary .eq (.resolve \"x\") ({LCall("I", ".resolve \"x\"")})"])),
+            v => $"I(a) = a\nx = {v.Source}\nx == I(x)"),
         new("identity",
-            v => $"I(a) = a\nx = {v.Source}\nI(x)",
-            v => LProg([LIdentity, LVal("x", v.LeanExpr)], [LCall("I", ".resolve \"x\"")])),
+            v => $"I(a) = a\nx = {v.Source}\nI(x)"),
         new("identityTwice",
-            v => $"I(a) = a\nx = {v.Source}\nI(I(x))",
-            v => LProg([LIdentity, LVal("x", v.LeanExpr)], [LCall("I", LCall("I", ".resolve \"x\""))])),
+            v => $"I(a) = a\nx = {v.Source}\nI(I(x))"),
         new("propChain",
-            v => $"P = {v.Source}\nQ = P\nQ",
-            v => LProg(
-                [LVal("P", v.LeanExpr), "privateProp \"Q\" (alg [] [] [] [.resolve \"P\"])"],
-                [".resolve \"Q\""])),
+            v => $"P = {v.Source}\nQ = P\nQ"),
         new("take1",
-            v => $"take({v.Source}, 1)",
-            v => LProg([], [LCall("take", v.LeanExpr, ".num 1")])),
+            v => $"take({v.Source}, 1)"),
         new("take9",
-            v => $"take({v.Source}, 9)",
-            v => LProg([], [LCall("take", v.LeanExpr, ".num 9")])),
+            v => $"take({v.Source}, 9)"),
         new("skip1",
-            v => $"skip({v.Source}, 1)",
-            v => LProg([], [LCall("skip", v.LeanExpr, ".num 1")])),
+            v => $"skip({v.Source}, 1)"),
         new("distinct",
-            v => $"distinct({v.Source})",
-            v => LProg([], [LCall("distinct", v.LeanExpr)])),
+            v => $"distinct({v.Source})"),
         new("order",
-            v => $"order({v.Source})",
-            v => LProg([], [LCall("order", v.LeanExpr)])),
+            v => $"order({v.Source})"),
         new("mapId",
-            v => $"M(a) = a\nmap({v.Source}, M)",
-            v => LProg(["privateProp \"M\" (alg [\"a\"] [] [] [.param \"a\"])"], [LCall("map", v.LeanExpr, ".resolve \"M\"")])),
+            v => $"M(a) = a\nmap({v.Source}, M)"),
         new("filterKeep",
-            v => $"T(a) = 1\nfilter({v.Source}, T)",
-            v => LProg(["privateProp \"T\" (alg [\"a\"] [] [] [.num 1])"], [LCall("filter", v.LeanExpr, ".resolve \"T\"")])),
+            v => $"T(a) = 1\nfilter({v.Source}, T)"),
         new("atoms",
-            v => $"atoms({v.Source})",
-            v => LProg([], [LCall("atoms", v.LeanExpr)])),
+            v => $"atoms({v.Source})"),
         new("takeCapture",
-            v => $"x = take({v.Source}, 1)\nx",
-            v => LProg(
-                [$"privateProp \"x\" (alg [] [] [] [{LCall("take", v.LeanExpr, ".num 1")}])"],
-                [".resolve \"x\""])),
+            v => $"x = take({v.Source}, 1)\nx"),
         new("takeIdentity",
-            v => $"I(a) = a\nI(take({v.Source}, 1))",
-            v => LProg([LIdentity], [LCall("I", LCall("take", v.LeanExpr, ".num 1"))])),
+            v => $"I(a) = a\nI(take({v.Source}, 1))"),
         new("takeCount",
-            v => $"count(take({v.Source}, 1))",
-            v => LProg([], [LCall("count", LCall("take", v.LeanExpr, ".num 1"))])),
+            v => $"count(take({v.Source}, 1))"),
         new("takeCollecting",
-            v => $"G(*a) = a\nG(take({v.Source}, 1))",
-            v => LProg([LCollectingG], [LCall("G", LCall("take", v.LeanExpr, ".num 1"))])),
+            v => $"G(*a) = a\nG(take({v.Source}, 1))"),
         // Stacked (repeated) spread `value**`: each extra written star crosses
         // one ordinary capture boundary (`items ∘ capture` per layer), so a
         // multi-item first spread is a fixed point and only a lone structured
@@ -386,249 +265,124 @@ public static class SemanticExplorerCorpus
         // and capture receivers across every corpus value (the hand-written
         // stackedSpread* CoreTests guards pin the law on selected values only).
         new("spreadRootStacked",
-            v => $"{v.Source}**",
-            v => LProg([], [$".sequenceSpread (.sequenceSpread {v.LeanExpr})"])),
+            v => $"{v.Source}**"),
         new("collectingStacked",
-            v => $"F(*a) = a\nF({v.Source}**)",
-            v => LProg([LCollectingF], [LCall("F", $".sequenceSpread (.sequenceSpread {v.LeanExpr})")])),
+            v => $"F(*a) = a\nF({v.Source}**)"),
         new("captureStacked",
-            v => $"x = {v.Source}**\nx",
-            v => LProg([LVal("x", $".sequenceSpread (.sequenceSpread {v.LeanExpr})")], [".resolve \"x\""])),
+            v => $"x = {v.Source}**\nx"),
     ];
 
     // ----- Specials -----------------------------------------------------------
+    //
+    // Specials declare SOURCE text only (Lean programs are encoder-derived in
+    // AllCases, like the templates); leanExclusionReason marks a deliberate
+    // parse-error probe with no comparable Lean program and states why.
 
-    private static readonly IReadOnlyList<(string Id, string Source, string? Lean)> Specials =
+    private static (string Id, string Source, string? LeanExclusionReason) Special(
+        string id, string source, string? leanExclusionReason = null) => (id, source, leanExclusionReason);
+
+    private static readonly IReadOnlyList<(string Id, string Source, string? LeanExclusionReason)> Specials =
     [
-        ("multiProp", "P = 1, 2, 3\nP",
-            LProg(["privateProp \"P\" (alg [] [] [] [.num 1, .num 2, .num 3])"], [".resolve \"P\""])),
-        ("multiPropCall", "P = 1, 2, 3\nP()",
-            LProg(["privateProp \"P\" (alg [] [] [] [.num 1, .num 2, .num 3])"], [".call (.resolve \"P\") []"])),
-        ("multiPropCount", "P = 1, 2, 3\ncount(P)",
-            LProg(["privateProp \"P\" (alg [] [] [] [.num 1, .num 2, .num 3])"], [LCall("count", ".resolve \"P\"")])),
-        ("multiPropDotCount", "P = 1, 2, 3\nP.count",
-            LProg(["privateProp \"P\" (alg [] [] [] [.num 1, .num 2, .num 3])"], [".dotCall (.resolve \"P\") \"count\" none"])),
-        ("multiPropDot", "A = {\n    X = 1, 2, 3\n}\nA.X",
-            LProg(["privateProp \"A\" (alg [] [] [privateProp \"X\" (alg [] [] [] [.num 1, .num 2, .num 3])] [])"],
-                [".dotCall (.resolve \"A\") \"X\" none"])),
+        Special("multiProp", "P = 1, 2, 3\nP"),
+        Special("multiPropCall", "P = 1, 2, 3\nP()"),
+        Special("multiPropCount", "P = 1, 2, 3\ncount(P)"),
+        Special("multiPropDotCount", "P = 1, 2, 3\nP.count"),
+        Special("multiPropDot", "A = {\n    X = 1, 2, 3\n}\nA.X"),
         // The `dotAccess*` templates use a PRIVATE member (that is what
         // `A = { X = ... }` elaborates to). These pin the public spelling of the
         // same access so a change that made structural dot access exposure-sensitive
         // on one side alone cannot pass unnoticed.
-        ("dotAccessPublicMember", "A = {\n    public X = 1, 2, 3\n}\nA.X",
-            LProg(["privateProp \"A\" (alg [] [] [publicProp \"X\" (alg [] [] [] [.num 1, .num 2, .num 3])] [])"],
-                [".dotCall (.resolve \"A\") \"X\" none"])),
-        ("dotAccessCallPublicMember", "A = {\n    public X = 1, 2, 3\n}\nA.X()",
-            LProg(["privateProp \"A\" (alg [] [] [publicProp \"X\" (alg [] [] [] [.num 1, .num 2, .num 3])] [])"],
-                [".dotCall (.resolve \"A\") \"X\" (some [])"])),
-        ("multiPropIndex0", "P = 1, 2, 3\nP:0",
-            LProg(["privateProp \"P\" (alg [] [] [] [.num 1, .num 2, .num 3])"], [".index (.resolve \"P\") (.num 0)"])),
-        ("multiPropEq", "P = 1, 2, 3\nP == (1, 2, 3)",
-            LProg(["privateProp \"P\" (alg [] [] [] [.num 1, .num 2, .num 3])"],
-                [".binary .eq (.resolve \"P\") (.capture [.num 1, .num 2, .num 3])"])),
-        ("multiCollecting", "F(*a) = a\nF(1, 2, 3)",
-            LProg([LCollectingF], [LCall("F", ".num 1", ".num 2", ".num 3")])),
-        ("multiCollectingCount", "F(*a) = a\ncount(F(1, 2, 3))",
-            LProg([LCollectingF], [LCall("count", LCall("F", ".num 1", ".num 2", ".num 3"))])),
-        ("collectingEmptyCall", "F(*a) = a\nF()",
-            LProg([LCollectingF], [".call (.resolve \"F\") []"])),
-        ("collectingFwdSum", "F(*a) = sum(a)\nF(1, 2, 3)",
-            LProg(["privateProp \"F\" (algWithParameters [{ name := \"a\", kind := .collecting }] [] [] [.call (.resolve \"sum\") [.param \"a\"]])"],
-                [LCall("F", ".num 1", ".num 2", ".num 3")])),
-        ("collectingFwdSpread", "F(*a) = G(a*)\nG(*b) = b\nF(1, 2, 3)",
-            LProg(
-                ["privateProp \"F\" (algWithParameters [{ name := \"a\", kind := .collecting }] [] [] [.call (.resolve \"G\") [.sequenceSpread (.param \"a\")]])",
-                 "privateProp \"G\" (algWithParameters [{ name := \"b\", kind := .collecting }] [] [] [.param \"b\"])"],
-                [LCall("F", ".num 1", ".num 2", ".num 3")])),
-        ("collectingJoin", "F(*a) = a\nF((1, 2)*, (3, 4)*)",
-            LProg([LCollectingF],
-                [LCall("F",
-                    ".sequenceSpread (.capture [.num 1, .num 2])",
-                    ".sequenceSpread (.capture [.num 3, .num 4])")])),
-        ("range13", "range(1, 3)", LProg([], [LCall("range", ".num 1", ".num 3")])),
-        ("rangeCapture", "x = range(1, 3)\nx",
-            LProg([$"privateProp \"x\" (alg [] [] [] [{LCall("range", ".num 1", ".num 3")}])"], [".resolve \"x\""])),
-        ("rangeCount", "count(range(1, 3))", LProg([], [LCall("count", LCall("range", ".num 1", ".num 3"))])),
-        ("rangeIndex0", "range(1, 3):0", LProg([], [$".index ({LCall("range", ".num 1", ".num 3")}) (.num 0)"])),
-        ("takeOneSurvivorPair", "take(((1, 2), (3, 4)), 1)",
-            LProg([], [LCall("take", PairOfPairs, ".num 1")])),
-        ("takeOneSurvivorPairCount", "count(take(((1, 2), (3, 4)), 1))",
-            LProg([], [LCall("count", LCall("take", PairOfPairs, ".num 1"))])),
-        ("takeOneSurvivorPairEq", "take(((1, 2), (3, 4)), 1) == (1, 2)",
-            LProg([], [$".binary .eq ({LCall("take", PairOfPairs, ".num 1")}) (.capture [.num 1, .num 2])"])),
-        ("skipToOnePair", "skip(((1, 2), (3, 4)), 1)",
-            LProg([], [LCall("skip", PairOfPairs, ".num 1")])),
-        ("distinctEmpties", "distinct((), ())",
-            LProg([], [LCall("distinct", ".emptySequence 0", ".emptySequence 0")])),
-        ("distinctPairsToOne", "distinct((1, 2), (1, 2))",
-            LProg([], [LCall("distinct", "(.capture [.num 1, .num 2])", "(.capture [.num 1, .num 2])")])),
-        ("takeEmpties", "take((), (), 2)",
-            LProg([], [LCall("take", ".emptySequence 0", ".emptySequence 0", ".num 2")])),
-        ("filterOneSurvivor", "Big(a) = a > 2\nfilter((1, 2, 3), Big)",
-            LProg(["privateProp \"Big\" (alg [\"a\"] [] [] [.binary .gt (.param \"a\") (.num 2)])"],
-                [LCall("filter", "(.capture [.num 1, .num 2, .num 3])", ".resolve \"Big\"")])),
-        ("filterOneSurvivorCount", "Big(a) = a > 2\ncount(filter((1, 2, 3), Big))",
-            LProg(["privateProp \"Big\" (alg [\"a\"] [] [] [.binary .gt (.param \"a\") (.num 2)])"],
-                [LCall("count", LCall("filter", "(.capture [.num 1, .num 2, .num 3])", ".resolve \"Big\""))])),
-        ("filterZeroSurvivors", "No(a) = 0\nfilter((1, 2, 3), No)",
-            LProg(["privateProp \"No\" (alg [\"a\"] [] [] [.num 0])"],
-                [LCall("filter", "(.capture [.num 1, .num 2, .num 3])", ".resolve \"No\"")])),
-        ("mapPairSwap", "Swap(a, b) = b, a\nmap(((1, 2), (3, 4)), Swap)",
-            LProg(["privateProp \"Swap\" (alg [\"a\", \"b\"] [] [] [.param \"b\", .param \"a\"])"],
-                [LCall("map", PairOfPairs, ".resolve \"Swap\"")])),
-        ("mapPairSwapOk", "Swap(a, b) = (b, a)\nmap(((1, 2), (3, 4)), Swap)",
-            LProg(["privateProp \"Swap\" (alg [\"a\", \"b\"] [] [] [.capture [.param \"b\", .param \"a\"]])"],
-                [LCall("map", PairOfPairs, ".resolve \"Swap\"")])),
-        ("mapToOne", "M(a) = a\nmap((7), M)",
-            LProg(["privateProp \"M\" (alg [\"a\"] [] [] [.param \"a\"])"],
-                [LCall("map", "(.capture [.num 7])", ".resolve \"M\"")])),
-        ("orderSingle", "order(5)", LProg([], [LCall("order", ".num 5")])),
-        ("orderEmpty", "order(())", LProg([], [LCall("order", ".emptySequence 0")])),
-        ("atomsNested", "atoms(((1, 2), (3, 4)))", LProg([], [LCall("atoms", PairOfPairs)])),
-        ("emptyOpGreater", "() > 1", LProg([], [".binary .gt (.emptySequence 0) (.num 1)"])),
-        ("emptyOpPlus", "() + 1", LProg([], [".binary .add (.emptySequence 0) (.num 1)"])),
-        ("emptyOpBoth", "() + ()", LProg([], [".binary .add (.emptySequence 0) (.emptySequence 0)"])),
-        ("emptyEqEmpty", "() == ()", LProg([], [".binary .eq (.emptySequence 0) (.emptySequence 0)"])),
-        ("emptyEqNestedEmpty", "() == (())",
-            LProg([], [".binary .eq (.emptySequence 0) (.capture [.emptySequence 0])"])),
-        ("emptyNeNestedEmpty", "() != (())",
-            LProg([], [".binary .ne (.emptySequence 0) (.capture [.emptySequence 0])"])),
-        ("propBodyEmptySlot", "P = (), 99\nP",
-            LProg(["privateProp \"P\" (alg [] [] [] [.emptySequence 0, .num 99])"], [".resolve \"P\""])),
-        ("rootEmptySlots", "(), 99", LProg([], [".emptySequence 0", ".num 99"])),
-        ("seqOfSpreadEmpty", "((()*), 1)",
-            LProg([], [".capture [.capture [.sequenceSpread (.emptySequence 0)], .num 1]"])),
-        ("indexPairInSeq", "x = ((1, 2), (3, 4))\n(x:0, 99)",
-            LProg([LVal("x", PairOfPairs)], [".capture [.index (.resolve \"x\") (.num 0), .num 99]"])),
-        ("indexEmptyItemRoot", "x = ((), ())\nx:0",
-            LProg([LVal("x", "(.capture [.emptySequence 0, .emptySequence 0])")],
-                [".index (.resolve \"x\") (.num 0)"])),
-        ("indexCapturedEq", "x = ((1, 2), (3, 4))\ny = x:0\ny == (1, 2)",
-            LProg(
-                [LVal("x", PairOfPairs), "privateProp \"y\" (alg [] [] [] [.index (.resolve \"x\") (.num 0)])"],
-                [".binary .eq (.resolve \"y\") (.capture [.num 1, .num 2])"])),
-        ("chainedListIndex", "x = [[1, 2], [3, 4]]\nx:1:0",
-            LProg(
-                [LVal("x", "(.listLiteral [.listLiteral [.num 1, .num 2], .listLiteral [.num 3, .num 4]])")],
-                [".index (.index (.resolve \"x\") (.num 1)) (.num 0)"])),
-        ("listIndexCapturedEq", "x = [[1, 2]]\ny = x:0\ny == [1, 2]",
-            LProg(
-                [LVal("x", "(.listLiteral [.listLiteral [.num 1, .num 2]])"),
-                 "privateProp \"y\" (alg [] [] [] [.index (.resolve \"x\") (.num 0)])"],
-                [".binary .eq (.resolve \"y\") (.listLiteral [.num 1, .num 2])"])),
-        ("listIndexSelectedKindEqFalse", "[[1, 2]]:0 == (1, 2)",
-            LProg([],
-                [".binary .eq (.index (.listLiteral [.listLiteral [.num 1, .num 2]]) (.num 0)) (.capture [.num 1, .num 2])"])),
-        ("orderIndex0", "[3, 1, 2].order:0",
-            LProg([],
-                [".index (.dotCall (.listLiteral [.num 3, .num 1, .num 2]) \"order\" none) (.num 0)"])),
-        ("nestedWrittenArg", "F(a, b) = a\nF(((1, 2)), 3)",
-            LProg(["privateProp \"F\" (alg [\"a\", \"b\"] [] [] [.param \"a\"])"],
-                [LCall("F", "(.capture [(.capture [.num 1, .num 2])])", ".num 3")])),
-        ("writtenSlotArity", "F(a, b) = a + b\nF(((1, 2)))",
-            LProg(["privateProp \"F\" (alg [\"a\", \"b\"] [] [] [.binary .add (.param \"a\") (.param \"b\")])"],
-                [LCall("F", "(.capture [(.capture [.num 1, .num 2])])")])),
-        ("mixedSingleGrouped", "F(x, *y, z) = y\nA = (1, 2, 3, 4)\nF(A)",
-            LProg(
-                ["privateProp \"F\" (algWithParameters [{ name := \"x\" }, { name := \"y\", kind := .collecting }, { name := \"z\" }] [] [] [.param \"y\"])",
-                 LVal("A", "(.capture [.num 1, .num 2, .num 3, .num 4])")],
-                [LCall("F", ".resolve \"A\"")])),
-        ("sumEmpty", "sum(())", LProg([], [LCall("sum", ".emptySequence 0")])),
+        Special("dotAccessPublicMember", "A = {\n    public X = 1, 2, 3\n}\nA.X"),
+        Special("dotAccessCallPublicMember", "A = {\n    public X = 1, 2, 3\n}\nA.X()"),
+        Special("multiPropIndex0", "P = 1, 2, 3\nP:0"),
+        Special("multiPropEq", "P = 1, 2, 3\nP == (1, 2, 3)"),
+        Special("multiCollecting", "F(*a) = a\nF(1, 2, 3)"),
+        Special("multiCollectingCount", "F(*a) = a\ncount(F(1, 2, 3))"),
+        Special("collectingEmptyCall", "F(*a) = a\nF()"),
+        Special("collectingFwdSum", "F(*a) = sum(a)\nF(1, 2, 3)"),
+        Special("collectingFwdSpread", "F(*a) = G(a*)\nG(*b) = b\nF(1, 2, 3)"),
+        Special("collectingJoin", "F(*a) = a\nF((1, 2)*, (3, 4)*)"),
+        Special("range13", "range(1, 3)"),
+        Special("rangeCapture", "x = range(1, 3)\nx"),
+        Special("rangeCount", "count(range(1, 3))"),
+        Special("rangeIndex0", "range(1, 3):0"),
+        Special("takeOneSurvivorPair", "take(((1, 2), (3, 4)), 1)"),
+        Special("takeOneSurvivorPairCount", "count(take(((1, 2), (3, 4)), 1))"),
+        Special("takeOneSurvivorPairEq", "take(((1, 2), (3, 4)), 1) == (1, 2)"),
+        Special("skipToOnePair", "skip(((1, 2), (3, 4)), 1)"),
+        Special("distinctEmpties", "distinct((), ())"),
+        Special("distinctPairsToOne", "distinct((1, 2), (1, 2))"),
+        Special("takeEmpties", "take((), (), 2)"),
+        Special("filterOneSurvivor", "Big(a) = a > 2\nfilter((1, 2, 3), Big)"),
+        Special("filterOneSurvivorCount", "Big(a) = a > 2\ncount(filter((1, 2, 3), Big))"),
+        Special("filterZeroSurvivors", "No(a) = 0\nfilter((1, 2, 3), No)"),
+        Special("mapPairSwap", "Swap(a, b) = b, a\nmap(((1, 2), (3, 4)), Swap)"),
+        Special("mapPairSwapOk", "Swap(a, b) = (b, a)\nmap(((1, 2), (3, 4)), Swap)"),
+        Special("mapToOne", "M(a) = a\nmap((7), M)"),
+        Special("orderSingle", "order(5)"),
+        Special("orderEmpty", "order(())"),
+        Special("atomsNested", "atoms(((1, 2), (3, 4)))"),
+        Special("emptyOpGreater", "() > 1"),
+        Special("emptyOpPlus", "() + 1"),
+        Special("emptyOpBoth", "() + ()"),
+        Special("emptyEqEmpty", "() == ()"),
+        Special("emptyEqNestedEmpty", "() == (())"),
+        Special("emptyNeNestedEmpty", "() != (())"),
+        Special("propBodyEmptySlot", "P = (), 99\nP"),
+        Special("rootEmptySlots", "(), 99"),
+        Special("seqOfSpreadEmpty", "((()*), 1)"),
+        Special("indexPairInSeq", "x = ((1, 2), (3, 4))\n(x:0, 99)"),
+        Special("indexEmptyItemRoot", "x = ((), ())\nx:0"),
+        Special("indexCapturedEq", "x = ((1, 2), (3, 4))\ny = x:0\ny == (1, 2)"),
+        Special("chainedListIndex", "x = [[1, 2], [3, 4]]\nx:1:0"),
+        Special("listIndexCapturedEq", "x = [[1, 2]]\ny = x:0\ny == [1, 2]"),
+        Special("listIndexSelectedKindEqFalse", "[[1, 2]]:0 == (1, 2)"),
+        Special("orderIndex0", "[3, 1, 2].order:0"),
+        Special("nestedWrittenArg", "F(a, b) = a\nF(((1, 2)), 3)"),
+        Special("writtenSlotArity", "F(a, b) = a + b\nF(((1, 2)))"),
+        Special("mixedSingleGrouped", "F(x, *y, z) = y\nA = (1, 2, 3, 4)\nF(A)"),
+        Special("sumEmpty", "sum(())"),
         // Spread-with-sibling slots inside a written sequence literal, and the
         // same shape observed through the non-counted evaluation paths (value
         // position of ==, spread operand, root rows). These pin the July 2026
         // fix that made Lean's evalAlgOutputCore the value projection of the
         // counted core (spread slots splice; a written `()` slot stays visible).
-        ("spreadWithSiblingSeqLiteral", "x = (1, 2)\n(x*, 99)",
-            LProg([LVal("x", Pair12)],
-                [".capture [.sequenceSpread (.resolve \"x\"), .num 99]"])),
-        ("spreadEmptyBetween", "(1*, (), 2*)",
-            LProg([], [".capture [.sequenceSpread (.num 1), .emptySequence 0, .sequenceSpread (.num 2)]"])),
-        ("rootSpreadExtra", "A = (1, 2)\nA*, 99",
-            LProg([LVal("A", Pair12)], [".sequenceSpread (.resolve \"A\")", ".num 99"])),
-        ("spreadOfSpreadSeqLiteral", "A = (1, 2)\n((A*, 99))*",
-            LProg([LVal("A", Pair12)],
-                [".sequenceSpread (.capture [(.capture [.sequenceSpread (.resolve \"A\"), .num 99])])"])),
-        ("eqSpreadSeqLiteral", "P = (1, 2)\n(P*, 99) == (1, 2, 99)",
-            LProg([LVal("P", Pair12)],
-                [".binary .eq (.capture [.sequenceSpread (.resolve \"P\"), .num 99]) (.capture [.num 1, .num 2, .num 99])"])),
-        ("loopSpreadHistoryFlat",
-            "Step((*history), previous) = (history*, previous + 1), previous + 1\nStep.repeat(2, (1, 2), 2):0",
-            LProg(
-                ["privateProp \"Step\" (algWithParameterPatterns [.sequenceValue [.capture { name := \"history\", kind := .collecting }], .capture { name := \"previous\" }] [] [] [.capture [.sequenceSpread (.param \"history\"), .binary .add (.param \"previous\") (.num 1)], .binary .add (.param \"previous\") (.num 1)])"],
-                [".index (.dotCall (.resolve \"Step\") \"repeat\" (some [.num 2, " + Pair12 + ", .num 2])) (.num 0)"])),
-        ("ifBranchSeq", "if(1, (1, 2), 3)",
-            LProg([], [LCall("if", ".num 1", "(.capture [.num 1, .num 2])", ".num 3")])),
-        ("divZero", "1 / 0", LProg([], [".binary .div (.num 1) (.num 0)"])),
-        ("negativeResult", "0 - 1", LProg([], [".binary .sub (.num 0) (.num 1)"])),
-        ("strEq", "'ab' == 'ab'", LProg([], [".binary .eq (.stringLiteral \"ab\") (.stringLiteral \"ab\")"])),
-        ("strCount", "count('ab')", LProg([], [LCall("count", "(.stringLiteral \"ab\")")])),
-        ("strCapture", "x = 'ab'\nx", LProg([LVal("x", "(.stringLiteral \"ab\")")], [".resolve \"x\""])),
+        Special("spreadWithSiblingSeqLiteral", "x = (1, 2)\n(x*, 99)"),
+        Special("spreadEmptyBetween", "(1*, (), 2*)"),
+        Special("rootSpreadExtra", "A = (1, 2)\nA*, 99"),
+        Special("spreadOfSpreadSeqLiteral", "A = (1, 2)\n((A*, 99))*"),
+        Special("eqSpreadSeqLiteral", "P = (1, 2)\n(P*, 99) == (1, 2, 99)"),
+        Special("loopSpreadHistoryFlat",
+            "Step((*history), previous) = (history*, previous + 1), previous + 1\nStep.repeat(2, (1, 2), 2):0"),
+        Special("ifBranchSeq", "if(1, (1, 2), 3)"),
+        Special("divZero", "1 / 0"),
+        Special("negativeResult", "0 - 1"),
+        Special("strEq", "'ab' == 'ab'"),
+        Special("strCount", "count('ab')"),
+        Special("strCapture", "x = 'ab'\nx"),
         // Exact list values: spread inside list literals, list/sequence kind
         // distinctions, empty-list-spread neutrality, and list arguments at
         // call boundaries. These pin the July 2026 list-value semantics.
-        ("listSpreadOfSeqProp", "A = 1, 2, 3\n[A*]",
-            LProg(["privateProp \"A\" (alg [] [] [] [.num 1, .num 2, .num 3])"],
-                [".listLiteral [.sequenceSpread (.resolve \"A\")]"])),
-        ("listSpreadBetween", "A = 1, 2, 3\n[0, A*, 4]",
-            LProg(["privateProp \"A\" (alg [] [] [] [.num 1, .num 2, .num 3])"],
-                [".listLiteral [.num 0, .sequenceSpread (.resolve \"A\"), .num 4]"])),
-        ("listOfLists", "A = [1, 2]\nB = [3, 4]\n[A, B]",
-            LProg([LVal("A", List12), LVal("B", List34)],
-                [".listLiteral [.resolve \"A\", .resolve \"B\"]"])),
-        ("listSpreadConcat", "A = [1, 2]\nB = [3, 4]\n[A*, B*]",
-            LProg([LVal("A", List12), LVal("B", List34)],
-                [".listLiteral [.sequenceSpread (.resolve \"A\"), .sequenceSpread (.resolve \"B\")]"])),
-        ("listMixedSpread", "A = [1, 2]\nB = [3, 4]\n[A, B*]",
-            LProg([LVal("A", List12), LVal("B", List34)],
-                [".listLiteral [.resolve \"A\", .sequenceSpread (.resolve \"B\")]"])),
-        ("listEmptyListSpreadBetween", "[1, []*, 2]",
-            LProg([], [".listLiteral [.num 1, .sequenceSpread (.listLiteral []), .num 2]"])),
-        ("listEmptySeqSpreadBetween", "[1, ()*, 2]",
-            LProg([], [".listLiteral [.num 1, .sequenceSpread (.emptySequence 0), .num 2]"])),
-        ("listNeSeq", "[1, 2] == (1, 2)",
-            LProg([], [".binary .eq (.listLiteral [.num 1, .num 2]) (.capture [.num 1, .num 2])"])),
-        ("listEmptyNeEmptySeq", "[] == ()",
-            LProg([], [".binary .eq (.listLiteral []) (.emptySequence 0)"])),
-        ("listSingletonNeItem", "[7] == 7",
-            LProg([], [".binary .eq (.listLiteral [.num 7]) (.num 7)"])),
-        ("listWrapCanonicalizes", "([1, 2]) == [1, 2]",
-            LProg([], [".binary .eq (.capture [.listLiteral [.num 1, .num 2]]) (.listLiteral [.num 1, .num 2])"])),
-        ("listSpreadCaptureRoundTrip", "A = [1, 2, 3]\nB = A*\nB == (1, 2, 3)",
-            LProg(
-                [LVal("A", "(.listLiteral [.num 1, .num 2, .num 3])"),
-                 "privateProp \"B\" (alg [] [] [] [.sequenceSpread (.resolve \"A\")])"],
-                [".binary .eq (.resolve \"B\") (.capture [.num 1, .num 2, .num 3])"])),
-        ("listCollectingNotSequenceKind", "x, *rest = [1, 2, 3]\nrest == (2, 3)",
-            LProg(
-                [LDecon("(.listLiteral [.num 1, .num 2, .num 3])", ["x", "rest"], 1, "rest")],
-                [".binary .eq (.resolve \"rest\") (.capture [.num 2, .num 3])"])),
-        ("listCollectingCollectsExactList", "x, *rest = [1, 2, 3]\nrest == [2, 3]",
-            LProg(
-                [LDecon("(.listLiteral [.num 1, .num 2, .num 3])", ["x", "rest"], 1, "rest")],
-                [".binary .eq (.resolve \"rest\") (.listLiteral [.num 2, .num 3])"])),
-        ("implicitForwardOrdinarySource", "Target(*items) = items\nUse(items) = Target\nUse([1, 2])",
-            LProg(
-                ["privateProp \"Target\" (algWithParameters [{ name := \"items\", kind := .collecting }] [] [] [.param \"items\"])",
-                 "privateProp \"Use\" (alg [\"items\"] [] [] [.call (.resolve \"Target\") [.param \"items\"]])"],
-                [LCall("Use", "(.listLiteral [.num 1, .num 2])")])),
-        ("callbackSingleCollectingMap", "Collect(*items) = items\n[7].map(Collect)",
-            LProg(
-                ["privateProp \"Collect\" (algWithParameters [{ name := \"items\", kind := .collecting }] [] [] [.param \"items\"])"],
-                [".dotCall (.listLiteral [.num 7]) \"map\" (some [.resolve \"Collect\"])"])),
-        ("callbackMixedCollectingRow", "F(first, *middle, last) = middle\n[(1, 2, 3, 4)].map(F)",
-            LProg(
-                ["privateProp \"F\" (algWithParameters [{ name := \"first\" }, { name := \"middle\", kind := .collecting }, { name := \"last\" }] [] [] [.param \"middle\"])"],
-                [".dotCall (.listLiteral [.capture [.num 1, .num 2, .num 3, .num 4]]) \"map\" (some [.resolve \"F\"])"])),
-        ("listInSeqSpreadKeepsList", "A = [1, 2]\n(A, 9)*",
-            LProg([LVal("A", List12)],
-                [".sequenceSpread (.capture [.resolve \"A\", .num 9])"])),
-        ("listFixedCallBoundary", "F(a, b) = a\nF([1, 2], 3)",
-            LProg(["privateProp \"F\" (alg [\"a\", \"b\"] [] [] [.param \"a\"])"],
-                [LCall("F", List12, ".num 3")])),
-        ("listCollectingSpreadCall", "F(*a) = a\nA = [1, 2]\nF(A*, 9)",
-            LProg([LCollectingF, LVal("A", List12)],
-                [LCall("F", ".sequenceSpread (.resolve \"A\")", ".num 9")])),
+        Special("listSpreadOfSeqProp", "A = 1, 2, 3\n[A*]"),
+        Special("listSpreadBetween", "A = 1, 2, 3\n[0, A*, 4]"),
+        Special("listOfLists", "A = [1, 2]\nB = [3, 4]\n[A, B]"),
+        Special("listSpreadConcat", "A = [1, 2]\nB = [3, 4]\n[A*, B*]"),
+        Special("listMixedSpread", "A = [1, 2]\nB = [3, 4]\n[A, B*]"),
+        Special("listEmptyListSpreadBetween", "[1, []*, 2]"),
+        Special("listEmptySeqSpreadBetween", "[1, ()*, 2]"),
+        Special("listNeSeq", "[1, 2] == (1, 2)"),
+        Special("listEmptyNeEmptySeq", "[] == ()"),
+        Special("listSingletonNeItem", "[7] == 7"),
+        Special("listWrapCanonicalizes", "([1, 2]) == [1, 2]"),
+        Special("listSpreadCaptureRoundTrip", "A = [1, 2, 3]\nB = A*\nB == (1, 2, 3)"),
+        Special("listCollectingNotSequenceKind", "x, *rest = [1, 2, 3]\nrest == (2, 3)"),
+        Special("listCollectingCollectsExactList", "x, *rest = [1, 2, 3]\nrest == [2, 3]"),
+        Special("implicitForwardOrdinarySource", "Target(*items) = items\nUse(items) = Target\nUse([1, 2])"),
+        Special("callbackSingleCollectingMap", "Collect(*items) = items\n[7].map(Collect)"),
+        Special("callbackMixedCollectingRow", "F(first, *middle, last) = middle\n[(1, 2, 3, 4)].map(F)"),
+        Special("listInSeqSpreadKeepsList", "A = [1, 2]\n(A, 9)*"),
+        Special("listFixedCallBoundary", "F(a, b) = a\nF([1, 2], 3)"),
+        Special("listCollectingSpreadCall", "F(*a) = a\nA = [1, 2]\nF(A*, 9)"),
         // Spread of a DIRECT written block whose output is missing: the
         // operand stays syntactically a Block, so evaluation takes the
         // specialized Block arm of the spread-operand evaluator on both
@@ -636,24 +390,22 @@ public static class SemanticExplorerCorpus
         // `EvalSequenceSpreadOperandItems`). Pinned as the spread-specific
         // error at every spread position, identical to the resolved-name
         // spelling (T4-2 — this arm was previously uncovered).
-        ("spreadNoOutputBlockRoot", "{A = 1}*",
-            LProg([], [$".sequenceSpread {NoOutputBlock}"])),
-        ("spreadNoOutputBlockList", "[{A = 1}*]",
-            LProg([], [$".listLiteral [.sequenceSpread {NoOutputBlock}]"])),
-        ("spreadNoOutputBlockCallArg", "F(a) = a\nF({A = 1}*)",
-            LProg([LFixed], [LCall("F", $".sequenceSpread {NoOutputBlock}")])),
-        ("spreadNoOutputResolved", "X = {A = 1}\nX*",
-            LProg([$"privateProp \"X\" {NoOutputAlg}"], [".sequenceSpread (.resolve \"X\")"])),
+        Special("spreadNoOutputBlockRoot", "{A = 1}*"),
+        Special("spreadNoOutputBlockList", "[{A = 1}*]"),
+        Special("spreadNoOutputBlockCallArg", "F(a) = a\nF({A = 1}*)"),
+        Special("spreadNoOutputResolved", "X = {A = 1}\nX*"),
         // C#-only parse-level cases (no comparable Lean program).
-        ("trailingComma", "(3,)", null),
-        ("spreadAsBinaryOperand", "A = (1, 2)\nA* == A*", null),
-        ("semicolonSeparator", "1 ; 2", null),
-        ("listUnterminated", "[1, 2", null),
-        ("listDefinitionInside", "[x = 1]", null),
-        ("listLoneCollectingAssignment", "*items = [1, 2, 3]",
-            LProg(
-                [LDecon("(.listLiteral [.num 1, .num 2, .num 3])", ["items"], 0, "items")],
-                [])),
+        Special("trailingComma", "(3,)",
+            "A trailing comma is a KatLang surface-parser diagnostic; Lean models only the elaborated AST."),
+        Special("spreadAsBinaryOperand", "A = (1, 2)\nA* == A*",
+            "A spread used as a binary operand is a KatLang surface-parser diagnostic; Lean models only the elaborated AST."),
+        Special("semicolonSeparator", "1 ; 2",
+            "Semicolon separation is a KatLang surface-parser diagnostic; Lean models only the elaborated AST."),
+        Special("listUnterminated", "[1, 2",
+            "An unterminated list is a KatLang surface-parser diagnostic; Lean models only the elaborated AST."),
+        Special("listDefinitionInside", "[x = 1]",
+            "A definition inside a list is a KatLang surface-parser diagnostic; Lean models only the elaborated AST."),
+        Special("listLoneCollectingAssignment", "*items = [1, 2, 3]"),
         // ── Builtins that had Lean guards and C# tests but no SHARED case ────
         // `while`, `first`, `last`, `min`, `max`, and `orderDesc` were the only
         // builtins with no Lean/C# differential pin at all (the receiver
@@ -662,75 +414,43 @@ public static class SemanticExplorerCorpus
         // Each is pinned here across the boundaries that distinguish them:
         // sequence vs exact list vs scalar collection, the empty-collection
         // policy, the item-shape constraint, and the dot spelling.
-        ("minSeq", "min((3, 1, 2))", LProg([], [LCall("min", Seq312)])),
-        ("minList", "min([3, 1])", LProg([], [LCall("min", "(.listLiteral [.num 3, .num 1])")])),
-        ("minScalar", "min(7)", LProg([], [LCall("min", ".num 7")])),
-        ("minEmpty", "min(())", LProg([], [LCall("min", ".emptySequence 0")])),
-        ("minNestedItem", "min(((1, 2), 3))",
-            LProg([], [LCall("min", $"(.capture [{Pair12}, .num 3])")])),
-        ("minDot", "x = 3, 1, 2\nx.min",
-            LProg([LVal("x", Seq312)], [".dotCall (.resolve \"x\") \"min\" none"])),
-        ("maxSeq", "max((3, 1, 2))", LProg([], [LCall("max", Seq312)])),
-        ("maxList", "max([3, 1])", LProg([], [LCall("max", "(.listLiteral [.num 3, .num 1])")])),
-        ("maxEmpty", "max(())", LProg([], [LCall("max", ".emptySequence 0")])),
-        ("maxDot", "x = 3, 1, 2\nx.max",
-            LProg([LVal("x", Seq312)], [".dotCall (.resolve \"x\") \"max\" none"])),
-        ("firstSeq", "first((1, 2, 3))",
-            LProg([], [LCall("first", "(.capture [.num 1, .num 2, .num 3])")])),
-        ("firstScalar", "first(7)", LProg([], [LCall("first", ".num 7")])),
-        ("firstListElementStaysExact", "first([[1, 2], 3])",
-            LProg([], [LCall("first", $"(.listLiteral [{List12}, .num 3])")])),
-        ("firstEmptyItem", "first(((), 1))",
-            LProg([], [LCall("first", "(.capture [.emptySequence 0, .num 1])")])),
-        ("firstEmpty", "first(())", LProg([], [LCall("first", ".emptySequence 0")])),
-        ("firstDot", "x = 1, 2, 3\nx.first",
-            LProg([LVal("x", "(.capture [.num 1, .num 2, .num 3])")],
-                [".dotCall (.resolve \"x\") \"first\" none"])),
-        ("lastSeq", "last((1, 2, 3))",
-            LProg([], [LCall("last", "(.capture [.num 1, .num 2, .num 3])")])),
-        ("lastListElementStaysExact", "last([1, [2, 3]])",
-            LProg([], [LCall("last", "(.listLiteral [.num 1, .listLiteral [.num 2, .num 3]])")])),
-        ("lastEmpty", "last(())", LProg([], [LCall("last", ".emptySequence 0")])),
-        ("orderDescSeq", "orderDesc((1, 3, 2))",
-            LProg([], [LCall("orderDesc", "(.capture [.num 1, .num 3, .num 2])")])),
-        ("orderDescList", "orderDesc([2, 1])",
-            LProg([], [LCall("orderDesc", "(.listLiteral [.num 2, .num 1])")])),
-        ("orderDescDuplicates", "orderDesc((2, 1, 2))",
-            LProg([], [LCall("orderDesc", "(.capture [.num 2, .num 1, .num 2])")])),
-        ("orderDescScalar", "orderDesc(7)", LProg([], [LCall("orderDesc", ".num 7")])),
-        ("orderDescEmpty", "orderDesc(())", LProg([], [LCall("orderDesc", ".emptySequence 0")])),
-        ("orderDescString", "orderDesc(('b', 'a'))",
-            LProg([], [LCall("orderDesc", "(.capture [.stringLiteral \"b\", .stringLiteral \"a\"])")])),
-        ("orderDescDot", "x = 1, 3, 2\nx.orderDesc",
-            LProg([LVal("x", "(.capture [.num 1, .num 3, .num 2])")],
-                [".dotCall (.resolve \"x\") \"orderDesc\" none"])),
-        ("whileCountdown", "S(a) = a - 1, a > 1\nwhile(S, 3)",
-            LProg([WhileCountdownStep], [LCall("while", ".resolve \"S\"", ".num 3")])),
-        ("whileZeroIterations", "S(a) = a, 0\nwhile(S, 5)",
-            LProg([HaltingStep], [LCall("while", ".resolve \"S\"", ".num 5")])),
-        ("whileTwoSlotState", "S(a, b) = a + 1, b * 2, a < 3\nwhile(S, 1, 1)",
-            LProg(
-                ["privateProp \"S\" (alg [\"a\", \"b\"] [] [] [.binary .add (.param \"a\") (.num 1), .binary .mul (.param \"b\") (.num 2), .binary .lt (.param \"a\") (.num 3)])"],
-                [LCall("while", ".resolve \"S\"", ".num 1", ".num 1")])),
-        ("whileEmptyInitialState", "S(a) = a, 0\nwhile(S, ())",
-            LProg([HaltingStep], [LCall("while", ".resolve \"S\"", ".emptySequence 0")])),
-        ("whileNonNumericContinuation", "S(a) = a, ()\nwhile(S, 1)",
-            LProg(
-                ["privateProp \"S\" (alg [\"a\"] [] [] [.param \"a\", .emptySequence 0])"],
-                [LCall("while", ".resolve \"S\"", ".num 1")])),
-        ("whileDot", "S(a) = a - 1, a > 1\nS.while(3)",
-            LProg([WhileCountdownStep],
-                [".dotCall (.resolve \"S\") \"while\" (some [.num 3])"])),
-        ("containsSequenceItem", "contains(((1, 2), 3), (1, 2))",
-            LProg([], [LCall("contains", $"(.capture [{Pair12}, .num 3])", Pair12)])),
-        ("containsListItem", "contains([[1, 2], 3], [1, 2])",
-            LProg([], [LCall("contains", $"(.listLiteral [{List12}, .num 3])", List12)])),
-        ("containsEmptyItem", "contains(((), 1), ())",
-            LProg([], [LCall("contains", "(.capture [.emptySequence 0, .num 1])", ".emptySequence 0")])),
-        ("containsScalarCollection", "contains(7, 7)",
-            LProg([], [LCall("contains", ".num 7", ".num 7")])),
-        ("containsAcrossKinds", "contains(([1, 2], 3), (1, 2))",
-            LProg([], [LCall("contains", $"(.capture [{List12}, .num 3])", Pair12)])),
+        Special("minSeq", "min((3, 1, 2))"),
+        Special("minList", "min([3, 1])"),
+        Special("minScalar", "min(7)"),
+        Special("minEmpty", "min(())"),
+        Special("minNestedItem", "min(((1, 2), 3))"),
+        Special("minDot", "x = 3, 1, 2\nx.min"),
+        Special("maxSeq", "max((3, 1, 2))"),
+        Special("maxList", "max([3, 1])"),
+        Special("maxEmpty", "max(())"),
+        Special("maxDot", "x = 3, 1, 2\nx.max"),
+        Special("firstSeq", "first((1, 2, 3))"),
+        Special("firstScalar", "first(7)"),
+        Special("firstListElementStaysExact", "first([[1, 2], 3])"),
+        Special("firstEmptyItem", "first(((), 1))"),
+        Special("firstEmpty", "first(())"),
+        Special("firstDot", "x = 1, 2, 3\nx.first"),
+        Special("lastSeq", "last((1, 2, 3))"),
+        Special("lastListElementStaysExact", "last([1, [2, 3]])"),
+        Special("lastEmpty", "last(())"),
+        Special("orderDescSeq", "orderDesc((1, 3, 2))"),
+        Special("orderDescList", "orderDesc([2, 1])"),
+        Special("orderDescDuplicates", "orderDesc((2, 1, 2))"),
+        Special("orderDescScalar", "orderDesc(7)"),
+        Special("orderDescEmpty", "orderDesc(())"),
+        Special("orderDescString", "orderDesc(('b', 'a'))"),
+        Special("orderDescDot", "x = 1, 3, 2\nx.orderDesc"),
+        Special("whileCountdown", "S(a) = a - 1, a > 1\nwhile(S, 3)"),
+        Special("whileZeroIterations", "S(a) = a, 0\nwhile(S, 5)"),
+        Special("whileTwoSlotState", "S(a, b) = a + 1, b * 2, a < 3\nwhile(S, 1, 1)"),
+        Special("whileEmptyInitialState", "S(a) = a, 0\nwhile(S, ())"),
+        Special("whileNonNumericContinuation", "S(a) = a, ()\nwhile(S, 1)"),
+        Special("whileDot", "S(a) = a - 1, a > 1\nS.while(3)"),
+        Special("containsSequenceItem", "contains(((1, 2), 3), (1, 2))"),
+        Special("containsListItem", "contains([[1, 2], 3], [1, 2])"),
+        Special("containsEmptyItem", "contains(((), 1), ())"),
+        Special("containsScalarCollection", "contains(7, 7)"),
+        Special("containsAcrossKinds", "contains(([1, 2], 3), (1, 2))"),
 
         // ----- open / visibility (Track 10) -----------------------------------
         // Name resolution, `open`, and visibility had ZERO cases in either
@@ -738,174 +458,80 @@ public static class SemanticExplorerCorpus
         // models ownership-first lookup, public-only exposure through `open`,
         // provider ambiguity, and open-target dedup in full.
         //
-        // Every Lean program below was produced by LeanAstEncoder from the
-        // written source's ELABORATED AST and is pinned against it by
-        // OpenVisibilityCorpusFidelityTests, so exposure metadata (public /
-        // private / local-only) and implicit-parameter promotion cannot silently
-        // drift from what the source actually means — the Track 9 fidelity
-        // defect this family is most exposed to.
-        ("openPublicMember", "Lib = {\n    public X = 101\n}\nA = {\n    open Lib\n    X\n}\nA",
-            LProg([LibPublicX, "privateProp \"A\" (alg [] [.resolve \"Lib\"] [] [.resolve \"X\"])"], [ResolveA])),
+        // Every Lean program in the corpus is now encoder-derived, but THIS
+        // family's derived encodings are additionally pinned against manually
+        // reviewed golden text in OpenVisibilityCorpusFidelityTests, because
+        // exposure metadata (public / private / local-only) and
+        // implicit-parameter promotion ARE the semantics under test here — the
+        // Track 9 fidelity defect this family is most exposed to.
+        Special("openPublicMember", "Lib = {\n    public X = 101\n}\nA = {\n    open Lib\n    X\n}\nA"),
 
         // `open` never exposes a private member, so `X` is unresolvable and the
         // front end promotes it to an implicit parameter of `A`.
-        ("openPrivateMemberHidden", "Lib = {\n    X = 101\n}\nA = {\n    open Lib\n    X\n}\nA(707)",
-            LProg(
-                [LibPrivateX, "privateProp \"A\" (alg [\"X\"] [.resolve \"Lib\"] [] [.param \"X\"])"],
-                [CallA707])),
+        Special("openPrivateMemberHidden", "Lib = {\n    X = 101\n}\nA = {\n    open Lib\n    X\n}\nA(707)"),
 
         // Public but NOT exported: the member depends on its owner's parameter.
-        ("openLocalOnlyCapturedParamsHidden",
-            "Lib(p) = {\n    public X = p + 101\n    X\n}\nA = {\n    open Lib\n    X\n}\nA",
-            LProg(
-                [
-                    "privateProp \"A\" (alg [] [.resolve \"Lib\"] [] [.resolve \"X\"])",
-                    "privateProp \"Lib\" (alg [\"p\"] [] [publicLocalProp \"X\" .localCapturedAncestorParams "
-                        + "(alg [] [] [] [(.binary .add (.param \"p\") (.num 101))])] [.resolve \"X\"])",
-                ],
-                [ResolveA])),
+        Special("openLocalOnlyCapturedParamsHidden",
+            "Lib(p) = {\n    public X = p + 101\n    X\n}\nA = {\n    open Lib\n    X\n}\nA"),
 
-        ("openTwoProvidersAmbiguous",
-            "L1 = {\n    public X = 101\n}\nL2 = {\n    public X = 202\n}\nA = {\n    open L1, L2\n    X\n}\nA",
-            LProg(
-                [
-                    "privateProp \"L1\" (alg [] [] [publicProp \"X\" (alg [] [] [] [.num 101])] [])",
-                    "privateProp \"L2\" (alg [] [] [publicProp \"X\" (alg [] [] [] [.num 202])] [])",
-                    "privateProp \"A\" (alg [] [.resolve \"L1\", .resolve \"L2\"] [] [.resolve \"X\"])",
-                ],
-                [ResolveA])),
+        Special("openTwoProvidersAmbiguous",
+            "L1 = {\n    public X = 101\n}\nL2 = {\n    public X = 202\n}\nA = {\n    open L1, L2\n    X\n}\nA"),
 
         // Duplicate NAMED targets deduplicate first-occurrence-wins, so they are
         // one provider and never a spurious ambiguity (Lean: resolveAllOpens).
-        ("openDuplicateTargetDedup", "Lib = {\n    public X = 101\n}\nA = {\n    open Lib, Lib\n    X\n}\nA",
-            LProg(
-                [LibPublicX, "privateProp \"A\" (alg [] [.resolve \"Lib\", .resolve \"Lib\"] [] [.resolve \"X\"])"],
-                [ResolveA])),
+        Special("openDuplicateTargetDedup", "Lib = {\n    public X = 101\n}\nA = {\n    open Lib, Lib\n    X\n}\nA"),
 
-        ("openDuplicateDottedTargetDedup",
-            "Lib = {\n    public S = {\n        public X = 101\n    }\n}\nA = {\n    open Lib.S, Lib.S\n    X\n}\nA",
-            LProg(
-                [
-                    LibPublicSX,
-                    "privateProp \"A\" (alg [] [(.dotCall (.resolve \"Lib\") \"S\" none), "
-                        + "(.dotCall (.resolve \"Lib\") \"S\" none)] [] [.resolve \"X\"])",
-                ],
-                [ResolveA])),
+        Special("openDuplicateDottedTargetDedup",
+            "Lib = {\n    public S = {\n        public X = 101\n    }\n}\nA = {\n    open Lib.S, Lib.S\n    X\n}\nA"),
 
         // Inline blocks get positional keys and are NEVER deduplicated, so two
         // structurally identical blocks really are two providers.
-        ("openDuplicateInlineBlocksAmbiguous",
-            "A = {\n    open { public X = 101 }, { public X = 202 }\n    X\n}\nA",
-            LProg(
-                [
-                    "privateProp \"A\" (alg [] [(.algorithmExpr (alg [] [] [publicProp \"X\" (alg [] [] [] [.num 101])] [])), "
-                        + "(.algorithmExpr (alg [] [] [publicProp \"X\" (alg [] [] [] [.num 202])] []))] [] [.resolve \"X\"])",
-                ],
-                [ResolveA])),
+        Special("openDuplicateInlineBlocksAmbiguous",
+            "A = {\n    open { public X = 101 }, { public X = 202 }\n    X\n}\nA"),
 
-        ("openInlineBlock", "A = {\n    open { public X = 101 }\n    X\n}\nA",
-            LProg(
-                [
-                    "privateProp \"A\" (alg [] [(.algorithmExpr (alg [] [] [publicProp \"X\" (alg [] [] [] [.num 101])] []))] "
-                        + "[] [.resolve \"X\"])",
-                ],
-                [ResolveA])),
+        Special("openInlineBlock", "A = {\n    open { public X = 101 }\n    X\n}\nA"),
 
-        ("openInlineBlockPrivateHidden", "A = {\n    open { X = 101 }\n    X\n}\nA(707)",
-            LProg(
-                [
-                    "privateProp \"A\" (alg [\"X\"] [(.algorithmExpr (alg [] [] [privateProp \"X\" (alg [] [] [] [.num 101])] []))] "
-                        + "[] [.param \"X\"])",
-                ],
-                [CallA707])),
+        Special("openInlineBlockPrivateHidden", "A = {\n    open { X = 101 }\n    X\n}\nA(707)"),
 
-        ("openDottedPath",
-            "Lib = {\n    public S = {\n        public X = 101\n    }\n}\nA = {\n    open Lib.S\n    X\n}\nA",
-            LProg(
-                [LibPublicSX, "privateProp \"A\" (alg [] [(.dotCall (.resolve \"Lib\") \"S\" none)] [] [.resolve \"X\"])"],
-                [ResolveA])),
+        Special("openDottedPath",
+            "Lib = {\n    public S = {\n        public X = 101\n    }\n}\nA = {\n    open Lib.S\n    X\n}\nA"),
 
         // A dotted open path requires every member after the lexical head to be
         // public, so a private intermediate provides nothing.
-        ("openDottedPathPrivateIntermediate",
-            "Lib = {\n    S = {\n        public X = 101\n    }\n}\nA = {\n    open Lib.S\n    X\n}\nA(707)",
-            LProg(
-                [
-                    "privateProp \"Lib\" (alg [] [] [privateProp \"S\" (alg [] [] [publicProp \"X\" (alg [] [] [] [.num 101])] [])] [])",
-                    "privateProp \"A\" (alg [\"X\"] [(.dotCall (.resolve \"Lib\") \"S\" none)] [] [.param \"X\"])",
-                ],
-                [CallA707])),
+        Special("openDottedPathPrivateIntermediate",
+            "Lib = {\n    S = {\n        public X = 101\n    }\n}\nA = {\n    open Lib.S\n    X\n}\nA(707)"),
 
         // Ownership-first: an owned property always beats an opened one.
-        ("openLocalShadowsOpenedName",
-            "Lib = {\n    public X = 101\n}\nA = {\n    open Lib\n    X = 202\n    X\n}\nA",
-            LProg(
-                [
-                    LibPublicX,
-                    "privateProp \"A\" (alg [] [.resolve \"Lib\"] [privateProp \"X\" (alg [] [] [] [.num 202])] [.resolve \"X\"])",
-                ],
-                [ResolveA])),
+        Special("openLocalShadowsOpenedName",
+            "Lib = {\n    public X = 101\n}\nA = {\n    open Lib\n    X = 202\n    X\n}\nA"),
 
-        ("openAncestorPropertyWins",
-            "Lib = {\n    public X = 101\n}\nA = {\n    X = 202\n    Inner = {\n        open Lib\n        X\n    }\n    Inner\n}\nA",
-            LProg(
-                [
-                    LibPublicX,
-                    "privateProp \"A\" (alg [] [] [privateProp \"X\" (alg [] [] [] [.num 202]), "
-                        + "privateProp \"Inner\" (alg [] [.resolve \"Lib\"] [] [.resolve \"X\"])] [.resolve \"Inner\"])",
-                ],
-                [ResolveA])),
+        Special("openAncestorPropertyWins",
+            "Lib = {\n    public X = 101\n}\nA = {\n    X = 202\n    Inner = {\n        open Lib\n        X\n    }\n    Inner\n}\nA"),
 
         // A nested `open` is visible to descendants but never leaks outward.
-        ("openParentScopeReachesChild",
-            "Lib = {\n    public X = 101\n}\nA = {\n    open Lib\n    Inner = {\n        X\n    }\n    Inner\n}\nA",
-            LProg(
-                [
-                    LibPublicX,
-                    "privateProp \"A\" (alg [] [.resolve \"Lib\"] [privateProp \"Inner\" (alg [] [] [] [.resolve \"X\"])] "
-                        + "[.resolve \"Inner\"])",
-                ],
-                [ResolveA])),
+        Special("openParentScopeReachesChild",
+            "Lib = {\n    public X = 101\n}\nA = {\n    open Lib\n    Inner = {\n        X\n    }\n    Inner\n}\nA"),
 
-        ("openNestedDoesNotLeakOutward",
-            "Lib = {\n    public X = 101\n}\nA = {\n    Inner = {\n        open Lib\n        X\n    }\n    X\n}\nA(707)",
-            LProg(
-                [
-                    LibPublicX,
-                    "privateProp \"A\" (alg [\"X\"] [] [privateProp \"Inner\" (alg [] [.resolve \"Lib\"] [] [.resolve \"X\"])] "
-                        + "[.param \"X\"])",
-                ],
-                [CallA707])),
+        Special("openNestedDoesNotLeakOutward",
+            "Lib = {\n    public X = 101\n}\nA = {\n    Inner = {\n        open Lib\n        X\n    }\n    X\n}\nA(707)"),
 
         // The open head resolves by direct lexical lookup, which sees a private
         // sibling defined later in the same body.
-        ("openHeadDefinedLater", "A = {\n    open Lib\n    X\n}\nLib = {\n    public X = 101\n}\nA",
-            LProg(["privateProp \"A\" (alg [] [.resolve \"Lib\"] [] [.resolve \"X\"])", LibPublicX], [ResolveA])),
+        Special("openHeadDefinedLater", "A = {\n    open Lib\n    X\n}\nLib = {\n    public X = 101\n}\nA"),
 
         // The prelude is the outermost lexical scope, so ownership-first reaches
         // the builtin before opens are consulted.
-        ("openBuiltinNameCollision",
-            "Lib = {\n    public count = 101\n}\nA = {\n    open Lib\n    count([1, 2, 3])\n}\nA",
-            LProg(
-                [
-                    "privateProp \"Lib\" (alg [] [] [publicProp \"count\" (alg [] [] [] [.num 101])] [])",
-                    "privateProp \"A\" (alg [] [.resolve \"Lib\"] [] "
-                        + "[(.call (.resolve \"count\") [(.listLiteral [.num 1, .num 2, .num 3])])])",
-                ],
-                [ResolveA])),
+        Special("openBuiltinNameCollision",
+            "Lib = {\n    public count = 101\n}\nA = {\n    open Lib\n    count([1, 2, 3])\n}\nA"),
 
         // A builtin is never a legal open target; validation runs over the whole
         // open list before any name is resolved through it.
-        ("openBuiltinTargetIsIllegal",
-            "Lib = {\n    public X = 101\n}\nA = {\n    open count, Lib\n    X\n}\nA",
-            LProg(
-                [LibPublicX, "privateProp \"A\" (alg [] [.resolve \"count\", .resolve \"Lib\"] [] [.resolve \"X\"])"],
-                [ResolveA])),
+        Special("openBuiltinTargetIsIllegal",
+            "Lib = {\n    public X = 101\n}\nA = {\n    open count, Lib\n    X\n}\nA"),
 
         // Structural dot access deliberately ignores visibility; `open` does not.
         // Pinning both spellings keeps the two rules from collapsing into one.
-        ("structuralDotSeesPrivateMember", "Lib = {\n    X = 101\n}\nLib.X",
-            LProg([LibPrivateX], ["(.dotCall (.resolve \"Lib\") \"X\" none)"])),
+        Special("structuralDotSeesPrivateMember", "Lib = {\n    X = 101\n}\nLib.X"),
 
         // A member `open` must not expose cannot become a SECOND provider.
         // The single-provider spelling cannot see this: the front end has
@@ -914,66 +540,12 @@ public static class SemanticExplorerCorpus
         // member with a visible one makes the filter decide between "resolves"
         // and "ambiguous" (Track 11 mutants A5-A8 survived the whole suite
         // without these).
-        ("openPrivateMemberIsNotASecondProvider",
-            "Pub = {\n    public X = 101\n}\nLib = {\n    X = 202\n}\nA = {\n    open Pub, Lib\n    X\n}\nA",
-            LProg(
-                [
-                    "privateProp \"Pub\" (alg [] [] [publicProp \"X\" (alg [] [] [] [.num 101])] [])",
-                    "privateProp \"Lib\" (alg [] [] [privateProp \"X\" (alg [] [] [] [.num 202])] [])",
-                    "privateProp \"A\" (alg [] [.resolve \"Pub\", .resolve \"Lib\"] [] [.resolve \"X\"])",
-                ],
-                [ResolveA])),
+        Special("openPrivateMemberIsNotASecondProvider",
+            "Pub = {\n    public X = 101\n}\nLib = {\n    X = 202\n}\nA = {\n    open Pub, Lib\n    X\n}\nA"),
 
-        ("openLocalOnlyMemberIsNotASecondProvider",
-            "Pub = {\n    public X = 101\n}\nLib(p) = {\n    public X = p + 202\n    X\n}\nA = {\n    open Pub, Lib\n    X\n}\nA",
-            LProg(
-                [
-                    "privateProp \"Pub\" (alg [] [] [publicProp \"X\" (alg [] [] [] [.num 101])] [])",
-                    "privateProp \"A\" (alg [] [.resolve \"Pub\", .resolve \"Lib\"] [] [.resolve \"X\"])",
-                    "privateProp \"Lib\" (alg [\"p\"] [] [publicLocalProp \"X\" .localCapturedAncestorParams "
-                        + "(alg [] [] [] [(.binary .add (.param \"p\") (.num 202))])] [.resolve \"X\"])",
-                ],
-                [ResolveA])),
+        Special("openLocalOnlyMemberIsNotASecondProvider",
+            "Pub = {\n    public X = 101\n}\nLib(p) = {\n    public X = p + 202\n    X\n}\nA = {\n    open Pub, Lib\n    X\n}\nA"),
     ];
-
-    // ----- open/visibility shared fragments ------------------------------------
-
-    private const string LibPublicX =
-        "privateProp \"Lib\" (alg [] [] [publicProp \"X\" (alg [] [] [] [.num 101])] [])";
-
-    private const string LibPrivateX =
-        "privateProp \"Lib\" (alg [] [] [privateProp \"X\" (alg [] [] [] [.num 101])] [])";
-
-    private const string LibPublicSX =
-        "privateProp \"Lib\" (alg [] [] [publicProp \"S\" (alg [] [] [publicProp \"X\" (alg [] [] [] [.num 101])] [])] [])";
-
-    private const string ResolveA = ".resolve \"A\"";
-
-    private const string CallA707 = "(.call (.resolve \"A\") [.num 707])";
-
-    private const string Seq312 = "(.capture [.num 3, .num 1, .num 2])";
-
-    /// <summary>`S(a) = a - 1, a > 1` — a terminating one-slot `while` step.</summary>
-    private const string WhileCountdownStep =
-        "privateProp \"S\" (alg [\"a\"] [] [] [.binary .sub (.param \"a\") (.num 1), .binary .gt (.param \"a\") (.num 1)])";
-
-    /// <summary>`S(a) = a, 0` — a `while` step whose continuation is immediately false.</summary>
-    private const string HaltingStep =
-        "privateProp \"S\" (alg [\"a\"] [] [] [.param \"a\", .num 0])";
-
-    private const string PairOfPairs =
-        "(.capture [(.capture [.num 1, .num 2]), (.capture [.num 3, .num 4])])";
-
-    private const string Pair12 = "(.capture [.num 1, .num 2])";
-
-    private const string List12 = "(.listLiteral [.num 1, .num 2])";
-
-    private const string List34 = "(.listLiteral [.num 3, .num 4])";
-
-    /// <summary>`{A = 1}` — a written block with one private property and no output rows.</summary>
-    private const string NoOutputAlg = "(alg [] [] [privateProp \"A\" (alg [] [] [] [.num 1])] [])";
-
-    private const string NoOutputBlock = $"(.algorithmExpr {NoOutputAlg})";
 
     // ----- Direct internal-node cases (Expr.SequenceConstruct) -----------------
     //
@@ -988,8 +560,8 @@ public static class SemanticExplorerCorpus
     private static Expr ScNum(int n) => new Expr.Num(n);
     private static Expr ScEmpty() => new Expr.EmptySequence(0);
 
-    // Written-group leaves are Capture nodes since the OutputBundle split,
-    // matching the Lean-side `(.capture [...])` encodings below.
+    // Written-group leaves are Capture nodes since the OutputBundle split
+    // (Lean-side: `.capture [...]`).
     private static Expr ScBlock(params Expr[] outputs) => new Expr.Capture(new OutputBundle(outputs));
 
     private static Expr Sc(params Expr[] leaves)
@@ -999,61 +571,46 @@ public static class SemanticExplorerCorpus
         new Expr.Resolve(builtin),
         args);
 
-    private const string LScPair12 = "(.capture [.num 1, .num 2])";
-
     public static IReadOnlyList<InternalNodeCase> InternalNodeCases() =>
     [
         new("sc_e_1", "SequenceConstruct[(), 1] drops the () leaf and singleton-collapses",
             () => Sc(ScEmpty(), ScNum(1)),
-            ".sequenceConstruct (.emptySequence 0) (.num 1)",
             "((), 1)", InternalNodeRelation.IntentionallyDifferent),
         new("sc_1_e", "SequenceConstruct[1, ()] drops the () leaf and singleton-collapses",
             () => Sc(ScNum(1), ScEmpty()),
-            ".sequenceConstruct (.num 1) (.emptySequence 0)",
             "(1, ())", InternalNodeRelation.IntentionallyDifferent),
         new("sc_e_e", "SequenceConstruct[(), ()] drops both () leaves to the empty sequence",
             () => Sc(ScEmpty(), ScEmpty()),
-            ".sequenceConstruct (.emptySequence 0) (.emptySequence 0)",
             "((), ())", InternalNodeRelation.IntentionallyDifferent),
         new("sc_p12_e", "SequenceConstruct[(1,2), ()] drops () and collapses to the pair",
             () => Sc(ScBlock(ScNum(1), ScNum(2)), ScEmpty()),
-            $".sequenceConstruct {LScPair12} (.emptySequence 0)",
             "((1, 2), ())", InternalNodeRelation.IntentionallyDifferent),
         new("sc_e_p12", "SequenceConstruct[(), (1,2)] drops () and collapses to the pair",
             () => Sc(ScEmpty(), ScBlock(ScNum(1), ScNum(2))),
-            $".sequenceConstruct (.emptySequence 0) {LScPair12}",
             "((), (1, 2))", InternalNodeRelation.IntentionallyDifferent),
         new("sc_1_2", "SequenceConstruct[1, 2] matches written (1, 2)",
             () => Sc(ScNum(1), ScNum(2)),
-            ".sequenceConstruct (.num 1) (.num 2)",
             "(1, 2)", InternalNodeRelation.IntentionallyEqual),
         new("sc_p12_p34", "SequenceConstruct of two pairs preserves nested structure",
             () => Sc(ScBlock(ScNum(1), ScNum(2)), ScBlock(ScNum(3), ScNum(4))),
-            $".sequenceConstruct {LScPair12} (.capture [.num 3, .num 4])",
             "((1, 2), (3, 4))", InternalNodeRelation.IntentionallyEqual),
         new("sc_spread_3", "SequenceConstruct[(1,2)*, 3] splices the spread leaf",
             () => Sc(new Expr.SequenceSpread(ScBlock(ScNum(1), ScNum(2))), ScNum(3)),
-            $".sequenceConstruct (.sequenceSpread {LScPair12}) (.num 3)",
             "((1, 2)*, 3)", InternalNodeRelation.IntentionallyEqual),
         new("sc_count_arg", "count of the internal node observes the ()-dropped value",
             () => ScCall("count", Sc(ScEmpty(), ScNum(1))),
-            ".call (.resolve \"count\") [.sequenceConstruct (.emptySequence 0) (.num 1)]",
             "count(((), 1))", InternalNodeRelation.IntentionallyDifferent),
         new("sc_take_collection", "a SequenceConstruct collection argument binds like the grouped surface form",
             () => ScCall("take", Sc(ScNum(1), ScNum(2), ScNum(5)), ScNum(2)),
-            ".call (.resolve \"take\") [.sequenceConstruct (.sequenceConstruct (.num 1) (.num 2)) (.num 5), .num 2]",
             "take((1, 2, 5), 2)", InternalNodeRelation.IntentionallyEqual),
         new("sc_take_collection_empty", "() leaf vanishes from a SequenceConstruct collection argument (written parens keep it)",
             () => ScCall("take", Sc(ScEmpty(), ScNum(1), ScNum(2)), ScNum(2)),
-            ".call (.resolve \"take\") [.sequenceConstruct (.sequenceConstruct (.emptySequence 0) (.num 1)) (.num 2), .num 2]",
             "take(((), 1, 2), 2)", InternalNodeRelation.IntentionallyDifferent),
         new("sc_take_block_leaf", "a nested pair inside a SequenceConstruct collection argument stays one item",
             () => ScCall("take", Sc(ScNum(1), ScBlock(ScNum(2), ScNum(5))), ScNum(2)),
-            ".call (.resolve \"take\") [.sequenceConstruct (.num 1) (.capture [.num 2, .num 5]), .num 2]",
             "take((1, (2, 5)), 2)", InternalNodeRelation.IntentionallyEqual),
         new("sc_sum_arg", "sum of the internal node matches the grouped surface form",
             () => ScCall("sum", Sc(ScNum(1), ScNum(2))),
-            ".call (.resolve \"sum\") [.sequenceConstruct (.num 1) (.num 2)]",
             "sum((1, 2))", InternalNodeRelation.IntentionallyEqual),
         // Call-FUNCTION position: the internal node cannot resolve to an
         // algorithm (structured payload "sequence construct expression",
@@ -1064,30 +621,87 @@ public static class SemanticExplorerCorpus
             () => new Expr.Call(
                 Sc(ScNum(1), ScNum(2)),
                 [ScNum(3)]),
-            ".call (.sequenceConstruct (.num 1) (.num 2)) [.num 3]",
             "X = (1, 2)\nX(3)", InternalNodeRelation.IntentionallyDifferent),
     ];
 
-    /// <summary>All generated cases (template x value cross product plus specials).</summary>
-    public static IReadOnlyList<ExplorerCase> AllCases()
+    /// <summary>
+    /// All generated cases (template x value cross product plus specials),
+    /// with each Lean-comparable case's Lean program DERIVED from the source's
+    /// real elaborated AST through <see cref="LeanAstEncoder"/>. Derivation is
+    /// fail-loud: a case not flagged C#-only must parse cleanly and encode, so
+    /// a parser regression or an encoder coverage regression fails corpus
+    /// construction naming the case instead of silently shrinking the
+    /// differential corpus. The corpus is deterministic and immutable, so it
+    /// is built once per process.
+    /// </summary>
+    public static IReadOnlyList<ExplorerCase> AllCases() => LazyCases.Value;
+
+    private static readonly Lazy<IReadOnlyList<ExplorerCase>> LazyCases = new(BuildCases);
+
+    private static IReadOnlyList<ExplorerCase> BuildCases()
     {
         var cases = new List<ExplorerCase>();
         foreach (var template in Templates)
         {
             foreach (var (valueId, value) in Values)
             {
+                var id = $"{template.Id}__{valueId}";
+                var source = template.Source(value);
+                ValidateExclusionReason(id, template.LeanExclusionReason);
                 cases.Add(new ExplorerCase(
-                    $"{template.Id}__{valueId}",
+                    id,
                     template.Id,
                     valueId,
-                    template.Source(value),
-                    template.Lean(value)));
+                    source,
+                    template.LeanExclusionReason is null ? DeriveLeanProgram(id, source) : null,
+                    template.LeanExclusionReason));
             }
         }
 
-        foreach (var (id, source, lean) in Specials)
-            cases.Add(new ExplorerCase($"special__{id}", "special", id, source, lean));
+        foreach (var (id, source, leanExclusionReason) in Specials)
+        {
+            var caseId = $"special__{id}";
+            ValidateExclusionReason(caseId, leanExclusionReason);
+            cases.Add(new ExplorerCase(
+                caseId, "special", id, source,
+                leanExclusionReason is null ? DeriveLeanProgram(caseId, source) : null,
+                leanExclusionReason));
+        }
 
-        return cases;
+        return cases.AsReadOnly();
+    }
+
+    private static void ValidateExclusionReason(string caseId, string? reason)
+    {
+        if (reason is not null && string.IsNullOrWhiteSpace(reason))
+        {
+            throw new InvalidOperationException(
+                $"Semantic-explorer case '{caseId}' has a blank LeanExclusionReason; " +
+                "an exclusion must state the reviewed parser/model boundary it exercises.");
+        }
+    }
+
+    private static string DeriveLeanProgram(string caseId, string source)
+    {
+        var parsed = Parser.Parse(source);
+        if (parsed.HasErrors)
+        {
+            throw new InvalidOperationException(
+                $"Semantic-explorer case '{caseId}' is not flagged C#-only but its source does not parse cleanly: "
+                + string.Join(" | ", parsed.Diagnostics.Select(d => d.Message.Split('\n')[0]))
+                + $"\nSource:\n{source}");
+        }
+
+        try
+        {
+            return LeanAstEncoder.EncodeProgram(parsed.Root);
+        }
+        catch (NotSupportedException ex)
+        {
+            throw new InvalidOperationException(
+                $"Semantic-explorer case '{caseId}' cannot be Lean-encoded; either extend LeanAstEncoder "
+                + $"deliberately or flag the case C#-only with a reviewed reason. Encoder said: {ex.Message}"
+                + $"\nSource:\n{source}", ex);
+        }
     }
 }

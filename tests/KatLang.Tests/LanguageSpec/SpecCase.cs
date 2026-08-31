@@ -93,19 +93,45 @@ public sealed record SpecCase
     public DiagnosticCode? ExpectedDiagnosticCode { get; init; }
 
     /// <summary>
-    /// Lean AST construction equivalent to <see cref="Source"/> (the same
-    /// encoding the semantic-explorer corpus uses: surviving parenthesized
-    /// lists are <c>.capture</c> bundles, never <c>.sequenceConstruct</c>).
-    /// Non-null iff
-    /// the case is in the Lean-guarded partition.
+    /// EXCEPTIONAL escape hatch: a hand-authored Lean program used INSTEAD of
+    /// the canonical encoder derivation. Ordinary cases must not set this —
+    /// the corpus derives <see cref="LeanProgram"/> from the source's real
+    /// elaborated AST through <c>LeanAstEncoder</c>, which is what makes the
+    /// two sides of the differential provably the same program. Setting an
+    /// override requires <see cref="LeanOverrideReason"/> (schema-enforced),
+    /// and the overriding text is NOT same-program-verified: it exists only
+    /// for a deliberately different Lean construction.
     /// </summary>
-    public string? LeanProgram { get; init; }
+    public string? LeanProgramOverride { get; init; }
+
+    /// <summary>
+    /// Required exactly when <see cref="LeanProgramOverride"/> is set: why
+    /// this case hand-authors its Lean program instead of deriving it.
+    /// </summary>
+    public string? LeanOverrideReason { get; init; }
+
+    /// <summary>
+    /// The encoder-derived Lean program, set ONLY by
+    /// <c>LanguageSpecCorpus.AllCases</c>'s derivation step (never by a case
+    /// author). Kept internal so a corpus case cannot smuggle hand-written
+    /// Lean text into the derived channel.
+    /// </summary>
+    internal string? DerivedLeanProgram { get; init; }
+
+    /// <summary>
+    /// Lean AST construction equivalent to <see cref="Source"/>: the encoder
+    /// derivation, or the explicit override. Non-null iff the case is in the
+    /// Lean-guarded partition.
+    /// </summary>
+    public string? LeanProgram => LeanProgramOverride ?? DerivedLeanProgram;
 
     /// <summary>
     /// Required exactly when a non-parse-error case has no
-    /// <see cref="LeanProgram"/>: why the case is C#-only (e.g. decimal
-    /// display semantics outside the Lean Int core, or a Lean AST encoding
-    /// that has not been authored yet).
+    /// <see cref="LeanProgram"/>: why the case is C#-only (an intentional
+    /// model divergence such as decimal semantics outside the Lean Int core,
+    /// or a shape the encoder deliberately does not cover). The derivation
+    /// step skips excluded cases, so this is also the explicit unsupported
+    /// inventory — a case can never silently leave the Lean partition.
     /// </summary>
     public string? LeanExclusionReason { get; init; }
 

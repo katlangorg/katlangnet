@@ -177,6 +177,12 @@ public class LanguageSpecRunnerTests
     {
         foreach (var specCase in Cases)
         {
+            if (specCase.LeanExclusionReason is { } reason)
+            {
+                Assert.False(string.IsNullOrWhiteSpace(reason),
+                    $"{specCase.Id}: LeanExclusionReason must explain the reviewed model divergence.");
+            }
+
             if (specCase.LeanProgram is not null)
             {
                 Assert.True(specCase.LeanExclusionReason is null,
@@ -188,6 +194,110 @@ public class LanguageSpecRunnerTests
                     $"{specCase.Id}: a non-parse-error case without a LeanProgram must state a LeanExclusionReason.");
             }
         }
+    }
+
+    /// <summary>
+    /// Hand-authored Lean programs are the exception, never the ordinary path:
+    /// an override must carry a reviewed reason, a reason must belong to an
+    /// override, and an override never combines with a C#-only exclusion.
+    /// </summary>
+    [Fact]
+    public void Schema_LeanOverridesAreExplicitAndExceptional()
+    {
+        foreach (var specCase in Cases)
+        {
+            if (specCase.LeanProgramOverride is not null)
+            {
+                Assert.False(string.IsNullOrWhiteSpace(specCase.LeanProgramOverride),
+                    $"{specCase.Id}: LeanProgramOverride cannot be blank.");
+                Assert.False(string.IsNullOrWhiteSpace(specCase.LeanOverrideReason),
+                    $"{specCase.Id}: a hand-authored LeanProgramOverride requires a non-blank LeanOverrideReason.");
+                Assert.True(specCase.LeanExclusionReason is null,
+                    $"{specCase.Id}: LeanProgramOverride and LeanExclusionReason are mutually exclusive.");
+            }
+            else
+            {
+                Assert.True(specCase.LeanOverrideReason is null,
+                    $"{specCase.Id}: LeanOverrideReason without a LeanProgramOverride is meaningless.");
+            }
+        }
+    }
+
+    [Fact]
+    public void FidelityExclusions_ArePinnedByExactIdAndCategory()
+    {
+        string[] expectedParseLevel =
+        [
+            "decon-two-collecting-rejected",
+            "negative-index-literal-rejected",
+            "open-capture-target-rejected",
+            "semicolon-not-expression-syntax",
+            "spread-not-binary-operand",
+            "trailing-comma-in-parens-rejected",
+        ];
+        string[] expectedModelDivergences =
+        [
+            "avg-decimal-mean",
+            "native-flat-callback-binding",
+        ];
+
+        Assert.Equal(
+            expectedParseLevel.OrderBy(id => id, StringComparer.Ordinal),
+            Cases.Where(c => c.Outcome == SpecOutcome.ParseError)
+                .Select(c => c.Id).OrderBy(id => id, StringComparer.Ordinal));
+        Assert.Equal(
+            expectedModelDivergences.OrderBy(id => id, StringComparer.Ordinal),
+            Cases.Where(c => c.LeanExclusionReason is not null)
+                .Select(c => c.Id).OrderBy(id => id, StringComparer.Ordinal));
+    }
+
+    /// <summary>
+    /// M11 coverage ratchet. Every Lean-guarded case's program is derived from
+    /// the source's real elaborated AST (<see cref="SpecCase.DerivedLeanProgram"/>,
+    /// same-program fidelity by construction) unless it is an explicit
+    /// hand-authored override. The pinned numbers may only be RAISED (or
+    /// lowered in a reviewed diff that deliberately removes a corpus case);
+    /// an encoder coverage regression cannot pass silently, because a case
+    /// that stops encoding fails corpus construction loudly, and a case moved
+    /// to the excluded/override channels changes the counts asserted here.
+    /// </summary>
+    [Fact]
+    public void FidelityRatchet_LeanGuardedCoverageCannotSilentlyShrink()
+    {
+        const int MinimumEncoderDerivedCases = 167;
+        const int MaximumHandAuthoredOverrides = 0;
+        const int MaximumCSharpOnlyCases = 2;
+
+        var derived = Cases.Count(c => c.DerivedLeanProgram is not null);
+        var overrides = Cases.Count(c => c.LeanProgramOverride is not null);
+        var excluded = Cases.Count(c => c.LeanExclusionReason is not null);
+        var parseLevel = Cases.Count(c => c.Outcome == SpecOutcome.ParseError);
+        var leanGuarded = Cases.Count(c => c.IsLeanRepresentable);
+
+        string Summary() =>
+            $"language-spec fidelity accounting: {Cases.Count} surface cases = "
+            + $"{derived} encoder-derived + {overrides} hand-authored overrides + "
+            + $"{excluded} explicit C#-only exclusions + {parseLevel} parse-level cases; "
+            + $"Lean-guarded partition = {leanGuarded}. Excluded reasons: "
+            + string.Join("; ", Cases.Where(c => c.LeanExclusionReason is not null)
+                .Select(c => $"{c.Id}: {c.LeanExclusionReason}"))
+            + ". Override reasons: "
+            + string.Join("; ", Cases.Where(c => c.LeanProgramOverride is not null)
+                .Select(c => $"{c.Id}: {c.LeanOverrideReason}"));
+
+        Assert.True(derived + overrides + excluded + parseLevel == Cases.Count,
+            $"Fidelity partition does not cover the corpus. {Summary()}");
+        Assert.True(derived + overrides == leanGuarded,
+            $"Lean-guarded cases must be exactly the derived + override cases. {Summary()}");
+
+        Assert.True(derived >= MinimumEncoderDerivedCases,
+            $"Encoder-derived fidelity coverage shrank below the pinned minimum {MinimumEncoderDerivedCases}. {Summary()}");
+        Assert.True(overrides <= MaximumHandAuthoredOverrides,
+            $"A new hand-authored Lean override entered the corpus; overrides are exceptional and this pin must be "
+            + $"raised in a reviewed diff. {Summary()}");
+        Assert.True(excluded <= MaximumCSharpOnlyCases,
+            $"A new C#-only exclusion entered the corpus; each exclusion is a deliberate model-divergence decision and "
+            + $"this pin must be raised in a reviewed diff. {Summary()}");
     }
 
     [Fact]
@@ -237,6 +347,8 @@ public class LanguageSpecRunnerTests
                 surfaceCases = surface,
                 parseLevelCases = parseLevel,
                 leanGuardedCases = leanGuarded,
+                encoderDerivedCases = Cases.Count(c => c.DerivedLeanProgram is not null),
+                handAuthoredOverrides = Cases.Count(c => c.LeanProgramOverride is not null),
                 csharpOnlyCases = csharpOnly,
                 probeObservations = Cases.Sum(c => c.Probes.Count),
                 generatorPromptCases = Cases.Count(c => c.IncludeInGeneratorPrompt),

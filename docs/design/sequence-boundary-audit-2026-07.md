@@ -359,20 +359,40 @@ open-target dedup, inline blocks, dotted paths, ownership-first shadowing,
 nested-scope leakage, builtin collision, and structural dot access to a private
 member, none of which had ANY case in either generated artifact before); the
 generated header, partition guards, JSON report, and table above now agree on
-1,557 surface cases, 31 parse-level exclusions, 1,526 Lean-representable
+1,559 surface cases, 31 parse-level exclusions, 1,528 Lean-representable
 surface cases, and 14 internal-node cases.
 
-Corpus fidelity note (Track 10): the `open`/visibility family's Lean programs
-are not hand-transcribed. `LeanAstEncoder` prints the Lean constructor form of
-the source's real ELABORATED AST, and `OpenVisibilityCorpusFidelityTests` pins
-every declared program against it. That matters twice over for this family:
-exposure metadata (`publicProp` / `privateProp` /
-`publicLocalProp .localCapturedAncestorParams`) IS the semantics under test, and
-the front end additionally rewrites names that no provider supplies into
-implicit parameters — so the honest Lean encoding of `open Lib` over a private
-`X` is `alg ["X"] [.resolve "Lib"] [] [.param "X"]`, not the naive shape of the
-written source. The encoder is fail-loud on node kinds it does not model, so it
-cannot silently approximate a program the way the Track 9 defect below did.
+Corpus fidelity note (M11, August 2026): NO corpus Lean program is
+hand-transcribed any more. `LeanAstEncoder` prints the Lean constructor form of
+the source's real ELABORATED AST, and both differential corpora
+(`SemanticExplorerCorpus` — templates, specials, and the internal-node cases —
+and `LanguageSpecCorpus`) derive every Lean-representable case's program
+through it at corpus-construction time, so a differential case provably runs
+the SAME program on both sides. The former test-side re-implementations of
+parser rules (the `ExplorerValue.LeanExpr` redundant-parenthesis
+normalization and the `LDecon` deconstruction-elaboration templates) are
+deleted; derivation surfaced and fixed the stored programs that had quietly
+drifted from the real elaboration (hand-written one-row capture bodies for
+multi-row `x = 3, 1, 2` sources, phantom `.capture` nodes for parser-unwrapped
+redundant parentheses, simplified deconstruction shapes, and clause-family
+property ordering) — none of which changed any pinned observation. The
+encoder is fail-loud on anything it does not model, so it cannot silently
+approximate a program the way the Track 9 defect below did; its encoding of
+semantics-bearing metadata is pinned by manually reviewed goldens in
+`LeanAstEncoderTests` and `OpenVisibilityCorpusFidelityTests` (the Track 10
+`open`/visibility family, where exposure metadata — `publicProp` /
+`privateProp` / `publicLocalProp .localCapturedAncestorParams` — IS the
+semantics under test, and the front end additionally rewrites names that no
+provider supplies into implicit parameters: the honest Lean encoding of
+`open Lib` over a private `X` is `alg ["X"] [.resolve "Lib"] [] [.param "X"]`,
+not the naive shape of the written source). Per-corpus ratchets
+(`FidelityRatchet_EncoderDerivedCoverageCannotSilentlyShrink`,
+`FidelityRatchet_LeanGuardedCoverageCannotSilentlyShrink`) pin the minimum
+derived-case counts so coverage cannot silently regress.
+Every explorer parse-level exclusion also carries a non-blank
+`LeanExclusionReason`, and both corpora pin their excluded case IDs exactly;
+changing the exclusion partition therefore requires a conspicuous reviewed
+test update rather than only changing a count.
 
 Corpus fidelity note (Track 9): the `dotAccess` / `dotAccessCall` templates
 and the `multiPropDot` special write `A = { X = ... }`, which the C# parser

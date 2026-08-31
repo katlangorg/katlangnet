@@ -99,11 +99,24 @@ After any regeneration: review the diff, then run the corresponding
    the *language rules* (AGENTS.md, the audit doc, the tutorial) — then let
    the runner tell you if the implementation disagrees. Do not paste observed
    output without checking it against the documented rules first.
-2. Decide the partition. Prefer authoring the `LeanProgram` (helpers
-   `LProg`/`LProp`/`LFn`/`LFnP`/`LFnPat`/`LCall`/`LCapture`/`LDecon` cover most
-   shapes; surviving parenthesized lists are `.capture` bundles, `()` is
-   `.emptySequence 0`, never `.sequenceConstruct`). If you must defer the
-   encoding, set `LeanExclusionReason` explaining why.
+2. Decide the partition. The ordinary path needs NOTHING beyond the source:
+   the corpus derives `LeanProgram` from the source's real elaborated AST
+   through `LeanAstEncoder` (M11), so a same-program differential case cannot
+   be authored with two unrelated program definitions. Only two explicit
+   deviations exist, both schema-enforced and count-ratcheted
+   (`FidelityRatchet_LeanGuardedCoverageCannotSilentlyShrink`):
+   - `LeanExclusionReason` — the case is C#-only (an intentional model
+     divergence, e.g. decimal semantics outside the Lean Int core or the
+     unmodeled Math-native surface);
+   - `LeanProgramOverride` + `LeanOverrideReason` — an exceptional,
+     deliberately hand-authored Lean construction (not same-program-verified;
+     currently unused).
+   If the encoder refuses a shape, corpus construction fails naming the case:
+   either extend `LeanAstEncoder` deliberately (with reviewed goldens in
+   `LeanAstEncoderTests`) or exclude the case with a reviewed reason.
+   Exclusion IDs are pinned exactly in both corpora, and blank exclusion or
+   override reasons are schema errors; a case cannot move out of derivation by
+   merely toggling a boolean or incrementing a permissive count.
 3. `dotnet test --filter LanguageSpec` — the runner verifies the C# side.
 4. Regenerate the spec artifacts (section 4), review the diff, and
    `lake build LanguageSpecCases` — the guard verifies the Lean side.
