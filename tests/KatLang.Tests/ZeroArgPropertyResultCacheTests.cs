@@ -299,16 +299,21 @@ public class ZeroArgPropertyResultCacheTests
 
         var result = Evaluator.Run(new Expr.AlgorithmExpr(SourceProvenance.ParseValid(source).Root), cache);
         var snapshot = cache.GetSnapshot();
-        var lexical = snapshot.GetAccessKind(ZeroArgPropertyAccessKind.Lexical);
+        // The plain evaluator family is the value projection of the counted
+        // family (M8), so plain Run reaches the cache through the counted
+        // lexical wiring point; the totals are unchanged from the
+        // pre-projection Lexical attribution.
+        var countedLexical = snapshot.GetAccessKind(ZeroArgPropertyAccessKind.CountedLexical);
 
         Assert.False(result.IsError);
         var atoms = result.Value.ToAtoms();
         Assert.Single(atoms);
         Assert.True(atoms[0] >= 0m && atoms[0] < 2m);
-        Assert.Equal(2, lexical.Requests);
-        Assert.Equal(1, lexical.Hits);
-        Assert.Equal(1, lexical.Misses);
-        Assert.Equal(1, lexical.Stores);
+        Assert.Equal(2, countedLexical.Requests);
+        Assert.Equal(1, countedLexical.Hits);
+        Assert.Equal(1, countedLexical.Misses);
+        Assert.Equal(1, countedLexical.Stores);
+        AssertLiveEvaluationUsesOnlyCountedAccessKinds(snapshot);
     }
 
     [Fact]
@@ -357,14 +362,17 @@ public class ZeroArgPropertyResultCacheTests
 
         var result = Evaluator.Run(new Expr.AlgorithmExpr(SourceProvenance.ParseValid(source).Root), cache);
         var snapshot = cache.GetSnapshot();
-        var lexical = snapshot.GetAccessKind(ZeroArgPropertyAccessKind.Lexical);
+        // Plain Run reaches the cache through the counted lexical wiring point
+        // (plain = value projection of counted, M8); totals unchanged.
+        var countedLexical = snapshot.GetAccessKind(ZeroArgPropertyAccessKind.CountedLexical);
 
         Assert.False(result.IsError);
         Assert.Equal([6m], result.Value.ToAtoms());
-        Assert.Equal(2, lexical.Requests);
-        Assert.Equal(1, lexical.Hits);
-        Assert.Equal(1, lexical.Misses);
-        Assert.Equal(1, lexical.Stores);
+        Assert.Equal(2, countedLexical.Requests);
+        Assert.Equal(1, countedLexical.Hits);
+        Assert.Equal(1, countedLexical.Misses);
+        Assert.Equal(1, countedLexical.Stores);
+        AssertLiveEvaluationUsesOnlyCountedAccessKinds(snapshot);
     }
 
     [Fact]
@@ -375,14 +383,17 @@ public class ZeroArgPropertyResultCacheTests
 
         var result = Evaluator.Run(new Expr.AlgorithmExpr(SourceProvenance.ParseValid(source).Root), cache);
         var snapshot = cache.GetSnapshot();
-        var structural = snapshot.GetAccessKind(ZeroArgPropertyAccessKind.Structural);
+        // Plain Run reaches the cache through the counted structural wiring
+        // point (plain = value projection of counted, M8); totals unchanged.
+        var countedStructural = snapshot.GetAccessKind(ZeroArgPropertyAccessKind.CountedStructural);
 
         Assert.False(result.IsError);
         Assert.Single(result.Value.ToAtoms());
-        Assert.Equal(2, structural.Requests);
-        Assert.Equal(1, structural.Hits);
-        Assert.Equal(1, structural.Misses);
-        Assert.Equal(1, structural.Stores);
+        Assert.Equal(2, countedStructural.Requests);
+        Assert.Equal(1, countedStructural.Hits);
+        Assert.Equal(1, countedStructural.Misses);
+        Assert.Equal(1, countedStructural.Stores);
+        AssertLiveEvaluationUsesOnlyCountedAccessKinds(snapshot);
     }
 
     [Fact]
@@ -500,7 +511,7 @@ public class ZeroArgPropertyResultCacheTests
     }
 
     [Fact]
-    public void Evaluator_ZeroArgPropertyCaching_DotReceiverUsesLexicalAccessKind()
+    public void Evaluator_ZeroArgPropertyCaching_DotReceiverUsesLexicalShapedAccessKind()
     {
         var source = """
             Values = range(1, 5)
@@ -510,7 +521,14 @@ public class ZeroArgPropertyResultCacheTests
 
         var result = Evaluator.Run(new Expr.AlgorithmExpr(SourceProvenance.ParseValid(source).Root), cache);
         var snapshot = cache.GetSnapshot();
-        var lexical = snapshot.GetAccessKind(ZeroArgPropertyAccessKind.Lexical);
+        // The semantic point is the access SHAPE: a sequence-builtin dot
+        // receiver reads `Values` through lexical resolution, never through
+        // structural owner keying. Plain Run reaches the cache through the
+        // counted lexical wiring point (plain = value projection of counted,
+        // M8); totals unchanged, and the structural kinds stay quiet.
+        var countedLexical = snapshot.GetAccessKind(ZeroArgPropertyAccessKind.CountedLexical);
+        var structural = snapshot.GetAccessKind(ZeroArgPropertyAccessKind.Structural);
+        var countedStructural = snapshot.GetAccessKind(ZeroArgPropertyAccessKind.CountedStructural);
 
         Assert.False(result.IsError);
         Assert.Equal([10m], result.Value.ToAtoms());
@@ -518,10 +536,13 @@ public class ZeroArgPropertyResultCacheTests
         Assert.Equal(1, snapshot.Hits);
         Assert.Equal(1, snapshot.Misses);
         Assert.Equal(1, snapshot.Stores);
-        Assert.Equal(2, lexical.Requests);
-        Assert.Equal(1, lexical.Hits);
-        Assert.Equal(1, lexical.Misses);
-        Assert.Equal(1, lexical.Stores);
+        Assert.Equal(2, countedLexical.Requests);
+        Assert.Equal(1, countedLexical.Hits);
+        Assert.Equal(1, countedLexical.Misses);
+        Assert.Equal(1, countedLexical.Stores);
+        Assert.Equal(0, structural.Requests);
+        Assert.Equal(0, countedStructural.Requests);
+        AssertLiveEvaluationUsesOnlyCountedAccessKinds(snapshot);
     }
 
     [Fact]
@@ -538,36 +559,39 @@ public class ZeroArgPropertyResultCacheTests
 
         var result = Evaluator.Run(new Expr.AlgorithmExpr(SourceProvenance.ParseValid(source).Root), cache);
         var snapshot = innerCache.GetSnapshot();
-        var structural = snapshot.GetAccessKind(ZeroArgPropertyAccessKind.Structural);
+        // Plain Run reaches the cache through the counted structural wiring
+        // point (plain = value projection of counted, M8); totals unchanged.
+        var structural = snapshot.GetAccessKind(ZeroArgPropertyAccessKind.CountedStructural);
         var structuralRequests = cache.Requests
-            .Where(request => request.AccessKind == ZeroArgPropertyAccessKind.Structural)
+            .Where(request => request.AccessKind == ZeroArgPropertyAccessKind.CountedStructural)
             .ToList();
         var comparison = CompareKeyComponents(structuralRequests[0], structuralRequests[1]);
 
         Assert.False(result.IsError);
         Assert.Equal([2m], result.Value.ToAtoms());
         Assert.Equal(2, snapshot.TotalRequests);
-    Assert.Equal(1, snapshot.Hits);
-    Assert.Equal(1, snapshot.Misses);
-    Assert.Equal(1, snapshot.Stores);
-    Assert.Equal(1, snapshot.DistinctKeysCreated);
-    Assert.Equal(0, snapshot.RepeatedMissRequests);
+        Assert.Equal(1, snapshot.Hits);
+        Assert.Equal(1, snapshot.Misses);
+        Assert.Equal(1, snapshot.Stores);
+        Assert.Equal(1, snapshot.DistinctKeysCreated);
+        Assert.Equal(0, snapshot.RepeatedMissRequests);
         Assert.Equal(2, structural.Requests);
-    Assert.Equal(1, structural.Hits);
-    Assert.Equal(1, structural.Misses);
-    Assert.Equal(1, structural.Stores);
+        Assert.Equal(1, structural.Hits);
+        Assert.Equal(1, structural.Misses);
+        Assert.Equal(1, structural.Stores);
 
-    // The evaluator still rebuilds distinct structural owners here, but the
-    // effective Stage 1 key no longer splits the cache on that difference.
+        // The evaluator still rebuilds distinct structural owners here, but the
+        // effective Stage 1 key no longer splits the cache on that difference.
         Assert.Equal(2, structuralRequests.Count);
-    Assert.False(ReferenceEquals(structuralRequests[0].Owner, structuralRequests[1].Owner));
-    Assert.True(comparison.AllComponentsMatch);
-    Assert.True(comparison.OwnerIdentityMatches);
+        Assert.False(ReferenceEquals(structuralRequests[0].Owner, structuralRequests[1].Owner));
+        Assert.True(comparison.AllComponentsMatch);
+        Assert.True(comparison.OwnerIdentityMatches);
         Assert.True(comparison.BindingIdentityMatches);
         Assert.True(comparison.ValueEnvironmentIdentityMatches);
         Assert.True(comparison.AlgorithmEnvironmentIdentityMatches);
         Assert.True(comparison.CountedParamEnvironmentIdentityMatches);
         Assert.True(comparison.RunIdentityMatches);
+        AssertLiveEvaluationUsesOnlyCountedAccessKinds(snapshot);
     }
 
     [Fact]
@@ -817,10 +841,8 @@ public class ZeroArgPropertyResultCacheTests
     }
 
     /// <summary>
-    /// Sums the plain and counted structural access kinds: the cache key merges
-    /// them by design, and which evaluator core serves a given surface entry
-    /// point (root output rows evaluate through the counted core even under
-    /// plain <c>Run</c>) is not what these tests pin.
+    /// Live evaluator entry points must use the counted structural wiring after
+    /// M8. The plain kind remains an enum/cache-key compatibility category only.
     /// </summary>
     private static void AssertStructuralAccessCounts(
         RunScopedZeroArgPropertyResultCache cache,
@@ -833,10 +855,38 @@ public class ZeroArgPropertyResultCacheTests
         var plain = snapshot.GetAccessKind(ZeroArgPropertyAccessKind.Structural);
         var counted = snapshot.GetAccessKind(ZeroArgPropertyAccessKind.CountedStructural);
 
-        Assert.Equal(requests, plain.Requests + counted.Requests);
-        Assert.Equal(hits, plain.Hits + counted.Hits);
-        Assert.Equal(misses, plain.Misses + counted.Misses);
-        Assert.Equal(stores, plain.Stores + counted.Stores);
+        Assert.Equal(0, plain.Requests);
+        Assert.Equal(0, plain.Hits);
+        Assert.Equal(0, plain.Misses);
+        Assert.Equal(0, plain.Stores);
+        Assert.Equal(requests, counted.Requests);
+        Assert.Equal(hits, counted.Hits);
+        Assert.Equal(misses, counted.Misses);
+        Assert.Equal(stores, counted.Stores);
+        AssertLiveEvaluationUsesOnlyCountedAccessKinds(snapshot);
+    }
+
+    private static void AssertLiveEvaluationUsesOnlyCountedAccessKinds(
+        ZeroArgPropertyResultCacheSnapshot snapshot)
+    {
+        var lexical = snapshot.GetAccessKind(ZeroArgPropertyAccessKind.Lexical);
+        var structural = snapshot.GetAccessKind(ZeroArgPropertyAccessKind.Structural);
+        var countedLexical = snapshot.GetAccessKind(ZeroArgPropertyAccessKind.CountedLexical);
+        var countedStructural = snapshot.GetAccessKind(ZeroArgPropertyAccessKind.CountedStructural);
+
+        Assert.Equal(0, lexical.Requests);
+        Assert.Equal(0, lexical.Hits);
+        Assert.Equal(0, lexical.Misses);
+        Assert.Equal(0, lexical.Stores);
+        Assert.Equal(0, structural.Requests);
+        Assert.Equal(0, structural.Hits);
+        Assert.Equal(0, structural.Misses);
+        Assert.Equal(0, structural.Stores);
+        Assert.Equal(snapshot.TotalRequests, countedLexical.Requests + countedStructural.Requests);
+        Assert.Equal(snapshot.Hits, countedLexical.Hits + countedStructural.Hits);
+        Assert.Equal(snapshot.Misses, countedLexical.Misses + countedStructural.Misses);
+        Assert.Equal(snapshot.Stores, countedLexical.Stores + countedStructural.Stores);
+        Assert.Equal(snapshot.TotalRequests, snapshot.Hits + snapshot.Misses);
     }
 
     [Fact]

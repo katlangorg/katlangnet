@@ -1,26 +1,28 @@
 namespace KatLang.Tests;
 
 /// <summary>
-/// Equivalence relation between the evaluator's TWO independently implemented
-/// lexical-lookup paths.
+/// Equivalence relation between the evaluator's two lexical-lookup SPELLINGS.
 ///
 /// <list type="bullet">
 /// <item><b>Twin 1</b> — <c>Evaluator.LookupLexical</c>, the binding-carrying
-/// path. Reached by a bare name in VALUE position (<c>X</c>), which feeds the
-/// zero-argument property cache.</item>
-/// <item><b>Twin 2</b> — <c>Evaluator.LookupLexicalResolvedAlgorithm</c>, the
-/// resolve-only fast path. Reached by a name in ALGORITHM position: a call
-/// callee (<c>X()</c>) or a dot-call target (<c>X.string</c>), both of which go
-/// through <c>ResolveAlg</c> / <c>ResolveNamedAlgorithm</c>.</item>
+/// canonical chain. Reached by a bare name in VALUE position (<c>X</c>), which
+/// feeds the zero-argument property cache.</item>
+/// <item><b>Twin 2</b> — <c>Evaluator.LookupLexicalResolvedAlgorithm</c>,
+/// reached by a name in ALGORITHM position: a call callee (<c>X()</c>) or a
+/// dot-call target (<c>X.string</c>), both of which go through
+/// <c>ResolveAlg</c> / <c>ResolveNamedAlgorithm</c>.</item>
 /// </list>
 ///
 /// <para>
-/// Each twin re-implements ownership-first ordering, opened-provider lookup,
-/// open-target dedup, ambiguity, scope-level precedence, and prelude fallback.
-/// Track 10 mutated only the fast path and found that no pre-existing test
-/// covered it; this relation makes both paths independently observable on the
-/// SAME scenario, so a rule that drifts on one side alone cannot hide behind
-/// the other.
+/// Since M8+M9 twin 2 is the algorithm PROJECTION of twin 1 (mirroring Lean,
+/// where <c>lookupLexical</c> projects <c>lookupLexicalProperty</c>), so
+/// ownership-first ordering, opened-provider lookup, open-target dedup,
+/// ambiguity, scope-level precedence, and prelude fallback exist once. Before
+/// that, each twin re-implemented those rules independently, and Track 10
+/// found a mutation of the fast path alone that no test covered. This
+/// relation keeps both SPELLINGS independently observable on the SAME
+/// scenario, so a re-grown independent algorithm-position path that drifts
+/// cannot hide behind the value-position one.
 /// </para>
 ///
 /// <para>
@@ -173,25 +175,27 @@ public class LookupTwinEquivalenceTests
         if (!SameSelectionScenarios.Contains(scenarioId))
             return;
 
-        // Twin 1 vs twin 2 on the same scenario. Stated relationally as well as
-        // absolutely: if a future rule change moves both expectations together,
-        // this still asserts the two implementations moved together too.
+        // Value position vs algorithm position on the same scenario. Stated
+        // relationally as well as absolutely: if a future rule change moves
+        // both expectations together, this still asserts both consumers select
+        // the same declaration.
         Assert.Equal(StripStringForm(bare), StripStringForm(dotTarget));
         Assert.Equal(bare, called);
     }
 
     /// <summary>
-    /// The relation is only meaningful if each spelling actually reaches its own
-    /// twin. Twin 2 is the resolve-only path used from algorithm position; if a
-    /// refactor routed callee resolution back through <c>LookupLexical</c>, the
-    /// equivalence above would go vacuous without any test noticing.
+    /// Both spellings share the canonical binding-carrying lookup chain, but
+    /// their downstream consumers must remain distinct: value position performs
+    /// property-style demand (and may cache it), while algorithm position calls
+    /// the selected algorithm explicitly.
     ///
     /// <para>
-    /// The two branches are distinguishable deterministically on a property with
+    /// The two consumers are distinguishable deterministically on a property with
     /// no output: the value-position branch reports it as a PROPERTY access
     /// ("Property 'P' has no defined output"), the algorithm-position branch as
     /// a CALL ("Cannot call 'P' ..."). Same declaration, same defect, different
-    /// path — so both really are being exercised above.
+    /// demand — so both really are being exercised above without requiring two
+    /// independent lookup implementations.
     /// </para>
     /// </summary>
     [Fact]
@@ -221,12 +225,12 @@ public class LookupTwinEquivalenceTests
     }
 
     /// <summary>
-    /// Corpus guard: the scenario set must keep covering every rule both twins
-    /// duplicate, so a deletion shows up here rather than as a quietly weaker
-    /// relation.
+    /// Corpus guard: the scenario set must keep covering every canonical lookup
+    /// rule observed by both spellings, so a deletion shows up here rather than
+    /// as a quietly weaker relation.
     /// </summary>
     [Fact]
-    public void ScenariosCoverEveryDuplicatedLookupRule()
+    public void ScenariosCoverEveryCanonicalLookupRule()
     {
         var ids = Scenarios.Select(static s => s.Id).ToHashSet(StringComparer.Ordinal);
 
@@ -256,9 +260,9 @@ public class LookupTwinEquivalenceTests
     }
 
     /// <summary>
-    /// Prelude fallback, which both twins reach through the parent chain rather
-    /// than through opens. Written separately because the discriminating probes
-    /// are not a plain <c>X</c> substitution.
+    /// Prelude fallback, which both spellings reach through the parent chain
+    /// rather than through opens. Written separately because the discriminating
+    /// probes are not a plain <c>X</c> substitution.
     /// </summary>
     [Fact]
     public void BothTwinsReachThePreludeThroughTheParentChain()

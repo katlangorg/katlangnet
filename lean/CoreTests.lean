@@ -12888,17 +12888,17 @@ def ifAtomsResultConditionInvalid : Bool :=
 --------------------------------------------------------------------------------
 -- dot-call projection parity guards
 --------------------------------------------------------------------------------
--- `evalDotCall` and `evalDotCallCounted` currently duplicate dot-call
--- dispatch: receiver resolution, structural lookup, lexical fallback with
--- receiver injection, zero-arg property access, conditional value-position
--- dispatch, and the receiver-spreading rules. These guards pin representative
--- projection parity
+-- `evalDotCallCounted` is the canonical owner of dot-call dispatch — receiver
+-- resolution, structural lookup, lexical fallback with receiver injection,
+-- zero-arg property access, conditional value-position dispatch, and the
+-- receiver-spreading rules — and `evalDotCall` is its Result projection.
+-- These guards pin representative projection parity
 --   evalDotCall target name args == Prod.fst <$> evalDotCallCounted target name args
 -- from identical initial state: equal Result values on success, equal error
 -- diagnostics on failure (compared via Repr, so context wording is pinned),
--- and equal final evaluator state (per-run zero-arg property cache). They are
--- groundwork for a possible future delegation rewrite, which is deliberately
--- NOT performed here.
+-- and equal final evaluator state (per-run zero-arg property cache). The
+-- projection makes parity true by construction; the guards keep it true
+-- against any future re-duplication of the plain path.
 
 -- Choose(0, y) = y; Choose(x, y) = x + y
 def dotCallParityChooseAlg : Algorithm := .conditional none [] [
@@ -13089,6 +13089,234 @@ def dotCallParityCacheCasesWriteCache : Bool :=
       | .error _ => false
 
 #guard dotCallParityCacheCasesWriteCache
+
+--------------------------------------------------------------------------------
+-- call-family projection parity guards
+--------------------------------------------------------------------------------
+-- The counted call family is canonical and the plain family is its value
+-- projection: `evalUserCall`, `evalConditionalCall`, `evalResolvedCall`, and
+-- `evalCallExpr` each return `Prod.fst <$>` of their counted twins. These
+-- guards pin representative parity from identical initial state — equal
+-- values, equal error Reprs, equal final evaluator state — so a future
+-- re-duplication of any plain call family cannot drift silently. The shared
+-- program/context comes from the dot-call parity section above; expected
+-- outcomes/atoms keep each case honest about what it exercises.
+
+structure CallProjectionParityCase where
+  label : String
+  callee : KatLang.Expr
+  args : List KatLang.Expr := []
+  expected : BuiltinApplyOutcome := .succeeded
+  expectedAtoms : Option (List Int) := none
+
+def callProjectionParityCaseHolds (c : CallProjectionParityCase) : Bool :=
+  let ctx := dotCallParityCtx dotCallParityProg
+  let plain := (KatLang.evalCallExpr c.callee c.args ctx []).run KatLang.EvalState.empty
+  let counted := (KatLang.evalCallCountedExpr c.callee c.args ctx []).run KatLang.EvalState.empty
+  let parity :=
+    match plain, counted with
+    | .ok (value, plainState), .ok ((countedValue, _), countedState) =>
+        value == countedValue && reprStr plainState == reprStr countedState
+    | .error plainErr, .error countedErr => reprStr plainErr == reprStr countedErr
+    | _, _ => false
+  let outcome := classifyBuiltinApply (plain.map (fun _ => ()))
+  let atomsMatch :=
+    match c.expectedAtoms, plain with
+    | some expected, .ok (value, _) => Result.hostAtoms value == expected
+    | some _, .error _ => false
+    | none, _ => true
+  parity && outcome == c.expected && atomsMatch
+
+def callProjectionParityCases : List CallProjectionParityCase :=
+  [ { label := "flat-user-call", callee := resolve "Double", args := [.num 5],
+      expectedAtoms := some [10] },
+    { label := "collecting-user-call", callee := resolve "NItems",
+      args := [.num 1, .num 2, .num 3], expectedAtoms := some [3] },
+    { label := "conditional-first-clause", callee := resolve "Choose",
+      args := [.num 0, .num 9], expectedAtoms := some [9] },
+    { label := "conditional-fallback-clause", callee := resolve "Choose",
+      args := [.num 2, .num 3], expectedAtoms := some [5] },
+    { label := "conditional-no-branch", callee := resolve "Choose",
+      args := [.num 1], expected := .failedOtherwise },
+    { label := "builtin-sum-callee", callee := resolve "sum",
+      args := [.capture [.num 1, .num 2, .num 3]], expectedAtoms := some [6] },
+    { label := "builtin-arity-rejected", callee := resolve "count",
+      args := [], expected := .arityRejected },
+    { label := "user-call-arity-rejected", callee := resolve "Double",
+      args := [.num 1, .num 2], expected := .arityRejected },
+    { label := "unknown-callee", callee := resolve "Nope",
+      args := [.num 1], expected := .failedOtherwise },
+    -- Reading the cacheable `Value` property while evaluating the argument
+    -- writes the per-run cache, so the final-state parity comparison is not
+    -- vacuous for the call family.
+    { label := "cached-property-argument", callee := resolve "Double",
+      args := [resolve "Value"], expectedAtoms := some [84] },
+    { label := "argument-failure", callee := resolve "Double",
+      args := [resolve "Bad"], expected := .failedOtherwise } ]
+
+def callProjectionParityCaseFailures : List String :=
+  (callProjectionParityCases.filter (fun c => !(callProjectionParityCaseHolds c))).map
+    (fun c => c.label)
+
+#guard callProjectionParityCaseFailures == []
+
+/-- Direct (non-expression-position) parity for `evalUserCall`,
+    `evalConditionalCall`, and `evalResolvedCall` against their counted twins,
+    including the missing-output error edge that never reaches
+    `evalCallExpr` through resolution. -/
+def directCallProjectionParityHolds : Bool :=
+  let ctx := dotCallParityCtx dotCallParityProg
+  let doubleAlg := alg ["x"] [] [] [.binary .mul (.param "x") (.num 2)]
+  let userParity :=
+    let plain := (KatLang.evalUserCall doubleAlg [KatLang.Expr.num 21] ctx []).run KatLang.EvalState.empty
+    let counted := (KatLang.evalUserCallCounted doubleAlg [KatLang.Expr.num 21] ctx []).run KatLang.EvalState.empty
+    match plain, counted with
+    | .ok (value, s1), .ok ((countedValue, _), s2) =>
+        value == countedValue && value == Result.atom 42 && reprStr s1 == reprStr s2
+    | _, _ => false
+  let userMissingOutputParity :=
+    let noOutput := alg [] [] [] []
+    let plain := (KatLang.evalUserCall noOutput [] ctx []).run KatLang.EvalState.empty
+    let counted := (KatLang.evalUserCallCounted noOutput [] ctx []).run KatLang.EvalState.empty
+    match plain, counted with
+    | .error e1, .error e2 => reprStr e1 == reprStr e2
+    | _, _ => false
+  let conditionalParity :=
+    let plain := (KatLang.evalConditionalCall dotCallParityChooseAlg
+      [KatLang.Expr.num 0, KatLang.Expr.num 7] ctx [] "Choose").run KatLang.EvalState.empty
+    let counted := (KatLang.evalConditionalCallCounted dotCallParityChooseAlg
+      [KatLang.Expr.num 0, KatLang.Expr.num 7] ctx [] "Choose").run KatLang.EvalState.empty
+    match plain, counted with
+    | .ok (value, s1), .ok ((countedValue, _), s2) =>
+        value == countedValue && value == Result.atom 7 && reprStr s1 == reprStr s2
+    | _, _ => false
+  let resolvedBuiltinParity :=
+    let plain := (KatLang.evalResolvedCall (.builtin .sumBuiltin)
+      [KatLang.Expr.capture [.num 1, .num 2, .num 3]] ctx []).run KatLang.EvalState.empty
+    let counted := (KatLang.evalResolvedCallCounted (.builtin .sumBuiltin)
+      [KatLang.Expr.capture [.num 1, .num 2, .num 3]] ctx []).run KatLang.EvalState.empty
+    match plain, counted with
+    | .ok (value, s1), .ok ((countedValue, _), s2) =>
+        value == countedValue && value == Result.atom 6 && reprStr s1 == reprStr s2
+    | _, _ => false
+  userParity && userMissingOutputParity && conditionalParity && resolvedBuiltinParity
+
+#guard directCallProjectionParityHolds
+
+--------------------------------------------------------------------------------
+-- total eval projection parity guards
+--------------------------------------------------------------------------------
+-- `evalCounted` is the canonical expression dispatch: it matches EVERY `Expr`
+-- variant explicitly (leaves included — num, stringLiteral, unary, binary now
+-- live in counted arms/`evalUnaryCounted`/`evalBinaryCounted`), and plain
+-- `eval` is its TOTAL value projection with no arms of its own. These probes
+-- pin `eval e == Prod.fst <$> evalCounted e` — values, error Reprs, and final
+-- evaluator state — across one representative expression per variant plus the
+-- operator edges whose semantics moved into the counted arms (empty
+-- transparency, string rejection, division by zero, negative power). The
+-- expected-success flag keeps each probe honest.
+
+def evalProjectionProbes : List (String × KatLang.Expr × Bool) :=
+  [ ("num", .num 42, true),
+    ("string", .stringLiteral "text", true),
+    ("unary-minus", .unary .minus (.num 7), true),
+    ("unary-not-zero", .unary .not (.num 0), true),
+    ("unary-empty-propagates", .unary .minus (.emptySequence 0), true),
+    ("unary-string-rejected", .unary .minus (.stringLiteral "s"), false),
+    ("binary-add", .binary .add (.num 2) (.num 3), true),
+    ("binary-eq-mixed-kinds", .binary .eq (.num 1) (.stringLiteral "1"), true),
+    ("binary-ne-strings", .binary .ne (.stringLiteral "a") (.stringLiteral "b"), true),
+    ("binary-empty-left-transparent", .binary .add (.emptySequence 0) (.num 5), true),
+    ("binary-both-empty", .binary .add (.emptySequence 0) (.emptySequence 0), true),
+    ("binary-string-op-rejected", .binary .add (.stringLiteral "a") (.stringLiteral "b"), false),
+    ("binary-mixed-string-rejected", .binary .lt (.num 1) (.stringLiteral "b"), false),
+    ("binary-div-by-zero", .binary .div (.num 1) (.num 0), false),
+    ("binary-negative-pow-exact", .binary .pow (.num (-1)) (.num (-2)), true),
+    -- The Int-valued Lean core rejects fractional reciprocals explicitly
+    -- (`negativeIntPow`); parity covers the error Repr on both sides.
+    ("binary-negative-pow-fractional", .binary .pow (.num 2) (.num (-2)), false),
+    ("index-selects", .index (.capture [.num 1, .num 2, .num 3]) (.num 1), true),
+    ("index-out-of-range", .index (.capture [.num 1]) (.num 5), false),
+    ("index-negative", .index (.capture [.num 1]) (.unary .minus (.num 1)), false),
+    ("param-unknown", .param "nope", false),
+    ("resolve-cached-property", resolve "Value", true),
+    ("resolve-unknown", resolve "NoSuchName", false),
+    ("empty-sequence", .emptySequence 0, true),
+    ("capture", .capture [.num 1, .num 2], true),
+    ("list-literal", .listLiteral [.num 1, .capture [.num 2, .num 3]], true),
+    ("sequence-spread", .sequenceSpread (resolve "Pair"), true),
+    ("algorithm-expr", .algorithmExpr (alg [] [] [] [.num 9]), true),
+    ("dot-call", KatLang.Expr.dotCall (resolve "Pair") "count" none, true),
+    ("call", .call (resolve "Double") [.num 4], true) ]
+
+def evalProjectionParityAt (e : KatLang.Expr) (expectOk : Bool) : Bool :=
+  let ctx := dotCallParityCtx dotCallParityProg
+  let plain := (KatLang.eval e ctx []).run KatLang.EvalState.empty
+  let counted := (KatLang.evalCounted e ctx []).run KatLang.EvalState.empty
+  let parity :=
+    match plain, counted with
+    | .ok (value, plainState), .ok ((countedValue, _), countedState) =>
+        value == countedValue && reprStr plainState == reprStr countedState
+    | .error plainErr, .error countedErr => reprStr plainErr == reprStr countedErr
+    | _, _ => false
+  parity && plain.isOk == expectOk
+
+def evalProjectionParityFailures : List String :=
+  (evalProjectionProbes.filter (fun (_, e, expectOk) => !evalProjectionParityAt e expectOk)).map
+    (fun (label, _, _) => label)
+
+#guard evalProjectionParityFailures == []
+
+--------------------------------------------------------------------------------
+-- lookup projection parity guards
+--------------------------------------------------------------------------------
+-- `lookupLexicalProperty` is the canonical ownership-first lookup chain
+-- (local → ancestor-structural → opens with public-only filtering, dedup, and
+-- ambiguity); `lookupLexical` is its algorithm projection. These scenarios
+-- pin that the projection selects the same declaration and reports the same
+-- errors, so the algorithm-position path can never regrow an independent
+-- chain.
+
+def lookupProjectionLibs : List (String × Algorithm) :=
+  [ ("LibA", alg [] [] [publicProp "Shared" (alg [] [] [] [.num 101]),
+                        publicProp "OnlyA" (alg [] [] [] [.num 111]),
+                        privateProp "Hidden" (alg [] [] [] [.num 121])] [.num 0]),
+    ("LibB", alg [] [] [publicProp "Shared" (alg [] [] [] [.num 202])] [.num 0]),
+    ("Own", alg [] [] [] [.num 7]) ]
+
+def lookupProjectionProg : Algorithm :=
+  algPrivate [] [] lookupProjectionLibs [.num 0]
+
+/-- Child of the program scope that opens both libraries and shadows one name. -/
+def lookupProjectionOpener : Algorithm :=
+  alg [] [resolve "LibA", resolve "LibB"]
+    [publicProp "Shadowed" (alg [] [] [] [.num 333])] [.num 0]
+
+def lookupProjectionScenarioHolds (name : String) (expectOk : Bool) : Bool :=
+  let ctx := dotCallParityCtx lookupProjectionProg
+  let opener := KatLang.wireToCaller ctx lookupProjectionOpener
+  let algSide := (KatLang.lookupLexical opener name ctx).run KatLang.EvalState.empty
+  let propSide := (KatLang.lookupLexicalProperty opener name ctx).run KatLang.EvalState.empty
+  match algSide, propSide with
+  | .ok (resolvedAlg, s1), .ok (resolvedProp, s2) =>
+      expectOk && reprStr resolvedAlg == reprStr resolvedProp.alg && reprStr s1 == reprStr s2
+  | .error e1, .error e2 => !expectOk && reprStr e1 == reprStr e2
+  | _, _ => false
+
+def lookupProjectionScenarios : List (String × String × Bool) :=
+  [ ("local-property", "Shadowed", true),
+    ("ancestor-structural", "Own", true),
+    ("open-provided", "OnlyA", true),
+    ("open-ambiguous", "Shared", false),
+    ("private-through-open", "Hidden", false),
+    ("unknown-name", "Missing", false) ]
+
+def lookupProjectionScenarioFailures : List String :=
+  (lookupProjectionScenarios.filter (fun (_, name, expectOk) =>
+    !(lookupProjectionScenarioHolds name expectOk))).map
+    (fun (label, _, _) => label)
+
+#guard lookupProjectionScenarioFailures == []
 
 --------------------------------------------------------------------------------
 -- Exact immutable list values (`[]` syntax)

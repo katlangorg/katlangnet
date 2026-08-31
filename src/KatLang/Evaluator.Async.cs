@@ -44,7 +44,7 @@ namespace KatLang;
 /// where the synchronous code used a plain-evaluation wrapper, the twin awaits the
 /// counted core and projects its value — every such wrapper in the synchronous family is
 /// itself exactly that projection (for example <c>EvalAlgOutput</c> →
-/// <c>EvalAlgOutputPreparedCore.Counted.Value</c>), and the plain/counted value
+/// <c>EvalAlgOutputCountedCore</c> → <c>ProjectCountedValue</c>), and the plain/counted value
 /// equivalence is a Lean-modelled language invariant pinned by the explorer corpus.
 /// The async differential suites re-pin the equivalence empirically across the language
 /// corpora.</para>
@@ -492,7 +492,7 @@ public static partial class Evaluator
     /// <summary>
     /// MIRROR OF <see cref="EvalRootProgram"/> — keep in lock-step. The value is the
     /// counted program output's value (the synchronous plain path is exactly that
-    /// projection: <c>EvalProgramOutput → EvalAlgOutputCore → PreparedCore.Counted.Value</c>).
+    /// projection: <c>EvalProgramOutput → EvalAlgOutputCore → EvalAlgOutputCountedCore</c>).
     /// </summary>
     private static async ValueTask<EvalResult<Result>> EvalRootProgramValueAsync(Algorithm alg, SourceSpan? span, EvalCtx ctx)
     {
@@ -1162,7 +1162,9 @@ public static partial class Evaluator
 
     /// <summary>
     /// MIRROR OF <see cref="EvalAlgOutputCore"/> / <see cref="EvalAlgOutput"/> — keep in
-    /// lock-step (the synchronous plain wrapper is exactly this counted-value projection).
+    /// lock-step. The synchronous wrapper projects <see cref="EvalAlgOutputCountedCore"/>;
+    /// this async twin projects the identical counted field from the shared prepared core
+    /// directly, avoiding a redundant async wrapper without owning any semantics.
     /// </summary>
     private static async ValueTask<EvalResult<Result>> EvalAlgOutputValueAsync(
         Algorithm alg,
@@ -1709,7 +1711,8 @@ public static partial class Evaluator
         CallDiagnosticName calleeName,
         CallArgumentAssembly argumentAssembly = CallArgumentAssembly.OrdinaryArguments)
     {
-        // Charged dynamic invocation boundary (see EvalConditionalCall).
+        // Charged dynamic invocation boundary; this counted core owns the
+        // boundary for both counted evaluation and its plain projection.
         if (ctx.Budget.TryEnterInvocation() is { } limitError)
             return AtSpanIfMissing(limitError, FirstSpan(args));
 
@@ -3053,7 +3056,7 @@ public static partial class Evaluator
         EvalCtx ctx,
         IReadOnlyList<(string, Result)> valEnv)
     {
-        // Stored-fallback consumption — see CallLexicalWithReceiver.
+        // Stored-fallback consumption — see CallLexicalWithReceiverCounted.
         if (dotCall.EffectiveLexicalFallback is not Expr.Resolve(var fallbackName))
             return await CallLexicalFallbackCalleeWithReceiverCountedAsync(dotCall, ctx, valEnv).ConfigureAwait(false);
 

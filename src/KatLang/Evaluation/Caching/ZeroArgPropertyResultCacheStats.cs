@@ -1,8 +1,15 @@
 namespace KatLang.Evaluation.Caching;
 
 /// <summary>
-/// Evaluator-side origin of a zero-arg property cache request.
-/// These categories identify the four Stage 1 wiring points only.
+/// Evaluator-side origin of a zero-arg property cache request. Since the
+/// plain evaluator family became the value projection of the counted family
+/// (M8), evaluation reaches the cache only through the counted wiring points,
+/// so live runs record <see cref="CountedLexical"/> and
+/// <see cref="CountedStructural"/> exclusively. The plain kinds are retained
+/// for direct cache exercises (unit tests) and because the cache KEY has
+/// never distinguished plain from counted: <c>ZeroArgPropertyCacheKey</c>
+/// collapses kinds to their access SHAPE, so entries were always shared
+/// across the plain/counted spellings.
 /// </summary>
 internal enum ZeroArgPropertyAccessKind
 {

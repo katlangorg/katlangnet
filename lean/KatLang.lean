@@ -1,4 +1,4 @@
--- KatLang v0.8.156 (core AST + semantics + while/repeat init boundaries + higher-order alg params + conditional algorithms + first-class strings)
+-- KatLang v0.8.190 (core AST + semantics + while/repeat init boundaries + higher-order alg params + conditional algorithms + first-class strings)
 -- Core semantics are authoritative. Surface syntax handled externally except
 -- where noted (implicit parameter detection, while/repeat init boundaries).
 -- Load elaboration is handled entirely in the front-end / elaboration layer;
@@ -62,7 +62,7 @@
 --   treatment (`Output = expr` is an ordinary property definition).
 --
 --   Semantic rules (enforced by evaluator, not parser):
---     - Opens provide PUBLIC properties only (lookupOpens filters by isPublic).
+--     - Opens provide PUBLIC properties only (lookupOpenProperties filters by isPublic).
 --     - Strict isolation: opening a library does NOT import its transitive opens.
 --     - Ambiguity: if multiple open targets provide the same public name, and no
 --       owned/local/parent property shadows it, `ambiguousOpen` is raised.
@@ -2755,13 +2755,6 @@ structure ResolvedOpen where
   lib  : Algorithm
   deriving Repr
 
-/-- A single hit from open lookup: which provider supplied it, the library, and the child algorithm. -/
-structure OpenHit where
-  provider : String
-  lib      : Algorithm
-  child    : Algorithm
-  deriving Repr
-
 /-- A resolved property-style access with the owner and binding retained for
     zero-argument property cache keys. -/
 structure ResolvedProperty where
@@ -3462,7 +3455,7 @@ def prepareLexicalDotCallArgs (receiver : Expr) (extraArgs : Option OutputBundle
     - `open Lib` where private `Lib` is defined later in the same algorithm body → OK
     - `open Lib.PrivateSub` where `PrivateSub` has `isPublic = false` → Error (notPublicProperty)
     - Structural access `Lib.PrivateSub.X` in code → OK (uses Algorithm.lookupProp, sees private)
-    - `open Lib` does NOT expose private properties of Lib (filtered by lookupOpens) -/
+    - `open Lib` does NOT expose private properties of Lib (filtered by lookupOpenProperties) -/
 def resolveAlgForOpen (e : Expr) (ctx : EvalCtx) : EvalM Algorithm := do
   -- This match mirrors `Expr.openForm?` case-for-case (algorithmExpr /
   -- resolve / no-arg dotCall / reject-the-rest) but matches the
@@ -3549,36 +3542,18 @@ def resolveAllOpens (a : Algorithm) (ctx : EvalCtx) : EvalM (List ResolvedOpen) 
     let lib <- withCtx (CtxMsg.openMsg key) (resolveOpen e ctx)
     pure { key := key, expr := e, lib := lib })
 
-/-- Lookup in opened namespaces with ambiguity error.
+/-- Lookup in opened namespaces with ambiguity error — the ONE open-lookup
+    implementation in the ownership-first chain. It returns the full
+    `ResolvedProperty` (owner + binding + wired algorithm) because the cached
+    property-style path needs the binding; algorithm-only consumers project
+    `ResolvedProperty.alg` instead of running a second lookup.
     Ordering rule: opens are searched in declaration order (first wins for
     single-provider lookups; multiple providers trigger ambiguousOpen).
     Only public properties are visible through opens.
     Returns:
       * ok none              if no open provides `name` publicly
-      * ok (some alg)        if exactly one open provides it publicly (wired to library parent)
+      * ok (some prop)       if exactly one open provides it publicly (alg wired to library parent)
       * error ambiguousOpen if multiple opens provide it publicly -/
-def lookupOpens (a : Algorithm) (name : Ident) (ctx : EvalCtx) : EvalM (Option Algorithm) := do
-  let ctx' := EvalCtx.push a ctx
-  let resolvedOpens <- resolveAllOpens a ctx'
-
-  -- * Public-only filtering: only public properties visible through opens
-  -- Keys from resolveAllOpens are used directly as provider tags.
-  let mut hits : List OpenHit := []
-  for ri in resolvedOpens do
-    match Algorithm.lookupPublicProp ri.lib name with
-    | some child =>
-        hits := { provider := ri.key, lib := ri.lib, child := child } :: hits
-    | none => pure ()
-  hits := hits.reverse
-
-  match hits with
-  | [] => pure none  -- No public matches found
-  | [h] =>
-      pure <| some (Algorithm.childOf h.lib h.child)
-  | hs =>
-    .error (Error.ambiguousOpen name (hs.map (fun hit => hit.provider)))
-
-/-- Property-aware open lookup used by cached property-style evaluation. -/
 def lookupOpenProperties (a : Algorithm) (name : Ident) (ctx : EvalCtx)
     : EvalM (Option ResolvedProperty) := do
   let ctx' := EvalCtx.push a ctx
@@ -3610,17 +3585,9 @@ def lookupOpenProperties (a : Algorithm) (name : Ident) (ctx : EvalCtx)
 /-- Structural-only lookup in parent chain (no opens anywhere).
     Ownership-first model: structural properties take precedence.
     Example: If parent defines Pi and opens Math also exports Pi,
-    the parent's Pi wins. To get Math.Pi, use Math.Pi syntax. -/
-def lookupInParentsStructural (sc : ScopeCtx) (name : Ident) : Option Algorithm :=
-  match lookupPropAny (ScopeCtx.props sc) name with
-  | some child => some (Algorithm.withParent (some sc) child)
-  | none =>
-      -- Match the constructor directly so the parent-chain recursion is
-      -- visibly structural (ScopeCtx.parent would hide the decrease).
-      match sc with
-      | .mk (some sc') _ _ => lookupInParentsStructural sc' name
-      | .mk none _ _       => none
-
+    the parent's Pi wins. To get Math.Pi, use Math.Pi syntax.
+    This is the ONE structural parent-chain lookup; algorithm-only consumers
+    project `ResolvedProperty.alg`. -/
 def lookupInParentsStructuralProperty (sc : ScopeCtx) (name : Ident)
     : Option ResolvedProperty :=
   match lookupPropDefAny? (ScopeCtx.props sc) name with
@@ -3636,16 +3603,7 @@ def lookupInParentsStructuralProperty (sc : ScopeCtx) (name : Ident)
       | .mk (some sc') _ _ => lookupInParentsStructuralProperty sc' name
       | .mk none _ _       => none
 
-/-- Open-based lookup in parent chain (helper for lookupOpensInChain). -/
-def lookupOpensInParentChain (sc : ScopeCtx) (name : Ident) (ctx : EvalCtx) : EvalM (Option Algorithm) := do
-  let tempAlg := Algorithm.forOpens sc
-  match (<- lookupOpens tempAlg name ctx) with
-  | some r => pure (some r)
-  | none =>
-      match sc with
-      | .mk (some sc') _ _ => lookupOpensInParentChain sc' name ctx
-      | .mk none _ _       => pure none
-
+/-- Open-based lookup in parent chain (helper for lookupOpenPropertiesInChain). -/
 def lookupOpenPropertiesInParentChain (sc : ScopeCtx) (name : Ident)
     (ctx : EvalCtx) : EvalM (Option ResolvedProperty) := do
   let tempAlg := Algorithm.forOpens sc
@@ -3658,16 +3616,6 @@ def lookupOpenPropertiesInParentChain (sc : ScopeCtx) (name : Ident)
 
 /-- Open-based lookup across the algorithm chain (current first, then parents).
     Checks opens at each level of the parent chain as fallback. -/
-def lookupOpensInChain (a : Algorithm) (name : Ident) (ctx : EvalCtx) : EvalM (Option Algorithm) := do
-  -- Try opens at current level
-  match (<- lookupOpens a name ctx) with
-  | some r => pure (some r)
-  | none =>
-      -- Try parent chain
-      match Algorithm.parent a with
-      | some sc => lookupOpensInParentChain sc name ctx
-      | none    => pure none
-
 def lookupOpenPropertiesInChain (a : Algorithm) (name : Ident)
     (ctx : EvalCtx) : EvalM (Option ResolvedProperty) := do
   match (<- lookupOpenProperties a name ctx) with
@@ -3677,36 +3625,15 @@ def lookupOpenPropertiesInChain (a : Algorithm) (name : Ident)
       | some sc => lookupOpenPropertiesInParentChain sc name ctx
       | none    => pure none
 
-/-- Full lexical lookup with ownership-first model:
+/-- Full lexical lookup with ownership-first model — the CANONICAL chain:
     1. Local properties (owned by this algorithm)
     2. Parent chain structural properties (owned by ancestors)
     3. Opens as fallback (foreign namespaces)
 
-    This ensures structural ownership always takes precedence over opens. -/
-def lookupLexical (a : Algorithm) (name : Ident) (ctx : EvalCtx) : EvalM Algorithm := do
-  -- 1. local properties
-  match Algorithm.lookupProp a name with
-  | some child =>
-      pure (Algorithm.childOf a child)
-  | none =>
-      -- 2. parent chain structural only
-      match Algorithm.parent a with
-      | some sc =>
-          match lookupInParentsStructural sc name with
-          | some r => pure r
-          | none =>
-              -- 3. opens fallback across chain
-              match (<- lookupOpensInChain a name ctx) with
-              | some r => pure r
-              | none   => .error (Error.unknownName name)
-      | none =>
-          -- no parents: try opens fallback
-          match (<- lookupOpensInChain a name ctx) with
-          | some r => pure r
-          | none   => .error (Error.unknownName name)
-
-/-- Full lexical property lookup that keeps the resolved owner and binding.
-    It follows the same ownership-first order as `lookupLexical`. -/
+    This ensures structural ownership always takes precedence over opens.
+    It keeps the resolved owner and binding for the zero-argument property
+    cache; `lookupLexical` is its algorithm projection, so the
+    ownership-first / dedup / ambiguity rules exist exactly once. -/
 def lookupLexicalProperty (a : Algorithm) (name : Ident) (ctx : EvalCtx)
     : EvalM ResolvedProperty := do
   match Algorithm.lookupPropDefAny? a name with
@@ -3729,6 +3656,15 @@ def lookupLexicalProperty (a : Algorithm) (name : Ident) (ctx : EvalCtx)
           match (<- lookupOpenPropertiesInChain a name ctx) with
           | some r => pure r
           | none   => .error (Error.unknownName name)
+
+/-- Algorithm-position lexical lookup (call callees, dot-call targets).
+    This is the algorithm PROJECTION of `lookupLexicalProperty`: the canonical
+    property-carrying chain owns ownership-first ordering, open dedup,
+    ambiguity, and precedence, and this projection only discards the
+    owner/binding metadata that algorithm-position consumers never read. -/
+def lookupLexical (a : Algorithm) (name : Ident) (ctx : EvalCtx) : EvalM Algorithm := do
+  let resolved <- lookupLexicalProperty a name ctx
+  pure resolved.alg
 
 def resolveAlg (e : Expr) (ctx : EvalCtx) : EvalM Algorithm :=
   match e with
@@ -4070,6 +4006,23 @@ total version would require an explicit fuel/step-indexed evaluator.
 
 Do not add non-evaluating helpers here — define them above this block so
 Lean checks them as total definitions.
+
+PLAIN/COUNTED OWNERSHIP: for every plain/counted evaluator pair the COUNTED
+implementation is canonical and the plain implementation is its value
+projection (`.fst` of the counted result) — `eval` projects `evalCounted`,
+`evalUserCall`/`evalConditionalCall`/`evalResolvedCall`/`evalCallExpr`/
+`evalDotCall`/`applyBuiltin`/`applyBuiltinResolved`/`evalAlgOutputCore`/
+`evalCaptureValue`/`evalZeroArgPropertyAccess`/`evalResolvedCallbackCall`
+project their counted twins. `evalCounted` therefore matches EVERY `Expr`
+variant explicitly, with no default arm delegating back to `eval`: the
+exhaustive match is the structural guard that a new variant cannot silently
+reintroduce reverse (plain-owned) semantics. Plain projections may still be
+CALLED from counted code wherever only the value of a subexpression or an
+algorithm output is needed — that is a value-boundary read through the
+projection, not an ownership reversal, and it recurses only into strictly
+smaller work. The one intentionally non-projected sibling family is the
+slot-view group (`evalAlgOutputSlots`, `evalExplicitSequenceValue*`), which
+returns item lists rather than one counted value.
 -/
 mutual
 
@@ -4100,8 +4053,8 @@ mutual
       so a conditional must never silently force its empty output list.
       C#: `EvalAlgOutputCore`. -/
   partial def evalAlgOutputCore (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) : EvalM Result := do
-    let out <- evalAlgOutputPreparedCore a ctx env
-    pure out.counted.fst
+    let out <- evalAlgOutputCountedCore a ctx env
+    pure out.fst
 
   /-- Force a user-defined algorithm value to produce output. -/
   partial def evalAlgOutput (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) : EvalM Result :=
@@ -5076,13 +5029,34 @@ mutual
       let argEnv <- bindParams valueParams values
       pure (argEnv, algBindings)
 
-  /-- Counted user-defined call evaluation.
-      A user/property call is a value boundary: argument-binding and body
-      evaluation are unchanged, but the public result preserves the structural
-      value while re-counting the emitted arity to `Result.valueCount` (via
-      `reCountValueBoundary`). A multi-output body therefore becomes one sequence
-      value (count 1); only a caller-site spread `value*`
-      re-spreads it. -/
+  /-- Counted user-defined call evaluation — the CANONICAL user-call
+      implementation (`evalUserCall` is its value projection).
+
+      Shared user-defined call binding logic. Preserves the eager value ABI
+      while layering AlgEnv for higher-order arguments. Each original argument
+      expression is interpreted independently in two ways:
+      - structural algorithm resolution for AlgEnv
+      - ordinary eager value evaluation for ValEnv
+
+      If both succeed, the parameter gets both meanings. If only one succeeds,
+      only that view is bound. If both fail, the ordinary eager-evaluation
+      error is propagated. Every `algorithmExpr` contributes its contained
+      algorithm to the `AlgEnv` side regardless of declaration/output count;
+      a `capture` contributes only its fresh zero-parameter value thunk and
+      never exposes contained algorithm identity.
+
+      Flat fixed calls bind call-site structure: each comma argument is one
+      argument expression, while a bare `sequenceSpread` expression explicitly
+      contributes its spread top-level items. Multi-output values from ordinary
+      expressions, including `.atoms`, remain one argument expression. Earlier
+      explicit argument positions stay distinct on the eager value side even if
+      some later arguments bind only through `AlgEnv`.
+
+      A user/property call is a value boundary: the public result preserves the
+      structural value while re-counting the emitted arity to
+      `Result.valueCount` (via `reCountValueBoundary`). A multi-output body
+      therefore becomes one sequence value (count 1); only a caller-site spread
+      `value*` re-spreads it. -/
   partial def evalUserCallCounted (callee : Algorithm) (args : OutputBundle)
       (ctx : EvalCtx) (env : ValEnv) (assembly : CallArgumentAssembly := .ordinaryArguments)
       : EvalM CountedResult := do
@@ -5129,11 +5103,30 @@ mutual
       | some value => pure value
       | none => .error (item.error?.getD Error.badArity))
 
-  /-- Counted conditional call evaluation.
-      The argument matching semantics are unchanged; the selected branch is a
-      value boundary, so its public result re-counts the emitted arity to
-      `Result.valueCount` (via `reCountValueBoundary`) -- a multi-output branch
-      becomes one sequence value (count 1), matching `if` and plain calls. -/
+  /-- Counted conditional call evaluation — the CANONICAL conditional-call
+      implementation (`evalConditionalCall` is its value projection).
+      1. Assemble the argument supply through the shared call argument
+         pipeline (explicit spread expands into ordinary argument slots
+         BEFORE clause matching, so a multi-clause callee sees the same
+         supply as every other callable shape).
+      2. Try branches in order; first match wins.
+      3. Evaluate the selected branch body with pattern bindings prepended.
+      4. If no branch matches, raise noMatchingBranch.
+
+      **Full-input-specification rule**: the branch body receives its input
+      bindings ONLY from the matched pattern. No extra implicit parameters are
+      inferred from free identifiers in the body; they must resolve through
+      ordinary lexical / property / open / builtin lookup or fail with
+      unknownName.
+
+      **Assumes uniform output arity**: after validation
+      (validateBranchOutputArities), all branches produce the same top-level
+      output arity; the evaluator does not re-check this at runtime.
+
+      The selected branch is a value boundary, so its public result re-counts
+      the emitted arity to `Result.valueCount` (via `reCountValueBoundary`) --
+      a multi-output branch becomes one sequence value (count 1), matching
+      `if` and plain calls. -/
   partial def evalConditionalCallCounted (callee : Algorithm) (args : OutputBundle)
       (ctx : EvalCtx) (env : ValEnv) (calleeName : String := "conditional")
       (assembly : CallArgumentAssembly := .ordinaryArguments) : EvalM CountedResult := do
@@ -5151,21 +5144,20 @@ mutual
       | none =>
           .error (Error.noMatchingBranch calleeName)
 
-  /-- Dispatch an already-resolved callee in ordinary evaluation. -/
+  /-- Dispatch an already-resolved callee with plain Result output.
+      This is the Result projection of `evalResolvedCallCounted`: the counted
+      twin owns the builtin/flat-binder/conditional/user dispatch, and each of
+      its arms already ends in a projected family, so the projection is
+      compositional. -/
   partial def evalResolvedCall (callee : Algorithm) (args : OutputBundle)
       (ctx : EvalCtx) (env : ValEnv) (calleeName : String := "conditional")
       (assembly : CallArgumentAssembly := .ordinaryArguments) : EvalM Result := do
-    match callee with
-    | .builtin b => do
-      let argAlgs <- resolveArgAlgsWithSequenceSpread args ctx env
-      applyBuiltinResolved b argAlgs ctx env
-    | .conditional _ _ _ =>
-      match flatBinderUserEquivalent? callee with
-      | some simple => evalUserCall simple args ctx env assembly
-      | none => evalConditionalCall callee args ctx env calleeName assembly
-    | _ => evalUserCall callee args ctx env assembly
+    let out <- evalResolvedCallCounted callee args ctx env calleeName assembly
+    pure out.fst
 
-  /-- Dispatch an already-resolved callee in counted evaluation. -/
+  /-- Dispatch an already-resolved callee in counted evaluation — the
+      CANONICAL resolved-callee dispatch (`evalResolvedCall` is its value
+      projection). -/
   partial def evalResolvedCallCounted (callee : Algorithm) (args : OutputBundle)
       (ctx : EvalCtx) (env : ValEnv) (calleeName : String := "conditional")
       (assembly : CallArgumentAssembly := .ordinaryArguments) : EvalM CountedResult := do
@@ -5179,8 +5171,9 @@ mutual
       | none => evalConditionalCallCounted callee args ctx env calleeName assembly
     | _ => evalUserCallCounted callee args ctx env assembly
 
-  /-- Context-aware counted call evaluation for expression position;
-      attaches `CtxMsg.call` to resolution and dispatch errors. -/
+  /-- Context-aware counted call evaluation for expression position — the
+      CANONICAL expression-position call dispatch (`evalCallExpr` is its value
+      projection); attaches `CtxMsg.call` to resolution and dispatch errors. -/
   partial def evalCallCountedExpr (f : Expr) (args : OutputBundle)
       (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult := do
     let callee <- withCtx (CtxMsg.call f) <| resolveAlg f ctx
@@ -5458,8 +5451,98 @@ mutual
                 loop rest (value :: items)
     loop (sequenceConstructLeaves e) []
 
+  /-- Evaluate a unary operator expression as one counted value. The operand is
+      read at its value boundary; the empty sequence value propagates through
+      unary operators, strings are rejected, and any other operand must be a
+      numeric scalar. Owned here so `eval` (the value projection) never carries
+      independent operator semantics. C#: the unary case of
+      `EvalExpressionSpineCounted`. -/
+  partial def evalUnaryCounted (op : UnaryOp) (operand : Expr) (ctx : EvalCtx) (env : ValEnv)
+      : EvalM CountedResult := do
+    let r <- eval operand ctx env
+    match r with
+    | .sequenceValue [] => pure (Result.sequenceValue [], 0)   -- empty propagates through unary
+    | .str _ => .error (Error.typeMismatch "Unary operator is not supported for strings")
+    | _ => do
+      let v <- expectInt r
+      pure (Result.atom <|
+        match op with
+        | .minus => -v
+        | .not   => if v = 0 then 1 else 0, 1)
+
+  /-- Evaluate a binary operator expression as one counted value. Both operands
+      are read at their value boundaries. `==`/`!=` compare KatLang values
+      structurally across all value kinds; empty results stay transparent for
+      the non-comparison operators; strings reject the non-equality operators;
+      everything else follows the numeric-scalar core. Owned here so `eval`
+      (the value projection) never carries independent operator semantics.
+      C#: the binary case of `EvalExpressionSpineCounted` / `ApplyBinaryOperator`. -/
+  partial def evalBinaryCounted (op : BinaryOp) (a b : Expr) (ctx : EvalCtx) (env : ValEnv)
+      : EvalM CountedResult := do
+    let lr <- eval a ctx env
+    let rr <- eval b ctx env
+    match op with
+    -- `==` and `!=` compare KatLang values structurally across all value kinds
+    -- (numbers, strings, and sequence values, recursively). Different value
+    -- kinds compare unequal rather than raising a type mismatch. This dedicated
+    -- path is separate from the numeric-scalar-only validation used by the
+    -- arithmetic and ordering operators below.
+    | .eq => pure (Result.atom (if resultValueEq lr rr then 1 else 0), 1)
+    | .ne => pure (Result.atom (if resultValueEq lr rr then 0 else 1), 1)
+    | _ =>
+      -- Empty results remain transparent for the non-comparison operators.
+      match lr, rr with
+      | .sequenceValue [], .sequenceValue [] => pure (Result.sequenceValue [], 0)
+      | .sequenceValue [], _ => pure (rr, Result.valueCount rr)
+      | _, .sequenceValue [] => pure (lr, Result.valueCount lr)
+      -- Non-equality operators are not defined on strings (they fail here rather
+      -- than via expectInt so the diagnostic names the string operands).
+      | .str _, .str _ => .error (Error.typeMismatch "Strings only support == and != operators")
+      -- Mixed string/number or string/sequence value: fail for any operator
+      | .str _, _ => .error (Error.typeMismatch "Cannot apply operator to string and non-string operands")
+      | _, .str _ => .error (Error.typeMismatch "Cannot apply operator to string and non-string operands")
+      | _, _ => do
+        let binaryContext := s!"while evaluating `{binaryExprDiagnosticName op a b}`"
+        let x <- withCtx binaryContext (requireNumericScalarOperand op "left" lr)
+        let y <- withCtx binaryContext (requireNumericScalarOperand op "right" rr)
+        -- Check for division by zero
+        if (op == BinaryOp.div || op == BinaryOp.idiv || op == BinaryOp.mod) && y == 0 then
+          .error Error.divByZero
+        else if op == BinaryOp.pow && y < 0 then do
+          let value <- negativeIntPow x y
+          pure (value, Result.valueCount value)
+        else
+          pure (Result.atom <|
+            -- `.eq`/`.ne` are handled structurally above; the arms below keep the
+            -- numeric match exhaustive over BinaryOp and are unreachable here.
+            match op with
+            | .add  => x + y
+            | .sub  => x - y
+            | .mul  => x * y
+            -- Division and modulo truncate toward zero (Int.tdiv / Int.tmod),
+            -- matching the C# reference: `-7 div 2 = -3` and `-7 mod 2 = -1`.
+            -- `/` on non-divisible operands additionally truncates the exact
+            -- decimal quotient as part of the integer-core limitation.
+            | .div  => x.tdiv y
+            | .idiv => x.tdiv y
+            | .mod  => x.tmod y
+            | .pow  => intPow x y.toNat
+            | .lt   => if x < y then 1 else 0
+            | .gt   => if x > y then 1 else 0
+            | .le   => if x <= y then 1 else 0
+            | .ge   => if x >= y then 1 else 0
+            | .eq   => if x = y then 1 else 0
+            | .ne   => if x != y then 1 else 0
+            | .and  => if x != 0 then (if y != 0 then 1 else 0) else 0
+            | .or   => if x != 0 then 1 else (if y != 0 then 1 else 0)
+            | .xor  => if x != 0 then (if y = 0 then 1 else 0) else (if y != 0 then 1 else 0), 1)
+
   /-- Evaluate an expression together with the number of top-level values it
-      emits at the current algorithm boundary.
+      emits at the current algorithm boundary — the CANONICAL expression
+      dispatch: it matches EVERY `Expr` variant explicitly (no default arm),
+      and plain `eval` is its total value projection. A new `Expr` variant
+      therefore fails compilation here until it is given a counted arm — the
+      structural guard against silently reintroducing plain-owned semantics.
 
       Calls, name resolution, and collection builtins are value boundaries: they
       emit `Result.valueCount` of the result value (one value for a non-empty
@@ -5539,105 +5622,46 @@ mutual
         evalDotCallCounted o n fallback argsOpt ctx env
     | .call f args =>
         evalCallCountedExpr f args ctx env
-    | _ => do
-        let r <- eval e ctx env
-        pure (r, Result.valueCount r)
+    | .num n => pure (Result.atom n, 1)
+    | .stringLiteral s => pure (Result.str s, 1)
+    | .unary op operand =>
+        evalUnaryCounted op operand ctx env
+    | .binary op a b =>
+        evalBinaryCounted op a b ctx env
 
-  /-- Shared user-defined call binding logic.
-      Preserves the eager value ABI while layering AlgEnv for higher-order
-      arguments. Each original argument expression is interpreted independently
-      in two ways:
-      - structural algorithm resolution for AlgEnv
-      - ordinary eager value evaluation for ValEnv
-
-      If both succeed, the parameter gets both meanings. If only one succeeds,
-      only that view is bound. If both fail, the ordinary eager-evaluation
-      error is propagated. Every `algorithmExpr` contributes its contained
-      algorithm to the `AlgEnv` side regardless of declaration/output count;
-      a `capture` contributes only its fresh zero-parameter value thunk and
-      never exposes contained algorithm identity.
-
-          Flat fixed calls bind call-site structure: each comma argument is one
-          argument expression, while a bare `sequenceSpread` expression explicitly
-          contributes its spread top-level items. Multi-output values from ordinary
-          expressions, including `.atoms`, remain one argument expression. Earlier
-          explicit argument positions stay distinct on the eager value side even if
-          some later arguments bind only through `AlgEnv`. -/
+  /-- User-defined call evaluation with plain Result output.
+      This is the Result projection of `evalUserCallCounted`: the counted twin
+      owns argument binding (dual-view ABI, patterned/deconstruction/flat
+      dispatch) and body evaluation, and the non-counted path only discards
+      the emitted-count metadata (`reCountValueBoundary` is value-preserving).
+      The CoreTests call projection parity guards pin this equivalence. -/
   partial def evalUserCall (callee : Algorithm) (args : OutputBundle)
       (ctx : EvalCtx) (env : ValEnv) (assembly : CallArgumentAssembly := .ordinaryArguments)
       : EvalM Result := do
-    if (Algorithm.output callee).isEmpty then
-      .error Error.missingOutput
-    else if Algorithm.requiresPatternBinding callee then do
-          let (argEnv, countedParamEnv, algBindings) <-
-            bindPatternedUserCall callee args ctx env assembly
-          let shadowedCountedParamEnv := CountedParamEnv.shadow ctx.countedParamEnv (Algorithm.params callee)
-          let newCtx :=
-            (ctx.withAlgEnv (algBindings ++ ctx.algEnv)).withCountedParamEnv
-              (countedParamEnv ++ shadowedCountedParamEnv)
-          evalAlgOutput callee newCtx (argEnv ++ env)
-    else match Algorithm.collectingParam? callee with
-      | some _ =>
-          -- Any top-level collecting parameter (lone collecting binding or comma deconstruction) binds
-          -- through the shared item-supply matcher.
-          let (argEnv, countedParamEnv, algBindings) <-
-            bindDeconstructionUserCall callee args ctx env assembly
-          let shadowedCountedParamEnv := CountedParamEnv.shadow ctx.countedParamEnv (Algorithm.params callee)
-          let newCtx :=
-            (ctx.withAlgEnv (algBindings ++ ctx.algEnv)).withCountedParamEnv
-              (countedParamEnv ++ shadowedCountedParamEnv)
-          evalAlgOutput callee newCtx (argEnv ++ env)
-      | none =>
-      do
-        let (argEnv, algBindings) <- bindFlatFixedUserCall callee args ctx env
-        let newCtx := (ctx.withAlgEnv (algBindings ++ ctx.algEnv)).withCountedParamEnv
-          (CountedParamEnv.shadow ctx.countedParamEnv (Algorithm.params callee))
-        evalAlgOutput callee newCtx (argEnv ++ env)
+    let out <- evalUserCallCounted callee args ctx env assembly
+    pure out.fst
 
-  /-- Evaluate a conditional algorithm call.
-      1. Evaluate argument expressions eagerly (same as normal call ABI).
-      2. Assemble full argument Result shape (preserving sequence-value shape for pattern matching).
-      3. Try branches in order; first match wins.
-      4. Evaluate selected branch body with pattern bindings prepended to env.
-      5. If no branch matches, raise noMatchingBranch error.
-
-      Unlike evalUserCall, conditional algorithms do NOT use params/unpackArgs.
-      The full argument shape is matched structurally against branch patterns.
-
-      **Full-input-specification rule**: the branch body receives its input
-      bindings ONLY from the matched pattern.  No extra implicit parameters are
-      inferred from free identifiers in the body.  Free identifiers in the body
-      must resolve through ordinary lexical / property / open / builtin lookup,
-      or evaluation fails with unknownName.
-
-      **Assumes uniform output arity**: after validation (validateBranchOutputArities),
-      all branches produce the same top-level output arity.  The evaluator does
-      not re-check this at runtime. -/
+  /-- Conditional call evaluation with plain Result output.
+      This is the Result projection of `evalConditionalCallCounted`: the
+      counted twin owns argument assembly, clause matching, and branch body
+      evaluation, and the non-counted path only discards the emitted-count
+      metadata (`reCountValueBoundary` is value-preserving). The CoreTests
+      call projection parity guards pin this equivalence. -/
   partial def evalConditionalCall (callee : Algorithm) (args : OutputBundle)
       (ctx : EvalCtx) (env : ValEnv) (calleeName : String := "conditional")
       (assembly : CallArgumentAssembly := .ordinaryArguments) : EvalM Result := do
-    -- Shared argument-slot assembly: explicit spread expands into ordinary
-    -- argument slots BEFORE clause matching, so a multi-clause callee sees
-    -- the same argument supply as every other callable shape.
-    let argResults <- evalConditionalCallArguments args ctx env assembly
-    if callee.hasDuplicateBranchPatterns then
-      .error Error.duplicateBranchPattern
-    else
-      match matchCallBranches (Algorithm.branches callee) argResults with
-      | some (branch, bindings) =>
-          let wiredBody := Algorithm.childOf callee branch.body
-          let names := bindings.map Prod.fst
-          let newCtx := (EvalCtx.push callee ctx).withCountedParamEnv
-            (CountedParamEnv.shadow ctx.countedParamEnv names)
-          evalAlgOutput wiredBody newCtx (bindings ++ env)
-      | none =>
-          .error (Error.noMatchingBranch calleeName)
+    let out <- evalConditionalCallCounted callee args ctx env calleeName assembly
+    pure out.fst
 
-  /-- Context-aware direct call evaluation for expression position. -/
+  /-- Context-aware direct call evaluation for expression position with plain
+      Result output. This is the Result projection of `evalCallCountedExpr`:
+      the counted twin owns callee resolution and dispatch, including the
+      `CtxMsg.call` error-context attachment, so contexts cannot drift between
+      the plain and counted spellings. -/
   partial def evalCallExpr (f : Expr) (args : OutputBundle)
       (ctx : EvalCtx) (env : ValEnv) : EvalM Result := do
-    let callee <- withCtx (CtxMsg.call f) <| resolveAlg f ctx
-    withCtx (CtxMsg.call f) <| evalResolvedCall callee args ctx env (openExprName f)
+    let out <- evalCallCountedExpr f args ctx env
+    pure out.fst
 
   /-- Dot-call evaluation with plain Result output.
       This is the Result projection of `evalDotCallCounted`: the counted twin
@@ -5653,162 +5677,17 @@ mutual
     let out <- evalDotCallCounted target name fallback argsOpt ctx env
     pure out.fst
 
-  partial def eval (e : Expr) (ctx : EvalCtx) (env : ValEnv) : EvalM Result :=
-    match e with
-    | .num n => pure (Result.atom n)
-
-    | .stringLiteral s => pure (Result.str s)
-
-    | .param x =>
-        match ctx.countedParamEnv.lookup x with
-        | some counted => pure counted.fst
-        | none =>
-            match env.lookup x with
-            | some v => pure v
-            | none   =>
-                -- Higher-order fallback: if x is bound in AlgEnv as a 0-param algorithm,
-                -- auto-evaluate it (thunk semantics).  Multi-param algorithms require
-                -- explicit call syntax and produce arityMismatch.
-                match ctx.algEnv.lookup x with
-                | some alg =>
-                    match conditionalValueAccessError? x alg with
-                    | some err => .error err
-                    | none =>
-                        if (Algorithm.params alg).length = 0 then
-                          evalAlgOutput alg ctx env
-                        else
-                          .error (Error.arityMismatch (Algorithm.params alg).length 0)
-                | none => .error (Error.unknownName x)
-
-    | .unary op e => do
-        let r <- eval e ctx env
-        match r with
-        | .sequenceValue [] => pure (Result.sequenceValue [])   -- empty propagates through unary
-        | .str _ => .error (Error.typeMismatch "Unary operator is not supported for strings")
-        | _ => do
-          let v <- expectInt r
-          pure (Result.atom <|
-            match op with
-            | .minus => -v
-            | .not   => if v = 0 then 1 else 0)
-
-    | .binary op a b => do
-        let lr <- eval a ctx env
-        let rr <- eval b ctx env
-        match op with
-        -- `==` and `!=` compare KatLang values structurally across all value kinds
-        -- (numbers, strings, and sequence values, recursively). Different value
-        -- kinds compare unequal rather than raising a type mismatch. This dedicated
-        -- path is separate from the numeric-scalar-only validation used by the
-        -- arithmetic and ordering operators below.
-        | .eq => pure (Result.atom (if resultValueEq lr rr then 1 else 0))
-        | .ne => pure (Result.atom (if resultValueEq lr rr then 0 else 1))
-        | _ =>
-          -- Empty results remain transparent for the non-comparison operators.
-          match lr, rr with
-          | .sequenceValue [], .sequenceValue [] => pure (Result.sequenceValue [])
-          | .sequenceValue [], _ => pure rr
-          | _, .sequenceValue [] => pure lr
-          -- Non-equality operators are not defined on strings (they fail here rather
-          -- than via expectInt so the diagnostic names the string operands).
-          | .str _, .str _ => .error (Error.typeMismatch "Strings only support == and != operators")
-          -- Mixed string/number or string/sequence value: fail for any operator
-          | .str _, _ => .error (Error.typeMismatch "Cannot apply operator to string and non-string operands")
-          | _, .str _ => .error (Error.typeMismatch "Cannot apply operator to string and non-string operands")
-          | _, _ => do
-            let binaryContext := s!"while evaluating `{binaryExprDiagnosticName op a b}`"
-            let x <- withCtx binaryContext (requireNumericScalarOperand op "left" lr)
-            let y <- withCtx binaryContext (requireNumericScalarOperand op "right" rr)
-            -- Check for division by zero
-            if (op == BinaryOp.div || op == BinaryOp.idiv || op == BinaryOp.mod) && y == 0 then
-              .error Error.divByZero
-            else if op == BinaryOp.pow && y < 0 then
-              negativeIntPow x y
-            else
-              pure (Result.atom <|
-                -- `.eq`/`.ne` are handled structurally above; the arms below keep the
-                -- numeric match exhaustive over BinaryOp and are unreachable here.
-                match op with
-                | .add  => x + y
-                | .sub  => x - y
-                | .mul  => x * y
-                -- Division and modulo truncate toward zero (Int.tdiv / Int.tmod),
-                -- matching the C# reference: `-7 div 2 = -3` and `-7 mod 2 = -1`.
-                -- `/` on non-divisible operands additionally truncates the exact
-                -- decimal quotient as part of the integer-core limitation.
-                | .div  => x.tdiv y
-                | .idiv => x.tdiv y
-                | .mod  => x.tmod y
-                | .pow  => intPow x y.toNat
-                | .lt   => if x < y then 1 else 0
-                | .gt   => if x > y then 1 else 0
-                | .le   => if x <= y then 1 else 0
-                | .ge   => if x >= y then 1 else 0
-                | .eq   => if x = y then 1 else 0
-                | .ne   => if x != y then 1 else 0
-                | .and  => if x != 0 then (if y != 0 then 1 else 0) else 0
-                | .or   => if x != 0 then 1 else (if y != 0 then 1 else 0)
-                | .xor  => if x != 0 then (if y = 0 then 1 else 0) else (if y != 0 then 1 else 0))
-
-    | .sequenceConstruct _ _ => do
-      let out <- evalSequenceConstructCounted e ctx env
-      pure out.fst
-
-    | .emptySequence depth =>
-        pure (buildEmptySequenceValue depth)
-
-    | .sequenceSpread _ => do
-        let out <- evalSequenceSpreadCounted e ctx env
-        pure out.fst
-
-    | .listLiteral elements => do
-        let out <- evalListLiteralCounted elements ctx env
-        pure out.fst
-
-    | .algorithmExpr a =>
-        let wired := wireToCaller ctx a
-        if (Algorithm.params wired).length = 0 then
-          evalAlgOutput wired ctx env
-        else
-          .error (Error.unresolvedImplicitParams (Algorithm.params wired))
-
-    | .capture rows =>
-        evalCaptureValue rows ctx env
-
-    | .resolve n => do
-        match ctx.callStack with
-        | owner :: _ =>
-            let resolved <- lookupLexicalProperty owner n ctx
-            match conditionalValueAccessError? n resolved.alg with
-            | some err => .error err
-            | none =>
-                if (Algorithm.params resolved.alg).length = 0 then
-                  withMissingOutputCtx (CtxMsg.property n) <|
-                    evalZeroArgPropertyAccess .lexical resolved.owner resolved.binding resolved.alg ctx env
-                else
-                  .error (Error.withContext (CtxMsg.property n) (Error.arityMismatch (Algorithm.params resolved.alg).length 0))
-        | [] => .error (Error.unknownName n)
-
-    | .dotMember o n fallback argsOpt => withCtx (CtxMsg.dotCall o n) do
-        evalDotCall o n fallback argsOpt ctx env
-
-    -- Call semantics:
-    -- 1. Resolve f to an Algorithm
-    -- 2. If builtin: args resolved lazily as algorithms, passed to builtin dispatch
-    -- 3. If user alg: args evaluated eagerly to values, bound to params
-    | .call f args =>
-      evalCallExpr f args ctx env
-
-    | .index a i => do
-        let ar <- eval a ctx env
-        let ir <- eval i ctx env
-        let n  <- expectInt ir
-        if n < 0 then
-          .error Error.badIndex
-        else
-          match Result.select? ar (Int.toNat n) with
-          | some (selected, _) => pure selected
-          | none => .error Error.badIndex
+  /-- Expression evaluation with plain Result output.
+      This is the TOTAL Result projection of `evalCounted`: the counted
+      evaluator owns the per-variant dispatch for every `Expr` constructor
+      (leaves included), and this projection only discards the emitted-count
+      metadata. Counted code calls it wherever a subexpression is read at a
+      value boundary; that recursion is into strictly smaller work, never a
+      same-node ownership cycle, because `evalCounted` has no arm that
+      delegates back here. -/
+  partial def eval (e : Expr) (ctx : EvalCtx) (env : ValEnv) : EvalM Result := do
+    let out <- evalCounted e ctx env
+    pure out.fst
 
 end
 

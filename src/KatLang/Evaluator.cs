@@ -326,14 +326,7 @@ public static partial class Evaluator
     private static bool IsExported(Property property)
         => property.Exposure == PropertyExposure.Exported;
 
-    /// <summary>Lean: Algorithm.lookupPublicProp (public only).</summary>
-    private static Algorithm? LookupPublicProp(Algorithm alg, string name)
-    {
-        foreach (var prop in alg.Properties)
-            if (prop.Name == name && prop.IsPublic && IsExported(prop)) return prop.Value;
-        return null;
-    }
-
+    /// <summary>Lean: Algorithm.lookupPropDefPublic? (public only).</summary>
     private static Property? LookupPublicPropBinding(Algorithm alg, string name)
     {
         foreach (var prop in alg.Properties)
@@ -843,90 +836,22 @@ public static partial class Evaluator
     }
 
     /// <summary>
-    /// Resolve-only open lookup for the hot <see cref="Expr.Resolve"/> path.
-    /// This preserves the same public-only open and ambiguity rules as
-    /// <see cref="LookupOpens"/>, but avoids carrying binding metadata when the
-    /// caller only needs the wired algorithm.
-    /// </summary>
-    private static EvalResult<Algorithm?> LookupOpensResolvedAlgorithm(
-        Algorithm alg, string name, EvalCtx ctx)
-    {
-        if (alg.Opens.Count == 0) return EvalResult<Algorithm?>.Ok(null);
-
-        var innerCtx = ctx.Push(alg);
-        var resolvedResult = ResolveAllOpens(alg, innerCtx);
-        if (resolvedResult.IsError) return resolvedResult.Error;
-
-        (Algorithm Lib, Algorithm Child)? firstHit = null;
-        List<string>? providers = null;
-
-        foreach (var resolvedOpen in resolvedResult.Value)
-        {
-            var child = LookupPublicProp(resolvedOpen.Lib, name);
-            if (child is null)
-                continue;
-
-            providers ??= [];
-            providers.Add(resolvedOpen.Key);
-            firstHit ??= (resolvedOpen.Lib, child);
-        }
-
-        if (providers is null)
-            return EvalResult<Algorithm?>.Ok(null);
-        if (providers.Count == 1)
-        {
-            var (lib, child) = firstHit!.Value;
-            return EvalResult<Algorithm?>.Ok(ChildOf(lib, child));
-        }
-
-        return new EvalError.AmbiguousOpen(name, providers);
-    }
-
-    private static EvalResult<Algorithm?> LookupOpensInParentChainResolvedAlgorithm(
-        ScopeCtx sc, string name, EvalCtx ctx)
-    {
-        var tempAlg = ForOpens(sc);
-        var openResult = LookupOpensResolvedAlgorithm(tempAlg, name, ctx);
-        if (openResult.IsError) return openResult.Error;
-        if (openResult.Value is not null)
-            return EvalResult<Algorithm?>.Ok(openResult.Value);
-
-        return sc.Parent is { } parent
-            ? LookupOpensInParentChainResolvedAlgorithm(parent, name, ctx)
-            : EvalResult<Algorithm?>.Ok(null);
-    }
-
-    private static EvalResult<Algorithm?> LookupOpensInChainResolvedAlgorithm(
-        Algorithm alg, string name, EvalCtx ctx)
-    {
-        var openResult = LookupOpensResolvedAlgorithm(alg, name, ctx);
-        if (openResult.IsError) return openResult.Error;
-        if (openResult.Value is not null)
-            return EvalResult<Algorithm?>.Ok(openResult.Value);
-
-        return alg.Parent is { } sc
-            ? LookupOpensInParentChainResolvedAlgorithm(sc, name, ctx)
-            : EvalResult<Algorithm?>.Ok(null);
-    }
-
-    /// <summary>
-    /// Resolve-only lexical lookup for hot algorithm-resolution paths.
-    /// Mirrors <see cref="LookupLexical"/> semantics, but returns only the wired
-    /// algorithm so plain <see cref="Expr.Resolve"/> callers avoid binding/owner packaging.
+    /// Algorithm-position lexical lookup (call callees, dot-call targets).
+    /// This is the algorithm PROJECTION of <see cref="LookupLexical"/>: the
+    /// canonical binding-carrying chain owns ownership-first ordering, open
+    /// dedup, public-only filtering, ambiguity, and precedence, and this
+    /// projection only discards the owner/binding metadata that
+    /// algorithm-position consumers never read — mirroring Lean, where
+    /// <c>lookupLexical</c> projects <c>lookupLexicalProperty</c>.
+    /// Lean: lookupLexical.
     /// </summary>
     private static EvalResult<Algorithm> LookupLexicalResolvedAlgorithm(
         Algorithm alg, string name, EvalCtx ctx)
     {
-        var direct = LookupLexicalDirect(alg, name);
-        if (direct is not null)
-            return EvalResult<Algorithm>.Ok(direct);
-
-        var opensResult = LookupOpensInChainResolvedAlgorithm(alg, name, ctx);
-        if (opensResult.IsError) return opensResult.Error;
-        if (opensResult.Value is { } openAlgorithm)
-            return EvalResult<Algorithm>.Ok(openAlgorithm);
-
-        return new EvalError.UnknownName(name);
+        var result = LookupLexical(alg, name, ctx);
+        return result.IsError
+            ? result.Error
+            : EvalResult<Algorithm>.Ok(result.Value.ResolvedAlgorithm);
     }
 
     /// <summary>
@@ -3521,12 +3446,7 @@ public static partial class Evaluator
         EvalCtx ctx,
         IReadOnlyList<(string, Result)> valEnv,
         string calleeName = "conditional")
-    {
-        var callbackR = EvalResolvedCallbackCallCounted(callee, args, ctx, valEnv, calleeName);
-        return callbackR.IsError
-            ? callbackR.Error
-            : EvalResult<Result>.Ok(callbackR.Value.Value);
-    }
+        => ProjectCountedValue(EvalResolvedCallbackCallCounted(callee, args, ctx, valEnv, calleeName));
 
     /// <summary>
     /// Evaluate a higher-order sequence callback on one iterated item.
@@ -3667,12 +3587,7 @@ public static partial class Evaluator
         OutputBundle body,
         EvalCtx ctx,
         IReadOnlyList<(string, Result)> valEnv)
-    {
-        var countedR = EvalCaptureCountedCore(body, ctx, valEnv);
-        return countedR.IsError
-            ? countedR.Error
-            : EvalResult<Result>.Ok(countedR.Value.Value);
-    }
+        => ProjectCountedValue(EvalCaptureCountedCore(body, ctx, valEnv));
 
     /// <summary>
     /// The algorithm-channel adapter for a capture: a fresh zero-parameter
@@ -3846,6 +3761,19 @@ public static partial class Evaluator
     private static EvalResult<CountedResult> ReCountValueBoundary(EvalResult<CountedResult> r)
         => r.IsError ? r.Error : EvalResult<CountedResult>.Ok(ReCountValueBoundary(r.Value));
 
+    /// <summary>
+    /// The ONE value-projection helper for plain results over counted
+    /// evaluation: discards only the emitted-count metadata, propagating
+    /// values and errors unchanged. Every plain twin of a counted family is
+    /// expressed through this projection (mirroring Lean, where each plain
+    /// evaluator returns <c>Prod.fst</c> of its counted twin), so plain and
+    /// counted semantics cannot drift.
+    /// </summary>
+    private static EvalResult<Result> ProjectCountedValue(EvalResult<CountedResult> counted)
+        => counted.IsError
+            ? counted.Error
+            : EvalResult<Result>.Ok(counted.Value.Value);
+
     private static EvalResult<CountedResult> EvalAlgOutputCounted(
         Algorithm alg,
         EvalCtx ctx,
@@ -3927,32 +3855,6 @@ public static partial class Evaluator
                 ctx.Budget),
             () => EvaluateZeroArgPropertyResult(resolvedAlgorithm, ctx, valEnv));
     }
-
-    private static EvalResult<Result> EvalZeroArgPropertyAccess(
-        Algorithm? owner,
-        Property binding,
-        ZeroArgPropertyAccessKind accessKind,
-        Algorithm resolvedAlgorithm,
-        EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv)
-    {
-        var propertyR = GetOrEvaluateZeroArgPropertyResult(owner, binding, accessKind, resolvedAlgorithm, ctx, valEnv);
-        return propertyR.IsError
-            ? propertyR.Error
-            : EvalResult<Result>.Ok(propertyR.Value.Value);
-    }
-
-    private static EvalResult<Result> EvalZeroArgPropertyAccess(
-        ResolvedLexicalProperty resolvedProperty,
-        EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv)
-        => EvalZeroArgPropertyAccess(
-            resolvedProperty.Owner,
-            resolvedProperty.Binding,
-            ZeroArgPropertyAccessKind.Lexical,
-            resolvedProperty.ResolvedAlgorithm,
-            ctx,
-            valEnv);
 
     private static EvalResult<CountedResult> EvalZeroArgPropertyAccessCounted(
         Algorithm? owner,
@@ -5598,12 +5500,7 @@ public static partial class Evaluator
         ResolvedArgumentAlgorithm arg,
         EvalCtx ctx,
         IReadOnlyList<(string, Result)> valEnv)
-    {
-        var countedR = EvalResolvedArgumentCounted(arg, ctx, valEnv);
-        return countedR.IsError
-            ? countedR.Error
-            : EvalResult<Result>.Ok(countedR.Value.Value);
-    }
+        => ProjectCountedValue(EvalResolvedArgumentCounted(arg, ctx, valEnv));
 
     private static EvalResult<IReadOnlyList<ResolvedArgumentAlgorithm>> ExpandSequenceSpreadBuiltinArguments(
         IReadOnlyList<ResolvedArgumentAlgorithm> args,
@@ -6060,12 +5957,7 @@ public static partial class Evaluator
         Algorithm alg,
         EvalCtx ctx,
         IReadOnlyList<(string, Result)> valEnv)
-    {
-        var preparedR = EvalAlgOutputPreparedCore(alg, ctx, valEnv);
-        return preparedR.IsError
-            ? preparedR.Error
-            : EvalResult<Result>.Ok(preparedR.Value.Counted.Value);
-    }
+        => ProjectCountedValue(EvalAlgOutputCountedCore(alg, ctx, valEnv));
 
     private static EvalResult<Result> EvalAlgOutput(
         Algorithm alg,
@@ -6499,16 +6391,6 @@ public static partial class Evaluator
             preserveSequenceSpreadExpressionBoundaries: ShouldPreserveLoopStepSequenceSpreadExpressionBoundaries(step, bindingSelection));
     }
 
-    /// <summary>Run a step algorithm with the given state bound to its params. Lean: runStep.</summary>
-    private static EvalResult<Result> RunStep(
-        Algorithm step, EvalCtx ctx, IReadOnlyList<(string, Result)> valEnv, Result state, string loopName)
-    {
-        var outputSlotsR = RunStepSlots(step, ctx, valEnv, UnpackArgs(state), loopName);
-        return outputSlotsR.IsError
-            ? outputSlotsR.Error
-            : MakeCheckedSequenceCapture(ctx, outputSlotsR.Value);
-    }
-
     internal static EvalResult<(IReadOnlyList<Result> NextStateSlots, Decimal128 Continue)> SplitContSlots(
         IReadOnlyList<Result> outputSlots)
     {
@@ -6529,113 +6411,13 @@ public static partial class Evaluator
     }
 
     // ── Builtins ─────────────────────────────────────────────────────────────
-
-    /// <summary>
-    /// Applies a builtin operation to lazily-resolved argument algorithms.
-    /// Lean: applyBuiltin → EvalM Result.
-    /// </summary>
-    private static EvalResult<Result> ApplyBuiltin(
-        BuiltinId builtin,
-        IReadOnlyList<Algorithm> args,
-        EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv)
-        => ApplyBuiltinResolved(builtin, WithoutSequenceSpread(args), ctx, valEnv);
-
-    private static EvalResult<Result> ApplyBuiltinResolved(
-        BuiltinId builtin,
-        IReadOnlyList<ResolvedArgumentAlgorithm> resolvedArgs,
-        EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv)
-    {
-        if (GetSequenceBuiltinMetadata(builtin) is { } metadata)
-        {
-            var countedR = ApplyBuiltinCountedSequence(builtin, metadata, resolvedArgs, ctx, valEnv);
-            if (countedR.IsError) return countedR.Error;
-            return EvalResult<Result>.Ok(countedR.Value.Value);
-        }
-
-        var expandedArgsR = ExpandSequenceSpreadBuiltinArguments(resolvedArgs, ctx, valEnv);
-        if (expandedArgsR.IsError) return expandedArgsR.Error;
-        var args = expandedArgsR.Value;
-
-        switch (builtin, args.Count)
-        {
-            // if(cond, thenBranch, elseBranch): standard 3-arg conditional.
-            case (BuiltinId.@if, 3):
-                {
-                    var condR = EvalResolvedArgument(args[0], ctx, valEnv);
-                    if (condR.IsError) return condR.Error;
-                    var truth = condR.Value.TruthValue();
-                    if (truth is null) return new EvalError.BadArity();
-                    return truth.Value
-                        ? EvalResolvedArgument(args[1], ctx, valEnv)
-                        : EvalResolvedArgument(args[2], ctx, valEnv);
-                }
-
-            // while(step, init1, init2, ...)
-            case (BuiltinId.@while, _) when args.Count >= 2:
-                {
-                    var stepR = ResolveArgumentAlgorithm(args[0], ctx);
-                    if (stepR.IsError) return stepR.Error;
-                    var initialStateR = EvalInitialLoopStateSlots(args.Skip(1).ToList(), ctx, valEnv);
-                    if (initialStateR.IsError) return initialStateR.Error;
-                    return WhileLoop(stepR.Value, initialStateR.Value, ctx, valEnv);
-                }
-
-            // repeat(step, count, init1, init2, ...)
-            case (BuiltinId.@repeat, _) when args.Count >= 3:
-                {
-                    var stepR = ResolveArgumentAlgorithm(args[0], ctx);
-                    if (stepR.IsError) return stepR.Error;
-                    var countR = EvalResolvedArgument(args[1], ctx, valEnv);
-                    if (countR.IsError) return countR.Error;
-                    var nR = ExpectWholeInt(countR.Value, "Repeat count");
-                    if (nR.IsError) return nR.Error;
-                    // Domain check BEFORE narrowing, mirroring the counted twin above.
-                    if (nR.Value < 0) return new EvalError.IllegalInEval("Repeat count must be >= 0");
-                    var n = nR.Value >= long.MaxValue ? long.MaxValue : (long)nR.Value;
-                    var initialStateR = EvalInitialLoopStateSlots(args.Skip(2).ToList(), ctx, valEnv);
-                    if (initialStateR.IsError) return initialStateR.Error;
-                    return RepeatLoop(stepR.Value, n, initialStateR.Value, ctx, valEnv);
-                }
-
-            // atoms(value) — recursively collect numeric atoms into one exact list
-            case (BuiltinId.@atoms, 1):
-                {
-                    var atomsR = EvalResolvedArgument(args[0], ctx, valEnv);
-                    if (atomsR.IsError) return atomsR.Error;
-                    var atomsListR = MakeLanguageAtomsResult(ctx, atomsR.Value);
-                    return atomsListR.IsError ? atomsListR.Error : EvalResult<Result>.Ok(atomsListR.Value.Value);
-                }
-
-            // range(start, stop) — inclusive integers materialized as one exact list.
-            case (BuiltinId.@range, 2):
-                {
-                    var rangeR = EvalBuiltinRangeArguments(args, ctx, valEnv);
-                    if (rangeR.IsError) return rangeR.Error;
-
-                    return BuildInclusiveRangeChecked(ctx, rangeR.Value);
-                }
-
-            default:
-                {
-                    return WrongBuiltinArity(builtin, args.Count);
-                }
-        }
-    }
-
-    /// <summary>Lean: While loop → EvalM Result.</summary>
-    private static EvalResult<Result> WhileLoop(
-        Algorithm step,
-        IReadOnlyList<Result> initialStateSlots,
-        EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv)
-    {
-        var countedR = WhileLoopCounted(step, initialStateSlots, ctx, valEnv);
-        return countedR.IsError
-            ? countedR.Error
-            : EvalResult<Result>.Ok(countedR.Value.Value);
-    }
+    // There is deliberately NO plain builtin dispatch function:
+    // ApplyBuiltinCountedResolved is the ONE builtin dispatch switch
+    // (sequence-builtin metadata routing plus the if/while/repeat/atoms/range
+    // arms), and every plain spelling reaches it through the counted call
+    // family plus the value projection. (Lean keeps the named projection
+    // `applyBuiltinResolved` because CoreTests guards address it directly;
+    // the C# equivalent would have no caller at all.)
 
     private static EvalResult<CountedResult> WhileLoopCounted(
         Algorithm step,
@@ -6677,18 +6459,6 @@ public static partial class Evaluator
             : WhileLoopGenericCounted(step, initialStateSlots, ctx, valEnv);
     }
 
-    private static EvalResult<Result> WhileLoopGeneric(
-        Algorithm step,
-        IReadOnlyList<Result> initialStateSlots,
-        EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv)
-    {
-        var countedR = WhileLoopGenericCounted(step, initialStateSlots, ctx, valEnv);
-        return countedR.IsError
-            ? countedR.Error
-            : EvalResult<Result>.Ok(countedR.Value.Value);
-    }
-
     private static EvalResult<CountedResult> WhileLoopGenericCounted(
         Algorithm step,
         IReadOnlyList<Result> initialStateSlots,
@@ -6706,20 +6476,6 @@ public static partial class Evaluator
             if (cont == 0) return MakeCheckedLoopStateResult(ctx, stateSlots);
             stateSlots = nextStateSlots.ToList();
         }
-    }
-
-    /// <summary>Lean: Repeat loop → EvalM Result.</summary>
-    private static EvalResult<Result> RepeatLoop(
-        Algorithm step,
-        long count,
-        IReadOnlyList<Result> initialStateSlots,
-        EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv)
-    {
-        var countedR = RepeatLoopCounted(step, count, initialStateSlots, ctx, valEnv);
-        return countedR.IsError
-            ? countedR.Error
-            : EvalResult<Result>.Ok(countedR.Value.Value);
     }
 
     private static EvalResult<CountedResult> RepeatLoopCounted(
@@ -6765,19 +6521,6 @@ public static partial class Evaluator
             out var optimizedResult)
             ? optimizedResult
             : RepeatLoopGenericCounted(step, count, initialStateSlots, ctx, valEnv);
-    }
-
-    private static EvalResult<Result> RepeatLoopGeneric(
-        Algorithm step,
-        long count,
-        IReadOnlyList<Result> initialStateSlots,
-        EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv)
-    {
-        var countedR = RepeatLoopGenericCounted(step, count, initialStateSlots, ctx, valEnv);
-        return countedR.IsError
-            ? countedR.Error
-            : EvalResult<Result>.Ok(countedR.Value.Value);
     }
 
     private static EvalResult<CountedResult> RepeatLoopGenericCounted(
@@ -7118,7 +6861,105 @@ public static partial class Evaluator
     internal static EvalResult<CountedResult> EvalCountedExpressionForTesting(Expr expr)
         => EvalCounted(expr, EvalCtx.Empty, []);
 
-    /// <summary>Lean: eval → EvalM Result.</summary>
+    /// <summary>
+    /// Counted parameter-reference evaluation — the CANONICAL Param dispatch
+    /// shared by both dispatcher spellings (the plain <see cref="Eval"/> arm
+    /// projects its value, so the dual-view rules exist once).
+    /// Dual-view lookup order (Lean: <c>evalCounted</c> Param(x)):
+    /// 1. Counted callback-param env (projected higher-order item meaning)
+    /// 2. ValEnv (ordinary value meaning)
+    /// 3. AlgEnv fallback (algorithm meaning):
+    ///    - 0-param algorithm → auto-evaluate (thunk semantics)
+    ///    - multi-param algorithm → arityMismatch (needs explicit call)
+    /// </summary>
+    private static EvalResult<CountedResult> EvalParamCounted(
+        string name,
+        SourceSpan? span,
+        EvalCtx ctx,
+        IReadOnlyList<(string, Result)> valEnv)
+    {
+        var counted = LookupCountedParam(ctx.CountedParamEnv, name);
+        if (counted is not null)
+            return EvalResult<CountedResult>.Ok(counted.Value);
+
+        var val = LookupVal(valEnv, name);
+        if (val is not null)
+            return EvalResult<CountedResult>.Ok(new CountedResult(val, val.ValueCount()));
+
+        var algBinding = LookupAlgBinding(ctx.AlgEnv, name);
+        if (algBinding is { } bound)
+        {
+            if (bound.ValueError is { } stickyLimit)
+                return AtSpanIfMissing(stickyLimit, span);
+            var algBound = bound.Algorithm;
+            if (ConditionalValueAccessError(name, algBound) is { } conditionalError)
+                return conditionalError with { Span = span };
+            if (algBound.Params.Count == 0)
+            {
+                var valueR = WithSpan(span, EvalResolvedAlgOutputForValueDemand(algBound, ctx, valEnv));
+                return valueR.IsError
+                    ? valueR.Error
+                    : EvalResult<CountedResult>.Ok(new CountedResult(valueR.Value, valueR.Value.ValueCount()));
+            }
+            return ZeroArgumentDemandArityMismatch(algBound) with { Span = span };
+        }
+
+        return new EvalError.UnknownName(name) { Span = span };
+    }
+
+    /// <summary>
+    /// Counted lexical property-reference evaluation — the CANONICAL Resolve
+    /// dispatch shared by both dispatcher spellings (the plain
+    /// <see cref="Eval"/> arm projects its value). Resolution goes through the
+    /// canonical binding-carrying <see cref="LookupLexical"/> chain, and
+    /// zero-argument access re-counts at the property value boundary.
+    /// Lean: <c>evalCounted</c> Resolve(n).
+    /// </summary>
+    private static EvalResult<CountedResult> EvalResolveCounted(
+        string name,
+        SourceSpan? span,
+        EvalCtx ctx,
+        IReadOnlyList<(string, Result)> valEnv)
+    {
+        if (ctx.CallStack.Count == 0)
+            return new EvalError.UnknownName(name) { Span = span };
+
+        var resolvedR = LookupLexical(ctx.CallStack[0], name, ctx);
+        if (resolvedR.IsError)
+            return AtSpanIfMissing(resolvedR.Error, span);
+
+        if (ConditionalValueAccessError(name, resolvedR.Value.ResolvedAlgorithm) is { } conditionalError)
+            return conditionalError with { Span = span };
+
+        if (resolvedR.Value.ResolvedAlgorithm.Params.Count != 0)
+        {
+            return WithSpan<CountedResult>(
+                span,
+                new EvalError.WithContext(
+                    CtxProperty(name),
+                    ZeroArgumentDemandArityMismatch(resolvedR.Value.ResolvedAlgorithm)));
+        }
+
+        var propertyR = WithPropertyContextOnMissingOutput(name, span,
+            EvalZeroArgPropertyAccessCounted(resolvedR.Value, ctx, valEnv));
+        return propertyR.IsError
+            ? propertyR.Error
+            : EvalResult<CountedResult>.Ok(new CountedResult(
+                propertyR.Value.Value,
+                propertyR.Value.Value.ValueCount()));
+    }
+
+    /// <summary>
+    /// Plain expression dispatch. Every RECURSIVE variant is the value
+    /// projection of its counted-canonical implementation (the same per-variant
+    /// helpers <see cref="EvalCounted"/> dispatches to), so plain and counted
+    /// semantics exist once; only the true leaves (Num, StringLiteral,
+    /// NativeCall, and the Grace/unknown catch-all) are plain-owned, because
+    /// the counted dispatchers' leaf-delegation group — pinned by the M10
+    /// async-dispatch exhaustiveness tests — delegates exactly those to this
+    /// method. Lean: eval (the total value projection of evalCounted; Lean has
+    /// no leaf exception because it has no async twin family).
+    /// </summary>
     private static EvalResult<Result> Eval(
         Expr expr,
         EvalCtx ctx,
@@ -7147,70 +6988,27 @@ public static partial class Evaluator
                 return MakeStringResult(ctx, s, expr.Span);
 
             case Expr.Param(var name):
-                {
-                    // Dual-view parameter evaluation (Lean: eval Param(x)):
-                    // 1. Counted callback-param env (projected higher-order item meaning)
-                    // 2. ValEnv (ordinary value meaning)
-                    // 3. AlgEnv fallback (algorithm meaning):
-                    //    - 0-param algorithm → auto-evaluate (thunk semantics)
-                    //    - multi-param algorithm → arityMismatch (needs explicit call)
-                    var counted = LookupCountedParam(ctx.CountedParamEnv, name);
-                    if (counted is not null) return EvalResult<Result>.Ok(counted.Value.Value);
-
-                    var val = LookupVal(valEnv, name);
-                    if (val is not null) return EvalResult<Result>.Ok(val);
-                    var algBinding = LookupAlgBinding(ctx.AlgEnv, name);
-                    if (algBinding is { } bound)
-                    {
-                        if (bound.ValueError is { } stickyLimit)
-                            return AtSpanIfMissing(stickyLimit, expr.Span);
-                        var algBound = bound.Algorithm;
-                        if (ConditionalValueAccessError(name, algBound) is { } conditionalError)
-                            return conditionalError with { Span = expr.Span };
-                        if (algBound.Params.Count == 0)
-                            return WithSpan(expr.Span, EvalResolvedAlgOutputForValueDemand(algBound, ctx, valEnv));
-                        return ZeroArgumentDemandArityMismatch(algBound) with { Span = expr.Span };
-                    }
-                    return new EvalError.UnknownName(name) { Span = expr.Span };
-                }
+                // Value projection of the canonical counted Param dispatch
+                // (dual-view lookup order documented on EvalParamCounted).
+                return ProjectCountedValue(EvalParamCounted(name, expr.Span, ctx, valEnv));
 
             case Expr.Unary or Expr.Binary:
-                {
-                    // Unary and binary spines evaluate iteratively; the machine
-                    // preserves the recursive semantics exactly (empty-result
-                    // propagation, string rejection, ApplyBinaryOperator).
-                    var spineR = EvalExpressionSpineCounted(expr, ctx, valEnv);
-                    return spineR.IsError
-                        ? spineR.Error
-                        : EvalResult<Result>.Ok(spineR.Value.Value);
-                }
+                // Unary and binary spines evaluate iteratively; the machine
+                // preserves the recursive semantics exactly (empty-result
+                // propagation, string rejection, ApplyBinaryOperator).
+                return ProjectCountedValue(EvalExpressionSpineCounted(expr, ctx, valEnv));
 
             case Expr.SequenceConstruct:
-                {
-                    var sequenceConstructR = EvalSequenceConstructCounted(expr, ctx, valEnv);
-                    return sequenceConstructR.IsError
-                        ? sequenceConstructR.Error
-                        : EvalResult<Result>.Ok(sequenceConstructR.Value.Value);
-                }
+                return ProjectCountedValue(EvalSequenceConstructCounted(expr, ctx, valEnv));
 
             case Expr.EmptySequence(var depth):
                 return EvalResult<Result>.Ok(BuildEmptySequenceValue(depth));
 
             case Expr.SequenceSpread:
-                {
-                    var sequenceSpreadR = EvalSequenceSpreadCounted(expr, ctx, valEnv);
-                    return sequenceSpreadR.IsError
-                        ? sequenceSpreadR.Error
-                        : EvalResult<Result>.Ok(sequenceSpreadR.Value.Value);
-                }
+                return ProjectCountedValue(EvalSequenceSpreadCounted(expr, ctx, valEnv));
 
             case Expr.ListLiteral:
-                {
-                    var listLiteralR = EvalExpressionSpineCounted(expr, ctx, valEnv);
-                    return listLiteralR.IsError
-                        ? listLiteralR.Error
-                        : EvalResult<Result>.Ok(listLiteralR.Value.Value);
-                }
+                return ProjectCountedValue(EvalExpressionSpineCounted(expr, ctx, valEnv));
 
             case Expr.AlgorithmExpr(var alg):
                 {
@@ -7225,29 +7023,8 @@ public static partial class Evaluator
                 return WithSpan(PreferExpressionSpan(expr.Span, captureBody), EvalCaptureValue(captureBody, ctx, valEnv));
 
             case Expr.Resolve(var name):
-                {
-                    if (ctx.CallStack.Count == 0)
-                        return new EvalError.UnknownName(name) { Span = expr.Span };
-
-                    var resolvedR = LookupLexical(ctx.CallStack[0], name, ctx);
-                    if (resolvedR.IsError)
-                        return AtSpanIfMissing(resolvedR.Error, expr.Span);
-
-                    if (ConditionalValueAccessError(name, resolvedR.Value.ResolvedAlgorithm) is { } conditionalError)
-                        return conditionalError with { Span = expr.Span };
-
-                    if (resolvedR.Value.ResolvedAlgorithm.Params.Count != 0)
-                    {
-                        return WithSpan<Result>(
-                            expr.Span,
-                            new EvalError.WithContext(
-                                CtxProperty(name),
-                                ZeroArgumentDemandArityMismatch(resolvedR.Value.ResolvedAlgorithm)));
-                    }
-
-                    return WithPropertyContextOnMissingOutput(name, expr.Span,
-                        EvalZeroArgPropertyAccess(resolvedR.Value, ctx, valEnv));
-                }
+                // Value projection of the canonical counted Resolve dispatch.
+                return ProjectCountedValue(EvalResolveCounted(name, expr.Span, ctx, valEnv));
 
             case Expr.DotCall dotCallExpr:
                 // Lean: eval (.dotMember o n fallback mode argsOpt) => withCtx (CtxMsg.dotCall o n) do evalDotCall
@@ -7260,12 +7037,8 @@ public static partial class Evaluator
                     EvalCallExpr(func, callArgs, ctx, valEnv));
 
             case Expr.Index:
-                {
-                    var selectionR = EvalExpressionSpineCounted(expr, ctx, valEnv);
-                    return selectionR.IsError
-                        ? selectionR.Error
-                        : EvalResult<Result>.Ok(selectionR.Value.Value);
-                }
+                // The spine machine owns the index-expression span.
+                return ProjectCountedValue(EvalExpressionSpineCounted(expr, ctx, valEnv));
 
             case Expr.NativeCall(var fnName, var argNames):
                 return EvalNativeCall(fnName, argNames, ctx, valEnv);
@@ -7302,35 +7075,7 @@ public static partial class Evaluator
         switch (expr)
         {
             case Expr.Param(var name):
-                {
-                    var counted = LookupCountedParam(ctx.CountedParamEnv, name);
-                    if (counted is not null)
-                        return EvalResult<CountedResult>.Ok(counted.Value);
-
-                    var val = LookupVal(valEnv, name);
-                    if (val is not null)
-                        return EvalResult<CountedResult>.Ok(new CountedResult(val, val.ValueCount()));
-
-                    var algBinding = LookupAlgBinding(ctx.AlgEnv, name);
-                    if (algBinding is { } bound)
-                    {
-                        if (bound.ValueError is { } stickyLimit)
-                            return AtSpanIfMissing(stickyLimit, expr.Span);
-                        var algBound = bound.Algorithm;
-                        if (ConditionalValueAccessError(name, algBound) is { } conditionalError)
-                            return conditionalError with { Span = expr.Span };
-                        if (algBound.Params.Count == 0)
-                        {
-                            var valueR = WithSpan(expr.Span, EvalResolvedAlgOutputForValueDemand(algBound, ctx, valEnv));
-                            return valueR.IsError
-                                ? valueR.Error
-                                : EvalResult<CountedResult>.Ok(new CountedResult(valueR.Value, valueR.Value.ValueCount()));
-                        }
-                        return ZeroArgumentDemandArityMismatch(algBound) with { Span = expr.Span };
-                    }
-
-                    return new EvalError.UnknownName(name) { Span = expr.Span };
-                }
+                return EvalParamCounted(name, expr.Span, ctx, valEnv);
 
             case Expr.SequenceSpread:
                 return EvalSequenceSpreadCounted(expr, ctx, valEnv);
@@ -7372,34 +7117,7 @@ public static partial class Evaluator
                 }
 
             case Expr.Resolve(var name):
-                {
-                    if (ctx.CallStack.Count == 0)
-                        return new EvalError.UnknownName(name) { Span = expr.Span };
-
-                    var resolvedR = LookupLexical(ctx.CallStack[0], name, ctx);
-                    if (resolvedR.IsError)
-                        return AtSpanIfMissing(resolvedR.Error, expr.Span);
-
-                    if (ConditionalValueAccessError(name, resolvedR.Value.ResolvedAlgorithm) is { } conditionalError)
-                        return conditionalError with { Span = expr.Span };
-
-                    if (resolvedR.Value.ResolvedAlgorithm.Params.Count != 0)
-                    {
-                        return WithSpan<CountedResult>(
-                            expr.Span,
-                            new EvalError.WithContext(
-                                CtxProperty(name),
-                                ZeroArgumentDemandArityMismatch(resolvedR.Value.ResolvedAlgorithm)));
-                    }
-
-                    var propertyR = WithPropertyContextOnMissingOutput(name, expr.Span,
-                        EvalZeroArgPropertyAccessCounted(resolvedR.Value, ctx, valEnv));
-                    return propertyR.IsError
-                        ? propertyR.Error
-                        : EvalResult<CountedResult>.Ok(new CountedResult(
-                            propertyR.Value.Value,
-                            propertyR.Value.Value.ValueCount()));
-                }
+                return EvalResolveCounted(name, expr.Span, ctx, valEnv);
 
             case Expr.DotCall dotCallExpr:
                 return WithSpan(expr.Span, WithDotCallCtx(dotCallExpr, ctx,
@@ -7993,76 +7711,27 @@ public static partial class Evaluator
     /// 2. If builtin: resolve args lazily as algorithms, dispatch to applyBuiltin.
     /// 3. If user-defined: delegate to EvalUserCall (dual-view argument binding).
     /// </summary>
-    private static EvalResult<Result> EvalCall(
-        Expr func,
-        OutputBundle args,
-        EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv)
-    {
-        var calleeR = ResolveAlg(func, ctx);
-        if (calleeR.IsError) return calleeR.Error;
-        return EvalResolvedCall(
-            calleeR.Value,
-            args,
-            ctx,
-            valEnv,
-            CallDiagnosticName.FromExpression(func));
-    }
-
     /// <summary>
-    /// Counted call evaluation for <c>reduce</c> step validation.
-    /// Lean: <c>evalCallCountedExpr</c> (Lean also attaches the call-context wrapper there).
-    /// </summary>
-    private static EvalResult<CountedResult> EvalCallCounted(
-        Expr func,
-        OutputBundle args,
-        EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv)
-    {
-        var calleeR = ResolveAlg(func, ctx);
-        if (calleeR.IsError) return calleeR.Error;
-        return EvalResolvedCallCounted(
-            calleeR.Value,
-            args,
-            ctx,
-            valEnv,
-            CallDiagnosticName.FromExpression(func));
-    }
-
-    /// <summary>
-    /// Context-aware call evaluation for expression position.
+    /// Context-aware call evaluation for expression position with plain
+    /// Result output. This is the value projection of
+    /// <see cref="EvalCallCountedExpr"/>: the counted twin owns callee
+    /// resolution, the sequence-pipeline hook, dispatch, and the call
+    /// error-context attachment, so contexts and spans cannot drift between
+    /// the plain and counted spellings.
+    /// Lean: evalCallExpr (the projection of evalCallCountedExpr).
     /// </summary>
     private static EvalResult<Result> EvalCallExpr(
         Expr func,
         OutputBundle args,
         EvalCtx ctx,
         IReadOnlyList<(string, Result)> valEnv)
-    {
-        var diagnosticName = CallDiagnosticName.FromExpression(func);
-        var calleeR = ResolveAlg(func, ctx);
-        if (calleeR.IsError)
-            return new EvalError.WithContext(CtxCall(diagnosticName, ctx), calleeR.Error) { Span = calleeR.Error.Span };
-
-        if (TryEvaluateSequencePipeline(
-            SequencePipelineInvocation.PlainCall(func, args, calleeR.Value),
-            ctx,
-            valEnv,
-            out var sequencePipelineR))
-            return WithCallCtx(
-                diagnosticName,
-                ctx,
-                sequencePipelineR.IsError
-                    ? sequencePipelineR.Error
-                    : EvalResult<Result>.Ok(sequencePipelineR.Value.Value));
-
-        return WithCallCtx(
-            diagnosticName,
-            ctx,
-            EvalResolvedCall(calleeR.Value, args, ctx, valEnv, diagnosticName));
-    }
+        => ProjectCountedValue(EvalCallCountedExpr(func, args, ctx, valEnv));
 
     /// <summary>
-    /// Counted expression-position call evaluation mirroring <see cref="EvalCallExpr"/>.
+    /// Counted expression-position call evaluation — the CANONICAL
+    /// expression-position call dispatch (<see cref="EvalCallExpr"/> is its
+    /// value projection).
+    /// Lean: evalCallCountedExpr.
     /// </summary>
     private static EvalResult<CountedResult> EvalCallCountedExpr(
         Expr func,
@@ -8088,28 +7757,8 @@ public static partial class Evaluator
             EvalResolvedCallCounted(calleeR.Value, args, ctx, valEnv, diagnosticName));
     }
 
-    // ── Conditional algorithm call (Lean: evalConditionalCall) ──────────────
+    // ── Conditional algorithm call (Lean: evalConditionalCallCounted) ───────
 
-    /// <summary>
-    /// Evaluates a conditional algorithm call.
-    /// 1. Evaluate argument expressions eagerly.
-    /// 2. Assemble full argument Result shape (preserving sequence-value shape for pattern matching).
-    /// 3. Try branches in order; first match wins.
-    /// 4. Evaluate selected branch body with pattern bindings prepended to env.
-    /// 5. If no branch matches, raise NoMatchingBranch error.
-    ///
-    /// <para><b>Full-input-specification rule</b>: the branch body receives input
-    /// bindings ONLY from the matched pattern. No extra implicit parameters are
-    /// inferred. Free identifiers in the body resolve through ordinary lexical /
-    /// property / open / builtin lookup, or produce unknownName at runtime.</para>
-    ///
-    /// <para><b>Assumes uniform output arity</b>: after validation
-    /// (<see cref="CondBranch.TopLevelOutputArity"/>), all branches produce the
-    /// same top-level output arity. The evaluator does not re-check this at
-    /// runtime.</para>
-    ///
-    /// Lean: evalConditionalCall.
-    /// </summary>
     /// <summary>
     /// Assemble the evaluated argument values for a conditional (multi-clause)
     /// call through the shared call argument pipeline
@@ -8139,65 +7788,32 @@ public static partial class Evaluator
         return EvalResult<IReadOnlyList<Result>>.Ok(argResults);
     }
 
-    private static EvalResult<Result> EvalConditionalCall(
-        Algorithm callee, OutputBundle args,
-        EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv,
-        CallDiagnosticName calleeName,
-        CallArgumentAssembly argumentAssembly = CallArgumentAssembly.OrdinaryArguments)
-    {
-        // Charged dynamic invocation boundary: clause selection plus the selected
-        // branch body are ONE dynamic invocation, exactly like a flat user call.
-        if (ctx.Budget.TryEnterInvocation() is { } limitError)
-            return AtSpanIfMissing(limitError, FirstSpan(args));
-
-        try
-        {
-            return EvalConditionalCallCore(callee, args, ctx, valEnv, calleeName, argumentAssembly);
-        }
-        finally
-        {
-            ctx.Budget.ExitInvocation();
-        }
-    }
-
-    private static EvalResult<Result> EvalConditionalCallCore(
-        Algorithm callee, OutputBundle args,
-        EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv,
-        CallDiagnosticName calleeName,
-        CallArgumentAssembly argumentAssembly)
-    {
-        // Shared argument-slot assembly: explicit spread expands into ordinary
-        // argument slots BEFORE clause matching, so a multi-clause callee sees
-        // the same argument supply as every other callable shape.
-        var argResultsR = EvalConditionalCallArguments(args, ctx, valEnv, argumentAssembly);
-        if (argResultsR.IsError) return argResultsR.Error;
-        var argResults = argResultsR.Value;
-
-        if (callee.HasDuplicateBranchPatterns())
-            return new EvalError.DuplicateBranchPattern();
-
-        var match = MatchCallBranches(callee.Branches, argResults);
-        if (match is null)
-            return new EvalError.NoMatchingBranch(calleeName.Render(ctx));
-
-        var (branch, bindings) = match.Value;
-        var wiredBody = ChildOf(callee, branch.Body);
-        var shadowedNames = bindings.Select(static binding => binding.Item1).ToArray();
-        var newCtx = ctx.Push(callee)
-            .WithCountedParamEnv(ShadowCountedParamEnv(ctx.CountedParamEnv, shadowedNames));
-        var newEnv = Concat(bindings, valEnv);
-        return EvalAlgOutput(wiredBody, newCtx, newEnv);
-    }
-
     /// <summary>
-    /// Counted conditional call evaluation.
-    /// The argument matching semantics are unchanged; the selected branch is a
-    /// value boundary, so its public result re-counts the emitted arity with
-    /// <see cref="ReCountValueBoundary"/> (<c>Result.ValueCount</c>) — a
-    /// multi-output branch becomes one sequence value (count 1), matching
-    /// <c>if</c> and plain calls.
+    /// Counted conditional call evaluation — the CANONICAL conditional-call
+    /// implementation (the plain spelling reaches it through
+    /// <see cref="EvalResolvedCallCounted"/> and the value projection).
+    /// 1. Assemble the argument supply through the shared call argument
+    ///    pipeline (explicit spread expands into ordinary argument slots
+    ///    BEFORE clause matching, so a multi-clause callee sees the same
+    ///    supply as every other callable shape).
+    /// 2. Try branches in order; first match wins.
+    /// 3. Evaluate the selected branch body with pattern bindings prepended.
+    /// 4. If no branch matches, raise NoMatchingBranch.
+    ///
+    /// <para><b>Full-input-specification rule</b>: the branch body receives input
+    /// bindings ONLY from the matched pattern. No extra implicit parameters are
+    /// inferred. Free identifiers in the body resolve through ordinary lexical /
+    /// property / open / builtin lookup, or produce unknownName at runtime.</para>
+    ///
+    /// <para><b>Assumes uniform output arity</b>: after validation
+    /// (<see cref="CondBranch.TopLevelOutputArity"/>), all branches produce the
+    /// same top-level output arity. The evaluator does not re-check this at
+    /// runtime.</para>
+    ///
+    /// The selected branch is a value boundary, so its public result re-counts
+    /// the emitted arity with <see cref="ReCountValueBoundary"/>
+    /// (<c>Result.ValueCount</c>) — a multi-output branch becomes one sequence
+    /// value (count 1), matching <c>if</c> and plain calls.
     /// Lean: <c>evalConditionalCallCounted</c>.
     /// </summary>
     private static EvalResult<CountedResult> EvalConditionalCallCounted(
@@ -8207,7 +7823,8 @@ public static partial class Evaluator
         CallDiagnosticName calleeName,
         CallArgumentAssembly argumentAssembly = CallArgumentAssembly.OrdinaryArguments)
     {
-        // Charged dynamic invocation boundary (see EvalConditionalCall).
+        // Charged dynamic invocation boundary; this counted core owns the
+        // boundary for both counted evaluation and its plain projection.
         if (ctx.Budget.TryEnterInvocation() is { } limitError)
             return AtSpanIfMissing(limitError, FirstSpan(args));
 
@@ -8248,10 +7865,13 @@ public static partial class Evaluator
         return ReCountValueBoundary(EvalAlgOutputCounted(wiredBody, newCtx, newEnv));
     }
 
-    // ── User-defined call (Lean: evalUserCall) ────────────────────────────
+    // ── User-defined call (Lean: evalUserCallCounted) ─────────────────────
 
     /// <summary>
-    /// Shared user-defined call binding logic (Lean: evalUserCall).
+    /// Counted user-defined call evaluation — the CANONICAL user-call
+    /// implementation (the plain spelling reaches it through
+    /// <see cref="EvalResolvedCallCounted"/> and the value projection).
+    ///
     /// Dual-view semantics: each original argument expression is independently
     /// interpreted in two ways:
     /// <list type="bullet">
@@ -8273,132 +7893,9 @@ public static partial class Evaluator
     /// expressions, including <c>.atoms</c>, remain one argument expression.
     /// Earlier explicit argument positions remain distinct on the eager value
     /// side even if some later arguments bind only through AlgEnv.
-    /// </summary>
-    private static EvalResult<Result> EvalUserCall(
-        Algorithm callee, OutputBundle args,
-        EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv,
-        CallArgumentAssembly argumentAssembly,
-        CallDiagnosticName calleeName)
-    {
-        // Charged dynamic invocation boundary (see EvaluationBudget).
-        if (ctx.Budget.TryEnterInvocation() is { } limitError)
-            return AtSpanIfMissing(limitError, FirstSpan(args));
-
-        try
-        {
-            return EvalUserCallCore(callee, args, ctx, valEnv, argumentAssembly, calleeName);
-        }
-        finally
-        {
-            ctx.Budget.ExitInvocation();
-        }
-    }
-
-    private static EvalResult<Result> EvalUserCallCore(
-        Algorithm callee, OutputBundle args,
-        EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv,
-        CallArgumentAssembly argumentAssembly,
-        CallDiagnosticName calleeName)
-    {
-        if (callee.Output.Count == 0)
-            return new EvalError.MissingOutput();
-
-        // Assignment-deconstruction target: project this target's slot from the group's shared
-        // run-scoped bind (computed once for all N targets) instead of rebinding the whole
-        // N-capture pattern per target. The non-counted value is the bound value itself.
-        if (callee is Algorithm.User { IsAssignmentDeconstructionHelper: true } deconstructionHelper
-            && TryProjectSharedDeconstructionTarget(deconstructionHelper, args, ctx, valEnv, calleeName, argumentAssembly) is { } sharedTarget)
-        {
-            return sharedTarget;
-        }
-
-        var signature = CallableSignature.FromAlgorithm(calleeName.StructuralName, callee);
-        var bindingPlan = CallableBindingPlan.FromSignature(signature);
-
-        if (bindingPlan.RequiresPatternedBinding)
-        {
-            var bindingsR = BindPatternedUserCall(callee, args, ctx, valEnv, calleeName, argumentAssembly);
-            if (bindingsR.IsError) return bindingsR.Error;
-
-            var bindings = bindingsR.Value;
-            var groupedCtx = WithUserCallBindingEnvironments(ctx, bindings, callee.Params);
-            var groupedEnv = Concat(bindings.ValueBindings, valEnv);
-            return EvalAlgOutput(callee, groupedCtx, groupedEnv);
-        }
-
-        if (IsDeconstructionUserCallShape(signature))
-        {
-            var bindingsR = BindDeconstructionUserCall(callee, args, ctx, valEnv, calleeName, argumentAssembly);
-            if (bindingsR.IsError) return bindingsR.Error;
-
-            var bindings = bindingsR.Value;
-            var deconstructionCtx = WithUserCallBindingEnvironments(ctx, bindings, callee.Params);
-            var deconstructionEnv = Concat(bindings.ValueBindings, valEnv);
-            return EvalAlgOutput(callee, deconstructionCtx, deconstructionEnv);
-        }
-
-        if (!TryGetPlanDerivedFlatFixedParameterNames(bindingPlan, out var flatFixedParams))
-            flatFixedParams = callee.Params;
-
-        var flatBindingsR = BindFlatFixedUserCallArguments(
-            callee,
-            calleeName,
-            flatFixedParams,
-            args,
-            ctx,
-            valEnv);
-        if (flatBindingsR.IsError) return flatBindingsR.Error;
-
-        var flatBindings = flatBindingsR.Value;
-        return EvalAlgOutput(callee, flatBindings.Context, flatBindings.ValueEnvironment);
-    }
-
-    /// <summary>
-    /// Dispatches an already-resolved callee.
-    /// </summary>
-    private static EvalResult<Result> EvalResolvedCall(
-        Algorithm callee,
-        OutputBundle args,
-        EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv,
-        CallDiagnosticName calleeName,
-        CallArgumentAssembly argumentAssembly = CallArgumentAssembly.OrdinaryArguments)
-    {
-        if (callee is Algorithm.Builtin(var builtinId))
-        {
-            var argAlgsR = ResolveArgAlgsWithSequenceSpread(args, ctx, valEnv);
-            if (argAlgsR.IsError) return argAlgsR.Error;
-            return ApplyBuiltinResolved(builtinId, argAlgsR.Value, ctx, valEnv);
-        }
-
-        if (TryGetFlatBinderUserEquivalent(callee) is { } simpleCallee)
-            return EvalUserCall(
-                simpleCallee,
-                args,
-                ctx,
-                valEnv,
-                argumentAssembly,
-                calleeName);
-
-        if (callee is Algorithm.Conditional)
-            return EvalConditionalCall(callee, args, ctx, valEnv, calleeName, argumentAssembly);
-
-        return EvalUserCall(
-            callee,
-            args,
-            ctx,
-            valEnv,
-            argumentAssembly,
-            calleeName);
-    }
-
-    /// <summary>
-    /// Counted user-defined call evaluation.
-    /// A user/property call is a value boundary: argument-binding and body
-    /// evaluation are unchanged, but the public result preserves the structural
-    /// value while re-counting the emitted arity with
+    ///
+    /// A user/property call is a value boundary: the public result preserves
+    /// the structural value while re-counting the emitted arity with
     /// <see cref="ReCountValueBoundary"/> (<c>Result.ValueCount</c>). A
     /// multi-output body therefore becomes one sequence value (count 1); only
     /// caller-site <c>spread</c> re-spreads it.
@@ -8488,7 +7985,11 @@ public static partial class Evaluator
     }
 
     /// <summary>
-    /// Counted dispatch for an already-resolved effective callee.
+    /// Counted dispatch for an already-resolved effective callee — the
+    /// CANONICAL resolved-callee dispatch (builtin / flat-binder-equivalent /
+    /// conditional / user); plain consumers reach it through the value
+    /// projection of their counted entry points.
+    /// Lean: <c>evalResolvedCallCounted</c>.
     /// </summary>
     private static EvalResult<CountedResult> EvalResolvedCallCounted(
         Algorithm callee,
@@ -8529,128 +8030,23 @@ public static partial class Evaluator
     // ── DotCall evaluation ────────────────────────────────────────────────
 
     /// <summary>
-    /// Evaluates dotCall: <c>a.f</c> or <c>a.f(args)</c>
-    /// Smart dispatch:
-    /// 1. Value-based intrinsic (string) → evaluate target, convert numeric result to string
-    /// 2. Structural property found (navigation-only):
-    ///    - No args + 0-param → value access
-    ///    - No args + has params → arity mismatch error
-    ///    - Has args → delegate to EvalUserCall (dual-view binding, no receiver injection)
-    /// 3. No property → lexical fallback (receiver injection via CallLexicalWithReceiver)
-    /// When resolveAlg returns notAnAlgorithm (e.g. numeric literal target),
-    /// value-based intrinsics are checked before lexical fallback.
-    /// Structural property calls use the same higher-order binding logic as normal
-    /// user-defined calls (both delegate to EvalUserCall).
-    /// (The graced sources <c>a~.f</c> / <c>a.~f</c> arrive here as the SAME
-    /// node as <c>a.f</c>: Grace is a front-end parameter-order annotation that
-    /// elaboration consumes, so this method — and every diagnostic it produces
-    /// — cannot tell the sources apart.)
+    /// Evaluates dotCall <c>a.f</c> / <c>a.f(args)</c> with plain Result
+    /// output. This is the value projection of
+    /// <see cref="EvalDotCallCounted"/>: the counted twin owns the whole
+    /// dot-call dispatch (sequence-pipeline hook, receiver resolution,
+    /// value-based intrinsics, structural property precedence and exposure,
+    /// conditional dispatch, and lexical fallback with receiver injection),
+    /// and the non-counted path only discards the emitted-count metadata —
+    /// mirroring Lean, where <c>evalDotCall</c> projects
+    /// <c>evalDotCallCounted</c>.
     /// Lean: evalDotCall.
     /// </summary>
     private static EvalResult<Result> EvalDotCall(
         Expr.DotCall dotCall,
         EvalCtx ctx,
         IReadOnlyList<(string, Result)> valEnv)
-    {
-        if (TryEvaluateSequencePipeline(
-            SequencePipelineInvocation.DotCall(dotCall),
-            ctx,
-            valEnv,
-            out var sequencePipelineR))
-            return sequencePipelineR.IsError
-                ? sequencePipelineR.Error
-                : EvalResult<Result>.Ok(sequencePipelineR.Value.Value);
+        => ProjectCountedValue(EvalDotCallCounted(dotCall, ctx, valEnv));
 
-        var target = dotCall.Target;
-        var name = dotCall.Name;
-        var argsOpt = dotCall.Args;
-
-        // Lean: let targetAlg <- resolveAlg target ctx
-        // Value-receiver fallback rule: if target is a value-producing expression (not an
-        // algorithm), ResolveAlg returns NotAnAlgorithm — check value-based intrinsics first,
-        // then fall back to lexical lookup so that
-        //   e.P      → P(e)
-        //   e.P(a,b) → P(e, a, b)
-        // works for any receiver expression, including literals and parenthesized expressions.
-        // The injected receiver remains one argument boundary.
-        // Other errors (e.g. UnknownName) propagate as before.
-        var targetResult = ResolveAlg(target, ctx);
-        if (targetResult.IsError)
-        {
-            if (targetResult.Error is EvalError.NotAnAlgorithm)
-            {
-                // Value-only target (e.g. numeric literal): check value-based intrinsics
-                if (dotCall.UsesOrdinaryDotStringIntrinsic())
-                {
-                    var val = Eval(target, ctx, valEnv);
-                    if (val.IsError) return val.Error;
-                    return ResultToString(ctx, val.Value);
-                }
-                return CallLexicalWithReceiver(dotCall, ctx, valEnv);
-            }
-            return targetResult.Error;
-        }
-        var targetAlg = targetResult.Value;
-
-        // Value-based intrinsic: "string" — evaluate algorithm output and convert
-        if (dotCall.UsesOrdinaryDotStringIntrinsic())
-        {
-            var val = EvalDotStringReceiverAlgOutput(target, targetAlg, ctx, valEnv);
-            if (val.IsError) return val.Error;
-            return ResultToString(ctx, val.Value);
-        }
-
-        // Structural: property of target (exported only; private export remains accessible)
-        var prop = LookupPropBinding(targetAlg, name);
-        if (prop is not null)
-        {
-            if (!IsExported(prop))
-                return new EvalError.LocalOnlyProperty(OpenExprName(target), name, prop.Exposure);
-
-            var wired = ChildOf(targetAlg, prop.Value);
-            if (argsOpt is null)
-            {
-                var simpleCallee = TryGetFlatBinderUserEquivalent(wired);
-                if (simpleCallee is not null)
-                    return new EvalError.ArityMismatch(simpleCallee.Params.Count, 0);
-
-                if (wired is Algorithm.Conditional)
-                    return new EvalError.NoMatchingBranch(name);
-
-                // No args: 0-param → value access, has params → arity error
-                if (wired.Params.Count == 0)
-                    return EvalZeroArgPropertyAccess(targetAlg, prop, ZeroArgPropertyAccessKind.Structural, wired, ctx, valEnv);
-                return ZeroArgumentDemandArityMismatch(wired);
-            }
-
-            return EvalResolvedCall(
-                wired,
-                argsOpt,
-                ctx,
-                valEnv,
-                CallDiagnosticName.FromKnown(name));
-        }
-
-        if (targetAlg.DefinesConditionalBranchProperty(name))
-            return new EvalError.LocalOnlyProperty(OpenExprName(target), name, PropertyExposure.LocalOnlyConditionalAlgorithm);
-
-        // Lexical fallback (receiver injection via CallLexicalWithReceiver)
-        return CallLexicalWithReceiver(dotCall, ctx, valEnv);
-    }
-
-    /// <summary>
-    /// Resolves name lexically and calls with receiver prepended to args.
-    /// The injected receiver remains one argument expression for flat fixed
-    /// user calls; sequence builtin dot-call expansion is handled before this path.
-    /// Delegates to EvalCall to get builtin dispatch for free.
-    ///
-    /// DotCall lexical fallback to "while" and "repeat" keeps explicit init
-    /// arguments intact; the loop builtin turns each init argument into one
-    /// initial state slot after structural property lookup has had priority.
-    ///
-    /// Lean: callLexicalWithReceiverCounted (the Lean plain path is the
-    /// projection `evalDotCall`, so only the counted helper remains).
-    /// </summary>
     private readonly record struct SequenceBuiltinDotCall(
         BuiltinId Builtin,
         IReadOnlyList<ResolvedArgumentAlgorithm> Args);
@@ -8907,28 +8303,8 @@ public static partial class Evaluator
     /// the receiver as one injected leading segment. This is pure consumption
     /// of the front-end's Param-vs-Resolve decision — no runtime environment
     /// is probed to reconstruct it. Kept out of
-    /// <see cref="CallLexicalWithReceiver"/> so its temporaries never enlarge
-    /// that recursive frame (native stack-margin calibration).
-    /// </summary>
-    [MethodImpl(MethodImplOptions.NoInlining)]
-    private static EvalResult<Result> CallLexicalFallbackCalleeWithReceiver(
-        Expr.DotCall dotCall,
-        EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv)
-    {
-        var calleeR = ResolveAlg(dotCall.EffectiveLexicalFallback, ctx);
-        if (calleeR.IsError) return calleeR.Error;
-        return EvalResolvedCall(
-            calleeR.Value,
-            BuildLexicalReceiverCallArgs(dotCall.Target, dotCall.Args),
-            ctx,
-            valEnv,
-            CallDiagnosticName.FromKnown(dotCall.Name),
-            CallArgumentAssembly.InjectedDotReceiverLeading);
-    }
-
-    /// <summary>
-    /// Counted twin of <see cref="CallLexicalFallbackCalleeWithReceiver"/>.
+    /// <see cref="CallLexicalWithReceiverCounted"/> so its temporaries never
+    /// enlarge that recursive frame (native stack-margin calibration).
     /// </summary>
     [MethodImpl(MethodImplOptions.NoInlining)]
     private static EvalResult<CountedResult> CallLexicalFallbackCalleeWithReceiverCounted(
@@ -8989,43 +8365,24 @@ public static partial class Evaluator
         return null;
     }
 
-    private static EvalResult<Result> CallLexicalWithReceiver(
-        Expr.DotCall dotCall,
-        EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv)
-    {
-        // The STORED lexical-fallback identity decides the callee channel —
-        // the front-end's Param-vs-Resolve decision is CONSUMED here, never
-        // reconstructed from runtime environments. A Param fallback (or any
-        // non-Resolve host-built expression) resolves through canonical
-        // ResolveAlg out of line, so a parameter shadows a same-name builtin
-        // exactly as in plain-call position; the dispatch stays out of line so
-        // its temporaries never enlarge this recursive dot-chain frame
-        // (native stack-margin calibration; see the near-boundary dot-call
-        // chain pin in AstStructuralDepthProcessTests).
-        if (dotCall.EffectiveLexicalFallback is not Expr.Resolve(var fallbackName))
-            return CallLexicalFallbackCalleeWithReceiver(dotCall, ctx, valEnv);
-
-        var sequenceDotCallR = TryBuildSequenceBuiltinDotCall(fallbackName, dotCall.Target, dotCall.Args, ctx, valEnv);
-        if (sequenceDotCallR.IsError) return sequenceDotCallR.Error;
-        if (sequenceDotCallR.Value is { } sequenceDotCall)
-            return ApplyBuiltinResolved(sequenceDotCall.Builtin, sequenceDotCall.Args, ctx, valEnv);
-
-        var calleeR = ResolveNamedAlgorithm(fallbackName, span: null, ctx);
-        if (calleeR.IsError) return calleeR.Error;
-        var combinedArgs = BuildLexicalReceiverCallArgs(dotCall.Target, dotCall.Args);
-        return EvalResolvedCall(
-            calleeR.Value,
-            combinedArgs,
-            ctx,
-            valEnv,
-            CallDiagnosticName.FromKnown(fallbackName),
-            CallArgumentAssembly.InjectedDotReceiverLeading);
-    }
-
     /// <summary>
-    /// Counted dotCall evaluation for <c>reduce</c> step validation.
-    /// Mirrors <see cref="EvalDotCall"/>.
+    /// Counted dotCall evaluation — the CANONICAL owner of dot-call dispatch
+    /// (<see cref="EvalDotCall"/> is its value projection).
+    /// Smart dispatch:
+    /// 1. Value-based intrinsic (string) → evaluate target, convert numeric result to string
+    /// 2. Structural property found (navigation-only):
+    ///    - No args + 0-param → value access
+    ///    - No args + has params → arity mismatch error
+    ///    - Has args → delegate to <see cref="EvalResolvedCallCounted"/>
+    ///      (dual-view binding, no receiver injection)
+    /// 3. No property → lexical fallback (receiver injection via
+    ///    <see cref="CallLexicalWithReceiverCounted"/>)
+    /// When resolveAlg returns notAnAlgorithm (e.g. numeric literal target),
+    /// value-based intrinsics are checked before lexical fallback.
+    /// (The graced sources <c>a~.f</c> / <c>a.~f</c> arrive here as the SAME
+    /// node as <c>a.f</c>: Grace is a front-end parameter-order annotation that
+    /// elaboration consumes, so this method — and every diagnostic it produces
+    /// — cannot tell the sources apart.)
     /// Lean: <c>evalDotCallCounted</c>.
     /// </summary>
     private static EvalResult<CountedResult> EvalDotCallCounted(
@@ -9110,16 +8467,32 @@ public static partial class Evaluator
     }
 
     /// <summary>
-    /// Counted lexical fallback with receiver injection.
-    /// Mirrors <see cref="CallLexicalWithReceiver"/>.
-    /// Lean: <c>callLexicalWithReceiverCounted</c>.
+    /// Counted lexical fallback with receiver injection — the ONE lexical
+    /// receiver-injection implementation (the plain dot-call spelling reaches
+    /// it through <see cref="EvalDotCallCounted"/> and the value projection).
+    /// The injected receiver remains one argument expression for flat fixed
+    /// user calls; sequence builtin dot-call expansion is handled before the
+    /// resolved-call path. DotCall lexical fallback to <c>while</c> and
+    /// <c>repeat</c> keeps explicit init arguments intact; the loop builtin
+    /// turns each init argument into one initial state slot after structural
+    /// property lookup has had priority.
+    /// Lean: <c>callLexicalWithReceiverCounted</c> (the Lean plain path is the
+    /// projection <c>evalDotCall</c>, so only the counted helper exists).
     /// </summary>
     private static EvalResult<CountedResult> CallLexicalWithReceiverCounted(
         Expr.DotCall dotCall,
         EvalCtx ctx,
         IReadOnlyList<(string, Result)> valEnv)
     {
-        // Stored-fallback consumption — see CallLexicalWithReceiver.
+        // The STORED lexical-fallback identity decides the callee channel —
+        // the front-end's Param-vs-Resolve decision is CONSUMED here, never
+        // reconstructed from runtime environments. A Param fallback (or any
+        // non-Resolve host-built expression) resolves through canonical
+        // ResolveAlg out of line, so a parameter shadows a same-name builtin
+        // exactly as in plain-call position; the dispatch stays out of line so
+        // its temporaries never enlarge this recursive dot-chain frame
+        // (native stack-margin calibration; see the near-boundary dot-call
+        // chain pin in AstStructuralDepthProcessTests).
         if (dotCall.EffectiveLexicalFallback is not Expr.Resolve(var fallbackName))
             return CallLexicalFallbackCalleeWithReceiverCounted(dotCall, ctx, valEnv);
 
