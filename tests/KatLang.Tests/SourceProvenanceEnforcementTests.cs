@@ -25,18 +25,53 @@ namespace KatLang.Tests;
 /// </para>
 ///
 /// <para>
-/// <b>Why a text scan and not an analyzer.</b> The dangerous construct is
-/// syntactically distinctive, so a scan catches it with no false positives and
-/// no new package dependency. It deliberately does not attempt full dataflow —
-/// a test that stores the parse result and checks <c>HasErrors</c> itself is
-/// correct and is not the pattern that caused the defect.
+/// <b>Why a text scan and not an analyzer.</b> The direct-call construct is
+/// syntactically distinctive, and lightweight lexical masking keeps examples
+/// in comments and strings from becoming false positives without adding a new
+/// package dependency. This guard is deliberately line-based and does not
+/// attempt full dataflow: stored parse results and calls split across lines
+/// remain review concerns, while a stored result whose <c>HasErrors</c> is
+/// checked before root consumption is valid.
 /// </para>
 /// </summary>
 public class SourceProvenanceEnforcementTests
 {
-    /// <summary>Matches `X.Parse(anything).Root` — the diagnostic-discarding shape.</summary>
-    private static readonly Regex UnsafeParseRoot =
-        new(@"Parse(?:Syntax)?\s*\([^;]*?\)\s*\.\s*Root", RegexOptions.Compiled);
+    /// <summary>
+    /// Matches every diagnostic-discarding root-off-a-parse-call shape the
+    /// suite's entry points expose today:
+    /// <c>Parser.Parse(...).Root</c>, <c>Parser.ParseSyntax(...).Root</c> and
+    /// its alias <c>.SyntaxRoot</c>, the async form
+    /// <c>(await Parser.ParseAsync(...)).Root</c> (the lazy argument match
+    /// absorbs the await group's closing paren) and its sync-over-async
+    /// bypass <c>Parser.ParseAsync(...).Result.Root</c>, and the internal
+    /// pipeline roots <c>FrontEndPipeline.Process(...).ElaboratedRoot</c> /
+    /// <c>(await FrontEndPipeline.ProcessAsync(...)).ElaboratedRoot</c>
+    /// (a chained <c>.ToParseResult().Root</c> included). <c>Process</c> is
+    /// recognized only behind the <c>FrontEndPipeline</c> qualifier, so
+    /// unrelated Process-named methods stay unmatched. The sanctioned strict
+    /// helpers (<c>ParseValid</c>/<c>ParseValidAsync</c>/
+    /// <c>ParseSyntaxValidRoot</c>/<c>ParseAllowingDiagnostics</c>...) never
+    /// match: their names put an identifier character where this pattern
+    /// requires the call's opening parenthesis.
+    /// </summary>
+    private static readonly Regex UnsafeParseRoot = new(
+        @"(?:\bParser\s*\.\s*Parse(?:Syntax|Async)?|\bFrontEndPipeline\s*\.\s*Process(?:Async)?)"
+        + @"\s*\([^;]*?\)(?:\s*\.\s*Result)?\s*\.\s*(?:Syntax|Elaborated)?Root",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.NonBacktracking);
+
+    /// <summary>
+    /// The one violation decision, shared by the scanner, the allow-list
+    /// staleness check, and the recognizer self-tests below — the self-tests
+    /// exercise the REAL matcher, never a re-composed copy of it.
+    /// </summary>
+    private static bool IsViolationLine(string line)
+    {
+        var lexicalState = new CSharpLexicalState();
+        return IsViolationLine(line, lexicalState);
+    }
+
+    private static bool IsViolationLine(string line, CSharpLexicalState lexicalState)
+        => UnsafeParseRoot.IsMatch(lexicalState.CodeOnly(line));
 
     /// <summary>
     /// Sites where consuming a parse root WITHOUT checking diagnostics is the
@@ -75,13 +110,211 @@ public class SourceProvenanceEnforcementTests
         return directory!.FullName;
     }
 
-    /// <summary>Lines that merely talk about the construct in prose.</summary>
-    private static bool IsCommentary(string line)
+    /// <summary>
+    /// Lightweight C# lexical masking for the line-based guard. Strings and
+    /// comments become spaces before the root matcher runs, so examples in
+    /// prose cannot be false positives. Block comments, verbatim strings, and
+    /// raw strings retain state across lines; executable code after a closing
+    /// block-comment/string delimiter remains visible. This is deliberately
+    /// lexical rather than a Roslyn/dataflow analyzer — it only separates code
+    /// from trivia for the distinctive direct-call shape enforced here.
+    /// </summary>
+    private sealed class CSharpLexicalState
     {
-        var trimmed = line.TrimStart();
-        return trimmed.StartsWith("//", StringComparison.Ordinal)
-            || trimmed.StartsWith("///", StringComparison.Ordinal)
-            || trimmed.StartsWith("*", StringComparison.Ordinal);
+        private bool _inBlockComment;
+        private bool _inVerbatimString;
+        private int _rawStringDelimiterLength;
+
+        public string CodeOnly(string line)
+        {
+            var code = line.ToCharArray();
+            var index = 0;
+
+            while (index < code.Length)
+            {
+                if (_inBlockComment)
+                {
+                    var close = line.IndexOf("*/", index, StringComparison.Ordinal);
+                    if (close < 0)
+                    {
+                        Blank(code, index, code.Length);
+                        break;
+                    }
+
+                    Blank(code, index, close + 2);
+                    _inBlockComment = false;
+                    index = close + 2;
+                    continue;
+                }
+
+                if (_rawStringDelimiterLength != 0)
+                {
+                    var close = FindQuoteRun(line, index, _rawStringDelimiterLength);
+                    if (close < 0)
+                    {
+                        Blank(code, index, code.Length);
+                        break;
+                    }
+
+                    var closeEnd = close + QuoteRunLength(line, close);
+                    Blank(code, index, closeEnd);
+                    _rawStringDelimiterLength = 0;
+                    index = closeEnd;
+                    continue;
+                }
+
+                if (_inVerbatimString)
+                {
+                    var close = FindVerbatimStringEnd(line, index);
+                    if (close < 0)
+                    {
+                        Blank(code, index, code.Length);
+                        break;
+                    }
+
+                    Blank(code, index, close);
+                    _inVerbatimString = false;
+                    index = close;
+                    continue;
+                }
+
+                if (index + 1 < code.Length && code[index] == '/' && code[index + 1] == '/')
+                {
+                    Blank(code, index, code.Length);
+                    break;
+                }
+
+                if (index + 1 < code.Length && code[index] == '/' && code[index + 1] == '*')
+                {
+                    var start = index;
+                    _inBlockComment = true;
+                    index += 2;
+                    var close = line.IndexOf("*/", index, StringComparison.Ordinal);
+                    if (close < 0)
+                    {
+                        Blank(code, start, code.Length);
+                        break;
+                    }
+
+                    Blank(code, start, close + 2);
+                    _inBlockComment = false;
+                    index = close + 2;
+                    continue;
+                }
+
+                if (code[index] == '"')
+                {
+                    var quoteRunLength = QuoteRunLength(line, index);
+                    if (quoteRunLength >= 3)
+                    {
+                        _rawStringDelimiterLength = quoteRunLength;
+                        Blank(code, index, index + quoteRunLength);
+                        index += quoteRunLength;
+                        continue;
+                    }
+
+                    var start = index;
+                    if ((index > 0 && code[index - 1] == '@')
+                        || (index > 1 && code[index - 2] == '@' && code[index - 1] == '$'))
+                    {
+                        _inVerbatimString = true;
+                        index++;
+                        var close = FindVerbatimStringEnd(line, index);
+                        if (close < 0)
+                        {
+                            Blank(code, start, code.Length);
+                            break;
+                        }
+
+                        Blank(code, start, close);
+                        _inVerbatimString = false;
+                        index = close;
+                        continue;
+                    }
+
+                    index = FindEscapedLiteralEnd(line, index + 1, '"');
+                    Blank(code, start, index);
+                    continue;
+                }
+
+                if (code[index] == '\'')
+                {
+                    var start = index;
+                    index = FindEscapedLiteralEnd(line, index + 1, '\'');
+                    Blank(code, start, index);
+                    continue;
+                }
+
+                index++;
+            }
+
+            return new string(code);
+        }
+
+        private static int FindEscapedLiteralEnd(string line, int index, char delimiter)
+        {
+            var escaped = false;
+            while (index < line.Length)
+            {
+                var current = line[index++];
+                if (escaped)
+                {
+                    escaped = false;
+                    continue;
+                }
+                if (current == '\\')
+                {
+                    escaped = true;
+                    continue;
+                }
+                if (current == delimiter)
+                    break;
+            }
+            return index;
+        }
+
+        private static int FindVerbatimStringEnd(string line, int index)
+        {
+            while (index < line.Length)
+            {
+                if (line[index] != '"')
+                {
+                    index++;
+                    continue;
+                }
+
+                if (index + 1 < line.Length && line[index + 1] == '"')
+                {
+                    index += 2;
+                    continue;
+                }
+
+                return index + 1;
+            }
+            return -1;
+        }
+
+        private static int FindQuoteRun(string line, int index, int minimumLength)
+        {
+            while (index < line.Length)
+            {
+                if (line[index] == '"' && QuoteRunLength(line, index) >= minimumLength)
+                    return index;
+                index++;
+            }
+            return -1;
+        }
+
+        private static int QuoteRunLength(string line, int index)
+        {
+            var end = index;
+            while (end < line.Length && line[end] == '"')
+                end++;
+            return end - index;
+        }
+
+        private static void Blank(char[] code, int start, int endExclusive)
+            => Array.Fill(code, ' ', start, endExclusive - start);
     }
 
     private sealed record Violation(string File, int Line, string Text);
@@ -104,22 +337,11 @@ public class SourceProvenanceEnforcementTests
                 continue;
 
             var lines = File.ReadAllLines(path);
+            var lexicalState = new CSharpLexicalState();
             for (var i = 0; i < lines.Length; i++)
             {
-                if (IsCommentary(lines[i]))
-                    continue;
-                if (!UnsafeParseRoot.IsMatch(lines[i]))
-                    continue;
-
-                // `SourceProvenance.ParseValid(...).Root` and
-                // `...ParseAllowingDiagnostics(...).Root` are the sanctioned forms.
-                if (lines[i].Contains("ParseValid(", StringComparison.Ordinal)
-                    || lines[i].Contains("ParseAllowingDiagnostics(", StringComparison.Ordinal))
-                {
-                    continue;
-                }
-
-                violations.Add(new Violation(name, i + 1, lines[i].Trim()));
+                if (IsViolationLine(lines[i], lexicalState))
+                    violations.Add(new Violation(name, i + 1, lines[i].Trim()));
             }
         }
 
@@ -150,18 +372,19 @@ public class SourceProvenanceEnforcementTests
     [Fact]
     public void EveryPermissiveExceptionIsStillNeeded()
     {
-        var files = TestSourceFiles().ToDictionary(Path.GetFileName, static path => path, StringComparer.Ordinal);
+        var files = TestSourceFiles().ToDictionary(
+            static path => Path.GetFileName(path)!,
+            static path => path,
+            StringComparer.Ordinal);
 
         foreach (var (name, reason) in PermissiveSites)
         {
             Assert.True(files.ContainsKey(name), $"Permissive allow-list names a missing file: {name}");
             Assert.False(string.IsNullOrWhiteSpace(reason), $"Permissive entry '{name}' has no reason.");
 
+            var lexicalState = new CSharpLexicalState();
             var stillNeeded = File.ReadAllLines(files[name])
-                .Any(line => !IsCommentary(line)
-                    && UnsafeParseRoot.IsMatch(line)
-                    && !line.Contains("ParseValid(", StringComparison.Ordinal)
-                    && !line.Contains("ParseAllowingDiagnostics(", StringComparison.Ordinal));
+                .Any(line => IsViolationLine(line, lexicalState));
 
             Assert.True(
                 stillNeeded,
@@ -172,27 +395,73 @@ public class SourceProvenanceEnforcementTests
 
     /// <summary>
     /// The guard must actually detect the pattern it bans. This runs the real
-    /// matcher over representative snippets rather than trusting the regex by
-    /// inspection — a guard that silently stopped matching would be worse than
-    /// no guard, because the suite would look protected.
+    /// matcher (<see cref="IsViolationLine"/>) over representative snippets
+    /// rather than trusting the regex by inspection — a guard that silently
+    /// stopped matching would be worse than no guard, because the suite would
+    /// look protected. The rows cover every sanctioned root family: the sync
+    /// parser roots, the raw-syntax root and its <c>SyntaxRoot</c> alias, the
+    /// awaited async parser root (with and without options) plus its
+    /// <c>.Result</c> sync-over-async bypass, and the internal
+    /// <c>FrontEndPipeline</c> roots (sync, awaited async, and the chained
+    /// <c>ToParseResult().Root</c> form). The negative rows pin against
+    /// overmatching: parse calls whose result is stored or whose diagnostics
+    /// are checked, the strict provenance helpers (async included), prose in
+    /// comments, mere mentions of ParseAsync without a root, and
+    /// Process-named methods outside the FrontEndPipeline qualifier.
     /// </summary>
     [Theory]
     [InlineData("        var ast = Parser.Parse(source).Root;", true)]
     [InlineData("        var root = Parser.Parse(\"1 + 2\").Root;", true)]
     [InlineData("        return new Expr.AlgorithmExpr(Parser.Parse(src).Root);", true)]
     [InlineData("        var r = Parser.ParseSyntax(source).Root;", true)]
+    [InlineData("        var r = Parser.ParseSyntax(source).SyntaxRoot;", true)]
+    [InlineData("        var root = (await Parser.ParseAsync(source)).Root;", true)]
+    [InlineData("        var root = (await Parser.ParseAsync(source, options)).Root;", true)]
+    [InlineData("        var root = Parser.ParseAsync(source).Result.Root;", true)]
+    [InlineData("        var a = FrontEndPipeline.Process(source).ElaboratedRoot;", true)]
+    [InlineData("        var a = FrontEndPipeline.Process(source, options).ElaboratedRoot;", true)]
+    [InlineData("        var a = (await FrontEndPipeline.ProcessAsync(source, options)).ElaboratedRoot;", true)]
+    [InlineData("        var r = FrontEndPipeline.Process(source).ToParseResult().Root;", true)]
     [InlineData("        var ast = SourceProvenance.ParseValid(source).Root;", false)]
     [InlineData("        var ast = SourceProvenance.ParseAllowingDiagnostics(source).Root;", false)]
+    [InlineData("        var root = (await SourceProvenance.ParseValidAsync(source)).Root;", false)]
+    [InlineData("        var provenance = await SourceProvenance.ParseValidAsync(source, options);", false)]
+    [InlineData("        var syntaxRoot = SourceProvenance.ParseSyntaxValidRoot(source);", false)]
     [InlineData("        var parsed = Parser.Parse(source);", false)]
+    [InlineData("        var parsed = await Parser.ParseAsync(source, options);", false)]
+    [InlineData("        Assert.False((await Parser.ParseAsync(Source)).HasErrors);", false)]
+    [InlineData("        var frontEnd = FrontEndPipeline.Process(source);", false)]
+    [InlineData("        var done = loader.Process(request).Root;", false)]
+    [InlineData("        var done = SomeOtherParser.ParseAsync(request).Root;", false)]
+    [InlineData("        var s = \"see Parser.ParseAsync(x) for loading\";", false)]
+    [InlineData("        var s = \"Parser.Parse(x).Root\";", false)]
+    [InlineData("        var s = @\"Parser.ParseAsync(x).Result.Root\";", false)]
+    [InlineData("        var s = @$\"see \"\"Parser.Parse(x).Root\"\"\";", false)]
+    [InlineData("        var s = \"\"\"Parser.ParseAsync(x).Root\"\"\";", false)]
+    [InlineData("        // var ast = Parser.Parse(source).Root; (prose about the banned shape)", false)]
+    [InlineData("        /* var ast = Parser.Parse(source).Root; */", false)]
+    [InlineData("        /* prose */ var ast = Parser.Parse(source).Root;", true)]
+    [InlineData("        var ok = SourceProvenance.ParseValid(x).Root; var bad = Parser.Parse(y).Root;", true)]
     [InlineData("        Assert.False(parsed.HasErrors);", false)]
     public void GuardMatchesExactlyTheDiagnosticDiscardingShape(string line, bool expectedViolation)
-    {
-        var matches = !IsCommentary(line)
-            && UnsafeParseRoot.IsMatch(line)
-            && !line.Contains("ParseValid(", StringComparison.Ordinal)
-            && !line.Contains("ParseAllowingDiagnostics(", StringComparison.Ordinal);
+        => Assert.Equal(expectedViolation, IsViolationLine(line));
 
-        Assert.Equal(expectedViolation, matches);
+    [Fact]
+    public void Guard_BlockCommentState_DoesNotHideCodeAfterTheClosingDelimiter()
+    {
+        var lexicalState = new CSharpLexicalState();
+        Assert.False(IsViolationLine("/* Parser.Parse(x).Root", lexicalState));
+        Assert.True(IsViolationLine("*/ var root = Parser.Parse(y).Root;", lexicalState));
+    }
+
+    [Fact]
+    public void Guard_LongNonMatchingLine_WithManyParserFragments_RemainsNonMatching()
+    {
+        // The production matcher uses RegexOptions.NonBacktracking, so this
+        // adversarial row is structurally linear rather than one suffix scan
+        // per ParseAsync fragment. No wall-clock assertion is needed.
+        var line = string.Join(" + ", Enumerable.Repeat("Parser.ParseAsync(source)", 20_000));
+        Assert.False(IsViolationLine(line));
     }
 
     // ── Strict-helper contract (Phase G) ──────────────────────────────────────
@@ -221,6 +490,45 @@ public class SourceProvenanceEnforcementTests
         Assert.False(provenance.HasFrontEndErrors);
         Assert.Empty(provenance.Diagnostics);
         Assert.Contains(provenance.Root.Properties, p => p.Name == "A");
+    }
+
+    /// <summary>
+    /// <c>ParseValidAsync</c> carries the same strict contract as
+    /// <c>ParseValid</c> over the authoritative async front end.
+    /// </summary>
+    [Fact]
+    public async Task ParseValidAsync_FailsLoudlyOnFrontEndRejectedSource()
+    {
+        var failure = await Record.ExceptionAsync(
+            () => SourceProvenance.ParseValidAsync("A = { public X = 1 }\nopen A\nX"));
+
+        Assert.NotNull(failure);
+        Assert.Contains("clean front end", failure!.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ParseValidAsync_ElaboratesLoadingSourceThroughTheAsyncFrontEnd()
+    {
+        // `open 'url'` with a configured downloader is elaborable ONLY by the
+        // asynchronous front end: the synchronous source-level entry points
+        // reject a downloader-configured options object with
+        // InvalidOperationException before parsing. That pins the helper to
+        // the real async path — a quiet sync-parse reimplementation cannot
+        // pass this test.
+        var options = new RunOptions
+        {
+            DownloadCode = (_, _) => ValueTask.FromResult("public M = 41"),
+        };
+
+        var provenance = await SourceProvenance.ParseValidAsync(
+            "open 'https://katlang.org/provenance/mod.kat'\nM + 1", options);
+
+        Assert.False(provenance.HasFrontEndErrors);
+        Assert.Empty(provenance.Diagnostics);
+
+        var result = provenance.Evaluate();
+        Assert.False(result.IsError);
+        Assert.True(Result.ValueComparer.Equals(result.Value, new Result.Atom(42)));
     }
 
     /// <summary>The permissive helper must keep diagnostics observable, not swallow them.</summary>

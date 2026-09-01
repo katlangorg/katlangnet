@@ -78,6 +78,14 @@ public class FrontEndPipelineInvariantTests
         var first = FrontEndPipeline.Process(source);
         var second = FrontEndPipeline.Process(source);
 
+        Assert.False(
+            first.HasErrors,
+            "first front end must be clean: "
+            + string.Join("; ", first.Diagnostics.Select(d => d.Message)));
+        Assert.False(
+            second.HasErrors,
+            "second front end must be clean: "
+            + string.Join("; ", second.Diagnostics.Select(d => d.Message)));
         Assert.Equal(Triples(first.Diagnostics), Triples(second.Diagnostics));
         Assert.Equal(PropertyNames(first.ElaboratedRoot), PropertyNames(second.ElaboratedRoot));
         Assert.Equal(first.CanEvaluateAfterLoadErrors, second.CanEvaluateAfterLoadErrors);
@@ -91,12 +99,28 @@ public class FrontEndPipelineInvariantTests
         const string a = "x, *y, z = (1, 2, 3, 4)\nx + z";
         const string b = "p, q = (9, 8)\nHelper(k) = k + p\nHelper(q)";
 
-        var a1 = PropertyNames(FrontEndPipeline.Process(a).ElaboratedRoot);
+        var a1 = PropertyNames(ProcessedCleanRoot(a));
         _ = FrontEndPipeline.Process(b);                 // unrelated work in between
         _ = FrontEndPipeline.Process(b);
-        var a2 = PropertyNames(FrontEndPipeline.Process(a).ElaboratedRoot);
+        var a2 = PropertyNames(ProcessedCleanRoot(a));
 
         Assert.Equal(a1, a2);
+    }
+
+    /// <summary>
+    /// Elaborated root with established provenance: a diagnostic would make
+    /// the compared property-name lists recovery artifacts (two equal-but-
+    /// meaningless lists would keep the test green), so a clean front end is
+    /// asserted before the root is used as evidence.
+    /// </summary>
+    private static Algorithm ProcessedCleanRoot(string source)
+    {
+        var processed = FrontEndPipeline.Process(source);
+        Assert.False(
+            processed.HasErrors,
+            "expected a clean front end: "
+            + string.Join("; ", processed.Diagnostics.Select(d => d.Message)));
+        return processed.ElaboratedRoot;
     }
 
     // ── Public wrapper parity: Parser.Parse == Process().ToParseResult() ──────

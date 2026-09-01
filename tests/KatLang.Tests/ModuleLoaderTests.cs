@@ -100,6 +100,32 @@ public class ModuleLoaderTests
         return Evaluator.RunFlat(new Expr.AlgorithmExpr(result.Root));
     }
 
+    [Fact]
+    public async Task StrictAsyncProvenance_LoadedModule_EvaluatesThroughParseValidAsync()
+    {
+        // Strict provenance for a loading program: ParseValidAsync goes
+        // through the authoritative async front end — the only entry that can
+        // elaborate `open 'url'` when a downloader is configured (the sync
+        // entry points reject downloader-configured options before parsing) —
+        // fails loudly on any diagnostic, and hands back the elaborated root
+        // without ever discarding front-end diagnostics.
+        var provenance = await SourceProvenance.ParseValidAsync(
+            "open 'https://katlang.org/lib/answers.kat'\nAnswer",
+            new RunOptions
+            {
+                DownloadCode = MockDownloader(new Dictionary<string, string>
+                {
+                    ["https://katlang.org/lib/answers.kat"] = "public Answer = 42",
+                }),
+            });
+
+        Assert.False(ContainsRawLoad(provenance.Root));
+
+        var result = provenance.Evaluate();
+        Assert.False(result.IsError);
+        Assert.True(Result.ValueComparer.Equals(result.Value, new Result.Atom(42)));
+    }
+
     // Ã¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢Â
     //  A) Basic load into lib definition
     // Ã¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢Â
@@ -689,8 +715,8 @@ public class ModuleLoaderTests
             'hello'
             """;
 
-        var result = Parser.Parse(source);
-        var evalResult = Evaluator.Run(new Expr.AlgorithmExpr(result.Root));
+        var provenance = SourceProvenance.ParseValid(source);
+        var evalResult = provenance.Evaluate();
         Assert.True(evalResult.IsOk);
         Assert.IsType<Result.Str>(evalResult.Value);
         Assert.Equal("hello", ((Result.Str)evalResult.Value).Value);

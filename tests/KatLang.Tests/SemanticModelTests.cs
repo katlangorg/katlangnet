@@ -2276,9 +2276,9 @@ public class SemanticModelTests
             span,
             [new VisibleSymbol("Inner", IdentifierClassification.PropertyReference, null, null)],
             NestingDepth: 2);
-        var parsed = Parser.Parse("1");
+        var root = SourceProvenance.ParseValid("1").Root;
         var model = new SemanticModel(
-            parsed.Root,
+            root,
             [],
             [],
             [],
@@ -2360,13 +2360,13 @@ public class SemanticModelTests
             PropertyExposure.Exported,
             [],
             []);
-        var parsed = Parser.Parse("1");
+        var root = SourceProvenance.ParseValid("1").Root;
         var properties = new Dictionary<DeclarationOccurrence, PropertyInfo>(ReferenceEqualityComparer.Instance)
         {
             [firstDeclaration] = first,
             [secondDeclaration] = second,
         };
-        var model = new SemanticModel(parsed.Root, [], [], [], [], properties, []);
+        var model = new SemanticModel(root, [], [], [], [], properties, []);
 
         Assert.Same(first, model.FindPropertyByDeclaration(firstDeclaration));
         Assert.Same(second, model.FindPropertyByDeclaration(secondDeclaration));

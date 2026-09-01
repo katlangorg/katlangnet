@@ -263,7 +263,7 @@ public class DiagnosticCodeTests
     [Fact]
     public void LoadElaborationGuardDiagnostics_CarryTheirFamilyCodes()
     {
-        var root = Parser.ParseSyntax("open 'https://katlang.org/lib.kat'\n1").SyntaxRoot;
+        var root = SourceProvenance.ParseSyntaxValidRoot("open 'https://katlang.org/lib.kat'\n1");
 
         var unavailable = LoadElaborationGuard.CreateUnavailableDiagnostics(root);
         Assert.NotEmpty(unavailable);

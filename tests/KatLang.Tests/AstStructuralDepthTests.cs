@@ -1378,7 +1378,7 @@ public class AstStructuralDepthTests
     public async Task ModuleLoaderElaborate_RechecksCachedModulesAtTheirFinalSplicePath()
     {
         const string url = "https://katlang.org/cache/deep.kat";
-        var load = Assert.Single(Parser.ParseSyntax($"open '{url}'").SyntaxRoot.Opens);
+        var load = Assert.Single(SourceProvenance.ParseSyntaxValidRoot($"open '{url}'").Opens);
 
         // The input host AST is safely below the raw loader ceiling. The first open
         // loads and caches a module with 80 block/algorithm levels. The second open
@@ -1434,7 +1434,7 @@ public class AstStructuralDepthTests
                 return ValueTask.FromResult(BracketChainComposition(levels: 9, chainOps: 70));
             });
 
-        await loader.ElaborateAsync(Parser.ParseSyntax($"open '{url}'").SyntaxRoot);
+        await loader.ElaborateAsync(SourceProvenance.ParseSyntaxValidRoot($"open '{url}'"));
 
         Assert.Equal(1, downloads);
         Assert.Equal(0, loader.CachedModuleCount);
@@ -2375,8 +2375,9 @@ public class AstStructuralDepthProcessTests
     /// The parser-safety proof, on a dedicated 1 MiB thread: every materially
     /// different recursive grammar shape at ONE BELOW, EXACTLY AT, and ONE BEYOND its
     /// maximum accepted level count under the ONE cumulative weighted parser
-    /// recursion budget (<c>Parser.MaxNestingDepth</c> = 384 units; groups/blocks
-    /// 4 units per level, lists/call arguments 3, prefix/pattern/power ~1). Below
+    /// recursion budget (<c>Parser.MaxNestingDepth</c> = 384 units; trailing-brace
+    /// calls 5 units per level, groups/blocks 4, lists/call arguments 3,
+    /// prefix/pattern/power ~1). Below
     /// and at each boundary the source parses (and evaluates to its exact value
     /// where the later structural gates admit it); one beyond returns the
     /// established nesting diagnostic — never process death. Every accepted maximum
@@ -2435,6 +2436,10 @@ public class AstStructuralDepthProcessTests
             // Lists, call argument nesting: 3 units/level -> 127 levels max.
             AssertBoundary(n => Rep("[", n) + "1" + Rep("]", n), 127);
             AssertBoundary(n => "f(x) = x\n" + Rep("f(", n) + "1" + Rep(")", n), 127);
+
+            // Trailing-brace calls charge BOTH heavy surcharges (call + block
+            // machineries): 5 units/level -> 76 levels max.
+            AssertBoundary(n => "f(x) = x\n" + Rep("f{", n) + "1" + Rep("}", n), 76);
 
             // Prefix unary: ~1 unit/level.
             AssertBoundary(n => Rep("-", n) + "1", 382);
@@ -2726,7 +2731,7 @@ public class AstStructuralDepthProcessTests
             var deepSiteDeepLoader = new ModuleLoader(
                 deepSiteDeep,
                 InMemoryDownloader(_ => "public LF = " + new string('{', 80) + "2" + new string('}', 80)));
-            ElaborateSynchronously(deepSiteDeepLoader, Parser.ParseSyntax(deepSitePrefix).SyntaxRoot);
+            ElaborateSynchronously(deepSiteDeepLoader, SourceProvenance.ParseSyntaxValidRoot(deepSitePrefix));
             Assert.Contains(
                 deepSiteDeep,
                 d => d.Message.Contains("cumulative structural", StringComparison.Ordinal));
@@ -2763,10 +2768,10 @@ public class AstStructuralDepthProcessTests
                 _ => "public RB = " + new string('{', 80) + "9" + new string('}', 80));
             var reuseDeep = new List<Diagnostic>();
             var reuseDeepLoader = new ModuleLoader(reuseDeep, reuseModules);
-            ElaborateSynchronously(reuseDeepLoader, Parser.ParseSyntax(
+            ElaborateSynchronously(reuseDeepLoader, SourceProvenance.ParseSyntaxValidRoot(
                 "Deep = " + new string('{', 80)
                 + "open 'https://katlang.org/deep/reuse.kat'\nRB"
-                + new string('}', 80) + "\npublic X = 1").SyntaxRoot);
+                + new string('}', 80) + "\npublic X = 1"));
             Assert.Contains(
                 reuseDeep,
                 d => d.Message.Contains("cumulative structural", StringComparison.Ordinal));
@@ -2799,10 +2804,10 @@ public class AstStructuralDepthProcessTests
             var shortCircuitDiags = new List<Diagnostic>();
             var shortCircuitLoader = new ModuleLoader(
                 shortCircuitDiags, InMemoryDownloader(ShortCircuitDownloader));
-            ElaborateSynchronously(shortCircuitLoader, Parser.ParseSyntax(
+            ElaborateSynchronously(shortCircuitLoader, SourceProvenance.ParseSyntaxValidRoot(
                 "Deep = " + new string('{', 80)
                 + "open 'https://katlang.org/deep/sc1.kat'\nS1"
-                + new string('}', 80) + "\npublic X = 1").SyntaxRoot);
+                + new string('}', 80) + "\npublic X = 1"));
             Assert.Contains(
                 shortCircuitDiags,
                 d => d.Message.Contains("cumulative structural", StringComparison.Ordinal));

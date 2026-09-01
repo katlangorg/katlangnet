@@ -129,6 +129,24 @@ public class ParserNestingDepthTests
     }
 
     [Fact]
+    public void TrailingBraceCallBoundary_AtMaximumParses_OneBeyondDiagnoses()
+    {
+        // A trailing-brace call level charges 5 units: the two base charges
+        // (ParseExpression + ParseUnary) plus BOTH heavy surcharges, because
+        // the form runs the call machinery AND the block machinery
+        // (EnterHeavyNesting(CallArgsNestingSurcharge + BlockNestingSurcharge)
+        // in ParseCallArgs). 76 levels peak at 76 x 5 + 2 (innermost leaf)
+        // = 382 <= 384 and parse; level 77's surcharge chokepoint reaches
+        // 77 x 5 = 385 > 384 and diagnoses. The historical calibration
+        // comment claimed 4 units while the implementation has always charged
+        // the conservative 5 — this pins the real boundary so a one-unit
+        // charge drift in either direction fails here.
+        AssertParses("f(x) = x\n" + Rep("f{", 76) + "1" + Rep("}", 76));
+        Assert.True(HasNestingDiagnostic(Parser.ParseSyntax(
+            "f(x) = x\n" + Rep("f{", 77) + "1" + Rep("}", 77))));
+    }
+
+    [Fact]
     public void PatternBoundary_AtMaximumParses_OneBeyondDiagnoses()
     {
         AssertParses("F" + Rep("(", 384) + "x" + Rep(")", 384) + " = x\nF(1)");

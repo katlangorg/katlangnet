@@ -4,8 +4,8 @@ public class ParameterDetectorTests
 {
     private static Algorithm ParseAndDetect(string source)
     {
-        var result = Parser.ParseSyntax(source);
-        var (detected, _) = ParameterDetector.Detect(result.Root);
+        var root = SourceProvenance.ParseSyntaxValidRoot(source);
+        var (detected, _) = ParameterDetector.Detect(root);
         return detected;
     }
 
@@ -455,8 +455,8 @@ public class ParameterDetectorTests
     public void Detect_OpenPublicProperty_NotAParam()
     {
         var source = """
-            Lib = { public inc = x + 1 }
             open Lib
+            Lib = { public inc = x + 1 }
             inc
             """;
         var ast = ParseAndDetect(source);
@@ -470,8 +470,8 @@ public class ParameterDetectorTests
     public void Detect_OpenPrivateProperty_StillAParam()
     {
         var source = """
-            Lib = { inc = x + 1 }
             open Lib
+            Lib = { inc = x + 1 }
             inc + 1
             """;
         var ast = ParseAndDetect(source);
@@ -485,9 +485,9 @@ public class ParameterDetectorTests
     public void Detect_OpenMultipleLibraries_CollectsFromAll()
     {
         var source = """
+            open A, B
             A = { public foo = 1 }
             B = { public bar = 2 }
-            open A, B
             foo + bar + z
             """;
         var ast = ParseAndDetect(source);
@@ -506,12 +506,15 @@ public class ParameterDetectorTests
         // `A * B` under the star law, and `open A*, B` would make B a real
         // second target — each would exercise something else.)
         var source = """
+            open A*
             A = { public foo = 1 }
             B = { public bar = 2 }
-            open A*
             foo + bar + z
             """;
-        var ast = ParseAndDetect(source);
+        var syntax = Parser.ParseSyntax(source);
+        var diagnostic = Assert.Single(syntax.Diagnostics);
+        Assert.Equal(DiagnosticCode.BadOpenForm, diagnostic.Code);
+        var (ast, _) = ParameterDetector.Detect(syntax.Root);
 
         Assert.Equal(["foo", "bar", "z"], ast.Params);
     }
@@ -521,8 +524,8 @@ public class ParameterDetectorTests
     {
         // Child property body should see names from parent's opens
         var source = """
-            Lib = { public val = 42 }
             open Lib
+            Lib = { public val = 42 }
             F = val + 1
             F
             """;
@@ -538,8 +541,8 @@ public class ParameterDetectorTests
     public void Detect_OpenDotPath_ResolvesPublicIntermediate()
     {
         var source = """
-            Outer = { public Inner = { public val = 42 } }
             open Outer.Inner
+            Outer = { public Inner = { public val = 42 } }
             val
             """;
         var ast = ParseAndDetect(source);
@@ -553,8 +556,8 @@ public class ParameterDetectorTests
     public void Detect_OpenDotPath_PrivateIntermediate_StillAParam()
     {
         var source = """
-            Outer = { Inner = { public val = 42 } }
             open Outer.Inner
+            Outer = { Inner = { public val = 42 } }
             val + 1
             """;
         var ast = ParseAndDetect(source);
@@ -694,8 +697,8 @@ public class ParameterDetectorTests
 
     private static IReadOnlyList<Diagnostic> ParseAndDetectDiagnostics(string source)
     {
-        var result = Parser.ParseSyntax(source);
-        var (_, diagnostics) = ParameterDetector.Detect(result.Root);
+        var root = SourceProvenance.ParseSyntaxValidRoot(source);
+        var (_, diagnostics) = ParameterDetector.Detect(root);
         return diagnostics;
     }
 
@@ -804,8 +807,8 @@ public class ParameterDetectorTests
     [Fact]
     public void Detect_ExplicitParameterList_FreeIdentifier_ReportsDiagnosticAndDoesNotBecomeParam()
     {
-        var result = Parser.ParseSyntax("F((x, y)) = x + y + z");
-        var (detected, diagnostics) = ParameterDetector.Detect(result.Root);
+        var root = SourceProvenance.ParseSyntaxValidRoot("F((x, y)) = x + y + z");
+        var (detected, diagnostics) = ParameterDetector.Detect(root);
 
         var error = Assert.Single(diagnostics);
         Assert.Equal(DiagnosticSeverity.Error, error.Severity);
@@ -838,7 +841,7 @@ public class ParameterDetectorTests
         // Branch 1 has free identifier 'a', branch 2 is fine
         var source = """
             Expense(1, qty) = a * qty
-            Expense(2, a, qty) = a * qty
+            Expense(2, qty) = qty
             """;
         var diags = ParseAndDetectDiagnostics(source);
 

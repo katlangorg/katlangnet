@@ -135,6 +135,9 @@ public class AsyncHostOperationTests
         var operations = HostOperations.Create(
             HostOperation.CreateAsync("Data", (_, _) => ValueTask.FromResult(Atom(1))));
         var parsed = Parser.Parse("Data", new RunOptions { HostOperations = operations });
+        Assert.False(
+            parsed.HasErrors,
+            string.Join(Environment.NewLine, parsed.Diagnostics.Select(static diagnostic => diagnostic.Message)));
         var ast = new Expr.AlgorithmExpr(parsed.Root);
 
         // Routing enforcement, not documentation: an internal caller cannot select the

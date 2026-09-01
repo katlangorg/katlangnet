@@ -47,6 +47,31 @@ public sealed record SourceProvenance(string Source, ParseResult Parsed)
     public static SourceProvenance ParseValid(string source)
     {
         var parsed = Parser.Parse(source);
+        RequireCleanFrontEnd(parsed, source);
+        return new SourceProvenance(source, parsed);
+    }
+
+    /// <summary>
+    /// Async analogue of <see cref="ParseValid"/> through the authoritative
+    /// asynchronous front end (<see cref="Parser.ParseAsync"/>) — the only
+    /// public entry that can elaborate <c>load</c>/<c>open 'url'</c> sources,
+    /// whose module downloads may genuinely suspend source processing. Same
+    /// contract: any parser or elaboration diagnostic fails the test
+    /// immediately. A downloader-configured <paramref name="options"/> also
+    /// guards the helper itself, because the synchronous entry points reject
+    /// such an options object with <see cref="InvalidOperationException"/>
+    /// before parsing — this helper cannot be quietly reimplemented over the
+    /// synchronous parser without failing every loading test that uses it.
+    /// </summary>
+    public static async Task<SourceProvenance> ParseValidAsync(string source, RunOptions? options = null)
+    {
+        var parsed = await Parser.ParseAsync(source, options);
+        RequireCleanFrontEnd(parsed, source);
+        return new SourceProvenance(source, parsed);
+    }
+
+    private static void RequireCleanFrontEnd(ParseResult parsed, string source)
+    {
         if (parsed.HasErrors)
         {
             Assert.Fail(
@@ -55,8 +80,6 @@ public sealed record SourceProvenance(string Source, ParseResult Parsed)
                 + string.Join(Environment.NewLine, parsed.Diagnostics.Select(d => "  - " + d.Message.Split('\n')[0]))
                 + Environment.NewLine + "Source:" + Environment.NewLine + source);
         }
-
-        return new SourceProvenance(source, parsed);
     }
 
     /// <summary>

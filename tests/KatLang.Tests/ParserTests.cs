@@ -1823,9 +1823,13 @@ public class ParserTests
     {
         // Architecture regression: `open` has a dedicated comma-list parser.
         // The open-target parsing region must never invoke the generic
-        // output-precedence machinery (sequence construction, adjacency, sequence
-        // spread) — open atoms are plain expressions, with spread-marked
-        // targets rejected by open-form validation.
+        // expression-LIST machinery (implicit adjacency separators, semicolon
+        // recovery, spread slots) — open atoms are single plain expressions
+        // parsed by ParseExpression, with spread-marked targets rejected by
+        // open-form validation. ParseExpressionListOperand is that machinery's
+        // one entry point (the historical ParseOutputLineExprs wrapper over it
+        // is gone), so its name appearing in the open region would mean the
+        // dedicated comma-list model regressed into output-precedence parsing.
         var source = ReadParserSource();
         var start = source.IndexOf("private List<Expr> ParseOpenTargetList", StringComparison.Ordinal);
         var end = source.IndexOf("private static Expr CreateLoadOpenTarget", StringComparison.Ordinal);
@@ -1834,8 +1838,9 @@ public class ParserTests
             "Expected the ParseOpenTargetList .. CreateLoadOpenTarget region in Parser.cs.");
 
         var openRegion = source[start..end];
-        Assert.DoesNotContain("ParseOutputOperatorExpression", openRegion, StringComparison.Ordinal);
-        Assert.DoesNotContain("ParseOutputLineExprs", openRegion, StringComparison.Ordinal);
+        Assert.Contains("return ParseExpression();", openRegion, StringComparison.Ordinal);
+        Assert.DoesNotContain("ParseExpressionListOperand", openRegion, StringComparison.Ordinal);
+        Assert.DoesNotContain("StartsImplicitExpressionListSeparator", openRegion, StringComparison.Ordinal);
     }
 
     private static string ReadParserSource()
@@ -3390,6 +3395,263 @@ public class ParserTests
             d => d.Message.Contains("Expected an open target after ','"));
         Assert.Equal("A", Assert.IsType<Expr.Resolve>(Assert.Single(result.Root.Opens)).Name);
         Assert.Equal("P", Assert.Single(result.Root.Properties).Name);
+    }
+
+    [Fact]
+    public void Parse_Open_DanglingCommaBeforeDeconstructionLine_KeepsDeconstructionIntact()
+    {
+        // The open-target recovery boundary and the adjacency rule share ONE
+        // declaration-starter relation. Historically the open-side copy missed
+        // the binding-pattern form, so `x` was swallowed as a second open
+        // target and the deconstruction was torn apart (opens [A, x], a lone
+        // property `y`, plus a cascade diagnostic). The dangling comma now
+        // reports exactly one targeted diagnostic and the following
+        // deconstruction line stays one intact declaration.
+        var result = Parser.ParseSyntax("open A,\nx, y = 1");
+
+        var diagnostic = Assert.Single(result.Diagnostics);
+        Assert.Equal(DiagnosticCode.InvalidOpenTargetList, diagnostic.Code);
+        Assert.Contains("Expected an open target after ','", diagnostic.Message);
+        // The span points at the dangling comma itself (line 1, column 7).
+        Assert.Equal(new SourceSpan(1, 7, 1, 7), diagnostic.Span);
+
+        Assert.Equal("A", Assert.IsType<Expr.Resolve>(Assert.Single(result.Root.Opens)).Name);
+        Assert.Empty(result.Root.Output);
+
+        // The deconstruction elaborates exactly like its well-formed
+        // counterpart `open A` newline `x, y = 1`: one synthetic shared-RHS
+        // property plus one property per target, in declaration order.
+        var canonical = Parser.ParseSyntax("open A\nx, y = 1");
+        Assert.False(canonical.HasErrors);
+        Assert.Equal(
+            global::KatLang.ParserFuzz.FrontEndFingerprint.ComputeParseResult(canonical.Root, []),
+            global::KatLang.ParserFuzz.FrontEndFingerprint.ComputeParseResult(result.Root, []));
+        Assert.Equal(
+            canonical.Root.Properties.Select(static p => p.Name),
+            result.Root.Properties.Select(static p => p.Name));
+        Assert.Equal(
+            ["$deconstruct$0", "x", "y"],
+            result.Root.Properties.Select(static p => p.Name).ToArray());
+
+    }
+
+    [Fact]
+    public void Parse_Open_DanglingCommaBeforeCollectingDeconstruction_KeepsCollectMarker()
+    {
+        // The torn recovery was even worse for a collecting deconstruction:
+        // after swallowing `x` as an open target, the separator-mistake branch
+        // consumed the `*` run (the `open 'url'*` guard), so `*y` silently
+        // became the PLAIN property `y`. The intact recovery keeps the whole
+        // binding pattern, collect marker included.
+        var result = Parser.ParseSyntax("open A,\nx, *y = (1, 2)");
+
+        var diagnostic = Assert.Single(result.Diagnostics);
+        Assert.Equal(DiagnosticCode.InvalidOpenTargetList, diagnostic.Code);
+        Assert.Equal("A", Assert.IsType<Expr.Resolve>(Assert.Single(result.Root.Opens)).Name);
+        Assert.Equal(
+            ["$deconstruct$0", "x", "y"],
+            result.Root.Properties.Select(static p => p.Name).ToArray());
+
+        var canonical = Parser.ParseSyntax("open A\nx, *y = (1, 2)");
+        Assert.False(canonical.HasErrors);
+        Assert.Equal(
+            global::KatLang.ParserFuzz.FrontEndFingerprint.ComputeParseResult(canonical.Root, []),
+            global::KatLang.ParserFuzz.FrontEndFingerprint.ComputeParseResult(result.Root, []));
+
+        // `y` still binds through the shared sequence-value pattern as a
+        // COLLECTING binding. The target property's body applies an inline
+        // pattern helper to the shared RHS property; the pattern lives on
+        // that helper.
+        var yBody = Assert.IsType<Algorithm.User>(result.Root.Properties[2].Value);
+        var helperCall = Assert.IsType<Expr.Call>(Assert.Single(yBody.Output));
+        var yHelper = Assert.IsType<Expr.AlgorithmExpr>(helperCall.Function).Algorithm;
+        var pattern = Assert.IsType<SequenceValueParameterPattern>(Assert.Single(yHelper.ParameterPatterns));
+        Assert.Collection(
+            pattern.Items,
+            item => Assert.Equal(ParameterKind.Normal, Assert.IsType<CaptureParameterPattern>(item).Kind),
+            item => Assert.Equal(ParameterKind.Collecting, Assert.IsType<CaptureParameterPattern>(item).Kind));
+    }
+
+    [Theory]
+    [InlineData("open A,")]
+    [InlineData("open 'url',")]
+    public void Parse_Open_DanglingCommaBeforeStarLedDeconstruction_KeepsCollectMarker(string openLine)
+    {
+        var result = Parser.ParseSyntax(openLine + "\n*items = (1, 2)");
+
+        var diagnostic = Assert.Single(result.Diagnostics);
+        Assert.Equal(DiagnosticCode.InvalidOpenTargetList, diagnostic.Code);
+        Assert.Single(result.Root.Opens);
+        Assert.Equal(
+            ["$deconstruct$0", "items"],
+            result.Root.Properties.Select(static property => property.Name).ToArray());
+
+        var itemsBody = Assert.IsType<Algorithm.User>(result.Root.Properties[1].Value);
+        var helperCall = Assert.IsType<Expr.Call>(Assert.Single(itemsBody.Output));
+        var helper = Assert.IsType<Expr.AlgorithmExpr>(helperCall.Function).Algorithm;
+        var pattern = Assert.IsType<SequenceValueParameterPattern>(Assert.Single(helper.ParameterPatterns));
+        var item = Assert.IsType<CaptureParameterPattern>(Assert.Single(pattern.Items));
+        Assert.Equal(ParameterKind.Collecting, item.Kind);
+        Assert.NotNull(item.CollectMarkerSpan);
+    }
+
+    [Fact]
+    public void Parse_Open_DanglingCommaBeforeMalformedCollectingDeconstruction_KeepsIndependentDiagnostic()
+    {
+        var result = Parser.ParseSyntax("open A,\nx, * y = (1, 2)");
+
+        Assert.Collection(
+            result.Diagnostics,
+            diagnostic => Assert.Equal(DiagnosticCode.InvalidOpenTargetList, diagnostic.Code),
+            diagnostic => Assert.Equal(DiagnosticCode.InvalidCollectMarker, diagnostic.Code));
+        Assert.Equal("A", Assert.IsType<Expr.Resolve>(Assert.Single(result.Root.Opens)).Name);
+        Assert.Equal(
+            ["$deconstruct$0", "x", "y"],
+            result.Root.Properties.Select(static property => property.Name).ToArray());
+
+        var yBody = Assert.IsType<Algorithm.User>(result.Root.Properties[2].Value);
+        var helperCall = Assert.IsType<Expr.Call>(Assert.Single(yBody.Output));
+        var helper = Assert.IsType<Expr.AlgorithmExpr>(helperCall.Function).Algorithm;
+        var pattern = Assert.IsType<SequenceValueParameterPattern>(Assert.Single(helper.ParameterPatterns));
+        Assert.Equal(
+            ParameterKind.Normal,
+            Assert.IsType<CaptureParameterPattern>(pattern.Items[1]).Kind);
+    }
+
+    [Theory]
+    [InlineData("open A,\r\nx, y = 1")]
+    [InlineData("open A,\n\nx, y = 1")]
+    [InlineData("open A, # trailing comment\n# leading comment\nx, y = 1")]
+    public void Parse_Open_DanglingCommaPhysicalLineBoundary_IgnoresNewlineEncodingAndTrivia(string source)
+    {
+        var result = Parser.ParseSyntax(source);
+
+        var diagnostic = Assert.Single(result.Diagnostics);
+        Assert.Equal(DiagnosticCode.InvalidOpenTargetList, diagnostic.Code);
+        Assert.Equal("A", Assert.IsType<Expr.Resolve>(Assert.Single(result.Root.Opens)).Name);
+        Assert.Equal(
+            ["$deconstruct$0", "x", "y"],
+            result.Root.Properties.Select(static property => property.Name).ToArray());
+    }
+
+    [Theory]
+    [InlineData("P(x) = x")]
+    [InlineData("public P = 1")]
+    [InlineData("public P(x) = x")]
+    [InlineData("~P = 1")]
+    [InlineData("~public P = 1")]
+    public void Parse_Open_DanglingCommaBeforeOtherDeclarationForms_LeavesDeclarationHeadIntact(
+        string declaration)
+    {
+        var result = Parser.ParseSyntax("open A,\n" + declaration);
+
+        Assert.Contains(
+            result.Diagnostics,
+            diagnostic => diagnostic.Code == DiagnosticCode.InvalidOpenTargetList
+                && diagnostic.Message.Contains("Expected an open target after ','"));
+        Assert.Equal("A", Assert.IsType<Expr.Resolve>(Assert.Single(result.Root.Opens)).Name);
+        Assert.Equal("P", Assert.Single(result.Root.Properties).Name);
+    }
+
+    [Fact]
+    public void Parse_Open_DanglingCommaBeforeSecondOpen_LeavesKeywordForAlgorithmRecovery()
+    {
+        var result = Parser.ParseSyntax("open A,\nopen B");
+
+        Assert.Contains(
+            result.Diagnostics,
+            diagnostic => diagnostic.Code == DiagnosticCode.InvalidOpenTargetList);
+        Assert.Contains(
+            result.Diagnostics,
+            diagnostic => diagnostic.Code == DiagnosticCode.InvalidOpenDeclaration
+                && diagnostic.Message.Contains("Only one 'open' declaration"));
+        Assert.Equal(
+            ["A", "B"],
+            result.Root.Opens.Select(static open => Assert.IsType<Expr.Resolve>(open).Name).ToArray());
+    }
+
+    [Fact]
+    public void Parse_Open_DanglingCommaBeforeClosingBrace_LeavesDelimiterForBlockParser()
+    {
+        var result = Parser.ParseSyntax("{open A,\n}");
+
+        var diagnostic = Assert.Single(result.Diagnostics);
+        Assert.Equal(DiagnosticCode.InvalidOpenTargetList, diagnostic.Code);
+        var block = Assert.IsType<Expr.AlgorithmExpr>(Assert.Single(result.Root.Output)).Algorithm;
+        Assert.Equal("A", Assert.IsType<Expr.Resolve>(Assert.Single(block.Opens)).Name);
+        Assert.Empty(block.Properties);
+        Assert.Empty(block.Output);
+    }
+
+    [Fact]
+    public void Parse_Open_SameLineDeclarationBoundary_IsUnchangedByTheSharedRelation()
+    {
+        // The comma-spanning binding-pattern arm applies only to a candidate
+        // on a NEW physical line: inside the open's own line the list's
+        // separator commas are open syntax, so `open A, x, y = 1` keeps
+        // today's recovery — `x` parses as a (bogus) open target and the
+        // boundary still stops at `y = 1` through the direct property head.
+        // This pins the adjacency gate: widening the binding-pattern arm to
+        // same-line candidates would reinterpret the open list's own commas
+        // and reject `A` itself.
+        var result = Parser.ParseSyntax("open A, x, y = 1");
+
+        Assert.True(result.HasErrors);
+        Assert.Contains(
+            result.Diagnostics,
+            d => d.Code == DiagnosticCode.InvalidOpenTargetList
+                && d.Message.Contains("Expected an open target after ','"));
+        Assert.Equal(
+            ["A", "x"],
+            result.Root.Opens.Select(static open => Assert.IsType<Expr.Resolve>(open).Name).ToArray());
+        Assert.Equal("y", Assert.Single(result.Root.Properties).Name);
+    }
+
+    [Theory]
+    [InlineData("open a, b, c\nx, y = 1")]
+    [InlineData("open a,\nb,\nc\nx, y = 1")]
+    public void Parse_Open_ValidListThenDeconstructionLine_StaysClean(string source)
+    {
+        // A fully valid open list followed by a deconstruction line parses
+        // cleanly: the boundary checks inside the list must neither absorb a
+        // target into a binding-pattern reading nor suppress the REAL binding
+        // pattern that starts on the next line. The multi-line variant also
+        // exercises the failed-scan memo in
+        // LookaheadIsBindingPatternAssignment: the new-line candidate `b`
+        // scans forward and fails exactly AT `x` (identifier after
+        // identifier), `c` sits inside that failed region (the memo answers
+        // false — `c` stays a target), and the statement-level consult at `x`
+        // lands exactly ON the region's breaking token, which the memo must
+        // exclude — a region inclusive of its breaking token would silently
+        // swallow the deconstruction that legitimately starts there.
+        var result = Parser.ParseSyntax(source);
+
+        Assert.False(result.HasErrors, string.Join(Environment.NewLine, result.Diagnostics));
+        Assert.Equal(
+            ["a", "b", "c"],
+            result.Root.Opens.Select(static open => Assert.IsType<Expr.Resolve>(open).Name).ToArray());
+        Assert.Equal(
+            ["$deconstruct$0", "x", "y"],
+            result.Root.Properties.Select(static p => p.Name).ToArray());
+        Assert.Empty(result.Root.Output);
+    }
+
+    [Fact]
+    public void Parse_Adjacency_BindingPatternAtScanBreakToken_StartsDeconstruction()
+    {
+        // `a b, c = 1` is the output row `a` followed by the deconstruction
+        // `b, c = 1`: the statement-head binding-pattern scan at `a` fails
+        // exactly AT `b` (identifier after identifier), and the adjacency
+        // boundary then consults the relation at `b` itself. A failed-scan
+        // memo that included its breaking token would answer false there and
+        // tear the deconstruction into output rows and a stray `=`.
+        var result = Parser.ParseSyntax("a b, c = 1");
+
+        Assert.False(result.HasErrors, string.Join(Environment.NewLine, result.Diagnostics));
+        Assert.Equal("a", Assert.IsType<Expr.Resolve>(Assert.Single(result.Root.Output)).Name);
+        Assert.Equal(
+            ["$deconstruct$0", "b", "c"],
+            result.Root.Properties.Select(static p => p.Name).ToArray());
     }
 
     [Theory]

@@ -98,8 +98,11 @@ public sealed class Parser
     // a parenthesized group or brace block runs the block/algorithm machinery each
     // level (~4.7 KB Debug ⇒ 4 total units with the two base charges), a call
     // argument list adds its call machinery (~3.5 KB ⇒ 3 units; the trailing-brace
-    // call form also runs the block machinery ⇒ 4 units), and a list literal adds
-    // its element-list machinery (~2.8 KB ⇒ 3 units).
+    // call form charges BOTH surcharges because it runs the call AND block
+    // machineries ⇒ 5 total units per level — deliberately conservative, bounding
+    // trailing-brace chains at 76 levels; see the exact-boundary pins in
+    // ParserNestingDepthTests and the ParserRecursionBudget probe), and a list
+    // literal adds its element-list machinery (~2.8 KB ⇒ 3 units).
     private const int GroupNestingSurcharge = 2;
     private const int BlockNestingSurcharge = 2;
     private const int CallArgsNestingSurcharge = 1;
@@ -848,8 +851,9 @@ public sealed class Parser
                 // output, algorithm and brace bodies, explicit parenthesized
                 // groups, and call argument lists. This loop appends
                 // contributions that are separated by definitions.
-                var exprs = ParseOutputLineExprs(allowNewlineImplicitExpressionListSeparator: true);
-                AppendOutputContribution(output, exprs, joinWithExisting: output.Count != 0);
+                var exprs = ParseExpressionListOperand(
+                    allowNewlineImplicitExpressionListSeparator: true);
+                AppendOutputContribution(output, exprs);
             }
         }
 
@@ -1004,12 +1008,11 @@ public sealed class Parser
         Expr operand, SourceSpan? span, SourceSpan? spreadMarkerSpan)
         => new Expr.SequenceSpread(operand) { Span = span, SpreadMarkerSpan = spreadMarkerSpan };
 
-    private void AppendOutputContribution(List<Expr> output, IReadOnlyList<Expr> exprs, bool joinWithExisting)
+    private static void AppendOutputContribution(List<Expr> output, IReadOnlyList<Expr> exprs)
     {
         if (exprs.Count == 0)
             return;
 
-        _ = joinWithExisting;
         output.AddRange(exprs);
     }
 
@@ -1103,14 +1106,24 @@ public sealed class Parser
     }
 
     // A token that can begin an open target atom. Declaration starters are
-    // excluded so recovery after a dangling comma leaves a following
-    // definition line intact, mirroring the adjacency rule's exclusions.
+    // excluded so recovery leaves a following declaration intact — through
+    // the SAME declaration-starter relation the adjacency rule stops at
+    // (StartsDeclaration), so the two boundary decisions cannot drift apart
+    // again. (A historical independently written copy here missed the
+    // binding-pattern form, so `open A,` newline `x, y = 1` swallowed `x` as
+    // an open target and tore the deconstruction apart — and its recovery
+    // even consumed the collect marker of a following `*y` binding.)
+    //
+    // The comma-spanning binding-pattern arm applies only to a candidate
+    // starting a NEW physical line: inside the open's own line the list's
+    // separator commas are open syntax and must not be absorbed into a
+    // binding-pattern reading, while a new-line candidate is only reachable
+    // through a trailing-comma continuation, where a declaration means the
+    // comma was dangling (see StartsDeclaration).
     private bool StartsOpenTargetAtom()
         => CanStartExpression(Current.Kind)
-            && Current.Kind != TokenKind.KeywordOpen
-            && !(Current.Kind == TokenKind.Identifier
-                && (LookaheadIsEquals() || LookaheadIsClauseDefinition()))
-            && !(Current.Kind == TokenKind.Tilde && LookaheadThroughTildesToPropertyDef());
+            && !StartsDeclaration(
+                includeCommaSpanningBindingPatterns: !IsSamePhysicalLineAsPreviousToken());
 
     /// <summary>
     /// Parses exactly one open target atom: a single-quoted string target
@@ -1224,6 +1237,26 @@ public sealed class Parser
         SourceSpan? NameSpan,
         SourceSpan? CollectMarkerSpan);
 
+    // Last FAILED binding-pattern scan: [start, break) with the breaking token
+    // index exclusive. Sound to reuse because the scan is a forward DFA over the
+    // immutable token stream (indexed absolutely; the parser only advances):
+    // every identifier/star position strictly inside a
+    // failed region is a binding-name/collect-marker position of that same
+    // failed scan, so a fresh scan from it follows the identical transitions to
+    // the identical breaking token and fails the same way. (A success cannot
+    // hide inside a failed region: accepting at an interior `=` needs a comma
+    // or collect marker before it, which the ORIGINAL scan — having traversed
+    // at least as much of the region — also had, so it would have accepted
+    // there too.) The breaking token itself is excluded: a scan STARTING at it
+    // is a different parse (`a b, c = 1` fails from `a` at `b`, succeeds from
+    // `b`). The memo only ever short-circuits a FALSE answer, and it is what
+    // keeps repeated boundary checks over one identifier-comma run linear —
+    // without it, every target of the multiline continuation `open a1,`
+    // newline `a2,` newline ... newline `an` would rescan the remaining run,
+    // turning that long open list quadratic.
+    private int _bindingPatternScanFailStart = -1;
+    private int _bindingPatternScanFailBreak = -1;
+
     /// <summary>
     /// Checks whether the tokens at the current position form a deconstruction
     /// assignment with identifier targets. A plain single <c>name =</c> is left
@@ -1239,7 +1272,11 @@ public sealed class Parser
     /// </summary>
     private bool LookaheadIsBindingPatternAssignment()
     {
-        var index = NextSignificantIndex(_pos);
+        var start = NextSignificantIndex(_pos);
+        if (start >= _bindingPatternScanFailStart && start < _bindingPatternScanFailBreak)
+            return false;
+
+        var index = start;
         var sawComma = false;
         var sawCollectMarker = false;
 
@@ -1253,7 +1290,7 @@ public sealed class Parser
             }
 
             if (_tokens[index].Kind != TokenKind.Identifier)
-                return false;
+                return FailBindingPatternScan(start, index);
             index = NextSignificantIndex(index + 1);
 
             switch (_tokens[index].Kind)
@@ -1263,11 +1300,20 @@ public sealed class Parser
                     index = NextSignificantIndex(index + 1);
                     continue;
                 case TokenKind.Equals:
-                    return sawComma || sawCollectMarker;
+                    return sawComma || sawCollectMarker
+                        || FailBindingPatternScan(start, index);
                 default:
-                    return false;
+                    return FailBindingPatternScan(start, index);
             }
         }
+    }
+
+    /// <summary>Records the failed scan region for the memo above; always false.</summary>
+    private bool FailBindingPatternScan(int start, int breakIndex)
+    {
+        _bindingPatternScanFailStart = start;
+        _bindingPatternScanFailBreak = breakIndex;
+        return false;
     }
 
     /// <summary>
@@ -2031,7 +2077,7 @@ public sealed class Parser
         // expression. A ';' is invalid expression syntax and reports the
         // unsupported-semicolon diagnostic; any tokens consumed after it are
         // error recovery, not a valid continuation.
-        var exprs = ParseOutputLineExprs(
+        var exprs = ParseExpressionListOperand(
             allowNewlineImplicitExpressionListSeparator: false);
 
         // Unwrap only scope-owning algorithm expressions (brace blocks and
@@ -2211,12 +2257,6 @@ public sealed class Parser
     /// use this method: `open` has its own dedicated comma-list parser
     /// (<see cref="ParseOpenTargetList"/>).
     /// </summary>
-    private List<Expr> ParseOutputLineExprs(
-        bool allowNewlineImplicitExpressionListSeparator = false)
-    {
-        return ParseExpressionListOperand(allowNewlineImplicitExpressionListSeparator);
-    }
-
     private List<Expr> ParseExpressionListOperand(
         bool allowNewlineImplicitExpressionListSeparator)
     {
@@ -2289,27 +2329,61 @@ public sealed class Parser
         if (!CanStartExpression(Current.Kind))
             return false;
 
-        // 'open' is a declaration even though it can begin a body line.
-        if (Current.Kind == TokenKind.KeywordOpen)
-            return false;
-
-        // Property definition `Name = ...`,
-        // clause definition `Name(pattern) = ...`, or comma deconstruction
-        // assignment `x, *y, z = ...`. The algorithm loop owns these definition
-        // forms, so they end any preceding output expression list.
-        if (Current.Kind == TokenKind.Identifier
-            && (LookaheadIsEquals()
-                || LookaheadIsBindingPatternAssignment()
-                || LookaheadIsClauseDefinition()))
-            return false;
-
-        // Invalid-grace property definition `~Name = ...`; keep the targeted
-        // grace diagnostic from the algorithm loop.
-        if (Current.Kind == TokenKind.Tilde && LookaheadThroughTildesToPropertyDef())
-            return false;
-
-        return true;
+        // Tokens that begin a declaration are never adjacent expressions:
+        // the algorithm loop owns those forms and their diagnostics. The
+        // binding-pattern arm is always included here — an expression list's
+        // commas are consumed BEFORE this check runs, so any comma run after
+        // the candidate belongs to the candidate's own form.
+        return !StartsDeclaration(includeCommaSpanningBindingPatterns: true);
     }
+
+    /// <summary>
+    /// THE declaration-starter relation for boundary decisions: true when the
+    /// tokens at the current position begin a declaration the algorithm loop
+    /// owns — an <c>open</c> declaration, a property definition
+    /// <c>Name = ...</c>, a deconstruction binding pattern
+    /// <c>x, *y, z = ...</c> (including the collect-marker-led form
+    /// <c>*items = ...</c>), a clause definition <c>Name(pattern) = ...</c>,
+    /// or the invalid-grace property prefix <c>~Name = ...</c>.
+    /// Both boundary consumers — the adjacency rule
+    /// (<see cref="StartsImplicitExpressionListSeparator"/>) and open-target
+    /// recovery (<see cref="StartsOpenTargetAtom"/>) — stop before this
+    /// relation, so a following declaration stays intact and its diagnostics
+    /// stay owned by the algorithm loop; encoding the set once keeps the two
+    /// decisions from drifting apart (the open-target copy historically
+    /// missed the binding-pattern form and tore <c>x, y = 1</c> apart).
+    ///
+    /// <para><paramref name="includeCommaSpanningBindingPatterns"/> gates the
+    /// ONE arm whose lookahead scans across commas (the deconstruction
+    /// binding pattern). It is a consumer-adjacency question, not a second
+    /// copy of the relation: the adjacency rule always includes it (its
+    /// expression list consumes commas before the boundary check, so trailing
+    /// commas always belong to the candidate), while open-target recovery
+    /// includes it only for a candidate that starts a NEW physical line —
+    /// inside the open's own line the list's separator commas must not be
+    /// absorbed into a binding-pattern reading (<c>open A, B = 1</c> keeps
+    /// <c>A</c> and stops at <c>B</c>; <c>open A, B, C</c> continues), while
+    /// a new-line candidate is only reachable through a trailing-comma
+    /// continuation, and a declaration there means the comma was dangling
+    /// (<c>open A,</c> newline <c>x, y = 1</c> keeps the whole
+    /// deconstruction).</para>
+    ///
+    /// <para>`public`-led declarations need no arm here: `public` cannot
+    /// start an expression (<see cref="CanStartExpression"/>), so both
+    /// consumers stop before consulting this relation. The Star arm is
+    /// equally unreachable through them today, but keeps the relation
+    /// faithful to the algorithm loop's own declaration dispatch.</para>
+    /// </summary>
+    private bool StartsDeclaration(bool includeCommaSpanningBindingPatterns)
+        => Current.Kind == TokenKind.KeywordOpen
+            || (Current.Kind == TokenKind.Identifier
+                && (LookaheadIsEquals()
+                    || (includeCommaSpanningBindingPatterns && LookaheadIsBindingPatternAssignment())
+                    || LookaheadIsClauseDefinition()))
+            || (Current.Kind == TokenKind.Star
+                && includeCommaSpanningBindingPatterns
+                && LookaheadIsBindingPatternAssignment())
+            || (Current.Kind == TokenKind.Tilde && LookaheadThroughTildesToPropertyDef());
 
     private static bool CanStartExpression(TokenKind kind) => kind switch
     {
@@ -2622,11 +2696,11 @@ public sealed class Parser
                     // Direct call: Name(args), Name~(args), or expr.Name(args) already handled above
                     // This handles: Name(args) → Call(Resolve(Name), args)
                     var callToken = Current;
+                    // The parser is purely syntactic: argument bundles carry the
+                    // ORIGINAL written expressions for every callee, builtins
+                    // included — builtin semantics belong to elaboration and the
+                    // evaluator/registry, never to argument parsing.
                     var callArgs = ParseCallArgs();
-                    // Hook for exact builtin direct-call argument rewrites. repeat/while
-                    // init arguments stay intact so the evaluator can preserve explicit
-                    // state-slot boundaries.
-                    callArgs = MaybeLowerBuiltinDirectCallArgs(lhs, callArgs);
                     // The complete call span (callee through the consumed ')'),
                     // computed once so the arity diagnostic and the Call node
                     // report the same source range.
@@ -3159,14 +3233,6 @@ public sealed class Parser
                 }
         }
     }
-
-    /// <summary>
-    /// Parser hook for exact builtin direct-call argument lowering.
-    /// repeat/while initial-state arguments are intentionally left intact here:
-    /// the evaluator preserves each explicit init argument as one state slot.
-    /// </summary>
-    private static OutputBundle MaybeLowerBuiltinDirectCallArgs(Expr callee, OutputBundle args)
-        => args;
 
     /// <summary>
     /// Validates that <c>if(...)</c> has exactly 3 arguments.
