@@ -8181,12 +8181,65 @@ public static partial class Evaluator
         return OutputBundle.TakeOwnership(outputExprs);
     }
 
+    /// <summary>
+    /// The production allocation-free sequence-pipeline gate shared by the two expression-position
+    /// dispatch sites (<see cref="EvalCallCountedExpr"/> and
+    /// <see cref="EvalDotCallCounted"/>). PERFORMANCE ORDERING IS LOAD-BEARING:
+    /// recognition is intentionally performed BEFORE entering
+    /// <see cref="TryEvaluateRecognizedSequencePipeline"/>, the separate helper that
+    /// contains the run-specific captured delegates. This helper boundary makes it
+    /// structurally impossible for the C# compiler to hoist their display-class
+    /// allocation onto an ordinary miss path; allocation freedom does not depend on
+    /// current JIT escape analysis. (An explicitly attached internal diagnostics
+    /// collector may allocate its own records.) A fusion-disabled run with no diagnostics attached
+    /// skips even recognition: nothing recognition could do there is observable
+    /// (recognition charges no budget, and <see cref="SequencePipelineDiagnostics"/> is
+    /// an internal harness channel that production runs never attach). Pinned by
+    /// <c>SequencePipelineDispatchTests</c> and the dispatch benchmarks.
+    /// </summary>
     private static bool TryEvaluateSequencePipeline(
         SequencePipelineInvocation invocation,
         EvalCtx ctx,
         IReadOnlyList<(string, Result)> valEnv,
         out EvalResult<CountedResult> result)
     {
+        result = default;
+        var diagnostics = ctx.SequenceDiagnostics;
+
+        if (!ctx.EnableSequencePipelineOptimization && diagnostics is null)
+            return false;
+
+        if (!SequencePipelineOptimizer.TryRecognize(
+            invocation,
+            ctx.EnableSequencePipelineOptimization,
+            diagnostics,
+            out var syntax))
+            return false;
+
+        return TryEvaluateRecognizedSequencePipeline(
+            syntax,
+            invocation,
+            ctx,
+            valEnv,
+            diagnostics,
+            out result);
+    }
+
+    /// <summary>
+    /// The closure-bearing half of the sequence-pipeline dispatch. This method is
+    /// entered only after the allocation-free gate recognized an enabled candidate,
+    /// so its one display class and six capturing delegates are candidate-only by
+    /// source structure, independently of compiler/JIT allocation sinking.
+    /// </summary>
+    private static bool TryEvaluateRecognizedSequencePipeline(
+        FilterCountPipelineSyntax syntax,
+        SequencePipelineInvocation invocation,
+        EvalCtx ctx,
+        IReadOnlyList<(string, Result)> valEnv,
+        SequencePipelineDiagnostics? diagnostics,
+        out EvalResult<CountedResult> result)
+    {
+        ctx.Observations?.RecordSequencePipelineServiceConstruction();
         var services = new SequencePipelineEvaluationServices(
             GetDotCallLexicalBuiltinFallbackReason: (stageDotCall, expectedBuiltin) =>
                 GetDotCallLexicalBuiltinFallbackReason(stageDotCall, expectedBuiltin, ctx),
@@ -8196,12 +8249,13 @@ public static partial class Evaluator
             ResolveAlgorithm: expr => ResolveAlg(expr, ctx),
             EvaluateRangeCallArguments: (function, args, callSpan) => EvaluateRangeCallArgumentsForSequenceOptimizer(function, args, callSpan, ctx, valEnv));
 
-        return SequencePipelineOptimizer.TryExecute(
+        return SequencePipelineOptimizer.TryExecuteRecognized(
+            syntax,
             invocation,
             services,
             ctx,
             valEnv,
-            ctx.SequenceDiagnostics,
+            diagnostics,
             out result);
     }
 
@@ -8250,7 +8304,8 @@ public static partial class Evaluator
         // equivalent level; charging it here too keeps every fused source shape on the
         // same dynamic depth as the generic path, so a `MaxDepth` verdict cannot depend
         // on which strategy an unrelated configured budget selected. The outer
-        // collection-argument level is charged once by SequencePipelineOptimizer.TryExecute.
+        // collection-argument level is charged once by
+        // SequencePipelineOptimizer.TryExecuteRecognized.
         if (ctx.Budget.TryEnterArgumentEvaluation() is { } depthError)
             return AtSpanIfMissing(depthError, callSpan);
 
@@ -8673,7 +8728,7 @@ public static partial class Evaluator
     /// budgets must instead be EQUALIZED between the strategies
     /// (<see cref="EvaluationBudget.CheckCollectionSize"/> on the fused range path;
     /// the argument-evaluation levels charged by
-    /// <c>SequencePipelineOptimizer.TryExecute</c> and
+    /// <c>SequencePipelineOptimizer.TryExecuteRecognized</c> and
     /// <see cref="EvaluateRangeCallArgumentsForSequenceOptimizer"/>). Adding a strategy
     /// switch here is never a way to make an always-active budget safe — and because
     /// this method's switches are driven by which UNRELATED budgets the caller

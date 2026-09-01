@@ -220,6 +220,24 @@ internal static class BenchmarkScenarioCatalog
 			resourceName: "KatLang.Benchmarks.Scenarios.sequence-square-free-filter-count-10000.kat",
 			expectedAtoms: [6083m]));
 
+	private static readonly Lazy<BenchmarkScenario> DispatchNonCandidateCallsScenario =
+		new(() => Load(
+			id: "dispatch-non-candidate-calls",
+			displayName: "Dispatch non-candidate calls",
+			description: "M15 sequence-pipeline dispatch benchmark: 100000 ordinary plain calls that are never pipeline candidates, so each iteration pays one recognition probe and nothing more.",
+			origin: "M15 sequence pipeline dispatch benchmark case.",
+			resourceName: "KatLang.Benchmarks.Scenarios.dispatch-non-candidate-calls.kat",
+			expectedAtoms: [100000m]));
+
+	private static readonly Lazy<BenchmarkScenario> DispatchNonCandidateDotCallsScenario =
+		new(() => Load(
+			id: "dispatch-non-candidate-dot-calls",
+			displayName: "Dispatch non-candidate dot-calls",
+			description: "M15 sequence-pipeline dispatch benchmark: 100000 ordinary dot-calls that are never pipeline candidates, so each iteration pays one recognition probe and nothing more.",
+			origin: "M15 sequence pipeline dispatch benchmark case.",
+			resourceName: "KatLang.Benchmarks.Scenarios.dispatch-non-candidate-dot-calls.kat",
+			expectedAtoms: [100000m]));
+
 	public static BenchmarkScenario RepeatedZeroArgPropertyReuse => RepeatedZeroArgPropertyReuseScenario.Value;
 
 	public static BenchmarkScenario ScalarHelperSumCalls => ScalarHelperSumCallsScenario.Value;
@@ -259,6 +277,10 @@ internal static class BenchmarkScenarioCatalog
 	public static BenchmarkScenario SequenceSquareFreeFilterCount1000 => SequenceSquareFreeFilterCount1000Scenario.Value;
 
 	public static BenchmarkScenario SequenceSquareFreeFilterCount10000 => SequenceSquareFreeFilterCount10000Scenario.Value;
+
+	public static BenchmarkScenario DispatchNonCandidateCalls => DispatchNonCandidateCallsScenario.Value;
+
+	public static BenchmarkScenario DispatchNonCandidateDotCalls => DispatchNonCandidateDotCallsScenario.Value;
 
 	private static BenchmarkScenario Load(
 		string id,

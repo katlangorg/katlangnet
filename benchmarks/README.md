@@ -16,6 +16,7 @@ dotnet run -c Release --project benchmarks/KatLang.Benchmarks/KatLang.Benchmarks
 dotnet run -c Release --project benchmarks/KatLang.Benchmarks/KatLang.Benchmarks.csproj -- --filter *GcdWhileLoop*
 dotnet run -c Release --project benchmarks/KatLang.Benchmarks/KatLang.Benchmarks.csproj -- --filter *LoopStage2*
 dotnet run -c Release --project benchmarks/KatLang.Benchmarks/KatLang.Benchmarks.csproj -- --filter *SequencePipelineStage2*
+dotnet run -c Release --project benchmarks/KatLang.Benchmarks/KatLang.Benchmarks.csproj -- --filter *SequencePipelineDispatch*
 dotnet run -c Release --project benchmarks/KatLang.Benchmarks/KatLang.Benchmarks.csproj -- --loop-stats
 dotnet run -c Release --project benchmarks/KatLang.Benchmarks/KatLang.Benchmarks.csproj -- --sequence-stats
 ```
@@ -29,6 +30,7 @@ BenchmarkDotNet writes summaries under `BenchmarkDotNet.Artifacts/results/`.
 - The baseline method in each class is `RepeatedZeroArgPropertyReuse`, so BenchmarkDotNet's ratio columns compare the other scenarios against that same repeated zero-arg property reuse scenario for each benchmark mode.
 - `LoopMode=Generic` disables the internal optimized loop path; `LoopMode=Optimized` enables it. This makes loop-heavy scenarios compare before/after behavior without changing KatLang source semantics.
 - `SequencePipelineMode=Generic` disables sequence filter-count fusion; `SequencePipelineMode=Optimized` enables Stage S2 direct range iteration while keeping loop optimization enabled in the sequence pipeline benchmarks.
+- `SequencePipelineDispatchBenchmarks` measures the sequence-pipeline PROBE cost on calls and dot-calls that are never candidates (M15): `Optimized` is the fusion-enabled recognition-miss path, `Generic` is the fusion-disabled bail path, and the generic loop strategy is pinned so every iteration crosses the expression dispatch that hosts the probe. Allocated bytes/op is the primary metric.
 
 ## Scenario Set
 
@@ -54,6 +56,8 @@ BenchmarkDotNet writes summaries under `BenchmarkDotNet.Artifacts/results/`.
 | Sequence filter count over range | `benchmarks/KatLang.Benchmarks/Scenarios/sequence-filter-count-even-range.kat` | Stage S2 `range(...).filter(IsEven).count` benchmark at N=10000. | Stage S2 sequence pipeline optimization benchmark case |
 | Sequence square-free filter count 1000 | `benchmarks/KatLang.Benchmarks/Scenarios/sequence-square-free-filter-count-1000.kat` | Square-free count through direct range filter-count at N=1000. | Stage S2 sequence pipeline optimization benchmark case |
 | Sequence square-free filter count 10000 | `benchmarks/KatLang.Benchmarks/Scenarios/sequence-square-free-filter-count-10000.kat` | Square-free count through direct range filter-count at N=10000. | Stage S2 sequence pipeline optimization benchmark case |
+| Dispatch non-candidate calls | `benchmarks/KatLang.Benchmarks/Scenarios/dispatch-non-candidate-calls.kat` | 100000 ordinary plain calls that are never pipeline candidates, isolating per-call sequence-pipeline probe cost. | M15 sequence pipeline dispatch benchmark case |
+| Dispatch non-candidate dot-calls | `benchmarks/KatLang.Benchmarks/Scenarios/dispatch-non-candidate-dot-calls.kat` | 100000 ordinary dot-calls that are never pipeline candidates, isolating per-dot-call sequence-pipeline probe cost. | M15 sequence pipeline dispatch benchmark case |
 
 ## Cache-Sensitive Notes
 

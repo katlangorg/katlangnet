@@ -1,0 +1,5 @@
+# M15 sequence-pipeline dispatch benchmark: 100000 ordinary plain calls that are
+# never pipeline candidates, so every iteration pays exactly one recognition probe.
+Add(a, b) = a + b
+Step = Add(k, 1)
+Step.repeat(100000, 0):0

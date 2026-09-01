@@ -379,3 +379,42 @@ public class SequencePipelineStage2Benchmarks
 			BenchmarkLoopMode.Optimized,
 			BenchmarkSequencePipelineMode.Optimized);
 }
+
+/// <summary>
+/// M15 sequence-pipeline dispatch benchmarks: the per-call cost of the pipeline
+/// PROBE on ordinary calls and dot-calls that are never candidates. Both workloads
+/// run 100000 iterations of a step whose body is one non-candidate call or
+/// dot-call; the generic loop strategy is pinned so every iteration goes through
+/// the generic expression dispatch that hosts the probe. <c>Optimized</c> measures
+/// the fusion-enabled miss path (recognition runs, nothing else may); <c>Generic</c>
+/// measures the fusion-disabled path (the probe must bail before recognition).
+/// Allocated bytes/op is the primary metric.
+/// </summary>
+[MemoryDiagnoser]
+[SimpleJob(launchCount: 1, warmupCount: 3, iterationCount: 8)]
+[Orderer(SummaryOrderPolicy.FastestToSlowest)]
+[RankColumn]
+public class SequencePipelineDispatchBenchmarks
+{
+	private static readonly BenchmarkScenario NonCandidateCallsScenario = BenchmarkScenarioCatalog.DispatchNonCandidateCalls;
+	private static readonly BenchmarkScenario NonCandidateDotCallsScenario = BenchmarkScenarioCatalog.DispatchNonCandidateDotCalls;
+
+	[Params(BenchmarkSequencePipelineMode.Generic, BenchmarkSequencePipelineMode.Optimized)]
+	public BenchmarkSequencePipelineMode SequencePipelineMode { get; set; }
+
+	[Benchmark]
+	public IReadOnlyList<Decimal128> NonCandidateCalls()
+		=> KatLangBenchmarkRunner.RunPrepared(
+			NonCandidateCallsScenario,
+			BenchmarkCacheMode.Stage1,
+			BenchmarkLoopMode.Generic,
+			SequencePipelineMode);
+
+	[Benchmark]
+	public IReadOnlyList<Decimal128> NonCandidateDotCalls()
+		=> KatLangBenchmarkRunner.RunPrepared(
+			NonCandidateDotCallsScenario,
+			BenchmarkCacheMode.Stage1,
+			BenchmarkLoopMode.Generic,
+			SequencePipelineMode);
+}

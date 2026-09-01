@@ -87,4 +87,23 @@ internal sealed class EvaluationObservations
 
     internal void RecordFilterItemDiagnosticContext()
         => FilterItemDiagnosticContextCount = checked(FilterItemDiagnosticContextCount + 1);
+
+    /// <summary>
+    /// Number of <c>SequencePipelineEvaluationServices</c> bundles constructed during this run.
+    /// The bundle's captured delegates are the sequence-pipeline probe's only allocations, and the
+    /// closure-bearing helper is entered only AFTER the production allocation-free syntactic recognition gate
+    /// (<c>SequencePipelineOptimizer.TryRecognize</c>) accepted the invocation on a fusion-enabled
+    /// run. Ordinary non-candidate calls and dot-calls therefore observe zero — however many are
+    /// evaluated — as does every fusion-disabled run; a recognized filter-count pipeline observes
+    /// exactly one construction per evaluation of the pipeline expression (whether fusion then
+    /// executes or the lookup stage falls back to the generic path). This pins the
+    /// recognition-before-services dispatch ordering without relying on CLR allocation totals;
+    /// the separate helper boundary additionally prevents compiler-hoisted closure allocation on
+    /// a miss even when the counter remains zero. An explicitly attached internal diagnostics
+    /// collector may independently allocate its own diagnostic records.
+    /// </summary>
+    public long SequencePipelineServiceConstructionCount { get; private set; }
+
+    internal void RecordSequencePipelineServiceConstruction()
+        => SequencePipelineServiceConstructionCount = checked(SequencePipelineServiceConstructionCount + 1);
 }

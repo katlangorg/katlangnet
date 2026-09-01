@@ -9,6 +9,15 @@ internal static class SequencePipelineOptimizer
     private const string SourceExecutionEagerCollection = "eager source collection";
     private const string SourceExecutionDirectRange = "direct range iteration";
 
+    // Canonical builtin spellings for the hot recognizer, cached once from the ONE
+    // authoritative name owner (BuiltinRegistry -> BuiltinDescriptor.Name — the same
+    // strings the runtime prelude binds to Algorithm.Builtin). Recognition probes
+    // EVERY call and dot-call evaluation, so it must not re-derive an enum name per
+    // probe; these are immutable and thread-safe by construction, never a second
+    // hand-maintained spelling table.
+    private static readonly string CountBuiltinName = BuiltinRegistry.GetBuiltin(BuiltinId.@count).Name;
+    private static readonly string FilterBuiltinName = BuiltinRegistry.GetBuiltin(BuiltinId.@filter).Name;
+
     private enum FilterCountRecognitionStatus
     {
         NotRecognized,
@@ -29,6 +38,13 @@ internal static class SequencePipelineOptimizer
         BuiltinRangeSourceSyntax? DirectRangeSource,
         string DirectRangeFallbackReason);
 
+    /// <summary>
+    /// The one-call entry: <see cref="TryRecognize"/> followed by
+    /// <see cref="TryExecuteRecognized"/>. The evaluator's dispatch funnel calls the
+    /// two halves separately so the evaluation-services bundle is constructed only
+    /// between them — after recognition said yes; this composition exists for callers
+    /// (and white-box tests) that already hold a services bundle.
+    /// </summary>
     internal static bool TryExecute(
         SequencePipelineInvocation invocation,
         SequencePipelineEvaluationServices services,
@@ -38,11 +54,33 @@ internal static class SequencePipelineOptimizer
         out EvalResult<Evaluator.CountedResult> result)
     {
         result = default;
+        return TryRecognize(invocation, ctx.EnableSequencePipelineOptimization, diagnostics, out var syntax)
+            && TryExecuteRecognized(syntax, invocation, services, ctx, valEnv, diagnostics, out result);
+    }
 
+    /// <summary>
+    /// The cheap pre-services gate: purely syntactic shape recognition plus the
+    /// optimizer-enable gate. It needs ONLY the invocation (plus the flag and the
+    /// optional diagnostics collector) — no evaluator services, no lookup, no
+    /// evaluation or budget charge. With no diagnostics collector (the production
+    /// shape) it is allocation-free; an explicitly attached collector may allocate
+    /// only its diagnostic plan/records. Callers construct the
+    /// <see cref="SequencePipelineEvaluationServices"/> bundle only after this returns
+    /// true, so an ordinary non-candidate call or a fusion-disabled run never pays for
+    /// the bundle's captured delegates. Diagnostics recording for syntactic
+    /// near-misses and for the disabled fallback happens here, exactly as when the gate
+    /// ran behind the services parameter.
+    /// </summary>
+    internal static bool TryRecognize(
+        SequencePipelineInvocation invocation,
+        bool enableSequencePipelineOptimization,
+        SequencePipelineDiagnostics? diagnostics,
+        out FilterCountPipelineSyntax syntax)
+    {
         // Purely syntactic shape recognition: no lookup, no evaluation, no budget
         // charge. An expression that is not a filter-count pipeline therefore reaches
         // the generic evaluator having consumed nothing here.
-        if (!TryRecognizeFilterCountSyntax(invocation, out var syntax, out var syntaxFallbackReason))
+        if (!TryRecognizeFilterCountSyntax(invocation, out syntax, out var syntaxFallbackReason))
         {
             if (syntaxFallbackReason is not null)
             {
@@ -61,15 +99,50 @@ internal static class SequencePipelineOptimizer
             return false;
         }
 
+        if (!enableSequencePipelineOptimization)
+        {
+            RecordFilterCountFallback(
+                diagnostics,
+                diagnostics is null
+                    ? null
+                    : CreateDiagnosticPlan(
+                        syntax.Form,
+                        syntax.Source,
+                        TryGetPredicateExpression(syntax),
+                        predicateAlg: null),
+                "sequence pipeline optimization disabled");
+            return false;
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// Everything after <see cref="TryRecognize"/> said yes: lookup-based
+    /// eligibility, the depth-charge commit point, source evaluation, and fused
+    /// execution. Assumes gating and syntactic recognition already passed — callers
+    /// reach it only through <see cref="TryRecognize"/> (directly, or via
+    /// <see cref="TryExecute"/>).
+    /// </summary>
+    internal static bool TryExecuteRecognized(
+        FilterCountPipelineSyntax syntax,
+        SequencePipelineInvocation invocation,
+        SequencePipelineEvaluationServices services,
+        Evaluator.EvalCtx ctx,
+        IReadOnlyList<(string, Result)> valEnv,
+        SequencePipelineDiagnostics? diagnostics,
+        out EvalResult<Evaluator.CountedResult> result)
+    {
+        result = default;
+
         // Finish every PURE eligibility check before committing to fusion. In
-        // particular, an optimizer-disabled run and a lookup/shape fallback must not
-        // charge PeakDepth merely because the tree looked like a candidate. That would
-        // make the forced-generic oracle pass through the same accounting under review.
+        // particular, a lookup/shape fallback must not charge PeakDepth merely
+        // because the tree looked like a candidate. That would make the
+        // forced-generic oracle pass through the same accounting under review.
         var preparationStatus = TryPrepareFilterCountPipeline(
             syntax,
             invocation,
             services,
-            ctx,
             diagnostics,
             out var preparation);
         if (preparationStatus is FilterCountRecognitionStatus.NotRecognized or FilterCountRecognitionStatus.Fallback)
@@ -141,13 +214,13 @@ internal static class SequencePipelineOptimizer
     /// Everything after the purely syntactic shape match that can still reject fusion
     /// without evaluating source or callback code. No budget is charged here; the
     /// caller enters the collection-argument depth level only after this method returns
-    /// <see cref="FilterCountRecognitionStatus.Recognized"/>.
+    /// <see cref="FilterCountRecognitionStatus.Recognized"/>. The optimizer-enable gate
+    /// already ran in <see cref="TryRecognize"/>, before any services existed.
     /// </summary>
     private static FilterCountRecognitionStatus TryPrepareFilterCountPipeline(
         FilterCountPipelineSyntax syntax,
         SequencePipelineInvocation invocation,
         SequencePipelineEvaluationServices services,
-        Evaluator.EvalCtx ctx,
         SequencePipelineDiagnostics? diagnostics,
         out FilterCountPipelinePreparation preparation)
     {
@@ -157,12 +230,6 @@ internal static class SequencePipelineOptimizer
         var diagnosticPlan = diagnostics is null
             ? null
             : CreateDiagnosticPlan(syntax.Form, syntax.Source, predicateExpr, predicateAlg: null);
-
-        if (!ctx.EnableSequencePipelineOptimization)
-        {
-            RecordFilterCountFallback(diagnostics, diagnosticPlan, "sequence pipeline optimization disabled");
-            return FilterCountRecognitionStatus.Fallback;
-        }
 
         if (!CountResolvesToBuiltin(invocation, services))
         {
@@ -212,10 +279,10 @@ internal static class SequencePipelineOptimizer
         OutputBundle? argsOpt,
         out FilterCountPipelineSyntax syntax)
     {
-        if (name == BuiltinId.@count.ToString()
+        if (name == CountBuiltinName
             && argsOpt is null
             && target is Expr.DotCall(var source, var filterName, var filterArgs)
-            && filterName == BuiltinId.@filter.ToString())
+            && filterName == FilterBuiltinName)
         {
             syntax = new FilterCountPipelineSyntax(
                 FilterCountPipelineForm.DotFilterDotCount,
@@ -240,7 +307,7 @@ internal static class SequencePipelineOptimizer
         syntax = default;
         fallbackReason = null;
 
-        if (function is not Expr.Resolve(var countName) || countName != BuiltinId.@count.ToString())
+        if (function is not Expr.Resolve(var countName) || countName != CountBuiltinName)
             return false;
 
         if (args.Count != 1)
@@ -263,7 +330,7 @@ internal static class SequencePipelineOptimizer
             return false;
 
         if (countSource is Expr.DotCall(var dotSource, var filterName, var dotFilterArgs)
-            && filterName == BuiltinId.@filter.ToString())
+            && filterName == FilterBuiltinName)
         {
             syntax = new FilterCountPipelineSyntax(
                 FilterCountPipelineForm.PlainCountDotFilter,
@@ -298,12 +365,16 @@ internal static class SequencePipelineOptimizer
         IReadOnlyList<Expr> expressions,
         out FilterCountPipelineSyntax syntax)
     {
-        foreach (var expression in expressions)
+        // This is still the pre-services syntactic gate. Iterate by index so an
+        // OutputBundle reached through IReadOnlyList<Expr> cannot allocate its
+        // interface enumerator on a wrong-arity count near miss.
+        for (var index = 0; index < expressions.Count; index++)
         {
+            var expression = expressions[index];
             var candidate = UnwrapSpread(expression);
 
             if (candidate is Expr.DotCall(var dotSource, var filterName, var dotFilterArgs)
-                && filterName == BuiltinId.@filter.ToString())
+                && filterName == FilterBuiltinName)
             {
                 syntax = new FilterCountPipelineSyntax(
                     FilterCountPipelineForm.PlainCountDotFilter,
@@ -337,7 +408,7 @@ internal static class SequencePipelineOptimizer
     }
 
     private static bool IsFilterFunctionCandidate(Expr function)
-        => function is Expr.Resolve(var name) && name == BuiltinId.@filter.ToString();
+        => function is Expr.Resolve(var name) && name == FilterBuiltinName;
 
     // Returns the innermost operand of a (possibly nested) unary spread, or the
     // expression unchanged when it is not a spread. This is a recognition
@@ -810,7 +881,7 @@ internal static class SequencePipelineOptimizer
             FilterCountPipelineForm.DotFilterDotCount or FilterCountPipelineForm.PlainCountDotFilter =>
                 new DotCallContext(
                     Evaluator.CallDiagnosticExprName(syntax.Source, ctx),
-                    BuiltinId.@filter.ToString()),
+                    FilterBuiltinName),
             FilterCountPipelineForm.PlainCountPlainFilter =>
                 new CallContext(Evaluator.CallDiagnosticExprName(syntax.PlainFilterFunction!, ctx)),
             _ => throw new InvalidOperationException($"Unsupported filter-count pipeline form '{syntax.Form}'."),
