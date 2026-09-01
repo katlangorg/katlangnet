@@ -4,10 +4,12 @@ namespace KatLang;
 /// Passive, pass-scoped observer of front-end AST traversal work. One instance belongs to ONE
 /// measured front-end invocation and is passed explicitly through the internal observation
 /// overloads (<c>ParameterDetector.DetectPrevalidated</c>, <c>ImplicitArgumentResolver.ResolvePrevalidated</c>,
-/// <c>PropertyExposureResolver.Resolve</c>, <c>PropertyDependencyGraphBuilder.Build</c>,
-/// <c>ModuleLoader.TraversalObservations</c>), so it records the structural work its own pass
-/// performs. It is never static and never ambient: the production paths carry no observer and
-/// record nothing, so a count can never leak across operations, runs, or threads.
+/// <c>PropertyExposureResolver.Resolve</c>, <c>PropertyDependencyGraphBuilder.BuildDependencyOrder</c> /
+/// <c>.BuildSummaries</c>, <c>ModuleLoader.TraversalObservations</c>), so it records the structural
+/// work its own pass performs. It is never static and never ambient: the production paths carry no
+/// observer and record nothing, so a count can never leak across operations, runs, or threads.
+/// (The resolver and exposure passes forward their observer into the one builder channel each
+/// consumes.)
 ///
 /// <para>Internal and excluded from every public API; the counts are C# implementation
 /// observations with no semantic meaning, used only by the front-end shared-AST-graph (DAG)
@@ -25,7 +27,10 @@ namespace KatLang;
 /// served from that walk's reference-identity memo without re-expansion, so for ONE walk each
 /// count stays bounded by the number of distinct reachable recursive nodes — never the number of
 /// expanded tree paths. Memo lifetimes are per constant-context walk region (see each pass), so
-/// the same node expanded under two genuinely different contexts records once per context.</para>
+/// the same node expanded under two genuinely different contexts records once per context. The
+/// one deliberately wider memo is the builder's completed algorithm-summary memo
+/// (<c>PropertyDependencyGraphBuilder.SummaryMemo</c>), which spans one whole exposure
+/// resolution — see <see cref="DependencyAlgorithmSummaryComputations"/>.</para>
 /// </summary>
 internal sealed class FrontEndTraversalObservations
 {
@@ -76,6 +81,20 @@ internal sealed class FrontEndTraversalObservations
 
     internal void RecordDependencySeedExpansion()
         => DependencySeedExpansions = checked(DependencySeedExpansions + 1);
+
+    /// <summary>
+    /// Completed algorithm-level summary computations in the builder's summary channel
+    /// (<c>PropertyDependencyGraphBuilder.CollectSharedAlgorithmSummarySeed</c> misses of the
+    /// completed-summary memo). Unlike the per-node expansion counters, one count means ONE
+    /// whole-algorithm summary computed and admitted; a reach served from the memo records
+    /// nothing, so an observed analysis is bounded by the DISTINCT algorithm nodes it
+    /// summarizes per memo lifetime — for the exposure resolver, once per resolution rather
+    /// than once per ancestor nesting level (M17).
+    /// </summary>
+    public long DependencyAlgorithmSummaryComputations { get; private set; }
+
+    internal void RecordDependencyAlgorithmSummaryComputation()
+        => DependencyAlgorithmSummaryComputations = checked(DependencyAlgorithmSummaryComputations + 1);
 
     /// <summary>Sibling-dependency expansions (<c>PropertyDependencyGraphBuilder.CollectSiblingDependencyIndices</c>).</summary>
     public long DependencySiblingExpansions { get; private set; }

@@ -22,16 +22,17 @@ public class PropertyExposureResolverTests
             }
             """);
 
-        var graph = PropertyDependencyGraphBuilder.Build(algorithm);
+        var orderGraph = PropertyDependencyGraphBuilder.BuildDependencyOrder(algorithm);
+        var graph = PropertyDependencyGraphBuilder.BuildSummaries(algorithm);
         var leftNode = graph[PropertyIndex(graph, "Left")];
         var rightNode = graph[PropertyIndex(graph, "Right")];
 
-        Assert.Empty(leftNode.SiblingDependencyIndices);
+        Assert.Empty(orderGraph[PropertyIndex(graph, "Left")].SiblingDependencyIndices);
         Assert.Equal([PropertyIndex(graph, "Right")], leftNode.SummarySiblingDependencyIndices);
         Assert.Empty(leftNode.SummaryVisiblePropertyDependencyNames);
         Assert.Empty(leftNode.RequiredAncestorOwnedParameterNames);
 
-        Assert.Empty(rightNode.SiblingDependencyIndices);
+        Assert.Empty(orderGraph[PropertyIndex(graph, "Right")].SiblingDependencyIndices);
         Assert.Equal([PropertyIndex(graph, "Left")], rightNode.SummarySiblingDependencyIndices);
         Assert.Empty(rightNode.SummaryVisiblePropertyDependencyNames);
         Assert.Equal(["x"], rightNode.RequiredAncestorOwnedParameterNames);
@@ -103,6 +104,54 @@ public class PropertyExposureResolverTests
         Assert.Equal(PropertyExposure.Exported, publicApi.Exposure);
     }
 
+    /// <summary>
+    /// The builder's LOCAL summary fixed point must expand transitively: a nested body's
+    /// two-level local chain (B = A, A captures x) makes the body's output requirement
+    /// reach x THROUGH B. A pre-fixed-point (base-seed) summary would instead report a
+    /// phantom visible dependency on the local name A and lose the capture entirely.
+    /// </summary>
+    [Fact]
+    public void Build_NestedLocalPropertyChain_ExpandsTransitivelyThroughTheLocalFixedPoint()
+    {
+        var algorithm = BuildUserAlgorithmBeforeExposure(
+            "Outer",
+            """
+            Outer(x) = {
+                P = {
+                    A = x + 1
+                    B = A
+                    B
+                }
+                x
+            }
+            """);
+
+        var graph = PropertyDependencyGraphBuilder.BuildSummaries(algorithm);
+
+        Assert.Equal(["x"], graph[PropertyIndex(graph, "P")].RequiredAncestorOwnedParameterNames);
+        Assert.Empty(graph[PropertyIndex(graph, "P")].SummaryVisiblePropertyDependencyNames);
+    }
+
+    [Fact]
+    public void Parse_NestedLocalPropertyChain_IsLocalOnly()
+    {
+        var algorithm = ParseSinglePropertyBody(
+            """
+            Outer(x) = {
+                P = {
+                    A = x + 1
+                    B = A
+                    B
+                }
+                x
+            }
+            """);
+
+        Assert.Equal(
+            PropertyExposure.LocalOnlyCapturedAncestorParameters,
+            Assert.Single(algorithm.Properties, property => property.Name == "P").Exposure);
+    }
+
     [Fact]
     public void Build_AncestorCaptureInsideTransparentLayers_SeedsRequiredAncestorNames()
     {
@@ -118,7 +167,7 @@ public class PropertyExposureResolverTests
             }
             """);
 
-        var graph = PropertyDependencyGraphBuilder.Build(algorithm);
+        var graph = PropertyDependencyGraphBuilder.BuildSummaries(algorithm);
 
         Assert.Equal(["x"], graph[PropertyIndex(graph, "Direct")].RequiredAncestorOwnedParameterNames);
         Assert.Equal(["x"], graph[PropertyIndex(graph, "Grouped")].RequiredAncestorOwnedParameterNames);
@@ -284,7 +333,7 @@ public class PropertyExposureResolverTests
         return Assert.IsType<Algorithm.User>(property.Value);
     }
 
-    private static int PropertyIndex(PropertyDependencyGraph graph, string propertyName)
+    private static int PropertyIndex(PropertyDependencySummaryGraph graph, string propertyName)
     {
         Assert.True(graph.TryGetPropertyIndex(propertyName, out var propertyIndex));
         return propertyIndex;

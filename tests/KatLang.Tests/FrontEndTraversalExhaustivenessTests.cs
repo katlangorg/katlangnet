@@ -209,9 +209,9 @@ public class FrontEndTraversalExhaustivenessTests
         return Task.CompletedTask;
     }
 
-    private static Task RunDependencyWalks(Expr sample)
+    private static Algorithm.User DependencyWalkRoot(Expr sample)
     {
-        var root = new Algorithm.User(
+        return new Algorithm.User(
             Parent: null,
             Parameters: [],
             Opens: [],
@@ -221,8 +221,17 @@ public class FrontEndTraversalExhaustivenessTests
                 new Property("B", EmptyAlgorithm(new Expr.Num(1))),
             ],
             Output: OutputBundle.Empty);
+    }
 
-        Assert.Equal(2, PropertyDependencyGraphBuilder.Build(root).Count);
+    private static Task RunDependencyOrderWalk(Expr sample)
+    {
+        Assert.Equal(2, PropertyDependencyGraphBuilder.BuildDependencyOrder(DependencyWalkRoot(sample)).Count);
+        return Task.CompletedTask;
+    }
+
+    private static Task RunDependencySummaryWalk(Expr sample)
+    {
+        Assert.Equal(2, PropertyDependencyGraphBuilder.BuildSummaries(DependencyWalkRoot(sample)).Count);
         return Task.CompletedTask;
     }
 
@@ -275,8 +284,8 @@ public class FrontEndTraversalExhaustivenessTests
             ["ImplicitArgumentResolver.RewriteImplicitCalls"] = RunImplicitOutputWalks,
             ["ImplicitArgumentResolver.ProcessExprNested"] = RunImplicitNestedExpr,
             ["PropertyExposureResolver.RewriteExpr"] = RunExposureRewrite,
-            ["PropertyDependencyGraphBuilder.CollectSummarySeed"] = RunDependencyWalks,
-            ["PropertyDependencyGraphBuilder.CollectSiblingDependencyIndices"] = RunDependencyWalks,
+            ["PropertyDependencyGraphBuilder.CollectSummarySeed"] = RunDependencySummaryWalk,
+            ["PropertyDependencyGraphBuilder.CollectSiblingDependencyIndices"] = RunDependencyOrderWalk,
             ["ModuleLoader.ProcessExpr"] = RunModuleLoaderSyncWalk,
             ["ModuleLoader.ProcessExprAsync"] = RunModuleLoaderAsyncWalkDispatch,
         };
@@ -628,7 +637,7 @@ public class FrontEndTraversalExhaustivenessTests
     }
 
     private static PropertyDependencyGraph BuildSiblingGraph(Expr referencingBody)
-        => PropertyDependencyGraphBuilder.Build(new Algorithm.User(
+        => PropertyDependencyGraphBuilder.BuildDependencyOrder(new Algorithm.User(
             Parent: null,
             Parameters: [],
             Opens: [],
@@ -652,6 +661,29 @@ public class FrontEndTraversalExhaustivenessTests
         var graph = BuildSiblingGraph(embedded);
 
         Assert.Contains(1, graph[0].SiblingDependencyIndices);
+    }
+
+    /// <summary>
+    /// The split SUMMARY channel independently descends through every recursive value
+    /// position. This is the semantic mutation guard for misclassifying one explicit arm as
+    /// a leaf: the generic H4 dispatch matrix catches a missing arm through the fail-loud
+    /// default, while this test catches a present-but-non-recursive arm.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(SiblingDependencyPositions))]
+    public void PropertyDependencyGraphBuilder_FindsSummaryNamesInsideRecursiveChildren(string position)
+    {
+        var embedded = RecursiveEmbeddings[position](new Expr.Param("captured"));
+        var root = new Algorithm.User(
+            Parent: null,
+            Parameters: [],
+            Opens: [],
+            Properties: [new Property("A", EmptyAlgorithm(embedded))],
+            Output: OutputBundle.Empty);
+
+        var graph = PropertyDependencyGraphBuilder.BuildSummaries(root);
+
+        Assert.Equal(["captured"], graph[0].RequiredAncestorOwnedParameterNames);
     }
 
     /// <summary>

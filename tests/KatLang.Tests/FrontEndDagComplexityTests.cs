@@ -678,13 +678,14 @@ public class FrontEndDagComplexityTests
                 ],
                 Output: OutputBundle.Empty);
 
-            var graph = PropertyDependencyGraphBuilder.Build(root, observations: observations);
+            var orderGraph = PropertyDependencyGraphBuilder.BuildDependencyOrder(root, observations: observations);
+            var summaryGraph = PropertyDependencyGraphBuilder.BuildSummaries(root, observations: observations);
 
             // The dependency SET is identical to the tree expansion's: one edge A -> B, neither
             // lost nor duplicated (indices are a set), regardless of the 2^depth paths.
-            Assert.Equal([1], graph[0].SiblingDependencyIndices);
-            Assert.Equal([1], graph[0].SummarySiblingDependencyIndices);
-            Assert.Empty(graph[1].SiblingDependencyIndices);
+            Assert.Equal([1], orderGraph[0].SiblingDependencyIndices);
+            Assert.Equal([1], summaryGraph[0].SummarySiblingDependencyIndices);
+            Assert.Empty(orderGraph[1].SiblingDependencyIndices);
 
             Assert.Equal(depth, observations.DependencySiblingExpansions);
             Assert.Equal(depth, observations.DependencySeedExpansions);
@@ -695,29 +696,36 @@ public class FrontEndDagComplexityTests
     )
     {
         const int depth = 6;
-        static PropertyDependencyGraph BuildWith(Expr referencing)
-            => PropertyDependencyGraphBuilder.Build(
-                new Algorithm.User(
-                    Parent: null,
-                    Parameters: [],
-                    Opens: [],
-                    Properties:
-                    [
-                        new Property("A", EmptyAlgorithm(referencing)),
-                        new Property("B", EmptyAlgorithm(new Expr.Num(1))),
-                    ],
-                    Output: OutputBundle.Empty),
-                ancestorOwnedNames: ["p"]);
+        static Algorithm.User TwoPropertyRoot(Expr referencing)
+            => new(
+                Parent: null,
+                Parameters: [],
+                Opens: [],
+                Properties:
+                [
+                    new Property("A", EmptyAlgorithm(referencing)),
+                    new Property("B", EmptyAlgorithm(new Expr.Num(1))),
+                ],
+                Output: OutputBundle.Empty);
 
-        var dag = BuildWith(BinaryDiamond(
-            depth, new Expr.Binary(BinaryOp.Add, new Expr.Resolve("B"), new Expr.Param("p"))));
-        var tree = BuildWith(BinaryTree(
-            depth, () => new Expr.Binary(BinaryOp.Add, new Expr.Resolve("B"), new Expr.Param("p"))));
+        static Expr ReferencingLeaf()
+            => new Expr.Binary(BinaryOp.Add, new Expr.Resolve("B"), new Expr.Param("p"));
 
-        Assert.Equal(tree[0].SiblingDependencyIndices, dag[0].SiblingDependencyIndices);
+        var dagRoot = TwoPropertyRoot(BinaryDiamond(depth, ReferencingLeaf()));
+        var treeRoot = TwoPropertyRoot(BinaryTree(depth, ReferencingLeaf));
+
+        var dagOrder = PropertyDependencyGraphBuilder.BuildDependencyOrder(dagRoot);
+        var treeOrder = PropertyDependencyGraphBuilder.BuildDependencyOrder(treeRoot);
+        Assert.Equal(treeOrder[0].SiblingDependencyIndices, dagOrder[0].SiblingDependencyIndices);
+
+        var dag = PropertyDependencyGraphBuilder.BuildSummaries(dagRoot);
+        var tree = PropertyDependencyGraphBuilder.BuildSummaries(treeRoot);
         Assert.Equal(tree[0].SummarySiblingDependencyIndices, dag[0].SummarySiblingDependencyIndices);
         Assert.Equal(tree[0].SummaryVisiblePropertyDependencyNames, dag[0].SummaryVisiblePropertyDependencyNames);
         Assert.Equal(tree[0].RequiredAncestorOwnedParameterNames, dag[0].RequiredAncestorOwnedParameterNames);
+        // The captured name is reported straight from the walk: the summary channel takes
+        // no ancestor-owned context at all (which is what makes empty-locals summaries
+        // memoizable by node reference — see PropertyDependencyGraphBuilder.SummaryMemo).
         Assert.Equal(["p"], dag[0].RequiredAncestorOwnedParameterNames);
     }
 
@@ -742,7 +750,7 @@ public class FrontEndDagComplexityTests
             ],
             Output: OutputBundle.Empty);
 
-        var graph = PropertyDependencyGraphBuilder.Build(root);
+        var graph = PropertyDependencyGraphBuilder.BuildDependencyOrder(root);
 
         Assert.Equal([2], graph[0].SiblingDependencyIndices);
         Assert.Equal([2], graph[1].SiblingDependencyIndices);
@@ -771,9 +779,341 @@ public class FrontEndDagComplexityTests
         var root = new Algorithm.User(
             null, [], [], [new Property("A", aValue)], OutputBundle.Empty);
 
-        var graph = PropertyDependencyGraphBuilder.Build(root);
+        var graph = PropertyDependencyGraphBuilder.BuildSummaries(root);
 
         Assert.Contains("B", graph[0].SummaryVisiblePropertyDependencyNames);
+    }
+
+    // ── 4b. M17: per-channel builder entries + resolution-scoped summary memo ──
+
+    /// <summary>
+    /// The implicit-argument resolver consumes ONLY the dependency/order channel. Nested
+    /// property values give the summary channel real work IF it ran; a recursive output row
+    /// gives the order channel an observable sibling expansion, proving the observer was
+    /// live on the builder path.
+    /// </summary>
+    [Fact]
+    public void Resolver_ConsumesOnlyTheDependencyOrderChannel()
+    {
+        var observations = new FrontEndTraversalObservations();
+        var nested = new Algorithm.User(
+            Parent: null,
+            Parameters: [],
+            Opens: [],
+            Properties: [new Property("Inner", EmptyAlgorithm(new Expr.Param("p")))],
+            Output: new OutputBundle([new Expr.Resolve("Inner")]));
+        var root = new Algorithm.User(
+            Parent: null,
+            Parameters: [],
+            Opens: [],
+            Properties:
+            [
+                new Property("A", nested),
+                new Property("B", EmptyAlgorithm(
+                    new Expr.Binary(BinaryOp.Add, new Expr.Resolve("A"), new Expr.Num(1)))),
+            ],
+            Output: new OutputBundle([new Expr.Resolve("B")]));
+
+        ImplicitArgumentResolver.ResolvePrevalidated(root, observations);
+
+        Assert.Equal(1, observations.DependencySiblingExpansions);
+        // The summary channel never ran: no expression seed expanded, no algorithm summary
+        // computed (M17 — the resolver reads only the topological property order).
+        Assert.Equal(0, observations.DependencySeedExpansions);
+        Assert.Equal(0, observations.DependencyAlgorithmSummaryComputations);
+    }
+
+    /// <summary>
+    /// Depth+1 distinct nested algorithm values: value_1..value_depth each wrap the previous
+    /// as their one property, and the innermost leaf captures the ancestor-owned name `p`.
+    /// The root holds value_depth as property "Top".
+    /// </summary>
+    private static Algorithm.User NestedPropertyChainRoot(int depth)
+    {
+        var value = EmptyAlgorithm(new Expr.Param("p"));
+        for (var level = 1; level <= depth; level++)
+        {
+            value = new Algorithm.User(
+                Parent: null,
+                Parameters: [],
+                Opens: [],
+                Properties: [new Property($"N{level}", value)],
+                Output: new OutputBundle([new Expr.Resolve($"N{level}")]));
+        }
+
+        return new Algorithm.User(
+            Parent: null,
+            Parameters: [],
+            Opens: [],
+            Properties: [new Property("Top", value)],
+            Output: OutputBundle.Empty);
+    }
+
+    /// <summary>
+    /// ONE completed-summary computation per distinct algorithm value for the WHOLE exposure
+    /// resolution — before M17 each level's subtree summary was recomputed at every ancestor
+    /// level (O(depth^2) subtree work; the measured pre-change expression-seed counts grew
+    /// ~4x per depth doubling). The count is exact, so a disabled or narrowed memo fails
+    /// deterministically.
+    /// </summary>
+    [Theory]
+    [InlineData(4)]
+    [InlineData(16)]
+    public void Exposure_NestedChain_ComputesEachDistinctAlgorithmSummaryOnce(int depth)
+    {
+        var observations = new FrontEndTraversalObservations();
+        var root = NestedPropertyChainRoot(depth);
+
+        var rewritten = PropertyExposureResolver.Resolve(root, observations);
+
+        Assert.Equal(depth + 1, observations.DependencyAlgorithmSummaryComputations);
+
+        // Classification is the ordinary recursive-capture result at every level.
+        var rewrittenRoot = (Algorithm.User)rewritten;
+        Assert.Equal(
+            PropertyExposure.LocalOnlyCapturedAncestorParameters,
+            Assert.Single(rewrittenRoot.Properties).Exposure);
+        var top = Assert.IsType<Algorithm.User>(Assert.Single(rewrittenRoot.Properties).Value);
+        Assert.Equal(
+            PropertyExposure.LocalOnlyCapturedAncestorParameters,
+            Assert.Single(top.Properties).Exposure);
+    }
+
+    /// <summary>
+    /// A descendant algorithm SHARED by two parents (the module-elaboration shape) is
+    /// summarized once per resolution and classifies identically at every use.
+    /// </summary>
+    [Fact]
+    public void Exposure_SharedDescendantAcrossParents_SummarizedOncePerResolution()
+    {
+        var observations = new FrontEndTraversalObservations();
+        var sharedChild = EmptyAlgorithm(new Expr.Param("p"));
+        var parentA = new Algorithm.User(
+            null, [], [],
+            [new Property("CA", sharedChild)],
+            new OutputBundle([new Expr.Resolve("CA")]));
+        var parentB = new Algorithm.User(
+            null, [], [],
+            [new Property("CB", sharedChild)],
+            new OutputBundle([new Expr.Resolve("CB")]));
+        var root = new Algorithm.User(
+            null, [], [],
+            [new Property("PA", parentA), new Property("PB", parentB)],
+            OutputBundle.Empty);
+        Assert.Same(parentA.Properties[0].Value, parentB.Properties[0].Value);
+
+        var rewritten = (Algorithm.User)PropertyExposureResolver.Resolve(root, observations);
+
+        // parentA, parentB, and the shared child: three distinct algorithms, the shared
+        // child counted once.
+        Assert.Equal(3, observations.DependencyAlgorithmSummaryComputations);
+        Assert.All(rewritten.Properties, property => Assert.Equal(
+            PropertyExposure.LocalOnlyCapturedAncestorParameters, property.Exposure));
+        var rewrittenParentA = Assert.IsType<Algorithm.User>(rewritten.Properties[0].Value);
+        var rewrittenParentB = Assert.IsType<Algorithm.User>(rewritten.Properties[1].Value);
+        Assert.Equal(
+            PropertyExposure.LocalOnlyCapturedAncestorParameters,
+            Assert.Single(rewrittenParentA.Properties).Exposure);
+        Assert.Equal(
+            PropertyExposure.LocalOnlyCapturedAncestorParameters,
+            Assert.Single(rewrittenParentB.Properties).Exposure);
+    }
+
+    /// <summary>
+    /// The completed-summary memo lives on ONE resolution: a second independent resolution
+    /// of the same root performs its own first computations in full (no static or cross-run
+    /// summary state).
+    /// </summary>
+    [Fact]
+    public void Exposure_SummaryMemoIsPerResolution_ASecondResolutionRecountsInFull()
+    {
+        var root = NestedPropertyChainRoot(8);
+        var first = new FrontEndTraversalObservations();
+        var second = new FrontEndTraversalObservations();
+
+        PropertyExposureResolver.Resolve(root, first);
+        PropertyExposureResolver.Resolve(root, second);
+
+        Assert.Equal(9, first.DependencyAlgorithmSummaryComputations);
+        Assert.Equal(9, second.DependencyAlgorithmSummaryComputations);
+    }
+
+    /// <summary>
+    /// Concurrent resolutions over the SAME immutable AST and over a distinct AST each own
+    /// their completed-summary memo and observation counters. No locks or shared counter
+    /// state are needed because all three memo lifetimes are resolution-local.
+    /// </summary>
+    [Fact]
+    public async Task Exposure_SummaryMemoIsResolutionLocal_UnderConcurrentResolutions()
+    {
+        var sharedRoot = NestedPropertyChainRoot(8);
+        var distinctRoot = NestedPropertyChainRoot(4);
+        var first = new FrontEndTraversalObservations();
+        var second = new FrontEndTraversalObservations();
+        var distinct = new FrontEndTraversalObservations();
+
+        await Task.WhenAll(
+            Task.Run(() => PropertyExposureResolver.Resolve(sharedRoot, first)),
+            Task.Run(() => PropertyExposureResolver.Resolve(sharedRoot, second)),
+            Task.Run(() => PropertyExposureResolver.Resolve(distinctRoot, distinct)));
+
+        Assert.Equal(9, first.DependencyAlgorithmSummaryComputations);
+        Assert.Equal(9, second.DependencyAlgorithmSummaryComputations);
+        Assert.Equal(5, distinct.DependencyAlgorithmSummaryComputations);
+    }
+
+    /// <summary>
+    /// The completed-summary memo is keyed by node REFERENCE: two structurally equal but
+    /// distinct algorithm objects summarize independently (a value/record-equality key would
+    /// collapse them).
+    /// </summary>
+    [Fact]
+    public void DependencyGraph_DistinctButEqualAlgorithms_SummarizeIndependently()
+    {
+        var observations = new FrontEndTraversalObservations();
+        var original = EmptyAlgorithm(new Expr.Binary(BinaryOp.Add, new Expr.Param("p"), new Expr.Num(1)));
+        var structuralTwin = original with { };
+        Assert.NotSame(original, structuralTwin);
+        Assert.Equal(original, structuralTwin);
+
+        var root = new Algorithm.User(
+            null, [], [],
+            [new Property("A", original), new Property("B", structuralTwin)],
+            OutputBundle.Empty);
+
+        var graph = PropertyDependencyGraphBuilder.BuildSummaries(
+            root, new PropertyDependencyGraphBuilder.SummaryMemo(), observations);
+
+        Assert.Equal(2, observations.DependencyAlgorithmSummaryComputations);
+        Assert.Equal(["p"], graph[0].RequiredAncestorOwnedParameterNames);
+        Assert.Equal(["p"], graph[1].RequiredAncestorOwnedParameterNames);
+    }
+
+    /// <summary>
+    /// Summary seeds are mutable accumulators, so no stored or shared seed instance may ever
+    /// be handed out directly. Three aliasing routes are pinned: (1) L's row makes a LITERAL's
+    /// empty seed the Binary accumulator and unions "x" into it — a shared empty-seed
+    /// singleton would leak "x" into every later empty summary (M); (2) P1 unions "x" into
+    /// the shared child algorithm's FIRST returned seed, proving the store-side pristine clone
+    /// survives first-caller accumulation; (3) P2 unions "y" into a cache-HIT seed, and P3
+    /// proves the stored seed itself did not escape from the hit side.
+    /// </summary>
+    [Fact]
+    public void DependencyGraph_SharedChildSummary_IsNotPollutedByAnEarlierOwnersAccumulation()
+    {
+        var sharedChild = new Expr.AlgorithmExpr(EmptyAlgorithm(new Expr.Num(7)));
+        var lValue = EmptyAlgorithm(new Expr.Binary(BinaryOp.Add, new Expr.Num(1), new Expr.Param("x")));
+        var mValue = EmptyAlgorithm(new Expr.Num(2));
+        var p1Value = EmptyAlgorithm(new Expr.Binary(BinaryOp.Add, sharedChild, new Expr.Param("x")));
+        var p2Value = EmptyAlgorithm(new Expr.Binary(BinaryOp.Add, sharedChild, new Expr.Param("y")));
+        var p3Value = EmptyAlgorithm(sharedChild);
+        var root = new Algorithm.User(
+            null, [], [],
+            [
+                new Property("L", lValue),
+                new Property("M", mValue),
+                new Property("P1", p1Value),
+                new Property("P2", p2Value),
+                new Property("P3", p3Value),
+            ],
+            OutputBundle.Empty);
+
+        var graph = PropertyDependencyGraphBuilder.BuildSummaries(root);
+
+        Assert.Equal(["x"], graph[0].RequiredAncestorOwnedParameterNames);
+        Assert.Empty(graph[1].RequiredAncestorOwnedParameterNames);
+        Assert.Equal(["x"], graph[2].RequiredAncestorOwnedParameterNames);
+        Assert.Equal(["y"], graph[3].RequiredAncestorOwnedParameterNames);
+        Assert.Empty(graph[4].RequiredAncestorOwnedParameterNames);
+    }
+
+    [Fact]
+    public void DependencyGraph_SummarySeedClone_CopiesEveryMutableSetInBothDirections()
+    {
+        var original = new PropertyDependencyGraphBuilder.SummarySeed(["p"], ["Visible"]);
+        var clone = original.Clone();
+
+        original.RequiredAncestorOwnedParameterNames.Add("original-only");
+        original.VisiblePropertyDependencyNames.Add("original-visible-only");
+        clone.RequiredAncestorOwnedParameterNames.Add("clone-only");
+        clone.VisiblePropertyDependencyNames.Add("clone-visible-only");
+
+        Assert.Equal(["original-only", "p"], original.RequiredAncestorOwnedParameterNames.Order(StringComparer.Ordinal));
+        Assert.Equal(["Visible", "original-visible-only"], original.VisiblePropertyDependencyNames.Order(StringComparer.Ordinal));
+        Assert.Equal(["clone-only", "p"], clone.RequiredAncestorOwnedParameterNames.Order(StringComparer.Ordinal));
+        Assert.Equal(["Visible", "clone-visible-only"], clone.VisiblePropertyDependencyNames.Order(StringComparer.Ordinal));
+        Assert.Same(StringComparer.Ordinal, original.RequiredAncestorOwnedParameterNames.Comparer);
+        Assert.Same(StringComparer.Ordinal, original.VisiblePropertyDependencyNames.Comparer);
+        Assert.Same(StringComparer.Ordinal, clone.RequiredAncestorOwnedParameterNames.Comparer);
+        Assert.Same(StringComparer.Ordinal, clone.VisiblePropertyDependencyNames.Comparer);
+    }
+
+    /// <summary>
+    /// The topological property order stays deterministic after the channel split: ready
+    /// properties leave in DECLARATION (index) order, a dependent follows its dependency,
+    /// and a dependency cycle falls back to appending the cyclic members in index order.
+    /// </summary>
+    [Fact]
+    public void DependencyOrder_TopologicalOrder_IsDeterministicWithDeclarationOrderTies()
+    {
+        var acyclic = new Algorithm.User(
+            null, [], [],
+            [
+                new Property("A", EmptyAlgorithm(new Expr.Num(1))),
+                new Property("B", EmptyAlgorithm(new Expr.Unary(UnaryOp.Minus, new Expr.Resolve("D")))),
+                new Property("C", EmptyAlgorithm(new Expr.Num(2))),
+                new Property("D", EmptyAlgorithm(new Expr.Num(3))),
+            ],
+            OutputBundle.Empty);
+        Assert.Equal(
+            [0, 2, 3, 1],
+            PropertyDependencyGraphBuilder.BuildDependencyOrder(acyclic).TopologicalOrder);
+
+        var cyclic = new Algorithm.User(
+            null, [], [],
+            [
+                new Property("X", EmptyAlgorithm(new Expr.Unary(UnaryOp.Minus, new Expr.Resolve("Y")))),
+                new Property("Y", EmptyAlgorithm(new Expr.Unary(UnaryOp.Minus, new Expr.Resolve("X")))),
+            ],
+            OutputBundle.Empty);
+        Assert.Equal(
+            [0, 1],
+            PropertyDependencyGraphBuilder.BuildDependencyOrder(cyclic).TopologicalOrder);
+    }
+
+    /// <summary>
+    /// ONE User body is both a conditional branch body (its binder `b` owns the body's free
+    /// name) and an ordinary property value (nothing owns `b`). The branch-body summary is
+    /// genuinely context-sensitive, so it must neither be admitted to nor served from the
+    /// empty-locals completed-summary memo — in either processing order.
+    /// </summary>
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void DependencyGraph_BranchBodySummaries_KeepBinderContextOutOfTheSharedMemo(bool conditionalFirst)
+    {
+        var sharedBody = EmptyAlgorithm(new Expr.Param("b"));
+        var conditional = new Algorithm.Conditional(
+            Parent: null,
+            Opens: [],
+            Branches: [new CondBranch(new Pattern.Bind("b"), sharedBody)]);
+        var condProperty = new Property("Cond", conditional);
+        var plainProperty = new Property("Plain", sharedBody);
+        var root = new Algorithm.User(
+            null, [], [],
+            conditionalFirst ? [condProperty, plainProperty] : [plainProperty, condProperty],
+            OutputBundle.Empty);
+        Assert.Same(sharedBody, conditional.Branches[0].Body);
+        Assert.Same(sharedBody, plainProperty.Value);
+
+        var graph = PropertyDependencyGraphBuilder.BuildSummaries(root);
+
+        Assert.True(graph.TryGetPropertyIndex("Cond", out var condIndex));
+        Assert.True(graph.TryGetPropertyIndex("Plain", out var plainIndex));
+        // Under its branch binder the body owns `b`: no ancestor requirement.
+        Assert.Empty(graph[condIndex].RequiredAncestorOwnedParameterNames);
+        // As a plain property value (empty locals) the SAME node leaves `b` free.
+        Assert.Equal(["b"], graph[plainIndex].RequiredAncestorOwnedParameterNames);
     }
 
     // ── 5. ModuleLoader ─────────────────────────────────────────────────────

@@ -2,11 +2,20 @@ namespace KatLang;
 
 internal sealed record PropertyDependencyNode(
     int PropertyIndex,
-    IReadOnlyList<int> SiblingDependencyIndices,
+    IReadOnlyList<int> SiblingDependencyIndices);
+
+internal sealed record PropertyDependencySummaryNode(
+    int PropertyIndex,
     IReadOnlyList<int> SummarySiblingDependencyIndices,
     IReadOnlyList<string> SummaryVisiblePropertyDependencyNames,
     IReadOnlyList<string> RequiredAncestorOwnedParameterNames);
 
+/// <summary>
+/// Sibling/processing-order channel result: per-property direct sibling dependency edges and
+/// the topological property-processing order derived from them. This is the ONLY channel the
+/// implicit-argument resolver consumes; the recursive summary channel lives on
+/// <see cref="PropertyDependencySummaryGraph"/> and is never computed here (M17).
+/// </summary>
 internal sealed class PropertyDependencyGraph
 {
     public static PropertyDependencyGraph Empty { get; } = new(
@@ -89,9 +98,49 @@ internal sealed class PropertyDependencyGraph
     }
 }
 
+/// <summary>
+/// Recursive summary channel result: per-property recursive ancestor-capture facts — direct
+/// required ancestor-owned parameter names plus summary edges to visible names and sibling
+/// properties. This is the ONLY channel the exposure resolver consumes; the sibling/order
+/// channel lives on <see cref="PropertyDependencyGraph"/> and is never computed here (M17).
+/// </summary>
+internal sealed class PropertyDependencySummaryGraph
+{
+    private readonly Dictionary<string, int> propertyNameToIndex;
+    private readonly PropertyDependencySummaryNode[] nodes;
+
+    public PropertyDependencySummaryGraph(
+        IReadOnlyList<Property> properties,
+        Dictionary<string, int> propertyNameToIndex,
+        PropertyDependencySummaryNode[] nodes)
+    {
+        Properties = properties;
+        this.propertyNameToIndex = propertyNameToIndex;
+        this.nodes = nodes;
+    }
+
+    public IReadOnlyList<Property> Properties { get; }
+
+    public int Count => nodes.Length;
+
+    public PropertyDependencySummaryNode this[int propertyIndex] => nodes[propertyIndex];
+
+    public bool TryGetPropertyIndex(string propertyName, out int propertyIndex)
+        => propertyNameToIndex.TryGetValue(propertyName, out propertyIndex);
+}
+
 internal static class PropertyDependencyGraphBuilder
 {
-    private sealed class SummarySeed
+    /// <summary>
+    /// Mutable name-set accumulator AND value of the summary channel. Callers mutate returned
+    /// seeds in place (<see cref="UnionWith"/>) while accumulating an enclosing expression's
+    /// contribution, so a completed summary admitted to a memo is stored as a PRISTINE CLONE
+    /// and every reach — first or later — receives its own mutable copy; returning a stored
+    /// instance directly would let one reader's accumulation corrupt every later reader. For
+    /// the same reason there is deliberately NO shared <c>Empty</c> singleton: every empty
+    /// seed is a fresh mutable instance.
+    /// </summary>
+    internal sealed class SummarySeed
     {
         public SummarySeed(
             IEnumerable<string>? requiredAncestorOwnedParameterNames = null,
@@ -123,27 +172,52 @@ internal static class PropertyDependencyGraphBuilder
     }
 
     /// <summary>
-    /// Reference-identity memo state for ONE summary-collection region (one algorithm-level
-    /// analysis, or one <see cref="Build"/> call's top property loop): the ancestor-owned set
-    /// is fixed for the region, and the walk's two context flavors get separate maps — the
-    /// region's PRIMARY (its local summaries and owned-here names) and the TRANSPARENT bundle
-    /// context (empty summaries, empty owned-here — call/dot-call argument bundles and capture
-    /// rows, identical however deeply they nest). Stored seeds follow a CLONE discipline:
-    /// callers mutate returned seeds as accumulators, so the memo keeps a pristine clone and
-    /// every reach (first or later) receives its own mutable copy — semantically identical to
-    /// re-walking the equivalent duplicated tree, because seed contributions are name SETS.
-    /// <see cref="AlgorithmSeeds"/> memoizes whole nested-algorithm summaries for the region's
-    /// (ancestor-owned, empty locally-owned) context — property values and
-    /// <see cref="Expr.AlgorithmExpr"/> contents alike; conditional BRANCH bodies are exempt
-    /// (their binder-name context varies per branch).
+    /// Completed-summary memo for the summary channel, keyed by ALGORITHM node REFERENCE
+    /// (reference identity, like every other front-end memo: two structurally equal but
+    /// distinct nodes summarize independently, while host-DAG sharing is by reference). An
+    /// entry is the finished summary of <c>CollectSummarySeed(algorithm, empty locally-owned
+    /// names)</c>, which is a pure function of the node: the summary walk never queries what
+    /// ancestors own — a free parameter reference is reported as a required ancestor-owned
+    /// name regardless of the ancestor context — so the empty-locals summary carries no
+    /// caller state. Conditional BRANCH bodies summarize under their per-branch binder names
+    /// (a genuinely context-sensitive input) and therefore never pass through this memo.
+    /// Entries are admitted only AFTER a summary is fully computed (local fixed point
+    /// converged, self-owned parameters stripped); the structural preflight guarantees
+    /// acyclic inputs, so a node can never be reached again while its own summary is still
+    /// in flight. Lifetime is the caller's: <see cref="PropertyExposureResolver"/> creates
+    /// ONE memo per resolution (never static, never cross-run) so each context-independent
+    /// summary is computed once per resolution instead of once per ancestor level, and a
+    /// standalone <see cref="BuildSummaries"/> call creates its own. Stored seeds follow the
+    /// clone discipline documented on <see cref="SummarySeed"/>.
     /// </summary>
-    private sealed class SummaryWalkMemos(FrontEndTraversalObservations? observations)
+    internal sealed class SummaryMemo
+    {
+        internal Dictionary<Algorithm, SummarySeed>? CompletedAlgorithmSummaries;
+    }
+
+    /// <summary>
+    /// Reference-identity memo state for ONE summary-collection region (one algorithm-level
+    /// analysis, or one <see cref="BuildSummaries"/> call's top property loop): the walk's
+    /// two context flavors get separate expression maps — the region's PRIMARY (its local
+    /// summaries and owned-here names) and the TRANSPARENT bundle context (empty summaries,
+    /// empty owned-here — call/dot-call argument bundles and capture rows, identical however
+    /// deeply they nest). Stored seeds follow a CLONE discipline: callers mutate returned
+    /// seeds as accumulators, so a memo keeps a pristine clone and every reach (first or
+    /// later) receives its own mutable copy — semantically identical to re-walking the
+    /// equivalent duplicated tree, because seed contributions are name SETS. Whole
+    /// nested-algorithm summaries (property values and <see cref="Expr.AlgorithmExpr"/>
+    /// contents alike, all summarized under the empty locally-owned context) live on the
+    /// region-spanning <see cref="SharedMemo"/> instead, so they are computed once per memo
+    /// lifetime rather than once per region; conditional BRANCH bodies stay exempt (their
+    /// binder-name context varies per branch).
+    /// </summary>
+    private sealed class SummaryWalkMemos(SummaryMemo sharedMemo, FrontEndTraversalObservations? observations)
     {
         public Dictionary<Expr, SummarySeed>? PrimarySeeds;
 
         public Dictionary<Expr, SummarySeed>? TransparentSeeds;
 
-        public Dictionary<Algorithm, SummarySeed>? AlgorithmSeeds;
+        public readonly SummaryMemo SharedMemo = sharedMemo;
 
         public readonly FrontEndTraversalObservations? Observations = observations;
     }
@@ -162,10 +236,14 @@ internal static class PropertyDependencyGraphBuilder
         public readonly FrontEndTraversalObservations? Observations = observations;
     }
 
-    public static PropertyDependencyGraph Build(
+    /// <summary>
+    /// Sibling/processing-order channel: per-property direct sibling dependency edges (and,
+    /// lazily, the topological order derived from them). Deliberately computes NO summary
+    /// data — the implicit-argument resolver consumes only this channel, and the recursive
+    /// summary fixed-point was pure dead work on its path (M17).
+    /// </summary>
+    public static PropertyDependencyGraph BuildDependencyOrder(
         Algorithm.User algorithm,
-        IEnumerable<string>? ancestorOwnedNames = null,
-        IEnumerable<string>? locallyOwnedNames = null,
         Func<string, bool>? preludeNameShadowedByCaller = null,
         FrontEndTraversalObservations? observations = null)
     {
@@ -174,11 +252,7 @@ internal static class PropertyDependencyGraphBuilder
             propertyNameToIndex[algorithm.Properties[i].Name] = i;
 
         var siblingNames = new HashSet<string>(propertyNameToIndex.Keys, StringComparer.Ordinal);
-        var ownedHere = CreateNameSet(locallyOwnedNames);
-        ownedHere.UnionWith(algorithm.Params);
-
-        var ancestorOwnedForProperties = CreateNameSet(ancestorOwnedNames);
-        ancestorOwnedForProperties.UnionWith(ownedHere);
+        var ownedHere = CreateNameSet(algorithm.Params);
 
         // Whether a prelude name is shadowed at this level through ordinary
         // resolution: siblings, this algorithm's own parameters, and
@@ -187,32 +261,57 @@ internal static class PropertyDependencyGraphBuilder
         // alias calls and canonical `Math.X` calls both consult this so the
         // sibling-order channel has the SAME binding knowledge as rewriting. A
         // PREDICATE, not a materialized union: copying the ancestor map's keys
-        // per Build call is O(ancestor properties) for every processed
+        // per build call is O(ancestor properties) for every processed
         // property value and made wide flat scopes quadratic.
         bool PreludeNameShadowed(string name)
             => siblingNames.Contains(name)
                 || ownedHere.Contains(name)
                 || (preludeNameShadowedByCaller?.Invoke(name) ?? false);
 
-        // One memo bundle spans the whole Build call: every property value below is
-        // summarized under the same (ancestorOwnedForProperties, empty locally-owned)
-        // context, so two properties sharing ONE value algorithm summarize it once.
-        var buildMemos = new SummaryWalkMemos(observations);
         var nodes = new PropertyDependencyNode[algorithm.Properties.Count];
         for (var i = 0; i < algorithm.Properties.Count; i++)
         {
-            var property = algorithm.Properties[i];
-            var siblingDependencyIndices = CollectSiblingDependencyIndices(
-                property.Value.Output,
-                siblingNames,
-                PreludeNameShadowed,
-                propertyNameToIndex,
+            nodes[i] = new PropertyDependencyNode(
                 i,
-                new SiblingWalkMemo(observations));
-            var summarySeed = CollectSharedAlgorithmSummarySeed(
-                property.Value,
-                ancestorOwnedForProperties,
-                buildMemos);
+                CollectSiblingDependencyIndices(
+                    algorithm.Properties[i].Value.Output,
+                    siblingNames,
+                    PreludeNameShadowed,
+                    propertyNameToIndex,
+                    i,
+                    new SiblingWalkMemo(observations)));
+        }
+
+        return new PropertyDependencyGraph(algorithm.Properties, propertyNameToIndex, nodes);
+    }
+
+    /// <summary>
+    /// Recursive summary channel: per-property recursive ancestor-capture facts for the
+    /// exposure resolver. Deliberately computes NO sibling/order data (M17). A
+    /// caller-supplied <paramref name="memo"/> extends completed-summary reuse across every
+    /// <see cref="BuildSummaries"/> call of one logical analysis (the exposure resolver
+    /// passes one memo per resolution, so a nested algorithm's summary is computed once
+    /// rather than once per ancestor level); with no memo the call is standalone and
+    /// creates its own.
+    /// </summary>
+    public static PropertyDependencySummaryGraph BuildSummaries(
+        Algorithm.User algorithm,
+        SummaryMemo? memo = null,
+        FrontEndTraversalObservations? observations = null)
+    {
+        var propertyNameToIndex = new Dictionary<string, int>(StringComparer.Ordinal);
+        for (var i = 0; i < algorithm.Properties.Count; i++)
+            propertyNameToIndex[algorithm.Properties[i].Name] = i;
+
+        // One memo bundle spans the whole BuildSummaries call: every property value below is
+        // summarized under the same empty locally-owned context, so two properties sharing
+        // ONE value algorithm summarize it once — and the caller's shared memo carries the
+        // same completed summaries across nesting levels.
+        var buildMemos = new SummaryWalkMemos(memo ?? new SummaryMemo(), observations);
+        var nodes = new PropertyDependencySummaryNode[algorithm.Properties.Count];
+        for (var i = 0; i < algorithm.Properties.Count; i++)
+        {
+            var summarySeed = CollectSharedAlgorithmSummarySeed(algorithm.Properties[i].Value, buildMemos);
             var summarySiblingDependencyIndices = new HashSet<int>();
             var summaryVisiblePropertyDependencyNames = CreateNameSet();
             foreach (var dependencyName in summarySeed.VisiblePropertyDependencyNames)
@@ -224,49 +323,50 @@ internal static class PropertyDependencyGraphBuilder
                     summaryVisiblePropertyDependencyNames.Add(dependencyName);
             }
 
-            nodes[i] = new PropertyDependencyNode(
+            nodes[i] = new PropertyDependencySummaryNode(
                 i,
-                siblingDependencyIndices,
                 summarySiblingDependencyIndices.OrderBy(static idx => idx).ToArray(),
                 summaryVisiblePropertyDependencyNames.OrderBy(static name => name, StringComparer.Ordinal).ToArray(),
                 summarySeed.RequiredAncestorOwnedParameterNames.OrderBy(static name => name, StringComparer.Ordinal).ToArray());
         }
 
-        return new PropertyDependencyGraph(algorithm.Properties, propertyNameToIndex, nodes);
+        return new PropertyDependencySummaryGraph(algorithm.Properties, propertyNameToIndex, nodes);
     }
 
     /// <summary>
-    /// Region-memoized nested-algorithm summary for the constant
-    /// (<paramref name="ancestorOwnedForChildren"/>, empty locally-owned) context — see the
-    /// clone discipline on <see cref="SummaryWalkMemos"/>.
+    /// Memo-shared nested-algorithm summary for the constant empty locally-owned context —
+    /// see <see cref="SummaryMemo"/> for why that summary is a pure function of the node
+    /// reference and <see cref="SummarySeed"/> for the clone discipline. The observation
+    /// counter records completed COMPUTATIONS (memo misses) only, so an observed analysis
+    /// is pinned to at most one computation per distinct algorithm node per memo lifetime.
     /// </summary>
     private static SummarySeed CollectSharedAlgorithmSummarySeed(
         Algorithm algorithm,
-        HashSet<string> ancestorOwnedForChildren,
         SummaryWalkMemos memos)
     {
-        memos.AlgorithmSeeds ??= new(ReferenceEqualityComparer.Instance);
-        if (memos.AlgorithmSeeds.TryGetValue(algorithm, out var stored))
+        var completedSummaries = memos.SharedMemo.CompletedAlgorithmSummaries ??= new(ReferenceEqualityComparer.Instance);
+        if (completedSummaries.TryGetValue(algorithm, out var stored))
             return stored.Clone();
 
-        var seed = CollectSummarySeed(algorithm, ancestorOwnedForChildren, CreateNameSet(), memos.Observations);
-        memos.AlgorithmSeeds[algorithm] = seed.Clone();
+        memos.Observations?.RecordDependencyAlgorithmSummaryComputation();
+        var seed = CollectSummarySeed(algorithm, CreateNameSet(), memos.SharedMemo, memos.Observations);
+        completedSummaries[algorithm] = seed.Clone();
         return seed;
     }
 
     private static SummarySeed CollectSummarySeed(
         Algorithm algorithm,
-        HashSet<string> ancestorOwnedNames,
         HashSet<string> locallyOwnedNames,
+        SummaryMemo sharedMemo,
         FrontEndTraversalObservations? observations)
     {
         switch (algorithm)
         {
             case Algorithm.User user:
-                return CollectSummarySeed(user, ancestorOwnedNames, locallyOwnedNames, observations);
+                return CollectSummarySeed(user, locallyOwnedNames, sharedMemo, observations);
 
             case Algorithm.Conditional conditional:
-                return CollectSummarySeed(conditional, ancestorOwnedNames, locallyOwnedNames, observations);
+                return CollectSummarySeed(conditional, locallyOwnedNames, sharedMemo, observations);
 
             default:
                 return new SummarySeed();
@@ -275,8 +375,8 @@ internal static class PropertyDependencyGraphBuilder
 
     private static SummarySeed CollectSummarySeed(
         Algorithm.User algorithm,
-        HashSet<string> ancestorOwnedNames,
         HashSet<string> locallyOwnedNames,
+        SummaryMemo sharedMemo,
         FrontEndTraversalObservations? observations)
     {
         // A synthetic assignment-deconstruction helper (`x, *y, z = RHS`) is self-contained: it
@@ -292,9 +392,6 @@ internal static class PropertyDependencyGraphBuilder
         var ownedHere = CreateNameSet(locallyOwnedNames);
         ownedHere.UnionWith(algorithm.Params);
 
-        var ancestorOwnedForChildren = CreateNameSet(ancestorOwnedNames);
-        ancestorOwnedForChildren.UnionWith(ownedHere);
-
         // Ownership attribution follows the same transparency model as
         // ParameterDetector: transparent OutputBundle content (call/dot-call
         // argument bundles, surviving parenthesized groups) owns no names, so
@@ -303,23 +400,24 @@ internal static class PropertyDependencyGraphBuilder
         // ancestor-capture requirement as the identical reference written
         // directly in the enclosing owner; the final
         // RemoveRequiredAncestorOwnedParameterNames strip below keeps each
-        // algorithm's self-owned parameters out of the summary it returns.
+        // algorithm's self-owned parameters out of the summary it returns. What
+        // ancestors own is deliberately NOT an input: a parameter reference not
+        // owned within this walk is reported as a required ancestor-owned name
+        // regardless, which is what makes the empty-locals summary a pure
+        // function of the node (see SummaryMemo).
 
-        // One memo bundle per algorithm-level analysis region: the property base seeds and
-        // the opens/output walks below all run against this region's fixed ancestor-owned
-        // set (property values and nested AlgorithmExpr contents additionally share the
-        // empty locally-owned algorithm context).
-        var memos = new SummaryWalkMemos(observations);
+        // One expression-memo bundle per algorithm-level analysis region: the property base
+        // seeds and the opens/output walks below all run against this region's local-summary
+        // and owned-here context (property values and nested AlgorithmExpr contents go
+        // through the shared completed-summary memo instead).
+        var memos = new SummaryWalkMemos(sharedMemo, observations);
         var currentPropertySummaries = new Dictionary<string, SummarySeed>(StringComparer.Ordinal);
         var propertyBaseSeeds = new SummarySeed[algorithm.Properties.Count];
         for (var i = 0; i < algorithm.Properties.Count; i++)
         {
             var property = algorithm.Properties[i];
             currentPropertySummaries[property.Name] = new SummarySeed();
-            propertyBaseSeeds[i] = CollectSharedAlgorithmSummarySeed(
-                property.Value,
-                ancestorOwnedForChildren,
-                memos);
+            propertyBaseSeeds[i] = CollectSharedAlgorithmSummarySeed(property.Value, memos);
         }
 
         while (true)
@@ -346,14 +444,12 @@ internal static class PropertyDependencyGraphBuilder
             algorithm.Opens,
             currentPropertySummaries,
             ownedHere,
-            ancestorOwnedForChildren,
             memos,
             inTransparentContext: false);
         seed.UnionWith(CollectSummarySeed(
             algorithm.Output,
             currentPropertySummaries,
             ownedHere,
-            ancestorOwnedForChildren,
             memos,
             inTransparentContext: false));
         seed.RemoveRequiredAncestorOwnedParameterNames(ownedHere);
@@ -383,30 +479,28 @@ internal static class PropertyDependencyGraphBuilder
 
     private static SummarySeed CollectSummarySeed(
         Algorithm.Conditional algorithm,
-        HashSet<string> ancestorOwnedNames,
         HashSet<string> locallyOwnedNames,
+        SummaryMemo sharedMemo,
         FrontEndTraversalObservations? observations)
     {
         var ownedHere = CreateNameSet(locallyOwnedNames);
-        var ancestorOwnedForChildren = CreateNameSet(ancestorOwnedNames);
-        ancestorOwnedForChildren.UnionWith(ownedHere);
 
         var seed = CollectSummarySeed(
             algorithm.Opens,
             new Dictionary<string, SummarySeed>(StringComparer.Ordinal),
             ownedHere,
-            ancestorOwnedForChildren,
-            new SummaryWalkMemos(observations),
+            new SummaryWalkMemos(sharedMemo, observations),
             inTransparentContext: false);
 
         foreach (var branch in algorithm.Branches)
         {
-            // Branch bodies are deliberately not reference-deduplicated: their binder-name
-            // context varies per branch.
+            // Branch bodies deliberately bypass the shared completed-summary memo: their
+            // binder-name context varies per branch, so their summaries are NOT pure
+            // functions of the body node (see SummaryMemo).
             seed.UnionWith(CollectSummarySeed(
                 branch.Body,
-                ancestorOwnedForChildren,
                 CreateNameSet(branch.Pattern.BoundNames()),
+                sharedMemo,
                 observations));
         }
 
@@ -417,13 +511,12 @@ internal static class PropertyDependencyGraphBuilder
         IReadOnlyList<Expr> expressions,
         IReadOnlyDictionary<string, SummarySeed> localPropertySummaries,
         HashSet<string> ownedHere,
-        HashSet<string> ancestorOwnedForChildren,
         SummaryWalkMemos memos,
         bool inTransparentContext)
     {
         var seed = new SummarySeed();
         foreach (var expression in expressions)
-            seed.UnionWith(CollectSummarySeed(expression, localPropertySummaries, ownedHere, ancestorOwnedForChildren, memos, inTransparentContext));
+            seed.UnionWith(CollectSummarySeed(expression, localPropertySummaries, ownedHere, memos, inTransparentContext));
 
         return seed;
     }
@@ -432,7 +525,6 @@ internal static class PropertyDependencyGraphBuilder
         Expr expr,
         IReadOnlyDictionary<string, SummarySeed> localPropertySummaries,
         HashSet<string> ownedHere,
-        HashSet<string> ancestorOwnedForChildren,
         SummaryWalkMemos memos,
         bool inTransparentContext)
     {
@@ -443,7 +535,7 @@ internal static class PropertyDependencyGraphBuilder
         // empty summaries/owned-here maps the transparent arms pass. Childless leaves
         // build their seed in place.
         if (!AstTraversalDagSafety.HasTraversableExprChildren(expr))
-            return CollectSummarySeedCore(expr, localPropertySummaries, ownedHere, ancestorOwnedForChildren, memos, inTransparentContext);
+            return CollectSummarySeedCore(expr, localPropertySummaries, ownedHere, memos, inTransparentContext);
 
         var seedMap = inTransparentContext
             ? memos.TransparentSeeds ??= new(ReferenceEqualityComparer.Instance)
@@ -452,7 +544,7 @@ internal static class PropertyDependencyGraphBuilder
             return stored.Clone();
 
         memos.Observations?.RecordDependencySeedExpansion();
-        var seed = CollectSummarySeedCore(expr, localPropertySummaries, ownedHere, ancestorOwnedForChildren, memos, inTransparentContext);
+        var seed = CollectSummarySeedCore(expr, localPropertySummaries, ownedHere, memos, inTransparentContext);
         seedMap[expr] = seed.Clone();
         return seed;
     }
@@ -461,7 +553,6 @@ internal static class PropertyDependencyGraphBuilder
         Expr expr,
         IReadOnlyDictionary<string, SummarySeed> localPropertySummaries,
         HashSet<string> ownedHere,
-        HashSet<string> ancestorOwnedForChildren,
         SummaryWalkMemos memos,
         bool inTransparentContext)
     {
@@ -478,35 +569,35 @@ internal static class PropertyDependencyGraphBuilder
                     : new SummarySeed(visiblePropertyDependencyNames: [name]);
 
             case Expr.Grace(var inner, _):
-                return CollectSummarySeed(inner, localPropertySummaries, ownedHere, ancestorOwnedForChildren, memos, inTransparentContext);
+                return CollectSummarySeed(inner, localPropertySummaries, ownedHere, memos, inTransparentContext);
 
             case Expr.Binary(_, var left, var right):
             {
-                var seed = CollectSummarySeed(left, localPropertySummaries, ownedHere, ancestorOwnedForChildren, memos, inTransparentContext);
-                seed.UnionWith(CollectSummarySeed(right, localPropertySummaries, ownedHere, ancestorOwnedForChildren, memos, inTransparentContext));
+                var seed = CollectSummarySeed(left, localPropertySummaries, ownedHere, memos, inTransparentContext);
+                seed.UnionWith(CollectSummarySeed(right, localPropertySummaries, ownedHere, memos, inTransparentContext));
                 return seed;
             }
 
             case Expr.Unary(_, var operand):
-                return CollectSummarySeed(operand, localPropertySummaries, ownedHere, ancestorOwnedForChildren, memos, inTransparentContext);
+                return CollectSummarySeed(operand, localPropertySummaries, ownedHere, memos, inTransparentContext);
 
             case Expr.Index(var target, var selector):
             {
-                var seed = CollectSummarySeed(target, localPropertySummaries, ownedHere, ancestorOwnedForChildren, memos, inTransparentContext);
-                seed.UnionWith(CollectSummarySeed(selector, localPropertySummaries, ownedHere, ancestorOwnedForChildren, memos, inTransparentContext));
+                var seed = CollectSummarySeed(target, localPropertySummaries, ownedHere, memos, inTransparentContext);
+                seed.UnionWith(CollectSummarySeed(selector, localPropertySummaries, ownedHere, memos, inTransparentContext));
                 return seed;
             }
 
             case Expr.SequenceSpread(var operand):
             {
-                var seed = CollectSummarySeed(operand, localPropertySummaries, ownedHere, ancestorOwnedForChildren, memos, inTransparentContext);
+                var seed = CollectSummarySeed(operand, localPropertySummaries, ownedHere, memos, inTransparentContext);
                 return seed;
             }
 
             case Expr.SequenceConstruct(var left, var right):
             {
-                var seed = CollectSummarySeed(left, localPropertySummaries, ownedHere, ancestorOwnedForChildren, memos, inTransparentContext);
-                seed.UnionWith(CollectSummarySeed(right, localPropertySummaries, ownedHere, ancestorOwnedForChildren, memos, inTransparentContext));
+                var seed = CollectSummarySeed(left, localPropertySummaries, ownedHere, memos, inTransparentContext);
+                seed.UnionWith(CollectSummarySeed(right, localPropertySummaries, ownedHere, memos, inTransparentContext));
                 return seed;
             }
 
@@ -514,15 +605,12 @@ internal static class PropertyDependencyGraphBuilder
             {
                 var seed = new SummarySeed();
                 foreach (var item in listItems)
-                    seed.UnionWith(CollectSummarySeed(item, localPropertySummaries, ownedHere, ancestorOwnedForChildren, memos, inTransparentContext));
+                    seed.UnionWith(CollectSummarySeed(item, localPropertySummaries, ownedHere, memos, inTransparentContext));
                 return seed;
             }
 
             case Expr.AlgorithmExpr(var algorithm):
-                return CollectSharedAlgorithmSummarySeed(
-                    algorithm,
-                    ancestorOwnedForChildren,
-                    memos);
+                return CollectSharedAlgorithmSummarySeed(algorithm, memos);
 
             case Expr.Capture(var captureBody):
                 // A capture owns no names: its rows walk with an empty
@@ -533,7 +621,6 @@ internal static class PropertyDependencyGraphBuilder
                     captureBody,
                     new Dictionary<string, SummarySeed>(StringComparer.Ordinal),
                     CreateNameSet(),
-                    ancestorOwnedForChildren,
                     memos,
                     inTransparentContext: true);
 
@@ -543,12 +630,11 @@ internal static class PropertyDependencyGraphBuilder
                 // owned-here set and an empty local-summary map — the same
                 // attribution as capture rows (and as the pre-Track-B empty
                 // transparent args wrapper).
-                var seed = CollectSummarySeed(function, localPropertySummaries, ownedHere, ancestorOwnedForChildren, memos, inTransparentContext);
+                var seed = CollectSummarySeed(function, localPropertySummaries, ownedHere, memos, inTransparentContext);
                 seed.UnionWith(CollectSummarySeed(
                     args,
                     new Dictionary<string, SummarySeed>(StringComparer.Ordinal),
                     CreateNameSet(),
-                    ancestorOwnedForChildren,
                     memos,
                     inTransparentContext: true));
                 return seed;
@@ -556,7 +642,7 @@ internal static class PropertyDependencyGraphBuilder
 
             case Expr.DotCall dotCall:
             {
-                var seed = CollectSummarySeed(dotCall.Target, localPropertySummaries, ownedHere, ancestorOwnedForChildren, memos, inTransparentContext);
+                var seed = CollectSummarySeed(dotCall.Target, localPropertySummaries, ownedHere, memos, inTransparentContext);
 
                 // The stored lexical-fallback identity is an ordinary
                 // elaborated name expression (Resolve/Param) and participates
@@ -582,7 +668,6 @@ internal static class PropertyDependencyGraphBuilder
                         dotCall.EffectiveLexicalFallback,
                         localPropertySummaries,
                         ownedHere,
-                        ancestorOwnedForChildren,
                         memos,
                         inTransparentContext));
                 }
@@ -593,7 +678,6 @@ internal static class PropertyDependencyGraphBuilder
                         argsOpt,
                         new Dictionary<string, SummarySeed>(StringComparer.Ordinal),
                         CreateNameSet(),
-                        ancestorOwnedForChildren,
                         memos,
                         inTransparentContext: true));
                 }

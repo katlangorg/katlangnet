@@ -174,10 +174,14 @@ internal static class ImplicitArgumentResolver
         // this pass's own visibleParamMap carries (ancestor property names here,
         // sibling names inside the builder), so dependency ordering and the
         // rewriting below cannot disagree about which calls are alias calls.
+        // This pass consumes ONLY the dependency/order channel: the builder's
+        // recursive property-summary channel belongs to the exposure resolver
+        // and is deliberately never computed here (M17).
         var dependencyGraph = alg is Algorithm.User userAlgorithm
-            ? PropertyDependencyGraphBuilder.Build(
+            ? PropertyDependencyGraphBuilder.BuildDependencyOrder(
                 userAlgorithm,
-                preludeNameShadowedByCaller: parentParamMap.ContainsKey)
+                preludeNameShadowedByCaller: parentParamMap.ContainsKey,
+                observations)
             : PropertyDependencyGraph.Empty;
 
         // Visible map = parent + local (local overrides). When there are no local properties —

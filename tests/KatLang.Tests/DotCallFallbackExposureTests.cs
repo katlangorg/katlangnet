@@ -555,7 +555,7 @@ public class DotCallFallbackExposureTests
         {
             var outer = Assert.IsType<Algorithm.User>(
                 Assert.Single(ParseValidRoot(source).Properties, property => property.Name == "Outer").Value);
-            var graph = PropertyDependencyGraphBuilder.Build(outer);
+            var graph = PropertyDependencyGraphBuilder.BuildSummaries(outer);
             return graph[0].RequiredAncestorOwnedParameterNames;
         }
 
@@ -609,13 +609,14 @@ public class DotCallFallbackExposureTests
             """);
         var outer = Assert.IsType<Algorithm.User>(
             Assert.Single(root.Properties, property => property.Name == "Outer").Value);
-        var graph = PropertyDependencyGraphBuilder.Build(outer);
+        var graph = PropertyDependencyGraphBuilder.BuildSummaries(outer);
         Assert.True(graph.TryGetPropertyIndex("P", out var pIndex));
         Assert.True(graph.TryGetPropertyIndex("t", out var tIndex));
         Assert.Equal([tIndex], graph[pIndex].SummarySiblingDependencyIndices);
         // The fallback is a CALLED name: it never contributes to the sibling
         // evaluation-order channel, matching Call function position.
-        Assert.Empty(graph[pIndex].SiblingDependencyIndices);
+        var orderGraph = PropertyDependencyGraphBuilder.BuildDependencyOrder(outer);
+        Assert.Empty(orderGraph[pIndex].SiblingDependencyIndices);
     }
 
     // ── The static certainty predicate mirrors evaluator dispatch ───────────

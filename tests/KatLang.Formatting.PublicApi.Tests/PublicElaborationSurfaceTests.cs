@@ -35,6 +35,7 @@ public class PublicElaborationSurfaceTests
         "KatLang.SyntaxParseResult",
         "KatLang.PropertyDependencyGraphBuilder",
         "KatLang.PropertyDependencyGraph",
+        "KatLang.PropertyDependencySummaryGraph",
     ];
 
     /// <summary>
