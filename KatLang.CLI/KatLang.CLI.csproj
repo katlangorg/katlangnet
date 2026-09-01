@@ -1,5 +1,12 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
+  <!--
+    The single authoritative KatLang version; see KatLangVersion.props. It is
+    the KatLang runtime this distribution carries, so it is both this
+    assembly's version and the version of the KatLang package referenced below.
+  -->
+  <Import Project="..\KatLangVersion.props" />
+
   <PropertyGroup>
     <OutputType>Exe</OutputType>
     <TargetFramework>net11.0</TargetFramework>
@@ -8,7 +15,6 @@
     <PublishAot>true</PublishAot>
     <InvariantGlobalization>true</InvariantGlobalization>
     <IsPackable>false</IsPackable>
-    <KatLangVersion>0.8.191</KatLangVersion>
     <Version>$(KatLangVersion)</Version>
     <Description>Command-line interface for the KatLang language.</Description>
   </PropertyGroup>

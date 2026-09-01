@@ -1,0 +1,39 @@
+<Project>
+
+  <!--
+    The single authoritative KatLang version.
+
+    KatLang and `katlang` are ONE product: the CLI is the command-line
+    distribution of the language runtime it carries, not a separately versioned
+    host. This file is the only place that number is written, and every
+    consumer reads $(KatLangVersion) from here:
+
+      KatLangVersion.props
+        src/KatLang/KatLang.csproj            package and assembly version
+        KatLang.CLI/KatLang.CLI.csproj        CLI assembly version, KatLang PackageReference
+        tests/KatLang.CLI.Tests/*.csproj      IntendedKatLangVersion assembly metadata
+
+    It is imported EXPLICITLY by exactly those three projects rather than
+    dropped in as a Directory.Build.props, so it versions the KatLang product
+    and leaves the benchmarks, demo app, fuzz host, and library tests alone.
+
+    Releasing is therefore: change the number here, pack src/KatLang, publish.
+    Because the CLI's PackageReference demands that package by version, a bump
+    that has not been published yet fails restore loudly instead of quietly
+    leaving the CLI on the previous runtime.
+  -->
+  <PropertyGroup>
+    <KatLangVersion>0.8.191</KatLangVersion>
+  </PropertyGroup>
+
+  <!--
+    A blanked out property would otherwise degrade quietly: the package would
+    fall back to the SDK's default version and the CLI test's build time
+    expectation would become an empty string.
+  -->
+  <Target Name="ValidateKatLangVersion" BeforeTargets="BeforeBuild">
+    <Error Condition="'$(KatLangVersion)' == ''"
+           Text="KatLangVersion is empty. It is defined in KatLangVersion.props, the single authoritative source of the KatLang version; set it there rather than in an individual project." />
+  </Target>
+
+</Project>

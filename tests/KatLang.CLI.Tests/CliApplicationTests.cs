@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Sockets;
+using System.Reflection;
 using System.Text;
 
 namespace KatLang.CLI.Tests;
@@ -50,15 +51,16 @@ public sealed class CliApplicationTests
         // tracking the runtime actually executing. VersionOf reads the assembly
         // identity - a different metadata source than the informational version
         // the CLI renders - so it is an independent oracle, not a copy of the
-        // implementation.
+        // implementation. Whether that runtime is the INTENDED one is a
+        // separate question, checked below against build metadata.
         Assert.Equal($"KatLang {VersionOf(typeof(KatLangEngine))}", result.TrimmedOutput);
     }
 
     /// <summary>
     /// The release invariant behind the single reported number: one MSBuild
-    /// property (KatLangVersion) drives both this assembly's version and the
-    /// KatLang PackageReference, so the CLI can identify itself by the runtime
-    /// it carries. Splitting those apart - or bumping one without the other -
+    /// property (KatLangVersion, owned by KatLangVersion.props) drives both
+    /// this assembly's version and the KatLang PackageReference, so the CLI can
+    /// identify itself by the runtime it carries. A stale or mismatched package
     /// desynchronizes the two assemblies and fails here.
     /// </summary>
     [Fact]
@@ -68,8 +70,16 @@ public sealed class CliApplicationTests
     }
 
     /// <summary>
-    /// The currently shipped version. A KatLang release moves the single
-    /// authoritative property in KatLang.CLI.csproj and lands here.
+    /// The currently shipped version: what the build INTENDED to ship against
+    /// what the CLI actually reports.
+    ///
+    /// <para>The expectation is injected at compile time from KatLangVersion.props
+    /// - the same property that sets the KatLang package version and the CLI's
+    /// KatLang PackageReference - so a KatLang release moves one number and
+    /// lands here with nothing to restate. It is NOT read from the loaded
+    /// KatLang assembly, which is what keeps the comparison meaningful: when a
+    /// build resolves or copies a KatLang runtime older than the one it intends
+    /// to ship, the CLI reports that older number and this fails.</para>
     /// </summary>
     [Fact]
     public async Task Version_ReportsTheCurrentlyShippedKatLangVersion()
@@ -77,7 +87,7 @@ public sealed class CliApplicationTests
         var result = await Cli.InvokeAsync("--version");
 
         Assert.Equal(Success, result.ExitCode);
-        Assert.Equal("KatLang 0.8.190", result.TrimmedOutput);
+        Assert.Equal($"KatLang {IntendedKatLangVersion}", result.TrimmedOutput);
     }
 
     [Fact]
@@ -497,6 +507,39 @@ public sealed class CliApplicationTests
     /// </summary>
     private static string VersionOf(Type type)
         => type.Assembly.GetName().Version!.ToString(3);
+
+    private const string IntendedVersionKey = "IntendedKatLangVersion";
+
+    /// <summary>
+    /// The KatLang version this build intends to ship, compiled into THIS
+    /// assembly from $(KatLangVersion). Reading it off the test assembly - not
+    /// off KatLang.dll - is what makes it an oracle rather than an echo.
+    /// </summary>
+    private static string IntendedKatLangVersion => ReadIntendedKatLangVersion();
+
+    private static string ReadIntendedKatLangVersion()
+    {
+        var version = typeof(CliApplicationTests).Assembly
+            .GetCustomAttributes<AssemblyMetadataAttribute>()
+            .SingleOrDefault(metadata => metadata.Key == IntendedVersionKey)
+            ?.Value;
+
+        // Deliberately no literal fallback. An absent or empty value means the
+        // build metadata stopped flowing - a dropped KatLangVersion.props
+        // import, a renamed property - and substituting a hard-coded number
+        // here would silently restore the hand-synchronized version drift this
+        // metadata exists to remove.
+        if (string.IsNullOrWhiteSpace(version))
+        {
+            throw new InvalidOperationException(
+                $"This test assembly carries no '{IntendedVersionKey}' assembly metadata, so the " +
+                "CLI version contract has no build-time expectation to check against. " +
+                "KatLang.CLI.Tests.csproj must import KatLangVersion.props and emit " +
+                "$(KatLangVersion) as AssemblyMetadata.");
+        }
+
+        return version;
+    }
 
     private sealed class ThrowingTextWriter(Exception exception) : StringWriter
     {

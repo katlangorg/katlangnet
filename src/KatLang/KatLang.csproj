@@ -1,5 +1,8 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
+	<!-- The single authoritative KatLang version; see KatLangVersion.props. -->
+	<Import Project="..\..\KatLangVersion.props" />
+
 	<PropertyGroup>
 		<TargetFramework>net11.0</TargetFramework>
 		<ImplicitUsings>enable</ImplicitUsings>
@@ -7,7 +10,7 @@
 		<RootNamespace>KatLang</RootNamespace>
 
 		<PackageId>KatLang</PackageId>
-		<Version>0.8.191</Version>
+		<Version>$(KatLangVersion)</Version>
 		<Authors>katlangorg</Authors>
 		<Company>Logics Research Centre SIA</Company>
 		<Copyright>Copyright © Logics Research Centre SIA and contributors</Copyright>

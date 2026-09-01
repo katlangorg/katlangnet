@@ -1,11 +1,27 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
+  <!-- The single authoritative KatLang version; see KatLangVersion.props. -->
+  <Import Project="..\..\KatLangVersion.props" />
+
   <PropertyGroup>
     <TargetFramework>net11.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <IsPackable>false</IsPackable>
   </PropertyGroup>
+
+  <!--
+    The version this build INTENDS to ship, baked into the test assembly at
+    compile time. It is what the CLI version test compares the running CLI's
+    reported version against, and it deliberately does NOT come from the loaded
+    KatLang assembly: the assertion is "what the build intended" vs "what the
+    process actually loaded", so a stale KatLang.dll or a PackageReference that
+    resolved to an older package still fails. Deriving the expectation from the
+    runtime would make that comparison self-fulfilling.
+  -->
+  <ItemGroup>
+    <AssemblyMetadata Include="IntendedKatLangVersion" Value="$(KatLangVersion)" />
+  </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
