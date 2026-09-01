@@ -105,6 +105,7 @@ internal sealed class LoopRunFrame
     private readonly Evaluator.CountedResult[] _countedParamSlots;
     private readonly PlannedLoopValue[] _tempSlots;
     private readonly bool[] _tempSlotHasValue;
+    private readonly PlannedLoopValue[] _iterationOutputs;
     private readonly LoopValueEnvironment _valueEnvironment;
 
     public LoopRunFrame(
@@ -121,6 +122,8 @@ internal sealed class LoopRunFrame
         _countedParamSlots = parentCtx.CountedParamEnv.Select(item => item.Value).ToArray();
         _tempSlots = new PlannedLoopValue[template.TempPlans.Count];
         _tempSlotHasValue = new bool[template.TempPlans.Count];
+        _iterationOutputs = new PlannedLoopValue[
+            template.NextStateOutputs.Count + (template.ContinuationOutput is null ? 0 : 1)];
         _valueEnvironment = new LoopValueEnvironment(template.Step.Params, _stateSlots, parentValEnv);
         Diagnostics = parentCtx.LoopDiagnostics;
         Diagnostics?.RecordLoopPlanExecution(template.DiagnosticKey);
@@ -166,6 +169,22 @@ internal sealed class LoopRunFrame
 
     public void SetScratchSlot(int index, Result value)
         => _scratchSlots[index] = value;
+
+    /// <summary>
+    /// Retains one evaluated iteration output (state outputs first, the while
+    /// continuation last) in a REUSABLE per-frame buffer. Normal iterations only ever
+    /// write here — struct copies into a preallocated array, no per-iteration
+    /// allocation — and the retained values are read back exclusively by
+    /// <c>LoopOptimizer.MaterializeGenericHandoverSlots</c> when an actual handover
+    /// branch needs the generic output-slot representation (M16). Handover ends the
+    /// optimized loop, so one buffer per frame can never be read after being
+    /// overwritten by a later iteration.
+    /// </summary>
+    public void SetIterationOutput(int index, PlannedLoopValue value)
+        => _iterationOutputs[index] = value;
+
+    public PlannedLoopValue GetIterationOutput(int index)
+        => _iterationOutputs[index];
 
     public EvalResult<Evaluator.CountedResult> CurrentStateResult()
         => Evaluator.MakeCheckedLoopStateResult(IterationCtx, _stateSlots);

@@ -106,4 +106,36 @@ internal sealed class EvaluationObservations
 
     internal void RecordSequencePipelineServiceConstruction()
         => SequencePipelineServiceConstructionCount = checked(SequencePipelineServiceConstructionCount + 1);
+
+    /// <summary>
+    /// Number of GENERIC loop-step binding preparations performed during this run: each increment is
+    /// one <c>Evaluator.PrepareGenericLoopStep</c> call — the loop-invariant selection of the step's
+    /// callable signature, binding plan/shape, shadowed counted-parameter environment, and
+    /// spread-boundary policy. The generic loop strategy prepares exactly ONCE per loop invocation
+    /// that runs at least one iteration (sync and async twins alike), never once per iteration, and a
+    /// zero-iteration loop (<c>repeat</c> with count 0, whose entry returns before the generic loop
+    /// body) prepares zero times. Handover from the optimized strategy re-enters the generic loop as
+    /// a fresh invocation and therefore prepares once more; nested or recursive loops prepare once
+    /// per invocation each. Optimized-strategy iterations never touch this counter.
+    /// </summary>
+    public long GenericLoopStepBindingPreparationCount { get; private set; }
+
+    internal void RecordGenericLoopStepBindingPreparation()
+        => GenericLoopStepBindingPreparationCount = checked(GenericLoopStepBindingPreparationCount + 1);
+
+    /// <summary>
+    /// Number of generic handover output-slot materializations performed by the OPTIMIZED loop
+    /// strategy during this run: each increment is one
+    /// <c>LoopOptimizer.MaterializeGenericHandoverSlots</c> call, which rebuilds the generic
+    /// evaluator's output-slot list from the iteration's retained planned values. Materialization
+    /// happens only inside an actual handover branch — an iteration output that did not emit exactly
+    /// one value, or a committed next state whose arity grew — so an optimized loop that runs to
+    /// completion without handover observes zero regardless of iteration count, and a loop that hands
+    /// over observes exactly one materialization at the handover point. Generic-strategy iterations
+    /// never touch this counter.
+    /// </summary>
+    public long OptimizedLoopHandoverMaterializationCount { get; private set; }
+
+    internal void RecordOptimizedLoopHandoverMaterialization()
+        => OptimizedLoopHandoverMaterializationCount = checked(OptimizedLoopHandoverMaterializationCount + 1);
 }

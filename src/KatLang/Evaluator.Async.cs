@@ -2886,10 +2886,13 @@ public static partial class Evaluator
         EvalCtx ctx,
         IReadOnlyList<(string, Result)> valEnv)
     {
+        // Loop-invariant step preparation, once per loop invocation — the SAME shared
+        // non-evaluating helper as the synchronous twin (nothing here awaits).
+        var prepared = PrepareGenericLoopStep(step, ctx);
         var stateSlots = initialStateSlots.ToList();
         while (true)
         {
-            var outputSlotsR = await RunStepSlotsAsync(step, ctx, valEnv, stateSlots, "while").ConfigureAwait(false);
+            var outputSlotsR = await RunStepSlotsAsync(step, ctx, valEnv, stateSlots, "while", prepared).ConfigureAwait(false);
             if (outputSlotsR.IsError) return outputSlotsR.Error;
             var splitR = SplitContSlots(outputSlotsR.Value);
             if (splitR.IsError) return splitR.Error;
@@ -2927,9 +2930,15 @@ public static partial class Evaluator
         IReadOnlyList<(string, Result)> valEnv)
     {
         var stateSlots = initialStateSlots.ToList();
+        // Zero-iteration guard mirrors the synchronous twin: no step preparation for a
+        // loop that never binds its step.
+        if (count <= 0)
+            return MakeCheckedLoopStateResult(ctx, stateSlots);
+
+        var prepared = PrepareGenericLoopStep(step, ctx);
         for (var k = 0; k < count; k++)
         {
-            var outputSlotsR = await RunStepSlotsAsync(step, ctx, valEnv, stateSlots, "repeat").ConfigureAwait(false);
+            var outputSlotsR = await RunStepSlotsAsync(step, ctx, valEnv, stateSlots, "repeat", prepared).ConfigureAwait(false);
             if (outputSlotsR.IsError) return outputSlotsR.Error;
             stateSlots = outputSlotsR.Value.ToList();
         }
@@ -2942,25 +2951,31 @@ public static partial class Evaluator
         EvalCtx ctx,
         IReadOnlyList<(string, Result)> valEnv,
         IReadOnlyList<Result> stateSlots,
-        string loopName)
+        string loopName,
+        PreparedGenericLoopStep prepared)
     {
         // One loop ITERATION is one charged work unit — identical chokepoint to the
         // synchronous twin.
         if (ctx.Budget.TryChargeStep() is { } limitError)
             return limitError;
 
-        var bindingSelection = SelectGenericLoopStepBinding(step);
-        var boundR = BindLoopStepState(step, stateSlots, ctx, loopName, bindingSelection);
+        var boundR = BindLoopStepState(
+            prepared.BindingContract,
+            stateSlots,
+            ctx,
+            loopName,
+            prepared.BindingSelection);
         if (boundR.IsError) return boundR.Error;
 
-        var shadowedCountedParamEnv = ShadowCountedParamEnv(ctx.CountedParamEnv, step.Params);
+        // Fresh concatenation per iteration for the same cache-identity reason as the
+        // synchronous twin.
         var stepCtx = ctx
-            .WithCountedParamEnv(Concat(boundR.Value.CountedBindings, shadowedCountedParamEnv));
+            .WithCountedParamEnv(Concat(boundR.Value.CountedBindings, prepared.ShadowedCountedParamEnv));
         return await EvalAlgOutputSlotsAsync(
             step,
             stepCtx,
             Concat(boundR.Value.ValueBindings, valEnv),
-            preserveSequenceSpreadExpressionBoundaries: ShouldPreserveLoopStepSequenceSpreadExpressionBoundaries(step, bindingSelection)).ConfigureAwait(false);
+            preserveSequenceSpreadExpressionBoundaries: prepared.PreserveSequenceSpreadExpressionBoundaries).ConfigureAwait(false);
     }
 
     // ── Dot-call twins ──────────────────────────────────────────────────────

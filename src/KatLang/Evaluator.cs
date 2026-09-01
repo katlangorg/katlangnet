@@ -1249,7 +1249,12 @@ public static partial class Evaluator
 
     private readonly record struct GenericLoopStepBindingSelection(
         GenericLoopStepBindingShape Shape,
-        CallableBindingPlan? Plan);
+        FlatCollectingBindingLayout? FlatCollectingLayout);
+
+    private readonly record struct GenericLoopStepBindingContract(
+        IReadOnlyList<ParameterDeclaration> Parameters,
+        IReadOnlyList<ParameterPattern> ParameterPatterns,
+        IReadOnlyList<string> ParameterNames);
 
     private readonly record struct CallableArgumentBindings<T>(
         IReadOnlyList<(string ParameterName, T Item)> NormalBindings,
@@ -1294,6 +1299,10 @@ public static partial class Evaluator
         => HasStructuredParameterPattern(algorithm)
             || ParameterPattern.HasRepeatedCaptureNames(algorithm.ParameterPatterns);
 
+    private static bool UsesPatternBinding(IReadOnlyList<ParameterPattern> parameterPatterns)
+        => parameterPatterns.Any(static parameter => parameter is SequenceValueParameterPattern)
+            || ParameterPattern.HasRepeatedCaptureNames(parameterPatterns);
+
     private static CallableBindingPlan? TryCreateUserLoopStepBindingPlan(Algorithm step)
     {
         if (step is not Algorithm.User userStep)
@@ -1335,18 +1344,28 @@ public static partial class Evaluator
     {
         var plan = TryCreateUserLoopStepBindingPlan(step);
         if (plan is null)
-            return new GenericLoopStepBindingSelection(GenericLoopStepBindingShape.Legacy, Plan: null);
+            return new GenericLoopStepBindingSelection(
+                GenericLoopStepBindingShape.Legacy,
+                FlatCollectingLayout: null);
 
         if (plan.RequiresPatternedBinding)
-            return new GenericLoopStepBindingSelection(GenericLoopStepBindingShape.Patterned, plan);
+            return new GenericLoopStepBindingSelection(
+                GenericLoopStepBindingShape.Patterned,
+                FlatCollectingLayout: null);
 
-        if (plan.TryGetFlatCollectingLayout(out _, out _, out _))
-            return new GenericLoopStepBindingSelection(GenericLoopStepBindingShape.FlatCollecting, plan);
+        if (TryGetFlatCollectingBindingLayout(plan, out var collectingLayout))
+            return new GenericLoopStepBindingSelection(
+                GenericLoopStepBindingShape.FlatCollecting,
+                collectingLayout);
 
         if (plan.TryGetFlatFixedLayout(out _))
-            return new GenericLoopStepBindingSelection(GenericLoopStepBindingShape.FlatFixed, plan);
+            return new GenericLoopStepBindingSelection(
+                GenericLoopStepBindingShape.FlatFixed,
+                FlatCollectingLayout: null);
 
-        return new GenericLoopStepBindingSelection(GenericLoopStepBindingShape.Legacy, plan);
+        return new GenericLoopStepBindingSelection(
+            GenericLoopStepBindingShape.Legacy,
+            FlatCollectingLayout: null);
     }
 
     private static bool ShouldPreserveLoopStepSequenceSpreadExpressionBoundaries(
@@ -1358,6 +1377,149 @@ public static partial class Evaluator
             GenericLoopStepBindingShape.Legacy => UsesPatternBinding(step),
             _ => false,
         };
+
+    /// <summary>
+    /// The loop-invariant part of generic loop-step execution, prepared ONCE per loop
+    /// invocation and reused by every iteration (M16). Everything here depends only on
+    /// the step algorithm and the loop's own context — never on iteration state — so
+    /// per-iteration recomputation was pure waste: the binding selection rebuilt the
+    /// step's callable signature, binding plan, and display text every iteration, and
+    /// the shadowed counted environment refiltered the same invariant inputs.
+    /// Iteration-varying work (state binding, the fresh counted-environment
+    /// concatenation whose list identity is a zero-arg-cache key component, and step
+    /// output evaluation) stays in <see cref="RunStepSlots"/>.
+    /// </summary>
+    private readonly record struct PreparedGenericLoopStep(
+        GenericLoopStepBindingContract BindingContract,
+        GenericLoopStepBindingSelection BindingSelection,
+        IReadOnlyList<(string Name, CountedResult Value)> ShadowedCountedParamEnv,
+        bool PreserveSequenceSpreadExpressionBoundaries);
+
+    /// <summary>
+    /// Freezes the temporary algorithm-shaped view used to derive callable metadata.
+    /// Public
+    /// host-built AST records may retain caller-owned <see cref="IReadOnlyList{T}"/>
+    /// instances, so reading the original user algorithm again after a callback could
+    /// mix a prepared plan for the old shape with parameter lists mutated to a new
+    /// shape. The returned copy is used only while preparation derives the narrow
+    /// <see cref="GenericLoopStepBindingContract"/> and binding plan; it is not stored
+    /// in the prepared object. Executable body, scope, properties, and opens remain on
+    /// <paramref name="step"/> and are evaluated normally every iteration.
+    /// </summary>
+    private static Algorithm SnapshotGenericLoopStepBindingContract(Algorithm step)
+    {
+        if (step is not Algorithm.User user)
+            return step;
+
+        return user with
+        {
+            Parameters = user.Parameters.ToArray(),
+            ParameterPatterns = SnapshotParameterPatterns(user.ParameterPatterns),
+            ExplicitParameters = user.ExplicitParameters.ToArray(),
+            ExplicitParameterPatterns = SnapshotParameterPatterns(user.ExplicitParameterPatterns),
+        };
+    }
+
+    /// <summary>
+    /// Iterative, DAG-preserving snapshot of recursive pattern-list membership. Capture
+    /// records are immutable and can be shared; sequence-pattern nodes are rebuilt so a
+    /// host cannot mutate a retained nested <c>Items</c> list during the loop.
+    /// Structural preflight has already rejected cycles before evaluation reaches this
+    /// helper.
+    /// </summary>
+    private static IReadOnlyList<ParameterPattern> SnapshotParameterPatterns(
+        IReadOnlyList<ParameterPattern> source)
+    {
+        if (source.Count == 0)
+            return [];
+
+        var snapshots = new Dictionary<SequenceValueParameterPattern, SequenceValueParameterPattern>(
+            ReferenceEqualityComparer.Instance);
+        var states = new Dictionary<SequenceValueParameterPattern, byte>(
+            ReferenceEqualityComparer.Instance);
+        var stack = new Stack<(SequenceValueParameterPattern Group, bool Expanded)>();
+
+        foreach (var pattern in source)
+        {
+            if (pattern is not SequenceValueParameterPattern root || snapshots.ContainsKey(root))
+                continue;
+
+            stack.Push((root, Expanded: false));
+            while (stack.Count != 0)
+            {
+                var (group, expanded) = stack.Pop();
+                if (snapshots.ContainsKey(group))
+                    continue;
+
+                if (!expanded)
+                {
+                    if (states.TryGetValue(group, out var state) && state == 1)
+                        throw new InvalidOperationException("Cyclic parameter pattern reached loop preparation after structural preflight.");
+
+                    states[group] = 1;
+                    stack.Push((group, Expanded: true));
+                    for (var index = group.Items.Count - 1; index >= 0; index--)
+                    {
+                        if (group.Items[index] is SequenceValueParameterPattern child
+                            && !snapshots.ContainsKey(child))
+                        {
+                            stack.Push((child, Expanded: false));
+                        }
+                    }
+
+                    continue;
+                }
+
+                var items = new ParameterPattern[group.Items.Count];
+                for (var index = 0; index < group.Items.Count; index++)
+                {
+                    var item = group.Items[index];
+                    items[index] = item is SequenceValueParameterPattern child
+                        ? snapshots[child]
+                        : item;
+                }
+
+                snapshots[group] = new SequenceValueParameterPattern(items);
+                states[group] = 2;
+            }
+        }
+
+        var result = new ParameterPattern[source.Count];
+        for (var index = 0; index < source.Count; index++)
+        {
+            var pattern = source[index];
+            result[index] = pattern is SequenceValueParameterPattern group
+                ? snapshots[group]
+                : pattern;
+        }
+
+        return result;
+    }
+
+    /// <summary>
+    /// Prepares the invariant generic loop-step state. Non-evaluating and infallible:
+    /// it charges no budget, observes no cancellation, resolves no names, and invokes
+    /// no callbacks, so both the synchronous generic loops and their async twins share
+    /// this ONE implementation (the M7/M10 twin rule: share non-evaluating
+    /// preparation, mirror evaluating work). Callers prepare only when the loop will
+    /// run at least one iteration — a zero-iteration loop must not gain preparation
+    /// work it never had.
+    /// </summary>
+    private static PreparedGenericLoopStep PrepareGenericLoopStep(Algorithm step, EvalCtx ctx)
+    {
+        ctx.Observations?.RecordGenericLoopStepBindingPreparation();
+        var bindingContract = SnapshotGenericLoopStepBindingContract(step);
+        var bindingSelection = SelectGenericLoopStepBinding(bindingContract);
+        var parameterNames = bindingContract.Params.ToArray();
+        return new PreparedGenericLoopStep(
+            new GenericLoopStepBindingContract(
+                bindingContract.Parameters,
+                bindingContract.ParameterPatterns,
+                parameterNames),
+            bindingSelection,
+            ShadowCountedParamEnv(ctx.CountedParamEnv, parameterNames),
+            ShouldPreserveLoopStepSequenceSpreadExpressionBoundaries(bindingContract, bindingSelection));
+    }
 
     private static bool TryGetFlatCollectingBindingLayout(
         CallableBindingPlan plan,
@@ -1376,11 +1538,10 @@ public static partial class Evaluator
     }
 
     private static bool TryGetLegacyFlatCollectingBindingLayout(
-        Algorithm algorithm,
+        IReadOnlyList<ParameterDeclaration> parameters,
         string callableName,
         out FlatCollectingBindingLayout layout)
     {
-        var parameters = algorithm.Parameters;
         for (var index = 0; index < parameters.Count; index++)
         {
             var parameter = parameters[index];
@@ -6042,6 +6203,31 @@ public static partial class Evaluator
         int expectedStateValueCount,
         int actualStateValueCount,
         string loopName)
+        => LoopStateArityMismatch(
+            step.ParameterPatterns,
+            step.Parameters,
+            expectedStateValueCount,
+            actualStateValueCount,
+            loopName);
+
+    private static EvalError LoopStateArityMismatch(
+        GenericLoopStepBindingContract bindingContract,
+        int expectedStateValueCount,
+        int actualStateValueCount,
+        string loopName)
+        => LoopStateArityMismatch(
+            bindingContract.ParameterPatterns,
+            bindingContract.Parameters,
+            expectedStateValueCount,
+            actualStateValueCount,
+            loopName);
+
+    private static EvalError LoopStateArityMismatch(
+        IReadOnlyList<ParameterPattern> parameterPatterns,
+        IReadOnlyList<ParameterDeclaration> parameters,
+        int expectedStateValueCount,
+        int actualStateValueCount,
+        string loopName)
         // Expected is the binder-computed top-level state-slot count, NOT the
         // flattened capture count: a patterned step `Step((x, y))` has ONE
         // state slot but two flattened captures. The context's parameter names
@@ -6049,11 +6235,11 @@ public static partial class Evaluator
         => new EvalError.WithContext(
             new LoopStateBindingContext(
                 loopName,
-                step.ParameterPatterns.Select(static pattern => pattern.DisplayName).ToList(),
+                parameterPatterns.Select(static pattern => pattern.DisplayName).ToList(),
                 actualStateValueCount),
             new EvalError.ArityMismatch(expectedStateValueCount, actualStateValueCount)
             {
-                InferredImplicitParameters = ImplicitParameterProvenance.CollectFrom(step.Parameters),
+                InferredImplicitParameters = ImplicitParameterProvenance.CollectFrom(parameters),
             });
 
     private static EvalError VariadicLoopStateArityMismatch(
@@ -6061,10 +6247,32 @@ public static partial class Evaluator
         int expectedMinimumStateValueCount,
         int actualStateValueCount,
         string loopName)
+        => VariadicLoopStateArityMismatch(
+            step.Parameters,
+            expectedMinimumStateValueCount,
+            actualStateValueCount,
+            loopName);
+
+    private static EvalError VariadicLoopStateArityMismatch(
+        GenericLoopStepBindingContract bindingContract,
+        int expectedMinimumStateValueCount,
+        int actualStateValueCount,
+        string loopName)
+        => VariadicLoopStateArityMismatch(
+            bindingContract.Parameters,
+            expectedMinimumStateValueCount,
+            actualStateValueCount,
+            loopName);
+
+    private static EvalError VariadicLoopStateArityMismatch(
+        IReadOnlyList<ParameterDeclaration> parameters,
+        int expectedMinimumStateValueCount,
+        int actualStateValueCount,
+        string loopName)
         => new EvalError.WithContext(
             new VariadicLoopStateBindingContext(
                 loopName,
-                step.Parameters
+                parameters
                     .Where(static parameter => parameter.Kind != ParameterKind.Collecting)
                     .Select(static parameter => parameter.DisplayName)
                     .ToList(),
@@ -6072,7 +6280,7 @@ public static partial class Evaluator
                 actualStateValueCount),
             new EvalError.ArityMismatch(expectedMinimumStateValueCount, actualStateValueCount)
             {
-                InferredImplicitParameters = ImplicitParameterProvenance.CollectFrom(step.Parameters),
+                InferredImplicitParameters = ImplicitParameterProvenance.CollectFrom(parameters),
             });
 
     private static EvalResult<IReadOnlyList<(string Name, Result Value)>> BindEvaluatedSlotValueBindings(
@@ -6108,7 +6316,7 @@ public static partial class Evaluator
     }
 
     private static EvalResult<EvaluatedSlotBindings> BindEvaluatedSlotsToParameters(
-        Algorithm algorithm,
+        GenericLoopStepBindingContract bindingContract,
         IReadOnlyList<Result> evaluatedSlots,
         EvalCtx ctx,
         string callableName,
@@ -6125,7 +6333,7 @@ public static partial class Evaluator
                 .Select(static slot => new ParameterPatternInput(slot, Algorithm: null, ValueError: null, ExplicitSequenceValueItems: null))
                 .ToList();
             var bindingsR = BindParameterPatternList(
-                algorithm.ParameterPatterns,
+                bindingContract.ParameterPatterns,
                 inputs,
                 ctx,
                 allowAlgorithmBindings: false,
@@ -6139,10 +6347,10 @@ public static partial class Evaluator
 
         EvalResult<EvaluatedSlotBindings> BindFlatFixedSlots()
         {
-            if (algorithm.Params.Count != evaluatedSlots.Count)
-                return fixedArityMismatch(algorithm.Params.Count, evaluatedSlots.Count);
+            if (bindingContract.ParameterNames.Count != evaluatedSlots.Count)
+                return fixedArityMismatch(bindingContract.ParameterNames.Count, evaluatedSlots.Count);
 
-            var boundR = BindParams(algorithm.Params, evaluatedSlots);
+            var boundR = BindParams(bindingContract.ParameterNames, evaluatedSlots);
             if (boundR.IsError) return boundR.Error;
 
             return EvalResult<EvaluatedSlotBindings>.Ok(new EvaluatedSlotBindings(boundR.Value, []));
@@ -6192,18 +6400,17 @@ public static partial class Evaluator
 
         EvalResult<EvaluatedSlotBindings> BindLegacyShape()
         {
-            if (UsesPatternBinding(algorithm))
+            if (UsesPatternBinding(bindingContract.ParameterPatterns))
                 return BindPatternedSlots();
 
-            return TryGetLegacyFlatCollectingBindingLayout(algorithm, callableName, out var legacyLayout)
+            return TryGetLegacyFlatCollectingBindingLayout(bindingContract.Parameters, callableName, out var legacyLayout)
                 ? BindFlatCollectingSlots(legacyLayout)
                 : BindFlatFixedSlots();
         }
 
         EvalResult<EvaluatedSlotBindings> BindSelectedFlatCollectingShape()
         {
-            return bindingSelection.Plan is not null
-                && TryGetFlatCollectingBindingLayout(bindingSelection.Plan, out var layout)
+            return bindingSelection.FlatCollectingLayout is { } layout
                 ? BindFlatCollectingSlots(layout)
                 : BindLegacyShape();
         }
@@ -6218,7 +6425,7 @@ public static partial class Evaluator
     }
 
     private static EvalResult<EvaluatedSlotBindings> BindLoopStepState(
-        Algorithm step,
+        GenericLoopStepBindingContract bindingContract,
         IReadOnlyList<Result> stateSlots,
         EvalCtx ctx,
         string loopName,
@@ -6228,13 +6435,13 @@ public static partial class Evaluator
         // step output. They are already evaluated and must not use ordinary
         // call-site behavior such as spread slot expansion.
         return BindEvaluatedSlotsToParameters(
-            step,
+            bindingContract,
             stateSlots,
             ctx,
             "loop step",
             bindingSelection,
-            (required, actual) => LoopStateArityMismatch(step, required, actual, loopName),
-            (required, actual) => VariadicLoopStateArityMismatch(step, required, actual, loopName));
+            (required, actual) => LoopStateArityMismatch(bindingContract, required, actual, loopName),
+            (required, actual) => VariadicLoopStateArityMismatch(bindingContract, required, actual, loopName));
     }
 
     /// <summary>
@@ -6367,7 +6574,8 @@ public static partial class Evaluator
         EvalCtx ctx,
         IReadOnlyList<(string, Result)> valEnv,
         IReadOnlyList<Result> stateSlots,
-        string loopName)
+        string loopName,
+        PreparedGenericLoopStep prepared)
     {
         // One loop ITERATION is one charged work unit. Loops repeat work without growing
         // the host stack, so they charge work only — never depth. This is the single
@@ -6377,18 +6585,25 @@ public static partial class Evaluator
         if (ctx.Budget.TryChargeStep() is { } limitError)
             return limitError;
 
-        var bindingSelection = SelectGenericLoopStepBinding(step);
-        var boundR = BindLoopStepState(step, stateSlots, ctx, loopName, bindingSelection);
+        var boundR = BindLoopStepState(
+            prepared.BindingContract,
+            stateSlots,
+            ctx,
+            loopName,
+            prepared.BindingSelection);
         if (boundR.IsError) return boundR.Error;
 
-        var shadowedCountedParamEnv = ShadowCountedParamEnv(ctx.CountedParamEnv, step.Params);
+        // The concatenation must build a FRESH list per iteration: the counted
+        // environment's reference identity is a zero-arg property cache key component,
+        // so reusing one instance across iterations would create cross-iteration cache
+        // hits the generic strategy never had.
         var stepCtx = ctx
-            .WithCountedParamEnv(Concat(boundR.Value.CountedBindings, shadowedCountedParamEnv));
+            .WithCountedParamEnv(Concat(boundR.Value.CountedBindings, prepared.ShadowedCountedParamEnv));
         return EvalAlgOutputSlots(
             step,
             stepCtx,
             Concat(boundR.Value.ValueBindings, valEnv),
-            preserveSequenceSpreadExpressionBoundaries: ShouldPreserveLoopStepSequenceSpreadExpressionBoundaries(step, bindingSelection));
+            preserveSequenceSpreadExpressionBoundaries: prepared.PreserveSequenceSpreadExpressionBoundaries);
     }
 
     internal static EvalResult<(IReadOnlyList<Result> NextStateSlots, Decimal128 Continue)> SplitContSlots(
@@ -6465,10 +6680,14 @@ public static partial class Evaluator
         EvalCtx ctx,
         IReadOnlyList<(string, Result)> valEnv)
     {
+        // `while` always runs its step at least once, so the loop-invariant step
+        // binding is prepared unconditionally — once per loop invocation, not per
+        // iteration.
+        var prepared = PrepareGenericLoopStep(step, ctx);
         var stateSlots = initialStateSlots.ToList();
         while (true)
         {
-            var outputSlotsR = RunStepSlots(step, ctx, valEnv, stateSlots, "while");
+            var outputSlotsR = RunStepSlots(step, ctx, valEnv, stateSlots, "while", prepared);
             if (outputSlotsR.IsError) return outputSlotsR.Error;
             var splitR = SplitContSlots(outputSlotsR.Value);
             if (splitR.IsError) return splitR.Error;
@@ -6531,9 +6750,16 @@ public static partial class Evaluator
         IReadOnlyList<(string, Result)> valEnv)
     {
         var stateSlots = initialStateSlots.ToList();
+        // A zero-iteration repeat never binds its step, so it must not gain step
+        // preparation either (every current caller already short-circuits count 0
+        // before reaching this loop; the guard keeps that contract local).
+        if (count <= 0)
+            return MakeCheckedLoopStateResult(ctx, stateSlots);
+
+        var prepared = PrepareGenericLoopStep(step, ctx);
         for (var k = 0; k < count; k++)
         {
-            var outputSlotsR = RunStepSlots(step, ctx, valEnv, stateSlots, "repeat");
+            var outputSlotsR = RunStepSlots(step, ctx, valEnv, stateSlots, "repeat", prepared);
             if (outputSlotsR.IsError) return outputSlotsR.Error;
             stateSlots = outputSlotsR.Value.ToList();
         }

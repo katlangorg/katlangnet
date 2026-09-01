@@ -31,7 +31,6 @@ internal static partial class LoopOptimizer
             ctx.Budget.ObserveCancellation();
             ctx.LoopDiagnostics?.RecordLoopIteration();
             frame.BeginIteration();
-            var outputSlots = new List<Result>();
             var requiresGenericContinuation = false;
 
             for (var i = 0; i < plan.NextStateOutputs.Count; i++)
@@ -43,7 +42,11 @@ internal static partial class LoopOptimizer
                     return true;
                 }
 
-                AppendGenericLoopOutputSlots(outputSlots, plan.NextStateOutputs[i].Source, outputR.Value);
+                // Normal iterations RETAIN the evaluated output (a struct copy into the
+                // frame's reusable buffer); the generic output-slot representation is
+                // deliberately NOT built here — it is materialized only inside an
+                // actual handover branch below (M16).
+                frame.SetIterationOutput(i, outputR.Value);
 
                 // The optimized frame packs one value per state slot, so it can
                 // only represent step expressions that emit EXACTLY one value.
@@ -70,7 +73,7 @@ internal static partial class LoopOptimizer
                 return true;
             }
 
-            AppendGenericLoopOutputSlots(outputSlots, plan.ContinuationOutput!.Source, continuationR.Value);
+            frame.SetIterationOutput(plan.NextStateOutputs.Count, continuationR.Value);
 
             // A continuation expression emitting other than one value changes
             // which generic slot is the continuation flag; generic semantics
@@ -83,6 +86,7 @@ internal static partial class LoopOptimizer
 
             if (requiresGenericContinuation)
             {
+                var outputSlots = MaterializeGenericHandoverSlots(frame, includeContinuation: true);
                 var splitR = Evaluator.SplitContSlots(outputSlots);
                 if (splitR.IsError)
                 {
@@ -115,7 +119,10 @@ internal static partial class LoopOptimizer
             if (!frame.TryCommitScratchFast())
             {
                 ctx.LoopDiagnostics?.RecordOptimizedLoopFallback("loop next-state arity changed");
-                result = genericContinuation(outputSlots.Take(outputSlots.Count - 1).ToList());
+                // Every output emitted exactly one value on this branch, so the
+                // state-only materialization equals the historical full list minus its
+                // final continuation slot.
+                result = genericContinuation(MaterializeGenericHandoverSlots(frame, includeContinuation: false));
                 return true;
             }
         }
@@ -146,7 +153,6 @@ internal static partial class LoopOptimizer
             ctx.Budget.ObserveCancellation();
             ctx.LoopDiagnostics?.RecordLoopIteration();
             frame.BeginIteration();
-            var outputSlots = new List<Result>();
             var requiresGenericContinuation = false;
 
             for (var i = 0; i < plan.NextStateOutputs.Count; i++)
@@ -158,7 +164,8 @@ internal static partial class LoopOptimizer
                     return true;
                 }
 
-                AppendGenericLoopOutputSlots(outputSlots, plan.NextStateOutputs[i].Source, outputR.Value);
+                // Retained, not materialized — see the while path (M16).
+                frame.SetIterationOutput(i, outputR.Value);
 
                 // Same exactly-one-value rule as the while path: the optimized
                 // frame cannot represent a changed state-slot vector. Complete
@@ -177,6 +184,7 @@ internal static partial class LoopOptimizer
 
             if (requiresGenericContinuation)
             {
+                var outputSlots = MaterializeGenericHandoverSlots(frame, includeContinuation: false);
                 var remainingCount = count - iteration - 1;
                 result = remainingCount == 0
                     ? Evaluator.MakeCheckedLoopStateResult(ctx, outputSlots)
@@ -193,6 +201,7 @@ internal static partial class LoopOptimizer
             if (!frame.TryCommitScratchFast())
             {
                 ctx.LoopDiagnostics?.RecordOptimizedLoopFallback("loop next-state arity changed");
+                var outputSlots = MaterializeGenericHandoverSlots(frame, includeContinuation: false);
                 var remainingCount = count - iteration - 1;
                 result = remainingCount == 0
                     ? Evaluator.MakeCheckedLoopStateResult(ctx, outputSlots)
@@ -203,6 +212,38 @@ internal static partial class LoopOptimizer
 
         result = frame.CurrentStateResult();
         return true;
+    }
+
+    /// <summary>
+    /// Builds the generic evaluator's output-slot list for the CURRENT iteration from
+    /// the frame's retained planned outputs — state outputs in order, then (when
+    /// requested) the while continuation. This runs ONLY inside an actual handover
+    /// branch, exactly once per handover (M16): normal optimized iterations retain
+    /// their outputs as structs and never construct this representation. Pure
+    /// representation work — it charges no budget, observes no cancellation, and
+    /// evaluates nothing; every value was already evaluated exactly once by the
+    /// iteration itself, so materializing here can neither replay a callback nor
+    /// reorder an effect.
+    /// </summary>
+    private static List<Result> MaterializeGenericHandoverSlots(
+        LoopRunFrame frame,
+        bool includeContinuation)
+    {
+        frame.IterationCtx.Observations?.RecordOptimizedLoopHandoverMaterialization();
+        var template = frame.Template;
+        var outputSlots = new List<Result>();
+        for (var i = 0; i < template.NextStateOutputs.Count; i++)
+            AppendGenericLoopOutputSlots(outputSlots, template.NextStateOutputs[i].Source, frame.GetIterationOutput(i));
+
+        if (includeContinuation)
+        {
+            AppendGenericLoopOutputSlots(
+                outputSlots,
+                template.ContinuationOutput!.Source,
+                frame.GetIterationOutput(template.NextStateOutputs.Count));
+        }
+
+        return outputSlots;
     }
 
     /// <summary>
