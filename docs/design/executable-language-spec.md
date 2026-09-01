@@ -40,7 +40,8 @@ summed into one total.
 |---|---|---|
 | C# engine | `LanguageSpecRunnerTests` runs every case + probe through `Parser.Parse` / `Evaluator.RunCounted` / `KatLangEngine.Run` (via `SemanticExplorerHarness`) | test failure |
 | Lean model | generated `lean/LanguageSpecCases.lean`: one `#guard obs case_x == "<canonical neutral>"` per Lean-guarded case | `lake build LanguageSpecCases` failure |
-| tutorial.md | `<!-- spec:case-id -->` markers before fences; `TutorialSpecTests` verifies source + expected output against the case | test failure |
+| tutorial.md (linked) | `<!-- spec:case-id -->` markers before fences; `TutorialSpecTests` verifies source + expected output against the case | test failure |
+| tutorial.md (all result claims) | `TutorialResultSweepTests` executes every fence followed by a `**Result(s):**` claim through `KatLangEngine.Run` and display-matches the claim (section 6a) | test failure |
 | generator prompts | marker-delimited generated block in `.github/agents/katlang-generator.agent.md` AND `experimental/prompts/katlang-generator.txt`, rendered from cases flagged `IncludeInGeneratorPrompt` | staleness test failure |
 
 The Lean/C# trust boundary: the two implementations are never executed in one
@@ -149,6 +150,88 @@ value-literal claims line up one-to-one with display rows.
 Keep prose free: only the marked source and its stated outputs are pinned.
 Markers are invisible in rendered Markdown.
 
+## 6a. The tutorial result-claim sweep (M13)
+
+Independently of markers, **every** tutorial fence whose next non-blank line
+is a result claim is executable documentation. `TutorialResultSweepTests`
+executes the fence source through the public runtime (`KatLangEngine.Run`,
+default options and normal resource limits) and compares the canonical
+display (`RunResult.ToDisplayString()`, line endings normalized to `"\n"`)
+against the claim. No marker is required — writing
+
+````markdown
+```
+1 + 2
+```
+
+**Result:** `3`
+````
+
+automatically enters the sweep. The recognized claim forms (shared grammar in
+`TutorialCorpus`, exercised on synthetic markdown by
+`TutorialCorpusParserTests`):
+
+- `**Result:** `value`` — one display row, matched exactly (Decimal128
+  quantum, signed zero, `NaN`/`Infinity` and sequence/list delimiters
+  included). A longer matching backtick run may delimit a value that itself
+  contains a shorter backtick run;
+- `**Results:**` (or `**Result:**`) followed by a bare fenced output block —
+  one display row per non-blank line (blank rows are presentation-only
+  grouping);
+- `**Result:** error — ...` — the source must parse cleanly and fail
+  evaluation (`EvalFailure`/`NoProgramOutput`; a parse failure or a
+  successful evaluation fails the sweep). A generic error label promises only
+  that classification. The tutorial's current three labels also name a
+  specific failure family, so their complete source/prose inventory is pinned
+  and checked through public `KatLangErrorCode` values (never rendered-message
+  substrings) by
+  `DetailedErrorClaims_MatchTheirReviewedStructuredErrors`.
+
+The deliberately narrow fence contract is a column-zero, untagged, exactly
+three-backtick fence; tagged, indented/list/blockquote, longer, and trailing-
+space fence forms are not KatLang source fences. If any such unsupported form
+is paired with a label-like Result line, parsing fails conspicuously. The label
+lint is likewise fail-loud for plain `Result:`, changed emphasis/casing,
+indentation, list/blockquote/heading placement, a claim not directly following
+a source fence, an unterminated fence, or a Results label without an output
+block. Whitespace-only separator lines count as blank. A formatting near-miss
+therefore cannot silently drop a result claim out of verification. Accounting
+is a pinned partition identity:
+result-bearing fences = engine-verified + explicitly skipped, with the exact
+skip inventory pinned in `SkipInventory_IsExactlyTheReviewedSet`.
+Result-bearing coverage is additionally **monotonic**
+(`CoverageRatchet_ResultBearingClaimsCannotSilentlyShrink`): new claims are
+automatically accepted and tested with no pin to update, while removing an
+existing claim requires deliberately lowering the pinned baseline in the same
+reviewed diff.
+
+The escape hatch for a genuinely non-standalone example is an explicit
+reviewed skip on the marker line before the fence:
+
+```markdown
+<!-- spec:skip module loading needs a host-configured network downloader -->
+```
+
+The reason is mandatory and non-blank (a blank reason fails parsing), a skip
+on a claim-less fence fails, and adding or removing a skip must update the
+pinned inventory in the same diff. That inventory pins the complete section,
+source, claim kind/display, and reason while deliberately ignoring line
+numbers, so moving an unchanged example within its section is stable but
+source/result/reason drift is reviewed. Use a skip only for structural reasons
+(needs a downloader/host setup, intentionally illustrative); a stale result,
+an inconvenient harness, or a real bug is never a skip reason. Examples with
+nondeterministic output (e.g. `Math.Random`) must not carry an exact
+`**Result:**` claim — describe the range in prose instead.
+
+Blank lines inside a fenced Results block remain presentation-only grouping
+and are removed before comparison, matching the pre-M13 marker convention.
+Consequently that form cannot encode an empty-string row among other output
+rows; no current claim needs that shape. KatLang string literals cannot span
+physical lines, so multiline string values are not another ambiguity. If a
+future tutorial example needs to distinguish an empty row or zero emitted rows
+structurally, give it a marker-linked canonical case (raw value + emitted-count
+pin) instead of relying on the display-only fenced form.
+
 ## 7. Running all validation
 
 `pwsh .\scripts\validate-all.ps1` runs everything: the C# suite (spec runner,
@@ -209,5 +292,10 @@ with `(1, 2)`, and re-spreading the result (`take(...)*` is the kept pair).
   and its test-case JSON are untracked and outside this system; only the two
   tracked prompt files participate. Prompt examples outside the generated
   block remain hand-maintained.
-- Tutorial examples without a `spec:` marker remain unverified; migrate
-  high-value examples incrementally using section 6.
+- Every tutorial fence with a `**Result(s):**` claim is engine-verified by
+  the sweep (section 6a) or carries an explicit reviewed `spec:skip` reason;
+  only claim-less fences (syntax fragments, style demos, and the indented
+  Pitfalls illustrations with inline `# error:` comments) remain outside
+  mechanical output verification. Marker linkage (section 6) stays the
+  stronger pin — it additionally ties an example to canonical raw structure,
+  emitted count, and structured error identity.

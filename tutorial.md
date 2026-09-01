@@ -98,7 +98,7 @@ If KatLang is new to you, read through [Practical Examples](#practical-examples)
 
 After that, continue with [Higher-Order Algorithms](#higher-order-algorithms), [Spread with the Postfix Star](#spread-with-the-postfix-star), [Lists](#lists), and [Conditional Algorithms](#conditional-algorithms) when you need those features. [Pitfalls](#pitfalls) and the [Full Reference](#full-reference) are designed for lookup rather than a first reading.
 
-Examples labelled **Result** produce one top-level output. **Results** shows several top-level output rows in order. An example labelled **Error** is intentionally invalid and demonstrates a diagnostic.
+Examples labelled **Result** produce one top-level output. **Results** shows several top-level output rows in order. An example labelled **Result:** error is intentionally invalid and demonstrates a diagnostic. These labelled outputs are executable documentation: the test suite runs every labelled example and checks the displayed result (see `docs/design/executable-language-spec.md`).
 
 ---
 
@@ -3070,6 +3070,9 @@ B.count
 Parenthesizing a spread plus the following expression-list slot keeps those results as one sequence value. `(First*, Second)` is a parenthesized expression list whose first slot is the spread — the comma is required here too, since `(First* Second)` would multiply:
 
 ```
+First = 1, 2
+Second = 3, 4
+
 Test = (First*, Second)
 Test.count
 ```
@@ -3655,8 +3658,7 @@ X = (1, 2, 3)
 X*
 ```
 
-produces:
-
+**Results:**
 ```
 1
 2
@@ -3866,6 +3868,7 @@ F(999)
 
 Algorithms can be loaded from URLs using `load`. The loaded algorithm becomes a property whose public sub-properties you access with dot syntax.
 
+<!-- spec:skip module loading needs a host-configured network downloader; the URL and its outputs are illustrative -->
 ```
 # Load and bind to property 'Lib':
 Lib = load('https://katlang.org/algorithm.kat')
@@ -3887,6 +3890,7 @@ Lib:1 + 10
 
 The `open` keyword makes all **public** properties of a target algorithm available directly in the current scope, without qualifying them with a prefix.
 
+<!-- spec:skip open 'url' needs a host-configured network downloader; the URL and its output are illustrative -->
 ```
 open 'https://katlang.org/algorithm.kat'
 

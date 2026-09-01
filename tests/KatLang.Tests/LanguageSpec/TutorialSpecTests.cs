@@ -21,83 +21,28 @@ public class TutorialSpecTests
         bool InlineErrorResult,  // **Result:** error — ...
         string? ResultsFence);   // **Results:**/**Result:** + fenced block (verbatim, may contain blank lines)
 
-    private static readonly Regex MarkerPattern = new(@"^<!--\s*spec:(?<id>\S+)\s*-->\s*$");
-
-    private static string TutorialPath => Path.Combine(RepoRoot.Find(), "tutorial.md");
-
     private static IReadOnlyList<string> CommentTexts(string source) =>
         Lexer.Tokenize(source).Tokens
             .Where(token => token.Kind == TokenKind.Comment)
             .Select(token => token.StringValue ?? string.Empty)
             .ToArray();
 
-    private static IReadOnlyList<LinkedExample> ParseLinkedExamples()
-    {
-        var lines = File.ReadAllText(TutorialPath).ReplaceLineEndings("\n").Split('\n');
-        var examples = new List<LinkedExample>();
-
-        for (var i = 0; i < lines.Length; i++)
-        {
-            var marker = MarkerPattern.Match(lines[i]);
-            if (!marker.Success)
-            {
-                Assert.False(lines[i].Contains("<!-- spec", StringComparison.Ordinal),
-                    $"tutorial.md line {i + 1}: malformed spec marker '{lines[i].Trim()}'.");
-                continue;
-            }
-
-            var caseId = marker.Groups["id"].Value;
-            var cursor = i + 1;
-            while (cursor < lines.Length && lines[cursor].Length == 0)
-                cursor++;
-
-            Assert.True(cursor < lines.Length && lines[cursor] == "```",
-                $"tutorial.md line {i + 1}: marker spec:{caseId} must be immediately followed by a bare ``` fence.");
-
-            var fenceStart = ++cursor;
-            while (cursor < lines.Length && lines[cursor] != "```")
-                cursor++;
-            Assert.True(cursor < lines.Length, $"tutorial.md: unterminated fence after spec:{caseId}.");
-            var fenceSource = string.Join("\n", lines[fenceStart..cursor]);
-            cursor++; // past closing fence
-
-            while (cursor < lines.Length && lines[cursor].Length == 0)
-                cursor++;
-
-            string? inlineResult = null;
-            var inlineError = false;
-            string? resultsFence = null;
-            if (cursor < lines.Length)
-            {
-                var inline = Regex.Match(lines[cursor], @"^\*\*Results?:\*\* `(?<value>.+)`\s*$");
-                if (inline.Success)
-                {
-                    inlineResult = inline.Groups["value"].Value;
-                }
-                else if (Regex.IsMatch(lines[cursor], @"^\*\*Results?:\*\* error"))
-                {
-                    inlineError = true;
-                }
-                else if (Regex.IsMatch(lines[cursor], @"^\*\*Results?:\*\*\s*$"))
-                {
-                    cursor++;
-                    while (cursor < lines.Length && lines[cursor].Length == 0)
-                        cursor++;
-                    Assert.True(cursor < lines.Length && lines[cursor] == "```",
-                        $"tutorial.md: spec:{caseId} has a Results heading without a fenced output block.");
-                    var resultsStart = ++cursor;
-                    while (cursor < lines.Length && lines[cursor] != "```")
-                        cursor++;
-                    Assert.True(cursor < lines.Length, $"tutorial.md: unterminated results fence for spec:{caseId}.");
-                    resultsFence = string.Join("\n", lines[resultsStart..cursor]);
-                }
-            }
-
-            examples.Add(new LinkedExample(caseId, i + 1, fenceSource, inlineResult, inlineError, resultsFence));
-        }
-
-        return examples;
-    }
+    /// <summary>
+    /// Marker-linked projection of the shared tutorial parse
+    /// (<see cref="TutorialCorpus"/>, which also enforces the structural
+    /// grammar: marker adjacency, fence termination, recognized claim forms).
+    /// </summary>
+    private static IReadOnlyList<LinkedExample> ParseLinkedExamples() =>
+        TutorialCorpus.Examples
+            .Where(e => e.SpecCaseId is not null)
+            .Select(e => new LinkedExample(
+                e.SpecCaseId!,
+                e.MarkerLine!.Value,
+                e.Source,
+                e.ClaimKind == TutorialClaimKind.InlineValue ? e.InlineValue : null,
+                e.ClaimKind == TutorialClaimKind.Error,
+                e.ClaimKind == TutorialClaimKind.FencedRows ? e.ResultsFence : null))
+            .ToArray();
 
     [Fact]
     public void LinkedExamples_ReferenceExistingCasesExactlyOnce()
@@ -163,8 +108,7 @@ public class TutorialSpecTests
                 // Blank lines inside a Results fence are presentation-only
                 // grouping (one group per source row); the display rows are
                 // the non-blank lines in order.
-                var tutorialRows = fence.Split('\n').Where(l => l.Length > 0);
-                var tutorialDisplay = string.Join("\n", tutorialRows);
+                var tutorialDisplay = TutorialCorpus.StripPresentationBlanks(fence);
                 Assert.True(specCase.ExpectedDisplay == tutorialDisplay,
                     $"tutorial.md line {example.MarkerLine}: spec:{example.CaseId} results block differs from canonical display.\n" +
                     $"--- canonical ---\n{specCase.ExpectedDisplay}\n--- tutorial (blank-stripped) ---\n{tutorialDisplay}");
