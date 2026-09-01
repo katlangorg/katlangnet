@@ -232,9 +232,17 @@ public static class SemanticModelBuilder
             ScopeFrame parentScope,
             IReadOnlyDictionary<string, SymbolDefinition>? extraParameters)
         {
-            var propertySymbols = new Dictionary<string, SymbolDefinition>(StringComparer.Ordinal);
+            // Every own property's symbol is built eagerly here — in declaration order,
+            // before the body walk — for its SIDE EFFECTS: CreatePropertySymbol registers
+            // the property's declaration occurrences, their definition resolutions, and
+            // its PropertyInfo, which the model reports even for a property nothing
+            // references (inside a load-elaborated module subtree, whose scope regions
+            // are suppressed, nothing else would ever register them). The symbols are
+            // served from the per-property cache; the frame keeps no property table of
+            // its own because property lookup has ONE owner, ElaboratedScopeLookup over
+            // PropertyScope.
             foreach (var property in algorithm.Properties)
-                propertySymbols[property.Name] = CreatePropertySymbol(property);
+                CreatePropertySymbol(property);
 
             var propertyScope = ElaboratedScopeLookup.CreateScope(algorithm, parentScope.PropertyScope);
 
@@ -289,7 +297,7 @@ public static class SemanticModelBuilder
                     : new SymbolDefinition(parameterName, SymbolKind.ImplicitParameter, AlgorithmValue: null, Declaration: null, IsPublic: false, PropertyInfo: null);
             }
 
-            return new ScopeFrame(parentScope, propertySymbols, parameterSymbols, propertyScope);
+            return new ScopeFrame(parentScope, parameterSymbols, propertyScope);
         }
 
         private SymbolDefinition CreatePropertySymbol(Property property)
@@ -1070,14 +1078,6 @@ public static class SemanticModelBuilder
             return Array.AsReadOnly(signatures.ToArray());
         }
 
-        private static IReadOnlyList<PropertyParameterInfo> CreateBuiltinParameters(
-            string name,
-            Algorithm? algorithm,
-            PropertyCallStyle callStyle)
-            => CreatePropertyParameters(
-                CreateBuiltinCallableSignature(name, algorithm, callStyle),
-                PropertyParameterKind.Explicit);
-
         private static CallableSignature CreateBuiltinCallableSignature(
             string name,
             Algorithm? algorithm,
@@ -1555,25 +1555,18 @@ public static class SemanticModelBuilder
 
         private static ScopeFrame CreatePreludeScope()
         {
-            var properties = new Dictionary<string, SymbolDefinition>(StringComparer.Ordinal);
-            foreach (var property in PreludeAlgorithm.Properties)
-                properties[property.Name] = CreateBuiltinSymbol(
-                    property.Name,
-                    property.Value,
-                    property.IsPublic,
-                    BuiltinRegistry.IsRuntimePreludeName(property.Name));
-
             // This prelude property scope is the one PROCESS-LIFETIME shared
             // scope level (every build's chain roots at it, possibly from
             // concurrent builds). Prewarming its lookup caches here keeps the
             // shared instance immutable after static initialization; all other
-            // scope chains are per-build and stay lazily cached.
+            // scope chains are per-build and stay lazily cached. Prelude symbols
+            // are built per build on demand (CreateLookupPropertySymbol), never
+            // stored on the frame.
             var propertyScope = ElaboratedScopeLookup.CreateScope(PreludeAlgorithm);
             propertyScope.PrewarmSharedLookupCaches();
 
             return new ScopeFrame(
                 parent: null,
-                properties,
                 parameters: new Dictionary<string, SymbolDefinition>(StringComparer.Ordinal),
                 propertyScope);
         }
@@ -1597,23 +1590,26 @@ public static class SemanticModelBuilder
         PropertyInfo? PropertyInfo,
         PropertyInfo? DotPropertyInfo = null);
 
+    /// <summary>
+    /// One lexical level of the builder's walk: the parameter symbols this level
+    /// binds (explicit, implicit, conditional binders) and the authoritative
+    /// property scope level. Property names are deliberately NOT tabulated
+    /// here — every property question goes through
+    /// <see cref="ElaboratedScopeLookup"/> over <see cref="PropertyScope"/>.
+    /// </summary>
     private sealed class ScopeFrame
     {
         public ScopeFrame(
             ScopeFrame? parent,
-            IReadOnlyDictionary<string, SymbolDefinition> properties,
             IReadOnlyDictionary<string, SymbolDefinition> parameters,
             ElaboratedPropertyScope propertyScope)
         {
             Parent = parent;
-            Properties = properties;
             Parameters = parameters;
             PropertyScope = propertyScope;
         }
 
         public ScopeFrame? Parent { get; }
-
-        public IReadOnlyDictionary<string, SymbolDefinition> Properties { get; }
 
         public IReadOnlyDictionary<string, SymbolDefinition> Parameters { get; }
 

@@ -100,8 +100,8 @@ internal sealed class ElaboratedPropertyScope
     /// This level's resolved <c>open</c> providers in declaration order: named
     /// targets deduplicated first-occurrence-wins by their open spelling
     /// (inline blocks never deduplicate — the evaluator's
-    /// <c>ResolveAllOpens</c> rule via
-    /// <see cref="ElaboratedScopeLookup.OpenTargetDedupKey"/>), unresolvable
+    /// <c>ResolveAllOpens</c> rule, keyed by the one shared
+    /// <see cref="Evaluator.OpenTargetDedupKey"/>), unresolvable
     /// targets omitted. Resolution is pure and diagnostic-free, and it is
     /// performed LAZILY — only when a lookup actually consults this level's
     /// opens — so owned-name precedence and the no-consultation case cost
@@ -121,7 +121,7 @@ internal sealed class ElaboratedPropertyScope
         {
             var openExpr = Opens[i];
             seenKeys ??= [];
-            if (!seenKeys.Add(ElaboratedScopeLookup.OpenTargetDedupKey(openExpr, i)))
+            if (!seenKeys.Add(Evaluator.OpenTargetDedupKey(openExpr, i)))
                 continue;
 
             Observations?.RecordLookupOpenTargetResolution();
@@ -352,17 +352,6 @@ internal static class ElaboratedScopeLookup
 
         return [];
     }
-
-    /// <summary>
-    /// Canonical dedup key for one written <c>open</c> target, matching
-    /// <c>Evaluator.ResolveAllOpens</c> and Lean <c>resolveAllOpens</c>.
-    /// Shared with the semantic model's scope-visibility enumeration so
-    /// completion applies the same first-occurrence-wins rule as resolution.
-    /// </summary>
-    internal static string OpenTargetDedupKey(Expr openExpr, int index)
-        => openExpr is Expr.AlgorithmExpr or Expr.Capture
-            ? $"(inline#{index})"
-            : Evaluator.OpenExprName(openExpr);
 
     public static IReadOnlyList<PropertyLookupHit> LookupLexicalPropertyMatches(ElaboratedPropertyScope scope, string name)
     {

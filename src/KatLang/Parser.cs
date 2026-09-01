@@ -579,6 +579,58 @@ public sealed class Parser
     }
 
     /// <summary>
+    /// All mutable build state of ONE same-name clause family
+    /// (<c>Name(pattern) = body</c> rows) while a body is being parsed: the
+    /// visibility of its first clause, the clauses in written order with their
+    /// whole-clause and name-token spans (index-aligned), and the
+    /// match-equivalence index that makes duplicate-branch detection O(1) per
+    /// clause. One family name owns exactly one builder for the lifetime of one
+    /// <see cref="ParseAlgorithmBodyParts"/> call; the builder never reaches the
+    /// AST — the post-loop elaboration reads it once and appends the family's
+    /// property.
+    /// </summary>
+    private sealed class ClauseGroupBuilder
+    {
+        // Lookup accelerator only: the ordered Branches list stays the source of
+        // truth for branch order, diagnostics, and spans.
+        private readonly HashSet<Pattern> _seenPatterns;
+
+        public ClauseGroupBuilder(string name, bool isPublic, IEqualityComparer<Pattern> matchEquivalence)
+        {
+            Name = name;
+            IsPublic = isPublic;
+            _seenPatterns = new HashSet<Pattern>(matchEquivalence);
+        }
+
+        public string Name { get; }
+
+        /// <summary>Visibility of the FIRST clause; every later clause must agree.</summary>
+        public bool IsPublic { get; }
+
+        public List<CondBranch> Branches { get; } = [];
+
+        /// <summary>Whole-clause spans, index-aligned with <see cref="Branches"/> (diagnostic anchors).</summary>
+        public List<SourceSpan> ClauseSpans { get; } = [];
+
+        /// <summary>Name-token spans, index-aligned with <see cref="Branches"/> (the property's declaration spans).</summary>
+        public List<SourceSpan> NameSpans { get; } = [];
+
+        /// <summary>
+        /// Records one clause in written order. Returns <c>false</c> when an
+        /// EARLIER clause of this family carried a match-equivalent pattern; the
+        /// clause is recorded either way so error recovery keeps a truthful family.
+        /// </summary>
+        public bool AddClause(Pattern pattern, Algorithm body, SourceSpan clauseSpan, SourceSpan nameSpan)
+        {
+            var isDistinct = _seenPatterns.Add(pattern);
+            Branches.Add(new CondBranch(pattern, body));
+            ClauseSpans.Add(clauseSpan);
+            NameSpans.Add(nameSpan);
+            return isDistinct;
+        }
+    }
+
+    /// <summary>
     /// Parses a scope-owning algorithm body — the root, brace blocks, and
     /// trailing brace call arguments — where declarations are legal and owned
     /// by the produced algorithm.
@@ -626,16 +678,51 @@ public sealed class Parser
         // duplicate checks, so those additions do not need mirroring.
         var declaredPropertyNames = new HashSet<string>(StringComparer.Ordinal);
         var output = new List<Expr>();
-        var clauseGroups = new Dictionary<string, List<CondBranch>>();
-        var clauseGroupSpans = new Dictionary<string, List<SourceSpan>>();
-        var clauseGroupNameSpans = new Dictionary<string, List<SourceSpan>>();
-        var clauseGroupIsPublic = new Dictionary<string, bool>();
-        // Per-group match-equivalence index over branch patterns already seen. Membership is
-        // O(1) amortized, so duplicate-branch detection across a whole family is O(clauses)
-        // instead of the former O(clauses^2) branchList.Any(IsMatchEquivalent) scan. The
-        // ordered branchList remains the source of truth for branch order, diagnostics, and
-        // spans; this set is only a lookup accelerator, local to this one parse.
-        var clauseGroupPatternSets = new Dictionary<string, HashSet<Pattern>>();
+        // ONE owner per same-name clause family: every piece of build state a family
+        // accumulates while its clauses are parsed lives in its ClauseGroupBuilder, keyed
+        // by ordinal name. The list keeps FIRST-SEEN family order for the post-loop
+        // elaboration, which is observable (appended property order, family diagnostic
+        // order) — it must never depend on dictionary enumeration order.
+        var clauseGroups = new Dictionary<string, ClauseGroupBuilder>(StringComparer.Ordinal);
+        var clauseGroupsInSourceOrder = new List<ClauseGroupBuilder>();
+
+        // Ordinary `Name = body` / `public Name = body`. The two spellings share every
+        // mechanic — duplicate check, parenthesized-declaration diagnostic, body parse,
+        // declaration span — and differ only in the consumed modifier and the
+        // resulting visibility flag.
+        void ParsePropertyDefinition(bool isPublic)
+        {
+            if (isPublic)
+            {
+                Advance(); // consume 'public'
+            }
+
+            var nameToken = Current;
+            var name = nameToken.StringValue!;
+
+            // Check for duplicate property definition
+            if (declaredPropertyNames.Contains(name) || clauseGroups.ContainsKey(name))
+            {
+                ReportError(DiagnosticCode.DuplicateProperty, $"Property '{name}' is already defined.");
+            }
+
+            if (!declarationsAllowed)
+            {
+                ReportError(
+                    DiagnosticCode.DeclarationInParentheses,
+                    PropertyDeclarationInParenthesesDiagnostic,
+                    TokenSpan(nameToken));
+            }
+
+            Advance(); // consume identifier
+            Advance(); // consume '='
+            var body = ParseOutputLine();
+            properties.Add(new Property(name, body, IsPublic: isPublic)
+            {
+                DeclarationSpans = [TokenSpan(nameToken)]
+            });
+            declaredPropertyNames.Add(name);
+        }
 
         void ParseClauseDefinition(bool isPublic)
         {
@@ -672,16 +759,16 @@ public sealed class Parser
             var body = ParseOutputLine();
             var clauseSpan = MakeSpan(nameToken);
 
-            if (!clauseGroups.TryGetValue(name, out var branchList))
+            if (!clauseGroups.TryGetValue(name, out var group))
             {
-                branchList = [];
-                clauseGroups[name] = branchList;
-                clauseGroupSpans[name] = [];
-                clauseGroupNameSpans[name] = [];
-                clauseGroupIsPublic[name] = isPublic;
-                clauseGroupPatternSets[name] = new HashSet<Pattern>(Pattern.CreateMatchEquivalenceComparer(_comparisonObservations));
+                group = new ClauseGroupBuilder(
+                    name,
+                    isPublic,
+                    Pattern.CreateMatchEquivalenceComparer(_comparisonObservations));
+                clauseGroups[name] = group;
+                clauseGroupsInSourceOrder.Add(group);
             }
-            else if (clauseGroupIsPublic[name] != isPublic)
+            else if (group.IsPublic != isPublic)
             {
                 ReportError(
                     DiagnosticCode.ClauseVisibilityMismatch,
@@ -689,20 +776,15 @@ public sealed class Parser
                     TokenSpan(nameToken));
             }
 
-            // Check for duplicate branch pattern (match-equivalent). Add returns false exactly
-            // when an earlier branch in this family carried a match-equivalent pattern — the same
-            // condition the former branchList.Any(IsMatchEquivalent) scan tested, but O(1) amortized.
-            if (!clauseGroupPatternSets[name].Add(pattern))
+            // The clause is always recorded (recovery keeps a truthful family); an earlier
+            // match-equivalent pattern in the same family additionally reports the duplicate.
+            if (!group.AddClause(pattern, body, clauseSpan, TokenSpan(nameToken)))
             {
                 ReportError(
                     DiagnosticCode.DuplicateBranchPattern,
                     $"Duplicate branch pattern for conditional algorithm '{name}'.",
                     clauseSpan);
             }
-
-            branchList.Add(new CondBranch(pattern, body));
-            clauseGroupSpans[name].Add(clauseSpan);
-            clauseGroupNameSpans[name].Add(TokenSpan(nameToken));
         }
 
         while (Current.Kind != TokenKind.EndOfFile
@@ -769,32 +851,7 @@ public sealed class Parser
             // Check for public property definition: public Name = ...
             else if (Current.Kind == TokenKind.KeywordPublic && LookaheadIsPublicPropertyDef())
             {
-                Advance(); // consume 'public'
-                var nameToken = Current;
-                var name = nameToken.StringValue!;
-
-                // Check for duplicate property definition
-                if (declaredPropertyNames.Contains(name) || clauseGroups.ContainsKey(name))
-                {
-                    ReportError(DiagnosticCode.DuplicateProperty, $"Property '{name}' is already defined.");
-                }
-
-                if (!declarationsAllowed)
-                {
-                    ReportError(
-                    DiagnosticCode.DeclarationInParentheses,
-                    PropertyDeclarationInParenthesesDiagnostic,
-                    TokenSpan(nameToken));
-                }
-
-                Advance(); // consume identifier
-                Advance(); // consume '='
-                var body = ParseOutputLine();
-                properties.Add(new Property(name, body, IsPublic: true)
-                {
-                    DeclarationSpans = [TokenSpan(nameToken)]
-                });
-                declaredPropertyNames.Add(name);
+                ParsePropertyDefinition(isPublic: true);
             }
             // public clause definition: public Name(...) = ...
             else if (Current.Kind == TokenKind.KeywordPublic && LookaheadIsPublicClauseDefinition())
@@ -804,31 +861,7 @@ public sealed class Parser
             // Check for property definition: Identifier '='
             else if (Current.Kind == TokenKind.Identifier && LookaheadIsEquals())
             {
-                var nameToken = Current;
-                var name = nameToken.StringValue!;
-
-                // Check for duplicate property definition
-                if (declaredPropertyNames.Contains(name) || clauseGroups.ContainsKey(name))
-                {
-                    ReportError(DiagnosticCode.DuplicateProperty, $"Property '{name}' is already defined.");
-                }
-
-                if (!declarationsAllowed)
-                {
-                    ReportError(
-                    DiagnosticCode.DeclarationInParentheses,
-                    PropertyDeclarationInParenthesesDiagnostic,
-                    TokenSpan(nameToken));
-                }
-
-                Advance(); // consume identifier
-                Advance(); // consume '='
-                var body = ParseOutputLine();
-                properties.Add(new Property(name, body)
-                {
-                    DeclarationSpans = [TokenSpan(nameToken)]
-                });
-                declaredPropertyNames.Add(name);
+                ParsePropertyDefinition(isPublic: false);
             }
             // Deconstruction / collecting binding pattern: x, *y, z = RHS (including
             // the collecting-led forms `*items = RHS` and `*first, rest = RHS`). A
@@ -865,12 +898,13 @@ public sealed class Parser
         //   F(x) = 1
         // must stay conditional for the whole family even though the second
         // clause would qualify in isolation.
-        foreach (var (name, branches) in clauseGroups)
+        foreach (var group in clauseGroupsInSourceOrder)
         {
-            var spans = clauseGroupSpans[name];
-            var nameSpans = clauseGroupNameSpans[name];
-            var isPublic = clauseGroupIsPublic.TryGetValue(name, out var publicValue) && publicValue;
-            var elaboratedClauseGroup = Algorithm.ElaborateClauseGroup(branches);
+            var name = group.Name;
+            var spans = group.ClauseSpans;
+            var nameSpans = group.NameSpans;
+            var isPublic = group.IsPublic;
+            var elaboratedClauseGroup = Algorithm.ElaborateClauseGroup(group.Branches);
 
             if (elaboratedClauseGroup is Algorithm.User ordinaryAlg)
             {
@@ -1333,7 +1367,7 @@ public sealed class Parser
     /// </summary>
     private void ParseBindingPatternAssignment(
         List<Property> properties,
-        Dictionary<string, List<CondBranch>> clauseGroups,
+        Dictionary<string, ClauseGroupBuilder> clauseGroups,
         HashSet<string> declaredPropertyNames,
         bool declarationsAllowed)
     {

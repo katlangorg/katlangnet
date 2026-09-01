@@ -384,6 +384,29 @@ public static partial class Evaluator
     internal static string OpenExprName(Expr e) => ExprNameRenderer.Render(e, ExprNameMode.Open);
 
     /// <summary>
+    /// The ONE dedup identity of a written <c>open</c> target, owned here beside
+    /// <see cref="OpenExprName"/> and shared by runtime open resolution
+    /// (<see cref="ResolveAllOpens"/>) and elaborated-scope lookup
+    /// (<c>ElaboratedPropertyScope.GetResolvedOpenProviders</c>), so both views
+    /// deduplicate targets by the same relation. An INLINE target
+    /// (<see cref="Expr.AlgorithmExpr"/> or <see cref="Expr.Capture"/>) is keyed by
+    /// its written position, so two structurally identical inline blocks are never
+    /// merged. Every other target — a named resolve, a dotted path, and on the
+    /// tolerant host/recovery paths any other expression — is keyed by its rendered
+    /// open spelling, so repeating one spelling is ONE provider (first occurrence
+    /// wins; consumers compare keys ordinally). The generic arm is deliberate and
+    /// must stay total: <see cref="ResolveAllOpens"/> spells an illegal target's
+    /// <c>BadOpenForm</c> diagnostic with this key, and the key is also the open's
+    /// diagnostic context and ambiguity-provider spelling. A new inline-like open
+    /// form must be added to the positional arm here — nowhere else.
+    /// Lean: <c>resolveAllOpens</c>.
+    /// </summary>
+    internal static string OpenTargetDedupKey(Expr openExpr, int index)
+        => openExpr is Expr.AlgorithmExpr or Expr.Capture
+            ? $"(inline#{index})"
+            : OpenExprName(openExpr);
+
+    /// <summary>
     /// Renders a compound call-context expression on an actual diagnostic path and records that
     /// work for an observed run. Simple identifiers reuse their existing string.
     /// </summary>
@@ -688,9 +711,10 @@ public static partial class Evaluator
 
     /// <summary>
     /// Resolve all opens of an algorithm upfront.
-    /// Deduplicates named opens by <c>openExprName</c> (first occurrence wins) to avoid
-    /// repeated resolution and spurious ambiguity from duplicate opens.
-    /// Inline blocks are never deduplicated (each gets a unique positional key).
+    /// Deduplicates targets by the shared <see cref="OpenTargetDedupKey"/> (named
+    /// targets by their open spelling, first occurrence wins; inline blocks by
+    /// position, never deduplicated) to avoid repeated resolution and spurious
+    /// ambiguity from duplicate opens.
     /// Validates all open expressions first for fail-fast diagnostics.
     /// Lean: resolveAllOpens → EvalM (List ResolvedOpen).
     /// </summary>
@@ -706,9 +730,7 @@ public static partial class Evaluator
         for (var i = 0; i < alg.Opens.Count; i++)
         {
             var openExpr = alg.Opens[i];
-            var key = openExpr is Expr.AlgorithmExpr or Expr.Capture
-                ? $"(inline#{i})"  // unique per original position, never deduped
-                : OpenExprName(openExpr);
+            var key = OpenTargetDedupKey(openExpr, i);
             if (seen.Add(key))
                 deduped.Add((key, openExpr));
         }

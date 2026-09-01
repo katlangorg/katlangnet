@@ -511,11 +511,6 @@ public class BuiltinRegistryParityTests
         private static readonly Type SemanticBuilderType = typeof(SemanticModelBuilder).GetNestedType("Builder", BindingFlags.NonPublic)
             ?? throw new InvalidOperationException("SemanticModelBuilder.Builder was not found.");
 
-        private static readonly MethodInfo SemanticCreateBuiltinParametersMethod = RequireMethod(
-            SemanticBuilderType,
-            "CreateBuiltinParameters",
-            StaticNonPublic);
-
         private static readonly MethodInfo RuntimeGetSequenceBuiltinMetadataMethod = RequireMethod(
             typeof(Evaluator),
             "GetSequenceBuiltinMetadata",
@@ -554,15 +549,23 @@ public class BuiltinRegistryParityTests
                 .OrderBy(static name => name, StringComparer.Ordinal)
                 .ToArray();
 
+        /// <summary>
+        /// The builtin's parameter names as the semantic model actually PUBLISHES
+        /// them: the <see cref="PreludeCatalog"/> entry's signature for
+        /// <paramref name="callStyle"/> (the same PropertyInfo every builtin
+        /// reference resolves to). A builtin that exposes no signature of that
+        /// style yields no names.
+        /// </summary>
         public static IReadOnlyList<string> SemanticBuiltinParameterNames(BuiltinId builtin, PropertyCallStyle callStyle)
         {
-            var parameters = InvokeStatic<IReadOnlyList<PropertyParameterInfo>>(
-                SemanticCreateBuiltinParametersMethod,
-                builtin.ToString(),
-                new Algorithm.Builtin(builtin),
-                callStyle);
+            var name = builtin.ToString();
+            var symbol = PreludeCatalog.Symbols.Single(symbol => symbol.Name == name);
+            var property = symbol.Property
+                ?? throw new InvalidOperationException($"Prelude catalog entry '{name}' carries no property metadata.");
 
-            return parameters.Select(static parameter => parameter.DisplayName).ToArray();
+            return (property.FindSignature(callStyle)?.Parameters ?? [])
+                .Select(static parameter => parameter.DisplayName)
+                .ToArray();
         }
 
         public static bool TryGetRuntimeSequenceSignature(BuiltinId builtin, out RuntimeSequenceSignature signature)
@@ -591,14 +594,16 @@ public class BuiltinRegistryParityTests
         public static IReadOnlyDictionary<string, IReadOnlyList<string>> SemanticMathMembers()
             => GetAlgorithmPropertyParameters(GetUserAlgorithmStaticField(SemanticBuilderType, "MathAlgorithm"));
 
+        /// <summary>
+        /// The semantic prelude's names as published through the editor-facing
+        /// <see cref="PreludeCatalog"/>, which is built from the same
+        /// signature-only prelude the semantic model resolves against.
+        /// </summary>
         private static IReadOnlyList<string> SemanticPreludePropertyNames()
-        {
-            var preludeScope = GetStaticFieldValue(SemanticBuilderType, "PreludeScope");
-            var properties = GetPropertyValue(preludeScope, "Properties");
-            return GetStringEnumerable(properties, "Keys")
+            => PreludeCatalog.Symbols
+                .Select(static symbol => symbol.Name)
                 .OrderBy(static name => name, StringComparer.Ordinal)
                 .ToArray();
-        }
 
         private static IReadOnlyDictionary<string, IReadOnlyList<string>> GetAlgorithmPropertyParameters(Algorithm.User algorithm)
         {
@@ -656,9 +661,6 @@ public class BuiltinRegistryParityTests
 
         private static IReadOnlyList<object> GetEnumerablePropertyValues(object instance, string propertyName)
             => ((IEnumerable)GetPropertyValue(instance, propertyName)).Cast<object>().ToArray();
-
-        private static IReadOnlyList<string> GetStringEnumerable(object instance, string propertyName)
-            => ((IEnumerable)GetPropertyValue(instance, propertyName)).Cast<string>().ToArray();
 
         private static string GetStringPropertyValue(object instance, string propertyName)
             => (string)GetPropertyValue(instance, propertyName);
