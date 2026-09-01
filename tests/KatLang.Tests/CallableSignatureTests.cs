@@ -86,6 +86,36 @@ public class CallableSignatureTests
     }
 
     [Fact]
+    public void FromHostBuiltAlgorithm_ParameterValidationIsShapeOnlyAndKeywordNeutral()
+    {
+        // Host-built AST metadata is not re-lexed. Keep this contract aligned
+        // with Lean's callableParameterNameIsIdentifierLike: keywords have no
+        // special status here, while C# uses its shipped BMP Unicode shape rule.
+        foreach (var name in new[] { "open", "div", "π" })
+        {
+            var signature = HostBuiltSignature(name);
+            Assert.Null(signature.ValidateMessage());
+            Assert.Equal($"Host({name})", signature.DisplayText);
+        }
+
+        var decomposed = "e" + (char)0x0301;
+        Assert.Equal(
+            $"Callable signature `Host` contains invalid parameter name `{decomposed}`.",
+            HostBuiltSignature(decomposed).ValidateMessage());
+
+        static CallableSignature HostBuiltSignature(string parameterName)
+        {
+            var algorithm = new Algorithm.User(
+                Parent: null,
+                Parameters: [new ParameterDeclaration(parameterName)],
+                Opens: [],
+                Properties: [],
+                Output: [new Expr.Param(parameterName)]);
+            return CallableSignature.FromAlgorithm("Host", algorithm);
+        }
+    }
+
+    [Fact]
     public void ArityFacts_ScalarExplicit_UsesFlatTopLevelSlots()
     {
         var signature = SignatureFor("Add(x, y) = x + y", "Add");

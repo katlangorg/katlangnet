@@ -509,4 +509,264 @@ public class LexerTests
         Assert.Equal(TokenKind.Identifier, tokens[1].Kind);
         Assert.Equal("e_3",                tokens[1].StringValue);
     }
+
+    // ── Identifier contract ──────────────────────────────────────────────────
+    // The shipped identifier policy, pinned as a hand-authored table: start =
+    // underscore or a UTF-16 code unit char.IsLetter accepts (Lu/Ll/Lt/Lm/Lo);
+    // continuation additionally accepts Unicode decimal digits (Nd); the whole
+    // word must not be a reserved keyword. Classification is per UTF-16 code
+    // unit, so surrogate pairs (supplementary-plane letters, emoji) and
+    // combining marks are never identifier characters and nothing normalizes
+    // source text. Every row is asserted BOTH against IsValidIdentifier and
+    // against real tokenization, so the whole-string helper and the tokenizer
+    // scan loop cannot drift apart without a failure here.
+
+    /// <summary>(display, text, valid): hand-authored identifier contract rows.
+    /// Tricky code units are composed from explicit code points so the file
+    /// stays reviewable; none of the rows is a reserved keyword (keywords are
+    /// pinned separately — they tokenize as ONE keyword token, not as an
+    /// identifier and not as an error).</summary>
+    private static readonly (string Display, string Text, bool Valid)[] IdentifierContractRows =
+    [
+        // Accepted: ASCII shapes.
+        ("ASCII name", "x", true),
+        ("ASCII with digits and underscores", "foo_bar_123", true),
+        ("lone underscore", "_", true),
+        ("leading underscore", "_x", true),
+        ("double underscore", "__", true),
+        ("underscore then digit", "_1", true),
+        ("digit continuation", "x1", true),
+        ("trailing underscore", "x_", true),
+        // Accepted: letters of any script (per-code-unit char.IsLetter).
+        ("Greek pi", "π", true),
+        ("Greek with Latin continuation", "Δx", true),
+        ("Cyrillic", "Жи", true),
+        ("CJK", "中文", true),
+        ("precomposed accent", "é", true),
+        ("Latvian diacritics", "Vērtība", true),
+        ("titlecase letter (Lt)", "ǅx", true),
+        ("modifier letter (Lm)", "xʰ", true),
+        // Accepted: Unicode decimal digits (Nd) CONTINUE an identifier.
+        ("Arabic-Indic digit continuation", "x" + (char)0x0663, true),
+        ("fullwidth digit continuation", "x" + (char)0xFF12, true),
+        // Rejected: empty, digit-first, punctuation, whitespace.
+        ("empty", "", false),
+        ("digit first", "3x", false),
+        ("Unicode digit first", (char)0x0663 + "x", false),
+        ("interior space", "x y", false),
+        ("interior hyphen", "x-y", false),
+        ("interior dot", "x.y", false),
+        ("leading space", " x", false),
+        ("trailing space", "x ", false),
+        ("trailing bang", "x!", false),
+        // Rejected: non-letter Unicode categories.
+        ("letter number Nl (Roman numeral)", "Ⅻ", false),
+        ("other number No (superscript two)", "x²", false),
+        ("currency symbol", "€", false),
+        ("decomposed accent (combining mark continuation)", "e" + (char)0x0301, false),
+        ("combining mark first", (char)0x0301 + "e", false),
+        ("combining mark after underscore", "_" + (char)0x0301, false),
+        // Rejected: supplementary-plane code points are surrogate PAIRS and the
+        // policy is per code unit — even a Unicode LETTER outside the BMP is
+        // not an identifier character. Changing this is a language-design
+        // decision, not a bug fix.
+        ("supplementary-plane letter (MATHEMATICAL BOLD CAPITAL A)", char.ConvertFromUtf32(0x1D400), false),
+        ("supplementary-plane letter continuation", "x" + char.ConvertFromUtf32(0x10400), false),
+        ("emoji", char.ConvertFromUtf32(0x1F600), false),
+        ("lone high surrogate", ((char)0xD835).ToString(), false),
+        ("lone low surrogate", ((char)0xDC00).ToString(), false),
+        ("surrogate after underscore", "_" + (char)0xD835, false),
+    ];
+
+    [Fact]
+    public void IdentifierPredicates_PreserveThePreviousRuleAndTheProgressInvariant_OverTheWholeBmp()
+    {
+        var failures = new List<string>();
+        for (var value = 0; value <= 0xFFFF && failures.Count < 12; value++)
+        {
+            var c = (char)value;
+            var previousStart = char.IsLetter(c) || c == '_';
+            var previousPart = char.IsLetterOrDigit(c) || c == '_';
+            var factoredPart = Lexer.IsIdentifierStartChar(c) || char.IsDigit(c);
+
+            if (Lexer.IsIdentifierStartChar(c) != previousStart)
+                failures.Add($"U+{value:X4}: identifier-start predicate changed from the shipped pre-M14 rule.");
+            if (Lexer.IsIdentifierPartChar(c) != previousPart)
+                failures.Add($"U+{value:X4}: identifier-part predicate changed from char.IsLetterOrDigit/underscore.");
+            if (char.IsLetterOrDigit(c) != (char.IsLetter(c) || char.IsDigit(c)))
+                failures.Add($"U+{value:X4}: char.IsLetterOrDigit differs from char.IsLetter || char.IsDigit.");
+            if (Lexer.IsIdentifierPartChar(c) != factoredPart)
+                failures.Add($"U+{value:X4}: identifier-part is not identifier-start || Unicode decimal digit.");
+            if (Lexer.IsIdentifierStartChar(c) && !Lexer.IsIdentifierPartChar(c))
+                failures.Add($"U+{value:X4}: identifier start is not a continuation, risking a zero-progress scan.");
+        }
+
+        Assert.True(failures.Count == 0, string.Join(Environment.NewLine, failures));
+    }
+
+    [Fact]
+    public void IsValidIdentifier_MatchesTheHandAuthoredContract()
+    {
+        var failures = new List<string>();
+        foreach (var (display, text, valid) in IdentifierContractRows)
+        {
+            if (Lexer.IsValidIdentifier(text) != valid)
+                failures.Add($"{display}: IsValidIdentifier(\"{Printable(text)}\") expected {valid}.");
+        }
+
+        Assert.True(failures.Count == 0, string.Join(Environment.NewLine, failures));
+    }
+
+    [Fact]
+    public void Tokenization_AgreesWithIsValidIdentifier_OnEveryContractRow()
+    {
+        // The whole-string helper and the tokenizer scan loop share one
+        // character policy; this asserts the OBSERVABLE agreement so that
+        // policy cannot silently fork: a text is a valid identifier exactly
+        // when it lexes as one clean Identifier token spanning the whole text.
+        // For an INVALID row this deliberately proves only that it is not one
+        // clean identifier; targeted tests below pin important recovery shapes
+        // such as Number+Identifier for a leading digit and Identifier+Bad for
+        // an invalid continuation.
+        var failures = new List<string>();
+        foreach (var (display, text, valid) in IdentifierContractRows)
+        {
+            if (text.Length == 0)
+                continue; // empty source lexes to EOF only; IsValidIdentifier covers the row
+
+            var (tokens, diagnostics) = Lexer.Tokenize(text);
+            var lexesAsOneIdentifier =
+                diagnostics.Count == 0
+                && tokens.Count == 2
+                && tokens[0].Kind == TokenKind.Identifier
+                && tokens[0].StringValue == text;
+            if (lexesAsOneIdentifier != valid)
+                failures.Add(
+                    $"{display}: tokenizing \"{Printable(text)}\" {(lexesAsOneIdentifier ? "produced" : "did not produce")} " +
+                    $"one clean Identifier token, but IsValidIdentifier says {valid}.");
+        }
+
+        Assert.True(failures.Count == 0, string.Join(Environment.NewLine, failures));
+    }
+
+    [Theory]
+    [InlineData("π2x")]
+    [InlineData("x٣y")]
+    [InlineData("foo_bar123")]
+    public void Tokenize_IdentifierUsesMaximalMunch(string source)
+    {
+        var (tokens, diagnostics) = Lexer.Tokenize(source);
+        Assert.Empty(diagnostics);
+        Assert.Equal(TokenKind.Identifier, tokens[0].Kind);
+        Assert.Equal(source, tokens[0].StringValue);
+        Assert.Equal(source.Length, tokens[0].Length);
+        Assert.Equal(TokenKind.EndOfFile, tokens[1].Kind);
+    }
+
+    [Fact]
+    public void Tokenize_InvalidIdentifierContinuation_EndsTheIdentifierAndKeepsMakingProgress()
+    {
+        foreach (var (source, prefix, badCount) in new[]
+        {
+            ("abc!", "abc", 1),
+            ("e" + (char)0x0301, "e", 1),
+            ("x" + char.ConvertFromUtf32(0x10400), "x", 2),
+            ("_" + (char)0xD835, "_", 1),
+        })
+        {
+            var (tokens, diagnostics) = Lexer.Tokenize(source);
+            Assert.Equal(prefix, tokens[0].StringValue);
+            Assert.Equal(prefix.Length, tokens[0].Length);
+            Assert.Equal(badCount, tokens.Count(static token => token.Kind == TokenKind.Bad));
+            Assert.Equal(badCount, diagnostics.Count);
+            Assert.Equal(source.Length, tokens[^1].Position);
+        }
+    }
+
+    [Fact]
+    public void ReservedKeywords_AreExactlyTheKnownEight_AndAreNeverIdentifiers()
+    {
+        // Independent hand-authored keyword list: a keyword added to or removed
+        // from the lexer must be reviewed here (and in KatLang.ebnf, whose
+        // ReservedWord production EbnfLexicalSyncTests pins against
+        // Lexer.KeywordNames).
+        string[] expected = ["div", "mod", "and", "or", "xor", "not", "public", "open"];
+        Assert.Equal(expected, Lexer.KeywordNames);
+
+        foreach (var keyword in expected)
+        {
+            Assert.False(Lexer.IsValidIdentifier(keyword), $"'{keyword}' must not be a valid identifier.");
+
+            // A keyword lexes as ONE keyword token — identifier-shaped, but
+            // classified out of the identifier space (never Bad, never split).
+            var (tokens, diagnostics) = Lexer.Tokenize(keyword);
+            Assert.Empty(diagnostics);
+            Assert.Equal(2, tokens.Count);
+            Assert.NotEqual(TokenKind.Identifier, tokens[0].Kind);
+            Assert.StartsWith("Keyword", tokens[0].Kind.ToString(), StringComparison.Ordinal);
+
+            // Reservation is exact and case-sensitive: any cased variant is an
+            // ordinary identifier.
+            var cased = char.ToUpperInvariant(keyword[0]) + keyword[1..];
+            Assert.True(Lexer.IsValidIdentifier(cased), $"'{cased}' (cased variant) must be a valid identifier.");
+        }
+    }
+
+    // ── Identifier contract, end to end ──────────────────────────────────────
+    // A helper is not evidence a program runs: these push representative names
+    // through the public engine (lexer → parser → front end → evaluator).
+
+    [Fact]
+    public void Run_GreekPropertyName_EvaluatesLikeAnyIdentifier()
+    {
+        var success = Assert.IsType<RunResult.Success>(KatLangEngine.Run("π = 3\nπ"));
+        Assert.Equal(3, Assert.Single(success.Atoms));
+    }
+
+    [Theory]
+    [InlineData("Ж")]
+    [InlineData("中")]
+    [InlineData("é")]
+    [InlineData("x٣")]
+    [InlineData("_1")]
+    public void Run_OtherBmpIdentifierClasses_EvaluateThroughThePublicEngine(string identifier)
+    {
+        var success = Assert.IsType<RunResult.Success>(
+            KatLangEngine.Run($"{identifier} = 3\n{identifier}"));
+        Assert.Equal(3, Assert.Single(success.Atoms));
+    }
+
+    [Fact]
+    public void Run_NonAsciiFunctionAndParameterNames_EvaluateLikeAnyIdentifier()
+    {
+        var source = "Saskaitīt(α, β) = α + β\nSaskaitīt(1, 2)";
+        var success = Assert.IsType<RunResult.Success>(KatLangEngine.Run(source));
+        Assert.Equal(3, Assert.Single(success.Atoms));
+    }
+
+    [Fact]
+    public void Run_SupplementaryPlaneLetterName_IsRejectedAtTheLexicalBoundary()
+    {
+        // U+1D400 is a Unicode letter, but the per-code-unit policy sees two
+        // surrogate halves: the program fails to parse instead of defining a
+        // property.
+        var failure = Assert.IsType<RunResult.ParseFailure>(KatLangEngine.Run(char.ConvertFromUtf32(0x1D400) + " = 1"));
+        Assert.NotEmpty(failure.Errors);
+    }
+
+    [Fact]
+    public void Run_DecomposedAccentName_IsRejected_WhilePrecomposedRuns()
+    {
+        var precomposed = Assert.IsType<RunResult.Success>(KatLangEngine.Run("é = 1\né"));
+        Assert.Equal(1, Assert.Single(precomposed.Atoms));
+
+        var decomposed = KatLangEngine.Run("e" + (char)0x0301 + " = 1");
+        Assert.IsType<RunResult.ParseFailure>(decomposed);
+    }
+
+    /// <summary>Renders non-ASCII/invisible code units as U+XXXX so a failure
+    /// message stays readable in any console.</summary>
+    private static string Printable(string text)
+        => string.Concat(text.Select(static c =>
+            c is >= ' ' and <= '~' ? c.ToString() : $"U+{(int)c:X4}"));
 }

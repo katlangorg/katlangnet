@@ -147,6 +147,15 @@ public class BuiltinRegistryParityTests
                     failures.Add(
                         $"Builtin '{builtin.Name}' has non-identifier callable parameter name '{parameter.Name}'.");
                 }
+
+                // Builtin parameter names surface in editor signatures and docs,
+                // so beyond being identifier-shaped they must be source-writable:
+                // never a reserved keyword spelling.
+                if (Lexer.KeywordNames.Contains(parameter.Name, StringComparer.Ordinal))
+                {
+                    failures.Add(
+                        $"Builtin '{builtin.Name}' callable parameter name '{parameter.Name}' is a reserved keyword.");
+                }
             }
         }
 
@@ -179,6 +188,23 @@ public class BuiltinRegistryParityTests
         AssertValidationReason(
             new CallableSignature("Bad", [new CallableParameter("x"), new CallableParameter("x")]),
             "Callable signature `Bad` contains duplicate parameter name `x`.");
+
+        // The parameter-name rule is identifier SHAPE only, mirroring Lean
+        // `callableParameterNameIsIdentifierLike` (which validates inside the
+        // modeled call binder): a reserved keyword spelling stays a
+        // structurally valid parameter name for a host-built AST — parsed
+        // source can never produce one — and the shipped charset is the
+        // lexer's Unicode per-UTF-16-code-unit rule, so a non-ASCII letter
+        // name is valid in C# too (a documented model boundary: Lean's shape
+        // check is ASCII-only; see the identifier row in
+        // SEMANTIC-ALIGNMENT.md). A combining mark is not an identifier
+        // character, so a decomposed accented name is rejected here exactly
+        // as the lexer rejects it in source.
+        Assert.Null(new CallableSignature("Host", [new CallableParameter("open")]).ValidateMessage());
+        Assert.Null(new CallableSignature("Host", [new CallableParameter("π")]).ValidateMessage());
+        AssertValidationReason(
+            new CallableSignature("Host", [new CallableParameter("e" + (char)0x0301)]),
+            "Callable signature `Host` contains invalid parameter name `e" + (char)0x0301 + "`.");
     }
 
     [Fact]
@@ -447,6 +473,13 @@ public class BuiltinRegistryParityTests
             [BuiltinId.distinct] = new("distinct(collection)", []),
         };
 
+    /// <summary>
+    /// Deliberately INDEPENDENT restatement of the lexer's identifier shape rule
+    /// (start: letter or underscore; continuation: letter, digit, or
+    /// underscore), so registry data is checked against a hand-authored oracle
+    /// rather than the production predicate it is supposed to satisfy. The
+    /// production rule itself is pinned in LexerTests and EbnfLexicalSyncTests.
+    /// </summary>
     private static bool IsIdentifierLike(string name)
     {
         if (name.Length == 0 || (!char.IsLetter(name[0]) && name[0] != '_'))

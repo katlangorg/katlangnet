@@ -145,6 +145,22 @@ public class KatLangErrorCodeTests
         Assert.Equal(KatLangErrorCode.ArityMismatch, projected.Code);
     }
 
+    [Theory]
+    [InlineData("open")]
+    [InlineData("div")]
+    public void FromEvalError_KeywordShapedHostNamesKeepTheBarePropertyDiagnostic(string name)
+    {
+        // A host-built AST can carry a keyword-shaped property description even
+        // though source cannot spell that declaration. IsSimpleIdentifier is a
+        // display-shape test, not a second source-validity gate; consolidation
+        // must preserve the established, quoted "Property 'name'" wording.
+        var error = new EvalError.WithContext(new CallContext(name), new EvalError.ArityMismatch(1, 0));
+
+        Assert.Equal(
+            $"Property '{name}' expects 1 parameter, but was called with 0 arguments.",
+            KatLangError.FromEvalError(error).Message);
+    }
+
     [Fact]
     public void FromEvalError_ProducesTheStableCode_ForEveryVariant()
     {

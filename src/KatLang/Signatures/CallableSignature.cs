@@ -215,11 +215,24 @@ public sealed record CallableSignature
             _ => false,
         };
 
+    /// <summary>
+    /// Whether <paramref name="name"/> is identifier-SHAPED under the lexer's one
+    /// identifier character policy, with DELIBERATELY no reserved-keyword
+    /// exclusion — this mirrors Lean <c>callableParameterNameIsIdentifierLike</c>,
+    /// which validates parameter names inside the modeled call binder
+    /// (<c>bindCallableArguments</c>). Keywords are a surface-syntax concept the
+    /// Lean model does not have, so a keyword spelling such as <c>open</c> stays a
+    /// structurally valid parameter name for a host-built AST (parsed source can
+    /// never produce one — the lexer refuses to lex it as an identifier). Names
+    /// that must be writable in source (host operations, builtin metadata) are
+    /// validated with the stricter <see cref="Lexer.IsValidIdentifier"/> instead.
+    /// Model boundary: when this validation is reached (currently through the
+    /// flat-collecting loop-step binder), Lean's <c>Char.isAlpha</c>/
+    /// <c>isAlphanum</c> are ASCII-only while the shipped rule is the lexer's
+    /// Unicode per-UTF-16-code-unit rule; the two agree on the ASCII subdomain
+    /// (see the identifier row in SEMANTIC-ALIGNMENT.md). This says nothing
+    /// about ordinary property/resolve names, which are stored as strings.
+    /// </summary>
     private static bool IsIdentifierLike(string name)
-    {
-        if (name.Length == 0 || (!char.IsLetter(name[0]) && name[0] != '_'))
-            return false;
-
-        return name.Skip(1).All(static c => char.IsLetterOrDigit(c) || c == '_');
-    }
+        => Lexer.IsIdentifierShaped(name);
 }

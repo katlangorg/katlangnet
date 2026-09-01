@@ -747,19 +747,16 @@ public sealed class KatLangError
             _ => string.Join(", ", values.Take(values.Count - 1).Select(value => $"'{value}'")) + $", and '{values[^1]}'",
         };
 
+    /// <summary>
+    /// Display heuristic: whether a callee/reference DESCRIPTION reads as one bare
+    /// name (so a diagnostic may say "Property 'X'") rather than as a rendered
+    /// expression. Shape-only via the lexer's one identifier character policy —
+    /// deliberately no keyword exclusion, because a host-built AST may legally
+    /// name a property with a keyword spelling and its description should still
+    /// render as that name.
+    /// </summary>
     private static bool IsSimpleIdentifier(string value)
-    {
-        if (string.IsNullOrEmpty(value) || !(char.IsLetter(value[0]) || value[0] == '_'))
-            return false;
-
-        for (var i = 1; i < value.Length; i++)
-        {
-            if (!(char.IsLetterOrDigit(value[i]) || value[i] == '_'))
-                return false;
-        }
-
-        return true;
-    }
+        => !string.IsNullOrEmpty(value) && Lexer.IsIdentifierShaped(value);
 
     private static string FormatUnresolvedImplicitParams(EvalError.UnresolvedImplicitParams e, int providedArgumentCount = 0)
     {

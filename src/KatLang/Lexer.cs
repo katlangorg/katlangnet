@@ -30,24 +30,68 @@ public static class Lexer
             static keyword => keyword.Kind,
             StringComparer.Ordinal);
 
+    // ── Identifier character policy ──────────────────────────────────────────
+    // THE one authoritative identifier character policy: the tokenizer's scan
+    // loop, the whole-string helpers below, and every identifier-shape consumer
+    // (`CallableSignature` parameter-name validation, `KatLangError` display
+    // heuristics) read these predicates, so the character rule cannot fork.
+    // Classification is per UTF-16 CODE UNIT (System.Char): a supplementary-
+    // plane letter arrives as a surrogate pair whose halves are not letters, so
+    // it is never an identifier character, and combining marks are not
+    // identifier characters (a precomposed accented letter is a letter; the
+    // decomposed spelling is an identifier followed by an unexpected-character
+    // diagnostic). Nothing normalizes source text. The identifier terminal
+    // claims in KatLang.ebnf are mechanically pinned to these predicates by
+    // EbnfLexicalSyncTests.
+
+    /// <summary>
+    /// Whether <paramref name="c"/> may START an identifier: an underscore or a
+    /// UTF-16 code unit in Unicode letter category Lu, Ll, Lt, Lm, or Lo
+    /// (<see cref="char.IsLetter(char)"/>).
+    /// </summary>
+    internal static bool IsIdentifierStartChar(char c)
+        => char.IsLetter(c) || c == '_';
+
+    /// <summary>
+    /// Whether <paramref name="c"/> may CONTINUE an identifier: an
+    /// identifier-start code unit or a Unicode decimal digit (category Nd,
+    /// <see cref="char.IsDigit(char)"/>). A digit never STARTS an identifier
+    /// because the number production claims a leading digit first.
+    /// </summary>
+    internal static bool IsIdentifierPartChar(char c)
+        => char.IsLetterOrDigit(c) || c == '_';
+
+    /// <summary>
+    /// Whether <paramref name="text"/> is identifier-SHAPED — one
+    /// identifier-start code unit followed by identifier-part code units — with
+    /// NO reserved-keyword exclusion: a keyword spelling such as "open" is
+    /// identifier-shaped even though it lexes as a keyword token. Shape-only
+    /// consumers (AST-level parameter-name validation mirroring Lean
+    /// `callableParameterNameIsIdentifierLike`, diagnostic display heuristics)
+    /// use this; names that must be writable in source use
+    /// <see cref="IsValidIdentifier"/>.
+    /// </summary>
+    internal static bool IsIdentifierShaped(string text)
+    {
+        if (text.Length == 0 || !IsIdentifierStartChar(text[0]))
+            return false;
+
+        for (var i = 1; i < text.Length; i++)
+        {
+            if (!IsIdentifierPartChar(text[i]))
+                return false;
+        }
+
+        return true;
+    }
+
     /// <summary>
     /// Whether <paramref name="text"/> is lexed as one identifier token rather than a
     /// keyword. Kept on the lexer so host-facing signature validation cannot drift from
     /// the language's identifier and keyword rules.
     /// </summary>
     public static bool IsValidIdentifier(string text)
-    {
-        if (text.Length == 0 || (!char.IsLetter(text[0]) && text[0] != '_'))
-            return false;
-
-        for (var i = 1; i < text.Length; i++)
-        {
-            if (!char.IsLetterOrDigit(text[i]) && text[i] != '_')
-                return false;
-        }
-
-        return ClassifyIdentifierOrKeyword(text) == TokenKind.Identifier;
-    }
+        => IsIdentifierShaped(text) && ClassifyIdentifierOrKeyword(text) == TokenKind.Identifier;
 
     /// <summary>
     /// The reserved keyword spellings, exactly the words
@@ -189,13 +233,15 @@ public static class Lexer
                 continue;
             }
 
-            // Identifiers and keywords
-            if (char.IsLetter(c) || c == '_')
+            // Identifiers and keywords — the scan loop reads the one shared
+            // identifier character policy above, so it cannot drift from
+            // whole-string validation.
+            if (IsIdentifierStartChar(c))
             {
                 var start = i;
                 var startLine = line;
                 var startCol = col;
-                while (i < source.Length && (char.IsLetterOrDigit(source[i]) || source[i] == '_'))
+                while (i < source.Length && IsIdentifierPartChar(source[i]))
                 { i++; col++; }
 
                 var text = source[start..i];

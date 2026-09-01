@@ -445,15 +445,53 @@ ListLiteral     = "[" [ ExpressionList ] "]" ;
                      supplies zero items. *)
 
 NumberLiteral   = Number ;
-Number          = /\d(_*\d)*(\.\d(_*\d)*)?(e[+-]?\d(_*\d)*)?/ ;
+Number          = /[0-9](_*[0-9])*(\.[0-9](_*[0-9])*)?(e[+-]?[0-9](_*[0-9])*)?/ ;
                   (* Values are IEEE 754 Decimal128: source text parses directly
                      into the 34-significant-digit representation. A finite
                      literal with more significant digits rounds to nearest
                      (round-half-even); a literal whose magnitude exceeds the
                      Decimal128 range (beyond about 9.999e6144) is rejected with
-                     the number-too-large diagnostic. *)
+                     the number-too-large diagnostic. This production describes
+                     VALID numeric syntax and is deliberately ASCII-only. During
+                     recovery from invalid input, the lexer also enters its
+                     number-scanning path for any Unicode decimal digit (Nd, per
+                     UTF-16 code unit); text such as U+0663 is then rejected by
+                     Decimal128 parsing with the number-too-large diagnostic.
+                     That recovery behavior is not admitted by this production
+                     and is pinned separately by Utf16LexerContractTests. *)
 BindingIdentifier = Identifier ;
-Identifier      = /[A-Za-z_][A-Za-z0-9_]*/ ;
+Identifier      = IdentifierStart { IdentifierPart } ;
+                  (* An Identifier is a maximal identifier-shaped word that is
+                     not a ReservedWord: the lexer scans the longest run of
+                     identifier characters and then classifies the whole word,
+                     so every ReservedWord spelling lexes as its keyword token
+                     and is never a valid identifier, while any other word —
+                     including builtin names such as "if" or "sum" — is an
+                     ordinary Identifier. Identifier characters are Unicode
+                     classes evaluated PER UTF-16 CODE UNIT (the classes of
+                     System.Char.IsLetter / System.Char.IsDigit): letters of
+                     any script work (Greek U+03C0, Cyrillic, CJK, precomposed
+                     accented letters such as U+00E9), but recognition never
+                     pairs surrogates — a supplementary-plane letter written
+                     as a surrogate pair (e.g. U+1D400) is NOT an identifier
+                     character — and combining marks are not identifier
+                     characters either (decomposed "e" + U+0301 is the
+                     identifier "e" followed by an unexpected-character
+                     diagnostic). Source text is never Unicode-normalized. A
+                     Unicode decimal digit may CONTINUE an identifier but
+                     never STARTS one, because the Number production claims a
+                     leading digit first. These identifier and reserved-word
+                     terminal claims are mechanically pinned against the
+                     shipped lexer by EbnfLexicalSyncTests. *)
+IdentifierStart = "_" | UnicodeLetter ;
+IdentifierPart  = "_" | UnicodeLetter | UnicodeDigit ;
+UnicodeLetter   = ? a UTF-16 code unit in Unicode category Lu, Ll, Lt, Lm, or Lo (System.Char.IsLetter) ? ;
+UnicodeDigit    = ? a UTF-16 code unit in Unicode category Nd (System.Char.IsDigit) ? ;
+ReservedWord    = "div" | "mod" | "and" | "or" | "xor" | "not" | "public" | "open" ;
+                  (* The complete reserved-word list; each spelling is a
+                     distinct keyword token, never an Identifier. Reservation
+                     is exact and case-sensitive: "Open", "Div", and "NOT" are
+                     ordinary identifiers. *)
 StringLiteral   = /'([^'\r\n])*'/ ;
 Comment         = /#[^\r\n]*/ ;
                   (* a "#" outside a string literal starts a comment that runs

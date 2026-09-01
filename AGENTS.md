@@ -107,7 +107,7 @@
 
 ## Documentation Expectations
 
-- Update `KatLang.ebnf` when lexer/parser grammar changes.
+- Update `KatLang.ebnf` when lexer/parser grammar changes. Its identifier/keyword terminal claims are mechanically checked by `EbnfLexicalSyncTests`: changing identifier characters or the keyword set requires updating the lexer, the EBNF, and the independent contract tests together; harmless wrapping and alternative reordering are not policy changes.
 - Update `tutorial.md` when user-facing behavior changes.
 - Update generator-facing files when syntax, builtins, `open`/`load`, or recommended code-generation idioms change.
 - In this repo that usually includes `.github/agents/katlang-generator.agent.md` and any related generator prompt assets.

@@ -328,6 +328,33 @@ public class LeanAstEncoderTests
     }
 
     [Fact]
+    public void UnicodeAstNames_EncodeAsLeanStrings_IndependentlyOfCallableValidation()
+    {
+        var value = new Algorithm.User(null, [], [], [], [new Expr.Num(3)]);
+        var root = new Algorithm.User(
+            Parent: null,
+            Parameters: [],
+            Opens: [],
+            Properties: [new Property("π", value)],
+            Output: [new Expr.Resolve("π")]);
+
+        var encodedRoot = LeanAstEncoder.EncodeProgram(root);
+        Assert.Contains("privateProp \"π\"", encodedRoot, StringComparison.Ordinal);
+        Assert.Contains(".resolve \"π\"", encodedRoot, StringComparison.Ordinal);
+
+        // Parameter names are representable by the same string field too. Lean's
+        // ASCII-only callableParameterNameIsIdentifierLike becomes observable
+        // only if evaluation reaches that validator; encoding itself is faithful.
+        var callable = new Algorithm.User(
+            Parent: null,
+            Parameters: [new ParameterDeclaration("π")],
+            Opens: [],
+            Properties: [],
+            Output: [new Expr.Param("π")]);
+        Assert.Contains("(alg [\"π\"]", LeanAstEncoder.EncodeAlgorithm(callable), StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void HostOnlyFieldsWithoutAFaithfulLeanValue_AreRefused()
     {
         Assert.Throws<NotSupportedException>(() =>
