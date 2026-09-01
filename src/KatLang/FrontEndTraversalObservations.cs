@@ -116,6 +116,64 @@ internal sealed class FrontEndTraversalObservations
 
     internal void RecordLoaderMarkerExpansion()
         => LoaderMarkerExpansions = checked(LoaderMarkerExpansions + 1);
+
+    // ── Elaborated scope-lookup work (M18) ────────────────────────────────────
+    // Unlike the traversal counters above, these record LOOKUP work performed by
+    // ElaboratedScopeLookup over one observed front-end pass: chain levels
+    // visited, linear property-name comparisons, per-level acceleration-index
+    // constructions, open-target resolutions, and parent-walk root discoveries.
+    // They flow through the observed pass's ElaboratedPropertyScope chain (the
+    // chain root carries the observer), so like every other counter they are
+    // pass-scoped, passive, and absent from production paths.
+
+    /// <summary>Scope-chain levels visited by direct (ownership-first) name queries.</summary>
+    public long LookupLevelVisits { get; private set; }
+
+    internal void RecordLookupLevelVisit()
+        => LookupLevelVisits = checked(LookupLevelVisits + 1);
+
+    /// <summary>
+    /// Property-name equality comparisons performed by LINEAR scans of a scope
+    /// level's property list or an open provider's member list. Index-served
+    /// lookups record nothing here (dictionary probes are not linear scans), so
+    /// this is the counter that exposes quadratic wide-scope lookup work.
+    /// </summary>
+    public long LookupPropertyComparisons { get; private set; }
+
+    internal void RecordLookupPropertyComparisons(int count)
+        => LookupPropertyComparisons = checked(LookupPropertyComparisons + count);
+
+    /// <summary>Per-level property-name index constructions (at most one per queried level).</summary>
+    public long LookupNameIndexBuilds { get; private set; }
+
+    internal void RecordLookupNameIndexBuild()
+        => LookupNameIndexBuilds = checked(LookupNameIndexBuilds + 1);
+
+    /// <summary>
+    /// Open-target resolutions performed for opened-name matching (one per written
+    /// open target examined for providers; dotted targets resolve through their own
+    /// nested steps without extra counts here).
+    /// </summary>
+    public long LookupOpenTargetResolutions { get; private set; }
+
+    internal void RecordLookupOpenTargetResolution()
+        => LookupOpenTargetResolutions = checked(LookupOpenTargetResolutions + 1);
+
+    /// <summary>Per-provider exported-member index constructions (at most one per consulted provider).</summary>
+    public long LookupOpenMemberIndexBuilds { get; private set; }
+
+    internal void RecordLookupOpenMemberIndexBuild()
+        => LookupOpenMemberIndexBuilds = checked(LookupOpenMemberIndexBuilds + 1);
+
+    /// <summary>
+    /// Chain-root discoveries performed by WALKING parent links. The cached
+    /// per-chain root reference discovers the root at construction time without
+    /// a walk, so an accelerated pass records zero.
+    /// </summary>
+    public long LookupRootDiscoveryWalks { get; private set; }
+
+    internal void RecordLookupRootDiscoveryWalk()
+        => LookupRootDiscoveryWalks = checked(LookupRootDiscoveryWalks + 1);
 }
 
 /// <summary>

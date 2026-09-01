@@ -66,6 +66,39 @@ internal static class FrontEndElaborationScenarios
 		Scale(4) + Scale(5)
 		""";
 
+	/// <summary>
+	/// A wide flat calculation chain: count root properties, each referencing the
+	/// previous one, plus one output row referencing the last. Every reference is
+	/// resolved by <c>ElaboratedScopeLookup</c> against the root level, so before
+	/// M18 the per-level linear scan made total lookup work quadratic in count.
+	/// </summary>
+	internal static string BuildWideLookupChainSource(int count)
+	{
+		var source = new StringBuilder();
+		source.AppendLine("V0 = 1");
+		for (var i = 1; i < count; i++)
+			source.AppendLine($"V{i} = V{i - 1} + 1");
+		source.AppendLine($"V{count - 1}");
+		return source.ToString();
+	}
+
+	/// <summary>
+	/// A wide flat scope plus count unresolved output-row references (one fresh
+	/// name per row, promoted to root implicit parameters). Every miss walks the
+	/// whole chain — root level and prelude — so before M18 each miss scanned
+	/// every property list in full, and the near-miss suggestion machinery
+	/// re-scanned the chain per gathered candidate name.
+	/// </summary>
+	internal static string BuildWideLookupMissSource(int count)
+	{
+		var source = new StringBuilder();
+		for (var i = 0; i < count; i++)
+			source.AppendLine($"V{i} = {i}");
+		for (var i = 0; i < count; i++)
+			source.AppendLine($"u{i}");
+		return source.ToString();
+	}
+
 	internal static void AssertParsesCleanly(string source)
 	{
 		var result = Parser.Parse(source);
@@ -118,6 +151,80 @@ internal static class FrontEndElaborationScenarios
 			|| exposureObservations.DependencyAlgorithmSummaryComputations != 3L * depth)
 		{
 			throw new InvalidOperationException("Nested benchmark no longer exercises linear completed-summary work.");
+		}
+	}
+
+	internal static void AssertWideLookupChainShape(string source, int count)
+	{
+		var result = Parser.Parse(source);
+		AssertParsesCleanly(result);
+		var root = AssertUser(result.Root, "root");
+		if (root.Properties.Count != count)
+			throw new InvalidOperationException($"Lookup-chain benchmark expected {count} root properties, found {root.Properties.Count}.");
+		if (root.Parameters.Count != 0)
+			throw new InvalidOperationException("Lookup-chain benchmark unexpectedly promoted implicit parameters.");
+		if (root.Output is not [Expr.Resolve { Name: var finalName }] || finalName != $"V{count - 1}")
+			throw new InvalidOperationException("Lookup-chain benchmark lost its final written reference.");
+		for (var i = 1; i < count; i++)
+		{
+			var value = AssertUser(root.Properties[i].Value, $"V{i}");
+			if (value.Output is not [Expr.Binary { Left: Expr.Resolve { Name: var referencedName } }]
+				|| referencedName != $"V{i - 1}")
+			{
+				throw new InvalidOperationException($"Lookup-chain benchmark V{i} no longer references V{i - 1} exactly once.");
+			}
+		}
+
+		AssertLookupWorkObserved(source, expectedIndexBuilds: 1, expectedLevelVisits: 2L * count - 1);
+	}
+
+	internal static void AssertWideLookupMissShape(string source, int count)
+	{
+		var result = Parser.Parse(source);
+		AssertParsesCleanly(result);
+		var root = AssertUser(result.Root, "root");
+		if (root.Properties.Count != count)
+			throw new InvalidOperationException($"Lookup-miss benchmark expected {count} root properties, found {root.Properties.Count}.");
+		if (root.Parameters.Count != count
+			|| root.Parameters[0].Name != "u0"
+			|| root.Parameters[count - 1].Name != $"u{count - 1}")
+			throw new InvalidOperationException("Lookup-miss benchmark lost its implicit-parameter promotions.");
+		if (root.Output.Count != count
+			|| root.Output.OfType<Expr.Param>().Select(static parameter => parameter.Name)
+				.Where(static name => name.StartsWith("u", StringComparison.Ordinal)).Distinct(StringComparer.Ordinal).Count() != count)
+		{
+			throw new InvalidOperationException("Lookup-miss benchmark no longer contains exactly the intended promoted references.");
+		}
+
+		AssertLookupWorkObserved(source, expectedIndexBuilds: 2, expectedLevelVisits: null);
+	}
+
+	private static void AssertLookupWorkObserved(
+		string source,
+		long expectedIndexBuilds,
+		long? expectedLevelVisits)
+	{
+		var syntax = Parser.ParseSyntax(source);
+		if (syntax.HasErrors)
+			throw new InvalidOperationException("Lookup benchmark syntax parse unexpectedly failed.");
+		var observations = new FrontEndTraversalObservations();
+		var (_, diagnostics) = ParameterDetector.DetectPrevalidated(syntax.Root, null, observations);
+		if (diagnostics.Any(diagnostic => diagnostic.Severity == DiagnosticSeverity.Error))
+			throw new InvalidOperationException("Lookup benchmark parameter detection unexpectedly failed.");
+		if (observations.LookupNameIndexBuilds != expectedIndexBuilds
+			|| observations.LookupPropertyComparisons != 0
+			|| observations.LookupOpenTargetResolutions != 0
+			|| observations.LookupOpenMemberIndexBuilds != 0
+			|| observations.LookupRootDiscoveryWalks != 0
+			|| (expectedLevelVisits is { } visits
+				? observations.LookupLevelVisits != visits
+				: observations.LookupLevelVisits <= 0))
+		{
+			throw new InvalidOperationException(
+				"Lookup benchmark no longer exercises the intended indexed substrate: "
+				+ $"indexes={observations.LookupNameIndexBuilds}, linearComparisons={observations.LookupPropertyComparisons}, "
+				+ $"openResolutions={observations.LookupOpenTargetResolutions}, openMemberIndexes={observations.LookupOpenMemberIndexBuilds}, "
+				+ $"rootWalks={observations.LookupRootDiscoveryWalks}, levelVisits={observations.LookupLevelVisits}.");
 		}
 	}
 
@@ -191,6 +298,39 @@ public class FrontEndNestedElaborationBenchmarks
 
 	[Benchmark]
 	public ParseResult NestedChain() => Parser.Parse(nestedChainSource);
+}
+
+/// <summary>
+/// Width scaling of front-end elaboration on lookup-heavy flat scopes — the workloads
+/// where repeated per-level linear name scans dominated before M18. Chain resolves
+/// every reference at the root level; Misses walks the full chain (root and prelude)
+/// for every promoted implicit parameter.
+/// </summary>
+[MemoryDiagnoser]
+[SimpleJob(launchCount: 1, warmupCount: 3, iterationCount: 8)]
+[Orderer(SummaryOrderPolicy.FastestToSlowest)]
+public class FrontEndWideLookupBenchmarks
+{
+	private string chainSource = string.Empty;
+	private string missSource = string.Empty;
+
+	[Params(100, 200, 400, 800)]
+	public int Width { get; set; }
+
+	[GlobalSetup]
+	public void Setup()
+	{
+		chainSource = FrontEndElaborationScenarios.BuildWideLookupChainSource(Width);
+		FrontEndElaborationScenarios.AssertWideLookupChainShape(chainSource, Width);
+		missSource = FrontEndElaborationScenarios.BuildWideLookupMissSource(Width);
+		FrontEndElaborationScenarios.AssertWideLookupMissShape(missSource, Width);
+	}
+
+	[Benchmark]
+	public ParseResult WideLookupChain() => Parser.Parse(chainSource);
+
+	[Benchmark]
+	public ParseResult WideLookupMisses() => Parser.Parse(missSource);
 }
 
 /// <summary>

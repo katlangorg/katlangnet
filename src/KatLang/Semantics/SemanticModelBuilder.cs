@@ -1384,23 +1384,20 @@ public static class SemanticModelBuilder
             HashSet<string> decided,
             List<VisibleSymbol> symbols)
         {
-            if (propertyScope.Opens.Count == 0)
+            // The level's resolved providers come from the scope's own cache
+            // (declaration order, first-occurrence open dedup, unresolved
+            // targets omitted) — the same providers per-name lookup consults.
+            // Provided-member enumeration stays over each target's ORDERED
+            // property list; the provider's member index is lookup-only.
+            var providers = propertyScope.GetResolvedOpenProviders();
+            if (providers.Count == 0)
                 return;
 
-            HashSet<string>? seenKeys = null;
             Dictionary<string, SymbolDefinition?>? levelProviders = null;
 
-            for (var i = 0; i < propertyScope.Opens.Count; i++)
+            foreach (var provider in providers)
             {
-                var openExpr = propertyScope.Opens[i];
-                seenKeys ??= [];
-                if (!seenKeys.Add(ElaboratedScopeLookup.OpenTargetDedupKey(openExpr, i)))
-                    continue;
-
-                var targetAlgorithm = ElaboratedScopeLookup.ResolveOpenTarget(propertyScope, openExpr);
-                if (targetAlgorithm is null)
-                    continue;
-
+                var targetAlgorithm = provider.Target;
                 var providedNames = new HashSet<string>(StringComparer.Ordinal);
                 foreach (var property in targetAlgorithm.Properties)
                 {
@@ -1566,11 +1563,19 @@ public static class SemanticModelBuilder
                     property.IsPublic,
                     BuiltinRegistry.IsRuntimePreludeName(property.Name));
 
+            // This prelude property scope is the one PROCESS-LIFETIME shared
+            // scope level (every build's chain roots at it, possibly from
+            // concurrent builds). Prewarming its lookup caches here keeps the
+            // shared instance immutable after static initialization; all other
+            // scope chains are per-build and stay lazily cached.
+            var propertyScope = ElaboratedScopeLookup.CreateScope(PreludeAlgorithm);
+            propertyScope.PrewarmSharedLookupCaches();
+
             return new ScopeFrame(
                 parent: null,
                 properties,
                 parameters: new Dictionary<string, SymbolDefinition>(StringComparer.Ordinal),
-                propertyScope: ElaboratedScopeLookup.CreateScope(PreludeAlgorithm));
+                propertyScope);
         }
     }
 

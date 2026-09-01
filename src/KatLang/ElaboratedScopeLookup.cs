@@ -3,17 +3,41 @@ namespace KatLang;
 /// <summary>
 /// Tiny adapter over elaborated AST property scopes for front-end and editor lookup.
 /// This intentionally excludes evaluator-specific runtime behavior.
+///
+/// <para><b>Acceleration caches (M18):</b> each level lazily carries a
+/// property-name index and its resolved <c>open</c> providers, and the chain
+/// root is captured at construction. All three are pure acceleration over the
+/// ordered data this level was built from — the ordered <see cref="Properties"/>
+/// list remains the semantic authority for enumeration, ordering, and
+/// diagnostics, and every cached answer is exactly what the linear walk over it
+/// selects (first occurrence wins by declaration identity). The caches are safe
+/// because an ordinary scope chain is confined to ONE single-threaded front-end
+/// operation (a parameter detection, a semantic-model build, or a suggestion
+/// computed inside one of those): every operation builds a fresh chain, level
+/// property lists are snapshotted at construction, and <see cref="Property"/> is
+/// an immutable record. Host mutation concurrent with a front-end operation is
+/// unsupported; mutation between operations is observed by the next fresh chain.
+/// The semantic model's one process-shared prelude level is the deliberate
+/// exception: its immutable source and every reachable lazy lookup cache are
+/// prewarmed before the level is published.</para>
 /// </summary>
 internal sealed class ElaboratedPropertyScope
 {
+    private Dictionary<string, int>? _nameIndex;
+    private int _firstNullNameIndex = -1;
+    private IReadOnlyList<ResolvedOpenProvider>? _openProviders;
+
     public ElaboratedPropertyScope(
         ElaboratedPropertyScope? parent,
         IReadOnlyList<Expr> opens,
-        IReadOnlyList<PropertyLookupHit> properties)
+        IReadOnlyList<PropertyLookupHit> properties,
+        FrontEndTraversalObservations? observations = null)
     {
         Parent = parent;
         Opens = opens;
         Properties = properties;
+        Observations = parent?.Observations ?? observations;
+        Root = parent is null ? this : parent.Root;
     }
 
     public ElaboratedPropertyScope? Parent { get; }
@@ -21,6 +45,166 @@ internal sealed class ElaboratedPropertyScope
     public IReadOnlyList<Expr> Opens { get; }
 
     public IReadOnlyList<PropertyLookupHit> Properties { get; }
+
+    /// <summary>
+    /// The chain's outermost level, captured at construction (parent links are
+    /// immutable, so it is invariant per chain). Detection and semantic-model
+    /// chains root at the prelude scope their pass created, so open-target
+    /// processing and prelude-shadow decisions anchor here without re-walking
+    /// parent links per query.
+    /// </summary>
+    public ElaboratedPropertyScope Root { get; }
+
+    /// <summary>
+    /// Passive lookup-work observer inherited from the chain root (see
+    /// <see cref="FrontEndTraversalObservations"/>). Null on production paths.
+    /// </summary>
+    public FrontEndTraversalObservations? Observations { get; }
+
+    /// <summary>
+    /// This level's own first declaration for <paramref name="name"/>, exactly
+    /// as the linear scan of <see cref="Properties"/> selects it: the FIRST
+    /// list entry whose property name is ordinal-equal wins, later same-name
+    /// entries are ignored. Served from a lazy name→first-index map; the index
+    /// exists for lookup only and is never an enumeration source.
+    /// </summary>
+    public PropertyLookupHit? TryLookupOwnProperty(string name)
+    {
+        var properties = Properties;
+        if (properties.Count == 0)
+            return null;
+
+        var index = _nameIndex;
+        if (index is null)
+        {
+            Observations?.RecordLookupNameIndexBuild();
+            index = new Dictionary<string, int>(properties.Count, StringComparer.Ordinal);
+            for (var i = 0; i < properties.Count; i++)
+            {
+                if (properties[i].Property.Name is { } propertyName)
+                    index.TryAdd(propertyName, i);
+                else if (_firstNullNameIndex < 0)
+                    _firstNullNameIndex = i;
+            }
+
+            _nameIndex = index;
+        }
+
+        if (name is null)
+            return _firstNullNameIndex >= 0 ? properties[_firstNullNameIndex] : null;
+
+        return index.TryGetValue(name, out var propertyIndex) ? properties[propertyIndex] : null;
+    }
+
+    /// <summary>
+    /// This level's resolved <c>open</c> providers in declaration order: named
+    /// targets deduplicated first-occurrence-wins by their open spelling
+    /// (inline blocks never deduplicate — the evaluator's
+    /// <c>ResolveAllOpens</c> rule via
+    /// <see cref="ElaboratedScopeLookup.OpenTargetDedupKey"/>), unresolvable
+    /// targets omitted. Resolution is pure and diagnostic-free, and it is
+    /// performed LAZILY — only when a lookup actually consults this level's
+    /// opens — so owned-name precedence and the no-consultation case cost
+    /// exactly what they did before the cache.
+    /// </summary>
+    public IReadOnlyList<ResolvedOpenProvider> GetResolvedOpenProviders()
+    {
+        if (_openProviders is { } cached)
+            return cached;
+
+        if (Opens.Count == 0)
+            return _openProviders = [];
+
+        List<ResolvedOpenProvider>? providers = null;
+        HashSet<string>? seenKeys = null;
+        for (var i = 0; i < Opens.Count; i++)
+        {
+            var openExpr = Opens[i];
+            seenKeys ??= [];
+            if (!seenKeys.Add(ElaboratedScopeLookup.OpenTargetDedupKey(openExpr, i)))
+                continue;
+
+            Observations?.RecordLookupOpenTargetResolution();
+            if (ElaboratedScopeLookup.ResolveOpenTarget(this, openExpr) is { } target)
+                (providers ??= []).Add(new ResolvedOpenProvider(target, Observations));
+        }
+
+        return _openProviders = providers is not null ? providers : [];
+    }
+
+    /// <summary>
+    /// Builds this level's lookup caches immediately. Ordinary chains are
+    /// confined to one single-threaded front-end operation and stay lazy; the
+    /// ONE legitimately long-lived shared level — the semantic model's static
+    /// prelude scope, whose source algorithm is itself immutable for the
+    /// process — prewarms at creation so the shared instance never mutates
+    /// afterwards and concurrent semantic-model builds touch only immutable
+    /// state.
+    /// </summary>
+    internal void PrewarmSharedLookupCaches()
+    {
+        _ = TryLookupOwnProperty(string.Empty);
+        foreach (var provider in GetResolvedOpenProviders())
+            provider.PrewarmSharedLookupCaches();
+    }
+}
+
+/// <summary>
+/// One resolved <c>open</c> provider of a scope level, caching the exact target
+/// algorithm the level's open declaration resolved to. Member lookup is served
+/// from a lazy name→first-QUALIFYING-index map replicating
+/// <see cref="ElaboratedScopeLookup.TryLookupPublicExportedProperty"/> exactly:
+/// the first list entry that matches the name AND is public AND exported wins
+/// (a non-qualifying same-name entry earlier in the list is skipped, never an
+/// answer). The target's ordered property list remains the enumeration source
+/// for visible-name gathering.
+/// </summary>
+internal sealed class ResolvedOpenProvider
+{
+    private readonly FrontEndTraversalObservations? _observations;
+    private Dictionary<string, int>? _exportedMemberIndex;
+    private int _firstNullExportedMemberIndex = -1;
+
+    public ResolvedOpenProvider(Algorithm target, FrontEndTraversalObservations? observations)
+    {
+        Target = target;
+        _observations = observations;
+    }
+
+    public Algorithm Target { get; }
+
+    public PropertyLookupHit? TryLookupExportedMember(string name)
+    {
+        var properties = Target.Properties;
+        var index = _exportedMemberIndex;
+        if (index is null)
+        {
+            _observations?.RecordLookupOpenMemberIndexBuild();
+            index = new Dictionary<string, int>(StringComparer.Ordinal);
+            for (var i = 0; i < properties.Count; i++)
+            {
+                var property = properties[i];
+                if (property.IsPublic
+                    && property.Exposure == PropertyExposure.Exported)
+                {
+                    if (property.Name is { } memberName)
+                        index.TryAdd(memberName, i);
+                    else if (_firstNullExportedMemberIndex < 0)
+                        _firstNullExportedMemberIndex = i;
+                }
+            }
+
+            _exportedMemberIndex = index;
+        }
+
+        var propertyIndex = name is null
+            ? _firstNullExportedMemberIndex
+            : index.TryGetValue(name, out var namedPropertyIndex) ? namedPropertyIndex : -1;
+        return propertyIndex >= 0 ? new PropertyLookupHit(Target, properties[propertyIndex]) : null;
+    }
+
+    internal void PrewarmSharedLookupCaches()
+        => _ = TryLookupExportedMember(string.Empty);
 }
 
 internal readonly record struct PropertyLookupHit(Algorithm Owner, Property Property);
@@ -37,11 +221,15 @@ internal readonly record struct VisibleLexicalName(
 
 internal static class ElaboratedScopeLookup
 {
-    public static ElaboratedPropertyScope CreateScope(Algorithm algorithm, ElaboratedPropertyScope? parentOverride = null)
+    public static ElaboratedPropertyScope CreateScope(
+        Algorithm algorithm,
+        ElaboratedPropertyScope? parentOverride = null,
+        FrontEndTraversalObservations? observations = null)
         => new(
             parentOverride ?? CreateParentScope(algorithm.Parent),
             algorithm.Opens,
-            CreatePropertyHits(algorithm, algorithm.Properties));
+            CreatePropertyHits(algorithm, algorithm.Properties),
+            observations);
 
     public static PropertyLookupHit? TryLookupProperty(Algorithm owner, string name)
     {
@@ -55,29 +243,38 @@ internal static class ElaboratedScopeLookup
     }
 
     public static PropertyLookupHit? TryLookupPublicExportedProperty(Algorithm owner, string name)
+        => TryLookupPublicExportedProperty(owner, name, observations: null);
+
+    private static PropertyLookupHit? TryLookupPublicExportedProperty(
+        Algorithm owner,
+        string name,
+        FrontEndTraversalObservations? observations)
     {
+        var comparisons = 0;
         foreach (var property in owner.Properties)
         {
+            comparisons++;
             if (property.Name == name
                 && property.IsPublic
                 && property.Exposure == PropertyExposure.Exported)
             {
+                observations?.RecordLookupPropertyComparisons(comparisons);
                 return new PropertyLookupHit(owner, property);
             }
         }
 
+        observations?.RecordLookupPropertyComparisons(comparisons);
         return null;
     }
 
     public static PropertyLookupHit? TryLookupDirectLexicalProperty(ElaboratedPropertyScope scope, string name)
     {
+        var observations = scope.Observations;
         for (var current = scope; current is not null; current = current.Parent)
         {
-            foreach (var hit in current.Properties)
-            {
-                if (hit.Property.Name == name)
-                    return hit;
-            }
+            observations?.RecordLookupLevelVisit();
+            if (current.TryLookupOwnProperty(name) is { } hit)
+                return hit;
         }
 
         return null;
@@ -95,7 +292,7 @@ internal static class ElaboratedScopeLookup
                 var targetAlgorithm = ResolveOpenTarget(scope, dotCall.Target);
                 return targetAlgorithm is null
                     ? null
-                    : TryLookupPublicExportedProperty(targetAlgorithm, dotCall.Name)?.Property.Value;
+                    : TryLookupPublicExportedProperty(targetAlgorithm, dotCall.Name, scope.Observations)?.Property.Value;
             }
 
             case Expr.SequenceSpread(var operand):
@@ -135,29 +332,14 @@ internal static class ElaboratedScopeLookup
     {
         for (var current = scope; current is not null; current = current.Parent)
         {
+            var providers = current.GetResolvedOpenProviders();
+            if (providers.Count == 0)
+                continue;
+
             List<PropertyLookupHit>? hits = null;
-            HashSet<string>? seenKeys = null;
-
-            for (var i = 0; i < current.Opens.Count; i++)
+            foreach (var provider in providers)
             {
-                var openExpr = current.Opens[i];
-
-                // Same dedup rule as the evaluator's ResolveAllOpens (Lean:
-                // resolveAllOpens): named targets are keyed by their open
-                // spelling and deduplicated first-occurrence-wins, while inline
-                // blocks get a unique positional key and are never deduplicated.
-                // Without this, `open Lib, Lib` reported one hit per written
-                // target and every name it provides looked ambiguous here while
-                // the evaluator resolved it.
-                seenKeys ??= [];
-                if (!seenKeys.Add(OpenTargetDedupKey(openExpr, i)))
-                    continue;
-
-                var targetAlgorithm = ResolveOpenTarget(current, openExpr);
-                if (targetAlgorithm is null)
-                    continue;
-
-                if (TryLookupPublicExportedProperty(targetAlgorithm, name) is { } hit)
+                if (provider.TryLookupExportedMember(name) is { } hit)
                 {
                     hits ??= [];
                     hits.Add(hit);
@@ -227,19 +409,9 @@ internal static class ElaboratedScopeLookup
                 }
             }
 
-            HashSet<string>? seenKeys = null;
-            for (var i = 0; i < current.Opens.Count; i++)
+            foreach (var provider in current.GetResolvedOpenProviders())
             {
-                var openExpr = current.Opens[i];
-                seenKeys ??= [];
-                if (!seenKeys.Add(OpenTargetDedupKey(openExpr, i)))
-                    continue;
-
-                var targetAlgorithm = ResolveOpenTarget(current, openExpr);
-                if (targetAlgorithm is null)
-                    continue;
-
-                foreach (var property in targetAlgorithm.Properties)
+                foreach (var property in provider.Target.Properties)
                 {
                     if (property.IsPublic
                         && property.Exposure == PropertyExposure.Exported

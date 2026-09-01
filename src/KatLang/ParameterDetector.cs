@@ -95,7 +95,7 @@ internal static class ParameterDetector
         var preludeAlgorithm = hostOperations?.SemanticPreludeAlgorithm
             ?? BuiltinRegistry.CreateSemanticPreludeAlgorithm();
         FinalPropertyExposure.MarkTreeFinal(preludeAlgorithm);
-        var preludeScope = ElaboratedScopeLookup.CreateScope(preludeAlgorithm);
+        var preludeScope = ElaboratedScopeLookup.CreateScope(preludeAlgorithm, observations: observations);
         var processed = ProcessAlgorithm(
             root,
             preludeScope,
@@ -495,21 +495,6 @@ internal static class ParameterDetector
         return helper with { Output = rewrittenOutput };
     }
 
-    /// <summary>
-    /// The detection's prelude scope: the root ancestor of any scope chain built during
-    /// this detection, since every chain starts at the prelude scope
-    /// <see cref="DetectPrevalidated"/> created. Open-target processing anchors on it
-    /// (rather than allocating a second prelude), which also keeps the host-operation
-    /// extended prelude — when one is configured — in force for open targets.
-    /// </summary>
-    private static ElaboratedPropertyScope RootPreludeScope(ElaboratedPropertyScope scope)
-    {
-        var current = scope;
-        while (current.Parent is not null)
-            current = current.Parent;
-        return current;
-    }
-
     private static IReadOnlyList<Expr> ProcessOpenExprs(
         IReadOnlyList<Expr> opens,
         ElaboratedPropertyScope parentScope,
@@ -519,10 +504,12 @@ internal static class ParameterDetector
         if (opens.Count == 0)
             return opens;
 
-        // Most algorithms have no open declaration. Resolve the detection-wide
-        // prelude only when an open target actually needs processing, preserving the
-        // zero-walk fast path for deeply nested ordinary algorithms.
-        var openParentScope = RootPreludeScope(parentScope);
+        // The detection's prelude scope is the chain root, since every chain of
+        // this detection starts at the prelude scope DetectPrevalidated created.
+        // Anchoring open-target processing on it (rather than allocating a second
+        // prelude) also keeps the host-operation extended prelude — when one is
+        // configured — in force for open targets.
+        var openParentScope = parentScope.Root;
         var memo = new OpenWalkMemo(observations);
         var processed = new List<Expr>(opens.Count);
         foreach (var open in opens)
@@ -1620,7 +1607,7 @@ internal static class ParameterDetector
     /// <summary>
     /// Whether a visible property hit can shadow a captured ancestor PARAMETER
     /// of the same name. Only a NON-PRELUDE hit can: the prelude is the scope
-    /// chain's root (see <see cref="RootPreludeScope"/>), always FARTHER than
+    /// chain's root (<see cref="ElaboratedPropertyScope.Root"/>), always FARTHER than
     /// any capturing algorithm's parameter, so ownership-first resolution
     /// selects the parameter over every prelude property — builtins and the
     /// prelude's <see cref="Algorithm.User"/>-valued members (<c>Math</c>, host
@@ -1636,7 +1623,7 @@ internal static class ParameterDetector
     {
         if (ElaboratedScopeLookup.TryLookupDirectLexicalProperty(scope, name) is { } directHit)
         {
-            var preludeScope = RootPreludeScope(scope);
+            var preludeScope = scope.Root;
             return preludeScope.Properties.Count == 0
                 || !ReferenceEquals(directHit.Owner, preludeScope.Properties[0].Owner);
         }
