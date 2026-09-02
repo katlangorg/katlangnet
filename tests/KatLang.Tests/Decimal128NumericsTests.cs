@@ -66,7 +66,7 @@ public class Decimal128NumericsTests
     }
 
     private static void AssertApprox(string source, Decimal128 expected, int decimalPlaces)
-        => EvaluatorTests.AssertApproximatelyEqual(expected, EvalSingle(source), decimalPlaces);
+        => EvaluatorTestSupport.AssertApproximatelyEqual(expected, EvalSingle(source), decimalPlaces);
 
     // ── Transcendental precision (the migration's motivation) ────────────────
     // References: sin(1)  = 0.84147098480789650665250232163029899962...
@@ -119,7 +119,7 @@ public class Decimal128NumericsTests
         // 0.8414709848078965 from 0.8414709848078965066525023216302990 leaves
         // the genuine tail, which the old implementation reported as zero.
         var tail = EvalSingle("Math.Sin(1) - 0.8414709848078965");
-        EvaluatorTests.AssertApproximatelyEqual(N("6.652502321630299e-18"), tail, 32);
+        EvaluatorTestSupport.AssertApproximatelyEqual(N("6.652502321630299e-18"), tail, 32);
     }
 
     // ── Trigonometric argument reduction at large magnitude ──────────────────
