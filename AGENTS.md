@@ -126,8 +126,21 @@
 Run the full validation script from repo root:
 
 ```powershell
-pwsh .\scripts\validate-all.ps1
+pwsh -NoProfile -File ./scripts/validate-all.ps1
 ```
+
+The optional phase switch is the shared local/CI boundary:
+
+```powershell
+pwsh -NoProfile -File ./scripts/validate-all.ps1 -Phase DotNet
+pwsh -NoProfile -File ./scripts/validate-all.ps1 -Phase Lean
+```
+
+Omitting `-Phase` means `All`. The .NET phase owns the full solution build,
+C# suite, and diff whitespace check. The Lean phase owns the one canonical
+seven-target list. Each phase fingerprints the existing staged, unstaged, and
+untracked state and fails if validation changes it; a developer checkout may
+already be dirty, but validation must leave it exactly as it started.
 
 This runs the FULL solution build (every project — `dotnet test` alone builds only test projects and their dependencies, so benchmark/demo compile breaks escape it), the C# test suite, `git diff --check`, and Lean targets:
 
@@ -161,6 +174,27 @@ Pop-Location
 Lean CoreTests now use `#guard` for semantic assertions, so a failing assertion fails `lake build CoreTests`. Remaining `#eval` lines are demo/inspection output only.
 
 `validate-all.ps1` is a VERIFICATION command and is observational: before it builds or tests anything it removes every `KATLANG_REGENERATE_*` environment variable from its own process (the whole prefix, case-insensitively; the original values are restored on exit), so a regeneration flag inherited from the calling shell can never make a green validation run rewrite a tracked generated artifact. Regenerating a generated artifact (`lean/LanguageSpecCases.lean`, `lean/SemanticExplorerCases.lean`, the generator prompt blocks, `tests/KatLang.Formatting.PublicApi.Tests/PublicApiBaseline.txt`) is always a separate, targeted `dotnet test` run with that artifact's flag set to `1`; the run WRITES the artifact and then FAILS BY DESIGN (also when the content did not change), so it can never be mistaken for a verification — review the diff, clear the flag, and rerun the normal verification. The flag registry and the write-then-fail contract are `RegenerationFlags` / `ArtifactRegeneration` in `tests/KatLang.Tests/Infrastructure/ArtifactRegeneration.cs` (shared as source with the public-API test project); a new `KATLANG_REGENERATE_*` variable must be registered there — `ArtifactRegenerationPolicyTests` scans the repository for unregistered names and for tests that read a flag outside the helper.
+
+## Continuous Integration And Releases
+
+- `.github/workflows/validate.yml` is automatic for pull requests and pushes to
+  `main`, and can also be dispatched manually. Its stable required-check names
+  are `.NET validation` and `Lean validation`; both invoke the phase boundary
+  above rather than duplicating commands in YAML.
+- `.github/workflows/release.yml` is manual-only. Dispatch it from `main` with
+  the version already present in `KatLangVersion.props`. A push, merge, or tag
+  never publishes a release automatically.
+- The release workflow validates the exact dispatched commit, builds and runs
+  the NativeAOT CLI on native Windows/Linux/macOS x64 and ARM64 runners,
+  packages the tested executable, collects all six archives, produces
+  `SHA256SUMS`, and only then creates the tag and publishes the GitHub Release.
+- `KatLangVersion.props` remains authoritative. Workflow code must never pass
+  an MSBuild version override, create/move an existing version tag, or replace
+  an existing release.
+- Normal jobs have `contents: read`. Only the final publication job has
+  `contents: write`; workflows use no user-managed secrets. External actions
+  are pinned to immutable commit SHAs and `.github/dependabot.yml` proposes
+  reviewable GitHub Actions pin updates.
 
 `lean/SemanticExplorerCases.lean` is a GENERATED Lean/C# differential corpus — do not edit it by hand. A failing `#guard` there is a Lean/C# divergence (or a Lean-internal plain/counted evaluator mismatch) on that case. After an intentional semantics change, regenerate it with `$env:KATLANG_REGENERATE_SEMANTIC_EXPLORER = "1"; dotnet test .\KatLang.slnx --filter SemanticExplorerLeanArtifact` (writes, then fails by design), review the diff, and rebuild the Lean target. See `docs/design/sequence-boundary-audit-2026-07.md`.
 

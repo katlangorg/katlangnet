@@ -182,8 +182,9 @@ public class TutorialResultSweepTests
     /// drift, or any reason rewrite is conspicuous in this test's diff — never
     /// a silent reclassification.
     /// </summary>
-    [Fact]
-    public void SkipInventory_IsExactlyTheReviewedSet()
+    [Theory]
+    [MemberData(nameof(CheckoutText.LineEndingData), MemberType = typeof(CheckoutText))]
+    public void SkipInventory_IsExactlyTheReviewedSet(string checkoutLineEnding)
     {
         ReviewedSkip[] expected =
         [
@@ -217,11 +218,24 @@ public class TutorialResultSweepTests
 
         var actual = Skipped
             .Select(e => new ReviewedSkip(
-                e.Section, e.Source, e.ClaimKind, e.ClaimedDisplay!, e.SkipReason!))
+                e.Section,
+                CheckoutText.Normalize(e.Source),
+                e.ClaimKind,
+                CheckoutText.Normalize(e.ClaimedDisplay!),
+                e.SkipReason!))
             .OrderBy(e => e.Section, StringComparer.Ordinal)
             .ToArray();
 
-        expected = expected.OrderBy(e => e.Section, StringComparer.Ordinal).ToArray();
+        expected = expected
+            .Select(e => e with
+            {
+                Source = CheckoutText.Normalize(
+                    CheckoutText.WithLineEndings(e.Source, checkoutLineEnding)),
+                ClaimedDisplay = CheckoutText.Normalize(
+                    CheckoutText.WithLineEndings(e.ClaimedDisplay, checkoutLineEnding)),
+            })
+            .OrderBy(e => e.Section, StringComparer.Ordinal)
+            .ToArray();
 
         string Inventory() => actual.Length == 0
             ? "(none)"

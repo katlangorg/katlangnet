@@ -163,8 +163,9 @@ public class PublicApiBaselineTests
     /// the rendered attributes. The expected text is a manually reviewed
     /// constant.
     /// </summary>
-    [Fact]
-    public void RendererFixture_RendersTheDocumentedFormat()
+    [Theory]
+    [MemberData(nameof(CheckoutText.LineEndingData), MemberType = typeof(CheckoutText))]
+    public void RendererFixture_RendersTheDocumentedFormat(string checkoutLineEnding)
     {
         var fixtureNamespace = typeof(RendererFixture.Shape).Namespace!;
         var types = PublicApiSurfaceRenderer.ConsumerVisibleTypes(typeof(RendererFixture.Shape).Assembly)
@@ -172,7 +173,8 @@ public class PublicApiBaselineTests
 
         var rendered = PublicApiSurfaceRenderer.Render("Fixture", types);
         var body = rendered[PublicApiSurfaceRenderer.Header("Fixture").Length..];
-        Assert.Equal(ExpectedFixtureRendering, body);
+        var checkoutExpected = CheckoutText.WithLineEndings(ExpectedFixtureRendering, checkoutLineEnding);
+        Assert.Equal(CheckoutText.Normalize(checkoutExpected), CheckoutText.Normalize(body));
     }
 
     private const string ExpectedFixtureRendering = """

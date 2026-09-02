@@ -1,0 +1,464 @@
+name: release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: KatLang version to publish, for example 0.8.192
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: katlang-release-publication
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    name: Verify release request
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      version: ${{ steps.release.outputs.version }}
+      tag: ${{ steps.release.outputs.tag }}
+      source-sha: ${{ steps.release.outputs.source-sha }}
+    steps:
+      - name: Check out the dispatched commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify source, version, and publication availability
+        id: release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REQUESTED_VERSION: ${{ inputs.version }}
+          SOURCE_REF: ${{ github.ref }}
+          SOURCE_SHA: ${{ github.sha }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          if ($env:SOURCE_REF -cne 'refs/heads/main') {
+              throw "Release must be dispatched from main; received '$env:SOURCE_REF'."
+          }
+
+          $checkedOutSha = (& git rev-parse HEAD).Trim()
+          if ($LASTEXITCODE -ne 0 -or $checkedOutSha -cne $env:SOURCE_SHA) {
+              throw "Checkout '$checkedOutSha' does not match dispatched source '$env:SOURCE_SHA'."
+          }
+
+          $version = (& ./scripts/release-version.ps1 -RequestedVersion $env:REQUESTED_VERSION).Trim()
+          if ($LASTEXITCODE -ne 0) {
+              throw 'Version verification failed.'
+          }
+          $tag = "v$version"
+
+          $tagRefs = @(& git ls-remote --tags origin "refs/tags/$tag")
+          if ($LASTEXITCODE -ne 0) {
+              throw "Could not inspect remote tag '$tag'."
+          }
+          if ($tagRefs.Count -ne 0) {
+              throw "Tag '$tag' already exists; published versions are immutable."
+          }
+
+          $releaseTags = @(& gh api --paginate "repos/$env:REPOSITORY/releases?per_page=100" --jq '.[].tag_name')
+          if ($LASTEXITCODE -ne 0) {
+              throw 'Could not inspect existing GitHub Releases.'
+          }
+          if ($releaseTags -ccontains $tag) {
+              throw "GitHub Release '$tag' already exists; published versions are immutable."
+          }
+
+          Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value "version=$version"
+          Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value "tag=$tag"
+          Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value "source-sha=$env:SOURCE_SHA"
+
+  dotnet-validation:
+    name: .NET validation
+    needs: verify
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - name: Check out verified source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.verify.outputs.source-sha }}
+          persist-credentials: false
+
+      - name: Install repository-pinned .NET SDK
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          global-json-file: global.json
+
+      - name: Validate the release commit with .NET
+        shell: pwsh
+        run: pwsh -NoProfile -File ./scripts/validate-all.ps1 -Phase DotNet
+
+  lean-validation:
+    name: Lean validation
+    needs: verify
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Check out verified source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.verify.outputs.source-sha }}
+          persist-credentials: false
+
+      - name: Install elan
+        shell: bash
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSfL \
+            https://raw.githubusercontent.com/leanprover/elan/227caca133724d5516bee25c2aeb3e609478f2d8/elan-init.sh \
+            -o "$RUNNER_TEMP/elan-init.sh"
+          echo "a620ff1641616222c8d37c54845492004bb84d6877cdbc944dd65c1aa685bf53  $RUNNER_TEMP/elan-init.sh" | sha256sum -c -
+          sh "$RUNNER_TEMP/elan-init.sh" -y --default-toolchain none
+          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
+
+      - name: Validate the release commit with Lean
+        shell: pwsh
+        run: pwsh -NoProfile -File ./scripts/validate-all.ps1 -Phase Lean
+
+  build:
+    name: Build and smoke-test ${{ matrix.rid }}
+    needs:
+      - verify
+      - dotnet-validation
+      - lean-validation
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - rid: win-x64
+            runner: windows-2025
+            extension: zip
+          - rid: win-arm64
+            runner: windows-11-arm
+            extension: zip
+          - rid: linux-x64
+            runner: ubuntu-24.04
+            extension: tar.gz
+          - rid: linux-arm64
+            runner: ubuntu-24.04-arm
+            extension: tar.gz
+          - rid: osx-x64
+            runner: macos-15-intel
+            extension: tar.gz
+          - rid: osx-arm64
+            runner: macos-15
+            extension: tar.gz
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    steps:
+      - name: Check out verified source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.verify.outputs.source-sha }}
+          persist-credentials: false
+
+      - name: Install repository-pinned .NET SDK
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          global-json-file: global.json
+
+      - name: Install Linux NativeAOT prerequisites
+        if: startsWith(matrix.runner, 'ubuntu-')
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends clang zlib1g-dev
+
+      - name: Publish NativeAOT executable
+        shell: pwsh
+        env:
+          RID: ${{ matrix.rid }}
+        run: |
+          dotnet publish ./KatLang.CLI/KatLang.CLI.csproj `
+              --configuration Release `
+              --runtime $env:RID `
+              --self-contained true `
+              --output "./publish/$env:RID"
+          if ($LASTEXITCODE -ne 0) {
+              throw "NativeAOT publish failed for $env:RID."
+          }
+
+      - name: Smoke-test published executable
+        shell: pwsh
+        env:
+          RID: ${{ matrix.rid }}
+          VERSION: ${{ needs.verify.outputs.version }}
+        run: |
+          $publishDirectory = Join-Path $env:GITHUB_WORKSPACE "publish/$env:RID"
+          $executable = if ($IsWindows) {
+              Join-Path $publishDirectory 'katlang.exe'
+          }
+          else {
+              Join-Path $publishDirectory 'katlang'
+          }
+
+          if (-not (Test-Path -LiteralPath $executable -PathType Leaf)) {
+              throw "Published executable is missing: $executable"
+          }
+          if (-not $IsWindows) {
+              & chmod 0755 $executable
+              if ($LASTEXITCODE -ne 0) { throw 'Could not set the executable bit.' }
+          }
+
+          function Invoke-Smoke {
+              param([string[]]$Arguments)
+              $output = @(& $executable @Arguments)
+              if ($LASTEXITCODE -ne 0) {
+                  throw "Smoke command failed: $executable $($Arguments -join ' ')"
+              }
+              return ($output -join "`n").Trim()
+          }
+
+          $versionOutput = Invoke-Smoke -Arguments @('--version')
+          if ($versionOutput -cne "KatLang $env:VERSION") {
+              throw "Unexpected --version output: '$versionOutput'."
+          }
+
+          $simpleOutput = Invoke-Smoke -Arguments @('eval', '1 + 2')
+          if ($simpleOutput -cne '3') {
+              throw "Unexpected arithmetic smoke output: '$simpleOutput'."
+          }
+
+          $mathOutput = Invoke-Smoke -Arguments @('eval', 'sin(1.234)')
+          if ($mathOutput -cne '0.9438182093746337048617510061568276') {
+              throw "Unexpected Math smoke output: '$mathOutput'."
+          }
+
+      - name: Package and verify release archive
+        shell: pwsh
+        env:
+          RID: ${{ matrix.rid }}
+          VERSION: ${{ needs.verify.outputs.version }}
+          EXTENSION: ${{ matrix.extension }}
+        run: |
+          $publishDirectory = Join-Path $env:GITHUB_WORKSPACE "publish/$env:RID"
+          $artifactDirectory = Join-Path $env:GITHUB_WORKSPACE 'release-artifact'
+          New-Item -ItemType Directory -Force -Path $artifactDirectory | Out-Null
+          $archive = Join-Path $artifactDirectory "katlang-cli-$env:VERSION-$env:RID.$env:EXTENSION"
+
+          if ($IsWindows) {
+              $executable = Join-Path $publishDirectory 'katlang.exe'
+              Compress-Archive -LiteralPath $executable -DestinationPath $archive -CompressionLevel Optimal
+              Add-Type -AssemblyName System.IO.Compression.FileSystem
+              $zip = [System.IO.Compression.ZipFile]::OpenRead($archive)
+              try {
+                  if ($zip.Entries.Count -ne 1) {
+                      throw "Archive must contain exactly one entry; found $($zip.Entries.Count)."
+                  }
+                  $entry = $zip.Entries[0]
+                  if ($entry.FullName -cne 'katlang.exe' -or $entry.Length -eq 0) {
+                      throw "Archive contains an unexpected entry: '$($entry.FullName)'."
+                  }
+              }
+              finally {
+                  $zip.Dispose()
+              }
+          }
+          else {
+              $executable = Join-Path $publishDirectory 'katlang'
+              & chmod 0755 $executable
+              if ($LASTEXITCODE -ne 0) { throw 'Could not set the executable bit.' }
+              & tar -czf $archive -C $publishDirectory katlang
+              if ($LASTEXITCODE -ne 0) { throw 'Could not create the tar archive.' }
+              $entries = @(& tar -tzf $archive)
+              if ($LASTEXITCODE -ne 0 -or $entries.Count -ne 1 -or $entries[0] -cne 'katlang') {
+                  throw "Archive must contain exactly one entry named katlang: $($entries -join ', ')"
+              }
+              $verboseEntry = (@(& tar -tvzf $archive) -join "`n")
+              if ($LASTEXITCODE -ne 0 -or $verboseEntry -notmatch '^-rwxr-xr-x') {
+                  throw "Archive did not preserve executable mode: $verboseEntry"
+              }
+          }
+
+          if (-not (Test-Path -LiteralPath $archive -PathType Leaf) -or (Get-Item $archive).Length -eq 0) {
+              throw "Release archive was not created: $archive"
+          }
+
+      - name: Upload tested release archive
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-${{ matrix.rid }}
+          path: release-artifact/katlang-cli-${{ needs.verify.outputs.version }}-${{ matrix.rid }}.${{ matrix.extension }}
+          if-no-files-found: error
+          retention-days: 7
+
+  collect:
+    name: Collect complete release bundle
+    needs:
+      - verify
+      - build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Download all tested archives
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: release-*
+          path: dist
+          merge-multiple: true
+
+      - name: Verify bundle and generate checksums
+        shell: pwsh
+        env:
+          VERSION: ${{ needs.verify.outputs.version }}
+        run: |
+          $expected = @(
+              "katlang-cli-$env:VERSION-win-x64.zip",
+              "katlang-cli-$env:VERSION-win-arm64.zip",
+              "katlang-cli-$env:VERSION-linux-x64.tar.gz",
+              "katlang-cli-$env:VERSION-linux-arm64.tar.gz",
+              "katlang-cli-$env:VERSION-osx-x64.tar.gz",
+              "katlang-cli-$env:VERSION-osx-arm64.tar.gz"
+          )
+          $actual = @(Get-ChildItem -LiteralPath ./dist -File | ForEach-Object Name)
+          $difference = @(Compare-Object -ReferenceObject $expected -DifferenceObject $actual)
+          if ($difference.Count -ne 0) {
+              throw "Release bundle is incomplete or contains unexpected files: $($difference | Out-String)"
+          }
+
+          $checksumRows = foreach ($name in ($expected | Sort-Object)) {
+              $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path ./dist $name)).Hash.ToLowerInvariant()
+              "$hash  $name"
+          }
+          Set-Content -LiteralPath ./dist/SHA256SUMS -Value $checksumRows -Encoding utf8NoBOM
+
+      - name: Upload complete release bundle
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: complete-release-bundle
+          path: dist/
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    name: Publish GitHub Release
+    needs:
+      - verify
+      - collect
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - name: Check out verified source without persisted credentials
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.verify.outputs.source-sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Download complete release bundle
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: complete-release-bundle
+          path: dist
+
+      - name: Reverify and publish atomically visible release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          SOURCE_SHA: ${{ needs.verify.outputs.source-sha }}
+          TAG: ${{ needs.verify.outputs.tag }}
+          VERSION: ${{ needs.verify.outputs.version }}
+        run: |
+          $repositoryVersion = (& ./scripts/release-version.ps1 -RequestedVersion $env:VERSION).Trim()
+          if ($LASTEXITCODE -ne 0 -or $repositoryVersion -cne $env:VERSION) {
+              throw 'Repository version changed or could not be verified in the publication job.'
+          }
+          if ((& git rev-parse HEAD).Trim() -cne $env:SOURCE_SHA) {
+              throw 'Publication checkout no longer matches the validated source commit.'
+          }
+
+          $expected = @(
+              "katlang-cli-$env:VERSION-win-x64.zip",
+              "katlang-cli-$env:VERSION-win-arm64.zip",
+              "katlang-cli-$env:VERSION-linux-x64.tar.gz",
+              "katlang-cli-$env:VERSION-linux-arm64.tar.gz",
+              "katlang-cli-$env:VERSION-osx-x64.tar.gz",
+              "katlang-cli-$env:VERSION-osx-arm64.tar.gz",
+              'SHA256SUMS'
+          )
+          $actual = @(Get-ChildItem -LiteralPath ./dist -File | ForEach-Object Name)
+          $difference = @(Compare-Object -ReferenceObject $expected -DifferenceObject $actual)
+          if ($difference.Count -ne 0) {
+              throw "Publication bundle is incomplete or contains unexpected files: $($difference | Out-String)"
+          }
+
+          # Close the ordinary verification/publication race as far as the API
+          # permits, while fixed workflow concurrency prevents two release
+          # runs from entering this section simultaneously.
+          $tagRefs = @(& git ls-remote --tags origin "refs/tags/$env:TAG")
+          if ($LASTEXITCODE -ne 0) { throw 'Could not recheck remote tags.' }
+          if ($tagRefs.Count -ne 0) { throw "Tag '$env:TAG' appeared during the workflow; refusing to overwrite it." }
+          $releaseTags = @(& gh api --paginate "repos/$env:REPOSITORY/releases?per_page=100" --jq '.[].tag_name')
+          if ($LASTEXITCODE -ne 0) { throw 'Could not recheck GitHub Releases.' }
+          if ($releaseTags -ccontains $env:TAG) { throw "Release '$env:TAG' appeared during the workflow; refusing to overwrite it." }
+
+          $notesPath = Join-Path $env:RUNNER_TEMP 'release-notes.md'
+          $notes = @(
+              "KatLang $env:VERSION",
+              '',
+              'NativeAOT command-line binaries for Windows, Linux, and macOS on x64 and ARM64.',
+              'Verify downloads with the attached `SHA256SUMS` file.'
+          )
+          Set-Content -LiteralPath $notesPath -Value $notes -Encoding utf8NoBOM
+
+          $assets = $expected | ForEach-Object { Join-Path ./dist $_ }
+          & gh release create $env:TAG `
+              --repo $env:REPOSITORY `
+              --target $env:SOURCE_SHA `
+              --title "KatLang $env:VERSION" `
+              --notes-file $notesPath `
+              --draft `
+              @assets
+          if ($LASTEXITCODE -ne 0) {
+              throw 'Creating the draft release or uploading its complete asset set failed. Inspect the draft before retrying.'
+          }
+
+          $draft = (& gh release view $env:TAG --repo $env:REPOSITORY --json tagName,isDraft,targetCommitish,assets) | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0 -or -not $draft.isDraft -or $draft.tagName -cne $env:TAG) {
+              throw 'The uploaded release is not the expected draft.'
+          }
+          if ($draft.targetCommitish -cne $env:SOURCE_SHA) {
+              throw "Draft target '$($draft.targetCommitish)' does not match validated commit '$env:SOURCE_SHA'."
+          }
+          $uploaded = @($draft.assets | ForEach-Object name)
+          $assetDifference = @(Compare-Object -ReferenceObject $expected -DifferenceObject $uploaded)
+          if ($assetDifference.Count -ne 0) {
+              throw "Draft assets are incomplete; leaving the draft unpublished for inspection: $($assetDifference | Out-String)"
+          }
+
+          & gh release edit $env:TAG --repo $env:REPOSITORY --draft=false
+          if ($LASTEXITCODE -ne 0) {
+              throw 'All assets were uploaded, but publishing the draft failed. Inspect the draft before retrying.'
+          }
+
+          $published = (& gh release view $env:TAG --repo $env:REPOSITORY --json isDraft) | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0 -or $published.isDraft) {
+              throw 'GitHub did not confirm the release as published.'
+          }
+
+          $remoteRefs = @(& git ls-remote origin "refs/tags/$env:TAG" "refs/tags/$env:TAG^{}")
+          if ($LASTEXITCODE -ne 0 -or $remoteRefs.Count -eq 0) {
+              throw 'Published tag could not be resolved.'
+          }
+          $peeled = $remoteRefs | Where-Object { $_ -like "*refs/tags/$env:TAG^{}" } | Select-Object -First 1
+          $resolvedTagSha = if ($null -ne $peeled) {
+              ($peeled -split "`t")[0]
+          }
+          else {
+              ($remoteRefs[0] -split "`t")[0]
+          }
+          if ($resolvedTagSha -cne $env:SOURCE_SHA) {
+              throw "Published tag points to '$resolvedTagSha', not validated commit '$env:SOURCE_SHA'."
+          }

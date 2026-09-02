@@ -26,9 +26,7 @@
 
   <Target Name="RenameKatLangPublishedExecutable" AfterTargets="Publish">
     <Move SourceFiles="$(PublishDir)KatLang.CLI.exe" DestinationFiles="$(PublishDir)katlang.exe" Condition="$([System.String]::Copy('$(RuntimeIdentifier)').StartsWith('win-')) AND Exists('$(PublishDir)KatLang.CLI.exe')" />
-	<Exec Command="powershell -NoProfile -NonInteractive -Command &quot;Compress-Archive -LiteralPath '$(PublishDir)katlang.exe' -DestinationPath '$(PublishDir)katlang-cli-$(Version)-$(RuntimeIdentifier).zip' -CompressionLevel Optimal -Force&quot;" Condition="$([System.String]::Copy('$(RuntimeIdentifier)').StartsWith('win-')) AND Exists('$(PublishDir)katlang.exe')" />
-	<Move SourceFiles="$(PublishDir)KatLang.CLI" DestinationFiles="$(PublishDir)katlang" Condition="$([System.String]::Copy('$(RuntimeIdentifier)').StartsWith('linux-')) AND Exists('$(PublishDir)KatLang.CLI')" />
-	<Exec Command="tar --format=ustar --owner=0 --group=0 --numeric-owner --mode=0755 -czf &quot;$(PublishDir)katlang-cli-$(Version)-$(RuntimeIdentifier).tar.gz&quot; -C &quot;$(PublishDir)&quot; katlang" Condition="$([System.String]::Copy('$(RuntimeIdentifier)').StartsWith('linux-')) AND Exists('$(PublishDir)katlang')" />
+    <Move SourceFiles="$(PublishDir)KatLang.CLI" DestinationFiles="$(PublishDir)katlang" Condition="($([System.String]::Copy('$(RuntimeIdentifier)').StartsWith('linux-')) OR $([System.String]::Copy('$(RuntimeIdentifier)').StartsWith('osx-'))) AND Exists('$(PublishDir)KatLang.CLI')" />
   </Target>
 
   <ItemGroup>
