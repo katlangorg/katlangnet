@@ -48,12 +48,11 @@ public sealed class CliApplicationTests
 
         // The expectation is DERIVED from the loaded KatLang assembly rather
         // than restated, so this fails if the reported number ever stops
-        // tracking the runtime actually executing. VersionOf reads the assembly
-        // identity - a different metadata source than the informational version
-        // the CLI renders - so it is an independent oracle, not a copy of the
-        // implementation. Whether that runtime is the INTENDED one is a
-        // separate question, checked below against build metadata.
-        Assert.Equal($"KatLang {VersionOf(typeof(KatLangEngine))}", result.TrimmedOutput);
+        // tracking the runtime actually executing. ProductVersionOf retains a
+        // SemVer pre-release suffix while removing only SDK-added build
+        // metadata. Whether that runtime is the INTENDED one is a separate,
+        // independent question, checked below against test-build metadata.
+        Assert.Equal($"KatLang {ProductVersionOf(typeof(KatLangEngine))}", result.TrimmedOutput);
     }
 
     /// <summary>
@@ -64,9 +63,9 @@ public sealed class CliApplicationTests
     /// two assemblies desynchronize and this fails.
     /// </summary>
     [Fact]
-    public void CliAssemblyVersion_EqualsTheLoadedKatLangRuntimeVersion()
+    public void CliProductVersion_EqualsTheLoadedKatLangRuntimeVersion()
     {
-        Assert.Equal(VersionOf(typeof(KatLangEngine)), VersionOf(typeof(CliApplication)));
+        Assert.Equal(ProductVersionOf(typeof(KatLangEngine)), ProductVersionOf(typeof(CliApplication)));
     }
 
     /// <summary>
@@ -502,11 +501,23 @@ public sealed class CliApplicationTests
     }
 
     /// <summary>
-    /// The three-part version of the assembly that defines <paramref name="type"/>,
-    /// taken from its assembly identity.
+    /// The package/product version of the assembly that defines
+    /// <paramref name="type"/>. The SDK may append source-revision build
+    /// metadata, which is deliberately not part of the package version.
     /// </summary>
-    private static string VersionOf(Type type)
-        => type.Assembly.GetName().Version!.ToString(3);
+    private static string ProductVersionOf(Type type)
+    {
+        var informational = type.Assembly
+            .GetCustomAttribute<AssemblyInformationalVersionAttribute>()
+            ?.InformationalVersion;
+        if (!string.IsNullOrWhiteSpace(informational))
+        {
+            var metadata = informational.IndexOf('+');
+            return metadata >= 0 ? informational[..metadata] : informational;
+        }
+
+        return type.Assembly.GetName().Version!.ToString(3);
+    }
 
     private const string IntendedVersionKey = "IntendedKatLangVersion";
 

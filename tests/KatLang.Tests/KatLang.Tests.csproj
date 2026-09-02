@@ -16,6 +16,8 @@
 
   <ItemGroup>
     <Using Include="Xunit" />
+    <!-- Shared test infrastructure (repo root, artifact regeneration contract); see Infrastructure/. -->
+    <Using Include="KatLang.TestInfrastructure" />
   </ItemGroup>
 
   <ItemGroup>

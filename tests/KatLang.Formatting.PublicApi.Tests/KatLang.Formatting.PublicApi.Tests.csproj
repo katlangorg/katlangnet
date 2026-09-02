@@ -15,8 +15,27 @@
 
   <ItemGroup>
     <Using Include="Xunit" />
+    <Using Include="KatLang.TestInfrastructure" />
   </ItemGroup>
 
+  <!--
+    The regeneration contract (write the artifact, then fail by design) and the
+    registry of KATLANG_REGENERATE_* flags are compiled in as SHARED SOURCE from
+    KatLang.Tests rather than referenced: this project must stay a non-friend
+    consumer of exactly the public package surface, and a reference to the
+    friend test assembly would pull the whole library suite into this small
+    project for one helper file.
+  -->
+  <ItemGroup>
+    <Compile Include="..\KatLang.Tests\Infrastructure\ArtifactRegeneration.cs" Link="Infrastructure\ArtifactRegeneration.cs" />
+  </ItemGroup>
+
+  <!--
+    Deliberately NOT a friend of KatLang (and never to be added to its
+    InternalsVisibleTo list): the public API baseline in PublicApiBaseline.txt
+    is meaningful only because this project sees the package exactly as a NuGet
+    consumer does.
+  -->
   <ItemGroup>
     <ProjectReference Include="..\..\src\KatLang\KatLang.csproj" />
   </ItemGroup>

@@ -15,11 +15,11 @@ namespace KatLang.Tests;
 /// Regenerate with:
 ///   $env:KATLANG_REGENERATE_SEMANTIC_EXPLORER = "1"
 ///   dotnet test --filter SemanticExplorerLeanArtifact
+/// That run writes the artifact and then fails by design (see
+/// <see cref="ArtifactRegeneration"/>); review the diff, clear the flag, rerun.
 /// </summary>
 public class SemanticExplorerLeanArtifactTests
 {
-    private const string RegenerateVariable = "KATLANG_REGENERATE_SEMANTIC_EXPLORER";
-
     [Fact]
     public void CachedCorpusObjectGraphs_ExposeNoMutableCollectionViews()
     {
@@ -74,23 +74,26 @@ public class SemanticExplorerLeanArtifactTests
     public void GeneratedLeanArtifact_MatchesCurrentCSharpObservations()
     {
         var expected = GenerateArtifact();
-        var path = Path.Combine(FindRepoRoot(), ArtifactRelativePath);
+        var path = Path.Combine(RepoRoot.Find(), ArtifactRelativePath);
+        var flag = RegenerationFlags.SemanticExplorer;
 
-        if (Environment.GetEnvironmentVariable(RegenerateVariable) == "1")
-        {
-            File.WriteAllText(path, expected);
-            return;
-        }
+        ArtifactRegeneration.VerifyOrRegenerate(
+            flag,
+            ArtifactRelativePath,
+            regenerate: () => expected,
+            verify: () =>
+            {
+                Assert.True(File.Exists(path),
+                    $"{ArtifactRelativePath} is missing. Set {flag}=1 and rerun this test to generate it (that run fails by design).");
 
-        Assert.True(File.Exists(path),
-            $"{ArtifactRelativePath} is missing. Set {RegenerateVariable}=1 and rerun this test to generate it.");
-
-        var actual = File.ReadAllText(path).ReplaceLineEndings("\n");
-        Assert.True(expected == actual,
-            $"{ArtifactRelativePath} is out of date with current C# evaluator observations. " +
-            $"Set {RegenerateVariable}=1, rerun this test, review the diff, and run " +
-            "`lake build SemanticExplorerCases` to check the Lean side. " +
-            DescribeFirstDifference(expected, actual));
+                var actual = File.ReadAllText(path).ReplaceLineEndings("\n");
+                Assert.True(expected == actual,
+                    $"{ArtifactRelativePath} is out of date with current C# evaluator observations. " +
+                    $"Set {flag}=1 and rerun this test to regenerate it (that run fails by design), review the diff, and run " +
+                    "`lake build SemanticExplorerCases` to check the Lean side. " +
+                    DescribeFirstDifference(expected, actual));
+            },
+            afterRegenerating: "run `lake build SemanticExplorerCases` to check the Lean side");
     }
 
     /// <summary>
@@ -208,7 +211,7 @@ public class SemanticExplorerLeanArtifactTests
         var internalNodes = SemanticExplorerCorpus.InternalNodeCases().Count;
         var outcomes = observations.GroupBy(o => o.Outcome).ToDictionary(g => g.Key, g => g.Count());
 
-        var path = Path.Combine(FindRepoRoot(), "docs/design/sequence-boundary-audit-2026-07.md");
+        var path = Path.Combine(RepoRoot.Find(), "docs/design/sequence-boundary-audit-2026-07.md");
         var document = File.ReadAllText(path).ReplaceLineEndings("\n");
 
         Assert.Contains($"all {Count(surface)} surface cases", document, StringComparison.Ordinal);
@@ -373,15 +376,5 @@ public class SemanticExplorerLeanArtifactTests
         var actualLine = lineIndex < actualLines.Length ? actualLines[lineIndex] : "<end of file>";
         return $"First mismatch at line {lineIndex + 1}, near {context}{Environment.NewLine}" +
             $"Expected: {expectedLine}{Environment.NewLine}Actual:   {actualLine}";
-    }
-
-    private static string FindRepoRoot()
-    {
-        var directory = AppContext.BaseDirectory;
-        while (directory is not null && !File.Exists(Path.Combine(directory, "KatLang.slnx")))
-            directory = Path.GetDirectoryName(directory);
-
-        return directory
-            ?? throw new InvalidOperationException("Could not locate repo root (KatLang.slnx) above test bin directory.");
     }
 }

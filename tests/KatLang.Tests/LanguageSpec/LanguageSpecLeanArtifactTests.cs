@@ -14,10 +14,11 @@ namespace KatLang.Tests.LanguageSpec;
 /// Regenerate with:
 ///   $env:KATLANG_REGENERATE_LANGUAGE_SPEC = "1"
 ///   dotnet test .\KatLang.slnx --filter LanguageSpecArtifacts
+/// That run writes the artifact and then fails by design (see
+/// <see cref="ArtifactRegeneration"/>); review the diff, clear the flag, rerun.
 /// </summary>
 public class LanguageSpecArtifactsTests
 {
-    internal const string RegenerateVariable = "KATLANG_REGENERATE_LANGUAGE_SPEC";
     private const string ArtifactRelativePath = "lean/LanguageSpecCases.lean";
 
     [Fact]
@@ -25,22 +26,25 @@ public class LanguageSpecArtifactsTests
     {
         var expected = GenerateArtifact();
         var path = Path.Combine(RepoRoot.Find(), ArtifactRelativePath);
+        var flag = RegenerationFlags.LanguageSpec;
 
-        if (Environment.GetEnvironmentVariable(RegenerateVariable) == "1")
-        {
-            File.WriteAllText(path, expected);
-            return;
-        }
+        ArtifactRegeneration.VerifyOrRegenerate(
+            flag,
+            ArtifactRelativePath,
+            regenerate: () => expected,
+            verify: () =>
+            {
+                Assert.True(File.Exists(path),
+                    $"{ArtifactRelativePath} is missing. Set {flag}=1 and rerun this test to generate it (that run fails by design).");
 
-        Assert.True(File.Exists(path),
-            $"{ArtifactRelativePath} is missing. Set {RegenerateVariable}=1 and rerun this test to generate it.");
-
-        var actual = File.ReadAllText(path).ReplaceLineEndings("\n");
-        Assert.True(expected == actual,
-            $"{ArtifactRelativePath} is out of date with the canonical corpus. " +
-            $"Set {RegenerateVariable}=1, rerun this test, review the diff, and run " +
-            "`lake build LanguageSpecCases` to check the Lean side. " +
-            SemanticExplorerLeanArtifactTests.DescribeFirstDifference(expected, actual));
+                var actual = File.ReadAllText(path).ReplaceLineEndings("\n");
+                Assert.True(expected == actual,
+                    $"{ArtifactRelativePath} is out of date with the canonical corpus. " +
+                    $"Set {flag}=1 and rerun this test to regenerate it (that run fails by design), review the diff, and run " +
+                    "`lake build LanguageSpecCases` to check the Lean side. " +
+                    SemanticExplorerLeanArtifactTests.DescribeFirstDifference(expected, actual));
+            },
+            afterRegenerating: "run `lake build LanguageSpecCases` to check the Lean side");
     }
 
     /// <summary>
@@ -123,19 +127,5 @@ public class LanguageSpecArtifactsTests
 
         builder.Append("end LanguageSpecCases\n");
         return builder.ToString();
-    }
-}
-
-/// <summary>Locates the repository root shared by artifact generators.</summary>
-internal static class RepoRoot
-{
-    public static string Find()
-    {
-        var directory = AppContext.BaseDirectory;
-        while (directory is not null && !File.Exists(Path.Combine(directory, "KatLang.slnx")))
-            directory = Path.GetDirectoryName(directory);
-
-        return directory
-            ?? throw new InvalidOperationException("Could not locate repo root (KatLang.slnx) above test bin directory.");
     }
 }

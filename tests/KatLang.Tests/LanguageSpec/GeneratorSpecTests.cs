@@ -12,7 +12,9 @@ namespace KatLang.Tests.LanguageSpec;
 /// corpus. A failure means the block is stale — regenerate with:
 ///   $env:KATLANG_REGENERATE_LANGUAGE_SPEC = "1"
 ///   dotnet test .\KatLang.slnx --filter LanguageSpecArtifacts
-/// (This class shares the LanguageSpecArtifacts regeneration filter.)
+/// (This class shares the LanguageSpecArtifacts regeneration filter; the
+/// regenerating run writes both files and then fails by design — see
+/// <see cref="ArtifactRegeneration"/>.)
 /// </summary>
 public class LanguageSpecArtifactsGeneratorPromptTests
 {
@@ -43,27 +45,32 @@ public class LanguageSpecArtifactsGeneratorPromptTests
         var expectedBlock = RenderBlock();
         var raw = File.ReadAllText(path);
         var content = raw.ReplaceLineEndings("\n");
+        var flag = RegenerationFlags.LanguageSpec;
 
-        if (Environment.GetEnvironmentVariable(LanguageSpecArtifactsTests.RegenerateVariable) == "1")
-        {
-            var updated = ReplaceOrAppendBlock(content, expectedBlock);
-            // Preserve the file's existing line-ending convention.
-            if (raw.Contains("\r\n", StringComparison.Ordinal))
-                updated = updated.Replace("\n", "\r\n", StringComparison.Ordinal);
-            File.WriteAllText(path, updated);
-            return;
-        }
+        ArtifactRegeneration.VerifyOrRegenerate(
+            flag,
+            relativePath,
+            regenerate: () =>
+            {
+                var updated = ReplaceOrAppendBlock(content, expectedBlock);
+                // Preserve the file's existing line-ending convention.
+                if (raw.Contains("\r\n", StringComparison.Ordinal))
+                    updated = updated.Replace("\n", "\r\n", StringComparison.Ordinal);
+                return updated;
+            },
+            verify: () =>
+            {
+                var begin = content.IndexOf(BeginMarker, StringComparison.Ordinal);
+                var end = content.IndexOf(EndMarker, StringComparison.Ordinal);
+                Assert.True(begin >= 0 && end > begin,
+                    $"{relativePath} is missing the generated katlang-spec-examples block. " +
+                    $"Set {flag}=1 and rerun this test to insert it (that run fails by design).");
 
-        var begin = content.IndexOf(BeginMarker, StringComparison.Ordinal);
-        var end = content.IndexOf(EndMarker, StringComparison.Ordinal);
-        Assert.True(begin >= 0 && end > begin,
-            $"{relativePath} is missing the generated katlang-spec-examples block. " +
-            $"Set {LanguageSpecArtifactsTests.RegenerateVariable}=1 and rerun this test to insert it.");
-
-        var actualBlock = content[begin..(end + EndMarker.Length)];
-        Assert.True(expectedBlock == actualBlock,
-            $"{relativePath}: the generated katlang-spec-examples block is out of date with the canonical corpus. " +
-            $"Set {LanguageSpecArtifactsTests.RegenerateVariable}=1, rerun this test, and review the diff.");
+                var actualBlock = content[begin..(end + EndMarker.Length)];
+                Assert.True(expectedBlock == actualBlock,
+                    $"{relativePath}: the generated katlang-spec-examples block is out of date with the canonical corpus. " +
+                    $"Set {flag}=1 and rerun this test to regenerate it (that run fails by design), then review the diff.");
+            });
     }
 
     [Theory]

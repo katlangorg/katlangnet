@@ -94,8 +94,18 @@ Both Lean artifacts embed the same observation machinery (`neutral`,
 `SemanticExplorerHarness.ErrorCategory` together when adding an `EvalError`
 kind, then regenerate both artifacts.
 
-After any regeneration: review the diff, then run the corresponding
-`lake build` target.
+A regeneration run WRITES the artifact and then FAILS BY DESIGN (also when the
+content did not change): it is a regeneration, not a verification, and its
+result must never read as green. `scripts/validate-all.ps1` removes every
+`KATLANG_REGENERATE_*` variable from its process before it builds, so it never
+regenerates anything. The shared contract and the flag registry are
+`tests/KatLang.Tests/Infrastructure/ArtifactRegeneration.cs`; the same
+discipline governs the public API baseline
+(`tests/KatLang.Formatting.PublicApi.Tests/PublicApiBaseline.txt`,
+`KATLANG_REGENERATE_PUBLIC_API`).
+
+After any regeneration: review the diff, clear the flag, rerun the normal
+verification, then run the corresponding `lake build` target.
 
 ## 5. How to add a new case
 
