@@ -708,7 +708,7 @@ internal static class ImplicitArgumentResolver
                     if (ps.Parameters.Count > 0 && seen.Add(name))
                         deps.Add((name, ps));
                 }
-                else if (BuiltinRegistry.TryGetMathAliasFacts(name, out var bareAliasFacts)
+                else if (expr.TryGetRegistryProvenMathAliasFacts(paramMap.ContainsKey, out var bareAliasFacts)
                     && seen.Add(bareAliasFacts.CanonicalKey))
                 {
                     // A bare Math ALIAS in value position lifts exactly like the
@@ -717,11 +717,20 @@ internal static class ImplicitArgumentResolver
                     // two spellings into ONE lifted dependency. Any visible user
                     // property — even a zero-parameter one — shadows the alias
                     // through the paramMap branch above.
+                    //
+                    // The resolver's shadow predicate for every Math-shape
+                    // classification (this arm, the alias-call arms, and the
+                    // canonical `Math.X` arms) is `paramMap.ContainsKey`: the map
+                    // carries every visible user property — local or ancestor —
+                    // and a parameter reference is an Expr.Param after detection,
+                    // so a surviving bare Expr.Resolve outside the map can only
+                    // resolve to the prelude. A user-defined `sin` or `Math`
+                    // therefore stays an ordinary neutral callable/container.
                     deps.Add((bareAliasFacts.CanonicalKey, bareAliasFacts.Signature));
                 }
                 break;
 
-            case Expr.Call(var func, var callArgs):
+            case Expr.Call(var func, var callArgs) call:
                 // func: if it's a direct Resolve, it's explicitly called - mark as call position.
                 // Otherwise recurse normally (e.g. Prop target is not in call position).
                 if (func is Expr.Resolve)
@@ -730,11 +739,11 @@ internal static class ImplicitArgumentResolver
 
                     // A Math-alias call has the SAME registry-proven strict-value
                     // argument contract as the written `Math.X(...)` dot shape
-                    // (the DotCall arm below): its argument slots are ordinary
-                    // value positions and contribute implicit dependencies.
-                    // Ordinary neutral call arguments contribute none.
-                    if (TryGetUnshadowedMathAliasCallee(func, paramMap, out var callAliasFacts)
-                        && callAliasFacts.HasStrictValueArguments)
+                    // (the DotCall arm below), classified by the shared alias-call
+                    // twin: its argument slots are ordinary value positions and
+                    // contribute implicit dependencies. Ordinary neutral call
+                    // arguments contribute none.
+                    if (call.HasRegistryProvenStrictValueArguments(paramMap.ContainsKey))
                     {
                         CollectArgumentImplicitDeps(callArgs, paramMap, seen, deps, memo);
                     }
@@ -830,34 +839,6 @@ internal static class ImplicitArgumentResolver
     }
 
     /// <summary>
-    /// Binding-aware Math-alias classification for one written name expression:
-    /// the registry facts apply ONLY when ordinary resolution actually reaches
-    /// the prelude alias. Any visible user property — local or ancestor, which
-    /// is exactly what <paramref name="paramMap"/> carries — shadows the alias,
-    /// and a parameter reference is an <see cref="Expr.Param"/> after detection,
-    /// so a surviving bare <see cref="Expr.Resolve"/> outside the map can only
-    /// resolve to the prelude. A user-defined <c>sin</c> therefore stays an
-    /// ordinary neutral callable; a call is never classified as Math merely
-    /// because its text is <c>sin</c>. Dependency collection and rewriting both
-    /// consult THIS one test, so they cannot disagree about processing order.
-    /// </summary>
-    private static bool TryGetUnshadowedMathAliasCallee(
-        Expr callee,
-        Dictionary<string, CallableSignature> paramMap,
-        [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out MathCallableFacts? facts)
-    {
-        if (callee is Expr.Resolve(var name)
-            && !paramMap.ContainsKey(name)
-            && BuiltinRegistry.TryGetMathAliasFacts(name, out facts))
-        {
-            return true;
-        }
-
-        facts = null;
-        return false;
-    }
-
-    /// <summary>
     /// Rewrites bare <see cref="Expr.Resolve"/> nodes into <see cref="Expr.Call"/> nodes
     /// with lifted parameters. Also recursively processes nested algorithms.
     /// </summary>
@@ -936,7 +917,7 @@ internal static class ImplicitArgumentResolver
                 // canonical `Math.X` arm below, from the same registry facts.
                 // The constant (`pi`) carries no facts and stays a bare reference.
                 if (!inCallPosition
-                    && TryGetUnshadowedMathAliasCallee(expr, paramMap, out var bareAliasFacts))
+                    && expr.TryGetRegistryProvenMathAliasFacts(paramMap.ContainsKey, out var bareAliasFacts))
                 {
                     if (requireExistingParameters
                         && (existingParameterNames is null
@@ -954,7 +935,7 @@ internal static class ImplicitArgumentResolver
                 }
                 return expr;
 
-            case Expr.Call(var func, var args):
+            case Expr.Call(var func, var args) call:
                 // If func is a direct Resolve, leave it (explicitly called).
                 // Otherwise recurse into func normally.
                 var newFunc = func is Expr.Resolve
@@ -963,11 +944,11 @@ internal static class ImplicitArgumentResolver
 
                 // A Math-alias call shares the written `Math.X(...)` dot shape's
                 // registry-proven strict-value argument contract (the DotCall arm
-                // below): its argument slots are ordinary value positions and
-                // lift. Every other call keeps NEUTRAL argument processing so
-                // bare higher-order references survive.
-                var newArgs = TryGetUnshadowedMathAliasCallee(func, paramMap, out var callAliasFacts)
-                    && callAliasFacts.HasStrictValueArguments
+                // below), classified by the shared alias-call twin: its argument
+                // slots are ordinary value positions and lift. Every other call
+                // keeps NEUTRAL argument processing so bare higher-order
+                // references survive.
+                var newArgs = call.HasRegistryProvenStrictValueArguments(paramMap.ContainsKey)
                     ? ProcessValueDemandingArgumentBundle(args, paramMap, memos)
                     : ProcessArgumentBundle(args, paramMap, memos);
                 return new Expr.Call(newFunc, newArgs) { Span = expr.Span };
@@ -1117,8 +1098,9 @@ internal static class ImplicitArgumentResolver
     ///
     /// <para>The current value-demanding consumer is the Math member family in
     /// BOTH of its spellings — the written <c>Math.X(...)</c> dot shape
-    /// (<see cref="AstHelpers.HasRegistryProvenStrictValueArguments"/>) and an
-    /// unshadowed prelude-alias call (<see cref="TryGetUnshadowedMathAliasCallee"/>),
+    /// (<see cref="AstHelpers.HasRegistryProvenStrictValueArguments(Expr.DotCall, Func{string, bool}?)"/>)
+    /// and an unshadowed prelude-alias call
+    /// (<see cref="AstHelpers.HasRegistryProvenStrictValueArguments(Expr.Call, Func{string, bool}?)"/>),
     /// which resolve to the same <see cref="MathCallableFacts"/>: the builtin registry proves every
     /// Math member consumes strictly numeric values, so no higher-order
     /// channel exists to preserve. Other strict builtins (<c>sum</c>,
@@ -1157,16 +1139,10 @@ internal static class ImplicitArgumentResolver
     {
         // `Math~.Pow` reaches this same structural arm: its ordinary receiver
         // Grace is consumed by parameter detection before implicit-call
-        // rewriting, so Grace cannot change registry facts.
-        if (expr is Expr.DotCall
-            {
-                Target: Expr.Resolve { Name: var ownerName },
-                Name: var memberName,
-                Args: null,
-            }
-            && !paramMap.ContainsKey(ownerName)
-            && ownerName == "Math"
-            && BuiltinRegistry.TryGetMathMemberFacts(memberName, out var facts)
+        // rewriting, so Grace cannot change registry facts. The bare reference
+        // is the argumentless canonical shape, classified by the shared helper.
+        if (expr is Expr.DotCall { Args: null } dotCall
+            && dotCall.TryGetRegistryProvenCanonicalMathFacts(paramMap.ContainsKey, out var facts)
             && facts.Signature.Parameters.Count > 0)
         {
             // The canonical spelling and its prelude alias use the SAME

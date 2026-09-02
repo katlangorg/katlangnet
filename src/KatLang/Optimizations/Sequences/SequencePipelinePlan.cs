@@ -49,25 +49,21 @@ internal readonly record struct SequencePipelineInvocation(
             PlainCallee: callee);
 }
 
+/// <summary>
+/// The evaluator services a recognized pipeline consumes: exactly the members the
+/// optimizer reads, one delegate each. A generic (non-range) source is evaluated
+/// ONLY through <see cref="EvaluateDotReceiverIterationItems"/> — the plain
+/// <c>count(filter(src, pred))</c> form fuses direct builtin-range sources alone
+/// and falls back before touching any other source, so it needs no plain-source
+/// evaluation service; a member no pipeline reads must not be added here, because
+/// every member costs one captured delegate per recognized pipeline.
+/// </summary>
 internal readonly record struct SequencePipelineEvaluationServices(
     Func<Expr.DotCall, BuiltinId, string?> GetDotCallLexicalBuiltinFallbackReason,
     Func<Expr, EvalResult<IReadOnlyList<Evaluator.CountedResult>>> EvaluateDotReceiverIterationItems,
-    Func<IReadOnlyList<Algorithm>, EvalResult<IReadOnlyList<Evaluator.CountedResult>>> EvaluateSequenceIterationItems,
     Func<OutputBundle, EvalResult<IReadOnlyList<Algorithm>>> ResolveArgumentAlgorithms,
     Func<Expr, EvalResult<Algorithm>> ResolveAlgorithm,
     Func<Expr, OutputBundle, SourceSpan?, EvalResult<Evaluator.InclusiveRange>> EvaluateRangeCallArguments);
-
-internal readonly record struct SequencePipelineRangeSourceEvaluation(
-    bool IsDirectRange,
-    Evaluator.InclusiveRange Range,
-    string FallbackReason)
-{
-    internal static SequencePipelineRangeSourceEvaluation Direct(Evaluator.InclusiveRange range)
-        => new(true, range, "");
-
-    internal static SequencePipelineRangeSourceEvaluation Fallback(string reason)
-        => new(false, default, reason);
-}
 
 internal abstract record FilterCountSourcePlan
 {

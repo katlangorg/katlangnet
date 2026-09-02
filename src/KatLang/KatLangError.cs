@@ -325,28 +325,19 @@ public sealed class KatLangError
         if (error is EvalError.WithContext { ErrorContext: DotCallContext dotContext, Inner: EvalError.UnknownName(var missingName) }
             && string.Equals(dotContext.PropertyName, missingName, StringComparison.Ordinal))
         {
-            message = $"Property '{dotContext.PropertyName}' was not found on `{dotContext.ReceiverDescription}`, and no visible algorithm or property named '{dotContext.PropertyName}' can be used with `{dotContext.ReceiverDescription}` as the first argument.";
+            message = FormatDotCallUnknownName(dotContext.PropertyName, dotContext.ReceiverDescription);
             return true;
         }
 
+        // Legacy host prose compatibility: the same semantic shape recognized
+        // from a text context, rendered through the SAME builder.
         if (!TryGetTextContext(error, out var context, out var inner)
-            || inner is not EvalError.UnknownName(var legacyMissingName))
+            || inner is not EvalError.UnknownName(var legacyMissingName)
+            || !TryParseDotCallContext(context, out var receiverDesc, out var propertyName)
+            || !string.Equals(propertyName, legacyMissingName, StringComparison.Ordinal))
             return false;
 
-        const string prefix = "while evaluating dotCall .";
-        if (!context.StartsWith(prefix, StringComparison.Ordinal))
-            return false;
-
-        var delimiterIndex = context.IndexOf(" of ", prefix.Length, StringComparison.Ordinal);
-        if (delimiterIndex < 0)
-            return false;
-
-        var propertyName = context[prefix.Length..delimiterIndex];
-        if (!string.Equals(propertyName, legacyMissingName, StringComparison.Ordinal))
-            return false;
-
-        var receiverDesc = context[(delimiterIndex + " of ".Length)..];
-        message = $"Property '{propertyName}' was not found on `{receiverDesc}`, and no visible algorithm or property named '{propertyName}' can be used with `{receiverDesc}` as the first argument.";
+        message = FormatDotCallUnknownName(propertyName, receiverDesc);
         return true;
     }
 
@@ -380,14 +371,12 @@ public sealed class KatLangError
 
         if (error is EvalError.WithContext { ErrorContext: DotCallContext dotCallContext, Inner: EvalError.MissingOutput })
         {
-            // The `string` intrinsic renders receiver-only because it is a
-            // dot-only value conversion (no `.string` property reference).
-            message = string.Equals(dotCallContext.PropertyName, "string", StringComparison.Ordinal)
-                ? FormatReferenceMissingOutput(dotCallContext.ReceiverDescription)
-                : FormatReferenceMissingOutput($"{dotCallContext.ReceiverDescription}.{dotCallContext.PropertyName}");
+            message = FormatDotCallMissingOutput(dotCallContext.ReceiverDescription, dotCallContext.PropertyName);
             return true;
         }
 
+        // Legacy host prose compatibility: each recognized text context maps to
+        // the structured shape above and renders through that shape's builder.
         if (!TryGetTextContext(error, out var context, out var inner)
             || inner is not EvalError.MissingOutput)
             return false;
@@ -406,11 +395,7 @@ public sealed class KatLangError
 
         if (TryParseDotCallContext(context, out var receiverDesc, out var dotPropertyName))
         {
-            // The `string` special case matches the dot-only intrinsic
-            // rendering of the structured DotCallContext path above.
-            message = string.Equals(dotPropertyName, "string", StringComparison.Ordinal)
-                ? FormatReferenceMissingOutput(receiverDesc)
-                : FormatReferenceMissingOutput($"{receiverDesc}.{dotPropertyName}");
+            message = FormatDotCallMissingOutput(receiverDesc, dotPropertyName);
             return true;
         }
 
@@ -423,65 +408,45 @@ public sealed class KatLangError
 
         if (error is EvalError.WithContext { ErrorContext: PropertyEvaluationContext propertyContext, Inner: EvalError.ArityMismatch propertyArity })
         {
-            message = FormatArityMismatch(propertyArity, propertyContext.PropertyName, preferPropertyName: true);
+            message = FormatPropertyArityMismatch(propertyArity, propertyContext.PropertyName);
             return true;
         }
 
         if (error is EvalError.WithContext { ErrorContext: CallContext callContext, Inner: EvalError.ArityMismatch callArity })
         {
-            message = callArity.Span is null
-                ? FormatArityMismatch(callArity, callContext.CalleeDescription, preferPropertyName: IsSimpleIdentifier(callContext.CalleeDescription))
-                : FormatGenericArityMismatch(callArity.Expected, callArity.Actual);
+            message = FormatCallArityMismatch(callArity, callContext.CalleeDescription);
             return true;
         }
 
         if (error is EvalError.WithContext { ErrorContext: DotCallContext dotCallContext, Inner: EvalError.ArityMismatch dotCallArity })
         {
-            // Signature first: builtin arity errors deliberately carry the
-            // Lean-aligned placeholder Expected = 0 beside their real
-            // signature, so rendering raw Expected here would claim
-            // "expects 0 parameters". Signatureless structural property
-            // errors keep the receiver-specific fallback below.
-            message = dotCallArity.Signature is not null
-                ? FormatArityMismatch(dotCallArity)
-                : dotCallArity.Span is null
-                    ? $"Property '{dotCallContext.PropertyName}' on `{dotCallContext.ReceiverDescription}` expects {FormatCount(dotCallArity.Expected, "parameter")}, but was called with {FormatCount(dotCallArity.Actual, "argument")}."
-                    : FormatGenericArityMismatch(dotCallArity.Expected, dotCallArity.Actual);
+            message = FormatDotCallArityMismatch(dotCallArity, dotCallContext.ReceiverDescription, dotCallContext.PropertyName);
             return true;
         }
 
+        // Legacy host prose compatibility: each recognized text context maps to
+        // the structured shape above and renders through that shape's builder.
+        // (A former `Builtin '...'` arm that echoed the context verbatim had no
+        // producer — builtin arity is a parser diagnostic — and was removed.)
         if (!TryGetTextContext(error, out var context, out var inner)
             || inner is not EvalError.ArityMismatch legacyArity)
             return false;
 
-        if (context.StartsWith("Builtin '", StringComparison.Ordinal))
-        {
-            message = context;
-            return true;
-        }
-
         if (TryParsePropertyContext(context, out var propertyName))
         {
-            message = FormatArityMismatch(legacyArity, propertyName, preferPropertyName: true);
+            message = FormatPropertyArityMismatch(legacyArity, propertyName);
             return true;
         }
 
         if (TryParseCallContext(context, out var calleeDesc))
         {
-            message = legacyArity.Span is null
-                ? FormatArityMismatch(legacyArity, calleeDesc, preferPropertyName: IsSimpleIdentifier(calleeDesc))
-                : FormatGenericArityMismatch(legacyArity.Expected, legacyArity.Actual);
+            message = FormatCallArityMismatch(legacyArity, calleeDesc);
             return true;
         }
 
         if (TryParseDotCallContext(context, out var receiverDesc, out var dotPropertyName))
         {
-            // Same signature-first rule as the structured DotCallContext branch.
-            message = legacyArity.Signature is not null
-                ? FormatArityMismatch(legacyArity)
-                : legacyArity.Span is null
-                    ? $"Property '{dotPropertyName}' on `{receiverDesc}` expects {FormatCount(legacyArity.Expected, "parameter")}, but was called with {FormatCount(legacyArity.Actual, "argument")}."
-                    : FormatGenericArityMismatch(legacyArity.Expected, legacyArity.Actual);
+            message = FormatDotCallArityMismatch(legacyArity, receiverDesc, dotPropertyName);
             return true;
         }
 
@@ -646,6 +611,47 @@ public sealed class KatLangError
         receiverDesc = context[(delimiterIndex + " of ".Length)..];
         return true;
     }
+
+    // ── Per-shape message builders ──────────────────────────────────────────
+    // ONE builder per semantic error shape. The structured-context branches and
+    // the legacy host-prose compatibility branches above both funnel through
+    // these, so the two construction paths can never render one shape
+    // differently (pinned by KatLangErrorLegacyContextTests). Recognition of a
+    // legacy prose context yields the shape's PAYLOAD (names, descriptions) and
+    // nothing else: a builder never re-parses a message.
+
+    private static string FormatDotCallUnknownName(string propertyName, string receiverDesc)
+        => $"Property '{propertyName}' was not found on `{receiverDesc}`, and no visible algorithm or property named '{propertyName}' can be used with `{receiverDesc}` as the first argument.";
+
+    /// <summary>
+    /// The <c>string</c> intrinsic renders receiver-only because it is a dot-only
+    /// value conversion (no <c>.string</c> property reference).
+    /// </summary>
+    private static string FormatDotCallMissingOutput(string receiverDesc, string propertyName)
+        => string.Equals(propertyName, "string", StringComparison.Ordinal)
+            ? FormatReferenceMissingOutput(receiverDesc)
+            : FormatReferenceMissingOutput($"{receiverDesc}.{propertyName}");
+
+    private static string FormatPropertyArityMismatch(EvalError.ArityMismatch arity, string propertyName)
+        => FormatArityMismatch(arity, propertyName, preferPropertyName: true);
+
+    private static string FormatCallArityMismatch(EvalError.ArityMismatch arity, string calleeDesc)
+        => arity.Span is null
+            ? FormatArityMismatch(arity, calleeDesc, preferPropertyName: IsSimpleIdentifier(calleeDesc))
+            : FormatGenericArityMismatch(arity.Expected, arity.Actual);
+
+    /// <summary>
+    /// Signature first: builtin arity errors deliberately carry the Lean-aligned
+    /// placeholder <c>Expected = 0</c> beside their real signature, so rendering
+    /// raw <c>Expected</c> would claim "expects 0 parameters". Signatureless
+    /// structural property errors keep the receiver-specific fallback.
+    /// </summary>
+    private static string FormatDotCallArityMismatch(EvalError.ArityMismatch arity, string receiverDesc, string propertyName)
+        => arity.Signature is not null
+            ? FormatArityMismatch(arity)
+            : arity.Span is null
+                ? $"Property '{propertyName}' on `{receiverDesc}` expects {FormatCount(arity.Expected, "parameter")}, but was called with {FormatCount(arity.Actual, "argument")}."
+                : FormatGenericArityMismatch(arity.Expected, arity.Actual);
 
     private static string FormatNamedArityMismatch(string calleeDesc, int expected, int actual, bool preferPropertyName)
     {

@@ -434,8 +434,6 @@ public class SequencePipelineDispatchTests
             },
             EvaluateDotReceiverIterationItems: _ =>
                 throw new Xunit.Sdk.XunitException("generic source evaluation must not run for a direct range"),
-            EvaluateSequenceIterationItems: _ =>
-                throw new Xunit.Sdk.XunitException("plain source evaluation must not run for a dot pipeline"),
             ResolveArgumentAlgorithms: _ =>
             {
                 callbacks.Add($"resolve-args@{budget.CurrentDepth}");

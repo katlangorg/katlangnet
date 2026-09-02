@@ -4412,20 +4412,24 @@ public class EvaluatorTests
         // non-range source would be evaluated once during the failed fusion probe
         // and again during generic fallback — double evaluation).
         //
-        // Models `count(filter(Data*, IsEven)*)` with `Data` a non-range
-        // (named) source. The counting EvaluateSequenceIterationItems delegate
-        // must be invoked exactly zero times.
-        var sequenceEvalCount = 0;
+        // Models `count(filter(Data, IsEven))` with `Data` a non-range
+        // (named) source. Keeping both call boundaries unspread is essential:
+        // an outer or inner spread is rejected by an earlier syntax gate and
+        // would never exercise the non-range-source fallback under test. The
+        // services bundle deliberately carries NO
+        // plain-source evaluation service (the plain form fuses direct
+        // builtin-range sources only), so the only two evaluation services —
+        // the dot-receiver source and the range arguments — both throw: the
+        // fallback must be reached without either running.
 
         OutputBundle filterArgs =
         [
-            new Expr.SequenceSpread(new Expr.Resolve("Data")),
+            new Expr.Resolve("Data"),
             new Expr.Resolve("IsEven"),
         ];
         OutputBundle countArgs =
         [
-            new Expr.SequenceSpread(
-                new Expr.Call(new Expr.Resolve("filter"), filterArgs)),
+            new Expr.Call(new Expr.Resolve("filter"), filterArgs),
         ];
         var invocation = SequencePipelineInvocation.PlainCall(
             new Expr.Resolve("count"),
@@ -4436,12 +4440,6 @@ public class EvaluatorTests
             GetDotCallLexicalBuiltinFallbackReason: (_, _) => null,
             EvaluateDotReceiverIterationItems: _ =>
                 throw new Xunit.Sdk.XunitException("dot-receiver evaluation must not run for a plain call"),
-            EvaluateSequenceIterationItems: _ =>
-            {
-                sequenceEvalCount++;
-                return EvalResult<IReadOnlyList<Evaluator.CountedResult>>.Ok(
-                    new List<Evaluator.CountedResult>());
-            },
             ResolveArgumentAlgorithms: _ => EvalResult<IReadOnlyList<Algorithm>>.Ok(
                 [new Algorithm.User(null, [], [], [], []), new Algorithm.User(null, [], [], [], [])]),
             ResolveAlgorithm: _ => EvalResult<Algorithm>.Ok(new Algorithm.Builtin(BuiltinId.@filter)),
@@ -4458,9 +4456,15 @@ public class EvaluatorTests
             out _);
 
         // The optimizer deferred to generic (did not fuse) WITHOUT evaluating the
-        // non-range source even once.
+        // non-range source even once (neither throwing evaluation service ran).
         Assert.False(handled);
-        Assert.Equal(0, sequenceEvalCount);
+        var stats = diagnostics.GetSnapshot();
+        Assert.Equal(0, stats.FilterCountFusionHits);
+        Assert.Equal(1, stats.FallbackReasons["source is not builtin range"]);
+        Assert.Equal(1, stats.FallbackReasons["non-range source for plain filter-count"]);
+        var pipeline = Assert.Single(stats.Pipelines);
+        Assert.Equal("non-range source for plain filter-count", pipeline.FallbackReason);
+        Assert.All(stats.Pipelines, pipeline => Assert.Equal("not executed", pipeline.SourceExecution));
     }
 
     [Fact]
@@ -4495,8 +4499,6 @@ public class EvaluatorTests
                 return EvalResult<IReadOnlyList<Evaluator.CountedResult>>.Ok(
                     new List<Evaluator.CountedResult>());
             },
-            EvaluateSequenceIterationItems: _ =>
-                throw new Xunit.Sdk.XunitException("plain sequence iteration must not run for a dot call"),
             ResolveArgumentAlgorithms: _ =>
                 EvalResult<IReadOnlyList<Algorithm>>.Err(new EvalError.UnknownName("BadPred")),
             ResolveAlgorithm: _ => EvalResult<Algorithm>.Ok(new Algorithm.Builtin(BuiltinId.@filter)),
@@ -4552,8 +4554,6 @@ public class EvaluatorTests
             GetDotCallLexicalBuiltinFallbackReason: (_, _) => null,
             EvaluateDotReceiverIterationItems: _ =>
                 throw new Xunit.Sdk.XunitException("generic dot-receiver iteration must not run for a direct range"),
-            EvaluateSequenceIterationItems: _ =>
-                throw new Xunit.Sdk.XunitException("plain sequence iteration must not run for a dot call"),
             ResolveArgumentAlgorithms: _ =>
                 EvalResult<IReadOnlyList<Algorithm>>.Err(new EvalError.UnknownName("BadPred")),
             ResolveAlgorithm: _ => EvalResult<Algorithm>.Ok(new Algorithm.Builtin(BuiltinId.@range)),

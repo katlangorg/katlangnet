@@ -81,6 +81,18 @@ internal readonly record struct MathMemberDescriptor(
         MathMemberKind.BinaryFunction => 2,
         _ => throw new InvalidOperationException($"Unsupported Math member kind '{Kind}'."),
     };
+
+    /// <summary>
+    /// The member's canonical qualified spelling (<c>"Math.Sin"</c>, <c>"Math.Pi"</c>):
+    /// the ONE identity string every consumer keys on. It is derived exactly once,
+    /// here at descriptor construction, from <see cref="BuiltinRegistry.MathModuleName"/>
+    /// and <see cref="Name"/>; <see cref="MathCallableFacts.CanonicalKey"/> (both
+    /// spellings' callable facts) and the editor's alias-target metadata carry THIS
+    /// instance rather than re-joining the two names, so the relation has one owner.
+    /// It can never collide with a user property name because identifiers cannot
+    /// contain <c>'.'</c>.
+    /// </summary>
+    public string CanonicalQualifiedName { get; } = BuiltinRegistry.MathModuleName + "." + Name;
 }
 
 /// <summary>
@@ -110,11 +122,11 @@ internal sealed class MathCallableFacts
     public string SpelledName { get; }
 
     /// <summary>
-    /// Stable canonical identity shared by both spellings (<c>"Math.Sin"</c>).
-    /// Dependency deduplication keys on this so a body referencing both
-    /// <c>Math.Pow</c> and <c>pow</c> lifts ONE dependency. It can never
-    /// collide with a user property name because identifiers cannot contain
-    /// <c>'.'</c>.
+    /// Stable canonical identity shared by both spellings (<c>"Math.Sin"</c>) —
+    /// the descriptor's own <see cref="MathMemberDescriptor.CanonicalQualifiedName"/>
+    /// instance, never reconstructed here. Dependency deduplication keys on this
+    /// so a body referencing both <c>Math.Pow</c> and <c>pow</c> lifts ONE
+    /// dependency.
     /// </summary>
     public string CanonicalKey { get; }
 
@@ -243,6 +255,15 @@ internal enum MathAlgorithmFlavor
 
 internal static class BuiltinRegistry
 {
+    /// <summary>
+    /// The prelude name of the Math module (<c>Math</c>): the receiver of every
+    /// canonical <c>Math.X</c> spelling, the reserved prelude name, and the
+    /// prefix of every <see cref="MathMemberDescriptor.CanonicalQualifiedName"/>.
+    /// Consumers classify the canonical shape through <c>AstHelpers</c> and read
+    /// qualified names from the descriptor, so this literal is written once.
+    /// </summary>
+    internal const string MathModuleName = "Math";
+
     private static readonly SequenceBuiltinMetadata FilterSequenceMetadata =
         new([new("predicate")], SequenceBuiltinEmptyPolicy.AllowEmpty, SequenceBuiltinItemShapeConstraint.Any);
 
@@ -366,7 +387,7 @@ internal static class BuiltinRegistry
     {
         var reservedNames = Builtins
             .Select(static descriptor => descriptor.Name)
-            .Append("Math")
+            .Append(MathModuleName)
             .Append("load");
         ValidateMathMemberMetadataCore(members, reservedNames);
         return Array.AsReadOnly(members);
@@ -452,7 +473,7 @@ internal static class BuiltinRegistry
             var spelledName = byAlias ? member.PreludeAlias : member.Name;
             facts[spelledName] = new MathCallableFacts(
                 spelledName,
-                canonicalKey: $"Math.{member.Name}",
+                canonicalKey: member.CanonicalQualifiedName,
                 CallableSignature.FromAlgorithm(
                     spelledName,
                     CreateMathMemberAlgorithm(member, MathAlgorithmFlavor.SignatureOnly)));
@@ -478,10 +499,10 @@ internal static class BuiltinRegistry
         .ToArray());
 
     public static IReadOnlyList<string> RuntimePreludeExtraNames { get; } = Array.AsReadOnly(
-        new[] { "Math" }.Concat(MathAliasNames).ToArray());
+        new[] { MathModuleName }.Concat(MathAliasNames).ToArray());
 
     public static IReadOnlyList<string> SemanticPreludeExtraNames { get; } = Array.AsReadOnly(
-        new[] { "Math", "load" }.Concat(MathAliasNames).ToArray());
+        new[] { MathModuleName, "load" }.Concat(MathAliasNames).ToArray());
 
     public static IReadOnlyList<string> ParameterDetectorPreludeNames { get; } =
         Array.AsReadOnly(BuiltinNames.Concat(SemanticPreludeExtraNames).ToArray());
@@ -549,7 +570,7 @@ internal static class BuiltinRegistry
         string memberName,
         [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out CallableSignature? signature)
     {
-        if (ownerName == "Math" && TryGetMathMemberFacts(memberName, out var facts))
+        if (ownerName == MathModuleName && TryGetMathMemberFacts(memberName, out var facts))
         {
             signature = facts.Signature;
             return true;
@@ -640,7 +661,7 @@ internal static class BuiltinRegistry
         if (includeLoad)
             properties.Add(new Property("load", CreateLoadAlgorithm(), IsPublic: true));
 
-        properties.Add(new Property("Math", mathAlgorithm, IsPublic: true));
+        properties.Add(new Property(MathModuleName, mathAlgorithm, IsPublic: true));
 
         // Each Math member is also visible through ONE predefined lower-camel-case
         // prelude alias (`pi`, `sin`, ...). An alias is an ordinary synthetic

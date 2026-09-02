@@ -4381,10 +4381,6 @@ public static partial class Evaluator
         IReadOnlyList<CountedResult> IterationItems,
         IReadOnlyList<PreparedSequenceBuiltinSuffixArg> SuffixArgs);
 
-    private static IReadOnlyList<ResolvedArgumentAlgorithm> WithoutSequenceSpread(
-        IReadOnlyList<Algorithm> args)
-        => args.Select(static arg => new ResolvedArgumentAlgorithm(arg, SpreadsSequence: false)).ToList();
-
     private static EvalResult<IReadOnlyList<VariadicCallItem>> BuildCallableCallItems(
         IReadOnlyList<ResolvedArgumentAlgorithm> args,
         EvalCtx ctx,
@@ -4540,35 +4536,6 @@ public static partial class Evaluator
         }
 
         return algorithm;
-    }
-
-    private static EvalResult<IReadOnlyList<CountedResult>> EvalSequenceIterationItems(
-        IReadOnlyList<Algorithm> collectionArgs,
-        EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv)
-        => EvalSequenceIterationItems(WithoutSequenceSpread(collectionArgs), ctx, valEnv);
-
-    private static EvalResult<IReadOnlyList<CountedResult>> EvalSequenceIterationItems(
-        IReadOnlyList<ResolvedArgumentAlgorithm> collectionArgs,
-        EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv)
-    {
-        var itemsR = BuildCallableCallItems(collectionArgs, ctx, valEnv);
-        if (itemsR.IsError) return itemsR.Error;
-
-        var items = new List<CountedResult>(itemsR.Value.Count);
-        foreach (var item in itemsR.Value)
-        {
-            if (item.Value is null && item.ValueError is null)
-                continue;
-
-            if (item.Value is null)
-                return item.ValueError ?? new EvalError.BadArity();
-
-            items.Add(new CountedResult(item.Value, 1));
-        }
-
-        return EvalResult<IReadOnlyList<CountedResult>>.Ok(items);
     }
 
     private static EvalResult<CollectedSequenceBuiltinInput> ApplySequenceBuiltinEmptyPolicy(
@@ -6001,20 +5968,21 @@ public static partial class Evaluator
     /// property named <c>Math</c> is not reinterpreted as the prelude module.
     /// </summary>
     private static Algorithm? TryResolveQualifiedMathNativeReference(
-        Expr target,
-        string memberName,
+        Expr.DotCall dotCall,
         EvalCtx ctx)
     {
-        if (target is not Expr.Resolve { Name: "Math" }
-            || !BuiltinRegistry.TryGetMathMemberFacts(memberName, out _))
-        {
+        // The shape gate is the ONE canonical-Math-member classification
+        // (AstHelpers); it is binding-neutral here because binding is established
+        // below by resolving the receiver itself and verifying the resolved
+        // member's actual native body, not by a static shadow predicate.
+        if (!dotCall.TryGetRegistryProvenCanonicalMathFacts(isPreludeNameShadowed: null, out _))
             return null;
-        }
 
-        var targetR = ResolveAlg(target, ctx);
+        var targetR = ResolveAlg(dotCall.Target, ctx);
         if (targetR.IsError)
             return null;
 
+        var memberName = dotCall.Name;
         var binding = LookupPropBinding(targetR.Value, memberName);
         if (binding is null || !IsExported(binding))
             return null;
@@ -6065,7 +6033,7 @@ public static partial class Evaluator
             case Expr.Resolve(var name):
                 return ResolveNamedAlgorithm(name, expr.Span, ctx);
 
-            case Expr.DotCall(var target, var memberName, var dotArgs):
+            case Expr.DotCall { Args: var dotArgs } dotCall:
                 {
                     // Math functions have one canonical callable identity across
                     // `Math.X`, opened `X`, and the predefined alias. In algorithm
@@ -6074,7 +6042,7 @@ public static partial class Evaluator
                     // generic DotCall thunk below remains authoritative for every
                     // other dotted expression (and for explicit argument lists).
                     if (dotArgs is null
-                        && TryResolveQualifiedMathNativeReference(target, memberName, ctx) is { } mathNative)
+                        && TryResolveQualifiedMathNativeReference(dotCall, ctx) is { } mathNative)
                     {
                         return EvalResult<Algorithm>.Ok(mathNative);
                     }
@@ -8476,7 +8444,7 @@ public static partial class Evaluator
     /// <summary>
     /// The closure-bearing half of the sequence-pipeline dispatch. This method is
     /// entered only after the allocation-free gate recognized an enabled candidate,
-    /// so its one display class and six capturing delegates are candidate-only by
+    /// so its one display class and five capturing delegates are candidate-only by
     /// source structure, independently of compiler/JIT allocation sinking.
     /// </summary>
     private static bool TryEvaluateRecognizedSequencePipeline(
@@ -8492,7 +8460,6 @@ public static partial class Evaluator
             GetDotCallLexicalBuiltinFallbackReason: (stageDotCall, expectedBuiltin) =>
                 GetDotCallLexicalBuiltinFallbackReason(stageDotCall, expectedBuiltin, ctx),
             EvaluateDotReceiverIterationItems: receiver => EvaluateDotReceiverIterationItemsForSequenceOptimizer(receiver, ctx, valEnv),
-            EvaluateSequenceIterationItems: collectionArgs => EvalSequenceIterationItems(collectionArgs, ctx, valEnv),
             ResolveArgumentAlgorithms: args => ResolveArgAlgs(args, ctx, valEnv),
             ResolveAlgorithm: expr => ResolveAlg(expr, ctx),
             EvaluateRangeCallArguments: (function, args, callSpan) => EvaluateRangeCallArgumentsForSequenceOptimizer(function, args, callSpan, ctx, valEnv));

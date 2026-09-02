@@ -415,7 +415,9 @@ public static class SemanticModelBuilder
             MathMemberDescriptor member,
             PropertyInfo aliasPropertyInfo)
         {
-            var qualifiedName = $"Math.{member.Name}";
+            // The registry descriptor owns the canonical qualified name; the
+            // editor never re-joins the module and member names itself.
+            var qualifiedName = member.CanonicalQualifiedName;
             var parameters = aliasPropertyInfo.FindSignature(PropertyCallStyle.Plain)?.Parameters
                 ?? aliasPropertyInfo.Parameters;
             return new PropertyAliasTargetInfo(

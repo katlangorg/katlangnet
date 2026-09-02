@@ -787,19 +787,17 @@ internal static class PropertyDependencyGraphBuilder
                 }
                 break;
 
-            case Expr.Call(var function, var callArgs):
+            case Expr.Call(var function, var callArgs) call:
                 CollectSiblingDependencyIndices(function, siblingNames, preludeNameShadowed, propertyNameToIndex, dependencyIndices, propertyIndex, inCallPosition: true, memo);
 
                 // An unshadowed Math-ALIAS call has the same registry-proven
                 // strict-value argument contract as the written `Math.X(...)`
-                // dot shape (the DotCall arm below): the resolver lifts its
-                // argument slots as value positions, so those slots contribute
-                // the same sibling processing-order dependencies here. Ordinary
-                // neutral call arguments contribute none.
-                if (function is Expr.Resolve(var calleeName)
-                    && BuiltinRegistry.TryGetMathAliasFacts(calleeName, out var aliasFacts)
-                    && aliasFacts.HasStrictValueArguments
-                    && !preludeNameShadowed(calleeName))
+                // dot shape (the DotCall arm below), classified by the shared
+                // alias-call twin: the resolver lifts its argument slots as value
+                // positions, so those slots contribute the same sibling
+                // processing-order dependencies here. Ordinary neutral call
+                // arguments contribute none.
+                if (call.HasRegistryProvenStrictValueArguments(preludeNameShadowed))
                 {
                     CollectArgumentSiblingDependencyIndices(callArgs, siblingNames, preludeNameShadowed, propertyNameToIndex, dependencyIndices, propertyIndex, memo);
                 }

@@ -1219,11 +1219,6 @@ public class BudgetCrossTalkMatrixTests
                 semanticServiceReached = true;
                 return EvalResult<IReadOnlyList<Evaluator.CountedResult>>.Ok([]);
             },
-            EvaluateSequenceIterationItems: _ =>
-            {
-                semanticServiceReached = true;
-                return EvalResult<IReadOnlyList<Evaluator.CountedResult>>.Ok([]);
-            },
             ResolveArgumentAlgorithms: _ =>
             {
                 semanticServiceReached = true;
@@ -1282,8 +1277,6 @@ public class BudgetCrossTalkMatrixTests
                 sourceEvaluated = true;
                 return EvalResult<IReadOnlyList<Evaluator.CountedResult>>.Ok([]);
             },
-            EvaluateSequenceIterationItems: _ =>
-                throw new Xunit.Sdk.XunitException("plain source evaluation must not run"),
             ResolveArgumentAlgorithms: _ => EvalResult<IReadOnlyList<Algorithm>>.Ok([predicate]),
             ResolveAlgorithm: _ => EvalResult<Algorithm>.Ok(new Algorithm.Builtin(BuiltinId.@range)),
             EvaluateRangeCallArguments: (_, _, _) =>
@@ -1329,8 +1322,6 @@ public class BudgetCrossTalkMatrixTests
             GetDotCallLexicalBuiltinFallbackReason: (_, _) => null,
             EvaluateDotReceiverIterationItems: _ =>
                 throw new Xunit.Sdk.XunitException("generic source evaluation must not run for a direct range"),
-            EvaluateSequenceIterationItems: _ =>
-                throw new Xunit.Sdk.XunitException("plain source evaluation must not run"),
             ResolveArgumentAlgorithms: _ => EvalResult<IReadOnlyList<Algorithm>>.Ok([predicate]),
             ResolveAlgorithm: _ => EvalResult<Algorithm>.Ok(new Algorithm.Builtin(BuiltinId.@range)),
             EvaluateRangeCallArguments: (_, _, _) => new EvalError.DivByZero());

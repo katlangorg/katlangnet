@@ -122,22 +122,94 @@ internal static class AstHelpers
         return expr;
     }
 
+    // ── Math member shape classification ─────────────────────────────────────
+    // The ONE owner of "is this written expression a Math member spelling?" for
+    // every static consumer (implicit-argument resolution, dependency ordering,
+    // the evaluator's qualified-native gate). Two shapes, one descriptor: the
+    // canonical dot edge `Math.X` and the predefined prelude alias `x`. Both
+    // helpers are SHAPE classification only — they resolve nothing, read no
+    // scope, and dispatch nothing. Callers supply their own ordinary-resolution
+    // shadow predicate (or null when they establish binding themselves), so a
+    // user-defined `Math` or `sin` never acquires builtin facts from spelling.
+
+    /// <summary>
+    /// The canonical Math-member shape of a dot edge: a written <c>Math.X</c>
+    /// whose <c>X</c> is a registry Math FUNCTION member, yielding that member's
+    /// callable facts. <paramref name="isPreludeNameShadowed"/> is the caller's
+    /// shadow knowledge for the module name (a locally defined <c>Math</c> is an
+    /// ordinary structural container, never the prelude module); a caller that
+    /// establishes binding by resolving the receiver itself passes <c>null</c>.
+    /// Constants (<c>Math.Pi</c>) carry no callable facts and never match.
+    /// </summary>
+    internal static bool TryGetRegistryProvenCanonicalMathFacts(
+        this Expr.DotCall dotCall,
+        Func<string, bool>? isPreludeNameShadowed,
+        [NotNullWhen(true)] out MathCallableFacts? facts)
+    {
+        if (dotCall.Target is Expr.Resolve { Name: BuiltinRegistry.MathModuleName }
+            && !(isPreludeNameShadowed?.Invoke(BuiltinRegistry.MathModuleName) ?? false)
+            && BuiltinRegistry.TryGetMathMemberFacts(dotCall.Name, out facts))
+        {
+            return true;
+        }
+
+        facts = null;
+        return false;
+    }
+
+    /// <summary>
+    /// The alias-shape twin of <see cref="TryGetRegistryProvenCanonicalMathFacts"/>:
+    /// a written bare name that is a Math FUNCTION member's predefined prelude
+    /// alias (<c>sin</c>, <c>pow</c>, ...), yielding the SAME descriptor-projected
+    /// facts as the canonical spelling. <paramref name="isPreludeNameShadowed"/> is
+    /// the caller's shadow knowledge for the written name — any visible user
+    /// property shadows the alias; a parameter reference is an <see cref="Expr.Param"/>
+    /// after detection and never matches. The constant alias (<c>pi</c>) carries no
+    /// callable facts and never matches.
+    /// </summary>
+    internal static bool TryGetRegistryProvenMathAliasFacts(
+        this Expr callee,
+        Func<string, bool>? isPreludeNameShadowed,
+        [NotNullWhen(true)] out MathCallableFacts? facts)
+    {
+        if (callee is Expr.Resolve(var name)
+            && !(isPreludeNameShadowed?.Invoke(name) ?? false)
+            && BuiltinRegistry.TryGetMathAliasFacts(name, out facts))
+        {
+            return true;
+        }
+
+        facts = null;
+        return false;
+    }
+
     /// <summary>
     /// Whether registry facts prove that this dot edge's written arguments are
-    /// strict values rather than neutral higher-order argument slots. Only an
-    /// UNSHADOWED structural Math member has that consumer contract: callers
-    /// supply their ordinary-resolution shadow predicate so a locally defined
-    /// <c>Math</c> never acquires builtin facts merely from its spelling. The
-    /// prelude-alias call spelling (<c>sin(...)</c>) shares the same
-    /// <see cref="MathCallableFacts"/> through its consumers' corresponding
-    /// binding-aware classification, so the two spellings cannot drift.
+    /// strict values rather than neutral higher-order argument slots: the edge
+    /// has the unshadowed canonical <c>Math.X(...)</c> shape
+    /// (<see cref="TryGetRegistryProvenCanonicalMathFacts"/>) and the member's
+    /// facts declare strict-value arguments.
     /// </summary>
     internal static bool HasRegistryProvenStrictValueArguments(
         this Expr.DotCall dotCall,
         Func<string, bool>? isPreludeNameShadowed = null)
-        => dotCall.Target is Expr.Resolve { Name: "Math" }
-            && !(isPreludeNameShadowed?.Invoke("Math") ?? false)
-            && BuiltinRegistry.TryGetMathMemberFacts(dotCall.Name, out var facts)
+        => dotCall.TryGetRegistryProvenCanonicalMathFacts(isPreludeNameShadowed, out var facts)
+            && facts.HasStrictValueArguments;
+
+    /// <summary>
+    /// The alias-call twin of
+    /// <see cref="HasRegistryProvenStrictValueArguments(Expr.DotCall, Func{string, bool}?)"/>:
+    /// whether registry facts prove that this call's written arguments are strict
+    /// values, because its callee is an unshadowed Math prelude alias
+    /// (<see cref="TryGetRegistryProvenMathAliasFacts"/>) whose facts declare
+    /// strict-value arguments. Both twins read the SAME descriptor facts, so a
+    /// consumer classifying calls through this pair cannot drift between
+    /// <c>sin(...)</c> and <c>Math.Sin(...)</c>.
+    /// </summary>
+    internal static bool HasRegistryProvenStrictValueArguments(
+        this Expr.Call call,
+        Func<string, bool>? isPreludeNameShadowed = null)
+        => call.Function.TryGetRegistryProvenMathAliasFacts(isPreludeNameShadowed, out var facts)
             && facts.HasStrictValueArguments;
 
     /// <summary>

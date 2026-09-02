@@ -824,7 +824,6 @@ public class BudgetConservationTests
         var services = new SequencePipelineEvaluationServices(
             GetDotCallLexicalBuiltinFallbackReason: (_, _) => null,
             EvaluateDotReceiverIterationItems: _ => throw new InvalidOperationException("fault-injection"),
-            EvaluateSequenceIterationItems: _ => throw new Xunit.Sdk.XunitException("plain source must not run"),
             ResolveArgumentAlgorithms: _ => EvalResult<IReadOnlyList<Algorithm>>.Ok([predicate]),
             ResolveAlgorithm: _ => EvalResult<Algorithm>.Ok(new Algorithm.User(null, [], [], [], [])),
             EvaluateRangeCallArguments: (_, _, _) =>
@@ -882,7 +881,6 @@ public class BudgetConservationTests
             GetDotCallLexicalBuiltinFallbackReason: (_, _) => null,
             EvaluateDotReceiverIterationItems: _ =>
                 throw new Xunit.Sdk.XunitException("generic source must not run for a direct range"),
-            EvaluateSequenceIterationItems: _ => throw new Xunit.Sdk.XunitException("plain source must not run"),
             ResolveArgumentAlgorithms: _ => EvalResult<IReadOnlyList<Algorithm>>.Ok([predicate]),
             ResolveAlgorithm: _ => EvalResult<Algorithm>.Ok(new Algorithm.Builtin(BuiltinId.@range)),
             EvaluateRangeCallArguments: (_, _, _) => throw fault());
