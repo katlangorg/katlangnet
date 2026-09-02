@@ -58,10 +58,10 @@ public sealed class CliApplicationTests
 
     /// <summary>
     /// The release invariant behind the single reported number: one MSBuild
-    /// property (KatLangVersion, owned by KatLangVersion.props) drives both
-    /// this assembly's version and the KatLang PackageReference, so the CLI can
-    /// identify itself by the runtime it carries. A stale or mismatched package
-    /// desynchronizes the two assemblies and fails here.
+    /// property (KatLangVersion, owned by KatLangVersion.props) versions both
+    /// the CLI and the KatLang library, so the CLI can identify itself by the
+    /// runtime it carries. If either project stops reading that property, the
+    /// two assemblies desynchronize and this fails.
     /// </summary>
     [Fact]
     public void CliAssemblyVersion_EqualsTheLoadedKatLangRuntimeVersion()
@@ -74,12 +74,12 @@ public sealed class CliApplicationTests
     /// what the CLI actually reports.
     ///
     /// <para>The expectation is injected at compile time from KatLangVersion.props
-    /// - the same property that sets the KatLang package version and the CLI's
-    /// KatLang PackageReference - so a KatLang release moves one number and
-    /// lands here with nothing to restate. It is NOT read from the loaded
-    /// KatLang assembly, which is what keeps the comparison meaningful: when a
-    /// build resolves or copies a KatLang runtime older than the one it intends
-    /// to ship, the CLI reports that older number and this fails.</para>
+    /// - the same property that versions the KatLang library the CLI carries -
+    /// so a KatLang release moves one number and lands here with nothing to
+    /// restate. It is NOT read from the loaded KatLang assembly, which is what
+    /// keeps the comparison meaningful: whenever the runtime the process
+    /// actually loaded was built or copied from anything other than the
+    /// intended number, the CLI reports that other number and this fails.</para>
     /// </summary>
     [Fact]
     public async Task Version_ReportsTheCurrentlyShippedKatLangVersion()

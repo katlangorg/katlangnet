@@ -15,8 +15,8 @@
     compile time. It is what the CLI version test compares the running CLI's
     reported version against, and it deliberately does NOT come from the loaded
     KatLang assembly: the assertion is "what the build intended" vs "what the
-    process actually loaded", so a stale KatLang.dll or a PackageReference that
-    resolved to an older package still fails. Deriving the expectation from the
+    process actually loaded", so a KatLang.dll built or copied from anything
+    other than this number still fails. Deriving the expectation from the
     runtime would make that comparison self-fulfilling.
   -->
   <ItemGroup>
@@ -34,9 +34,10 @@
   </ItemGroup>
 
   <!--
-    Only the CLI is referenced. The KatLang package arrives transitively, which
-    keeps the tests honest about the integration boundary: they exercise the CLI
-    against exactly the published API surface the CLI itself consumes.
+    Only the CLI is referenced. KatLang arrives transitively, which keeps the
+    tests honest about the integration boundary: they exercise the CLI against
+    exactly the API surface the CLI itself consumes, with no direct handle on
+    KatLang that the CLI does not already have.
   -->
   <ItemGroup>
     <ProjectReference Include="..\..\KatLang.CLI\KatLang.CLI.csproj" />

@@ -10,7 +10,7 @@
 
       KatLangVersion.props
         src/KatLang/KatLang.csproj            package and assembly version
-        KatLang.CLI/KatLang.CLI.csproj        CLI assembly version, KatLang PackageReference
+        KatLang.CLI/KatLang.CLI.csproj        CLI assembly version
         tests/KatLang.CLI.Tests/*.csproj      IntendedKatLangVersion assembly metadata
 
     It is imported EXPLICITLY by exactly those three projects rather than
@@ -18,18 +18,21 @@
     and leaves the benchmarks, demo app, fuzz host, and library tests alone.
 
     Releasing is therefore: change the number here, pack src/KatLang, publish.
-    Because the CLI's PackageReference demands that package by version, a bump
-    that has not been published yet fails restore loudly instead of quietly
-    leaving the CLI on the previous runtime.
+    The CLI builds against the KatLang PROJECT, so it always carries the
+    runtime built from this same number and cannot drift onto a previously
+    published one.
   -->
   <PropertyGroup>
     <KatLangVersion>0.8.191</KatLangVersion>
   </PropertyGroup>
 
   <!--
-    A blanked out property would otherwise degrade quietly: the package would
-    fall back to the SDK's default version and the CLI test's build time
-    expectation would become an empty string.
+    A blanked out property would otherwise degrade quietly: every importer
+    would fall back to the SDK's default version and the CLI test's build time
+    expectation would become an empty string. This guard is the only build time
+    catch for that; a DROPPED import escapes it (the guard travels with the
+    file) and is caught instead by the CLI version test, which then sees the
+    SDK default rather than the intended version.
   -->
   <Target Name="ValidateKatLangVersion" BeforeTargets="BeforeBuild">
     <Error Condition="'$(KatLangVersion)' == ''"
