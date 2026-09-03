@@ -1,0 +1,12 @@
+# EditorConfig (https://editorconfig.org). Line endings are enforced by
+# .gitattributes (`* text=auto eol=lf`); this file makes editors create and
+# save LF files so the working tree never drifts from what git stores.
+root = true
+
+[*]
+end_of_line = lf
+
+# Parser fuzzing seed corpora keep their exact bytes (several deliberately
+# contain CRLF or lone CR) — an editor must never normalize them.
+[fuzz/KatLang.ParserFuzz/{Testcases,FrontendTestcases,EvaluatorTestcases}/**]
+end_of_line = unset

@@ -1,4 +1,11 @@
-# Scoped rules for the parser fuzzing harness (repo uses core.autocrlf=true).
+# Line-ending policy: every text file is stored in the index AND checked out
+# with LF on every platform, whatever a machine's core.autocrlf says. (The repo
+# used to rely on core.autocrlf=true, which left working trees with a mix of
+# CRLF, LF, and mixed-ending files.) Binary content is auto-detected and left
+# untouched.
+* text=auto eol=lf
+
+# Scoped rules for the parser fuzzing harness.
 # Seed corpus inputs must keep their EXACT bytes — several deliberately contain
 # CRLF or lone-CR to exercise the lexer's line counting — so never normalize them,
 # and accept CR at end of line in whitespace checks (`git diff --check`).
@@ -6,7 +13,12 @@ fuzz/KatLang.ParserFuzz/Testcases/** -text whitespace=cr-at-eol
 fuzz/KatLang.ParserFuzz/FrontendTestcases/** -text whitespace=cr-at-eol
 fuzz/KatLang.ParserFuzz/EvaluatorTestcases/** -text whitespace=cr-at-eol
 
-# The WSL runner and the libFuzzer dictionary are consumed inside Linux/WSL and
-# must stay LF regardless of the Windows checkout setting.
+# The WSL runner and the libFuzzer dictionary are consumed inside Linux/WSL.
+# The global rule already makes them LF; they stay explicit so the intent
+# survives any future change to that rule.
 fuzz/run-campaign.sh text eol=lf
 fuzz/katlang.dict     text eol=lf
+
+# This test source embeds literal NUL bytes (the UTF-16 lexer contract), which
+# makes git's auto-detection call it binary; keep it under the LF policy anyway.
+tests/KatLang.Tests/Utf16LexerContractTests.cs text eol=lf
