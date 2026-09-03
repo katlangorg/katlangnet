@@ -152,6 +152,17 @@ public class ContinuousIntegrationPolicyTests
 
         Assert.Equal(ReleaseRunners.Count, Regex.Matches(source, @"(?m)^          - rid:").Count);
         Assert.Contains("runs-on: ${{ matrix.runner }}", source, StringComparison.Ordinal);
+        Assert.Contains("fail-fast: false", source, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void CliProject_ScopesTheMacOsLinkerWorkaroundToX64()
+    {
+        var source = Text("KatLang.CLI/KatLang.CLI.csproj");
+        Assert.Matches(
+            @"(?s)<ItemGroup Condition=""'\$\(RuntimeIdentifier\)' == 'osx-x64'"">\s*<LinkerArg Include=""-Wl,-no_fixup_chains""\s*/>\s*</ItemGroup>",
+            source);
+        Assert.Single(Regex.Matches(source, @"<LinkerArg Include=""-Wl,-no_fixup_chains""\s*/>").Cast<Match>());
     }
 
     [Fact]

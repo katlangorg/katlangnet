@@ -131,7 +131,10 @@ jobs:
       - dotnet-validation
       - lean-validation
     strategy:
-      fail-fast: true
+      # Let every platform finish so one toolchain failure does not hide the
+      # status of another. The collect/publish dependency still makes release
+      # publication all-or-nothing.
+      fail-fast: false
       matrix:
         include:
           - rid: win-x64
