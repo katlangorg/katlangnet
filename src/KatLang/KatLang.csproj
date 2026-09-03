@@ -13,7 +13,8 @@
 		<Version>$(KatLangVersion)</Version>
 		<Authors>katlangorg</Authors>
 		<Company>Logics Research Centre SIA</Company>
-		<Copyright>Copyright © Logics Research Centre SIA and contributors</Copyright>
+		<Copyright>Copyright © Logics Research Centre SIA and Contributors</Copyright>
+		<Product>KatLang</Product>
 
 		<Description>KatLang is a domain-specific programming language for calculations. This package provides the core parser, evaluator, and semantic model.</Description>
 		<PackageTitle>KatLang</PackageTitle>

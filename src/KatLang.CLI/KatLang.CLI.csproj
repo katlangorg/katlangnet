@@ -17,6 +17,10 @@
     <IsPackable>false</IsPackable>
     <Version>$(KatLangVersion)</Version>
     <Description>Command-line interface for the KatLang language.</Description>
+
+	<Company>Logics Research Centre SIA</Company>
+	<Copyright>Copyright © Logics Research Centre SIA and Contributors</Copyright>
+	<Product>KatLang</Product>
   </PropertyGroup>
 	
   <PropertyGroup Condition="'$(Configuration)' == 'Release'">

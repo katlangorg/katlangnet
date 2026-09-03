@@ -130,7 +130,7 @@ Performance improvements.
 
 ## Authorship and Contributions
 
-KatLang is created and authored by Mikus Vanags and published by Logics Research Centre SIA. Contributions from the community are very welcome — whether through ideas, discussions, bug reports, documentation improvements, or code.
+KatLang is created and authored by Mikus Vanags and published by Logics Research Centre SIA. Copyright is held by Logics Research Centre SIA and Contributors: contributors keep the copyright in their contributions and license them under the MIT License, with no Contributor License Agreement required (see CONTRIBUTING.md). Contributions from the community are very welcome — whether through ideas, discussions, bug reports, documentation improvements, or code. The full list of contributors is at https://github.com/katlangorg/katlangnet/graphs/contributors.
 
 ## Feedback
 Contact Mikus Vanags: mikus.vanags@logicsresearchcentre.com
