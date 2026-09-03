@@ -245,21 +245,38 @@ jobs:
         run: |
           $publishDirectory = Join-Path $env:GITHUB_WORKSPACE "publish/$env:RID"
           $artifactDirectory = Join-Path $env:GITHUB_WORKSPACE 'release-artifact'
+          $packageDirectory = Join-Path $env:GITHUB_WORKSPACE "release-package/$env:RID"
           New-Item -ItemType Directory -Force -Path $artifactDirectory | Out-Null
+          New-Item -ItemType Directory -Force -Path $packageDirectory | Out-Null
           $archive = Join-Path $artifactDirectory "katlang-cli-$env:VERSION-$env:RID.$env:EXTENSION"
+          $legalFiles = @('LICENSE', 'NOTICE', 'PATENTS')
+          $executableName = if ($IsWindows) { 'katlang.exe' } else { 'katlang' }
+          $expectedEntries = @($executableName) + $legalFiles
+
+          foreach ($name in $expectedEntries) {
+              $source = if ($name -ceq $executableName) {
+                  Join-Path $publishDirectory $name
+              }
+              else {
+                  Join-Path $env:GITHUB_WORKSPACE $name
+              }
+              if (-not (Test-Path -LiteralPath $source -PathType Leaf) -or (Get-Item $source).Length -eq 0) {
+                  throw "Release package input is missing or empty: $source"
+              }
+              Copy-Item -LiteralPath $source -Destination (Join-Path $packageDirectory $name)
+          }
 
           if ($IsWindows) {
-              $executable = Join-Path $publishDirectory 'katlang.exe'
-              Compress-Archive -LiteralPath $executable -DestinationPath $archive -CompressionLevel Optimal
+              $archiveEntries = $expectedEntries | ForEach-Object { Join-Path $packageDirectory $_ }
+              Compress-Archive -LiteralPath $archiveEntries -DestinationPath $archive -CompressionLevel Optimal
               Add-Type -AssemblyName System.IO.Compression.FileSystem
               $zip = [System.IO.Compression.ZipFile]::OpenRead($archive)
               try {
-                  if ($zip.Entries.Count -ne 1) {
-                      throw "Archive must contain exactly one entry; found $($zip.Entries.Count)."
-                  }
-                  $entry = $zip.Entries[0]
-                  if ($entry.FullName -cne 'katlang.exe' -or $entry.Length -eq 0) {
-                      throw "Archive contains an unexpected entry: '$($entry.FullName)'."
+                  $actualEntries = @($zip.Entries | ForEach-Object FullName)
+                  foreach ($entry in $zip.Entries) {
+                      if ($entry.Length -eq 0) {
+                          throw "Archive contains an empty entry: '$($entry.FullName)'."
+                      }
                   }
               }
               finally {
@@ -267,19 +284,22 @@ jobs:
               }
           }
           else {
-              $executable = Join-Path $publishDirectory 'katlang'
+              $executable = Join-Path $packageDirectory $executableName
               & chmod 0755 $executable
               if ($LASTEXITCODE -ne 0) { throw 'Could not set the executable bit.' }
-              & tar -czf $archive -C $publishDirectory katlang
+              & tar -czf $archive -C $packageDirectory @expectedEntries
               if ($LASTEXITCODE -ne 0) { throw 'Could not create the tar archive.' }
-              $entries = @(& tar -tzf $archive)
-              if ($LASTEXITCODE -ne 0 -or $entries.Count -ne 1 -or $entries[0] -cne 'katlang') {
-                  throw "Archive must contain exactly one entry named katlang: $($entries -join ', ')"
-              }
+              $actualEntries = @(& tar -tzf $archive)
+              if ($LASTEXITCODE -ne 0) { throw 'Could not inspect the tar archive.' }
               $verboseEntry = (@(& tar -tvzf $archive) -join "`n")
               if ($LASTEXITCODE -ne 0 -or $verboseEntry -notmatch '^-rwxr-xr-x') {
                   throw "Archive did not preserve executable mode: $verboseEntry"
               }
+          }
+
+          $entryDifference = @(Compare-Object -ReferenceObject $expectedEntries -DifferenceObject $actualEntries)
+          if ($actualEntries.Count -ne $expectedEntries.Count -or $entryDifference.Count -ne 0) {
+              throw "Archive must contain exactly: $($expectedEntries -join ', '). Found: $($actualEntries -join ', ')."
           }
 
           if (-not (Test-Path -LiteralPath $archive -PathType Leaf) -or (Get-Item $archive).Length -eq 0) {
@@ -411,7 +431,7 @@ jobs:
           $notes = @(
               'KatLang command-line interface (CLI) for Windows, Linux, and macOS, available for x64 and ARM64.',
               '',
-              'Each archive contains a standalone executable; no .NET installation is required.',
+              'Each archive contains a standalone executable plus the LICENSE, NOTICE, and PATENTS files; no .NET installation is required.',
               '',
               'Verify downloads with the attached `SHA256SUMS` file.'
           )

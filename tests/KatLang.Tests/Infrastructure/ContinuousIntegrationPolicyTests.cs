@@ -191,11 +191,15 @@ public class ContinuousIntegrationPolicyTests
     }
 
     [Fact]
-    public void ReleaseWorkflow_PackagesOnlyTheUserFacingExecutable()
+    public void ReleaseWorkflow_PackagesTheExecutableAndLegalFiles()
     {
         var source = Text(ReleasePath);
-        Assert.Contains("$entry.FullName -cne 'katlang.exe'", source, StringComparison.Ordinal);
-        Assert.Contains("$entries.Count -ne 1 -or $entries[0] -cne 'katlang'", source, StringComparison.Ordinal);
+        Assert.Contains("$legalFiles = @('LICENSE', 'NOTICE', 'PATENTS')", source, StringComparison.Ordinal);
+        Assert.Contains("$expectedEntries = @($executableName) + $legalFiles", source, StringComparison.Ordinal);
+        Assert.Contains("Copy-Item -LiteralPath $source -Destination (Join-Path $packageDirectory $name)", source, StringComparison.Ordinal);
+        Assert.Contains("Compare-Object -ReferenceObject $expectedEntries -DifferenceObject $actualEntries", source, StringComparison.Ordinal);
+        Assert.Contains("$actualEntries.Count -ne $expectedEntries.Count", source, StringComparison.Ordinal);
+        Assert.Contains("$entry.Length -eq 0", source, StringComparison.Ordinal);
         Assert.Contains("$verboseEntry -notmatch '^-rwxr-xr-x'", source, StringComparison.Ordinal);
         Assert.DoesNotContain(".dbg", source, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain(".pdb", source, StringComparison.OrdinalIgnoreCase);
@@ -243,7 +247,7 @@ public class ContinuousIntegrationPolicyTests
         var source = Text(ReleasePath);
         Assert.Contains("--title \"KatLang.CLI $env:VERSION\"", source, StringComparison.Ordinal);
         Assert.Contains("KatLang command-line interface (CLI) for Windows, Linux, and macOS, available for x64 and ARM64.", source, StringComparison.Ordinal);
-        Assert.Contains("Each archive contains a standalone executable; no .NET installation is required.", source, StringComparison.Ordinal);
+        Assert.Contains("Each archive contains a standalone executable plus the LICENSE, NOTICE, and PATENTS files; no .NET installation is required.", source, StringComparison.Ordinal);
         Assert.DoesNotContain("NativeAOT command-line binaries", source, StringComparison.Ordinal);
     }
 

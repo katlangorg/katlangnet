@@ -186,8 +186,9 @@ Lean CoreTests now use `#guard` for semantic assertions, so a failing assertion 
   never publishes a release automatically.
 - The release workflow validates the exact dispatched commit, builds and runs
   the NativeAOT CLI on native Windows/Linux/macOS x64 and ARM64 runners,
-  packages the tested executable, collects all six archives, produces
-  `SHA256SUMS`, and only then creates the tag and publishes the GitHub Release.
+  packages the tested executable with the root `LICENSE`, `NOTICE`, and
+  `PATENTS` files, collects all six archives, produces `SHA256SUMS`, and only
+  then creates the tag and publishes the GitHub Release.
 - `KatLangVersion.props` remains authoritative. Workflow code must never pass
   an MSBuild version override, create/move an existing version tag, or replace
   an existing release.
