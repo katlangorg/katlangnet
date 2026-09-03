@@ -181,7 +181,7 @@ jobs:
         env:
           RID: ${{ matrix.rid }}
         run: |
-          dotnet publish ./KatLang.CLI/KatLang.CLI.csproj `
+          dotnet publish ./src/KatLang.CLI/KatLang.CLI.csproj `
               --configuration Release `
               --runtime $env:RID `
               --self-contained true `

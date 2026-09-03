@@ -10,7 +10,7 @@
 
       KatLangVersion.props
         src/KatLang/KatLang.csproj            package and assembly version
-        KatLang.CLI/KatLang.CLI.csproj        CLI assembly version
+        src/KatLang.CLI/KatLang.CLI.csproj    CLI assembly version
         tests/KatLang.CLI.Tests/*.csproj      IntendedKatLangVersion assembly metadata
 
     It is imported EXPLICITLY by exactly those three projects rather than

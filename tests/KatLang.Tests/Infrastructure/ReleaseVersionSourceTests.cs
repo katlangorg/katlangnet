@@ -34,7 +34,7 @@ public class ReleaseVersionSourceTests
     private static readonly string[] ShippedProjects =
     [
         "src/KatLang/KatLang.csproj",
-        "KatLang.CLI/KatLang.CLI.csproj",
+        "src/KatLang.CLI/KatLang.CLI.csproj",
     ];
 
     [Fact]
@@ -55,7 +55,7 @@ public class ReleaseVersionSourceTests
 
     [Theory]
     [InlineData("src/KatLang/KatLang.csproj")]
-    [InlineData("KatLang.CLI/KatLang.CLI.csproj")]
+    [InlineData("src/KatLang.CLI/KatLang.CLI.csproj")]
     [InlineData("tests/KatLang.CLI.Tests/KatLang.CLI.Tests.csproj")]
     public void EveryVersionedProject_ImportsThePropsAndDerivesEveryVersionPropertyFromIt(string relativePath)
     {
@@ -174,7 +174,7 @@ public class ReleaseVersionSourceTests
         Assert.Empty(packagePins);
         Assert.True(projectReferences >= 2, "expected at least the CLI and the library tests to reference the KatLang project");
 
-        var cli = Load("KatLang.CLI/KatLang.CLI.csproj");
+        var cli = Load("src/KatLang.CLI/KatLang.CLI.csproj");
         var cliKatLangReferences = cli.Descendants("ProjectReference")
             .Select(reference => (string?)reference.Attribute("Include") ?? "")
             .Where(path => path.EndsWith("KatLang.csproj", StringComparison.OrdinalIgnoreCase))

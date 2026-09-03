@@ -161,7 +161,7 @@ public class ContinuousIntegrationPolicyTests
     [Fact]
     public void CliProject_ScopesTheMacOsLinkerWorkaroundToX64()
     {
-        var source = Text("KatLang.CLI/KatLang.CLI.csproj");
+        var source = Text("src/KatLang.CLI/KatLang.CLI.csproj");
         Assert.Matches(
             @"(?s)<ItemGroup Condition=""'\$\(RuntimeIdentifier\)' == 'osx-x64'"">\s*<LinkerArg Include=""-Wl,-no_fixup_chains""\s*/>\s*</ItemGroup>",
             source);
@@ -172,7 +172,7 @@ public class ContinuousIntegrationPolicyTests
     public void ReleaseWorkflow_PublishesNativeAotWithoutOverridingVersion()
     {
         var source = Text(ReleasePath);
-        Assert.Contains("dotnet publish ./KatLang.CLI/KatLang.CLI.csproj", source, StringComparison.Ordinal);
+        Assert.Contains("dotnet publish ./src/KatLang.CLI/KatLang.CLI.csproj", source, StringComparison.Ordinal);
         Assert.Contains("--configuration Release", source, StringComparison.Ordinal);
         Assert.Contains("--runtime $env:RID", source, StringComparison.Ordinal);
         Assert.DoesNotContain("PublishAot=false", source, StringComparison.OrdinalIgnoreCase);
@@ -381,7 +381,7 @@ public class ContinuousIntegrationPolicyTests
     [Fact]
     public void CliProject_RenamesEveryReleaseOsButDoesNotPackage()
     {
-        var source = Text("KatLang.CLI/KatLang.CLI.csproj");
+        var source = Text("src/KatLang.CLI/KatLang.CLI.csproj");
         Assert.Contains("StartsWith('win-')", source, StringComparison.Ordinal);
         Assert.Contains("StartsWith('linux-')", source, StringComparison.Ordinal);
         Assert.Contains("StartsWith('osx-')", source, StringComparison.Ordinal);

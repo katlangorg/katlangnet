@@ -5,7 +5,7 @@
     is the command-line distribution of the KatLang runtime it carries, so this
     assembly's version IS that runtime's version, and both come from there.
   -->
-  <Import Project="..\KatLangVersion.props" />
+  <Import Project="..\..\KatLangVersion.props" />
 
   <PropertyGroup>
     <OutputType>Exe</OutputType>
@@ -50,7 +50,7 @@
       KatLang's InternalsVisibleTo list, so reaching for an internal would be a
       compile error until someone adds it there in a reviewable change.
     -->
-    <ProjectReference Include="..\src\KatLang\KatLang.csproj" />
+    <ProjectReference Include="..\KatLang\KatLang.csproj" />
   </ItemGroup>
 
 </Project>

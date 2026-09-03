@@ -40,7 +40,7 @@
     KatLang that the CLI does not already have.
   -->
   <ItemGroup>
-    <ProjectReference Include="..\..\KatLang.CLI\KatLang.CLI.csproj" />
+    <ProjectReference Include="..\..\src\KatLang.CLI\KatLang.CLI.csproj" />
   </ItemGroup>
 
 </Project>
