@@ -52,8 +52,8 @@ jobs:
           }
 
           $version = (& ./scripts/release-version.ps1 -RequestedVersion $env:REQUESTED_VERSION).Trim()
-          if ($LASTEXITCODE -ne 0) {
-              throw 'Version verification failed.'
+          if ($version -cne $env:REQUESTED_VERSION) {
+              throw "Version verification returned '$version', not '$env:REQUESTED_VERSION'."
           }
           $tag = "v$version"
 
@@ -375,7 +375,7 @@ jobs:
           VERSION: ${{ needs.verify.outputs.version }}
         run: |
           $repositoryVersion = (& ./scripts/release-version.ps1 -RequestedVersion $env:VERSION).Trim()
-          if ($LASTEXITCODE -ne 0 -or $repositoryVersion -cne $env:VERSION) {
+          if ($repositoryVersion -cne $env:VERSION) {
               throw 'Repository version changed or could not be verified in the publication job.'
           }
           if ((& git rev-parse HEAD).Trim() -cne $env:SOURCE_SHA) {

@@ -128,6 +128,9 @@ public class ContinuousIntegrationPolicyTests
     {
         var source = Text(ReleasePath);
         Assert.True(Regex.Matches(source, @"scripts/release-version\.ps1 -RequestedVersion").Count >= 2);
+        Assert.DoesNotMatch(@"(?m)release-version\.ps1[^\n]*\n\s*if \(\$LASTEXITCODE", source);
+        Assert.Contains("$version -cne $env:REQUESTED_VERSION", source, StringComparison.Ordinal);
+        Assert.Contains("$repositoryVersion -cne $env:VERSION", source, StringComparison.Ordinal);
         Assert.DoesNotMatch(@"(?i)(?:-|/)p:(?:Version|KatLangVersion)\s*=", source);
         Assert.DoesNotContain("--property:Version", source, StringComparison.OrdinalIgnoreCase);
     }
