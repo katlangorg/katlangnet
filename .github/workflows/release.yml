@@ -275,20 +275,82 @@ jobs:
                   -DestinationName $name
           }
 
-          if ([string]::IsNullOrWhiteSpace($env:DOTNET_ROOT) -or -not (Test-Path -LiteralPath $env:DOTNET_ROOT -PathType Container)) {
-              throw 'DOTNET_ROOT does not identify the repository-pinned SDK installed by setup-dotnet.'
+          $assetsPath = Join-Path $env:GITHUB_WORKSPACE 'src/KatLang.CLI/obj/project.assets.json'
+          if (-not (Test-Path -LiteralPath $assetsPath -PathType Leaf)) {
+              throw "Publish did not produce the dependency inventory: $assetsPath"
           }
-          $dotnetDistributionFiles = @(
-              [pscustomobject]@{ SourceName = 'LICENSE.txt'; DestinationName = 'DOTNET-LICENSE.TXT' },
-              [pscustomobject]@{ SourceName = 'ThirdPartyNotices.txt'; DestinationName = 'THIRD-PARTY-NOTICES.TXT' }
+          $assets = Get-Content -LiteralPath $assetsPath -Raw | ConvertFrom-Json
+          $downloadDependencies = @(
+              $assets.project.frameworks.PSObject.Properties |
+                  ForEach-Object { @($_.Value.downloadDependencies) }
           )
-          foreach ($file in $dotnetDistributionFiles) {
-              $matches = @(Get-ChildItem -LiteralPath $env:DOTNET_ROOT -File | Where-Object Name -IEQ $file.SourceName)
+          $packageFolders = @($assets.packageFolders.PSObject.Properties | ForEach-Object Name)
+
+          function Get-ExactDownloadDependencyVersion {
+              param([Parameter(Mandatory)] [string] $PackageId)
+
+              $matches = @($downloadDependencies | Where-Object name -IEQ $PackageId)
               if ($matches.Count -ne 1) {
-                  throw "Expected exactly one '$($file.SourceName)' in DOTNET_ROOT; found $($matches.Count)."
+                  throw "Expected exactly one '$PackageId' download dependency; found $($matches.Count)."
               }
-              Copy-RequiredPackageFile -Source $matches[0].FullName -DestinationName $file.DestinationName
+              $bounds = @(([string]$matches[0].version).Trim('[', ']').Split(',') | ForEach-Object { $_.Trim() })
+              if ($bounds.Count -ne 2 -or [string]::IsNullOrWhiteSpace($bounds[0]) -or $bounds[0] -cne $bounds[1]) {
+                  throw "Download dependency '$PackageId' does not have one exact version: '$($matches[0].version)'."
+              }
+              return $bounds[0]
           }
+
+          function Get-RestoredPackageDirectory {
+              param(
+                  [Parameter(Mandatory)] [string] $PackageId,
+                  [Parameter(Mandatory)] [string] $Version
+              )
+
+              $normalizedPackageId = $PackageId.ToLowerInvariant()
+              $normalizedVersion = $Version.ToLowerInvariant()
+              $relativePath = Join-Path $normalizedPackageId $normalizedVersion
+              $matches = @(
+                  $packageFolders |
+                      ForEach-Object { Join-Path $_ $relativePath } |
+                      Where-Object { Test-Path -LiteralPath $_ -PathType Container }
+              )
+              if ($matches.Count -ne 1) {
+                  throw "Expected exactly one restored '$PackageId/$Version' directory; found $($matches.Count)."
+              }
+              return $matches[0]
+          }
+
+          function Get-RequiredPackageFile {
+              param(
+                  [Parameter(Mandatory)] [string] $PackageDirectory,
+                  [Parameter(Mandatory)] [string] $FileName
+              )
+
+              $matches = @(Get-ChildItem -LiteralPath $PackageDirectory -File | Where-Object Name -IEQ $FileName)
+              if ($matches.Count -ne 1 -or $matches[0].Length -eq 0) {
+                  throw "Expected one non-empty '$FileName' in '$PackageDirectory'; found $($matches.Count)."
+              }
+              return $matches[0].FullName
+          }
+
+          $runtimePackId = "Microsoft.NETCore.App.Runtime.$env:RID"
+          $compilerPackId = "runtime.$env:RID.Microsoft.DotNet.ILCompiler"
+          $runtimePackVersion = Get-ExactDownloadDependencyVersion -PackageId $runtimePackId
+          $compilerPackVersion = Get-ExactDownloadDependencyVersion -PackageId $compilerPackId
+          $runtimePackDirectory = Get-RestoredPackageDirectory -PackageId $runtimePackId -Version $runtimePackVersion
+          $compilerPackDirectory = Get-RestoredPackageDirectory -PackageId $compilerPackId -Version $compilerPackVersion
+          $runtimeLicense = Get-RequiredPackageFile -PackageDirectory $runtimePackDirectory -FileName 'LICENSE.TXT'
+          $runtimeNotices = Get-RequiredPackageFile -PackageDirectory $runtimePackDirectory -FileName 'THIRD-PARTY-NOTICES.TXT'
+          $compilerNotices = Get-RequiredPackageFile -PackageDirectory $compilerPackDirectory -FileName 'THIRD-PARTY-NOTICES.TXT'
+
+          $runtimeNoticeHash = (Get-FileHash -LiteralPath $runtimeNotices -Algorithm SHA256).Hash
+          $compilerNoticeHash = (Get-FileHash -LiteralPath $compilerNotices -Algorithm SHA256).Hash
+          if ($runtimeNoticeHash -cne $compilerNoticeHash) {
+              throw "Runtime and ILCompiler third-party notices disagree for $env:RID."
+          }
+
+          Copy-RequiredPackageFile -Source $runtimeLicense -DestinationName 'DOTNET-LICENSE.TXT'
+          Copy-RequiredPackageFile -Source $runtimeNotices -DestinationName 'THIRD-PARTY-NOTICES.TXT'
 
           if ($IsWindows) {
               $archiveEntries = $expectedEntries | ForEach-Object { Join-Path $packageDirectory $_ }
