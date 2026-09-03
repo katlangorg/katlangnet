@@ -249,21 +249,45 @@ jobs:
           New-Item -ItemType Directory -Force -Path $artifactDirectory | Out-Null
           New-Item -ItemType Directory -Force -Path $packageDirectory | Out-Null
           $archive = Join-Path $artifactDirectory "katlang-cli-$env:VERSION-$env:RID.$env:EXTENSION"
-          $legalFiles = @('LICENSE', 'NOTICE', 'PATENTS')
+          $repositoryLegalFiles = @('LICENSE', 'NOTICE', 'PATENTS')
+          $dotnetLegalFiles = @('DOTNET-LICENSE.TXT', 'THIRD-PARTY-NOTICES.TXT')
           $executableName = if ($IsWindows) { 'katlang.exe' } else { 'katlang' }
-          $expectedEntries = @($executableName) + $legalFiles
+          $expectedEntries = @($executableName) + $repositoryLegalFiles + $dotnetLegalFiles
 
-          foreach ($name in $expectedEntries) {
-              $source = if ($name -ceq $executableName) {
-                  Join-Path $publishDirectory $name
+          function Copy-RequiredPackageFile {
+              param(
+                  [Parameter(Mandatory)] [string] $Source,
+                  [Parameter(Mandatory)] [string] $DestinationName
+              )
+
+              if (-not (Test-Path -LiteralPath $Source -PathType Leaf) -or (Get-Item $Source).Length -eq 0) {
+                  throw "Release package input is missing or empty: $Source"
               }
-              else {
-                  Join-Path $env:GITHUB_WORKSPACE $name
+              Copy-Item -LiteralPath $Source -Destination (Join-Path $packageDirectory $DestinationName)
+          }
+
+          Copy-RequiredPackageFile `
+              -Source (Join-Path $publishDirectory $executableName) `
+              -DestinationName $executableName
+          foreach ($name in $repositoryLegalFiles) {
+              Copy-RequiredPackageFile `
+                  -Source (Join-Path $env:GITHUB_WORKSPACE $name) `
+                  -DestinationName $name
+          }
+
+          if ([string]::IsNullOrWhiteSpace($env:DOTNET_ROOT) -or -not (Test-Path -LiteralPath $env:DOTNET_ROOT -PathType Container)) {
+              throw 'DOTNET_ROOT does not identify the repository-pinned SDK installed by setup-dotnet.'
+          }
+          $dotnetDistributionFiles = @(
+              [pscustomobject]@{ SourceName = 'LICENSE.txt'; DestinationName = 'DOTNET-LICENSE.TXT' },
+              [pscustomobject]@{ SourceName = 'ThirdPartyNotices.txt'; DestinationName = 'THIRD-PARTY-NOTICES.TXT' }
+          )
+          foreach ($file in $dotnetDistributionFiles) {
+              $matches = @(Get-ChildItem -LiteralPath $env:DOTNET_ROOT -File | Where-Object Name -IEQ $file.SourceName)
+              if ($matches.Count -ne 1) {
+                  throw "Expected exactly one '$($file.SourceName)' in DOTNET_ROOT; found $($matches.Count)."
               }
-              if (-not (Test-Path -LiteralPath $source -PathType Leaf) -or (Get-Item $source).Length -eq 0) {
-                  throw "Release package input is missing or empty: $source"
-              }
-              Copy-Item -LiteralPath $source -Destination (Join-Path $packageDirectory $name)
+              Copy-RequiredPackageFile -Source $matches[0].FullName -DestinationName $file.DestinationName
           }
 
           if ($IsWindows) {
@@ -431,7 +455,7 @@ jobs:
           $notes = @(
               'KatLang command-line interface (CLI) for Windows, Linux, and macOS, available for x64 and ARM64.',
               '',
-              'Each archive contains a standalone executable plus the LICENSE, NOTICE, and PATENTS files; no .NET installation is required.',
+              'Each archive contains a standalone executable, KatLang licensing files, and the .NET license and third-party notices; no .NET installation is required.',
               '',
               'Verify downloads with the attached `SHA256SUMS` file.'
           )

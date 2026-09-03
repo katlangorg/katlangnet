@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using System.Xml.Linq;
 
 namespace KatLang.Tests.Infrastructure;
 
@@ -194,15 +195,34 @@ public class ContinuousIntegrationPolicyTests
     public void ReleaseWorkflow_PackagesTheExecutableAndLegalFiles()
     {
         var source = Text(ReleasePath);
-        Assert.Contains("$legalFiles = @('LICENSE', 'NOTICE', 'PATENTS')", source, StringComparison.Ordinal);
-        Assert.Contains("$expectedEntries = @($executableName) + $legalFiles", source, StringComparison.Ordinal);
-        Assert.Contains("Copy-Item -LiteralPath $source -Destination (Join-Path $packageDirectory $name)", source, StringComparison.Ordinal);
+        Assert.Contains("$repositoryLegalFiles = @('LICENSE', 'NOTICE', 'PATENTS')", source, StringComparison.Ordinal);
+        Assert.Contains("$dotnetLegalFiles = @('DOTNET-LICENSE.TXT', 'THIRD-PARTY-NOTICES.TXT')", source, StringComparison.Ordinal);
+        Assert.Contains("$expectedEntries = @($executableName) + $repositoryLegalFiles + $dotnetLegalFiles", source, StringComparison.Ordinal);
+        Assert.Contains("SourceName = 'LICENSE.txt'; DestinationName = 'DOTNET-LICENSE.TXT'", source, StringComparison.Ordinal);
+        Assert.Contains("SourceName = 'ThirdPartyNotices.txt'; DestinationName = 'THIRD-PARTY-NOTICES.TXT'", source, StringComparison.Ordinal);
+        Assert.Contains("Get-ChildItem -LiteralPath $env:DOTNET_ROOT -File", source, StringComparison.Ordinal);
+        Assert.Contains("Copy-Item -LiteralPath $Source -Destination (Join-Path $packageDirectory $DestinationName)", source, StringComparison.Ordinal);
         Assert.Contains("Compare-Object -ReferenceObject $expectedEntries -DifferenceObject $actualEntries", source, StringComparison.Ordinal);
         Assert.Contains("$actualEntries.Count -ne $expectedEntries.Count", source, StringComparison.Ordinal);
         Assert.Contains("$entry.Length -eq 0", source, StringComparison.Ordinal);
         Assert.Contains("$verboseEntry -notmatch '^-rwxr-xr-x'", source, StringComparison.Ordinal);
         Assert.DoesNotContain(".dbg", source, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain(".pdb", source, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Theory]
+    [InlineData("src/KatLang/KatLang.csproj")]
+    [InlineData("src/KatLang.CLI/KatLang.CLI.csproj")]
+    public void ReleaseNoticeInventory_HasNoUnreviewedProductNuGetDependencies(string project)
+    {
+        var document = XDocument.Parse(Text(project));
+        var packageReferences = document
+            .Descendants()
+            .Where(element => element.Name.LocalName == "PackageReference")
+            .Select(element => (string?)element.Attribute("Include") ?? element.ToString())
+            .ToArray();
+
+        Assert.Empty(packageReferences);
     }
 
     [Fact]
@@ -247,7 +267,7 @@ public class ContinuousIntegrationPolicyTests
         var source = Text(ReleasePath);
         Assert.Contains("--title \"KatLang.CLI $env:VERSION\"", source, StringComparison.Ordinal);
         Assert.Contains("KatLang command-line interface (CLI) for Windows, Linux, and macOS, available for x64 and ARM64.", source, StringComparison.Ordinal);
-        Assert.Contains("Each archive contains a standalone executable plus the LICENSE, NOTICE, and PATENTS files; no .NET installation is required.", source, StringComparison.Ordinal);
+        Assert.Contains("Each archive contains a standalone executable, KatLang licensing files, and the .NET license and third-party notices; no .NET installation is required.", source, StringComparison.Ordinal);
         Assert.DoesNotContain("NativeAOT command-line binaries", source, StringComparison.Ordinal);
     }
 
