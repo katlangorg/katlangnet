@@ -251,8 +251,9 @@ jobs:
           $archive = Join-Path $artifactDirectory "katlang-cli-$env:VERSION-$env:RID.$env:EXTENSION"
           $repositoryLegalFiles = @('LICENSE', 'NOTICE', 'PATENTS')
           $dotnetLegalFiles = @('DOTNET-LICENSE.TXT', 'THIRD-PARTY-NOTICES.TXT')
+          $textFileNames = $repositoryLegalFiles + $dotnetLegalFiles
           $executableName = if ($IsWindows) { 'katlang.exe' } else { 'katlang' }
-          $expectedEntries = @($executableName) + $repositoryLegalFiles + $dotnetLegalFiles
+          $expectedEntries = @($executableName) + $textFileNames
 
           function Copy-RequiredPackageFile {
               param(
@@ -373,13 +374,26 @@ jobs:
               $executable = Join-Path $packageDirectory $executableName
               & chmod 0755 $executable
               if ($LASTEXITCODE -ne 0) { throw 'Could not set the executable bit.' }
+              foreach ($name in $textFileNames) {
+                  $textFile = Join-Path $packageDirectory $name
+                  & chmod 0644 $textFile
+                  if ($LASTEXITCODE -ne 0) {
+                      throw "Could not normalize release text-file mode: $textFile"
+                  }
+              }
               & tar -czf $archive -C $packageDirectory @expectedEntries
               if ($LASTEXITCODE -ne 0) { throw 'Could not create the tar archive.' }
               $actualEntries = @(& tar -tzf $archive)
               if ($LASTEXITCODE -ne 0) { throw 'Could not inspect the tar archive.' }
-              $verboseEntry = (@(& tar -tvzf $archive) -join "`n")
-              if ($LASTEXITCODE -ne 0 -or $verboseEntry -notmatch '^-rwxr-xr-x') {
-                  throw "Archive did not preserve executable mode: $verboseEntry"
+              $verboseExecutableEntry = (@(& tar -tvzf $archive $executableName) -join "`n")
+              if ($LASTEXITCODE -ne 0 -or $verboseExecutableEntry -notmatch '^-rwxr-xr-x') {
+                  throw "Archive did not preserve executable mode: $verboseExecutableEntry"
+              }
+              foreach ($name in $textFileNames) {
+                  $verboseTextEntry = (@(& tar -tvzf $archive $name) -join "`n")
+                  if ($LASTEXITCODE -ne 0 -or $verboseTextEntry -notmatch '^-rw-r--r--') {
+                      throw "Archive did not preserve text-file mode for '$name': $verboseTextEntry"
+                  }
               }
           }
 

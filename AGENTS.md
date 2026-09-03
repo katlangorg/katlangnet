@@ -193,7 +193,8 @@ Lean CoreTests now use `#guard` for semantic assertions, so a failing assertion 
   Runtime/ILCompiler pack identities and versions come from the publish output's
   `project.assets.json`, never from the machine-wide SDK root. The shipped
   projects currently have no external `PackageReference`; adding one requires
-  explicit release-notice review and an update to the pinned CI policy.
+  explicit release-notice review and an update to the pinned CI policy. Unix
+  archives store the CLI as mode `0755` and every text document as mode `0644`.
 - `KatLangVersion.props` remains authoritative. Workflow code must never pass
   an MSBuild version override, create/move an existing version tag, or replace
   an existing release.

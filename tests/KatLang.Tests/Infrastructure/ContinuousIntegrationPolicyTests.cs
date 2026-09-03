@@ -197,7 +197,8 @@ public class ContinuousIntegrationPolicyTests
         var source = Text(ReleasePath);
         Assert.Contains("$repositoryLegalFiles = @('LICENSE', 'NOTICE', 'PATENTS')", source, StringComparison.Ordinal);
         Assert.Contains("$dotnetLegalFiles = @('DOTNET-LICENSE.TXT', 'THIRD-PARTY-NOTICES.TXT')", source, StringComparison.Ordinal);
-        Assert.Contains("$expectedEntries = @($executableName) + $repositoryLegalFiles + $dotnetLegalFiles", source, StringComparison.Ordinal);
+        Assert.Contains("$textFileNames = $repositoryLegalFiles + $dotnetLegalFiles", source, StringComparison.Ordinal);
+        Assert.Contains("$expectedEntries = @($executableName) + $textFileNames", source, StringComparison.Ordinal);
         Assert.Contains("src/KatLang.CLI/obj/project.assets.json", source, StringComparison.Ordinal);
         Assert.Contains("$assets.project.frameworks.PSObject.Properties", source, StringComparison.Ordinal);
         Assert.Contains("$runtimePackId = \"Microsoft.NETCore.App.Runtime.$env:RID\"", source, StringComparison.Ordinal);
@@ -212,7 +213,11 @@ public class ContinuousIntegrationPolicyTests
         Assert.Contains("Compare-Object -ReferenceObject $expectedEntries -DifferenceObject $actualEntries", source, StringComparison.Ordinal);
         Assert.Contains("$actualEntries.Count -ne $expectedEntries.Count", source, StringComparison.Ordinal);
         Assert.Contains("$entry.Length -eq 0", source, StringComparison.Ordinal);
-        Assert.Contains("$verboseEntry -notmatch '^-rwxr-xr-x'", source, StringComparison.Ordinal);
+        Assert.Contains("& chmod 0755 $executable", source, StringComparison.Ordinal);
+        Assert.Contains("& chmod 0644 $textFile", source, StringComparison.Ordinal);
+        Assert.True(Regex.Matches(source, @"foreach \(\$name in \$textFileNames\)").Count >= 2);
+        Assert.Contains("$verboseExecutableEntry -notmatch '^-rwxr-xr-x'", source, StringComparison.Ordinal);
+        Assert.Contains("$verboseTextEntry -notmatch '^-rw-r--r--'", source, StringComparison.Ordinal);
         Assert.DoesNotContain(".dbg", source, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain(".pdb", source, StringComparison.OrdinalIgnoreCase);
     }
