@@ -307,7 +307,7 @@ public class LifetimeDifferentialTests
         Assert.DoesNotContain(secondDiagnostics, d => d.Severity == DiagnosticSeverity.Error);
 
         // One download total: the second call was a cache hit on the same scope.
-        Assert.Equal(1, host.DownloadLog.Count);
+        Assert.Single(host.DownloadLog);
         Assert.Equal(FinishPipelineNeutral(first), FinishPipelineNeutral(second));
 
         // A FRESH loader (the per-run production boundary) sees the new content.
@@ -347,7 +347,7 @@ public class LifetimeDifferentialTests
 
         var (_, callDiagnostics) = ElaborateWith(loader, diagnostics, LifetimeDifferentialCorpus.TargetRepeatedImport);
         Assert.DoesNotContain(callDiagnostics, d => d.Severity == DiagnosticSeverity.Error);
-        Assert.Equal(1, host.DownloadLog.Count);
+        Assert.Single(host.DownloadLog);
     }
 
     /// <summary>
@@ -364,7 +364,7 @@ public class LifetimeDifferentialTests
         var (_, aliasCallDiagnostics) = ElaborateWith(
             aliasLoader, aliasDiagnostics, LifetimeDifferentialCorpus.TargetDotSegmentAlias);
         Assert.DoesNotContain(aliasCallDiagnostics, d => d.Severity == DiagnosticSeverity.Error);
-        Assert.Equal(1, aliasHost.DownloadLog.Count);
+        Assert.Single(aliasHost.DownloadLog);
         Assert.Equal(LifetimeDifferentialCorpus.UrlI1, aliasHost.DownloadLog[0]);
 
         var hostCaseHost = new LifetimeModuleHost(
@@ -374,7 +374,7 @@ public class LifetimeDifferentialTests
         var (_, hostCaseCallDiagnostics) = ElaborateWith(
             hostCaseLoader, hostCaseDiagnostics, LifetimeDifferentialCorpus.TargetHostCaseAlias);
         Assert.DoesNotContain(hostCaseCallDiagnostics, d => d.Severity == DiagnosticSeverity.Error);
-        Assert.Equal(1, hostCaseHost.DownloadLog.Count);
+        Assert.Single(hostCaseHost.DownloadLog);
 
         var pathCaseHost = new LifetimeModuleHost(
             (LifetimeDifferentialCorpus.UrlI3Upper, LifetimeDifferentialCorpus.ModuleI3Upper),
