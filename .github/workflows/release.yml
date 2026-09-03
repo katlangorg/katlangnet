@@ -409,9 +409,10 @@ jobs:
 
           $notesPath = Join-Path $env:RUNNER_TEMP 'release-notes.md'
           $notes = @(
-              "KatLang $env:VERSION",
+              'KatLang command-line interface (CLI) for Windows, Linux, and macOS, available for x64 and ARM64.',
               '',
-              'NativeAOT command-line binaries for Windows, Linux, and macOS on x64 and ARM64.',
+              'Each archive contains a standalone executable; no .NET installation is required.',
+              '',
               'Verify downloads with the attached `SHA256SUMS` file.'
           )
           Set-Content -LiteralPath $notesPath -Value $notes -Encoding utf8NoBOM
@@ -420,7 +421,7 @@ jobs:
           & gh release create $env:TAG `
               --repo $env:REPOSITORY `
               --target $env:SOURCE_SHA `
-              --title "KatLang $env:VERSION" `
+              --title "KatLang.CLI $env:VERSION" `
               --notes-file $notesPath `
               --draft `
               @assets

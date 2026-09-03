@@ -238,6 +238,16 @@ public class ContinuousIntegrationPolicyTests
     }
 
     [Fact]
+    public void ReleaseWorkflow_UsesUserFacingCliMetadata()
+    {
+        var source = Text(ReleasePath);
+        Assert.Contains("--title \"KatLang.CLI $env:VERSION\"", source, StringComparison.Ordinal);
+        Assert.Contains("KatLang command-line interface (CLI) for Windows, Linux, and macOS, available for x64 and ARM64.", source, StringComparison.Ordinal);
+        Assert.Contains("Each archive contains a standalone executable; no .NET installation is required.", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("NativeAOT command-line binaries", source, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void ReleaseWorkflow_RefusesExistingVersionsBeforeAndAfterBuilds()
     {
         var source = Text(ReleasePath);
