@@ -1552,33 +1552,36 @@ public class MetamorphicPhase3FamilyTests
 
     /// <summary>
     /// The isolation fingerprint carries no scheduling-dependent data: no thread or process id, no
-    /// task index, no completion order, no timing, no hash code. Checked positively — the current
-    /// thread's own id must not appear — as well as by name.
+    /// task index, no completion order, no timing, no hash code. Field names are checked rather
+    /// than raw numeric values because a legitimate count can equal a runner-assigned id.
     /// </summary>
     [Fact]
     public void IsolationFingerprints_ContainNoSchedulingDependentData()
     {
         var fingerprint = IsolationFingerprint(source: 0, dimension: 3, ParallelIsolationByte);
 
-        // The word "thread" legitimately appears in the run-plan LABEL, which describes the plan
-        // rather than any particular thread. What may never appear is an identity or a duration.
-        foreach (var forbidden in new[]
+        var fieldNames = fingerprint.Split('|').Select(field =>
+        {
+            var separator = field.IndexOf('=');
+            Assert.True(separator > 0, $"Malformed fingerprint field: '{field}'.");
+            return field[..separator];
+        }).ToArray();
+
+        // The word "thread" legitimately appears in the run-plan VALUE, which describes the plan.
+        // Scheduling-dependent data would require a field of its own; inspecting names avoids
+        // confusing an ordinary count such as itemTotal=12 with managed thread id 12.
+        foreach (var forbiddenFieldNamePart in new[]
                  {
-                     "threadId", "ThreadId", "managedThread", "processId", "ProcessId",
-                     "completion", "schedule", "elapsed", "Elapsed", "Ticks", "HashCode", "@0",
+                     "thread", "process", "task", "completion", "schedule", "elapsed", "duration",
+                     "tick", "hash", "timestamp",
                  })
         {
-            Assert.DoesNotContain(forbidden, fingerprint, StringComparison.Ordinal);
+            Assert.DoesNotContain(
+                fieldNames,
+                name => name.Contains(forbiddenFieldNamePart, StringComparison.OrdinalIgnoreCase));
         }
 
-        Assert.DoesNotContain(
-            "=" + Environment.CurrentManagedThreadId.ToString(CultureInfo.InvariantCulture) + "|",
-            fingerprint,
-            StringComparison.Ordinal);
-        Assert.DoesNotContain(
-            "=" + Environment.ProcessId.ToString(CultureInfo.InvariantCulture) + "|",
-            fingerprint,
-            StringComparison.Ordinal);
+        Assert.DoesNotContain("@0", fingerprint, StringComparison.Ordinal);
 
         // The run plan is named for what it does, and the name is part of the recorded shape.
         Assert.Contains("runPlan=threads-4-ordered", fingerprint, StringComparison.Ordinal);
