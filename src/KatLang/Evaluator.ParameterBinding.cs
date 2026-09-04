@@ -606,12 +606,21 @@ public static partial class Evaluator
     /// contributes its explicit written slots. Algorithm-shaped groupings reach
     /// it after pushing their own scope; a <see cref="Expr.Capture"/> body
     /// reaches it directly (captures own no scope).
+    ///
+    /// <para>Carries the structural-nesting stack backstop (mirrored verbatim by the
+    /// async twin <see cref="EvalExplicitSequenceValueRowSlotsAsync"/>; rationale on
+    /// <see cref="EvalOutputRowsPreparedCore"/>): nested written groups recurse through
+    /// this family without touching the ordinary dispatch or any invocation
+    /// chokepoint, so the probe fires once per nesting level here too.</para>
     /// </summary>
     private static EvalResult<IReadOnlyList<Result>> EvalExplicitSequenceValueRowSlots(
         IReadOnlyList<Expr> rows,
         EvalCtx rowCtx,
         IReadOnlyList<(string, Result)> valEnv)
     {
+        if (!RuntimeHelpers.TryEnsureSufficientExecutionStack())
+            return new EvalError.EvaluationStackExhausted();
+
         var slots = new List<Result>();
         foreach (var expr in rows)
         {

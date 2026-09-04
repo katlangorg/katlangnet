@@ -130,6 +130,15 @@ stop a run EARLIER than a physical overflow, never change a completing run, and 
 moves no budget counter. The synchronous path deliberately keeps its calibrated
 no-per-node-probe policy — unchanged.
 
+> **Update 2026-09-04 (audit finding K2-R1).** The same two funnels on the SYNCHRONOUS
+> family (`EvalOutputRowsPreparedCore`, `EvalExplicitSequenceValueRowSlots`) now carry the
+> identical probe: static nesting multiplied by dynamic recursion descended uncharged
+> between two chokepoint probes and overflowed the process on a 1 MiB thread (the 90-byte
+> `F(n) = {×30 F(n - 1) }×30` program) where this twin-only backstop already returned the
+> structured error. The per-node policy is still unchanged — the probe is per row loop —
+> and the twin may still stop earlier than the synchronous family on the same program. See
+> `SEMANTIC-ALIGNMENT.md` (Depth note) and `StructuralNestingStackBackstopProcessTests`.
+
 ### Measured synchronous-completion stack capacity (1 MiB thread, `--async-stack-capacity`)
 
 Largest recursion request completing without the structured stack backstop

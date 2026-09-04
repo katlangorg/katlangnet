@@ -1070,15 +1070,16 @@ public static partial class Evaluator
     }
 
     /// <summary>
-    /// MIRROR OF <see cref="EvalOutputRowsPreparedCore"/> — keep in lock-step, except
-    /// for the twin-only STRUCTURAL-NESTING STACK BACKSTOP at the head: nested
-    /// algorithm/capture bodies recurse through async state-machine frames that are
-    /// larger than their synchronous counterparts, and this chain passes no invocation
-    /// chokepoint (structural nesting charges no dynamic depth), so the synchronous
-    /// family's shape calibration does not transfer. The probe converts an outgrowing
-    /// chain into the established structured error; like the invocation-chokepoint
-    /// probe it can only stop evaluation EARLIER than a physical overflow, never change
-    /// a run that has host stack headroom, and it moves no budget counter.
+    /// MIRROR OF <see cref="EvalOutputRowsPreparedCore"/> — keep in lock-step, INCLUDING
+    /// the STRUCTURAL-NESTING STACK BACKSTOP at the head, which both families carry
+    /// (rationale on the synchronous funnel: static nesting multiplied by dynamic
+    /// recursion descends uncharged between two chokepoint probes). The twin needed it
+    /// first because its async state-machine frames are larger than the calibrated
+    /// synchronous frames, so this probe may stop a chain EARLIER than the synchronous
+    /// one does on the same program; like the invocation-chokepoint probe it can only
+    /// stop evaluation earlier than a physical overflow with the established structured
+    /// error, never change a run that has host stack headroom, and it moves no budget
+    /// counter.
     /// </summary>
     private static async ValueTask<EvalResult<PreparedAlgorithmOutput>> EvalOutputRowsPreparedCoreAsync(
         IReadOnlyList<Expr> rows,
@@ -1254,7 +1255,7 @@ public static partial class Evaluator
 
     /// <summary>
     /// MIRROR OF <see cref="EvalExplicitSequenceValueRowSlots"/> — keep in lock-step,
-    /// plus the twin-only structural-nesting stack backstop (see
+    /// INCLUDING the structural-nesting stack backstop both families carry (see
     /// <see cref="EvalOutputRowsPreparedCoreAsync"/>): nested written groups recurse
     /// through this family without touching the ordinary dispatch or any invocation
     /// chokepoint.

@@ -450,7 +450,11 @@ public static partial class Evaluator
         // is calibrated against. Deliberately NO TryEnsureSufficientExecutionStack
         // probe here: the CLR probe reserves roughly half of a 1 MiB stack, so a
         // per-node probe rejects deep parser-produced programs that complete fine
-        // today (measured: a 288-level bracket nesting).
+        // today (measured: a 288-level bracket nesting). The structural-nesting
+        // backstop lives instead at the two per-nesting-level row-loop funnels
+        // (EvalOutputRowsPreparedCore, EvalExplicitSequenceValueRowSlots and their
+        // async twins), where static nesting multiplied by dynamic recursion
+        // would otherwise descend uncharged between two chokepoint probes.
         // Bulk pathological-work bound (see TryChargeExpressionNodeWork).
         if (ctx.Budget.TryChargeExpressionNodeWork() is { } nodeWorkError)
             return nodeWorkError;

@@ -746,6 +746,24 @@ public static partial class Evaluator
     /// evaluation reaches it directly with the surrounding context, because a
     /// capture owns no scope. Both receivers therefore share exactly the same
     /// supply semantics rather than duplicating them.
+    ///
+    /// <para><b>Structural-nesting stack backstop</b> (mirrored verbatim by the async
+    /// twin <see cref="EvalOutputRowsPreparedCoreAsync"/>): nested brace and capture
+    /// bodies recurse through this funnel WITHOUT crossing any invocation chokepoint
+    /// (structural nesting charges no dynamic depth), and the static preflight bounds
+    /// only the written nesting of ONE body. Dynamic recursion multiplies that bound:
+    /// each recursion level crosses one charged, probing chokepoint and then descends
+    /// its whole written nesting uncharged, so a body nested wider than the
+    /// chokepoint probe's reserve overflowed the process stack BETWEEN two probes — the
+    /// next chokepoint noticed exhaustion with no stack left to build the structured
+    /// error (audit finding K2-R1, September 2026). Probing once per row loop, i.e.
+    /// once per nesting level, bounds the uncharged descent between two probes to a
+    /// single level of frames. This is NOT the rejected per-node probe (see
+    /// <see cref="EvaluationLimits.MaxSupportedAstDepth"/>): it runs per row loop, not
+    /// per expression node, so deep parser-produced expression spines are unaffected.
+    /// Like the invocation-chokepoint probe it can only stop evaluation EARLIER with
+    /// the structured error, never change a run that has host stack headroom, and it
+    /// moves no budget counter.</para>
     /// </summary>
     private static EvalResult<PreparedAlgorithmOutput> EvalOutputRowsPreparedCore(
         IReadOnlyList<Expr> rows,
@@ -753,6 +771,9 @@ public static partial class Evaluator
         EvalCtx reserveCtx,
         IReadOnlyList<(string, Result)> valEnv)
     {
+        if (!RuntimeHelpers.TryEnsureSufficientExecutionStack())
+            return new EvalError.EvaluationStackExhausted();
+
         var results = new List<Result>();
         var emittedCount = 0;
 
