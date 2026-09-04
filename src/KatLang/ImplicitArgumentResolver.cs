@@ -76,28 +76,85 @@ internal static class ImplicitArgumentResolver
     }
 
     /// <summary>
+    /// The CALLER-dependent configuration one algorithm's implicit-call rewriting runs under:
+    /// the enclosing algorithm's parameter patterns, the source binding kinds derived from
+    /// them, and its closed-explicit-list gate. Every rewrite decision that is not a property
+    /// of the node itself or of the visible signature map reads this record, so it must travel
+    /// unchanged into every sub-context of the same algorithm — including value-demanding
+    /// (Math) argument bundles, which are ordinary value positions of the SAME caller.
+    ///
+    /// <para>Bundling the four values is deliberate: they are one semantic unit, and the
+    /// defect this record replaces was exactly a call site that supplied two of them
+    /// degenerately and silently defaulted the other two away
+    /// (see <see cref="ProcessValueDemandingArgumentBundle"/>).</para>
+    /// </summary>
+    /// <param name="CallerParameterPatterns">
+    /// The enclosing algorithm's parameter patterns — the forwarding SOURCE shape.
+    /// </param>
+    /// <param name="SourceBindingKinds">
+    /// Caller capture name to binding kind, so re-spread decisions read the source binding
+    /// (see <see cref="BuildSourceBindingKinds"/>).
+    /// </param>
+    /// <param name="RequireExistingParameters">
+    /// True inside an algorithm whose explicit parameter list is CLOSED: nothing may be lifted
+    /// that would need a capture the list does not already declare.
+    /// </param>
+    /// <param name="ExistingParameterNames">
+    /// The closed list's declared capture names; consulted only when
+    /// <paramref name="RequireExistingParameters"/> is true.
+    /// </param>
+    /// <remarks>
+    /// A reference type, allocated EXACTLY ONCE per rewrite region and forwarded by reference
+    /// through the whole walk: that makes the region's memo-soundness guard one reference
+    /// comparison (<see cref="ResolverWalkMemos.PinRewriteContext"/>) instead of a per-node
+    /// field-by-field comparison, and keeps the recursion spine passing one reference rather
+    /// than copying four values.
+    /// </remarks>
+    private sealed record ImplicitRewriteContext(
+        IReadOnlyList<ParameterPattern> CallerParameterPatterns,
+        IReadOnlyDictionary<string, ParameterKind> SourceBindingKinds,
+        bool RequireExistingParameters,
+        IReadOnlySet<string>? ExistingParameterNames);
+
+    /// <summary>
     /// Reference-identity memo state for the walks of ONE constant rewrite context region —
     /// either one algorithm's output-rewrite phase (its visible signature map is final once
-    /// the property loop completed) or one algorithm's open-target region (fresh empty
-    /// signature maps throughout). Maps are keyed by the ORIGINAL node reference and split by
-    /// the context dimensions that legitimately change a node's rewrite within the region:
-    /// call position (a callee <see cref="Expr.Resolve"/> stays bare where a value-position
-    /// one lifts) and the value-demanding Math-argument sub-context (which rewrites under an
-    /// empty caller-pattern configuration). Shared input therefore rewrites once per distinct
-    /// (node, position, sub-context) and stays shared in the output.
+    /// the property loop completed, and its <see cref="ImplicitRewriteContext"/> is one fixed
+    /// value for every row and every sub-context below them) or one algorithm's open-target
+    /// region (fresh empty signature maps throughout; open targets never reach the rewrite
+    /// maps at all). Maps are keyed by the ORIGINAL node reference and split by the ONE
+    /// context dimension that legitimately changes a node's rewrite within the region: call
+    /// position (a callee <see cref="Expr.Resolve"/> stays bare where a value-position one
+    /// lifts). Shared input therefore rewrites once per distinct (node, position) and stays
+    /// shared in the output.
     /// <see cref="Algorithms"/> memoizes nested-algorithm processing so two distinct
     /// <see cref="Expr.AlgorithmExpr"/> wrappers over ONE shared algorithm resolve it once
     /// (same signature map for every such call inside the region).
+    ///
+    /// <para><b>Memo soundness invariant:</b> node reference plus call position is a complete
+    /// key ONLY because the region's <see cref="ImplicitRewriteContext"/> is invariant. That
+    /// is not a comment but a checked fact: <see cref="PinRewriteContext"/> records the first
+    /// context the region rewrites under and throws on any later divergence, so a future
+    /// caller that reintroduces a sub-context with its own configuration fails loudly here
+    /// instead of silently serving another caller's rewrite. This is what made the
+    /// pre-fix value-demanding sub-context safe to unify AND what made it wrong: it unified
+    /// by ERASING the caller's configuration rather than by preserving it.</para>
     /// </summary>
     private sealed class ResolverWalkMemos(FrontEndTraversalObservations? observations)
     {
+        private ImplicitRewriteContext? _pinnedRewriteContext;
+
+        private static readonly string RewriteContextViolationMessage =
+            $"{nameof(ImplicitArgumentResolver)} memo soundness violation: one rewrite region observed two "
+            + "different caller rewrite contexts. The reference-identity rewrite memo is keyed by node and call "
+            + "position only, which is complete solely while the region's caller configuration (parameter "
+            + "patterns, source binding kinds, closed-explicit-list gate) stays fixed. Allocate the region's "
+            + $"{nameof(ImplicitRewriteContext)} once and forward that instance; a sub-context that genuinely "
+            + "needs its own configuration needs its own region memo.";
+
         public Dictionary<Expr, Expr>? ValueRewrites;
 
         public Dictionary<Expr, Expr>? CalleeRewrites;
-
-        public Dictionary<Expr, Expr>? ValueDemandingValueRewrites;
-
-        public Dictionary<Expr, Expr>? ValueDemandingCalleeRewrites;
 
         public Dictionary<Expr, Expr>? OpenRewrites;
 
@@ -107,14 +164,29 @@ internal static class ImplicitArgumentResolver
 
         public readonly FrontEndTraversalObservations? Observations = observations;
 
-        public Dictionary<Expr, Expr> RewriteMapFor(bool inValueDemandingContext, bool inCallPosition)
-            => inValueDemandingContext
-                ? inCallPosition
-                    ? ValueDemandingCalleeRewrites ??= new(ReferenceEqualityComparer.Instance)
-                    : ValueDemandingValueRewrites ??= new(ReferenceEqualityComparer.Instance)
-                : inCallPosition
-                    ? CalleeRewrites ??= new(ReferenceEqualityComparer.Instance)
-                    : ValueRewrites ??= new(ReferenceEqualityComparer.Instance);
+        /// <summary>
+        /// Fail-loud guard for the memo soundness invariant above. One reference comparison,
+        /// because a region allocates its <see cref="ImplicitRewriteContext"/> once and every
+        /// walk below forwards that instance. Deliberately stricter than value equality: an
+        /// equal-but-freshly-built context also trips, which can only over-report (never let an
+        /// unsound reuse through) and points at the right fix — hoist the allocation.
+        /// </summary>
+        public void PinRewriteContext(ImplicitRewriteContext context)
+        {
+            if (_pinnedRewriteContext is null)
+            {
+                _pinnedRewriteContext = context;
+                return;
+            }
+
+            if (!ReferenceEquals(_pinnedRewriteContext, context))
+                throw new InvalidOperationException(RewriteContextViolationMessage);
+        }
+
+        public Dictionary<Expr, Expr> RewriteMapFor(bool inCallPosition)
+            => inCallPosition
+                ? CalleeRewrites ??= new(ReferenceEqualityComparer.Instance)
+                : ValueRewrites ??= new(ReferenceEqualityComparer.Instance);
     }
 
     /// <summary>
@@ -252,7 +324,11 @@ internal static class ImplicitArgumentResolver
         if (alg.ExplicitParameterPatterns.Count > 0)
         {
             var explicitExistingParams = new HashSet<string>(alg.Params);
-            var explicitBindingKinds = BuildSourceBindingKinds(alg.ParameterPatterns);
+            var explicitContext = new ImplicitRewriteContext(
+                alg.ParameterPatterns,
+                BuildSourceBindingKinds(alg.ParameterPatterns),
+                RequireExistingParameters: true,
+                explicitExistingParams);
             var newOutput = new List<Expr>(alg.Output.Count);
             foreach (var expr in alg.Output)
             {
@@ -260,13 +336,9 @@ internal static class ImplicitArgumentResolver
                     RewriteImplicitCalls(
                         expr,
                         visibleParamMap,
-                        alg.ParameterPatterns,
-                        explicitBindingKinds,
+                        explicitContext,
                         inCallPosition: false,
-                        walkMemos,
-                        inValueDemandingContext: false,
-                        requireExistingParameters: true,
-                        explicitExistingParams));
+                        walkMemos));
             }
 
             return alg with
@@ -317,7 +389,11 @@ internal static class ImplicitArgumentResolver
         // parameters binds through the capture lifted above (possibly by an
         // earlier dependency with a different kind), and that lifted capture
         // is the forwarding source.
-        var liftedBindingKinds = BuildSourceBindingKinds(newPatterns);
+        var liftedContext = new ImplicitRewriteContext(
+            alg.ParameterPatterns,
+            BuildSourceBindingKinds(newPatterns),
+            RequireExistingParameters: false,
+            ExistingParameterNames: null);
         var rewrittenOutput = new List<Expr>(alg.Output.Count);
         foreach (var expr in alg.Output)
         {
@@ -327,11 +403,9 @@ internal static class ImplicitArgumentResolver
                     : RewriteImplicitCalls(
                         expr,
                         visibleParamMap,
-                        alg.ParameterPatterns,
-                        liftedBindingKinds,
+                        liftedContext,
                         inCallPosition: false,
-                        walkMemos,
-                        inValueDemandingContext: false));
+                        walkMemos));
         }
 
         return alg.WithParameterPatterns(newPatterns) with
@@ -572,6 +646,28 @@ internal static class ImplicitArgumentResolver
 
         return true;
     }
+
+    /// <summary>
+    /// The CLOSED-explicit-parameter-list gate, in one place: inside an algorithm that wrote
+    /// its own parameter list, a bare parameterized reference may lift only when every capture
+    /// the synthesized argument list would need is already declared by that list (or is the
+    /// caller's own forwarded collecting stream). Lifting anything else would invent a
+    /// parameter the programmer never wrote — and, worse, silently bind an ancestor's.
+    ///
+    /// <para>Every liftable arm of <see cref="RewriteImplicitCallsCore"/> consults THIS
+    /// helper with the region's <see cref="ImplicitRewriteContext"/>, so no expression
+    /// position — value-demanding Math arguments included — can be reached under a
+    /// weaker gate than the rows around it.</para>
+    /// </summary>
+    private static bool ClosedListBlocksLifting(
+        ImplicitRewriteContext context,
+        IReadOnlyList<ParameterPattern> calleePatterns)
+        => context.RequireExistingParameters
+            && (context.ExistingParameterNames is null
+                || !CanBuildImplicitCallArgumentsFromExistingParameters(
+                    calleePatterns,
+                    context.CallerParameterPatterns,
+                    context.ExistingParameterNames));
 
     /// <summary>
     /// Maps every caller-side capture name (top-level and nested) to its
@@ -845,38 +941,29 @@ internal static class ImplicitArgumentResolver
     private static Expr RewriteImplicitCalls(
         Expr expr,
         Dictionary<string, CallableSignature> paramMap,
-        IReadOnlyList<ParameterPattern> callerParameterPatterns,
-        IReadOnlyDictionary<string, ParameterKind> sourceBindingKinds,
+        ImplicitRewriteContext context,
         bool inCallPosition,
-        ResolverWalkMemos memos,
-        bool inValueDemandingContext,
-        bool requireExistingParameters = false,
-        IReadOnlySet<string>? existingParameterNames = null)
+        ResolverWalkMemos memos)
     {
-        // DAG-safety: one rewrite per shared node reference per (region, call position,
-        // value-demanding sub-context); the memo returns the same rewritten node for every
-        // later reach, preserving the input's sharing (see ResolverWalkMemos). A Resolve
-        // leaf participates because value-position resolution may replace it with a fresh Call.
-        // The
-        // inValueDemandingContext flag travels in lock-step with the caller-pattern /
-        // binding-kind configuration, which is what actually distinguishes the sub-context.
+        // DAG-safety: one rewrite per shared node reference per (region, call position); the
+        // memo returns the same rewritten node for every later reach, preserving the input's
+        // sharing (see ResolverWalkMemos). A Resolve leaf participates because value-position
+        // resolution may replace it with a fresh Call. Node plus call position is a complete
+        // key only while the region rewrites under ONE caller context — pinned here, not
+        // assumed.
+        memos.PinRewriteContext(context);
+
         var hasTraversableChildren = AstTraversalDagSafety.HasTraversableExprChildren(expr);
         if (!hasTraversableChildren && expr is not Expr.Resolve)
-        {
-            return RewriteImplicitCallsCore(
-                expr, paramMap, callerParameterPatterns, sourceBindingKinds, inCallPosition,
-                memos, inValueDemandingContext, requireExistingParameters, existingParameterNames);
-        }
+            return RewriteImplicitCallsCore(expr, paramMap, context, inCallPosition, memos);
 
-        var rewriteMap = memos.RewriteMapFor(inValueDemandingContext, inCallPosition);
+        var rewriteMap = memos.RewriteMapFor(inCallPosition);
         if (rewriteMap.TryGetValue(expr, out var rewritten))
             return rewritten;
 
         if (hasTraversableChildren)
             memos.Observations?.RecordResolverRewriteExpansion();
-        rewritten = RewriteImplicitCallsCore(
-            expr, paramMap, callerParameterPatterns, sourceBindingKinds, inCallPosition,
-            memos, inValueDemandingContext, requireExistingParameters, existingParameterNames);
+        rewritten = RewriteImplicitCallsCore(expr, paramMap, context, inCallPosition, memos);
         rewriteMap[expr] = rewritten;
         return rewritten;
     }
@@ -884,13 +971,9 @@ internal static class ImplicitArgumentResolver
     private static Expr RewriteImplicitCallsCore(
         Expr expr,
         Dictionary<string, CallableSignature> paramMap,
-        IReadOnlyList<ParameterPattern> callerParameterPatterns,
-        IReadOnlyDictionary<string, ParameterKind> sourceBindingKinds,
+        ImplicitRewriteContext context,
         bool inCallPosition,
-        ResolverWalkMemos memos,
-        bool inValueDemandingContext,
-        bool requireExistingParameters = false,
-        IReadOnlySet<string>? existingParameterNames = null)
+        ResolverWalkMemos memos)
     {
         switch (expr)
         {
@@ -899,17 +982,11 @@ internal static class ImplicitArgumentResolver
                     && paramMap.TryGetValue(name, out var ps)
                     && ps.Parameters.Count > 0)
                 {
-                    if (requireExistingParameters
-                        && (existingParameterNames is null
-                            || !CanBuildImplicitCallArgumentsFromExistingParameters(
-                                ps.ParameterPatterns,
-                                callerParameterPatterns,
-                                existingParameterNames)))
-                    {
+                    if (ClosedListBlocksLifting(context, ps.ParameterPatterns))
                         return expr;
-                    }
 
-                    var implicitArgs = OutputBundle.From(BuildImplicitCallArguments(ps.ParameterPatterns, callerParameterPatterns, sourceBindingKinds));
+                    var implicitArgs = OutputBundle.From(BuildImplicitCallArguments(
+                        ps.ParameterPatterns, context.CallerParameterPatterns, context.SourceBindingKinds));
                     return new Expr.Call(new Expr.Resolve(name) { Span = expr.Span }, implicitArgs) { Span = expr.Span };
                 }
 
@@ -919,18 +996,11 @@ internal static class ImplicitArgumentResolver
                 if (!inCallPosition
                     && expr.TryGetRegistryProvenMathAliasFacts(paramMap.ContainsKey, out var bareAliasFacts))
                 {
-                    if (requireExistingParameters
-                        && (existingParameterNames is null
-                            || !CanBuildImplicitCallArgumentsFromExistingParameters(
-                                bareAliasFacts.Signature.ParameterPatterns,
-                                callerParameterPatterns,
-                                existingParameterNames)))
-                    {
+                    if (ClosedListBlocksLifting(context, bareAliasFacts.Signature.ParameterPatterns))
                         return expr;
-                    }
 
                     var aliasArgs = OutputBundle.From(BuildImplicitCallArguments(
-                        bareAliasFacts.Signature.ParameterPatterns, callerParameterPatterns, sourceBindingKinds));
+                        bareAliasFacts.Signature.ParameterPatterns, context.CallerParameterPatterns, context.SourceBindingKinds));
                     return new Expr.Call(new Expr.Resolve(name) { Span = expr.Span }, aliasArgs) { Span = expr.Span };
                 }
                 return expr;
@@ -940,7 +1010,7 @@ internal static class ImplicitArgumentResolver
                 // Otherwise recurse into func normally.
                 var newFunc = func is Expr.Resolve
                     ? func
-                    : RewriteImplicitCalls(func, paramMap, callerParameterPatterns, sourceBindingKinds, inCallPosition: false, memos, inValueDemandingContext, requireExistingParameters, existingParameterNames);
+                    : RewriteImplicitCalls(func, paramMap, context, inCallPosition: false, memos);
 
                 // A Math-alias call shares the written `Math.X(...)` dot shape's
                 // registry-proven strict-value argument contract (the DotCall arm
@@ -949,26 +1019,26 @@ internal static class ImplicitArgumentResolver
                 // keeps NEUTRAL argument processing so bare higher-order
                 // references survive.
                 var newArgs = call.HasRegistryProvenStrictValueArguments(paramMap.ContainsKey)
-                    ? ProcessValueDemandingArgumentBundle(args, paramMap, memos)
+                    ? ProcessValueDemandingArgumentBundle(args, paramMap, context, memos)
                     : ProcessArgumentBundle(args, paramMap, memos);
                 return new Expr.Call(newFunc, newArgs) { Span = expr.Span };
 
             case Expr.Binary(var op, var left, var right):
                 return new Expr.Binary(op,
-                    RewriteImplicitCalls(left, paramMap, callerParameterPatterns, sourceBindingKinds, false, memos, inValueDemandingContext, requireExistingParameters, existingParameterNames),
-                    RewriteImplicitCalls(right, paramMap, callerParameterPatterns, sourceBindingKinds, false, memos, inValueDemandingContext, requireExistingParameters, existingParameterNames)) { Span = expr.Span };
+                    RewriteImplicitCalls(left, paramMap, context, false, memos),
+                    RewriteImplicitCalls(right, paramMap, context, false, memos)) { Span = expr.Span };
 
             case Expr.Unary(var op, var operand):
-                return new Expr.Unary(op, RewriteImplicitCalls(operand, paramMap, callerParameterPatterns, sourceBindingKinds, false, memos, inValueDemandingContext, requireExistingParameters, existingParameterNames)) { Span = expr.Span };
+                return new Expr.Unary(op, RewriteImplicitCalls(operand, paramMap, context, false, memos)) { Span = expr.Span };
 
             case Expr.Index(var target, var selector):
                 return new Expr.Index(
-                    RewriteImplicitCalls(target, paramMap, callerParameterPatterns, sourceBindingKinds, false, memos, inValueDemandingContext, requireExistingParameters, existingParameterNames),
-                    RewriteImplicitCalls(selector, paramMap, callerParameterPatterns, sourceBindingKinds, false, memos, inValueDemandingContext, requireExistingParameters, existingParameterNames)) { Span = expr.Span };
+                    RewriteImplicitCalls(target, paramMap, context, false, memos),
+                    RewriteImplicitCalls(selector, paramMap, context, false, memos)) { Span = expr.Span };
 
             case Expr.SequenceSpread(var operand):
                 return new Expr.SequenceSpread(
-                    RewriteImplicitCalls(operand, paramMap, callerParameterPatterns, sourceBindingKinds, false, memos, inValueDemandingContext, requireExistingParameters, existingParameterNames))
+                    RewriteImplicitCalls(operand, paramMap, context, false, memos))
                 {
                     Span = expr.Span,
                     SpreadMarkerSpan = ((Expr.SequenceSpread)expr).SpreadMarkerSpan,
@@ -976,31 +1046,25 @@ internal static class ImplicitArgumentResolver
 
             case Expr.SequenceConstruct(var left, var right):
                 return new Expr.SequenceConstruct(
-                    RewriteImplicitCalls(left, paramMap, callerParameterPatterns, sourceBindingKinds, false, memos, inValueDemandingContext, requireExistingParameters, existingParameterNames),
-                    RewriteImplicitCalls(right, paramMap, callerParameterPatterns, sourceBindingKinds, false, memos, inValueDemandingContext, requireExistingParameters, existingParameterNames)) { Span = expr.Span };
+                    RewriteImplicitCalls(left, paramMap, context, false, memos),
+                    RewriteImplicitCalls(right, paramMap, context, false, memos)) { Span = expr.Span };
 
             case Expr.ListLiteral(var listItems):
                 return new Expr.ListLiteral(
-                    listItems.Select(item => RewriteImplicitCalls(item, paramMap, callerParameterPatterns, sourceBindingKinds, false, memos, inValueDemandingContext, requireExistingParameters, existingParameterNames)).ToList())
+                    listItems.Select(item => RewriteImplicitCalls(item, paramMap, context, false, memos)).ToList())
                 { Span = expr.Span };
 
             case Expr.DotCall(var target, var name, null)
                 when !inCallPosition
                     && TryGetBareBuiltinCallableSignature(expr, paramMap, out _, out var builtinSignature):
-                if (requireExistingParameters
-                    && (existingParameterNames is null
-                        || !CanBuildImplicitCallArgumentsFromExistingParameters(
-                            builtinSignature.ParameterPatterns,
-                            callerParameterPatterns,
-                            existingParameterNames)))
-                {
+                if (ClosedListBlocksLifting(context, builtinSignature.ParameterPatterns))
                     return expr;
-                }
 
-                var liftedDotArgs = OutputBundle.From(BuildImplicitCallArguments(builtinSignature.ParameterPatterns, callerParameterPatterns, sourceBindingKinds));
+                var liftedDotArgs = OutputBundle.From(BuildImplicitCallArguments(
+                    builtinSignature.ParameterPatterns, context.CallerParameterPatterns, context.SourceBindingKinds));
                 return ((Expr.DotCall)expr) with
                 {
-                    Target = RewriteImplicitCalls(target, paramMap, callerParameterPatterns, sourceBindingKinds, inCallPosition: true, memos, inValueDemandingContext, requireExistingParameters, existingParameterNames),
+                    Target = RewriteImplicitCalls(target, paramMap, context, inCallPosition: true, memos),
                     Args = liftedDotArgs,
                 };
 
@@ -1010,16 +1074,16 @@ internal static class ImplicitArgumentResolver
                 // no implicit-call rewriting; `with` carries it forward.
                 return dotCall with
                 {
-                    Target = RewriteImplicitCalls(dotCall.Target, paramMap, callerParameterPatterns, sourceBindingKinds, inCallPosition: true, memos, inValueDemandingContext, requireExistingParameters, existingParameterNames),
+                    Target = RewriteImplicitCalls(dotCall.Target, paramMap, context, inCallPosition: true, memos),
                     Args = dotCall.Args is { } dotArgs
                         ? dotCall.HasRegistryProvenStrictValueArguments(paramMap.ContainsKey)
-                            ? ProcessValueDemandingArgumentBundle(dotArgs, paramMap, memos)
+                            ? ProcessValueDemandingArgumentBundle(dotArgs, paramMap, context, memos)
                             : ProcessArgumentBundle(dotArgs, paramMap, memos)
                         : null,
                 };
 
             case Expr.Grace(var inner, _):
-                return RewriteImplicitCalls(inner, paramMap, callerParameterPatterns, sourceBindingKinds, inCallPosition, memos, inValueDemandingContext, requireExistingParameters, existingParameterNames);
+                return RewriteImplicitCalls(inner, paramMap, context, inCallPosition, memos);
 
             case Expr.AlgorithmExpr(var alg):
                 return new Expr.AlgorithmExpr(
@@ -1109,24 +1173,28 @@ internal static class ImplicitArgumentResolver
     /// (a documented consistency gap; widening lifting to them would be a new
     /// observable semantic surface and is deliberately left as future
     /// work).</para>
+    ///
+    /// <para><b>Value-demanding is WHERE lifting happens, never HOW.</b> The consumer's
+    /// registry-proven strict-value contract decides only that these slots are value
+    /// positions; the rewriting itself must then be the ordinary one, under the ENCLOSING
+    /// algorithm's <see cref="ImplicitRewriteContext"/> — the same caller parameter patterns,
+    /// the same source binding kinds, and the same closed-explicit-list gate as the rows
+    /// around the Math call. This method therefore forwards <paramref name="context"/>
+    /// unchanged and holds no configuration of its own. Erasing it (as an earlier revision
+    /// did, to let a region's value-demanding memo entries unify) made a semantically neutral
+    /// <c>Math.Abs(...)</c> wrapper change elaboration: forwarding spread was decided from the
+    /// CALLEE's kind, forwarded under the CALLEE's capture name, and a closed explicit
+    /// parameter list silently acquired an ancestor's parameter.</para>
     /// </summary>
     private static OutputBundle ProcessValueDemandingArgumentBundle(
         OutputBundle args,
         Dictionary<string, CallableSignature> paramMap,
+        ImplicitRewriteContext context,
         ResolverWalkMemos memos)
     {
-        // Every value-demanding bundle in a region rewrites under the same configuration
-        // (empty caller patterns, empty binding kinds, no existing-parameter gate), so the
-        // region's value-demanding memo maps unify them; the flag below keeps the memo
-        // choice in lock-step with that configuration.
-        var emptyBindingKinds = BuildSourceBindingKinds([]);
         var rewritten = new List<Expr>(args.Count);
         foreach (var argExpr in args)
-        {
-            rewritten.Add(RewriteImplicitCalls(
-                argExpr, paramMap, [], emptyBindingKinds, inCallPosition: false,
-                memos, inValueDemandingContext: true));
-        }
+            rewritten.Add(RewriteImplicitCalls(argExpr, paramMap, context, inCallPosition: false, memos));
 
         return new OutputBundle(rewritten);
     }

@@ -685,4 +685,801 @@ public class ImplicitArgumentResolverTests
             """;
         AssertEval(source, 800);
     }
+
+    // -- Math value-demanding lifting carries the caller's rewrite context (K1-03 / K1-04) --
+    //
+    // A registry-provably strict-value Math consumer decides only THAT its argument slots are
+    // value positions; the rewriting inside them is the ordinary implicit-argument rewriting,
+    // under the ENCLOSING algorithm's caller configuration. Wrapping an ordinary value-position
+    // reference in `Math.Abs(...)` -- the identity on the positive values used below -- must
+    // therefore not change which caller name is forwarded, whether it is forwarded as a spread,
+    // or whether a closed explicit parameter list permits lifting at all.
+
+    /// <summary>
+    /// Projects a <c>Math.X(arg)</c> row down to its single argument, so a wrapped form can be
+    /// compared against the unwrapped form's row directly.
+    /// </summary>
+    private static Expr MathArgument(Expr row)
+    {
+        var dotCall = Assert.IsType<Expr.DotCall>(row);
+        Assert.Equal("Math", Assert.IsType<Expr.Resolve>(dotCall.Target).Name);
+        Assert.NotNull(dotCall.Args);
+        return Assert.Single(dotCall.Args);
+    }
+
+    private static Expr PropertyOutputRow(Algorithm root, string propertyName)
+        => Assert.Single(root.Properties.Single(p => p.Name == propertyName).Value.Output);
+
+    private sealed class ParamNameCollector : AstWalker
+    {
+        public HashSet<string> ParamNames { get; } = [];
+
+        protected override void VisitParameterIdentifier(Expr.Param expr)
+            => ParamNames.Add(expr.Name);
+    }
+
+    private static HashSet<string> ParamNamesIn(Algorithm algorithm)
+    {
+        var collector = new ParamNameCollector();
+        collector.VisitAlgorithm(algorithm);
+        return collector.ParamNames;
+    }
+
+    /// <summary>
+    /// Structural equality over the shapes these tests synthesize (calls with Param /
+    /// SequenceSpread-of-Param arguments, and bare Resolve). Spans are deliberately ignored:
+    /// the wrapped and unwrapped spellings occupy different columns, but must otherwise
+    /// elaborate to the same tree.
+    /// </summary>
+    private static void AssertSameLiftingShape(Expr expected, Expr actual)
+    {
+        switch (expected)
+        {
+            case Expr.Resolve resolve:
+                Assert.Equal(resolve.Name, Assert.IsType<Expr.Resolve>(actual).Name);
+                break;
+            case Expr.Param param:
+                Assert.Equal(param.Name, Assert.IsType<Expr.Param>(actual).Name);
+                break;
+            case Expr.SequenceSpread spread:
+                AssertSameLiftingShape(spread.Operand, Assert.IsType<Expr.SequenceSpread>(actual).Operand);
+                break;
+            case Expr.Call call:
+                var actualCall = Assert.IsType<Expr.Call>(actual);
+                AssertSameLiftingShape(call.Function, actualCall.Function);
+                Assert.Equal(call.Args.Count, actualCall.Args.Count);
+                for (var i = 0; i < call.Args.Count; i++)
+                    AssertSameLiftingShape(call.Args[i], actualCall.Args[i]);
+                break;
+            default:
+                Assert.Fail($"Unexpected shape in lifting comparison: {expected.GetType().Name}");
+                break;
+        }
+    }
+
+    [Fact]
+    public void Resolve_MathArgument_FixedSourceIntoCollectingCallee_SynthesizesUnspreadArgument()
+    {
+        // K1-03. `K` binds `xs` as a FIXED parameter (lifted from `B(xs)`), so the collecting
+        // destination `A(*xs)` must receive ONE argument. Deciding the spread from the CALLEE's
+        // collecting kind -- the last resort an ERASED caller configuration always falls through
+        // to -- produced `A(xs*)` and silently turned a 1 into a 3.
+        var root = Resolve("""
+            A(*xs) = xs.count
+            B(xs) = xs
+            K = B, Math.Abs(A)
+            """);
+
+        var k = root.Properties.Single(p => p.Name == "K").Value;
+        Assert.Equal(["xs"], k.Params);
+        Assert.Equal(["xs"], k.ParameterPatterns.Select(parameter => parameter.DisplayName).ToList());
+
+        var call = Assert.IsType<Expr.Call>(MathArgument(k.Output[1]));
+        Assert.Equal("A", Assert.IsType<Expr.Resolve>(call.Function).Name);
+        var argument = Assert.Single(call.Args);
+        Assert.IsNotType<Expr.SequenceSpread>(argument);
+        Assert.Equal("xs", Assert.IsType<Expr.Param>(argument).Name);
+    }
+
+    [Fact]
+    public void Resolve_MathArgument_FixedSourceIntoCollectingCallee_MatchesUnwrappedValuePosition()
+    {
+        // The differential property: the Math wrapper is the ONLY difference between the two
+        // programs, so the lifted inner call must be identical.
+        var wrapped = Resolve("""
+            A(*xs) = xs.count
+            B(xs) = xs
+            K = B, Math.Abs(A)
+            """);
+        var unwrapped = Resolve("""
+            A(*xs) = xs.count
+            B(xs) = xs
+            K = B, A
+            """);
+
+        AssertSameLiftingShape(
+            unwrapped.Properties.Single(p => p.Name == "K").Value.Output[1],
+            MathArgument(wrapped.Properties.Single(p => p.Name == "K").Value.Output[1]));
+    }
+
+    [Fact]
+    public void Eval_MathArgument_FixedSourceIntoCollectingCallee_AgreesWithUnwrappedValuePosition()
+    {
+        // End-to-end K1-03: `Math.Abs` is the identity on the correct result 1, so any
+        // divergence from the unwrapped control is a front-end divergence.
+        AssertEval(
+            """
+            A(*xs) = xs.count
+            B(xs) = xs
+            K = B, Math.Abs(A)
+            K((1, 2, 3))
+            """,
+            1, 2, 3, 1);
+        AssertEval(
+            """
+            A(*xs) = xs.count
+            B(xs) = xs
+            K = B, A
+            K((1, 2, 3))
+            """,
+            1, 2, 3, 1);
+    }
+
+    [Fact]
+    public void Resolve_MathArgument_CollectingSourceNameMismatch_ForwardsCallerName()
+    {
+        // K1-03's name half. `Use` declares `items`, never `xs`; forwarding under the CALLEE's
+        // capture name synthesized a reference to a name the enclosing algorithm does not bind
+        // (`Unknown name: xs` at runtime) and mis-marked `Use` as capturing an ancestor's
+        // parameter.
+        var root = Resolve("""
+            Target(*xs) = xs.count
+            Use(*items) = Math.Abs(Target)
+            """);
+
+        var use = root.Properties.Single(p => p.Name == "Use");
+        Assert.Equal(["items"], use.Value.Params);
+        Assert.DoesNotContain("xs", ParamNamesIn(use.Value));
+        Assert.Equal(PropertyExposure.Exported, use.Exposure);
+
+        var call = Assert.IsType<Expr.Call>(MathArgument(Assert.Single(use.Value.Output)));
+        Assert.Equal("Target", Assert.IsType<Expr.Resolve>(call.Function).Name);
+        var spread = Assert.IsType<Expr.SequenceSpread>(Assert.Single(call.Args));
+        Assert.Equal("items", Assert.IsType<Expr.Param>(spread.Operand).Name);
+    }
+
+    [Fact]
+    public void Resolve_MathArgument_CollectingSourceNameMismatch_MatchesUnwrappedValuePosition()
+    {
+        var wrapped = Resolve("""
+            Target(*xs) = xs.count
+            Use(*items) = Math.Abs(Target)
+            """);
+        var unwrapped = Resolve("""
+            Target(*xs) = xs.count
+            Use(*items) = Target
+            """);
+
+        AssertSameLiftingShape(
+            PropertyOutputRow(unwrapped, "Use"),
+            MathArgument(PropertyOutputRow(wrapped, "Use")));
+    }
+
+    [Fact]
+    public void Eval_MathArgument_CollectingSourceNameMismatch_AgreesWithUnwrappedValuePosition()
+    {
+        AssertEval(
+            """
+            Target(*xs) = xs.count
+            Use(*items) = Math.Abs(Target)
+            Use(1, 2, 3)
+            """,
+            3);
+        AssertEval(
+            """
+            Target(*xs) = xs.count
+            Use(*items) = Target
+            Use(1, 2, 3)
+            """,
+            3);
+    }
+
+    [Fact]
+    public void Resolve_MathArgument_CollectingSourceIntoCollectingCallee_KeepsForwardingSpread()
+    {
+        // The legal forwarding direction must survive the fix: a COLLECTING caller binding
+        // still re-spreads into a collecting destination (spread(collect(xs)) = xs).
+        var root = Resolve("""
+            Target(*items) = items.count
+            Use(*items) = Math.Abs(Target)
+            """);
+
+        var call = Assert.IsType<Expr.Call>(MathArgument(PropertyOutputRow(root, "Use")));
+        var spread = Assert.IsType<Expr.SequenceSpread>(Assert.Single(call.Args));
+        Assert.Equal("items", Assert.IsType<Expr.Param>(spread.Operand).Name);
+
+        AssertEval(
+            """
+            Target(*items) = items.count
+            Use(*items) = Math.Abs(Target)
+            Use(1, 2)
+            """,
+            2);
+    }
+
+    [Fact]
+    public void Resolve_MathArgument_FixedSourceIntoFixedCallee_ForwardsCallerParameter()
+    {
+        // Ordinary fixed -> fixed lifting inside a Math argument keeps working: the value
+        // position still lifts (that is what makes Math arguments value-demanding at all).
+        var root = Resolve("""
+            Helper(n) = n + 1
+            Use = Math.Abs(Helper)
+            """);
+
+        var use = root.Properties.Single(p => p.Name == "Use").Value;
+        Assert.Equal(["n"], use.Params);
+
+        var call = Assert.IsType<Expr.Call>(MathArgument(Assert.Single(use.Output)));
+        Assert.Equal("Helper", Assert.IsType<Expr.Resolve>(call.Function).Name);
+        Assert.Equal("n", Assert.IsType<Expr.Param>(Assert.Single(call.Args)).Name);
+
+        AssertEval(
+            """
+            Helper(n) = n + 1
+            Use = Math.Abs(Helper)
+            Use(4)
+            """,
+            5);
+    }
+
+    [Fact]
+    public void Resolve_MathAliasArgument_CarriesCallerContextLikeCanonicalSpelling()
+    {
+        // Both value-demanding spellings share one implementation: the prelude ALIAS call
+        // `abs(...)` must carry the caller's configuration exactly like `Math.Abs(...)`.
+        var root = Resolve("""
+            A(*xs) = xs.count
+            B(xs) = xs
+            K = B, abs(A)
+            """);
+
+        var aliasCall = Assert.IsType<Expr.Call>(root.Properties.Single(p => p.Name == "K").Value.Output[1]);
+        Assert.Equal("abs", Assert.IsType<Expr.Resolve>(aliasCall.Function).Name);
+
+        var lifted = Assert.IsType<Expr.Call>(Assert.Single(aliasCall.Args));
+        Assert.Equal("A", Assert.IsType<Expr.Resolve>(lifted.Function).Name);
+        var argument = Assert.Single(lifted.Args);
+        Assert.IsNotType<Expr.SequenceSpread>(argument);
+        Assert.Equal("xs", Assert.IsType<Expr.Param>(argument).Name);
+    }
+
+    [Fact]
+    public void Resolve_MathArgument_ClosedExplicitParameterList_DoesNotLiftBareParameterizedHelper()
+    {
+        // K1-04, the Math-wrapped twin of
+        // Resolve_ExplicitParameterList_DoesNotLiftBareParameterizedHelper. An explicit
+        // parameter list is CLOSED; a strict-value Math wrapper is not an escape hatch from it.
+        var root = Resolve("""
+            CountItems(*items) = items.count
+            Use(value) = Math.Abs(CountItems)
+            """);
+
+        var use = root.Properties.Single(p => p.Name == "Use").Value;
+        Assert.Equal(["value"], use.Params);
+        Assert.DoesNotContain("items", use.Params);
+
+        var resolve = Assert.IsType<Expr.Resolve>(MathArgument(Assert.Single(use.Output)));
+        Assert.Equal("CountItems", resolve.Name);
+    }
+
+    [Fact]
+    public void Resolve_MathArgument_ClosedExplicitParameterList_DoesNotSynthesizeAncestorParameter()
+    {
+        // The audit's K1-04 repro. `F`'s explicit list is `(x)`, and `y` appears nowhere in
+        // F's source: lifting `A` there synthesized `A(Expr.Param("y"))`, which bound the
+        // enclosing `G`'s parameter at runtime and additionally corrupted F's exposure.
+        var root = Resolve("""
+            A = y + 1
+            G = {
+              F(x) = Math.Abs(A)
+              F(1) + y
+            }
+            """);
+
+        var f = root.Properties.Single(p => p.Name == "G").Value.Properties.Single(p => p.Name == "F");
+
+        Assert.Equal(["x"], f.Value.Params);
+        Assert.DoesNotContain("y", f.Value.Params);
+        Assert.Equal(PropertyExposure.Exported, f.Exposure);
+
+        var resolve = Assert.IsType<Expr.Resolve>(MathArgument(Assert.Single(f.Value.Output)));
+        Assert.Equal("A", resolve.Name);
+
+        // No invented Expr.Param anywhere inside F -- `y` least of all.
+        Assert.Empty(ParamNamesIn(f.Value));
+    }
+
+    [Fact]
+    public void Resolve_MathArgument_ClosedExplicitParameterList_MatchesUnwrappedValuePosition()
+    {
+        var wrapped = Resolve("""
+            A = y + 1
+            G = {
+              F(x) = Math.Abs(A)
+              F(1) + y
+            }
+            """);
+        var unwrapped = Resolve("""
+            A = y + 1
+            G = {
+              F(x) = A
+              F(1) + y
+            }
+            """);
+
+        static Property NestedF(Algorithm root)
+            => root.Properties.Single(p => p.Name == "G").Value.Properties.Single(p => p.Name == "F");
+
+        AssertSameLiftingShape(
+            Assert.Single(NestedF(unwrapped).Value.Output),
+            MathArgument(Assert.Single(NestedF(wrapped).Value.Output)));
+        Assert.Equal(NestedF(unwrapped).Exposure, NestedF(wrapped).Exposure);
+        Assert.Equal(NestedF(unwrapped).Value.Params, NestedF(wrapped).Value.Params);
+    }
+
+    [Fact]
+    public void Eval_MathArgument_ClosedExplicitParameterList_NoLongerBindsUndeclaredAncestorParameter()
+    {
+        // Pre-fix this printed 21, by binding `G`'s `y = 10` into a parameter `F` never
+        // declared. The front end no longer synthesizes that reference, so the invented
+        // ancestor binding is gone.
+        //
+        // What the evaluator then does with the (correctly) unlifted bare reference is a
+        // SEPARATE, pre-existing concern that this batch does not touch: a bare reference to a
+        // parameterized property in a Math argument slot binds on the higher-order algorithm
+        // channel, and the native wrapper's declared argument name is then read through the
+        // counted-first dual view. That path is reachable without any Math value-demanding
+        // lifting at all (for example `Id(v) = v` with `Id(Math.Abs(A))`, a NEUTRAL argument
+        // slot this pass leaves bare on both sides of this change), so it is asserted here only
+        // to the extent B2a owns it: 21 is impossible.
+        var result = Eval("""
+            A = y + 1
+            G = {
+              F(x) = Math.Abs(A)
+              F(1) + y
+            }
+            G(10)
+            """);
+
+        Assert.False(
+            !result.IsError && result.Value.SequenceEqual<Decimal128>([21]),
+            "The closed explicit parameter list of F must not acquire the ancestor parameter y.");
+    }
+
+    [Theory]
+    // The Math-ALIAS Resolve arm and the bare canonical `Math.X` argumentless-DotCall arm are
+    // the other two gated lift sites. Both are reachable inside a value-demanding bundle, and
+    // pre-fix both invented the member's own parameter names (`value`, `digits`) inside a
+    // CLOSED explicit list, exactly like the ordinary Resolve arm.
+    [InlineData("Use(v) = Math.Abs(round)")]
+    [InlineData("Use(v) = Math.Abs(Math.Round)")]
+    public void Resolve_MathArgument_ClosedExplicitParameterList_DoesNotLiftBareMathMemberReference(string source)
+    {
+        var root = Resolve(source);
+        var use = root.Properties.Single(p => p.Name == "Use").Value;
+
+        Assert.Equal(["v"], use.Params);
+        Assert.Empty(ParamNamesIn(use));
+
+        var argument = MathArgument(Assert.Single(use.Output));
+        Assert.False(
+            argument is Expr.Call or Expr.DotCall { Args: not null },
+            $"The closed list of Use must not lift the Math member reference: {argument}");
+    }
+
+    [Theory]
+    // The open-list twins of the two arms above: lifting there is legal and must still happen,
+    // so the gate cannot be over-blocking.
+    [InlineData("Use = Math.Abs(round)")]
+    [InlineData("Use = Math.Abs(Math.Round)")]
+    public void Resolve_MathArgument_OpenParameterList_StillLiftsBareMathMemberReference(string source)
+    {
+        var root = Resolve(source);
+        var use = root.Properties.Single(p => p.Name == "Use").Value;
+
+        Assert.NotEmpty(use.Params);
+
+        var liftedArgs = MathArgument(Assert.Single(use.Output)) switch
+        {
+            Expr.Call call => call.Args,
+            Expr.DotCall { Args: { } dotArgs } => dotArgs,
+            var other => throw new Xunit.Sdk.XunitException($"Expected a lifted call, got {other}"),
+        };
+        Assert.Equal(
+            use.Params,
+            liftedArgs.Select(argument => Assert.IsType<Expr.Param>(argument).Name).ToList());
+    }
+
+    [Fact]
+    public void Resolve_MathArgument_ClosedExplicitListStillLiftsWhatItDeclares()
+    {
+        // The gate must not over-block: when the closed list DOES declare the capture the
+        // synthesized argument needs, the Math argument lifts exactly like the bare row.
+        var root = Resolve("""
+            A = y + 1
+            Use(y) = Math.Abs(A)
+            """);
+
+        var use = root.Properties.Single(p => p.Name == "Use").Value;
+        Assert.Equal(["y"], use.Params);
+
+        var call = Assert.IsType<Expr.Call>(MathArgument(Assert.Single(use.Output)));
+        Assert.Equal("A", Assert.IsType<Expr.Resolve>(call.Function).Name);
+        Assert.Equal("y", Assert.IsType<Expr.Param>(Assert.Single(call.Args)).Name);
+
+        AssertEval(
+            """
+            A = y + 1
+            Use(y) = Math.Abs(A)
+            Use(10)
+            """,
+            11);
+    }
+
+    // -- The value-demanding rewrite memo must stay caller-context sound -----------
+
+    [Fact]
+    public void Resolve_MathArgument_FixedAndCollectingCallers_DoNotShareRewrite()
+    {
+        // Two callers, ONE destination and one written argument shape. The fixed caller must
+        // forward one argument and the collecting caller must forward a spread -- in BOTH
+        // declaration orders, so the result cannot come from whichever context happened to
+        // populate a memo first.
+        static void AssertBothCallers(string source)
+        {
+            var root = Resolve(source);
+
+            var fixedCall = Assert.IsType<Expr.Call>(MathArgument(PropertyOutputRow(root, "FixedCaller")));
+            var fixedArgument = Assert.Single(fixedCall.Args);
+            Assert.IsNotType<Expr.SequenceSpread>(fixedArgument);
+            Assert.Equal("zs", Assert.IsType<Expr.Param>(fixedArgument).Name);
+
+            var collectingCall = Assert.IsType<Expr.Call>(MathArgument(PropertyOutputRow(root, "CollectingCaller")));
+            var collectingSpread = Assert.IsType<Expr.SequenceSpread>(Assert.Single(collectingCall.Args));
+            Assert.Equal("zs", Assert.IsType<Expr.Param>(collectingSpread.Operand).Name);
+        }
+
+        AssertBothCallers("""
+            Target(*zs) = zs.count
+            FixedCaller(zs) = Math.Abs(Target)
+            CollectingCaller(*zs) = Math.Abs(Target)
+            """);
+
+        AssertBothCallers("""
+            Target(*zs) = zs.count
+            CollectingCaller(*zs) = Math.Abs(Target)
+            FixedCaller(zs) = Math.Abs(Target)
+            """);
+    }
+
+    [Fact]
+    public void Eval_MathArgument_FixedAndCollectingCallers_ProduceTheirOwnResults()
+    {
+        // The same separation, end to end: the fixed caller's collecting destination collects
+        // ONE slot, the collecting caller re-supplies its three collected items.
+        AssertEval(
+            """
+            Target(*zs) = zs.count
+            FixedCaller(zs) = Math.Abs(Target)
+            CollectingCaller(*zs) = Math.Abs(Target)
+            FixedCaller((1, 2, 3)), CollectingCaller(1, 2, 3)
+            """,
+            1, 3);
+    }
+
+    [Fact]
+    public void Resolve_MathArgument_DifferentCallerNames_ForwardTheirOwnName()
+    {
+        // Two callers spell the same callee capture differently; each rewritten call must use
+        // its OWN caller name, in both declaration orders.
+        static void AssertBothNames(string source)
+        {
+            var root = Resolve(source);
+
+            foreach (var (property, expectedName) in new[] { ("UseItems", "items"), ("UseValues", "values") })
+            {
+                var call = Assert.IsType<Expr.Call>(MathArgument(PropertyOutputRow(root, property)));
+                var spread = Assert.IsType<Expr.SequenceSpread>(Assert.Single(call.Args));
+                Assert.Equal(expectedName, Assert.IsType<Expr.Param>(spread.Operand).Name);
+            }
+        }
+
+        AssertBothNames("""
+            Target(*xs) = xs.count
+            UseItems(*items) = Math.Abs(Target)
+            UseValues(*values) = Math.Abs(Target)
+            """);
+
+        AssertBothNames("""
+            Target(*xs) = xs.count
+            UseValues(*values) = Math.Abs(Target)
+            UseItems(*items) = Math.Abs(Target)
+            """);
+    }
+
+    [Fact]
+    public void Resolve_MathArgument_ClosedAndOpenParameterLists_DoNotShareRewrite()
+    {
+        // The same Math argument shape in an algorithm where lifting is legal and in one whose
+        // explicit list forbids it. Neither context may inherit the other's rewrite, in either
+        // declaration order.
+        static void AssertBothGates(string source)
+        {
+            var root = Resolve(source);
+
+            var lifted = Assert.IsType<Expr.Call>(MathArgument(PropertyOutputRow(root, "OpenList")));
+            Assert.Equal("Helper", Assert.IsType<Expr.Resolve>(lifted.Function).Name);
+            Assert.Equal("n", Assert.IsType<Expr.Param>(Assert.Single(lifted.Args)).Name);
+            Assert.Equal(["n"], root.Properties.Single(p => p.Name == "OpenList").Value.Params);
+
+            var blocked = Assert.IsType<Expr.Resolve>(MathArgument(PropertyOutputRow(root, "ClosedList")));
+            Assert.Equal("Helper", blocked.Name);
+            Assert.Equal(["other"], root.Properties.Single(p => p.Name == "ClosedList").Value.Params);
+        }
+
+        AssertBothGates("""
+            Helper(n) = n + 1
+            OpenList = Math.Abs(Helper)
+            ClosedList(other) = Math.Abs(Helper)
+            """);
+
+        AssertBothGates("""
+            Helper(n) = n + 1
+            ClosedList(other) = Math.Abs(Helper)
+            OpenList = Math.Abs(Helper)
+            """);
+    }
+
+    [Fact]
+    public void Resolve_SharedNodeInMathArgumentAndValueRow_RewritesIdentically()
+    {
+        // A host-built DAG puts ONE Expr.Resolve node in an ordinary value row AND inside a
+        // Math argument of the SAME algorithm. Value-demanding is WHERE lifting happens, never
+        // HOW, so both reaches must produce the SAME rewrite -- which is exactly why the
+        // region's rewrite memo may unify them. Pre-fix the two sub-contexts rewrote under
+        // different configurations and produced `Target(items*)` and `Target(xs*)`.
+        var scope = (Algorithm.User)SourceProvenance.ParseValid("""
+            Target(*xs) = xs.count
+            Use(*items) = 0
+            """).Root;
+
+        var shared = new Expr.Resolve("Target");
+        var root = scope with
+        {
+            Properties = scope.Properties
+                .Select(p => p.Name == "Use"
+                    ? p.WithValue(p.Value with
+                    {
+                        Output = new OutputBundle([
+                            shared,
+                            new Expr.DotCall(new Expr.Resolve("Math"), "Abs", new OutputBundle([shared])),
+                        ]),
+                    })
+                    : p)
+                .ToList(),
+        };
+
+        var (detected, detectorDiagnostics) = ParameterDetector.DetectPrevalidated(root);
+        Assert.Empty(detectorDiagnostics);
+        var resolved = ImplicitArgumentResolver.ResolvePrevalidated(detected);
+
+        var resolvedUse = resolved.Properties.Single(p => p.Name == "Use").Value;
+        var valueRow = resolvedUse.Output[0];
+
+        var call = Assert.IsType<Expr.Call>(valueRow);
+        Assert.Equal("Target", Assert.IsType<Expr.Resolve>(call.Function).Name);
+        var spread = Assert.IsType<Expr.SequenceSpread>(Assert.Single(call.Args));
+        Assert.Equal("items", Assert.IsType<Expr.Param>(spread.Operand).Name);
+
+        // Same node reference in, same rewritten node out: the region's memo unifies the two
+        // positions precisely because they carry ONE caller configuration.
+        Assert.Same(valueRow, MathArgument(resolvedUse.Output[1]));
+    }
+
+    [Fact]
+    public void Resolve_SharedNodeInMathArgumentsOfDifferentCallers_RewritesPerCaller()
+    {
+        // The cross-region tripwire: ONE shared Expr.Resolve node reached from the Math
+        // arguments of two DIFFERENT algorithms whose bindings disagree. A rewrite memo shared
+        // across algorithms (or keyed structurally rather than per region) would serve the
+        // first caller's rewrite to the second.
+        var scope = (Algorithm.User)SourceProvenance.ParseValid("""
+            Target(*zs) = zs.count
+            FixedCaller(zs) = 0
+            CollectingCaller(*zs) = 0
+            """).Root;
+
+        var shared = new Expr.Resolve("Target");
+        var root = scope with
+        {
+            Properties = scope.Properties
+                .Select(p => p.Name is "FixedCaller" or "CollectingCaller"
+                    ? p.WithValue(p.Value with
+                    {
+                        Output = new OutputBundle([
+                            new Expr.DotCall(new Expr.Resolve("Math"), "Abs", new OutputBundle([shared])),
+                        ]),
+                    })
+                    : p)
+                .ToList(),
+        };
+
+        var (detected, detectorDiagnostics) = ParameterDetector.DetectPrevalidated(root);
+        Assert.Empty(detectorDiagnostics);
+        var resolved = ImplicitArgumentResolver.ResolvePrevalidated(detected);
+
+        var fixedCall = Assert.IsType<Expr.Call>(MathArgument(PropertyOutputRow(resolved, "FixedCaller")));
+        var fixedArgument = Assert.Single(fixedCall.Args);
+        Assert.IsNotType<Expr.SequenceSpread>(fixedArgument);
+        Assert.Equal("zs", Assert.IsType<Expr.Param>(fixedArgument).Name);
+
+        var collectingCall = Assert.IsType<Expr.Call>(MathArgument(PropertyOutputRow(resolved, "CollectingCaller")));
+        var collectingSpread = Assert.IsType<Expr.SequenceSpread>(Assert.Single(collectingCall.Args));
+        Assert.Equal("zs", Assert.IsType<Expr.Param>(collectingSpread.Operand).Name);
+    }
+
+    [Fact]
+    public void Resolve_MathArgument_NestedExplicitAlgorithmUsesItsOwnFixedContext()
+    {
+        var root = Resolve("""
+            Target(*value) = value.count
+            Outer(*outer) = {
+              Inner(value) = Math.Abs(Target)
+              Inner
+            }
+            """);
+
+        var outer = root.Properties.Single(property => property.Name == "Outer").Value;
+        var inner = outer.Properties.Single(property => property.Name == "Inner").Value;
+        Assert.Equal(["value"], inner.Params);
+
+        var call = Assert.IsType<Expr.Call>(MathArgument(Assert.Single(inner.Output)));
+        var argument = Assert.Single(call.Args);
+        Assert.IsNotType<Expr.SequenceSpread>(argument);
+        Assert.Equal("value", Assert.IsType<Expr.Param>(argument).Name);
+    }
+
+    [Fact]
+    public void Resolve_NestedValueDemandingCallsCarryOneCallerContext()
+    {
+        var root = Resolve("""
+            Target(*xs) = xs.count
+            Use(*items) = Math.Abs(abs(Target))
+            """);
+
+        var aliasCall = Assert.IsType<Expr.Call>(MathArgument(PropertyOutputRow(root, "Use")));
+        Assert.Equal("abs", Assert.IsType<Expr.Resolve>(aliasCall.Function).Name);
+        var targetCall = Assert.IsType<Expr.Call>(Assert.Single(aliasCall.Args));
+        var spread = Assert.IsType<Expr.SequenceSpread>(Assert.Single(targetCall.Args));
+        Assert.Equal("items", Assert.IsType<Expr.Param>(spread.Operand).Name);
+
+        AssertEval("""
+            Target(*xs) = xs.count
+            Use(*items) = Math.Abs(abs(Target))
+            Use(1, 2, 3)
+            """, 3);
+    }
+
+    [Theory]
+    [InlineData("Math.Round(Target, 0)")]
+    [InlineData("round(Target, 0)")]
+    public void Resolve_NonUnaryMathArgument_CanonicalAndAliasCarryCallerContext(string expression)
+    {
+        var root = Resolve($$"""
+            Target(*xs) = xs.count
+            Use(*items) = {{expression}}
+            """);
+
+        var mathCall = PropertyOutputRow(root, "Use");
+        var targetCall = mathCall switch
+        {
+            Expr.DotCall { Args: { } args } => Assert.IsType<Expr.Call>(args[0]),
+            Expr.Call { Args: { } args } => Assert.IsType<Expr.Call>(args[0]),
+            _ => throw new Xunit.Sdk.XunitException($"Expected a Math call, got {mathCall}"),
+        };
+        var spread = Assert.IsType<Expr.SequenceSpread>(Assert.Single(targetCall.Args));
+        Assert.Equal("items", Assert.IsType<Expr.Param>(spread.Operand).Name);
+    }
+
+    [Theory]
+    [InlineData("Math.Abs(Target)")]
+    [InlineData("abs(Target)")]
+    public void Resolve_MathArgument_CollectingSourceIntoFixedCalleeDoesNotSpread(string expression)
+    {
+        var root = Resolve($$"""
+            Target(items) = items.count
+            Use(*items) = {{expression}}
+            """);
+
+        var mathCall = PropertyOutputRow(root, "Use");
+        var targetCall = mathCall switch
+        {
+            Expr.DotCall { Args: { } args } => Assert.IsType<Expr.Call>(Assert.Single(args)),
+            Expr.Call { Args: { } args } => Assert.IsType<Expr.Call>(Assert.Single(args)),
+            _ => throw new Xunit.Sdk.XunitException($"Expected a Math call, got {mathCall}"),
+        };
+        var argument = Assert.Single(targetCall.Args);
+        Assert.IsNotType<Expr.SequenceSpread>(argument);
+        Assert.Equal("items", Assert.IsType<Expr.Param>(argument).Name);
+
+        AssertEval($$"""
+            Target(items) = items.count
+            Use(*items) = {{expression}}
+            Use(1, 2, 3)
+            """, 3);
+    }
+
+    [Fact]
+    public void Resolve_SharedArgumentBundleAcrossMathSpellingsPreservesSharedRewrite()
+    {
+        var parsed = (Algorithm.User)Resolve("""
+            Target(*xs) = xs.count
+            Use(*items) = 0
+            """);
+        var sharedResolve = new Expr.Resolve("Target");
+        var sharedArgs = new OutputBundle([sharedResolve]);
+        var root = parsed with
+        {
+            Properties = parsed.Properties
+                .Select(property => property.Name == "Use"
+                    ? property.WithValue(property.Value with
+                    {
+                        Output = new OutputBundle([
+                            new Expr.DotCall(new Expr.Resolve("Math"), "Abs", sharedArgs),
+                            new Expr.Call(new Expr.Resolve("abs"), sharedArgs),
+                        ]),
+                    })
+                    : property)
+                .ToList(),
+        };
+
+        var resolved = ImplicitArgumentResolver.ResolvePrevalidated(root);
+        var use = resolved.Properties.Single(property => property.Name == "Use").Value;
+        var canonicalArgument = MathArgument(use.Output[0]);
+        var aliasArgument = Assert.Single(Assert.IsType<Expr.Call>(use.Output[1]).Args);
+
+        Assert.Same(canonicalArgument, aliasArgument);
+        var targetCall = Assert.IsType<Expr.Call>(canonicalArgument);
+        var spread = Assert.IsType<Expr.SequenceSpread>(Assert.Single(targetCall.Args));
+        Assert.Equal("items", Assert.IsType<Expr.Param>(spread.Operand).Name);
+    }
+
+    [Fact]
+    public async Task Eval_MathArgumentRewrite_AgreesAcrossSyncGenericAndSuspendingTwin()
+    {
+        const string source = """
+            Seed = 0
+            Target(*xs) = xs.count
+            Fixed(xs) = Math.Abs(Target)
+            Collecting(*items) = abs(Target)
+            Fixed((1, 2, 3)) + Seed, Collecting(1, 2, 3)
+            """;
+        var ast = new Expr.AlgorithmExpr(Resolve(source));
+        var syncDefault = Evaluator.RunCounted(ast);
+        var (syncGeneric, _) = Evaluator.RunCountedObserved(ast, enableOptimizations: false);
+        var cache = new AsyncEvaluation.SuspendingAsyncZeroArgPropertyResultCache();
+        var pendingAsyncTwin = Evaluator.RunCountedAsync(ast, cache);
+        Assert.False(pendingAsyncTwin.IsCompleted);
+        var asyncTwin = await AsyncEvaluation.AsyncEvaluationHarness.Complete(
+            pendingAsyncTwin);
+
+        Assert.Equal(
+            AsyncEvaluation.AsyncEvaluationHarness.NeutralOf(syncDefault),
+            AsyncEvaluation.AsyncEvaluationHarness.NeutralOf(syncGeneric));
+        Assert.Equal(
+            AsyncEvaluation.AsyncEvaluationHarness.NeutralOf(syncDefault),
+            AsyncEvaluation.AsyncEvaluationHarness.NeutralOf(asyncTwin));
+        Assert.True(cache.AsyncAccesses > 0);
+    }
 }
