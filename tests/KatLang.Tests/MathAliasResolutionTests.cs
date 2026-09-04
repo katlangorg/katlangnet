@@ -247,8 +247,14 @@ public class MathAliasResolutionTests
         Assert.Equal(1, arityError.Expected);
         Assert.Equal(2, arityError.Actual);
 
-        // Property-style `Math.cos` equally stays an error.
-        SourceProvenance.ParseValid("Math.cos").ExpectEvaluationError<EvalError.UnknownName>();
+        // Property-style `Math.cos` equally stays an error, and it is an error
+        // about what the program actually wrote: the fallback is `cos(Math)`,
+        // whose argument binds on the algorithm channel only, so the wrapper's
+        // declared-argument read demands the `Math` module's value and reports
+        // that it has no output. (It used to report `Unknown name: radians` —
+        // the wrapper's own internal parameter — because that read stopped
+        // before the algorithm tier.)
+        SourceProvenance.ParseValid("Math.cos").ExpectEvaluationError<EvalError.MissingOutput>();
     }
 
     [Fact]

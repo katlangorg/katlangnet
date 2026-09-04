@@ -42,6 +42,10 @@ public class TutorialResultSweepTests
                     "**Result:** error — `A` has no defined output.",
                     KatLangErrorCode.MissingOutput),
                 new(
+                    "A = q + 1\nAdd1(x) = x + 1\nF(x) = Add1(A)\n\nF(7)",
+                    "**Result:** error — `Add1`'s parameter `x` is bound to the callable `A`, and `A` still needs its implicit `q`, so demanding `x` as a value is an arity error.",
+                    KatLangErrorCode.ArityMismatch),
+                new(
                     "A = [1, 2, 3]\nA*.count",
                     "**Result:** error — `A*.count` is the fluent supply chain, exactly `count(A*)`: the three items become three separate argument slots, and the fixed `count(collection)` signature reports an arity error.",
                     KatLangErrorCode.ArityMismatch),

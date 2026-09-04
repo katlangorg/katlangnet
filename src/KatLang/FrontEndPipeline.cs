@@ -246,7 +246,18 @@ internal static class FrontEndPipeline
         diagnostics.AddRange(parameterDiagnostics);
 
         cancellationToken.ThrowIfCancellationRequested();
-        var implicitResolvedRoot = ImplicitArgumentResolver.ResolvePrevalidated(parameterizedRoot);
+
+        // Implicit-argument resolution also REPORTS the forwarding it had to refuse: a
+        // registry-proven value-demanding position whose referenced callable needs implicit
+        // parameters the enclosing CLOSED explicit list cannot supply can never be satisfied
+        // by any call of that algorithm, so it is a static well-formedness failure of the
+        // closed interface — the same rule parameter detection applies to a directly written
+        // undeclared identifier, one indirection further out.
+        var implicitDiagnostics = new List<Diagnostic>();
+        var implicitResolvedRoot = ImplicitArgumentResolver.ResolvePrevalidated(
+            parameterizedRoot, observations: null, implicitDiagnostics);
+        diagnostics.AddRange(implicitDiagnostics);
+
         cancellationToken.ThrowIfCancellationRequested();
         var propertyExposedRoot = PropertyExposureResolver.Resolve(implicitResolvedRoot);
         cancellationToken.ThrowIfCancellationRequested();

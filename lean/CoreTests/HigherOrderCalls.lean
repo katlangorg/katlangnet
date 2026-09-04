@@ -1561,4 +1561,140 @@ def test21 : Bool :=
 #guard test21
 #eval runFlat (.call (resolve "if") [.num 0, .num 5, .num 6])
 
+--------------------------------------------------------------------------------
+-- Algorithm-channel parameter binding shadows the caller's value environment
+--
+-- A callee inherits the CALLER's value environment (`argEnv ++ env`), which is
+-- what lets a nested property read an ancestor-owned parameter. A parameter the
+-- call bound only through AlgEnv contributes no `argEnv` entry, so without
+-- `ValEnv.shadow` a same-named caller binding would answer every value-position
+-- read of that parameter: the callee would silently observe an unrelated caller
+-- value instead of the argument bound at THIS invocation.
+--
+-- Shape under test, for each of the three user-call binding paths:
+--   A(q) = q + 1        -- parameterized: binds only on the algorithm channel
+--   G(x) = x + 1        -- reads x in value position
+--   F(x) = G(A)         -- caller's own x = 7 must NOT be visible inside G
+--   F(7)
+-- Expected: the ordinary zero-argument value demand of a 1-parameter callable
+-- (arityMismatch 1 0), never 8.
+--------------------------------------------------------------------------------
+
+def shadowedParameterizedArg : Algorithm :=
+  alg ["q"] [] [] [.binary .add (.param "q") (.num 1)]
+
+def shadowedCallerAlg (calleeName : String) : Algorithm :=
+  alg ["x"] [] [] [.call (resolve calleeName) [resolve "A"]]
+
+def shadowedCallRoot (calleeName : String) (callee : Algorithm) : Algorithm :=
+  algPrivate [] [] [
+    ("A", shadowedParameterizedArg),
+    (calleeName, callee),
+    ("F", shadowedCallerAlg calleeName)
+  ] [
+    .call (resolve "F") [.num 7]
+  ]
+
+-- Flat fixed binding: G(x) = x + 1
+def shadowedFlatFixedCallee : Algorithm :=
+  alg ["x"] [] [] [.binary .add (.param "x") (.num 1)]
+
+def testAlgChannelParamShadowsCallerValueFlat : Bool :=
+  match runFlat (.algorithmExpr (shadowedCallRoot "G" shadowedFlatFixedCallee)) with
+  | Except.error err => innermostIsArityMismatch 1 0 err
+  | _ => false
+
+#guard testAlgChannelParamShadowsCallerValueFlat
+#eval runFlat (.algorithmExpr (shadowedCallRoot "G" shadowedFlatFixedCallee))
+
+-- Patterned binding: P(x, (a, b)) = x + a — the first argument still binds only
+-- through AlgEnv, and the written group supplies the pattern's items.
+def shadowedPatternedCallee : Algorithm :=
+  algWithParameterPatterns
+    [.capture { name := "x" }, .sequenceValue [.capture { name := "a" }, .capture { name := "b" }]]
+    [] []
+    [.binary .add (.param "x") (.param "a")]
+
+def shadowedPatternedRoot : Algorithm :=
+  algPrivate [] [] [
+    ("A", shadowedParameterizedArg),
+    ("P", shadowedPatternedCallee),
+    ("F", alg ["x"] [] [] [.call (resolve "P") [resolve "A", .capture [.num 1, .num 2]]])
+  ] [
+    .call (resolve "F") [.num 7]
+  ]
+
+def testAlgChannelParamShadowsCallerValuePatterned : Bool :=
+  match runFlat (.algorithmExpr shadowedPatternedRoot) with
+  | Except.error err => innermostIsArityMismatch 1 0 err
+  | _ => false
+
+#guard testAlgChannelParamShadowsCallerValuePatterned
+#eval runFlat (.algorithmExpr shadowedPatternedRoot)
+
+-- Item-supply (collecting) binding: C(x, *rest) = x + 1 — a fixed prefix
+-- parameter allocated an algorithm-only argument takes the same rule.
+def shadowedCollectingCallee : Algorithm :=
+  algWithParameterPatterns
+    [.capture { name := "x" }, .capture { name := "rest", kind := .collecting }]
+    [] []
+    [.binary .add (.param "x") (.num 1)]
+
+def shadowedCollectingRoot : Algorithm :=
+  algPrivate [] [] [
+    ("A", shadowedParameterizedArg),
+    ("C", shadowedCollectingCallee),
+    ("F", alg ["x"] [] [] [.call (resolve "C") [resolve "A", .num 5]])
+  ] [
+    .call (resolve "F") [.num 7]
+  ]
+
+def testAlgChannelParamShadowsCallerValueCollecting : Bool :=
+  match runFlat (.algorithmExpr shadowedCollectingRoot) with
+  | Except.error err => innermostIsArityMismatch 1 0 err
+  | _ => false
+
+#guard testAlgChannelParamShadowsCallerValueCollecting
+#eval runFlat (.algorithmExpr shadowedCollectingRoot)
+
+-- Positive control 1: shadowing removes ONLY the callee's own parameter names.
+-- `Outer(v)`'s nested property still reads the ancestor-owned `v` through the
+-- inherited value environment, because `Inner` declares no parameter named `v`.
+def ancestorParameterReaderRoot : Algorithm :=
+  algPrivate [] [] [
+    ("Outer",
+      algPrivate ["v"] [] [("Inner", alg [] [] [] [.binary .add (.param "v") (.num 1)])]
+        [resolve "Inner"])
+  ] [
+    .call (resolve "Outer") [.num 7]
+  ]
+
+def testAncestorParameterStillVisible : Bool :=
+  match runFlat (.algorithmExpr ancestorParameterReaderRoot) with
+  | Except.ok [8] => true
+  | _ => false
+
+#guard testAncestorParameterStillVisible
+#eval runFlat (.algorithmExpr ancestorParameterReaderRoot)
+
+-- Positive control 2: a parameter bound on BOTH channels keeps its value view.
+-- `Z` is a zero-parameter property, so `G(Z)` binds `x` to Z's value as well as
+-- to its algorithm; the value tier still answers and shadowing changes nothing.
+def dualChannelArgRoot : Algorithm :=
+  algPrivate [] [] [
+    ("Z", alg [] [] [] [.num 41]),
+    ("G", shadowedFlatFixedCallee),
+    ("F", alg ["x"] [] [] [.call (resolve "G") [resolve "Z"]])
+  ] [
+    .call (resolve "F") [.num 7]
+  ]
+
+def testDualChannelArgumentKeepsValueView : Bool :=
+  match runFlat (.algorithmExpr dualChannelArgRoot) with
+  | Except.ok [42] => true
+  | _ => false
+
+#guard testDualChannelArgumentKeepsValueView
+#eval runFlat (.algorithmExpr dualChannelArgRoot)
+
 end KatLangTests

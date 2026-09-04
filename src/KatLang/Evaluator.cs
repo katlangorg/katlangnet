@@ -179,28 +179,30 @@ public static partial class Evaluator
     }
 
     /// <summary>
-    /// Native-wrapper argument lookup, shared by Math-member natives and host
+    /// Native-wrapper argument read, shared by Math-member natives and host
     /// operations. A wrapper body's argument names are the wrapper's own bound
-    /// parameters, which live in the counted callback-parameter environment when
-    /// the wrapper was invoked through the flat-callback/loop-step funnel and in
-    /// the value environment on direct calls. Counted-first with value fallback is
-    /// the <see cref="Expr.Param"/> dual-view order (minus the algorithm-binding
-    /// tier — native arguments are always value bindings), so a native callback
-    /// reads its actual bound argument and can never capture a same-named ambient
-    /// caller value instead. Direct calls are unaffected: flat fixed binding
-    /// shadows the callee's parameter names out of the caller's counted
-    /// environment before the body evaluates.
+    /// parameters, so this is EXACTLY the <see cref="Expr.Param"/> value read —
+    /// <see cref="EvalParamCounted"/> projected to its value — and not a
+    /// separate lookup rule: counted callback-parameter environment first (the
+    /// flat-callback/loop-step funnel), then the value environment (direct
+    /// calls), then the algorithm binding.
+    /// <para>The algorithm tier is reachable whenever an argument bound only on
+    /// the algorithm channel — its value evaluation failed, or it names a
+    /// callable — and it must produce the ordinary value-demand outcome: the
+    /// zero-argument arity error for a parameterized callable, the conditional
+    /// value-access error for a clause family, or the value/failure of a
+    /// zero-parameter algorithm. Omitting it reported <c>Unknown name</c> for
+    /// the wrapper's OWN parameter, and (before the value environment was
+    /// shadowed at binding) let a same-named ambient caller value answer
+    /// instead.</para>
+    /// The wrapper body carries no source span, so the error is positioned by
+    /// the enclosing call/dot-call context like every other native failure.
     /// </summary>
-    private static Result? LookupNativeArgument(
+    private static EvalResult<Result> LookupNativeArgument(
         EvalCtx ctx,
         IReadOnlyList<(string, Result)> valEnv,
         string name)
-    {
-        var counted = LookupCountedParam(ctx.CountedParamEnv, name);
-        if (counted is not null)
-            return counted.Value.Value;
-        return LookupVal(valEnv, name);
-    }
+        => ProjectCountedValue(EvalParamCounted(name, span: null, ctx, valEnv));
 
     internal static IReadOnlyList<(string Name, CountedResult Value)> ShadowCountedParamEnv(
         IReadOnlyList<(string Name, CountedResult Value)> env,
@@ -227,6 +229,78 @@ public static partial class Evaluator
         }
 
         return removedAny ? filtered : env;
+    }
+
+    /// <summary>
+    /// Removes the named bindings from an INHERITED value environment — the
+    /// value-tier counterpart of <see cref="ShadowCountedParamEnv"/>.
+    /// <para>A callee's value environment is its own bindings prepended to the
+    /// CALLER's, which is what lets a nested property body still read an
+    /// ancestor-owned parameter. A parameter the call bound only on the
+    /// ALGORITHM channel — a higher-order argument, or any argument whose value
+    /// evaluation failed — contributes no value binding, so without this filter
+    /// a same-named binding inherited from the caller would answer every
+    /// value-position read of that parameter: the callee would silently observe
+    /// an unrelated caller value instead of the argument bound at THIS
+    /// invocation, and which caller parameter names happen to collide with a
+    /// callee's parameter names would become observable. Shadowing the callee's
+    /// whole parameter list is the same rule the counted tier already applies;
+    /// names that DO carry a value binding are shadowed by the prepended
+    /// bindings anyway, so filtering the tail changes nothing for them.</para>
+    /// Lean: <c>ValEnv.shadow</c>.
+    /// </summary>
+    internal static IReadOnlyList<(string Name, Result Value)> ShadowValEnv(
+        IReadOnlyList<(string Name, Result Value)> env,
+        IReadOnlyList<string> shadowedNames)
+    {
+        if (env.Count == 0 || shadowedNames.Count == 0)
+            return env;
+
+        // Callee parameter lists are short in every ordinary program, so the
+        // linear membership scan avoids allocating a set on the hot call path;
+        // a wide deconstruction signature crosses over to the set.
+        HashSet<string>? shadowedSet = shadowedNames.Count > LinearShadowNameScanLimit
+            ? new HashSet<string>(shadowedNames, StringComparer.Ordinal)
+            : null;
+
+        List<(string Name, Result Value)>? filtered = null;
+        for (var index = 0; index < env.Count; index++)
+        {
+            var binding = env[index];
+            var isShadowed = shadowedSet is not null
+                ? shadowedSet.Contains(binding.Name)
+                : ContainsOrdinal(shadowedNames, binding.Name);
+
+            if (isShadowed)
+            {
+                if (filtered is null)
+                {
+                    filtered = new List<(string Name, Result Value)>(env.Count - 1);
+                    for (var copied = 0; copied < index; copied++)
+                        filtered.Add(env[copied]);
+                }
+
+                continue;
+            }
+
+            filtered?.Add(binding);
+        }
+
+        return filtered ?? env;
+    }
+
+    /// <summary>
+    /// Parameter-list length at which <see cref="ShadowValEnv"/> switches from a
+    /// linear membership scan to a hash set.
+    /// </summary>
+    private const int LinearShadowNameScanLimit = 8;
+
+    private static bool ContainsOrdinal(IReadOnlyList<string> names, string name)
+    {
+        for (var index = 0; index < names.Count; index++)
+            if (string.Equals(names[index], name, StringComparison.Ordinal))
+                return true;
+        return false;
     }
 
     private static (Algorithm Algorithm, EvalError? ValueError)? LookupAlgBinding(

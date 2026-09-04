@@ -154,9 +154,10 @@ public enum DiagnosticCode
     ExplicitParametersRequireOutput = 22,
 
     /// <summary>
-    /// An identifier used inside a conditional branch or explicitly
-    /// parameterized algorithm is neither declared in the closed parameter
-    /// list/pattern nor resolvable to a visible name.
+    /// A name required inside a conditional branch or explicitly parameterized
+    /// algorithm is not declared by the applicable closed parameter list or
+    /// pattern. This includes both a directly written unresolved identifier and
+    /// an implicit parameter required to produce a visible callable's value.
     /// </summary>
     UndeclaredIdentifier = 23,
 

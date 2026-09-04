@@ -611,13 +611,20 @@ public static partial class Evaluator
                 // The spine machine owns the index-expression span.
                 return EvalExpressionSpineCounted(expr, ctx, valEnv);
 
-            // LEAVES of the counted dispatch: none evaluates a child
-            // expression, so delegating to the plain evaluator is exact and
-            // the single-value count projection is total. Grace is the
+            // PLAIN-DELEGATING cases of the counted dispatch: each produces
+            // exactly one value, so delegating to the plain evaluator and
+            // projecting a single-value count is total. Grace is the
             // deliberate illegal-in-eval catch-all (elaboration strips every
             // written one; a host-built survivor reports
-            // EvalError.IllegalInEval through the plain dispatch). Keep this
-            // classification in lock-step with EvalCountedAsync.
+            // EvalError.IllegalInEval through the plain dispatch). Num,
+            // StringLiteral and Grace are also LEAVES — they evaluate no child
+            // expression — and are the sync-delegable group EvalCountedAsync
+            // may run through the synchronous evaluator. NativeCall is NOT a
+            // leaf: its declared-argument reads are ordinary Expr.Param value
+            // reads, so a demanded algorithm-channel binding re-enters an
+            // algorithm body; the async twin therefore gives it its own case
+            // (EvalNativeCallAsync). Keep this classification in lock-step
+            // with EvalCountedAsync.
             case Expr.Num:
             case Expr.StringLiteral:
             case Expr.NativeCall:
@@ -659,11 +666,31 @@ public static partial class Evaluator
             return InvokeSynchronousHostOperation(hostOperation, argNames, ctx, valEnv);
         }
 
+        var argsR = CollectMathNativeArguments(argNames, ctx, valEnv);
+        if (argsR.IsError) return argsR.Error;
+
+        return ApplyMathNative(fnName, argsR.Value);
+    }
+
+    /// <summary>
+    /// Reads one Math native's declared arguments from the wrapper's bound
+    /// parameter environments, in declaration order, and coerces each to its
+    /// numeric domain. Lookup is the shared native-argument read
+    /// (<see cref="LookupNativeArgument"/>), which is the ordinary
+    /// <see cref="Expr.Param"/> value read; the numeric constraint applies to
+    /// the value that read produced.
+    /// </summary>
+    private static EvalResult<Decimal128[]> CollectMathNativeArguments(
+        IReadOnlyList<string> argNames,
+        EvalCtx ctx,
+        IReadOnlyList<(string, Result)> valEnv)
+    {
         var args = new Decimal128[argNames.Count];
         for (var i = 0; i < argNames.Count; i++)
         {
-            var val = LookupNativeArgument(ctx, valEnv, argNames[i]);
-            if (val is null) return new EvalError.UnknownName(argNames[i]);
+            var valR = LookupNativeArgument(ctx, valEnv, argNames[i]);
+            if (valR.IsError) return valR.Error;
+            var val = valR.Value;
             var num = val.AsNum();
             if (num is null)
                 return val is Result.Str
@@ -672,6 +699,17 @@ public static partial class Evaluator
             args[i] = num.Value;
         }
 
+        return EvalResult<Decimal128[]>.Ok(args);
+    }
+
+    /// <summary>
+    /// Applies one Math native to its already-read numeric arguments. Pure
+    /// computation over the argument snapshot — it evaluates nothing and reads
+    /// no environment — so the synchronous dispatch and its async twin share
+    /// this ONE implementation and the member set cannot drift between them.
+    /// </summary>
+    private static EvalResult<Result> ApplyMathNative(string fnName, Decimal128[] args)
+    {
         // Every math member computes Decimal128 end-to-end — no double round-trip
         // anywhere, so transcendental results carry Decimal128's full 34-digit
         // precision. Domain violations follow IEEE: Sqrt(-1) and Ln(-1) are NaN,
@@ -870,10 +908,9 @@ public static partial class Evaluator
         var arguments = new Result[argNames.Count];
         for (var i = 0; i < argNames.Count; i++)
         {
-            var value = LookupNativeArgument(ctx, valEnv, argNames[i]);
-            if (value is null)
-                return new EvalError.UnknownName(argNames[i]);
-            arguments[i] = value;
+            var valueR = LookupNativeArgument(ctx, valEnv, argNames[i]);
+            if (valueR.IsError) return valueR.Error;
+            arguments[i] = valueR.Value;
         }
 
         return EvalResult<IReadOnlyList<Result>>.Ok(Array.AsReadOnly(arguments));

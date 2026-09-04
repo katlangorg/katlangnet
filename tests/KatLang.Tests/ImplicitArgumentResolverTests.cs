@@ -6,6 +6,28 @@ public class ImplicitArgumentResolverTests
     private static Algorithm Resolve(string source)
         => SourceProvenance.ParseValid(source).Root;
 
+    /// <summary>
+    /// Elaborated root for a source the closed-list strict-value refinement REJECTS at the
+    /// front end (a registry-proven value-demanding position whose referenced callable needs
+    /// implicit parameters the closed explicit list cannot supply).
+    ///
+    /// <para>The rewrite is still the subject of these tests: what makes the new diagnostic
+    /// honest rather than a cover story is that the resolver, on refusing to lift, leaves the
+    /// reference bare and invents no parameter. So this states the rejection explicitly —
+    /// never <c>ParseValid</c>, which would silently evaluate a recovery tree — and hands back
+    /// the tree the resolver actually produced. The diagnostic's own content is owned by
+    /// <see cref="ClosedListStrictValueDiagnosticTests"/>.</para>
+    /// </summary>
+    private static Algorithm ResolveRejected(string source)
+    {
+        var parsed = Parser.Parse(source);
+        Assert.True(
+            parsed.HasErrors,
+            "Expected the closed-list strict-value diagnostic, but the front end accepted:"
+            + Environment.NewLine + source);
+        return parsed.Root;
+    }
+
     private static EvalResult<IReadOnlyList<Decimal128>> Eval(string source)
         => Evaluator.RunFlat(new Expr.AlgorithmExpr(Resolve(source)));
 
@@ -960,7 +982,7 @@ public class ImplicitArgumentResolverTests
         // K1-04, the Math-wrapped twin of
         // Resolve_ExplicitParameterList_DoesNotLiftBareParameterizedHelper. An explicit
         // parameter list is CLOSED; a strict-value Math wrapper is not an escape hatch from it.
-        var root = Resolve("""
+        var root = ResolveRejected("""
             CountItems(*items) = items.count
             Use(value) = Math.Abs(CountItems)
             """);
@@ -979,7 +1001,7 @@ public class ImplicitArgumentResolverTests
         // The audit's K1-04 repro. `F`'s explicit list is `(x)`, and `y` appears nowhere in
         // F's source: lifting `A` there synthesized `A(Expr.Param("y"))`, which bound the
         // enclosing `G`'s parameter at runtime and additionally corrupted F's exposure.
-        var root = Resolve("""
+        var root = ResolveRejected("""
             A = y + 1
             G = {
               F(x) = Math.Abs(A)
@@ -1003,7 +1025,7 @@ public class ImplicitArgumentResolverTests
     [Fact]
     public void Resolve_MathArgument_ClosedExplicitParameterList_MatchesUnwrappedValuePosition()
     {
-        var wrapped = Resolve("""
+        var wrapped = ResolveRejected("""
             A = y + 1
             G = {
               F(x) = Math.Abs(A)
@@ -1035,22 +1057,25 @@ public class ImplicitArgumentResolverTests
         // declared. The front end no longer synthesizes that reference, so the invented
         // ancestor binding is gone.
         //
-        // What the evaluator then does with the (correctly) unlifted bare reference is a
-        // SEPARATE, pre-existing concern that this batch does not touch: a bare reference to a
-        // parameterized property in a Math argument slot binds on the higher-order algorithm
-        // channel, and the native wrapper's declared argument name is then read through the
-        // counted-first dual view. That path is reachable without any Math value-demanding
-        // lifting at all (for example `Id(v) = v` with `Id(Math.Abs(A))`, a NEUTRAL argument
-        // slot this pass leaves bare on both sides of this change), so it is asserted here only
-        // to the extent B2a owns it: 21 is impossible.
-        var result = Eval("""
+        // THREE layers now stand behind that, and this test asserts the innermost one — the
+        // rewrite — independently of the outer two, so a regression in either cannot hide it.
+        // (1) The front end REJECTS this source outright: `A` is required as a value by a
+        // registry-proven strict consumer and `F`'s closed list cannot supply `y`. (2) Were
+        // checking bypassed, the evaluator's dual-view shadowing makes the bare reference a
+        // value-demand failure rather than an ancestor capture. (3) Underneath both, the
+        // resolver's own output must simply never contain the invented parameter — which is
+        // what this evaluates the elaborated tree to confirm: 21 is impossible.
+        var source = """
             A = y + 1
             G = {
               F(x) = Math.Abs(A)
               F(1) + y
             }
             G(10)
-            """);
+            """;
+
+        var rejectedRoot = ResolveRejected(source);
+        var result = Evaluator.RunFlat(new Expr.AlgorithmExpr(rejectedRoot));
 
         Assert.False(
             !result.IsError && result.Value.SequenceEqual<Decimal128>([21]),
@@ -1066,7 +1091,7 @@ public class ImplicitArgumentResolverTests
     [InlineData("Use(v) = Math.Abs(Math.Round)")]
     public void Resolve_MathArgument_ClosedExplicitParameterList_DoesNotLiftBareMathMemberReference(string source)
     {
-        var root = Resolve(source);
+        var root = ResolveRejected(source);
         var use = root.Properties.Single(p => p.Name == "Use").Value;
 
         Assert.Equal(["v"], use.Params);
@@ -1216,7 +1241,7 @@ public class ImplicitArgumentResolverTests
         // declaration order.
         static void AssertBothGates(string source)
         {
-            var root = Resolve(source);
+            var root = ResolveRejected(source);
 
             var lifted = Assert.IsType<Expr.Call>(MathArgument(PropertyOutputRow(root, "OpenList")));
             Assert.Equal("Helper", Assert.IsType<Expr.Resolve>(lifted.Function).Name);
@@ -1470,7 +1495,6 @@ public class ImplicitArgumentResolverTests
         var (syncGeneric, _) = Evaluator.RunCountedObserved(ast, enableOptimizations: false);
         var cache = new AsyncEvaluation.SuspendingAsyncZeroArgPropertyResultCache();
         var pendingAsyncTwin = Evaluator.RunCountedAsync(ast, cache);
-        Assert.False(pendingAsyncTwin.IsCompleted);
         var asyncTwin = await AsyncEvaluation.AsyncEvaluationHarness.Complete(
             pendingAsyncTwin);
 
@@ -1481,5 +1505,6 @@ public class ImplicitArgumentResolverTests
             AsyncEvaluation.AsyncEvaluationHarness.NeutralOf(syncDefault),
             AsyncEvaluation.AsyncEvaluationHarness.NeutralOf(asyncTwin));
         Assert.True(cache.AsyncAccesses > 0);
+        Assert.Equal(cache.AsyncAccesses, cache.ThreadHops.Count);
     }
 }

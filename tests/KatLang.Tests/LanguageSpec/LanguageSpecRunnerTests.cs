@@ -230,6 +230,7 @@ public class LanguageSpecRunnerTests
         [
             "decon-two-collecting-rejected",
             "negative-index-literal-rejected",
+            "closed-list-strict-value-forwarding",
             "open-capture-target-rejected",
             "semicolon-not-expression-syntax",
             "spread-not-binary-operand",
@@ -247,6 +248,7 @@ public class LanguageSpecRunnerTests
             "negative-zero-display",
             "overflow-produces-infinity",
             // The unmodeled Math-native surface.
+            "native-argument-value-demand",
             "native-flat-callback-binding",
         ];
 
@@ -273,9 +275,9 @@ public class LanguageSpecRunnerTests
     [Fact]
     public void FidelityRatchet_LeanGuardedCoverageCannotSilentlyShrink()
     {
-        const int MinimumEncoderDerivedCases = 168;
+        const int MinimumEncoderDerivedCases = 169;
         const int MaximumHandAuthoredOverrides = 0;
-        const int MaximumCSharpOnlyCases = 7;
+        const int MaximumCSharpOnlyCases = 8;
 
         var derived = Cases.Count(c => c.DerivedLeanProgram is not null);
         var overrides = Cases.Count(c => c.LeanProgramOverride is not null);

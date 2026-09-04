@@ -9,9 +9,9 @@ namespace KatLang.Tests.AsyncEvaluation;
 /// have evaluated its children synchronously — bypassing the async twin family —
 /// while still passing outcome-differential tests (the sync oracle produces the
 /// same values). The dispatch now enumerates the sync-delegable leaves
-/// explicitly (<c>Num</c>, <c>StringLiteral</c>, synchronous <c>NativeCall</c>,
-/// and the illegal-in-eval <c>Grace</c>) and fails loudly on anything else, in
-/// lock-step with the synchronous <c>EvalCounted</c> mirror.</para>
+/// explicitly (<c>Num</c>, <c>StringLiteral</c>, and the illegal-in-eval
+/// <c>Grace</c>) and fails loudly on anything else, in lock-step with the
+/// synchronous <c>EvalCounted</c> mirror.</para>
 ///
 /// <para>These tests pin the contract three ways: (1) a reflection-complete
 /// classification of every concrete variant into explicitly-async-cased vs
@@ -37,14 +37,6 @@ public class AsyncDispatchExhaustivenessTests
         /// catch-all: a structured error, no child evaluation).
         /// </summary>
         SyncDelegatedLeaf,
-
-        /// <summary>
-        /// NativeCall only: a native naming an ASYNCHRONOUS host operation is
-        /// intercepted by the guarded async case (the one Phase 3 await site,
-        /// pinned by the Hosting suites); every other native is a synchronous
-        /// leaf and delegates.
-        /// </summary>
-        SplitOnAsynchronousHostOperation,
     }
 
     private static IReadOnlyDictionary<string, AsyncDispatchPolicy> DeclaredPolicies { get; } =
@@ -63,7 +55,7 @@ public class AsyncDispatchExhaustivenessTests
             [nameof(Expr.Capture)] = AsyncDispatchPolicy.ExplicitAsyncCase,
             [nameof(Expr.Call)] = AsyncDispatchPolicy.ExplicitAsyncCase,
             [nameof(Expr.DotCall)] = AsyncDispatchPolicy.ExplicitAsyncCase,
-            [nameof(Expr.NativeCall)] = AsyncDispatchPolicy.SplitOnAsynchronousHostOperation,
+            [nameof(Expr.NativeCall)] = AsyncDispatchPolicy.ExplicitAsyncCase,
             [nameof(Expr.Num)] = AsyncDispatchPolicy.SyncDelegatedLeaf,
             [nameof(Expr.StringLiteral)] = AsyncDispatchPolicy.SyncDelegatedLeaf,
             [nameof(Expr.Grace)] = AsyncDispatchPolicy.SyncDelegatedLeaf,
@@ -233,12 +225,15 @@ public class AsyncDispatchExhaustivenessTests
     }
 
     /// <summary>
-    /// NativeCall has a split policy, but the ordinary built-in/synchronous-host
-    /// branch is still one of the four sync-delegable leaves and must touch no
-    /// property-cache seam.
+    /// NativeCall is an explicit async case because its declared-argument reads
+    /// are ordinary <c>Expr.Param</c> value reads, and an argument bound on the
+    /// ALGORITHM channel makes one of those reads re-enter an algorithm body. A
+    /// native whose arguments are ordinary bound values evaluates nothing, so it
+    /// still touches no property-cache seam; the algorithm-channel case is
+    /// pinned by <see cref="NativeArgumentAlgorithmDemand_RoutesThroughTheAsyncSeam"/>.
     /// </summary>
     [Fact]
-    public async Task SynchronousNativeCall_DelegatesExactlyAndTouchesNoSeam()
+    public async Task NativeCallWithValueBoundArguments_TouchesNoSeam()
     {
         var ast = new Expr.AlgorithmExpr(EmptyAlgorithm(VariantSamples[nameof(Expr.NativeCall)]));
         var sync = Evaluator.RunCounted(ast);
@@ -249,6 +244,102 @@ public class AsyncDispatchExhaustivenessTests
         Assert.Equal(AsyncEvaluationHarness.NeutralOf(sync), AsyncEvaluationHarness.NeutralOf(async));
         Assert.Equal(0, cache.SyncAccesses);
         Assert.Equal(0, cache.AsyncAccesses);
+    }
+
+    /// <summary>
+    /// The recursive NativeCall child position: a Math member argument that
+    /// binds only on the ALGORITHM channel makes the wrapper's declared-argument
+    /// read demand that algorithm's value, which must run on the ASYNC seam. A
+    /// NativeCall silently delegated to synchronous evaluation would reach the
+    /// SYNCHRONOUS seam member instead and fail the counters.
+    /// </summary>
+    [Fact]
+    public async Task NativeArgumentAlgorithmDemand_RoutesThroughTheAsyncSeam()
+    {
+        // `Wrapped` binds Math.Sqrt's `x` on the algorithm channel only (its own
+        // value evaluation fails), so the wrapper body demands its value, which
+        // re-enters `Wrapped`'s body through the zero-argument property seam.
+        var ast = new Expr.AlgorithmExpr(
+            KatLang.Tests.SourceProvenance.ParseValid(
+                """
+                P = 4
+                Wrapped = P + 1 / 0
+                Math.Sqrt(Wrapped)
+                """).Root);
+
+        var (sync, syncBudget) = Evaluator.RunCountedObserved(ast, enableOptimizations: false);
+
+        var cache = new SuspendingAsyncZeroArgPropertyResultCache();
+        var (async, asyncBudget) = await AsyncEvaluationHarness.Complete(
+            Evaluator.RunCountedObservedAsync(ast, zeroArgPropertyResultCache: cache));
+
+        Assert.Equal(AsyncEvaluationHarness.NeutralOf(sync), AsyncEvaluationHarness.NeutralOf(async));
+        Assert.Equal(syncBudget.ConsumedSteps, asyncBudget.ConsumedSteps);
+        Assert.Equal(syncBudget.PeakDepth, asyncBudget.PeakDepth);
+        Assert.Equal(syncBudget.MaterializedItems, asyncBudget.MaterializedItems);
+        Assert.Equal(syncBudget.MaterializedStringChars, asyncBudget.MaterializedStringChars);
+        Assert.Equal(0, cache.SyncAccesses);
+        Assert.True(cache.AsyncAccesses > 0);
+        Assert.Equal(cache.AsyncAccesses, cache.ThreadHops.Count);
+    }
+
+    [Fact]
+    public async Task NativeArgumentAlgorithmDemand_TightLimitsMatchSyncVerdictsAndCounters()
+    {
+        var ast = new Expr.AlgorithmExpr(
+            KatLang.Tests.SourceProvenance.ParseValid(
+                """
+                P = 4
+                Wrapped = P + 1 / 0
+                Math.Sqrt(Wrapped)
+                """).Root);
+        var (_, baselineBudget) = Evaluator.RunCountedObserved(ast, enableOptimizations: false);
+        var limits = new[]
+        {
+            new EvaluationLimits { MaxSteps = Math.Max(1, baselineBudget.ConsumedSteps - 1) },
+            new EvaluationLimits { MaxDepth = Math.Max(1, baselineBudget.PeakDepth - 1) },
+        };
+
+        foreach (var limit in limits)
+        {
+            var (sync, syncBudget) = Evaluator.RunCountedObserved(
+                ast, limit, enableOptimizations: false);
+            var cache = new PassThroughAsyncZeroArgPropertyResultCache();
+            var (async, asyncBudget) = await AsyncEvaluationHarness.Complete(
+                Evaluator.RunCountedObservedAsync(
+                    ast, limit, zeroArgPropertyResultCache: cache));
+
+            Assert.Equal(AsyncEvaluationHarness.NeutralOf(sync), AsyncEvaluationHarness.NeutralOf(async));
+            Assert.Equal(syncBudget.ConsumedSteps, asyncBudget.ConsumedSteps);
+            Assert.Equal(syncBudget.PeakDepth, asyncBudget.PeakDepth);
+            Assert.Equal(syncBudget.MaterializedItems, asyncBudget.MaterializedItems);
+            Assert.Equal(syncBudget.MaterializedStringChars, asyncBudget.MaterializedStringChars);
+            Assert.Equal(0, cache.SyncAccesses);
+        }
+    }
+
+    [Fact]
+    public async Task NativeArgumentAlgorithmDemand_ObservesCancellationDuringRedemand()
+    {
+        var ast = new Expr.AlgorithmExpr(
+            KatLang.Tests.SourceProvenance.ParseValid(
+                """
+                P = 4
+                Wrapped = P + 1 / 0
+                Math.Sqrt(Wrapped)
+                """).Root);
+        using var cancellation = new CancellationTokenSource();
+        var cache = new CancellingAsyncZeroArgPropertyResultCache(
+            cancelAtAccess: 3,
+            cancellation);
+
+        var thrown = await Assert.ThrowsAnyAsync<OperationCanceledException>(async () =>
+            await Evaluator.RunCountedAsync(
+                ast, cache, limits: null, cancellationToken: cancellation.Token));
+
+        Assert.Equal(cancellation.Token, thrown.CancellationToken);
+        Assert.True(cache.AsyncAccesses >= 3);
+        Assert.Equal(0, cache.ObservedBudget!.CurrentDepth);
     }
 
     // ── Recursive child positions route through the ASYNC seam ──────────────

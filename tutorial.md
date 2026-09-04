@@ -61,6 +61,7 @@ Learn KatLang from a first calculation through collections, higher-order algorit
     - [Fibonacci Sequence](#fibonacci-sequence)
 12. [Higher-Order Algorithms](#higher-order-algorithms)
     - [Algorithm as Argument](#algorithm-as-argument)
+    - [A Parameter Always Means This Call's Argument](#a-parameter-always-means-this-calls-argument)
     - [Algorithms vs. Grouped Expressions](#algorithms-vs-grouped-expressions)
 13. [Spread with the Postfix Star](#spread-with-the-postfix-star)
     - [Capture Parentheses](#capture-parentheses)
@@ -1301,6 +1302,19 @@ When KatLang sees a name, it checks these places in order and stops at the first
 3. **Opens** — public properties from `open` targets, checked for the current algorithm first and then upward through the parent chain.
 
 If the name is not found at any of these levels, KatLang treats it as an implicit parameter only when the current algorithm has no explicit parameter list (see [Parameters](#parameters)). Explicit parameter lists are closed, so an unresolved extra name is reported as an error instead.
+
+Closedness also covers what a name needs *indirectly*. Referring to a property that has its own implicit parameters normally passes them along for you, and an explicit list can only do that for the parameters it declares. Where a value is definitely required — a math function's argument, for example — KatLang reports the gap instead of leaving it to fail at run time. Declaring the required name keeps the program legal:
+
+```
+A = q + 1
+F(q) = Math.Abs(A)
+
+F(7)
+```
+
+**Result:** `8`
+
+Leaving the list off entirely works too (`F = Math.Abs(A)` infers `q` for you), and so does supplying the argument at the call (`Math.Abs(A(1))`). But writing `F(x) = Math.Abs(A)` is rejected, because `Math.Abs` needs `A`'s value, producing that value needs `A`'s `q`, and `F(x)` declares no `q`: "'A' is required as a value here, but producing that value needs the implicit parameter 'q', which the enclosing explicit parameter list does not declare." Only a *value* demand is checked this way — passing `A` where a callable is wanted, as in `Apply(A)` or `map(abs)`, is unaffected.
 
 ```
 X = 1
@@ -2848,6 +2862,34 @@ Call0({42})
 **Result:** `42`
 
 Grouping is different: parentheses capture a *value*, and a captured value never carries the algorithm identity of what it encloses, so `Apply((Increment))` and `Call0((Const))` fail even though the bare names work. (Parentheses directly around a brace block simply normalize away, so `Call0(({42}))` behaves exactly like `Call0({42})`.)
+
+### A Parameter Always Means This Call's Argument
+
+Passing a callable binds the receiving parameter on the *callable* channel rather than the value channel. Calling that parameter works as shown above; reading it as a plain value asks the callable for a zero-argument result, which fails when the callable still needs arguments:
+
+<!-- spec:callable-argument-parameter-shadowing -->
+```
+A = q + 1
+Add1(x) = x + 1
+F(x) = Add1(A)
+
+F(7)
+```
+
+**Result:** error — `Add1`'s parameter `x` is bound to the callable `A`, and `A` still needs its implicit `q`, so demanding `x` as a value is an arity error.
+
+The name `x` here happens to be a parameter of the *caller* `F` as well, and that changes nothing: a parameter always means the argument bound at this call, never a same-named binding from the surrounding algorithm. Renaming `F`'s parameter to `zz` produces exactly the same error. Either call the parameter — `Apply(x) = x(10)` with `Apply(A)` gives `11` — or pass a value instead of a callable.
+
+Names the callee does *not* declare as parameters still resolve outward as usual, so a nested property keeps reading its ancestor's parameter:
+
+```
+Outer(v) = Inner
+  Inner = v + 1
+
+Outer(7)
+```
+
+**Result:** `8`
 
 Sequence builtins `filter`, `map`, and `reduce` are a special higher-order case. Their per-item callback argument behaves like `S:i` for the traversed sequence `S`, so sequence-value current items expose their immediate members without recursive flattening. This rule is local to those builtins; ordinary higher-order calls such as `Apply(Increment)` still use ordinary argument binding.
 

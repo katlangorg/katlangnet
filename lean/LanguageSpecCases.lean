@@ -14,11 +14,11 @@ This is bounded differential validation over the Lean-guarded partition,
 not a formal verification of the evaluators.
 
 Partition (machine-checked by the `specCaseIds.length` guard below):
-- specification surface cases: 181
-- excluded parse-level cases (Lean has no surface parser): 6
-- excluded C#-only cases (each carries an explicit reason in the corpus): 7
-- Lean-guarded cases: 168
-- probe observations (C#-only by design): 287
+- specification surface cases: 184
+- excluded parse-level cases (Lean has no surface parser): 7
+- excluded C#-only cases (each carries an explicit reason in the corpus): 8
+- Lean-guarded cases: 169
+- probe observations (C#-only by design): 300
 - internal-node cases live in the semantic-explorer corpus, not here: see
   lean/SemanticExplorerCases.lean
 
@@ -938,7 +938,12 @@ def case_list_builtin_collection : Expr :=
   .algorithmExpr (alg [] [] [] [(.call (.resolve "count") [(.listLiteral [.num 1, .num 2, .num 3])])])
 #guard obs case_list_builtin_collection == "ok raw=3 n=1"
 
--- 168 canonical Lean-guarded specification cases.
+-- callable-argument-parameter-shadowing [access-boundaries]: A = q + 1 \n Add1(x) = x + 1 \n F(x) = Add1(A) \n  \n F(7)
+def case_callable_argument_parameter_shadowing : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "A" (alg ["q"] [] [] [(.binary .add (.param "q") (.num 1))]), privateProp "Add1" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))]), privateProp "F" (alg ["x"] [] [] [(.call (.resolve "Add1") [.resolve "A"])])] [(.call (.resolve "F") [.num 7])])
+#guard obs case_callable_argument_parameter_shadowing == "err arity"
+
+-- 169 canonical Lean-guarded specification cases.
 
 /--
 Machine-checked Lean-guarded partition count: the id list is built by the
@@ -1113,8 +1118,9 @@ def specCaseIds : List String := [
   "list-deconstruction-not-recursive",
   "collecting-binding-exact-list",
   "list-lone-collecting-assignment",
-  "list-builtin-collection"
+  "list-builtin-collection",
+  "callable-argument-parameter-shadowing"
 ]
-#guard specCaseIds.length == 168
+#guard specCaseIds.length == 169
 
 end LanguageSpecCases

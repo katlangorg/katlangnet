@@ -2780,5 +2780,77 @@ public static class LanguageSpecCorpus
             IncludeInGeneratorPrompt = true,
             Explanation = "A math function is an ordinary callable, so its lowercase alias, opened canonical name, and qualified `Math.X` spelling work directly as callbacks: the callback binds its own arguments and never captures same-named values from the surrounding algorithm — the ambient `x = 5` does not leak into `abs`. Direct calls such as `abs(-2)` are unchanged.",
         },
+        new()
+        {
+            Id = "callable-argument-parameter-shadowing",
+            Category = "access-boundaries",
+            Source = "A = q + 1\nAdd1(x) = x + 1\nF(x) = Add1(A)\n\nF(7)",
+            Outcome = SpecOutcome.EvalError,
+            ExpectedErrorCategory = "arity",
+            Probes =
+            [
+                // The caller's parameter name is the ONLY difference, and it changes nothing.
+                new SpecProbe("A = q + 1\nAdd1(x) = x + 1\nF(zz) = Add1(A)\nF(7)", "err arity"),
+                // Patterned and item-supply callees take the same rule.
+                new SpecProbe("A = q + 1\nP(x, (a, b)) = x + a\nF(x) = P(A, (1, 2))\nF(7)", "err arity"),
+                new SpecProbe("A = q + 1\nC(x, *rest) = x + 1\nF(x) = C(A, 5)\nF(7)", "err arity"),
+                // The callable argument is still invocable by name inside the callee.
+                new SpecProbe("A = q + 1\nApply(x) = x(10)\nF(x) = Apply(A)\nF(7)", "ok raw=11 n=1"),
+                // A nested property still reads its ancestor's parameter: shadowing removes
+                // only the callee's OWN parameter names from the inherited environment.
+                new SpecProbe("Outer(v) = Inner\n  Inner = v + 1\nOuter(7)", "ok raw=8 n=1"),
+            ],
+            IncludeInGeneratorPrompt = true,
+            Explanation = "Passing a callable binds the receiving parameter on the callable channel, not the value channel, so reading that parameter as a value asks the callable for a zero-argument value — an arity error here, because `A` still needs its implicit `q`. The callee never sees the caller's own `x`: a parameter always means the argument bound at this call, whatever the surrounding algorithm happens to name its parameters. Call the parameter (`x(10)`) to use it, or pass a value.",
+        },
+        new()
+        {
+            Id = "native-argument-value-demand",
+            Category = "errors",
+            Source = "Z = 1 / 0\n\nMath.Abs(Z)",
+            Outcome = SpecOutcome.EvalError,
+            ExpectedErrorCategory = "div0",
+            LeanExclusionReason = "Math natives (Expr.NativeCall) are a documented unmodeled gap in the Lean core; the wrapper's declared-argument read is the modeled Expr.Param value read applied to a native body Lean does not represent.",
+            Probes =
+            [
+                // A clause family has no value with zero arguments, so the ordinary
+                // conditional value-access failure surfaces.
+                new SpecProbe("C(0) = 1\nC(n) = 2\nMath.Abs(C)", "err branch"),
+                // A builtin argument reports the builtin's own arity failure.
+                new SpecProbe("Math.Abs(count)", "err arity"),
+                // Where the reference's parameters CAN be inferred, the math argument is an
+                // ordinary value position and the program simply works.
+                new SpecProbe("A = q + 1\nF(q) = Math.Abs(A)\nF(7)", "ok raw=8 n=1"),
+                // Ordinary value arguments are unchanged.
+                new SpecProbe("F(x) = Math.Abs(x)\nF(0 - 9)", "ok raw=9 n=1"),
+            ],
+            Explanation = "A math function needs a VALUE, so its argument is read exactly like any other parameter: the value bound at this call, and otherwise whatever the bound callable yields with no arguments — here `Z`'s own division by zero. The failure is always about the argument, never about the math function's declared parameter name (`x`, `value`, `digits`, ...), which the program never binds.",
+        },
+        new()
+        {
+            Id = "closed-list-strict-value-forwarding",
+            Category = "errors",
+            Source = "A = q + 1\nF(x) = Math.Abs(A)\n\nF(7)",
+            Outcome = SpecOutcome.ParseError,
+            ExpectedDiagnosticCode = DiagnosticCode.UndeclaredIdentifier,
+            ExpectedParseDiagnosticFragment = "producing that value needs the implicit parameter 'q'",
+            // Probes observe values, so the REJECTED spellings of this rule (the alias
+            // `abs(A)`, either argument position of `Math.Pow`) are pinned by
+            // ClosedListStrictValueDiagnosticTests instead; what belongs here are the
+            // controls proving the rule does not over-reject.
+            Probes =
+            [
+                // Declaring the required parameter, or leaving the list open so it is
+                // inferred, keeps the program legal.
+                new SpecProbe("A = q + 1\nF(q) = Math.Abs(A)\nF(7)", "ok raw=8 n=1"),
+                new SpecProbe("A = q + 1\nF = Math.Abs(A)\nF(7)", "ok raw=8 n=1"),
+                // A bare reference is not a value demand, and an ordinary call's arguments
+                // stay higher-order: neither is diagnosed.
+                new SpecProbe("A = q + 1\nApply(f) = f(10)\nF(x) = Apply(A)\nF(7)", "ok raw=11 n=1"),
+                new SpecProbe("F(x) = [0 - 1, 0 - 2].map(abs).sum\nF(9)", "ok raw=3 n=1"),
+            ],
+            IncludeInGeneratorPrompt = true,
+            Explanation = "An explicit parameter list is closed, and that applies to what a value position needs indirectly as well as directly. `Math.Abs` needs `A`'s value, producing it needs `A`'s inferred `q`, and `F(x)` declares no `q` — so the program is rejected before it runs, naming `A` and `q` rather than the math function. Declare `q` in the list, call `A` with explicit arguments, or leave the list off so `q` is inferred. Passing `A` where a callable is wanted is unaffected: only a proven value demand is checked this way.",
+        },
     ];
 }

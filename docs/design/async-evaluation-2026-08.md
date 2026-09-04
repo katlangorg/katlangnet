@@ -83,9 +83,8 @@ One decision per run, at the async entry point:
 - A twin may call: other `*Async` twins; shared helpers verified not to evaluate
   expressions; and the plain synchronous `Eval` only for proven-leaf dispatch kinds.
   The sync-delegable leaves are ENUMERATED EXPLICITLY in `EvalCountedAsync` — `Num`,
-  `StringLiteral`, synchronous `NativeCall` (an async host operation is intercepted by
-  the guarded case above the group), and `Grace` (the illegal-in-eval catch-all: a
-  structured error, no child evaluation) — and the dispatch default is a FAIL-LOUD
+  `StringLiteral`, and `Grace` (the illegal-in-eval catch-all: a structured error, no
+  child evaluation) — and the dispatch default is a FAIL-LOUD
   exhaustiveness guard, mirrored in the synchronous `EvalCounted`, so a newly added
   recursive `Expr` variant can never silently fall through to synchronous child
   evaluation (it would have passed outcome differentials while bypassing the twin
@@ -283,11 +282,15 @@ module — rather than inventing a parallel subsystem:
   semantic preludes that `Math` relies on; the evaluator resolves against the
   configuration's extended RUNTIME prelude selected in `CreateRootCtx`.
 - Dispatch happens where a Math native dispatches: the shared `EvalNativeCall`
-  consults the run's registry first (synchronous operations, both pipelines), and the
-  async twin's `EvalCountedAsync` carries ONE new guarded `Expr.NativeCall` case that
-  awaits an ASYNCHRONOUS operation's `ValueTask` — exactly the "adding an operation
-  class means adding an await site in the already-async twin" extension Phase 2 was
-  built for. The configuration itself rides the run-scoped `EvaluationBudget`
+  consults the run's registry first (synchronous operations), and the async twin's
+  `EvalCountedAsync` carries ONE guarded `Expr.NativeCall` case that awaits an
+  ASYNCHRONOUS operation's `ValueTask` — exactly the "adding an operation class means
+  adding an await site in the already-async twin" extension Phase 2 was built for.
+  (September 2026: every OTHER native now takes the twin's ordinary `Expr.NativeCall`
+  case, `EvalNativeCallAsync`, because a wrapper's declared-argument read can demand
+  an algorithm-channel binding's value and so re-enter an algorithm body; the member
+  computation itself stays the shared pure `ApplyMathNative`.)
+  The configuration itself rides the run-scoped `EvaluationBudget`
   (immutable configuration on the run-identity object), so the prelude choice and the
   dispatch registry can never disagree within a run and the hot by-value `EvalCtx`
   struct did not grow.
@@ -368,10 +371,13 @@ operations fall back to the generic loop — pinned by test).
 ## Known limitations (documented and pinned)
 
 - ~~Native-call wrappers referenced DIRECTLY as flat callbacks fail with
-  `Unknown name: x`~~ — LIFTED August 2026: native-call wrapper bodies (Math
-  members and host operations together) now read their declared argument names
-  counted-first with value fallback (`LookupNativeArgument`, the `Expr.Param`
-  dual-view order), so `[1, 2, 3].map(abs)`, `open Math` plus
+  `Unknown name: x`~~ — LIFTED August 2026, completed September 2026:
+  native-call wrapper bodies (Math members and host operations together) read
+  their declared argument names through `LookupNativeArgument`, which IS the
+  `Expr.Param` value read (`EvalParamCounted` projected: counted environment,
+  value environment, then the algorithm binding — the August version stopped
+  after the value environment and still said `Unknown name: x` for an argument
+  that bound only on the algorithm channel), so `[1, 2, 3].map(abs)`, `open Math` plus
   `[1, 2, 3].map(Abs)`, the qualified `[1, 2, 3].map(Math.Abs)`, and a host
   operation referenced directly as a flat callback bind the callback-bound
   element. The qualified spelling is gated on the resolved member's actual

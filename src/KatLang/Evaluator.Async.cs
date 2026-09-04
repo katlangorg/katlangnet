@@ -616,6 +616,144 @@ public static partial class Evaluator
 
     // ── Main dispatch twin ──────────────────────────────────────────────────
 
+    /// <summary>MIRROR OF <see cref="EvalParamCounted"/> — keep in lock-step.</summary>
+    private static async ValueTask<EvalResult<CountedResult>> EvalParamCountedAsync(
+        string name,
+        SourceSpan? span,
+        EvalCtx ctx,
+        IReadOnlyList<(string, Result)> valEnv)
+    {
+        var counted = LookupCountedParam(ctx.CountedParamEnv, name);
+        if (counted is not null)
+            return EvalResult<CountedResult>.Ok(counted.Value);
+
+        var val = LookupVal(valEnv, name);
+        if (val is not null)
+            return EvalResult<CountedResult>.Ok(new CountedResult(val, val.ValueCount()));
+
+        var algBinding = LookupAlgBinding(ctx.AlgEnv, name);
+        if (algBinding is { } bound)
+        {
+            if (bound.ValueError is { } stickyLimit)
+                return AtSpanIfMissing(stickyLimit, span);
+            var algBound = bound.Algorithm;
+            if (ConditionalValueAccessError(name, algBound) is { } conditionalError)
+                return conditionalError with { Span = span };
+            if (algBound.Params.Count == 0)
+            {
+                var valueR = WithSpan(
+                    span,
+                    await EvalResolvedAlgOutputForValueDemandAsync(algBound, ctx, valEnv).ConfigureAwait(false));
+                return valueR.IsError
+                    ? valueR.Error
+                    : EvalResult<CountedResult>.Ok(new CountedResult(valueR.Value, valueR.Value.ValueCount()));
+            }
+            return ZeroArgumentDemandArityMismatch(algBound) with { Span = span };
+        }
+
+        return new EvalError.UnknownName(name) { Span = span };
+    }
+
+    /// <summary>MIRROR OF <see cref="LookupNativeArgument"/> — keep in lock-step.</summary>
+    private static async ValueTask<EvalResult<Result>> LookupNativeArgumentAsync(
+        EvalCtx ctx,
+        IReadOnlyList<(string, Result)> valEnv,
+        string name)
+        => ProjectCountedValue(await EvalParamCountedAsync(name, span: null, ctx, valEnv).ConfigureAwait(false));
+
+    /// <summary>MIRROR OF <see cref="CollectMathNativeArguments"/> — keep in lock-step.</summary>
+    private static async ValueTask<EvalResult<Decimal128[]>> CollectMathNativeArgumentsAsync(
+        IReadOnlyList<string> argNames,
+        EvalCtx ctx,
+        IReadOnlyList<(string, Result)> valEnv)
+    {
+        var args = new Decimal128[argNames.Count];
+        for (var i = 0; i < argNames.Count; i++)
+        {
+            var valR = await LookupNativeArgumentAsync(ctx, valEnv, argNames[i]).ConfigureAwait(false);
+            if (valR.IsError) return valR.Error;
+            var val = valR.Value;
+            var num = val.AsNum();
+            if (num is null)
+                return val is Result.Str
+                    ? new EvalError.TypeMismatch("Expected a number, got a string")
+                    : new EvalError.BadArity();
+            args[i] = num.Value;
+        }
+
+        return EvalResult<Decimal128[]>.Ok(args);
+    }
+
+    /// <summary>MIRROR OF <see cref="CollectHostOperationArguments"/> — keep in lock-step.</summary>
+    private static async ValueTask<EvalResult<IReadOnlyList<Result>>> CollectHostOperationArgumentsAsync(
+        IReadOnlyList<string> argNames,
+        EvalCtx ctx,
+        IReadOnlyList<(string, Result)> valEnv)
+    {
+        if (argNames.Count == 0)
+            return EvalResult<IReadOnlyList<Result>>.Ok([]);
+
+        var arguments = new Result[argNames.Count];
+        for (var i = 0; i < argNames.Count; i++)
+        {
+            var valueR = await LookupNativeArgumentAsync(ctx, valEnv, argNames[i]).ConfigureAwait(false);
+            if (valueR.IsError) return valueR.Error;
+            arguments[i] = valueR.Value;
+        }
+
+        return EvalResult<IReadOnlyList<Result>>.Ok(Array.AsReadOnly(arguments));
+    }
+
+    /// <summary>MIRROR OF <see cref="InvokeSynchronousHostOperation"/> — keep in lock-step.</summary>
+    private static async ValueTask<EvalResult<Result>> InvokeSynchronousHostOperationAsync(
+        HostOperation hostOperation,
+        IReadOnlyList<string> argNames,
+        EvalCtx ctx,
+        IReadOnlyList<(string, Result)> valEnv)
+    {
+        if (hostOperation.SynchronousImplementation is not { } implementation)
+        {
+            throw new InvalidOperationException(
+                $"Asynchronous host operation '{hostOperation.Name}' reached the synchronous evaluator; " +
+                "async host configurations must route through the async evaluation path.");
+        }
+
+        if (ValidateHostOperationNativeSignature(hostOperation, argNames) is { } signatureError)
+            return signatureError;
+
+        var argumentsR = await CollectHostOperationArgumentsAsync(argNames, ctx, valEnv).ConfigureAwait(false);
+        if (argumentsR.IsError) return argumentsR.Error;
+
+        var value = implementation(argumentsR.Value, ctx.Budget.CancellationToken);
+        return EvalResult<Result>.Ok(NormalizeHostOperationValue(hostOperation, value));
+    }
+
+    /// <summary>
+    /// MIRROR OF <see cref="EvalNativeCall"/> — keep in lock-step. Only the
+    /// declared-argument reads are awaited; the member computation itself is the
+    /// SHARED pure <see cref="ApplyMathNative"/>, so the native member set cannot
+    /// drift between the two paths. Asynchronous host operations never reach here
+    /// — <see cref="EvalCountedAsync"/> intercepts them at their own await site.
+    /// </summary>
+    private static async ValueTask<EvalResult<Result>> EvalNativeCallAsync(
+        string fnName,
+        IReadOnlyList<string> argNames,
+        EvalCtx ctx,
+        IReadOnlyList<(string, Result)> valEnv)
+    {
+        if (ctx.Budget.HostOperations is { } hostOperations
+            && fnName.StartsWith(HostOperations.NativeNamePrefix, StringComparison.Ordinal)
+            && hostOperations.TryGetByNativeName(fnName, out var hostOperation))
+        {
+            return await InvokeSynchronousHostOperationAsync(hostOperation, argNames, ctx, valEnv).ConfigureAwait(false);
+        }
+
+        var argsR = await CollectMathNativeArgumentsAsync(argNames, ctx, valEnv).ConfigureAwait(false);
+        if (argsR.IsError) return argsR.Error;
+
+        return ApplyMathNative(fnName, argsR.Value);
+    }
+
     /// <summary>
     /// MIRROR OF <see cref="EvalCounted"/> — keep in lock-step, case for case.
     /// Cases whose synchronous counterpart delegated to the PLAIN evaluator award the
@@ -633,37 +771,7 @@ public static partial class Evaluator
         switch (expr)
         {
             case Expr.Param(var name):
-                {
-                    var counted = LookupCountedParam(ctx.CountedParamEnv, name);
-                    if (counted is not null)
-                        return EvalResult<CountedResult>.Ok(counted.Value);
-
-                    var val = LookupVal(valEnv, name);
-                    if (val is not null)
-                        return EvalResult<CountedResult>.Ok(new CountedResult(val, val.ValueCount()));
-
-                    var algBinding = LookupAlgBinding(ctx.AlgEnv, name);
-                    if (algBinding is { } bound)
-                    {
-                        if (bound.ValueError is { } stickyLimit)
-                            return AtSpanIfMissing(stickyLimit, expr.Span);
-                        var algBound = bound.Algorithm;
-                        if (ConditionalValueAccessError(name, algBound) is { } conditionalError)
-                            return conditionalError with { Span = expr.Span };
-                        if (algBound.Params.Count == 0)
-                        {
-                            var valueR = WithSpan(
-                                expr.Span,
-                                await EvalResolvedAlgOutputForValueDemandAsync(algBound, ctx, valEnv).ConfigureAwait(false));
-                            return valueR.IsError
-                                ? valueR.Error
-                                : EvalResult<CountedResult>.Ok(new CountedResult(valueR.Value, valueR.Value.ValueCount()));
-                        }
-                        return ZeroArgumentDemandArityMismatch(algBound) with { Span = expr.Span };
-                    }
-
-                    return new EvalError.UnknownName(name) { Span = expr.Span };
-                }
+                return await EvalParamCountedAsync(name, expr.Span, ctx, valEnv).ConfigureAwait(false);
 
             case Expr.SequenceSpread:
                 return await EvalSequenceSpreadCountedAsync(expr, ctx, valEnv).ConfigureAwait(false);
@@ -754,25 +862,33 @@ public static partial class Evaluator
                     && hostOperations.TryGetByNativeName(nativeFnName, out var hostOperation)
                     && hostOperation.IsAsynchronous:
                 // THE Phase 3 await site: an ASYNCHRONOUS host operation completes by
-                // suspending the spine here. Synchronous host operations and built-in
-                // Math natives stay leaves of the default case below — their dispatch
-                // completes inline in the shared synchronous EvalNativeCall.
+                // suspending the spine here. Every other native — a synchronous host
+                // operation or a built-in Math member — takes the ordinary twin case
+                // below, which awaits its declared-argument reads.
                 return await EvalAsynchronousHostOperationCountedAsync(
                     hostOperation, nativeArgNames, ctx, valEnv).ConfigureAwait(false);
+
+            case Expr.NativeCall(var nativeFnName, var nativeArgNames):
+                {
+                    // A native wrapper's declared-argument reads ARE ordinary
+                    // Expr.Param value reads (LookupNativeArgument), so a demanded
+                    // algorithm-channel binding re-enters an algorithm body — that
+                    // makes NativeCall a recursive variant, not a leaf, and it must
+                    // stay on the twin family.
+                    var nativeR = await EvalNativeCallAsync(nativeFnName, nativeArgNames, ctx, valEnv).ConfigureAwait(false);
+                    if (nativeR.IsError) return nativeR.Error;
+                    return EvalResult<CountedResult>.Ok(new CountedResult(nativeR.Value, nativeR.Value.ValueCount()));
+                }
 
             // SYNC-DELEGABLE LEAVES — the only kinds allowed to run through
             // the synchronous evaluator on the twin path: none evaluates a
             // child expression, so delegating to the synchronous Eval here is
             // exact — the same leaf code the synchronous counted dispatch
             // runs. Grace is the illegal-in-eval catch-all (a structured
-            // error, no child evaluation). A NativeCall naming an
-            // ASYNCHRONOUS host operation is the one NativeCall that is not a
-            // synchronous leaf; it is intercepted by the guarded case above
-            // and never reaches this delegation. Keep this classification in
+            // error, no child evaluation). Keep this classification in
             // lock-step with EvalCounted.
             case Expr.Num:
             case Expr.StringLiteral:
-            case Expr.NativeCall:
             case Expr.Grace:
                 {
                     var resultR = Eval(expr, ctx, valEnv);
@@ -1445,7 +1561,9 @@ public static partial class Evaluator
         if (ValidateHostOperationNativeSignature(hostOperation, argNames) is { } signatureError)
             return signatureError;
 
-        var argumentsR = CollectHostOperationArguments(argNames, ctx, valEnv);
+        // The declared-argument reads are ordinary Expr.Param value reads and can
+        // demand an algorithm-channel binding's value, so they take the twin.
+        var argumentsR = await CollectHostOperationArgumentsAsync(argNames, ctx, valEnv).ConfigureAwait(false);
         if (argumentsR.IsError) return argumentsR.Error;
 
         var value = await hostOperation.AsynchronousImplementation!(
@@ -1613,9 +1731,8 @@ public static partial class Evaluator
             if (bindingsR.IsError) return bindingsR.Error;
 
             var bindings = bindingsR.Value;
-            var groupedCtx = WithUserCallBindingEnvironments(ctx, bindings, callee.Params);
-            var groupedEnv = Concat(bindings.ValueBindings, valEnv);
-            return ReCountValueBoundary(await EvalAlgOutputCountedCoreAsync(callee, groupedCtx, groupedEnv).ConfigureAwait(false));
+            var grouped = WithUserCallBindingEnvironments(ctx, bindings, valEnv, callee.Params);
+            return ReCountValueBoundary(await EvalAlgOutputCountedCoreAsync(callee, grouped.Context, grouped.ValueEnvironment).ConfigureAwait(false));
         }
 
         if (IsDeconstructionUserCallShape(signature))
@@ -1624,9 +1741,8 @@ public static partial class Evaluator
             if (bindingsR.IsError) return bindingsR.Error;
 
             var bindings = bindingsR.Value;
-            var deconstructionCtx = WithUserCallBindingEnvironments(ctx, bindings, callee.Params);
-            var deconstructionEnv = Concat(bindings.ValueBindings, valEnv);
-            return ReCountValueBoundary(await EvalAlgOutputCountedCoreAsync(callee, deconstructionCtx, deconstructionEnv).ConfigureAwait(false));
+            var deconstruction = WithUserCallBindingEnvironments(ctx, bindings, valEnv, callee.Params);
+            return ReCountValueBoundary(await EvalAlgOutputCountedCoreAsync(callee, deconstruction.Context, deconstruction.ValueEnvironment).ConfigureAwait(false));
         }
 
         if (!TryGetPlanDerivedFlatFixedParameterNames(bindingPlan, out var flatFixedParams))
@@ -1986,7 +2102,7 @@ public static partial class Evaluator
     }
 
     /// <summary>MIRROR OF <see cref="BindFlatFixedUserCallArguments"/> — keep in lock-step.</summary>
-    private static async ValueTask<EvalResult<FlatFixedUserCallBindings>> BindFlatFixedUserCallArgumentsAsync(
+    private static async ValueTask<EvalResult<UserCallEnvironments>> BindFlatFixedUserCallArgumentsAsync(
         Algorithm callee,
         CallDiagnosticName calleeName,
         IReadOnlyList<string> parameterNames,
@@ -2054,8 +2170,8 @@ public static partial class Evaluator
         var boundCtx = ctx
             .WithAlgEnv(Concat(algBindings, ctx.AlgEnv))
             .WithCountedParamEnv(ShadowCountedParamEnv(ctx.CountedParamEnv, parameterNames));
-        var boundEnv = Concat(argEnvR.Value, valEnv);
-        return EvalResult<FlatFixedUserCallBindings>.Ok(new FlatFixedUserCallBindings(boundCtx, boundEnv));
+        var boundEnv = Concat(argEnvR.Value, ShadowValEnv(valEnv, parameterNames));
+        return EvalResult<UserCallEnvironments>.Ok(new UserCallEnvironments(boundCtx, boundEnv));
     }
 
     // ── Builtin twins ───────────────────────────────────────────────────────

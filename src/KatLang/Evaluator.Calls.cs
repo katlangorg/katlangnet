@@ -432,9 +432,8 @@ public static partial class Evaluator
             if (bindingsR.IsError) return bindingsR.Error;
 
             var bindings = bindingsR.Value;
-            var groupedCtx = WithUserCallBindingEnvironments(ctx, bindings, callee.Params);
-            var groupedEnv = Concat(bindings.ValueBindings, valEnv);
-            return ReCountValueBoundary(EvalAlgOutputCounted(callee, groupedCtx, groupedEnv));
+            var grouped = WithUserCallBindingEnvironments(ctx, bindings, valEnv, callee.Params);
+            return ReCountValueBoundary(EvalAlgOutputCounted(callee, grouped.Context, grouped.ValueEnvironment));
         }
 
         if (IsDeconstructionUserCallShape(signature))
@@ -443,9 +442,8 @@ public static partial class Evaluator
             if (bindingsR.IsError) return bindingsR.Error;
 
             var bindings = bindingsR.Value;
-            var deconstructionCtx = WithUserCallBindingEnvironments(ctx, bindings, callee.Params);
-            var deconstructionEnv = Concat(bindings.ValueBindings, valEnv);
-            return ReCountValueBoundary(EvalAlgOutputCounted(callee, deconstructionCtx, deconstructionEnv));
+            var deconstruction = WithUserCallBindingEnvironments(ctx, bindings, valEnv, callee.Params);
+            return ReCountValueBoundary(EvalAlgOutputCounted(callee, deconstruction.Context, deconstruction.ValueEnvironment));
         }
 
         if (!TryGetPlanDerivedFlatFixedParameterNames(bindingPlan, out var flatFixedParams))

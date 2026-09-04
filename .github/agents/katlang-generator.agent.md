@@ -1528,7 +1528,7 @@ Without trailing output, `Order` has no direct result — use `Order.Total(25, 4
 
 === BEGIN GENERATED: katlang-spec-examples (DO NOT EDIT BY HAND) ===
 
-Verified reference examples (55 of the 181-case canonical language specification,
+Verified reference examples (57 of the 184-case canonical language specification,
 tests/KatLang.Tests/LanguageSpec/LanguageSpecCorpus.cs). Every program and expected
 output below is executed against the KatLang engine and (where representable)
 guarded against the Lean model on every build. Treat these as ground truth for the
@@ -2068,5 +2068,24 @@ Regenerate this block from the repo root with:
 
   Displays:
     [1, 2]
+
+[callable-argument-parameter-shadowing] Passing a callable binds the receiving parameter on the callable channel, not the value channel, so reading that parameter as a value asks the callable for a zero-argument value — an arity error here, because `A` still needs its implicit `q`. The callee never sees the caller's own `x`: a parameter always means the argument bound at this call, whatever the surrounding algorithm happens to name its parameters. Call the parameter (`x(10)`) to use it, or pass a value.
+
+    A = q + 1
+    Add1(x) = x + 1
+    F(x) = Add1(A)
+
+    F(7)
+
+  Fails with an evaluation error (arity).
+
+[closed-list-strict-value-forwarding] An explicit parameter list is closed, and that applies to what a value position needs indirectly as well as directly. `Math.Abs` needs `A`'s value, producing it needs `A`'s inferred `q`, and `F(x)` declares no `q` — so the program is rejected before it runs, naming `A` and `q` rather than the math function. Declare `q` in the list, call `A` with explicit arguments, or leave the list off so `q` is inferred. Passing `A` where a callable is wanted is unaffected: only a proven value demand is checked this way.
+
+    A = q + 1
+    F(x) = Math.Abs(A)
+
+    F(7)
+
+  Rejected by the parser: "producing that value needs the implicit parameter 'q' ..."
 
 === END GENERATED: katlang-spec-examples ===

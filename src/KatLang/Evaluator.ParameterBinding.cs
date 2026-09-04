@@ -104,7 +104,12 @@ public static partial class Evaluator
         Algorithm? Algorithm,
         EvalError? ValueError);
 
-    private readonly record struct FlatFixedUserCallBindings(
+    /// <summary>
+    /// A bound user call's callee-side environments: the context carrying the
+    /// algorithm and counted tiers, and the value environment. Produced by every
+    /// user-call binding shape (flat fixed, patterned, item supply).
+    /// </summary>
+    private readonly record struct UserCallEnvironments(
         EvalCtx Context,
         IReadOnlyList<(string, Result)> ValueEnvironment);
 
@@ -1368,16 +1373,27 @@ public static partial class Evaluator
             });
     }
 
-    private static EvalCtx WithUserCallBindingEnvironments(
+    /// <summary>
+    /// The callee's three environments for a patterned or item-supply user call:
+    /// the algorithm and counted tiers on the returned context, and the value
+    /// tier as the returned environment. All THREE inherited tiers are shadowed
+    /// by the callee's parameter names, so a parameter bound on only one channel
+    /// can never be answered by a same-named binding inherited from the caller
+    /// (see <see cref="ShadowValEnv"/>); the callee's own bindings are prepended
+    /// and win regardless. Shared by the synchronous path and its async twin, so
+    /// the two cannot drift.
+    /// Lean: the environment construction inside <c>evalUserCallCounted</c>.
+    /// </summary>
+    private static UserCallEnvironments WithUserCallBindingEnvironments(
         EvalCtx ctx,
         UserCallBindings bindings,
-        IEnumerable<string> shadowedNames)
-    {
-        var shadowed = shadowedNames.ToArray();
-        return ctx
-            .WithAlgEnv(Concat(bindings.AlgorithmBindings, ctx.AlgEnv))
-            .WithCountedParamEnv(Concat(bindings.CountedBindings, ShadowCountedParamEnv(ctx.CountedParamEnv, shadowed)));
-    }
+        IReadOnlyList<(string, Result)> valEnv,
+        IReadOnlyList<string> shadowedNames)
+        => new(
+            ctx
+                .WithAlgEnv(Concat(bindings.AlgorithmBindings, ctx.AlgEnv))
+                .WithCountedParamEnv(Concat(bindings.CountedBindings, ShadowCountedParamEnv(ctx.CountedParamEnv, shadowedNames))),
+            Concat(bindings.ValueBindings, ShadowValEnv(valEnv, shadowedNames)));
 
     private static EvalCtx WithCountedParameterEnvironments(
         EvalCtx ctx,
@@ -1392,7 +1408,7 @@ public static partial class Evaluator
     internal static EvalError? RetainResourceLimitForAlgorithmBinding(EvalError? valueError)
         => valueError is { IsResourceLimit: true } ? valueError : null;
 
-    private static EvalResult<FlatFixedUserCallBindings> BindFlatFixedUserCallArguments(
+    private static EvalResult<UserCallEnvironments> BindFlatFixedUserCallArguments(
         Algorithm callee,
         CallDiagnosticName calleeName,
         IReadOnlyList<string> parameterNames,
@@ -1464,7 +1480,7 @@ public static partial class Evaluator
         var boundCtx = ctx
             .WithAlgEnv(Concat(algBindings, ctx.AlgEnv))
             .WithCountedParamEnv(ShadowCountedParamEnv(ctx.CountedParamEnv, parameterNames));
-        var boundEnv = Concat(argEnvR.Value, valEnv);
-        return EvalResult<FlatFixedUserCallBindings>.Ok(new FlatFixedUserCallBindings(boundCtx, boundEnv));
+        var boundEnv = Concat(argEnvR.Value, ShadowValEnv(valEnv, parameterNames));
+        return EvalResult<UserCallEnvironments>.Ok(new UserCallEnvironments(boundCtx, boundEnv));
     }
 }
