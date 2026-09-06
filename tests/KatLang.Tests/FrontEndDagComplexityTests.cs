@@ -67,6 +67,29 @@ public class FrontEndDagComplexityTests
     private static Algorithm.User EmptyAlgorithm(params Expr[] output)
         => new(Parent: null, Parameters: [], Opens: [], Properties: [], Output: output);
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void DeconstructionSource_SharedAliases_PreserveAlgorithmAndExpressionSharing(bool resolve)
+    {
+        var source = EmptyAlgorithm(BinaryDiamond(DeepDepth, new Expr.Num(1))) with
+        {
+            IsAssignmentDeconstructionSource = true,
+        };
+        var root = EmptyAlgorithm() with
+        {
+            Properties = [new Property("First", source), new Property("Second", source)],
+        };
+        Algorithm rewritten;
+        if (resolve)
+            rewritten = ImplicitArgumentResolver.Resolve(root);
+        else
+            (rewritten, _) = ParameterDetector.Detect(root);
+
+        Assert.Same(rewritten.Properties[0].Value, rewritten.Properties[1].Value);
+        AssertDiamondSharingPreserved(Assert.Single(rewritten.Properties[0].Value.Output), DeepDepth);
+    }
+
     /// <summary>
     /// The doubling diamond: depth interior Binary nodes, one shared leaf, 2^depth root-to-leaf
     /// paths. Every level references the SAME child object twice.
@@ -788,31 +811,36 @@ public class FrontEndDagComplexityTests
     }
 
     /// <summary>
-    /// Owner and transparent-bundle attribution are distinct memo contexts. The shared Unary
-    /// below names A's local B property: its direct occurrence consumes B's local summary,
-    /// while the occurrence inside a neutral call argument crosses a transparent bundle whose
-    /// local-summary map is empty and therefore remains a visible dependency named B.
+    /// Owner and transparent-bundle attribution are distinct memo contexts, and both resolve
+    /// the enclosing owner's names ownership-first. The shared Unary below names A's local B
+    /// property: its direct occurrence consumes B's local summary while it is walked, and the
+    /// occurrence inside a neutral call argument crosses a transparent bundle whose
+    /// local-summary map is empty — the bare name it reports is resolved against A's own
+    /// properties before A's summary escapes (bug-hunt K1-02), so neither reach leaves a
+    /// visible dependency named B. T references B through the transparent reach ALONE, so the
+    /// ancestor capture B carries reaches T's summary only through that resolution.
     /// </summary>
     [Fact]
-    public void DependencyGraph_SharedExpressionAcrossOwnerAndTransparentContexts_KeepsBothAttributions()
+    public void DependencyGraph_SharedExpressionAcrossOwnerAndTransparentContexts_ResolvesBothOwnershipFirst()
     {
         var shared = new Expr.Unary(UnaryOp.Minus, new Expr.Resolve("B"));
+        var neutralCall = new Expr.Call(new Expr.Resolve("Neutral"), new OutputBundle([shared]));
         var aValue = new Algorithm.User(
             Parent: null,
             Parameters: [],
             Opens: [],
-            Properties: [new Property("B", EmptyAlgorithm(new Expr.Num(1)))],
-            Output: new OutputBundle(
-            [
-                shared,
-                new Expr.Call(new Expr.Resolve("Neutral"), new OutputBundle([shared])),
-            ]));
+            Properties: [new Property("B", EmptyAlgorithm(new Expr.Param("p")))],
+            Output: new OutputBundle([shared, neutralCall]));
+        var transparentOnlyValue = aValue with { Output = new OutputBundle([neutralCall]) };
         var root = new Algorithm.User(
-            null, [], [], [new Property("A", aValue)], OutputBundle.Empty);
+            null, [], [], [new Property("A", aValue), new Property("T", transparentOnlyValue)], OutputBundle.Empty);
 
         var graph = PropertyDependencyGraphBuilder.BuildSummaries(root);
 
-        Assert.Contains("B", graph[0].SummaryVisiblePropertyDependencyNames);
+        Assert.DoesNotContain("B", graph[0].SummaryVisiblePropertyDependencyNames);
+        Assert.Equal(["p"], graph[0].RequiredAncestorOwnedParameterNames);
+        Assert.DoesNotContain("B", graph[1].SummaryVisiblePropertyDependencyNames);
+        Assert.Equal(["p"], graph[1].RequiredAncestorOwnedParameterNames);
     }
 
     // ── 4b. M17: per-channel builder entries + resolution-scoped summary memo ──

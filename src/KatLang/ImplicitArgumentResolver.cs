@@ -655,7 +655,14 @@ internal static class ImplicitArgumentResolver
         {
             var prop = alg.Properties[idx];
 
-            if (prop.Value is Algorithm.Conditional condAlg)
+            if (prop.Value is Algorithm.User { IsAssignmentDeconstructionSource: true })
+            {
+                // Hoisted deconstruction right-hand side: written as rows of THIS body, so it
+                // is rewritten in the output phase below with this body's own context and
+                // acquires no parameters of its own (see RewriteDeconstructionSourceRows).
+                processedProperties[idx] = prop;
+            }
+            else if (prop.Value is Algorithm.Conditional condAlg)
             {
                 processedProperties[idx] = prop.WithValue(ProcessConditionalProperty(
                     condAlg, prop.Name, visibleParamMap, observations, diagnostics, run));
@@ -725,6 +732,11 @@ internal static class ImplicitArgumentResolver
                         walkMemos));
             }
 
+            AstHelpers.RewriteDeconstructionSourceRows(
+                alg,
+                newProperties,
+                expr => RewriteImplicitCalls(expr, visibleParamMap, explicitContext, inCallPosition: false, walkMemos));
+
             return alg with
             {
                 Opens = newOpens,
@@ -739,11 +751,9 @@ internal static class ImplicitArgumentResolver
         var deps = new List<(string Name, CallableSignature Signature)>();
         var seen = new HashSet<string>();
         var depsMemo = new DepsWalkMemo(observations);
-        foreach (var expr in alg.Output)
+        foreach (var expr in AstHelpers.WrittenRows(
+            alg, isRoot ? expr => !ShouldPreserveBareRootResolve(expr, visibleParamMap, isRoot: true) : null))
         {
-            if (ShouldPreserveBareRootResolve(expr, visibleParamMap, isRoot))
-                continue;
-
             CollectImplicitDeps(expr, visibleParamMap, seen, deps, inCallPosition: false, depsMemo);
         }
 
@@ -791,6 +801,11 @@ internal static class ImplicitArgumentResolver
                         inCallPosition: false,
                         walkMemos));
         }
+
+        AstHelpers.RewriteDeconstructionSourceRows(
+            alg,
+            newProperties,
+            expr => RewriteImplicitCalls(expr, visibleParamMap, liftedContext, inCallPosition: false, walkMemos));
 
         return alg.WithParameterPatterns(newPatterns) with
         {

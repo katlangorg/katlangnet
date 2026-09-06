@@ -14,11 +14,11 @@ This is bounded differential validation over the Lean-guarded partition,
 not a formal verification of the evaluators.
 
 Partition (machine-checked by the `specCaseIds.length` guard below):
-- specification surface cases: 191
+- specification surface cases: 196
 - excluded parse-level cases (Lean has no surface parser): 10
 - excluded C#-only cases (each carries an explicit reason in the corpus): 8
-- Lean-guarded cases: 173
-- probe observations (C#-only by design): 320
+- Lean-guarded cases: 178
+- probe observations (C#-only by design): 327
 - internal-node cases live in the semantic-explorer corpus, not here: see
   lean/SemanticExplorerCases.lean
 
@@ -278,6 +278,21 @@ def case_decon_pair : Expr :=
   .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [.num 1, .num 2]), privateProp "x" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "x"])) [.resolve "$deconstruct$0"])]), privateProp "y" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "y"])) [.resolve "$deconstruct$0"])])] [.resolve "x", .resolve "y"])
 #guard obs case_decon_pair == "ok raw=S[1, 2] n=2"
 
+-- decon-rhs-implicit-parameter [deconstruction]: F = { \n     a, b = x, 10 \n     a + b \n } \n F(1)
+def case_decon_rhs_implicit_parameter : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["x"] [] [privateLocalProp "$deconstruct$0" .localCapturedAncestorParams (alg [] [] [] [.param "x", .num 10]), privateLocalProp "a" .localCapturedAncestorParams (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "a" }, .capture { name := "b" }]] [] [] [.param "a"])) [.resolve "$deconstruct$0"])]), privateLocalProp "b" .localCapturedAncestorParams (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "a" }, .capture { name := "b" }]] [] [] [.param "b"])) [.resolve "$deconstruct$0"])])] [(.binary .add (.resolve "a") (.resolve "b"))])] [(.call (.resolve "F") [.num 1])])
+#guard obs case_decon_rhs_implicit_parameter == "ok raw=11 n=1"
+
+-- decon-rhs-brace-scope [deconstruction]: F = { \n     Q = 100 \n     a, b = { Q = 7 \n         Q, 10 } \n     a + b \n } \n F
+def case_decon_rhs_brace_scope : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg [] [] [privateProp "Q" (alg [] [] [] [.num 100]), privateProp "$deconstruct$0" (alg [] [] [] [(.algorithmExpr (alg [] [] [privateProp "Q" (alg [] [] [] [.num 7])] [.resolve "Q", .num 10]))]), privateProp "a" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "a" }, .capture { name := "b" }]] [] [] [.param "a"])) [.resolve "$deconstruct$0"])]), privateProp "b" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "a" }, .capture { name := "b" }]] [] [] [.param "b"])) [.resolve "$deconstruct$0"])])] [(.binary .add (.resolve "a") (.resolve "b"))])] [.resolve "F"])
+#guard obs case_decon_rhs_brace_scope == "ok raw=17 n=1"
+
+-- decon-rhs-lifted-parameter-order [deconstruction]: P = x * 2 \n R = y * 3 \n F = { \n     a, b = P, 10 \n     R + a + b \n } \n F(1, 2)
+def case_decon_rhs_lifted_parameter_order : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "P" (alg ["x"] [] [] [(.binary .mul (.param "x") (.num 2))]), privateProp "R" (alg ["y"] [] [] [(.binary .mul (.param "y") (.num 3))]), privateProp "F" (alg ["x", "y"] [] [privateLocalProp "$deconstruct$0" .localCapturedAncestorParams (alg [] [] [] [(.call (.resolve "P") [.param "x"]), .num 10]), privateLocalProp "a" .localCapturedAncestorParams (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "a" }, .capture { name := "b" }]] [] [] [.param "a"])) [.resolve "$deconstruct$0"])]), privateLocalProp "b" .localCapturedAncestorParams (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "a" }, .capture { name := "b" }]] [] [] [.param "b"])) [.resolve "$deconstruct$0"])])] [(.binary .add (.binary .add (.call (.resolve "R") [.param "y"]) (.resolve "a")) (.resolve "b"))])] [(.call (.resolve "F") [.num 1, .num 2])])
+#guard obs case_decon_rhs_lifted_parameter_order == "ok raw=18 n=1"
+
 -- decon-collecting-tail [deconstruction]: x, *rest = 1, 2, 3 \n rest
 def case_decon_collecting_tail : Expr :=
   .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [.num 1, .num 2, .num 3]), privateProp "x" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "rest", kind := .collecting }]] [] [] [.param "x"])) [.resolve "$deconstruct$0"])]), privateProp "rest" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "rest", kind := .collecting }]] [] [] [.param "rest"])) [.resolve "$deconstruct$0"])])] [.resolve "rest"])
@@ -472,6 +487,16 @@ def case_spread_one_level_only : Expr :=
 def case_dot_access_value_boundary : Expr :=
   .algorithmExpr (alg [] [] [privateProp "A" (alg [] [] [privateProp "X" (alg [] [] [] [.num 1, .num 2, .num 3])] [])] [(.dotCall (.resolve "A") "X" none)])
 #guard obs case_dot_access_value_boundary == "ok raw=S[1, 2, 3] n=1"
+
+-- open-local-only-through-capture-row [access-boundaries]: Outer(p) = { \n     open Lib \n     Lib = { public G = { Q = p + 1 \n     (Q) } } \n     G \n } \n Outer(1)
+def case_open_local_only_through_capture_row : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Outer" (alg ["p"] [.resolve "Lib"] [privateProp "Lib" (alg [] [] [publicLocalProp "G" .localCapturedAncestorParams (alg [] [] [privateLocalProp "Q" .localCapturedAncestorParams (alg [] [] [] [(.binary .add (.param "p") (.num 1))])] [(.capture [.resolve "Q"])])] [])] [.resolve "G"])] [(.call (.resolve "Outer") [.num 1])])
+#guard obs case_open_local_only_through_capture_row == "err unknownName"
+
+-- open-self-contained-beside-same-named-sibling [access-boundaries]: Outer(p) = { \n     open Lib \n     Lib = { \n         public G = { Q = 7 \n         (Q) } \n         Q = p + 1 \n     } \n     G \n } \n Outer(1)
+def case_open_self_contained_beside_same_named_sibling : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Outer" (alg ["p"] [.resolve "Lib"] [privateProp "Lib" (alg [] [] [publicProp "G" (alg [] [] [privateProp "Q" (alg [] [] [] [.num 7])] [(.capture [.resolve "Q"])]), privateLocalProp "Q" .localCapturedAncestorParams (alg [] [] [] [(.binary .add (.param "p") (.num 1))])] [])] [.resolve "G"])] [(.call (.resolve "Outer") [.num 1])])
+#guard obs case_open_self_contained_beside_same_named_sibling == "ok raw=7 n=1"
 
 -- zero-param-block-higher-order [access-boundaries]: Call0 = f() \n Call0({42})
 def case_zero_param_block_higher_order : Expr :=
@@ -963,7 +988,7 @@ def case_conditional_branch_local_library_is_openable_within_the_branch : Expr :
   .algorithmExpr (alg [] [] [privateProp "F" (.conditional none [] [⟨.litInt 0, (alg [] [] [privateProp "Lib" (alg [] [] [publicProp "X" (alg [] [] [] [.num 1])] []), privateProp "G" (alg [] [.resolve "Lib"] [] [.resolve "X"])] [.resolve "G"])⟩, ⟨.bind "n", (alg [] [] [] [.param "n"])⟩])] [(.call (.resolve "F") [.num 0])])
 #guard obs case_conditional_branch_local_library_is_openable_within_the_branch == "ok raw=1 n=1"
 
--- 173 canonical Lean-guarded specification cases.
+-- 178 canonical Lean-guarded specification cases.
 
 /--
 Machine-checked Lean-guarded partition count: the id list is built by the
@@ -1007,6 +1032,9 @@ def specCaseIds : List String := [
   "empty-visible-in-sequence",
   "empty-visible-at-root",
   "decon-pair",
+  "decon-rhs-implicit-parameter",
+  "decon-rhs-brace-scope",
+  "decon-rhs-lifted-parameter-order",
   "decon-collecting-tail",
   "decon-collecting-head",
   "decon-collecting-middle",
@@ -1046,6 +1074,8 @@ def specCaseIds : List String := [
   "spread-slots-capture",
   "spread-one-level-only",
   "dot-access-value-boundary",
+  "open-local-only-through-capture-row",
+  "open-self-contained-beside-same-named-sibling",
   "zero-param-block-higher-order",
   "dot-member-higher-order-parameter",
   "dot-member-fallback-implicit-signature",
@@ -1145,6 +1175,6 @@ def specCaseIds : List String := [
   "conditional-branch-inline-open-exposes-members-to-the-branch",
   "conditional-branch-local-library-is-openable-within-the-branch"
 ]
-#guard specCaseIds.length == 173
+#guard specCaseIds.length == 178
 
 end LanguageSpecCases

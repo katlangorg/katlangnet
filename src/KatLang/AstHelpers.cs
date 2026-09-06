@@ -64,6 +64,55 @@ internal enum LexicalFallbackSelection
 
 internal static class AstHelpers
 {
+    /// <summary>
+    /// Output rows and hoisted deconstruction RHS rows in written order. Positionless
+    /// rows retain declaration order after positioned rows. The optional filter applies
+    /// only to output rows, so the resolver's bare-root rule never suppresses an RHS.
+    /// </summary>
+    internal static IReadOnlyList<Expr> WrittenRows(Algorithm algorithm, Func<Expr, bool>? includeOutputRow = null)
+    {
+        var output = includeOutputRow is null
+            ? algorithm.Output
+            : (IReadOnlyList<Expr>)algorithm.Output.Where(includeOutputRow).ToList();
+        List<Expr>? merged = null;
+        foreach (var property in algorithm.Properties)
+        {
+            if (property.Value is not Algorithm.User { IsAssignmentDeconstructionSource: true } source)
+                continue;
+
+            merged ??= new List<Expr>(output);
+            merged.AddRange(source.Output);
+        }
+
+        if (merged is null)
+            return output;
+
+        return merged
+            .OrderBy(static row => row.Span?.StartLineNumber ?? int.MaxValue)
+            .ThenBy(static row => row.Span?.StartColumn ?? int.MaxValue)
+            .ToList();
+    }
+
+    /// <summary>Rewrites each shared hoisted source once in its enclosing row context.</summary>
+    internal static void RewriteDeconstructionSourceRows(
+        Algorithm algorithm, List<Property> processedProperties, Func<Expr, Expr> rewriteRow)
+    {
+        Dictionary<Algorithm.User, Algorithm.User>? rewrittenSources = null;
+        for (var index = 0; index < algorithm.Properties.Count; index++)
+        {
+            if (algorithm.Properties[index].Value is not Algorithm.User { IsAssignmentDeconstructionSource: true } source)
+                continue;
+
+            rewrittenSources ??= new(ReferenceEqualityComparer.Instance);
+            if (!rewrittenSources.TryGetValue(source, out var rewritten))
+            {
+                rewritten = source with { Output = source.Output.Select(rewriteRow).ToList() };
+                rewrittenSources[source] = rewritten;
+            }
+            processedProperties[index] = algorithm.Properties[index].WithValue(rewritten);
+        }
+    }
+
     internal static bool TryGetUnresolvedLoadArguments(
         this Expr expr,
         [NotNullWhen(true)] out OutputBundle? args)
@@ -349,13 +398,14 @@ internal static class AstHelpers
     /// Collapses a wrapper algorithm whose single output row is a scope-owning
     /// algorithm expression into that algorithm (module elaboration's
     /// single-block property-body promotion). A <see cref="Expr.Capture"/> body
-    /// never collapses — a captured value boundary is not algorithm identity —
-    /// the unwrap predicate is the structural node kind.
+    /// never collapses — a captured value boundary is not algorithm identity.
+    /// A deconstruction source also keeps its written RHS boundary and provenance.
     /// </summary>
     internal static Algorithm UnwrapSingleBlockPropertyBody(this Algorithm algorithm)
     {
         if (algorithm is Algorithm.User
             {
+                IsAssignmentDeconstructionSource: false,
                 Params.Count: 0, Opens.Count: 0, Properties.Count: 0,
                 Output: [Expr.AlgorithmExpr(var innerAlgorithm)]
             })

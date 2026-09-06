@@ -1439,7 +1439,7 @@ public sealed class Parser
         }
 
         Expect(TokenKind.Equals);
-        var rhsBody = ParseOutputLine();
+        var rhsBody = ParseOutputLine(preserveWrittenBlock: true);
 
         if (targets.Count(static target => target.Kind == ParameterKind.Collecting) > 1)
         {
@@ -1493,7 +1493,11 @@ public sealed class Parser
         HashSet<string> declaredPropertyNames)
     {
         var sourceName = $"$deconstruct${_deconstructionCounter++}";
-        properties.Add(new Property(sourceName, rhsBody));
+        // The hoisted right-hand side is marked so the front end elaborates its rows as rows
+        // of the enclosing body (see Algorithm.User.IsAssignmentDeconstructionSource).
+        properties.Add(new Property(
+            sourceName,
+            rhsBody is Algorithm.User rhsUser ? rhsUser with { IsAssignmentDeconstructionSource = true } : rhsBody));
         declaredPropertyNames.Add(sourceName);
 
         var captures = targets
@@ -2099,8 +2103,9 @@ public sealed class Parser
     /// X = { Y = ... }). Plain sequence values such as <c>(a, b)</c> stay wrapped
     /// as a single block output so callers can distinguish one sequence value
     /// from multiple top-level outputs.
+    /// Assignment deconstruction preserves a written block inside its shared RHS wrapper.
     /// </summary>
-    private Algorithm ParseOutputLine()
+    private Algorithm ParseOutputLine(bool preserveWrittenBlock = false)
     {
         // Definition bodies are line-bounded: a newline ends the body and never
         // continues it as another expression-list row. An expression on a
@@ -2119,7 +2124,7 @@ public sealed class Parser
         // brace algorithm into the property body. A plain parenthesized
         // capture such as `X = (a, b)` stays one captured value boundary —
         // the distinction is now structural (AlgorithmExpr vs Capture).
-        if (exprs.Count == 1
+        if (!preserveWrittenBlock && exprs.Count == 1
             && exprs[0] is Expr.AlgorithmExpr(var innerAlg))
             return innerAlg;
 

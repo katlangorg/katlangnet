@@ -1696,7 +1696,20 @@ z
 5
 ```
 
-The pattern unpacks the single stored sequence value `A`, so `x, *y, z = A` splits `A` into its items: `x = 1`, `y = [2, 3, 4]`, `z = 5`. Explicit `x, *y, z = A*` supplies the same items, and a direct item supply `x, *y, z = 1, 2, 3, 4, 5` binds the same way. Fixed targets bind from the start and end; the collecting target collects the middle as one exact immutable [list](#lists). `*head, last = 1, 2, 3` binds `head = [1, 2]` and `last = 3`; `first, *tail = 1, 2, 3` binds `first = 1` and `tail = [2, 3]`; a singleton collected segment stays a one-element list (`x, *tail = 1, 2` binds `tail = [2]`), and `x, *y, z = 1, 2` binds `y = []`. With a single fixed target plus a collecting binding, `first, *rest = A` unpacks `A` into `first = 1` and `rest = [2, 3, 4, 5]` — the same as `first, *rest = A*`. A lone collecting target is also valid: `*all = 1, 2, 3` binds `all = [1, 2, 3]`, while `*all = ()` binds `all = []`. Without a collecting binding the item count must match exactly, so `x, y = 1, 2` binds `x = 1` and `y = 2`, while `x, y = 1` (one item) and `x, y = 1, 2, 3` (three items) are arity errors against the two targets. This unpacking is deconstruction-specific: a function call `F(A)` still passes `A` as one argument, so calls need `F(A*)` to open it. More than one collecting binding (`*a, *b = 1, 2, 3`) is rejected.
+The pattern unpacks the single stored sequence value `A`, so `x, *y, z = A` splits `A` into its items: `x = 1`, `y = [2, 3, 4]`, `z = 5`. Explicit `x, *y, z = A*` supplies the same items, and a direct item supply `x, *y, z = 1, 2, 3, 4, 5` binds the same way. Fixed targets bind from the start and end; the collecting target collects the middle as one exact immutable [list](#lists). `*head, last = 1, 2, 3` binds `head = [1, 2]` and `last = 3`; `first, *tail = 1, 2, 3` binds `first = 1` and `tail = [2, 3]`; a singleton collected segment stays a one-element list (`x, *tail = 1, 2` binds `tail = [2]`), and `x, *y, z = 1, 2` binds `y = []`. With a single fixed target plus a collecting binding, `first, *rest = A` unpacks `A` into `first = 1` and `rest = [2, 3, 4, 5]` — the same as `first, *rest = A*`. A lone collecting target is also valid: `*all = 1, 2, 3` binds `all = [1, 2, 3]`, while `*all = ()` binds `all = []`. Without a collecting binding the item count must match exactly, so `x, y = 1, 2` binds `x = 1` and `y = 2`, while `x, y = 1` (one item) and `x, y = 1, 2, 3` (three items) are arity errors against the two targets. This unpacking is deconstruction-specific: a function call `F(A)` still passes `A` as one argument, so calls need `F(A*)` to open it. More than one collecting binding (`*a, *b = 1, 2, 3`) is rejected. The right-hand side is an ordinary expression of the surrounding algorithm: it is evaluated once for all of its targets, and a name it does not resolve becomes an implicit parameter of that algorithm (never of the deconstruction itself):
+
+```
+F = {
+  a, b = x, 10
+  a + b
+}
+
+F(1)
+```
+
+**Result:** `11`
+
+The same closed-input rule applies as for an ordinary row: in `F(k) = { a, b = x, 10 }`, undeclared `x` is a front-end error. Direct free names and lifted sibling dependencies keep their respective ordinary-row ordering across right-hand sides and output rows. A written brace on the right-hand side still creates its own lexical scope; its local properties, opens, and nested deconstructions stay inside that brace.
 
 The exactness matters most when the remaining items are themselves structured — one leftover row stays distinguishable from the row's own elements:
 

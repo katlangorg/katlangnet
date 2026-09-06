@@ -612,6 +612,53 @@ public static class LanguageSpecCorpus
         },
         new()
         {
+            Id = "decon-rhs-implicit-parameter",
+            Category = "deconstruction",
+            Source = "F = {\n    a, b = x, 10\n    a + b\n}\nF(1)",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "11",
+            ExpectedRaw = "11",
+            ExpectedEmittedCount = 1,
+            Probes =
+            [
+                new SpecProbe("F = {\n    P = y * 2\n    a, b = P, 10\n    a + b\n}\nF(4)", "ok raw=18 n=1"),
+                new SpecProbe("F = {\n    a, b = P, 10\n    P = y * 2\n    a + b\n}\nF(4)", "ok raw=18 n=1"),
+            ],
+            Explanation = "A deconstruction right-hand side is an expression of the enclosing body: its unresolved name `x` becomes `F`'s implicit parameter (never the hoisted source's), and a parameterized sibling referenced there lifts in `F`'s context regardless of declaration order.",
+        },
+        new()
+        {
+            Id = "decon-rhs-brace-scope",
+            Category = "deconstruction",
+            Source = "F = {\n    Q = 100\n    a, b = { Q = 7\n        Q, 10 }\n    a + b\n}\nF",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "17",
+            ExpectedRaw = "17",
+            ExpectedEmittedCount = 1,
+            Probes =
+            [
+                new SpecProbe("a, b = { open { public Q = 7 }\n Q, 10 }\na + b", "ok raw=17 n=1"),
+                new SpecProbe("a, b = { c, d = 7, 10\n c, d }\na + b", "ok raw=17 n=1"),
+            ],
+            Explanation = "A whole-brace deconstruction RHS keeps its lexical scope inside the shared source: its own Q shadows the enclosing Q, and its declarations never become enclosing RHS rows.",
+        },
+        new()
+        {
+            Id = "decon-rhs-lifted-parameter-order",
+            Category = "deconstruction",
+            Source = "P = x * 2\nR = y * 3\nF = {\n    a, b = P, 10\n    R + a + b\n}\nF(1, 2)",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "18",
+            ExpectedRaw = "18",
+            ExpectedEmittedCount = 1,
+            Probes =
+            [
+                new SpecProbe("P = x * 2\nR = y * 3\nF = {\n R + a + b\n a, b = P, 10\n}\nF(1, 2)", "ok raw=17 n=1"),
+            ],
+            Explanation = "Sibling-derived parameters follow written row order across RHS and output rows, exactly as ordinary output rows do: F infers x then y, not output-first y then x.",
+        },
+        new()
+        {
             Id = "decon-collecting-tail",
             Category = "deconstruction",
             Source = "x, *rest = 1, 2, 3\nrest",
@@ -1198,6 +1245,31 @@ public static class LanguageSpecCorpus
                 new SpecProbe("A = {\n    X = 1, 2, 3\n}\ncount(A.X)", "ok raw=3 n=1"),
             ],
             Explanation = "Structural dot access observes the same value boundary as lexical access: one canonical sequence value.",
+        },
+        new()
+        {
+            Id = "open-local-only-through-capture-row",
+            Category = "access-boundaries",
+            Source = "Outer(p) = {\n    open Lib\n    Lib = { public G = { Q = p + 1\n    (Q) } }\n    G\n}\nOuter(1)",
+            Outcome = SpecOutcome.EvalError,
+            ExpectedErrorCategory = "unknownName",
+            Probes =
+            [
+                new SpecProbe("Outer(p) = {\n    open Lib\n    Lib = { public G = { Q = p + 1\n    { Q } } }\n    G\n}\nOuter(1)", "err unknownName"),
+                new SpecProbe("Outer(p) = {\n    open Lib\n    Lib = { public G = { Q = p + 1\n    Id(Q) } }\n    Id(v) = v\n    G\n}\nOuter(1)", "err unknownName"),
+            ],
+            Explanation = "Exposure follows ownership through every layer: `G` depends on `p` (owned by `Outer`) through its own local `Q` whether the reference is written bare, in a capture row, in a nested block, or in a call argument, so it is local-only and `open Lib` does not expose it.",
+        },
+        new()
+        {
+            Id = "open-self-contained-beside-same-named-sibling",
+            Category = "access-boundaries",
+            Source = "Outer(p) = {\n    open Lib\n    Lib = {\n        public G = { Q = 7\n        (Q) }\n        Q = p + 1\n    }\n    G\n}\nOuter(1)",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "7",
+            ExpectedRaw = "7",
+            ExpectedEmittedCount = 1,
+            Explanation = "`G`'s capture row names its OWN self-contained `Q = 7`, never Lib's ancestor-capturing `Q = p + 1`, so `G` stays exported through `open Lib`.",
         },
         new()
         {

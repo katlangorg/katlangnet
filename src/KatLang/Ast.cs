@@ -1383,6 +1383,19 @@ public abstract record Algorithm
         internal bool IsAssignmentDeconstructionHelper { get; init; }
 
         /// <summary>
+        /// True for the parser-synthesized <c>$deconstruct$N</c> property that hoists an
+        /// assignment deconstruction's right-hand side (<c>x, *y, z = RHS</c>) so it is
+        /// evaluated once and shared by the target helpers. The right-hand side is written
+        /// as an expression of the ENCLOSING body, so the front end elaborates this
+        /// algorithm's output rows as rows of the enclosing algorithm — its free names
+        /// become that algorithm's implicit parameters (read back through the inherited
+        /// value environment) and its sibling references lift in that algorithm's context —
+        /// and the property itself stays a zero-parameter shared source. Not part of the Lean
+        /// model (the elaborated tree is an ordinary zero-parameter property).
+        /// </summary>
+        internal bool IsAssignmentDeconstructionSource { get; init; }
+
+        /// <summary>
         /// True for a module root spliced into the tree by load elaboration.
         /// Tooling-only provenance metadata: source spans inside a loaded module
         /// are positioned in the MODULE's source text, so editor scope regions

@@ -403,6 +403,148 @@ public class PropertyExposureResolverTests
             Assert.IsType<RunResult.Success>(KatLangEngine.Run(source)).ToDisplayString().ReplaceLineEndings("\n"));
     }
 
+    // ───────── Bug-hunt K1-02: a local property referenced through a transparent layer ─────────
+    //
+    // Capture rows, call and dot-call argument bundles walk with empty local maps (they own no
+    // names), and a nested block's completed summary knows nothing of the enclosing level, so a
+    // reference to the ENCLOSING algorithm's own property escaped as a bare visible name. An
+    // enclosing level without that name dropped it (a local-only member leaked through `open`);
+    // an enclosing sibling of the same name was wrongly consulted (a self-contained member was
+    // hidden). The summary now resolves those names ownership-first at the algorithm level.
+
+    private static string OpenThroughTransparentLayerSource(string row) =>
+        $$"""
+        Outer(p) = {
+          open Lib
+          Lib = { public G = { Q = p + 1
+          {{row}} } }
+          Id(v) = v
+          Zero = 0
+          Add2(u, v) = u + v
+          G
+        }
+        Outer(1)
+        """;
+
+    private const string SelfContainedThroughCaptureRowSource = """
+        Outer(p) = {
+          open Lib
+          Lib = {
+            public G = { Q = 7
+            (Q) }
+            Q = p + 1
+          }
+          G
+        }
+        Outer(1)
+        """;
+
+    [Theory]
+    [InlineData("(Q)")]
+    [InlineData("{ Q }")]
+    [InlineData("Id(Q)")]
+    [InlineData("Zero.Add2(Q)")]
+    public void Parse_LocalPropertyReferencedThroughTransparentLayer_KeepsAncestorCaptureLocalOnly(string row)
+    {
+        var source = OpenThroughTransparentLayerSource(row);
+        var root = SourceProvenance.ParseValid(source).Root;
+
+        // `G` depends, through its own local `Q`, on `p` — owned by the enclosing `Outer` — so it
+        // is local-only however the reference is written, and `open Lib` must not expose it.
+        Assert.Equal(
+            PropertyExposure.LocalOnlyCapturedAncestorParameters,
+            NestedProperty(root, "Outer", "Lib", "G").Exposure);
+
+        var failure = Assert.IsType<RunResult.EvalFailure>(KatLangEngine.Run(source));
+        var error = Assert.Single(failure.Errors);
+        Assert.Equal(KatLangErrorCode.UnknownName, error.Code);
+        Assert.Contains("Unknown name: G", error.Message);
+    }
+
+    [Fact]
+    public void Parse_LocalPropertyReferencedDirectly_IsTheControlForTheTransparentLayers()
+    {
+        // The bare `Q` row: the same program every transparent spelling above must agree with.
+        var source = OpenThroughTransparentLayerSource("Q");
+        Assert.Equal(
+            PropertyExposure.LocalOnlyCapturedAncestorParameters,
+            NestedProperty(SourceProvenance.ParseValid(source).Root, "Outer", "Lib", "G").Exposure);
+        Assert.IsType<RunResult.EvalFailure>(KatLangEngine.Run(source));
+    }
+
+    [Fact]
+    public void Parse_SelfContainedLocalReferencedThroughCaptureRow_StaysExportedBesideSameNamedEnclosingSibling()
+    {
+        var root = SourceProvenance.ParseValid(SelfContainedThroughCaptureRowSource).Root;
+
+        // `G`'s `(Q)` names ITS OWN self-contained `Q = 7`, never Lib's `Q = p + 1`.
+        Assert.Equal(PropertyExposure.Exported, NestedProperty(root, "Outer", "Lib", "G").Exposure);
+        Assert.Equal(
+            PropertyExposure.LocalOnlyCapturedAncestorParameters,
+            NestedProperty(root, "Outer", "Lib", "Q").Exposure);
+
+        var success = Assert.IsType<RunResult.Success>(KatLangEngine.Run(SelfContainedThroughCaptureRowSource));
+        Assert.Equal("7", success.ToDisplayString());
+    }
+
+    public static IEnumerable<object[]> ExposureAdversarialCases()
+    {
+        foreach (var row in new[] { "Q", "(Q)", "((Q))", "Id(Q)", "Id(Id(Q))", "Zero.Add2(Id(Q))", "{ Q }", "Id({ Q })", "[Q]:0", "Q*" })
+        foreach (var captures in new[] { false, true })
+        foreach (var declarations in new[] { "Q = VALUE", "Q = R\n R = VALUE", "R = VALUE\n Q = R", "Q = if(0, R, VALUE)\n R = (Q)" })
+            yield return [row, declarations.Replace("VALUE", captures ? "p + 1" : "7", StringComparison.Ordinal), captures];
+    }
+
+    [Theory]
+    [MemberData(nameof(ExposureAdversarialCases))]
+    public async Task Exposure_TransitiveAndCyclicLocals_RespectOwnershipAcrossBundles(
+        string row, string declarations, bool captures)
+    {
+        var source = $$"""
+            Outer(p) = {
+              open Lib, Other, Lib
+              Lib = {
+                public G = { {{declarations}}
+                {{row}} }
+                Q = p + 100
+              }
+              Other = { public Extra = 9 }
+              Id(value) = value
+              Zero = 0
+              Add2(left, right) = left + right
+              G
+            }
+            Outer(1)
+            """;
+        var root = SourceProvenance.ParseValid(source).Root;
+        Assert.Equal(captures ? PropertyExposure.LocalOnlyCapturedAncestorParameters : PropertyExposure.Exported,
+            NestedProperty(root, "Outer", "Lib", "G").Exposure);
+        var sync = KatLangEngine.Run(source);
+        var asyncResult = await KatLangEngine.RunAsync(source);
+        Assert.Equal(sync.ToDisplayString(), asyncResult.ToDisplayString());
+        if (captures)
+        {
+            var error = Assert.Single(Assert.IsType<RunResult.EvalFailure>(sync).Errors);
+            Assert.Equal(KatLangErrorCode.UnknownName, error.Code);
+            Assert.Contains("Unknown name: G", error.Message);
+        }
+        else
+            Assert.Equal("7", Assert.IsType<RunResult.Success>(sync).ToDisplayString());
+    }
+
+    private static Property NestedProperty(Algorithm algorithm, params string[] path)
+    {
+        Property? current = null;
+        var scope = algorithm;
+        foreach (var name in path)
+        {
+            current = Assert.Single(scope.Properties, property => property.Name == name);
+            scope = current.Value;
+        }
+
+        return current!;
+    }
+
     private static Algorithm.User ParseSinglePropertyBody(string source)
     {
         var result = Parser.Parse(source);

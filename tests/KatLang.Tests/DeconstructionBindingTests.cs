@@ -298,6 +298,260 @@ public class DeconstructionBindingTests
         Assert.Equal(1, arity.Actual);
     }
 
+    // ───────── Bug-hunt K1-05: the right-hand side is an expression of the enclosing body ─────────
+    //
+    // `x, *y, z = RHS` hoists `RHS` into a synthetic zero-parameter source property so it is
+    // evaluated once for every target. A free name in `RHS` used to become that SOURCE's own
+    // implicit parameter, which nothing could ever supply (the targets open the source through
+    // a neutral argument slot), so the enclosing algorithm was uncallable at every arity and the
+    // synthetic `$deconstruct$N` name leaked into the diagnostic. The front end now elaborates
+    // the right-hand side as rows of the ENCLOSING body: its free names are that body's implicit
+    // parameters, its sibling references lift in that body's context, and the source stays
+    // zero-parameter.
+
+    [Fact]
+    public void Assignment_RightHandSideFreeName_BecomesTheEnclosingAlgorithmsImplicitParameter()
+    {
+        const string source = "F = {\n  a, b = x, 10\n  a + b\n}\nF(1)";
+        AssertAtoms(source, 11);
+
+        var root = SourceProvenance.ParseValid(source).Root;
+        var f = Assert.IsType<Algorithm.User>(Assert.Single(root.Properties, p => p.Name == "F").Value);
+        Assert.Equal(["x"], f.Params);
+
+        // The hoisted source reads `x` from the inherited value environment and stays zero-parameter;
+        // the target opens it through the bare shared reference, exactly as before.
+        var hoisted = Assert.Single(f.Properties, p => p.Name.StartsWith("$deconstruct$", StringComparison.Ordinal));
+        var hoistedSource = Assert.IsType<Algorithm.User>(hoisted.Value);
+        Assert.Empty(hoistedSource.Params);
+        Assert.Equal("x", Assert.IsType<Expr.Param>(hoistedSource.Output[0]).Name);
+        var target = Assert.IsType<Algorithm.User>(Assert.Single(f.Properties, p => p.Name == "a").Value);
+        Assert.Empty(target.Params);
+        var bindingCall = Assert.IsType<Expr.Call>(Assert.Single(target.Output));
+        Assert.Equal(hoisted.Name, Assert.IsType<Expr.Resolve>(Assert.Single(bindingCall.Args)).Name);
+    }
+
+    [Fact]
+    public void Assignment_RootRightHandSideFreeName_BecomesTheProgramsImplicitParameter_WithoutSyntheticNames()
+    {
+        var failure = Assert.IsType<RunResult.EvalFailure>(KatLangEngine.Run("a, b = x, 10\na + b"));
+        var error = Assert.Single(failure.Errors);
+        Assert.Equal(KatLangErrorCode.UnresolvedImplicitParams, error.Code);
+        Assert.Contains("'x'", error.Message);
+        Assert.DoesNotContain("$deconstruct$", error.Message);
+    }
+
+    [Fact]
+    public void Assignment_EnclosingAlgorithmCalledWithoutTheForwardedParameter_NamesTheAlgorithm_NotTheSource()
+    {
+        var failure = Assert.IsType<RunResult.EvalFailure>(KatLangEngine.Run("F = {\n  a, b = x, 10\n  a + b\n}\nF"));
+        var error = Assert.Single(failure.Errors);
+        Assert.Equal(KatLangErrorCode.ArityMismatch, error.Code);
+        Assert.Contains("'F'", error.Message);
+        Assert.Contains("'x'", error.Message);
+        Assert.DoesNotContain("$deconstruct$", error.Message);
+    }
+
+    [Theory]
+    [InlineData("P = y * 2\na, b = P, 10\na + b")]
+    [InlineData("a, b = P, 10\nP = y * 2\na + b")]
+    public void Assignment_RightHandSideSiblingReference_LiftsInTheEnclosingContextRegardlessOfDeclarationOrder(string source)
+    {
+        var failure = Assert.IsType<RunResult.EvalFailure>(KatLangEngine.Run(source));
+        var error = Assert.Single(failure.Errors);
+        Assert.Equal(KatLangErrorCode.UnresolvedImplicitParams, error.Code);
+        Assert.Contains("'y'", error.Message);
+    }
+
+    [Theory]
+    [InlineData("F = {\n  P = y * 2\n  a, b = P, 10\n  a + b\n}\nF(4)")]
+    [InlineData("F = {\n  a, b = P, 10\n  P = y * 2\n  a + b\n}\nF(4)")]
+    public void Assignment_NestedRightHandSideSiblingReference_ReachesTheEnclosingAlgorithm(string source)
+        => AssertAtoms(source, 18);
+
+    [Theory]
+    [InlineData("F = {\n  a, b = x, 10\n  y + a\n}\nF(1, 2)", "x", "y")]
+    [InlineData("F = {\n  y + a\n  a, b = x, 10\n}\nF(1, 2)", "y", "x")]
+    public void Assignment_RightHandSideNames_OrderWithTheBodysRowsByWrittenPosition(string source, string first, string second)
+    {
+        var root = SourceProvenance.ParseValid(source).Root;
+        var f = Assert.IsType<Algorithm.User>(Assert.Single(root.Properties, p => p.Name == "F").Value);
+        Assert.Equal([first, second], f.Params);
+        AssertAtoms(source, 3);
+    }
+
+    [Fact]
+    public void Assignment_RightHandSideUnderClosedExplicitList_IsAFrontEndError()
+    {
+        var diagnostics = SourceProvenance.ExpectFrontEndError("F(k) = {\n  a, b = x, 10\n  a + b\n}\nF(1)");
+        var diagnostic = Assert.Single(diagnostics, d => d.Code == DiagnosticCode.UndeclaredIdentifier);
+        Assert.Contains("'x'", diagnostic.Message);
+    }
+
+    [Fact]
+    public void Assignment_RightHandSideInConditionalBranchBody_ObeysTheBranchPattern()
+    {
+        var diagnostics = SourceProvenance.ExpectFrontEndError("G(0) = {\n  a, b = q, 10\n  a\n}\nG(n) = n\nG(0)");
+        Assert.Contains(diagnostics, d => d.Code == DiagnosticCode.UndeclaredIdentifier && d.Message.Contains("'q'"));
+
+        AssertAtoms("G(0) = {\n  a, b = 4, 10\n  a + b\n}\nG(n) = n\nG(0)", 14);
+    }
+
+    [Fact]
+    public void Assignment_ParameterizedRightHandSide_IsStillEvaluatedOnceForAllTargets()
+    {
+        var calls = 0;
+        var options = new RunOptions
+        {
+            HostOperations = HostOperations.Create(
+                HostOperation.Create("Tick", (args, _) => { calls++; return args[0]; }, "value")),
+        };
+
+        var success = Assert.IsType<RunResult.Success>(
+            KatLangEngine.Run("F = {\n  a, b = Tick(x), 10\n  a + b\n}\nF(1)", options));
+
+        Assert.Equal("11", success.ToDisplayString());
+        Assert.Equal(1, calls);
+    }
+
+    [Fact]
+    public void Assignment_RightHandSideRuntimeError_NeverNamesTheHoistedSource()
+    {
+        var failure = Assert.IsType<RunResult.EvalFailure>(KatLangEngine.Run("F = {\n  a, b = x / 0, 10\n  a + b\n}\nF(1)"));
+        var error = Assert.Single(failure.Errors);
+        Assert.Equal(KatLangErrorCode.DivisionByZero, error.Code);
+        Assert.DoesNotContain("$deconstruct$", error.Message);
+    }
+
+    [Theory]
+    [InlineData("F(x) = {\n a, b = { c, d = x, 10\n c + d }, 20\n a + b\n}\nF(1)", "31")]
+    [InlineData("F = {\n a, b = x, y\n a * 10 + b\n}\nF(1, 2)", "12")]
+    [InlineData("F = {\n a, b, c = x, y, x\n a * 100 + b * 10 + c + z\n}\nF(1, 2, 3)", "124")]
+    [InlineData("F(x) = {\n a, b = { Q = x + 1\n Q }, 10\n a + b\n}\nF(1)", "12")]
+    public void Assignment_RightHandSideNestedBodiesAndFreeNameOrder_UseEnclosingContext(string source, string expected)
+    {
+        SourceProvenance.ParseValid(source);
+        var success = Assert.IsType<RunResult.Success>(KatLangEngine.Run(source));
+        Assert.Equal(expected, success.ToDisplayString());
+    }
+
+    [Theory]
+    [InlineData("Q = 7\n Q, 10")]
+    [InlineData("open { public R = 7 }\n R, 10")]
+    [InlineData("c, d = 7, 10\n c, d")]
+    [InlineData("Choose(0) = 7\n Choose(n) = n\n Choose(0), 10")]
+    public void Assignment_WholeBraceRightHandSide_PreservesItsLexicalScope(string body)
+    {
+        var source = $"F = {{\n Q = 100\n a, b = {{ {body} }}\n a + b\n}}\nF";
+        var root = SourceProvenance.ParseValid(source).Root;
+        var enclosing = Assert.IsType<Algorithm.User>(Assert.Single(root.Properties).Value);
+        Assert.Empty(enclosing.Params);
+        var hoisted = Assert.IsType<Algorithm.User>(Assert.Single(enclosing.Properties,
+            property => property.Value is Algorithm.User { IsAssignmentDeconstructionSource: true }).Value);
+        Assert.Empty(hoisted.Params);
+        Assert.Empty(hoisted.Properties);
+        Assert.Empty(hoisted.Opens);
+        Assert.IsType<Expr.AlgorithmExpr>(Assert.Single(hoisted.Output));
+        var success = Assert.IsType<RunResult.Success>(KatLangEngine.Run(source));
+        Assert.Equal("17", success.ToDisplayString());
+    }
+
+    [Theory]
+    [InlineData("a, b = P, 10\n R + a + b", "P, 10\n R + 1", "x", "y", "18")]
+    [InlineData("R + a + b\n a, b = P, 10", "R + 1\n P, 10", "y", "x", "17")]
+    public void Assignment_LiftedSiblingParameterOrder_MatchesWrittenRows(
+        string body, string ordinaryBody, string first, string second, string expected)
+    {
+        const string declarations = "P = x * 2\nR = y * 3\n";
+        var source = declarations + $"F = {{\n {body}\n}}\nF(1, 2)";
+        var ordinary = SourceProvenance.ParseValid(declarations + $"F = {{\n {ordinaryBody}\n}}").Root;
+        var root = SourceProvenance.ParseValid(source).Root;
+        var function = Assert.Single(root.Properties, property => property.Name == "F").Value;
+        var control = Assert.Single(ordinary.Properties, property => property.Name == "F").Value;
+        Assert.Equal([first, second], control.Params);
+        Assert.Equal(control.Params, function.Params);
+        Assert.Equal(expected, Assert.IsType<RunResult.Success>(KatLangEngine.Run(source)).ToDisplayString());
+    }
+
+    [Theory]
+    [InlineData("F(k)", "")]
+    [InlineData("F(0)", "\nF(n) = n")]
+    public void Assignment_ClosedRhsDiagnostic_MatchesOrdinaryRowExactly(string head, string alternatives)
+    {
+        var source = $"{head} = {{\n a, b = x, 10\n 0\n}}{alternatives}";
+        var control = source.Replace("a, b = ", "       ", StringComparison.Ordinal);
+        var diagnostics = SourceProvenance.ExpectFrontEndError(source);
+        var ordinaryDiagnostics = SourceProvenance.ExpectFrontEndError(control);
+        var diagnostic = Assert.Single(diagnostics, item => item.Code == DiagnosticCode.UndeclaredIdentifier);
+        var ordinaryDiagnostic = Assert.Single(ordinaryDiagnostics, item => item.Code == DiagnosticCode.UndeclaredIdentifier);
+        Assert.Equal(ordinaryDiagnostic, diagnostic);
+        Assert.DoesNotContain("$deconstruct$", diagnostic.ToString());
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Assignment_ImplicitRhs_IsMaterializedOnceWithinAPureResourceBudget(bool asynchronous)
+    {
+        const string source = "F = {\n a, b = range(1, 1000), x\n a.count + b\n}\nF(1)";
+        SourceProvenance.ParseValid(source);
+        var options = new RunOptions
+        {
+            EvaluationLimits = new EvaluationLimits { MaxMaterializedItems = 1500 },
+            HostOperations = asynchronous
+                ? HostOperations.Create(HostOperation.CreateAsync("Unused", (_, _) => ValueTask.FromResult<Result>(new Result.Atom(0))))
+                : null,
+        };
+        var result = asynchronous ? await KatLangEngine.RunAsync(source, options) : KatLangEngine.Run(source, options);
+        Assert.Equal("1001", Assert.IsType<RunResult.Success>(result).ToDisplayString());
+
+        const string duplicate = "F(x) = range(1, 1000).count + range(1, 1000).count + x\nF(1)";
+        SourceProvenance.ParseValid(duplicate);
+        var control = asynchronous ? await KatLangEngine.RunAsync(duplicate, options) : KatLangEngine.Run(duplicate, options);
+        var error = Assert.Single(Assert.IsType<RunResult.EvalFailure>(control).Errors);
+        Assert.Equal(KatLangErrorCode.MaterializationLimitExceeded, error.Code);
+    }
+
+    [Theory]
+    [InlineData("Q = 7\n Q, 10")]
+    [InlineData("open 'https://katlang.org/rhs-review'\n Q, 10")]
+    public async Task Assignment_WholeBraceRhs_ModuleElaborationPreservesTheSourceBoundary(string body)
+    {
+        var source = $"F = {{\n a, b = {{ {body} }}\n a + b\n}}\nF";
+        var options = new RunOptions
+        {
+            DownloadCode = (_, _) => ValueTask.FromResult("public Q = 7"),
+        };
+        var parsed = await Parser.ParseAsync(source, options);
+        Assert.False(parsed.HasErrors, string.Join("\n", parsed.Diagnostics));
+        var enclosing = Assert.Single(parsed.Root.Properties).Value;
+        var hoisted = Assert.Single(enclosing.Properties,
+            property => property.Value is Algorithm.User { IsAssignmentDeconstructionSource: true }).Value;
+        Assert.Empty(hoisted.Params);
+        Assert.Empty(hoisted.Properties);
+        Assert.IsType<Expr.AlgorithmExpr>(Assert.Single(hoisted.Output));
+        Assert.Equal("17", Assert.IsType<RunResult.Success>(await KatLangEngine.RunAsync(source, options)).ToDisplayString());
+    }
+
+    [Fact]
+    public void Assignment_ImplicitRhsFailure_IsNotReplayedAndKeepsWrittenDiagnostics()
+    {
+        var calls = 0;
+        var options = new RunOptions
+        {
+            HostOperations = HostOperations.Create(HostOperation.Create("Tick", (arguments, _) =>
+            {
+                calls++;
+                return arguments[0];
+            }, "value")),
+        };
+        const string source = "F = {\n a, b = Tick(x) / 0, 10\n a + b\n}\nF(1)";
+        var failure = Assert.IsType<RunResult.EvalFailure>(KatLangEngine.Run(source, options));
+        Assert.Equal(KatLangErrorCode.DivisionByZero, Assert.Single(failure.Errors).Code);
+        Assert.Equal(1, calls);
+        Assert.DoesNotContain("$deconstruct$", failure.ToDisplayString());
+    }
+
     private static EvalError Innermost(EvalError error)
     {
         while (error is EvalError.WithContext context)

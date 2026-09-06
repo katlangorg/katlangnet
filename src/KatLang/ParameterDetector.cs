@@ -145,10 +145,15 @@ internal static class ParameterDetector
         // These should rewrite to Expr.Param but must not become new local params.
         var boundNames = UnionNames(capturedParamNames, alg.Params);
 
+        // Every row this body WRITES: its output rows plus each hoisted assignment-
+        // deconstruction right-hand side (see WrittenRows) — the right-hand side obeys this
+        // body's closed-input rule and seeds this body's implicit parameters like any row.
+        var writtenRows = AstHelpers.WrittenRows(alg);
+
         ImplicitParameterOccurrenceRecorder? provenanceRecorder = null;
         if (hasExplicitParameterList)
         {
-            ReportUndeclaredExplicitParameterNames(alg.Output, scope, boundNames, diagnostics, observations);
+            ReportUndeclaredExplicitParameterNames(writtenRows, scope, boundNames, diagnostics, observations);
         }
         else
         {
@@ -157,7 +162,7 @@ internal static class ParameterDetector
                 alg.Params,
                 capturedParamNames);
             CollectFreeParams(
-                alg.Output, scope, boundNames, paramNames, paramOrder, graceWeights,
+                writtenRows, scope, boundNames, paramNames, paramOrder, graceWeights,
                 FreeNameCollection.ImplicitSignature,
                 provenanceRecorder,
                 new FreeNameWalkMemo(observations));
@@ -181,7 +186,14 @@ internal static class ParameterDetector
         var newProperties = new List<Property>(alg.Properties.Count);
         foreach (var prop in alg.Properties)
         {
-            if (prop.Value is Algorithm.Conditional condAlg)
+            if (prop.Value is Algorithm.User { IsAssignmentDeconstructionSource: true })
+            {
+                // Hoisted deconstruction right-hand side: its rows were collected with this
+                // body's rows above and are rewritten with them below (never as a nested
+                // scope of its own, which would make its free names ITS parameters).
+                newProperties.Add(prop);
+            }
+            else if (prop.Value is Algorithm.Conditional condAlg)
             {
                 newProperties.Add(prop.WithValue(ProcessConditionalProperty(
                     condAlg, prop.Name, scope, nestedCapturedParamNames, diagnostics, observations, run)));
@@ -221,6 +233,8 @@ internal static class ParameterDetector
         var rewrittenOutput = new List<Expr>(alg.Output.Count);
         foreach (var expr in alg.Output)
             rewrittenOutput.Add(RewriteParams(expr, paramNames, scope, capturedParamNames, rewriteMemo));
+        AstHelpers.RewriteDeconstructionSourceRows(
+            alg, newProperties, expr => RewriteParams(expr, paramNames, scope, capturedParamNames, rewriteMemo));
 
         return algWithProcessedOpens.WithParams(paramOrder, provenanceRecorder?.Provenance) with
         {
@@ -871,6 +885,10 @@ internal static class ParameterDetector
 
         var bodyCapturedParamNames = UnionNames(capturedParamNames, binderNames);
 
+        // Every row this branch body WRITES, hoisted deconstruction right-hand sides
+        // included (see WrittenRows): they obey the same full-input-specification rule.
+        var writtenRows = AstHelpers.WrittenRows(body);
+
         // Detect free identifiers that would be implicit parameters — these are
         // forbidden in conditional branch bodies (full-input-specification rule).
         List<(string Name, SourceSpan Span)>? undeclaredNames = null;
@@ -880,7 +898,7 @@ internal static class ParameterDetector
             var freeOrder = new List<string>();
             var dummyWeights = new Dictionary<string, int>();
             CollectFreeParams(
-                body.Output,
+                writtenRows,
                 bodyScope,
                 bodyCapturedParamNames,
                 freeNames,
@@ -892,7 +910,7 @@ internal static class ParameterDetector
             foreach (var freeName in freeOrder)
             {
                 // Find the span for the first occurrence of this free identifier
-                var span = FindResolveSpan(body.Output, freeName, new ResolveSpanSearchMemo(observations))
+                var span = FindResolveSpan(writtenRows, freeName, new ResolveSpanSearchMemo(observations))
                     ?? new SourceSpan(0, 0, 0, 0);
                 (undeclaredNames ??= []).Add((freeName, span));
                 diagnostics.Add(CreateConditionalBranchUndeclaredIdentifierDiagnostic(freeName, branchName, span));
@@ -910,6 +928,14 @@ internal static class ParameterDetector
         foreach (var prop in body.Properties)
         {
             Algorithm processedProp;
+            if (prop.Value is Algorithm.User { IsAssignmentDeconstructionSource: true })
+            {
+                // Hoisted deconstruction right-hand side: collected with the body's rows
+                // above and rewritten with them below (see WrittenRows).
+                newProperties.Add(prop);
+                continue;
+            }
+
             if (prop.Value is Algorithm.Conditional nestedCondAlg)
             {
                 processedProp = ProcessConditionalProperty(
@@ -947,6 +973,8 @@ internal static class ParameterDetector
         var rewrittenOutput = new List<Expr>(body.Output.Count);
         foreach (var expr in body.Output)
             rewrittenOutput.Add(RewriteBinderRefs(expr, binderNames, bodyScope, capturedParamNames, rewriteMemo));
+        AstHelpers.RewriteDeconstructionSourceRows(
+            body, newProperties, expr => RewriteBinderRefs(expr, binderNames, bodyScope, capturedParamNames, rewriteMemo));
 
         var rewritten = bodyWithProcessedOpens with
         {

@@ -193,6 +193,23 @@ public class AsyncHostOperationTests
     }
 
     [Fact]
+    public async Task DeconstructionImplicitRhs_SuspendsOnceAndSharesTheResultAcrossTargets()
+    {
+        var held = new HeldOperation();
+        var options = new RunOptions
+        {
+            HostOperations = HostOperations.Create(HostOperation.CreateAsync("Fetch", held.InvokeAsync, "value")),
+        };
+        var task = KatLangEngine.RunAsync("F = {\n a, b = Fetch(x), 10\n a + b + a\n}\nF(1)", options);
+        await Reached(held.ReachedTask);
+        Assert.False(task.IsCompleted);
+        Assert.Equal(Atom(1), Assert.Single(held.ObservedArguments!));
+        held.Release(Atom(1));
+        Assert.Equal("12", Assert.IsType<RunResult.Success>(await Complete(task)).ToDisplayString());
+        Assert.Equal(1, held.Invocations);
+    }
+
+    [Fact]
     public async Task NestedAsyncOperations_SuspendInEvaluationOrder_WithoutReplay()
     {
         var inner = new HeldOperation();

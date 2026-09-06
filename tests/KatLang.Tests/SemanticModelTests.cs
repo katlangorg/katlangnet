@@ -362,6 +362,18 @@ public class SemanticModelTests
     }
 
     [Fact]
+    public void Build_DeconstructionRhsImplicitName_HasOnlyWrittenProvenance()
+    {
+        var model = BuildModel("F = {\n a, b = x, 10\n a + b\n}\nF(1)");
+        var reference = Assert.Single(model.FindResolutions("x"));
+        Assert.Equal(IdentifierClassification.ImplicitParameterReference, reference.Classification);
+        AssertSpan(reference.Occurrence.Span, 2, 9, 2, 9);
+        Assert.Empty(model.FindDeclarations("x"));
+        Assert.DoesNotContain(model.PropertyInfos, property => property.Name.StartsWith('$'));
+        Assert.DoesNotContain(model.IdentifierResolutions, resolution => resolution.Occurrence.Name.StartsWith('$'));
+    }
+
+    [Fact]
     public void Build_RepeatedOrdinaryBinder_ReferencesFirstDeclaration()
     {
         var model = BuildModel("F(x, x) = x");

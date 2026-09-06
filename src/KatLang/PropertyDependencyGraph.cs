@@ -491,6 +491,18 @@ internal static class PropertyDependencyGraphBuilder
             ownedHere,
             memos,
             inTransparentContext: false));
+
+        // A name the opens/output walk reported unresolved from a transparent layer (a capture
+        // row, a call or dot-call argument bundle — walked with empty local maps, see the arms
+        // below) or from a nested block (whose completed summary knows nothing of this level)
+        // is a reference written in THIS algorithm's lexical context, so ownership-first
+        // resolution consults this algorithm's own properties before the name may escape to
+        // the enclosing level — exactly as each property base seed is expanded against the
+        // same local fixed point. Without this step `G = { Q = p + 1  (Q) }` reported the bare
+        // name `Q` upward: an enclosing level with no `Q` dropped it (a local-only `G` leaked
+        // through `open`), and an enclosing sibling `Q` was wrongly consulted (a self-contained
+        // `G` was hidden).
+        seed = ExpandLocalPropertyDependencies(seed, currentPropertySummaries);
         seed.RemoveRequiredAncestorOwnedParameterNames(ownedHere);
         return seed;
     }
@@ -675,7 +687,10 @@ internal static class PropertyDependencyGraphBuilder
                 // A capture owns no names: its rows walk with an empty
                 // owned-here set and an empty local-summary map — exactly what
                 // the pre-split transparent wrapper algorithm's output walk did
-                // (the same attribution as call-argument bundles).
+                // (the same attribution as call-argument bundles). The names it
+                // reports unresolved are resolved against the enclosing
+                // algorithm's own property summaries at the algorithm level
+                // (CollectSummarySeed(Algorithm.User)), never left to escape.
                 return CollectSummarySeed(
                     captureBody,
                     new Dictionary<string, SummarySeed>(StringComparer.Ordinal),
