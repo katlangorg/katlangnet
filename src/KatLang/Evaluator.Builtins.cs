@@ -270,7 +270,7 @@ public static partial class Evaluator
             return new EvalError.NoMatchingBranch(calleeName);
 
         var (branch, bindings) = match.Value;
-        var wiredBody = ChildOf(callee, branch.Body);
+        var wiredBody = ChildOf(callee, SelectedBranchBody(branch));
         var newCtx = WithCountedParameterEnvironments(
             ctx.Push(callee),
             bindings,

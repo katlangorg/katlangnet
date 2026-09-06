@@ -29,6 +29,9 @@ namespace KatLang.Tests.AsyncEvaluation;
 /// </summary>
 public class RunEntryPreparationTests
 {
+    /// <summary>A module-free program: the cache pairing rule sees no deferred module regions.</summary>
+    private static readonly Expr Program = new Expr.Num(0);
+
     private static Result Atom(Decimal128 value) => new Result.Atom(value);
 
     private static HostOperations AsynchronousOperations() =>
@@ -174,14 +177,14 @@ public class RunEntryPreparationTests
         // No host operations and purely synchronous operations keep the ordinary
         // run-scoped cache (and with it the synchronous fast path).
         Assert.IsNotAssignableFrom<IAsyncZeroArgPropertyResultCache>(
-            Evaluator.CreateRunScopedZeroArgPropertyResultCache(hostOperations: null));
+            Evaluator.CreateRunScopedZeroArgPropertyResultCache(Program, hostOperations: null));
         Assert.IsNotAssignableFrom<IAsyncZeroArgPropertyResultCache>(
-            Evaluator.CreateRunScopedZeroArgPropertyResultCache(
+            Evaluator.CreateRunScopedZeroArgPropertyResultCache(Program,
                 HostOperations.Create(HostOperation.Create("Data", (_, _) => Atom(1)))));
 
         // An asynchronous configuration is paired with the async-capable cache.
         Assert.IsAssignableFrom<IAsyncZeroArgPropertyResultCache>(
-            Evaluator.CreateRunScopedZeroArgPropertyResultCache(AsynchronousOperations()));
+            Evaluator.CreateRunScopedZeroArgPropertyResultCache(Program, AsynchronousOperations()));
     }
 
     [Fact]
@@ -189,11 +192,29 @@ public class RunEntryPreparationTests
     {
         var operations = AsynchronousOperations();
         Assert.NotSame(
-            Evaluator.CreateRunScopedZeroArgPropertyResultCache(operations),
-            Evaluator.CreateRunScopedZeroArgPropertyResultCache(operations));
+            Evaluator.CreateRunScopedZeroArgPropertyResultCache(Program, operations),
+            Evaluator.CreateRunScopedZeroArgPropertyResultCache(Program, operations));
         Assert.NotSame(
-            Evaluator.CreateRunScopedZeroArgPropertyResultCache(hostOperations: null),
-            Evaluator.CreateRunScopedZeroArgPropertyResultCache(hostOperations: null));
+            Evaluator.CreateRunScopedZeroArgPropertyResultCache(Program, hostOperations: null),
+            Evaluator.CreateRunScopedZeroArgPropertyResultCache(Program, hostOperations: null));
+    }
+
+    [Fact]
+    public async Task CacheFactory_PairsTheAsyncCapableCache_WithARootCarryingDeferredModuleRegions()
+    {
+        // B2c: a root whose conditional branch owns a deferred module region runs on the
+        // twin path (its selected branch is materialized by awaiting), so the same pairing
+        // rule hands it the async-capable cache even without any host operation.
+        var parsed = await Parser.ParseAsync(
+            "F(0) = 1\nF(1) = {\n    open 'https://katlang.org/lazy/b.kat'\n    B\n}\nF(0)",
+            new RunOptions { DownloadCode = (_, _) => ValueTask.FromResult("public B = 2") });
+        Assert.False(parsed.HasErrors);
+        var lazyRoot = new Expr.AlgorithmExpr(parsed.Root);
+
+        Assert.IsAssignableFrom<IAsyncZeroArgPropertyResultCache>(
+            Evaluator.CreateRunScopedZeroArgPropertyResultCache(lazyRoot, hostOperations: null));
+        Assert.True(DeferredModuleRegions.RequiresAsyncEvaluation(lazyRoot));
+        Assert.False(DeferredModuleRegions.RequiresAsyncEvaluation(Program));
     }
 
     [Fact]

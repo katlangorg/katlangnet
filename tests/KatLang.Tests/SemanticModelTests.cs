@@ -1854,13 +1854,18 @@ public class SemanticModelTests
             Outer.Inner
             """);
 
+        // Declarations in a branch body classify under the ONE self-containment rule: the
+        // literal `Inner = 1` is Exported, the binder-capturing `Inner = x + 1` is local-only
+        // because the branch binder is an input only the family's call binds. Neither is
+        // reachable through the family by name — a conditional exposes no structural
+        // members — so `Outer.Inner` stays unresolved regardless of that classification.
         var innerProperties = model.FindProperties("Inner").ToList();
         Assert.Equal(2, innerProperties.Count);
-        Assert.All(innerProperties, property =>
-        {
-            Assert.Equal(PropertyExposure.LocalOnlyConditionalAlgorithm, property.Exposure);
-            Assert.False(property.IsExported);
-        });
+        var selfContained = Assert.Single(innerProperties, property => property.Exposure == PropertyExposure.Exported);
+        Assert.True(selfContained.IsExported);
+        var binderCapturing = Assert.Single(
+            innerProperties, property => property.Exposure == PropertyExposure.LocalOnlyCapturedAncestorParameters);
+        Assert.False(binderCapturing.IsExported);
 
         var dotResolution = ResolutionAt(model, 9, 7);
         Assert.Equal(IdentifierClassification.Unresolved, dotResolution.Classification);

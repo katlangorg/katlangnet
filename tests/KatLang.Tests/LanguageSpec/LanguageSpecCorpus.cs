@@ -2901,5 +2901,91 @@ public static class LanguageSpecCorpus
             ],
             Explanation = "Brace blocks work in any expression position and are scope-owning bodies under the same rules as the root, so a closed explicit parameter list inside an output-position block reports its undeclared identifier at the front end exactly as the same declaration would at the root — it does not fall through to a runtime `Unknown name`.",
         },
+        new()
+        {
+            Id = "conditional-branch-inline-open-exposes-members-to-the-branch",
+            Category = "conditionals",
+            Source = "F(0) = {\n  open {\n    public Helper = 5\n  }\n  Helper\n}\nF(n) = n\n\nF(0)",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "5",
+            ExpectedRaw = "5",
+            ExpectedEmittedCount = 1,
+            Probes =
+            [
+                // The equivalent named open of an outer library makes the same decision.
+                new SpecProbe("Helpers = {\n  public Helper = 5\n}\nF(0) = {\n  open Helpers\n  Helper\n}\nF(n) = n\nF(0)", "ok raw=5 n=1"),
+                // A parameterized helper, and a branch binder handed to it as an explicit argument.
+                new SpecProbe("F(0) = {\n  open {\n    public Helper(x) = x\n  }\n  Helper(5)\n}\nF(n) = n\nF(0)", "ok raw=5 n=1"),
+                new SpecProbe("F(0) = 0\nF(n) = {\n  open {\n    public Helper(x) = x\n  }\n  Helper(n)\n}\nF(5)", "ok raw=5 n=1"),
+                // The block is isolated from the opener like every open target: a bare name inside
+                // it is the helper's own implicit parameter, so a bare reference to the helper is
+                // the ordinary zero-argument arity failure — exactly as through the named open.
+                new SpecProbe("F(0) = 0\nF(n) = {\n  open {\n    public Helper = n\n  }\n  Helper\n}\nF(5)", "err arity"),
+                new SpecProbe("Helpers = {\n  public Helper = n\n}\nF(0) = 0\nF(n) = {\n  open Helpers\n  Helper\n}\nF(5)", "err arity"),
+                // Outside the branch the name resolves to nothing: the enclosing algorithm treats
+                // it as its own implicit parameter.
+                new SpecProbe("Outer = {\n  F(0) = {\n    open { public Helper = 5 }\n    Helper\n  }\n  F(n) = n\n  F(0), Helper\n}\nOuter(7)", "ok raw=S[5, 7] n=1"),
+            ],
+            IncludeInGeneratorPrompt = true,
+            Explanation = "An `open` target is a provider for the body that opens it, not a definition of that body. An inline block opened by a conditional branch therefore exposes its self-contained public members to that branch exactly as an equivalent named open of an outer library would — `Helper` is 5 inside `F(0)` — while the block lives only for that branch: sibling branches, the enclosing algorithm, and callers never see `Helper`. Properties DECLARED in the branch stay branch-local as before, and the branch pattern stays closed — a binder reaches an opened helper as an explicit argument, never as a captured name inside the block.",
+        },
+        new()
+        {
+            Id = "conditional-branch-inline-open-does-not-leak-to-sibling-branches",
+            Category = "errors",
+            Source = "F(0) = {\n  open {\n    public Helper = 5\n  }\n  Helper\n}\nF(1) = Helper\nF(n) = n\n\nF(1)",
+            Outcome = SpecOutcome.ParseError,
+            ExpectedDiagnosticCode = DiagnosticCode.UndeclaredIdentifier,
+            ExpectedParseDiagnosticFragment = "Identifier 'Helper' is used in conditional branch 'F'",
+            Probes =
+            [
+                // A sibling branch that declares the name itself is unaffected.
+                new SpecProbe("F(0) = {\n  open {\n    public Helper = 5\n  }\n  Helper\n}\nF(1) = {\n  Helper = 6\n  Helper\n}\nF(n) = n\nF(1)", "ok raw=6 n=1"),
+            ],
+            Explanation = "Exposure through an inline open ends at the branch that wrote it: `F(1)` resolves through its own lookup chain, which never contains the first branch's open list, so its `Helper` is an undeclared identifier under the closed branch-pattern rule — the same diagnostic any other unbound name in a branch body receives.",
+        },
+        new()
+        {
+            Id = "conditional-branch-local-library-is-openable-within-the-branch",
+            Category = "conditionals",
+            Source = "F(0) = {\n  Lib = {\n    public X = 1\n  }\n  G = {\n    open Lib\n    X\n  }\n  G\n}\nF(n) = n\n\nF(0)",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "1",
+            ExpectedRaw = "1",
+            ExpectedEmittedCount = 1,
+            Probes =
+            [
+                // A parameterized member, structural dot access inside the branch, a consumer two
+                // bodies down, and an inner clause family's branch as the consumer.
+                new SpecProbe("F(0) = {\n  Lib = {\n    public X(n) = n\n  }\n  G = {\n    open Lib\n    X(5)\n  }\n  G\n}\nF(n) = n\nF(0)", "ok raw=5 n=1"),
+                new SpecProbe("F(0) = {\n  Lib = { public X = 1 }\n  Lib.X\n}\nF(n) = n\nF(0)", "ok raw=1 n=1"),
+                new SpecProbe("F(0) = {\n  Lib = { public X = 1 }\n  G = {\n    H = {\n      open Lib\n      X\n    }\n    H\n  }\n  G\n}\nF(n) = n\nF(0)", "ok raw=1 n=1"),
+                new SpecProbe("F(0) = {\n  Lib = { public X = 1 }\n  G(0) = {\n    open Lib\n    X\n  }\n  G(k) = k\n  G(0)\n}\nF(n) = n\nF(0)", "ok raw=1 n=1"),
+                // A member capturing the branch binder is local-only exactly like a
+                // parameter-capturing member, so `open Lib` hides it.
+                new SpecProbe("F(0) = 0\nF(n) = {\n  Lib = { public X = n }\n  G = {\n    open Lib\n    X\n  }\n  G\n}\nF(5)", "err unknownName"),
+                // By name, nothing declared in a branch is reachable from outside the family.
+                new SpecProbe("F(0) = {\n  Lib = { public X = 1 }\n  Lib.X\n}\nF(n) = n\nF.Lib", "err localOnlyProperty"),
+                new SpecProbe("Outer = {\n  F(0) = {\n    Lib = { public X = 1 }\n    G = {\n      open Lib\n      X\n    }\n    G\n  }\n  F(n) = n\n  F(0), X\n}\nOuter(7)", "ok raw=S[1, 7] n=1"),
+            ],
+            IncludeInGeneratorPrompt = true,
+            Explanation = "A library declared inside a conditional branch classifies exactly like one declared in a parameterized body: its self-contained public members are exported, so any body nested in that branch may `open` it (or reach its members with dot access) — `X` is 1 inside `G`. What stays branch-local is the declaration's reach by name: a conditional exposes no members of its branches, so `F.Lib` and `open F.Lib` are refused at the family, and a sibling branch or the enclosing algorithm never sees `Lib` or `X`. A member that captures the branch's pattern binder is local-only for the same reason a parameter-capturing member is.",
+        },
+        new()
+        {
+            Id = "conditional-branch-local-library-does-not-leak-to-sibling-branches",
+            Category = "errors",
+            Source = "F(0) = {\n  Lib = {\n    public X = 1\n  }\n  G = {\n    open Lib\n    X\n  }\n  G\n}\nF(1) = X\nF(n) = n\n\nF(1)",
+            Outcome = SpecOutcome.ParseError,
+            ExpectedDiagnosticCode = DiagnosticCode.UndeclaredIdentifier,
+            ExpectedParseDiagnosticFragment = "Identifier 'X' is used in conditional branch 'F'",
+            Probes =
+            [
+                // The sibling may declare and open a library of its own, and a branch body may
+                // open its own declaration directly.
+                new SpecProbe("F(0) = {\n  Lib = { public X = 1 }\n  G = {\n    open Lib\n    X\n  }\n  G\n}\nF(1) = {\n  open Lib\n  Lib = { public X = 2 }\n  X\n}\nF(n) = n\nF(1)", "ok raw=2 n=1"),
+            ],
+            Explanation = "A branch-local library is visible only inside the branch that declares it: the sibling branch `F(1)` resolves through its own lookup chain, which never contains the first branch's declarations, so its `X` is an undeclared identifier under the closed branch-pattern rule.",
+        },
     ];
 }

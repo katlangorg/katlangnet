@@ -482,9 +482,12 @@ genuinely awaits module acquisition is (`ModuleLoader.ElaborateAsync`,
   diagnostic. The former `Parser.Parse(source, downloadCode, allowedHosts)` overload
   and `ModuleLoader.CreateWithCancellation` are removed; the `ModuleLoader` constructor
   takes the async downloader and the source-processing token directly (token last).
-- The low-level evaluator surface is untouched: `Evaluator.Run`/`RunFlat` stay
+- The low-level evaluator signatures are unchanged: `Evaluator.Run`/`RunFlat` stay
   synchronous primitives over already-constructed `Expr`, alongside the Phase 2
-  `RunAsync`/`RunFlatAsync` twins.
+  `RunAsync`/`RunFlatAsync` twins. Trees carrying deferred regions require the async
+  entries, including host copies and enclosing captures. Routing scans structural
+  children iteratively by identity. Host flat-binder normalization preserves region
+  metadata but demands the body only after argument binding, never during arity inspection.
 
 ## Loader traversal: routed sync/async walks
 
@@ -500,6 +503,37 @@ The loader's rewrite walk exists in two lock-step forms, routed per subtree:
   so async state-machine frames are spent only where a suspension is possible.
   Measured spine cost: ~837 B/counted level Release (matching the ~0.83 KB/level the
   `NestedParseStackDebt` model prices) and ~1.1 KB/level Debug.
+- Clause families are handled by ownership (B2c, branch-lazy module loading, September
+  2026): a family's own open list (host trees) is shared by every alternative and rewrites
+  eagerly as an open list, while each alternative branch body that owns an unresolved load
+  is a DEFERRED module-elaboration region the walks never descend into. It is registered
+  (`DeferredModuleRegions`) with the family's load context, its counted depth (one level
+  below the family — `CondBranch` is a depth membrane like `Property`), and the live
+  traversal base, and it is materialized only when evaluation selects the branch:
+  `DeferredModuleRegion.MaterializeAsync` runs `ModuleLoader.LoadDeferredRegionAsync` (own
+  pre-scan, the same routed walks, cache, cycle detection, policy, and budgets, diagnostics
+  into a per-materialization list) and then the ordinary detector, resolver, and exposure
+  passes under the contexts the eager passes recorded, serialized per loader by
+  `MaterializationGate`. Nested families inside a materialized body are deferred again. A
+  root carrying deferred regions is marked and evaluated by the async twin family only,
+  with the async-capable cache. Previously the walks visited only the base `Algorithm`
+  accessors, which are empty for a family, leaving a load under a conditional for the
+  post-elaboration guard to report; an interim repair descended every branch eagerly.
+- Deferred materialization is evaluation-owned (B2c hardening, September 2026): a region
+  keeps ONE shared underlying run while a materialization is in flight; every evaluation
+  that selects the branch joins it and waits with its own evaluation token, leaving at once
+  (with that token's identity) when cancelled. The run's own token is cancelled exactly when
+  its last consumer leaves; the run links that token with the source token before waiting
+  for the loader gate, and `ModuleLoader.LoadDeferredRegionAsync` links it with
+  the configured source-processing token into the active token every walk check and the
+  downloader observe for the duration of the load (the linked source is disposed on the way
+  out), so an in-flight download is aborted with the evaluation, nothing partial reaches the
+  module cache, budget reservations roll back as for host cancellation, and the region
+  publishes no region body — the next selection starts a fresh run. Completed dependency
+  modules remain reusable. Publication and abandonment share a lock, and run cancellation
+  sources are disposed after completion and any concurrent cancellation finish.
+  The source-processing token stays
+  authoritative and keeps its identity; ordinary eager loads observe only that token.
 - The pre-scan and BOTH walks probe the runtime's execution-stack reserve at every
   level; exhaustion (for example a host thread below the documented 1 MiB envelope, or
   Debug async-frame slack over the debt model at an extreme composition) unwinds to one
@@ -516,8 +550,10 @@ The loader's rewrite walk exists in two lock-step forms, routed per subtree:
   it there exactly once; the downloader is never re-invoked after a suspension.
   Caching is unchanged: each distinct successful URL is fetched once per elaboration
   scope (fresh `ModuleLoader` per front-end run), failed URLs are re-fetched per load
-  site and never cached, cycles/domains/budgets behave identically.
-- The source-processing token is passed unchanged to the downloader and observed
+  site and never cached, including parents whose recursive dependency elaboration failed;
+  cycles/domains/budgets behave identically. Deferred diagnostics use the materialization's
+  sink, never an already-published parse result's diagnostic list.
+- For eager loads, the source-processing token is passed unchanged to the downloader and observed
   before AND after each fetch; the post-fetch observation also catches cancellation
   requested while a download was suspended, so a cancelled run never commits the
   fetched module. Host cancellation stays authoritative over a differently-faulted
@@ -525,7 +561,9 @@ The loader's rewrite walk exists in two lock-step forms, routed per subtree:
   configured host token even if the downloader faulted with its own cancellation token;
   a downloader's own cancellation/timeout without host cancellation remains the ordinary
   `load: failed to fetch` diagnostic. Source-processing and evaluation cancellation remain
-  separate tokens; hosts may pass the same token to both.
+  separate tokens; hosts may pass the same token to both. Deferred loads use the linked
+  materialization token described above; source cancellation still wins and preserves its
+  exact identity, while an individually cancelled consumer leaves with its evaluation token.
 - Downloader failures keep the existing normalization, now uniformly: the `catch`
   around the await covers a synchronously-throwing delegate and a faulted awaitable
   identically → `load: failed to fetch '<url>': <message>`. Parse/elaboration failures

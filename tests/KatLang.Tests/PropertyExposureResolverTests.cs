@@ -27,12 +27,16 @@ public class PropertyExposureResolverTests
         var leftNode = graph[PropertyIndex(graph, "Left")];
         var rightNode = graph[PropertyIndex(graph, "Right")];
 
-        Assert.Empty(orderGraph[PropertyIndex(graph, "Left")].SiblingDependencyIndices);
+        // The processing-order channel sees the nested references too (the resolver rewrites
+        // InnerLeft while processing Left and reads Right's signature there): a direct
+        // sibling cycle, which the topological order resolves by declaration order. The
+        // summary channel's facts are computed independently and stay exactly as before.
+        Assert.Equal([PropertyIndex(graph, "Right")], orderGraph[PropertyIndex(graph, "Left")].SiblingDependencyIndices);
         Assert.Equal([PropertyIndex(graph, "Right")], leftNode.SummarySiblingDependencyIndices);
         Assert.Empty(leftNode.SummaryVisiblePropertyDependencyNames);
         Assert.Empty(leftNode.RequiredAncestorOwnedParameterNames);
 
-        Assert.Empty(orderGraph[PropertyIndex(graph, "Right")].SiblingDependencyIndices);
+        Assert.Equal([PropertyIndex(graph, "Left")], orderGraph[PropertyIndex(graph, "Right")].SiblingDependencyIndices);
         Assert.Equal([PropertyIndex(graph, "Left")], rightNode.SummarySiblingDependencyIndices);
         Assert.Empty(rightNode.SummaryVisiblePropertyDependencyNames);
         Assert.Equal(["x"], rightNode.RequiredAncestorOwnedParameterNames);
@@ -311,6 +315,92 @@ public class PropertyExposureResolverTests
         Assert.Equal(
             PropertyExposure.LocalOnlyCapturedAncestorParameters,
             Assert.Single(algorithm.Properties, property => property.Name == "CapturedBrace").Exposure);
+    }
+
+    /// <summary>
+    /// Declarations inside a conditional branch body classify under the ONE self-containment
+    /// rule, exactly like declarations in a parameterized body: self-contained members — of the
+    /// opened inline block, of a branch-local library, of a block the branch hands out, of a
+    /// nested clause family's branch — are Exported; a member capturing the block's own
+    /// parameter or the branch's pattern binder is local-only for that reason. Reachability from
+    /// outside the conditional is the family's structural rule, never a classification, so
+    /// <c>LocalOnlyConditionalAlgorithm</c> is assigned to no property.
+    /// </summary>
+    [Fact]
+    public void Parse_BranchDeclarations_ClassifyUnderTheOneSelfContainmentRule()
+    {
+        var source = """
+            Apply(f) = f
+            F(0) = {
+                open {
+                    public Helper = 5
+                    public Capturing(y) = {
+                        public Inner = y
+                        Inner
+                    }
+                }
+                public Declared = Helper
+                Lib = {
+                    public X = 1
+                }
+                Handed = Apply({
+                    public Member = 1
+                    Member
+                })
+                Declared, Handed
+            }
+            F(n) = {
+                Bound = n + 1
+                Lib = {
+                    public X = 1
+                    public Y = n
+                }
+                K(0) = {
+                    public Z = 7
+                    Z
+                }
+                K(m) = m
+                Bound, Lib.X
+            }
+            F(0), F(3)
+            """;
+        var result = Parser.Parse(source);
+        Assert.False(result.HasErrors, string.Join(Environment.NewLine, result.Diagnostics.Select(d => d.Message)));
+
+        var family = Assert.IsType<Algorithm.Conditional>(Assert.Single(result.Root.Properties, p => p.Name == "F").Value);
+        var literalBranch = Assert.IsType<Algorithm.User>(family.Branches[0].Body);
+        var opened = Assert.IsType<Expr.AlgorithmExpr>(Assert.Single(literalBranch.Opens)).Algorithm;
+        Assert.Equal(PropertyExposure.Exported, Assert.Single(opened.Properties, p => p.Name == "Helper").Exposure);
+        var capturing = Assert.Single(opened.Properties, p => p.Name == "Capturing");
+        Assert.Equal(PropertyExposure.Exported, capturing.Exposure);
+        Assert.Equal(PropertyExposure.LocalOnlyCapturedAncestorParameters, Assert.Single(capturing.Value.Properties).Exposure);
+        Assert.Equal(PropertyExposure.Exported, Assert.Single(literalBranch.Properties, p => p.Name == "Declared").Exposure);
+        var library = Assert.Single(literalBranch.Properties, p => p.Name == "Lib");
+        Assert.Equal(PropertyExposure.Exported, library.Exposure);
+        Assert.Equal(PropertyExposure.Exported, Assert.Single(library.Value.Properties).Exposure);
+        var handed = Assert.Single(literalBranch.Properties, p => p.Name == "Handed");
+        Assert.Equal(PropertyExposure.Exported, handed.Exposure);
+        var handedBlock = Assert.IsType<Expr.AlgorithmExpr>(
+            Assert.Single(Assert.IsType<Expr.Call>(Assert.Single(handed.Value.Output)).Args)).Algorithm;
+        Assert.Equal(PropertyExposure.Exported, Assert.Single(handedBlock.Properties).Exposure);
+
+        var binderBranch = Assert.IsType<Algorithm.User>(family.Branches[1].Body);
+        Assert.Equal(
+            PropertyExposure.LocalOnlyCapturedAncestorParameters,
+            Assert.Single(binderBranch.Properties, p => p.Name == "Bound").Exposure);
+        var binderLibrary = Assert.Single(binderBranch.Properties, p => p.Name == "Lib");
+        Assert.Equal(PropertyExposure.Exported, binderLibrary.Exposure);
+        Assert.Equal(PropertyExposure.Exported, Assert.Single(binderLibrary.Value.Properties, p => p.Name == "X").Exposure);
+        Assert.Equal(
+            PropertyExposure.LocalOnlyCapturedAncestorParameters,
+            Assert.Single(binderLibrary.Value.Properties, p => p.Name == "Y").Exposure);
+        var nestedFamily = Assert.Single(binderBranch.Properties, p => p.Name == "K");
+        Assert.Equal(PropertyExposure.Exported, nestedFamily.Exposure);
+        Assert.Equal(PropertyExposure.Exported, Assert.Single(nestedFamily.Value.Branches[0].Body.Properties).Exposure);
+
+        Assert.Equal(
+            "(5, 1)\n(4, 1)",
+            Assert.IsType<RunResult.Success>(KatLangEngine.Run(source)).ToDisplayString().ReplaceLineEndings("\n"));
     }
 
     private static Algorithm.User ParseSinglePropertyBody(string source)

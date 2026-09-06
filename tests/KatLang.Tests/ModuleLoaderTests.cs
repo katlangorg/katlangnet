@@ -743,4 +743,151 @@ public class ModuleLoaderTests
             string.Join(Environment.NewLine, result.Diagnostics.Select(d => d.Message)));
         Assert.False(ContainsRawLoad(result.Root));
     }
+
+    // ── B2c: alternative branch bodies are deferred module-elaboration regions ──
+    //
+    // Initial module elaboration never descends into a load-bearing conditional branch body:
+    // nothing under it is fetched, parsed, elaborated, or budget-charged until evaluation
+    // selects that branch. Family-owned opens (host trees only) are shared by every
+    // alternative and stay eager. These pins are C#-only by nature (module transport is a
+    // host facility the Lean model does not have), so this is the family that owns them; the
+    // engine-level acceptance matrix lives in BranchLazyModuleLoadingTests.
+
+    [Theory]
+    // Directly in a branch body's open list.
+    [InlineData("F(0) = {\n    open 'https://katlang.org/demo/m.kat'\n    ImportedValue\n}\nF(n) = n\nF(0)")]
+    // In a nested brace body inside the branch.
+    [InlineData("F(0) = {\n    G = {\n        open 'https://katlang.org/demo/m.kat'\n        ImportedValue\n    }\n    G\n}\nF(n) = n\nF(0)")]
+    // Two conditional levels down.
+    [InlineData("F(0) = {\n    G(0) = {\n        open 'https://katlang.org/demo/m.kat'\n        ImportedValue\n    }\n    G(k) = k\n    G(0)\n}\nF(n) = n\nF(0)")]
+    // In an expression-position block inside the branch.
+    [InlineData("F(0) = {\n    { open 'https://katlang.org/demo/m.kat'\n      ImportedValue }\n}\nF(n) = n\nF(0)")]
+    // As a branch-local property value, promoted to the module itself like any `X = load(...)`.
+    [InlineData("F(0) = {\n    Lib = load('https://katlang.org/demo/m.kat')\n    Lib.ImportedValue\n}\nF(n) = n\nF(0)")]
+    public async Task Load_InsideConditionalBranch_IsDeferredUntilTheBranchIsSelected(string source)
+    {
+        var downloads = 0;
+        var files = MockDownloader(new Dictionary<string, string>
+        {
+            ["https://katlang.org/demo/m.kat"] = "public ImportedValue = 5",
+        });
+        Func<string, CancellationToken, ValueTask<string>> counting = (url, token) =>
+        {
+            downloads++;
+            return files(url, token);
+        };
+
+        var parsed = await Parser.ParseAsync(source, new RunOptions { DownloadCode = counting });
+
+        Assert.False(parsed.HasErrors, string.Join(Environment.NewLine, parsed.Diagnostics.Select(d => d.Message)));
+        Assert.Equal(0, downloads);
+        var family = Assert.IsType<Algorithm.Conditional>(parsed.Root.Properties.Single(p => p.Name == "F").Value);
+        Assert.True(DeferredModuleRegions.TryGet(family.Branches[0].Body, out var region));
+        Assert.False(region!.IsMaterialized);
+        Assert.Equal(0, region.MaterializationAttempts);
+        // The directive stays inside the deferred region by design (never an unresolved load
+        // the pipeline forgot), and the load-free alternative is an ordinary eager branch.
+        Assert.True(ContainsRawLoad(family.Branches[0].Body));
+        Assert.False(DeferredModuleRegions.IsDeferred(family.Branches[1].Body));
+
+        var result = await Evaluator.RunFlatAsync(new Expr.AlgorithmExpr(parsed.Root));
+
+        Assert.False(result.IsError, result.IsError ? result.Error.ToString() : null);
+        Assert.Equal([5m], result.Value);
+        Assert.Equal(1, downloads);
+        Assert.True(region.IsMaterialized);
+        Assert.Equal(1, region.MaterializationAttempts);
+        Assert.True(region.TryGetMaterialized(out var materialized));
+        // Nested laziness: an inner alternative (case 3) keeps its own directive inside its own
+        // deferred region; nothing outside a deferred region is left unresolved.
+        Assert.False(LoadElaborationGuard.TryFindFirstUnresolvedLoad(materialized!, out _));
+    }
+
+    [Fact]
+    public async Task Load_HostFamilyOwnedOpenIsShared_WhileSharedBranchBodiesDeferSeparately()
+    {
+        // Ownership-first: a family-owned open (host trees only) belongs to every alternative
+        // and is elaborated eagerly; each branch body's own load is branch-exclusive and
+        // deferred. ONE raw body object shared by two branches (a legal host DAG) yields two
+        // distinct regions — the second branch materializes on its own selection, and the
+        // per-URL module cache keeps one download per module across both.
+        var downloads = new Dictionary<string, int>();
+        var files = MockDownloader(new Dictionary<string, string>
+        {
+            ["https://katlang.org/demo/family.kat"] = "public FamilyValue = 7",
+            ["https://katlang.org/demo/branch.kat"] = "public BranchValue = 8",
+        });
+        Func<string, CancellationToken, ValueTask<string>> counting = (url, token) =>
+        {
+            downloads[url] = downloads.GetValueOrDefault(url) + 1;
+            return files(url, token);
+        };
+        static Expr Load(string url)
+            => new Expr.Call(new Expr.Resolve("load"), new OutputBundle([new Expr.StringLiteral(url)]));
+        var sharedBody = new Algorithm.User(
+            null,
+            [],
+            [Load("https://katlang.org/demo/branch.kat")],
+            [],
+            [new Expr.Binary(BinaryOp.Add, new Expr.Resolve("FamilyValue"), new Expr.Resolve("BranchValue"))]);
+        var conditional = new Algorithm.Conditional(
+            null,
+            [Load("https://katlang.org/demo/family.kat")],
+            [
+                new CondBranch(new Pattern.LitInt(0), sharedBody),
+                new CondBranch(new Pattern.LitInt(1), sharedBody),
+                new CondBranch(new Pattern.Bind("n"), new Algorithm.User(null, [], [], [], [new Expr.Resolve("n")])),
+            ]);
+        var root = new Algorithm.User(null, [], [], [new Property("F", conditional)], OutputBundle.Empty);
+        var diagnostics = new List<Diagnostic>();
+        var loader = new ModuleLoader(diagnostics, counting);
+
+        var elaborated = await loader.ElaborateAsync(root);
+
+        Assert.Empty(diagnostics);
+        Assert.Equal(1, downloads.GetValueOrDefault("https://katlang.org/demo/family.kat"));
+        Assert.Equal(0, downloads.GetValueOrDefault("https://katlang.org/demo/branch.kat"));
+        Assert.Equal(2, loader.DeferredRegionCount);
+        var family = Assert.IsType<Algorithm.Conditional>(Assert.Single(elaborated.Properties).Value);
+        var familyModule = Assert.IsType<Expr.AlgorithmExpr>(Assert.Single(family.Opens)).Algorithm;
+        Assert.Contains(familyModule.Properties, p => p.Name == "FamilyValue");
+        Assert.NotSame(family.Branches[0].Body, family.Branches[1].Body);
+        Assert.True(DeferredModuleRegions.TryGet(family.Branches[0].Body, out var loaderRegion0));
+        Assert.True(DeferredModuleRegions.TryGet(family.Branches[1].Body, out var loaderRegion1));
+        Assert.NotSame(loaderRegion0, loaderRegion1);
+        Assert.Same(loaderRegion0!.RawBody, loaderRegion1!.RawBody);
+        Assert.False(DeferredModuleRegions.IsDeferred(family.Branches[2].Body));
+
+        var (detected, detectorDiagnostics) = ParameterDetector.Detect(elaborated);
+        Assert.Empty(detectorDiagnostics);
+        var exposed = PropertyExposureResolver.Resolve(ImplicitArgumentResolver.Resolve(detected));
+        family = Assert.IsType<Algorithm.Conditional>(Assert.Single(exposed.Properties).Value);
+        Assert.True(DeferredModuleRegions.TryGet(family.Branches[0].Body, out var region0));
+        Assert.True(DeferredModuleRegions.TryGet(family.Branches[1].Body, out var region1));
+
+        Algorithm Program(int literal)
+        {
+            var program = exposed with
+            {
+                Output = new OutputBundle([new Expr.Call(new Expr.Resolve("F"), new OutputBundle([new Expr.Num(literal)]))]),
+            };
+            DeferredModuleRegions.MarkRootRequiresAsyncEvaluation(program);
+            return program;
+        }
+
+        var first = await Evaluator.RunFlatAsync(new Expr.AlgorithmExpr(Program(0)));
+        Assert.False(first.IsError, first.IsError ? first.Error.ToString() : null);
+        Assert.Equal([15m], first.Value);
+        Assert.Equal(1, downloads["https://katlang.org/demo/branch.kat"]);
+        Assert.Equal(1, region0!.MaterializationAttempts);
+        Assert.Equal(0, region1!.MaterializationAttempts);
+
+        var second = await Evaluator.RunFlatAsync(new Expr.AlgorithmExpr(Program(1)));
+        Assert.False(second.IsError, second.IsError ? second.Error.ToString() : null);
+        Assert.Equal([15m], second.Value);
+        // The second region materializes on its own selection; the module cache served it.
+        Assert.Equal(1, downloads["https://katlang.org/demo/branch.kat"]);
+        Assert.Equal(1, region1.MaterializationAttempts);
+        Assert.Equal(1, downloads["https://katlang.org/demo/family.kat"]);
+    }
 }

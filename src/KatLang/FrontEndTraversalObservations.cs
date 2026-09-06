@@ -55,6 +55,18 @@ internal sealed class FrontEndTraversalObservations
     internal void RecordDetectorSpanSearchExpansion()
         => DetectorSpanSearchExpansions = checked(DetectorSpanSearchExpansions + 1);
 
+    /// <summary>
+    /// Conditional branch-body REGIONS the detector processed (<c>ParameterDetector.ProcessConditionalBranchBody</c>
+    /// misses of the run's branch-body region memo). One count means one branch body elaborated under one
+    /// semantic region — parent scope, binder names, captured names, reporting mode; a body reached again
+    /// under the same region (a second family sharing it, a second path to its family) records nothing, so
+    /// the count is bounded by distinct (body, region) pairs, never by traversal paths (M4).
+    /// </summary>
+    public long DetectorBranchBodyRegionExpansions { get; private set; }
+
+    internal void RecordDetectorBranchBodyRegionExpansion()
+        => DetectorBranchBodyRegionExpansions = checked(DetectorBranchBodyRegionExpansions + 1);
+
     /// <summary>Implicit-dependency collection expansions (<c>ImplicitArgumentResolver.CollectImplicitDeps</c>).</summary>
     public long ResolverCollectExpansions { get; private set; }
 
@@ -70,11 +82,44 @@ internal sealed class FrontEndTraversalObservations
     internal void RecordResolverRewriteExpansion()
         => ResolverRewriteExpansions = checked(ResolverRewriteExpansions + 1);
 
+    /// <summary>
+    /// Conditional branch-body REGIONS the resolver processed (<c>ImplicitArgumentResolver.ProcessAlgorithm</c>
+    /// misses of the run's algorithm region memo for bodies rewritten under a closed branch pattern): one
+    /// count per branch body rewritten under one semantic region — the signature snapshot of its free
+    /// reference names, the closed binder specification, and the reporting mode (M4).
+    /// </summary>
+    public long ResolverBranchBodyRegionExpansions { get; private set; }
+
+    internal void RecordResolverBranchBodyRegionExpansion()
+        => ResolverBranchBodyRegionExpansions = checked(ResolverBranchBodyRegionExpansions + 1);
+
+    /// <summary>
+    /// Nested user-algorithm REGIONS the resolver processed outside any branch pattern — property values,
+    /// block literals, open targets (<c>ImplicitArgumentResolver.ProcessAlgorithm</c> misses of the same
+    /// memo): one count per algorithm body rewritten under one semantic region — the signature snapshot
+    /// of its free reference names and the reporting mode. A property value shared by several
+    /// properties or reached through several paths under one snapshot records once (M4).
+    /// </summary>
+    public long ResolverAlgorithmRegionExpansions { get; private set; }
+
+    internal void RecordResolverAlgorithmRegionExpansion()
+        => ResolverAlgorithmRegionExpansions = checked(ResolverAlgorithmRegionExpansions + 1);
+
     /// <summary>Exposure rewrite expansions (<c>PropertyExposureResolver.RewriteExpr</c>).</summary>
     public long ExposureRewriteExpansions { get; private set; }
 
     internal void RecordExposureRewriteExpansion()
         => ExposureRewriteExpansions = checked(ExposureRewriteExpansions + 1);
+
+    /// <summary>
+    /// User-algorithm regions the exposure pass processed (<c>PropertyExposureResolver.ProcessUserAlgorithm</c>
+    /// entries): one count per distinct algorithm body classified under one visible-summary context —
+    /// property values, block literals, and conditional branch bodies alike (M4).
+    /// </summary>
+    public long ExposureAlgorithmExpansions { get; private set; }
+
+    internal void RecordExposureAlgorithmExpansion()
+        => ExposureAlgorithmExpansions = checked(ExposureAlgorithmExpansions + 1);
 
     /// <summary>Summary-seed expansions (<c>PropertyDependencyGraphBuilder.CollectSummarySeed</c>, expression level).</summary>
     public long DependencySeedExpansions { get; private set; }
@@ -96,6 +141,19 @@ internal sealed class FrontEndTraversalObservations
     internal void RecordDependencyAlgorithmSummaryComputation()
         => DependencyAlgorithmSummaryComputations = checked(DependencyAlgorithmSummaryComputations + 1);
 
+    /// <summary>
+    /// Completed conditional BRANCH-BODY summary computations in the builder's summary channel
+    /// (<c>PropertyDependencyGraphBuilder.CollectBranchBodySummarySeed</c> misses of the
+    /// completed branch-body memo, keyed by body reference and binder-name set). Like
+    /// <see cref="DependencyAlgorithmSummaryComputations"/>, one count means one whole body
+    /// summarized under one binder context; a body shared by several families with the same
+    /// binders is summarized once per memo lifetime (M4).
+    /// </summary>
+    public long DependencyBranchBodySummaryComputations { get; private set; }
+
+    internal void RecordDependencyBranchBodySummaryComputation()
+        => DependencyBranchBodySummaryComputations = checked(DependencyBranchBodySummaryComputations + 1);
+
     /// <summary>Sibling-dependency expansions (<c>PropertyDependencyGraphBuilder.CollectSiblingDependencyIndices</c>).</summary>
     public long DependencySiblingExpansions { get; private set; }
 
@@ -116,6 +174,29 @@ internal sealed class FrontEndTraversalObservations
 
     internal void RecordLoaderMarkerExpansion()
         => LoaderMarkerExpansions = checked(LoaderMarkerExpansions + 1);
+
+    // ── Semantic model construction (editor) ──────────────────────────────────
+
+    /// <summary>
+    /// Expression visits of the semantic model builder (<c>SemanticModelBuilder</c>'s value-position and
+    /// open-position expression walks): one count per expression node analyzed under one scope frame. A
+    /// node reached again in the same frame — through a second DAG path — is served from the frame's
+    /// visit memo and records nothing, so the count is bounded by distinct (node, frame) pairs (M4).
+    /// </summary>
+    public long SemanticModelExpressionVisits { get; private set; }
+
+    internal void RecordSemanticModelExpressionVisit()
+        => SemanticModelExpressionVisits = checked(SemanticModelExpressionVisits + 1);
+
+    /// <summary>
+    /// Algorithm visits of the semantic model builder: one count per algorithm node analyzed under one
+    /// parent scope frame and one extra-parameter table (a conditional branch's binder symbols, or none).
+    /// A shared algorithm reached again under the same frame and table records nothing.
+    /// </summary>
+    public long SemanticModelAlgorithmVisits { get; private set; }
+
+    internal void RecordSemanticModelAlgorithmVisit()
+        => SemanticModelAlgorithmVisits = checked(SemanticModelAlgorithmVisits + 1);
 
     // ── Elaborated scope-lookup work (M18) ────────────────────────────────────
     // Unlike the traversal counters above, these record LOOKUP work performed by

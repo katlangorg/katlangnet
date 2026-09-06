@@ -193,6 +193,28 @@ internal static class PropertyDependencyGraphBuilder
     internal sealed class SummaryMemo
     {
         internal Dictionary<Algorithm, SummarySeed>? CompletedAlgorithmSummaries;
+
+        /// <summary>
+        /// Completed conditional BRANCH-BODY summaries, keyed by body node REFERENCE plus the
+        /// branch's binder-name SET (M4). A branch body summarizes under its binder names, so
+        /// its summary is not a function of the node alone — but it IS a pure function of
+        /// (node, binder names): the walk never queries anything else about its context. Two
+        /// families sharing one body under the same binders therefore share one summary,
+        /// while the same body under different binders (or as a plain property value, which
+        /// goes through <see cref="CompletedAlgorithmSummaries"/>) summarizes independently.
+        /// Same admission and clone discipline as the node-keyed memo.
+        /// </summary>
+        internal Dictionary<BranchBodySummaryKey, SummarySeed>? CompletedBranchBodySummaries;
+    }
+
+    /// <summary>Key of <see cref="SummaryMemo.CompletedBranchBodySummaries"/>: body by reference, binders by content.</summary>
+    internal sealed record BranchBodySummaryKey(Algorithm Body, string BinderNames)
+    {
+        public bool Equals(BranchBodySummaryKey? other)
+            => other is not null && ReferenceEquals(Body, other.Body) && BinderNames == other.BinderNames;
+
+        public override int GetHashCode()
+            => HashCode.Combine(System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(Body), BinderNames);
     }
 
     /// <summary>
@@ -223,17 +245,33 @@ internal static class PropertyDependencyGraphBuilder
     }
 
     /// <summary>
-    /// Reference-identity memo for ONE sibling-dependency collection (one property's rows):
-    /// contributions are an index SET, so a completed node reference — split by call
-    /// position, the one context dimension that changes a node's contribution — is skipped.
+    /// Reference-identity memo for ONE sibling-dependency collection (one property's value
+    /// subtree): contributions are an index SET, so a completed node reference — split by the
+    /// two context dimensions that change a node's contribution, the shadow context of the
+    /// nested bodies around it and its position (value, callee, transparent) — is skipped,
+    /// and a nested body reached again under the same shadow context is not re-walked.
     /// </summary>
     private sealed class SiblingWalkMemo(FrontEndTraversalObservations? observations)
     {
-        public readonly HashSet<Expr> ValueVisited = new(ReferenceEqualityComparer.Instance);
+        private readonly Dictionary<(string Shadow, SiblingWalkPosition Position), HashSet<Expr>> _visited = new();
 
-        public HashSet<Expr>? CalleeVisited;
+        private readonly Dictionary<string, HashSet<Algorithm>> _algorithms = new(StringComparer.Ordinal);
 
         public readonly FrontEndTraversalObservations? Observations = observations;
+
+        public HashSet<Expr> Visited(string shadowKey, SiblingWalkPosition position)
+        {
+            if (!_visited.TryGetValue((shadowKey, position), out var visited))
+                _visited[(shadowKey, position)] = visited = new HashSet<Expr>(ReferenceEqualityComparer.Instance);
+            return visited;
+        }
+
+        public HashSet<Algorithm> Algorithms(string shadowKey)
+        {
+            if (!_algorithms.TryGetValue(shadowKey, out var visited))
+                _algorithms[shadowKey] = visited = new HashSet<Algorithm>(ReferenceEqualityComparer.Instance);
+            return visited;
+        }
     }
 
     /// <summary>
@@ -271,15 +309,16 @@ internal static class PropertyDependencyGraphBuilder
         var nodes = new PropertyDependencyNode[algorithm.Properties.Count];
         for (var i = 0; i < algorithm.Properties.Count; i++)
         {
-            nodes[i] = new PropertyDependencyNode(
-                i,
-                CollectSiblingDependencyIndices(
-                    algorithm.Properties[i].Value.Output,
-                    siblingNames,
-                    PreludeNameShadowed,
-                    propertyNameToIndex,
-                    i,
-                    new SiblingWalkMemo(observations)));
+            // Every value-position sibling reference in the property's whole value subtree
+            // — output rows, nested property values, block literals, capture rows, and
+            // conditional branch bodies alike — is a processing-order dependency, because the
+            // resolver rewrites all of it while processing this property.
+            var dependencyIndices = new HashSet<int>();
+            CollectAlgorithmSiblingDependencyIndices(
+                algorithm.Properties[i].Value,
+                new SiblingWalkContext(siblingNames, propertyNameToIndex, dependencyIndices, i, new SiblingWalkMemo(observations)),
+                ShadowScope.Level(PreludeNameShadowed));
+            nodes[i] = new PropertyDependencyNode(i, dependencyIndices.OrderBy(static idx => idx).ToArray());
         }
 
         return new PropertyDependencyGraph(algorithm.Properties, propertyNameToIndex, nodes);
@@ -494,16 +533,36 @@ internal static class PropertyDependencyGraphBuilder
 
         foreach (var branch in algorithm.Branches)
         {
-            // Branch bodies deliberately bypass the shared completed-summary memo: their
+            // Branch bodies deliberately bypass the node-keyed completed-summary memo: their
             // binder-name context varies per branch, so their summaries are NOT pure
-            // functions of the body node (see SummaryMemo).
-            seed.UnionWith(CollectSummarySeed(
-                branch.Body,
-                CreateNameSet(branch.Pattern.BoundNames()),
-                sharedMemo,
-                observations));
+            // functions of the body node (see SummaryMemo). They are pure functions of
+            // (body, binder names), which the branch-body memo keys on — so a body shared by
+            // several families under the same binders is summarized once (M4).
+            seed.UnionWith(CollectBranchBodySummarySeed(branch, sharedMemo, observations));
         }
 
+        return seed;
+    }
+
+    /// <summary>
+    /// Memo-shared branch-body summary for one (body, binder-name set) — see
+    /// <see cref="SummaryMemo.CompletedBranchBodySummaries"/>. Records completed computations
+    /// (memo misses) only, like <see cref="CollectSharedAlgorithmSummarySeed"/>.
+    /// </summary>
+    private static SummarySeed CollectBranchBodySummarySeed(
+        CondBranch branch,
+        SummaryMemo sharedMemo,
+        FrontEndTraversalObservations? observations)
+    {
+        var binderNames = branch.Pattern.BoundNames();
+        var key = new BranchBodySummaryKey(branch.Body, FrontEndRegionKeys.NameSet(binderNames));
+        var completedSummaries = sharedMemo.CompletedBranchBodySummaries ??= new();
+        if (completedSummaries.TryGetValue(key, out var stored))
+            return stored.Clone();
+
+        observations?.RecordDependencyBranchBodySummaryComputation();
+        var seed = CollectSummarySeed(branch.Body, CreateNameSet(binderNames), sharedMemo, observations);
+        completedSummaries[key] = seed.Clone();
         return seed;
     }
 
@@ -721,74 +780,182 @@ internal static class PropertyDependencyGraphBuilder
         return true;
     }
 
-    private static IReadOnlyList<int> CollectSiblingDependencyIndices(
-        IReadOnlyList<Expr> expressions,
-        HashSet<string> siblingNames,
-        Func<string, bool> preludeNameShadowed,
-        IReadOnlyDictionary<string, int> propertyNameToIndex,
-        int propertyIndex,
-        SiblingWalkMemo memo)
-    {
-        var dependencyIndices = new HashSet<int>();
-        foreach (var expression in expressions)
-            CollectSiblingDependencyIndices(expression, siblingNames, preludeNameShadowed, propertyNameToIndex, dependencyIndices, propertyIndex, inCallPosition: false, memo);
+    /// <summary>
+    /// The constant inputs of ONE property's sibling-dependency collection: the sibling name
+    /// set, the level's prelude-shadow predicate, the name→index map, the accumulating index
+    /// set, the property's own index, and the walk memo.
+    /// </summary>
+    private sealed record SiblingWalkContext(
+        HashSet<string> SiblingNames,
+        IReadOnlyDictionary<string, int> PropertyNameToIndex,
+        HashSet<int> DependencyIndices,
+        int PropertyIndex,
+        SiblingWalkMemo Memo);
 
-        return dependencyIndices.OrderBy(static idx => idx).ToArray();
+    /// <summary>
+    /// The names bound by the bodies between a property's value and the node being walked
+    /// (the value's own properties included: its output rows resolve inside its own scope). A
+    /// body's own property names shadow same-named siblings for everything inside it —
+    /// ownership-first lookup reaches the enclosing level's siblings before any open — so a
+    /// shadowed reference is no processing-order dependency; binders and parameters are
+    /// already <see cref="Expr.Param"/>s and never match a sibling name. The scope composes
+    /// the level's prelude-shadow predicate with those names, so a nested <c>abs</c> property
+    /// shadows the alias inside that body exactly as a sibling <c>abs</c> does at the level.
+    /// <see cref="Key"/> is the content identity the walk memo splits on.
+    /// </summary>
+    private sealed class ShadowScope
+    {
+        private readonly HashSet<string> _names;
+
+        private ShadowScope(HashSet<string> names, string key, Func<string, bool> preludeNameShadowed)
+        {
+            _names = names;
+            Key = key;
+            PreludeNameShadowed = preludeNameShadowed;
+        }
+
+        public static ShadowScope Level(Func<string, bool> preludeNameShadowed)
+            => new(CreateNameSet(), "", preludeNameShadowed);
+
+        public string Key { get; }
+
+        public Func<string, bool> PreludeNameShadowed { get; }
+
+        public bool Shadows(string name) => _names.Contains(name);
+
+        public ShadowScope Enter(Algorithm body)
+        {
+            if (body.Properties.Count == 0)
+                return this;
+
+            var names = new HashSet<string>(_names, StringComparer.Ordinal);
+            foreach (var property in body.Properties)
+                names.Add(property.Name);
+            var outer = PreludeNameShadowed;
+            return new ShadowScope(names, FrontEndRegionKeys.NameSet(names), name => names.Contains(name) || outer(name));
+        }
+    }
+
+    /// <summary>
+    /// The position a walked expression stands in, which decides what a name contributes —
+    /// mirroring what the resolver reads there: a VALUE-position sibling reference is lifted
+    /// (its signature is read); a CALLEE is not (called siblings are not order
+    /// dependencies, the same rule as Call function position); a TRANSPARENT context (neutral
+    /// call arguments, capture rows — <c>ImplicitArgumentResolver.ProcessExprNested</c>)
+    /// lifts nothing, so only the nested algorithms inside it contribute.
+    /// </summary>
+    private enum SiblingWalkPosition
+    {
+        Value,
+        Callee,
+        Transparent,
+    }
+
+    /// <summary>
+    /// Collects the sibling dependencies of ONE property value: every value-position sibling
+    /// reference anywhere in the value's subtree that no nested body shadows — its output
+    /// rows, its nested property values, block literals and capture rows in expression
+    /// position, and every branch body of a conditional family — because the resolver
+    /// rewrites all of those while processing the property and reads each referenced
+    /// sibling's CURRENT signature there. Complete edges are what make the topological order
+    /// process a sibling before every consumer, whatever the declaration order, so no
+    /// consumer's rewrite depends on where it was written. Memoized per (node, shadow
+    /// context, position): a shared subtree is walked once per context, never once per path.
+    /// </summary>
+    private static void CollectAlgorithmSiblingDependencyIndices(
+        Algorithm value,
+        SiblingWalkContext context,
+        ShadowScope shadow)
+    {
+        switch (value)
+        {
+            case Algorithm.User user:
+            {
+                var inner = shadow.Enter(user);
+                if (!context.Memo.Algorithms(inner.Key).Add(user))
+                    return;
+
+                foreach (var row in user.Output)
+                    CollectSiblingDependencyIndices(row, context, inner, SiblingWalkPosition.Value);
+
+                foreach (var property in user.Properties)
+                    CollectAlgorithmSiblingDependencyIndices(property.Value, context, inner);
+                break;
+            }
+
+            case Algorithm.Conditional conditional:
+            {
+                if (!context.Memo.Algorithms(shadow.Key).Add(conditional))
+                    return;
+
+                // Family-owned opens are open targets, which the resolver never reads through
+                // the signature map; binders are Params. Each branch body is a body of its own,
+                // resolved inside the family's scope.
+                foreach (var branch in conditional.Branches)
+                    CollectAlgorithmSiblingDependencyIndices(branch.Body, context, shadow);
+                break;
+            }
+
+            case Algorithm.Builtin:
+                break;
+
+            default:
+                throw new InvalidOperationException(
+                    $"Unhandled Algorithm variant in {nameof(PropertyDependencyGraphBuilder)}.{nameof(CollectAlgorithmSiblingDependencyIndices)}: {value.GetType().Name}.");
+        }
     }
 
     private static void CollectSiblingDependencyIndices(
         Expr expr,
-        HashSet<string> siblingNames,
-        Func<string, bool> preludeNameShadowed,
-        IReadOnlyDictionary<string, int> propertyNameToIndex,
-        HashSet<int> dependencyIndices,
-        int propertyIndex,
-        bool inCallPosition,
-        SiblingWalkMemo memo)
+        SiblingWalkContext context,
+        ShadowScope shadow,
+        SiblingWalkPosition position)
     {
         // DAG-safety: contributions are index-set idempotent, so a completed node reference
-        // reached again under the same call-position flavor is skipped (see SiblingWalkMemo).
+        // reached again under the same shadow context and position is skipped (see
+        // SiblingWalkMemo).
         if (!AstTraversalDagSafety.HasTraversableExprChildren(expr))
         {
-            CollectSiblingDependencyIndicesCore(expr, siblingNames, preludeNameShadowed, propertyNameToIndex, dependencyIndices, propertyIndex, inCallPosition, memo);
+            CollectSiblingDependencyIndicesCore(expr, context, shadow, position);
             return;
         }
 
-        var visited = inCallPosition
-            ? memo.CalleeVisited ??= new(ReferenceEqualityComparer.Instance)
-            : memo.ValueVisited;
+        var visited = context.Memo.Visited(shadow.Key, position);
         if (visited.Contains(expr))
             return;
 
-        memo.Observations?.RecordDependencySiblingExpansion();
-        CollectSiblingDependencyIndicesCore(expr, siblingNames, preludeNameShadowed, propertyNameToIndex, dependencyIndices, propertyIndex, inCallPosition, memo);
+        context.Memo.Observations?.RecordDependencySiblingExpansion();
+        CollectSiblingDependencyIndicesCore(expr, context, shadow, position);
         visited.Add(expr);
     }
 
+    /// <summary>A child of a value or callee expression stands in value position; a child of a transparent one stays transparent.</summary>
+    private static SiblingWalkPosition ChildPosition(SiblingWalkPosition position)
+        => position == SiblingWalkPosition.Transparent ? SiblingWalkPosition.Transparent : SiblingWalkPosition.Value;
+
     private static void CollectSiblingDependencyIndicesCore(
         Expr expr,
-        HashSet<string> siblingNames,
-        Func<string, bool> preludeNameShadowed,
-        IReadOnlyDictionary<string, int> propertyNameToIndex,
-        HashSet<int> dependencyIndices,
-        int propertyIndex,
-        bool inCallPosition,
-        SiblingWalkMemo memo)
+        SiblingWalkContext context,
+        ShadowScope shadow,
+        SiblingWalkPosition position)
     {
+        var child = ChildPosition(position);
         switch (expr)
         {
             case Expr.Resolve(var name):
-                if (!inCallPosition
-                    && siblingNames.Contains(name)
-                    && propertyNameToIndex.TryGetValue(name, out var dependencyIndex)
-                    && dependencyIndex != propertyIndex)
+                if (position == SiblingWalkPosition.Value
+                    && !shadow.Shadows(name)
+                    && context.SiblingNames.Contains(name)
+                    && context.PropertyNameToIndex.TryGetValue(name, out var dependencyIndex)
+                    && dependencyIndex != context.PropertyIndex)
                 {
-                    dependencyIndices.Add(dependencyIndex);
+                    context.DependencyIndices.Add(dependencyIndex);
                 }
                 break;
 
             case Expr.Call(var function, var callArgs) call:
-                CollectSiblingDependencyIndices(function, siblingNames, preludeNameShadowed, propertyNameToIndex, dependencyIndices, propertyIndex, inCallPosition: true, memo);
+                CollectSiblingDependencyIndices(
+                    function, context, shadow, position == SiblingWalkPosition.Transparent ? SiblingWalkPosition.Transparent : SiblingWalkPosition.Callee);
 
                 // An unshadowed Math-ALIAS call has the same registry-proven
                 // strict-value argument contract as the written `Math.X(...)`
@@ -796,59 +963,79 @@ internal static class PropertyDependencyGraphBuilder
                 // alias-call twin: the resolver lifts its argument slots as value
                 // positions, so those slots contribute the same sibling
                 // processing-order dependencies here. Ordinary neutral call
-                // arguments contribute none.
-                if (call.HasRegistryProvenStrictValueArguments(preludeNameShadowed))
-                {
-                    CollectArgumentSiblingDependencyIndices(callArgs, siblingNames, preludeNameShadowed, propertyNameToIndex, dependencyIndices, propertyIndex, memo);
-                }
+                // arguments lift nothing (transparent), so only the nested
+                // algorithms inside them contribute.
+                CollectArgumentSiblingDependencyIndices(
+                    callArgs,
+                    context,
+                    shadow,
+                    position != SiblingWalkPosition.Transparent && call.HasRegistryProvenStrictValueArguments(shadow.PreludeNameShadowed)
+                        ? SiblingWalkPosition.Value
+                        : SiblingWalkPosition.Transparent);
                 break;
 
             case Expr.Binary(_, var left, var right):
-                CollectSiblingDependencyIndices(left, siblingNames, preludeNameShadowed, propertyNameToIndex, dependencyIndices, propertyIndex, false, memo);
-                CollectSiblingDependencyIndices(right, siblingNames, preludeNameShadowed, propertyNameToIndex, dependencyIndices, propertyIndex, false, memo);
+                CollectSiblingDependencyIndices(left, context, shadow, child);
+                CollectSiblingDependencyIndices(right, context, shadow, child);
                 break;
 
             case Expr.Unary(_, var operand):
-                CollectSiblingDependencyIndices(operand, siblingNames, preludeNameShadowed, propertyNameToIndex, dependencyIndices, propertyIndex, false, memo);
+                CollectSiblingDependencyIndices(operand, context, shadow, child);
                 break;
 
             case Expr.Index(var target, var selector):
-                CollectSiblingDependencyIndices(target, siblingNames, preludeNameShadowed, propertyNameToIndex, dependencyIndices, propertyIndex, false, memo);
-                CollectSiblingDependencyIndices(selector, siblingNames, preludeNameShadowed, propertyNameToIndex, dependencyIndices, propertyIndex, false, memo);
+                CollectSiblingDependencyIndices(target, context, shadow, child);
+                CollectSiblingDependencyIndices(selector, context, shadow, child);
                 break;
 
             case Expr.SequenceSpread(var operand):
-                CollectSiblingDependencyIndices(operand, siblingNames, preludeNameShadowed, propertyNameToIndex, dependencyIndices, propertyIndex, false, memo);
+                CollectSiblingDependencyIndices(operand, context, shadow, child);
                 break;
 
             case Expr.SequenceConstruct(var left, var right):
-                CollectSiblingDependencyIndices(left, siblingNames, preludeNameShadowed, propertyNameToIndex, dependencyIndices, propertyIndex, false, memo);
-                CollectSiblingDependencyIndices(right, siblingNames, preludeNameShadowed, propertyNameToIndex, dependencyIndices, propertyIndex, false, memo);
+                CollectSiblingDependencyIndices(left, context, shadow, child);
+                CollectSiblingDependencyIndices(right, context, shadow, child);
                 break;
 
             case Expr.ListLiteral(var listItems):
                 foreach (var item in listItems)
-                    CollectSiblingDependencyIndices(item, siblingNames, preludeNameShadowed, propertyNameToIndex, dependencyIndices, propertyIndex, false, memo);
+                    CollectSiblingDependencyIndices(item, context, shadow, child);
                 break;
 
             case Expr.DotCall(var target, _, null):
-                CollectSiblingDependencyIndices(target, siblingNames, preludeNameShadowed, propertyNameToIndex, dependencyIndices, propertyIndex, false, memo);
+                CollectSiblingDependencyIndices(target, context, shadow, child);
                 break;
 
             case Expr.DotCall dotCall:
-                CollectSiblingDependencyIndices(dotCall.Target, siblingNames, preludeNameShadowed, propertyNameToIndex, dependencyIndices, propertyIndex, inCallPosition: true, memo);
-                if (dotCall.Args is { } args
-                    && dotCall.HasRegistryProvenStrictValueArguments(preludeNameShadowed))
+                CollectSiblingDependencyIndices(
+                    dotCall.Target, context, shadow, position == SiblingWalkPosition.Transparent ? SiblingWalkPosition.Transparent : SiblingWalkPosition.Callee);
+                if (dotCall.Args is { } args)
                 {
-                    CollectArgumentSiblingDependencyIndices(args, siblingNames, preludeNameShadowed, propertyNameToIndex, dependencyIndices, propertyIndex, memo);
+                    CollectArgumentSiblingDependencyIndices(
+                        args,
+                        context,
+                        shadow,
+                        position != SiblingWalkPosition.Transparent && dotCall.HasRegistryProvenStrictValueArguments(shadow.PreludeNameShadowed)
+                            ? SiblingWalkPosition.Value
+                            : SiblingWalkPosition.Transparent);
                 }
                 break;
 
             case Expr.Grace(var inner, _):
-                CollectSiblingDependencyIndices(inner, siblingNames, preludeNameShadowed, propertyNameToIndex, dependencyIndices, propertyIndex, inCallPosition, memo);
+                CollectSiblingDependencyIndices(inner, context, shadow, position);
                 break;
 
-            case Expr.AlgorithmExpr or Expr.Capture:
+            case Expr.AlgorithmExpr(var nested):
+                // A block literal is a body of its own in every position: the resolver
+                // rewrites it (and reads sibling signatures inside it) wherever it stands.
+                CollectAlgorithmSiblingDependencyIndices(nested, context, shadow);
+                break;
+
+            case Expr.Capture(var captureBody):
+                // Capture rows are transparent (no lifting at this level); their nested
+                // algorithms still contribute.
+                foreach (var row in captureBody)
+                    CollectSiblingDependencyIndices(row, context, shadow, SiblingWalkPosition.Transparent);
                 break;
 
             // Intentional leaves: no sibling references.
@@ -871,25 +1058,12 @@ internal static class PropertyDependencyGraphBuilder
 
     private static void CollectArgumentSiblingDependencyIndices(
         OutputBundle args,
-        HashSet<string> siblingNames,
-        Func<string, bool> preludeNameShadowed,
-        IReadOnlyDictionary<string, int> propertyNameToIndex,
-        HashSet<int> dependencyIndices,
-        int propertyIndex,
-        SiblingWalkMemo memo)
+        SiblingWalkContext context,
+        ShadowScope shadow,
+        SiblingWalkPosition position)
     {
         foreach (var expression in args)
-        {
-            CollectSiblingDependencyIndices(
-                expression,
-                siblingNames,
-                preludeNameShadowed,
-                propertyNameToIndex,
-                dependencyIndices,
-                propertyIndex,
-                inCallPosition: false,
-                memo);
-        }
+            CollectSiblingDependencyIndices(expression, context, shadow, position);
     }
 
     private static HashSet<string> CreateNameSet(IEnumerable<string>? names = null)

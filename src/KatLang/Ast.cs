@@ -1044,13 +1044,32 @@ public sealed record CondBranch(Pattern Pattern, Algorithm Body)
 // ── Algorithm (Lean: Algorithm — discriminated union) ───────────────────────
 
 /// <summary>
-/// A named property within an algorithm, with visibility metadata.
-/// Lean: PropDef { name, alg, isPublic }.
+/// Exposure classification of a property, computed by the C# front end
+/// (<c>PropertyExposureResolver</c>) and consumed as an INPUT by every lookup.
+/// Lean: <c>PropExposure</c>. <c>open</c> exposes public <see cref="Exported"/> members and
+/// structural dot access reaches <see cref="Exported"/> members; the classification is a
+/// fact about the property's VALUE, never about where the declaration is written.
 /// </summary>
 public enum PropertyExposure
 {
+    /// <summary>Self-contained: evaluable wherever the property can be reached.</summary>
     Exported,
+
+    /// <summary>
+    /// The value (transitively) requires an input that only an enclosing owner's call binds —
+    /// a parameter of an enclosing parameterized algorithm, or a pattern binder of an
+    /// enclosing conditional branch — so the property is usable by name inside that owner
+    /// but never exported through <c>open</c>, <c>load</c>, or dot access.
+    /// </summary>
     LocalOnlyCapturedAncestorParameters,
+
+    /// <summary>
+    /// The family-level reachability reason, never assigned to a property by classification:
+    /// a conditional family exposes no structural members, so a name access into one of its
+    /// branch bodies (<c>F.Helper</c>, <c>open F.Helper</c>) is refused with this reason
+    /// (Lean: <c>conditionalBranchesDefineProperty</c>). Inside the branch, its declarations
+    /// classify exactly like declarations in any other body.
+    /// </summary>
     LocalOnlyConditionalAlgorithm,
 }
 

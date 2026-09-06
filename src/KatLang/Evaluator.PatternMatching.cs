@@ -252,9 +252,13 @@ public static partial class Evaluator
         if (paramNames is null)
             return null;
 
-        return ChildOf(callee, cond.Branches[0].Body) is Algorithm.User body
-            ? (Algorithm.User)body.WithParameters(Algorithm.NormalParameters(paramNames))
-            : null;
+        if (ChildOf(callee, cond.Branches[0].Body) is not Algorithm.User body)
+            return null;
+
+        var equivalent = (Algorithm.User)body.WithParameters(Algorithm.NormalParameters(paramNames));
+        if (DeferredModuleRegions.TryGet(cond.Branches[0].Body, out var region))
+            DeferredModuleRegions.Register(equivalent, region);
+        return equivalent;
     }
 
     /// <summary>
@@ -713,6 +717,13 @@ public static partial class Evaluator
         EvalCtx ctx,
         IReadOnlyList<(string, Result)> valEnv)
     {
+        if (DeferredModuleRegions.TryGet(alg, out var region))
+        {
+            if (!region.TryGetMaterialized(out var materialized))
+                throw DeferredModuleRegions.SynchronousSelectionNotSupported();
+            alg = materialized.WithParameters(alg.Parameters) with { Parent = alg.Parent };
+        }
+
         if (alg is Algorithm.Builtin(var builtin))
         {
             var countedR = EvalBuiltinValueCounted(builtin);

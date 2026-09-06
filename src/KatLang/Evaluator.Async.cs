@@ -124,7 +124,7 @@ public static partial class Evaluator
         Expr expr, EvaluationLimits? limits, CancellationToken cancellationToken)
         => await RunAsync(
             expr,
-            new RunScopedZeroArgPropertyResultCache(),
+            CreateRunScopedZeroArgPropertyResultCache(expr, hostOperations: null),
             limits,
             loopDiagnostics: null,
             sequenceDiagnostics: null,
@@ -164,7 +164,7 @@ public static partial class Evaluator
         ArgumentNullException.ThrowIfNull(hostOperations);
         return await RunAsync(
             expr,
-            CreateRunScopedZeroArgPropertyResultCache(hostOperations),
+            CreateRunScopedZeroArgPropertyResultCache(expr, hostOperations),
             limits,
             loopDiagnostics: null,
             sequenceDiagnostics: null,
@@ -220,10 +220,15 @@ public static partial class Evaluator
     /// the honest optimum, since nothing could suspend.
     /// </summary>
     private static bool RequiresAsyncEvaluationPath(
+        Expr expr,
         IZeroArgPropertyResultCache zeroArgPropertyResultCache,
         HostOperations? hostOperations)
         => zeroArgPropertyResultCache is IAsyncZeroArgPropertyResultCache
-            || hostOperations?.ContainsAsynchronousOperations == true;
+            || hostOperations?.ContainsAsynchronousOperations == true
+            // B2c: a root carrying deferred module regions — materializing a selected branch
+            // awaits the module downloader, the third and only other run component that can
+            // complete asynchronously.
+            || DeferredModuleRegions.RequiresAsyncEvaluation(expr);
 
     /// <summary>
     /// Routing enforcement for the twin path's property seam: the twin family awaits
@@ -236,15 +241,26 @@ public static partial class Evaluator
     /// twin family's mid-run ownership exception.
     /// </summary>
     private static void ThrowIfAsyncHostOperationsWithoutAsyncCapableCache(
+        Expr expr,
         IZeroArgPropertyResultCache zeroArgPropertyResultCache,
         HostOperations? hostOperations)
     {
-        if (hostOperations?.ContainsAsynchronousOperations == true
-            && zeroArgPropertyResultCache is not IAsyncZeroArgPropertyResultCache)
+        if (zeroArgPropertyResultCache is IAsyncZeroArgPropertyResultCache)
+            return;
+
+        if (hostOperations?.ContainsAsynchronousOperations == true)
         {
             throw new InvalidOperationException(
                 "Asynchronous host operations require an async-capable zero-argument property result cache " +
                 "for the run; use an async evaluation entry point that constructs one.");
+        }
+
+        if (DeferredModuleRegions.RequiresAsyncEvaluation(expr))
+        {
+            throw new InvalidOperationException(
+                "A program with deferred module regions (conditional branches whose module dependencies load " +
+                "on demand) requires an async-capable zero-argument property result cache for the run; use an " +
+                "async evaluation entry point that constructs one.");
         }
     }
 
@@ -261,8 +277,12 @@ public static partial class Evaluator
     /// same pairing fail-loud for internal callers that supply their own cache.
     /// </summary>
     internal static IZeroArgPropertyResultCache CreateRunScopedZeroArgPropertyResultCache(
+        Expr expr,
         HostOperations? hostOperations)
         => hostOperations?.ContainsAsynchronousOperations == true
+            // B2c: a root carrying deferred module regions runs on the twin path too, and
+            // so pairs with the async-capable cache by the same rule.
+            || DeferredModuleRegions.RequiresAsyncEvaluation(expr)
             ? new RunScopedAsyncZeroArgPropertyResultCache()
             : new RunScopedZeroArgPropertyResultCache();
 
@@ -288,7 +308,7 @@ public static partial class Evaluator
         HostOperations? hostOperations,
         CancellationToken cancellationToken)
     {
-        ThrowIfAsyncHostOperationsWithoutAsyncCapableCache(zeroArgPropertyResultCache, hostOperations);
+        ThrowIfAsyncHostOperationsWithoutAsyncCapableCache(expr, zeroArgPropertyResultCache, hostOperations);
         cancellationToken.ThrowIfCancellationRequested();
 
         return PrepareAdmittedRun(
@@ -324,7 +344,7 @@ public static partial class Evaluator
     {
         ArgumentNullException.ThrowIfNull(zeroArgPropertyResultCache);
 
-        if (!RequiresAsyncEvaluationPath(zeroArgPropertyResultCache, hostOperations))
+        if (!RequiresAsyncEvaluationPath(expr, zeroArgPropertyResultCache, hostOperations))
         {
             // Fast path: the synchronous pipeline IS the async result. Same code, same
             // budget accounting, same optimizer eligibility as the sync entry point.
@@ -379,7 +399,7 @@ public static partial class Evaluator
     {
         ArgumentNullException.ThrowIfNull(zeroArgPropertyResultCache);
 
-        if (!RequiresAsyncEvaluationPath(zeroArgPropertyResultCache, hostOperations))
+        if (!RequiresAsyncEvaluationPath(expr, zeroArgPropertyResultCache, hostOperations))
             return RunCounted(expr, zeroArgPropertyResultCache, limits, hostOperations, cancellationToken);
 
         // Twin path: the same shared preparation as RunCounted; only the dispatch
@@ -410,7 +430,7 @@ public static partial class Evaluator
         ArgumentNullException.ThrowIfNull(zeroArgPropertyResultCache);
         ArgumentException.ThrowIfNullOrWhiteSpace(topLevelPropertyName);
 
-        if (!RequiresAsyncEvaluationPath(zeroArgPropertyResultCache, hostOperations))
+        if (!RequiresAsyncEvaluationPath(expr, zeroArgPropertyResultCache, hostOperations))
             return RunCountedWithTopLevelProperty(expr, topLevelPropertyName, zeroArgPropertyResultCache, limits, hostOperations, cancellationToken);
 
         // Twin path: the same shared preparation as RunCountedWithTopLevelProperty;
@@ -456,8 +476,8 @@ public static partial class Evaluator
         CancellationToken cancellationToken = default)
     {
         var cache = zeroArgPropertyResultCache
-            ?? CreateRunScopedZeroArgPropertyResultCache(hostOperations);
-        if (!RequiresAsyncEvaluationPath(cache, hostOperations))
+            ?? CreateRunScopedZeroArgPropertyResultCache(expr, hostOperations);
+        if (!RequiresAsyncEvaluationPath(expr, cache, hostOperations))
         {
             return RunCountedObserved(
                 expr,
@@ -1162,6 +1182,14 @@ public static partial class Evaluator
         EvalCtx ctx,
         IReadOnlyList<(string, Result)> valEnv)
     {
+        if (DeferredModuleRegions.TryGet(alg, out var region))
+        {
+            var materialized = await region.MaterializeAsync(ctx.Budget.CancellationToken).ConfigureAwait(false);
+            if (materialized.IsError)
+                return materialized.Error;
+            alg = materialized.Value.WithParameters(alg.Parameters) with { Parent = alg.Parent };
+        }
+
         if (alg is Algorithm.Builtin(var builtin))
         {
             var countedR = EvalBuiltinValueCounted(builtin);
@@ -1863,7 +1891,9 @@ public static partial class Evaluator
             return new EvalError.NoMatchingBranch(calleeName.Render(ctx));
 
         var (branch, bindings) = match.Value;
-        var wiredBody = ChildOf(callee, branch.Body);
+        var selectedBodyR = await SelectedBranchBodyAsync(branch, ctx).ConfigureAwait(false);
+        if (selectedBodyR.IsError) return selectedBodyR.Error;
+        var wiredBody = ChildOf(callee, selectedBodyR.Value);
         var shadowedNames = bindings.Select(static binding => binding.Item1).ToArray();
         var newCtx = ctx.Push(callee)
             .WithCountedParamEnv(ShadowCountedParamEnv(ctx.CountedParamEnv, shadowedNames));
@@ -2769,7 +2799,9 @@ public static partial class Evaluator
             return new EvalError.NoMatchingBranch(calleeName);
 
         var (branch, bindings) = match.Value;
-        var wiredBody = ChildOf(callee, branch.Body);
+        var selectedBodyR = await SelectedBranchBodyAsync(branch, ctx).ConfigureAwait(false);
+        if (selectedBodyR.IsError) return selectedBodyR.Error;
+        var wiredBody = ChildOf(callee, selectedBodyR.Value);
         var newCtx = WithCountedParameterEnvironments(
             ctx.Push(callee),
             bindings,

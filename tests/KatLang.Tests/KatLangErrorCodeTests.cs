@@ -76,6 +76,22 @@ public class KatLangErrorCodeTests
             [typeof(EvalError.AstDepthLimitExceeded)] = (
                 new EvalError.AstDepthLimitExceeded(10), KatLangErrorCode.AstDepthLimitExceeded, true),
             [typeof(EvalError.AstCycleDetected)] = (new EvalError.AstCycleDetected(), KatLangErrorCode.AstCycleDetected, false),
+            // B2c: a selected branch's demand-time module failure carries the very
+            // diagnostics the eager load would have produced, so its family is the
+            // primary diagnostic's own (here the fetch failure), never a new family.
+            [typeof(EvalError.ModuleRegionMaterializationFailed)] = (
+                EvalError.ModuleRegionMaterializationFailed.From(
+                [
+                    new Diagnostic(
+                        "load: failed to fetch 'https://katlang.org/m.kat': 404",
+                        DiagnosticSeverity.Error,
+                        new SourceSpan(3, 5, 3, 40))
+                    {
+                        Code = DiagnosticCode.LoadFetchFailed,
+                    },
+                ]),
+                KatLangErrorCode.LoadFetchFailed,
+                false),
             // The contextual wrapper resolves to its inner error's family; its
             // dedicated behavior is pinned by the WithContext tests below.
             [typeof(EvalError.WithContext)] = (

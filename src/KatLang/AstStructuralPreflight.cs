@@ -472,7 +472,7 @@ internal static class AstStructuralPreflight
     /// being silently treated as a leaf: skipping unknown children would let a future
     /// AST variant smuggle unmeasured depth past this guard.
     /// </summary>
-    private static bool TryGetChild(object node, int index, out object child)
+    internal static bool TryGetChild(object node, int index, out object child)
     {
         switch (node)
         {

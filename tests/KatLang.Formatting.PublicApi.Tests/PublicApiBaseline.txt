@@ -2018,6 +2018,7 @@ public enum KatLang.Semantics.IdentifierClassification : int
   LoadedExternalMemberReference = 8
   OpenTarget = 9
   Unresolved = 10
+  DeferredModuleReference = 11
 
 public record KatLang.Semantics.IdentifierOccurrence : System.IEquatable<KatLang.Semantics.IdentifierOccurrence>
   ctor     protected IdentifierOccurrence(KatLang.Semantics.IdentifierOccurrence original)

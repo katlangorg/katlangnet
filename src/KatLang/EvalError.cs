@@ -128,6 +128,7 @@ public abstract record EvalError
                 EvaluationStackExhausted => KatLangErrorCode.EvaluationStackExhausted,
                 AstDepthLimitExceeded => KatLangErrorCode.AstDepthLimitExceeded,
                 AstCycleDetected => KatLangErrorCode.AstCycleDetected,
+                ModuleRegionMaterializationFailed e => KatLangError.MapDiagnosticCode(e.Primary.Code),
                 _ => throw new InvalidOperationException(
                     $"Unhandled EvalError variant in {nameof(EvalError)}.{nameof(Code)}: {terminal.GetType().Name}. "
                     + "Map the new variant to a KatLangErrorCode family explicitly."),
@@ -351,6 +352,47 @@ public abstract record EvalError
     /// ACYCLIC subtrees are legal and are not reported as cycles.
     /// </summary>
     public sealed record AstCycleDetected() : EvalError;
+
+    /// <summary>
+    /// [HOST] B2c — materializing the deferred module region of a SELECTED conditional
+    /// branch failed: the branch's own module dependencies (loaded only on selection) or the
+    /// body's demand-time elaboration produced front-end error diagnostics. They are the
+    /// very diagnostics the equivalent eager load would have produced — same
+    /// <see cref="DiagnosticCode"/>, same branch-local source span, same module identity —
+    /// surfaced at selection time instead of parse time. Internal by design: hosts observe
+    /// it through <see cref="KatLangError"/>, whose code and span come from
+    /// <see cref="Primary"/>. No Lean counterpart: Lean's input model has no external modules
+    /// and no demand timing.
+    /// </summary>
+    internal sealed record ModuleRegionMaterializationFailed(IReadOnlyList<Diagnostic> Diagnostics) : EvalError
+    {
+        /// <summary>The first error diagnostic: the facade's code and span source.</summary>
+        public Diagnostic Primary
+        {
+            get
+            {
+                foreach (var diagnostic in Diagnostics)
+                {
+                    if (diagnostic.Severity == DiagnosticSeverity.Error)
+                        return diagnostic;
+                }
+
+                return Diagnostics[0];
+            }
+        }
+
+        internal static ModuleRegionMaterializationFailed From(IReadOnlyList<Diagnostic> diagnostics)
+        {
+            if (diagnostics.Count == 0)
+            {
+                throw new InvalidOperationException(
+                    "Internal error: a deferred module region failed to materialize without reporting a diagnostic.");
+            }
+
+            var error = new ModuleRegionMaterializationFailed(diagnostics);
+            return error with { Span = error.Primary.Span };
+        }
+    }
 
     /// <summary>Contextual wrapper attaching structured context to an inner error.</summary>
     public sealed record WithContext : EvalError

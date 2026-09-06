@@ -873,7 +873,7 @@ Algo(x) = {
 Algo(6)
 ```
 
-This produces `7`. Conditional branches follow the same rule: declare them on the enclosing algorithm head. To get an algorithm's result, call the algorithm directly. Bare `Algo` still refers to the algorithm value, not an automatic call. Self-contained helper properties remain accessible through dot syntax, for example `Algo.Helper(6)`. If a nested property depends on parameters owned by the enclosing algorithm, or is defined inside a conditional algorithm branch, it is local-only and cannot be accessed as `Algo.Helper` or exported through `open`/`load`.
+This produces `7`. Conditional branches follow the same rule: declare them on the enclosing algorithm head. To get an algorithm's result, call the algorithm directly. Bare `Algo` still refers to the algorithm value, not an automatic call. Self-contained helper properties remain accessible through dot syntax, for example `Algo.Helper(6)`. If a nested property depends on parameters owned by the enclosing algorithm — including the pattern binders of a conditional branch — it is local-only and cannot be accessed as `Algo.Helper` or exported through `open`/`load`. Properties defined inside a conditional branch are never reachable by name from outside that branch (`Algo.Helper` and `open Algo.Helper` are refused, and sibling branches never see them), but inside the branch they are ordinary properties: a self-contained branch-local library can be opened or dot-accessed by the branch body and by any body nested in it, exactly like an outer library.
 
 Algorithm-level explicit parameters define the algorithm's direct-call interface, so they are valid only when the algorithm defines output. This is invalid:
 
@@ -3944,6 +3944,8 @@ X + 3
 
 **Result:** `23`
 
+A module-backed open written inside a conditional branch is loaded only when that branch is actually selected: alternatives that are never selected fetch nothing and cannot fail because of their own modules, nested branches follow the same rule, and a module-load error inside a branch is reported when the branch runs. Opens outside conditional branches keep loading up front, and syntax errors anywhere are still reported before anything runs.
+
 You can open a locally defined algorithm the same way:
 
 ```
@@ -4004,7 +4006,7 @@ Sqrt(16)
 
 ### Visibility
 
-By default, properties are private — accessible within their own algorithm and its children, but not visible to outside callers who load or open the algorithm. Marking a property `public` makes it eligible for external exposure, but a property is exported only if it is self-contained. A nested property is not exported if it depends on parameters owned by an enclosing algorithm, or if it is defined inside a conditional algorithm branch.
+By default, properties are private — accessible within their own algorithm and its children, but not visible to outside callers who load or open the algorithm. Marking a property `public` makes it eligible for external exposure, but a property is exported only if it is self-contained. A nested property is not exported if it depends on parameters owned by an enclosing algorithm, including the pattern binders of a conditional branch. Properties defined inside a conditional branch are additionally unreachable by name from outside that branch — a conditional exposes no members of its branches — but inside the branch they follow the ordinary rules: a self-contained branch-local library, whether declared there, opened inline, or backed by `open 'url'`, exposes its public members to the branch body and to any body nested in it, and nowhere else.
 
 ```
 # In a library algorithm:

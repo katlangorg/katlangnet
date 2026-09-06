@@ -73,7 +73,275 @@ internal static class ImplicitArgumentResolver
         List<Diagnostic>? diagnostics = null)
     {
         return ProcessAlgorithm(
-            root, parentParamMap: new Dictionary<string, CallableSignature>(), isRoot: true, observations, diagnostics);
+            root,
+            parentParamMap: new Dictionary<string, CallableSignature>(),
+            isRoot: true,
+            observations,
+            diagnostics,
+            branchContext: null,
+            new ResolutionRun());
+    }
+
+    /// <summary>
+    /// Run-scoped state of ONE resolution (a <see cref="ResolvePrevalidated"/> or
+    /// <see cref="ElaborateDeferredBranch"/> call), threaded through every algorithm-processing
+    /// path so an algorithm reached through several paths of a shared (acyclic) host tree —
+    /// a property value shared by several properties, a block literal reached from several
+    /// rows, a conditional branch body shared by several families — is rewritten once per
+    /// SEMANTIC REGION rather than once per path (M4). Run-local: created per resolution,
+    /// garbage afterwards — never static, never ambient.
+    /// </summary>
+    private sealed class ResolutionRun
+    {
+        /// <summary>
+        /// Nested algorithms rewritten so far, by <see cref="AlgorithmRegionKey"/>. A family's
+        /// NAME only words a branch body's blocked strict-value diagnostics, so a second
+        /// family sharing the body reuses the rewrite and REPLAYS those diagnostics under its
+        /// own name (see <see cref="AlgorithmRegion.DiagnosticTemplates"/>).
+        /// </summary>
+        public Dictionary<AlgorithmRegionKey, AlgorithmRegion>? AlgorithmRegions;
+
+        /// <summary>
+        /// The free reference names of every algorithm node computed so far (a pure function
+        /// of the node — see <see cref="FreeReferenceNames"/>), by node reference.
+        /// </summary>
+        public Dictionary<Algorithm, IReadOnlySet<string>>? FreeReferenceNames;
+    }
+
+    /// <summary>
+    /// The minimal complete semantic context of one nested-algorithm rewrite: the node by
+    /// REFERENCE; the <see cref="SignatureSnapshot"/> of the signatures its FREE reference
+    /// names see in the visible map (every signature the rewrite can read — the subtree's own
+    /// bindings shadow the map, open targets use fresh maps, stored dot-edge fallbacks are
+    /// never rewritten); for a conditional branch body the closed binder specification the
+    /// pattern imposes, by CONTENT (<see cref="FrontEndRegionKeys.ClosedBranchSpecification"/>);
+    /// and the reporting mode. Two reaches with equal keys observe identical inputs, whatever
+    /// path led to them and whatever else the property loop rewrote in between.
+    /// </summary>
+    private sealed record AlgorithmRegionKey(
+        Algorithm Node,
+        SignatureSnapshot Snapshot,
+        string? ClosedSpecification,
+        bool ReportsDiagnostics)
+    {
+        public bool Equals(AlgorithmRegionKey? other)
+            => other is not null
+                && ReferenceEquals(Node, other.Node)
+                && Snapshot.Equals(other.Snapshot)
+                && ClosedSpecification == other.ClosedSpecification
+                && ReportsDiagnostics == other.ReportsDiagnostics;
+
+        public override int GetHashCode()
+            => HashCode.Combine(
+                System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(Node),
+                Snapshot.GetHashCode(),
+                ClosedSpecification,
+                ReportsDiagnostics);
+    }
+
+    /// <summary>
+    /// The signature-map footprint of one algorithm: for each of its free reference names
+    /// (sorted), the signature object the visible map holds for it — by REFERENCE, since the
+    /// property loop replaces a rewritten sibling's signature object — or null when the map
+    /// has no entry (a prelude name, an open-provided name, or an unresolved one).
+    /// </summary>
+    private sealed class SignatureSnapshot : IEquatable<SignatureSnapshot>
+    {
+        private readonly string[] _names;
+        private readonly CallableSignature?[] _signatures;
+        private readonly int _hash;
+
+        private SignatureSnapshot(string[] names, CallableSignature?[] signatures)
+        {
+            _names = names;
+            _signatures = signatures;
+            var hash = new HashCode();
+            for (var i = 0; i < names.Length; i++)
+            {
+                hash.Add(names[i], StringComparer.Ordinal);
+                hash.Add(signatures[i] is { } signature ? System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(signature) : 0);
+            }
+
+            _hash = hash.ToHashCode();
+        }
+
+        public static SignatureSnapshot Capture(IReadOnlySet<string> freeNames, Dictionary<string, CallableSignature> visibleParamMap)
+        {
+            var names = freeNames.Order(StringComparer.Ordinal).ToArray();
+            var signatures = new CallableSignature?[names.Length];
+            for (var i = 0; i < names.Length; i++)
+                signatures[i] = visibleParamMap.TryGetValue(names[i], out var signature) ? signature : null;
+            return new SignatureSnapshot(names, signatures);
+        }
+
+        public bool Equals(SignatureSnapshot? other)
+        {
+            if (other is null || other._names.Length != _names.Length)
+                return false;
+
+            for (var i = 0; i < _names.Length; i++)
+            {
+                if (!string.Equals(_names[i], other._names[i], StringComparison.Ordinal)
+                    || !ReferenceEquals(_signatures[i], other._signatures[i]))
+                    return false;
+            }
+
+            return true;
+        }
+
+        public override bool Equals(object? obj) => obj is SignatureSnapshot other && Equals(other);
+
+        public override int GetHashCode() => _hash;
+    }
+
+    /// <summary>
+    /// A completed algorithm region: the rewritten algorithm and, for a conditional branch
+    /// body, the blocked strict-value forwarding diagnostics its own output rewrite reported
+    /// — the one diagnostic whose wording names the family — as re-issuable templates.
+    /// </summary>
+    private sealed record AlgorithmRegion(Algorithm Rewritten, IReadOnlyList<BlockedForwardingTemplate>? DiagnosticTemplates);
+
+    /// <summary>One blocked strict-value forwarding report, minus the family name that words it.</summary>
+    private readonly record struct BlockedForwardingTemplate(
+        string ReferenceDisplayName,
+        IReadOnlyList<string> MissingParameterNames,
+        SourceSpan Span);
+
+    /// <summary>
+    /// The FREE reference names of an algorithm's subtree: every <see cref="Expr.Resolve"/>
+    /// name in its output rows and property values (recursively) that the subtree does not
+    /// bind itself (a body's property names bind for everything inside it; parameters and
+    /// binders are already <see cref="Expr.Param"/>s). These are exactly the names whose
+    /// visible-map signatures the rewrite of the subtree can read — bare and called
+    /// references, the alias and canonical <c>Math</c> shadow checks, and the sibling-order
+    /// channel's shadow predicate all probe the map by a written name — while open targets
+    /// (rewritten with fresh maps) and stored dot-edge fallbacks (never rewritten) read
+    /// nothing. A pure function of the node: memoized per run, and reference-visited per
+    /// subtree so a shared expression contributes its names once.
+    /// </summary>
+    private static IReadOnlySet<string> FreeReferenceNames(Algorithm algorithm, ResolutionRun run)
+    {
+        var memo = run.FreeReferenceNames ??= new(ReferenceEqualityComparer.Instance);
+        if (memo.TryGetValue(algorithm, out var cached))
+            return cached;
+
+        var names = new HashSet<string>(StringComparer.Ordinal);
+        switch (algorithm)
+        {
+            case Algorithm.User user:
+            {
+                var visited = new HashSet<Expr>(ReferenceEqualityComparer.Instance);
+                foreach (var row in user.Output)
+                    CollectReferenceNames(row, names, visited, run);
+                foreach (var property in user.Properties)
+                    names.UnionWith(FreeReferenceNames(property.Value, run));
+                foreach (var property in user.Properties)
+                    names.Remove(property.Name);
+                break;
+            }
+
+            case Algorithm.Conditional conditional:
+                foreach (var branch in conditional.Branches)
+                    names.UnionWith(FreeReferenceNames(branch.Body, run));
+                break;
+
+            case Algorithm.Builtin:
+                break;
+
+            default:
+                throw new InvalidOperationException(
+                    $"Unhandled Algorithm variant in {nameof(ImplicitArgumentResolver)}.{nameof(FreeReferenceNames)}: {algorithm.GetType().Name}.");
+        }
+
+        memo[algorithm] = names;
+        return names;
+    }
+
+    private static void CollectReferenceNames(Expr expr, HashSet<string> names, HashSet<Expr> visited, ResolutionRun run)
+    {
+        if (AstTraversalDagSafety.HasTraversableExprChildren(expr) && !visited.Add(expr))
+            return;
+
+        switch (expr)
+        {
+            case Expr.Resolve(var name):
+                names.Add(name);
+                break;
+
+            case Expr.Call(var function, var args):
+                CollectReferenceNames(function, names, visited, run);
+                foreach (var arg in args)
+                    CollectReferenceNames(arg, names, visited, run);
+                break;
+
+            case Expr.Binary(_, var left, var right):
+                CollectReferenceNames(left, names, visited, run);
+                CollectReferenceNames(right, names, visited, run);
+                break;
+
+            case Expr.Unary(_, var operand):
+                CollectReferenceNames(operand, names, visited, run);
+                break;
+
+            case Expr.Index(var target, var selector):
+                CollectReferenceNames(target, names, visited, run);
+                CollectReferenceNames(selector, names, visited, run);
+                break;
+
+            case Expr.SequenceSpread(var operand):
+                CollectReferenceNames(operand, names, visited, run);
+                break;
+
+            case Expr.SequenceConstruct(var left, var right):
+                CollectReferenceNames(left, names, visited, run);
+                CollectReferenceNames(right, names, visited, run);
+                break;
+
+            case Expr.ListLiteral(var items):
+                foreach (var item in items)
+                    CollectReferenceNames(item, names, visited, run);
+                break;
+
+            case Expr.DotCall dotCall:
+                // The target is read (a bare `Math` receiver is a shadow check, a called
+                // receiver is a name); the stored lexical fallback is never rewritten.
+                CollectReferenceNames(dotCall.Target, names, visited, run);
+                if (dotCall.Args is { } dotArgs)
+                {
+                    foreach (var arg in dotArgs)
+                        CollectReferenceNames(arg, names, visited, run);
+                }
+
+                break;
+
+            case Expr.Grace(var inner, _):
+                CollectReferenceNames(inner, names, visited, run);
+                break;
+
+            case Expr.AlgorithmExpr(var nested):
+                names.UnionWith(FreeReferenceNames(nested, run));
+                break;
+
+            case Expr.Capture(var rows):
+                foreach (var row in rows)
+                    CollectReferenceNames(row, names, visited, run);
+                break;
+
+            // Intentional leaves: no written name the resolver could look up.
+            case Expr.Param:
+            case Expr.Num:
+            case Expr.StringLiteral:
+            case Expr.EmptySequence:
+            case Expr.NativeCall:
+                break;
+
+            // Exhaustiveness guard, matching AstWalker.VisitExpr: a new Expr variant must be
+            // classified above rather than silently keeping its names out of the region key.
+            default:
+                throw new InvalidOperationException(
+                    $"Unhandled Expr variant in {nameof(ImplicitArgumentResolver)}.{nameof(CollectReferenceNames)}: {expr.GetType().Name}. " +
+                    "Classify the new variant explicitly as a recursive case or an intentional leaf.");
+        }
     }
 
     /// <summary>
@@ -157,10 +425,21 @@ internal static class ImplicitArgumentResolver
     /// by ERASING the caller's configuration rather than by preserving it.</para>
     /// </summary>
     private sealed class ResolverWalkMemos(
+        ResolutionRun run,
         FrontEndTraversalObservations? observations,
         List<Diagnostic>? diagnostics)
     {
         private ImplicitRewriteContext? _pinnedRewriteContext;
+
+        /// <summary>The resolution this region belongs to (its algorithm region memo).</summary>
+        public readonly ResolutionRun Run = run;
+
+        /// <summary>
+        /// Non-null only for a conditional branch body's own output-rewrite region: the
+        /// templates of the blocked strict-value reports it issues, kept on the region so a
+        /// further family sharing the body re-issues them under its own name (M4).
+        /// </summary>
+        public List<BlockedForwardingTemplate>? BranchDiagnosticTemplates;
 
         private static readonly string RewriteContextViolationMessage =
             $"{nameof(ImplicitArgumentResolver)} memo soundness violation: one rewrite region observed two "
@@ -261,21 +540,26 @@ internal static class ImplicitArgumentResolver
 
     /// <summary>
     /// Processes an algorithm: topologically sorts its properties, recursively processes each,
-    /// then collects implicit deps and rewrites the algorithm's own output.
+    /// then collects implicit deps and rewrites the algorithm's own output. Every NESTED
+    /// algorithm — a property value, a block literal, an open target, a conditional branch
+    /// body — goes through the run's region memo (M4): one rewrite per
+    /// <see cref="AlgorithmRegionKey"/>, sharing preserved in the output, and a branch body's
+    /// family-worded diagnostics replayed for every further family that shares it.
     /// </summary>
     private static Algorithm ProcessAlgorithm(
         Algorithm alg,
         Dictionary<string, CallableSignature> parentParamMap,
-        bool isRoot = false,
-        FrontEndTraversalObservations? observations = null,
-        List<Diagnostic>? diagnostics = null,
-        ConditionalBranchContext? branchContext = null)
+        bool isRoot,
+        FrontEndTraversalObservations? observations,
+        List<Diagnostic>? diagnostics,
+        ConditionalBranchContext? branchContext,
+        ResolutionRun run)
     {
         if (alg is Algorithm.Builtin)
             return alg;
 
         if (alg is Algorithm.Conditional conditional)
-            return ProcessConditionalProperty(conditional, "<anonymous>", parentParamMap, observations, diagnostics);
+            return ProcessConditionalProperty(conditional, "<anonymous>", parentParamMap, observations, diagnostics, run);
 
         // A synthetic assignment-deconstruction helper (`x, *y, z = RHS`) is a fully-elaborated
         // leaf: its output is a single bound Param (rewritten by ParameterDetector), it has no
@@ -286,7 +570,48 @@ internal static class ImplicitArgumentResolver
         if (alg is Algorithm.User { IsAssignmentDeconstructionHelper: true })
             return alg;
 
-        var newOpens = ProcessOpenExprs(alg.Opens, observations);
+        // The root is processed exactly once and keeps its bare-root rule; nothing shares it.
+        if (isRoot)
+            return ProcessUserAlgorithm(alg, parentParamMap, isRoot: true, observations, diagnostics, branchContext: null, run, diagnosticTemplates: null);
+
+        var regionKey = new AlgorithmRegionKey(
+            alg,
+            SignatureSnapshot.Capture(FreeReferenceNames(alg, run), parentParamMap),
+            branchContext is null ? null : FrontEndRegionKeys.ClosedBranchSpecification(branchContext.Pattern),
+            ReportsDiagnostics: diagnostics is not null);
+        var regions = run.AlgorithmRegions ??= new();
+        if (regions.TryGetValue(regionKey, out var completedRegion))
+        {
+            if (branchContext is not null)
+                ReplayBranchDiagnostics(completedRegion, branchContext.BranchName, diagnostics);
+            return completedRegion.Rewritten;
+        }
+
+        if (branchContext is null)
+            observations?.RecordResolverAlgorithmRegionExpansion();
+        else
+            observations?.RecordResolverBranchBodyRegionExpansion();
+
+        var diagnosticTemplates = branchContext is not null && diagnostics is not null
+            ? new List<BlockedForwardingTemplate>()
+            : null;
+        var rewritten = ProcessUserAlgorithm(alg, parentParamMap, isRoot: false, observations, diagnostics, branchContext, run, diagnosticTemplates);
+        // Admitted only after the whole body completed (acyclic by the structural preflight).
+        regions[regionKey] = new AlgorithmRegion(rewritten, diagnosticTemplates);
+        return rewritten;
+    }
+
+    private static Algorithm ProcessUserAlgorithm(
+        Algorithm alg,
+        Dictionary<string, CallableSignature> parentParamMap,
+        bool isRoot,
+        FrontEndTraversalObservations? observations,
+        List<Diagnostic>? diagnostics,
+        ConditionalBranchContext? branchContext,
+        ResolutionRun run,
+        List<BlockedForwardingTemplate>? diagnosticTemplates)
+    {
+        var newOpens = ProcessOpenExprs(alg.Opens, observations, run);
 
         // Build local param map
         var localParamMap = BuildPropertyParamMap(alg.Properties);
@@ -333,17 +658,20 @@ internal static class ImplicitArgumentResolver
             if (prop.Value is Algorithm.Conditional condAlg)
             {
                 processedProperties[idx] = prop.WithValue(ProcessConditionalProperty(
-                    condAlg, prop.Name, visibleParamMap, observations, diagnostics));
+                    condAlg, prop.Name, visibleParamMap, observations, diagnostics, run));
             }
             else
             {
-                // NOTE: property VALUES are deliberately NOT reference-deduplicated in this
-                // pass (unlike ParameterDetector's property loop): visibleParamMap is UPDATED
-                // after each processed property, so two properties sharing one value algorithm
-                // may legitimately observe different sibling signatures. See the front-end
-                // DAG-safety notes in SEMANTIC-ALIGNMENT.md for the residual complexity this
-                // leaves on shared property values.
-                var processedBody = ProcessAlgorithm(prop.Value, visibleParamMap, isRoot: false, observations, diagnostics);
+                // visibleParamMap is UPDATED after each processed property, so a value shared
+                // by two properties could observe different sibling signatures if it were
+                // reached between two writes it depends on. The run's region memo keys each
+                // value on the signatures its FREE names actually see (M4), so a shared value
+                // rewrites once per distinct observation and never once per referencing
+                // property — and the dependency order above processes every referenced
+                // sibling first, so within an acyclic property graph every reach observes the
+                // same, final signatures.
+                var processedBody = ProcessAlgorithm(
+                    prop.Value, visibleParamMap, isRoot: false, observations, diagnostics, branchContext: null, run);
 
                 // Update param maps with the processed, potentially augmented signature.
                 var processedSignature = CallableSignature.FromAlgorithm(prop.Name, processedBody);
@@ -359,7 +687,10 @@ internal static class ImplicitArgumentResolver
         // ONE memo bundle spans this algorithm's whole output-rewrite phase: the property
         // loop above has completed, so visibleParamMap's contents are final for every
         // rewrite below, and all rows share the exact same context (see ResolverWalkMemos).
-        var walkMemos = new ResolverWalkMemos(observations, diagnostics);
+        var walkMemos = new ResolverWalkMemos(run, observations, diagnostics)
+        {
+            BranchDiagnosticTemplates = diagnosticTemplates,
+        };
 
         if (alg.ExplicitParameterPatterns.Count > 0 || branchContext is not null)
         {
@@ -471,7 +802,8 @@ internal static class ImplicitArgumentResolver
 
     private static IReadOnlyList<Expr> ProcessOpenExprs(
         IReadOnlyList<Expr> opens,
-        FrontEndTraversalObservations? observations)
+        FrontEndTraversalObservations? observations,
+        ResolutionRun run)
     {
         if (opens.Count == 0)
             return opens;
@@ -479,7 +811,7 @@ internal static class ImplicitArgumentResolver
         // One memo bundle per open-target region: every walk below runs with a fresh EMPTY
         // signature map, so the region's rewrite context is constant regardless of which
         // fresh map instance a call site allocates.
-        var memos = new ResolverWalkMemos(observations, diagnostics: null);
+        var memos = new ResolverWalkMemos(run, observations, diagnostics: null);
         var processed = new List<Expr>(opens.Count);
         foreach (var open in opens)
             processed.Add(ProcessOpenExpr(open, memos));
@@ -491,20 +823,96 @@ internal static class ImplicitArgumentResolver
         string propertyName,
         Dictionary<string, CallableSignature> parentParamMap,
         FrontEndTraversalObservations? observations,
-        List<Diagnostic>? diagnostics)
+        List<Diagnostic>? diagnostics,
+        ResolutionRun run)
     {
-        var newOpens = ProcessOpenExprs(conditional.Opens, observations);
+        var newOpens = ProcessOpenExprs(conditional.Opens, observations, run);
         var branches = new List<CondBranch>(conditional.Branches.Count);
         foreach (var branch in conditional.Branches)
         {
+            if (DeferredModuleRegions.TryGet(branch.Body, out var region))
+            {
+                // B2c: a deferred module region is not resolved eagerly (its provisional body
+                // is never evaluated, and resolving it could only report false forwarding
+                // refusals against names a deferred module provides). The region records the
+                // visible signature map as it stands HERE — a snapshot, since the property loop
+                // keeps extending the map — and is re-keyed by this region's own output body.
+                var placeholder = branch.Body with { };
+                DeferredModuleRegions.Register(
+                    placeholder,
+                    region.WithResolution(new DeferredBranchContext(
+                        new Dictionary<string, CallableSignature>(parentParamMap),
+                        propertyName,
+                        branch.Pattern)));
+                branches.Add(new CondBranch(branch.Pattern, placeholder));
+                continue;
+            }
+
+            // M4: the body is rewritten through the run's region memo — once per (body,
+            // free-name signature snapshot, closed binder specification, reporting mode). A
+            // body shared by several families under one region is rewritten once (sharing
+            // preserved in the output) and only its blocked-forwarding diagnostics, the one
+            // thing that names THIS family, are re-issued for the later families.
             var body = ProcessAlgorithm(
                 branch.Body, parentParamMap, isRoot: false, observations, diagnostics,
-                new ConditionalBranchContext(propertyName, branch.Pattern));
+                new ConditionalBranchContext(propertyName, branch.Pattern), run);
             branches.Add(new CondBranch(branch.Pattern, body));
         }
 
         return conditional with { Opens = newOpens, Branches = branches };
     }
+
+    /// <summary>
+    /// Re-issues a completed region's blocked strict-value reports for a further family that
+    /// shares the body — same references, same missing names, same spans, worded with THIS
+    /// family's name — so per-family diagnostic multiplicity matches a fresh rewrite without
+    /// performing one, independent of which family was reached first.
+    /// </summary>
+    private static void ReplayBranchDiagnostics(AlgorithmRegion region, string branchName, List<Diagnostic>? diagnostics)
+    {
+        if (diagnostics is null || region.DiagnosticTemplates is null)
+            return;
+
+        foreach (var template in region.DiagnosticTemplates)
+        {
+            diagnostics.Add(new Diagnostic(
+                FormatBlockedStrictValueForwarding(template.ReferenceDisplayName, template.MissingParameterNames, branchName),
+                DiagnosticSeverity.Error,
+                template.Span)
+            {
+                Code = DiagnosticCode.UndeclaredIdentifier,
+            });
+        }
+    }
+
+    /// <summary>
+    /// The resolution context of one deferred module region (B2c): the visible signature map
+    /// exactly as the eager walk saw it at the branch, plus the closed branch-pattern
+    /// specification, so the demand-time run rewrites the detected body under the same
+    /// forwarding rules.
+    /// </summary>
+    internal sealed record DeferredBranchContext(
+        IReadOnlyDictionary<string, CallableSignature> ParentParamMap,
+        string BranchName,
+        Pattern Pattern);
+
+    /// <summary>
+    /// Demand-time implicit-argument resolution of a deferred region's DETECTED body: the
+    /// ordinary closed-branch rewrite, with diagnostics.
+    /// </summary>
+    internal static Algorithm ElaborateDeferredBranch(
+        Algorithm detectedBody,
+        DeferredBranchContext context,
+        List<Diagnostic> diagnostics,
+        FrontEndTraversalObservations? observations = null)
+        => ProcessAlgorithm(
+            detectedBody,
+            new Dictionary<string, CallableSignature>(context.ParentParamMap),
+            isRoot: false,
+            observations,
+            diagnostics,
+            new ConditionalBranchContext(context.BranchName, context.Pattern),
+            new ResolutionRun());
 
     private static Expr ProcessOpenExpr(Expr expr, ResolverWalkMemos memos)
     {
@@ -808,13 +1216,17 @@ internal static class ImplicitArgumentResolver
         if (missing.Count == 0)
             return;
 
+        var span = reference.Span ?? new SourceSpan(0, 0, 0, 0);
         diagnostics.Add(new Diagnostic(
             FormatBlockedStrictValueForwarding(referenceDisplayName, missing, context.ConditionalBranchName),
             DiagnosticSeverity.Error,
-            reference.Span ?? new SourceSpan(0, 0, 0, 0))
+            span)
         {
             Code = DiagnosticCode.UndeclaredIdentifier,
         });
+        // A conditional branch body's own region keeps the report re-issuable for further
+        // families sharing the body (M4; see ConditionalBranchContext.DiagnosticTemplates).
+        memos.BranchDiagnosticTemplates?.Add(new BlockedForwardingTemplate(referenceDisplayName, missing, span));
     }
 
     /// <summary>
@@ -1439,7 +1851,8 @@ internal static class ImplicitArgumentResolver
         memos.Algorithms ??= new(ReferenceEqualityComparer.Instance);
         if (!memos.Algorithms.TryGetValue(alg, out var processed))
         {
-            processed = ProcessAlgorithm(alg, paramMap, isRoot: false, memos.Observations, memos.Diagnostics);
+            processed = ProcessAlgorithm(
+                alg, paramMap, isRoot: false, memos.Observations, memos.Diagnostics, branchContext: null, memos.Run);
             memos.Algorithms[alg] = processed;
         }
 

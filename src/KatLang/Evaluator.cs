@@ -1819,6 +1819,25 @@ public static partial class Evaluator
     }
 
     /// <summary>
+    /// Routing enforcement for the synchronous entry family, B2c half: a root carrying
+    /// deferred module regions (conditional branches whose module dependencies load on
+    /// demand) can select a branch only by awaiting the module downloader, which the
+    /// synchronous pipeline is structurally unable to do. Rejected here, before any tree
+    /// work, as a host configuration error — the same rule and the same shape as the
+    /// asynchronous host-operation rejection above.
+    /// </summary>
+    private static void ThrowIfDeferredModuleRegionsOnSynchronousEntry(Expr expr)
+    {
+        if (DeferredModuleRegions.RequiresAsyncEvaluation(expr))
+        {
+            throw new InvalidOperationException(
+                "The program contains conditional branches whose module dependencies load on demand " +
+                "(deferred module regions), which a synchronous evaluation entry point cannot await. " +
+                "Use RunAsync (or an async KatLangEngine entry point).");
+        }
+    }
+
+    /// <summary>
     /// Shared pre-evaluation validation gate for every prebuilt-AST entry point.
     /// Lean: the validation pass <c>runResultM</c> runs before any evaluation
     /// (<c>validateExplicitParamOutputInvariantExpr</c>). The violation kinds map
@@ -1904,6 +1923,7 @@ public static partial class Evaluator
         // token stops the run before the structural preflight spends O(tree) work.
         cancellationToken.ThrowIfCancellationRequested();
         ThrowIfAsynchronousHostOperationsOnSynchronousEntry(hostOperations);
+        ThrowIfDeferredModuleRegionsOnSynchronousEntry(expr);
 
         return PrepareAdmittedRun(
             expr,

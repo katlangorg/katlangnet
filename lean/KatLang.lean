@@ -250,6 +250,14 @@ structure CallableArgumentBindings (α : Type) where
   collectingItems : List α := []
   deriving Repr
 
+/-- Exposure classification of a `PropDef`: an INPUT to lookup, computed by the C# front
+    end and never derived here. `open` exposes public `.exported` members and structural
+    dot access reaches `.exported` members. `.localCapturedAncestorParams`: the value
+    requires an input only an enclosing owner's call binds (a parameter, or a conditional
+    branch's pattern binder). `.localConditional` is the family-level reason a name access
+    into a conditional's branch bodies is refused (`conditionalBranchesDefineProperty`);
+    the front end never assigns it to a `PropDef` — a branch's own declarations classify
+    exactly like declarations in any other body. -/
 inductive PropExposure where
   | exported
   | localCapturedAncestorParams

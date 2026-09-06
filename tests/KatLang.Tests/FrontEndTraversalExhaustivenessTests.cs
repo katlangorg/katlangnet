@@ -203,6 +203,20 @@ public class FrontEndTraversalExhaustivenessTests
         return Task.CompletedTask;
     }
 
+    private static Task RunImplicitReferenceNames(Expr sample)
+    {
+        // The free-reference-name walk keys the region memo of every NESTED algorithm, so the
+        // sample sits in a property value's output.
+        var root = new Algorithm.User(
+            Parent: null,
+            Parameters: [],
+            Opens: [],
+            Properties: [new Property("Nested", EmptyAlgorithm(sample))],
+            Output: OutputBundle.Empty);
+        Assert.NotNull(ImplicitArgumentResolver.Resolve(root));
+        return Task.CompletedTask;
+    }
+
     private static Task RunExposureRewrite(Expr sample)
     {
         Assert.NotNull(PropertyExposureResolver.Resolve(EmptyAlgorithm(sample)));
@@ -283,6 +297,7 @@ public class FrontEndTraversalExhaustivenessTests
             ["ImplicitArgumentResolver.CollectImplicitDeps"] = RunImplicitOutputWalks,
             ["ImplicitArgumentResolver.RewriteImplicitCalls"] = RunImplicitOutputWalks,
             ["ImplicitArgumentResolver.ProcessExprNested"] = RunImplicitNestedExpr,
+            ["ImplicitArgumentResolver.CollectReferenceNames"] = RunImplicitReferenceNames,
             ["PropertyExposureResolver.RewriteExpr"] = RunExposureRewrite,
             ["PropertyDependencyGraphBuilder.CollectSummarySeed"] = RunDependencySummaryWalk,
             ["PropertyDependencyGraphBuilder.CollectSiblingDependencyIndices"] = RunDependencyOrderWalk,
@@ -291,8 +306,8 @@ public class FrontEndTraversalExhaustivenessTests
         };
 
     [Fact]
-    public void TraversalInventory_IsExactlyTheFifteenH4Sites()
-        => Assert.Equal(15, TraversalDrivers.Count);
+    public void TraversalInventory_IsExactlyTheSixteenH4Sites()
+        => Assert.Equal(16, TraversalDrivers.Count);
 
     public static TheoryData<string, string> TraversalVariantMatrix()
     {
@@ -806,6 +821,100 @@ public class FrontEndTraversalExhaustivenessTests
         else
         {
             Assert.Empty(diagnostics);
+            var moduleFinder = new SplicedModuleFinder();
+            moduleFinder.VisitAlgorithm(elaborated);
+            Assert.True(moduleFinder.FoundModuleProperty, $"expected the stub module to be spliced at {position}");
+        }
+    }
+
+    // ── ModuleLoader: clause-family positions — shared opens eager, branch bodies deferred ──
+
+    /// <summary>
+    /// Clause-family positions for the loader walks (B2c). A family's OWN open list (host
+    /// trees) is shared by every alternative and is elaborated eagerly. Everything under an
+    /// alternative branch body — its opens, a property value, an output row, a runtime
+    /// expression, an inner family, a family in expression position — is a deferred module
+    /// region: the walks never descend into it, so no download, no diagnostic, and the load
+    /// directive stays inside the region INTENTIONALLY (the post-elaboration guard knows it
+    /// is deferred, not forgotten) until evaluation selects the branch.
+    /// </summary>
+    public static TheoryData<string, bool> ClauseFamilyLoadBearingPositions() => new()
+    {
+        { "Conditional.Opens", false },
+        { "Branch.Opens", true },
+        { "Branch.PropertyValue", true },
+        { "Branch.OutputRow", true },
+        { "Branch.OutputRow.RuntimeExpr", true },
+        { "NestedConditional.Branch.Opens", true },
+        { "ExpressionPositionConditional.Branch.Opens", true },
+    };
+
+    private static Algorithm EmbedClauseFamilyLoad(string position)
+    {
+        static Algorithm.Conditional Family(IReadOnlyList<Expr> opens, Algorithm body)
+            => new(null, opens, [new CondBranch(new Pattern.LitInt(0), body)]);
+        return position switch
+        {
+            "Conditional.Opens" => Family([LoadCall()], EmptyAlgorithm(new Expr.Num(1))),
+            "Branch.Opens" => Family([], EmptyAlgorithm(new Expr.Num(1)) with { Opens = [LoadCall()] }),
+            "Branch.PropertyValue" => Family([], EmptyAlgorithm(new Expr.Num(1)) with
+            {
+                Properties = [new Property("Lib", EmptyAlgorithm(LoadCall()))],
+            }),
+            "Branch.OutputRow" => Family([], EmptyAlgorithm(LoadCall())),
+            "Branch.OutputRow.RuntimeExpr" => Family([], EmptyAlgorithm(new Expr.Unary(UnaryOp.Minus, LoadCall()))),
+            "NestedConditional.Branch.Opens" => Family([], EmptyAlgorithm(new Expr.Num(1)) with
+            {
+                Properties =
+                [
+                    new Property("Inner", Family([], EmptyAlgorithm(new Expr.Num(1)) with { Opens = [LoadCall()] })),
+                ],
+            }),
+            "ExpressionPositionConditional.Branch.Opens" => EmptyAlgorithm(
+                new Expr.AlgorithmExpr(Family([], EmptyAlgorithm(new Expr.Num(1)) with { Opens = [LoadCall()] }))),
+            _ => throw new ArgumentOutOfRangeException(nameof(position)),
+        };
+    }
+
+    [Theory]
+    [MemberData(nameof(ClauseFamilyLoadBearingPositions))]
+    public async Task ModuleLoader_DefersEveryClauseFamilyBranchPosition(string position, bool deferred)
+    {
+        var downloads = 0;
+        var diagnostics = new List<Diagnostic>();
+        var loader = new ModuleLoader(
+            diagnostics,
+            (url, cancellationToken) =>
+            {
+                downloads++;
+                return ValueTask.FromResult("public X = 1");
+            });
+        var root = new Algorithm.User(
+            Parent: null,
+            Parameters: [],
+            Opens: [],
+            Properties: [new Property("Mod", EmbedClauseFamilyLoad(position))],
+            Output: OutputBundle.Empty);
+
+        var elaborated = await loader.ElaborateAsync(root);
+
+        Assert.Empty(diagnostics);
+        var loadCounter = new UnresolvedLoadCounter();
+        loadCounter.VisitAlgorithm(elaborated);
+        if (deferred)
+        {
+            Assert.Equal(0, downloads);
+            Assert.Equal(1, loader.DeferredRegionCount);
+            // The directive survives inside the deferred region by design; the guard
+            // distinguishes that from an unresolved load the pipeline forgot.
+            Assert.Equal(1, loadCounter.UnresolvedLoads);
+            Assert.False(LoadElaborationGuard.TryFindFirstUnresolvedLoad(elaborated, out _));
+        }
+        else
+        {
+            Assert.Equal(1, downloads);
+            Assert.Equal(0, loader.DeferredRegionCount);
+            Assert.Equal(0, loadCounter.UnresolvedLoads);
             var moduleFinder = new SplicedModuleFinder();
             moduleFinder.VisitAlgorithm(elaborated);
             Assert.True(moduleFinder.FoundModuleProperty, $"expected the stub module to be spliced at {position}");

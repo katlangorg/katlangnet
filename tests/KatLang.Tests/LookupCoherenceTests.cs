@@ -115,9 +115,40 @@ public class LookupCoherenceTests
             "Lib(p) = {\n    public X = p + 101\n    X\n}\nA = {\n    open Lib\n    X\n}\nA",
             "X", "err unknownName", new NoDeclaration()),
 
-        new("exposure.openLocalOnlyConditionalIsHidden",
+        // A declaration inside a conditional branch body is never reachable BY NAME from
+        // outside the conditional: `open Lib` provides Lib's own members (the family F), and
+        // the family exposes no structural members, so the branch's X is not provided.
+        new("exposure.openDoesNotReachBranchDeclarations",
             "Lib = {\n    public F(0) = {\n        public X = 101\n        X\n    }\n    public F(n) = n\n}\nA = {\n    open Lib\n    X\n}\nA(707)",
             "X", "ok raw=707 n=1", new ImplicitParameter("root.A")),
+
+        // An inline block in a branch body's OWN open list is a provider for that branch: its
+        // exported public member is visible to the branch in all three views.
+        new("exposure.openInlineBlockInsideBranchIsVisibleToTheBranch",
+            "F(0) = {\n    open { public X = 101 }\n    X\n}\nF(n) = n\nF(0)",
+            "X", "ok raw=101 n=1", new Declared("X", 1)),
+
+        // A self-contained library DECLARED in a branch body classifies exactly like one
+        // declared in a parameterized body, so a body nested in that branch may open it and
+        // all three views select the branch-local declaration.
+        new("exposure.openBranchLocalLibraryFromNestedBody",
+            "F(0) = {\n    Lib = {\n        public X = 101\n    }\n    G = {\n        open Lib\n        X\n    }\n    G\n}\nF(n) = n\nF(0)",
+            "X", "ok raw=101 n=1", new Declared("X", 1)),
+
+        // A branch-local member that captures the branch's pattern binder is local-only for
+        // the same reason a parameter-capturing member is, so `open Lib` hides it exactly as
+        // exposure.openLocalOnlyCapturedAncestorParamsIsHidden does for a parameter.
+        new("exposure.openBranchLocalBinderCapturingMemberIsHidden",
+            "F(0) = 0\nF(n) = {\n    Lib = {\n        public X = n + 101\n    }\n    G = {\n        open Lib\n        X\n    }\n    G\n}\nF(5)",
+            "X", "err unknownName", new NoDeclaration()),
+
+        // The family-level rule in all three views: a structural path into a branch body is
+        // refused at the family (runtime localOnlyProperty with the family-level reason), the
+        // editor leaves the member unresolved, and the detector promotes nothing — the branch
+        // declaration's own Exported classification never enters into it.
+        new("exposure.structuralDotDoesNotReachBranchDeclarations",
+            "F(0) = {\n    Lib = { public X = 101 }\n    Lib.X\n}\nF(n) = n\nF.Lib",
+            "Lib", "err localOnlyProperty", new NoDeclaration()),
 
         // Structural dot access deliberately sees private members; `open` does not.
         new("exposure.structuralDotSeesPrivateMember",

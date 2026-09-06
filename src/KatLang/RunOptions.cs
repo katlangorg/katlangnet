@@ -7,7 +7,9 @@ public sealed class RunOptions
 {
     /// <summary>
     /// Injected asynchronous code fetcher — the ONE source-loading contract: URL and the
-    /// configured <see cref="SourceProcessingCancellationToken"/> → source text. A host with the
+    /// active source-processing cancellation token to source text. Eager downloads receive
+    /// <see cref="SourceProcessingCancellationToken"/> unchanged; deferred branch downloads
+    /// receive a token linked to it and to the shared materialization's active consumers. A host with the
     /// source already in memory returns <c>ValueTask.FromResult(text)</c> and source processing
     /// completes synchronously; a networked host awaits ordinary managed I/O (for example
     /// <c>HttpClient.GetStringAsync(url, token)</c>) and source processing genuinely suspends
@@ -29,16 +31,18 @@ public sealed class RunOptions
 
     /// <summary>
     /// Host cancellation for parsing, module fetching, and front-end source processing.
-    /// The token is passed unchanged to <see cref="DownloadCode"/>. Cancellation
+    /// The token is passed unchanged to <see cref="DownloadCode"/> for eager loads and linked
+    /// with consumer cancellation for deferred branch loads, including their loader-gate wait. Cancellation
     /// is checked at front-end phase boundaries and immediately before and after each module
     /// fetch. It does not cancel arbitrary evaluator computation after source processing has
-    /// completed; use <see cref="EvaluationCancellationToken"/> to cancel evaluation and
+    /// completed, but remains authoritative for later deferred module materialization;
+    /// use <see cref="EvaluationCancellationToken"/> to cancel evaluation and
     /// <see cref="EvaluationLimits"/> to bound evaluator work.
-    /// <para>An <see cref="OperationCanceledException"/> is propagated as host cancellation only
-    /// when this token has been cancelled, and the escaping exception carries this exact token —
+    /// <para>When this token is cancelled, an escaping <see cref="OperationCanceledException"/>
+    /// carries this exact token, taking precedence over evaluation cancellation —
     /// including when the downloader's awaitable faults with a different exception or cancellation
-    /// token while the host token is cancelled. A downloader cancellation or timeout while this
-    /// token is not cancelled remains an ordinary <c>load: failed to fetch</c> diagnostic.</para>
+    /// token while the host token is cancelled. A downloader cancellation or timeout without
+    /// source or materialization cancellation remains an ordinary <c>load: failed to fetch</c> diagnostic.</para>
     /// </summary>
     public CancellationToken SourceProcessingCancellationToken { get; init; }
 
@@ -55,6 +59,10 @@ public sealed class RunOptions
     /// <para>Separate from <see cref="SourceProcessingCancellationToken"/>, which
     /// governs parsing and module loading only. A host that wants one stop signal for
     /// the whole pipeline passes the same token to both properties.</para>
+    /// <para>A cancelled evaluation leaves a shared deferred materialization immediately. The
+    /// underlying work is cancelled only when its last consumer leaves; it cannot publish an
+    /// abandoned body. Source-processing cancellation remains authoritative when both tokens
+    /// are cancelled during materialization.</para>
     /// <para>Requested cancellation escapes as
     /// <see cref="OperationCanceledException"/> carrying this token — never a KatLang
     /// diagnostic, and never a retained resource-limit value, so a cancelled run does

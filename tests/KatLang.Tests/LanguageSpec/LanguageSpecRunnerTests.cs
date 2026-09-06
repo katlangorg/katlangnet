@@ -230,6 +230,8 @@ public class LanguageSpecRunnerTests
         [
             "decon-two-collecting-rejected",
             "expression-position-block-closed-list-is-diagnosed",
+            "conditional-branch-inline-open-does-not-leak-to-sibling-branches",
+            "conditional-branch-local-library-does-not-leak-to-sibling-branches",
             "negative-index-literal-rejected",
             "closed-list-strict-value-forwarding",
             "open-capture-target-rejected",

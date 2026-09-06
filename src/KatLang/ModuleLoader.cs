@@ -3,13 +3,14 @@ using System.Runtime.CompilerServices;
 namespace KatLang;
 
 /// <summary>
-/// Elaboration pass that resolves <c>load("url")</c> calls at compile time.
-/// Runs AFTER parsing but BEFORE parameter detection and evaluation.
+/// Elaboration pass that resolves <c>load('url')</c> directives after parsing.
+/// Eager regions load before parameter detection; conditional alternatives load on selection.
 ///
 /// <para>
-/// <c>load</c> is a compile-time directive, NOT a runtime function.
-/// After this pass completes, no load calls remain in the AST — they are replaced
-/// with <see cref="Expr.AlgorithmExpr"/> nodes containing the parsed remote algorithm.
+/// <c>load</c> is a source-elaboration directive, NOT a runtime function.
+/// Outside registered deferred branch regions, load calls are replaced with
+/// <see cref="Expr.AlgorithmExpr"/> nodes containing the parsed remote algorithm.
+/// A selected deferred region completes loading and front-end elaboration before its body runs.
 /// </para>
 ///
 /// <para><b>Async-only module acquisition:</b> source text is obtained through ONE
@@ -58,10 +59,60 @@ internal sealed class ModuleLoader
 {
     private readonly Func<string, CancellationToken, ValueTask<string>> _downloadCode;
     private readonly CancellationToken _sourceProcessingCancellationToken;
+
+    // The token the walks and the downloader observe RIGHT NOW. During initial elaboration it
+    // is the configured source-processing token. While a deferred region materializes (under
+    // the materialization gate) it is that token LINKED with the requesting materialization's
+    // own token: a deferred materialization exists only because evaluation selected a branch,
+    // so the requesting evaluation's lifetime cancels its module work — an in-flight download
+    // receives the cancellation, the partial module never reaches the cache, and the budget
+    // reservations roll back exactly as for host source cancellation (see
+    // LoadDeferredRegionAsync). Ordinary eager loads never see anything but the configured
+    // token, and the configured token keeps its IDENTITY whenever it is the cancelled one
+    // (see ThrowIfCancellationRequested).
+    private CancellationToken _cancellationToken;
     private readonly HashSet<string> _allowedHosts;
     private readonly Dictionary<string, Algorithm> _cache = new();
     private readonly HashSet<string> _inProgress = new();
     private readonly List<Diagnostic> _diagnostics;
+
+    // The diagnostics sink the walks report into: the elaboration's own list during
+    // ElaborateAsync, and a per-materialization list while a deferred region is being
+    // materialized (LoadDeferredRegionAsync swaps it under the materialization gate), so a
+    // demand-time load never appends to a parse result that has already been published.
+    private List<Diagnostic> _sink;
+
+    // B2c: materializations are serialized per loader exactly as initial elaboration is one
+    // logical sequence — the walk memos, the in-progress module set, and the traversal base
+    // are plain fields by that contract. Concurrent selections of one or several deferred
+    // branches queue here; a region already materialized by the time its turn comes returns
+    // the cached body without any loader work.
+    private readonly SemaphoreSlim _materializationGate = new(1, 1);
+
+    /// <summary>Deferred module regions this loader created during its most recent walk (test-observable).</summary>
+    internal int DeferredRegionCount { get; private set; }
+
+    /// <summary>The configured host source-processing token — the authoritative cancellation identity.</summary>
+    internal CancellationToken SourceProcessingCancellationToken => _sourceProcessingCancellationToken;
+
+    /// <summary>
+    /// The ONE cancellation observation of the loader's walks and fetches. The configured
+    /// source-processing token is checked FIRST so that whenever the host cancelled source
+    /// processing the thrown exception carries exactly that token (the established identity
+    /// contract), and only then the active token — which additionally carries a deferred
+    /// materialization's own cancellation while one is in flight.
+    /// </summary>
+    private void ThrowIfCancellationRequested()
+    {
+        _sourceProcessingCancellationToken.ThrowIfCancellationRequested();
+        _cancellationToken.ThrowIfCancellationRequested();
+    }
+
+    private bool IsCancellationRequested
+        => _sourceProcessingCancellationToken.IsCancellationRequested || _cancellationToken.IsCancellationRequested;
+
+    /// <summary>The per-loader materialization gate (see <see cref="DeferredModuleRegion.MaterializeAsync"/>).</summary>
+    internal SemaphoreSlim MaterializationGate => _materializationGate;
 
     // Reference-identity set of nodes with an unresolved load call at or beneath them —
     // the load-bearing spines. Populated by MarkLoadBearing before each tree is walked
@@ -276,8 +327,10 @@ internal sealed class ModuleLoader
         ArgumentNullException.ThrowIfNull(downloadCode);
 
         _diagnostics = diagnostics;
+        _sink = diagnostics;
         _downloadCode = downloadCode;
         _sourceProcessingCancellationToken = sourceProcessingCancellationToken;
+        _cancellationToken = sourceProcessingCancellationToken;
         _allowedHosts = allowedHosts is not null
             ? new HashSet<string>(allowedHosts, StringComparer.OrdinalIgnoreCase)
             : new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "katlang.org" };
@@ -327,7 +380,7 @@ internal sealed class ModuleLoader
     /// </exception>
     public async ValueTask<Algorithm> ElaborateAsync(Algorithm root)
     {
-        _sourceProcessingCancellationToken.ThrowIfCancellationRequested();
+        ThrowIfCancellationRequested();
         try
         {
             // Structural safety boundary for this recursive consumer: checked iteratively
@@ -362,7 +415,7 @@ internal sealed class ModuleLoader
                 return new Algorithm.User(null, [], [], [], []);
             }
 
-            _sourceProcessingCancellationToken.ThrowIfCancellationRequested();
+            ThrowIfCancellationRequested();
 
             // Cache hits deliberately skip fetch, parse, and recursive loader traversal,
             // but a module cached at a shallow site may later be spliced under a much
@@ -397,7 +450,7 @@ internal sealed class ModuleLoader
     /// <summary>
     /// Tracks where a load call appears to enforce position restrictions.
     /// </summary>
-    private enum LoadContext
+    internal enum LoadContext
     {
         /// <summary>Top-level algorithm body.</summary>
         TopLevel,
@@ -418,9 +471,11 @@ internal sealed class ModuleLoader
     /// node — full-path marking makes "marked" upward-closed — so total marking work
     /// stays proportional to the marked spine. The scan's reach is a superset of the
     /// rewrite walk's reach (it is an <see cref="AstWalker"/>, which additionally
-    /// visits patterns, conditional branches, and stored fallback identities the
-    /// rewrite walk leaves untouched), so an UNMARKED node is proof its subtree
-    /// elaborates without ever needing to await.
+    /// visits patterns and stored fallback identities the rewrite walk leaves
+    /// untouched, and it descends every conditional branch body while the rewrite
+    /// walks defer load-bearing ones), so an UNMARKED node is proof its subtree
+    /// elaborates without ever needing to await, and a MARKED branch body is exactly
+    /// one that <see cref="DeferOrKeepBranches"/> must defer.
     ///
     /// <para><b>DAG-safety:</b> the scan is reference-identity memoized per call. A
     /// completed node's marked-ness is exactly "its subtree reaches a load", so a
@@ -527,7 +582,12 @@ internal sealed class ModuleLoader
     /// </summary>
     private ValueTask<Algorithm> RouteAlgorithmAsync(Algorithm alg, LoadContext context, int depth)
         => _loadBearing.Contains(alg)
-            ? ProcessAlgorithmAsync(alg, context, depth)
+            // Clause families dispatch HERE, before any state machine is entered, to their
+            // own twin: the ordinary-body twin keeps exactly its calibrated await sites and
+            // frame, and a family level still costs one state-machine frame.
+            ? alg is Algorithm.Conditional conditional
+                ? ProcessConditionalAlgorithmAsync(conditional, context, depth)
+                : ProcessAlgorithmAsync(alg, context, depth)
             : new ValueTask<Algorithm>(ProcessAlgorithm(alg, context, depth));
 
     /// <summary>MIRROR OF <see cref="RouteAlgorithmAsync"/> for expression children.</summary>
@@ -550,7 +610,7 @@ internal sealed class ModuleLoader
     private Algorithm ProcessAlgorithm(Algorithm alg, LoadContext context, int depth)
     {
         ThrowIfInsufficientStack();
-        _sourceProcessingCancellationToken.ThrowIfCancellationRequested();
+        ThrowIfCancellationRequested();
 
         if (alg is Algorithm.Builtin) return alg;
 
@@ -560,56 +620,88 @@ internal sealed class ModuleLoader
 
         TraversalObservations?.RecordLoaderWalkExpansion();
 
-        var newOpens = new List<Expr>(alg.Opens.Count);
-        foreach (var open in alg.Opens)
-            newOpens.Add(ProcessExpr(open, LoadContext.OpenList, depth + 1));
-
-        var newProperties = new List<Property>(alg.Properties.Count);
-        foreach (var prop in alg.Properties)
+        Algorithm result;
+        if (alg is Algorithm.Conditional conditional)
         {
-            var processedValue = ProcessAlgorithm(prop.Value, LoadContext.PropertyDef, depth + 1);
-            // Unwrap only algorithm-valued single-block property bodies. A plain
-            // sequence value such as (a, b) stays one captured value boundary,
-            // while load-elaborated modules become direct property values.
-            processedValue = processedValue.UnwrapSingleBlockPropertyBody();
-            newProperties.Add(prop.WithValue(processedValue));
+            // A clause family (B2c): its family-owned open list (host trees only — parsed
+            // families keep their opens on the branch bodies) is SHARED by every alternative
+            // and is processed eagerly like any open list, while each alternative branch body
+            // is a deferred module-elaboration region — see DeferOrKeepBranches. On this
+            // synchronous walk the family is load-free, so every branch is simply kept.
+            var newFamilyOpens = new List<Expr>(conditional.Opens.Count);
+            foreach (var open in conditional.Opens)
+                newFamilyOpens.Add(ProcessExpr(open, LoadContext.OpenList, depth + 1));
+
+            result = conditional with
+            {
+                Opens = newFamilyOpens,
+                Branches = DeferOrKeepBranches(conditional, context, depth),
+            };
         }
-
-        var newOutput = new List<Expr>(alg.Output.Count);
-        foreach (var expr in alg.Output)
+        else
         {
-            // In a property definition or open list body, output is allowed for load
-            // At top-level, output is runtime
-            var outputCtx = context is LoadContext.PropertyDef or LoadContext.OpenList
-                ? LoadContext.PropertyDef
-                : LoadContext.RuntimeExpr;
-            newOutput.Add(ProcessExpr(expr, outputCtx, depth + 1));
+            var newOpens = new List<Expr>(alg.Opens.Count);
+            foreach (var open in alg.Opens)
+                newOpens.Add(ProcessExpr(open, LoadContext.OpenList, depth + 1));
+
+            var newProperties = new List<Property>(alg.Properties.Count);
+            foreach (var prop in alg.Properties)
+            {
+                var processedValue = ProcessAlgorithm(prop.Value, LoadContext.PropertyDef, depth + 1);
+                // Unwrap only algorithm-valued single-block property bodies. A plain
+                // sequence value such as (a, b) stays one captured value boundary,
+                // while load-elaborated modules become direct property values.
+                processedValue = processedValue.UnwrapSingleBlockPropertyBody();
+                newProperties.Add(prop.WithValue(processedValue));
+            }
+
+            var newOutput = new List<Expr>(alg.Output.Count);
+            foreach (var expr in alg.Output)
+            {
+                // In a property definition or open list body, output is allowed for load
+                // At top-level, output is runtime
+                var outputCtx = context is LoadContext.PropertyDef or LoadContext.OpenList
+                    ? LoadContext.PropertyDef
+                    : LoadContext.RuntimeExpr;
+                newOutput.Add(ProcessExpr(expr, outputCtx, depth + 1));
+            }
+
+            result = alg with
+            {
+                Opens = newOpens,
+                Properties = newProperties,
+                Output = newOutput,
+            };
         }
-
-        var result = alg with
-        {
-            Opens = newOpens,
-            Properties = newProperties,
-            Output = newOutput,
-        };
 
         memo[alg] = result;
         return result;
     }
 
     /// <summary>
-    /// MIRROR OF <see cref="ProcessAlgorithm"/> — keep in lock-step. Runs only on
-    /// load-bearing spines (see <see cref="RouteAlgorithmAsync"/>); each child routes
-    /// back to the synchronous walk the moment its subtree is load-free. The memo entry
-    /// is stored only after the (possibly suspending) processing fully completed, from
-    /// INSIDE this one state machine — no wrapper frame may join the recursion spine.
+    /// MIRROR OF the ordinary-body part of <see cref="ProcessAlgorithm"/> — keep in
+    /// lock-step (clause families: <see cref="ProcessConditionalAlgorithmAsync"/>). Runs
+    /// only on load-bearing spines (see <see cref="RouteAlgorithmAsync"/>); each child
+    /// routes back to the synchronous walk the moment its subtree is load-free. The memo
+    /// entry is stored only after the (possibly suspending) processing fully completed,
+    /// from INSIDE this one state machine — no wrapper frame may join the recursion spine.
     /// </summary>
     private async ValueTask<Algorithm> ProcessAlgorithmAsync(Algorithm alg, LoadContext context, int depth)
     {
         ThrowIfInsufficientStack();
-        _sourceProcessingCancellationToken.ThrowIfCancellationRequested();
+        ThrowIfCancellationRequested();
 
         if (alg is Algorithm.Builtin) return alg;
+
+        if (alg is Algorithm.Conditional)
+        {
+            // Unreachable by construction: RouteAlgorithmAsync dispatches families to their
+            // own twin. Fail loudly rather than rewrite a family through the ordinary-body
+            // accessors, which are empty for it (the original traversal gap).
+            throw new InvalidOperationException(
+                "Internal error: the ordinary-body async module-elaboration walk reached a clause family. " +
+                "Families route through ProcessConditionalAlgorithmAsync.");
+        }
 
         var memo = _loadBearingAlgorithmWalkMemos[(int)context] ??=
             new(ReferenceEqualityComparer.Instance);
@@ -657,6 +749,186 @@ internal sealed class ModuleLoader
 
         rewritesByDepth[effectiveDepth] = result;
         return result;
+    }
+
+    /// <summary>
+    /// MIRROR OF the clause-family arm of <see cref="ProcessAlgorithm"/> — keep in lock-step.
+    /// A separate twin rather than an arm inside <see cref="ProcessAlgorithmAsync"/> so the
+    /// ordinary-body twin keeps exactly its calibrated await sites and frame; a family level
+    /// still costs one state-machine frame because <see cref="RouteAlgorithmAsync"/> dispatches
+    /// here before any state machine is entered. Same memo discipline as the ordinary twin:
+    /// keyed by context and effective live depth, stored only after completion. Only the
+    /// family-owned opens can await here: branch bodies are deferred, never descended
+    /// (<see cref="DeferOrKeepBranches"/>).
+    /// </summary>
+    private async ValueTask<Algorithm> ProcessConditionalAlgorithmAsync(
+        Algorithm.Conditional conditional, LoadContext context, int depth)
+    {
+        ThrowIfInsufficientStack();
+        ThrowIfCancellationRequested();
+
+        var memo = _loadBearingAlgorithmWalkMemos[(int)context] ??=
+            new(ReferenceEqualityComparer.Instance);
+        if (!memo.TryGetValue(conditional, out var rewritesByDepth))
+        {
+            rewritesByDepth = [];
+            memo[conditional] = rewritesByDepth;
+        }
+
+        var effectiveDepth = checked(_nestedTraversalBase + depth);
+        if (rewritesByDepth.TryGetValue(effectiveDepth, out var memoized))
+            return memoized;
+
+        TraversalObservations?.RecordLoaderWalkExpansion();
+
+        var newFamilyOpens = new List<Expr>(conditional.Opens.Count);
+        foreach (var open in conditional.Opens)
+            newFamilyOpens.Add(await RouteExprAsync(open, LoadContext.OpenList, depth + 1).ConfigureAwait(false));
+
+        var result = conditional with
+        {
+            Opens = newFamilyOpens,
+            Branches = DeferOrKeepBranches(conditional, context, depth),
+        };
+        rewritesByDepth[effectiveDepth] = result;
+        return result;
+    }
+
+    // ── B2c: deferred module regions ────────────────────────────────────────
+
+    /// <summary>
+    /// The ONE owner of branch-lazy module loading's initial-elaboration rule, shared by both
+    /// family walks. A branch body that the load-bearing pre-scan proved to contain no
+    /// unresolved load is kept exactly as written (there is nothing to elaborate and the eager
+    /// front end elaborates it in full). A LOAD-BEARING branch body is not descended: it
+    /// becomes a deferred module-elaboration region — nothing under it is fetched, parsed,
+    /// elaborated, or budget-charged until evaluation selects that branch — represented in
+    /// the output tree by a fresh placeholder object (a shallow clone of the raw body, so the
+    /// family keeps its written branch shape and output arity) registered in
+    /// <see cref="DeferredModuleRegions"/> with this walk's context: the family's load
+    /// context (the body inherits it exactly as eager elaboration would), the body's counted
+    /// depth (<c>CondBranch</c> is a depth membrane, so one level below the family), and the
+    /// live traversal base. A fresh placeholder per branch OCCURRENCE keeps regions distinct
+    /// even when host branches share one raw body object.
+    /// </summary>
+    private IReadOnlyList<CondBranch> DeferOrKeepBranches(Algorithm.Conditional conditional, LoadContext context, int depth)
+    {
+        var branches = new List<CondBranch>(conditional.Branches.Count);
+        foreach (var branch in conditional.Branches)
+        {
+            if (!_loadBearing.Contains(branch.Body))
+            {
+                branches.Add(branch);
+                continue;
+            }
+
+            var placeholder = branch.Body with { };
+            DeferredModuleRegions.Register(
+                placeholder,
+                new DeferredModuleRegion(this, branch.Body, context, depth + 1, _nestedTraversalBase));
+            DeferredRegionCount++;
+            branches.Add(new CondBranch(branch.Pattern, placeholder));
+        }
+
+        return branches;
+    }
+
+    /// <summary>
+    /// The loader half of materializing a deferred region (called by
+    /// <see cref="DeferredModuleRegion.MaterializeAsync"/> under this loader's
+    /// <see cref="MaterializationGate"/>): the region's raw body is walked exactly like a
+    /// subtree of the initial elaboration — its own pre-scan, the routed sync/async walks,
+    /// the same per-URL cache, cycle detection, policy checks, and budgets, judged at the
+    /// depth and live traversal base the eager walk recorded — with diagnostics reported into
+    /// <paramref name="diagnostics"/> rather than the published parse result. Nested clause
+    /// families inside the body are deferred again by the same rule. The composed body is
+    /// then re-gated at both structural ceilings the eager pipeline applies (the raw-syntax
+    /// cap after splicing and the elaboration ceiling), against the allowance left at the
+    /// region's depth, and checked for unresolved loads outside nested deferred regions.
+    /// The walk memos and the load-bearing set are cleared afterwards, as at the
+    /// elaboration boundary.
+    ///
+    /// <para><paramref name="materializationCancellationToken"/> is the requesting
+    /// materialization's own token (cancelled once no evaluation needs the region any more —
+    /// see <see cref="DeferredModuleRegion.MaterializeAsync"/>). For the duration of this
+    /// load it is LINKED with the configured source-processing token into the active token
+    /// every walk check and the downloader observe, so an in-flight download is cancelled
+    /// with the evaluation, nothing partial reaches the module cache, and budget
+    /// reservations roll back; the linked source is disposed on the way out, so no
+    /// registration outlives the load. Cancellation identity: the configured
+    /// source-processing token whenever it is the cancelled one, otherwise the linked token
+    /// (the region maps that to the requesting evaluation's own token).</para>
+    /// </summary>
+    internal async ValueTask<Algorithm> LoadDeferredRegionAsync(
+        DeferredModuleRegion region,
+        List<Diagnostic> diagnostics,
+        CancellationToken materializationCancellationToken)
+    {
+        ThrowIfCancellationRequested();
+        materializationCancellationToken.ThrowIfCancellationRequested();
+
+        using var linkedCancellation = CancellationTokenSource.CreateLinkedTokenSource(
+            _sourceProcessingCancellationToken,
+            materializationCancellationToken);
+        var previousSink = _sink;
+        var previousTraversalBase = _nestedTraversalBase;
+        var previousCancellationToken = _cancellationToken;
+        _sink = diagnostics;
+        _nestedTraversalBase = region.NestedTraversalBase;
+        _cancellationToken = linkedCancellation.Token;
+        try
+        {
+            Algorithm loaded;
+            try
+            {
+                MarkLoadBearing(region.RawBody);
+                loaded = await RouteAlgorithmAsync(region.RawBody, region.Context, region.Depth).ConfigureAwait(false);
+            }
+            catch (ModuleElaborationStackException)
+            {
+                ReportSourceProcessingDiagnostic(
+                    SourceProcessingDiagnostics.ModuleElaborationStackExhausted(MaxTraversalDepth));
+                return region.RawBody;
+            }
+
+            ThrowIfCancellationRequested();
+
+            if (AstStructuralPreflight.Check(
+                    loaded,
+                    MaxTraversalDepth - region.Depth,
+                    AstConsumerProfile.FullyRecursive) is { } compositionRejection)
+            {
+                ReportSourceProcessingDiagnostic(AstStructuralPreflight.ToParseDiagnostic(
+                    compositionRejection, MaxTraversalDepth));
+                return loaded;
+            }
+
+            if (AstStructuralPreflight.Check(
+                    loaded,
+                    EvaluationLimits.MaxSupportedAstDepth - region.Depth,
+                    AstConsumerProfile.FullyRecursive) is { } elaborationRejection)
+            {
+                _sink.Add(AstStructuralPreflight.ToParseDiagnostic(
+                    elaborationRejection, EvaluationLimits.MaxSupportedAstDepth));
+                return loaded;
+            }
+
+            if (LoadElaborationGuard.TryFindFirstUnresolvedLoad(loaded, out _))
+                _sink.Add(LoadElaborationGuard.CreatePostElaborationInvariantDiagnostic(loaded));
+
+            return loaded;
+        }
+        finally
+        {
+            _cancellationToken = previousCancellationToken;
+            _nestedTraversalBase = previousTraversalBase;
+            _sink = previousSink;
+            _loadBearing.Clear();
+            Array.Clear(_exprWalkMemos);
+            Array.Clear(_algorithmWalkMemos);
+            Array.Clear(_loadBearingExprWalkMemos);
+            Array.Clear(_loadBearingAlgorithmWalkMemos);
+        }
     }
 
     // ── Expression processing (synchronous walk: load-free subtrees) ─────────
@@ -1141,25 +1413,27 @@ internal sealed class ModuleLoader
             string source;
             try
             {
-                _sourceProcessingCancellationToken.ThrowIfCancellationRequested();
-                source = await _downloadCode(normalizedUrl, _sourceProcessingCancellationToken).ConfigureAwait(false);
-                _sourceProcessingCancellationToken.ThrowIfCancellationRequested();
+                ThrowIfCancellationRequested();
+                source = await _downloadCode(normalizedUrl, _cancellationToken).ConfigureAwait(false);
+                ThrowIfCancellationRequested();
             }
-            catch (OperationCanceledException) when (_sourceProcessingCancellationToken.IsCancellationRequested)
+            catch (OperationCanceledException) when (IsCancellationRequested)
             {
                 // Host cancellation is authoritative, including TOKEN IDENTITY. The
                 // downloader may have faulted with its own timeout/cancellation token
-                // while reacting to the host request; normalize that race to the exact
-                // configured source-processing token instead of leaking the downloader's.
-                _sourceProcessingCancellationToken.ThrowIfCancellationRequested();
+                // while reacting to the request; normalize that race to the exact
+                // configured source-processing token — or, for a deferred materialization
+                // cancelled by the evaluation that requested it, to the active linked token
+                // — instead of leaking the downloader's.
+                ThrowIfCancellationRequested();
                 throw; // Unreachable; keeps the compiler's flow analysis explicit.
             }
             catch (Exception ex)
             {
-                // Host cancellation is authoritative even if the downloader surfaced a different
-                // exception while reacting to it. Only a still-active host token permits a fetch
+                // Cancellation is authoritative even if the downloader surfaced a different
+                // exception while reacting to it. Only a still-active token permits a fetch
                 // diagnostic (including downloader-owned cancellation/timeout exceptions).
-                _sourceProcessingCancellationToken.ThrowIfCancellationRequested();
+                ThrowIfCancellationRequested();
                 ReportError(DiagnosticCode.LoadFetchFailed, $"load: failed to fetch '{normalizedUrl}': {ex.Message}", span);
                 return new Expr.Num(0) { Span = span };
             }
@@ -1206,7 +1480,7 @@ internal sealed class ModuleLoader
             // stack proof). A module whose nesting no longer fits the indebted
             // budget is rejected by the parser at the crossing token, and reported
             // here on the established load channel at the load site.
-            _sourceProcessingCancellationToken.ThrowIfCancellationRequested();
+            ThrowIfCancellationRequested();
             var syntaxResult = Parser.ParseSyntax(source, parseStackDebt);
 
             if (syntaxResult.HasErrors)
@@ -1234,7 +1508,7 @@ internal sealed class ModuleLoader
             // nested diagnostic keeps its semantic family through the re-wrap.
             foreach (var diag in syntaxResult.Diagnostics)
             {
-                _diagnostics.Add(new Diagnostic(
+                _sink.Add(new Diagnostic(
                     $"[while loading {normalizedUrl}] {diag.Message}",
                     diag.Severity,
                     diag.Span)
@@ -1266,7 +1540,8 @@ internal sealed class ModuleLoader
             // Recursively elaborate any load calls in the fetched module. The fetched
             // tree gets its own load-bearing pre-scan so its load-free subtrees take
             // the synchronous walk too.
-            _sourceProcessingCancellationToken.ThrowIfCancellationRequested();
+            ThrowIfCancellationRequested();
+            var nestedDiagnosticStart = _sink.Count;
             MarkLoadBearing(syntaxResult.SyntaxRoot);
             var previousTraversalBase = _nestedTraversalBase;
             _nestedTraversalBase = traversalBase;
@@ -1283,18 +1558,19 @@ internal sealed class ModuleLoader
 
             // Cancellation never commits a partial module. This check also observes cancellation
             // requested during parsing or recursive elaboration before the cache write.
-            _sourceProcessingCancellationToken.ThrowIfCancellationRequested();
+            ThrowIfCancellationRequested();
 
             // Mark the module root for editor tooling BEFORE caching so cache hits
             // splice the same marked instance: spans inside the module belong to
             // the module's source text, not the loading document's.
             if (elaborated is Algorithm.User moduleRoot)
                 elaborated = moduleRoot with { IsModuleElaborated = true };
-            _cache[normalizedUrl] = elaborated;
+            if (!_sink.Skip(nestedDiagnosticStart).Any(static diagnostic => diagnostic.Severity == DiagnosticSeverity.Error))
+                _cache[normalizedUrl] = elaborated;
 
             return new Expr.AlgorithmExpr(elaborated) { Span = span };
         }
-        catch (OperationCanceledException) when (_sourceProcessingCancellationToken.IsCancellationRequested)
+        catch (OperationCanceledException) when (IsCancellationRequested)
         {
             if (hasModuleSourceReservation)
                 _budget.RollbackModuleSource(reservedSourceLength);
@@ -1371,7 +1647,7 @@ internal sealed class ModuleLoader
 
     private void ReportError(DiagnosticCode code, string message, SourceSpan? span)
     {
-        _diagnostics.Add(new Diagnostic(
+        _sink.Add(new Diagnostic(
             message,
             DiagnosticSeverity.Error,
             span ?? new SourceSpan(1, 1, 1, 1))
@@ -1383,6 +1659,6 @@ internal sealed class ModuleLoader
     private void ReportSourceProcessingDiagnostic(Diagnostic diagnostic)
     {
         HasSourceProcessingErrors = true;
-        _diagnostics.Add(diagnostic);
+        _sink.Add(diagnostic);
     }
 }

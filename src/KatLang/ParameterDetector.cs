@@ -101,7 +101,8 @@ internal static class ParameterDetector
             preludeScope,
             capturedParamNames: [],
             diagnostics,
-            observations);
+            observations,
+            new DetectionRun());
         return (processed, diagnostics);
     }
 
@@ -109,15 +110,16 @@ internal static class ParameterDetector
         Algorithm alg,
         ElaboratedPropertyScope parentScope,
         HashSet<string> capturedParamNames,
-        List<Diagnostic>? diagnostics = null,
-        FrontEndTraversalObservations? observations = null)
+        List<Diagnostic>? diagnostics,
+        FrontEndTraversalObservations? observations,
+        DetectionRun run)
     {
         if (alg is Algorithm.Builtin)
             return alg;
 
         if (alg is Algorithm.Conditional conditional)
             return ProcessConditionalProperty(
-                conditional, "<anonymous>", parentScope, capturedParamNames, diagnostics, observations);
+                conditional, "<anonymous>", parentScope, capturedParamNames, diagnostics, observations, run);
 
         // A synthetic assignment-deconstruction helper (`x, *y, z = RHS`) is already a
         // fully-formed elaboration leaf: an explicit N-capture sequence-value pattern, no
@@ -130,7 +132,7 @@ internal static class ParameterDetector
         if (alg is Algorithm.User { IsAssignmentDeconstructionHelper: true } deconstructionHelper)
             return RewriteAssignmentDeconstructionHelperOutput(deconstructionHelper);
 
-        var newOpens = ProcessOpenExprs(alg.Opens, parentScope, diagnostics, observations);
+        var newOpens = ProcessOpenExprs(alg.Opens, parentScope, diagnostics, observations, run);
         var algWithProcessedOpens = alg with { Opens = newOpens };
         var scope = ElaboratedScopeLookup.CreateScope(algWithProcessedOpens, parentScope);
 
@@ -182,7 +184,7 @@ internal static class ParameterDetector
             if (prop.Value is Algorithm.Conditional condAlg)
             {
                 newProperties.Add(prop.WithValue(ProcessConditionalProperty(
-                    condAlg, prop.Name, scope, nestedCapturedParamNames, diagnostics, observations)));
+                    condAlg, prop.Name, scope, nestedCapturedParamNames, diagnostics, observations, run)));
             }
             else if (processedSharedValues is null)
             {
@@ -191,7 +193,8 @@ internal static class ParameterDetector
                     scope,
                     nestedCapturedParamNames,
                     diagnostics,
-                    observations)));
+                    observations,
+                    run)));
             }
             else
             {
@@ -202,7 +205,8 @@ internal static class ParameterDetector
                         scope,
                         nestedCapturedParamNames,
                         diagnostics,
-                        observations);
+                        observations,
+                        run);
                     processedSharedValues[prop.Value] = processedBody;
                 }
 
@@ -213,7 +217,7 @@ internal static class ParameterDetector
         // Rewrite Resolve → Param for detected parameters. ONE reference memo spans all
         // output rows: they share this exact rewrite context, so a node shared between
         // rows (or reached twice within one row) rewrites once.
-        var rewriteMemo = new RewriteWalkMemo(observations, diagnostics);
+        var rewriteMemo = new RewriteWalkMemo(run, observations, diagnostics);
         var rewrittenOutput = new List<Expr>(alg.Output.Count);
         foreach (var expr in alg.Output)
             rewrittenOutput.Add(RewriteParams(expr, paramNames, scope, capturedParamNames, rewriteMemo));
@@ -245,9 +249,10 @@ internal static class ParameterDetector
         ElaboratedPropertyScope scope,
         HashSet<string> capturedParamNames,
         List<Diagnostic>? diagnostics,
-        FrontEndTraversalObservations? observations)
+        FrontEndTraversalObservations? observations,
+        DetectionRun run)
     {
-        var newOpens = ProcessOpenExprs(condAlg.Opens, scope, diagnostics, observations);
+        var newOpens = ProcessOpenExprs(condAlg.Opens, scope, diagnostics, observations, run);
         var processedConditional = condAlg with { Opens = newOpens };
         var branchParentScope = newOpens.Count == 0
             ? scope
@@ -261,6 +266,37 @@ internal static class ParameterDetector
         foreach (var branch in condAlg.Branches)
         {
             var binderNames = new HashSet<string>(branch.Pattern.BoundNames());
+            if (DeferredModuleRegions.TryGet(branch.Body, out var region))
+            {
+                // B2c: a deferred module region. The body's modules — and with them its full
+                // elaboration and every diagnostic that could depend on their members — wait
+                // for the branch to be selected. Eagerly the body is elaborated PROVISIONALLY:
+                // the same walk with the diagnostics sink withheld, so binder and
+                // ancestor-parameter references become Params (what the exposure summary
+                // channel needs to classify the family soundly) while no undeclared-identifier
+                // diagnostic can be raised against names a deferred module may provide. The
+                // region records this exact context for the demand-time run and is re-keyed
+                // by this region's own output body.
+                var provisionalBody = ProcessConditionalBranchBody(
+                    branch.Body,
+                    branchParentScope,
+                    binderNames,
+                    propertyName,
+                    capturedParamNames,
+                    diagnostics: null,
+                    observations,
+                    run);
+                DeferredModuleRegions.Register(
+                    provisionalBody,
+                    region.WithDetection(new DeferredBranchContext(
+                        branchParentScope,
+                        new HashSet<string>(binderNames),
+                        propertyName,
+                        new HashSet<string>(capturedParamNames))));
+                processedBranches.Add(new CondBranch(branch.Pattern, provisionalBody));
+                continue;
+            }
+
             var processedBody = ProcessConditionalBranchBody(
                 branch.Body,
                 branchParentScope,
@@ -268,12 +304,45 @@ internal static class ParameterDetector
                 propertyName,
                 capturedParamNames,
                 diagnostics,
-                observations);
+                observations,
+                run);
             processedBranches.Add(new CondBranch(branch.Pattern, processedBody));
         }
 
         return processedConditional with { Branches = processedBranches };
     }
+
+    /// <summary>
+    /// The detection context of one deferred module region (B2c): exactly what
+    /// <see cref="ProcessConditionalBranchBody"/> received when the eager walk reached the
+    /// branch, so the demand-time run elaborates the loaded body under the same scope chain,
+    /// binder names, family name, and captured ancestor names.
+    /// </summary>
+    internal sealed record DeferredBranchContext(
+        ElaboratedPropertyScope ParentScope,
+        IReadOnlySet<string> BinderNames,
+        string BranchName,
+        IReadOnlySet<string> CapturedParamNames);
+
+    /// <summary>
+    /// Demand-time detection of a deferred region's LOADED body: the ordinary branch-body
+    /// walk, with diagnostics — the closed-branch rule and every nested closed-list check
+    /// now run against the real module members.
+    /// </summary>
+    internal static Algorithm ElaborateDeferredBranch(
+        Algorithm loadedBody,
+        DeferredBranchContext context,
+        List<Diagnostic> diagnostics,
+        FrontEndTraversalObservations? observations = null)
+        => ProcessConditionalBranchBody(
+            loadedBody,
+            context.ParentScope,
+            new HashSet<string>(context.BinderNames),
+            context.BranchName,
+            new HashSet<string>(context.CapturedParamNames),
+            diagnostics,
+            observations,
+            new DetectionRun());
 
     /// <summary>
     /// Records the diagnostic-only origin of each implicit parameter at the
@@ -344,6 +413,65 @@ internal static class ParameterDetector
             _provenance[name] = new ImplicitParameterProvenance(name, occurrence.Span, suggestion);
         }
     }
+
+    /// <summary>
+    /// Run-scoped state of ONE detection (a <see cref="DetectPrevalidated"/> or
+    /// <see cref="ElaborateDeferredBranch"/> call), threaded through every algorithm-processing
+    /// path so a node reached through several paths of a shared (acyclic) host tree is
+    /// elaborated once per SEMANTIC REGION rather than once per path (M4). Run-local: created
+    /// per detection, garbage afterwards — never static, never ambient.
+    /// </summary>
+    private sealed class DetectionRun
+    {
+        /// <summary>
+        /// Conditional branch bodies elaborated so far, by <see cref="BranchBodyRegionKey"/>.
+        /// A branch body's rewrite depends on exactly the key's dimensions (parent scope,
+        /// binder names, captured names, and whether diagnostics are reported); the family's
+        /// NAME only words the body's closed-branch diagnostics, so a second family sharing
+        /// the body reuses the rewrite and REPLAYS those diagnostics under its own name (see
+        /// <see cref="BranchBodyRegion.UndeclaredNames"/>). Diagnostics of nodes nested inside
+        /// the body do not mention the family and are reported once per region, exactly like
+        /// every other shared node within one diagnostic context.
+        /// </summary>
+        public Dictionary<BranchBodyRegionKey, BranchBodyRegion>? BranchBodyRegions;
+    }
+
+    /// <summary>
+    /// The minimal complete semantic context of one conditional branch-body elaboration:
+    /// body and parent scope by REFERENCE, binder and captured names by CONTENT, plus the
+    /// reporting mode (a provisional, diagnostic-free elaboration of a deferred module region
+    /// never stands in for a reporting one).
+    /// </summary>
+    private sealed record BranchBodyRegionKey(
+        Algorithm Body,
+        ElaboratedPropertyScope ParentScope,
+        string BinderNames,
+        string CapturedNames,
+        bool ReportsDiagnostics)
+    {
+        public bool Equals(BranchBodyRegionKey? other)
+            => other is not null
+                && ReferenceEquals(Body, other.Body)
+                && ReferenceEquals(ParentScope, other.ParentScope)
+                && BinderNames == other.BinderNames
+                && CapturedNames == other.CapturedNames
+                && ReportsDiagnostics == other.ReportsDiagnostics;
+
+        public override int GetHashCode()
+            => HashCode.Combine(
+                System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(Body),
+                System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(ParentScope),
+                BinderNames,
+                CapturedNames,
+                ReportsDiagnostics);
+    }
+
+    /// <summary>
+    /// A completed branch-body region: the rewritten body, and the closed-branch undeclared
+    /// identifiers it reported (name and first-occurrence span) — the one diagnostic whose
+    /// wording names the family, re-issued for every further family that shares the body.
+    /// </summary>
+    private sealed record BranchBodyRegion(Algorithm Rewritten, IReadOnlyList<(string Name, SourceSpan Span)>? UndeclaredNames);
 
     /// <summary>
     /// Reference-identity memo state for ONE <see cref="CollectFreeParams(IReadOnlyList{Expr}, ElaboratedPropertyScope, HashSet{string}, HashSet{string}, List{string}, Dictionary{string, int}, FreeNameCollection, ImplicitParameterOccurrenceRecorder?, FreeNameWalkMemo)"/>
@@ -428,11 +556,13 @@ internal static class ParameterDetector
     /// families report undeclared identifiers exactly as they would at the root. The memo
     /// keeps that per NODE within the region — a shared block reports once.
     /// </summary>
-    private sealed class RewriteWalkMemo(FrontEndTraversalObservations? observations, List<Diagnostic>? diagnostics)
+    private sealed class RewriteWalkMemo(DetectionRun run, FrontEndTraversalObservations? observations, List<Diagnostic>? diagnostics)
     {
         public readonly Dictionary<Expr, Expr> Rewrites = new(ReferenceEqualityComparer.Instance);
 
         public Dictionary<Algorithm, Algorithm>? Algorithms;
+
+        public readonly DetectionRun Run = run;
 
         public readonly FrontEndTraversalObservations? Observations = observations;
 
@@ -450,7 +580,7 @@ internal static class ParameterDetector
     /// separate for the same reason: the open walk elaborates nested algorithms WITH the
     /// diagnostics sink, the transparent walk without one.
     /// </summary>
-    private sealed class OpenWalkMemo(FrontEndTraversalObservations? observations)
+    private sealed class OpenWalkMemo(DetectionRun run, FrontEndTraversalObservations? observations)
     {
         public readonly Dictionary<Expr, Expr> OpenRewrites = new(ReferenceEqualityComparer.Instance);
 
@@ -459,6 +589,8 @@ internal static class ParameterDetector
         public Dictionary<Algorithm, Algorithm>? OpenAlgorithms;
 
         public Dictionary<Algorithm, Algorithm>? TransparentAlgorithms;
+
+        public readonly DetectionRun Run = run;
 
         public readonly FrontEndTraversalObservations? Observations = observations;
     }
@@ -541,7 +673,8 @@ internal static class ParameterDetector
         IReadOnlyList<Expr> opens,
         ElaboratedPropertyScope parentScope,
         List<Diagnostic>? diagnostics,
-        FrontEndTraversalObservations? observations)
+        FrontEndTraversalObservations? observations,
+        DetectionRun run)
     {
         if (opens.Count == 0)
             return opens;
@@ -552,7 +685,7 @@ internal static class ParameterDetector
         // prelude) also keeps the host-operation extended prelude — when one is
         // configured — in force for open targets.
         var openParentScope = parentScope.Root;
-        var memo = new OpenWalkMemo(observations);
+        var memo = new OpenWalkMemo(run, observations);
         var processed = new List<Expr>(opens.Count);
         foreach (var open in opens)
             processed.Add(ProcessOpenExpr(open, openParentScope, diagnostics, memo));
@@ -602,7 +735,7 @@ internal static class ParameterDetector
                 if (!memo.OpenAlgorithms.TryGetValue(algorithm, out var processedAlgorithm))
                 {
                     processedAlgorithm = ProcessAlgorithm(
-                        algorithm, openParentScope, [], diagnostics, memo.Observations);
+                        algorithm, openParentScope, [], diagnostics, memo.Observations, memo.Run);
                     memo.OpenAlgorithms[algorithm] = processedAlgorithm;
                 }
 
@@ -705,13 +838,34 @@ internal static class ParameterDetector
         string branchName,
         HashSet<string> capturedParamNames,
         List<Diagnostic>? diagnostics,
-        FrontEndTraversalObservations? observations = null)
+        FrontEndTraversalObservations? observations,
+        DetectionRun run)
     {
+        // M4: one elaboration per (body, semantic region). A body shared by several families
+        // — or a family reached from several parents of a shared host tree — is rewritten once
+        // per distinct parent scope, binder set, captured set, and reporting mode; a later
+        // reach reuses the rewritten body (sharing preserved in the output) and re-issues only
+        // the closed-branch diagnostics, which are the one thing that names THIS family.
+        var regionKey = new BranchBodyRegionKey(
+            body,
+            parentScope,
+            FrontEndRegionKeys.NameSet(binderNames),
+            FrontEndRegionKeys.NameSet(capturedParamNames),
+            ReportsDiagnostics: diagnostics is not null);
+        var regions = run.BranchBodyRegions ??= new();
+        if (regions.TryGetValue(regionKey, out var completedRegion))
+        {
+            ReplayUndeclaredNames(completedRegion, branchName, diagnostics);
+            return completedRegion.Rewritten;
+        }
+
+        observations?.RecordDetectorBranchBodyRegionExpansion();
+
         // A branch body owns its `open` list exactly like every other algorithm body, so its
         // targets are elaborated here — an inline open block's members get their own
         // parameter detection — and the body scope is created over the PROCESSED opens,
         // exactly as ProcessAlgorithm does for ordinary bodies.
-        var newOpens = ProcessOpenExprs(body.Opens, parentScope, diagnostics, observations);
+        var newOpens = ProcessOpenExprs(body.Opens, parentScope, diagnostics, observations, run);
         var bodyWithProcessedOpens = body with { Opens = newOpens };
         var bodyScope = ElaboratedScopeLookup.CreateScope(bodyWithProcessedOpens, parentScope);
 
@@ -719,6 +873,7 @@ internal static class ParameterDetector
 
         // Detect free identifiers that would be implicit parameters — these are
         // forbidden in conditional branch bodies (full-input-specification rule).
+        List<(string Name, SourceSpan Span)>? undeclaredNames = null;
         if (diagnostics is not null)
         {
             var freeNames = new HashSet<string>();
@@ -737,14 +892,10 @@ internal static class ParameterDetector
             foreach (var freeName in freeOrder)
             {
                 // Find the span for the first occurrence of this free identifier
-                var span = FindResolveSpan(body.Output, freeName, new ResolveSpanSearchMemo(observations));
-                diagnostics.Add(new Diagnostic(
-                    FormatConditionalBranchUndeclaredIdentifier(freeName, branchName),
-                    DiagnosticSeverity.Error,
-                    span ?? new SourceSpan(0, 0, 0, 0))
-                {
-                    Code = DiagnosticCode.UndeclaredIdentifier,
-                });
+                var span = FindResolveSpan(body.Output, freeName, new ResolveSpanSearchMemo(observations))
+                    ?? new SourceSpan(0, 0, 0, 0);
+                (undeclaredNames ??= []).Add((freeName, span));
+                diagnostics.Add(CreateConditionalBranchUndeclaredIdentifierDiagnostic(freeName, branchName, span));
             }
         }
 
@@ -762,7 +913,7 @@ internal static class ParameterDetector
             if (prop.Value is Algorithm.Conditional nestedCondAlg)
             {
                 processedProp = ProcessConditionalProperty(
-                    nestedCondAlg, prop.Name, bodyScope, bodyCapturedParamNames, diagnostics, observations);
+                    nestedCondAlg, prop.Name, bodyScope, bodyCapturedParamNames, diagnostics, observations, run);
             }
             else if (processedSharedValues is null)
             {
@@ -771,7 +922,8 @@ internal static class ParameterDetector
                     bodyScope,
                     bodyCapturedParamNames,
                     diagnostics,
-                    observations);
+                    observations,
+                    run);
             }
             else if (!processedSharedValues.TryGetValue(prop.Value, out processedProp!))
             {
@@ -780,7 +932,8 @@ internal static class ParameterDetector
                     bodyScope,
                     bodyCapturedParamNames,
                     diagnostics,
-                    observations);
+                    observations,
+                    run);
                 processedSharedValues[prop.Value] = processedProp;
             }
 
@@ -790,18 +943,46 @@ internal static class ParameterDetector
         // Rewrite only binder names Resolve → Param; leave all others as-is.
         // Process nested blocks/calls normally for their own parameter detection.
         // ONE reference memo spans the branch body's rows (constant rewrite context).
-        var rewriteMemo = new RewriteWalkMemo(observations, diagnostics);
+        var rewriteMemo = new RewriteWalkMemo(run, observations, diagnostics);
         var rewrittenOutput = new List<Expr>(body.Output.Count);
         foreach (var expr in body.Output)
             rewrittenOutput.Add(RewriteBinderRefs(expr, binderNames, bodyScope, capturedParamNames, rewriteMemo));
 
-        return bodyWithProcessedOpens with
+        var rewritten = bodyWithProcessedOpens with
         {
             Parameters = [],  // No implicit params — bindings come from pattern matching
             Properties = newProperties,
             Output = rewrittenOutput,
         };
+        // Admitted only after the whole body completed (the structural preflight guarantees
+        // acyclic inputs, so the body can never be reached again while in flight).
+        regions[regionKey] = new BranchBodyRegion(rewritten, undeclaredNames);
+        return rewritten;
     }
+
+    /// <summary>
+    /// Re-issues a completed region's closed-branch diagnostics for a further family that
+    /// shares the body: same identifiers, same spans, worded with THIS family's name — so
+    /// diagnostic multiplicity per family is exactly what elaborating the body again would
+    /// produce, without re-walking it, and independent of which family was reached first.
+    /// </summary>
+    private static void ReplayUndeclaredNames(BranchBodyRegion region, string branchName, List<Diagnostic>? diagnostics)
+    {
+        if (diagnostics is null || region.UndeclaredNames is null)
+            return;
+
+        foreach (var (name, span) in region.UndeclaredNames)
+            diagnostics.Add(CreateConditionalBranchUndeclaredIdentifierDiagnostic(name, branchName, span));
+    }
+
+    private static Diagnostic CreateConditionalBranchUndeclaredIdentifierDiagnostic(string identifierName, string branchName, SourceSpan span)
+        => new(
+            FormatConditionalBranchUndeclaredIdentifier(identifierName, branchName),
+            DiagnosticSeverity.Error,
+            span)
+        {
+            Code = DiagnosticCode.UndeclaredIdentifier,
+        };
 
     private static string FormatConditionalBranchUndeclaredIdentifier(string identifierName, string branchName)
         => string.Join(
@@ -955,7 +1136,7 @@ internal static class ParameterDetector
                 if (!memo.Algorithms.TryGetValue(alg, out var processedAlg))
                 {
                     processedAlg = ProcessAlgorithm(
-                        alg, scope, UnionNames(capturedParamNames, binderNames), memo.Diagnostics, memo.Observations);
+                        alg, scope, UnionNames(capturedParamNames, binderNames), memo.Diagnostics, memo.Observations, memo.Run);
                     memo.Algorithms[alg] = processedAlg;
                 }
 
@@ -1489,7 +1670,7 @@ internal static class ParameterDetector
                 if (!memo.Algorithms.TryGetValue(alg, out var processedAlg))
                 {
                     processedAlg = ProcessAlgorithm(
-                        alg, scope, UnionNames(capturedParamNames, paramNames), memo.Diagnostics, memo.Observations);
+                        alg, scope, UnionNames(capturedParamNames, paramNames), memo.Diagnostics, memo.Observations, memo.Run);
                     memo.Algorithms[alg] = processedAlg;
                 }
 
@@ -1643,7 +1824,7 @@ internal static class ParameterDetector
         memo.TransparentAlgorithms ??= new(ReferenceEqualityComparer.Instance);
         if (!memo.TransparentAlgorithms.TryGetValue(alg, out var processed))
         {
-            processed = ProcessAlgorithm(alg, scope, capturedParamNames, diagnostics: null, memo.Observations);
+            processed = ProcessAlgorithm(alg, scope, capturedParamNames, diagnostics: null, memo.Observations, memo.Run);
             memo.TransparentAlgorithms[alg] = processed;
         }
 

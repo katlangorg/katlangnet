@@ -204,7 +204,8 @@ internal static class FrontEndPipeline
                     .Take(loadDiagnosticsEnd - loadDiagnosticStart)
                     .Any(static d => d.Severity == DiagnosticSeverity.Error),
             hostOperations: hostOperations,
-            cancellationToken: cancellationToken);
+            cancellationToken: cancellationToken,
+            hasDeferredModuleRegions: loader.DeferredRegionCount > 0);
     }
 
     private static FrontEndResult FinalizeElaboration(
@@ -212,7 +213,8 @@ internal static class FrontEndPipeline
         List<Diagnostic> diagnostics,
         bool canEvaluateAfterLoadErrors = false,
         HostOperations? hostOperations = null,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        bool hasDeferredModuleRegions = false)
     {
         cancellationToken.ThrowIfCancellationRequested();
 
@@ -261,7 +263,14 @@ internal static class FrontEndPipeline
         cancellationToken.ThrowIfCancellationRequested();
         var propertyExposedRoot = PropertyExposureResolver.Resolve(implicitResolvedRoot);
         cancellationToken.ThrowIfCancellationRequested();
-        return new FrontEndResult(propertyExposedRoot, diagnostics, canEvaluateAfterLoadErrors);
+
+        // B2c: a tree with deferred module regions is evaluated by the async evaluation
+        // family only (materializing a selected branch awaits the module downloader); the
+        // mark is what routes it there and what makes the synchronous entry points reject it.
+        if (hasDeferredModuleRegions)
+            DeferredModuleRegions.MarkRootRequiresAsyncEvaluation(propertyExposedRoot);
+
+        return new FrontEndResult(propertyExposedRoot, diagnostics, canEvaluateAfterLoadErrors, hasDeferredModuleRegions);
     }
 }
 
@@ -283,7 +292,8 @@ internal sealed record SyntaxParseResult(Algorithm Root, IReadOnlyList<Diagnosti
 internal sealed record FrontEndResult(
     Algorithm ElaboratedRoot,
     IReadOnlyList<Diagnostic> Diagnostics,
-    bool CanEvaluateAfterLoadErrors = false)
+    bool CanEvaluateAfterLoadErrors = false,
+    bool HasDeferredModuleRegions = false)
 {
     public bool HasErrors => Diagnostics.Any(d => d.Severity == DiagnosticSeverity.Error);
 

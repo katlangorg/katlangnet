@@ -2574,7 +2574,8 @@ public class AstStructuralDepthProcessTests
             Assert.Contains(flakyDiags, d => d.Message.Contains("failed to fetch", StringComparison.Ordinal));
             Assert.Equal(2, flakyCalls["https://katlang.org/deep/flaky.kat"]);
             Assert.Equal(0, flakyLoader.InProgressModuleCount);
-            Assert.Equal(2, flakyLoader.CachedModuleCount);
+            Assert.Equal(1, flakyCalls["https://katlang.org/deep/root.kat"]);
+            Assert.Equal(1, flakyLoader.CachedModuleCount);
 
             // 4. Completed siblings stay cached and charged after a LATER rejection,
             // and the rejected module is fetched but never cached. Each deep module
@@ -2615,11 +2616,11 @@ public class AstStructuralDepthProcessTests
             Assert.Equal(1, siblingCalls["https://katlang.org/deep/ok.kat"]);
             Assert.Equal(1, siblingCalls["https://katlang.org/deep/deep1.kat"]);
             Assert.Equal(0, siblingLoader.InProgressModuleCount);
-            // ok and deep1 completed and stayed cached; deep2 was fetched once
+            // Only ok completed successfully and stayed cached; deep2 was fetched once
             // (allowance and minimal parse budget were still positive, so the source
             // had to be fetched to be judged), rejected AT PARSE, and never cached;
-            // deep3 was never requested.
-            Assert.Equal(2, siblingLoader.CachedModuleCount);
+            // its parent deep1 is not cached either, and deep3 was never requested.
+            Assert.Equal(1, siblingLoader.CachedModuleCount);
             Assert.Equal(1, siblingCalls["https://katlang.org/deep/deep2.kat"]);
             Assert.False(siblingCalls.ContainsKey("https://katlang.org/deep/deep3.kat"));
 

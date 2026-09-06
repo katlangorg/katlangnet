@@ -1,4 +1,5 @@
 using System.Numerics;
+using KatLang.Semantics;
 
 namespace KatLang.Tests;
 
@@ -32,6 +33,36 @@ public class FrontEndDagComplexityTests
     private const int ShallowDepth = 20;
 
     private const int DeepDepth = 40;
+
+    [Fact]
+    public void RegionKeys_DistinguishNamesContainingTheirDelimiters()
+    {
+        Assert.NotEqual(
+            FrontEndRegionKeys.NameSet(["x", "y"]),
+            FrontEndRegionKeys.NameSet(["x\u0001y"]));
+        Assert.NotEqual(
+            FrontEndRegionKeys.ClosedBranchSpecification(
+                new Pattern.SequenceValue([new Pattern.Bind("x"), new Pattern.Bind("y")])),
+            FrontEndRegionKeys.ClosedBranchSpecification(new Pattern.Bind("x:0,y")));
+
+        var body = EmptyAlgorithm(new Expr.Resolve("x"));
+        var root = EmptyAlgorithm() with
+        {
+            Properties =
+            [
+                new Property("Pair", new Algorithm.Conditional(null, [],
+                    [new CondBranch(new Pattern.SequenceValue([new Pattern.Bind("x"), new Pattern.Bind("y")]), body)])),
+                new Property("Joined", new Algorithm.Conditional(null, [],
+                    [new CondBranch(new Pattern.Bind("x\u0001y"), body)])),
+            ],
+        };
+
+        var (detected, diagnostics) = ParameterDetector.Detect(root);
+
+        Assert.IsType<Expr.Param>(detected.Properties[0].Value.Branches[0].Body.Output[0]);
+        Assert.IsType<Expr.Resolve>(detected.Properties[1].Value.Branches[0].Body.Output[0]);
+        Assert.Equal(DiagnosticCode.UndeclaredIdentifier, Assert.Single(diagnostics).Code);
+    }
 
     private static Algorithm.User EmptyAlgorithm(params Expr[] output)
         => new(Parent: null, Parameters: [], Opens: [], Properties: [], Output: output);
@@ -1160,6 +1191,656 @@ public class FrontEndDagComplexityTests
             Assert.Empty(diagnostics);
             AssertDiamondSharingPreserved(elaborated.Output[0], 600);
         });
+
+    /// <summary>
+    /// A load beneath a DIAMOND of nested clause families — at every level two families share
+    /// ONE branch body, so the root-to-load paths double per level (B2c). Initial elaboration
+    /// never descends into an alternative branch body: it expands the root and its output
+    /// call, the outermost body and its output call, and the two families, defers both
+    /// branches, and performs no download — whatever the depth.
+    /// </summary>
+    [Theory]
+    [InlineData(ShallowDepth)]
+    [InlineData(DeepDepth)]
+    public Task Loader_ClauseFamilyDiamondOverLoad_DefersAlternativesWithoutExpandingPaths(int depth)
+        => AssertCompletesUnderWallClockGuard(async () =>
+        {
+            var downloads = 0;
+            var observations = new FrontEndTraversalObservations();
+            var diagnostics = new List<Diagnostic>();
+            var loader = CreateLoader(diagnostics, observations, (url, ct) =>
+            {
+                downloads++;
+                return ValueTask.FromResult("public X = 1");
+            });
+
+            var elaborated = await loader.ElaborateAsync(ClauseFamilyDiamond(depth, load: true));
+
+            Assert.Empty(diagnostics);
+            Assert.Equal(0, downloads);
+            Assert.Equal(2, loader.DeferredRegionCount);
+            Assert.Equal(6, observations.LoaderWalkExpansions);
+            Assert.False(LoadElaborationGuard.TryFindFirstUnresolvedLoad(elaborated, out _));
+        });
+
+    /// <summary>
+    /// The demand side of the same diamond: evaluating one path (<c>Mod.Left(0)</c>, whose
+    /// every level again selects <c>Left(0)</c>) materializes exactly the regions on that
+    /// path, one level at a time — each nested family is deferred again when its enclosing
+    /// body is materialized — while every <c>Right</c> region, sharing the very same raw body,
+    /// stays untouched, and the per-URL cache keeps the one download. The eager provisional
+    /// elaboration of the two deferred placeholders is bounded as well (M4): each placeholder
+    /// is one detector region whose nested shared bodies elaborate once per level, so the
+    /// provisional work is linear in the depth — never the 2^depth paths — and the demand-time
+    /// elaboration of every selected level is bounded the same way.
+    /// </summary>
+    [Theory]
+    [InlineData(ShallowDepth)]
+    [InlineData(DeepDepth)]
+    public Task Loader_ClauseFamilyDiamondOverLoad_MaterializesOnlyTheSelectedPath(int depth)
+        => AssertCompletesUnderWallClockGuard(async () =>
+        {
+            var downloads = 0;
+            var diagnostics = new List<Diagnostic>();
+            var loader = CreateLoader(diagnostics, observations: null, (url, ct) =>
+            {
+                downloads++;
+                return ValueTask.FromResult("public X = 1");
+            });
+
+            var elaborated = await loader.ElaborateAsync(ClauseFamilyDiamond(depth, load: true));
+            Assert.Empty(diagnostics);
+            var detectorObservations = new FrontEndTraversalObservations();
+            var (detected, detectorDiagnostics) = ParameterDetector.DetectPrevalidated(elaborated, null, detectorObservations);
+            Assert.Empty(detectorDiagnostics);
+            // Left's and Right's placeholders are distinct clones of the shared body, so each
+            // is its own provisional region over the same nested chain: two chains of `depth`
+            // regions, not 2^depth.
+            Assert.Equal(2 * depth, detectorObservations.DetectorBranchBodyRegionExpansions);
+            var exposed = PropertyExposureResolver.Resolve(ImplicitArgumentResolver.Resolve(detected));
+            DeferredModuleRegions.MarkRootRequiresAsyncEvaluation(exposed);
+            var demandObservations = new FrontEndTraversalObservations();
+            loader.TraversalObservations = demandObservations;
+
+            var result = await Evaluator.RunFlatAsync(new Expr.AlgorithmExpr(exposed));
+
+            Assert.False(result.IsError, result.IsError ? result.Error.ToString() : null);
+            Assert.Equal([1m], result.Value);
+            Assert.Equal(1, downloads);
+            Assert.Equal(depth * depth, demandObservations.DetectorBranchBodyRegionExpansions);
+            Assert.Equal(depth, demandObservations.ResolverBranchBodyRegionExpansions);
+            Assert.Equal(depth + 2, demandObservations.ExposureAlgorithmExpansions);
+            Assert.Equal(4 * depth, demandObservations.LoaderWalkExpansions);
+            Assert.Equal(depth * (depth - 1), demandObservations.DependencyBranchBodySummaryComputations);
+            Console.WriteLine($"Demand depth={depth}: detector={demandObservations.DetectorBranchBodyRegionExpansions}, "
+                + $"resolver={demandObservations.ResolverBranchBodyRegionExpansions}, exposure={demandObservations.ExposureAlgorithmExpansions}, "
+                + $"loader={demandObservations.LoaderWalkExpansions}, summaries={demandObservations.DependencyBranchBodySummaryComputations}");
+            var current = Assert.IsType<Algorithm.User>(Assert.Single(exposed.Properties, p => p.Name == "Mod").Value);
+            for (var level = 0; level < depth; level++)
+            {
+                var left = Assert.IsType<Algorithm.Conditional>(Assert.Single(current.Properties, p => p.Name == "Left").Value);
+                var right = Assert.IsType<Algorithm.Conditional>(Assert.Single(current.Properties, p => p.Name == "Right").Value);
+                Assert.True(DeferredModuleRegions.TryGet(Assert.Single(left.Branches).Body, out var leftRegion));
+                Assert.True(DeferredModuleRegions.TryGet(Assert.Single(right.Branches).Body, out var rightRegion));
+                Assert.NotSame(leftRegion, rightRegion);
+                Assert.Same(leftRegion!.RawBody, rightRegion!.RawBody);
+                Assert.Equal(1, leftRegion.MaterializationAttempts);
+                Assert.Equal(0, rightRegion.MaterializationAttempts);
+                Assert.True(leftRegion.TryGetMaterialized(out var materialized));
+                current = Assert.IsType<Algorithm.User>(materialized);
+            }
+            Assert.IsType<Expr.AlgorithmExpr>(Assert.Single(current.Opens));
+        });
+
+    // ── 6. Shared conditional families (M4): once per distinct node and semantic region ──
+
+    /// <summary>
+    /// <c>Mod.Left(0)</c> over <paramref name="depth"/> levels of <c>Left</c>/<c>Right</c>
+    /// families whose single branches share ONE body object per level — 2^depth root-to-leaf
+    /// paths through depth + 2 distinct bodies. With <paramref name="load"/> the innermost
+    /// body opens a module (the B2c shape); without it the diamond is load-free.
+    /// </summary>
+    private static Algorithm.User ClauseFamilyDiamond(int depth, bool load)
+    {
+        Algorithm body = load
+            ? EmptyAlgorithm(new Expr.Resolve("X")) with { Opens = [LoadCall()] }
+            : EmptyAlgorithm(new Expr.Num(1));
+        for (var level = 0; level < depth; level++)
+        {
+            Algorithm.Conditional Family() => new(null, [], [new CondBranch(new Pattern.LitInt(0), body)]);
+            body = EmptyAlgorithm(new Expr.Call(new Expr.Resolve("Left"), new OutputBundle([new Expr.Num(0)]))) with
+            {
+                Properties = [new Property("Left", Family()), new Property("Right", Family())],
+            };
+        }
+        return new Algorithm.User(
+            null,
+            [],
+            [],
+            [new Property("Mod", body)],
+            new OutputBundle([new Expr.DotCall(new Expr.Resolve("Mod"), "Left", new OutputBundle([new Expr.Num(0)]))]));
+    }
+
+    /// <summary>
+    /// Asserts a rewritten family diamond kept its sharing at every level: the Left and Right
+    /// families' branch bodies are ONE object, and returns the innermost body.
+    /// </summary>
+    private static Algorithm AssertFamilyDiamondSharingPreserved(Algorithm rewrittenRoot, int depth)
+    {
+        var current = Assert.IsType<Algorithm.User>(Assert.Single(rewrittenRoot.Properties, p => p.Name == "Mod").Value);
+        for (var level = 0; level < depth; level++)
+        {
+            var left = Assert.IsType<Algorithm.Conditional>(Assert.Single(current.Properties, p => p.Name == "Left").Value);
+            var right = Assert.IsType<Algorithm.Conditional>(Assert.Single(current.Properties, p => p.Name == "Right").Value);
+            Assert.Same(Assert.Single(left.Branches).Body, Assert.Single(right.Branches).Body);
+            current = Assert.IsType<Algorithm.User>(left.Branches[0].Body);
+        }
+
+        return current;
+    }
+
+    /// <summary>
+    /// The three front-end passes over the load-free family diamond: every branch body is
+    /// elaborated ONCE per semantic region — here one region per level, since Left and Right
+    /// reach the shared body under the same parent scope, binder set, signature-map state, and
+    /// visible summaries — so every counter is linear in the depth while the path count is
+    /// 2^depth, and the rewritten trees keep the sharing at every level. Region counts are the
+    /// primary signal; the expression counters show each region's own output row expanding
+    /// once (plus the root's <c>Mod.Left(0)</c> and Mod's <c>Left(0)</c>).
+    /// </summary>
+    [Theory]
+    [InlineData(ShallowDepth)]
+    [InlineData(DeepDepth)]
+    public Task FrontEnd_ClauseFamilyDiamond_ElaboratesEachBranchBodyOncePerRegion(int depth)
+        => AssertCompletesUnderWallClockGuard(() =>
+        {
+            var root = ClauseFamilyDiamond(depth, load: false);
+
+            var detectorObservations = new FrontEndTraversalObservations();
+            var (detected, detectorDiagnostics) = ParameterDetector.DetectPrevalidated(root, null, detectorObservations);
+            Assert.Empty(detectorDiagnostics);
+            Assert.Equal(depth, detectorObservations.DetectorBranchBodyRegionExpansions);
+            Assert.Equal(depth + 1, detectorObservations.DetectorRewriteExpansions);
+            Assert.Equal(depth + 1, detectorObservations.DetectorCollectExpansions);
+            AssertFamilyDiamondSharingPreserved(detected, depth);
+
+            var resolverObservations = new FrontEndTraversalObservations();
+            var resolverDiagnostics = new List<Diagnostic>();
+            var resolved = ImplicitArgumentResolver.ResolvePrevalidated(detected, resolverObservations, resolverDiagnostics);
+            Assert.Empty(resolverDiagnostics);
+            Assert.Equal(depth, resolverObservations.ResolverBranchBodyRegionExpansions);
+            Assert.Equal(depth + 1, resolverObservations.ResolverRewriteExpansions);
+            AssertFamilyDiamondSharingPreserved(resolved, depth);
+
+            var exposureObservations = new FrontEndTraversalObservations();
+            var exposed = PropertyExposureResolver.Resolve(resolved, exposureObservations);
+            // Root, Mod, and each shared body once.
+            Assert.Equal(depth + 2, exposureObservations.ExposureAlgorithmExpansions);
+            Assert.Equal(depth + 1, exposureObservations.ExposureRewriteExpansions);
+            // Every family node once (two per level, memoized by node) plus Mod's body.
+            Assert.Equal(2 * depth + 1, exposureObservations.DependencyAlgorithmSummaryComputations);
+            // Every shared branch body once per binder set — one per level.
+            Assert.Equal(depth, exposureObservations.DependencyBranchBodySummaryComputations);
+            AssertFamilyDiamondSharingPreserved(exposed, depth);
+
+            Assert.Equal([1m], Evaluator.RunFlat(new Expr.AlgorithmExpr(exposed)).Value);
+        });
+
+    /// <summary>
+    /// A branch body shared by two families under ONE semantic region is rewritten once, yet
+    /// each family still receives the closed-branch diagnostic worded with its own name (the
+    /// family name is the only thing that distinguishes the two reports), while a diagnostic
+    /// of a node NESTED inside the shared body — which names no family — is reported once for
+    /// the region. None of that depends on which family is declared first.
+    /// </summary>
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Detector_SharedBranchBody_RewritesOnceAndReportsPerFamily_IndependentOfOrder(bool reversed)
+    {
+        // One raw branch body from real syntax: an inner explicit-parameter algorithm with an
+        // undeclared name (a nested, family-independent diagnostic) and a free name in the
+        // branch output (the family-worded closed-branch diagnostic).
+        var parsed = Parser.ParseSyntax("F(0) = {\n    Inner(a) = zzInner\n    zzFree\n}\nF(1) = 0\nF(0)");
+        Assert.False(parsed.HasErrors);
+        var syntax = parsed.SyntaxRoot;
+        var sharedBody = Assert.IsType<Algorithm.Conditional>(Assert.Single(syntax.Properties, p => p.Name == "F").Value).Branches[0].Body;
+        Algorithm.Conditional Family() => new(null, [], [new CondBranch(new Pattern.LitInt(0), sharedBody)]);
+        var left = new Property("Left", Family());
+        var right = new Property("Right", Family());
+        var root = new Algorithm.User(null, [], [], reversed ? [right, left] : [left, right], OutputBundle.Empty);
+        var observations = new FrontEndTraversalObservations();
+
+        var (detected, diagnostics) = ParameterDetector.DetectPrevalidated(root, null, observations);
+
+        Assert.Equal(1, observations.DetectorBranchBodyRegionExpansions);
+        var leftBody = Assert.IsType<Algorithm.Conditional>(Assert.Single(detected.Properties, p => p.Name == "Left").Value).Branches[0].Body;
+        var rightBody = Assert.IsType<Algorithm.Conditional>(Assert.Single(detected.Properties, p => p.Name == "Right").Value).Branches[0].Body;
+        Assert.Same(leftBody, rightBody);
+
+        var messages = diagnostics.Select(d => d.Message).ToList();
+        Assert.Equal(3, diagnostics.Count);
+        Assert.All(diagnostics, d => Assert.Equal(DiagnosticCode.UndeclaredIdentifier, d.Code));
+        Assert.Single(messages, m => m.Contains("'zzInner' is used in an explicitly parameterized algorithm", StringComparison.Ordinal));
+        Assert.Single(messages, m => m.Contains("'zzFree' is used in conditional branch 'Left'", StringComparison.Ordinal));
+        Assert.Single(messages, m => m.Contains("'zzFree' is used in conditional branch 'Right'", StringComparison.Ordinal));
+        // Both family reports carry the free name's own span.
+        var freeSpans = diagnostics.Where(d => d.Message.Contains("zzFree", StringComparison.Ordinal)).Select(d => d.Span).Distinct().ToList();
+        Assert.Single(freeSpans);
+    }
+
+    /// <summary>
+    /// The same raw body under two genuinely different regions is elaborated independently:
+    /// a binder set that binds the body's free name versus one that does not, and a parent
+    /// scope that declares the name versus one that does not. The memo must never serve one
+    /// region's rewrite or diagnostics to the other.
+    /// </summary>
+    [Fact]
+    public void Detector_SharedBranchBody_UnderDistinctRegions_ElaboratesIndependently()
+    {
+        var sharedBody = EmptyAlgorithm(new Expr.Resolve("x") { Span = new SourceSpan(1, 1, 1, 1) });
+        var binds = new Algorithm.Conditional(null, [], [new CondBranch(new Pattern.Bind("x"), sharedBody)]);
+        var literal = new Algorithm.Conditional(null, [], [new CondBranch(new Pattern.LitInt(0), sharedBody)]);
+        var declaringBlock = new Algorithm.User(
+            null, [], [],
+            [new Property("x", EmptyAlgorithm(new Expr.Num(1))), new Property("Declared", literal)],
+            OutputBundle.Empty);
+        var root = new Algorithm.User(
+            null, [], [],
+            [new Property("Binds", binds), new Property("Free", literal), new Property("Block", declaringBlock)],
+            OutputBundle.Empty);
+        var observations = new FrontEndTraversalObservations();
+
+        var (detected, diagnostics) = ParameterDetector.DetectPrevalidated(root, null, observations);
+
+        // Three regions: (root scope, binder x), (root scope, no binders), (block scope, no binders).
+        Assert.Equal(3, observations.DetectorBranchBodyRegionExpansions);
+        var bindsBody = Assert.IsType<Algorithm.Conditional>(detected.Properties[0].Value).Branches[0].Body;
+        var freeBody = Assert.IsType<Algorithm.Conditional>(detected.Properties[1].Value).Branches[0].Body;
+        var declaredBody = Assert.IsType<Algorithm.Conditional>(
+            Assert.IsType<Algorithm.User>(detected.Properties[2].Value).Properties[1].Value).Branches[0].Body;
+        Assert.NotSame(bindsBody, freeBody);
+        Assert.NotSame(freeBody, declaredBody);
+        Assert.Equal("x", Assert.IsType<Expr.Param>(bindsBody.Output[0]).Name);
+        Assert.IsType<Expr.Resolve>(freeBody.Output[0]);
+        Assert.IsType<Expr.Resolve>(declaredBody.Output[0]);
+        // Exactly the unbound, undeclared occurrence is reported — under its own family.
+        var diagnostic = Assert.Single(diagnostics);
+        Assert.Contains("'x' is used in conditional branch 'Free'", diagnostic.Message, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// The resolver's region is the signature SNAPSHOT of a body's free names: when two
+    /// families sharing one body genuinely observe different signatures for a name the body
+    /// reads, the body is rewritten again under the new observation and only the family that
+    /// saw the lifted signature reports the blocked forwarding — exactly what two separate
+    /// bodies would do — while families reached under one observation share one rewrite.
+    /// Within an ACYCLIC property graph every consumer is processed after the siblings it
+    /// reads (complete dependency edges), so distinct observations arise only in a sibling
+    /// CYCLE, where the order falls back to declaration order: here P and R reference each
+    /// other, every family depends on P, and the fallback processes Before and Early (P still
+    /// detected: no parameters), then P (lifting `x` from the bare `Math.Abs`), then Late.
+    /// </summary>
+    [Fact]
+    public void Resolver_SharedBranchBody_SplitsOnObservedSignatures_AndSharesWithinOne()
+    {
+        // `Math.Abs(P)` is a proven strict-value position: the blocked forwarding is diagnosed
+        // exactly when the visible signature of P carries the lifted `x`.
+        var parsed = Parser.ParseSyntax("P = Math.Abs + R\nR = P + 1\nF(0) = Math.Abs(P)\nF(1) = 0\nF(0)");
+        Assert.False(parsed.HasErrors);
+        var syntax = parsed.SyntaxRoot;
+        var sharedBody = Assert.IsType<Algorithm.Conditional>(Assert.Single(syntax.Properties, p => p.Name == "F").Value).Branches[0].Body;
+        var p = Assert.Single(syntax.Properties, p => p.Name == "P");
+        var r = Assert.Single(syntax.Properties, p => p.Name == "R");
+        Algorithm.Conditional Family() => new(null, [], [new CondBranch(new Pattern.LitInt(0), sharedBody)]);
+        var root = new Algorithm.User(
+            null, [], [],
+            [new Property("Before", Family()), new Property("Early", Family()), p, r, new Property("Late", Family())],
+            OutputBundle.Empty);
+        var (detected, detectorDiagnostics) = ParameterDetector.DetectPrevalidated(root);
+        Assert.Empty(detectorDiagnostics);
+        var observations = new FrontEndTraversalObservations();
+        var diagnostics = new List<Diagnostic>();
+
+        var resolved = ImplicitArgumentResolver.ResolvePrevalidated(detected, observations, diagnostics);
+
+        Assert.Equal(2, observations.ResolverBranchBodyRegionExpansions);
+        Algorithm BodyOf(string family)
+            => Assert.IsType<Algorithm.Conditional>(Assert.Single(resolved.Properties, prop => prop.Name == family).Value).Branches[0].Body;
+        Assert.Same(BodyOf("Before"), BodyOf("Early"));
+        Assert.NotSame(BodyOf("Early"), BodyOf("Late"));
+        var diagnostic = Assert.Single(diagnostics);
+        Assert.Equal(DiagnosticCode.UndeclaredIdentifier, diagnostic.Code);
+        Assert.Contains("conditional branch 'Late'", diagnostic.Message, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// The resolver's family-worded diagnostic is replayed per family sharing one body under
+    /// ONE map state: both families report the blocked forwarding in their own name, from one
+    /// rewrite, in either declaration order.
+    /// </summary>
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Resolver_SharedBranchBody_ReplaysBlockedForwardingPerFamily_IndependentOfOrder(bool reversed)
+    {
+        // P's implicit `y` is detected directly, so every family sees P(y) whatever the loop order.
+        var parsed = Parser.ParseSyntax("P = y + 1\nF(0) = Math.Abs(P)\nF(1) = 0\nF(0)");
+        Assert.False(parsed.HasErrors);
+        var syntax = parsed.SyntaxRoot;
+        var sharedBody = Assert.IsType<Algorithm.Conditional>(Assert.Single(syntax.Properties, p => p.Name == "F").Value).Branches[0].Body;
+        var p = Assert.Single(syntax.Properties, p => p.Name == "P");
+        Algorithm.Conditional Family() => new(null, [], [new CondBranch(new Pattern.LitInt(0), sharedBody)]);
+        var left = new Property("Left", Family());
+        var right = new Property("Right", Family());
+        var root = new Algorithm.User(null, [], [], reversed ? [p, right, left] : [p, left, right], OutputBundle.Empty);
+        var (detected, _) = ParameterDetector.DetectPrevalidated(root);
+        var observations = new FrontEndTraversalObservations();
+        var diagnostics = new List<Diagnostic>();
+
+        var resolved = ImplicitArgumentResolver.ResolvePrevalidated(detected, observations, diagnostics);
+
+        Assert.Equal(1, observations.ResolverBranchBodyRegionExpansions);
+        Assert.Same(
+            Assert.IsType<Algorithm.Conditional>(Assert.Single(resolved.Properties, prop => prop.Name == "Left").Value).Branches[0].Body,
+            Assert.IsType<Algorithm.Conditional>(Assert.Single(resolved.Properties, prop => prop.Name == "Right").Value).Branches[0].Body);
+        Assert.Equal(2, diagnostics.Count);
+        Assert.Single(diagnostics, d => d.Message.Contains("conditional branch 'Left'", StringComparison.Ordinal));
+        Assert.Single(diagnostics, d => d.Message.Contains("conditional branch 'Right'", StringComparison.Ordinal));
+        Assert.Single(diagnostics.Select(d => d.Span).Distinct());
+    }
+
+    /// <summary>
+    /// Exposure classification of a shared branch body is computed once per region and the
+    /// families keep ONE rewritten object; a body shared between a family and a plain property
+    /// summarizes under both contexts (binder-owned versus empty locals) but is rewritten once.
+    /// </summary>
+    [Fact]
+    public void Exposure_SharedBranchBody_ClassifiesOnceAndPreservesSharing()
+    {
+        var sharedBody = new Algorithm.User(
+            null, [], [],
+            [new Property("Captures", EmptyAlgorithm(new Expr.Param("b"))), new Property("Plain", EmptyAlgorithm(new Expr.Num(1)))],
+            new OutputBundle([new Expr.Resolve("Plain")]));
+        Algorithm.Conditional Family() => new(null, [], [new CondBranch(new Pattern.Bind("b"), sharedBody)]);
+        var root = new Algorithm.User(
+            null, [], [],
+            [new Property("Left", Family()), new Property("Right", Family()), new Property("Value", sharedBody)],
+            OutputBundle.Empty);
+        var observations = new FrontEndTraversalObservations();
+
+        var rewritten = PropertyExposureResolver.Resolve(root, observations);
+
+        // Root, the shared body once (its two property values are leaves).
+        Assert.Equal(4, observations.ExposureAlgorithmExpansions);
+        Assert.Equal(1, observations.DependencyBranchBodySummaryComputations);
+        var leftBody = Assert.IsType<Algorithm.Conditional>(rewritten.Properties[0].Value).Branches[0].Body;
+        var rightBody = Assert.IsType<Algorithm.Conditional>(rewritten.Properties[1].Value).Branches[0].Body;
+        Assert.Same(leftBody, rightBody);
+        Assert.Same(leftBody, rewritten.Properties[2].Value);
+        Assert.Equal(PropertyExposure.LocalOnlyCapturedAncestorParameters, Assert.Single(leftBody.Properties, p => p.Name == "Captures").Exposure);
+        Assert.Equal(PropertyExposure.Exported, Assert.Single(leftBody.Properties, p => p.Name == "Plain").Exposure);
+    }
+
+    // ── 7. Shared property VALUES in the resolver: once per free-name signature snapshot ──
+
+    /// <summary>
+    /// A property-value diamond: every level has two properties sharing ONE value algorithm,
+    /// so the innermost value is reachable through 2^depth paths. Every value's output is a
+    /// Binary, so each rewrite records exactly one resolver rewrite expansion.
+    /// </summary>
+    private static Algorithm.User PropertyValueDiamond(int depth, string leafName)
+    {
+        Algorithm value = EmptyAlgorithm(new Expr.Binary(BinaryOp.Add, new Expr.Resolve(leafName), new Expr.Num(0)));
+        for (var level = 0; level < depth; level++)
+        {
+            var shared = value;
+            value = EmptyAlgorithm(new Expr.Binary(BinaryOp.Add, new Expr.Resolve("P1"), new Expr.Num(0))) with
+            {
+                Properties = [new Property("P1", shared), new Property("P2", shared)],
+            };
+        }
+
+        return (Algorithm.User)value;
+    }
+
+    /// <summary>
+    /// Every value in the diamond reads only the signatures of its FREE names (here the
+    /// root's <c>Leaf</c>; <c>P1</c> is its own property), so under one observation each value
+    /// is rewritten once — the resolver's region is the signature snapshot of the value's free
+    /// names, never the referencing property or the path — and the rewritten tree keeps the
+    /// sharing at every level.
+    /// </summary>
+    [Theory]
+    [InlineData(ShallowDepth)]
+    [InlineData(DeepDepth)]
+    public Task Resolver_PropertyValueDiamond_RewritesEachValueOncePerRegion(int depth)
+        => AssertCompletesUnderWallClockGuard(() =>
+        {
+            var root = new Algorithm.User(
+                null, [], [],
+                [new Property("Leaf", EmptyAlgorithm(new Expr.Num(1))), new Property("Mod", PropertyValueDiamond(depth, "Leaf"))],
+                new OutputBundle([new Expr.Resolve("Mod")]));
+            var (detected, detectorDiagnostics) = ParameterDetector.DetectPrevalidated(root);
+            Assert.Empty(detectorDiagnostics);
+            var observations = new FrontEndTraversalObservations();
+
+            var resolved = ImplicitArgumentResolver.ResolvePrevalidated(detected, observations, new List<Diagnostic>());
+
+            // Leaf's value and the depth + 1 diamond values, each once.
+            Assert.Equal(depth + 2, observations.ResolverAlgorithmRegionExpansions);
+            Assert.Equal(depth + 1, observations.ResolverRewriteExpansions);
+            var current = Assert.IsType<Algorithm.User>(Assert.Single(resolved.Properties, p => p.Name == "Mod").Value);
+            for (var level = 0; level < depth; level++)
+            {
+                Assert.Same(current.Properties[0].Value, current.Properties[1].Value);
+                current = Assert.IsType<Algorithm.User>(current.Properties[0].Value);
+            }
+        });
+
+    /// <summary>
+    /// The same diamond under two blocks whose <c>Leaf</c> differs — a plain constant versus a
+    /// value lifting an implicit <c>y</c> — is two genuinely different observations per
+    /// level: the values are rewritten independently (the lifted <c>y</c> propagates up the
+    /// whole chain under the lifting block only), each still once per observation, never once
+    /// per path.
+    /// </summary>
+    [Theory]
+    [InlineData(ShallowDepth)]
+    [InlineData(DeepDepth)]
+    public Task Resolver_PropertyValueDiamond_UnderDistinctObservations_RewritesIndependentlyOncePerRegion(int depth)
+        => AssertCompletesUnderWallClockGuard(() =>
+        {
+            var diamond = PropertyValueDiamond(depth, "Leaf");
+            Algorithm.User Block(Algorithm leaf)
+                => new(null, [], [], [new Property("Leaf", leaf), new Property("Mod", diamond)], new OutputBundle([new Expr.Resolve("Mod")]));
+            var root = new Algorithm.User(
+                null, [], [],
+                [
+                    new Property("Plain", Block(EmptyAlgorithm(new Expr.Num(1)))),
+                    new Property("Lifting", Block(EmptyAlgorithm(new Expr.Binary(BinaryOp.Add, new Expr.Resolve("y"), new Expr.Num(1))))),
+                ],
+                OutputBundle.Empty);
+            var (detected, _) = ParameterDetector.DetectPrevalidated(root);
+            var observations = new FrontEndTraversalObservations();
+
+            var resolved = ImplicitArgumentResolver.ResolvePrevalidated(detected, observations, new List<Diagnostic>());
+
+            // Two blocks, two leaf values, and the depth + 1 diamond values once per observation.
+            Assert.Equal(2 * (depth + 1) + 4, observations.ResolverAlgorithmRegionExpansions);
+            var plain = Assert.IsType<Algorithm.User>(Assert.Single(Assert.IsType<Algorithm.User>(resolved.Properties[0].Value).Properties, p => p.Name == "Mod").Value);
+            var lifting = Assert.IsType<Algorithm.User>(Assert.Single(Assert.IsType<Algorithm.User>(resolved.Properties[1].Value).Properties, p => p.Name == "Mod").Value);
+            Assert.NotSame(plain, lifting);
+            Assert.Empty(plain.Params);
+            Assert.Equal(["y"], lifting.Params);
+        });
+
+    /// <summary>
+    /// The processing-order channel sees every value-position sibling reference in a property's
+    /// whole value subtree: nested property values and conditional branch bodies contribute
+    /// edges, a nested body's own property shadows the same-named sibling, a neutral call
+    /// argument lifts nothing, and a block literal inside such an argument is a body of its
+    /// own. Complete edges are what make sibling declaration order unobservable.
+    /// </summary>
+    [Fact]
+    public void DependencyOrder_SeesNestedBodiesAndBranchBodies_UnderShadowingAndTransparency()
+    {
+        Expr B() => new Expr.Resolve("B");
+        var root = new Algorithm.User(
+            null, [], [],
+            [
+                // A = { Inner = B + 1  Inner }
+                new Property("A", EmptyAlgorithm(new Expr.Resolve("Inner")) with
+                {
+                    Properties = [new Property("Inner", EmptyAlgorithm(new Expr.Binary(BinaryOp.Add, B(), new Expr.Num(1))))],
+                }),
+                // F(0) = B
+                new Property("F", new Algorithm.Conditional(null, [], [new CondBranch(new Pattern.LitInt(0), EmptyAlgorithm(B()))])),
+                // C = { B = 1  B + 1 }: the nested B shadows the sibling.
+                new Property("C", EmptyAlgorithm(new Expr.Binary(BinaryOp.Add, B(), new Expr.Num(1))) with
+                {
+                    Properties = [new Property("B", EmptyAlgorithm(new Expr.Num(1)))],
+                }),
+                // D = Apply(B): a neutral argument is transparent.
+                new Property("D", EmptyAlgorithm(new Expr.Call(new Expr.Resolve("Apply"), new OutputBundle([B()])))),
+                // E = Apply({ B }): the block literal inside the argument is a body of its own.
+                new Property("E", EmptyAlgorithm(new Expr.Call(new Expr.Resolve("Apply"), new OutputBundle([new Expr.AlgorithmExpr(EmptyAlgorithm(B()))])))),
+                new Property("B", EmptyAlgorithm(new Expr.Num(5))),
+            ],
+            OutputBundle.Empty);
+
+        var order = PropertyDependencyGraphBuilder.BuildDependencyOrder(root);
+
+        Assert.True(order.TryGetPropertyIndex("B", out var b));
+        Assert.Equal([b], order[0].SiblingDependencyIndices);
+        Assert.Equal([b], order[1].SiblingDependencyIndices);
+        Assert.Empty(order[2].SiblingDependencyIndices);
+        Assert.Empty(order[3].SiblingDependencyIndices);
+        Assert.Equal([b], order[4].SiblingDependencyIndices);
+        // B is processed before every consumer, whatever the declaration order.
+        var topological = order.TopologicalOrder.ToList();
+        Assert.True(topological.IndexOf(b) < topological.IndexOf(0));
+        Assert.True(topological.IndexOf(b) < topological.IndexOf(1));
+        Assert.True(topological.IndexOf(b) < topological.IndexOf(4));
+    }
+
+    /// <summary>
+    /// Sibling declaration order is not observable: two programs that differ only in the order
+    /// of their sibling declarations — a family and the sibling it reads at the root, a
+    /// sibling that itself depends on another, a nested block reading a sibling, and families
+    /// on both sides of a sibling inside a block — report the same diagnostics and produce the
+    /// same outcome, because every consumer is processed after the siblings it reads.
+    /// </summary>
+    [Theory]
+    [InlineData("P = Math.Abs\nF(0) = Math.Abs(P)\nF(1) = 0\nF(0)", "F(0) = Math.Abs(P)\nF(1) = 0\nP = Math.Abs\nF(0)")]
+    [InlineData("P = Q + 1\nQ = y * 2\nF(0) = Math.Abs(P)\nF(1) = 0\nF(0)", "F(0) = Math.Abs(P)\nF(1) = 0\nQ = y * 2\nP = Q + 1\nF(0)")]
+    [InlineData("P = Math.Abs\nA = {\n    Inner = Math.Abs(P)\n    Inner\n}\nA", "A = {\n    Inner = Math.Abs(P)\n    Inner\n}\nP = Math.Abs\nA")]
+    [InlineData(
+        "Q = y * 2\nBlock = {\n    Before(0) = Math.Abs(P)\n    Before(1) = 0\n    P = Q + 1\n    Late(0) = Math.Abs(P)\n    Late(1) = 0\n    Before(0) + Late(0)\n}\nBlock",
+        "Q = y * 2\nBlock = {\n    Late(0) = Math.Abs(P)\n    Late(1) = 0\n    P = Q + 1\n    Before(0) = Math.Abs(P)\n    Before(1) = 0\n    Before(0) + Late(0)\n}\nBlock")]
+    public void FrontEnd_SiblingDeclarationOrder_DoesNotChangeDiagnosticsOrOutcome(string source, string reordered)
+    {
+        static IReadOnlyList<string> Diagnostics(string program)
+            => Parser.Parse(program).Diagnostics
+                .Select(d => d.Code + ": " + d.Message)
+                .OrderBy(text => text, StringComparer.Ordinal)
+                .ToList();
+
+        static string Outcome(string program)
+            => KatLangEngine.Run(program) switch
+            {
+                RunResult.Success success => "success " + success.ToDisplayString(),
+                RunResult.ParseFailure failure => "parse " + string.Join(",", failure.Errors.Select(e => e.Code).OrderBy(c => c)),
+                RunResult.EvalFailure failure => "eval " + string.Join(",", failure.Errors.Select(e => e.Code).OrderBy(c => c)),
+                var other => other.GetType().Name,
+            };
+
+        Assert.Equal(Diagnostics(source), Diagnostics(reordered));
+        Assert.Equal(Outcome(source), Outcome(reordered));
+    }
+
+    // ── 8. SemanticModelBuilder: one analysis per (node, scope frame) ────────
+
+    /// <summary>
+    /// An expression diamond in one body is one scope frame: every node is analyzed once and
+    /// the shared leaf is one identifier occurrence, not 2^depth of them.
+    /// </summary>
+    [Theory]
+    [InlineData(ShallowDepth)]
+    [InlineData(DeepDepth)]
+    public Task SemanticModel_ExpressionDiamond_AnalyzesEachNodeOncePerFrame(int depth)
+        => AssertCompletesUnderWallClockGuard(() =>
+        {
+            var leaf = new Expr.Resolve("Leaf") { Span = new SourceSpan(2, 1, 2, 4) };
+            var root = new Algorithm.User(
+                null, [], [],
+                [new Property("Leaf", EmptyAlgorithm(new Expr.Num(1)))],
+                new OutputBundle([BinaryDiamond(depth, leaf)]));
+            var (detected, _) = ParameterDetector.Detect(root);
+            var observations = new FrontEndTraversalObservations();
+
+            var model = SemanticModelBuilder.Build(detected, observations);
+
+            // Leaf's own `1`, then the diamond's depth interior nodes and its one leaf.
+            Assert.Equal(depth + 2, observations.SemanticModelExpressionVisits);
+            var occurrence = Assert.Single(model.IdentifierOccurrences);
+            Assert.Equal("Leaf", occurrence.Name);
+            Assert.Equal(
+                IdentifierClassification.PropertyReference,
+                Assert.Single(model.FindResolutions("Leaf"), r => r.Occurrence.Kind == OccurrenceKind.ResolveReference).Classification);
+        });
+
+    /// <summary>
+    /// A shared property-value diamond: the same value under two properties of one body is
+    /// one occurrence, so the builder analyzes every distinct algorithm once — root, the leaf
+    /// value, and the depth + 1 diamond values.
+    /// </summary>
+    [Theory]
+    [InlineData(ShallowDepth)]
+    [InlineData(DeepDepth)]
+    public Task SemanticModel_PropertyValueDiamond_AnalyzesEachAlgorithmOncePerFrame(int depth)
+        => AssertCompletesUnderWallClockGuard(() =>
+        {
+            var root = new Algorithm.User(
+                null, [], [],
+                [new Property("Leaf", EmptyAlgorithm(new Expr.Num(1))), new Property("Mod", PropertyValueDiamond(depth, "Leaf"))],
+                new OutputBundle([new Expr.Resolve("Mod")]));
+            var (detected, _) = ParameterDetector.Detect(root);
+            var observations = new FrontEndTraversalObservations();
+
+            SemanticModelBuilder.Build(detected, observations);
+
+            Assert.Equal(depth + 3, observations.SemanticModelAlgorithmVisits);
+        });
+
+    /// <summary>
+    /// The semantic model stays OCCURRENCE-oriented where contexts genuinely differ: one body
+    /// under two families whose patterns declare their own <c>x</c>, and as a plain property
+    /// value, is three analyses — the binder references resolve to their own family's
+    /// declaration, and the plain value's <c>x</c> is unbound — each analyzed once.
+    /// </summary>
+    [Fact]
+    public void SemanticModel_SharedBody_UnderDistinctBinderTables_IsAnalyzedPerFamily()
+    {
+        var body = EmptyAlgorithm(new Expr.Param("x") { Span = new SourceSpan(9, 1, 9, 1) });
+        Algorithm.Conditional Family(int line)
+            => new(null, [], [new CondBranch(new Pattern.Bind("x") { NameSpan = new SourceSpan(line, 1, line, 1) }, body)]);
+        var root = new Algorithm.User(
+            null, [], [],
+            [new Property("Left", Family(1)), new Property("Right", Family(2)), new Property("Value", body)],
+            OutputBundle.Empty);
+        var observations = new FrontEndTraversalObservations();
+
+        var model = SemanticModelBuilder.Build(root, observations);
+
+        // Root, two families, the body under each family's binder table, and as a plain value.
+        Assert.Equal(6, observations.SemanticModelAlgorithmVisits);
+        var references = model.FindResolutions("x").Where(r => r.Occurrence.Kind == OccurrenceKind.ParameterReference).ToList();
+        Assert.Equal(3, references.Count);
+        Assert.Contains(references, r => r.Classification == IdentifierClassification.ConditionalBinderReference && r.ResolvedDeclaration?.Span.StartLineNumber == 1);
+        Assert.Contains(references, r => r.Classification == IdentifierClassification.ConditionalBinderReference && r.ResolvedDeclaration?.Span.StartLineNumber == 2);
+        Assert.Contains(references, r => r.Classification == IdentifierClassification.Unresolved);
+    }
 
     private static Expr LoadCall()
         => new Expr.Call(

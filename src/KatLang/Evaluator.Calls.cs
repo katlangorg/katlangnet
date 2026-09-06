@@ -237,6 +237,51 @@ public static partial class Evaluator
             EvalResolvedCallCounted(calleeR.Value, args, ctx, valEnv, diagnosticName));
     }
 
+    // ── [HOST] B2c: deferred module regions at the branch-selection boundary ──
+
+    /// <summary>
+    /// The body a SELECTED conditional branch evaluates. An ordinary branch evaluates its
+    /// written body; a branch whose body is a deferred module region
+    /// (<see cref="DeferredModuleRegions"/>) evaluates its MATERIALIZED body — the one
+    /// eager elaboration would have produced, so the core rules from here on are unchanged.
+    /// The synchronous family can only use a materialization that already exists: producing
+    /// one awaits the module downloader, which the async family does through
+    /// <see cref="SelectedBranchBodyAsync"/>. Every synchronous entry point rejects a root
+    /// carrying deferred regions before evaluating, so reaching an unmaterialized region here
+    /// means a deferred-region tree was evaluated through a synchronous path — a host
+    /// configuration error, reported fail-loud exactly like the async-only host-operation
+    /// rejections, never as a KatLang diagnostic.
+    /// </summary>
+    private static Algorithm SelectedBranchBody(CondBranch branch)
+    {
+        if (!DeferredModuleRegions.TryGet(branch.Body, out var region))
+            return branch.Body;
+
+        if (region.TryGetMaterialized(out var materialized))
+            return materialized;
+
+        throw DeferredModuleRegions.SynchronousSelectionNotSupported();
+    }
+
+    /// <summary>
+    /// MIRROR OF <see cref="SelectedBranchBody"/> for the async twin family: materializes
+    /// the selected branch's deferred module region on first selection (awaiting its module
+    /// loads through the owning loader), reuses the cached materialization afterwards, and
+    /// surfaces a failed materialization as the structured
+    /// <see cref="EvalError.ModuleRegionMaterializationFailed"/> carrying the module
+    /// diagnostics with their branch-local provenance.
+    /// </summary>
+    private static async ValueTask<EvalResult<Algorithm>> SelectedBranchBodyAsync(CondBranch branch, EvalCtx ctx)
+    {
+        if (!DeferredModuleRegions.TryGet(branch.Body, out var region))
+            return EvalResult<Algorithm>.Ok(branch.Body);
+
+        if (region.TryGetMaterialized(out var materialized))
+            return EvalResult<Algorithm>.Ok(materialized);
+
+        return await region.MaterializeAsync(ctx.Budget.CancellationToken).ConfigureAwait(false);
+    }
+
     // ── Conditional algorithm call (Lean: evalConditionalCallCounted) ───────
 
     /// <summary>
@@ -337,7 +382,7 @@ public static partial class Evaluator
             return new EvalError.NoMatchingBranch(calleeName.Render(ctx));
 
         var (branch, bindings) = match.Value;
-        var wiredBody = ChildOf(callee, branch.Body);
+        var wiredBody = ChildOf(callee, SelectedBranchBody(branch));
         var shadowedNames = bindings.Select(static binding => binding.Item1).ToArray();
         var newCtx = ctx.Push(callee)
             .WithCountedParamEnv(ShadowCountedParamEnv(ctx.CountedParamEnv, shadowedNames));

@@ -89,6 +89,20 @@ internal static class LoadElaborationGuard
             base.VisitAlgorithm(algorithm);
         }
 
+        /// <summary>
+        /// B2c: a branch body registered as a deferred module region carries its load
+        /// directives INTENTIONALLY — they are materialized when the branch is selected — so
+        /// it is not an unresolved load the pipeline forgot. The guard distinguishes the two
+        /// by the registry, never by shape.
+        /// </summary>
+        protected override void VisitConditionalBranch(CondBranch branch)
+        {
+            if (DeferredModuleRegions.IsDeferred(branch.Body))
+                return;
+
+            base.VisitConditionalBranch(branch);
+        }
+
         public override void VisitExpr(Expr expr)
         {
             if (!_visited.Add(expr))

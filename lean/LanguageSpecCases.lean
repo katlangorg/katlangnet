@@ -14,11 +14,11 @@ This is bounded differential validation over the Lean-guarded partition,
 not a formal verification of the evaluators.
 
 Partition (machine-checked by the `specCaseIds.length` guard below):
-- specification surface cases: 187
-- excluded parse-level cases (Lean has no surface parser): 8
+- specification surface cases: 191
+- excluded parse-level cases (Lean has no surface parser): 10
 - excluded C#-only cases (each carries an explicit reason in the corpus): 8
-- Lean-guarded cases: 171
-- probe observations (C#-only by design): 305
+- Lean-guarded cases: 173
+- probe observations (C#-only by design): 320
 - internal-node cases live in the semantic-explorer corpus, not here: see
   lean/SemanticExplorerCases.lean
 
@@ -945,7 +945,7 @@ def case_callable_argument_parameter_shadowing : Expr :=
 
 -- clause-family-nested-in-branch-body-binds-its-own-binders [conditionals]: n = 99 \n F(0) = { \n   G(0) = 'zero' \n   G(n) = n \n   G(5) \n } \n F(k) = k \n  \n F(0)
 def case_clause_family_nested_in_branch_body_binds_its_own_binders : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "n" (alg [] [] [] [.num 99]), privateProp "F" (.conditional none [] [⟨.litInt 0, (alg [] [] [privateLocalProp "G" .localConditional (.conditional none [] [⟨.litInt 0, (alg [] [] [] [.stringLiteral "zero"])⟩, ⟨.bind "n", (alg [] [] [] [.param "n"])⟩])] [(.call (.resolve "G") [.num 5])])⟩, ⟨.bind "k", (alg [] [] [] [.param "k"])⟩])] [(.call (.resolve "F") [.num 0])])
+  .algorithmExpr (alg [] [] [privateProp "n" (alg [] [] [] [.num 99]), privateProp "F" (.conditional none [] [⟨.litInt 0, (alg [] [] [privateProp "G" (.conditional none [] [⟨.litInt 0, (alg [] [] [] [.stringLiteral "zero"])⟩, ⟨.bind "n", (alg [] [] [] [.param "n"])⟩])] [(.call (.resolve "G") [.num 5])])⟩, ⟨.bind "k", (alg [] [] [] [.param "k"])⟩])] [(.call (.resolve "F") [.num 0])])
 #guard obs case_clause_family_nested_in_branch_body_binds_its_own_binders == "ok raw=5 n=1"
 
 -- conditional-branch-pattern-is-a-closed-input-specification [conditionals]: A = x + 1 \n F(0) = A \n F(n) = n \n  \n F(0)
@@ -953,7 +953,17 @@ def case_conditional_branch_pattern_is_a_closed_input_specification : Expr :=
   .algorithmExpr (alg [] [] [privateProp "A" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))]), privateProp "F" (.conditional none [] [⟨.litInt 0, (alg [] [] [] [.resolve "A"])⟩, ⟨.bind "n", (alg [] [] [] [.param "n"])⟩])] [(.call (.resolve "F") [.num 0])])
 #guard obs case_conditional_branch_pattern_is_a_closed_input_specification == "err arity"
 
--- 171 canonical Lean-guarded specification cases.
+-- conditional-branch-inline-open-exposes-members-to-the-branch [conditionals]: F(0) = { \n   open { \n     public Helper = 5 \n   } \n   Helper \n } \n F(n) = n \n  \n F(0)
+def case_conditional_branch_inline_open_exposes_members_to_the_branch : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (.conditional none [] [⟨.litInt 0, (alg [] [(.algorithmExpr (alg [] [] [publicProp "Helper" (alg [] [] [] [.num 5])] []))] [] [.resolve "Helper"])⟩, ⟨.bind "n", (alg [] [] [] [.param "n"])⟩])] [(.call (.resolve "F") [.num 0])])
+#guard obs case_conditional_branch_inline_open_exposes_members_to_the_branch == "ok raw=5 n=1"
+
+-- conditional-branch-local-library-is-openable-within-the-branch [conditionals]: F(0) = { \n   Lib = { \n     public X = 1 \n   } \n   G = { \n     open Lib \n     X \n   } \n   G \n } \n F(n) = n \n  \n F(0)
+def case_conditional_branch_local_library_is_openable_within_the_branch : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (.conditional none [] [⟨.litInt 0, (alg [] [] [privateProp "Lib" (alg [] [] [publicProp "X" (alg [] [] [] [.num 1])] []), privateProp "G" (alg [] [.resolve "Lib"] [] [.resolve "X"])] [.resolve "G"])⟩, ⟨.bind "n", (alg [] [] [] [.param "n"])⟩])] [(.call (.resolve "F") [.num 0])])
+#guard obs case_conditional_branch_local_library_is_openable_within_the_branch == "ok raw=1 n=1"
+
+-- 173 canonical Lean-guarded specification cases.
 
 /--
 Machine-checked Lean-guarded partition count: the id list is built by the
@@ -1131,8 +1141,10 @@ def specCaseIds : List String := [
   "list-builtin-collection",
   "callable-argument-parameter-shadowing",
   "clause-family-nested-in-branch-body-binds-its-own-binders",
-  "conditional-branch-pattern-is-a-closed-input-specification"
+  "conditional-branch-pattern-is-a-closed-input-specification",
+  "conditional-branch-inline-open-exposes-members-to-the-branch",
+  "conditional-branch-local-library-is-openable-within-the-branch"
 ]
-#guard specCaseIds.length == 171
+#guard specCaseIds.length == 173
 
 end LanguageSpecCases

@@ -131,6 +131,7 @@ public class SemanticModelDeclarationRegistrationTests
             .Select(static property => property.Name)
             .OrderBy(static name => name, StringComparer.Ordinal)
             .ToList();
-        Assert.Equal(["Parameters", "Parent", "PropertyScope"], members);
+        // HasDeferredModuleOpen is a per-frame flag (B2c editor uncertainty), not a name table.
+        Assert.Equal(["HasDeferredModuleOpen", "Parameters", "Parent", "PropertyScope"], members);
     }
 }

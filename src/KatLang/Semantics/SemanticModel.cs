@@ -31,11 +31,23 @@ public enum IdentifierClassification
     /// <summary>
     /// Legacy classification retained for API compatibility.
     /// The default public front-end should not produce this because successful
-    /// parse/elaboration removes unresolved <c>load</c> before semantic modeling.
+    /// parse/elaboration removes unresolved <c>load</c> outside deferred regions, which use
+    /// <see cref="DeferredModuleReference"/> instead.
     /// </summary>
     LoadedExternalMemberReference,
     OpenTarget,
     Unresolved,
+    /// <summary>
+    /// The identifier's meaning cannot be determined without materializing a DEFERRED module
+    /// dependency (branch-lazy module loading, B2c): it has no certain lexical resolution, and a
+    /// module-backed <c>open</c> whose module is loaded only when its conditional branch is
+    /// selected sits in the lookup chain (or is the receiver of the dot member) and may
+    /// supply it or make an ordinary open's candidate ambiguous. Neither resolved nor known to be invalid — the semantic model never loads
+    /// a branch's modules to find out — so tooling should treat it as indeterminate rather
+    /// than as an error, including in completion results. A name that no deferred open could supply stays
+    /// <see cref="Unresolved"/>.
+    /// </summary>
+    DeferredModuleReference,
 }
 
 /// <summary>

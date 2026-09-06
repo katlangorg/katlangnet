@@ -280,9 +280,28 @@ public sealed class KatLangError
             EvalError.AstCycleDetected =>
                 "The program tree contains a reference cycle, so it is not a valid KatLang program structure. "
                 + "KatLang ASTs must be acyclic: shared subtrees are allowed, but no node may reach itself through its own children",
+            EvalError.ModuleRegionMaterializationFailed e => FormatModuleRegionMaterializationFailed(e),
             EvalError.WithContext e => $"{e.Context}: {FormatEvalError(e.Inner)}",
             _ => error.ToString()!,
         };
+    }
+
+    /// <summary>
+    /// The demand-time module diagnostics of a selected conditional branch, worded exactly
+    /// as the equivalent eager load reports them: the primary diagnostic's own message first,
+    /// then any further error messages on their own lines.
+    /// </summary>
+    private static string FormatModuleRegionMaterializationFailed(EvalError.ModuleRegionMaterializationFailed error)
+    {
+        var primary = error.Primary;
+        var lines = new List<string> { primary.Message };
+        foreach (var diagnostic in error.Diagnostics)
+        {
+            if (!ReferenceEquals(diagnostic, primary) && diagnostic.Severity == DiagnosticSeverity.Error)
+                lines.Add(diagnostic.Message);
+        }
+
+        return string.Join(Environment.NewLine, lines);
     }
 
     private static bool TryGetTextContext(EvalError error, out string context, out EvalError inner)

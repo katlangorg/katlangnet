@@ -21,6 +21,13 @@ public static class SemanticModelBuilder
         => BuildElaborated(root);
 
     /// <summary>
+    /// Observed build for the shared-AST-graph (DAG) complexity regressions: the builder
+    /// records its expression and algorithm visits on <paramref name="observations"/>.
+    /// </summary>
+    internal static SemanticModel Build(Algorithm root, FrontEndTraversalObservations? observations)
+        => BuildElaborated(root, observations);
+
+    /// <summary>
     /// Builds a semantic model from a parse result returned by the public
     /// front-end compatibility wrapper.
     /// </summary>
@@ -33,7 +40,7 @@ public static class SemanticModelBuilder
     internal static SemanticModel Build(FrontEndResult frontEndResult)
         => BuildElaborated(frontEndResult.ElaboratedRoot);
 
-    private static SemanticModel BuildElaborated(Algorithm elaboratedRoot)
+    private static SemanticModel BuildElaborated(Algorithm elaboratedRoot, FrontEndTraversalObservations? observations = null)
     {
         // Semantic modeling walks the tree recursively, and the public Build overloads
         // accept preconstructed (host-built) roots, so the same non-recursive structural
@@ -59,7 +66,7 @@ public static class SemanticModelBuilder
         }
 
         LoadElaborationGuard.ThrowIfUnresolvedLoad(elaboratedRoot, "Semantic model building");
-        return new Builder().Build(elaboratedRoot);
+        return new Builder(observations).Build(elaboratedRoot);
     }
 
     /// <summary>
@@ -127,6 +134,58 @@ public static class SemanticModelBuilder
         private readonly List<ScopeVisibility> _scopeVisibilities = [];
         private readonly List<ScopeRegionBuilder> _regionStack = [];
 
+        // DAG-safety (M4): the semantic model is OCCURRENCE-oriented — an identifier site is a
+        // node with a span, analyzed under the scope frame it stands in — so a node reached
+        // again under the SAME frame (a shared subtree referenced twice from one body, a
+        // property value shared by two properties of one body) is the same occurrence and is
+        // analyzed once. The per-frame visit memos below key on node reference plus frame
+        // reference (algorithms additionally on the extra-parameter table a branch supplies, so
+        // a body shared by two families with their own binder declarations stays one analysis
+        // PER FAMILY: its binder references resolve to different declarations). They live in
+        // this builder, never on the frames — the prelude frame is process-lifetime and shared.
+        private readonly Dictionary<ScopeFrame, FrameVisits> _visitsByFrame = new(ReferenceEqualityComparer.Instance);
+        private readonly FrontEndTraversalObservations? _observations;
+
+        public Builder(FrontEndTraversalObservations? observations)
+        {
+            _observations = observations;
+        }
+
+        private sealed class FrameVisits
+        {
+            public HashSet<Expr>? ValueExpressions;
+
+            public HashSet<Expr>? OpenExpressions;
+
+            public HashSet<AlgorithmVisitKey>? Algorithms;
+
+            public Dictionary<Expr, bool>? DeferredReceivers;
+        }
+
+        /// <summary>An algorithm node plus the extra-parameter table it was visited with, both by reference.</summary>
+        private readonly struct AlgorithmVisitKey(Algorithm algorithm, object? extraParameters) : IEquatable<AlgorithmVisitKey>
+        {
+            private readonly Algorithm _algorithm = algorithm;
+            private readonly object? _extraParameters = extraParameters;
+
+            public bool Equals(AlgorithmVisitKey other)
+                => ReferenceEquals(_algorithm, other._algorithm) && ReferenceEquals(_extraParameters, other._extraParameters);
+
+            public override bool Equals(object? obj) => obj is AlgorithmVisitKey other && Equals(other);
+
+            public override int GetHashCode()
+                => HashCode.Combine(
+                    System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(_algorithm),
+                    _extraParameters is null ? 0 : System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(_extraParameters));
+        }
+
+        private FrameVisits VisitsOf(ScopeFrame scope)
+        {
+            if (!_visitsByFrame.TryGetValue(scope, out var visits))
+                _visitsByFrame[scope] = visits = new FrameVisits();
+            return visits;
+        }
+
         public SemanticModel Build(Algorithm root)
         {
             VisitAlgorithm(root, PreludeScope, extraParameters: null);
@@ -168,6 +227,15 @@ public static class SemanticModelBuilder
             IReadOnlyDictionary<string, SymbolDefinition>? extraParameters,
             SourceSpan? regionSeedSpan = null)
         {
+            // Same algorithm, same parent frame, same (or no) extra-parameter table: the same
+            // occurrence, analyzed once. An empty binder table is no table at all, so two
+            // literal-pattern families sharing a body share its analysis.
+            var visits = VisitsOf(parentScope);
+            visits.Algorithms ??= [];
+            if (!visits.Algorithms.Add(new AlgorithmVisitKey(algorithm, extraParameters is { Count: > 0 } ? extraParameters : null)))
+                return;
+
+            _observations?.RecordSemanticModelAlgorithmVisit();
             switch (algorithm)
             {
                 case Algorithm.User user:
@@ -297,7 +365,108 @@ public static class SemanticModelBuilder
                     : new SymbolDefinition(parameterName, SymbolKind.ImplicitParameter, AlgorithmValue: null, Declaration: null, IsPublic: false, PropertyInfo: null);
             }
 
-            return new ScopeFrame(parentScope, parameterSymbols, propertyScope);
+            return new ScopeFrame(parentScope, parameterSymbols, propertyScope, OwnsDeferredModuleOpen(propertyScope));
+        }
+
+        /// <summary>
+        /// Whether one of <paramref name="propertyScope"/>'s opens is a DEFERRED module open: the
+        /// raw <c>open 'url'</c> a deferred module region keeps until its branch is selected,
+        /// or an <c>open X</c> whose target is the unmaterialized placeholder of
+        /// <c>X = load('url')</c>. Outside deferred regions every load is already elaborated
+        /// (the load-elaboration guard proved it), so this is exactly the module-backed
+        /// uncertainty the editor cannot resolve without branch module I/O.
+        /// </summary>
+        private static bool OwnsDeferredModuleOpen(ElaboratedPropertyScope propertyScope)
+        {
+            foreach (var open in propertyScope.Opens)
+            {
+                if (IsDeferredOpenTarget(open, propertyScope))
+                    return true;
+            }
+
+            return false;
+        }
+
+        private static bool IsDeferredOpenTarget(Expr expression, ElaboratedPropertyScope propertyScope)
+        {
+            if (expression.TryGetUnresolvedLoadArguments(out _))
+                return true;
+
+            while (true)
+            {
+                if (ElaboratedScopeLookup.ResolveOpenTarget(propertyScope, expression) is { } target
+                    && IsDeferredModulePlaceholder(target))
+                    return true;
+
+                if (expression is not Expr.DotCall dotCall || !dotCall.IsCoreOpenForm())
+                    return false;
+
+                expression = dotCall.Target;
+            }
+        }
+
+        /// <summary>
+        /// The shape <c>X = load('url')</c> keeps inside a deferred module region: a wrapper
+        /// whose single output row is the still-unresolved load directive (module elaboration
+        /// would have replaced the wrapper by the loaded module itself).
+        /// </summary>
+        private static bool IsDeferredModulePlaceholder(Algorithm algorithm)
+            => algorithm is Algorithm.User { Params.Count: 0, Opens.Count: 0, Properties.Count: 0, Output: [var single] }
+                && single.TryGetUnresolvedLoadArguments(out _);
+
+        /// <summary>
+        /// Classification of a bare name that resolved to NO lexical symbol: indeterminate when
+        /// the lookup found nothing at all and a deferred module open sits in the chain (the
+        /// module may supply it); otherwise — nothing found and no deferred open, or an
+        /// ambiguous open provider set — genuinely unresolved, exactly as before.
+        /// </summary>
+        private static IdentifierClassification ClassifyUnresolvedLexicalReference(ScopeFrame scope, string name)
+            => IsDeferredLexicalReference(scope, name)
+                ? IdentifierClassification.DeferredModuleReference
+                : IdentifierClassification.Unresolved;
+
+        private static bool IsDeferredLexicalReference(ScopeFrame scope, string name)
+        {
+            if (!scope.HasDeferredModuleOpen
+                || ElaboratedScopeLookup.TryLookupDirectLexicalProperty(scope.PropertyScope, name) is not null)
+                return false;
+
+            for (var current = scope.PropertyScope; current is not null; current = current.Parent)
+            {
+                var matches = current.GetResolvedOpenProviders()
+                    .Count(provider => provider.TryLookupExportedMember(name) is not null);
+                if (matches > 1)
+                    return false;
+                if (OwnsDeferredModuleOpen(current))
+                    return true;
+                if (matches == 1)
+                    return false;
+            }
+
+            return false;
+        }
+
+        /// <summary>
+        /// A dot receiver that is itself an indeterminate deferred-module name (<c>Lib.X</c>
+        /// where the deferred open may supply <c>Lib</c>): its members are indeterminate too.
+        /// </summary>
+        private bool IsDeferredModuleReceiver(Expr receiver, ScopeFrame scope)
+        {
+            var memo = VisitsOf(scope).DeferredReceivers ??= new(ReferenceEqualityComparer.Instance);
+            if (memo.TryGetValue(receiver, out var cached))
+                return cached;
+
+            var unwrapped = receiver.UnwrapGraceOperand();
+            var deferred = unwrapped is Expr.Resolve resolve
+                ? IsDeferredLexicalReference(scope, resolve.Name)
+                    || (ResolveLexicalProperty(scope, resolve.Name)?.AlgorithmValue is { } algorithm
+                        && IsDeferredModulePlaceholder(algorithm))
+                : unwrapped is Expr.Param parameter
+                    ? ClassifyParameterReference(scope, parameter.Name, out _) == IdentifierClassification.DeferredModuleReference
+                    : unwrapped is Expr.DotCall dotCall
+                        && ResolveDotMember(dotCall, scope).Classification == IdentifierClassification.DeferredModuleReference;
+            memo[receiver] = deferred;
+            return deferred;
         }
 
         private SymbolDefinition CreatePropertySymbol(Property property)
@@ -483,6 +652,13 @@ public static class SemanticModelBuilder
         {
             ExtendCurrentRegion(expr.Span);
 
+            // One analysis per (node, frame) in open position — see _visitsByFrame.
+            var visits = VisitsOf(scope);
+            visits.OpenExpressions ??= new(ReferenceEqualityComparer.Instance);
+            if (!visits.OpenExpressions.Add(expr))
+                return;
+
+            _observations?.RecordSemanticModelExpressionVisit();
             switch (expr)
             {
                 case Expr.Resolve resolve:
@@ -512,7 +688,11 @@ public static class SemanticModelBuilder
                         OccurrenceKind.OpenTargetMemberReference,
                         isValidOpenTarget
                             ? IdentifierClassification.OpenTarget
-                            : IdentifierClassification.Unresolved,
+                            // `open X.Sub` on the unmaterialized placeholder of `X = load('url')`:
+                            // the module may export Sub — indeterminate until its branch is selected.
+                            : IsDeferredOpenTarget(dotCall.Target, scope.PropertyScope)
+                                ? IdentifierClassification.DeferredModuleReference
+                                : IdentifierClassification.Unresolved,
                         isValidOpenTarget ? memberSymbol?.Declaration : null,
                         isValidOpenTarget ? memberSymbol?.PropertyInfo : null);
                     break;
@@ -559,6 +739,13 @@ public static class SemanticModelBuilder
         {
             ExtendCurrentRegion(expr.Span);
 
+            // One analysis per (node, frame) in value position — see _visitsByFrame.
+            var visits = VisitsOf(scope);
+            visits.ValueExpressions ??= new(ReferenceEqualityComparer.Instance);
+            if (!visits.ValueExpressions.Add(expr))
+                return;
+
+            _observations?.RecordSemanticModelExpressionVisit();
             switch (expr)
             {
                 case Expr.Resolve resolve:
@@ -568,7 +755,9 @@ public static class SemanticModelBuilder
                         resolve.Name,
                         resolve.Span,
                         OccurrenceKind.ResolveReference,
-                        ClassifyReferenceSymbol(symbol),
+                        symbol is null
+                            ? ClassifyUnresolvedLexicalReference(scope, resolve.Name)
+                            : ClassifyReferenceSymbol(symbol),
                         symbol?.Declaration,
                         symbol?.PropertyInfo);
                     break;
@@ -576,12 +765,12 @@ public static class SemanticModelBuilder
 
                 case Expr.Param parameter:
                 {
-                    var symbol = ResolveParameter(scope, parameter.Name);
+                    var parameterClassification = ClassifyParameterReference(scope, parameter.Name, out var symbol);
                     AddReference(
                         parameter.Name,
                         parameter.Span,
                         OccurrenceKind.ParameterReference,
-                        ClassifyParameterSymbol(symbol),
+                        parameterClassification,
                         symbol?.Declaration,
                         propertyInfo: null);
                     break;
@@ -671,6 +860,9 @@ public static class SemanticModelBuilder
             if (dotCall.UsesOrdinaryDotStringIntrinsic())
                 return (IdentifierClassification.Builtin, null, StringIntrinsicSymbol.PropertyInfo);
 
+            if (IsDeferredModuleReceiver(dotCall.Target, scope))
+                return (IdentifierClassification.DeferredModuleReference, null, null);
+
             var provider = ResolveStructuralMemberProvider(dotCall.Target, scope);
             if (provider.Kind == StaticStructuralMemberProviderKind.KnownAlgorithm)
             {
@@ -686,12 +878,25 @@ public static class SemanticModelBuilder
                 if (targetAlgorithm.DefinesConditionalBranchProperty(dotCall.Name))
                     return (IdentifierClassification.Unresolved, null, null);
 
+                // The receiver is the unmaterialized placeholder of `X = load('url')` inside a
+                // deferred module region: the module may define the member, and only branch
+                // selection would load it — indeterminate, never a hard error.
+                if (IsDeferredModulePlaceholder(targetAlgorithm))
+                    return (IdentifierClassification.DeferredModuleReference, null, null);
+
                 return ResolveDotMemberFallbackBinding(dotCall, scope);
             }
 
             var fallbackSelection = dotCall.GetLexicalFallbackSelection(provider);
             return fallbackSelection switch
             {
+                // The receiver itself may be supplied by a deferred module open: its members
+                // are indeterminate with it.
+                LexicalFallbackSelection.Conditional
+                    when provider.Kind == StaticStructuralMemberProviderKind.LexicalReference
+                        && IsDeferredModuleReceiver(dotCall.Target, scope) =>
+                    (IdentifierClassification.DeferredModuleReference, null, null),
+
                 // The editor surfaces a MAY-selected stored fallback for a
                 // runtime parameter as the possible callable binding, exactly
                 // like implicit signature inference. Exposure analysis remains
@@ -733,13 +938,18 @@ public static class SemanticModelBuilder
             {
                 case Expr.Param(var parameterName):
                 {
-                    var parameterSymbol = ResolveParameter(scope, parameterName);
-                    return (ClassifyParameterSymbol(parameterSymbol), parameterSymbol?.Declaration, null);
+                    var classification = ClassifyParameterReference(scope, parameterName, out var parameterSymbol);
+                    return (classification, parameterSymbol?.Declaration, null);
                 }
 
                 case Expr.Resolve(var fallbackName)
                     when ResolveLexicalProperty(scope, fallbackName) is { } lexical:
                     return (ClassifyReferenceSymbol(lexical), lexical.Declaration, GetLexicalDotFallbackPropertyInfo(lexical));
+
+                case Expr.Resolve(var fallbackName):
+                    // The fallback callable may itself be supplied by a deferred module open in
+                    // the chain (`Local.Absent` dispatching to a module's `Absent`).
+                    return (ClassifyUnresolvedLexicalReference(scope, fallbackName), null, null);
 
                 default:
                     return (IdentifierClassification.Unresolved, null, null);
@@ -754,6 +964,9 @@ public static class SemanticModelBuilder
 
         private SymbolDefinition? ResolveLexicalProperty(ScopeFrame scope, string name)
         {
+            if (IsDeferredLexicalReference(scope, name))
+                return null;
+
             var hits = ElaboratedScopeLookup.LookupLexicalPropertyMatches(scope.PropertyScope, name);
             return hits.Count == 1
                 ? CreateLookupPropertySymbol(hits[0].Owner, hits[0].Property)
@@ -761,14 +974,38 @@ public static class SemanticModelBuilder
         }
 
         private static SymbolDefinition? ResolveParameter(ScopeFrame scope, string name)
+            => ResolveParameter(scope, name, out _);
+
+        private static SymbolDefinition? ResolveParameter(ScopeFrame scope, string name, out ScopeFrame? declaringFrame)
         {
             for (var current = scope; current is not null; current = current.Parent)
             {
                 if (current.Parameters.TryGetValue(name, out var parameter))
+                {
+                    declaringFrame = current;
                     return parameter;
+                }
             }
 
+            declaringFrame = null;
             return null;
+        }
+
+        /// <summary>
+        /// Classification of a parameter reference. An IMPLICIT parameter inferred by a body
+        /// that sits under a deferred module open was inferred PROVISIONALLY (parameter
+        /// detection ran before the branch's modules could be consulted): once the branch is
+        /// selected and its modules materialize, the same name may resolve to a module member
+        /// instead, so the reference is indeterminate. Explicit parameters, conditional
+        /// binders, and implicit parameters declared outside any deferred region keep their
+        /// ordinary classification — nothing a module supplies can rebind them.
+        /// </summary>
+        private static IdentifierClassification ClassifyParameterReference(ScopeFrame scope, string name, out SymbolDefinition? symbol)
+        {
+            symbol = ResolveParameter(scope, name, out var declaringFrame);
+            return symbol?.Kind == SymbolKind.ImplicitParameter && declaringFrame!.HasDeferredModuleOpen
+                ? IdentifierClassification.DeferredModuleReference
+                : ClassifyParameterSymbol(symbol);
         }
 
         private SymbolDefinition? ResolveOpenHead(ScopeFrame scope, string name)
@@ -1333,7 +1570,7 @@ public static class SemanticModelBuilder
 
                     symbols.Add(new VisibleSymbol(
                         name,
-                        ClassifyParameterSymbol(symbol),
+                        ClassifyParameterReference(scope, name, out _),
                         symbol.Declaration,
                         Property: null));
                 }
@@ -1368,6 +1605,18 @@ public static class SemanticModelBuilder
 
             for (var propertyScope = scope.PropertyScope; propertyScope is not null; propertyScope = propertyScope.Parent)
                 CollectOpenProvidedSymbols(propertyScope, decided, symbols);
+
+            if (scope.HasDeferredModuleOpen)
+            {
+                for (var index = 0; index < symbols.Count; index++)
+                {
+                    var symbol = symbols[index];
+                    if (symbol.Classification == IdentifierClassification.PropertyReference
+                        && IsDeferredLexicalReference(scope, symbol.Name))
+                        symbols[index] = new VisibleSymbol(
+                            symbol.Name, IdentifierClassification.DeferredModuleReference, Declaration: null, Property: null);
+                }
+            }
 
             symbols.Sort(static (left, right) => string.CompareOrdinal(left.Name, right.Name));
             return symbols;
@@ -1604,11 +1853,13 @@ public static class SemanticModelBuilder
         public ScopeFrame(
             ScopeFrame? parent,
             IReadOnlyDictionary<string, SymbolDefinition> parameters,
-            ElaboratedPropertyScope propertyScope)
+            ElaboratedPropertyScope propertyScope,
+            bool ownsDeferredModuleOpen = false)
         {
             Parent = parent;
             Parameters = parameters;
             PropertyScope = propertyScope;
+            HasDeferredModuleOpen = ownsDeferredModuleOpen || parent?.HasDeferredModuleOpen == true;
         }
 
         public ScopeFrame? Parent { get; }
@@ -1616,6 +1867,17 @@ public static class SemanticModelBuilder
         public IReadOnlyDictionary<string, SymbolDefinition> Parameters { get; }
 
         public ElaboratedPropertyScope PropertyScope { get; }
+
+        /// <summary>
+        /// True when this level or an enclosing level opens a DEFERRED module (a module-backed
+        /// <c>open</c> whose module is loaded only when its conditional branch is selected,
+        /// B2c): a name that resolves nowhere in this chain may be supplied by that module, so
+        /// it is <see cref="IdentifierClassification.DeferredModuleReference"/> rather than
+        /// <see cref="IdentifierClassification.Unresolved"/>. Computed once per frame from its
+        /// own open list and the parent flag, so each lookup pays one flag read — the
+        /// uncertainty adds no per-path work to the builder's walk.
+        /// </summary>
+        public bool HasDeferredModuleOpen { get; }
     }
 
     /// <summary>

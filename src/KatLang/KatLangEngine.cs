@@ -395,14 +395,16 @@ public static class KatLangEngine
                     : []);
         }
 
-        // Cache-pairing rule (async-capable cache exactly for asynchronous
-        // host-operation configurations): Evaluator.CreateRunScopedZeroArgPropertyResultCache.
+        // Cache-pairing rule (async-capable cache exactly for asynchronous host-operation
+        // configurations and for roots carrying deferred module regions):
+        // Evaluator.CreateRunScopedZeroArgPropertyResultCache.
+        var program = new Expr.AlgorithmExpr(frontEndResult.ElaboratedRoot);
         var zeroArgPropertyResultCache =
-            Evaluator.CreateRunScopedZeroArgPropertyResultCache(hostOperations);
+            Evaluator.CreateRunScopedZeroArgPropertyResultCache(program, hostOperations);
 
         // One budget for the whole run, exactly as in Run.
         var evalResult = await Evaluator.RunCountedWithTopLevelPropertyAsync(
-            new Expr.AlgorithmExpr(frontEndResult.ElaboratedRoot),
+            program,
             DisplayDecimalsPropertyName,
             zeroArgPropertyResultCache,
             options?.EvaluationLimits,
@@ -670,9 +672,10 @@ public static class KatLangEngine
     private static async Task<IReadOnlyList<KatLangError>> EvaluateForAdditionalErrorsAsync(
         Algorithm root, EvaluationLimits? limits, HostOperations? hostOperations, CancellationToken cancellationToken)
     {
+        var program = new Expr.AlgorithmExpr(root);
         var evalResult = await Evaluator.RunCountedAsync(
-            new Expr.AlgorithmExpr(root),
-            Evaluator.CreateRunScopedZeroArgPropertyResultCache(hostOperations),
+            program,
+            Evaluator.CreateRunScopedZeroArgPropertyResultCache(program, hostOperations),
             limits,
             hostOperations,
             cancellationToken).ConfigureAwait(false);
