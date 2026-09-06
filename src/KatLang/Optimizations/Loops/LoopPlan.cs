@@ -105,6 +105,8 @@ internal sealed class LoopRunFrame
     private readonly Evaluator.CountedResult[] _countedParamSlots;
     private readonly PlannedLoopValue[] _tempSlots;
     private readonly bool[] _tempSlotHasValue;
+    private Dictionary<int, PlannedLoopValue>? _callTempMemo;
+    private int _tempCallDepth;
     private readonly PlannedLoopValue[] _iterationOutputs;
     private readonly LoopValueEnvironment _valueEnvironment;
 
@@ -157,14 +159,57 @@ internal sealed class LoopRunFrame
 
     public bool TryGetTempSlot(int index, out PlannedLoopValue value)
     {
+        if (_tempCallDepth != 0)
+        {
+            value = default;
+            return _callTempMemo is not null && _callTempMemo.TryGetValue(index, out value);
+        }
+
         value = _tempSlots[index];
         return _tempSlotHasValue[index];
     }
 
     public void SetTempSlot(int index, PlannedLoopValue value)
     {
+        if (_tempCallDepth != 0)
+        {
+            (_callTempMemo ??= [])[index] = value;
+            return;
+        }
+
         _tempSlots[index] = value;
         _tempSlotHasValue[index] = true;
+    }
+
+    /// <summary>
+    /// Suspends the per-iteration temp memo for the duration of a planned temp CALL
+    /// (<see cref="LoopExprPlan.TempCall"/>) and returns the state
+    /// <see cref="RestoreTempMemo"/> reinstates. A generic user call runs its callee in
+    /// FRESH value, counted, and algorithm environments, and the run's zero-argument
+    /// property cache is keyed by their identities: a bare temp read inside the callee
+    /// therefore neither hits nor populates the caller's entries, and the call's own reads
+    /// memoize only among themselves until it returns. Mirroring that exactly is what
+    /// keeps the two strategies' depth peaks and string materialization equal for a temp
+    /// that reads another temp. Call memos are sparse and allocated only on a bare-temp
+    /// miss. Suspension and restoration touch no root slots and take constant time;
+    /// neither copies storage proportional to the step's declared property count.
+    /// </summary>
+    public Dictionary<int, PlannedLoopValue>? SuspendTempMemo()
+    {
+        var saved = _callTempMemo;
+        _callTempMemo = null;
+        _tempCallDepth++;
+        return saved;
+    }
+
+    /// <summary>Reinstates the memo state <see cref="SuspendTempMemo"/> returned.</summary>
+    public void RestoreTempMemo(Dictionary<int, PlannedLoopValue>? saved)
+    {
+        if (_tempCallDepth == 0)
+            throw new InvalidOperationException("No suspended temp memo to restore.");
+
+        _callTempMemo = saved;
+        _tempCallDepth--;
     }
 
     public void SetScratchSlot(int index, Result value)

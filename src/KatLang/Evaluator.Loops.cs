@@ -672,7 +672,12 @@ public static partial class Evaluator
             return MakeCheckedLoopStateResult(ctx, stateSlots);
 
         var prepared = PrepareGenericLoopStep(step, ctx);
-        for (var k = 0; k < count; k++)
+        // The counter is a LONG like `count` itself. An `int` counter silently wraps past
+        // int.MaxValue and never satisfies `k < count` again, so a repeat count above
+        // 2^31 - 1 (legal: the count is narrowed from Decimal128 to long) would spin
+        // forever instead of finishing. Pinned structurally at both mirror sites by
+        // EvaluatorLoopTests.RepeatLoopGenericCounter_IsLongAtBothMirrorSites.
+        for (var k = 0L; k < count; k++)
         {
             var outputSlotsR = RunStepSlots(step, ctx, valEnv, stateSlots, "repeat", prepared);
             if (outputSlotsR.IsError) return outputSlotsR.Error;

@@ -30,6 +30,8 @@ public class CollectionMaterializationLimitsTests
 
     private static EvaluationLimits Total(long maxMaterializedItems) => new() { MaxMaterializedItems = maxMaterializedItems };
 
+    private static EvaluationLimits Chars(long maxMaterializedStringChars) => new() { MaxMaterializedStringChars = maxMaterializedStringChars };
+
     private static (EvalResult<Evaluator.CountedResult> Result, EvaluationBudget Budget) Observe(
         string source,
         EvaluationLimits? limits = null,
@@ -293,6 +295,48 @@ public class CollectionMaterializationLimitsTests
             Assert.False(result.IsError);
             Assert.Equal(1, diagnostics.GetSnapshot().OptimizedLoopHits);
         }
+    }
+
+    [Fact]
+    public void GenericAndOptimizedLoops_ChargeEveryFreshTempCallString()
+    {
+        // The CUMULATIVE string counterpart of the test above. `T()` is an explicit call:
+        // a call bypasses the zero-argument property cache (`A` versus `A()`), so the ten
+        // code units are materialized on EVERY call — twice per iteration over 200
+        // iterations — and the cumulative string boundary is exactly 4000 on both
+        // strategies. The planned loop used to compile `T()` to its memoized per-iteration
+        // slot and stopped at 2000, so a configured MaxMaterializedStringChars between the
+        // two decided the verdict by execution strategy.
+        const string source = "Step = {\n    T = 'xxxxxxxxxx'\n    n + (T() == T())\n}\nStep.repeat(200, 0)";
+
+        foreach (var optimized in new[] { false, true })
+        {
+            var exact = Observe(source, Chars(4000), optimized);
+            Assert.False(exact.Result.IsError, $"optimized={optimized}: {(exact.Result.IsError ? exact.Result.Error : null)}");
+            Assert.Equal(4000, exact.Budget.MaterializedStringChars);
+            Assert.Equal(200m, Assert.IsType<Result.Atom>(exact.Result.Value.Value).Value);
+
+            Assert.IsType<EvalError.StringMaterializationLimitExceeded>(
+                Observe(source, Chars(3999), optimized).Result.Error);
+        }
+
+        // The optimized side really ran the planned loop with `T()` planned as a fresh
+        // temp CALL — a configured cumulative string budget forces only the generic
+        // sequence strategy, never the generic loop strategy.
+        var diagnostics = new LoopOptimizationDiagnostics();
+        var observed = Evaluator.RunCountedObserved(
+            new Expr.AlgorithmExpr(SourceProvenance.ParseValid(source).Root),
+            Chars(4000),
+            enableOptimizations: true,
+            loopDiagnostics: diagnostics);
+        Assert.False(observed.Result.IsError);
+        var snapshot = diagnostics.GetSnapshot();
+        Assert.Equal(1, snapshot.OptimizedLoopHits);
+        Assert.Equal(0, snapshot.PlannedExpressionFallbacks);
+        Assert.Equal(0, snapshot.GenericExpressionEvaluationsInsideOptimizedLoops);
+        var plan = Assert.Single(snapshot.LoopPlans);
+        var output = Assert.Single(plan.Expressions);
+        Assert.Equal("Add(StateSlot(n), Equal(TempCall(T), TempCall(T)))", output.PlanSummary);
     }
 
     [Fact]

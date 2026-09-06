@@ -1484,19 +1484,16 @@ public static partial class Evaluator
         IReadOnlyList<(string, Result)> valEnv)
     {
         // Charged dynamic invocation boundary, entered BEFORE the cache is consulted —
-        // identical protocol to the synchronous twin, released from the finally on every
-        // completion path including exceptional unwind through a suspended seam await.
-        if (ctx.Budget.TryEnterInvocation() is { } limitError)
-            return AtSpanIfMissing(limitError, binding.DeclarationSpans.FirstOrDefault());
+        // the SAME enter helper and scoped release as the synchronous twin
+        // (Evaluator.BudgetScopes.cs), disposed on every completion path including
+        // exceptional unwind through a suspended seam await.
+        if (TryEnterDynamicInvocation(ctx, binding.DeclarationSpans.FirstOrDefault(), out var level) is { } limitError)
+            return limitError;
 
-        try
+        using (level)
         {
             return await GetOrEvaluateZeroArgPropertyResultCoreAsync(
                 owner, binding, accessKind, resolvedAlgorithm, ctx, valEnv).ConfigureAwait(false);
-        }
-        finally
-        {
-            ctx.Budget.ExitInvocation();
         }
     }
 
@@ -1616,15 +1613,12 @@ public static partial class Evaluator
         EvalCtx ctx,
         IReadOnlyList<(string, Result)> valEnv)
     {
-        if (ctx.Budget.TryEnterArgumentEvaluation() is { } limitError)
+        if (TryEnterArgumentEvaluationLevel(ctx, out var level) is { } limitError)
             return limitError;
-        try
+
+        using (level)
         {
             return await EvalAlgOutputValueAsync(algorithm, ctx, valEnv).ConfigureAwait(false);
-        }
-        finally
-        {
-            ctx.Budget.ExitInvocation();
         }
     }
 
@@ -1716,17 +1710,14 @@ public static partial class Evaluator
         CallArgumentAssembly argumentAssembly,
         CallDiagnosticName calleeName)
     {
-        // Charged dynamic invocation boundary (see EvaluationBudget).
-        if (ctx.Budget.TryEnterInvocation() is { } limitError)
-            return AtSpanIfMissing(limitError, FirstSpan(args));
+        // Charged dynamic invocation boundary (see EvaluationBudget) — the SAME enter
+        // helper and scoped release as the synchronous twin (Evaluator.BudgetScopes.cs).
+        if (TryEnterDynamicInvocation(ctx, UserCallLimitSpan(args), out var level) is { } limitError)
+            return limitError;
 
-        try
+        using (level)
         {
             return await EvalUserCallCountedCoreAsync(callee, args, ctx, valEnv, argumentAssembly, calleeName).ConfigureAwait(false);
-        }
-        finally
-        {
-            ctx.Budget.ExitInvocation();
         }
     }
 
@@ -2362,15 +2353,14 @@ public static partial class Evaluator
         EvalCtx ctx,
         IReadOnlyList<(string, Result)> valEnv)
     {
-        if (ctx.Budget.TryEnterArgumentEvaluation() is { } limitError)
+        // The SAME enter helper and scoped release as the synchronous twin
+        // (Evaluator.BudgetScopes.cs).
+        if (TryEnterArgumentEvaluationLevel(ctx, out var level) is { } limitError)
             return limitError;
-        try
+
+        using (level)
         {
             return await EvalAlgOutputCountedCoreAsync(algorithm, ctx, valEnv).ConfigureAwait(false);
-        }
-        finally
-        {
-            ctx.Budget.ExitInvocation();
         }
     }
 
@@ -3085,7 +3075,9 @@ public static partial class Evaluator
             return MakeCheckedLoopStateResult(ctx, stateSlots);
 
         var prepared = PrepareGenericLoopStep(step, ctx);
-        for (var k = 0; k < count; k++)
+        // LONG counter, exactly like the synchronous twin: an `int` would wrap past
+        // int.MaxValue and never end (see RepeatLoopGenericCounted).
+        for (var k = 0L; k < count; k++)
         {
             var outputSlotsR = await RunStepSlotsAsync(step, ctx, valEnv, stateSlots, "repeat", prepared).ConfigureAwait(false);
             if (outputSlotsR.IsError) return outputSlotsR.Error;

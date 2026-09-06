@@ -1,5 +1,7 @@
 using KatLang.Evaluation;
 using System.Numerics;
+using System.Reflection;
+using System.Runtime.CompilerServices;
 using KatLang.Evaluation.Caching;
 using KatLang.Optimizations.Loops;
 using KatLang.Optimizations.Sequences;
@@ -389,9 +391,13 @@ public class EvaluatorLoopTests
         Assert.True(temp.Planned, temp.FallbackReason);
         Assert.Equal("Add(StateSlot(x), Const(1))", temp.PlanSummary);
 
+        // `A` reads `x`, which the step does not bind itself, so the front end gives `A`
+        // the implicit parameter `x` and rewrites the reference to the forwarding call
+        // `A(x)` — a user call, evaluated fresh on every call by both strategies
+        // (TempCall), never the memoized zero-argument read (TempSlot).
         var output = AssertLoopExpression(plan, "output", 0);
         Assert.True(output.Planned);
-        Assert.Equal("TempSlot(A)", output.PlanSummary);
+        Assert.Equal("TempCall(A)", output.PlanSummary);
     }
 
     [Fact]
@@ -418,7 +424,7 @@ public class EvaluatorLoopTests
 
         var output = AssertLoopExpression(plan, "output", 0);
         Assert.True(output.Planned);
-        Assert.Equal("Add(TempSlot(A), Const(1))", output.PlanSummary);
+        Assert.Equal("Add(TempCall(A), Const(1))", output.PlanSummary);
     }
 
     [Fact]
@@ -475,11 +481,29 @@ public class EvaluatorLoopTests
 
         var output = AssertLoopExpression(plan, "output", 0);
         Assert.True(output.Planned);
-        Assert.Equal("TempSlot(A)", output.PlanSummary);
+        Assert.Equal("TempCall(A)", output.PlanSummary);
 
         var continuation = AssertLoopExpression(plan, "continuation", null);
         Assert.True(continuation.Planned);
-        Assert.Equal("LessOrEqual(TempSlot(A), Const(5))", continuation.PlanSummary);
+        Assert.Equal("LessOrEqual(TempCall(A), Const(5))", continuation.PlanSummary);
+    }
+
+    [Theory]
+    [InlineData("RepeatLoopGenericCounted")]
+    [InlineData("RepeatLoopGenericCountedAsync")]
+    public void RepeatLoopGenericCounter_IsLongAtBothMirrorSites(string methodName)
+    {
+        var method = typeof(Evaluator).GetMethod(methodName, BindingFlags.NonPublic | BindingFlags.Static)!;
+        Assert.Equal(typeof(long), Assert.Single(method.GetParameters(), parameter => parameter.Name == "count").ParameterType);
+        var stateMachine = method.GetCustomAttribute<AsyncStateMachineAttribute>()?.StateMachineType;
+        var numericLocals = stateMachine is null
+            ? method.GetMethodBody()!.LocalVariables.Select(local => local.LocalType)
+            : stateMachine.GetFields(BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public)
+                .Where(field => field.Name != "<>1__state"
+                    && !method.GetParameters().Any(parameter => parameter.Name == field.Name))
+                .Select(field => field.FieldType);
+
+        Assert.Equal(typeof(long), Assert.Single(numericLocals, type => type == typeof(int) || type == typeof(long)));
     }
 
     [Fact]

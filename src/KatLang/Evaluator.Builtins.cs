@@ -177,6 +177,16 @@ public static partial class Evaluator
             new ZeroArgPropertyResult(countedR.Value.Value, countedR.Value.EmittedCount));
     }
 
+    /// <summary>
+    /// Charged dynamic invocation boundary, entered BEFORE the cache is consulted so
+    /// that recursive property access (<c>A = A</c>) is bounded by depth. A cache HIT
+    /// charges exactly this one access step and never re-charges the cached
+    /// computation; a MISS additionally charges everything its body evaluates. The
+    /// level is entered through the shared <see cref="TryEnterDynamicInvocation"/> helper
+    /// and released by its <see cref="BudgetLevel"/> — the planned loop temp read
+    /// (<c>LoopExprPlan.TempSlot</c>) enters the same one, so the two strategies' charges
+    /// cannot drift (see <c>Evaluator.BudgetScopes.cs</c>).
+    /// </summary>
     private static EvalResult<ZeroArgPropertyResult> GetOrEvaluateZeroArgPropertyResult(
         Algorithm? owner,
         Property binding,
@@ -185,20 +195,12 @@ public static partial class Evaluator
         EvalCtx ctx,
         IReadOnlyList<(string, Result)> valEnv)
     {
-        // Charged dynamic invocation boundary, entered BEFORE the cache is consulted so
-        // that recursive property access (`A = A`) is bounded by depth. A cache HIT
-        // charges exactly this one access step and never re-charges the cached
-        // computation; a MISS additionally charges everything its body evaluates.
-        if (ctx.Budget.TryEnterInvocation() is { } limitError)
-            return AtSpanIfMissing(limitError, binding.DeclarationSpans.FirstOrDefault());
+        if (TryEnterDynamicInvocation(ctx, binding.DeclarationSpans.FirstOrDefault(), out var level) is { } limitError)
+            return limitError;
 
-        try
+        using (level)
         {
             return GetOrEvaluateZeroArgPropertyResultCore(owner, binding, accessKind, resolvedAlgorithm, ctx, valEnv);
-        }
-        finally
-        {
-            ctx.Budget.ExitInvocation();
         }
     }
 
@@ -1729,22 +1731,23 @@ public static partial class Evaluator
     /// count) recurses outside every budget chokepoint and terminates the process
     /// with an uncatchable <see cref="StackOverflowException"/>. It charges no STEP,
     /// preserving the frozen step accounting (steps count dynamic invocations and
-    /// loop iterations only) and the plain/dot work-parity pins.
+    /// loop iterations only) and the plain/dot work-parity pins. The level is entered
+    /// through the shared <see cref="TryEnterArgumentEvaluationLevel"/> helper and
+    /// released by its <see cref="BudgetLevel"/> — a planned loop <c>if</c> enters the
+    /// same one per condition and selected branch, so the two strategies' depth charges
+    /// cannot drift (see <c>Evaluator.BudgetScopes.cs</c>).
     /// </summary>
     private static EvalResult<CountedResult> EvalArgumentAlgOutputCounted(
         Algorithm algorithm,
         EvalCtx ctx,
         IReadOnlyList<(string, Result)> valEnv)
     {
-        if (ctx.Budget.TryEnterArgumentEvaluation() is { } limitError)
+        if (TryEnterArgumentEvaluationLevel(ctx, out var level) is { } limitError)
             return limitError;
-        try
+
+        using (level)
         {
             return EvalAlgOutputCounted(algorithm, ctx, valEnv);
-        }
-        finally
-        {
-            ctx.Budget.ExitInvocation();
         }
     }
 
@@ -1766,15 +1769,12 @@ public static partial class Evaluator
         EvalCtx ctx,
         IReadOnlyList<(string, Result)> valEnv)
     {
-        if (ctx.Budget.TryEnterArgumentEvaluation() is { } limitError)
+        if (TryEnterArgumentEvaluationLevel(ctx, out var level) is { } limitError)
             return limitError;
-        try
+
+        using (level)
         {
             return EvalAlgOutput(algorithm, ctx, valEnv);
-        }
-        finally
-        {
-            ctx.Budget.ExitInvocation();
         }
     }
 

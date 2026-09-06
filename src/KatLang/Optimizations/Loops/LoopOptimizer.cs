@@ -23,11 +23,13 @@ internal static partial class LoopOptimizer
         var frame = new LoopRunFrame(plan, valEnv, stateValues);
         while (true)
         {
-            // Fully-planned iterations bypass every charging budget chokepoint (planned
-            // expressions never re-enter Eval, and this path never runs under a step
-            // budget), so this is the one per-iteration host-cancellation observation.
-            // It must stay observation-only: charging any counter here would break the
-            // pinned optimized-vs-generic accounting parity.
+            // A fully-planned iteration touches a charging budget chokepoint only where
+            // the generic path charges one — a planned `if` argument level, a temp read,
+            // a temp call — and an iteration of bare planned arithmetic touches none (this
+            // path never runs under a step budget), so this is the one guaranteed
+            // per-iteration host-cancellation observation. It must stay observation-only:
+            // charging any counter here would break the pinned optimized-vs-generic
+            // accounting parity.
             ctx.Budget.ObserveCancellation();
             ctx.LoopDiagnostics?.RecordLoopIteration();
             frame.BeginIteration();
@@ -148,8 +150,9 @@ internal static partial class LoopOptimizer
         var frame = new LoopRunFrame(plan, valEnv, stateValues);
         for (var iteration = 0L; iteration < count; iteration++)
         {
-            // Same rule as the optimized while path: fully-planned iterations touch no
-            // charging chokepoint, so observe host cancellation here, observation-only.
+            // Same rule as the optimized while path: an iteration of bare planned
+            // arithmetic touches no charging chokepoint, so observe host cancellation
+            // here, observation-only.
             ctx.Budget.ObserveCancellation();
             ctx.LoopDiagnostics?.RecordLoopIteration();
             frame.BeginIteration();
@@ -329,6 +332,28 @@ internal static partial class LoopOptimizer
             if (!plan.IsFullyPlanned)
                 requiresPerIterationCacheIdentity = true;
             continuationOutput = plan.Plan;
+        }
+
+        if (requiresPerIterationCacheIdentity && tempPlans.Count != 0)
+        {
+            const string reason = "local properties require the shared generic cache in a partially planned loop";
+            tempPlans = [];
+            nextStateOutputs.Clear();
+            for (var index = 0; index < stateArity; index++)
+            {
+                nextStateOutputs.Add(BuildLoopExprPlan(
+                    userStep.Output[index], userStep.Params, iterationCtx, parentValEnv, tempPlans).Plan);
+            }
+
+            if (kind == LoopKind.While)
+            {
+                continuationOutput = BuildLoopExprPlan(
+                    userStep.Output[stateArity], userStep.Params, iterationCtx, parentValEnv, tempPlans).Plan;
+            }
+
+            tempPlanBuild = new LoopTempPlanBuild(tempPlans, tempPlanBuild.Diagnostics.Select(temp => temp.Planned
+                ? temp with { Planned = false, PlanSummary = null, FallbackReason = reason }
+                : temp).ToArray());
         }
 
         string? diagnosticKey = null;

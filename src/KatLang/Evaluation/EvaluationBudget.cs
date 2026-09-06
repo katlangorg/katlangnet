@@ -102,9 +102,12 @@ internal sealed class EvaluationBudget
     /// error.</para>
     ///
     /// <para>Called at the head of every budget chokepoint, and directly by the
-    /// optimized loop executor, whose fully-planned iterations are the one unbounded
-    /// execution shape that otherwise touches no chokepoint (it must stay
-    /// observation-only there — charging anything would break optimized-vs-generic
+    /// optimized loop executor, whose fully-planned iterations of bare planned
+    /// arithmetic are the one unbounded execution shape that otherwise touches no
+    /// chokepoint (planned <c>if</c> arguments, temp reads, and temp calls charge exactly
+    /// the chokepoints their generic counterparts charge, through the shared
+    /// <c>Evaluator.BudgetScopes.cs</c> helpers; the per-iteration observation itself must
+    /// stay observation-only — charging anything there would break optimized-vs-generic
     /// accounting parity).</para>
     /// </summary>
     internal void ObserveCancellation() => _cancellationToken.ThrowIfCancellationRequested();

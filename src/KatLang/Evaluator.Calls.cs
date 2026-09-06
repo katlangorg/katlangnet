@@ -433,17 +433,16 @@ public static partial class Evaluator
         CallArgumentAssembly argumentAssembly,
         CallDiagnosticName calleeName)
     {
-        // Charged dynamic invocation boundary (see EvaluationBudget).
-        if (ctx.Budget.TryEnterInvocation() is { } limitError)
-            return AtSpanIfMissing(limitError, FirstSpan(args));
+        // Charged dynamic invocation boundary (see EvaluationBudget) — the SAME enter
+        // helper and scoped release the planned loop temp call (LoopExprPlan.TempCall)
+        // uses, so the two strategies' charges and limit-span stamping cannot drift
+        // (Evaluator.BudgetScopes.cs).
+        if (TryEnterDynamicInvocation(ctx, UserCallLimitSpan(args), out var level) is { } limitError)
+            return limitError;
 
-        try
+        using (level)
         {
             return EvalUserCallCountedCore(callee, args, ctx, valEnv, argumentAssembly, calleeName);
-        }
-        finally
-        {
-            ctx.Budget.ExitInvocation();
         }
     }
 

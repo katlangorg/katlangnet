@@ -1,10 +1,17 @@
 namespace KatLang.Optimizations.Loops;
 
+/// <summary>
+/// One planned local property of a loop step. <paramref name="DeclarationSpan"/> is the
+/// property's first declared-name span — the span the generic zero-argument property
+/// access stamps on a rejected depth enter — retained so a planned bare read
+/// (<see cref="LoopExprPlan.TempSlot"/>) reports the same limit-error span.
+/// </summary>
 internal sealed record LoopTempPlan(
     string Name,
     int Index,
     IReadOnlyList<string> ParameterNames,
-    LoopExprPlan Plan);
+    LoopExprPlan Plan,
+    SourceSpan? DeclarationSpan);
 
 internal sealed record LoopTempPlanBuild(
     IReadOnlyList<LoopTempPlan> Plans,
@@ -33,7 +40,12 @@ internal static partial class LoopOptimizer
                 var parameterNames = property.Value is Algorithm.User userProperty
                     ? userProperty.Params
                     : [];
-                var plan = new LoopTempPlan(property.Name, tempIndex, parameterNames, tempR.Plan);
+                var plan = new LoopTempPlan(
+                    property.Name,
+                    tempIndex,
+                    parameterNames,
+                    tempR.Plan,
+                    property.DeclarationSpans.FirstOrDefault());
                 plans.Add(plan);
                 diagnostics?.Add(new LoopTempDiagnosticSnapshot(
                     property.Name,

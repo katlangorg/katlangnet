@@ -513,6 +513,26 @@ public class BudgetCrossTalkMatrixTests
 
         // String-heavy, low step count: reachable only through a host-built AST.
         new("HostLongString", null, LongStringProgram(600), MaxStringLengthDim, MaxMaterializedStringCharsDim),
+
+        // Optimized-loop shapes the planner handles WITHOUT falling back, whose generic
+        // twins charge dynamic depth per `if` argument (nested `if`s stack levels), per
+        // bare temp read (the zero-argument property access), and per temp call (a user
+        // call) — wrapped in enough recursion that the depth boundary is decisive. The
+        // planned nodes used to charge nothing, so a MaxDepth verdict depended on which
+        // unrelated budget happened to select the strategy.
+        Source("PlannedNestedIfLoop",
+            "Probe = 1\nStep = n + if(n < 30, if(n < 10, 1, 2), 3)\nf(0) = Step.repeat(40, 0)\nf(k) = f(k - 1)\nf(12)",
+            MaxDepthDim, MaxStepsDim),
+        Source("PlannedTempReadAndCallLoop",
+            "Probe = 1\nStep = {\n    T = 7\n    U = n + 1\n    n + if(n < 30, if(T < 5, T, U - n), T() + 0)\n}\nf(0) = Step.repeat(50, 0)\nf(k) = f(k - 1)\nf(12)",
+            MaxDepthDim, MaxStepsDim),
+
+        // A string temp CALLED twice per iteration: a call bypasses the property cache,
+        // so both strategies must materialize the string on every call (the memoized
+        // planned slot used to halve the cumulative string boundary).
+        Source("PlannedStringTempCallLoop",
+            "Probe = 1\nStep = {\n    T = 'xxxxxxxxxx'\n    n + (T() == T())\n}\nStep.repeat(200, 0)",
+            MaxDepthDim, MaxStringLengthDim, MaxMaterializedStringCharsDim),
     ];
 
     // ── Boundary discovery ───────────────────────────────────────────────────
