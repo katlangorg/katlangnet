@@ -630,4 +630,41 @@ public class ClosedListStrictValueDiagnosticTests
         // diagnostics and still models the (unlifted) tree rather than failing on it.
         Assert.NotNull(KatLang.Semantics.SemanticModelBuilder.Build(parsed));
     }
+
+    // ── A conditional branch pattern is the same kind of closed specification ────────
+
+    /// <summary>
+    /// The branch body's only inputs are its pattern binders, so a strict value demand the
+    /// pattern cannot satisfy is diagnosed exactly like one behind a closed explicit list —
+    /// worded in the branch's own terms.
+    /// </summary>
+    [Fact]
+    public void ConditionalBranchPattern_BlockingAStrictValueDemand_IsDiagnosed()
+    {
+        var diagnostic = SingleBlocked(
+            """
+            A = q + 1
+            F(0) = Math.Abs(A)
+            F(x) = x
+            F(0)
+            """);
+
+        Assert.Equal(DiagnosticCode.UndeclaredIdentifier, diagnostic.Code);
+        Assert.Contains("'A'", diagnostic.Message, StringComparison.Ordinal);
+        Assert.Contains("'q'", diagnostic.Message, StringComparison.Ordinal);
+        Assert.Contains("conditional branch 'F'", diagnostic.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("explicit parameter list", diagnostic.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ConditionalBranchPattern_BindingTheNeededName_IsNotDiagnosed()
+    {
+        AssertNotDiagnosed(
+            """
+            A = q + 1
+            F(0) = 0
+            F(q) = Math.Abs(A)
+            F(3)
+            """);
+    }
 }

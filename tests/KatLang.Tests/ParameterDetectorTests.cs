@@ -890,4 +890,117 @@ public class ParameterDetectorTests
         Assert.NotNull(body.Span);
         Assert.Equal(1, body.Span!.StartLineNumber);
     }
+
+    // ── Conditional branch bodies are elaborated like every other body (B2b) ───────
+    //
+    // Three gaps had made a branch body a weaker scope than a brace block: a clause
+    // family declared inside a branch body was routed through the general ProcessAlgorithm
+    // (which has no branch handling) and came back untouched, the body's own `open` list
+    // was never processed, and blocks in expression position lost the diagnostics sink.
+
+    [Fact]
+    public void Detect_ConditionalBranch_NestedClauseFamily_BindersBecomeParam()
+    {
+        // G's binder `n` must become Expr.Param; left as a bare Resolve it bound the outer
+        // sibling `n = 99` at runtime, so `G(5)` silently returned 99 instead of 5.
+        var source = """
+            n = 99
+            F(0) = {
+              G(0) = 'zero'
+              G(n) = n
+              G(5)
+            }
+            F(k) = k
+            """;
+        var ast = ParseAndDetect(source);
+
+        var f = Assert.IsType<Algorithm.Conditional>(ast.Properties.Single(p => p.Name == "F").Value);
+        var branchBody = f.Branches[0].Body;
+        var g = Assert.IsType<Algorithm.Conditional>(Assert.Single(branchBody.Properties, p => p.Name == "G").Value);
+        var binderBranch = g.Branches[1];
+
+        Assert.Empty(binderBranch.Body.Params);
+        var param = Assert.IsType<Expr.Param>(Assert.Single(binderBranch.Body.Output));
+        Assert.Equal("n", param.Name);
+    }
+
+    [Fact]
+    public void Detect_ConditionalBranch_NestedClauseFamilyFreeIdentifier_ReportsDiagnostic()
+    {
+        // The nested family's full-input-specification rule is enforced, not skipped.
+        var source = """
+            F(0) = {
+              G(0) = z
+              G(n) = n
+              G(5)
+            }
+            F(k) = k
+            """;
+        var root = SourceProvenance.ParseSyntaxValidRoot(source);
+        var (_, diagnostics) = ParameterDetector.Detect(root);
+
+        var error = Assert.Single(diagnostics, d => d.Code == DiagnosticCode.UndeclaredIdentifier);
+        Assert.Contains("Identifier 'z' is used in conditional branch 'G'", error.Message);
+    }
+
+    [Fact]
+    public void Detect_ConditionalBranch_InlineOpenBlock_MembersAreDetected()
+    {
+        // A branch body owns its `open` list (branch-owned opens): the inline block's member
+        // gets its own parameter detection, `Helper(q) = q`, exactly as in a brace block.
+        var source = """
+            F(0) = {
+              open {public Helper = q}
+              Helper(5)
+            }
+            F(x) = x
+            """;
+        var ast = ParseAndDetect(source);
+
+        var f = Assert.IsType<Algorithm.Conditional>(ast.Properties.Single(p => p.Name == "F").Value);
+        var openBlock = Assert.IsType<Expr.AlgorithmExpr>(Assert.Single(f.Branches[0].Body.Opens)).Algorithm;
+        var helper = Assert.Single(openBlock.Properties, p => p.Name == "Helper").Value;
+
+        Assert.Equal(["q"], helper.Params);
+        var param = Assert.IsType<Expr.Param>(Assert.Single(helper.Output));
+        Assert.Equal("q", param.Name);
+    }
+
+    [Theory]
+    [InlineData("{\n  F(x) = y\n  F(1)\n}", "Identifier 'y' is used in an explicitly parameterized algorithm")]
+    [InlineData("{\n  G(0) = y\n  G(n) = n\n  G(0)\n}", "Identifier 'y' is used in conditional branch 'G'")]
+    [InlineData("Apply(f) = f\nApply({\n  F(x) = y\n  F(1)\n})", "Identifier 'y' is used in an explicitly parameterized algorithm")]
+    public void Detect_ExpressionPositionBlock_ClosedSpecificationViolation_IsReported(string source, string fragment)
+    {
+        // A brace block in expression position (an output row, a call argument) is a
+        // scope-owning body under the same rules as the root: its closed explicit lists and
+        // clause families report undeclared identifiers instead of deferring to a runtime
+        // `Unknown name`.
+        var root = SourceProvenance.ParseSyntaxValidRoot(source);
+        var (_, diagnostics) = ParameterDetector.Detect(root);
+
+        var error = Assert.Single(diagnostics, d => d.Code == DiagnosticCode.UndeclaredIdentifier);
+        Assert.Contains(fragment, error.Message);
+        Assert.NotEqual(new SourceSpan(0, 0, 0, 0), error.Span);
+    }
+
+    [Fact]
+    public void Detect_ExpressionPositionBlock_BoundOuterParameter_IsNotReported()
+    {
+        // The sink reaches nested blocks, but the closed-list check still sees the names the
+        // enclosing algorithm binds: the block is an OUTPUT-position row of `Outer(y)`, so its
+        // nested explicit list may reference Outer's declared `y`.
+        var source = """
+            Outer(y) = 1, {
+              F(x) = x + y
+              F(1)
+            }
+            Outer(2)
+            """;
+        var root = SourceProvenance.ParseSyntaxValidRoot(source);
+        var (detected, diagnostics) = ParameterDetector.Detect(root);
+
+        Assert.DoesNotContain(diagnostics, d => d.Code == DiagnosticCode.UndeclaredIdentifier);
+        Assert.Equal(["y"], detected.Properties.Single(p => p.Name == "Outer").Value.Params);
+    }
 }

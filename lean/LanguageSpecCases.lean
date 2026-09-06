@@ -14,11 +14,11 @@ This is bounded differential validation over the Lean-guarded partition,
 not a formal verification of the evaluators.
 
 Partition (machine-checked by the `specCaseIds.length` guard below):
-- specification surface cases: 184
-- excluded parse-level cases (Lean has no surface parser): 7
+- specification surface cases: 187
+- excluded parse-level cases (Lean has no surface parser): 8
 - excluded C#-only cases (each carries an explicit reason in the corpus): 8
-- Lean-guarded cases: 169
-- probe observations (C#-only by design): 300
+- Lean-guarded cases: 171
+- probe observations (C#-only by design): 305
 - internal-node cases live in the semantic-explorer corpus, not here: see
   lean/SemanticExplorerCases.lean
 
@@ -943,7 +943,17 @@ def case_callable_argument_parameter_shadowing : Expr :=
   .algorithmExpr (alg [] [] [privateProp "A" (alg ["q"] [] [] [(.binary .add (.param "q") (.num 1))]), privateProp "Add1" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))]), privateProp "F" (alg ["x"] [] [] [(.call (.resolve "Add1") [.resolve "A"])])] [(.call (.resolve "F") [.num 7])])
 #guard obs case_callable_argument_parameter_shadowing == "err arity"
 
--- 169 canonical Lean-guarded specification cases.
+-- clause-family-nested-in-branch-body-binds-its-own-binders [conditionals]: n = 99 \n F(0) = { \n   G(0) = 'zero' \n   G(n) = n \n   G(5) \n } \n F(k) = k \n  \n F(0)
+def case_clause_family_nested_in_branch_body_binds_its_own_binders : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "n" (alg [] [] [] [.num 99]), privateProp "F" (.conditional none [] [⟨.litInt 0, (alg [] [] [privateLocalProp "G" .localConditional (.conditional none [] [⟨.litInt 0, (alg [] [] [] [.stringLiteral "zero"])⟩, ⟨.bind "n", (alg [] [] [] [.param "n"])⟩])] [(.call (.resolve "G") [.num 5])])⟩, ⟨.bind "k", (alg [] [] [] [.param "k"])⟩])] [(.call (.resolve "F") [.num 0])])
+#guard obs case_clause_family_nested_in_branch_body_binds_its_own_binders == "ok raw=5 n=1"
+
+-- conditional-branch-pattern-is-a-closed-input-specification [conditionals]: A = x + 1 \n F(0) = A \n F(n) = n \n  \n F(0)
+def case_conditional_branch_pattern_is_a_closed_input_specification : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "A" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))]), privateProp "F" (.conditional none [] [⟨.litInt 0, (alg [] [] [] [.resolve "A"])⟩, ⟨.bind "n", (alg [] [] [] [.param "n"])⟩])] [(.call (.resolve "F") [.num 0])])
+#guard obs case_conditional_branch_pattern_is_a_closed_input_specification == "err arity"
+
+-- 171 canonical Lean-guarded specification cases.
 
 /--
 Machine-checked Lean-guarded partition count: the id list is built by the
@@ -1119,8 +1129,10 @@ def specCaseIds : List String := [
   "collecting-binding-exact-list",
   "list-lone-collecting-assignment",
   "list-builtin-collection",
-  "callable-argument-parameter-shadowing"
+  "callable-argument-parameter-shadowing",
+  "clause-family-nested-in-branch-body-binds-its-own-binders",
+  "conditional-branch-pattern-is-a-closed-input-specification"
 ]
-#guard specCaseIds.length == 169
+#guard specCaseIds.length == 171
 
 end LanguageSpecCases

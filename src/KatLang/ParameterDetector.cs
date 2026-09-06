@@ -115,6 +115,10 @@ internal static class ParameterDetector
         if (alg is Algorithm.Builtin)
             return alg;
 
+        if (alg is Algorithm.Conditional conditional)
+            return ProcessConditionalProperty(
+                conditional, "<anonymous>", parentScope, capturedParamNames, diagnostics, observations);
+
         // A synthetic assignment-deconstruction helper (`x, *y, z = RHS`) is already a
         // fully-formed elaboration leaf: an explicit N-capture sequence-value pattern, no
         // opens, no properties, and an output that is exactly the single bound target name.
@@ -177,27 +181,8 @@ internal static class ParameterDetector
         {
             if (prop.Value is Algorithm.Conditional condAlg)
             {
-                // Process each conditional branch body with the full-input-specification rule:
-                // - Pattern binder names are rewritten to Expr.Param (resolved via valEnv at runtime)
-                // - NO other free identifiers become implicit parameters
-                // - The branch body's Params list is empty (bindings come from pattern matching)
-                var processedBranches = new List<CondBranch>(condAlg.Branches.Count);
-                foreach (var branch in condAlg.Branches)
-                {
-                    var binderNames = new HashSet<string>(branch.Pattern.BoundNames());
-                    var processedBody = ProcessConditionalBranchBody(
-                        branch.Body,
-                        scope,
-                        binderNames,
-                        prop.Name,
-                        nestedCapturedParamNames,
-                        diagnostics,
-                        observations);
-                    processedBranches.Add(new CondBranch(branch.Pattern, processedBody));
-                }
-                var processedCond = new Algorithm.Conditional(
-                    condAlg.Parent, condAlg.Opens, processedBranches);
-                newProperties.Add(prop.WithValue(processedCond));
+                newProperties.Add(prop.WithValue(ProcessConditionalProperty(
+                    condAlg, prop.Name, scope, nestedCapturedParamNames, diagnostics, observations)));
             }
             else if (processedSharedValues is null)
             {
@@ -228,7 +213,7 @@ internal static class ParameterDetector
         // Rewrite Resolve → Param for detected parameters. ONE reference memo spans all
         // output rows: they share this exact rewrite context, so a node shared between
         // rows (or reached twice within one row) rewrites once.
-        var rewriteMemo = new RewriteWalkMemo(observations);
+        var rewriteMemo = new RewriteWalkMemo(observations, diagnostics);
         var rewrittenOutput = new List<Expr>(alg.Output.Count);
         foreach (var expr in alg.Output)
             rewrittenOutput.Add(RewriteParams(expr, paramNames, scope, capturedParamNames, rewriteMemo));
@@ -238,6 +223,56 @@ internal static class ParameterDetector
             Properties = newProperties,
             Output = rewrittenOutput,
         };
+    }
+
+    /// <summary>
+    /// Elaborates one clause family (a property whose value is an
+    /// <see cref="Algorithm.Conditional"/>) branch by branch under the
+    /// full-input-specification rule of <see cref="ProcessConditionalBranchBody"/>. This is
+    /// the ONE owner of that per-branch dispatch: <see cref="ProcessAlgorithm"/>'s property
+    /// loop and <see cref="ProcessConditionalBranchBody"/>'s own property loop both route
+    /// conditional values here, so a family declared inside a branch body is elaborated
+    /// exactly like one declared in any other body (its binders become
+    /// <see cref="Expr.Param"/>, its undeclared names are reported).
+    /// General algorithm descent also routes host-built root/expression conditionals here.
+    /// Previously it returned the family untouched, leaving its binders as bare resolves
+    /// that later bound whatever outer name happened to match. Parsed families have no family-level opens;
+    /// host-built families may have them and retain that parent scope for their branches.
+    /// </summary>
+    private static Algorithm.Conditional ProcessConditionalProperty(
+        Algorithm.Conditional condAlg,
+        string propertyName,
+        ElaboratedPropertyScope scope,
+        HashSet<string> capturedParamNames,
+        List<Diagnostic>? diagnostics,
+        FrontEndTraversalObservations? observations)
+    {
+        var newOpens = ProcessOpenExprs(condAlg.Opens, scope, diagnostics, observations);
+        var processedConditional = condAlg with { Opens = newOpens };
+        var branchParentScope = newOpens.Count == 0
+            ? scope
+            : ElaboratedScopeLookup.CreateScope(processedConditional, scope);
+
+        // Process each conditional branch body with the full-input-specification rule:
+        // - Pattern binder names are rewritten to Expr.Param (resolved via valEnv at runtime)
+        // - NO other free identifiers become implicit parameters
+        // - The branch body's Params list is empty (bindings come from pattern matching)
+        var processedBranches = new List<CondBranch>(condAlg.Branches.Count);
+        foreach (var branch in condAlg.Branches)
+        {
+            var binderNames = new HashSet<string>(branch.Pattern.BoundNames());
+            var processedBody = ProcessConditionalBranchBody(
+                branch.Body,
+                branchParentScope,
+                binderNames,
+                propertyName,
+                capturedParamNames,
+                diagnostics,
+                observations);
+            processedBranches.Add(new CondBranch(branch.Pattern, processedBody));
+        }
+
+        return processedConditional with { Branches = processedBranches };
     }
 
     /// <summary>
@@ -387,14 +422,21 @@ internal static class ParameterDetector
     /// input rewrites once and stays shared in the output. <see cref="Algorithms"/> additionally
     /// memoizes the region's nested-algorithm processing so two distinct
     /// <see cref="Expr.AlgorithmExpr"/> wrappers over ONE shared algorithm elaborate it once.
+    /// The region's diagnostics sink travels with the memo: a brace block in expression
+    /// position (an output row, a call argument, a capture element) is a scope-owning body
+    /// under the same rules as the enclosing one, so its closed explicit lists and clause
+    /// families report undeclared identifiers exactly as they would at the root. The memo
+    /// keeps that per NODE within the region — a shared block reports once.
     /// </summary>
-    private sealed class RewriteWalkMemo(FrontEndTraversalObservations? observations)
+    private sealed class RewriteWalkMemo(FrontEndTraversalObservations? observations, List<Diagnostic>? diagnostics)
     {
         public readonly Dictionary<Expr, Expr> Rewrites = new(ReferenceEqualityComparer.Instance);
 
         public Dictionary<Algorithm, Algorithm>? Algorithms;
 
         public readonly FrontEndTraversalObservations? Observations = observations;
+
+        public readonly List<Diagnostic>? Diagnostics = diagnostics;
     }
 
     /// <summary>
@@ -646,7 +688,9 @@ internal static class ParameterDetector
     /// - Pattern binder names are rewritten to <see cref="Expr.Param"/> (resolved via valEnv at runtime).
     /// - No other free identifiers become implicit parameters.
     /// - The branch body's <see cref="Algorithm.Parameters"/> list is empty.
-    /// - Nested algorithms within the body are processed normally.
+    /// - The body's own `open` list is elaborated (branch-owned opens, see
+    ///   SEMANTIC-ALIGNMENT.md), and nested algorithms within the body — brace blocks,
+    ///   property values, and nested clause families alike — are processed normally.
     ///
     /// This enforces the invariant that conditional branch inputs come ONLY from the
     /// branch pattern. Free identifiers in the body that are not pattern-bound must
@@ -663,7 +707,13 @@ internal static class ParameterDetector
         List<Diagnostic>? diagnostics,
         FrontEndTraversalObservations? observations = null)
     {
-        var bodyScope = ElaboratedScopeLookup.CreateScope(body, parentScope);
+        // A branch body owns its `open` list exactly like every other algorithm body, so its
+        // targets are elaborated here — an inline open block's members get their own
+        // parameter detection — and the body scope is created over the PROCESSED opens,
+        // exactly as ProcessAlgorithm does for ordinary bodies.
+        var newOpens = ProcessOpenExprs(body.Opens, parentScope, diagnostics, observations);
+        var bodyWithProcessedOpens = body with { Opens = newOpens };
+        var bodyScope = ElaboratedScopeLookup.CreateScope(bodyWithProcessedOpens, parentScope);
 
         var bodyCapturedParamNames = UnionNames(capturedParamNames, binderNames);
 
@@ -709,7 +759,12 @@ internal static class ParameterDetector
         foreach (var prop in body.Properties)
         {
             Algorithm processedProp;
-            if (prop.Value is Algorithm.Conditional || processedSharedValues is null)
+            if (prop.Value is Algorithm.Conditional nestedCondAlg)
+            {
+                processedProp = ProcessConditionalProperty(
+                    nestedCondAlg, prop.Name, bodyScope, bodyCapturedParamNames, diagnostics, observations);
+            }
+            else if (processedSharedValues is null)
             {
                 processedProp = ProcessAlgorithm(
                     prop.Value,
@@ -735,12 +790,12 @@ internal static class ParameterDetector
         // Rewrite only binder names Resolve → Param; leave all others as-is.
         // Process nested blocks/calls normally for their own parameter detection.
         // ONE reference memo spans the branch body's rows (constant rewrite context).
-        var rewriteMemo = new RewriteWalkMemo(observations);
+        var rewriteMemo = new RewriteWalkMemo(observations, diagnostics);
         var rewrittenOutput = new List<Expr>(body.Output.Count);
         foreach (var expr in body.Output)
             rewrittenOutput.Add(RewriteBinderRefs(expr, binderNames, bodyScope, capturedParamNames, rewriteMemo));
 
-        return body with
+        return bodyWithProcessedOpens with
         {
             Parameters = [],  // No implicit params — bindings come from pattern matching
             Properties = newProperties,
@@ -900,7 +955,7 @@ internal static class ParameterDetector
                 if (!memo.Algorithms.TryGetValue(alg, out var processedAlg))
                 {
                     processedAlg = ProcessAlgorithm(
-                        alg, scope, UnionNames(capturedParamNames, binderNames), diagnostics: null, memo.Observations);
+                        alg, scope, UnionNames(capturedParamNames, binderNames), memo.Diagnostics, memo.Observations);
                     memo.Algorithms[alg] = processedAlg;
                 }
 
@@ -1434,7 +1489,7 @@ internal static class ParameterDetector
                 if (!memo.Algorithms.TryGetValue(alg, out var processedAlg))
                 {
                     processedAlg = ProcessAlgorithm(
-                        alg, scope, UnionNames(capturedParamNames, paramNames), diagnostics: null, memo.Observations);
+                        alg, scope, UnionNames(capturedParamNames, paramNames), memo.Diagnostics, memo.Observations);
                     memo.Algorithms[alg] = processedAlg;
                 }
 

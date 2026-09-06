@@ -2852,5 +2852,54 @@ public static class LanguageSpecCorpus
             IncludeInGeneratorPrompt = true,
             Explanation = "An explicit parameter list is closed, and that applies to what a value position needs indirectly as well as directly. `Math.Abs` needs `A`'s value, producing it needs `A`'s inferred `q`, and `F(x)` declares no `q` — so the program is rejected before it runs, naming `A` and `q` rather than the math function. Declare `q` in the list, call `A` with explicit arguments, or leave the list off so `q` is inferred. Passing `A` where a callable is wanted is unaffected: only a proven value demand is checked this way.",
         },
+        new()
+        {
+            Id = "clause-family-nested-in-branch-body-binds-its-own-binders",
+            Category = "conditionals",
+            Source = "n = 99\nF(0) = {\n  G(0) = 'zero'\n  G(n) = n\n  G(5)\n}\nF(k) = k\n\nF(0)",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "5",
+            ExpectedRaw = "5",
+            ExpectedEmittedCount = 1,
+            Probes =
+            [
+                // The identical family inside an ordinary brace block, and at the root.
+                new SpecProbe("n = 99\nK = {\n  G(0) = 'zero'\n  G(n) = n\n  G(5)\n}\nK", "ok raw=5 n=1"),
+                new SpecProbe("n = 99\nG(0) = 'zero'\nG(n) = n\nG(5)", "ok raw=5 n=1"),
+            ],
+            IncludeInGeneratorPrompt = true,
+            Explanation = "A clause family declared inside a conditional branch body is elaborated exactly like one declared in a brace block or at the root: `G(n) = n` binds its own pattern binder `n`, so `G(5)` is 5. The outer sibling `n = 99` is never consulted — a branch body is a scope-owning body under the same rules as every other body, not a weaker one.",
+        },
+        new()
+        {
+            Id = "conditional-branch-pattern-is-a-closed-input-specification",
+            Category = "conditionals",
+            Source = "A = x + 1\nF(0) = A\nF(n) = n\n\nF(0)",
+            Outcome = SpecOutcome.EvalError,
+            ExpectedErrorCategory = "arity",
+            Probes =
+            [
+                // A binder the pattern DOES bind supplies the referenced callable's implicit
+                // parameter, without the body acquiring a parameter of its own.
+                new SpecProbe("A = n + 1\nF(0) = 0\nF(n) = A\nF(4)", "ok raw=5 n=1"),
+                // The same reference behind a closed explicit list fails the same way.
+                new SpecProbe("A = x + 1\nF(k) = A\nF(0)", "err arity"),
+            ],
+            Explanation = "A conditional branch pattern is a closed input specification, like a written explicit parameter list: the branch body's only inputs are its pattern binders, and the front end never invents a body parameter to feed a referenced callable. `F(0) = A` therefore keeps `A` as a bare reference whose zero-argument value demand fails with the ordinary arity error, exactly as `F(k) = A` does — never with an `Unknown name` for a parameter nothing binds.",
+        },
+        new()
+        {
+            Id = "expression-position-block-closed-list-is-diagnosed",
+            Category = "errors",
+            Source = "{\n  F(x) = y\n  F(1)\n}",
+            Outcome = SpecOutcome.ParseError,
+            ExpectedDiagnosticCode = DiagnosticCode.UndeclaredIdentifier,
+            ExpectedParseDiagnosticFragment = "Identifier 'y' is used in an explicitly parameterized algorithm",
+            Probes =
+            [
+                new SpecProbe("{\n  F(x) = x\n  F(1)\n}", "ok raw=1 n=1"),
+            ],
+            Explanation = "Brace blocks work in any expression position and are scope-owning bodies under the same rules as the root, so a closed explicit parameter list inside an output-position block reports its undeclared identifier at the front end exactly as the same declaration would at the root — it does not fall through to a runtime `Unknown name`.",
+        },
     ];
 }

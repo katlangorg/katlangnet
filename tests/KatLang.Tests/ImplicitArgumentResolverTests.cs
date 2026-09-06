@@ -1507,4 +1507,60 @@ public class ImplicitArgumentResolverTests
         Assert.True(cache.AsyncAccesses > 0);
         Assert.Equal(cache.AsyncAccesses, cache.ThreadHops.Count);
     }
+
+    // ── Conditional branch bodies resolve under the closed branch-pattern rule (B2b) ──
+    //
+    // A branch pattern is the same kind of CLOSED input specification as a written explicit
+    // parameter list: the body's only inputs are its pattern binders, and its Parameters
+    // stay empty by invariant. The open implicit-lifting path used to run on branch bodies
+    // and invented body parameters that nothing ever bound (`Unknown name` at runtime).
+
+    [Fact]
+    public void Resolve_ConditionalBranch_LiftsThroughBinder_WithoutInventingBodyParameters()
+    {
+        var source = """
+            A = n + 1
+            F(0) = 0
+            F(n) = A
+            """;
+        var root = Resolve(source);
+
+        var f = Assert.IsType<Algorithm.Conditional>(root.Properties.Single(p => p.Name == "F").Value);
+        var body = f.Branches[1].Body;
+        Assert.Empty(body.Params);
+
+        var call = Assert.IsType<Expr.Call>(Assert.Single(body.Output));
+        Assert.Equal("A", Assert.IsType<Expr.Resolve>(call.Function).Name);
+        Assert.Equal("n", Assert.IsType<Expr.Param>(Assert.Single(call.Args)).Name);
+
+        Assert.Equal([5m], Eval(source + "\nF(4)").Value);
+    }
+
+    [Fact]
+    public void Resolve_ConditionalBranch_DoesNotLiftBareParameterizedHelper()
+    {
+        // Mirror of Resolve_ExplicitParameterList_DoesNotLiftBareParameterizedHelper: `A`
+        // needs `x`, which the pattern `0` does not bind, so the reference stays bare and the
+        // body invents no parameter. Evaluation then reports the ordinary arity error of the
+        // zero-argument value demand — the same outcome as `F(k) = A` — never `Unknown name`
+        // for a parameter nobody binds.
+        var source = """
+            A = x + 1
+            F(0) = A
+            F(n) = n
+            """;
+        var root = Resolve(source);
+
+        var f = Assert.IsType<Algorithm.Conditional>(root.Properties.Single(p => p.Name == "F").Value);
+        var body = f.Branches[0].Body;
+        Assert.Empty(body.Params);
+        Assert.Equal("A", Assert.IsType<Expr.Resolve>(Assert.Single(body.Output)).Name);
+
+        var result = Eval(source + "\nF(0)");
+        Assert.True(result.IsError);
+        var error = result.Error;
+        while (error is EvalError.WithContext withContext)
+            error = withContext.Inner;
+        Assert.IsType<EvalError.ArityMismatch>(error);
+    }
 }

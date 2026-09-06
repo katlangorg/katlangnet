@@ -104,6 +104,11 @@ internal static class ImplicitArgumentResolver
     /// The closed list's declared capture names; consulted only when
     /// <paramref name="RequireExistingParameters"/> is true.
     /// </param>
+    /// <param name="ConditionalBranchName">
+    /// Non-null when the closed specification is a conditional BRANCH PATTERN rather than a
+    /// written explicit parameter list: the family's property name, used only to word the
+    /// blocked strict-value diagnostic in the branch's own terms.
+    /// </param>
     /// <remarks>
     /// A reference type, allocated EXACTLY ONCE per rewrite region and forwarded by reference
     /// through the whole walk: that makes the region's memo-soundness guard one reference
@@ -115,7 +120,16 @@ internal static class ImplicitArgumentResolver
         IReadOnlyList<ParameterPattern> CallerParameterPatterns,
         IReadOnlyDictionary<string, ParameterKind> SourceBindingKinds,
         bool RequireExistingParameters,
-        IReadOnlySet<string>? ExistingParameterNames);
+        IReadOnlySet<string>? ExistingParameterNames,
+        string? ConditionalBranchName = null);
+
+    /// <summary>
+    /// The conditional branch a body belongs to, threaded into
+    /// <see cref="ProcessAlgorithm"/> so the body resolves under the CLOSED branch-pattern
+    /// rule: its pattern binders are its only inputs, exactly like a written explicit
+    /// parameter list, and its <see cref="Algorithm.Parameters"/> stay empty.
+    /// </summary>
+    private sealed record ConditionalBranchContext(string BranchName, Pattern Pattern);
 
     /// <summary>
     /// Reference-identity memo state for the walks of ONE constant rewrite context region —
@@ -254,10 +268,14 @@ internal static class ImplicitArgumentResolver
         Dictionary<string, CallableSignature> parentParamMap,
         bool isRoot = false,
         FrontEndTraversalObservations? observations = null,
-        List<Diagnostic>? diagnostics = null)
+        List<Diagnostic>? diagnostics = null,
+        ConditionalBranchContext? branchContext = null)
     {
         if (alg is Algorithm.Builtin)
             return alg;
+
+        if (alg is Algorithm.Conditional conditional)
+            return ProcessConditionalProperty(conditional, "<anonymous>", parentParamMap, observations, diagnostics);
 
         // A synthetic assignment-deconstruction helper (`x, *y, z = RHS`) is a fully-elaborated
         // leaf: its output is a single bound Param (rewritten by ParameterDetector), it has no
@@ -314,16 +332,8 @@ internal static class ImplicitArgumentResolver
 
             if (prop.Value is Algorithm.Conditional condAlg)
             {
-                // Process each conditional branch body
-                var processedBranches = new List<CondBranch>(condAlg.Branches.Count);
-                foreach (var branch in condAlg.Branches)
-                {
-                    var processedBody = ProcessAlgorithm(branch.Body, visibleParamMap, isRoot: false, observations, diagnostics);
-                    processedBranches.Add(new CondBranch(branch.Pattern, processedBody));
-                }
-                var processedCond = new Algorithm.Conditional(
-                    condAlg.Parent, condAlg.Opens, processedBranches);
-                processedProperties[idx] = prop.WithValue(processedCond);
+                processedProperties[idx] = prop.WithValue(ProcessConditionalProperty(
+                    condAlg, prop.Name, visibleParamMap, observations, diagnostics));
             }
             else
             {
@@ -351,14 +361,27 @@ internal static class ImplicitArgumentResolver
         // rewrite below, and all rows share the exact same context (see ResolverWalkMemos).
         var walkMemos = new ResolverWalkMemos(observations, diagnostics);
 
-        if (alg.ExplicitParameterPatterns.Count > 0)
+        if (alg.ExplicitParameterPatterns.Count > 0 || branchContext is not null)
         {
-            var explicitExistingParams = new HashSet<string>(alg.Params);
+            // Two CLOSED input specifications share one gate: a written explicit parameter
+            // list, and a conditional branch pattern. A branch body's only inputs are its
+            // pattern binders — bound through valEnv at runtime exactly like declared
+            // parameters — and its Parameters stay empty by invariant, so nothing may be
+            // lifted that would need a capture the pattern does not already bind. The open
+            // implicit-lifting path below would instead invent that capture as a body
+            // parameter nothing ever binds (`Unknown name` at runtime).
+            var closedPatterns = branchContext is null
+                ? alg.ParameterPatterns
+                : BranchBinderParameterPatterns(branchContext.Pattern);
+            var closedExistingParams = branchContext is null
+                ? new HashSet<string>(alg.Params)
+                : new HashSet<string>(branchContext.Pattern.BoundNames());
             var explicitContext = new ImplicitRewriteContext(
-                alg.ParameterPatterns,
-                BuildSourceBindingKinds(alg.ParameterPatterns),
+                closedPatterns,
+                BuildSourceBindingKinds(closedPatterns),
                 RequireExistingParameters: true,
-                explicitExistingParams);
+                closedExistingParams,
+                branchContext?.BranchName);
             var newOutput = new List<Expr>(alg.Output.Count);
             foreach (var expr in alg.Output)
             {
@@ -461,6 +484,26 @@ internal static class ImplicitArgumentResolver
         foreach (var open in opens)
             processed.Add(ProcessOpenExpr(open, memos));
         return processed;
+    }
+
+    private static Algorithm.Conditional ProcessConditionalProperty(
+        Algorithm.Conditional conditional,
+        string propertyName,
+        Dictionary<string, CallableSignature> parentParamMap,
+        FrontEndTraversalObservations? observations,
+        List<Diagnostic>? diagnostics)
+    {
+        var newOpens = ProcessOpenExprs(conditional.Opens, observations);
+        var branches = new List<CondBranch>(conditional.Branches.Count);
+        foreach (var branch in conditional.Branches)
+        {
+            var body = ProcessAlgorithm(
+                branch.Body, parentParamMap, isRoot: false, observations, diagnostics,
+                new ConditionalBranchContext(propertyName, branch.Pattern));
+            branches.Add(new CondBranch(branch.Pattern, body));
+        }
+
+        return conditional with { Opens = newOpens, Branches = branches };
     }
 
     private static Expr ProcessOpenExpr(Expr expr, ResolverWalkMemos memos)
@@ -766,7 +809,7 @@ internal static class ImplicitArgumentResolver
             return;
 
         diagnostics.Add(new Diagnostic(
-            FormatBlockedStrictValueForwarding(referenceDisplayName, missing),
+            FormatBlockedStrictValueForwarding(referenceDisplayName, missing, context.ConditionalBranchName),
             DiagnosticSeverity.Error,
             reference.Span ?? new SourceSpan(0, 0, 0, 0))
         {
@@ -776,17 +819,29 @@ internal static class ImplicitArgumentResolver
 
     /// <summary>
     /// Wording for <see cref="ReportBlockedStrictValueForwarding"/>, deliberately parallel
-    /// to parameter detection's directly-written counterpart ("Identifier 'z' is used in an
-    /// explicitly parameterized algorithm, but it is not declared in the parameter list"):
-    /// the same closed-list rule, reached one level of indirection away because the missing
-    /// name is required by the REFERENCED callable rather than written here.
+    /// to parameter detection's directly-written counterparts ("Identifier 'z' is used in an
+    /// explicitly parameterized algorithm, but it is not declared in the parameter list" /
+    /// "Identifier 'z' is used in conditional branch 'F', but it is not declared in the branch
+    /// pattern"): the same closed-specification rule, reached one level of indirection away
+    /// because the missing name is required by the REFERENCED callable rather than written here.
     /// </summary>
     private static string FormatBlockedStrictValueForwarding(
         string referenceDisplayName,
-        IReadOnlyList<string> missingParameterNames)
+        IReadOnlyList<string> missingParameterNames,
+        string? conditionalBranchName)
     {
         var names = FormatQuotedNameList(missingParameterNames);
         var noun = missingParameterNames.Count == 1 ? "parameter" : "parameters";
+        if (conditionalBranchName is not null)
+        {
+            return string.Join(
+                Environment.NewLine,
+                $"'{referenceDisplayName}' is required as a value here, but producing that value needs the implicit {noun} {names}, "
+                    + $"which the pattern of conditional branch '{conditionalBranchName}' does not bind.",
+                $"Conditional branch patterns are closed, so {names} cannot be inferred here. Declare {names} in the branch pattern, "
+                    + $"or call '{referenceDisplayName}' with explicit arguments.");
+        }
+
         return string.Join(
             Environment.NewLine,
             $"'{referenceDisplayName}' is required as a value here, but producing that value needs the implicit {noun} {names}, "
@@ -817,6 +872,68 @@ internal static class ImplicitArgumentResolver
         foreach (var capture in ParameterPattern.FlattenCaptures(callerPatterns))
             kinds.TryAdd(capture.Name, capture.Kind);
         return kinds;
+    }
+
+    /// <summary>
+    /// The binder shape of a conditional branch pattern as caller parameter patterns — the
+    /// forwarding SOURCE shape of a branch body, mirroring
+    /// <see cref="Pattern.TryGetOrdinaryClauseParameterPatterns"/> but total over mixed
+    /// heads: literal items bind nothing, so they contribute no capture,
+    /// while binders keep their kind and nested binder groups keep their sequence-value
+    /// structure, including empty groups. The closed-specification name check consumes only
+    /// captures, but single-collecting forwarding also depends on those group boundaries.
+    /// Collecting binders in conditional families are host-AST-only; the parser rejects them.
+    /// </summary>
+    private static IReadOnlyList<ParameterPattern> BranchBinderParameterPatterns(Pattern pattern)
+    {
+        // A top-level sequence pattern IS the branch's parameter list; any other top-level
+        // pattern is one single parameter position.
+        var items = pattern is Pattern.SequenceValue(var topLevelItems) ? topLevelItems : [pattern];
+        var patterns = new List<ParameterPattern>(items.Count);
+        foreach (var item in items)
+        {
+            if (TryCreateBinderParameterPattern(item, out var parameterPattern))
+                patterns.Add(parameterPattern);
+        }
+
+        return patterns;
+    }
+
+    private static bool TryCreateBinderParameterPattern(
+        Pattern pattern,
+        [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out ParameterPattern? parameterPattern)
+    {
+        switch (pattern)
+        {
+            case Pattern.Bind binder:
+                parameterPattern = new CaptureParameterPattern(binder.Name, binder.NameSpan, binder.ParameterKind)
+                {
+                    CollectMarkerSpan = binder.CollectMarkerSpan,
+                };
+                return true;
+
+            case Pattern.SequenceValue(var items):
+            {
+                var childPatterns = new List<ParameterPattern>(items.Count);
+                foreach (var item in items)
+                {
+                    if (TryCreateBinderParameterPattern(item, out var childPattern))
+                        childPatterns.Add(childPattern);
+                }
+
+                parameterPattern = new SequenceValueParameterPattern(childPatterns);
+                return true;
+            }
+
+            case Pattern.LitInt:
+            case Pattern.LitString:
+                parameterPattern = null;
+                return false;
+
+            default:
+                throw new InvalidOperationException(
+                    $"Unhandled Pattern variant in {nameof(BranchBinderParameterPatterns)}: {pattern.GetType().Name}.");
+        }
     }
 
     private static IReadOnlyList<Expr> BuildImplicitCallArguments(

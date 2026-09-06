@@ -229,6 +229,7 @@ public class LanguageSpecRunnerTests
         string[] expectedParseLevel =
         [
             "decon-two-collecting-rejected",
+            "expression-position-block-closed-list-is-diagnosed",
             "negative-index-literal-rejected",
             "closed-list-strict-value-forwarding",
             "open-capture-target-rejected",
