@@ -573,6 +573,34 @@ public static partial class Evaluator
         IReadOnlyList<CountedResult> IterationItems,
         IReadOnlyList<PreparedSequenceBuiltinSuffixArg> SuffixArgs);
 
+    /// <summary>Only arguments without callback parameters are eagerly value-evaluated.</summary>
+    private static bool IsValueShapedArgument(Algorithm argument)
+        => argument.Params.Count == 0 && argument.ParameterPatterns.Count == 0;
+
+    /// <summary>
+    /// Prepares a filter predicate through the generic call-item and suffix binding
+    /// helpers: one eager value attempt, sticky resource-limit retention, and the
+    /// original callable identity. Used after fusion commits, with caller environments.
+    /// A failed collection in a plain call still requires this attempt; its earlier
+    /// error takes precedence over this result, just as in BindSequenceBuiltinArguments.
+    /// </summary>
+    internal static EvalResult<Algorithm> PrepareFilterPredicateArgument(
+        Algorithm argument,
+        EvalCtx ctx,
+        IReadOnlyList<(string, Result)> valEnv)
+    {
+        var itemsR = BuildCallableCallItems(
+            [new ResolvedArgumentAlgorithm(argument, SpreadsSequence: false)], ctx, valEnv);
+        if (itemsR.IsError) return itemsR.Error;
+
+        var descriptor = BuiltinRegistry.GetBuiltin(BuiltinId.@filter).SequenceMetadata!.Value.SuffixArgs[0];
+        var preparedR = PrepareSequenceBuiltinSuffixArg(BuiltinId.@filter, descriptor, itemsR.Value[0], ctx);
+        if (preparedR.IsError) return preparedR.Error;
+        return preparedR.Value is PreparedSequenceBuiltinSuffixArg.AlgorithmArg callback
+            ? EvalResult<Algorithm>.Ok(callback.AlgorithmValue)
+            : throw new InvalidOperationException("The filter predicate must be an algorithm argument.");
+    }
+
     private static EvalResult<IReadOnlyList<VariadicCallItem>> BuildCallableCallItems(
         IReadOnlyList<ResolvedArgumentAlgorithm> args,
         EvalCtx ctx,
@@ -591,8 +619,10 @@ public static partial class Evaluator
             // was deferred as a self-referential thunk, that stray lookup re-enters the
             // same builtin call and recurses without ever settling on a value. Keep the
             // algorithm unevaluated so it can be applied with bound parameters later;
-            // only value-shaped arguments (no parameters) are materialized eagerly.
-            if (arg is not null && (arg.Params.Count > 0 || arg.ParameterPatterns.Count > 0))
+            // only value-shaped arguments (no parameters) are materialized eagerly
+            // (IsValueShapedArgument — the classification the fused filter-count
+            // pipeline shares).
+            if (arg is not null && !IsValueShapedArgument(arg))
             {
                 items.Add(new VariadicCallItem(
                     Value: null,
@@ -657,8 +687,11 @@ public static partial class Evaluator
                     // level retrying once turns a failing self-referential argument
                     // (`A = xs.reduce(F, A)`) into work exponential in the depth limit.
                     // Non-limit value errors keep the legacy fall-through, which is what
-                    // lets a genuine callback reference reach the algorithm channel.
-                    if (item.ValueError is { IsResourceLimit: true } stickyLimit)
+                    // lets a genuine callback reference reach the algorithm channel. The
+                    // retention policy is the shared algorithm-binding one, and the fused
+                    // filter-count pipeline applies the same attempt-and-retain step
+                    // through PrepareFilterPredicateArgument.
+                    if (RetainResourceLimitForAlgorithmBinding(item.ValueError) is { } stickyLimit)
                         return stickyLimit;
 
                     var algorithm = item.Algorithm
@@ -668,8 +701,7 @@ public static partial class Evaluator
                     if (algorithm is not null)
                     {
                         return EvalResult<PreparedSequenceBuiltinSuffixArg>.Ok(
-                            new PreparedSequenceBuiltinSuffixArg.AlgorithmArg(
-                                NormalizeSequenceCallableSuffixAlgorithm(algorithm, ctx))
+                            new PreparedSequenceBuiltinSuffixArg.AlgorithmArg(algorithm)
                             {
                                 PreparedValue = item.PreparedValue,
                             });
@@ -715,19 +747,6 @@ public static partial class Evaluator
                     builtin,
                     "used an unknown suffix-argument kind");
         }
-    }
-
-    private static Algorithm NormalizeSequenceCallableSuffixAlgorithm(Algorithm algorithm, EvalCtx ctx)
-    {
-        if (algorithm is Algorithm.User { Params.Count: 0, Output.Count: 1 } user
-            && user.Output[0] is Expr.Resolve(var name) resolve)
-        {
-            var resolvedR = ResolveNamedAlgorithm(name, resolve.Span, ctx);
-            if (resolvedR.IsOk)
-                return resolvedR.Value;
-        }
-
-        return algorithm;
     }
 
     private static EvalResult<CollectedSequenceBuiltinInput> ApplySequenceBuiltinEmptyPolicy(

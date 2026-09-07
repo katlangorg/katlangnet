@@ -895,4 +895,19 @@ def test92 : Bool :=
 
 #guard test92
 
+-- K3-02: a zero-parameter wrapper retains its own callable identity even when
+-- its only output names a parameterized algorithm. Eager value failure is not
+-- permission to replace the wrapper by that output on the algorithm channel.
+def filterZeroParameterWrapperRetainsArity : Bool :=
+  match runFlat (.algorithmExpr (algPrivate [] [] [
+    ("P", alg ["x"] [] [] [.num 1]),
+    ("D", alg [] [] [] [.resolve "P"])
+  ] [.call (.resolve "count") [.call (.resolve "filter") [
+    .call (.resolve "range") [.num 1, .num 3], .resolve "D"
+  ]]])) with
+  | Except.error err => innermostIsArityMismatch 0 1 err
+  | _ => false
+
+#guard filterZeroParameterWrapperRetainsArity
+
 end KatLangTests

@@ -426,15 +426,34 @@ public static partial class Evaluator
     }
 
     /// <summary>
-    /// Plain expression dispatch. Every RECURSIVE variant is the value
-    /// projection of its counted-canonical implementation (the same per-variant
-    /// helpers <see cref="EvalCounted"/> dispatches to), so plain and counted
-    /// semantics exist once; only the true leaves (Num, StringLiteral,
-    /// NativeCall, and the Grace/unknown catch-all) are plain-owned, because
-    /// the counted dispatchers' leaf-delegation group — pinned by the M10
-    /// async-dispatch exhaustiveness tests — delegates exactly those to this
-    /// method. Lean: eval (the total value projection of evalCounted; Lean has
-    /// no leaf exception because it has no async twin family).
+    /// Evaluates a proven leaf without charging a dispatch checkpoint. Each caller
+    /// has already charged through its Eval/EvalCounted head (sync or async).
+    /// String construction still performs its normal resource checks and tracking.
+    /// </summary>
+    private static EvalResult<Result> EvalLeafUncharged(Expr expr, EvalCtx ctx)
+    {
+        switch (expr)
+        {
+            case Expr.Num(var n):
+                return EvalResult<Result>.Ok(new Result.Atom(n));
+
+            case Expr.StringLiteral(var s):
+                return MakeStringResult(ctx, s, expr.Span);
+
+            case Expr.Grace:
+                return new EvalError.IllegalInEval(ExprKind(expr)) { Span = expr.Span };
+
+            default:
+                throw new InvalidOperationException($"Uncharged leaf evaluation cannot dispatch '{expr.GetType().Name}'.");
+        }
+    }
+
+    /// <summary>
+    /// Plain expression dispatch. Recursive variants project the counted-canonical
+    /// per-variant helpers. Leaves and native dispatch are shared implementations;
+    /// counted heads enter those directly after charging, never through this head.
+    /// NativeCall can demand argument algorithms and has its own async twin.
+    /// Lean: eval is the total value projection of evalCounted.
     /// </summary>
     private static EvalResult<Result> Eval(
         Expr expr,
@@ -461,11 +480,9 @@ public static partial class Evaluator
 
         switch (expr)
         {
-            case Expr.Num(var n):
-                return EvalResult<Result>.Ok(new Result.Atom(n));
-
-            case Expr.StringLiteral(var s):
-                return MakeStringResult(ctx, s, expr.Span);
+            case Expr.Num:
+            case Expr.StringLiteral:
+                return EvalLeafUncharged(expr, ctx);
 
             case Expr.Param(var name):
                 // Value projection of the canonical counted Param dispatch
@@ -523,7 +540,9 @@ public static partial class Evaluator
             case Expr.NativeCall(var fnName, var argNames):
                 return EvalNativeCall(fnName, argNames, ctx, valEnv);
 
-            // Catch-all: uses Expr.kind for clear diagnostics
+            case Expr.Grace:
+                return EvalLeafUncharged(expr, ctx);
+
             default:
                 return new EvalError.IllegalInEval(ExprKind(expr)) { Span = expr.Span };
         }
@@ -611,26 +630,22 @@ public static partial class Evaluator
                 // The spine machine owns the index-expression span.
                 return EvalExpressionSpineCounted(expr, ctx, valEnv);
 
-            // PLAIN-DELEGATING cases of the counted dispatch: each produces
-            // exactly one value, so delegating to the plain evaluator and
-            // projecting a single-value count is total. Grace is the
-            // deliberate illegal-in-eval catch-all (elaboration strips every
-            // written one; a host-built survivor reports
-            // EvalError.IllegalInEval through the plain dispatch). Num,
-            // StringLiteral and Grace are also LEAVES — they evaluate no child
-            // expression — and are the sync-delegable group EvalCountedAsync
-            // may run through the synchronous evaluator. NativeCall is NOT a
-            // leaf: its declared-argument reads are ordinary Expr.Param value
-            // reads, so a demanded algorithm-channel binding re-enters an
-            // algorithm body; the async twin therefore gives it its own case
-            // (EvalNativeCallAsync). Keep this classification in lock-step
-            // with EvalCountedAsync.
+            // This head already charged the dispatch checkpoint. Enter the shared
+            // implementations directly, never through the charging plain Eval head.
+            // NativeCall is recursive: its parameter reads can demand algorithms,
+            // so the async counted dispatcher uses EvalNativeCallAsync.
+            case Expr.NativeCall(var nativeFnName, var nativeArgNames):
+                {
+                    var nativeR = EvalNativeCall(nativeFnName, nativeArgNames, ctx, valEnv);
+                    if (nativeR.IsError) return nativeR.Error;
+                    return EvalResult<CountedResult>.Ok(new CountedResult(nativeR.Value, nativeR.Value.ValueCount()));
+                }
+
             case Expr.Num:
             case Expr.StringLiteral:
-            case Expr.NativeCall:
             case Expr.Grace:
                 {
-                    var resultR = Eval(expr, ctx, valEnv);
+                    var resultR = EvalLeafUncharged(expr, ctx);
                     if (resultR.IsError) return resultR.Error;
                     return EvalResult<CountedResult>.Ok(new CountedResult(resultR.Value, resultR.Value.ValueCount()));
                 }

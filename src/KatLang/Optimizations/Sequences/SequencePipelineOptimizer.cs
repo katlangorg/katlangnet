@@ -180,6 +180,7 @@ internal static class SequencePipelineOptimizer
                 preparation,
                 services,
                 ctx,
+                valEnv,
                 diagnostics,
                 out var plan,
                 out result);
@@ -630,13 +631,15 @@ internal static class SequencePipelineOptimizer
 
     /// <summary>
     /// The committed fused region. The caller holds the outer collection-argument
-    /// depth level across source evaluation and the later callbacks. No fallback is
-    /// possible from here: source failures are returned as optimized-path errors.
+    /// depth level across source evaluation, the predicate's eager value attempt, and
+    /// the later callbacks. No fallback is possible from here: source failures and a
+    /// sticky predicate limit are returned as optimized-path errors.
     /// </summary>
     private static FilterCountRecognitionStatus TryCreateFilterCountPlan(
         FilterCountPipelinePreparation preparation,
         SequencePipelineEvaluationServices services,
         Evaluator.EvalCtx ctx,
+        IReadOnlyList<(string, Result)> valEnv,
         SequencePipelineDiagnostics? diagnostics,
         out FilterCountPipelinePlan? plan,
         out EvalResult<Evaluator.CountedResult> result)
@@ -656,6 +659,11 @@ internal static class SequencePipelineOptimizer
                     directRangeSource.Span));
             if (rangeR.IsError)
             {
+                // Plain call-item assembly evaluates ALL slots before inspecting the
+                // collection's retained error. Dot receiver failure returns earlier.
+                // The source error still wins, including over a later sticky limit.
+                if (preparation.Syntax.Form == FilterCountPipelineForm.PlainCountPlainFilter)
+                    _ = Evaluator.PrepareFilterPredicateArgument(preparation.Predicate, ctx, valEnv);
                 result = rangeR.Error;
                 return FilterCountRecognitionStatus.Error;
             }
@@ -683,11 +691,24 @@ internal static class SequencePipelineOptimizer
                 preparation.DirectRangeFallbackReason);
         }
 
+        // Use the actual generic preparation: it owns eager evaluation, sticky
+        // failures and callable identity. A failure after commitment is terminal;
+        // falling back here would evaluate the source and predicate a second time.
+        var predicateR = Evaluator.PrepareFilterPredicateArgument(preparation.Predicate, ctx, valEnv);
+        if (predicateR.IsError)
+        {
+            result = WithContext(
+                preparation.Syntax,
+                ctx,
+                EvalResult<Evaluator.CountedResult>.Err(predicateR.Error));
+            return FilterCountRecognitionStatus.Error;
+        }
+
         var sourceKind = SourceKind(sourcePlan);
         plan = new FilterCountPipelinePlan(
             preparation.Syntax.Source,
             sourcePlan,
-            preparation.Predicate,
+            predicateR.Value,
             preparation.Syntax.Form,
             preparation.PredicateExpression,
             preparation.Syntax,
@@ -697,7 +718,7 @@ internal static class SequencePipelineOptimizer
                     preparation.Syntax.Form,
                     preparation.Syntax.Source,
                     preparation.PredicateExpression,
-                    preparation.Predicate,
+                    predicateR.Value,
                     sourceKind));
         return FilterCountRecognitionStatus.Recognized;
     }

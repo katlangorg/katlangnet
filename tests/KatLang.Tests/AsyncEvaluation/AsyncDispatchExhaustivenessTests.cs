@@ -32,9 +32,11 @@ public class AsyncDispatchExhaustivenessTests
         ExplicitAsyncCase,
 
         /// <summary>
-        /// Delegated to the synchronous evaluator because the variant provably
-        /// evaluates no child expression (Grace is the illegal-in-eval
-        /// catch-all: a structured error, no child evaluation).
+        /// Delegated to the synchronous evaluator's uncharged leaf core
+        /// (<c>EvalLeafUncharged</c> — never the plain <c>Eval</c> head, which would
+        /// charge the node's bulk-work checkpoint a second time) because the
+        /// variant provably evaluates no child expression (Grace is the
+        /// illegal-in-eval catch-all: a structured error, no child evaluation).
         /// </summary>
         SyncDelegatedLeaf,
     }

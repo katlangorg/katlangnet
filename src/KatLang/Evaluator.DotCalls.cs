@@ -293,9 +293,15 @@ public static partial class Evaluator
         // same dynamic depth as the generic path, so a `MaxDepth` verdict cannot depend
         // on which strategy an unrelated configured budget selected. The outer
         // collection-argument level is charged once by
-        // SequencePipelineOptimizer.TryExecuteRecognized.
+        // SequencePipelineOptimizer.TryExecuteRecognized. A REJECTED level is returned
+        // UNSPANNED, exactly as the generic argument funnel returns it: the generic
+        // strategy attributes that rejection to the FILTER expression whose collection
+        // argument could not be entered (its dispatch-site WithSpan), never to the
+        // range call, which was never entered — and the optimizer's WithContext stamps
+        // the same elided filter span. Stamping the range call's span here made the
+        // two strategies disagree on the span of the same MaxDepth verdict.
         if (ctx.Budget.TryEnterArgumentEvaluation() is { } depthError)
-            return AtSpanIfMissing(depthError, callSpan);
+            return depthError;
 
         try
         {

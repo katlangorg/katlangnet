@@ -902,16 +902,21 @@ public static partial class Evaluator
 
             // SYNC-DELEGABLE LEAVES — the only kinds allowed to run through
             // the synchronous evaluator on the twin path: none evaluates a
-            // child expression, so delegating to the synchronous Eval here is
-            // exact — the same leaf code the synchronous counted dispatch
-            // runs. Grace is the illegal-in-eval catch-all (a structured
+            // child expression, so delegating to the synchronous leaf core here
+            // is exact — the same leaf code the synchronous counted dispatch
+            // runs. The core is UNCHARGED (EvalLeafUncharged): this head already
+            // charged the node's one bulk-work checkpoint, and entering the
+            // plain Eval head instead charged a second one, so a leaf the
+            // synchronous spine delivers through plain Eval cost one checkpoint
+            // there and two here — the two strategies' step verdicts diverged at
+            // scale. Grace is the illegal-in-eval catch-all (a structured
             // error, no child evaluation). Keep this classification in
             // lock-step with EvalCounted.
             case Expr.Num:
             case Expr.StringLiteral:
             case Expr.Grace:
                 {
-                    var resultR = Eval(expr, ctx, valEnv);
+                    var resultR = EvalLeafUncharged(expr, ctx);
                     if (resultR.IsError) return resultR.Error;
                     return EvalResult<CountedResult>.Ok(new CountedResult(resultR.Value, resultR.Value.ValueCount()));
                 }
@@ -2408,8 +2413,9 @@ public static partial class Evaluator
         {
             var arg = resolvedArg.Algorithm;
 
-            // Callback/function arguments stay unevaluated — see the synchronous twin.
-            if (arg is not null && (arg.Params.Count > 0 || arg.ParameterPatterns.Count > 0))
+            // Callback/function arguments stay unevaluated — see the synchronous twin
+            // (the shared IsValueShapedArgument classification).
+            if (arg is not null && !IsValueShapedArgument(arg))
             {
                 items.Add(new VariadicCallItem(
                     Value: null,

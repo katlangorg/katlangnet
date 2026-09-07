@@ -81,7 +81,11 @@ One decision per run, at the async entry point:
 ### Twin discipline (normative)
 
 - A twin may call: other `*Async` twins; shared helpers verified not to evaluate
-  expressions; and the plain synchronous `Eval` only for proven-leaf dispatch kinds.
+  expressions; and the synchronous evaluator's UNCHARGED leaf core (`EvalLeafUncharged`)
+  only for proven-leaf dispatch kinds — never the plain `Eval` head, which charges the
+  node's bulk-work checkpoint that the twin's counted head has already charged (that
+  double charge made `repeat({x + 1}, 40960, 0)` need 41030 steps on the twin against
+  41020 synchronously; `AsyncTwinDifferentialTests` pins the large-loop equality).
   The sync-delegable leaves are ENUMERATED EXPLICITLY in `EvalCountedAsync` — `Num`,
   `StringLiteral`, and `Grace` (the illegal-in-eval catch-all: a structured error, no
   child evaluation) — and the dispatch default is a FAIL-LOUD

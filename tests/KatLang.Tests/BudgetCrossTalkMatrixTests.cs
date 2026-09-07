@@ -2,6 +2,7 @@ using System.Text;
 using KatLang.Evaluation;
 using KatLang.Evaluation.Caching;
 using KatLang.Optimizations.Sequences;
+using static KatLang.Tests.LoopDiagnosticParityAssertions;
 
 namespace KatLang.Tests;
 
@@ -375,6 +376,11 @@ public class BudgetCrossTalkMatrixTests
         Assert.True(
             diagnostics.GetSnapshot().FilterCountFusionHits >= minimumFusionHits,
             "The optimized side did not execute the fused path under test.");
+        if (minimumFusionHits == 0)
+        {
+            Assert.Equal(0, diagnostics.GetSnapshot().FilterCountFusionHits);
+            Assert.True(diagnostics.GetSnapshot().FilterCountFusionFallbacks > 0);
+        }
         Assert.Equal(genericBudget.PeakDepth, optimizedBudget.PeakDepth);
 
         var requiredDepth = optimizedBudget.PeakDepth;
@@ -382,20 +388,21 @@ public class BudgetCrossTalkMatrixTests
         foreach (var offset in new[] { -1, 0, 1 })
         {
             var limits = new EvaluationLimits { MaxDepth = requiredDepth + offset };
-            var optimizedAtBoundary = Evaluator.RunCountedObserved(
+            var (optimizedAtBoundary, optimizedLimitBudget) = Evaluator.RunCountedObserved(
                 ast,
                 limits,
-                enableOptimizations: true).Result;
-            var genericAtBoundary = Evaluator.RunCountedObserved(
+                enableOptimizations: true);
+            var (genericAtBoundary, genericLimitBudget) = Evaluator.RunCountedObserved(
                 ast,
                 limits,
-                enableOptimizations: false).Result;
+                enableOptimizations: false);
 
             Assert.Equal(optimizedAtBoundary.IsError, genericAtBoundary.IsError);
             if (offset < 0)
             {
                 Assert.IsType<EvalError.EvaluationDepthExceeded>(Innermost(optimizedAtBoundary.Error));
                 Assert.IsType<EvalError.EvaluationDepthExceeded>(Innermost(genericAtBoundary.Error));
+                AssertIdenticalFailure(genericAtBoundary, genericLimitBudget, optimizedAtBoundary, optimizedLimitBudget);
             }
             else
             {
@@ -1157,7 +1164,16 @@ public class BudgetCrossTalkMatrixTests
     /// <summary>
     /// The same invariant swept across the fusion-eligible spellings and source shapes,
     /// including the ones only reachable when the pipeline's depth lives in its range
-    /// BOUNDS rather than its predicate.
+    /// BOUNDS rather than its predicate, and the ones where it lives in the PREDICATE
+    /// ARGUMENT's eager value attempt (K3-02 of the fused-pipeline review): the generic
+    /// binding materializes a VALUE-SHAPED predicate — a capture <c>(D)</c>, a bare
+    /// zero-parameter property <c>D</c>, a zero-declaration brace <c>{D}</c> — at the
+    /// filter call boundary before any item is visited, so a deep <c>D</c> charges its
+    /// depth even over the EMPTY source <c>E</c>, where no predicate call ever happens.
+    /// (Over a non-empty source such a predicate is an arity error on both strategies;
+    /// see <see cref="ValueShapedDeepPredicate_StickyLimitIsTheFusedPipelinesTerminalVerdict"/>.)
+    /// The fused pipeline used to resolve the predicate on the algorithm channel only and
+    /// skip the attempt entirely: peak depth 3 fused against 10 generic.
     /// </summary>
     [Theory]
     [InlineData("range(1, 3).filter(P).count", 1)]
@@ -1170,11 +1186,16 @@ public class BudgetCrossTalkMatrixTests
     [InlineData("count(filter(range(1, f(6) + 3), P))", 1)]
     [InlineData("Src.filter(P).count", 1)]
     [InlineData("count(Src.filter(P))", 1)]
+    [InlineData("E.filter((D)).count", 1)]
+    [InlineData("count(E.filter((D)))", 1)]
+    [InlineData("count(filter(E, (D)))", 0)]
+    [InlineData("E.filter(D).count", 1)]
+    [InlineData("E.filter({D}).count", 1)]
     public void FusedAndGenericSequencePipelines_ConsumeIdenticalDynamicDepth(
         string pipeline,
         int minimumFusionHits)
     {
-        var source = $"{CountDown}P(x) = f(6) + 1\nA = (1, 2, 3)\nSrc = (f(6) + 1, 2, 3)\n{pipeline}";
+        var source = $"{CountDown}P(x) = f(6) + 1\nD = f(6) + 1\nA = (1, 2, 3)\nE = ()\nSrc = (f(6) + 1, 2, 3)\n{pipeline}";
         AssertSameExactDepthBoundary(source, minimumFusionHits);
     }
 
@@ -1373,16 +1394,25 @@ public class BudgetCrossTalkMatrixTests
     // ── G. The named regression for the defect this suite found ──────────────
 
     /// <summary>
-    /// Minimal reproducer for the defect. <c>range(1, 3).filter(P).count</c> creates no
+    /// Minimal reproducers for the defect. <c>range(1, 3).filter(P).count</c> creates no
     /// string at all, so <c>MaxStringLength</c> is non-binding by construction — yet
     /// configuring it selected the generic sequence strategy, which consumed one more
     /// level of dynamic depth than the fused strategy, and the program's <c>MaxDepth</c>
     /// verdict flipped from success to <see cref="EvalError.EvaluationDepthExceeded"/>.
+    /// The value-shaped predicate rows (K3-02 of the fused-pipeline review) are the same
+    /// flip one layer in: the generic binding's eager value attempt on the deep predicate
+    /// <c>(D)</c> / <c>D</c> is where the program's depth lives, and the fused pipeline
+    /// used to skip that attempt — so the unrelated string limit decided whether
+    /// <c>MaxDepth = 3</c> or <c>MaxDepth = 10</c> was the boundary.
     /// </summary>
-    [Fact]
-    public void ConfiguredStringLimit_DoesNotChangeDepthVerdict_OfAFusedSequencePipeline()
+    [Theory]
+    [InlineData("range(1, 3).filter(P).count")]
+    [InlineData("E.filter((D)).count")]
+    [InlineData("count(E.filter((D)))")]
+    [InlineData("E.filter(D).count")]
+    public void ConfiguredStringLimit_DoesNotChangeDepthVerdict_OfAFusedSequencePipeline(string pipeline)
     {
-        var ast = FromSource($"{CountDown}P(x) = f(6) + 1\nrange(1, 3).filter(P).count");
+        var ast = FromSource($"{CountDown}P(x) = f(6) + 1\nD = f(6) + 1\nE = ()\n{pipeline}");
 
         // The program creates no language string, so every string budget is non-binding.
         var (_, unlimitedBudget) = Evaluator.RunCountedObserved(ast);
@@ -1405,14 +1435,114 @@ public class BudgetCrossTalkMatrixTests
                 : stringLimit with { MaxDepth = boundary };
             var belowBoundary = atBoundary with { MaxDepth = boundary - 1 };
 
-            var passing = Evaluator.Run(ast, atBoundary);
+            var diagnostics = new SequencePipelineDiagnostics();
+            var (passing, passingBudget) = Evaluator.RunCountedObserved(ast, atBoundary, sequenceDiagnostics: diagnostics);
             Assert.False(
                 passing.IsError,
                 $"MaxDepth={boundary} must succeed with unrelated limits {atBoundary}; got {(passing.IsError ? passing.Error : null)}");
 
-            var failing = Evaluator.Run(ast, belowBoundary);
+            Assert.Equal(stringLimit is null ? 1 : 0, diagnostics.GetSnapshot().FilterCountFusionHits);
+            var (reference, referenceBudget) = Evaluator.RunCountedObserved(ast, atBoundary, enableOptimizations: false);
+            Assert.Equal(reference.Value.Value, passing.Value.Value, Result.ValueComparer);
+            Assert.Equal(referenceBudget.ConsumedSteps, passingBudget.ConsumedSteps);
+            Assert.Equal(referenceBudget.PeakDepth, passingBudget.PeakDepth);
+
+            var (failing, failingBudget) = Evaluator.RunCountedObserved(ast, belowBoundary);
             Assert.IsType<EvalError.EvaluationDepthExceeded>(Innermost(failing.Error));
+            var (genericFailure, genericFailureBudget) = Evaluator.RunCountedObserved(ast, belowBoundary, enableOptimizations: false);
+            AssertIdenticalFailure(genericFailure, genericFailureBudget, failing, failingBudget);
         }
+    }
+
+    /// <summary>
+    /// The value-shaped predicate defect over a NON-EMPTY source (K3-02 of the
+    /// fused-pipeline review). The generic binding evaluates a value-shaped predicate —
+    /// <c>(D)</c>, bare <c>D</c>, <c>{D}</c> — eagerly at the filter call boundary and
+    /// treats a resource-limit failure of that attempt as the call's verdict (the sticky
+    /// rule of <c>PrepareSequenceBuiltinSuffixArg</c>); a success or a non-limit failure
+    /// proceeds to the algorithm channel, where applying a zero-parameter algorithm to
+    /// an item is an arity error. The fused pipeline resolved the predicate on the
+    /// algorithm channel only, so below the attempt's depth it reported the ARITY error
+    /// where the generic strategy reported the DEPTH limit, and its accounting never
+    /// included the attempt. Both strategies must agree on the complete structured error
+    /// (kind, payload, context chain and spans) and on the operational counters at EVERY
+    /// depth limit up to and past the attempt's need, and the fused path must reach that
+    /// agreement itself — a sticky limit is its terminal verdict, never a fallback.
+    /// </summary>
+    [Theory]
+    [InlineData("range(1, 3).filter((D)).count")]
+    [InlineData("count(range(1, 3).filter((D)))")]
+    [InlineData("count(filter(range(1, 3), (D)))")]
+    [InlineData("A.filter((D)).count")]
+    [InlineData("count(A.filter((D)))")]
+    [InlineData("range(1, 3).filter(D).count")]
+    [InlineData("range(1, 3).filter({D}).count")]
+    public void ValueShapedDeepPredicate_StickyLimitIsTheFusedPipelinesTerminalVerdict(string pipeline)
+    {
+        var ast = FromSource($"{CountDown}D = f(6) + 1\nA = (1, 2, 3)\n{pipeline}");
+
+        // Unlimited: the eager attempt succeeds, the predicate reaches the algorithm
+        // channel, and the first item's application fails identically on both strategies
+        // — with the attempt's depth and steps charged on both.
+        var diagnostics = new SequencePipelineDiagnostics();
+        var (optimized, optimizedBudget) = Evaluator.RunCountedObserved(
+            ast,
+            enableOptimizations: true,
+            sequenceDiagnostics: diagnostics);
+        var (generic, genericBudget) = Evaluator.RunCountedObserved(ast, enableOptimizations: false);
+
+        Assert.True(generic.IsError);
+        Assert.IsType<EvalError.ArityMismatch>(Innermost(generic.Error));
+        AssertIdenticalFailure(generic, genericBudget, optimized, optimizedBudget);
+        Assert.Equal(1, diagnostics.GetSnapshot().FilterCountFusionHits);
+
+        // The attempt is the program's deepest point, so every limit below its need is a
+        // verdict on the attempt itself: the sticky depth limit, reported by BOTH
+        // strategies, never the per-item arity error the fused path used to report.
+        var attemptDepth = genericBudget.PeakDepth;
+        Assert.True(attemptDepth > 3, $"expected the deep predicate to dominate the depth profile, observed {attemptDepth}");
+        for (var maxDepth = 1; maxDepth <= attemptDepth + 1; maxDepth++)
+        {
+            var limits = new EvaluationLimits { MaxDepth = maxDepth };
+            var limitedDiagnostics = new SequencePipelineDiagnostics();
+            var (optimizedAtLimit, optimizedLimitBudget) = Evaluator.RunCountedObserved(
+                ast,
+                limits,
+                enableOptimizations: true,
+                sequenceDiagnostics: limitedDiagnostics);
+            var (genericAtLimit, genericLimitBudget) = Evaluator.RunCountedObserved(
+                ast,
+                limits,
+                enableOptimizations: false);
+
+            Assert.True(genericAtLimit.IsError);
+            Assert.IsType(
+                maxDepth < attemptDepth
+                    ? typeof(EvalError.EvaluationDepthExceeded)
+                    : typeof(EvalError.ArityMismatch),
+                Innermost(genericAtLimit.Error));
+            AssertIdenticalFailure(genericAtLimit, genericLimitBudget, optimizedAtLimit, optimizedLimitBudget);
+            Assert.Equal(0, limitedDiagnostics.GetSnapshot().FilterCountFusionFallbacks);
+        }
+    }
+
+    /// <summary>
+    /// Complete failure equivalence between the strategies: the classified innermost
+    /// error, the full structured tree (every context frame and span included), and the
+    /// operational counters the run charged before failing.
+    /// </summary>
+    private static void AssertIdenticalFailure(
+        EvalResult<Evaluator.CountedResult> generic,
+        EvaluationBudget genericBudget,
+        EvalResult<Evaluator.CountedResult> optimized,
+        EvaluationBudget optimizedBudget)
+    {
+        Assert.True(optimized.IsError, $"optimized run succeeded where the generic run failed with {generic.Error}");
+        Assert.Equal(Failure(generic.Error), Failure(optimized.Error));
+        Assert.Equal(DescribeErrorTree(generic.Error), DescribeErrorTree(optimized.Error));
+        Assert.Equal(genericBudget.PeakDepth, optimizedBudget.PeakDepth);
+        Assert.Equal(genericBudget.ConsumedSteps, optimizedBudget.ConsumedSteps);
+        Assert.Equal(genericBudget.MaterializedStringChars, optimizedBudget.MaterializedStringChars);
     }
 
     // ── H. Multi-limit precedence (legitimate competition, not cross-talk) ───
