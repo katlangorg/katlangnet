@@ -921,13 +921,15 @@ public class GraceDotCompositionTests
     }
 
     [Fact]
-    public void Adjacency_PrefixMemberGrace_MemberOnNextLine_MirrorsOrdinaryTrailingDot()
+    public void Adjacency_PrefixMemberGrace_IsLineLocal_OrdinaryTrailingDotIsUnchanged()
     {
-        var graced = Parser.Parse("K(a, t) = a.~\nt\nK(7, {a+1})");
-        var ordinary = Parser.Parse("Obj = {public V = 42}\nObj.\nV");
-        Assert.Equal(ordinary.HasErrors, graced.HasErrors);
-        if (!graced.HasErrors)
-            AssertResult("K(a, t) = a.~\nt\nK(7, {a+1})", Atom(8));
+        // A trailing dot may precede a newline; an annotation may not reach
+        // across it to acquire its name. B4's line-local law applies to the
+        // member occurrence just as it does to a primary occurrence.
+        var graced = Parser.ParseSyntax("a.~\nt\n7");
+        Assert.Equal(DiagnosticCode.InvalidGraceMarker, Assert.Single(graced.Diagnostics).Code);
+        Assert.Equal("t", Assert.IsType<Expr.Resolve>(graced.Root.Output[1]).Name);
+        AssertResult("Obj = {public V = 42}\nObj.\nV", Atom(42));
     }
 
     // ── J. The stored fallback decides — wrapper topology is irrelevant ─────

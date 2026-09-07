@@ -14,11 +14,11 @@ This is bounded differential validation over the Lean-guarded partition,
 not a formal verification of the evaluators.
 
 Partition (machine-checked by the `specCaseIds.length` guard below):
-- specification surface cases: 196
-- excluded parse-level cases (Lean has no surface parser): 10
-- excluded C#-only cases (each carries an explicit reason in the corpus): 8
-- Lean-guarded cases: 178
-- probe observations (C#-only by design): 327
+- specification surface cases: 199
+- excluded parse-level cases (Lean has no surface parser): 11
+- excluded C#-only cases (each carries an explicit reason in the corpus): 9
+- Lean-guarded cases: 179
+- probe observations (C#-only by design): 332
 - internal-node cases live in the semantic-explorer corpus, not here: see
   lean/SemanticExplorerCases.lean
 
@@ -783,6 +783,11 @@ def case_trailing_comma_continues_line : Expr :=
   .algorithmExpr (alg [] [] [] [.num 1, .num 2])
 #guard obs case_trailing_comma_continues_line == "ok raw=S[1, 2] n=2"
 
+-- grace-prefix-marker-led-row [parser-layout]: K = { \n   a \n   ~b \n } \n K(10, 20)
+def case_grace_prefix_marker_led_row : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "K" (alg ["b", "a"] [] [] [.param "a", .param "b"])] [(.call (.resolve "K") [.num 10, .num 20])])
+#guard obs case_grace_prefix_marker_led_row == "ok raw=S[20, 10] n=1"
+
 -- adjacency-call-across-space [parser-layout]: Add(a, b) = a + b \n  \n Add(1, 2)    # 3 \n Add (1, 2)   # the same call, 3
 def case_adjacency_call_across_space : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Add" (alg ["a", "b"] [] [] [(.binary .add (.param "a") (.param "b"))])] [(.call (.resolve "Add") [.num 1, .num 2]), (.call (.resolve "Add") [.num 1, .num 2])])
@@ -988,7 +993,7 @@ def case_conditional_branch_local_library_is_openable_within_the_branch : Expr :
   .algorithmExpr (alg [] [] [privateProp "F" (.conditional none [] [⟨.litInt 0, (alg [] [] [privateProp "Lib" (alg [] [] [publicProp "X" (alg [] [] [] [.num 1])] []), privateProp "G" (alg [] [.resolve "Lib"] [] [.resolve "X"])] [.resolve "G"])⟩, ⟨.bind "n", (alg [] [] [] [.param "n"])⟩])] [(.call (.resolve "F") [.num 0])])
 #guard obs case_conditional_branch_local_library_is_openable_within_the_branch == "ok raw=1 n=1"
 
--- 178 canonical Lean-guarded specification cases.
+-- 179 canonical Lean-guarded specification cases.
 
 /--
 Machine-checked Lean-guarded partition count: the id list is built by the
@@ -1133,6 +1138,7 @@ def specCaseIds : List String := [
   "index-captured-requality",
   "output-rows-interleave-definitions",
   "trailing-comma-continues-line",
+  "grace-prefix-marker-led-row",
   "adjacency-call-across-space",
   "multiline-call-open-delimiter",
   "newline-ends-property-body",
@@ -1175,6 +1181,6 @@ def specCaseIds : List String := [
   "conditional-branch-inline-open-exposes-members-to-the-branch",
   "conditional-branch-local-library-is-openable-within-the-branch"
 ]
-#guard specCaseIds.length == 178
+#guard specCaseIds.length == 179
 
 end LanguageSpecCases

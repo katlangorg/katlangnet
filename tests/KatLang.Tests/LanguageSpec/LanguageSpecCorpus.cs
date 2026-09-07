@@ -2165,6 +2165,33 @@ public static class LanguageSpecCorpus
         },
         new()
         {
+            Id = "grace-line-final-marker-after-call-rejected",
+            Category = "parser-layout",
+            Source = "Q = {\n  b\n  F(1)~\n  a\n}\nF(z) = z\nQ(10, 20)",
+            Outcome = SpecOutcome.ParseError,
+            ExpectedParseDiagnosticFragment = "Grace `~` can only be applied to a parameter or name occurrence",
+            ExpectedDiagnosticCode = DiagnosticCode.InvalidGraceMarker,
+            Explanation = "A grace marker never binds across a physical newline in either direction: `F(1)~` at the end of a row is the rejected `f(x)~` spelling (Grace decorates exactly one bare name), never prefix Grace on the next row's `a`. Write the marker on the name it decorates, on that name's line: `~a`.",
+        },
+        new()
+        {
+            Id = "grace-prefix-marker-led-row",
+            Category = "parser-layout",
+            Source = "K = {\n  a\n  ~b\n}\nK(10, 20)",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "(20, 10)",
+            ExpectedRaw = "S[20, 10]",
+            ExpectedEmittedCount = 1,
+            Probes =
+            [
+                // At root, `A` newline `~B` stays two rows: the marker belongs
+                // to its own line and never continues `A` as postfix Grace.
+                new SpecProbe("A = 1\nB = 2\nA\n~B", "ok raw=S[1, 2] n=2"),
+            ],
+            Explanation = "A `~`-led row is its own prefix-grace expression, and the marker and its name share one physical line: `~b` moves `b` one position earlier, so the block's implicit parameters are `(b, a)` and `K(10, 20)` binds `b = 10`, `a = 20`.",
+        },
+        new()
+        {
             Id = "adjacency-call-across-space",
             Category = "parser-layout",
             Source = "Add(a, b) = a + b\n\nAdd(1, 2)    # 3\nAdd (1, 2)   # the same call, 3",
@@ -2830,6 +2857,29 @@ public static class LanguageSpecCorpus
             ],
             Notes = "The canonical case keeps the representative signed-zero boundary: construction/display, structural equality (including the hashed `distinct` consumer), and the shared zero-divisor rule. Decimal128NumericsTests retains the denser relational, arithmetic-sign, and truthiness matrix.",
             Explanation = "`-0` (unary minus on zero — literals are unsigned) is an observable Decimal128 value: it displays with its sign while comparing structurally equal to `0`, and it remains a zero-valued divisor (`1 / -0` is the ordinary division-by-zero error, not `-Infinity`).",
+        },
+        new()
+        {
+            Id = "pow-integer-exponent-inexact-accuracy",
+            Category = "arithmetic",
+            Source = "0.9999999 ^ 10000000",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "0.3678794227774694966078669291031613",
+            ExpectedRaw = "0.3678794227774694966078669291031613",
+            ExpectedEmittedCount = 1,
+            LeanExclusionReason = "A fractional base and a 34-digit inexact power are outside the Lean Int numeric model: Lean's `intPow` is exact Int arithmetic, while the Decimal128 runtime rounds the exact mathematical power once to 34 significant digits.",
+            Probes =
+            [
+                // One implementation behind the three spellings.
+                new SpecProbe("Math.Pow(0.9999999, 10000000)", "ok raw=0.3678794227774694966078669291031613 n=1"),
+                new SpecProbe("pow(0.9999999, 10000000)", "ok raw=0.3678794227774694966078669291031613 n=1"),
+                // An exact 35-digit power ending in 5 is a rounding tie: to even.
+                new SpecProbe("5 ^ 49", "ok raw=17763568394002504646778106689453120 n=1"),
+                // A negative exponent rounds once, at the reciprocal.
+                new SpecProbe("1.1 ^ -34", "ok raw=0.03914251301220414284805399307112554 n=1"),
+            ],
+            Notes = "The dense accuracy matrix (independent 90/140-digit references, exact-midpoint and near-midpoint cases, the exactness boundary `2 ^ 112` / `2 ^ 113`, the certification loop) lives in Decimal128NumericsTests.",
+            Explanation = "An integer power that does not fit 34 significant digits is the exact mathematical power rounded ONCE to the nearest Decimal128 (ties to even): `0.9999999 ^ 10000000` is correct in every digit, `5 ^ 49` resolves its exact midpoint to even, and a negative exponent rounds once at the reciprocal. `^`, `Math.Pow`, and `pow` share the implementation.",
         },
         new()
         {

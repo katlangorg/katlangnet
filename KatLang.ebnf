@@ -406,14 +406,22 @@ Primary         = NumberLiteral
 GraceIdentifier = { "~" } Identifier { "~" } ;
                   (* Grace `~` applies ONLY to one bare parameter/name
                      occurrence — this production is its entire surface.
-                     Attaching a marker to any other completed expression
-                     (`(x + y)~`, `f(x)~`, `x.y~`, `[x]~`, `5~`, `~(x)`)
-                     is a targeted parse error: Grace is a parameter-order
-                     annotation, not an expression operator, and never
-                     distributes through a compound operand. Postfix "~" is
-                     same-physical-line only: a "~"-led line is its own
-                     prefix-grace expression, never postfix grace on the
-                     previous line's identifier. *)
+                     A marker run attached to any other completed
+                     expression (`(x + y)~`, `f(x)~`, `x.y~`, `[x]~`, `5~`,
+                     `~(x)`) is a targeted parse error spanning the run:
+                     Grace is a parameter-order annotation, not an
+                     expression operator, and never distributes through a
+                     compound operand. That rejection is the same at the end
+                     of a line (`f(x)~` newline `a`) and before a same-line
+                     operand (`f(x)~ c`); a prefix-grace slot after another
+                     slot on one line needs a comma (`f(x), ~c`). The whole
+                     marker run is physical-line-local and the identifier it
+                     decorates must be on the run's own line: a "~"-led line
+                     is its own prefix-grace expression, never postfix grace
+                     on the previous line's identifier, and a run ending a
+                     line never becomes prefix grace on the next line's
+                     identifier (`~` newline `~a` reports the first line's
+                     lone marker and keeps `~a` intact). *)
 ParenBundleExpr = "(" ExpressionAlgorithm ")" ;
                   (* Empty parentheses "()" construct the empty sequence value,
                      displayed as (). Ordinary repeated parentheses around the empty

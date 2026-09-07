@@ -2345,29 +2345,52 @@ public static partial class Evaluator
     // ── Utility ──────────────────────────────────────────────────────────────
 
     /// <summary>
-    /// Shared exponentiation for the <c>^</c> operator and <c>Math.Pow</c>.
-    /// The EXACT-BY-SQUARING guarantee covers integer exponents whose magnitude
-    /// fits the host <see cref="long"/>: those use Decimal128 exponentiation by
-    /// squaring — exact whenever the true power fits 34 significant digits, and
-    /// carrying an integral quantum so <c>2^10</c> stays <c>1024</c>, not
-    /// <c>1024.000…</c>. Negative integer exponents are the reciprocal of the
-    /// positive power. Everything else — fractional, non-finite, and beyond-long
-    /// integral exponents — uses <see cref="Decimal128.Pow"/> and is a 34-digit
-    /// approximation for ordinary finite bases; the IEEE-specified special bases
-    /// (0, ±1, NaN, the infinities, signed zero) still resolve exactly by sign
-    /// and parity there, which <c>Decimal128NumericsTests</c> pins through both
-    /// public spellings. Zero raised to any negative integer exponent stays the
-    /// specified KatLang error rather than the IEEE infinity.
+    /// Shared exponentiation for <c>^</c>, <c>Math.Pow</c>, and <c>pow</c>.
+    /// Finite nonzero bases with integral |exponent| &lt;= long.MaxValue use
+    /// <see cref="Decimal128Numerics.TryIntegerPower"/> except for the existing
+    /// negative-exponent overflow delegation described below. Successful certified
+    /// results round the exact input power once to Decimal128, ties to even;
+    /// negative exponents certify the reciprocal before target rounding.
+    /// Exact positive powers retain the preferred quantum (2^10 is 1024).
+    /// Reciprocals retain the previous division's quantum whenever its numerical
+    /// result agrees with the certified result (including the exact 5^-50).
+    /// <para>Refinement starts at 34 + digits(|n|) + 8 and doubles up to 4096
+    /// working digits, including the final capped attempt. The helper's midpoint
+    /// argument establishes eventual certification, not success within this cap.
+    /// Exhaustion returns IllegalInEval with the expression span, never an
+    /// uncertified approximation. The optional internal precision arguments are
+    /// a test seam for this otherwise difficult-to-reach error path.</para>
+    /// <para>Delegation to Decimal128.Pow is unchanged from before B4: fractional,
+    /// non-finite, and beyond-long exponents, plus negative integral exponents
+    /// whose legacy positive-power chain overflows (10^-6146 remains a nonzero
+    /// subnormal). These dependency results are quantum-canonicalized and are
+    /// not covered by the certification guarantee. Special bases retain IEEE
+    /// sign/parity, x^0 is 1, and zero to a negative integer is a KatLang error.</para>
     /// </summary>
-    internal static EvalResult<Result> EvalPow(SourceSpan? span, Decimal128 b, Decimal128 exp)
+    internal static EvalResult<Result> EvalPow(
+        SourceSpan? span, Decimal128 b, Decimal128 exp,
+        int? initialWorkingDigits = null, int maxWorkingDigits = Decimal128Numerics.MaxWorkingDigits)
     {
         if (b == 0 && exp < 0 && Decimal128.IsInteger(exp))
             return new EvalError.IllegalInEval("zero cannot be raised to a negative integer exponent") { Span = span };
 
-        return EvalResult<Result>.Ok(new Result.Atom(Decimal128Pow(b, exp)));
+        if (TryDecimal128Pow(b, exp, initialWorkingDigits, maxWorkingDigits, out var result))
+            return EvalResult<Result>.Ok(new Result.Atom(result));
+
+        // The certification loop reached its working-precision cap without an
+        // unambiguous rounding decision. Fail loudly: returning the nearest
+        // uncertified digit would silently break the correct-rounding contract.
+        return new EvalError.IllegalInEval(
+            $"the correctly rounded value of {FormatNumber(b)} ^ {FormatNumber(exp)} could not be certified "
+            + $"within the {maxWorkingDigits}-digit working-precision limit")
+        { Span = span };
     }
 
-    private static Decimal128 Decimal128Pow(Decimal128 b, Decimal128 exp)
+    private static string FormatNumber(Decimal128 value)
+        => value.ToString(System.Globalization.CultureInfo.InvariantCulture);
+
+    private static bool TryDecimal128Pow(
+        Decimal128 b, Decimal128 exp, int? initialWorkingDigits, int maxWorkingDigits, out Decimal128 result)
     {
         // IsInteger is false for NaN and the infinities, so non-finite exponents
         // take Decimal128.Pow's IEEE behavior. Integral exponents beyond long also
@@ -2377,28 +2400,65 @@ public static partial class Evaluator
         // squaring loop could deliver exactness either; bases very close to 1 give
         // genuine finite approximations that Decimal128.Pow computes directly.
         if (!Decimal128.IsInteger(exp) || Decimal128.Abs(exp) > long.MaxValue)
-            return CanonicalizeMathResult(Decimal128.Pow(b, exp));
+        {
+            result = CanonicalizeMathResult(Decimal128.Pow(b, exp));
+            return true;
+        }
 
         // |exp| <= long.MaxValue, so the narrowing is exact and negation cannot
-        // overflow. For a negative exponent, prefer the by-squaring positive
-        // power followed by one correctly-rounded division. Its intermediate can
-        // overflow even when the reciprocal is still a representable subnormal
-        // (for example 10^-6146), though, because Decimal128's subnormal range
-        // extends farther below zero than its finite range extends above it. In
-        // that one case delegate the original signed exponent to Decimal128.Pow
-        // instead of collapsing the valid reciprocal to zero.
+        // overflow.
         var exponent = (long)exp;
+        if (exponent == 0 || !Decimal128.IsFinite(b) || b == 0)
+        {
+            // x ^ 0 is 1 for every base, and the special bases (NaN, the infinities,
+            // signed zero) only ever produce sign-and-parity outcomes: every product
+            // of the chain is exact, so the plain Decimal128 chain is the exact
+            // answer here. (Zero with a negative exponent is rejected by EvalPow.)
+            result = exponent < 0
+                ? Decimal128.One / PowNonNegative(b, (ulong)(-exponent))
+                : PowNonNegative(b, (ulong)exponent);
+            return true;
+        }
+
+        Decimal128? previousReciprocal = null;
         if (exponent < 0)
         {
             var positivePower = PowNonNegative(b, (ulong)(-exponent));
-            return Decimal128.IsInfinity(positivePower)
-                ? CanonicalizeMathResult(Decimal128.Pow(b, exp))
-                : Decimal128.One / positivePower;
+            if (Decimal128.IsInfinity(positivePower))
+            {
+                // Preserve the pre-B4 delegation domain: a positive intermediate
+                // can overflow while its reciprocal is a representable subnormal.
+                result = CanonicalizeMathResult(Decimal128.Pow(b, exp));
+                return true;
+            }
+
+            previousReciprocal = Decimal128.One / positivePower;
         }
 
-        return PowNonNegative(b, (ulong)exponent);
+        if (!Decimal128Numerics.TryIntegerPower(
+                b, exponent,
+                initialWorkingDigits ?? Decimal128Numerics.Precision
+                    + Decimal128Numerics.DigitCount((BigInteger)System.Math.Abs(exponent))
+                    + Decimal128Numerics.InitialGuardDigits,
+                maxWorkingDigits, out result))
+            return false;
+
+        // The old chain supplies ONLY a compatible quantum, after certification.
+        // In particular 5^-50 is exact even though 5^50 is not representable.
+        // Never use that rounded positive power as the input to certification.
+        if (previousReciprocal is { } previous && previous == result)
+            result = previous;
+        return true;
     }
 
+    /// <summary>
+    /// Decimal128 exponentiation by squaring, used for special bases, the existing
+    /// reciprocal overflow delegation, and compatible reciprocal quantum selection.
+    /// It is not an accuracy oracle for ordinary finite bases: each Decimal128
+    /// multiplication would otherwise round, and those roundings compound to a
+    /// relative error of about |n| half-ulps — see <see cref="Decimal128Numerics"/>
+    /// for the certified path that ordinary finite bases take.
+    /// </summary>
     private static Decimal128 PowNonNegative(Decimal128 b, ulong exponent)
     {
         Decimal128 result = Decimal128.One;

@@ -232,6 +232,7 @@ public class LanguageSpecRunnerTests
             "expression-position-block-closed-list-is-diagnosed",
             "conditional-branch-inline-open-does-not-leak-to-sibling-branches",
             "conditional-branch-local-library-does-not-leak-to-sibling-branches",
+            "grace-line-final-marker-after-call-rejected",
             "negative-index-literal-rejected",
             "closed-list-strict-value-forwarding",
             "open-capture-target-rejected",
@@ -250,6 +251,7 @@ public class LanguageSpecRunnerTests
             "nan-equality-vs-ordering",
             "negative-zero-display",
             "overflow-produces-infinity",
+            "pow-integer-exponent-inexact-accuracy",
             // The unmodeled Math-native surface.
             "native-argument-value-demand",
             "native-flat-callback-binding",
@@ -280,7 +282,7 @@ public class LanguageSpecRunnerTests
     {
         const int MinimumEncoderDerivedCases = 169;
         const int MaximumHandAuthoredOverrides = 0;
-        const int MaximumCSharpOnlyCases = 8;
+        const int MaximumCSharpOnlyCases = 9;
 
         var derived = Cases.Count(c => c.DerivedLeanProgram is not null);
         var overrides = Cases.Count(c => c.LeanProgramOverride is not null);

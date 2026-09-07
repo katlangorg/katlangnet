@@ -125,8 +125,198 @@ public class GraceEligibilityTests
     [InlineData("K = [x]~")]
     [InlineData("K = 5~")]
     [InlineData("K = (x * y + z)~")]
+    // A marker run attached to a completed non-name expression at the END of
+    // a physical line is the same `f(x)~` spelling: a grace marker never
+    // binds across a newline in either direction, so it never becomes prefix
+    // Grace on the next line's name (K5-R1).
+    [InlineData("K = f(x)~\ny")]
+    [InlineData("K = (x)~\n-1")]
+    [InlineData("K = [1]~\nz")]
+    [InlineData("K = 5~\nz")]
+    // The same-line forms are the same error: a prefix-grace slot after
+    // another slot on one line needs a comma (`F(1), ~c`).
+    [InlineData("K = F(1)~ c")]
+    [InlineData("K = (x)~ c")]
+    [InlineData("K = [1]~ c")]
+    [InlineData("K = 5~ c")]
+    // A multi-marker run (the end-of-file marker is the `K = f(x)~` row above).
+    [InlineData("K = f(x)~~~\ny")]
+    // A lone run binds nothing on a later line, and a run on the last line
+    // binds nothing at all.
+    [InlineData("K = ~\ny")]
+    [InlineData("~")]
     public void ComplexGraceOperand_IsRejectedWithTheLawDiagnostic(string source)
         => AssertGraceRejected(source);
+
+    // ── K5-R1: the marker run is physical-line-local, and recovery keeps rows ─
+
+    [Fact]
+    public void LineFinalMarkerAfterCall_InABlockBody_IsRejectedInsteadOfReorderingTheNextRow()
+    {
+        // The reported program: `F(1)~` at the end of a block row silently became
+        // prefix Grace on the next row's `a`, reordering the block's implicit
+        // parameters (the call printed (20, 1, 10) instead of (10, 1, 20)).
+        AssertGraceRejected("Q = {\n  b\n  F(1)~\n  a\n}\nF(z) = z\nQ(10, 20)");
+
+        // The written prefix form on its own line is the supported spelling and
+        // stays observable: `~b` moves `b` earlier, so `K(10, 20)` binds b = 10.
+        var reordered = Evaluate("K = {\n  a\n  ~b\n}\nK(10, 20)");
+        Assert.True(
+            Result.ValueComparer.Equals(
+                new Result.SequenceValue([new Result.Atom(20), new Result.Atom(10)]),
+                reordered),
+            $"Expected (20, 10) but got {reordered}");
+    }
+
+    [Theory]
+    [InlineData("\n")]
+    [InlineData("\r\n")]
+    public void LineFinalMarkerAfterCall_KeepsTheFollowingRowsIntact(string newline)
+    {
+        // `F(1)~` newline `-1` newline `7`: the run is rejected over its own
+        // span and recovery consumes nothing past it, so the following rows
+        // survive exactly as written — a `-1` row (never a `1` row) and `7`.
+        var source = string.Join(newline, "F(z) = z", "F(1)~", "-1", "7");
+        var result = Parser.ParseSyntax(source);
+
+        var diagnostic = Assert.Single(result.Diagnostics);
+        Assert.Equal(DiagnosticCode.InvalidGraceMarker, diagnostic.Code);
+        Assert.Contains(GraceLawFragment, diagnostic.Message, StringComparison.Ordinal);
+        Assert.Equal(2, diagnostic.Span.StartLineNumber);
+
+        var rows = result.Root.Output;
+        Assert.Equal(3, rows.Count);
+        Assert.IsType<Expr.Call>(rows[0]);
+        var negated = Assert.IsType<Expr.Unary>(rows[1]);
+        Assert.Equal(UnaryOp.Minus, negated.Op);
+        Assert.Equal(1, Assert.IsType<Expr.Num>(negated.Operand).Value);
+        Assert.Equal(7, Assert.IsType<Expr.Num>(rows[2]).Value);
+    }
+
+    [Theory]
+    [InlineData("\n")]
+    [InlineData("\r\n")]
+    public void LoneMarkerRun_IsLineLocal_AndLeavesTheNextRowsPrefixGraceIntact(string newline)
+    {
+        // `~` newline `~a`: the first line's lone marker is the one error; the
+        // run never absorbs the next line's marker, so `~a` stays that row's
+        // own prefix Grace (weight -1, never a merged -2).
+        var source = string.Join(newline, "a = 1", "~", "~a");
+        var result = Parser.ParseSyntax(source);
+
+        var diagnostic = Assert.Single(result.Diagnostics);
+        Assert.Equal(DiagnosticCode.InvalidGraceMarker, diagnostic.Code);
+        Assert.Equal(2, diagnostic.Span.StartLineNumber);
+        Assert.Equal(2, diagnostic.Span.EndLineNumber);
+
+        var grace = Assert.IsType<Expr.Grace>(result.Root.Output[^1]);
+        Assert.Equal("a", Assert.IsType<Expr.Resolve>(grace.Inner).Name);
+        Assert.Equal(-1, grace.Weight);
+    }
+
+    [Theory]
+    [InlineData("\n")]
+    [InlineData("\r\n")]
+    public void PrefixMarker_NeverBindsANameOnTheNextLine(string newline)
+    {
+        // `~` newline `a`: the name on the next line is a row of its own, not
+        // the marker's operand.
+        var source = string.Join(newline, "a = 1", "~", "a");
+        var result = Parser.ParseSyntax(source);
+
+        var diagnostic = Assert.Single(result.Diagnostics);
+        Assert.Equal(DiagnosticCode.InvalidGraceMarker, diagnostic.Code);
+        Assert.Equal("a", Assert.IsType<Expr.Resolve>(result.Root.Output[^1]).Name);
+        Assert.DoesNotContain(result.Root.Output, row => row is Expr.Grace);
+    }
+
+    [Fact]
+    public void SameLineMarkerAfterCompoundOperand_NeedsACommaToStartAPrefixGraceSlot()
+    {
+        // `F(1), ~c` is two slots: the call and prefix Grace on `c`.
+        var separated = Parser.ParseSyntax("F(z) = z\nc = 3\nF(1), ~c");
+        Assert.False(separated.HasErrors);
+        Assert.Equal(2, separated.Root.Output.Count);
+        Assert.IsType<Expr.Call>(separated.Root.Output[0]);
+        var grace = Assert.IsType<Expr.Grace>(separated.Root.Output[1]);
+        Assert.Equal("c", Assert.IsType<Expr.Resolve>(grace.Inner).Name);
+        Assert.Equal(-1, grace.Weight);
+
+        // Without the comma the run attaches to the completed call and is the
+        // law diagnostic; `c` still survives as an ordinary adjacent slot and
+        // never acquires the marker.
+        var rejected = Parser.ParseSyntax("F(z) = z\nc = 3\nF(1)~ c");
+        var diagnostic = Assert.Single(rejected.Diagnostics);
+        Assert.Equal(DiagnosticCode.InvalidGraceMarker, diagnostic.Code);
+        Assert.Equal(2, rejected.Root.Output.Count);
+        Assert.IsType<Expr.Call>(rejected.Root.Output[0]);
+        Assert.Equal("c", Assert.IsType<Expr.Resolve>(rejected.Root.Output[1]).Name);
+    }
+
+    [Fact]
+    public void LoneMarkerBeforeADeclarationLine_KeepsTheDeclaration()
+    {
+        // `~` newline `Name = 1`: the run is the lone marker of its own line
+        // (the property-name diagnostic needs the marker on the name's line),
+        // and the declaration on the next line stays intact.
+        var result = Parser.ParseSyntax("~\nName = 1\nName");
+        var diagnostic = Assert.Single(result.Diagnostics);
+        Assert.Equal(DiagnosticCode.InvalidGraceMarker, diagnostic.Code);
+        Assert.Contains(GraceLawFragment, diagnostic.Message, StringComparison.Ordinal);
+        Assert.Equal("Name", Assert.Single(result.Root.Properties).Name);
+    }
+
+    [Theory]
+    [InlineData("\n")]
+    [InlineData("\r\n")]
+    public void MemberPrefixGraceRecovery_IsLineLocalAndPreservesFollowingSyntax(string newline)
+    {
+        foreach (var next in new[] { "b", "~b", "-1", "Name = 1", "F(z) = z" })
+        {
+            var source = string.Join(newline, "a.~~ # marker row", next, "7");
+            var raw = Parser.ParseSyntax(source);
+            var diagnostic = Assert.Single(raw.Diagnostics);
+            Assert.Equal(DiagnosticCode.InvalidGraceMarker, diagnostic.Code);
+            Assert.Equal(new SourceSpan(1, 3, 1, 4), diagnostic.Span);
+            Assert.Equal("a", Assert.IsType<Expr.Resolve>(raw.Root.Output[0]).Name);
+            Assert.Equal(7, Assert.IsType<Expr.Num>(raw.Root.Output[^1]).Value);
+            if (next == "~b")
+                Assert.Equal(-1, Assert.IsType<Expr.Grace>(raw.Root.Output[1]).Weight);
+            else if (next == "-1")
+                Assert.Equal(UnaryOp.Minus, Assert.IsType<Expr.Unary>(raw.Root.Output[1]).Op);
+            else if (next.Contains('='))
+                Assert.Single(raw.Root.Properties);
+            else
+                Assert.Equal("b", Assert.IsType<Expr.Resolve>(raw.Root.Output[1]).Name);
+
+            Assert.Equal(DiagnosticCode.InvalidGraceMarker, Assert.Single(Parser.Parse(source).Diagnostics).Code);
+        }
+
+        // EOF and a same-line non-name also blame the whole marker run once.
+        foreach (var source in new[] { "a.~~", "a.~~ 7" })
+            Assert.Equal(new SourceSpan(1, 3, 1, 4), Assert.Single(Parser.ParseSyntax(source).Diagnostics).Span);
+    }
+
+    [Theory]
+    [InlineData("\n")]
+    [InlineData("\r\n")]
+    public void DeclarationGraceRecovery_DoesNotMergeMarkerRunsAcrossLines(string newline)
+    {
+        var raw = Parser.ParseSyntax($"F(~~{newline}~a, b) = b{newline}7");
+        Assert.Equal(2, raw.Diagnostics.Count);
+        Assert.All(raw.Diagnostics, d =>
+        {
+            Assert.Equal(DiagnosticCode.InvalidGraceMarker, d.Code);
+            Assert.Equal(d.Span.StartLineNumber, d.Span.EndLineNumber);
+        });
+        Assert.Equal(new SourceSpan(1, 3, 1, 4), raw.Diagnostics[0].Span);
+        Assert.Equal("F", Assert.Single(raw.Root.Properties).Name);
+        Assert.Equal(7, Assert.IsType<Expr.Num>(Assert.Single(raw.Root.Output)).Value);
+
+        var property = Parser.ParseSyntax($"~~Name = 1{newline}7");
+        Assert.Equal(new SourceSpan(1, 1, 1, 2), Assert.Single(property.Diagnostics).Span);
+        Assert.Equal("Name", Assert.Single(property.Root.Properties).Name);
+    }
 
     [Fact]
     public void ParenthesizedName_CannotSmuggleAGraceOperand()

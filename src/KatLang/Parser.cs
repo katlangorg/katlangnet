@@ -801,10 +801,14 @@ public sealed class Parser
             // Check for invalid grace on property name: ~Name = ... or ~public Name = ...
             if (Current.Kind == TokenKind.Tilde && LookaheadThroughTildesToPropertyDef())
             {
+                var firstMarker = Advance();
+                var lastMarker = firstMarker;
+                while (Current.Kind == TokenKind.Tilde && MayContinueClosedExpression(TokenKind.Tilde))
+                    lastMarker = Advance();
                 ReportError(
                     DiagnosticCode.InvalidGraceMarker,
-                    "Grace operator cannot be applied to property names.");
-                while (Current.Kind == TokenKind.Tilde) Advance();
+                    "Grace operator cannot be applied to property names.",
+                    CombineSpans(TokenSpan(firstMarker), TokenSpan(lastMarker))!);
                 // Fall through to normal property definition handling
             }
 
@@ -1570,37 +1574,108 @@ public sealed class Parser
         => second.Position == first.Position + first.Length;
 
     /// <summary>
-    /// True when the CURRENT postfix-Grace run is followed on the same
-    /// physical line by a dot. A bare identifier consumes such a run in
-    /// <see cref="ParsePrimary"/> using the ordinary postfix-Grace rule before
-    /// the ordinary dot continuation runs. This lookahead is used only for
-    /// recovery when the completed operand is NOT a bare name, such as
-    /// <c>(x + y)~.t</c>: report the one-name Grace diagnostic, discard the
-    /// invalid ordering annotation, then retain a useful graceless DotCall.
+    /// The one written-Grace law: `~` decorates exactly one bare
+    /// parameter/name occurrence (`~x` / `x~`). Every other operand shape —
+    /// prefix on a non-name, and a postfix run after a completed compound
+    /// expression such as `(x + y)~`, `f(x)~`, `x.y~`, `[x]~`, or `5~` —
+    /// reports this diagnostic.
     /// </summary>
-    private bool IsPostfixGraceRunBeforeDot()
+    private const string GraceEligibilityMessage =
+        "Grace `~` can only be applied to a parameter or name occurrence.";
+
+    /// <summary>
+    /// Reports the one-name Grace law for a same-line postfix marker run that
+    /// follows a completed COMPOUND operand, consuming exactly that run. A
+    /// bare name consumes its own postfix run in <see cref="ParsePrimary"/>,
+    /// so a run reaching <see cref="ParsePostfix"/> is never eligible. The
+    /// run is physical-line-local: it starts at the current marker (already
+    /// proven to be on the operand's line) and stops before the first token
+    /// on a later line, so a marker that begins the next row is never
+    /// consumed here and the caller resumes on whatever follows — an
+    /// ordinary dot edge, a same-line adjacent operand, or the next row. The
+    /// diagnostic spans the run itself, first marker through last. Kept out
+    /// of <see cref="ParsePostfix"/> so its locals never enlarge that hot
+    /// recursive frame (native stack-margin calibration).
+    /// </summary>
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private void RejectPostfixGraceRunOnCompoundOperand()
     {
-        var offset = 0;
-        while (PeekSignificant(offset) is { Kind: TokenKind.Tilde } tilde
-               && tilde.Line == Current.Line)
+        var firstTilde = Current;
+        var lastTilde = firstTilde;
+        while (Current.Kind == TokenKind.Tilde && MayContinueClosedExpression(TokenKind.Tilde))
+            lastTilde = Advance();
+        ReportError(
+            DiagnosticCode.InvalidGraceMarker,
+            GraceEligibilityMessage,
+            CombineSpans(TokenSpan(firstTilde), TokenSpan(lastTilde))!);
+    }
+
+    /// <summary>
+    /// Parses a `~`-led primary: prefix Grace on the ONE bare name that
+    /// follows the marker run on the run's own physical line, then any
+    /// same-line postfix markers after that name (`~x~` nets to weight 0 and
+    /// yields the plain name). The whole run is physical-line-local — a
+    /// marker on a later line is never consumed as part of this run, and a
+    /// name on a later line never becomes its operand — so `~` newline `~a`
+    /// reports the first line's lone marker and leaves `~a` intact as the next
+    /// row's own prefix-grace expression. A run not followed by a same-line
+    /// name reports the one-name Grace law over the run (first marker
+    /// through last). Recovery consumes nothing beyond the run: the token
+    /// after it — on this line or the next — is left for ordinary parsing
+    /// (`F(1)~` newline `-1` keeps a `-1` row, never a `1` row), and the
+    /// consumed run itself is the progress that keeps the caller moving; the
+    /// placeholder operand carries the run's span.
+    /// </summary>
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private Expr ParsePrefixGracePrimary()
+    {
+        var firstTilde = Current;
+        var lastTilde = Advance(); // the run always owns its first marker
+        var weight = -1;
+        while (Current.Kind == TokenKind.Tilde && MayContinueClosedExpression(TokenKind.Tilde))
         {
-            offset++;
+            lastTilde = Advance();
+            weight--;
         }
 
-        return offset > 0
-            && PeekSignificant(offset) is { Kind: TokenKind.Dot } dot
-            && dot.Line == Current.Line;
+        if (Current.Kind != TokenKind.Identifier || !IsSamePhysicalLineAsPreviousToken())
+        {
+            ReportError(
+                DiagnosticCode.InvalidGraceMarker,
+                GraceEligibilityMessage,
+                CombineSpans(TokenSpan(firstTilde), TokenSpan(lastTilde))!);
+            return new Expr.Num(0) { Span = MakeSpan(firstTilde) };
+        }
+
+        var nameToken = Advance();
+        // Postfix grace: each same-line marker after the name increments the
+        // weight; a marker on a later line never continues, including one
+        // immediately before an ordinary dot.
+        while (Current.Kind == TokenKind.Tilde && MayContinueClosedExpression(TokenKind.Tilde))
+        {
+            Advance();
+            weight++;
+        }
+
+        var resolve = new Expr.Resolve(nameToken.StringValue!) { Span = TokenSpan(nameToken) };
+        return weight == 0 ? resolve : new Expr.Grace(resolve, weight) { Span = MakeSpan(firstTilde) };
     }
 
     /// <summary>
     /// Checks if the current tilde sequence is followed by Identifier '=' or 'public Identifier ='.
-    /// Used to detect invalid grace on property definitions.
+    /// Used to detect invalid grace on property definitions. The run and the
+    /// declaration head share one physical line: a marker run followed by a
+    /// declaration on a later line is the lone marker of ITS line (reported by
+    /// <see cref="ParsePrefixGracePrimary"/>), and the declaration stays intact.
     /// </summary>
     private bool LookaheadThroughTildesToPropertyDef()
     {
+        var line = Current.Line;
         var offset = 0;
-        while (PeekSignificant(offset).Kind == TokenKind.Tilde)
+        while (PeekSignificant(offset) is { Kind: TokenKind.Tilde } tilde && tilde.Line == line)
             offset++;
+        if (PeekSignificant(offset).Line != line)
+            return false;
         // ~Name = ...
         if (PeekSignificant(offset).Kind == TokenKind.Identifier
             && PeekSignificant(offset + 1).Kind == TokenKind.Equals)
@@ -1608,6 +1683,7 @@ public sealed class Parser
         // ~public Name = ...
         return PeekSignificant(offset).Kind == TokenKind.KeywordPublic
             && PeekSignificant(offset + 1).Kind == TokenKind.Identifier
+            && PeekSignificant(offset + 1).Line == line
             && PeekSignificant(offset + 2).Kind == TokenKind.Equals;
     }
 
@@ -1971,13 +2047,13 @@ public sealed class Parser
                 {
                     var firstTilde = Current;
                     var lastGraceToken = Current;
-                    while (Current.Kind == TokenKind.Tilde)
+                    while (Current.Kind == TokenKind.Tilde && Current.Line == firstTilde.Line)
                         lastGraceToken = Advance(); // skip prefix tildes
-                    if (Current.Kind == TokenKind.Identifier)
+                    if (Current.Kind == TokenKind.Identifier && Current.Line == firstTilde.Line)
                     {
                         var token = Advance();
                         lastGraceToken = token;
-                        while (Current.Kind == TokenKind.Tilde)
+                        while (Current.Kind == TokenKind.Tilde && MayContinueClosedExpression(TokenKind.Tilde))
                             lastGraceToken = Advance(); // skip postfix tildes
                         ReportError(
                             DiagnosticCode.InvalidGraceMarker,
@@ -2028,7 +2104,7 @@ public sealed class Parser
                     var name = token.StringValue!;
 
                     Token? lastPostfixTilde = null;
-                    while (Current.Kind == TokenKind.Tilde)
+                    while (Current.Kind == TokenKind.Tilde && MayContinueClosedExpression(TokenKind.Tilde))
                         lastPostfixTilde = Advance();
 
                     if (lastPostfixTilde is not null)
@@ -2691,25 +2767,21 @@ public sealed class Parser
                     lhs = ParseIndexContinuation(lhs, colonToken);
                     break;
 
-                case TokenKind.Tilde when MayContinueClosedExpression(TokenKind.Tilde)
-                    && IsPostfixGraceRunBeforeDot():
-                    // Recovery only. A bare identifier already consumed this
-                    // run as ordinary postfix Grace in ParsePrimary. Reaching
-                    // it here means the operand is a compound expression, on
-                    // which Grace is not defined. Report once, discard every
-                    // marker in the run, and preserve the ordinary dot edge.
-                    var invalidGraceToken = Current;
-                    while (Current.Kind == TokenKind.Tilde
-                           && MayContinueClosedExpression(TokenKind.Tilde))
-                    {
-                        Advance();
-                    }
-                    ReportError(
-                        DiagnosticCode.InvalidGraceMarker,
-                        "Grace `~` can only be applied to a parameter or name occurrence.",
-                        TokenSpan(invalidGraceToken));
-                    var recoveredDotToken = Advance(); // consume '.'
-                    lhs = ParseDotCallContinuation(lhs, recoveredDotToken);
+                case TokenKind.Tilde when MayContinueClosedExpression(TokenKind.Tilde):
+                    // Recovery only. A bare name consumes its same-line
+                    // postfix-Grace run in ParsePrimary, so a same-line tilde
+                    // reaching this loop is attached to a completed COMPOUND
+                    // operand (`f(x)~`, `(x)~`, `[1]~`, `5~`), on which Grace
+                    // is not defined. Report once over the whole run and
+                    // discard every marker in it; the loop then resumes
+                    // ordinarily: a following dot still builds the ordinary
+                    // dot edge (`(x + y)~.t` keeps a graceless DotCall), a
+                    // same-line operand is ordinary adjacency (`f(x)~ c` is
+                    // never the prefix-grace slot `~c` — write `f(x), ~c`),
+                    // and a token on the next physical line stays the start
+                    // of the next row: the run never becomes prefix Grace on
+                    // a later line's name.
+                    RejectPostfixGraceRunOnCompoundOperand();
                     break;
 
                 case TokenKind.Dot when MayContinueClosedExpression(TokenKind.Dot):
@@ -2844,10 +2916,19 @@ public sealed class Parser
         if (Current.Kind == TokenKind.Tilde && IsDirectlyAttached(dotToken, Current))
         {
             memberGraceStart = Current;
-            while (Current.Kind == TokenKind.Tilde)
+            while (Current.Kind == TokenKind.Tilde && Current.Line == memberGraceStart.Line)
             {
                 Advance();
                 memberGraceWeight--;
+            }
+
+            if (Current.Kind != TokenKind.Identifier || !IsSamePhysicalLineAsPreviousToken())
+            {
+                ReportError(
+                    DiagnosticCode.InvalidGraceMarker,
+                    GraceEligibilityMessage,
+                    CombineSpans(TokenSpan(memberGraceStart), TokenSpan(Previous))!);
+                return lhs;
             }
         }
 
@@ -3073,42 +3154,7 @@ public sealed class Parser
                 }
 
             case TokenKind.Tilde:
-                {
-                    // Prefix grace: each ~ decrements weight
-                    var startToken = Current;
-                    var weight = 0;
-                    while (Current.Kind == TokenKind.Tilde)
-                    {
-                        Advance();
-                        weight--;
-                    }
-                    if (Current.Kind != TokenKind.Identifier)
-                    {
-                        // The one written-grace law: `~` decorates exactly one
-                        // bare parameter/name occurrence (`~x` / `x~`). Every
-                        // complex-operand spelling — prefix on a non-name, and
-                        // the postfix forms `(x + y)~` / `f(x)~` / `x.y~` /
-                        // `[x]~` / `5~`, whose orphaned tilde re-enters here as
-                        // the start of a new expression — lands on this
-                        // diagnostic.
-                        ReportError(
-                            DiagnosticCode.InvalidGraceMarker,
-                            "Grace `~` can only be applied to a parameter or name occurrence.");
-                        Advance(); // skip for recovery
-                        return new Expr.Num(0) { Span = MakeSpan(startToken) };
-                    }
-                    var graceToken = Advance();
-                    // Postfix grace: each same-line ~ after the identifier
-                    // increments weight; a '~' on a later line never continues,
-                    // including one immediately before an ordinary dot.
-                    while (Current.Kind == TokenKind.Tilde && MayContinueClosedExpression(TokenKind.Tilde))
-                    {
-                        Advance();
-                        weight++;
-                    }
-                    var resolve = new Expr.Resolve(graceToken.StringValue!) { Span = TokenSpan(graceToken) };
-                    return weight == 0 ? resolve : new Expr.Grace(resolve, weight) { Span = MakeSpan(startToken) };
-                }
+                return ParsePrefixGracePrimary();
 
             case TokenKind.LParen:
                 {

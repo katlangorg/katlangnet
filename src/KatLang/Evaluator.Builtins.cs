@@ -1529,85 +1529,20 @@ public static partial class Evaluator
 
     /// <summary>
     /// Rounds <paramref name="scaledNumerator"/> / <paramref name="denominator"/>
-    /// times 10^<paramref name="decimalScale"/> directly into Decimal128.
+    /// times 10^<paramref name="decimalScale"/> directly into Decimal128 — one
+    /// IEEE round-to-nearest/ties-to-even rounding of the exact rational, through
+    /// the shared <see cref="Decimal128Numerics.RoundRational"/> (the same rounding
+    /// the integer-power path certifies against).
     /// </summary>
     private static Decimal128 RoundScaledRationalToDecimal128(
         BigInteger scaledNumerator,
         int denominator,
         int decimalScale)
     {
-        const int DecimalPrecision = 34;
-        const int MinimumQuantumExponent = -6176;
-
         var negative = scaledNumerator.Sign < 0;
-        var magnitude = BigInteger.Abs(scaledNumerator);
-        var numeratorDigits = magnitude.ToString(System.Globalization.CultureInfo.InvariantCulture).Length;
-
-        // Division by the positive item count can lower the scientific exponent by
-        // only a handful of places. Start at the numerator's exponent and compare
-        // exactly, avoiding a binary floating-point logarithm in this numeric path.
-        var scientificExponent = numeratorDigits - 1 + decimalScale;
-        while (!ScaledRatioIsAtLeastPowerOfTen(
-                   magnitude,
-                   denominator,
-                   decimalScale,
-                   scientificExponent))
-        {
-            scientificExponent--;
-        }
-
-        var precisionQuantumExponent = scientificExponent - (DecimalPrecision - 1);
-        var targetQuantumExponent = precisionQuantumExponent < MinimumQuantumExponent
-            ? MinimumQuantumExponent
-            : precisionQuantumExponent;
-
-        var scaleShift = decimalScale - targetQuantumExponent;
-        BigInteger quotient;
-        BigInteger remainder;
-        BigInteger roundingDenominator;
-        if (scaleShift >= 0)
-        {
-            var roundingNumerator = magnitude * BigInteger.Pow(10, scaleShift);
-            quotient = BigInteger.DivRem(roundingNumerator, denominator, out remainder);
-            roundingDenominator = denominator;
-        }
-        else
-        {
-            roundingDenominator = denominator * BigInteger.Pow(10, -scaleShift);
-            quotient = BigInteger.DivRem(magnitude, roundingDenominator, out remainder);
-        }
-
-        var doubledRemainder = remainder << 1;
-        if (doubledRemainder > roundingDenominator
-            || (doubledRemainder == roundingDenominator && !quotient.IsEven))
-        {
-            quotient++;
-        }
-
-        if (quotient.IsZero)
-            return negative ? Decimal128.NegativeZero : Decimal128.Zero;
-
-        var tenToPrecision = BigInteger.Pow(10, DecimalPrecision);
-        if (quotient == tenToPrecision)
-        {
-            quotient /= 10;
-            targetQuantumExponent++;
-        }
-
-        var result = Decimal128.ScaleB((Decimal128)(Int128)quotient, targetQuantumExponent);
-        return negative ? -result : result;
-    }
-
-    private static bool ScaledRatioIsAtLeastPowerOfTen(
-        BigInteger magnitude,
-        int denominator,
-        int decimalScale,
-        int power)
-    {
-        var shift = decimalScale - power;
-        return shift >= 0
-            ? magnitude * BigInteger.Pow(10, shift) >= denominator
-            : magnitude >= denominator * BigInteger.Pow(10, -shift);
+        return Decimal128Numerics
+            .RoundRational(BigInteger.Abs(scaledNumerator), denominator, decimalScale)
+            .ToDecimal128(negative);
     }
 
     private static EvalResult<CountedResult> ApplyBuiltinCountedSequence(

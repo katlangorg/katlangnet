@@ -208,6 +208,62 @@ public class ParserDiagnosticSpanTests
         AssertSpan(source, diagnostic, 1, 3, 1, 3, "~");
     }
 
+    // ── K5-R1: expression-position grace diagnostics span the marker run ────
+
+    private const string GraceLawMessage = "Grace `~` can only be applied to a parameter or name occurrence.";
+
+    [Fact]
+    public void LineFinalGraceAfterCall_SpansTheMarker()
+    {
+        const string source = "K = f(x)~\ny";
+        var diagnostic = SingleDiagnosticContaining(source, GraceLawMessage);
+        Assert.Equal(GraceLawMessage, diagnostic.Message);
+        AssertSpan(source, diagnostic, 1, 9, 1, 9, "~");
+    }
+
+    [Fact]
+    public void LineFinalGraceRunAfterCall_SpansTheWholeRun()
+    {
+        const string source = "K = f(x)~~~\ny";
+        var diagnostic = SingleDiagnosticContaining(source, GraceLawMessage);
+        AssertSpan(source, diagnostic, 1, 9, 1, 11, "~~~");
+    }
+
+    [Fact]
+    public void SameLineGraceAfterLiteral_SpansTheMarker()
+    {
+        const string source = "c = 3\n5~ c";
+        var diagnostic = SingleDiagnosticContaining(source, GraceLawMessage);
+        AssertSpan(source, diagnostic, 2, 2, 2, 2, "~");
+    }
+
+    [Fact]
+    public void LoneGraceRunLine_SpansOnlyItsOwnLine()
+    {
+        // The run is physical-line-local: the next line's `~a` is not part
+        // of it (and stays valid prefix Grace, so it reports nothing).
+        const string source = "a = 1\n~~\n~a";
+        var diagnostic = SingleDiagnosticContaining(source, GraceLawMessage);
+        AssertSpan(source, diagnostic, 2, 1, 2, 2, "~~");
+    }
+
+    [Fact]
+    public void PrefixGraceRunBeforeNonName_SpansTheRun()
+    {
+        // The diagnostic covers the marker run, never the token after it.
+        const string source = "~~42";
+        var diagnostic = SingleDiagnosticContaining(source, GraceLawMessage);
+        AssertSpan(source, diagnostic, 1, 1, 1, 2, "~~");
+    }
+
+    [Fact]
+    public void PostfixGraceOnCompoundReceiverBeforeDot_SpansTheMarker()
+    {
+        const string source = "K = (x + y)~.t";
+        var diagnostic = SingleDiagnosticContaining(source, GraceLawMessage);
+        AssertSpan(source, diagnostic, 1, 12, 1, 12, "~");
+    }
+
     // ── F4 (related): collecting-binding diagnostic includes the marker ─────
 
     [Fact]

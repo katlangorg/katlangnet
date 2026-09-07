@@ -672,6 +672,255 @@ public class Decimal128NumericsTests
         Assert.Equal(N("1267650600228229401496703205376"), EvalSingle("2 ^ 100"));
     }
 
+    // ── Integer exponents: correctly rounded, certified (K6-numeric-R1) ──────
+    //
+    // The by-squaring chain of Decimal128 multiplications lost about log10(n)
+    // digits (`0.9999999 ^ 10000000` came back with 27 correct digits). The
+    // integer path now computes the exact power on scaled integers and rounds
+    // ONCE, certifying the rounding through an enclosure (Decimal128Numerics).
+    //
+    // REFERENCE GENERATION. Inexact references were produced offline with an
+    // independent tool: perl v5.38.2 (Git for Windows, msys), Math::BigFloat
+    // 1.999837 and Math::BigInt 1.999837 (Perl core). Exponential/log form,
+    // exp(n · ln x) evaluated at accuracy(90) — BigFloat's own round-half-even
+    // at 90 significant digits — and RECHECKED at accuracy(140) (every digit
+    // listed below agrees at both precisions):
+    //
+    //   perl -MMath::BigFloat -e 'Math::BigFloat->accuracy(90);
+    //     print Math::BigFloat->new("0.9999999")->blog(undef, 90)
+    //       ->bmul(Math::BigFloat->new("10000000"))->bexp(90)->bsstr, "\n"'
+    //
+    //   0.9999999 ^ 10000000              = 0.3678794227774694966078669291031613|26455811307582982690…
+    //   1.0000001 ^ 10000000              = 2.718281692544966271198550225777813|27315350827128440406…
+    //   1.000000000000001 ^ 1e17          = 2.688117141816001042555534748257343|28808084615231907423…e43
+    //   1.0000001 ^ -10000000             = 0.3678794595654136137521757302057823|93348061095868753496…
+    //   0.9999999 ^ -10000000             = 2.718281964373149117105452258406462|09562945067261121506…
+    //
+    // Composing individually rounded exp and ln does NOT certify the last
+    // digit near a midpoint, so these five are used only because their digits
+    // past the 34th (shown after the `|`) are far from a tie; the 34-digit
+    // expectations were rounded from them by hand under round-to-nearest,
+    // ties-to-even. The midpoint-sensitive references are EXACT integer
+    // arithmetic (perl -MMath::BigInt, bpow/bdiv, same versions):
+    //
+    //   4605889780318500696115135255278667^3 = 977103621742003931391326397581734850000333819641909
+    //       42296702877652224558413926428271296912133703166963 (101 digits): the
+    //       value 97.71036217420039313913263975817348|5000033… lies 3.3e-8 ulp ABOVE
+    //       the midpoint, so it rounds UP to …17349 (a 39-digit intermediate
+    //       sees the midpoint and rounds to even, …17348).
+    //   5^49  = 17763568394002504646778106689453125 (an exact midpoint: ties-to-even → …312 × 10)
+    //   2^112 = 5192296858534827628530496329220096 (34 digits: exact)
+    //   2^113 = 10384593717069655257060992658440192 (35 digits: …4019|2 rounds down)
+    //   11^34 = 255476698618765889551019445759400441;
+    //   10^114 div 11^34 = 3914251301220414284805399307112554|114502… (rounds down)
+    //       → 1.1 ^ -34 = 0.03914251301220414284805399307112554, while rounding
+    //       the positive power 25.54766986187658895510194457594004|1 first and then
+    //       dividing gives the wrong …555.
+
+    public static TheoryData<string, string> CorrectlyRoundedIntegerPowerCases() => new()
+    {
+        { "0.9999999 ^ 10000000", "0.3678794227774694966078669291031613" },
+        { "1.0000001 ^ 10000000", "2.718281692544966271198550225777813" },
+        { "1.000000000000001 ^ 100000000000000000", "2.688117141816001042555534748257343e43" },
+        { "4.605889780318500696115135255278667 ^ 3", "97.71036217420039313913263975817349" },
+        { "1.1 ^ -34", "0.03914251301220414284805399307112554" },
+        { "1.0000001 ^ -10000000", "0.3678794595654136137521757302057824" },
+        { "0.9999999 ^ -10000000", "2.718281964373149117105452258406462" },
+        { "5 ^ 49", "1.776356839400250464677810668945312e34" },
+        { "2 ^ 112", "5192296858534827628530496329220096" },
+        { "2 ^ 113", "1.038459371706965525706099265844019e34" },
+    };
+
+    [Theory]
+    [MemberData(nameof(CorrectlyRoundedIntegerPowerCases))]
+    public void IntegerExponent_IsTheExactPowerRoundedOnce(string source, string expected)
+    {
+        // Value AND quantum: an inexact result carries exactly 34 significant
+        // digits, an exact one its preferred quantum, so the display agrees too.
+        var expectedValue = N(expected);
+        var actual = EvalSingle(source);
+        Assert.Equal(expectedValue, actual);
+        Assert.True(Decimal128.HaveSameQuantum(expectedValue, actual), $"{source}: quantum differs, got {actual}");
+    }
+
+    [Fact]
+    public void InexactIntegerPower_SharesTheCorrectedPathAcrossAllThreeSpellings()
+    {
+        // `^`, `Math.Pow`, and the `pow` alias are one implementation; the
+        // primary repro proves it on the corrected path (the routing tests
+        // above pin the equivalence of the spellings on every other path).
+        const string expected = "0.3678794227774694966078669291031613";
+        foreach (var source in new[]
+                 {
+                     "0.9999999 ^ 10000000",
+                     "Math.Pow(0.9999999, 10000000)",
+                     "pow(0.9999999, 10000000)",
+                 })
+        {
+            Assert.Equal(expected, Assert.IsType<RunResult.Success>(KatLangEngine.Run(source)).ToDisplayString());
+        }
+    }
+
+    [Theory]
+    [InlineData("1.0 ^ 3", "1.000")]
+    [InlineData("1.0 ^ 100", "1.000000000000000000000000000000000")]
+    [InlineData("2.50 ^ 2", "6.2500")]
+    [InlineData("10 ^ 40", "10000000000000000000000000000000000000000")]
+    [InlineData("0.5 ^ 3", "0.125")]
+    [InlineData("(-2) ^ 3", "-8")]
+    [InlineData("(-0.5) ^ 3", "-0.125")]
+    [InlineData("7 ^ 0", "1")]
+    [InlineData("2 ^ -2", "0.25")]
+    [InlineData("0.5 ^ -3", "8")]
+    [InlineData("1.0 ^ -3", "1")]
+    [InlineData("2 ^ -49", "0.000000000000001776356839400250464677810668945312")]
+    // 5^50 needs 35 digits, but its reciprocal is exactly representable.
+    // Preserve the old division's quantum when its value agrees with the
+    // certified answer; intermediate inexactness does not waive compatibility.
+    [InlineData("5 ^ -50", "0.00000000000000000000000000000000001125899906842624000000000000000000")]
+    public void ExactIntegerPower_KeepsThePreferredQuantum(string source, string expectedDisplay)
+        => Assert.Equal(expectedDisplay, Assert.IsType<RunResult.Success>(KatLangEngine.Run(source)).ToDisplayString());
+
+    [Fact]
+    public void ExactIntegerPowers_AgreeWithTheDecimal128ChainInValueAndQuantum()
+    {
+        // The retired implementation — Decimal128 exponentiation by squaring,
+        // plus one IEEE division for a negative exponent — was correct
+        // (value and quantum) wherever every product was exact, i.e. whenever
+        // the positive power fits 34 significant digits. The certified path
+        // must preserve that domain's behavior. This bounded sample covers
+        // 21 listed bases and exponents -60..60 with the positive coefficient
+        // fitting 34 digits; it is not an exhaustive proof of the domain.
+        // `2 ^ -49` additionally checks an exact reciprocal midpoint.
+        static Decimal128 Chain(Decimal128 b, int n)
+        {
+            Decimal128 result = Decimal128.One;
+            var factor = b;
+            var remaining = n < 0 ? -n : n;
+            while (remaining > 0)
+            {
+                if ((remaining & 1) == 1)
+                    result *= factor;
+                remaining >>= 1;
+                if (remaining > 0)
+                    factor *= factor;
+            }
+
+            return n < 0 ? Decimal128.One / result : result;
+        }
+
+        static bool PositivePowerIsExact(Decimal128 b, int n)
+        {
+            var magnitude = Decimal128.Abs(b);
+            var quantum = Decimal128.GetQuantum(magnitude);
+            var coefficient = BigInteger.CreateChecked((Int128)(magnitude / quantum));
+            while (!coefficient.IsZero && (coefficient % 10).IsZero)
+                coefficient /= 10;
+            var digits = BigInteger.Pow(coefficient, n < 0 ? -n : n)
+                .ToString(CultureInfo.InvariantCulture).Length;
+            return digits <= 34;
+        }
+
+        string[] bases =
+        [
+            "2", "3", "7", "10", "11", "99999", "1.0", "1.5", "2.50", "0.5", "0.25", "0.1", "0.125",
+            "12.5", "1e10", "1e-10", "-2", "-1.5", "-0.5", "1", "-1",
+        ];
+        var compared = 0;
+        foreach (var text in bases)
+        {
+            var b = N(text);
+            for (var n = -60; n <= 60; n++)
+            {
+                if (n == 0 || !PositivePowerIsExact(b, n))
+                    continue;
+
+                var expected = Chain(b, n);
+                var actual = EvalSingle($"({text}) ^ {n}");
+                Assert.True(
+                    expected == actual && Decimal128.HaveSameQuantum(expected, actual),
+                    $"({text}) ^ {n}: chain {expected} vs certified {actual}");
+                compared++;
+            }
+        }
+
+        Assert.True(compared > 500, $"only {compared} exact cases compared");
+    }
+
+    [Theory]
+    [InlineData("(1e-3088) ^ 2", "1e-6176")]      // exact subnormal
+    [InlineData("(1.5e-3088) ^ 2", "2e-6176")]    // exact 2.25e-6176 rounds at the subnormal quantum
+    [InlineData("(5e-2059) ^ 3", "1.2e-6175")]    // exact 12.5e-6176: a tie at the subnormal floor, to even
+    [InlineData("(1e-1000) ^ 7", "0")]            // below half the smallest subnormal
+    [InlineData("0.1 ^ 6200", "0")]
+    [InlineData("10 ^ 6144", "1e6144")]
+    [InlineData("10 ^ 6145", "Infinity")]
+    [InlineData("0.1 ^ -6200", "Infinity")]
+    [InlineData("0.5 ^ 9223372036854775807", "0")]
+    [InlineData("(-0.5) ^ 9223372036854775807", "-0")]
+    [InlineData("(-2) ^ 9223372036854775807", "-Infinity")]
+    [InlineData("(9e6144 * 10) ^ -3", "0")]       // +∞ ^ -3
+    public void IntegerPower_RangeOutcomesFollowTheDecimal128Representation(string source, string expected)
+    {
+        var expectedValue = N(expected);
+        var actual = EvalSingle(source);
+        Assert.Equal(expectedValue, actual);
+        Assert.Equal(Decimal128.IsNegative(expectedValue), Decimal128.IsNegative(actual));
+    }
+
+    [Fact]
+    public void NearMidpointPower_RefinesUntilTheRoundingIsCertified()
+    {
+        // 4.605889780318500696115135255278667^3 lies 3.3e-8 ulp above a
+        // midpoint (digits 35+ are 5000033…): a 39-digit enclosure straddles
+        // that midpoint and cannot certify either neighbour, so the loop must
+        // double the precision rather than return the nearest uncertified digit.
+        var b = N("4.605889780318500696115135255278667");
+        Assert.True(Decimal128Numerics.TryIntegerPower(b, 3, initialWorkingDigits: 39, maxWorkingDigits: Decimal128Numerics.MaxWorkingDigits, out var refined));
+        Assert.Equal(N("97.71036217420039313913263975817349"), refined);
+
+        // With the cap at the straddling precision, the loop reports failure
+        // instead of returning the wrong …17348; the evaluator turns that into a
+        // structured error (unreachable at the real 4096-digit cap for any known
+        // input — see Decimal128Numerics).
+        Assert.False(Decimal128Numerics.TryIntegerPower(b, 3, initialWorkingDigits: 39, maxWorkingDigits: 39, out _));
+
+        // The exact midpoint is decided on the exact value, never by refinement.
+        Assert.True(Decimal128Numerics.TryIntegerPower(N("5"), 49, initialWorkingDigits: 35, maxWorkingDigits: 35, out var tie));
+        Assert.Equal(N("1.776356839400250464677810668945312e34"), tie);
+    }
+
+    [Fact]
+    public void RoundRational_RoundsOnceWithTiesToEven_AndDecidesTheRange()
+    {
+        // 1/3 at 34 digits; 2/3 rounds up; 1/8 is exact with a short coefficient.
+        var third = Decimal128Numerics.RoundRational(1, 3, 0);
+        Assert.Equal(BigInteger.Parse("3333333333333333333333333333333333"), third.Coefficient);
+        Assert.Equal(-34, third.QuantumExponent);
+        Assert.Equal(BigInteger.Parse("6666666666666666666666666666666667"), Decimal128Numerics.RoundRational(2, 3, 0).Coefficient);
+
+        // Exact ties, to even, in both directions.
+        Assert.Equal(BigInteger.Parse("1776356839400250464677810668945312"), Decimal128Numerics.RoundRational(BigInteger.Pow(5, 49), 1, 0).Coefficient);
+        // 9.9999…95e34 (35 digits) rounds up to 1e35 = 10^33 × 10^2: the carry
+        // moves the 34-digit coefficient one quantum up.
+        Assert.Equal(BigInteger.Parse("1000000000000000000000000000000000"), Decimal128Numerics.RoundRational(BigInteger.Parse("99999999999999999999999999999999995"), 1, 0).Coefficient);
+        Assert.Equal(2, Decimal128Numerics.RoundRational(BigInteger.Parse("99999999999999999999999999999999995"), 1, 0).QuantumExponent);
+
+        // Range decisions come from the representation: 34 nines at the
+        // largest quantum is MaxValue, one more rounds to infinity, and the
+        // subnormal floor rounds to zero below half an Epsilon.
+        var max = Decimal128Numerics.RoundRational(BigInteger.Parse("9999999999999999999999999999999999"), 1, 6111);
+        Assert.Equal(Decimal128.MaxValue, max.ToDecimal128(negative: false));
+        Assert.Equal(Decimal128Numerics.RoundedMagnitudeKind.Infinity, Decimal128Numerics.RoundRational(BigInteger.Parse("99999999999999999999999999999999995"), 1, 6110).Kind);
+        Assert.Equal(Decimal128Numerics.RoundedMagnitudeKind.Zero, Decimal128Numerics.RoundRational(4, 1, -6177).Kind);
+        Assert.Equal(Decimal128Numerics.RoundedMagnitudeKind.Zero, Decimal128Numerics.RoundRational(5, 1, -6177).Kind);
+        Assert.Equal(Decimal128.Epsilon, Decimal128Numerics.RoundRational(6, 1, -6177).ToDecimal128(negative: false));
+        Assert.Equal(-Decimal128.Epsilon, Decimal128Numerics.RoundRational(6, 1, -6177).ToDecimal128(negative: true));
+        Assert.Equal(34, Decimal128Numerics.Precision);
+        Assert.Equal(6111, Decimal128Numerics.MaxQuantumExponent);
+        Assert.Equal(-6176, Decimal128Numerics.MinQuantumExponent);
+    }
+
     [Theory]
     [InlineData("10", "-6146", "1e-6146")]
     [InlineData("(-10)", "-6147", "-1e-6147")]
