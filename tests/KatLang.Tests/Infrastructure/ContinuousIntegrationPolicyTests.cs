@@ -29,7 +29,7 @@ public class ContinuousIntegrationPolicyTests
         new Dictionary<string, string>(StringComparer.Ordinal)
         {
             ["win-x64"] = "windows-2025",
-            ["win-arm64"] = "windows-11-arm",
+            ["win-arm64"] = "windows-11-vs2026-arm",
             ["linux-x64"] = "ubuntu-24.04",
             ["linux-arm64"] = "ubuntu-24.04-arm",
             ["osx-x64"] = "macos-15-intel",
