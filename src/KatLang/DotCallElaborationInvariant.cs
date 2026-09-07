@@ -68,6 +68,11 @@ internal static class DotCallElaborationInvariant
     {
         public DotCallElaborationViolation? Violation { get; private set; }
 
+        // The invariant is a property of dot-call EXPRESSIONS; declarations carry none, and no
+        // declaration hook is overridden, so the per-declaration loop is skipped (linear on a
+        // wide assignment deconstruction — see AstWalkerDeclarationVisitPolicyTests).
+        protected override bool VisitsExplicitParameterDeclarations => false;
+
         public override void VisitExpr(Expr expr)
         {
             if (Violation is not null)

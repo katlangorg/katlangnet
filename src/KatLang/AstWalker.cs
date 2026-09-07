@@ -22,6 +22,19 @@ namespace KatLang;
 public abstract class AstWalker
 {
     /// <summary>
+    /// Passive per-walk observer of the traversal work the BASE walker performs: algorithm
+    /// and expression expansions, and every explicit parameter declaration the
+    /// per-declaration loop of <see cref="VisitUserAlgorithm"/> examines. Internal and absent
+    /// from every production walk — a null observer records nothing and never changes a
+    /// visit; the library's own walkers carry one only from scaling regressions. It exists so
+    /// a walker's per-declaration work is observable WITHOUT the walker overriding the
+    /// declaration hooks (which is the very thing the
+    /// <see cref="VisitsExplicitParameterDeclarations"/> opt-out is for), so a regression can
+    /// see a rescan of an intentionally shared parameter list that per-node counts hide.
+    /// </summary>
+    internal FrontEndTraversalObservations? TraversalObservations { get; init; }
+
+    /// <summary>
     /// Visits an algorithm node.
     /// </summary>
     public virtual void VisitAlgorithm(Algorithm algorithm)
@@ -42,9 +55,10 @@ public abstract class AstWalker
 
     /// <summary>
     /// Whether <see cref="VisitUserAlgorithm"/> iterates each algorithm's explicit parameter
-    /// declarations and calls <see cref="VisitExplicitParameterDeclaration"/>. Defaults to
-    /// <c>true</c>. Walkers that never override <see cref="VisitExplicitParameterDeclaration"/>
-    /// may return <c>false</c> to skip that loop (see the note in <see cref="VisitUserAlgorithm"/>).
+    /// declarations and calls <see cref="VisitExplicitParameterDeclaration"/> and, for collecting
+    /// declarations, <see cref="VisitCollectMarker"/>. Defaults to <c>true</c>. Walkers that need
+    /// neither hook on explicit declarations (including inherited behavior) may return <c>false</c>
+    /// to skip that loop. Conditional binder hooks are unaffected.
     /// </summary>
     protected virtual bool VisitsExplicitParameterDeclarations => true;
 
@@ -53,7 +67,9 @@ public abstract class AstWalker
     /// </summary>
     protected virtual void VisitUserAlgorithm(Algorithm.User algorithm)
     {
-        // Walkers that do not override VisitExplicitParameterDeclaration can opt out of this
+        TraversalObservations?.RecordWalkerAlgorithmExpansion();
+
+        // Walkers that need neither explicit-declaration hook can opt out of this
         // per-parameter loop. It matters for wide assignment deconstructions: those elaborate to
         // N synthetic helpers that each carry the full N-capture parameter list, so a walker that
         // visits every declaration is O(N^2) even when the visit is a no-op.
@@ -61,6 +77,7 @@ public abstract class AstWalker
         {
             foreach (var parameter in algorithm.ExplicitParameters)
             {
+                TraversalObservations?.RecordWalkerParameterDeclarationVisit();
                 VisitExplicitParameterDeclaration(algorithm, parameter);
                 if (parameter.CollectMarkerSpan is { } collectMarkerSpan)
                     VisitCollectMarker(collectMarkerSpan);
@@ -82,6 +99,8 @@ public abstract class AstWalker
     /// </summary>
     protected virtual void VisitConditionalAlgorithm(Algorithm.Conditional algorithm)
     {
+        TraversalObservations?.RecordWalkerAlgorithmExpansion();
+
         foreach (var open in algorithm.Opens)
             VisitOpenExpression(open);
 
@@ -141,6 +160,8 @@ public abstract class AstWalker
     /// </summary>
     public virtual void VisitExpr(Expr expr)
     {
+        TraversalObservations?.RecordWalkerExpressionExpansion();
+
         switch (expr)
         {
             case Expr.Resolve resolve:

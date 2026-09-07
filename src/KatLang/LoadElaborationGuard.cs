@@ -9,10 +9,20 @@ internal static class LoadElaborationGuard
         "Internal error: module elaboration left an unresolved load directive in the AST.";
 
     internal static IReadOnlyList<Diagnostic> CreateUnavailableDiagnostics(Algorithm root)
+        => CreateUnavailableDiagnostics(root, observations: null);
+
+    /// <summary>
+    /// Observation overload: <paramref name="observations"/> passively records the base-walker
+    /// steps of the guard's walk (scaling regressions only). The pipeline passes no observer;
+    /// the diagnostics are identical either way.
+    /// </summary>
+    internal static IReadOnlyList<Diagnostic> CreateUnavailableDiagnostics(
+        Algorithm root,
+        FrontEndTraversalObservations? observations)
     {
         var diagnostics = new List<Diagnostic>();
 
-        VisitLoads(root, span =>
+        VisitLoads(root, observations, span =>
         {
             diagnostics.Add(new Diagnostic(
                 ModuleElaborationUnavailableDiagnostic,
@@ -66,12 +76,31 @@ internal static class LoadElaborationGuard
     }
 
     private static void VisitLoads(Algorithm root, Action<SourceSpan?> onLoad)
+        => VisitLoads(root, observations: null, onLoad);
+
+    private static void VisitLoads(
+        Algorithm root,
+        FrontEndTraversalObservations? observations,
+        Action<SourceSpan?> onLoad)
     {
-        new LoadWalker(onLoad).VisitAlgorithm(root);
+        new LoadWalker(onLoad) { TraversalObservations = observations }.VisitAlgorithm(root);
     }
 
     private sealed class LoadWalker(Action<SourceSpan?> onLoad) : AstWalker
     {
+        // A load directive is an EXPRESSION (a `load('url')` call, or the `open 'url'` sugar
+        // that lowers to one), so this walk inspects expression nodes only: a parameter
+        // declaration carries a name and spans, never an expression, and neither declaration
+        // hook is overridden here. Skipping the base walker's per-declaration loop is therefore
+        // behavior-preserving — and it is what keeps the guard LINEAR on a wide assignment
+        // deconstruction: the N synthetic helpers share ONE N-declaration list, so iterating it
+        // once per helper was N² no-op visits. The same walker serves the sync/no-downloader
+        // pipeline, the async post-elaboration invariant, deferred-branch materialization,
+        // and semantic-model building. Pinned by the walker-step
+        // observations in `WideDeconstructionScalabilityTests` and, for every library walker,
+        // by `AstWalkerDeclarationVisitPolicyTests`.
+        protected override bool VisitsExplicitParameterDeclarations => false;
+
         // Reference-identity memo over visited algorithms and expressions. Elaborated
         // trees legally contain shared (acyclic) subtrees — module elaboration splices one
         // cached module at several load sites, and host-built trees may share freely — and

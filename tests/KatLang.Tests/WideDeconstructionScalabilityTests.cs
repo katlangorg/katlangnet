@@ -1,5 +1,7 @@
 using System.Text;
 using System.Numerics;
+using KatLang.ParserFuzz;
+using Xunit.Abstractions;
 
 namespace KatLang.Tests;
 
@@ -15,7 +17,7 @@ namespace KatLang.Tests;
 /// helper. The correction keeps the elaboration identical while making each helper cost O(1) to
 /// process, so a wide deconstruction is now linear.
 /// </summary>
-public class WideDeconstructionScalabilityTests
+public class WideDeconstructionScalabilityTests(ITestOutputHelper output)
 {
     private static Decimal128[] Atoms(string source) => KatLangEngine.EvaluateToAtoms(source).ToArray();
 
@@ -211,6 +213,220 @@ public class WideDeconstructionScalabilityTests
         var before = GC.GetAllocatedBytesForCurrentThread();
         _ = Parser.Parse(source);
         return GC.GetAllocatedBytesForCurrentThread() - before;
+    }
+
+    // ───────────────────────── scaling regression (load-guard walk work, never time) ─────────────────────────
+
+    /// <summary>Builds <c>x0 = 1</c> … <c>x{n-1} = 1</c> then <c>x0</c>: N ordinary definitions (control).</summary>
+    private static string SeparateDefinitionsSource(int n)
+    {
+        var sb = new StringBuilder();
+        for (var i = 0; i < n; i++)
+            sb.Append('x').Append(i).Append(" = 1\n");
+        return sb.Append("x0").ToString();
+    }
+
+    /// <summary>Builds N/2 two-target groups <c>a{i}, b{i} = (1, 2)</c> then <c>a0</c>: N targets in narrow groups (control).</summary>
+    private static string NarrowGroupsSource(int n)
+    {
+        var sb = new StringBuilder();
+        for (var i = 0; i < n / 2; i++)
+            sb.Append('a').Append(i).Append(", b").Append(i).Append(" = (1, 2)\n");
+        return sb.Append("a0").ToString();
+    }
+
+    private sealed record LoadGuardWalk(int Targets, long Steps, long DeclarationVisits, long NodeExpansions);
+
+    /// <summary>
+    /// Runs the load-elaboration guard — the first post-parse stage of <c>Parser.Parse</c> — over the
+    /// SYNTAX root exactly as the pipeline does, observed through the base walker's passive step
+    /// counters (<see cref="FrontEndTraversalObservations.WalkerSteps"/>).
+    /// </summary>
+    private static LoadGuardWalk MeasureLoadGuardWalk(int targets, string source)
+    {
+        var root = SourceProvenance.ParseSyntaxValidRoot(source);
+
+        var observations = new FrontEndTraversalObservations();
+        var diagnostics = LoadElaborationGuard.CreateUnavailableDiagnostics(root, observations);
+        Assert.Empty(diagnostics);
+        // Each shape has at least one body and one expression per target. Check EVERY size,
+        // including the last doubling, so a detached or partially disabled observer cannot pass.
+        Assert.True(observations.WalkerAlgorithmExpansions >= targets);
+        Assert.True(observations.WalkerExpressionExpansions >= targets);
+
+        return new LoadGuardWalk(
+            targets,
+            observations.WalkerSteps,
+            observations.WalkerParameterDeclarationVisits,
+            observations.WalkerAlgorithmExpansions + observations.WalkerExpressionExpansions);
+    }
+
+    /// <summary>
+    /// Every target of <c>x0, …, x{N-1} = RHS</c> contributes a fixed number of nodes to the syntax
+    /// tree the guard walks: the target property's body algorithm, that body's call expression, the
+    /// helper literal (<c>AlgorithmExpr</c>), the helper algorithm, the helper's one output row, and
+    /// the call's one argument — six walker steps. The shared <c>$deconstruct$N</c> source, the root,
+    /// and the report row are a constant on top.
+    /// </summary>
+    private const int LoadGuardStepsPerTarget = 6;
+
+    private const int LoadGuardStepsConstant = 32;
+
+    private static void AssertWideWalkBudget(LoadGuardWalk walk)
+        => Assert.True(
+            walk.Steps <= (long)LoadGuardStepsPerTarget * walk.Targets + LoadGuardStepsConstant,
+            $"N={walk.Targets}: {walk.Steps} walker steps exceed the linear budget "
+            + $"{(long)LoadGuardStepsPerTarget * walk.Targets + LoadGuardStepsConstant}; "
+            + $"declaration visits={walk.DeclarationVisits}, node expansions={walk.NodeExpansions}.");
+
+    [Fact]
+    public void Scaling_LoadGuardWideWalk_StaysWithinLinearBudget()
+    {
+        // Bounded negative-control target: restoring only LoadWalker's declaration loop must
+        // fail this WORK budget, even with linear node expansions and unchanged diagnostics.
+        const int n = 256;
+        var walk = MeasureLoadGuardWalk(n, WideSource(n, $"range(1, {n + 1})") + "\nx0");
+        AssertWideWalkBudget(walk);
+        Assert.Equal(6L * n + 7, walk.NodeExpansions);
+        Assert.Equal(0, walk.DeclarationVisits);
+    }
+
+    private static void AssertPerDoublingGrowth(string scenario, IReadOnlyList<LoadGuardWalk> walks, string report)
+    {
+        for (var i = 1; i < walks.Count; i++)
+        {
+            Assert.True(walks[i - 1].Steps > 0, $"{scenario}: the guard walk recorded no work at N={walks[i - 1].Targets}.{report}");
+            var ratio = (double)walks[i].Steps / walks[i - 1].Steps;
+            Assert.True(
+                ratio <= 2.2,
+                $"{scenario}: load-guard walk work grew {ratio:F2}x from N={walks[i - 1].Targets} to N={walks[i].Targets} "
+                + $"(linear growth is ~2x per doubling; the quadratic per-helper declaration rescan was ~4x).{report}");
+        }
+    }
+
+    /// <summary>
+    /// K2-R2 (September 2026). The load-elaboration guard (<see cref="LoadElaborationGuard"/>, the
+    /// first post-parse stage of <c>Parser.Parse</c>, also run by <c>ParseAsync</c>, on deferred branches,
+    /// and by semantic-model building) is an <see cref="AstWalker"/> that never took the walker's
+    /// <c>VisitsExplicitParameterDeclarations</c> opt-out, so it iterated the shared N-declaration
+    /// list of every one of the N deconstruction helpers: O(N²) no-op declaration visits, measured
+    /// 0.5 s / 2.3 s / 9.7 s at 10k / 20k / 40k targets while every other front-end stage stayed
+    /// linear, and ~114 s for a legal 629 KB program of 80k targets. The observed metric is the base
+    /// walker's total step count INCLUDING every declaration the per-declaration loop examines, so a
+    /// walker cannot pass by moving the rescans out of an expansion count. Deterministic: counts, never
+    /// time. Both controls keep the same target count and shrink only the group width, so a failure
+    /// here is attributed to the width of one group.
+    /// </summary>
+    [Fact]
+    public void Scaling_LoadGuardWalk_GrowsLinearlyInTargetCount()
+    {
+        int[] sizes = [10_000, 20_000, 40_000];
+
+        var wide = sizes.Select(n => MeasureLoadGuardWalk(n, WideSource(n, $"range(1, {n + 1})") + "\nx0")).ToList();
+        var separate = sizes.Select(n => MeasureLoadGuardWalk(n, SeparateDefinitionsSource(n))).ToList();
+        var narrow = sizes.Select(n => MeasureLoadGuardWalk(n, NarrowGroupsSource(n))).ToList();
+
+        var report = Environment.NewLine + "load-guard walk work (steps / declaration visits / node expansions):" + Environment.NewLine
+            + string.Join(Environment.NewLine, new[] { ("wide deconstruction", wide), ("separate definitions", separate), ("narrow groups", narrow) }
+                .SelectMany(scenario => scenario.Item2.Select(w =>
+                    $"  {scenario.Item1} N={w.Targets}: {w.Steps} / {w.DeclarationVisits} / {w.NodeExpansions}")));
+        output.WriteLine(report);
+
+        // 1. The guard inspects expression nodes only — a load directive is an expression, and a
+        //    parameter declaration carries a name and spans, never an expression — so it examines NO
+        //    explicit parameter declaration: in particular none of the N shared declarations of each
+        //    of the N helpers (the former N² term).
+        Assert.All(wide, w => Assert.True(
+            w.DeclarationVisits == 0,
+            $"the load guard examined {w.DeclarationVisits} explicit parameter declarations at N={w.Targets}; "
+            + "it needs none, and per-helper visits of the shared declaration list are O(N^2)." + report));
+
+        // 2. Justified absolute linear bound (see LoadGuardStepsPerTarget).
+        Assert.All(wide, AssertWideWalkBudget);
+
+        // 3. Per-doubling growth for the wide case and both controls.
+        AssertPerDoublingGrowth("wide deconstruction", wide, report);
+        AssertPerDoublingGrowth("separate definitions", separate, report);
+        AssertPerDoublingGrowth("narrow groups", narrow, report);
+    }
+
+    /// <summary>
+    /// The opt-out changes nothing the guard reports: with explicit parameter lists and a wide
+    /// deconstruction present (the declarations it no longer iterates), every load directive is still
+    /// found — a root <c>open 'url'</c>, a property value <c>load('url')</c>, and a nested block's own
+    /// open — in document order, with the same message, code, severity and span whether or not the
+    /// walk is observed. The observed walk records steps, and zero declaration visits.
+    /// </summary>
+    [Fact]
+    public void LoadGuard_StillFindsEveryLoad_AndObservationChangesNoDiagnostic()
+    {
+        const string source = """
+            open 'https://example.test/lib.kat'
+            Lib = load('https://example.test/other.kat')
+            F(a, b) = a + b
+            x0, x1, x2, x3 = (1, 2, 3, 4)
+            M = {
+              open 'https://example.test/nested.kat'
+              F(x0, x1)
+            }
+            x2
+            """;
+        var root = SourceProvenance.ParseSyntaxValidRoot(source);
+
+        var unobserved = LoadElaborationGuard.CreateUnavailableDiagnostics(root);
+        var observations = new FrontEndTraversalObservations();
+        var observed = LoadElaborationGuard.CreateUnavailableDiagnostics(root, observations);
+
+        Assert.Equal(3, unobserved.Count);
+        Assert.All(unobserved, d => Assert.Equal(DiagnosticCode.LoadElaborationUnavailable, d.Code));
+        Assert.Equal([1, 2, 6], unobserved.Select(d => d.Span.StartLineNumber));
+        Assert.Equal(
+            unobserved.Select(d => (d.Message, d.Code, d.Severity, d.Span)),
+            observed.Select(d => (d.Message, d.Code, d.Severity, d.Span)));
+
+        Assert.True(observations.WalkerSteps > 0);
+        Assert.True(observations.WalkerExpressionExpansions > 0);
+        Assert.Equal(0, observations.WalkerParameterDeclarationVisits);
+    }
+
+    [Theory]
+    [InlineData("x, *rest, y = (1, 2, 3)\nx, rest, y", 0)]
+    [InlineData("x, y = (load('https://example.test/a'), load('https://example.test/b'))\nx", 2)]
+    [InlineData("F((x, *rest)) = { open 'https://example.test/a'\nx }\nF((1, 2))", 1)]
+    [InlineData("F(0) = load('https://example.test/a')\nF(x) = x\nF(0)", 1)]
+    [InlineData("[1 + -load('https://example.test/a'), (load('https://example.test/b'))]:0", 2)]
+    [InlineData("load('https://example.test/a').F(load('https://example.test/b'))", 2)]
+    public async Task LoadGuard_ObservationIsNeutral_AndPublicParsersReportTheSameDiagnostics(string source, int loads)
+    {
+        var root = SourceProvenance.ParseSyntaxValidRoot(source);
+        var before = FrontEndFingerprint.ComputeParseResult(root, []);
+        var unobserved = LoadElaborationGuard.CreateUnavailableDiagnostics(root);
+        Assert.Equal(before, FrontEndFingerprint.ComputeParseResult(root, []));
+
+        var observations = new FrontEndTraversalObservations();
+        var observed = LoadElaborationGuard.CreateUnavailableDiagnostics(root, observations);
+        Assert.Equal(before, FrontEndFingerprint.ComputeParseResult(root, []));
+        Assert.Equal(loads, observed.Count);
+        Assert.All(observed, d => Assert.Equal(DiagnosticCode.LoadElaborationUnavailable, d.Code));
+        // Diagnostic is a value record including message, code, severity and the complete span.
+        Assert.Equal(unobserved, observed);
+        Assert.Equal(unobserved, Parser.Parse(source).Diagnostics);
+        Assert.Equal(unobserved, (await Parser.ParseAsync(source)).Diagnostics);
+        Assert.True(observations.WalkerSteps > 0);
+        Assert.Equal(0, observations.WalkerParameterDeclarationVisits);
+
+        // A second walk of the SAME root needs its own visited set; concurrent parses/walks with
+        // distinct observers must neither suppress diagnostics nor add to this observer's counts.
+        var steps = observations.WalkerSteps;
+        var repeated = await Task.WhenAll(Enumerable.Range(0, 4).Select(_ => Task.Run(() =>
+        {
+            var independent = new FrontEndTraversalObservations();
+            Assert.Equal(observed, LoadElaborationGuard.CreateUnavailableDiagnostics(root, independent));
+            Assert.Equal(observed, Parser.Parse(source).Diagnostics);
+            return independent.WalkerSteps;
+        })));
+        Assert.All(repeated, count => Assert.Equal(steps, count));
+        Assert.Equal(steps, observations.WalkerSteps);
     }
 
     // ───────────────────────── large deterministic case ─────────────────────────

@@ -5,7 +5,8 @@ namespace KatLang;
 /// measured front-end invocation and is passed explicitly through the internal observation
 /// overloads (<c>ParameterDetector.DetectPrevalidated</c>, <c>ImplicitArgumentResolver.ResolvePrevalidated</c>,
 /// <c>PropertyExposureResolver.Resolve</c>, <c>PropertyDependencyGraphBuilder.BuildDependencyOrder</c> /
-/// <c>.BuildSummaries</c>, <c>ModuleLoader.TraversalObservations</c>), so it records the structural
+/// <c>.BuildSummaries</c>, <c>ModuleLoader.TraversalObservations</c>,
+/// <c>LoadElaborationGuard.CreateUnavailableDiagnostics</c>), so it records the structural
 /// work its own pass performs. It is never static and never ambient: the production paths carry no
 /// observer and record nothing, so a count can never leak across operations, runs, or threads.
 /// (The resolver and exposure passes forward their observer into the one builder channel each
@@ -21,8 +22,8 @@ namespace KatLang;
 /// <see cref="PatternComparisonObservations"/> (parser/clause-family comparisons): created by the
 /// measuring caller, mutated only through <c>Record*</c> methods, and read afterwards.</para>
 ///
-/// <para><b>What one count means.</b> Every counter records node-body EXPANSIONS of the named
-/// traversal: one increment per structurally recursive node whose children were actually walked.
+/// <para><b>What one count means.</b> The per-pass recursive expansion counters record node-body
+/// EXPANSIONS of the named traversal: one increment per recursive node whose children were walked.
 /// Childless leaves record nothing, and a node reached again through a second shared reference is
 /// served from that walk's reference-identity memo without re-expansion, so for ONE walk each
 /// count stays bounded by the number of distinct reachable recursive nodes — never the number of
@@ -30,7 +31,10 @@ namespace KatLang;
 /// the same node expanded under two genuinely different contexts records once per context. The
 /// one deliberately wider memo is the builder's completed algorithm-summary memo
 /// (<c>PropertyDependencyGraphBuilder.SummaryMemo</c>), which spans one whole exposure
-/// resolution — see <see cref="DependencyAlgorithmSummaryComputations"/>.</para>
+/// resolution — see <see cref="DependencyAlgorithmSummaryComputations"/>. Other counters below
+/// measure regions, lookups, or base-walker work as their individual summaries specify. In
+/// particular, base-walker expression dispatch counts include leaves, and declaration visits
+/// count list iterations rather than distinct nodes.</para>
 /// </summary>
 internal sealed class FrontEndTraversalObservations
 {
@@ -174,6 +178,47 @@ internal sealed class FrontEndTraversalObservations
 
     internal void RecordLoaderMarkerExpansion()
         => LoaderMarkerExpansions = checked(LoaderMarkerExpansions + 1);
+
+    // ── Shared AstWalker base traversal (walker-class passes) ─────────────────
+    // These record what the BASE AstWalker examines during ONE observed walk of a
+    // walker carrying the observer (AstWalker.TraversalObservations — today the
+    // load-elaboration guard). Unlike the per-pass expansion counters above, the
+    // declaration counter records every ELEMENT of an algorithm's explicit parameter
+    // list the per-declaration loop examines, once per algorithm that lists it: the
+    // work a rescan of an intentionally SHARED list performs, which a per-node
+    // expansion count alone hides (K2-R2).
+
+    /// <summary>Algorithm bodies the base walker expanded (user and conditional algorithms).</summary>
+    public long WalkerAlgorithmExpansions { get; private set; }
+
+    internal void RecordWalkerAlgorithmExpansion()
+        => WalkerAlgorithmExpansions = checked(WalkerAlgorithmExpansions + 1);
+
+    /// <summary>Expression nodes the base walker dispatched (<c>AstWalker.VisitExpr</c> entries).</summary>
+    public long WalkerExpressionExpansions { get; private set; }
+
+    internal void RecordWalkerExpressionExpansion()
+        => WalkerExpressionExpansions = checked(WalkerExpressionExpansions + 1);
+
+    /// <summary>
+    /// Explicit parameter declarations the base walker's per-declaration loop examined. A
+    /// walker that opts out (<c>VisitsExplicitParameterDeclarations => false</c>) records
+    /// zero; a walker that keeps the loop records one per declaration PER ALGORITHM that
+    /// lists it — for the N synthetic helpers of a wide assignment deconstruction, which
+    /// share one N-declaration list, that is N² for a walk that needs none of them.
+    /// </summary>
+    public long WalkerParameterDeclarationVisits { get; private set; }
+
+    internal void RecordWalkerParameterDeclarationVisit()
+        => WalkerParameterDeclarationVisits = checked(WalkerParameterDeclarationVisits + 1);
+
+    /// <summary>
+    /// Sum of the recorded base-walker work: user/conditional algorithm expansions, expression
+    /// dispatches (including leaves), and parameter-declaration iterations. This is not an
+    /// instruction count: subclass-only work and other metadata loops are not instrumented.
+    /// </summary>
+    public long WalkerSteps
+        => checked(WalkerAlgorithmExpansions + WalkerExpressionExpansions + WalkerParameterDeclarationVisits);
 
     // ── Semantic model construction (editor) ──────────────────────────────────
 
