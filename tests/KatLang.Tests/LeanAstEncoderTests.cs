@@ -265,7 +265,7 @@ public class LeanAstEncoderTests
     // ----- fail-loud contract -------------------------------------------------
 
     [Fact]
-    public void IntegerNumbers_AreEncodedByValue_NotBySourceSpellingOrGeneralFormat()
+    public void IntegerNumbers_WithPlainRendering_AreEncodedByValue_NotBySourceSpelling()
     {
         Assert.Equal(".algorithmExpr (alg [] [] [] [.num 1000])", EncodeSource("1e3"));
         Assert.Equal(
@@ -298,6 +298,148 @@ public class LeanAstEncoderTests
         var negativeZero = Decimal128.Parse("-0", CultureInfo.InvariantCulture);
         var zero = Assert.Throws<NotSupportedException>(() => LeanAstEncoder.EncodeExpr(new Expr.Num(negativeZero)));
         Assert.Contains("negative zero", zero.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void QuantumBearingIntegralNumbers_AreRefusedNotNormalizedToInt()
+    {
+        // K5-R6. `1.0` is integral (Decimal128.IsInteger is true), so the
+        // integrality guard alone lets it through, but the runtime keeps its
+        // quantum: `1.0 + 2.0` displays `3.0` in C# while the Lean Int program
+        // `1 + 2` observes `3`. Encoding it as `.num 1` would turn a derived
+        // differential case into a divergence fabricated by this encoder, so
+        // the quantum-bearing value is refused exactly like negative zero,
+        // and a corpus case that needs it must carry a LeanExclusionReason
+        // (the Decimal128-only numeric tier).
+        var ex = Assert.Throws<NotSupportedException>(() => EncodeSource("1.0 + 2.0"));
+        Assert.Contains("'1.0'", ex.Message);
+        Assert.Contains("quantum", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("LeanExclusionReason", ex.Message);
+
+        foreach (var spelling in new[] { "1.0", "10.0", "1.00", "0.0", "100e-2", "1.50e1" })
+        {
+            var value = Decimal128.Parse(spelling, NumberStyles.Float, CultureInfo.InvariantCulture);
+            Assert.True(Decimal128.IsInteger(value), $"{spelling} is integral by value; only its quantum differs");
+            var refused = Assert.Throws<NotSupportedException>(() => LeanAstEncoder.EncodeExpr(new Expr.Num(value)));
+            Assert.Contains($"'{value.ToString(CultureInfo.InvariantCulture)}'", refused.Message);
+        }
+
+        // A clause-head literal takes the same path.
+        Assert.Throws<NotSupportedException>(() => LeanAstEncoder.EncodePattern(
+            new Pattern.LitInt(Decimal128.Parse("1.0", CultureInfo.InvariantCulture))));
+
+        // Control: values with plain integer rendering keep encoding by value
+        // whatever their source spelling.
+        Assert.Equal(".algorithmExpr (alg [] [] [] [(.binary .add (.num 1) (.num 2))])", EncodeSource("1 + 2"));
+        Assert.Equal(
+            ".num 1000",
+            LeanAstEncoder.EncodeExpr(new Expr.Num(Decimal128.Parse("1e3", CultureInfo.InvariantCulture))));
+        Assert.Equal(
+            ".num 15",
+            LeanAstEncoder.EncodeExpr(new Expr.Num(Decimal128.Parse("1.5e1", CultureInfo.InvariantCulture))));
+        Assert.Equal(".num 0", LeanAstEncoder.EncodeExpr(new Expr.Num(Decimal128.Zero)));
+    }
+
+    [Theory]
+    [InlineData("-1.0", "-1.0")]
+    [InlineData("-10.00", "-10.00")]
+    [InlineData("100e-2", "1.00")]
+    [InlineData("1.50e1", "15.0")]
+    [InlineData("0e-4", "0.0000")]
+    [InlineData("999999999999999999999999999999999.0", "999999999999999999999999999999999.0")]
+    [InlineData("1.0000000000000000000000000000000000", "1.000000000000000000000000000000000")]
+    public void IntegralQuantumRefusal_UsesTheRepresentedValue_InExpressionsAndClauseHeads(string source, string display)
+    {
+        var value = Decimal128.Parse(source, CultureInfo.InvariantCulture);
+        Assert.True(Decimal128.IsInteger(value));
+        Assert.Equal(display, SemanticExplorerHarness.Neutral(new Result.Atom(value)));
+        foreach (var encode in new Func<string>[]
+        {
+            () => LeanAstEncoder.EncodeExpr(new Expr.Num(value)),
+            () => LeanAstEncoder.EncodePattern(new Pattern.LitInt(value)),
+            () => EncodeSource(source),
+            () => EncodeSource($"F({source}) = 7\nF(x) = 9\nF(1)"),
+        })
+        {
+            var ex = Assert.Throws<NotSupportedException>(encode);
+            Assert.Contains("quantum", ex.Message, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("LeanExclusionReason", ex.Message);
+        }
+    }
+
+    [Theory]
+    [InlineData("-0")]
+    [InlineData("-0.0")]
+    [InlineData("-0e3")]
+    [InlineData("-0e-6176")]
+    public void NegativeZeroRefusal_PrecedesQuantumRefusal(string spelling)
+    {
+        var value = Decimal128.Parse(spelling, CultureInfo.InvariantCulture);
+        Assert.True(value == Decimal128.Zero && Decimal128.IsNegative(value));
+        var ex = Assert.Throws<NotSupportedException>(() => LeanAstEncoder.EncodeExpr(new Expr.Num(value)));
+        Assert.Contains("negative zero", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("quantum-bearing", ex.Message);
+    }
+
+    [Theory]
+    [InlineData("fr-FR")]
+    [InlineData("ar-SA")]
+    public void NumericEncoding_IsInvariant_AndDoesNotRejectUnobservableSourceSpelling(string culture)
+    {
+        var original = CultureInfo.CurrentCulture;
+        try
+        {
+            CultureInfo.CurrentCulture = CultureInfo.GetCultureInfo(culture);
+            foreach (var (source, expected) in new[]
+            {
+                ("0001", "1"), ("0e3", "0"), ("1.000e3", "1000"),
+                ("1.5e1", "15"), ("1.0e34", "1" + new string('0', 34)),
+            })
+            {
+                var value = Decimal128.Parse(source, CultureInfo.InvariantCulture);
+                Assert.Equal(expected, SemanticExplorerHarness.Neutral(new Result.Atom(value)));
+                Assert.Equal($".num {expected}", LeanAstEncoder.EncodeExpr(new Expr.Num(value)));
+                Assert.Equal($".litInt {expected}", LeanAstEncoder.EncodePattern(new Pattern.LitInt(value)));
+                Assert.Equal($".algorithmExpr (alg [] [] [] [.num {expected}])", EncodeSource(source));
+            }
+            var ex = Assert.Throws<NotSupportedException>(() => EncodeSource("1.0"));
+            Assert.Contains("'1.0'", ex.Message);
+        }
+        finally { CultureInfo.CurrentCulture = original; }
+    }
+
+    [Fact]
+    public void NumericEncoding_CoversRangeBoundariesAndEvaluatedValues()
+    {
+        // Exact integral values at the precision and exponent boundaries still
+        // render as digits on the pinned runtime; F0 must not round or truncate.
+        foreach (var (value, digits) in new[]
+        {
+            (Decimal128.Parse("1e33", CultureInfo.InvariantCulture), "1" + new string('0', 33)),
+            (Decimal128.Parse("1e34", CultureInfo.InvariantCulture), "1" + new string('0', 34)),
+            (Decimal128.Parse("1e6144", CultureInfo.InvariantCulture), "1" + new string('0', 6144)),
+            (Decimal128.MaxValue, new string('9', 34) + new string('0', 6111)),
+        })
+        {
+            Assert.Equal(digits, SemanticExplorerHarness.Neutral(new Result.Atom(value)));
+            Assert.Equal($".num {digits}", LeanAstEncoder.EncodeExpr(new Expr.Num(value)));
+            Assert.Equal($".num (-{digits})", LeanAstEncoder.EncodeExpr(new Expr.Num(-value)));
+        }
+
+        // Subnormals are refused BEFORE F0 could round them to zero. Positive
+        // underflowed zero is instead an integral value with visible quantum.
+        var tiny = Assert.Throws<NotSupportedException>(() =>
+            LeanAstEncoder.EncodeExpr(new Expr.Num(Decimal128.Epsilon)));
+        Assert.Contains("non-integer or non-finite", tiny.Message);
+        foreach (var source in new[] { "1e-6177", "0e-6176", "0.5 + 0.5", "-0.5 + -0.5" })
+        {
+            var result = Evaluator.Run(new Expr.AlgorithmExpr(SourceProvenance.ParseValid(source).Root));
+            Assert.False(result.IsError);
+            var atom = Assert.IsType<Result.Atom>(result.Value);
+            Assert.True(Decimal128.IsInteger(atom.Value));
+            var ex = Assert.Throws<NotSupportedException>(() => LeanAstEncoder.EncodeExpr(new Expr.Num(atom.Value)));
+            Assert.Contains("quantum", ex.Message);
+        }
     }
 
     [Fact]

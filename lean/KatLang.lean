@@ -1,4 +1,5 @@
--- KatLang v0.8.190 (core AST + semantics + while/repeat init boundaries + higher-order alg params + conditional algorithms + first-class strings)
+-- KatLang authoritative language model (core AST + semantics + while/repeat init boundaries + higher-order alg params + conditional algorithms + first-class strings).
+-- Release version: see KatLangVersion.props.
 -- Core semantics are authoritative. Surface syntax handled externally except
 -- where noted (implicit parameter detection, while/repeat init boundaries).
 -- Load elaboration is handled entirely in the front-end / elaboration layer;
@@ -3316,7 +3317,7 @@ def evalContainsCounted (items : List Result) (searched : Result) : EvalM Counte
     sequence/list values structurally by their elements. Sequence and list
     values stay intact and are not flattened. The kept items are materialized
     as one exact immutable list value: empty collections yield `[]`, and a
-    single kept item forms `[item]` (so `distinct((), ())` yields `[()]`). -/
+    single kept item forms `[item]` (so `distinct(((), ()))` yields `[()]`). -/
 def evalDistinctCounted (items : List Result) : EvalM CountedResult := do
   let distinctItems := dedupList items
   pure (makeCollectionListResult distinctItems)

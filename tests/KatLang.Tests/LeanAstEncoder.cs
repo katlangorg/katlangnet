@@ -32,9 +32,10 @@ namespace KatLang.Tests;
 /// prelude/host wrapper bodies, never inside a source program's AST; the Lean
 /// core deliberately does not model natives), and
 /// <see cref="Algorithm.Builtin"/> (a prelude member, likewise never part of
-/// a source program). Numbers must be integer-valued (the Lean core is
-/// <c>Int</c>) and strings must be control-character-free; both are validated
-/// fail-loud.
+/// a source program). Numbers must be integer-valued AND render as plain integers
+/// (the Lean core is <c>Int</c>; the runtime keeps Decimal128 quantum, so
+/// <c>1.0</c> is refused) and strings must be control-character-free; both are
+/// validated fail-loud.
 /// </para>
 /// </summary>
 public static class LeanAstEncoder
@@ -276,12 +277,20 @@ public static class LeanAstEncoder
     };
 
     /// <summary>
-    /// Lean <c>.num</c> takes an <c>Int</c>: every finite, exactly integral
-    /// Decimal128 value is rendered in fixed-point form, independent of how the
-    /// source literal was spelled or how the value's general formatter chooses
-    /// exponent notation. Fractions, non-finite values, and negative zero are
-    /// outside the Lean Int model and are refused rather than normalized to a
-    /// different value.
+    /// Lean <c>.num</c> takes an <c>Int</c>: a finite, exactly integral
+    /// Decimal128 value is encoded by value in fixed-point form when that is
+    /// also how the runtime renders it — an exponent spelling such as
+    /// <c>1e3</c> renders and encodes as <c>1000</c>. Fractions, non-finite
+    /// values, and negative zero are outside the Lean Int model and are refused
+    /// rather than normalized to a different value; so is an integral value
+    /// whose invariant rendering keeps a Decimal128 quantum (<c>1.0</c>,
+    /// <c>10.0</c>, <c>100e-2</c>): <c>Decimal128.IsInteger</c> ignores the
+    /// quantum, but the runtime displays it (<c>1.0 + 2.0</c> is <c>3.0</c>)
+    /// where a Lean Int program observes <c>3</c>, so <c>.num 1</c> would
+    /// fabricate a Lean/C# divergence out of the encoder itself. Quantum is the
+    /// Decimal128-only numeric tier (the numeric row in
+    /// <c>src/KatLang/SEMANTIC-ALIGNMENT.md</c>); a case that needs it is
+    /// excluded with a <c>LeanExclusionReason</c>, never given a Lean encoding.
     /// </summary>
     private static string EncodeNumber(Decimal128 value)
     {
@@ -302,6 +311,19 @@ public static class LeanAstEncoder
         }
 
         var text = value.ToString("F0", CultureInfo.InvariantCulture);
+        if (text != display)
+        {
+            // The invariant rendering is the observation channel the differential
+            // corpora compare (SemanticExplorerHarness.Neutral), so it — not a
+            // quantum probe — decides encodability: `1e100` renders as its plain
+            // digits and encodes, `1.0` renders its quantum and is refused.
+            throw new NotSupportedException(
+                $"{nameof(LeanAstEncoder)} cannot encode the quantum-bearing integral number '{display}'; " +
+                $"the Lean core models Int and would observe '{text}', while the Decimal128 runtime keeps the " +
+                "quantum in its output. Quantum is Decimal128-only numeric-tier behavior (never given a " +
+                "fabricated Lean encoding), so the case must be excluded explicitly with a LeanExclusionReason.");
+        }
+
         return text.StartsWith('-') ? $"({text})" : text;
     }
 

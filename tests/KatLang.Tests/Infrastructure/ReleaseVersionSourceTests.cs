@@ -23,6 +23,16 @@ public class ReleaseVersionSourceTests
         @"^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?$",
         RegexOptions.CultureInvariant);
 
+    /// <summary>
+    /// A product name immediately followed by a version, allowing ordinary
+    /// header punctuation, Markdown and wrapped Lean comments. Requiring that
+    /// adjacency keeps unrelated numbers, toolchain versions and references to
+    /// KatLangVersion.props outside this policy.
+    /// </summary>
+    private static readonly Regex KatLangVersionLiteral = new(
+        """\bKatLang\b[\s:="'`*()\[\]–—-]+(?:version\b[\s:="'`*()\[\]–—-]+)?v?[ \t]*(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?!\w)""",
+        RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
+
     /// <summary>MSBuild properties that would set a version if written into a project.</summary>
     private static readonly string[] VersionBearingProperties =
     [
@@ -148,6 +158,99 @@ public class ReleaseVersionSourceTests
             $"Release versions may only be written in {PropsRelativePath}; derive these from {DerivedValue}:\n" +
             string.Join("\n", offenders));
     }
+
+    /// <summary>
+    /// Prevents a stale product-version header in the Lean model or its docs.
+    /// The central version policy also applies outside MSBuild files.
+    /// </summary>
+    [Fact]
+    public void LeanSourcesAndDocs_CarryNoKatLangVersionLiteral()
+    {
+        var root = RepoRoot.Find();
+        var offenders = FindLeanVersionLiterals(Path.Combine(root, "lean"));
+
+        Assert.True(offenders.Count == 0,
+            $"The KatLang release version is written only in {PropsRelativePath}; the Lean model is versioned with the " +
+            "product and must not restate its number. Remove these version literals from lean/:\n" +
+            string.Join("\n", offenders.Select(offender => "lean/" + offender)));
+    }
+
+    private static IReadOnlyList<string> FindLeanVersionLiterals(string leanRoot)
+    {
+        var offenders = new List<string>();
+        // The shared walker excludes .lake, bin, obj and other build outputs,
+        // and selects text extensions only. Sort normalized relative paths so
+        // diagnostics do not depend on filesystem enumeration order or OS.
+        var files = ArtifactRegenerationPolicyTests.EnumerateRepositoryTextFiles(leanRoot)
+            .Select(file => (File: file, Relative: Path.GetRelativePath(leanRoot, file).Replace('\\', '/')))
+            .OrderBy(entry => entry.Relative, StringComparer.Ordinal);
+        foreach (var (file, relative) in files)
+        {
+            var text = File.ReadAllText(file).ReplaceLineEndings("\n");
+            foreach (Match match in KatLangVersionLiteral.Matches(text))
+            {
+                var lineNumber = 1 + text[..match.Index].Count(c => c == '\n');
+                offenders.Add($"{relative}:{lineNumber}: {match.Value.ReplaceLineEndings(" ")}");
+            }
+        }
+        return offenders;
+    }
+
+    [Fact]
+    public void LeanVersionScan_IsRecursiveSortedAndSkipsBuildOutputs()
+    {
+        var scratch = Path.Combine(Path.GetTempPath(), "katlang-version-policy", Guid.NewGuid().ToString("N"));
+        try
+        {
+            foreach (var relative in new[]
+            {
+                "z/nested/Header.LEAN", "a/notes.md", ".lake/packages/Header.lean",
+                "bin/Header.lean", "obj/notes.md", "compiled.olean", "binary.dll",
+            })
+            {
+                var file = Path.Combine(scratch, relative);
+                Directory.CreateDirectory(Path.GetDirectoryName(file)!);
+                File.WriteAllText(file, "intro\r\n-- KatLang version:\r\n-- 1.2.3\r\n");
+            }
+            Assert.Equal(
+                new[] { "a/notes.md:2: KatLang version: -- 1.2.3", "z/nested/Header.LEAN:2: KatLang version: -- 1.2.3" },
+                FindLeanVersionLiterals(scratch));
+        }
+        finally
+        {
+            if (Directory.Exists(scratch))
+                Directory.Delete(scratch, recursive: true);
+        }
+    }
+
+    [Theory]
+    [InlineData("-- KatLang v0.8.190 (core AST + semantics + while/repeat init boundaries)", true)]
+    [InlineData("KatLang 0.8.196", true)]
+    [InlineData("katlang v1.2.3-rc.1", true)]
+    [InlineData("KatLang version 0.9.0", true)]
+    [InlineData("This is KatLang version 1.2.3.", true)]
+    [InlineData("-- KATLANG\tVERSION:\tV1.2.3", true)]
+    [InlineData("KatLang: 1.2.3", true)]
+    [InlineData("KatLang-version: 1.2.3-rc.1+build.42", true)]
+    [InlineData("KatLang (v1.2.3)", true)]
+    [InlineData("KatLang — v1.2.3", true)]
+    [InlineData("/- **KatLang** version: `1.2.3` -/", true)]
+    [InlineData("def banner := \"KatLang: v1.2.3\"", true)]
+    [InlineData("-- KatLang version:\r\n-- 1.2.3", true)]
+    [InlineData("-- KatLang authoritative language model (core AST + semantics)", false)]
+    [InlineData("KatLangVersion.props is the single version source", false)]
+    [InlineData("See `KatLangVersion.props` for the KatLang version.", false)]
+    [InlineData("KatLang uses Lean v4.28.0", false)]
+    [InlineData("KatLang previously used a different version policy (see 1.2.3).", false)]
+    [InlineData("NotKatLang v1.2.3", false)]
+    [InlineData("KatLang 1.2.30x", false)]
+    [InlineData("KatLang 1.2.3.4", true)]
+    [InlineData("leanprover/lean4:v4.28.0", false)]
+    [InlineData("v0.8.196", false)]
+    [InlineData("0.8.196", false)]
+    [InlineData("KatLang 4 rows and 1.5 items", false)]
+    public void KatLangVersionLiteralPattern_MatchesTheProductVersionForm_NotOrdinaryNumerals(string text, bool matches)
+        => Assert.Equal(matches, KatLangVersionLiteral.IsMatch(text));
 
     /// <summary>
     /// The drift class the CLI once had — a <c>PackageReference</c> to KatLang

@@ -354,6 +354,152 @@ public class OutputBundleSplitTests
         Assert.IsType<EvalError.BadOpenForm>(Innermost(hostResult.Error));
     }
 
+    [Fact]
+    public void OpenDottedTarget_RedundantParenthesesNormalizeAway_AndACaptureTargetStaysRejected()
+    {
+        // K5-R2 — the boundary KatLang.ebnf's ValidatedOpenExpression documents.
+        // Parentheses around a dotted open path are redundant grouping:
+        // Parser.ShouldUnwrapParenthesizedPrimary erases them before open-form
+        // validation, so `open (M.N)` and `open ((M.N))` reach elaboration as
+        // the very same open as `open M.N` — an argumentless DotCall with no
+        // Capture layer anywhere — and evaluate identically. A bare name keeps
+        // its capture layer instead (the sibling above), so `open (M)` stays a
+        // targeted BadOpenForm parse error.
+        const string Library = "M = { public N = { public X = 7 } }\n";
+        var plain = SourceProvenance.ParseValid(Library + "R = { open M.N\n  X }\nR");
+
+        foreach (var spelling in new[] { "open M.N", "open (M.N)", "open ((M.N))", "open (((((M.N)))))" })
+        {
+            var source = Library + "R = { " + spelling + "\n  X }\nR";
+            var parsed = SourceProvenance.ParseValid(source);
+
+            var body = Assert.IsType<Algorithm.User>(Assert.Single(parsed.Root.Properties, p => p.Name == "R").Value);
+            var open = Assert.IsType<Expr.DotCall>(Assert.Single(body.Opens));
+            Assert.Equal("M", Assert.IsType<Expr.Resolve>(open.Target).Name);
+            Assert.Equal("N", open.Name);
+            Assert.Null(open.Args);
+            // Record equality is suitable for this complete open subtree once
+            // only source locations are removed. Whole algorithms also carry
+            // collection identities, so their encoding is a separate check.
+            Assert.Equal(
+                new Expr.DotCall(new Expr.Resolve("M"), "N") { LexicalFallback = new Expr.Resolve("N") },
+                open with
+                {
+                    Span = null, MemberSpan = null,
+                    Target = open.Target with { Span = null },
+                    LexicalFallback = open.EffectiveLexicalFallback with { Span = null },
+                });
+
+            // Check the remaining Lean-modeled program structure too.
+            Assert.Equal(LeanAstEncoder.EncodeProgram(plain.Root), LeanAstEncoder.EncodeProgram(parsed.Root));
+            Assert.Equal(7, Assert.IsType<Result.Atom>(Eval(source)).Value);
+        }
+
+        const string RejectedSource = "M = { public X = 7 }\nR = { open (M)\n  X }\nR";
+        var syntax = Parser.ParseSyntax(RejectedSource);
+        var parsedRejection = SourceProvenance.ParseAllowingDiagnostics(RejectedSource);
+        foreach (var diagnostics in new[] { syntax.Diagnostics, parsedRejection.Diagnostics })
+        {
+            var diagnostic = Assert.Single(diagnostics);
+            Assert.Equal(DiagnosticCode.BadOpenForm, diagnostic.Code);
+            Assert.Contains("captured value", diagnostic.Message);
+            Assert.Contains("open M", diagnostic.Message);
+            Assert.Equal(new SourceSpan(2, 12, 2, 14), diagnostic.Span);
+        }
+    }
+
+    [Theory]
+    [InlineData("M", "M = { public X = 7 }")]
+    [InlineData("{ public X = 7 }", "")]
+    [InlineData("((({ public X = 7 })))", "")]
+    [InlineData("(M.N).P", "M = { public N = { public P = { public X = 7 } } }")]
+    [InlineData("(((M.N).P))", "M = { public N = { public P = { public X = 7 } } }")]
+    [InlineData("({ public N = { public X = 7 } }).N", "")]
+    [InlineData("(({ public N = { public X = 7 } }.N))", "")]
+    public void OpenTargetNormalization_AcceptsNamesBlocksAndContinuedDottedPaths(string target, string library)
+        => Assert.Equal(7, Assert.IsType<Result.Atom>(Eval(library + "\nR = { open " + target + "\nX }\nR")).Value);
+
+    [Theory]
+    [InlineData("(M)")]
+    [InlineData("((M))")]
+    [InlineData("(M, M)")]
+    [InlineData("()")]
+    [InlineData("((()))")]
+    [InlineData("1")]
+    [InlineData("(1)")]
+    [InlineData("('url')")]
+    [InlineData("([])")]
+    [InlineData("M*")]
+    [InlineData("(M*)")]
+    [InlineData("(M*.N)")]
+    [InlineData("(M.N())")]
+    [InlineData("(~M)")]
+    [InlineData("(M.~N)")]
+    public void OpenTargetNormalization_RejectsNonOpenOuterFormsAtSyntaxPhase(string target)
+    {
+        var parsed = Parser.ParseSyntax("open " + target);
+        Assert.NotEmpty(parsed.Diagnostics);
+        Assert.All(parsed.Diagnostics, d => Assert.Equal(DiagnosticCode.BadOpenForm, d.Code));
+    }
+
+    [Theory]
+    [InlineData("(M).N")]
+    [InlineData("((M).N)")]
+    [InlineData("(M*).N")]
+    [InlineData("1.N")]
+    [InlineData("('url').N")]
+    public void OpenTargetOuterFormAcceptance_DoesNotPromiseAnOpenableReceiver(string target)
+    {
+        // Parse-time open validation checks the outer DotCall. Resolving its
+        // receiver is a later operation, so the grammar must not claim these
+        // are parser rejections or normalize a receiver capture away.
+        var parsed = Parser.ParseSyntax("open " + target);
+        Assert.Empty(parsed.Diagnostics);
+        var dot = Assert.IsType<Expr.DotCall>(Assert.Single(parsed.Root.Opens));
+        Assert.Null(dot.Args);
+        Assert.True(dot.Target is Expr.Capture or Expr.Num or Expr.StringLiteral);
+    }
+
+    [Theory]
+    [InlineData("'url'.N")]
+    [InlineData("'url'*")]
+    public void OpenStringSugar_ConsumesOnlyTheBareStringToken(string target)
+    {
+        var parsed = Parser.ParseSyntax("open " + target);
+        Assert.Contains(parsed.Diagnostics, d => d.Code == DiagnosticCode.InvalidOpenTargetList);
+        var load = Assert.IsType<Expr.Call>(Assert.Single(parsed.Root.Opens));
+        Assert.Equal("load", Assert.IsType<Expr.Resolve>(load.Function).Name);
+    }
+
+    [Theory]
+    [InlineData("'https://example.test/module.kat'")]
+    [InlineData("load('https://example.test/module.kat')")]
+    [InlineData("((load('https://example.test/module.kat')))")]
+    public async Task OpenTargetNormalization_AcceptsDirectAndGroupedLoadCalls(string target)
+    {
+        var source = "R = { open " + target + "\nX }\nR";
+        var syntax = Parser.ParseSyntax(source);
+        Assert.Empty(syntax.Diagnostics);
+        var open = Assert.IsType<Expr.Call>(Assert.Single(Assert.Single(syntax.Root.Properties).Value.Opens));
+        Assert.Equal("load", Assert.IsType<Expr.Resolve>(open.Function).Name);
+        var fetches = 0;
+        var parsed = await Parser.ParseAsync(source, new RunOptions
+        {
+            AllowedHosts = ["example.test"],
+            DownloadCode = (url, _) =>
+            {
+                Assert.Equal("https://example.test/module.kat", url);
+                fetches++;
+                return ValueTask.FromResult("public X = 7");
+            },
+        });
+        Assert.Empty(parsed.Diagnostics);
+        Assert.Equal(1, fetches);
+        var result = Evaluator.Run(new Expr.AlgorithmExpr(parsed.Root));
+        Assert.False(result.IsError);
+        Assert.Equal(7, Assert.IsType<Result.Atom>(result.Value).Value);
+    }
+
     // ── Recovery ─────────────────────────────────────────────────────────────
 
     [Fact]

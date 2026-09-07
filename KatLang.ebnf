@@ -40,12 +40,36 @@ OpenTargetList  = OpenTarget { "," OpenTarget } ;
                      validates each target as an individual Lean-compatible
                      open form. *)
 OpenTarget      = StringLiteral              (* sugar: open 'url' → open load('url') *)
-                | Identifier                 (* resolve form *)
-                | DottedOpenPath             (* argumentless dot-call path, e.g. Lib.Sub *)
-                | BraceAlgorithmExpr         (* inline block bundle target, e.g. open { public X = 1 } *)
-                | ParenBundleExpr ;          (* parenthesized expression target — expression-only,
-                                                declarations belong to the brace form *)
-DottedOpenPath  = Identifier { "." Identifier } ;
+                | ValidatedOpenExpression ;
+ValidatedOpenExpression = ? an Expression not starting with a string token and satisfying the open-form constraints below ? ;
+                  (* Open targets use the ordinary Expression parser, followed
+                     by normalization and open-form validation. The resulting
+                     outer node must be a bare resolve, a brace algorithm,
+                     an argumentless dot-call, or a direct unresolved load
+                     call (which requires asynchronous load elaboration).
+                     Grace on an open path and call-like dot edges are rejected.
+                     These are AST constraints, not a separate dotted-name
+                     grammar: parentheses around a dotted expression, brace
+                     algorithm, or load call normalize away, at every nesting
+                     level. Thus open (M.N), open ((M.N)), open (M.N).P,
+                     open ({ public X = 1 }), open ({ public N = {} }.N),
+                     and open (load('url')) reach the same forms as their
+                     ungrouped counterparts. A dot receiver still has to
+                     resolve to an openable algorithm at evaluation time;
+                     passing the outer-form check alone does not establish it
+                     (e.g. open (M).N passes that parser check).
+                     Bare names open directly, but open (M), open ((M)),
+                     open (A, B), and open (A*) retain a captured VALUE and
+                     receive the targeted BadOpenForm diagnostic. Empty groups,
+                     literals, lists, and spread/supply forms are not open
+                     forms, even if redundant grouping normalizes away:
+                     open (()), open (1), open ('url'), open A*, and
+                     open (A*.N) are rejected. String sugar applies only when
+                     the target starts with the bare string token, which is
+                     consumed alone: open 'url'.N is a target-list error,
+                     while open ('url').N passes the outer dot-form check.
+                     Declarations inside parentheses remain illegal; they
+                     belong to brace algorithms. *)
 
 PropertyDefinition = [ "public" ] Identifier "=" PropertyBody ;
 PropertyBody       = OutputBundle ;
