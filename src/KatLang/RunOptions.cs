@@ -76,7 +76,10 @@ public sealed class RunOptions
     /// the original HTTPS URL against this set before passing it to <see cref="DownloadCode"/>;
     /// it does not observe or recursively validate transport-level redirect destinations.
     /// Redirect handling and every other transport policy belong to the host-supplied downloader.
-    /// Defaults to katlang.org only.
+    /// A URL's host is admitted when it equals an entry or is a subdomain of one (<c>sub.ex.com</c>
+    /// under <c>ex.com</c>; <c>ex.com.evil.net</c> is not), entries are trimmed, and a null, empty,
+    /// or whitespace-only entry is rejected with <see cref="ArgumentException"/> at the parse/run
+    /// entry point before anything is processed. Defaults to katlang.org only.
     /// </summary>
     public IEnumerable<string>? AllowedHosts { get; init; }
 

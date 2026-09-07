@@ -538,6 +538,29 @@ internal static class BuiltinRegistry
     internal static bool TryGetMathMemberByPreludeAlias(string aliasName, out MathMemberDescriptor member)
         => MathMembersByPreludeAlias.TryGetValue(aliasName, out member);
 
+    /// <summary>
+    /// The runtime argument count of every Math FUNCTION member keyed by canonical
+    /// member name (<c>"Sqrt"</c> → 1, <c>"Pow"</c> → 2), derived from the SAME
+    /// descriptor table the runtime wrappers are built from — never a second
+    /// hand-maintained map. Constants are absent: they evaluate as
+    /// <see cref="Expr.Num"/> and never reach native dispatch.
+    /// </summary>
+    private static readonly IReadOnlyDictionary<string, int> MathFunctionArityByName =
+        MathMemberDescriptors
+            .Where(static member => member.Kind != MathMemberKind.Constant)
+            .ToFrozenDictionary(static member => member.Name, static member => member.Arity, StringComparer.Ordinal);
+
+    /// <summary>
+    /// The declared argument count of the Math FUNCTION member named
+    /// <paramref name="memberName"/> — the number of argument names a runtime
+    /// <see cref="Expr.NativeCall"/> carrying that native name must supply
+    /// (<c>Evaluator.ApplyMathNative</c> gates host-built calls on it). False for
+    /// constants and for every name that is not a canonical Math function member,
+    /// so the evaluator's unknown-native arm keeps its verdict for those.
+    /// </summary>
+    internal static bool TryGetMathFunctionArity(string memberName, out int arity)
+        => MathFunctionArityByName.TryGetValue(memberName, out arity);
+
     public static IReadOnlyList<string> MathMemberNames { get; } = Array.AsReadOnly(MathMemberDescriptors
         .Select(static member => member.Name)
         .ToArray());

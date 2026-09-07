@@ -725,6 +725,31 @@ public static partial class Evaluator
     /// </summary>
     private static EvalResult<Result> ApplyMathNative(string fnName, Decimal128[] args)
     {
+        // Host-AST arity gate (bug-hunt B5a). `Expr.NativeCall` is publicly
+        // host-constructible, and the arms below read FIXED argument positions
+        // (args[0], args[1]), so a host-built call whose ArgNames list was shorter
+        // than the member's arity escaped as a CLR IndexOutOfRangeException out of
+        // every Run* entry point. The registry's descriptor table is the one
+        // authority on each member's arity, and the count must match it EXACTLY:
+        // a LONGER list is rejected as well (pinned policy, mirroring the
+        // host-operation signature rule in ValidateHostOperationNativeSignature),
+        // because the registry-built wrappers always carry exactly the declared
+        // names and a surplus name is silently ignored binding metadata no host
+        // can have meant. The gate sits AFTER argument binding — the caller has
+        // already read every named argument — so an unbound name still reports
+        // UnknownName first, and a name that is no Math function member still
+        // reaches the `default:` arm below. Both dispatch twins share this one
+        // implementation, so the verdict cannot drift between them.
+        // A malformed host AST can carry a null name. Preserve the switch's
+        // unknown-native verdict instead of passing null to the registry map.
+        if (fnName is not null
+            && BuiltinRegistry.TryGetMathFunctionArity(fnName, out var arity)
+            && args.Length != arity)
+        {
+            return new EvalError.IllegalInEval(
+                $"invalid native-call signature for Math.{fnName}: expected {arity} argument name(s), got {args.Length}");
+        }
+
         // Every math member computes Decimal128 end-to-end — no double round-trip
         // anywhere, so transcendental results carry Decimal128's full 34-digit
         // precision. Domain violations follow IEEE: Sqrt(-1) and Ln(-1) are NaN,

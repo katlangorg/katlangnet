@@ -32,6 +32,9 @@ internal static class FrontEndPipeline
     /// </exception>
     internal static FrontEndResult Process(string source, RunOptions? options)
     {
+        // Validation only: no loader exists on the synchronous path, but a nonsensical
+        // allow-list fails loudly at every options boundary, not just the loading one.
+        _ = NormalizeAllowedHosts(options?.AllowedHosts);
         ThrowIfSynchronousEntryWithDownloader(options);
 
         var cancellationToken = options?.SourceProcessingCancellationToken ?? CancellationToken.None;
@@ -60,6 +63,8 @@ internal static class FrontEndPipeline
     {
         // MIRROR OF Process(string, RunOptions?) — keep in lock-step; only module
         // elaboration is awaited.
+        var allowedHosts = NormalizeAllowedHosts(options?.AllowedHosts);
+
         var cancellationToken = options?.SourceProcessingCancellationToken ?? CancellationToken.None;
         cancellationToken.ThrowIfCancellationRequested();
 
@@ -74,7 +79,7 @@ internal static class FrontEndPipeline
             return await ProcessWithModuleElaborationAsync(
                 syntaxResult,
                 options.DownloadCode,
-                options.AllowedHosts,
+                allowedHosts,
                 budget,
                 options.HostOperations,
                 cancellationToken).ConfigureAwait(false);
@@ -98,6 +103,44 @@ internal static class FrontEndPipeline
                 "KatLangEngine.RunAsync (or an async convenience entry point) or Parser.ParseAsync, " +
                 "or omit the downloader for source without load directives.");
         }
+    }
+
+    /// <summary>
+    /// Validates and normalizes <see cref="RunOptions.AllowedHosts"/> at the options boundary —
+    /// the synchronous AND the asynchronous front end, so a nonsensical allow-list fails loudly
+    /// wherever it is supplied, matching the <see cref="EvaluationLimits"/> /
+    /// <see cref="SourceProcessingLimits"/> convention. A null set keeps the loader's default;
+    /// every entry is trimmed; a null, empty, or whitespace-only entry is rejected with
+    /// <see cref="ArgumentException"/> BEFORE any parsing or loader exists, because the loader's
+    /// exact-or-subdomain rule would otherwise collapse an empty entry into the suffix
+    /// <c>"."</c> and admit every root-anchored host name (bug-hunt B5a; the loader's own suffix
+    /// arm refuses blank entries as well — see <c>ModuleLoader.IsAllowedUrl</c> — so an internally
+    /// constructed loader can never fail open either). The exact-or-subdomain rule itself is
+    /// unchanged: <c>sub.ex.com</c> is admitted under <c>ex.com</c>, <c>ex.com.evil.net</c> is not.
+    /// </summary>
+    /// <exception cref="ArgumentException">An entry is null, empty, or whitespace-only.</exception>
+    internal static IReadOnlyList<string>? NormalizeAllowedHosts(IEnumerable<string>? allowedHosts)
+    {
+        if (allowedHosts is null)
+            return null;
+
+        var normalized = new List<string>();
+        var index = 0;
+        foreach (var entry in allowedHosts)
+        {
+            if (string.IsNullOrWhiteSpace(entry))
+            {
+                throw new ArgumentException(
+                    $"RunOptions.AllowedHosts entry {index} is {(entry is null ? "null" : "blank")}; " +
+                    "every allowed host must be a non-blank host name.",
+                    nameof(RunOptions.AllowedHosts));
+            }
+
+            normalized.Add(entry.Trim());
+            index++;
+        }
+
+        return normalized;
     }
 
     /// <summary>

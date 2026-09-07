@@ -264,6 +264,220 @@ public class ParserNestingDepthTests
         Assert.IsType<Expr.Num>(SingleOutput(Parser.ParseSyntax("7")));             // scalar
     }
 
+    // ── Grace marker-run scans are linear in the run (bug-hunt B5a, K2-R3) ────
+    //
+    // `LookaheadThroughTildesToPropertyDef` walked a k-marker run with
+    // `PeekSignificant(offset)` for offset 0..k; that primitive restarts at the
+    // current position and is O(offset) per call, so ONE row-start run cost O(k²)
+    // (3.3 s for 40 000 markers, ~4x per doubling) and a parse could not be
+    // interrupted until it finished. The scan now walks token indices from one
+    // cursor and memoizes its verdict per run start. Pinned deterministically
+    // through the parser's token-step counter (ParserTraversalObservations)
+    // rather than wall-clock: doubling the run may at most 2.5x the steps. Each
+    // shape's diagnostics and tree are pinned alongside — the observable structure the
+    // offset walk produced, because this is a pure traversal change.
+
+    public enum GraceRunShape
+    {
+        /// <summary>`1 ~~~x` at root: a same-line run after a NON-name operand is the one-name Grace law's recovery — one diagnostic over the run, `x` an ordinary adjacent row.</summary>
+        PostfixRunAtRoot,
+
+        /// <summary>The same run inside a definition body: `F(x) = 1 ~~~x` newline `F(2)`.</summary>
+        PostfixRunInDefinitionBody,
+
+        /// <summary>`~~~` newline `x = 1` newline `x`: a row-start run with no same-line name — the diagnostic-producing prefix run before a declaration.</summary>
+        PrefixRunBeforeDeclaration,
+
+        /// <summary>`~~~x`: the legal, diagnostic-free root prefix run (weight −k).</summary>
+        PrefixRunOnRootName,
+
+        /// <summary>`(~~~x)`: the same legal run as a grouped row.</summary>
+        PrefixRunInGroup,
+    }
+
+    private static string Tildes(int k) => new('~', k);
+
+    private static string GraceRunSource(GraceRunShape shape, int k) => shape switch
+    {
+        GraceRunShape.PostfixRunAtRoot => $"1 {Tildes(k)}x",
+        GraceRunShape.PostfixRunInDefinitionBody => $"F(x) = 1 {Tildes(k)}x\nF(2)",
+        GraceRunShape.PrefixRunBeforeDeclaration => $"{Tildes(k)}\nx = 1\nx",
+        GraceRunShape.PrefixRunOnRootName => $"{Tildes(k)}x",
+        GraceRunShape.PrefixRunInGroup => $"({Tildes(k)}x)",
+        _ => throw new ArgumentOutOfRangeException(nameof(shape), shape, null),
+    };
+
+    private static void AssertGraceRunShape(GraceRunShape shape, int k, SyntaxParseResult result)
+    {
+        var root = Assert.IsType<Algorithm.User>(result.Root);
+        switch (shape)
+        {
+            case GraceRunShape.PostfixRunAtRoot:
+                {
+                    var diagnostic = Assert.Single(result.Diagnostics);
+                    Assert.Equal(DiagnosticCode.InvalidGraceMarker, diagnostic.Code);
+                    Assert.Equal(new SourceSpan(1, 3, 1, k + 2), diagnostic.Span);
+                    Assert.Empty(root.Properties);
+                    Assert.Equal(2, root.Output.Count);
+                    Assert.Equal(1m, Assert.IsType<Expr.Num>(root.Output[0]).Value);
+                    Assert.Equal("x", Assert.IsType<Expr.Resolve>(root.Output[1]).Name);
+                    break;
+                }
+
+            case GraceRunShape.PostfixRunInDefinitionBody:
+                {
+                    var diagnostic = Assert.Single(result.Diagnostics);
+                    Assert.Equal(DiagnosticCode.InvalidGraceMarker, diagnostic.Code);
+                    Assert.Equal(new SourceSpan(1, 10, 1, k + 9), diagnostic.Span);
+                    var f = Assert.Single(root.Properties);
+                    Assert.Equal("F", f.Name);
+                    var body = Assert.IsType<Algorithm.User>(f.Value);
+                    Assert.Equal("x", Assert.Single(body.Params));
+                    Assert.Equal(2, body.Output.Count);
+                    Assert.Equal(1m, Assert.IsType<Expr.Num>(body.Output[0]).Value);
+                    Assert.Equal("x", Assert.IsType<Expr.Resolve>(body.Output[1]).Name);
+                    var call = Assert.IsType<Expr.Call>(Assert.Single(root.Output));
+                    Assert.Equal("F", Assert.IsType<Expr.Resolve>(call.Function).Name);
+                    Assert.Equal(2m, Assert.IsType<Expr.Num>(Assert.Single(call.Args)).Value);
+                    break;
+                }
+
+            case GraceRunShape.PrefixRunBeforeDeclaration:
+                {
+                    var diagnostic = Assert.Single(result.Diagnostics);
+                    Assert.Equal(DiagnosticCode.InvalidGraceMarker, diagnostic.Code);
+                    Assert.Equal(new SourceSpan(1, 1, 1, k), diagnostic.Span);
+                    var x = Assert.Single(root.Properties);
+                    Assert.Equal("x", x.Name);
+                    Assert.Equal(1m, Assert.IsType<Expr.Num>(Assert.Single(Assert.IsType<Algorithm.User>(x.Value).Output)).Value);
+                    // The run's recovery placeholder, then the `x` row.
+                    Assert.Equal(2, root.Output.Count);
+                    Assert.Equal(0m, Assert.IsType<Expr.Num>(root.Output[0]).Value);
+                    Assert.Equal("x", Assert.IsType<Expr.Resolve>(root.Output[1]).Name);
+                    break;
+                }
+
+            case GraceRunShape.PrefixRunOnRootName:
+            case GraceRunShape.PrefixRunInGroup:
+                {
+                    Assert.Empty(result.Diagnostics);
+                    Assert.Empty(root.Properties);
+                    var grace = Assert.IsType<Expr.Grace>(Assert.Single(root.Output));
+                    Assert.Equal(-k, grace.Weight);
+                    Assert.Equal("x", Assert.IsType<Expr.Resolve>(grace.Inner).Name);
+                    break;
+                }
+
+            default:
+                throw new ArgumentOutOfRangeException(nameof(shape), shape, null);
+        }
+    }
+
+    private static long ObservedTokenSteps(GraceRunShape shape, int k)
+    {
+        var observations = new ParserTraversalObservations();
+        var result = Parser.ParseSyntaxObserved(GraceRunSource(shape, k), observations);
+        AssertGraceRunShape(shape, k, result);
+        return observations.TokenSteps;
+    }
+
+    [Theory]
+    [InlineData(GraceRunShape.PostfixRunAtRoot)]
+    [InlineData(GraceRunShape.PostfixRunInDefinitionBody)]
+    [InlineData(GraceRunShape.PrefixRunBeforeDeclaration)]
+    [InlineData(GraceRunShape.PrefixRunOnRootName)]
+    [InlineData(GraceRunShape.PrefixRunInGroup)]
+    public void GraceMarkerRun_TokenStepsGrowLinearly(GraceRunShape shape)
+    {
+        var steps20 = ObservedTokenSteps(shape, 20_000);
+        var steps40 = ObservedTokenSteps(shape, 40_000);
+
+        // Every marker is consumed at least once, so the counter is a real cost model.
+        Assert.True(steps20 >= 20_000, $"{shape}: {steps20} steps for 20 000 markers");
+        // Linear: doubling the run at most 2.5x the steps (the offset walk grew ~4x).
+        Assert.True(steps40 <= 2.5 * steps20, $"{shape}: {steps20} -> {steps40} steps (20k -> 40k markers)");
+        // Do not run the still larger input after an already-proven complexity regression.
+        var steps80 = ObservedTokenSteps(shape, 80_000);
+        Assert.True(steps80 <= 2.5 * steps40, $"{shape}: {steps40} -> {steps80} steps (40k -> 80k markers)");
+    }
+
+    [Theory]
+    [InlineData("{0}x = 1\nx\n42", 1)]
+    [InlineData("0\n{0}public x = 1\nx\n42", 1)]
+    [InlineData("{0}1\n42", 1)]
+    [InlineData("{0}# comment\n{0}x\n42", 1)]
+    [InlineData("a.{0}b\n42", 0)]
+    [InlineData("a.{0}\n{0}b\n42", 1)]
+    [InlineData("F({0}x) = x\n42", 1)]
+    [InlineData("x{0}\n42", 0)]
+    public void GraceMarkerRun_DeclarationMemberAndRecoveryScansAreLinear(string template, int diagnosticCount)
+    {
+        long previousSteps = 0;
+        foreach (var k in new[] { 20_000, 40_000, 80_000 })
+        {
+            var observations = new ParserTraversalObservations();
+            var parsed = Parser.ParseSyntaxObserved(template.Replace("{0}", Tildes(k)), observations);
+            Assert.Equal(diagnosticCount, parsed.Diagnostics.Count);
+            Assert.All(parsed.Diagnostics, d => Assert.Equal(DiagnosticCode.InvalidGraceMarker, d.Code));
+            // Every shape must consume its run and preserve a later output row.
+            var root = Assert.IsType<Algorithm.User>(parsed.Root);
+            Assert.Equal(42m, Assert.IsType<Expr.Num>(root.Output[^1]).Value);
+            Assert.True(observations.TokenSteps >= k);
+            if (previousSteps > 0)
+                Assert.True(observations.TokenSteps <= 2.5 * previousSteps,
+                    $"{template}: {previousSteps} -> {observations.TokenSteps} steps at {k} markers");
+            previousSteps = observations.TokenSteps;
+        }
+    }
+
+    /// <summary>
+    /// The traversal change produced no new shape: every run shape parses to the
+    /// diagnostics, spans, weights, and tree the offset walk produced, and the
+    /// observed entry is the unobserved parse with a counter attached.
+    /// </summary>
+    [Theory]
+    [InlineData(GraceRunShape.PostfixRunAtRoot, 1)]
+    [InlineData(GraceRunShape.PostfixRunAtRoot, 3)]
+    [InlineData(GraceRunShape.PostfixRunInDefinitionBody, 1)]
+    [InlineData(GraceRunShape.PostfixRunInDefinitionBody, 3)]
+    [InlineData(GraceRunShape.PrefixRunBeforeDeclaration, 1)]
+    [InlineData(GraceRunShape.PrefixRunBeforeDeclaration, 3)]
+    [InlineData(GraceRunShape.PrefixRunOnRootName, 1)]
+    [InlineData(GraceRunShape.PrefixRunOnRootName, 3)]
+    [InlineData(GraceRunShape.PrefixRunInGroup, 1)]
+    [InlineData(GraceRunShape.PrefixRunInGroup, 3)]
+    public void GraceMarkerRun_SmallRuns_KeepTheirShape(GraceRunShape shape, int k)
+    {
+        var source = GraceRunSource(shape, k);
+        var unobserved = Parser.ParseSyntax(source);
+        AssertGraceRunShape(shape, k, unobserved);
+
+        var observations = new ParserTraversalObservations();
+        var observed = Parser.ParseSyntaxObserved(source, observations);
+        AssertGraceRunShape(shape, k, observed);
+        Assert.True(observations.TokenSteps > 0);
+        Assert.Equal(
+            unobserved.Diagnostics.Select(d => (d.Code, d.Span, d.Message)),
+            observed.Diagnostics.Select(d => (d.Code, d.Span, d.Message)));
+
+        var elaborated = Parser.Parse(source);
+        Assert.Equal(unobserved.Diagnostics, elaborated.Diagnostics);
+        // Hand-written recovery/Grace expectations after elaboration. With one
+        // inferred parameter, Grace changes no parameter order, and the group
+        // containing Grace is already unwrapped by the raw parser.
+        var expectedSource = shape switch
+        {
+            GraceRunShape.PostfixRunAtRoot => "1 x",
+            GraceRunShape.PostfixRunInDefinitionBody => "F(x) = 1 x\nF(2)",
+            GraceRunShape.PrefixRunBeforeDeclaration => "0\nx = 1\nx",
+            GraceRunShape.PrefixRunOnRootName or GraceRunShape.PrefixRunInGroup => "x",
+            _ => throw new ArgumentOutOfRangeException(nameof(shape)),
+        };
+        Assert.Equal(
+            LeanAstEncoder.EncodeProgram(SourceProvenance.ParseValid(expectedSource).Root),
+            LeanAstEncoder.EncodeProgram(elaborated.Root));
+    }
+
     // ── Surface parser never emits the internal SequenceConstruct node ────────
     [Theory]
     [InlineData("((((1))))")]

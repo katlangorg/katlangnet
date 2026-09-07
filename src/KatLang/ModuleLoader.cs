@@ -276,7 +276,10 @@ internal sealed class ModuleLoader
     /// policy, belongs to this delegate.
     /// </param>
     /// <param name="allowedHosts">
-    /// Set of allowed hostnames. Defaults to katlang.org only.
+    /// Set of allowed hostnames (exact match or subdomain). Defaults to katlang.org only. The
+    /// public options boundary (<see cref="FrontEndPipeline.NormalizeAllowedHosts"/>) trims
+    /// entries and rejects blank ones before a loader exists; a blank entry that reaches a
+    /// directly constructed loader admits nothing (<see cref="IsAllowedUrl"/>).
     /// </param>
     /// <param name="sourceProcessingCancellationToken">
     /// Host cancellation for module fetching, parsing, and recursive module elaboration. The token
@@ -1332,6 +1335,14 @@ internal sealed class ModuleLoader
         // Check exact match or subdomain match
         foreach (var allowed in _allowedHosts)
         {
+            // Fail closed on a blank entry (bug-hunt B5a). The exact arm can never match
+            // one — an absolute https URI always has a non-empty host — but the suffix
+            // arm would collapse to "." and admit every root-anchored host name
+            // ("evil.example." ends with "."). The options boundary rejects blank
+            // entries before a loader exists (FrontEndPipeline.NormalizeAllowedHosts);
+            // this guard keeps a directly constructed loader closed as well.
+            if (string.IsNullOrWhiteSpace(allowed))
+                continue;
             if (string.Equals(host, allowed, StringComparison.OrdinalIgnoreCase))
                 return true;
             if (host.EndsWith("." + allowed, StringComparison.OrdinalIgnoreCase))
