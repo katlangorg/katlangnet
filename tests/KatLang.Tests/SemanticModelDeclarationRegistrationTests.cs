@@ -4,17 +4,17 @@ using KatLang.Semantics;
 namespace KatLang.Tests;
 
 /// <summary>
-/// The semantic-model builder registers every property DECLARATION eagerly when
-/// it opens a scope (<c>CreateScope</c>'s per-property loop): the declaration
+/// The semantic-model builder registers every DOCUMENT-OWNED property declaration eagerly
+/// when it opens a scope (<c>CreateScope</c>'s per-property loop): the declaration
 /// occurrence, its definition resolution, its <see cref="PropertyInfo"/>, and the
 /// declaration→property link — independent of whether anything references the
-/// property and whether the scope's completion region is ever emitted. That
-/// loop used to also fill a per-frame property table nothing read; the table is
-/// gone, the side effects are the reason the loop exists, and these tests fail if
-/// the loop (or any one of its effects) goes with it. Load-elaborated module
-/// subtrees are the discriminating case: their scope regions are suppressed, so
-/// no completion enumeration ever touches their properties and the eager loop is
-/// the ONLY registration path for an unreferenced module property.
+/// property and whether the scope's completion region is ever emitted. That loop used to
+/// also fill a per-frame property table nothing read; the table is gone and the side
+/// effects are the reason the loop exists. The same loop runs for a load-elaborated
+/// module subtree, where it builds the module's LOCATIONLESS property symbols (the
+/// binding surface document lookups resolve to) and registers nothing: a module property
+/// is never a declaration site of the importing document, referenced or not, public or
+/// not (K7-SEM-R1). These tests fail if either half of that contract goes.
 /// </summary>
 public class SemanticModelDeclarationRegistrationTests
 {
@@ -28,7 +28,7 @@ public class SemanticModelDeclarationRegistrationTests
     };
 
     [Fact]
-    public async Task ModuleProperties_AreRegisteredEvenWhenUnreferencedAndUnenumerated()
+    public async Task ModuleProperties_RegisterNoDocumentSites_ReferencedOrNot()
     {
         const string module = """
             public Tax = 0.21
@@ -43,10 +43,23 @@ public class SemanticModelDeclarationRegistrationTests
         // The module emits no completion region (its spans are module-local) ...
         Assert.Single(model.ScopeVisibilities);
 
-        // ... yet its unreferenced properties — private and public alike — are fully
-        // registered with module-local coordinates.
-        AssertDeclarationRegistered(model, "Helper", line: 2, column: 1);
-        AssertDeclarationRegistered(model, "Spare", line: 3, column: 8);
+        // ... and none of its declarations — private, public, referenced, or unreferenced —
+        // is a declaration site of this document.
+        Assert.Empty(model.Declarations);
+        AssertNotRegistered(model, "Helper");
+        AssertNotRegistered(model, "Spare");
+
+        // The referenced Tax enters the model only through the document's reference, as a
+        // locationless module-provided target.
+        Assert.Empty(model.FindDeclarations("Tax"));
+        var reference = Assert.Single(model.FindResolutions("Tax"));
+        Assert.Equal(OccurrenceKind.ResolveReference, reference.Occurrence.Kind);
+        Assert.Equal(IdentifierClassification.PropertyReference, reference.Classification);
+        Assert.Null(reference.ResolvedDeclaration);
+        var property = Assert.Single(model.FindProperties("Tax"));
+        Assert.Same(property, reference.ResolvedProperty);
+        Assert.Null(property.Declaration);
+        Assert.True(property.IsPublic);
     }
 
     [Fact]
@@ -59,21 +72,13 @@ public class SemanticModelDeclarationRegistrationTests
     }
 
     [Fact]
-    public async Task UnreferencedPrivateModuleClauseFamily_RegistersEveryDeclarationSpan()
+    public void UnreferencedPrivateClauseFamily_RegistersEveryDeclarationSpan()
     {
-        const string module = """
-            Hidden(0) = 1
-            Hidden(x) = x
-            public Visible = 7
-            """;
-        var provenance = await SourceProvenance.ParseValidAsync(
-            $"open '{ModuleUrl}'\nVisible",
-            InMemoryModule(module));
-        var model = SemanticModelBuilder.Build(provenance.Parsed);
+        var model = SemanticModelBuilder.Build(
+            SourceProvenance.ParseValid("Hidden(0) = 1\nHidden(x) = x\npublic Visible = 7\nVisible").Parsed);
 
-        // Hidden is private, unreferenced, and belongs to a suppressed module
-        // region, so eager CreateScope registration is its only semantic-model
-        // registration path. Both clause heads must map to the ONE family info.
+        // Hidden is private and unreferenced, so eager CreateScope registration is its only
+        // semantic-model registration path. Both clause heads must map to the ONE family info.
         var declarations = model.FindDeclarations("Hidden").ToList();
         Assert.Equal([1, 2], declarations.Select(static declaration => declaration.Span.StartLineNumber).ToList());
 
@@ -89,6 +94,29 @@ public class SemanticModelDeclarationRegistrationTests
             Assert.Same(declaration, resolution.ResolvedDeclaration);
             Assert.Same(property, resolution.ResolvedProperty);
         }
+    }
+
+    [Fact]
+    public async Task UnreferencedPrivateModuleClauseFamily_RegistersNothing()
+    {
+        const string module = """
+            Hidden(0) = 1
+            Hidden(x) = x
+            public Visible = 7
+            """;
+        var provenance = await SourceProvenance.ParseValidAsync(
+            $"open '{ModuleUrl}'\nVisible",
+            InMemoryModule(module));
+        var model = SemanticModelBuilder.Build(provenance.Parsed);
+
+        // Neither clause head, nor the binder x, nor the family's property info is a
+        // document-owned object; Visible reaches the model only through its reference.
+        AssertNotRegistered(model, "Hidden");
+        AssertNotRegistered(model, "x");
+        Assert.Empty(model.Declarations);
+        var visible = Assert.Single(model.FindResolutions("Visible"));
+        Assert.Null(visible.ResolvedDeclaration);
+        Assert.Same(Assert.Single(model.FindProperties("Visible")), visible.ResolvedProperty);
     }
 
     /// <summary>
@@ -113,6 +141,18 @@ public class SemanticModelDeclarationRegistrationTests
         Assert.Equal(IdentifierClassification.PropertyDefinition, resolution.Classification);
         Assert.Same(declaration, resolution.ResolvedDeclaration);
         Assert.Same(property, resolution.ResolvedProperty);
+    }
+
+    /// <summary>
+    /// No effect of the eager loop for a module-provided declaration: no declaration
+    /// occurrence, no resolution site, no identifier occurrence, and no reported property.
+    /// </summary>
+    private static void AssertNotRegistered(SemanticModel model, string name)
+    {
+        Assert.Empty(model.FindDeclarations(name));
+        Assert.Empty(model.FindResolutions(name));
+        Assert.DoesNotContain(model.IdentifierOccurrences, occurrence => occurrence.Name == name);
+        Assert.Empty(model.FindProperties(name));
     }
 
     /// <summary>

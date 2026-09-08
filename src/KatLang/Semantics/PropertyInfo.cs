@@ -148,6 +148,18 @@ public sealed record PropertyInfo
 
     public string Name { get; }
 
+    /// <summary>
+    /// The property's declaration site in the current document, or
+    /// <see langword="null"/> when it has none: a builtin
+    /// (<see cref="PropertyShape.Builtin"/>), or a property supplied by a
+    /// load-elaborated module — a module-provided target is locationless with
+    /// respect to the document that imports it (its <see cref="Parameters"/> and
+    /// <see cref="ConditionalBranches"/> carry no spans either), because its
+    /// coordinates belong to the module's own source text.
+    /// A document-owned declaration may reuse an imported callable body in a
+    /// host-built AST; its declaration stays local while the imported parameter
+    /// spans remain unavailable.
+    /// </summary>
     public DeclarationOccurrence? Declaration { get; }
 
     public PropertyShape Shape { get; }

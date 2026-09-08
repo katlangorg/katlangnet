@@ -1398,12 +1398,16 @@ public abstract record Algorithm
         /// <summary>
         /// True for a module root spliced into the tree by load elaboration.
         /// Tooling-only provenance metadata: source spans inside a loaded module
-        /// are positioned in the MODULE's source text, so editor scope regions
-        /// derived from spans must not treat them as current-document positions
-        /// (the semantic model suppresses scope-region emission for the whole
-        /// marked subtree; identifier occurrences keep their existing per-span
-        /// source-text filtering downstream). Not part of the Lean model — no
-        /// observable evaluation semantics depend on it.
+        /// are positioned in the MODULE's source text, so editor sites derived from
+        /// spans must not treat them as current-document positions. The semantic
+        /// model treats the whole marked subtree — at every nesting depth, modules
+        /// opened by the module included — as module-provided: it emits no scope
+        /// regions, declaration occurrences, reference sites, or classification
+        /// sites for it, and a document reference to one of its members resolves to
+        /// a locationless target. When this algorithm itself is the semantic model's
+        /// root, its source is the current document and only nested imports are
+        /// suppressed. Not part of the Lean model — no observable
+        /// evaluation semantics depend on it.
         /// </summary>
         internal bool IsModuleElaborated { get; init; }
 

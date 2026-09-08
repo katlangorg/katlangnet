@@ -62,7 +62,13 @@ public sealed record DeclarationOccurrence(string Name, SourceSpan Span, Occurre
     : IdentifierOccurrence(Name, Span, Kind);
 
 /// <summary>
-/// Semantic resolution information for one identifier site.
+/// Semantic resolution information for one identifier site of the current document.
+/// <see cref="ResolvedDeclaration"/> is the document's declaration occurrence the
+/// site resolves to, or <see langword="null"/> when the target has no site in this
+/// document: a builtin, an implicit parameter, an unresolved or deferred name, or a
+/// property supplied by a load-elaborated module (a module-provided target keeps its
+/// <see cref="ResolvedProperty"/> metadata but is locationless with respect to the
+/// importing document — see <see cref="PropertyInfo.Declaration"/>).
 /// </summary>
 public sealed record IdentifierResolution(
     IdentifierOccurrence Occurrence,
@@ -72,7 +78,13 @@ public sealed record IdentifierResolution(
 
 /// <summary>
 /// Semantic information derived from a parsed KatLang root algorithm.
-/// Only source-backed sites with exact spans are included.
+/// Only source-backed sites with exact spans in the CURRENT document are
+/// included: every listed occurrence, declaration, and resolution site slices the
+/// document's text to the identifier written there. A load-elaborated module
+/// subtree (<c>open 'url'</c>, <c>load('url')</c>) is positioned in the module's
+/// own source text, so it contributes no sites at any nesting depth; document
+/// references that bind to its members resolve to locationless module-provided
+/// targets, and its public names stay visible through the open.
 /// </summary>
 public sealed class SemanticModel
 {
@@ -95,9 +107,9 @@ public sealed class SemanticModel
         PropertyInfos = Array.AsReadOnly(propertyInfos.ToArray());
         ScopeVisibilities = Array.AsReadOnly(
             (scopeVisibilities ?? [new ScopeVisibility(Span: null, Symbols: [])]).ToArray());
-        // Declaration coordinates are local to their source document. Preserve
-        // canonical occurrence identity so equal name/span DTOs from different
-        // loaded modules cannot overwrite one another.
+        // Declarations are looked up by canonical occurrence identity, never by
+        // name/span value: a value-equal DTO (constructed by a consumer, or shared
+        // declaration nodes in a host-built tree) is not a key.
         _propertiesByDeclaration = new Dictionary<DeclarationOccurrence, PropertyInfo>(
             propertiesByDeclaration,
             ReferenceEqualityComparer.Instance);
@@ -124,23 +136,29 @@ public sealed class SemanticModel
     public IReadOnlyList<IdentifierOccurrence> IdentifierOccurrences { get; }
 
     /// <summary>
-    /// Source-backed declaration sites.
+    /// Source-backed declaration sites of the current document. Declarations
+    /// inside a load-elaborated module are sites of the module's text, not of
+    /// this document, and are never listed.
     /// </summary>
     public IReadOnlyList<DeclarationOccurrence> Declarations { get; }
 
     /// <summary>
-    /// Semantic classifications for all source-backed identifier sites,
-    /// including declarations. When the occurrence resolves to a property,
-    /// <see cref="IdentifierResolution.ResolvedProperty"/> exposes richer
-    /// property-centered hover metadata.
+    /// Semantic classifications for all source-backed identifier sites of the
+    /// current document, including declarations. When the occurrence resolves
+    /// to a property, <see cref="IdentifierResolution.ResolvedProperty"/>
+    /// exposes richer property-centered hover metadata; a module-provided target
+    /// has no <see cref="IdentifierResolution.ResolvedDeclaration"/>.
     /// </summary>
     public IReadOnlyList<IdentifierResolution> IdentifierResolutions { get; }
 
     /// <summary>
-    /// All property-centered semantic objects known to this model.
-    /// Ordinary properties expose parameter information, conditional
-    /// properties expose branch-head summaries, and builtins are represented
-    /// conservatively when their callable shape is known.
+    /// All property-centered semantic objects known to this model: every
+    /// property declared in the current document, plus the targets its sites
+    /// resolve to (referenced builtins and module-provided properties, both
+    /// without a <see cref="PropertyInfo.Declaration"/>). Ordinary properties
+    /// expose parameter information, conditional properties expose branch-head
+    /// summaries, and builtins are represented conservatively when their
+    /// callable shape is known.
     /// </summary>
     public IReadOnlyList<PropertyInfo> PropertyInfos { get; }
 
@@ -254,8 +272,8 @@ public sealed class SemanticModel
     /// <summary>
     /// Finds the property-centered semantic object associated with a specific
     /// declaration occurrence. The occurrence must be the canonical instance
-    /// returned by this model; source coordinates alone are not a cross-module
-    /// declaration identity.
+    /// returned by this model; a value-equal occurrence constructed elsewhere is
+    /// not a declaration identity.
     /// </summary>
     public PropertyInfo? FindPropertyByDeclaration(DeclarationOccurrence declaration)
         => _propertiesByDeclaration.TryGetValue(declaration, out var property)

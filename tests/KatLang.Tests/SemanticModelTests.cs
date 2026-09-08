@@ -1370,11 +1370,17 @@ public class SemanticModelTests
         Assert.Equal(IdentifierClassification.PropertyReference, aReference.Classification);
         Assert.Equal(aDeclaration, aReference.ResolvedDeclaration);
 
-        var xDeclaration = Assert.Single(model.FindDeclarations("X"));
+        // X is declared in the loaded module: the member resolves to it as a module-provided
+        // target — no declaration site of this document, no local location.
+        Assert.Empty(model.FindDeclarations("X"));
         var xReference = ResolutionAt(model, 2, 3);
         Assert.Equal(OccurrenceKind.DotMemberReference, xReference.Occurrence.Kind);
         Assert.Equal(IdentifierClassification.PropertyReference, xReference.Classification);
-        Assert.Equal(xDeclaration, xReference.ResolvedDeclaration);
+        Assert.Null(xReference.ResolvedDeclaration);
+        var x = Assert.IsType<PropertyInfo>(xReference.ResolvedProperty);
+        Assert.Equal("X", x.Name);
+        Assert.Null(x.Declaration);
+        Assert.True(x.IsPublic);
     }
 
     [Fact]
@@ -2178,6 +2184,806 @@ public class SemanticModelTests
         Assert.Equal(["Inner"], deep.Members.Select(static member => member.Name).ToList());
         Assert.Single(root.Symbols, symbol => symbol.Name == "Tax");
         Assert.DoesNotContain(root.Symbols, symbol => symbol.Name == "Helper");
+    }
+
+    // ── Module provenance: imported source locations are never document sites (K7-SEM-R1) ──
+
+    private static Func<string, CancellationToken, ValueTask<string>> TrackingDownloader(
+        Dictionary<string, string> files,
+        ICollection<string> fetched)
+    {
+        var downloader = MockDownloader(files);
+        return (url, cancellationToken) =>
+        {
+            fetched.Add(url);
+            return downloader(url, cancellationToken);
+        };
+    }
+
+    private static SemanticModel BuildModel(string source, Func<string, CancellationToken, ValueTask<string>> downloader)
+    {
+        var parseResult = Parser.ParseAsync(source, new RunOptions { DownloadCode = downloader })
+            .GetAwaiter().GetResult();
+        Assert.False(
+            parseResult.HasErrors,
+            string.Join(Environment.NewLine, parseResult.Diagnostics.Select(d => d.Message)));
+        return SemanticModelBuilder.Build(parseResult);
+    }
+
+    private static string Evaluate(string source, Dictionary<string, string> remoteFiles)
+        => Evaluate(source, MockDownloader(remoteFiles));
+
+    // The in-memory downloader completes synchronously, so the async engine run does too.
+    private static string Evaluate(string source, Func<string, CancellationToken, ValueTask<string>> downloader)
+        => KatLangEngine.EvaluateToStringAsync(source, new RunOptions { DownloadCode = downloader })
+            .GetAwaiter().GetResult();
+
+    private static string[] Lines(string source) => source.Replace("\r", "").Split('\n');
+
+    /// <summary>The document text an identifier site claims: a single-line range inside the document.</summary>
+    private static string SliceOf(string source, SourceSpan span)
+    {
+        var lines = Lines(source);
+        Assert.Equal(span.StartLineNumber, span.EndLineNumber);
+        Assert.InRange(span.StartLineNumber, 1, lines.Length);
+        var line = lines[span.StartLineNumber - 1];
+        Assert.InRange(span.StartColumn, 1, line.Length);
+        Assert.InRange(span.EndColumn, span.StartColumn, line.Length);
+        return line.Substring(span.StartColumn - 1, span.EndColumn - span.StartColumn + 1);
+    }
+
+    private static HashSet<DeclarationOccurrence> DocumentDeclarations(SemanticModel model)
+        => new(model.Declarations, ReferenceEqualityComparer.Instance);
+
+    /// <summary>
+    /// A declaration a site, property, or symbol points at is either locationless
+    /// (<see langword="null"/>) or one of the document's own declaration occurrences —
+    /// never a span positioned in some other source text.
+    /// </summary>
+    private static void AssertDocumentTarget(HashSet<DeclarationOccurrence> declarations, DeclarationOccurrence? target)
+    {
+        if (target is not null)
+            Assert.True(declarations.Contains(target), $"'{target.Name}' at {target.Span} is not a declaration site of this document.");
+    }
+
+    private static void AssertDocumentProperty(string source, HashSet<DeclarationOccurrence> declarations, PropertyInfo? property)
+    {
+        if (property is null)
+            return;
+
+        AssertDocumentTarget(declarations, property.Declaration);
+        foreach (var parameter in property.Parameters.Concat(property.Signatures.SelectMany(static signature => signature.Parameters)))
+        {
+            if (parameter.Span is { } parameterSpan)
+                Assert.Equal(parameter.Name, SliceOf(source, parameterSpan));
+        }
+
+        foreach (var branch in property.ConditionalBranches)
+        {
+            if (branch.HeadSpan is { } headSpan)
+                Assert.Equal(property.Name, SliceOf(source, headSpan));
+        }
+    }
+
+    private static void AssertDocumentSymbol(string source, HashSet<DeclarationOccurrence> declarations, VisibleSymbol symbol)
+    {
+        AssertDocumentTarget(declarations, symbol.Declaration);
+        AssertDocumentProperty(source, declarations, symbol.Property);
+        foreach (var member in symbol.Members)
+            AssertDocumentSymbol(source, declarations, member);
+    }
+
+    /// <summary>
+    /// The identifier-slice invariant over every public listing surface: each declaration,
+    /// occurrence, and resolution site slices the document to the identifier written there,
+    /// and every declaration or span reachable from a resolution, property, or visible
+    /// symbol is either locationless or a document site. Scope hulls are deliberately not
+    /// sliced — they are extents, not identifier sites.
+    /// </summary>
+    private static void AssertIdentifierSitesSliceToTheirSpelling(SemanticModel model, string source)
+    {
+        var declarations = DocumentDeclarations(model);
+
+        foreach (var declaration in model.Declarations)
+            Assert.Equal(declaration.Name, SliceOf(source, declaration.Span));
+
+        foreach (var occurrence in model.IdentifierOccurrences)
+            Assert.Equal(occurrence.Name, SliceOf(source, occurrence.Span));
+
+        foreach (var resolution in model.IdentifierResolutions)
+        {
+            Assert.Equal(resolution.Occurrence.Name, SliceOf(source, resolution.Occurrence.Span));
+            AssertDocumentTarget(declarations, resolution.ResolvedDeclaration);
+            AssertDocumentProperty(source, declarations, resolution.ResolvedProperty);
+        }
+
+        foreach (var property in model.PropertyInfos)
+            AssertDocumentProperty(source, declarations, property);
+
+        foreach (var scope in model.ScopeVisibilities)
+        {
+            foreach (var symbol in scope.Symbols)
+                AssertDocumentSymbol(source, declarations, symbol);
+        }
+    }
+
+    /// <summary>
+    /// The position-based query surface, swept over every character of the document: a hit
+    /// is one of the listed document sites containing the position, the property and scope
+    /// queries agree with it, and no visible symbol points outside the document.
+    /// </summary>
+    private static void AssertPositionalQueriesReturnOnlyDocumentSites(SemanticModel model, string source)
+    {
+        var declarations = DocumentDeclarations(model);
+        var lines = Lines(source);
+        for (var line = 1; line <= lines.Length; line++)
+        {
+            for (var column = 1; column <= lines[line - 1].Length; column++)
+            {
+                var resolution = model.FindResolutionAt(line, column);
+                if (resolution is not null)
+                {
+                    Assert.Contains(model.IdentifierResolutions, candidate => ReferenceEquals(candidate, resolution));
+                    Assert.Equal(resolution.Occurrence.Name, SliceOf(source, resolution.Occurrence.Span));
+                    Assert.Equal(line, resolution.Occurrence.Span.StartLineNumber);
+                    Assert.InRange(column, resolution.Occurrence.Span.StartColumn, resolution.Occurrence.Span.EndColumn);
+                }
+
+                Assert.Same(resolution?.ResolvedProperty, model.FindPropertyAt(line, column));
+                Assert.Contains(model.ScopeVisibilities, candidate => ReferenceEquals(candidate, model.FindScopeAt(line, column)));
+                foreach (var symbol in model.GetVisibleSymbolsAt(line, column))
+                    AssertDocumentSymbol(source, declarations, symbol);
+            }
+        }
+    }
+
+    private static PropertyInfo AssertModuleProvidedTarget(IdentifierResolution resolution, string name)
+    {
+        // The existing no-local-location convention: the target is identified by its
+        // property metadata and has no declaration site in this document.
+        Assert.Null(resolution.ResolvedDeclaration);
+        var target = Assert.IsType<PropertyInfo>(resolution.ResolvedProperty);
+        Assert.Equal(name, target.Name);
+        Assert.Null(target.Declaration);
+        Assert.NotEqual(PropertyShape.Builtin, target.Shape);
+        return target;
+    }
+
+    private static void AssertNoSites(SemanticModel model, params string[] names)
+    {
+        foreach (var name in names)
+        {
+            Assert.Empty(model.FindDeclarations(name));
+            Assert.Empty(model.FindResolutions(name));
+            Assert.DoesNotContain(model.IdentifierOccurrences, occurrence => occurrence.Name == name);
+            Assert.Empty(model.FindProperties(name));
+        }
+    }
+
+    [Fact]
+    public void ModuleProvenance_ImportedPrivateDeclarationDoesNotHijackDocumentLookup()
+    {
+        // K7-SEM-R1, repro A. The module's private `Fee` is declared at MODULE coordinates
+        // 2:1–2:3, which coincide with the document's `Total` reference at 2:1–2:5: a
+        // definition site registered for it sorted ahead of the document's own site and won
+        // FindResolutionAt(2, 1).
+        const string source = "open 'https://katlang.org/lib2.kat'\nTotal + 1";
+        var remoteFiles = new Dictionary<string, string>
+        {
+            ["https://katlang.org/lib2.kat"] = "public Total = 5\nFee = 9",
+        };
+        var model = BuildModel(source, remoteFiles);
+
+        var reference = ResolutionAt(model, 2, 1);
+        Assert.Equal("Total", reference.Occurrence.Name);
+        AssertSpan(reference.Occurrence.Span, 2, 1, 2, 5);
+        Assert.Equal(OccurrenceKind.ResolveReference, reference.Occurrence.Kind);
+        Assert.Equal(IdentifierClassification.PropertyReference, reference.Classification);
+        var target = AssertModuleProvidedTarget(reference, "Total");
+        Assert.Equal(PropertyShape.Ordinary, target.Shape);
+        Assert.True(target.IsPublic);
+        Assert.True(target.IsExported);
+        Assert.Same(target, model.FindPropertyAt(2, 1));
+        Assert.Same(target, Assert.Single(model.FindProperties("Total")));
+
+        // Fee contributes no site of any kind, and neither does the imported Total's own
+        // declaration: the document's reference is the only site in this model.
+        AssertNoSites(model, "Fee");
+        Assert.Empty(model.Declarations);
+        Assert.Same(reference, Assert.Single(model.IdentifierResolutions));
+        Assert.Same(reference.Occurrence, Assert.Single(model.IdentifierOccurrences));
+
+        AssertIdentifierSitesSliceToTheirSpelling(model, source);
+        AssertPositionalQueriesReturnOnlyDocumentSites(model, source);
+        Assert.Equal("6", Evaluate(source, remoteFiles));
+    }
+
+    [Fact]
+    public void ModuleProvenance_ImportedDeclarationsExposeNoDocumentSites()
+    {
+        // K7-SEM-R1, repro B. Module coordinates 1:8–1:10 slice the document's URL ("ttp")
+        // and 2:1–2:6 slice "Tax + ": neither may surface as a declaration of this document,
+        // and neither range may acquire an identifier-definition classification.
+        const string source = "open 'https://katlang.org/lib.kat'\nTax + 1";
+        var remoteFiles = new Dictionary<string, string>
+        {
+            ["https://katlang.org/lib.kat"] = "public Tax = 21\nHelper = 9",
+        };
+        var model = BuildModel(source, remoteFiles);
+
+        Assert.Empty(model.Declarations);
+        Assert.DoesNotContain(
+            model.IdentifierResolutions,
+            resolution => resolution.Classification == IdentifierClassification.PropertyDefinition);
+        AssertNoIdentifierSemanticSiteOverlaps(model, StringLiteralSpan(source));
+        Assert.Null(model.FindResolutionAt(1, 8));
+
+        var reference = ResolutionAt(model, 2, 1);
+        Assert.Equal("Tax", reference.Occurrence.Name);
+        AssertSpan(reference.Occurrence.Span, 2, 1, 2, 3);
+        Assert.Equal(OccurrenceKind.ResolveReference, reference.Occurrence.Kind);
+        Assert.Equal(IdentifierClassification.PropertyReference, reference.Classification);
+        var target = AssertModuleProvidedTarget(reference, "Tax");
+        Assert.True(target.IsPublic);
+        Assert.Same(reference, Assert.Single(model.FindResolutions("Tax")));
+
+        // Every position of "Tax + " sees the document's reference or nothing — never Helper.
+        for (var column = 1; column <= 6; column++)
+            Assert.Same(column <= 3 ? reference : null, model.FindResolutionAt(2, column));
+        AssertNoSites(model, "Helper");
+
+        AssertIdentifierSitesSliceToTheirSpelling(model, source);
+        AssertPositionalQueriesReturnOnlyDocumentSites(model, source);
+        Assert.Equal("22", Evaluate(source, remoteFiles));
+    }
+
+    [Fact]
+    public void ModuleProvenance_DocumentOwnedOpenBlockAndNestedAlgorithmKeepTheirSites()
+    {
+        // Positive control with the same names declared by the DOCUMENT: suppression follows
+        // module provenance, not the presence of an `open`. The inline open block's private
+        // Fee and the nested Lib's private Helper keep their local sites even though they are
+        // invisible outside their scopes.
+        const string source = """
+            open {
+              public Total = Fee - 4
+              Fee = 9
+            }
+            Lib = {
+              public Tax = Helper + 12
+              Helper = 9
+            }
+            Total + Lib.Tax
+            """;
+        var model = BuildModel(source);
+
+        Assert.Equal(
+            [("Total", 2, 10, 14), ("Fee", 3, 3, 5), ("Lib", 5, 1, 3), ("Tax", 6, 10, 12), ("Helper", 7, 3, 8)],
+            model.Declarations
+                .Select(static declaration => (declaration.Name, declaration.Span.StartLineNumber, declaration.Span.StartColumn, declaration.Span.EndColumn))
+                .ToList());
+        foreach (var declaration in model.Declarations)
+        {
+            Assert.Equal(OccurrenceKind.PropertyDefinition, declaration.Kind);
+            var definition = Assert.Single(
+                model.IdentifierResolutions,
+                resolution => ReferenceEquals(resolution.Occurrence, declaration));
+            Assert.Equal(IdentifierClassification.PropertyDefinition, definition.Classification);
+            Assert.Same(declaration, definition.ResolvedDeclaration);
+            Assert.Same(model.FindPropertyByDeclaration(declaration), definition.ResolvedProperty);
+            Assert.Same(declaration, definition.ResolvedProperty!.Declaration);
+        }
+
+        var fee = Assert.Single(model.FindDeclarations("Fee"));
+        var feeReference = ResolutionAt(model, 2, 18);
+        Assert.Equal(OccurrenceKind.ResolveReference, feeReference.Occurrence.Kind);
+        Assert.Equal(IdentifierClassification.PropertyReference, feeReference.Classification);
+        Assert.Same(fee, feeReference.ResolvedDeclaration);
+
+        var helper = Assert.Single(model.FindDeclarations("Helper"));
+        var helperReference = ResolutionAt(model, 6, 16);
+        Assert.Equal(IdentifierClassification.PropertyReference, helperReference.Classification);
+        Assert.Same(helper, helperReference.ResolvedDeclaration);
+
+        var total = Assert.Single(model.FindDeclarations("Total"));
+        var totalReference = ResolutionAt(model, 9, 1);
+        Assert.Equal(IdentifierClassification.PropertyReference, totalReference.Classification);
+        Assert.Same(total, totalReference.ResolvedDeclaration);
+        Assert.Same(total, totalReference.ResolvedProperty!.Declaration);
+
+        var lib = Assert.Single(model.FindDeclarations("Lib"));
+        Assert.Same(lib, ResolutionAt(model, 9, 9).ResolvedDeclaration);
+        var tax = Assert.Single(model.FindDeclarations("Tax"));
+        var taxReference = ResolutionAt(model, 9, 13);
+        Assert.Equal(OccurrenceKind.DotMemberReference, taxReference.Occurrence.Kind);
+        Assert.Equal(IdentifierClassification.PropertyReference, taxReference.Classification);
+        Assert.Same(tax, taxReference.ResolvedDeclaration);
+
+        // Visibility: the open provides Total (public) to the root, never Fee; inside the
+        // block both are directly visible with their local declaration sites.
+        var root = model.FindScopeAt(9, 1);
+        Assert.Same(total, SingleSymbol(root, "Total").Declaration);
+        Assert.DoesNotContain(root.Symbols, symbol => symbol.Name is "Fee" or "Tax" or "Helper");
+        var block = model.FindScopeAt(3, 3);
+        Assert.Same(fee, SingleSymbol(block, "Fee").Declaration);
+        Assert.Same(total, SingleSymbol(block, "Total").Declaration);
+
+        AssertIdentifierSitesSliceToTheirSpelling(model, source);
+        AssertPositionalQueriesReturnOnlyDocumentSites(model, source);
+        Assert.Equal("26", KatLangEngine.EvaluateToString(source));
+    }
+
+    [Fact]
+    public void ModuleProvenance_LocalContentAfterImportedOpenKeepsItsSites()
+    {
+        // Suppression must not leak past the imported subtree: document declarations,
+        // references, and a nested algorithm written AFTER the open keep every site, a local
+        // Helper shadows the module's public Helper (direct beats open), and references to the
+        // imported Total still bind to the locationless imported target.
+        const string source = """
+            open 'https://katlang.org/lib.kat'
+            Local = Total + 1
+            Helper = 3
+            F = {
+              Fee = Helper + Total
+              Fee
+            }
+            Local + F
+            """;
+        var remoteFiles = new Dictionary<string, string>
+        {
+            ["https://katlang.org/lib.kat"] = "public Total = 5\nFee = 9\npublic Helper = 100",
+        };
+        var model = BuildModel(source, remoteFiles);
+
+        Assert.Equal(
+            [("Local", 2, 1, 5), ("Helper", 3, 1, 6), ("F", 4, 1, 1), ("Fee", 5, 3, 5)],
+            model.Declarations
+                .Select(static declaration => (declaration.Name, declaration.Span.StartLineNumber, declaration.Span.StartColumn, declaration.Span.EndColumn))
+                .ToList());
+
+        var helper = Assert.Single(model.FindDeclarations("Helper"));
+        var helperReference = ResolutionAt(model, 5, 9);
+        Assert.Equal(IdentifierClassification.PropertyReference, helperReference.Classification);
+        Assert.Same(helper, helperReference.ResolvedDeclaration);
+        Assert.Same(helper, helperReference.ResolvedProperty!.Declaration);
+
+        var fee = Assert.Single(model.FindDeclarations("Fee"));
+        var feeReference = ResolutionAt(model, 6, 3);
+        Assert.Equal(IdentifierClassification.PropertyReference, feeReference.Classification);
+        Assert.Same(fee, feeReference.ResolvedDeclaration);
+
+        foreach (var (line, column) in new[] { (2, 9), (5, 18) })
+        {
+            var totalReference = ResolutionAt(model, line, column);
+            Assert.Equal("Total", totalReference.Occurrence.Name);
+            Assert.Equal(IdentifierClassification.PropertyReference, totalReference.Classification);
+            AssertModuleProvidedTarget(totalReference, "Total");
+        }
+
+        Assert.Same(Assert.Single(model.FindDeclarations("Local")), ResolutionAt(model, 8, 1).ResolvedDeclaration);
+        Assert.Same(Assert.Single(model.FindDeclarations("F")), ResolutionAt(model, 8, 9).ResolvedDeclaration);
+        Assert.Equal(2, model.FindResolutions("Total").Count);
+        Assert.Equal(2, model.FindResolutions("Fee").Count);
+        Assert.Equal(2, model.FindResolutions("Helper").Count);
+
+        // The nested block sees its own Fee and the local Helper; the module's private Fee and
+        // public Helper never reach either scope, and Total is visible without a location.
+        var block = model.FindScopeAt(6, 3);
+        Assert.Same(fee, SingleSymbol(block, "Fee").Declaration);
+        Assert.Same(helper, SingleSymbol(block, "Helper").Declaration);
+        Assert.Null(SingleSymbol(block, "Total").Declaration);
+        var root = model.FindScopeAt(8, 1);
+        Assert.DoesNotContain(root.Symbols, symbol => symbol.Name == "Fee");
+        Assert.Same(helper, SingleSymbol(root, "Helper").Declaration);
+        var visibleTotal = SingleSymbol(root, "Total");
+        Assert.Equal(IdentifierClassification.PropertyReference, visibleTotal.Classification);
+        Assert.Null(visibleTotal.Declaration);
+        Assert.Equal("Total", visibleTotal.Property!.Name);
+
+        AssertIdentifierSitesSliceToTheirSpelling(model, source);
+        AssertPositionalQueriesReturnOnlyDocumentSites(model, source);
+        Assert.Equal("14", Evaluate(source, remoteFiles));
+    }
+
+    [Fact]
+    public void ModuleProvenance_SuppressionIsInheritedAtEveryDepthAndAcrossChainedModules()
+    {
+        // An ordinary nested algorithm inside the module, and a module that opens another
+        // module: no declaration, reference, or classification site surfaces from any depth,
+        // while the document's references bind to the imported targets.
+        const string source = "open 'https://katlang.org/lib.kat'\nTax + Deep.Inner";
+        var remoteFiles = new Dictionary<string, string>
+        {
+            ["https://katlang.org/lib.kat"] = """
+                open 'https://katlang.org/base.kat'
+                public Tax = Base + 1
+                public Deep = {
+                  public Inner = Base - 19
+                  Secret = 2
+                  Inner
+                }
+                Helper = 9
+                """,
+            ["https://katlang.org/base.kat"] = "public Base = 20\nHidden = 3",
+        };
+        var fetched = new List<string>();
+        var model = BuildModel(source, TrackingDownloader(remoteFiles, fetched));
+
+        // Both modules were elaborated (not deferred): the sources were fetched and no name
+        // is left indeterminate.
+        Assert.Equal(["https://katlang.org/lib.kat", "https://katlang.org/base.kat"], fetched);
+        Assert.DoesNotContain(
+            model.IdentifierResolutions,
+            resolution => resolution.Classification is IdentifierClassification.DeferredModuleReference or IdentifierClassification.Unresolved);
+
+        Assert.Empty(model.Declarations);
+        Assert.Equal(
+            [("Tax", 2, 1, 3), ("Deep", 2, 7, 10), ("Inner", 2, 12, 16)],
+            model.IdentifierOccurrences
+                .Select(static occurrence => (occurrence.Name, occurrence.Span.StartLineNumber, occurrence.Span.StartColumn, occurrence.Span.EndColumn))
+                .ToList());
+        AssertNoSites(model, "Base", "Hidden", "Secret", "Helper");
+
+        var taxReference = ResolutionAt(model, 2, 1);
+        Assert.Equal(IdentifierClassification.PropertyReference, taxReference.Classification);
+        AssertModuleProvidedTarget(taxReference, "Tax");
+
+        var deepReference = ResolutionAt(model, 2, 7);
+        Assert.Equal(IdentifierClassification.PropertyReference, deepReference.Classification);
+        AssertModuleProvidedTarget(deepReference, "Deep");
+
+        var innerReference = ResolutionAt(model, 2, 12);
+        Assert.Equal(OccurrenceKind.DotMemberReference, innerReference.Occurrence.Kind);
+        Assert.Equal(IdentifierClassification.PropertyReference, innerReference.Classification);
+        var inner = AssertModuleProvidedTarget(innerReference, "Inner");
+        Assert.True(inner.IsPublic);
+        Assert.Same(innerReference, Assert.Single(model.FindResolutions("Inner")));
+
+        // Visibility: lib's public names, and nothing that lib merely opened or kept private.
+        // Deep's structural member surface lists its exported members (private ones included,
+        // as structural dot access reaches them), every one locationless.
+        var root = Assert.Single(model.ScopeVisibilities);
+        Assert.Null(root.Span);
+        Assert.Equal(["Deep", "Tax"], root.Symbols.Select(static symbol => symbol.Name).ToList());
+        var deep = SingleSymbol(root, "Deep");
+        Assert.Null(deep.Declaration);
+        Assert.Equal(["Inner", "Secret"], deep.Members.Select(static member => member.Name).ToList());
+        Assert.All(deep.Members, member => Assert.Null(member.Declaration));
+        Assert.All(deep.Members, member => Assert.Null(member.Property!.Declaration));
+
+        AssertIdentifierSitesSliceToTheirSpelling(model, source);
+        AssertPositionalQueriesReturnOnlyDocumentSites(model, source);
+        Assert.Equal("22", Evaluate(source, remoteFiles));
+    }
+
+    [Fact]
+    public void ModuleProvenance_ImportedCallableMetadataCarriesNoDocumentSpans()
+    {
+        // Imported explicit parameters and clause binders are declarations positioned in the
+        // module: they register no sites, and the imported property metadata keeps its
+        // callable shape without any span a consumer could take for a document position.
+        const string source = "open 'https://katlang.org/lib.kat'\nScale(2) + Pick(1)";
+        var remoteFiles = new Dictionary<string, string>
+        {
+            ["https://katlang.org/lib.kat"] = "public Scale(x) = x * 2\npublic Pick(0) = 0\npublic Pick(n) = n",
+        };
+        var model = BuildModel(source, remoteFiles);
+
+        Assert.Empty(model.Declarations);
+        AssertNoSites(model, "x", "n");
+
+        var scale = AssertModuleProvidedTarget(ResolutionAt(model, 2, 1), "Scale");
+        Assert.Equal(PropertyShape.Ordinary, scale.Shape);
+        AssertPropertySignature(scale, "Scale(x)", "x");
+        var x = Assert.Single(scale.Parameters);
+        Assert.Equal(PropertyParameterKind.Explicit, x.Kind);
+        Assert.Null(x.Span);
+        Assert.All(scale.Signatures.SelectMany(static signature => signature.Parameters), parameter => Assert.Null(parameter.Span));
+
+        var pick = AssertModuleProvidedTarget(ResolutionAt(model, 2, 12), "Pick");
+        Assert.Equal(PropertyShape.Conditional, pick.Shape);
+        Assert.Equal(["Pick(0)", "Pick(n)"], pick.ConditionalBranches.Select(static branch => branch.HeadText).ToList());
+        Assert.All(pick.ConditionalBranches, branch => Assert.Null(branch.HeadSpan));
+        Assert.All(pick.Signatures.SelectMany(static signature => signature.Parameters), parameter => Assert.Null(parameter.Span));
+
+        // Apart from the spans, the imported metadata is exactly what the same declarations
+        // produce when they are written in the document itself.
+        var local = BuildModel("public Scale(x) = x * 2\npublic Pick(0) = 0\npublic Pick(n) = n\nScale(2) + Pick(1)");
+        var localScale = SingleProperty(local, "Scale");
+        Assert.Equal(localScale.DisplaySignature, scale.DisplaySignature);
+        Assert.Equal(
+            localScale.Signatures.Select(static signature => signature.DisplayText),
+            scale.Signatures.Select(static signature => signature.DisplayText));
+        Assert.NotNull(Assert.Single(localScale.Parameters).Span);
+        var localPick = SingleProperty(local, "Pick");
+        Assert.Equal(localPick.DisplaySignature, pick.DisplaySignature);
+        Assert.Equal(
+            localPick.ConditionalBranches.Select(static branch => branch.HeadText),
+            pick.ConditionalBranches.Select(static branch => branch.HeadText));
+        Assert.Equal(
+            localPick.Signatures.Select(static signature => signature.DisplayText),
+            pick.Signatures.Select(static signature => signature.DisplayText));
+        Assert.All(localPick.ConditionalBranches, branch => Assert.NotNull(branch.HeadSpan));
+
+        AssertIdentifierSitesSliceToTheirSpelling(model, source);
+        AssertPositionalQueriesReturnOnlyDocumentSites(model, source);
+        Assert.Equal("5", Evaluate(source, remoteFiles));
+    }
+
+    [Fact]
+    public void ModuleProvenance_LookupReachingAnUnwalkedModuleSubtreeIsLocationless()
+    {
+        // Provenance is structural, not a walk position: A's body is analyzed before the walk
+        // reaches M's value (the module), so the lookup of T — a member of the NESTED module
+        // algorithm Sub, reached through `open M.Sub` — creates T's symbol from document
+        // context. It must still be locationless, and Sub/T/Hid must register no sites.
+        const string source = "open M.Sub\nA = T\nM = load('https://katlang.org/lib.kat')\nA + 1";
+        var remoteFiles = new Dictionary<string, string>
+        {
+            ["https://katlang.org/lib.kat"] = "public Sub = {\n  public T = 4\n  Hid = 1\n}",
+        };
+        var model = BuildModel(source, remoteFiles);
+
+        Assert.Equal(
+            [("A", 2, 1, 1), ("M", 3, 1, 1)],
+            model.Declarations
+                .Select(static declaration => (declaration.Name, declaration.Span.StartLineNumber, declaration.Span.StartColumn, declaration.Span.EndColumn))
+                .ToList());
+        AssertNoSites(model, "Hid");
+        Assert.Empty(model.FindDeclarations("Sub"));
+        Assert.Empty(model.FindDeclarations("T"));
+
+        var openHead = ResolutionAt(model, 1, 6);
+        Assert.Equal(OccurrenceKind.OpenTargetReference, openHead.Occurrence.Kind);
+        Assert.Equal(IdentifierClassification.OpenTarget, openHead.Classification);
+        Assert.Same(Assert.Single(model.FindDeclarations("M")), openHead.ResolvedDeclaration);
+
+        var openMember = ResolutionAt(model, 1, 8);
+        Assert.Equal(OccurrenceKind.OpenTargetMemberReference, openMember.Occurrence.Kind);
+        Assert.Equal(IdentifierClassification.OpenTarget, openMember.Classification);
+        AssertModuleProvidedTarget(openMember, "Sub");
+
+        var tReference = ResolutionAt(model, 2, 5);
+        Assert.Equal(OccurrenceKind.ResolveReference, tReference.Occurrence.Kind);
+        Assert.Equal(IdentifierClassification.PropertyReference, tReference.Classification);
+        AssertModuleProvidedTarget(tReference, "T");
+        Assert.Same(tReference, Assert.Single(model.FindResolutions("T")));
+
+        AssertIdentifierSitesSliceToTheirSpelling(model, source);
+        AssertPositionalQueriesReturnOnlyDocumentSites(model, source);
+        Assert.Equal("5", Evaluate(source, remoteFiles));
+    }
+
+    [Fact]
+    public void ModuleProvenance_EqualCoordinatesDoNotConflateDistinctSourceAnchors()
+    {
+        const string source = "open 'https://katlang.org/lib.kat'\nTotal";
+        var model = BuildModel(source, new Dictionary<string, string>
+        {
+            ["https://katlang.org/lib.kat"] = "public Total = 5\nTotal",
+        });
+
+        // The module's own Total reference has exactly the document reference's spelling
+        // AND coordinates. Only the distinct, document-backed occurrence may be emitted.
+        var reference = Assert.Single(model.IdentifierResolutions);
+        Assert.Equal("Total", reference.Occurrence.Name);
+        Assert.Equal(OccurrenceKind.ResolveReference, reference.Occurrence.Kind);
+        Assert.Equal(IdentifierClassification.PropertyReference, reference.Classification);
+        AssertSpan(reference.Occurrence.Span, 2, 1, 2, 5);
+        var target = AssertModuleProvidedTarget(reference, "Total");
+        Assert.Same(target, Assert.Single(model.GetVisibleSymbolsAt(2, 1), symbol => symbol.Name == "Total").Property);
+        Assert.Empty(model.Declarations);
+        AssertIdentifierSitesSliceToTheirSpelling(model, source);
+        AssertPositionalQueriesReturnOnlyDocumentSites(model, source);
+    }
+
+    [Fact]
+    public async Task ModuleProvenance_AnalyzingModuleAsCurrentRootKeepsItsOwnSites()
+    {
+        const string moduleSource = "open 'https://katlang.org/base.kat'\npublic Total = Base + 1\nTotal";
+        var parsed = await Parser.ParseAsync("open 'https://katlang.org/lib.kat'\nTotal", new RunOptions
+        {
+            DownloadCode = (url, _) => ValueTask.FromResult(url.EndsWith("/lib.kat", StringComparison.Ordinal)
+                ? moduleSource : "public Base = 4\nHidden = 3"),
+        });
+        Assert.False(parsed.HasErrors);
+        Assert.False(Assert.IsType<Algorithm.User>(parsed.Root).IsModuleElaborated);
+        var module = Assert.IsType<Algorithm.User>(
+            Assert.IsType<Expr.AlgorithmExpr>(Assert.Single(parsed.Root.Opens)).Algorithm);
+        Assert.True(module.IsModuleElaborated);
+
+        // Supplying the loaded algorithm itself to Build chooses THAT source as the
+        // current document. Its own mark is ignored, while its nested import still counts.
+        var model = SemanticModelBuilder.Build(module);
+        var total = Assert.Single(model.FindDeclarations("Total"));
+        AssertSpan(total.Span, 2, 8, 2, 12);
+        var reference = ResolutionAt(model, 3, 1);
+        Assert.Equal(IdentifierClassification.PropertyReference, reference.Classification);
+        Assert.Same(total, reference.ResolvedDeclaration);
+        Assert.Same(model.FindPropertyByDeclaration(total), reference.ResolvedProperty);
+        var imported = ResolutionAt(model, 2, 16);
+        Assert.Equal("Base", imported.Occurrence.Name);
+        Assert.Equal(IdentifierClassification.PropertyReference, imported.Classification);
+        AssertModuleProvidedTarget(imported, "Base");
+        AssertNoSites(model, "Hidden");
+        Assert.Empty(model.FindDeclarations("Base"));
+        AssertIdentifierSitesSliceToTheirSpelling(model, moduleSource);
+        AssertPositionalQueriesReturnOnlyDocumentSites(model, moduleSource);
+    }
+
+    [Fact]
+    public async Task ModuleProvenance_CachedModuleDagSharesLocationlessTargets()
+    {
+        const string source = "A = load('https://katlang.org/lib.kat')\nB = load('https://katlang.org/lib.kat')\nA.F(2) + B.F(3)";
+        var fetches = 0;
+        var parsed = await Parser.ParseAsync(source, new RunOptions
+        {
+            DownloadCode = (_, _) =>
+            {
+                fetches++;
+                return ValueTask.FromResult("public F(x) = x + 1\nHidden = 9");
+            },
+        });
+        Assert.False(parsed.HasErrors);
+        Assert.Equal(1, fetches);
+        Assert.Same(parsed.Root.Properties[0].Value, parsed.Root.Properties[1].Value);
+
+        var model = SemanticModelBuilder.Build(parsed);
+        Assert.Equal(["A", "B"], model.Declarations.Select(declaration => declaration.Name));
+        var first = ResolutionAt(model, 3, 3);
+        var second = ResolutionAt(model, 3, 12);
+        Assert.Equal(IdentifierClassification.PropertyReference, first.Classification);
+        Assert.Equal(IdentifierClassification.PropertyReference, second.Classification);
+        Assert.Equal(OccurrenceKind.DotMemberReference, first.Occurrence.Kind);
+        Assert.Equal(OccurrenceKind.DotMemberReference, second.Occurrence.Kind);
+        var target = AssertModuleProvidedTarget(first, "F");
+        Assert.Same(target, AssertModuleProvidedTarget(second, "F"));
+        AssertPropertySignature(target, "F(x)", "x");
+        AssertNoSites(model, "Hidden", "x");
+        AssertIdentifierSitesSliceToTheirSpelling(model, source);
+        AssertPositionalQueriesReturnOnlyDocumentSites(model, source);
+        Assert.Equal(1, fetches); // Building and querying the model perform no I/O.
+    }
+
+    [Fact]
+    public async Task ModuleProvenance_SharedImportedNodesDoNotAcquireDocumentSites()
+    {
+        const string source = "open 'https://katlang.org/lib.kat', 'https://katlang.org/other.kat'\nAlias = 0\nLocal = 3\nLocal";
+        var parsed = await Parser.ParseAsync(source, new RunOptions
+        {
+            DownloadCode = (url, _) => ValueTask.FromResult(url.EndsWith("/lib.kat", StringComparison.Ordinal)
+                ? "public F(x) = x + 1\nFee = 9\n{ F(2) }"
+                : "public F(other) = other + 2"),
+        });
+        Assert.False(parsed.HasErrors);
+        var module = Assert.IsType<Expr.AlgorithmExpr>(parsed.Root.Opens[0]).Algorithm;
+        var imported = Assert.Single(module.Properties, property => property.Name == "F");
+        var alias = Assert.Single(parsed.Root.Properties, property => property.Name == "Alias");
+        var sharedBlock = Assert.IsType<Expr.AlgorithmExpr>(Assert.Single(module.Output));
+
+        // The public Build(Algorithm) path accepts shared acyclic graphs. Moving the SAME
+        // imported declaration/reference under another parent does not rebase its source.
+        // Alias has a local declaration and a copied algorithm with shared imported
+        // body/parameter nodes. F is also installed directly: it must beat BOTH opens.
+        var root = parsed.Root with
+        {
+            Properties = [imported, alias with { Value = imported.Value with { } },
+                .. parsed.Root.Properties.Where(property => property.Name != "Alias")],
+            Output = new OutputBundle([sharedBlock,
+                sharedBlock with { Algorithm = sharedBlock.Algorithm with { } }, .. parsed.Root.Output]),
+        };
+        var model = SemanticModelBuilder.Build(root);
+
+        Assert.Equal(["Alias", "Local"], model.Declarations.Select(declaration => declaration.Name));
+        AssertNoSites(model, "F", "Fee", "x", "other");
+        var local = ResolutionAt(model, 4, 1);
+        Assert.Equal("Local", local.Occurrence.Name);
+        Assert.Same(Assert.Single(model.FindDeclarations("Local")), local.ResolvedDeclaration);
+        var aliasInfo = SingleProperty(model, "Alias");
+        Assert.Same(Assert.Single(model.FindDeclarations("Alias")), aliasInfo.Declaration);
+        AssertPropertySignature(aliasInfo, "Alias(x)", "x");
+        Assert.Null(Assert.Single(aliasInfo.Parameters).Span);
+        var visible = Assert.Single(model.GetVisibleSymbolsAt(4, 1), symbol => symbol.Name == "F");
+        Assert.Equal(IdentifierClassification.PropertyReference, visible.Classification);
+        Assert.Null(visible.Declaration);
+        Assert.Equal("F(x)", visible.Property!.DisplaySignature);
+        // The copied block's module-relative extent must not create a local scope over
+        // the document's Local declaration either. This checks extent provenance, not spelling.
+        Assert.Same(model.ScopeVisibilities[0], model.FindScopeAt(3, 1));
+        AssertIdentifierSitesSliceToTheirSpelling(model, source);
+        AssertPositionalQueriesReturnOnlyDocumentSites(model, source);
+    }
+
+    [Fact]
+    public async Task ModuleProvenance_LocalAliasToImportedBodyKeepsOnlyLocalDeclarationSpans()
+    {
+        const string source = "open 'https://katlang.org/lib.kat'\nAlias = 0\nAlias";
+        var parsed = await Parser.ParseAsync(source, new RunOptions
+        {
+            DownloadCode = (_, _) => ValueTask.FromResult(
+                "public Pick(n, 0) = n\npublic Pick(n, k) = n + k"),
+        });
+        Assert.False(parsed.HasErrors);
+        var module = Assert.IsType<Expr.AlgorithmExpr>(Assert.Single(parsed.Root.Opens)).Algorithm;
+        var imported = Assert.Single(module.Properties);
+        var alias = Assert.Single(parsed.Root.Properties);
+        var model = SemanticModelBuilder.Build(parsed.Root with
+        {
+            // Copying the family retains shared branch patterns and bodies, whose spans
+            // still belong to the module even though this algorithm has a local owner.
+            Properties = [alias with { Value = imported.Value with { } }],
+        });
+
+        var info = SingleProperty(model, "Alias");
+        Assert.Equal(PropertyShape.Conditional, info.Shape);
+        var declaration = Assert.Single(model.FindDeclarations("Alias"));
+        Assert.Same(declaration, info.Declaration);
+        Assert.Same(declaration.Span, info.ConditionalBranches[0].HeadSpan);
+        Assert.Equal("n", info.Signatures[0].Parameters[0].Name);
+        Assert.Null(info.Signatures[0].Parameters[0].Span);
+        Assert.Same(info, ResolutionAt(model, 3, 1).ResolvedProperty);
+        AssertNoSites(model, "Pick", "n", "k");
+        AssertIdentifierSitesSliceToTheirSpelling(model, source);
+        AssertPositionalQueriesReturnOnlyDocumentSites(model, source);
+    }
+
+    [Fact]
+    public void ModuleProvenance_VisibilityAndDeferredModuleBoundaryAreUnchanged()
+    {
+        // The eager open's public name stays visible (locationless) and its private name does
+        // not leak; the deferred branch (B2c) keeps its indeterminate classification and its
+        // module is never fetched — by the model build or by an evaluation that selects the
+        // other branch.
+        const string source = """
+            open 'https://katlang.org/lib2.kat'
+            F(0) = {
+              open 'https://katlang.org/deferred.kat'
+              Later + Total
+            }
+            F(1) = Total
+            F(1)
+            """;
+        var remoteFiles = new Dictionary<string, string>
+        {
+            ["https://katlang.org/lib2.kat"] = "public Total = 5\nFee = 9",
+        };
+        var fetched = new List<string>();
+        var model = BuildModel(source, TrackingDownloader(remoteFiles, fetched));
+        Assert.Equal(["https://katlang.org/lib2.kat"], fetched);
+
+        var later = Assert.Single(model.FindResolutions("Later"));
+        Assert.Equal(IdentifierClassification.DeferredModuleReference, later.Classification);
+        Assert.Null(later.ResolvedDeclaration);
+        Assert.Null(later.ResolvedProperty);
+
+        // Under the deferred open, the eagerly imported Total is indeterminate (the deferred
+        // module may supply or ambiguate it); outside it, it is the imported target.
+        var deferredTotal = ResolutionAt(model, 4, 11);
+        Assert.Equal(IdentifierClassification.DeferredModuleReference, deferredTotal.Classification);
+        Assert.Null(deferredTotal.ResolvedDeclaration);
+        var eagerTotal = ResolutionAt(model, 6, 8);
+        Assert.Equal(IdentifierClassification.PropertyReference, eagerTotal.Classification);
+        AssertModuleProvidedTarget(eagerTotal, "Total");
+
+        var visibleTotal = Assert.Single(model.GetVisibleSymbolsAt(6, 8), symbol => symbol.Name == "Total");
+        Assert.Equal(IdentifierClassification.PropertyReference, visibleTotal.Classification);
+        Assert.Null(visibleTotal.Declaration);
+        Assert.Equal("Total", visibleTotal.Property!.Name);
+        Assert.DoesNotContain(model.GetVisibleSymbolsAt(6, 8), symbol => symbol.Name == "Fee");
+        var deferredVisibleTotal = Assert.Single(model.GetVisibleSymbolsAt(4, 3), symbol => symbol.Name == "Total");
+        Assert.Equal(IdentifierClassification.DeferredModuleReference, deferredVisibleTotal.Classification);
+        Assert.Null(deferredVisibleTotal.Declaration);
+        Assert.DoesNotContain(model.GetVisibleSymbolsAt(4, 3), symbol => symbol.Name == "Fee");
+
+        AssertNoSites(model, "Fee");
+        Assert.Equal(2, model.FindDeclarations("F").Count);
+        AssertIdentifierSitesSliceToTheirSpelling(model, source);
+        AssertPositionalQueriesReturnOnlyDocumentSites(model, source);
+
+        var evaluationFetches = new List<string>();
+        Assert.Equal("5", Evaluate(source, TrackingDownloader(remoteFiles, evaluationFetches)));
+        Assert.Equal(["https://katlang.org/lib2.kat"], evaluationFetches);
     }
 
     [Fact]

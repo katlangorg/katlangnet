@@ -4,9 +4,11 @@ namespace KatLang.Semantics;
 /// One name visible at a source position — the editor-facing completion view of
 /// KatLang's ownership-first lexical lookup. A visible symbol is a scope QUERY
 /// result, not a source-backed identifier site: <see cref="Declaration"/> links
-/// the declaration occurrence when one exists (module-elaborated declarations
-/// carry spans from their own module source), and prelude/implicit-parameter
-/// symbols have none.
+/// the document's declaration occurrence when one exists; prelude and
+/// implicit-parameter symbols have none, and neither does a symbol supplied by
+/// a load-elaborated module (its declaration lies in the module's own source
+/// text, so it is locationless with respect to the current document while
+/// <see cref="Property"/> still carries its callable metadata).
 /// </summary>
 public sealed record VisibleSymbol
 {

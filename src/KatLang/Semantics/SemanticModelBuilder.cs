@@ -121,12 +121,34 @@ public static class SemanticModelBuilder
         private readonly List<IdentifierResolution> _identifierResolutions = [];
         private readonly List<PropertyInfo> _propertyInfos = [];
         private readonly HashSet<PropertyInfo> _seenPropertyInfos = new(ReferenceEqualityComparer.Instance);
-        // SourceSpan coordinates are document-local. Two loaded modules may therefore
-        // contain value-equal declaration DTOs even though they denote different
-        // properties; declaration resolution carries the canonical occurrence object,
-        // so this identity map must not collapse those module-local declarations.
+        // Declaration resolution carries the canonical occurrence object, and this
+        // identity map links exactly that object to its property: a value-equal DTO
+        // (host-built trees may share declaration nodes; a consumer may construct one)
+        // is never a key.
         private readonly Dictionary<DeclarationOccurrence, PropertyInfo> _propertyInfoByDeclaration =
             new(ReferenceEqualityComparer.Instance);
+
+        // MODULE PROVENANCE. Every algorithm node inside a load-elaborated module subtree
+        // (`Algorithm.User.IsModuleElaborated`, set by ModuleLoader on the spliced module
+        // root — the document root itself never counts: a host analyzing a module directly
+        // makes that module's text the current document). Spans inside such a subtree are
+        // positioned in the MODULE's source text, so nothing there is a site of the
+        // current document: no declaration occurrence, reference site, classification
+        // site, or scope region may be emitted for it, and a document reference that
+        // resolves to one of its properties targets a LOCATIONLESS property (no
+        // declaration occurrence, no parameter or clause-head spans). The set is
+        // collected structurally before the walk because property symbols are created
+        // lazily by lookups — a document body declared before `M = load('url')` can reach
+        // a nested module algorithm through `open M.Sub` before the walk enters the
+        // module — so the walk position alone cannot classify an owner; the region
+        // stack's inherited suppression (OpenScopeRegion) is this set's walk-time
+        // projection and gates the sites the walk itself creates. Shared source anchors
+        // are additionally filtered through _moduleProvidedSpans, even outside that region.
+        private readonly HashSet<Algorithm> _moduleProvidedAlgorithms = new(ReferenceEqualityComparer.Instance);
+        // Host-built DAGs may reuse a module's property, expression, or parameter metadata
+        // under a document-owned parent. Its source anchor still belongs to the module.
+        // Reference identity matters: equal coordinates in two parsed documents are unrelated.
+        private readonly HashSet<SourceSpan> _moduleProvidedSpans = new(ReferenceEqualityComparer.Instance);
         private readonly Dictionary<Property, SymbolDefinition> _propertySymbolCache =
             new(ReferenceEqualityComparer.Instance);
         private readonly Dictionary<Algorithm, IReadOnlyList<VisibleSymbol>> _memberSymbolCache =
@@ -188,6 +210,7 @@ public static class SemanticModelBuilder
 
         public SemanticModel Build(Algorithm root)
         {
+            ModuleProvidedAlgorithmCollector.Collect(root, _moduleProvidedAlgorithms, _moduleProvidedSpans);
             VisitAlgorithm(root, PreludeScope, extraParameters: null);
 
             var sortedIdentifierOccurrences = _identifierOccurrences
@@ -255,8 +278,11 @@ public static class SemanticModelBuilder
             IReadOnlyDictionary<string, SymbolDefinition>? extraParameters,
             SourceSpan? regionSeedSpan = null)
         {
+            // The region — and with it the module-provenance suppression state — is
+            // established BEFORE the scope is created: CreateScope registers the
+            // algorithm's own declaration sites, which must already be gated.
+            var region = OpenScopeRegion(algorithm, regionSeedSpan);
             var scope = CreateScope(algorithm, parentScope, extraParameters);
-            var region = OpenScopeRegion(scope, regionSeedSpan, algorithm.IsModuleElaborated);
             ExtendRegionWithDeclarationAnchors(algorithm, extraParameters);
 
             foreach (var open in algorithm.Opens)
@@ -268,7 +294,7 @@ public static class SemanticModelBuilder
             foreach (var expr in algorithm.Output)
                 VisitExpr(expr, scope);
 
-            CloseScopeRegion(region);
+            CloseScopeRegion(region, scope);
         }
 
         private void VisitConditionalAlgorithm(
@@ -276,8 +302,8 @@ public static class SemanticModelBuilder
             ScopeFrame parentScope,
             SourceSpan? regionSeedSpan = null)
         {
+            var region = OpenScopeRegion(algorithm, regionSeedSpan);
             var scope = CreateScope(algorithm, parentScope, extraParameters: null);
-            var region = OpenScopeRegion(scope, regionSeedSpan);
             ExtendRegionWithDeclarationAnchors(algorithm, extraParameters: null);
 
             foreach (var open in algorithm.Opens)
@@ -286,7 +312,7 @@ public static class SemanticModelBuilder
             foreach (var branch in algorithm.Branches)
                 VisitConditionalBranch(branch, scope);
 
-            CloseScopeRegion(region);
+            CloseScopeRegion(region, scope);
         }
 
         private void VisitConditionalBranch(CondBranch branch, ScopeFrame parentScope)
@@ -301,16 +327,16 @@ public static class SemanticModelBuilder
             IReadOnlyDictionary<string, SymbolDefinition>? extraParameters)
         {
             // Every own property's symbol is built eagerly here — in declaration order,
-            // before the body walk — for its SIDE EFFECTS: CreatePropertySymbol registers
-            // the property's declaration occurrences, their definition resolutions, and
-            // its PropertyInfo, which the model reports even for a property nothing
-            // references (inside a load-elaborated module subtree, whose scope regions
-            // are suppressed, nothing else would ever register them). The symbols are
-            // served from the per-property cache; the frame keeps no property table of
-            // its own because property lookup has ONE owner, ElaboratedScopeLookup over
-            // PropertyScope.
+            // before the body walk — for its SIDE EFFECTS: for a document-owned
+            // algorithm CreatePropertySymbol registers the property's declaration
+            // occurrences, their definition resolutions, and its PropertyInfo, which the
+            // model reports even for a property nothing references; for a module-provided
+            // algorithm it builds the locationless symbol the document's lookups bind to
+            // and registers nothing. The symbols are served from the per-property cache;
+            // the frame keeps no property table of its own because property lookup has
+            // ONE owner, ElaboratedScopeLookup over PropertyScope.
             foreach (var property in algorithm.Properties)
-                CreatePropertySymbol(property);
+                CreatePropertySymbol(algorithm, property);
 
             var propertyScope = ElaboratedScopeLookup.CreateScope(algorithm, parentScope.PropertyScope);
 
@@ -469,14 +495,39 @@ public static class SemanticModelBuilder
             return deferred;
         }
 
-        private SymbolDefinition CreatePropertySymbol(Property property)
+        /// <summary>
+        /// Whether <paramref name="owner"/> sits inside a load-elaborated module subtree
+        /// (see <see cref="_moduleProvidedAlgorithms"/>): its declarations are positioned
+        /// in the module's source text and are never sites of the current document.
+        /// </summary>
+        private bool IsModuleProvided(Algorithm owner)
+            => _moduleProvidedAlgorithms.Contains(owner);
+
+        /// <summary>
+        /// Whether the walk currently stands inside a load-elaborated module subtree —
+        /// the region stack's inherited suppression state, seeded from
+        /// <see cref="IsModuleProvided"/> when the enclosing algorithm's region opened.
+        /// Every site the walk creates (declarations of parameters and binders, every
+        /// reference and classification site) is gated on it; property declarations are
+        /// gated on their owner directly because lookups create them lazily.
+        /// </summary>
+        private bool InModuleProvidedSubtree
+            => _regionStack.Count > 0 && _regionStack[^1].Suppressed;
+
+        private SymbolDefinition CreatePropertySymbol(Algorithm owner, Property property)
         {
             if (_propertySymbolCache.TryGetValue(property, out var cached))
                 return cached;
 
+            if (IsModuleProvided(owner))
+                return CreateModuleProvidedPropertySymbol(property);
+
             var declarations = new List<DeclarationOccurrence>(property.DeclarationSpans.Count);
             foreach (var span in property.DeclarationSpans)
-                declarations.Add(CreateDeclarationOccurrence(property.Name, span, OccurrenceKind.PropertyDefinition));
+            {
+                if (DocumentSpan(span, _moduleProvidedSpans) is not null)
+                    declarations.Add(CreateDeclarationOccurrence(property.Name, span, OccurrenceKind.PropertyDefinition));
+            }
 
             var canonicalDeclaration = declarations.FirstOrDefault();
             var propertyInfo = CreatePropertyInfo(
@@ -486,7 +537,8 @@ public static class SemanticModelBuilder
                 canonicalDeclaration,
                 property.IsPublic,
                 property.Exposure,
-                property.DeclarationSpans);
+                property.DeclarationSpans,
+                moduleProvidedSpans: _moduleProvidedSpans);
 
             foreach (var declaration in declarations)
             {
@@ -499,7 +551,7 @@ public static class SemanticModelBuilder
             // (`$deconstruct$N`). They remain available for internal lookup and
             // evaluation through the symbol cache, but must not surface as
             // user-facing semantic property metadata.
-            if (property.DeclarationSpans.Count > 0)
+            if (declarations.Count > 0)
                 TrackPropertyInfo(propertyInfo);
 
             var symbol = new SymbolDefinition(
@@ -513,13 +565,46 @@ public static class SemanticModelBuilder
             return symbol;
         }
 
+        /// <summary>
+        /// The symbol of a property declared inside a load-elaborated module: the same
+        /// binding surface (value, visibility, exposure, callable signature) with NO
+        /// document location — no declaration occurrence, no definition resolution, no
+        /// parameter or clause-head spans (all of which would be module-relative
+        /// coordinates masquerading as positions in the current document). Nothing is
+        /// registered here; its <see cref="PropertyInfo"/> enters the model's property
+        /// list only through a document site that resolves to it (see
+        /// <see cref="AddResolution"/>).
+        /// </summary>
+        private SymbolDefinition CreateModuleProvidedPropertySymbol(Property property)
+        {
+            var propertyInfo = CreatePropertyInfo(
+                property.Name,
+                SymbolKind.Property,
+                property.Value,
+                declaration: null,
+                property.IsPublic,
+                property.Exposure,
+                declarationSpans: null,
+                moduleProvided: true);
+
+            var symbol = new SymbolDefinition(
+                property.Name,
+                SymbolKind.Property,
+                property.Value,
+                Declaration: null,
+                property.IsPublic,
+                propertyInfo);
+            _propertySymbolCache[property] = symbol;
+            return symbol;
+        }
+
         private SymbolDefinition CreateLookupPropertySymbol(Algorithm owner, Property property)
         {
             if (_propertySymbolCache.TryGetValue(property, out var cached))
                 return cached;
 
             if (!ReferenceEquals(owner, MathAlgorithm) && !ReferenceEquals(owner, PreludeAlgorithm))
-                return CreatePropertySymbol(property);
+                return CreatePropertySymbol(owner, property);
 
             var symbol = CreateBuiltinSymbol(
                 property.Name,
@@ -603,7 +688,13 @@ public static class SemanticModelBuilder
             OccurrenceKind occurrenceKind,
             IdentifierClassification definitionClassification)
         {
-            var declaration = span is null ? null : AddDeclaration(name, span, occurrenceKind, definitionClassification);
+            // A parameter or binder declared inside a load-elaborated module has no
+            // document site: the symbol still binds its references (all of which lie
+            // inside the same module and register nothing either), locationlessly.
+            span = DocumentSpan(span, _moduleProvidedSpans);
+            var declaration = span is null || InModuleProvidedSubtree
+                ? null
+                : AddDeclaration(name, span, occurrenceKind, definitionClassification);
             return new SymbolDefinition(name, kind, AlgorithmValue: null, Declaration: declaration, IsPublic: false, PropertyInfo: null);
         }
 
@@ -1081,8 +1172,14 @@ public static class SemanticModelBuilder
             PropertyExposure exposure,
             IReadOnlyList<SourceSpan>? declarationSpans,
             PropertyCallStyle preferredCallStyle = PropertyCallStyle.Plain,
-            bool? supportsLexicalDotCall = null)
+            bool? supportsLexicalDotCall = null,
+            bool moduleProvided = false,
+            IReadOnlySet<SourceSpan>? moduleProvidedSpans = null)
         {
+            // An imported property has no local metadata spans. A document-owned property
+            // can also reuse imported callable metadata in a host DAG: filter those spans
+            // individually while retaining its document-owned declaration/clause heads.
+            var documentLocalSpans = !moduleProvided;
             var supportsDotFallback = supportsLexicalDotCall
                 ?? SupportsLexicalDotCall(algorithm);
 
@@ -1109,14 +1206,16 @@ public static class SemanticModelBuilder
 
             return algorithm switch
             {
-                Algorithm.User user => CreateOrdinaryPropertyInfo(name, user, declaration, isPublic, exposure),
+                Algorithm.User user => CreateOrdinaryPropertyInfo(name, user, declaration, isPublic, exposure, documentLocalSpans, moduleProvidedSpans),
                 Algorithm.Conditional conditional => CreateConditionalPropertyInfo(
                     name,
                     conditional,
                     declaration,
                     isPublic,
                     exposure,
-                    declarationSpans),
+                    documentLocalSpans ? declarationSpans : null,
+                    documentLocalSpans,
+                    moduleProvidedSpans),
                 _ => new PropertyInfo(name, declaration, PropertyShape.Ordinary, isPublic, exposure, [], []),
             };
         }
@@ -1137,10 +1236,12 @@ public static class SemanticModelBuilder
             Algorithm.User algorithm,
             DeclarationOccurrence? declaration,
             bool isPublic,
-            PropertyExposure exposure)
+            PropertyExposure exposure,
+            bool documentLocalSpans,
+            IReadOnlySet<SourceSpan>? moduleProvidedSpans)
         {
             var signature = CallableSignature.FromAlgorithm(name, algorithm);
-            var parameters = CreateOrdinaryParameters(signature);
+            var parameters = CreateOrdinaryParameters(signature, documentLocalSpans, moduleProvidedSpans);
             return new PropertyInfo(
                 name,
                 declaration,
@@ -1155,7 +1256,10 @@ public static class SemanticModelBuilder
             };
         }
 
-        private static IReadOnlyList<PropertyParameterInfo> CreateOrdinaryParameters(CallableSignature signature)
+        private static IReadOnlyList<PropertyParameterInfo> CreateOrdinaryParameters(
+            CallableSignature signature,
+            bool documentLocalSpans,
+            IReadOnlySet<SourceSpan>? moduleProvidedSpans)
         {
             var parameters = new List<PropertyParameterInfo>(signature.Parameters.Count);
 
@@ -1164,7 +1268,7 @@ public static class SemanticModelBuilder
                 parameters.Add(new PropertyParameterInfo(
                     parameter.Name,
                     ToPropertyParameterKind(parameter.Source),
-                    GetSourceSpan(parameter))
+                    documentLocalSpans ? DocumentSpan(GetSourceSpan(parameter), moduleProvidedSpans) : null)
                 {
                     IsCollecting = parameter.Kind == ParameterKind.Collecting,
                 });
@@ -1220,12 +1324,14 @@ public static class SemanticModelBuilder
             DeclarationOccurrence? declaration,
             bool isPublic,
             PropertyExposure exposure,
-            IReadOnlyList<SourceSpan>? declarationSpans)
+            IReadOnlyList<SourceSpan>? declarationSpans,
+            bool documentLocalSpans,
+            IReadOnlySet<SourceSpan>? moduleProvidedSpans)
         {
             var arity = algorithm.Branches.Count == 0
                 ? 0
                 : algorithm.Branches[0].Pattern.TopLevelArity();
-            var parameters = CreateConditionalSignatureParameters(algorithm, arity);
+            var parameters = CreateConditionalSignatureParameters(algorithm, arity, documentLocalSpans, moduleProvidedSpans);
             var signatures = new List<PropertySignatureInfo>();
 
             if (arity > 0)
@@ -1246,7 +1352,7 @@ public static class SemanticModelBuilder
                 isPublic,
                 exposure,
                 Parameters: [],
-                CreateConditionalBranches(name, algorithm, declarationSpans))
+                CreateConditionalBranches(name, algorithm, declarationSpans, moduleProvidedSpans))
             {
                 Signatures = Array.AsReadOnly(signatures.ToArray()),
                 SupportsLexicalDotCall = arity > 0,
@@ -1255,7 +1361,9 @@ public static class SemanticModelBuilder
 
         private static IReadOnlyList<PropertyParameterInfo> CreateConditionalSignatureParameters(
             Algorithm.Conditional algorithm,
-            int arity)
+            int arity,
+            bool documentLocalSpans,
+            IReadOnlySet<SourceSpan>? moduleProvidedSpans)
         {
             if (arity == 0)
                 return [];
@@ -1277,7 +1385,8 @@ public static class SemanticModelBuilder
                 parameters[i] = new PropertyParameterInfo(
                     name,
                     PropertyParameterKind.ConditionalBinder,
-                    pattern is Pattern.Bind binder ? binder.NameSpan : null)
+                    documentLocalSpans && pattern is Pattern.Bind binder
+                        ? DocumentSpan(binder.NameSpan, moduleProvidedSpans) : null)
                 {
                     IsCollecting = pattern is Pattern.Bind { ParameterKind: ParameterKind.Collecting },
                 };
@@ -1391,10 +1500,14 @@ public static class SemanticModelBuilder
                     ? capture.Span
                     : null;
 
+        private static SourceSpan? DocumentSpan(SourceSpan? span, IReadOnlySet<SourceSpan>? moduleProvidedSpans)
+            => span is not null && moduleProvidedSpans?.Contains(span) == true ? null : span;
+
         private static IReadOnlyList<ConditionalBranchInfo> CreateConditionalBranches(
             string name,
             Algorithm.Conditional algorithm,
-            IReadOnlyList<SourceSpan>? declarationSpans)
+            IReadOnlyList<SourceSpan>? declarationSpans,
+            IReadOnlySet<SourceSpan>? moduleProvidedSpans)
         {
             var branches = new List<ConditionalBranchInfo>(algorithm.Branches.Count);
 
@@ -1402,7 +1515,7 @@ public static class SemanticModelBuilder
             {
                 var branch = algorithm.Branches[i];
                 var headSpan = declarationSpans is not null && i < declarationSpans.Count
-                    ? declarationSpans[i]
+                    ? DocumentSpan(declarationSpans[i], moduleProvidedSpans)
                     : null;
                 branches.Add(new ConditionalBranchInfo(
                     ConditionalBranchHeadFormatter.Format(name, branch.Pattern),
@@ -1447,8 +1560,11 @@ public static class SemanticModelBuilder
             PropertyInfo? propertyInfo)
         {
             // SemanticModel is source-backed: if there is no real identifier token
-            // in source, there is no identifier occurrence to record.
-            if (span is null)
+            // in source, there is no identifier occurrence to record. A token inside a
+            // load-elaborated module is positioned in the MODULE's text: it is not a
+            // site of the current document, so it records nothing either.
+            span = DocumentSpan(span, _moduleProvidedSpans);
+            if (span is null || InModuleProvidedSubtree)
                 return;
 
             var occurrence = new IdentifierOccurrence(name, span, kind);
@@ -1472,25 +1588,28 @@ public static class SemanticModelBuilder
 
         // ── Scope visibility (editor completion) ────────────────────────────
 
-        private ScopeRegionBuilder OpenScopeRegion(ScopeFrame scope, SourceSpan? seedSpan, bool isModuleRoot = false)
+        private ScopeRegionBuilder OpenScopeRegion(Algorithm algorithm, SourceSpan? seedSpan)
         {
             var isRoot = _regionStack.Count == 0;
 
             // A loaded module's spans are positioned in the MODULE's source text,
             // so no span inside its subtree may become a current-document scope
-            // region or extend an enclosing document hull. The document root is
-            // never suppressed: a host analyzing a module directly makes that
+            // region, extend an enclosing document hull, or register a document
+            // site (see InModuleProvidedSubtree). The state is seeded from the
+            // structural provenance set and inherited by every nested region, open
+            // target, and frameless open-list row walked inside. The document root
+            // is never suppressed: a host analyzing a module directly makes that
             // module's text the current document.
             var suppressed = !isRoot
-                && (isModuleRoot || _regionStack[^1].Suppressed);
+                && (IsModuleProvided(algorithm) || _regionStack[^1].Suppressed);
 
-            var region = new ScopeRegionBuilder(scope, isRoot, suppressed, _regionStack.Count);
-            region.Extend(seedSpan);
+            var region = new ScopeRegionBuilder(isRoot, suppressed, _regionStack.Count);
+            region.Extend(DocumentSpan(seedSpan, _moduleProvidedSpans));
             _regionStack.Add(region);
             return region;
         }
 
-        private void CloseScopeRegion(ScopeRegionBuilder region)
+        private void CloseScopeRegion(ScopeRegionBuilder region, ScopeFrame scope)
         {
             _regionStack.RemoveAt(_regionStack.Count - 1);
 
@@ -1508,19 +1627,19 @@ public static class SemanticModelBuilder
             if (region.IsRoot)
                 _scopeVisibilities.Add(new ScopeVisibility(
                     Span: null,
-                    ComputeVisibleSymbols(region.Scope),
+                    ComputeVisibleSymbols(scope),
                     region.NestingDepth));
             else if (region.Hull is { } hull)
                 _scopeVisibilities.Add(new ScopeVisibility(
                     hull,
-                    ComputeVisibleSymbols(region.Scope),
+                    ComputeVisibleSymbols(scope),
                     region.NestingDepth));
         }
 
         private void ExtendCurrentRegion(SourceSpan? span)
         {
             if (_regionStack.Count > 0 && !_regionStack[^1].Suppressed)
-                _regionStack[^1].Extend(span);
+                _regionStack[^1].Extend(DocumentSpan(span, _moduleProvidedSpans));
         }
 
         private void ExtendRegionWithDeclarationAnchors(
@@ -1591,9 +1710,10 @@ public static class SemanticModelBuilder
 
                     var symbol = CreateLookupPropertySymbol(hit.Owner, hit.Property);
 
-                    // Synthetic properties (deconstruction's hoisted shared RHS)
-                    // have no declaration site and are never source-visible names.
-                    if (symbol.Declaration is null)
+                    // Synthetic properties (deconstruction's hoisted shared RHS) have no
+                    // source declarations. A real property can have a source declaration
+                    // outside this document, so a null symbol.Declaration is not this test.
+                    if (hit.Property.DeclarationSpans.Count == 0)
                         continue;
 
                     if (!decided.Add(name))
@@ -1890,15 +2010,12 @@ public static class SemanticModelBuilder
     /// </summary>
     private sealed class ScopeRegionBuilder
     {
-        public ScopeRegionBuilder(ScopeFrame scope, bool isRoot, bool suppressed, int nestingDepth)
+        public ScopeRegionBuilder(bool isRoot, bool suppressed, int nestingDepth)
         {
-            Scope = scope;
             IsRoot = isRoot;
             Suppressed = suppressed;
             NestingDepth = nestingDepth;
         }
-
-        public ScopeFrame Scope { get; }
 
         public bool IsRoot { get; }
 
@@ -1906,7 +2023,8 @@ public static class SemanticModelBuilder
 
         /// <summary>
         /// True inside a load-elaborated module subtree: spans there belong to the
-        /// module's source text, so the region neither emits nor folds outward.
+        /// module's source text, so the region neither emits nor folds outward, and
+        /// no site created while it is the innermost region is a document site.
         /// </summary>
         public bool Suppressed { get; }
 
@@ -1936,6 +2054,136 @@ public static class SemanticModelBuilder
                 startsEarlier ? span.StartColumn : Hull.StartColumn,
                 endsLater ? span.EndLineNumber : Hull.EndLineNumber,
                 endsLater ? span.EndColumn : Hull.EndColumn);
+        }
+    }
+
+    /// <summary>
+    /// Collects the module-provenance set of one build (see the builder's
+    /// <c>_moduleProvidedAlgorithms</c>): every algorithm node reachable inside a
+    /// load-elaborated module subtree — the spliced module root
+    /// (<see cref="Algorithm.User.IsModuleElaborated"/>) and everything nested in
+    /// it at any depth, including ordinary nested algorithms, clause families and
+    /// their branch bodies, inline open-target blocks, and the roots of modules a
+    /// module opens in turn. The document root's own mark is deliberately ignored.
+    /// Provenance is structural: a node inside a module subtree is module-provided
+    /// however a lookup or the walk later reaches it. Its source anchors are also
+    /// collected by identity: host-built DAGs may share properties, expressions, and
+    /// parameter metadata across the boundary without rebasing their source coordinates.
+    /// Equal coordinates in distinct source anchors do not imply shared provenance.
+    /// Reference-identity memos per provenance context expand shared nodes at most
+    /// once outside and once inside a module; shared parameter metadata is scanned once.
+    /// </summary>
+    private sealed class ModuleProvidedAlgorithmCollector : AstWalker
+    {
+        private readonly Algorithm _root;
+        private readonly HashSet<Algorithm> _moduleProvided;
+        private readonly HashSet<SourceSpan> _moduleProvidedSpans;
+        private readonly HashSet<object> _visitedOutside = new(ReferenceEqualityComparer.Instance);
+        private readonly HashSet<object> _visitedInside = new(ReferenceEqualityComparer.Instance);
+        private int _moduleDepth;
+
+        private ModuleProvidedAlgorithmCollector(
+            Algorithm root,
+            HashSet<Algorithm> moduleProvided,
+            HashSet<SourceSpan> moduleProvidedSpans)
+        {
+            _root = root;
+            _moduleProvided = moduleProvided;
+            _moduleProvidedSpans = moduleProvidedSpans;
+        }
+
+        public static void Collect(
+            Algorithm root,
+            HashSet<Algorithm> moduleProvided,
+            HashSet<SourceSpan> moduleProvidedSpans)
+            => new ModuleProvidedAlgorithmCollector(root, moduleProvided, moduleProvidedSpans).VisitAlgorithm(root);
+
+        // Parameter metadata is collected once per shared list below, not once per
+        // algorithm (deconstruction helpers intentionally share a wide declaration list).
+        protected override bool VisitsExplicitParameterDeclarations => false;
+
+        public override void VisitAlgorithm(Algorithm algorithm)
+        {
+            var entersModule = !ReferenceEquals(algorithm, _root)
+                && algorithm is Algorithm.User { IsModuleElaborated: true };
+            var inside = _moduleDepth > 0 || entersModule;
+            if (!(inside ? _visitedInside : _visitedOutside).Add(algorithm))
+                return;
+
+            if (inside)
+                _moduleProvided.Add(algorithm);
+
+            if (entersModule)
+                _moduleDepth++;
+            if (inside)
+            {
+                if (_visitedInside.Add(algorithm.ExplicitParameters))
+                {
+                    foreach (var parameter in algorithm.ExplicitParameters)
+                        CollectSpan(parameter.Span);
+                }
+                if (_visitedInside.Add(algorithm.ExplicitParameterPatterns))
+                {
+                    foreach (var pattern in algorithm.ExplicitParameterPatterns)
+                        CollectParameterPatternSpans(pattern);
+                }
+            }
+            base.VisitAlgorithm(algorithm);
+            if (entersModule)
+                _moduleDepth--;
+        }
+
+        public override void VisitExpr(Expr expr)
+        {
+            if (!(_moduleDepth > 0 ? _visitedInside : _visitedOutside).Add(expr))
+                return;
+
+            CollectSpan(expr.Span);
+            if (expr is Expr.DotCall dotCall)
+                CollectSpan(dotCall.MemberSpan);
+            base.VisitExpr(expr);
+        }
+
+        protected override void VisitProperty(Property property)
+        {
+            if (!(_moduleDepth > 0 ? _visitedInside : _visitedOutside).Add(property))
+                return;
+            foreach (var span in property.DeclarationSpans)
+                CollectSpan(span);
+            VisitAlgorithm(property.Value);
+        }
+
+        public override void VisitPattern(Pattern pattern)
+        {
+            if (!(_moduleDepth > 0 ? _visitedInside : _visitedOutside).Add(pattern))
+                return;
+            if (pattern is Pattern.Bind bind)
+                CollectSpan(bind.NameSpan);
+            base.VisitPattern(pattern);
+        }
+
+        private void CollectParameterPatternSpans(ParameterPattern pattern)
+        {
+            if (!_visitedInside.Add(pattern))
+                return;
+            switch (pattern)
+            {
+                case CaptureParameterPattern capture:
+                    CollectSpan(capture.Span);
+                    break;
+                case SequenceValueParameterPattern sequence:
+                    foreach (var item in sequence.Items)
+                        CollectParameterPatternSpans(item);
+                    break;
+                default:
+                    throw new InvalidOperationException($"Unhandled parameter pattern: {pattern.GetType().Name}");
+            }
+        }
+
+        private void CollectSpan(SourceSpan? span)
+        {
+            if (_moduleDepth > 0 && span is not null)
+                _moduleProvidedSpans.Add(span);
         }
     }
 
