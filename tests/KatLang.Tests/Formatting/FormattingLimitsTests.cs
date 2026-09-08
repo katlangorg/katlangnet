@@ -289,8 +289,10 @@ public class FormattingLimitsTests
     [Fact]
     public void RenderDisplay_NamesTheEffectiveLimit_WhichAPerCallOptionCanOnlyLower()
     {
+        // Six digits exceed the limit even before separators. The exact formatter
+        // uses platform newlines: "1, 2, 3" fits five units on LF but not on CRLF.
         var run = KatLangEngine.Run(
-            "1, 2, 3",
+            "11, 22, 33",
             new RunOptions { EvaluationLimits = new EvaluationLimits { MaxDisplayLength = 5 } });
 
         foreach (var formatter in OutputFormatters.All)
