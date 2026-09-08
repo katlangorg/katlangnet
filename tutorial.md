@@ -1960,7 +1960,7 @@ This makes a direct `if(X*)` behave the same as a user-defined wrapper such as `
 - If `start < stop`, it counts upward by `1`
 - If `start > stop`, it counts downward by `1`
 - If `start == stop`, it returns a one-element list
-- Both arguments must be integers
+- Both arguments must be whole numbers
 
 ```
 range(1, 5)
@@ -1976,6 +1976,15 @@ range(3, 3)
 
 [3]
 ```
+
+A bound's evaluated value must be a finite whole number within ±`1e34`; a fractional value such as `1.5` is rejected. Accepted bounds may use decimal or exponent notation (`1.0`, `3.000`, `1e1`). `range` produces canonical integer elements independent of the bounds' Decimal128 quantum and zero sign: `range(1.0, 3)` produces `[1, 2, 3]`, and `range(-0.0, 2)` produces `[0, 1, 2]`. This normalization is specific to `range`; ordinary arithmetic retains its result quantum. Collection and evaluation limits still apply.
+
+<!-- spec:range-integral-bound-quantum -->
+```
+range(1.0, 3)
+```
+
+**Result:** `[1, 2, 3]`
 
 A `range` call is a value boundary: each bare call materializes one exact immutable [list value](#lists) (`range(3, 3)` is the one-element list `[3]`, never erased to the bare atom `3`). The list result is itself one collection argument for the next builtin:
 

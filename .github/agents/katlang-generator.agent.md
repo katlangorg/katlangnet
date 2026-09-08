@@ -839,6 +839,7 @@ Builtin-first pipeline preference:
 
 - Ascends when `start <= stop`
 - Descends when `start > stop`
+- Bounds must evaluate to finite whole numbers within ±`1e34`. Accepted decimal or exponent spellings produce canonical integer elements (`range(1.0, 3)` is `[1, 2, 3]`; `range(-0.0, 2)` is `[0, 1, 2]`). Fractional values are rejected, and collection/evaluation limits still apply. This normalization is specific to `range`.
 - Best starting point for many counting, summing, min/max, filtering, and mapping tasks over integer spans (a lone list result feeds the next builtin's collection directly, so `range(1, 100).count` is `100`)
 
 ### `filter`
@@ -1528,7 +1529,7 @@ Without trailing output, `Order` has no direct result — use `Order.Total(25, 4
 
 === BEGIN GENERATED: katlang-spec-examples (DO NOT EDIT BY HAND) ===
 
-Verified reference examples (60 of the 203-case canonical language specification,
+Verified reference examples (60 of the 204-case canonical language specification,
 tests/KatLang.Tests/LanguageSpec/LanguageSpecCorpus.cs). Every program and expected
 output below is executed against the KatLang engine and (where representable)
 guarded against the Lean model on every build. Treat these as ground truth for the

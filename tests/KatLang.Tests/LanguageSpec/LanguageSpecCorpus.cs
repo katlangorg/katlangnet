@@ -1760,6 +1760,31 @@ public static class LanguageSpecCorpus
         },
         new()
         {
+            Id = "range-integral-bound-quantum",
+            Category = "collection-builtins",
+            Source = "range(1.0, 3)",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "[1, 2, 3]",
+            ExpectedRaw = "L[1, 2, 3]",
+            ExpectedEmittedCount = 1,
+            LeanExclusionReason = "Decimal128 quantum is outside the Lean Int numeric model: the whole-number bound `1.0` has no Int spelling distinct from `1` (the encoder refuses it), so only the runtime can observe — and must canonicalize — the representation of an integral range bound.",
+            Probes =
+            [
+                // Every spelling of the same integer bounds is the same canonical list,
+                // in either direction.
+                new SpecProbe("range(1, 3.0)", "ok raw=L[1, 2, 3] n=1"),
+                new SpecProbe("range(1.00, 3.000)", "ok raw=L[1, 2, 3] n=1"),
+                new SpecProbe("range(3.0, 1)", "ok raw=L[3, 2, 1] n=1"),
+                // Signed and fractional zero spellings emit canonical integer zero.
+                new SpecProbe("range(-0.0, 2)", "ok raw=L[0, 1, 2] n=1"),
+                // Whole-number validation is unchanged: a fractional bound is rejected.
+                new SpecProbe("range(1.5, 3)", "err illegalInEval"),
+            ],
+            Notes = "The canonical case keeps the representative boundary: a whole-number bound written with a quantum is accepted and the list carries the canonical integer representation. RangeBoundCanonicalizationTests retains the denser matrix (exponent spellings, negative bounds, the 1e34 endpoint, the async twin, and fused direct-range iteration) with quantum-level assertions.",
+            Explanation = "`range` emits canonical integer elements independent of its accepted whole-number bounds' Decimal128 quantum and zero sign: `range(1.0, 3)` produces `[1, 2, 3]`, and `range(-0.0, 2)` produces `[0, 1, 2]`. The existing bound and collection limits still apply.",
+        },
+        new()
+        {
             Id = "spread-arguments-keep-written-order",
             Category = "collection-builtins",
             Source = "Lo = 2\nHi = 4\nrange(Lo*, Hi*)",

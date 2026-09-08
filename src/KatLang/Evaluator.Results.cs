@@ -297,7 +297,10 @@ public static partial class Evaluator
 
     /// <summary>
     /// Evaluated bounds for the inclusive integer <c>range(start, stop)</c>
-    /// builtin. The bounds have already passed range's whole-integer validation.
+    /// builtin. The bounds have already passed range's whole-integer validation and
+    /// carry the canonical integer representation
+    /// (<see cref="CanonicalizeIntegralRangeBound"/>), so enumeration never sees the
+    /// quantum or zero sign a bound was written with.
     /// </summary>
     internal readonly record struct InclusiveRange(Decimal128 Start, Decimal128 Stop);
 

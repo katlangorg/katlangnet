@@ -672,6 +672,7 @@ Sibling grouped values INSIDE the one collection argument stay separate items; n
 Use `range(start, stop)` for inclusive integer spans; the result is one exact list value (`range(1, 5)` is `[1, 2, 3, 4, 5]`). It ascends or descends:
     range(1, 5)
     range(5, 1)
+Bounds must evaluate to finite whole numbers within ±`1e34`. Accepted decimal or exponent spellings produce canonical integer elements (`range(1.0, 3)` is `[1, 2, 3]`; `range(-0.0, 2)` is `[0, 1, 2]`). Fractional values are rejected, and collection/evaluation limits still apply. This normalization is specific to `range`.
 
 Prefer builtin-first pipelines:
     IsEven = x mod 2 == 0
@@ -1053,7 +1054,7 @@ Idiomatic structure:
 
 === BEGIN GENERATED: katlang-spec-examples (DO NOT EDIT BY HAND) ===
 
-Verified reference examples (60 of the 203-case canonical language specification,
+Verified reference examples (60 of the 204-case canonical language specification,
 tests/KatLang.Tests/LanguageSpec/LanguageSpecCorpus.cs). Every program and expected
 output below is executed against the KatLang engine and (where representable)
 guarded against the Lean model on every build. Treat these as ground truth for the

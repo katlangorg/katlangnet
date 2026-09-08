@@ -2285,9 +2285,9 @@ public static partial class Evaluator
     /// <summary>
     /// MIRROR OF <see cref="EvalBuiltinRangeArguments"/> — keep in lock-step.
     /// Only child-evaluation sequencing is twinned; bound VALIDATION is the shared
-    /// <see cref="ValidateRangeBound"/>, so the range safety policy (whole integer,
-    /// magnitude within the exact-unit-step domain) cannot drift between the sync
-    /// and async paths.
+    /// <see cref="ValidateRangeBound"/>, so the range bound policy (whole integer,
+    /// magnitude within the exact-unit-step domain, canonical integer representation)
+    /// cannot drift between the sync and async paths.
     /// </summary>
     private static async ValueTask<EvalResult<InclusiveRange>> EvalBuiltinRangeArgumentsAsync(
         IReadOnlyList<ResolvedArgumentAlgorithm> args,

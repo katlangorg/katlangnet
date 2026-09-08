@@ -1219,15 +1219,18 @@ public static partial class Evaluator
     }
 
     /// <summary>
-    /// The ONE range-bound safety policy, shared by every execution path that
-    /// builds an <see cref="InclusiveRange"/> (synchronous evaluation, the async
-    /// twin, and — through the synchronous entry — sequence-pipeline direct range
-    /// iteration): a bound must be an exact integer whose magnitude does not
+    /// The ONE range-bound policy, shared by every execution path that builds an
+    /// <see cref="InclusiveRange"/> (synchronous evaluation, the async twin, and —
+    /// through the synchronous entry — sequence-pipeline direct range iteration).
+    /// Safety half: a bound must be an exact integer whose magnitude does not
     /// exceed <see cref="MaxExactRangeBound"/>, because beyond 1e34 a unit step
     /// is absorbed (<c>x + 1 == x</c>) and enumeration could never advance while
     /// the computed cardinality still looked small enough to pass collection
-    /// limits. Pure over the already-evaluated bound value, so no path can
-    /// re-implement (and drift from) the policy.
+    /// limits. Representation half: an accepted bound is returned in its canonical
+    /// integer representation (<see cref="CanonicalizeIntegralRangeBound"/>), so
+    /// the quantum a whole-number bound was written with never reaches the
+    /// generated list. Pure over the already-evaluated bound value, so no path can
+    /// re-implement (and drift from) either half.
     /// </summary>
     private static EvalResult<Decimal128> ValidateRangeBound(Result value, string description)
     {
@@ -1235,8 +1238,47 @@ public static partial class Evaluator
         if (wholeR.IsError) return wholeR.Error;
         if (Decimal128.Abs(wholeR.Value) > MaxExactRangeBound)
             return new EvalError.IllegalInEval($"{description} must not exceed 1e34 in magnitude");
-        return wholeR;
+        return EvalResult<Decimal128>.Ok(CanonicalizeIntegralRangeBound(wholeR.Value));
     }
+
+    /// <summary>
+    /// Canonical representation of an already-validated integral <c>range</c> bound:
+    /// unsigned zero, or the exponent-0 cohort member. Quantize is exact for these
+    /// integers of at most 34 digits. The only accepted 35-digit integers, ±1e34,
+    /// require exponent 1 (coefficient 10^33). Unit steps preserve this representation,
+    /// including transitions to and from those endpoints, so enumeration needs no
+    /// per-item normalization. This is range-specific: ordinary arithmetic and other
+    /// whole-integer argument validators retain their existing quantum behavior.
+    /// </summary>
+    internal static Decimal128 CanonicalizeIntegralRangeBound(Decimal128 whole)
+    {
+        if (whole == Decimal128.Zero)
+            return Decimal128.Zero;
+
+        var canonical = Decimal128.Quantize(whole, Decimal128.One);
+        if (Decimal128.IsNaN(canonical))
+            canonical = Decimal128.Quantize(whole, RangeCeilingQuantum);
+
+        // Value preservation is what makes this a representation-only step. An
+        // inexact quantize (or a NaN after both attempts) means the bound bypassed
+        // the whole-integer and magnitude checks above — an internal invariant
+        // violation that fails loud, never a silently changed range.
+        if (canonical != whole)
+        {
+            throw new InvalidOperationException(
+                $"range bound {whole.ToString(System.Globalization.CultureInfo.InvariantCulture)} has no exact canonical "
+                + "integer representation, so it bypassed ValidateRangeBound's whole-integer and magnitude checks.");
+        }
+
+        return canonical;
+    }
+
+    /// <summary>
+    /// Quantum of the canonical representation of the ±1e34 range endpoints
+    /// (coefficient 10^33, exponent 1): 1e34 itself has 35 digits, one more than
+    /// a Decimal128 coefficient holds, so it has no exponent-0 cohort member.
+    /// </summary>
+    private static readonly Decimal128 RangeCeilingQuantum = Decimal128.ScaleB(Decimal128.One, 1);
 
     /// <summary>
     /// Largest magnitude a <c>range</c> or <c>Math.RandomInt</c> bound may have:
@@ -1254,7 +1296,11 @@ public static partial class Evaluator
     /// Enumerate the validated inclusive integer bounds for <c>range(start, stop)</c>.
     /// The inclusive-bound check runs BEFORE the step, never after: bounds are whole
     /// numbers within <see cref="MaxExactRangeBound"/>, so every step is exact, the
-    /// cursor lands exactly on <c>Stop</c>, and the enumeration is total. A step that
+    /// cursor lands exactly on <c>Stop</c>, and the enumeration is total. Bounds arrive
+    /// canonical (<see cref="CanonicalizeIntegralRangeBound"/>) and a unit step from
+    /// an exponent-0 value keeps exponent 0, so every enumerated value is canonical
+    /// without per-item normalization; only a ±1e34 endpoint is reached at exponent 1,
+    /// the representation Decimal128 precision forces there. A step that
     /// fails to advance (unit-step absorption above 1e34) means a caller bypassed
     /// <see cref="ValidateRangeBound"/>; that is an internal invariant violation and
     /// fails loud rather than looping forever — the same discipline as the budget
