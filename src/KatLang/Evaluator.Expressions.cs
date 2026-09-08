@@ -751,10 +751,12 @@ public static partial class Evaluator
         }
 
         // Every math member computes Decimal128 end-to-end — no double round-trip
-        // anywhere, so transcendental results carry Decimal128's full 34-digit
-        // precision. Domain violations follow IEEE: Sqrt(-1) and Ln(-1) are NaN,
-        // Ln(0) is -Infinity, and non-finite inputs propagate. Transcendental
-        // results are quantum-canonicalized (see CanonicalizeMathResult); the
+        // in KatLang. Results use Decimal128's 34-digit format; this is not a
+        // correct-rounding guarantee. Asin/Acos use Decimal128Numerics to avoid
+        // the tested runtime's loss of accuracy near ±1. Domain violations
+        // follow IEEE: Sqrt(-1) and Ln(-1) are NaN, Ln(0) is -Infinity, and
+        // non-finite inputs propagate. Transcendental results are
+        // quantum-canonicalized (see CanonicalizeMathResult); the
         // quantum-transparent members (Abs/Ceil/Floor/Round/Sign) keep their
         // argument-derived quanta exactly as System.Decimal did.
         Decimal128 result;
@@ -785,9 +787,9 @@ public static partial class Evaluator
             case "Ln": result = CanonicalizeMathResult(Decimal128.Log(args[0])); break;
             case "Lg": result = CanonicalizeMathResult(Decimal128.Log10(args[0])); break;
             case "Sin": result = CanonicalizeMathResult(Decimal128.Sin(args[0])); break;
-            case "Asin": result = CanonicalizeMathResult(Decimal128.Asin(args[0])); break;
+            case "Asin": result = CanonicalizeMathResult(Decimal128Numerics.Asin(args[0])); break;
             case "Cos": result = CanonicalizeMathResult(Decimal128.Cos(args[0])); break;
-            case "Acos": result = CanonicalizeMathResult(Decimal128.Acos(args[0])); break;
+            case "Acos": result = CanonicalizeMathResult(Decimal128Numerics.Acos(args[0])); break;
             case "Tan": result = CanonicalizeMathResult(Decimal128.Tan(args[0])); break;
             case "Atan": result = CanonicalizeMathResult(Decimal128.Atan(args[0])); break;
             case "Atan2": result = CanonicalizeMathResult(Decimal128.Atan2(args[0], args[1])); break;

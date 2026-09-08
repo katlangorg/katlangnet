@@ -55,6 +55,9 @@ public class MathAliasEvaluationTests
     [InlineData("asin(0.5)", "Math.Asin(0.5)")]
     [InlineData("cos(0.123)", "Math.Cos(0.123)")]
     [InlineData("acos(0.5)", "Math.Acos(0.5)")]
+    // Inverse-trig endpoint band (Decimal128Numerics.Acos/Asin) — shared as well.
+    [InlineData("asin(1 - 1e-30)", "Math.Asin(1 - 1e-30)")]
+    [InlineData("acos(-1 + 1e-33)", "Math.Acos(-1 + 1e-33)")]
     [InlineData("tan(1)", "Math.Tan(1)")]
     [InlineData("atan(1)", "Math.Atan(1)")]
     [InlineData("atan2(1, 2)", "Math.Atan2(1, 2)")]
