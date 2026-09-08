@@ -113,7 +113,7 @@ public static class CliApplication
         var options = new RunOptions
         {
             DownloadCode = invocation.AllowLoading
-                ? loadingDownloader ?? HttpSourceDownloader.DownloadAsync
+                ? loadingDownloader ?? HttpSourceDownloader.Shared.DownloadAsync
                 : null,
             SourceProcessingCancellationToken = cancellationToken,
             EvaluationCancellationToken = cancellationToken,

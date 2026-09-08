@@ -112,6 +112,16 @@ else
 
 The CLI's `run` and `eval` commands render before writing program output. Display overflow returns exit code 1, writes the complete limit notice once to stderr, and leaves stdout empty. Genuine notice-shaped output remains successful stdout output with exit code 0. Ordinary output keeps its terminating newline; programs with no output rows succeed silently. `check` validates source without executing or rendering it, so valid source that would overflow on execution still passes silently.
 
+## Command-line module loading
+
+The `katlang` CLI's `--allow-loading` flag is off by default: without it, source that uses `load` or `open 'url'` is rejected with a diagnostic and nothing is fetched. With it, KatLang hands a load target to the CLI's HTTP transport only after its own checks pass — an HTTPS URL on an allowed host (`katlang.org` and its subdomains); anything else is refused before any request is made. The transport policies below belong to the shipped CLI, not to the KatLang package, whose host-supplied downloader contract is unchanged:
+
+- HTTP redirects are refused rather than followed.
+- Each downloaded module is limited to **1 MiB (1,048,576 content bytes)**. This is a fixed CLI transport policy, independent of and intentionally stricter than the library's decoded-source limit: valid source that fits the library limit can still be refused by the CLI. Non-ASCII and non-UTF-8 sources consume the content bytes their encoding requires, including any byte-order mark. An excessive declared `Content-Length` is refused before buffering; a chunked or unknown-length body is refused when a buffer write would exceed the ceiling. The ceiling counts content bytes exposed by `HttpContent`, excluding HTTP headers and chunk framing. No decompression is negotiated or performed. Network read-ahead and the HTTP client's bounded disposal drain are separate from accepted buffer contents.
+- Each complete module download has one absolute **15-second cancellation deadline** starting before the request and remaining active through headers and body acquisition. Incoming bytes do not restart it, so both stalled and trickling responses are cancelled. Cancellation is cooperative; bounded synchronous text decoding is not preemptible.
+
+These bounds apply per download. KatLang's `SourceProcessingLimits` (decoded per-module source length, aggregate source, module count, import depth) still apply separately to the text the transport returns. A refused or timed-out download is reported as an ordinary `load: failed to fetch` diagnostic with exit code 1.
+
 ## Nuget package
 https://www.nuget.org/packages/KatLang
 

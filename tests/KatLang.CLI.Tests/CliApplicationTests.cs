@@ -1,7 +1,4 @@
-using System.Net;
-using System.Net.Sockets;
 using System.Reflection;
-using System.Text;
 
 namespace KatLang.CLI.Tests;
 
@@ -30,8 +27,25 @@ public sealed class CliApplicationTests
         Assert.Contains("katlang check <file> [--allow-loading]", result.TrimmedOutput);
         Assert.Contains("--allow-loading", result.TrimmedOutput);
         Assert.Contains("Disabled by default.", result.TrimmedOutput);
+        // The transport bounds the help quotes must be the ones actually enforced.
+        Assert.Contains($"{HttpSourceDownloader.DownloadTimeout.TotalSeconds:0} seconds", result.TrimmedOutput);
+        Assert.Contains($"1 MiB ({HttpSourceDownloader.MaxResponseBodyBytes.ToString("N0", System.Globalization.CultureInfo.InvariantCulture)} content", result.TrimmedOutput);
+        Assert.Contains("bytes), excluding HTTP headers and chunk framing.", result.TrimmedOutput);
         Assert.Contains("--version", result.TrimmedOutput);
         Assert.Contains("--help", result.TrimmedOutput);
+    }
+
+    [Fact]
+    public void Readme_ReportsTheShippedTransportBounds()
+    {
+        var directory = new DirectoryInfo(AppContext.BaseDirectory);
+        while (directory is not null && !File.Exists(Path.Combine(directory.FullName, "KatLang.slnx")))
+            directory = directory.Parent;
+        Assert.NotNull(directory);
+
+        var readme = File.ReadAllText(Path.Combine(directory.FullName, "README.md"));
+        Assert.Contains($"1 MiB ({HttpSourceDownloader.MaxResponseBodyBytes.ToString("N0", System.Globalization.CultureInfo.InvariantCulture)} content bytes)", readme);
+        Assert.Contains($"{HttpSourceDownloader.DownloadTimeout.TotalSeconds:0}-second cancellation deadline", readme);
     }
 
     [Fact]
@@ -534,16 +548,34 @@ public sealed class CliApplicationTests
         Assert.Contains("domain not allowed", result.TrimmedError);
     }
 
+    [Theory]
+    [InlineData("http://katlang.org/x.kat", "only HTTPS URLs are allowed")]
+    [InlineData("https://127.0.0.1/x.kat", "domain not allowed")]
+    [InlineData("https://katlang.org.example.net/x.kat", "domain not allowed")]
+    public async Task AllowLoading_RefusesForbiddenSchemesAndHosts_BeforeAnyRequest(string url, string expected)
+    {
+        // KatLang's scheme and allowed-host checks run before the CLI transport is ever
+        // consulted, with or without the flag's transport bounds.
+        var downloader = new RecordingDownloader();
+
+        var result = await Cli.InvokeWithDownloaderAsync(
+            downloader.DownloadAsync, "eval", $"open '{url}'\n1", "--allow-loading");
+
+        Assert.Equal(Failure, result.ExitCode);
+        Assert.Empty(downloader.RequestedUrls);
+        Assert.Contains(expected, result.TrimmedError);
+    }
+
     [Fact]
     public async Task HttpDownloader_RefusesRedirectsBeforeFetchingTheirDestination()
     {
-        await using var destination = new SingleResponseHttpServer(
-            () => SingleResponseHttpServer.Ok("public Value = 42"));
-        await using var origin = new SingleResponseHttpServer(
-            () => SingleResponseHttpServer.Redirect(destination.Url("localhost")));
+        await using var destination = new LoopbackHttpServer(
+            () => LoopbackHttpServer.Ok("public Value = 42"));
+        await using var origin = new LoopbackHttpServer(
+            () => LoopbackHttpServer.Redirect(destination.Url("localhost")));
 
         var exception = await Assert.ThrowsAsync<HttpRequestException>(async () =>
-            await HttpSourceDownloader.DownloadAsync(origin.Url("127.0.0.1"), CancellationToken.None));
+            await HttpSourceDownloader.Shared.DownloadAsync(origin.Url("127.0.0.1"), CancellationToken.None));
 
         Assert.Contains("redirects are not allowed", exception.Message, StringComparison.OrdinalIgnoreCase);
         Assert.Equal(1, origin.RequestCount);
@@ -643,84 +675,5 @@ public sealed class CliApplicationTests
     private sealed class ThrowingTextWriter(Exception exception) : StringWriter
     {
         public override void WriteLine(string? value) => throw exception;
-    }
-
-    /// <summary>
-    /// One-request loopback HTTP endpoint. It keeps the redirect test entirely
-    /// offline while exercising the downloader's real process-wide HttpClient.
-    /// </summary>
-    private sealed class SingleResponseHttpServer : IAsyncDisposable
-    {
-        private readonly TcpListener _listener = new(IPAddress.Loopback, 0);
-        private readonly CancellationTokenSource _cancellation = new();
-        private readonly Func<string> _response;
-        private readonly Task _serverTask;
-        private int _requestCount;
-
-        public SingleResponseHttpServer(Func<string> response)
-        {
-            _response = response;
-            _listener.Start();
-            _serverTask = ServeOneAsync();
-        }
-
-        public int RequestCount => Volatile.Read(ref _requestCount);
-
-        public string Url(string host)
-        {
-            var endpoint = (IPEndPoint)_listener.LocalEndpoint;
-            return $"http://{host}:{endpoint.Port}/module.kat";
-        }
-
-        public static string Ok(string content)
-        {
-            var length = Encoding.UTF8.GetByteCount(content);
-            return $"HTTP/1.1 200 OK\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: {length}\r\nConnection: close\r\n\r\n{content}";
-        }
-
-        public static string Redirect(string location)
-            => $"HTTP/1.1 302 Found\r\nLocation: {location}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
-
-        public async ValueTask DisposeAsync()
-        {
-            await _cancellation.CancelAsync();
-            _listener.Stop();
-
-            try
-            {
-                await _serverTask;
-            }
-            catch (Exception ex) when (ex is OperationCanceledException or SocketException or ObjectDisposedException)
-            {
-                // A destination that was correctly never requested is still
-                // blocked in AcceptTcpClientAsync when the fixture is disposed.
-            }
-
-            _cancellation.Dispose();
-        }
-
-        private async Task ServeOneAsync()
-        {
-            using var client = await _listener.AcceptTcpClientAsync(_cancellation.Token);
-            Interlocked.Increment(ref _requestCount);
-
-            await using var stream = client.GetStream();
-            var buffer = new byte[1024];
-            var request = new StringBuilder();
-
-            while (!request.ToString().Contains("\r\n\r\n", StringComparison.Ordinal))
-            {
-                var read = await stream.ReadAsync(buffer, _cancellation.Token);
-                if (read == 0)
-                    break;
-
-                request.Append(Encoding.ASCII.GetString(buffer, 0, read));
-                if (request.Length > 16 * 1024)
-                    throw new InvalidOperationException("Loopback test request headers were unexpectedly large.");
-            }
-
-            var response = Encoding.UTF8.GetBytes(_response());
-            await stream.WriteAsync(response, _cancellation.Token);
-        }
     }
 }
