@@ -1237,6 +1237,22 @@ abbrev AlgEnv := Assoc Ident Algorithm
 namespace AlgEnv
   def lookup (env : AlgEnv) (x : Ident) : Option Algorithm :=
     lookupAssoc x env
+
+  /-- Remove the named bindings from an INHERITED algorithm environment — the
+      algorithm-tier counterpart of `CountedParamEnv.shadow` and `ValEnv.shadow`.
+
+      A callee's algorithm environment is its own algorithm bindings prepended
+      to the CALLER's, which is what lets a nested call still invoke an
+      ancestor-owned callable parameter. A parameter the call bound only on the
+      VALUE channel contributes no algorithm binding, so without this filter a
+      same-named callable inherited from the caller answered every
+      call-position read of that parameter (`resolveAlg (.param x)`):
+      `Inner(f) = f(2)` called as `Inner(5)` inside `Apply(f)` invoked the
+      caller's `f` instead of failing as not-callable, exactly as the standalone
+      `Inner(5)` does. Shadowing is applied per binding site through
+      `EvalCtx.bindParameters`. C#: `ShadowAlgEnv`. -/
+  def shadow (env : AlgEnv) (names : List Ident) : AlgEnv :=
+    env.filter (fun entry => !names.contains entry.fst)
 end AlgEnv
 
 /-- Counted parameter environment for callback-bound values that must preserve
@@ -1354,6 +1370,27 @@ namespace EvalCtx
     { callStack := ctx.callStack, algEnv := env, countedParamEnv := ctx.countedParamEnv }
   def withCountedParamEnv (env : CountedParamEnv) (ctx : EvalCtx) : EvalCtx :=
     { callStack := ctx.callStack, algEnv := ctx.algEnv, countedParamEnv := env }
+
+  /-- The callee-side context of a parameter binding: the callee's own
+      algorithm and counted bindings prepended to the CALLER's tiers with the
+      bound parameter names removed from BOTH inherited tiers (`AlgEnv.shadow`,
+      `CountedParamEnv.shadow`; the value tier is shadowed beside it with
+      `ValEnv.shadow`).
+
+      A bound parameter owns its name on every channel: a call-position read of
+      a value-bound parameter never reaches a same-named caller callable,
+      exactly as a value-position read of an algorithm-bound parameter never
+      reaches a same-named caller value. Names the callee does not bind stay
+      visible, which is what lets a nested call still reach an ancestor-owned
+      callable. Every user-call, conditional-call, callback, and loop-step
+      binding site builds its context through this one definition, so no path
+      can shadow one tier and forget another.
+      C#: `ShadowInheritedParameterEnvironments` plus the site's own prepend. -/
+  def bindParameters (names : List Ident) (algBindings : AlgEnv)
+      (countedBindings : CountedParamEnv) (ctx : EvalCtx) : EvalCtx :=
+    { callStack := ctx.callStack,
+      algEnv := algBindings ++ AlgEnv.shadow ctx.algEnv names,
+      countedParamEnv := countedBindings ++ CountedParamEnv.shadow ctx.countedParamEnv names }
 end EvalCtx
 
 abbrev ValEnv.lookup (env : ValEnv) (x : Ident) : Option Result :=
@@ -1371,9 +1408,10 @@ abbrev ValEnv.lookup (env : ValEnv) (x : Ident) : Option Result :=
     unrelated caller value instead of the argument bound at THIS invocation, and
     which caller parameter names happen to collide with a callee's parameter
     names would become observable. Shadowing the callee's whole parameter list
-    is exactly the rule `CountedParamEnv.shadow` already applies to the counted
-    tier; names that DO carry a value binding are shadowed by `argEnv` anyway,
-    so filtering the tail changes nothing for them.
+    is exactly the rule `CountedParamEnv.shadow` and `AlgEnv.shadow` apply to
+    the counted and algorithm tiers (`EvalCtx.bindParameters`); names that DO
+    carry a value binding are shadowed by `argEnv` anyway, so filtering the
+    tail changes nothing for them.
     C#: `ShadowValEnv`. -/
 def ValEnv.shadow (env : ValEnv) (names : List Ident) : ValEnv :=
   env.filter (fun entry => !names.contains entry.fst)
@@ -3730,7 +3768,11 @@ def resolveAlg (e : Expr) (ctx : EvalCtx) : EvalM Algorithm :=
       pure (wireToCaller ctx (Algorithm.ofExpr (.dotMember o n fallback args)))
   -- Explicit errors for syntactic forms that cannot resolve to algorithms
   | .param x =>
-      -- Higher-order parameter: if x is bound in AlgEnv, return the algorithm
+      -- Higher-order parameter: if x is bound in AlgEnv, return the algorithm.
+      -- The environment reaching here was shadowed by every enclosing
+      -- binding's parameter names (`EvalCtx.bindParameters`), so a parameter
+      -- bound only on the value channel finds NO entry and fails as
+      -- not-callable instead of reaching a same-named caller callable.
       match ctx.algEnv.lookup x with
       | some alg => pure alg
       | none     => .error (Error.notAnAlgorithm s!"param({x})")
@@ -4142,8 +4184,7 @@ mutual
   partial def runStepSlots (step : Algorithm) (ctx : EvalCtx) (env : ValEnv)
       (stateSlots : List Result) : EvalM (List Result) := do
     let (argEnv, countedParamEnv) <- bindLoopStepState step stateSlots
-    let shadowedCountedParamEnv := CountedParamEnv.shadow ctx.countedParamEnv (Algorithm.params step)
-    let stepCtx := ctx.withCountedParamEnv (countedParamEnv ++ shadowedCountedParamEnv)
+    let stepCtx := ctx.bindParameters (Algorithm.params step) [] countedParamEnv
     evalAlgOutputSlots step stepCtx (argEnv ++ env) (Algorithm.requiresPatternBinding step)
 
   /-- Run a step algorithm with the given state bound to its params. -/
@@ -4308,8 +4349,7 @@ mutual
       | some (branch, bindings) =>
           let wiredBody := Algorithm.childOf callee branch.body
           let names := bindings.map Prod.fst
-          let newCtx := (EvalCtx.push callee ctx).withCountedParamEnv
-            (bindings ++ CountedParamEnv.shadow ctx.countedParamEnv names)
+          let newCtx := (EvalCtx.push callee ctx).bindParameters names [] bindings
           let newEnv := (bindings.map fun | (name, value) => (name, value.fst)) ++ env
           evalAlgOutputCounted wiredBody newCtx newEnv
       | none =>
@@ -4336,9 +4376,7 @@ mutual
               .error Error.missingOutput
             else do
               let countedParamEnv <- bindCountedCallbackParams (Algorithm.params simple) args
-              let names := Algorithm.params simple
-              let newCtx := ctx.withCountedParamEnv
-                (countedParamEnv ++ CountedParamEnv.shadow ctx.countedParamEnv names)
+              let newCtx := ctx.bindParameters (Algorithm.params simple) [] countedParamEnv
               evalAlgOutputCounted simple newCtx env
         | none =>
             evalConditionalCallbackCallCounted callee args ctx env calleeName
@@ -4349,8 +4387,7 @@ mutual
           if Algorithm.requiresPatternBinding callee then do
             let bindings <- bindCountedParameterPatternList (Algorithm.parameterPatterns callee) args
             let names := bindings.countedParamEnv.map Prod.fst
-            let newCtx := ctx.withCountedParamEnv
-              (bindings.countedParamEnv ++ CountedParamEnv.shadow ctx.countedParamEnv names)
+            let newCtx := ctx.bindParameters names [] bindings.countedParamEnv
             evalAlgOutputCounted callee newCtx env
           -- A flat callee with a top-level collecting parameter (`Rows.map(F)` with
           -- `F(x, *y, z)` or a single-collecting `Collect(*items)`) binds through
@@ -4363,8 +4400,7 @@ mutual
             let bindings <- bindCountedCallbackParameterPatternList
               (Algorithm.parameterPatterns callee) args
             let names := bindings.countedParamEnv.map Prod.fst
-            let newCtx := ctx.withCountedParamEnv
-              (bindings.countedParamEnv ++ CountedParamEnv.shadow ctx.countedParamEnv names)
+            let newCtx := ctx.bindParameters names [] bindings.countedParamEnv
             evalAlgOutputCounted callee newCtx env
           else do
             -- Fixed-only flat callback binding projects each callback item into
@@ -4374,9 +4410,7 @@ mutual
             -- Scalar callback deconstruction stays deferred so the counted
             -- callback path keeps Lean/C# parity.
             let countedParamEnv <- bindCountedCallbackParams (Algorithm.params callee) args
-            let names := Algorithm.params callee
-            let newCtx := ctx.withCountedParamEnv
-              (countedParamEnv ++ CountedParamEnv.shadow ctx.countedParamEnv names)
+            let newCtx := ctx.bindParameters (Algorithm.params callee) [] countedParamEnv
             evalAlgOutputCounted callee newCtx env
 
   /-- Non-counted wrapper for callback calls that still preserve projected item
@@ -4399,8 +4433,7 @@ mutual
         else do
           let bindings <- bindCountedParameterPatternList patterns args
           let names := bindings.countedParamEnv.map Prod.fst
-          let newCtx := ctx.withCountedParamEnv
-            (bindings.countedParamEnv ++ CountedParamEnv.shadow ctx.countedParamEnv names)
+          let newCtx := ctx.bindParameters names [] bindings.countedParamEnv
           evalAlgOutputCounted callee newCtx env
     | _ =>
         evalResolvedCallbackCallCounted callee args ctx env calleeName
@@ -5083,7 +5116,13 @@ mutual
       value-tier counterpart of `CountedParamEnv.shadow`), so a value-position
       read of that parameter reaches its algorithm binding — the ordinary
       zero-argument value demand or its arity error — instead of silently
-      answering with a same-named caller value. If both fail, the ordinary
+      answering with a same-named caller value. Symmetrically, a parameter
+      bound only through `ValEnv` SHADOWS the caller's inherited algorithm
+      environment (`AlgEnv.shadow`, applied together with the counted tier by
+      `EvalCtx.bindParameters`), so a call-position read of that parameter
+      fails as not-callable instead of invoking a same-named caller callable:
+      the callee's parameter list owns its names on every channel. If both
+      fail, the ordinary
       eager-evaluation error is propagated. Every `algorithmExpr` contributes
       its contained algorithm to the `AlgEnv` side regardless of declaration/output count;
       a `capture` contributes only its fresh zero-parameter value thunk and
@@ -5109,28 +5148,21 @@ mutual
     else if Algorithm.requiresPatternBinding callee then do
           let (argEnv, countedParamEnv, algBindings) <-
             bindPatternedUserCall callee args ctx env assembly
-          let shadowedCountedParamEnv := CountedParamEnv.shadow ctx.countedParamEnv (Algorithm.params callee)
           let shadowedEnv := ValEnv.shadow env (Algorithm.params callee)
-          let newCtx :=
-            (ctx.withAlgEnv (algBindings ++ ctx.algEnv)).withCountedParamEnv
-              (countedParamEnv ++ shadowedCountedParamEnv)
+          let newCtx := ctx.bindParameters (Algorithm.params callee) algBindings countedParamEnv
           reCountValueBoundary <$> evalAlgOutputCounted callee newCtx (argEnv ++ shadowedEnv)
     else match Algorithm.collectingParam? callee with
       | some _ =>
           -- Any top-level variadic binds the supplied call argument stream.
           let (argEnv, countedParamEnv, algBindings) <-
             bindDeconstructionUserCall callee args ctx env assembly
-          let shadowedCountedParamEnv := CountedParamEnv.shadow ctx.countedParamEnv (Algorithm.params callee)
           let shadowedEnv := ValEnv.shadow env (Algorithm.params callee)
-          let newCtx :=
-            (ctx.withAlgEnv (algBindings ++ ctx.algEnv)).withCountedParamEnv
-              (countedParamEnv ++ shadowedCountedParamEnv)
+          let newCtx := ctx.bindParameters (Algorithm.params callee) algBindings countedParamEnv
           reCountValueBoundary <$> evalAlgOutputCounted callee newCtx (argEnv ++ shadowedEnv)
       | none =>
       do
         let (argEnv, algBindings) <- bindFlatFixedUserCall callee args ctx env
-        let newCtx := (ctx.withAlgEnv (algBindings ++ ctx.algEnv)).withCountedParamEnv
-          (CountedParamEnv.shadow ctx.countedParamEnv (Algorithm.params callee))
+        let newCtx := ctx.bindParameters (Algorithm.params callee) algBindings []
         let shadowedEnv := ValEnv.shadow env (Algorithm.params callee)
         reCountValueBoundary <$> evalAlgOutputCounted callee newCtx (argEnv ++ shadowedEnv)
 
@@ -5185,8 +5217,7 @@ mutual
       | some (branch, bindings) =>
           let wiredBody := Algorithm.childOf callee branch.body
           let names := bindings.map Prod.fst
-          let newCtx := (EvalCtx.push callee ctx).withCountedParamEnv
-            (CountedParamEnv.shadow ctx.countedParamEnv names)
+          let newCtx := (EvalCtx.push callee ctx).bindParameters names [] []
           reCountValueBoundary <$> evalAlgOutputCounted wiredBody newCtx (bindings ++ env)
       | none =>
           .error (Error.noMatchingBranch calleeName)

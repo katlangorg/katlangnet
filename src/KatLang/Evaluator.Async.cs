@@ -1891,8 +1891,7 @@ public static partial class Evaluator
         if (selectedBodyR.IsError) return selectedBodyR.Error;
         var wiredBody = ChildOf(callee, selectedBodyR.Value);
         var shadowedNames = bindings.Select(static binding => binding.Item1).ToArray();
-        var newCtx = ctx.Push(callee)
-            .WithCountedParamEnv(ShadowCountedParamEnv(ctx.CountedParamEnv, shadowedNames));
+        var newCtx = ShadowInheritedParameterEnvironments(ctx.Push(callee), shadowedNames);
         var newEnv = Concat(bindings, valEnv);
         return ReCountValueBoundary(await EvalAlgOutputCountedCoreAsync(wiredBody, newCtx, newEnv).ConfigureAwait(false));
     }
@@ -2193,9 +2192,8 @@ public static partial class Evaluator
             return argEnvR.Error;
         }
 
-        var boundCtx = ctx
-            .WithAlgEnv(Concat(algBindings, ctx.AlgEnv))
-            .WithCountedParamEnv(ShadowCountedParamEnv(ctx.CountedParamEnv, parameterNames));
+        var inherited = ShadowInheritedParameterEnvironments(ctx, parameterNames);
+        var boundCtx = inherited.WithAlgEnv(Concat(algBindings, inherited.AlgEnv));
         var boundEnv = Concat(argEnvR.Value, ShadowValEnv(valEnv, parameterNames));
         return EvalResult<UserCallEnvironments>.Ok(new UserCallEnvironments(boundCtx, boundEnv));
     }
@@ -3117,6 +3115,7 @@ public static partial class Evaluator
         // Fresh concatenation per iteration for the same cache-identity reason as the
         // synchronous twin.
         var stepCtx = ctx
+            .WithAlgEnv(prepared.ShadowedAlgEnv)
             .WithCountedParamEnv(Concat(boundR.Value.CountedBindings, prepared.ShadowedCountedParamEnv));
         return await EvalAlgOutputSlotsAsync(
             step,

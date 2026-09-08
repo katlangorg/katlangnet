@@ -2904,6 +2904,38 @@ Outer(7)
 
 **Result:** `8`
 
+The rule holds in the other direction too. A parameter bound to a *value* is not callable, even when the surrounding algorithm received a callable under the same name:
+
+<!-- spec:value-argument-parameter-shadowing -->
+```
+Inc(x) = x + 1
+
+Apply(f) = {
+    Inner(f) = f(2)
+    Inner(5)
+}
+
+Apply(Inc)
+```
+
+**Result:** error — `Inner`'s parameter `f` is the value `5` at this call, so `f(2)` is not a call of a callable; the `Inc` that `Apply` holds under its own `f` is never consulted, and the program fails exactly as the standalone `Inner(5)` does.
+
+Only the names a callee binds itself are hidden. `Inner(x)` below declares no `f`, so `f` still resolves outward to the callable `Apply` received:
+
+<!-- spec:ancestor-callable-visible-without-same-named-parameter -->
+```
+Inc(x) = x + 1
+
+Apply(f) = {
+    Inner(x) = f(x)
+    Inner(5)
+}
+
+Apply(Inc)
+```
+
+**Result:** `6`
+
 Sequence builtins `filter`, `map`, and `reduce` are a special higher-order case. Their per-item callback argument behaves like `S:i` for the traversed sequence `S`, so sequence-value current items expose their immediate members without recursive flattening. This rule is local to those builtins; ordinary higher-order calls such as `Apply(Increment)` still use ordinary argument binding.
 
 ### Algorithms vs. Grouped Expressions

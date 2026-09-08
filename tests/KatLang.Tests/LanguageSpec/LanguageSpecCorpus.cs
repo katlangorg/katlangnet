@@ -2927,6 +2927,72 @@ public static class LanguageSpecCorpus
         },
         new()
         {
+            Id = "value-argument-parameter-shadowing",
+            Category = "access-boundaries",
+            Source = "Inc(x) = x + 1\n\nApply(f) = {\n    Inner(f) = f(2)\n    Inner(5)\n}\n\nApply(Inc)",
+            Outcome = SpecOutcome.EvalError,
+            ExpectedErrorCategory = "notAnAlgorithm",
+            Probes =
+            [
+                // The standalone callee fails identically, so the enclosing parameter name is unobservable.
+                new SpecProbe("Inner(f) = f(2)\nInner(5)", "err notAnAlgorithm"),
+                // Patterned and item-supply callees take the same rule.
+                new SpecProbe("Inc(x) = x + 1\nApply(f) = {\n    Inner(f, (a, b)) = f(2)\n    Inner(5, (1, 2))\n}\nApply(Inc)", "err notAnAlgorithm"),
+                new SpecProbe("Inc(x) = x + 1\nApply(f) = {\n    Inner(f, *rest) = f(2)\n    Inner(5, 1)\n}\nApply(Inc)", "err notAnAlgorithm"),
+                // A parameter bound per item or per iteration owns its name the same way.
+                new SpecProbe("Inc(x) = x + 1\nApply(f) = {\n    Inner(f) = f(2)\n    [5].map(Inner)\n}\nApply(Inc)", "err notAnAlgorithm"),
+                new SpecProbe("Inc(x) = x + 1\nApply(f) = {\n    Inner(f) = f(2)\n    repeat(Inner, 1, 5)\n}\nApply(Inc)", "err notAnAlgorithm"),
+                // The lexical dot-call fallback and argument forwarding read the same shadowed binding.
+                new SpecProbe("Inc(x) = x + 1\nApply(f) = {\n    Inner(f) = 2.f\n    Inner(5)\n}\nApply(Inc)", "err notAnAlgorithm"),
+                new SpecProbe("Inc(x) = x + 1\nApply(f) = {\n    Pass(g) = g(1)\n    Inner(f) = Pass(f)\n    Inner(5)\n}\nApply(Inc)", "err notAnAlgorithm"),
+                // The mirror direction: an algorithm-bound inner parameter hides the caller's same-named VALUE.
+                new SpecProbe("Inc(x) = x + 1\nOuter(f) = {\n    Inner(f) = f + 1\n    Inner(Inc)\n}\nOuter(5)", "err arity"),
+            ],
+            Explanation = "`Inner`'s parameter `f` is bound to the value `5` at this call, and a value cannot be called. The callable `Inc` that the surrounding `Apply` received under the same name is never consulted: a parameter owns its name on every channel, so the program fails exactly like the standalone `Inner(5)` instead of silently computing `Inc(2)`.",
+        },
+        new()
+        {
+            Id = "value-parameter-shadowing-through-nested-scope",
+            Category = "access-boundaries",
+            Source = "Inc(x) = x + 1\n\nApply(f) = {\n    Inner(f) = {\n        Local(y) = f(y)\n        Local(2)\n    }\n    Inner(5)\n}\n\nApply(Inc)",
+            Outcome = SpecOutcome.EvalError,
+            ExpectedErrorCategory = "notAnAlgorithm",
+            Probes =
+            [
+                // A nested zero-parameter property reads the same shadowed binding.
+                new SpecProbe("Inc(x) = x + 1\nApply(f) = {\n    Inner(f) = {\n        Local = f(2)\n        Local\n    }\n    Inner(5)\n}\nApply(Inc)", "err notAnAlgorithm"),
+            ],
+            Explanation = "Shadowing is lexical and survives nested scopes: `Local` is called inside `Inner`, whose parameter `f` is the value `5`, so `f(y)` is not a call of a callable. `Local`'s own call binds only `y` and cannot bring back the `Inc` that `Apply` holds under the name `f`.",
+        },
+        new()
+        {
+            Id = "value-binder-parameter-shadowing",
+            Category = "conditionals",
+            Source = "Inc(x) = x + 1\n\nApply(f) = {\n    Inner(0) = 0\n    Inner(f) = f(2)\n    Inner(5)\n}\n\nApply(Inc)",
+            Outcome = SpecOutcome.EvalError,
+            ExpectedErrorCategory = "notAnAlgorithm",
+            Explanation = "A clause-family binder is bound to the matched argument value, so `f` is `5` inside the selected branch and `f(2)` is not a call of a callable. The binder owns its name exactly like an explicit parameter: the `Inc` that `Apply` received under the same name is not visible in the branch.",
+        },
+        new()
+        {
+            Id = "ancestor-callable-visible-without-same-named-parameter",
+            Category = "access-boundaries",
+            Source = "Inc(x) = x + 1\n\nApply(f) = {\n    Inner(x) = f(x)\n    Inner(5)\n}\n\nApply(Inc)",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "6",
+            ExpectedRaw = "6",
+            ExpectedEmittedCount = 1,
+            Probes =
+            [
+                // Only the callee's OWN parameter names are shadowed; a nested property reads its ancestor's parameter the same way.
+                new SpecProbe("Outer(v) = Inner\n  Inner = v + 1\nOuter(7)", "ok raw=8 n=1"),
+                // A callback callee that declares no `f` reaches the ancestor's callable too.
+                new SpecProbe("Inc(x) = x + 1\nApply(f) = {\n    Inner(x) = f(x)\n    [5].map(Inner)\n}\nApply(Inc)", "ok raw=L[6] n=1"),
+            ],
+            Explanation = "Shadowing removes only the names the callee itself binds. `Inner` declares `x`, not `f`, so `f` still resolves outward to the callable `Apply` received, and `Inner(5)` computes `Inc(5)`.",
+        },
+        new()
+        {
             Id = "native-argument-value-demand",
             Category = "errors",
             Source = "Z = 1 / 0\n\nMath.Abs(Z)",

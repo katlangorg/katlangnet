@@ -511,8 +511,10 @@ public static partial class Evaluator
         // The concatenation must build a FRESH list per iteration: the counted
         // environment's reference identity is a zero-arg property cache key component,
         // so reusing one instance across iterations would create cross-iteration cache
-        // hits the generic strategy never had.
+        // hits the generic strategy never had. The algorithm tier carries no
+        // per-iteration bindings, so its prepared shadowed instance is reused.
         var stepCtx = ctx
+            .WithAlgEnv(prepared.ShadowedAlgEnv)
             .WithCountedParamEnv(Concat(boundR.Value.CountedBindings, prepared.ShadowedCountedParamEnv));
         return EvalAlgOutputSlots(
             step,

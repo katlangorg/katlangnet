@@ -383,9 +383,12 @@ public static partial class Evaluator
 
         var (branch, bindings) = match.Value;
         var wiredBody = ChildOf(callee, SelectedBranchBody(branch));
+        // A clause-family binder is bound on the value channel only, so the
+        // inherited algorithm and counted tiers are shadowed by the binder names
+        // exactly like a user call's parameter list (the value tier is shadowed
+        // by the prepended bindings themselves).
         var shadowedNames = bindings.Select(static binding => binding.Item1).ToArray();
-        var newCtx = ctx.Push(callee)
-            .WithCountedParamEnv(ShadowCountedParamEnv(ctx.CountedParamEnv, shadowedNames));
+        var newCtx = ShadowInheritedParameterEnvironments(ctx.Push(callee), shadowedNames);
         var newEnv = Concat(bindings, valEnv);
         return ReCountValueBoundary(EvalAlgOutputCounted(wiredBody, newCtx, newEnv));
     }

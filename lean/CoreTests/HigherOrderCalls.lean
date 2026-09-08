@@ -1697,4 +1697,139 @@ def testDualChannelArgumentKeepsValueView : Bool :=
 #guard testDualChannelArgumentKeepsValueView
 #eval runFlat (.algorithmExpr dualChannelArgRoot)
 
+--------------------------------------------------------------------------------
+-- Value-channel parameter binding shadows the caller's algorithm environment
+-- (K4-03 — the mirror image of the block above)
+--
+-- A callee's algorithm environment is its own algorithm bindings prepended to
+-- the CALLER's, which is what lets a nested call still invoke an ancestor-owned
+-- callable parameter. A parameter the call bound only on the VALUE channel
+-- contributes no algorithm binding, so without `AlgEnv.shadow` (applied at
+-- every binding site by `EvalCtx.bindParameters`) a same-named caller callable
+-- answered every call-position read of that parameter: `Inner(f) = f(2)`
+-- called as `Inner(5)` inside `Apply(f)` invoked the caller's `f` and returned
+-- 3, where the standalone `Inner(5)` fails as not-callable.
+--
+-- Shape under test, once per binding path:
+--   Inc(x) = x + 1
+--   Apply(f) = { Inner(f) = f(2)     -- f is bound to the VALUE 5 at this call
+--                Inner(5) }
+--   Apply(Inc)
+-- Expected: notAnAlgorithm "param(f)" — never 3.
+--------------------------------------------------------------------------------
+
+def valueShadowIncArg : Algorithm :=
+  alg ["x"] [] [] [.binary .add (.param "x") (.num 1)]
+
+-- `Apply(f) = { Inner = <inner>; <body rows> }`, called as `Apply(Inc)`.
+def valueShadowRoot (inner : Algorithm) (body : List KatLang.Expr) : Algorithm :=
+  algPrivate [] [] [
+    ("Inc", valueShadowIncArg),
+    ("Apply", algPrivate ["f"] [] [("Inner", inner)] body)
+  ] [
+    .call (resolve "Apply") [resolve "Inc"]
+  ]
+
+def expectNotCallableParamF (result : Except Error (List Int)) : Bool :=
+  match result with
+  | Except.error err => innermostIsNotAnAlgorithm "param(f)" err
+  | _ => false
+
+-- Flat fixed binding: Inner(f) = f(2), Inner(5).
+def valueShadowedFlatCallee : Algorithm :=
+  alg ["f"] [] [] [.call (.param "f") [.num 2]]
+
+def testValueParamShadowsCallerAlgorithmFlat : Bool :=
+  expectNotCallableParamF (runFlat (.algorithmExpr
+    (valueShadowRoot valueShadowedFlatCallee [.call (resolve "Inner") [.num 5]])))
+
+#guard testValueParamShadowsCallerAlgorithmFlat
+#eval runFlat (.algorithmExpr (valueShadowRoot valueShadowedFlatCallee [.call (resolve "Inner") [.num 5]]))
+
+-- Standalone control: the same callee outside any enclosing `f` fails the same
+-- way, so the enclosing algorithm's parameter name is unobservable.
+def testValueParamNotCallableStandalone : Bool :=
+  expectNotCallableParamF (runFlat (.algorithmExpr
+    (algPrivate [] [] [("Inner", valueShadowedFlatCallee)] [.call (resolve "Inner") [.num 5]])))
+
+#guard testValueParamNotCallableStandalone
+
+-- Clause-family binder: Inner(0) = 0 / Inner(f) = f(2), Inner(5). A binder is
+-- bound on the value channel only and shadows the algorithm tier the same way.
+def valueShadowedConditionalCallee : Algorithm :=
+  .conditional none [] [
+    ⟨.litInt 0, alg [] [] [] [.num 0]⟩,
+    ⟨.bind "f", alg [] [] [] [.call (.param "f") [.num 2]]⟩
+  ]
+
+def testValueBinderShadowsCallerAlgorithm : Bool :=
+  expectNotCallableParamF (runFlat (.algorithmExpr
+    (valueShadowRoot valueShadowedConditionalCallee [.call (resolve "Inner") [.num 5]])))
+
+#guard testValueBinderShadowsCallerAlgorithm
+
+-- Sequence-builtin callback: map([5], Inner) binds `f` on the counted channel only.
+def testValueCallbackParamShadowsCallerAlgorithm : Bool :=
+  expectNotCallableParamF (runFlat (.algorithmExpr
+    (valueShadowRoot valueShadowedFlatCallee
+      [.call (resolve "map") [.listLiteral [.num 5], resolve "Inner"]])))
+
+#guard testValueCallbackParamShadowsCallerAlgorithm
+
+-- Loop step: repeat(Inner, 1, 5) binds the state slot to `f`.
+def testValueLoopStepParamShadowsCallerAlgorithm : Bool :=
+  expectNotCallableParamF (runFlat (.algorithmExpr
+    (valueShadowRoot valueShadowedFlatCallee
+      [.call (resolve "repeat") [resolve "Inner", .num 1, .num 5]])))
+
+#guard testValueLoopStepParamShadowsCallerAlgorithm
+
+-- Nested call frame inside the callee: Inner(f) = { Local(y) = f(y); Local(2) }.
+-- The shadow established by Inner's binding survives Local's own binding,
+-- which shadows only `y`.
+def valueShadowedNestedCallee : Algorithm :=
+  algPrivate ["f"] [] [("Local", alg ["y"] [] [] [.call (.param "f") [.param "y"]])]
+    [.call (resolve "Local") [.num 2]]
+
+def testValueParamShadowsCallerAlgorithmThroughNestedCall : Bool :=
+  expectNotCallableParamF (runFlat (.algorithmExpr
+    (valueShadowRoot valueShadowedNestedCallee [.call (resolve "Inner") [.num 5]])))
+
+#guard testValueParamShadowsCallerAlgorithmThroughNestedCall
+
+-- Positive control: shadowing removes ONLY the callee's own parameter names.
+-- Inner(x) = f(x) declares no `f`, so the ancestor-owned callable stays
+-- visible through the inherited algorithm environment: Inner(5) = Inc(5) = 6.
+def ancestorCallableCallee : Algorithm :=
+  alg ["x"] [] [] [.call (.param "f") [.param "x"]]
+
+def testAncestorCallableStillVisible : Bool :=
+  match runFlat (.algorithmExpr
+    (valueShadowRoot ancestorCallableCallee [.call (resolve "Inner") [.num 5]])) with
+  | Except.ok [6] => true
+  | _ => false
+
+#guard testAncestorCallableStillVisible
+#eval runFlat (.algorithmExpr (valueShadowRoot ancestorCallableCallee [.call (resolve "Inner") [.num 5]]))
+
+-- Mirror direction, in this shape: Outer(f) = { Inner(f) = f + 1; Inner(Inc) },
+-- Outer(5). The algorithm-only inner `f` hides the caller's value 5, so the
+-- value read is Inc's zero-argument arity error — never 6.
+def algorithmShadowsValueRoot : Algorithm :=
+  algPrivate [] [] [
+    ("Inc", valueShadowIncArg),
+    ("Outer", algPrivate ["f"] []
+      [("Inner", alg ["f"] [] [] [.binary .add (.param "f") (.num 1)])]
+      [.call (resolve "Inner") [resolve "Inc"]])
+  ] [
+    .call (resolve "Outer") [.num 5]
+  ]
+
+def testAlgorithmParamStillShadowsCallerValue : Bool :=
+  match runFlat (.algorithmExpr algorithmShadowsValueRoot) with
+  | Except.error err => innermostIsArityMismatch 1 0 err
+  | _ => false
+
+#guard testAlgorithmParamStillShadowsCallerValue
+
 end KatLangTests

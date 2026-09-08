@@ -270,6 +270,7 @@ public static partial class Evaluator
     private readonly record struct PreparedGenericLoopStep(
         GenericLoopStepBindingContract BindingContract,
         GenericLoopStepBindingSelection BindingSelection,
+        IReadOnlyList<(string Name, Algorithm Value, EvalError? ValueError)> ShadowedAlgEnv,
         IReadOnlyList<(string Name, CountedResult Value)> ShadowedCountedParamEnv,
         bool PreserveSequenceSpreadExpressionBoundaries);
 
@@ -389,13 +390,18 @@ public static partial class Evaluator
         var bindingContract = SnapshotGenericLoopStepBindingContract(step);
         var bindingSelection = SelectGenericLoopStepBinding(bindingContract);
         var parameterNames = bindingContract.Params.ToArray();
+        // Both inherited tiers are shadowed once per loop invocation through the
+        // shared callee-context helper; RunStepSlots prepends the per-iteration
+        // counted bindings on top of the prepared counted tier.
+        var inherited = ShadowInheritedParameterEnvironments(ctx, parameterNames);
         return new PreparedGenericLoopStep(
             new GenericLoopStepBindingContract(
                 bindingContract.Parameters,
                 bindingContract.ParameterPatterns,
                 parameterNames),
             bindingSelection,
-            ShadowCountedParamEnv(ctx.CountedParamEnv, parameterNames),
+            inherited.AlgEnv,
+            inherited.CountedParamEnv,
             ShouldPreserveLoopStepSequenceSpreadExpressionBoundaries(bindingContract, bindingSelection));
     }
 
@@ -1379,30 +1385,44 @@ public static partial class Evaluator
     /// tier as the returned environment. All THREE inherited tiers are shadowed
     /// by the callee's parameter names, so a parameter bound on only one channel
     /// can never be answered by a same-named binding inherited from the caller
-    /// (see <see cref="ShadowValEnv"/>); the callee's own bindings are prepended
-    /// and win regardless. Shared by the synchronous path and its async twin, so
-    /// the two cannot drift.
-    /// Lean: the environment construction inside <c>evalUserCallCounted</c>.
+    /// (see <see cref="ShadowInheritedParameterEnvironments"/> and
+    /// <see cref="ShadowValEnv"/>); the callee's own bindings are prepended and
+    /// win regardless. Shared by the synchronous path and its async twin, so the
+    /// two cannot drift.
+    /// Lean: <c>EvalCtx.bindParameters</c> inside <c>evalUserCallCounted</c>.
     /// </summary>
     private static UserCallEnvironments WithUserCallBindingEnvironments(
         EvalCtx ctx,
         UserCallBindings bindings,
         IReadOnlyList<(string, Result)> valEnv,
         IReadOnlyList<string> shadowedNames)
-        => new(
-            ctx
-                .WithAlgEnv(Concat(bindings.AlgorithmBindings, ctx.AlgEnv))
-                .WithCountedParamEnv(Concat(bindings.CountedBindings, ShadowCountedParamEnv(ctx.CountedParamEnv, shadowedNames))),
+    {
+        var inherited = ShadowInheritedParameterEnvironments(ctx, shadowedNames);
+        return new(
+            inherited
+                .WithAlgEnv(Concat(bindings.AlgorithmBindings, inherited.AlgEnv))
+                .WithCountedParamEnv(Concat(bindings.CountedBindings, inherited.CountedParamEnv)),
             Concat(bindings.ValueBindings, ShadowValEnv(valEnv, shadowedNames)));
+    }
 
+    /// <summary>
+    /// Callback-binding context (flat, patterned, collecting, and clause-family
+    /// callbacks of the sequence builtins): the callee's counted bindings
+    /// prepended to the inherited tiers shadowed by the callee's parameter
+    /// names (<see cref="ShadowInheritedParameterEnvironments"/>). A callback
+    /// parameter is bound on the counted channel only, so the algorithm tier
+    /// must be shadowed here too — otherwise <c>[5].map(Inner)</c> with
+    /// <c>Inner(f) = f(2)</c> would still invoke an enclosing callable <c>f</c>.
+    /// Lean: <c>EvalCtx.bindParameters</c> at the callback sites of
+    /// <c>evalResolvedCallbackCallCounted</c>.
+    /// </summary>
     private static EvalCtx WithCountedParameterEnvironments(
         EvalCtx ctx,
         IReadOnlyList<(string, CountedResult)> countedBindings,
         IEnumerable<string> shadowedNames)
     {
-        var shadowed = shadowedNames.ToArray();
-        return ctx
-            .WithCountedParamEnv(Concat(countedBindings, ShadowCountedParamEnv(ctx.CountedParamEnv, shadowed)));
+        var inherited = ShadowInheritedParameterEnvironments(ctx, shadowedNames.ToArray());
+        return inherited.WithCountedParamEnv(Concat(countedBindings, inherited.CountedParamEnv));
     }
 
     internal static EvalError? RetainResourceLimitForAlgorithmBinding(EvalError? valueError)
@@ -1477,9 +1497,8 @@ public static partial class Evaluator
             return argEnvR.Error;
         }
 
-        var boundCtx = ctx
-            .WithAlgEnv(Concat(algBindings, ctx.AlgEnv))
-            .WithCountedParamEnv(ShadowCountedParamEnv(ctx.CountedParamEnv, parameterNames));
+        var inherited = ShadowInheritedParameterEnvironments(ctx, parameterNames);
+        var boundCtx = inherited.WithAlgEnv(Concat(algBindings, inherited.AlgEnv));
         var boundEnv = Concat(argEnvR.Value, ShadowValEnv(valEnv, parameterNames));
         return EvalResult<UserCallEnvironments>.Ok(new UserCallEnvironments(boundCtx, boundEnv));
     }

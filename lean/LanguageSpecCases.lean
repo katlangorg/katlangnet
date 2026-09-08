@@ -14,11 +14,11 @@ This is bounded differential validation over the Lean-guarded partition,
 not a formal verification of the evaluators.
 
 Partition (machine-checked by the `specCaseIds.length` guard below):
-- specification surface cases: 199
+- specification surface cases: 203
 - excluded parse-level cases (Lean has no surface parser): 11
 - excluded C#-only cases (each carries an explicit reason in the corpus): 9
-- Lean-guarded cases: 179
-- probe observations (C#-only by design): 332
+- Lean-guarded cases: 183
+- probe observations (C#-only by design): 343
 - internal-node cases live in the semantic-explorer corpus, not here: see
   lean/SemanticExplorerCases.lean
 
@@ -973,6 +973,26 @@ def case_callable_argument_parameter_shadowing : Expr :=
   .algorithmExpr (alg [] [] [privateProp "A" (alg ["q"] [] [] [(.binary .add (.param "q") (.num 1))]), privateProp "Add1" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))]), privateProp "F" (alg ["x"] [] [] [(.call (.resolve "Add1") [.resolve "A"])])] [(.call (.resolve "F") [.num 7])])
 #guard obs case_callable_argument_parameter_shadowing == "err arity"
 
+-- value-argument-parameter-shadowing [access-boundaries]: Inc(x) = x + 1 \n  \n Apply(f) = { \n     Inner(f) = f(2) \n     Inner(5) \n } \n  \n Apply(Inc)
+def case_value_argument_parameter_shadowing : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))]), privateProp "Apply" (alg ["f"] [] [privateProp "Inner" (alg ["f"] [] [] [(.call (.param "f") [.num 2])])] [(.call (.resolve "Inner") [.num 5])])] [(.call (.resolve "Apply") [.resolve "Inc"])])
+#guard obs case_value_argument_parameter_shadowing == "err notAnAlgorithm"
+
+-- value-parameter-shadowing-through-nested-scope [access-boundaries]: Inc(x) = x + 1 \n  \n Apply(f) = { \n     Inner(f) = { \n         Local(y) = f(y) \n         Local(2) \n     } \n     Inner(5) \n } \n  \n Apply(Inc)
+def case_value_parameter_shadowing_through_nested_scope : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))]), privateProp "Apply" (alg ["f"] [] [privateProp "Inner" (alg ["f"] [] [privateLocalProp "Local" .localCapturedAncestorParams (alg ["y"] [] [] [(.call (.param "f") [.param "y"])])] [(.call (.resolve "Local") [.num 2])])] [(.call (.resolve "Inner") [.num 5])])] [(.call (.resolve "Apply") [.resolve "Inc"])])
+#guard obs case_value_parameter_shadowing_through_nested_scope == "err notAnAlgorithm"
+
+-- value-binder-parameter-shadowing [conditionals]: Inc(x) = x + 1 \n  \n Apply(f) = { \n     Inner(0) = 0 \n     Inner(f) = f(2) \n     Inner(5) \n } \n  \n Apply(Inc)
+def case_value_binder_parameter_shadowing : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))]), privateProp "Apply" (alg ["f"] [] [privateProp "Inner" (.conditional none [] [⟨.litInt 0, (alg [] [] [] [.num 0])⟩, ⟨.bind "f", (alg [] [] [] [(.call (.param "f") [.num 2])])⟩])] [(.call (.resolve "Inner") [.num 5])])] [(.call (.resolve "Apply") [.resolve "Inc"])])
+#guard obs case_value_binder_parameter_shadowing == "err notAnAlgorithm"
+
+-- ancestor-callable-visible-without-same-named-parameter [access-boundaries]: Inc(x) = x + 1 \n  \n Apply(f) = { \n     Inner(x) = f(x) \n     Inner(5) \n } \n  \n Apply(Inc)
+def case_ancestor_callable_visible_without_same_named_parameter : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))]), privateProp "Apply" (alg ["f"] [] [privateLocalProp "Inner" .localCapturedAncestorParams (alg ["x"] [] [] [(.call (.param "f") [.param "x"])])] [(.call (.resolve "Inner") [.num 5])])] [(.call (.resolve "Apply") [.resolve "Inc"])])
+#guard obs case_ancestor_callable_visible_without_same_named_parameter == "ok raw=6 n=1"
+
 -- clause-family-nested-in-branch-body-binds-its-own-binders [conditionals]: n = 99 \n F(0) = { \n   G(0) = 'zero' \n   G(n) = n \n   G(5) \n } \n F(k) = k \n  \n F(0)
 def case_clause_family_nested_in_branch_body_binds_its_own_binders : Expr :=
   .algorithmExpr (alg [] [] [privateProp "n" (alg [] [] [] [.num 99]), privateProp "F" (.conditional none [] [⟨.litInt 0, (alg [] [] [privateProp "G" (.conditional none [] [⟨.litInt 0, (alg [] [] [] [.stringLiteral "zero"])⟩, ⟨.bind "n", (alg [] [] [] [.param "n"])⟩])] [(.call (.resolve "G") [.num 5])])⟩, ⟨.bind "k", (alg [] [] [] [.param "k"])⟩])] [(.call (.resolve "F") [.num 0])])
@@ -993,7 +1013,7 @@ def case_conditional_branch_local_library_is_openable_within_the_branch : Expr :
   .algorithmExpr (alg [] [] [privateProp "F" (.conditional none [] [⟨.litInt 0, (alg [] [] [privateProp "Lib" (alg [] [] [publicProp "X" (alg [] [] [] [.num 1])] []), privateProp "G" (alg [] [.resolve "Lib"] [] [.resolve "X"])] [.resolve "G"])⟩, ⟨.bind "n", (alg [] [] [] [.param "n"])⟩])] [(.call (.resolve "F") [.num 0])])
 #guard obs case_conditional_branch_local_library_is_openable_within_the_branch == "ok raw=1 n=1"
 
--- 179 canonical Lean-guarded specification cases.
+-- 183 canonical Lean-guarded specification cases.
 
 /--
 Machine-checked Lean-guarded partition count: the id list is built by the
@@ -1176,11 +1196,15 @@ def specCaseIds : List String := [
   "list-lone-collecting-assignment",
   "list-builtin-collection",
   "callable-argument-parameter-shadowing",
+  "value-argument-parameter-shadowing",
+  "value-parameter-shadowing-through-nested-scope",
+  "value-binder-parameter-shadowing",
+  "ancestor-callable-visible-without-same-named-parameter",
   "clause-family-nested-in-branch-body-binds-its-own-binders",
   "conditional-branch-pattern-is-a-closed-input-specification",
   "conditional-branch-inline-open-exposes-members-to-the-branch",
   "conditional-branch-local-library-is-openable-within-the-branch"
 ]
-#guard specCaseIds.length == 179
+#guard specCaseIds.length == 183
 
 end LanguageSpecCases

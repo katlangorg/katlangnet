@@ -305,7 +305,7 @@ internal static partial class LoopOptimizer
             return null;
         }
 
-        var loopCtx = ShadowLoopStepCountedParamEnv(ctx, userStep);
+        var loopCtx = ShadowLoopStepParameterEnvironments(ctx, userStep);
         var iterationCtx = loopCtx.Push(userStep);
         var tempPlanBuild = BuildLoopTempPlans(
             userStep,
@@ -382,10 +382,17 @@ internal static partial class LoopOptimizer
             diagnosticKey);
     }
 
-    private static Evaluator.EvalCtx ShadowLoopStepCountedParamEnv(
+    /// <summary>
+    /// The planned loop's step context shadows the step's parameter names out of
+    /// BOTH inherited tiers through the evaluator's shared callee-context helper —
+    /// the same construction the generic step binding performs — so a partially
+    /// planned row that falls back to generic evaluation inside the planned loop
+    /// resolves a call on a state parameter exactly as the generic strategy does.
+    /// </summary>
+    private static Evaluator.EvalCtx ShadowLoopStepParameterEnvironments(
         Evaluator.EvalCtx ctx,
         Algorithm.User userStep)
-        => ctx.WithCountedParamEnv(Evaluator.ShadowCountedParamEnv(ctx.CountedParamEnv, userStep.Params));
+        => Evaluator.ShadowInheritedParameterEnvironments(ctx, userStep.Params);
 
     private static void RecordLoopPlanFallbackDiagnostic(
         LoopKind kind,

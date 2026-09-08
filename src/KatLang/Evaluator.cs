@@ -232,6 +232,86 @@ public static partial class Evaluator
     }
 
     /// <summary>
+    /// Removes the named bindings from an INHERITED algorithm environment — the
+    /// algorithm-tier counterpart of <see cref="ShadowCountedParamEnv"/> and
+    /// <see cref="ShadowValEnv"/>.
+    /// <para>A callee's algorithm environment is its own algorithm bindings
+    /// prepended to the CALLER's, which is what lets a nested call still invoke
+    /// an ancestor-owned callable parameter. A parameter the call bound only on
+    /// the VALUE channel contributes no algorithm binding, so without this
+    /// filter a same-named callable inherited from the caller answered every
+    /// call-position read of that parameter (<see cref="ResolveAlg"/> on an
+    /// <see cref="Expr.Param"/>): <c>Inner(f) = f(2)</c> called as
+    /// <c>Inner(5)</c> inside <c>Apply(f)</c> invoked the caller's <c>f</c>
+    /// instead of failing as not-callable, exactly as the standalone
+    /// <c>Inner(5)</c> does.</para>
+    /// Returns the SAME instance when nothing is removed: the environment's
+    /// reference identity is a zero-arg property cache key component.
+    /// Lean: <c>AlgEnv.shadow</c>.
+    /// </summary>
+    internal static IReadOnlyList<(string Name, Algorithm Value, EvalError? ValueError)> ShadowAlgEnv(
+        IReadOnlyList<(string Name, Algorithm Value, EvalError? ValueError)> env,
+        IReadOnlyList<string> shadowedNames)
+    {
+        if (env.Count == 0 || shadowedNames.Count == 0)
+            return env;
+
+        HashSet<string>? shadowedSet = shadowedNames.Count > LinearShadowNameScanLimit
+            ? new HashSet<string>(shadowedNames, StringComparer.Ordinal)
+            : null;
+
+        List<(string Name, Algorithm Value, EvalError? ValueError)>? filtered = null;
+        for (var index = 0; index < env.Count; index++)
+        {
+            var binding = env[index];
+            var isShadowed = shadowedSet is not null
+                ? shadowedSet.Contains(binding.Name)
+                : ContainsOrdinal(shadowedNames, binding.Name);
+
+            if (isShadowed)
+            {
+                if (filtered is null)
+                {
+                    filtered = new List<(string Name, Algorithm Value, EvalError? ValueError)>(env.Count - 1);
+                    for (var copied = 0; copied < index; copied++)
+                        filtered.Add(env[copied]);
+                }
+
+                continue;
+            }
+
+            filtered?.Add(binding);
+        }
+
+        return filtered ?? env;
+    }
+
+    /// <summary>
+    /// The inherited tiers of a callee's context with the callee's parameter
+    /// names shadowed out of BOTH the algorithm environment
+    /// (<see cref="ShadowAlgEnv"/>) and the counted callback-parameter
+    /// environment (<see cref="ShadowCountedParamEnv"/>).
+    /// <para>A bound parameter owns its name on every channel: a call-position
+    /// read of a value-bound parameter never reaches a same-named caller
+    /// callable, exactly as a value-position read of an algorithm-bound
+    /// parameter never reaches a same-named caller value
+    /// (<see cref="ShadowValEnv"/>, applied beside this helper at the value
+    /// tier). Names the callee does not bind stay visible, which is what lets a
+    /// nested call still reach an ancestor-owned callable. Every user-call,
+    /// conditional-call, callback, and loop-step binding site — generic and
+    /// planned, synchronous and async twin — derives its callee context from
+    /// this ONE helper and then prepends its own bindings, so no path can
+    /// shadow one tier and forget another. Each tier keeps its instance when
+    /// nothing is removed, because both identities are zero-arg property cache
+    /// key components.</para>
+    /// Lean: <c>EvalCtx.bindParameters</c> (which also performs the prepend).
+    /// </summary>
+    internal static EvalCtx ShadowInheritedParameterEnvironments(EvalCtx ctx, IReadOnlyList<string> parameterNames)
+        => ctx
+            .WithAlgEnv(ShadowAlgEnv(ctx.AlgEnv, parameterNames))
+            .WithCountedParamEnv(ShadowCountedParamEnv(ctx.CountedParamEnv, parameterNames));
+
+    /// <summary>
     /// Removes the named bindings from an INHERITED value environment — the
     /// value-tier counterpart of <see cref="ShadowCountedParamEnv"/>.
     /// <para>A callee's value environment is its own bindings prepended to the
@@ -244,9 +324,10 @@ public static partial class Evaluator
     /// an unrelated caller value instead of the argument bound at THIS
     /// invocation, and which caller parameter names happen to collide with a
     /// callee's parameter names would become observable. Shadowing the callee's
-    /// whole parameter list is the same rule the counted tier already applies;
-    /// names that DO carry a value binding are shadowed by the prepended
-    /// bindings anyway, so filtering the tail changes nothing for them.</para>
+    /// whole parameter list is the same rule the counted and algorithm tiers
+    /// apply (<see cref="ShadowInheritedParameterEnvironments"/>); names that
+    /// DO carry a value binding are shadowed by the prepended bindings anyway,
+    /// so filtering the tail changes nothing for them.</para>
     /// Lean: <c>ValEnv.shadow</c>.
     /// </summary>
     internal static IReadOnlyList<(string Name, Result Value)> ShadowValEnv(
@@ -1519,6 +1600,10 @@ public static partial class Evaluator
             // Algorithm resolution for parameters (Lean: resolveAlg Param(x)):
             // Check AlgEnv first — if x is bound to an algorithm, return it.
             // Otherwise NotAnAlgorithm (parameters are not structurally algorithms).
+            // The environment reaching here was shadowed by every enclosing
+            // binding's parameter names (ShadowInheritedParameterEnvironments), so a
+            // parameter bound only on the value channel finds NO entry and fails as
+            // not-callable instead of reaching a same-named caller callable.
             case Expr.Param(var x):
                 {
                     var algBound = LookupAlg(ctx.AlgEnv, x);

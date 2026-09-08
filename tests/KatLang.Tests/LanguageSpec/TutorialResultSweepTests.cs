@@ -46,6 +46,10 @@ public class TutorialResultSweepTests
                     "**Result:** error — `Add1`'s parameter `x` is bound to the callable `A`, and `A` still needs its implicit `q`, so demanding `x` as a value is an arity error.",
                     KatLangErrorCode.ArityMismatch),
                 new(
+                    "Inc(x) = x + 1\n\nApply(f) = {\n    Inner(f) = f(2)\n    Inner(5)\n}\n\nApply(Inc)",
+                    "**Result:** error — `Inner`'s parameter `f` is the value `5` at this call, so `f(2)` is not a call of a callable; the `Inc` that `Apply` holds under its own `f` is never consulted, and the program fails exactly as the standalone `Inner(5)` does.",
+                    KatLangErrorCode.NotAnAlgorithm),
+                new(
                     "A = [1, 2, 3]\nA*.count",
                     "**Result:** error — `A*.count` is the fluent supply chain, exactly `count(A*)`: the three items become three separate argument slots, and the fixed `count(collection)` signature reports an arity error.",
                     KatLangErrorCode.ArityMismatch),
