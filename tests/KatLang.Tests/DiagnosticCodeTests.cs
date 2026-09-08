@@ -120,6 +120,8 @@ public class DiagnosticCodeTests
         { "number-too-large", "1e999999", DiagnosticCode.NumberLiteralTooLarge },
         { "unexpected-token-missing-close", "(1", DiagnosticCode.UnexpectedToken },
         { "unexpected-token-trailing-comma", "(3,)", DiagnosticCode.UnexpectedToken },
+        { "unexpected-token-stray-root-paren", "Before = 1\n)\nAfter = 2\nAfter", DiagnosticCode.UnexpectedToken },
+        { "unexpected-token-stray-root-brace", "Before = 1\n}\nAfter = 2\nAfter", DiagnosticCode.UnexpectedToken },
         { "semicolon-output-row", "1 ; 2", DiagnosticCode.UnsupportedSemicolon },
         { "semicolon-primary", "(; 1)", DiagnosticCode.UnsupportedSemicolon },
         { "duplicate-property", "A = 1\nA = 2", DiagnosticCode.DuplicateProperty },

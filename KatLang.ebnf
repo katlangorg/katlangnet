@@ -1,4 +1,7 @@
 Program         = Algorithm ;
+                  (* Unmatched root ")" and "}" are invalid syntax. Recovery
+                     reports and skips each token, retaining later items in the
+                     same root scope for editor analysis; the parse stays invalid. *)
 
 Algorithm       = { AlgorithmItem } ;
 AlgorithmItem   = OpenDeclaration | PropertyDefinition | DeconstructionDefinition | ClauseDefinition | OutputLine ;

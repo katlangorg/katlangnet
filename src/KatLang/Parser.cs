@@ -282,7 +282,11 @@ public sealed class Parser
         try
         {
             parser.GuardNestingDepth();
-            root = parser.ParseScopedAlgorithm();
+            root = parser.ParseRootAlgorithm();
+            // The root body loop consumes every token up to end of input — an
+            // unmatched closer is recovered in place (ParseRootAlgorithm) instead
+            // of ending the parse — so this is a fail-loud backstop against a
+            // root loop exit a future change might introduce, not a reachable path.
             if (parser.Current.Kind != TokenKind.EndOfFile)
             {
                 parser.ReportError(
@@ -586,11 +590,15 @@ public sealed class Parser
     // rows and declarations into syntactic PARTS without constructing a
     // semantic Algorithm. The two semantic entry points lower the parts
     // differently:
-    //   ParseScopedAlgorithm        — the root, brace blocks, and trailing
-    //                                 brace call arguments: the parts become
-    //                                 an Algorithm.User that owns its
+    //   ParseScopedAlgorithm        — brace blocks and trailing brace call
+    //                                 arguments: the parts become an
+    //                                 Algorithm.User that owns its
     //                                 declarations and its parameter
-    //                                 analysis.
+    //                                 analysis. ParseRootAlgorithm is the
+    //                                 same lowering for the root — the one
+    //                                 body with no enclosing delimiter, where
+    //                                 an unmatched ')' or '}' is a recovered
+    //                                 parse error rather than a terminator.
     //   ParseParenthesizedBodyParts — expression groups and call argument
     //                                 lists: declarations (open, properties,
     //                                 clause definitions, deconstruction
@@ -671,12 +679,37 @@ public sealed class Parser
     }
 
     /// <summary>
-    /// Parses a scope-owning algorithm body — the root, brace blocks, and
-    /// trailing brace call arguments — where declarations are legal and owned
-    /// by the produced algorithm.
+    /// Parses a scope-owning algorithm body — brace blocks and trailing brace
+    /// call arguments — where declarations are legal and owned by the produced
+    /// algorithm. The body stops at ')' or '}'; the caller consumes its
+    /// expected closer or reports a mismatch without consuming it.
     /// </summary>
     private Algorithm.User ParseScopedAlgorithm()
-        => CreateAlgorithm(ParseAlgorithmBodyParts(declarationsAllowed: true));
+        => CreateAlgorithm(ParseAlgorithmBodyParts(declarationsAllowed: true, atRoot: false));
+
+    /// <summary>
+    /// Parses one root scope through end of input. Any ')' or '}' left by
+    /// nested parsing is reported and consumed within the same body loop,
+    /// preserving accumulated declarations, output, and clause-family state.
+    /// Recovery retains an erroneous tree for diagnostics and editor analysis.
+    /// </summary>
+    private Algorithm.User ParseRootAlgorithm()
+        => CreateAlgorithm(ParseAlgorithmBodyParts(declarationsAllowed: true, atRoot: true));
+
+    /// <summary>
+    /// Reports an unmatched <c>)</c> or <c>}</c> at the root in KatLang terms —
+    /// the written character, not the internal token kind — spanning exactly
+    /// the offending token (the shared <see cref="DiagnosticCode.UnexpectedToken"/>
+    /// family: a token that cannot continue the construct being parsed).
+    /// </summary>
+    private void ReportStrayRootCloser(Token closer)
+    {
+        var (written, opener) = closer.Kind == TokenKind.RParen ? (")", "(") : ("}", "{");
+        ReportError(
+            DiagnosticCode.UnexpectedToken,
+            $"Unexpected '{written}' at the top level. There is no open '{opener}' for it to close.",
+            TokenSpan(closer));
+    }
 
     /// <summary>
     /// Parses a parenthesized expression-list body — expression groups and
@@ -687,7 +720,7 @@ public sealed class Parser
     /// declarations were retained.
     /// </summary>
     private ParsedAlgorithmBody ParseParenthesizedBodyParts()
-        => ParseAlgorithmBodyParts(declarationsAllowed: false);
+        => ParseAlgorithmBodyParts(declarationsAllowed: false, atRoot: false);
 
     /// <summary>
     /// Constructs the semantic algorithm for parsed body parts. Used by the
@@ -704,7 +737,7 @@ public sealed class Parser
             Properties: body.Properties,
             Output: body.Output);
 
-    private ParsedAlgorithmBody ParseAlgorithmBodyParts(bool declarationsAllowed)
+    private ParsedAlgorithmBody ParseAlgorithmBodyParts(bool declarationsAllowed, bool atRoot)
     {
         var opens = new List<Expr>();
         var hasOpenDeclaration = false;
@@ -827,10 +860,26 @@ public sealed class Parser
             }
         }
 
-        while (Current.Kind != TokenKind.EndOfFile
-            && Current.Kind != TokenKind.RParen
-            && Current.Kind != TokenKind.RBrace)
+        while (Current.Kind != TokenKind.EndOfFile)
         {
+            if (Current.Kind is TokenKind.RParen or TokenKind.RBrace)
+            {
+                // A closing delimiter ends every NESTED body: the enclosing
+                // group, block, or argument-list parser owns it and consumes it
+                // (or reports the mismatch). The root has no enclosing
+                // delimiter, so a closer reaching it is unmatched. Recover in
+                // place: report the token at its own span, consume it, and keep
+                // collecting into the SAME parts so the root stays one scope
+                // (see ParseRootAlgorithm). Each recovery step consumes exactly
+                // one token and reports exactly once, so a run of stray closers
+                // costs linear work and one diagnostic per token.
+                if (!atRoot)
+                    break;
+
+                ReportStrayRootCloser(Advance());
+                continue;
+            }
+
             // Skip bad tokens for error recovery
             if (Current.Kind == TokenKind.Bad)
             {

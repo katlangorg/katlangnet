@@ -368,6 +368,25 @@ public sealed class CliApplicationTests
         Assert.Matches(@"^\[\d+:\d+\] ", result.TrimmedError);
     }
 
+    [Theory]
+    [InlineData("check")]
+    [InlineData("run")]
+    public async Task StrayRootCloser_FailsTheCommand_AndNeverEvaluatesTheRecoveredRemainder(string command)
+    {
+        // The parser keeps `After = 2` / `After` after the stray ')' for
+        // diagnostics and editor analysis, but the document is invalid: the
+        // recovered remainder would print `2`, and neither command may.
+        using var file = new TempSourceFile("Before = 1\n)\nAfter = 2\nAfter\n");
+
+        var result = await Cli.InvokeAsync(command, file.Path);
+
+        Assert.Equal(Failure, result.ExitCode);
+        Assert.Equal("", result.Output);
+        Assert.Equal(
+            "[2:1] Unexpected ')' at the top level. There is no open '(' for it to close.",
+            result.TrimmedError);
+    }
+
     // ── File handling ───────────────────────────────────────────────────────
 
     [Theory]
