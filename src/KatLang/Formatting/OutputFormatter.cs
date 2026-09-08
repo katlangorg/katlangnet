@@ -50,8 +50,25 @@ public abstract class OutputFormatter
     /// response is returned (the complete limit message when it fits,
     /// otherwise the complete <c>…</c> marker, otherwise the empty string) —
     /// output is never truncated mid-value.</para>
+    ///
+    /// <para>This is the <see cref="DisplayRendering.Text"/> projection of
+    /// <see cref="RenderDisplay"/>; detect overflow through that method's
+    /// structured result, never by inspecting the returned text.</para>
     /// </summary>
     public string Format(RunResult result, OutputFormattingOptions? options = null)
+        => RenderDisplay(result, options).Text;
+
+    /// <summary>
+    /// Formats an already evaluated run exactly like <see cref="Format"/> and
+    /// additionally reports, structurally, whether the rendering exceeded the
+    /// effective display limit. The signal is derived by this shared template
+    /// from the bounded writer's own state — never from the text — so every
+    /// formatter, built-in or external, reports it identically, and a derived
+    /// formatter can neither suppress nor fabricate it. Overflow is a property
+    /// of this one rendering call (its formatter and effective limit), not of
+    /// the run: the <see cref="RunResult"/> is unchanged.
+    /// </summary>
+    public DisplayRendering RenderDisplay(RunResult result, OutputFormattingOptions? options = null)
     {
         ArgumentNullException.ThrowIfNull(result);
         var effectiveOptions = options ?? OutputFormattingOptions.Default;

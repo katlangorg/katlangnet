@@ -446,6 +446,11 @@ public enum KatLang.DiagnosticSeverity : int
   Warning = 4
   Error = 8
 
+public sealed class KatLang.DisplayRendering
+  property public KatLang.KatLangError? LimitError { get; }
+  property [MemberNotNullWhen(true, "LimitError")] public bool LimitExceeded { get; }
+  property public string Text { get; }
+
 public sealed record KatLang.DotCallContext : KatLang.ErrorContext, System.IEquatable<KatLang.DotCallContext>
   ctor     public DotCallContext(string ReceiverDescription, string PropertyName)
   property protected override System.Type EqualityContract { get; }
@@ -1358,6 +1363,7 @@ public abstract class KatLang.Formatting.OutputFormatter
   ctor     protected OutputFormatter()
   property public abstract string Id { get; }
   method   public string Format(KatLang.RunResult result, KatLang.Formatting.OutputFormattingOptions? options = null)
+  method   public KatLang.DisplayRendering RenderDisplay(KatLang.RunResult result, KatLang.Formatting.OutputFormattingOptions? options = null)
   method   protected abstract bool WriteSuccessOutput(System.Collections.Generic.IReadOnlyList<KatLang.Result> outputRows, KatLang.Formatting.OutputFormattingOptions options, KatLang.Formatting.BoundedOutputWriter writer)
 
 public static class KatLang.Formatting.OutputFormatters
@@ -1893,6 +1899,7 @@ public abstract record KatLang.RunResult : System.IEquatable<KatLang.RunResult>
   method   public virtual bool Equals(KatLang.RunResult? other)
   method   public override int GetHashCode()
   method   protected virtual bool PrintMembers(System.Text.StringBuilder builder)
+  method   public KatLang.DisplayRendering RenderDisplay()
   method   public string ToDisplayString()
   method   public override string ToString()
   operator public static bool op_Equality(KatLang.RunResult? left, KatLang.RunResult? right)

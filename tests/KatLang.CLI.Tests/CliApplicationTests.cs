@@ -216,6 +216,94 @@ public sealed class CliApplicationTests
         Assert.Equal("", result.Error);
     }
 
+    // ── Display limit ───────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Evaluates successfully under every default limit — each list has two
+    /// item slots and strings contribute no host atoms — while the rendered
+    /// text doubles per level and passes KatLang's display ceiling.
+    /// </summary>
+    private const string DisplayOverflowSource =
+        "'first output row'\nToText(x) = x.string\nValues = range(1, 1000).map(ToText)\n"
+        + "L0 = [Values, Values]\nL1 = [L0, L0]\nL2 = [L1, L1]\nL3 = [L2, L2]\n"
+        + "L4 = [L3, L3]\nL5 = [L4, L4]\nL6 = [L5, L5]\nL7 = [L6, L6]\nL7\n";
+
+    /// <summary>
+    /// The notice KatLang renders for its default display ceiling, taken from
+    /// the package rather than restated, so the CLI contract is pinned to the
+    /// package's wording without the tests coupling to it.
+    /// </summary>
+    private static string DisplayLimitNotice =>
+        KatLangError.FromEvalError(
+            new EvalError.DisplayLengthLimitExceeded(EvaluationLimits.MaxSupportedDisplayLength)).Message;
+
+    [Fact]
+    public async Task DisplayOverflowSource_ReachesRenderingAfterSuccessfulEvaluation()
+    {
+        var success = Assert.IsType<RunResult.Success>(await KatLangEngine.RunAsync(DisplayOverflowSource));
+        Assert.Empty(success.Atoms); // No earlier host-atom projection refusal.
+        Assert.Equal(2, success.OutputRows.Count);
+        Assert.Equal("first output row", Assert.IsType<Result.Str>(success.OutputRows[0]).Value);
+
+        var rendering = success.RenderDisplay();
+        Assert.True(rendering.LimitExceeded);
+        Assert.Equal(KatLangErrorCode.DisplayLengthLimitExceeded, rendering.LimitError!.Code);
+        Assert.Equal(DisplayLimitNotice, rendering.Text);
+    }
+
+    [Fact]
+    public async Task Run_OutputExceedingTheDisplayLimit_IsACommandFailure()
+    {
+        using var file = new TempSourceFile(DisplayOverflowSource);
+
+        var result = await Cli.InvokeAsync("run", file.Path);
+
+        // The notice is a diagnostic, not program output: stderr carries it,
+        // stdout stays empty, and the exit code says the command failed.
+        Assert.Equal(Failure, result.ExitCode);
+        Assert.Equal("", result.Output);
+        Assert.Equal(DisplayLimitNotice + Environment.NewLine, result.Error);
+    }
+
+    [Fact]
+    public async Task Eval_OutputExceedingTheDisplayLimit_IsACommandFailure()
+    {
+        var result = await Cli.InvokeAsync("eval", DisplayOverflowSource);
+
+        Assert.Equal(Failure, result.ExitCode);
+        Assert.Equal("", result.Output);
+        Assert.Equal(DisplayLimitNotice + Environment.NewLine, result.Error);
+    }
+
+    [Theory]
+    [InlineData("run")]
+    [InlineData("eval")]
+    public async Task OutputEqualToTheDisplayLimitNotice_IsOrdinaryOutput(string command)
+    {
+        // The discriminator: a program whose genuine output IS the notice text
+        // renders byte-identically to an overflow. The CLI must tell the two
+        // apart structurally, never by looking at the text.
+        using var file = new TempSourceFile($"'{DisplayLimitNotice}'\n");
+
+        var result = await Cli.InvokeAsync(command, command == "run" ? file.Path : $"'{DisplayLimitNotice}'\n");
+
+        Assert.Equal(Success, result.ExitCode);
+        Assert.Equal(DisplayLimitNotice + Environment.NewLine, result.Output);
+        Assert.Equal("", result.Error);
+    }
+
+    [Fact]
+    public async Task Check_DoesNotEvaluate_SoADisplayOverflowIsNotItsConcern()
+    {
+        using var file = new TempSourceFile(DisplayOverflowSource);
+
+        var result = await Cli.InvokeAsync("check", file.Path);
+
+        Assert.Equal(Success, result.ExitCode);
+        Assert.Equal("", result.Output);
+        Assert.Equal("", result.Error);
+    }
+
     // ── check ───────────────────────────────────────────────────────────────
 
     [Fact]

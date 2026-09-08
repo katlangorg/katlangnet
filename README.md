@@ -98,6 +98,20 @@ var text = OutputFormatters.Readable.Format(result, new OutputFormattingOptions
 
 `OutputFormattingOptions` also covers the newline sequence, the number of blank lines between root-output blocks (`RootOutputSpacing`), and an optional `MaxDisplayLength` that can lower — never raise — the run's display limit.
 
+When a rendering exceeds the effective display limit, the string surfaces return the bounded limit notice (or `…`, or an empty string, when even the notice does not fit). A program's genuine output can equal that notice, so overflow is detected structurally, never from the text: `result.RenderDisplay()` and `formatter.RenderDisplay(result, options)` return a `DisplayRendering` whose `Text` is the same string and whose `LimitExceeded` / `LimitError` (a `KatLangError` with code `DisplayLengthLimitExceeded`) report the overflow. Evaluation is unaffected — the run stays a `Success` with its structured value.
+
+```c#
+var rendering = OutputFormatters.Exact.RenderDisplay(result);
+if (rendering.LimitExceeded)
+    Console.Error.WriteLine(rendering.LimitError.Message);   // a diagnostic, never program output
+else
+    Console.WriteLine(rendering.Text);
+```
+
+`ToDisplayString()` and `OutputFormatter.Format(...)` discard the structured rendering status. `EvaluateToString` and `EvaluateToStringAsync` are separate, lossy conveniences: they join numeric host atoms with spaces, dropping strings and structure boundaries, and return error or overflow text without a status. Their atom-only rendering can reach a different display-limit verdict from canonical display. Use `Run`/`RunAsync` followed by `RenderDisplay` when evaluation and rendering status matter.
+
+The CLI's `run` and `eval` commands render before writing program output. Display overflow returns exit code 1, writes the complete limit notice once to stderr, and leaves stdout empty. Genuine notice-shaped output remains successful stdout output with exit code 0. Ordinary output keeps its terminating newline; programs with no output rows succeed silently. `check` validates source without executing or rendering it, so valid source that would overflow on execution still passes silently.
+
 ## Nuget package
 https://www.nuget.org/packages/KatLang
 

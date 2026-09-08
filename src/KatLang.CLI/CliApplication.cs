@@ -17,8 +17,9 @@ public static class CliApplication
 
     /// <summary>
     /// Exit code for every unsuccessful command — a usage error, an unreadable
-    /// file, KatLang diagnostics, or a failed evaluation. v1 deliberately keeps
-    /// a two-value exit contract rather than a public exit-code taxonomy.
+    /// file, KatLang diagnostics, a failed evaluation, or output that could not
+    /// be rendered within KatLang's display limit. v1 deliberately keeps a
+    /// two-value exit contract rather than a public exit-code taxonomy.
     /// </summary>
     public const int FailureExitCode = 1;
 
@@ -144,12 +145,27 @@ public static class CliApplication
         switch (result)
         {
             case RunResult.Success success:
-                // The package's canonical display form, unmodified.
                 // A successful zero-row emission is silent; an explicitly
                 // emitted empty value still has one OutputRows entry and keeps
                 // its terminating output newline.
-                if (success.OutputRows.Count != 0)
-                    output.WriteLine(success.ToDisplayString());
+                if (success.OutputRows.Count == 0)
+                    return SuccessExitCode;
+
+                var rendering = success.RenderDisplay();
+                if (rendering.LimitExceeded)
+                {
+                    // The program evaluated, but its output cannot be rendered
+                    // within KatLang's display limit. That is a failed command,
+                    // not program output: the notice goes to stderr, stdout
+                    // stays empty, and the exit code says so. The decision is
+                    // structural, so a program whose genuine output happens to
+                    // equal the notice text still prints it as output.
+                    error.WriteLine(rendering.LimitError.ToString());
+                    return FailureExitCode;
+                }
+
+                // The package's canonical display form, unmodified.
+                output.WriteLine(rendering.Text);
                 return SuccessExitCode;
 
             case RunResult.NoProgramOutput:

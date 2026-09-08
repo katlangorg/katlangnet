@@ -150,28 +150,80 @@ public class FormattingLimitsTests
         }
     }
 
-    [Fact]
-    public void UnicodeSurrogatePairs_AreChargedAsUtf16Units()
+    [Theory]
+    [InlineData("ä")]
+    [InlineData("😀")]
+    [InlineData("e\u0301")]
+    public void Unicode_IsChargedAsUtf16Units(string value)
     {
-        var run = KatLangEngine.Run("'😀'");
+        var run = Assert.IsType<RunResult.Success>(KatLangEngine.Run($"'{value}'"));
         foreach (var formatter in OutputFormatters.All)
         {
-            Assert.Equal("😀", formatter.Format(run, Options(2)));
-            Assert.Equal("…", formatter.Format(run, Options(1)));
+            var exact = formatter.RenderDisplay(run, Options(value.Length));
+            AssertWithinLimit(exact);
+            Assert.Equal(value, exact.Text);
+            Assert.Equal(formatter.Format(run, Options(value.Length)), exact.Text);
+
+            var overflow = formatter.RenderDisplay(run, Options(value.Length - 1));
+            AssertReportsOverflow(overflow, value.Length - 1);
+            Assert.Equal(OverflowResponse(value.Length - 1), overflow.Text);
         }
     }
 
     [Fact]
     public void OverflowState_IsIsolatedToOneFormattingCall()
     {
-        var run = KatLangEngine.Run("[111, 222, 333]");
+        var run = Assert.IsType<RunResult.Success>(KatLangEngine.Run("[111, 222, 333]"));
         foreach (var formatter in OutputFormatters.All)
         {
-            Assert.Equal("…", formatter.Format(run, Options(3)));
-            var complete = formatter.Format(run, Options(1_000));
-            Assert.NotEqual("…", complete);
-            Assert.Equal("…", formatter.Format(run, Options(3)));
+            var first = formatter.RenderDisplay(run, Options(3));
+            AssertReportsOverflow(first, 3);
+            Assert.Equal("…", first.Text);
+            var complete = formatter.RenderDisplay(run, Options(1_000));
+            AssertWithinLimit(complete);
+            Assert.Equal("[111, 222, 333]", complete.Text);
+            var last = formatter.RenderDisplay(run, Options(3));
+            AssertReportsOverflow(last, 3);
+            Assert.Equal(first.Text, last.Text);
+
+            // Earlier rendering objects retain their own verdict after later calls.
+            AssertReportsOverflow(first, 3);
+            AssertWithinLimit(complete);
         }
+    }
+
+    [Fact]
+    public void RenderDisplay_StatusBelongsToTheSelectedFormatter()
+    {
+        var run = Assert.IsType<RunResult.Success>(KatLangEngine.Run("'a b'", new RunOptions
+        {
+            EvaluationLimits = new EvaluationLimits { MaxDisplayLength = 3 },
+        }));
+
+        AssertWithinLimit(run.RenderDisplay());
+        foreach (var formatter in new[] { OutputFormatters.Readable, OutputFormatters.Concise })
+        {
+            // Quoting costs two units, while canonical raw display fits exactly.
+            AssertReportsOverflow(formatter.RenderDisplay(run), 3);
+            var raw = formatter.RenderDisplay(run, new OutputFormattingOptions
+            {
+                StringDelimiters = StringDelimiterMode.Never,
+            });
+            AssertWithinLimit(raw);
+            Assert.Equal("a b", raw.Text);
+        }
+        AssertWithinLimit(run.RenderDisplay());
+        AssertWithinLimit(OutputFormatters.Exact.RenderDisplay(run));
+
+        var sequence = Assert.IsType<RunResult.Success>(KatLangEngine.Run("(10, 20)", new RunOptions
+        {
+            EvaluationLimits = new EvaluationLimits { MaxDisplayLength = 5 },
+        }));
+        AssertReportsOverflow(sequence.RenderDisplay(), 5);
+        var concise = OutputFormatters.Concise.RenderDisplay(sequence);
+        AssertWithinLimit(concise);
+        Assert.Equal("10 20", concise.Text);
+        AssertReportsOverflow(sequence.RenderDisplay(), 5);
     }
 
     [Fact]
@@ -186,5 +238,115 @@ public class FormattingLimitsTests
                 Assert.Equal(string.Empty, formatter.Format(run, Options(0)));
             }
         }
+    }
+
+    // ── The structured overflow signal ──────────────────────────────────────
+
+    private static void AssertReportsOverflow(DisplayRendering rendering, int effectiveLimit)
+    {
+        Assert.True(rendering.LimitExceeded);
+        Assert.NotNull(rendering.LimitError);
+        Assert.Equal(KatLangErrorCode.DisplayLengthLimitExceeded, rendering.LimitError.Code);
+        Assert.True(rendering.LimitError.IsResourceLimit);
+        Assert.Equal(
+            effectiveLimit,
+            Assert.IsType<EvalError.DisplayLengthLimitExceeded>(rendering.LimitError.Source).Limit);
+    }
+
+    private static void AssertWithinLimit(DisplayRendering rendering)
+    {
+        Assert.False(rendering.LimitExceeded);
+        Assert.Null(rendering.LimitError);
+    }
+
+    [Fact]
+    public void EveryFormatter_RenderDisplay_FlagsExactlyTheRefusedRenderings_AndProjectsToFormat()
+    {
+        const string source = "1, 2, 3";
+        foreach (var formatter in OutputFormatters.All)
+        {
+            var run = KatLangEngine.Run(source);
+            var natural = formatter.Format(run, Options(int.MaxValue));
+
+            for (var limit = 0; limit <= natural.Length + 2; limit++)
+            {
+                var rendering = formatter.RenderDisplay(run, Options(limit));
+                Assert.Equal(formatter.Format(run, Options(limit)), rendering.Text);
+                if (limit < natural.Length)
+                {
+                    AssertReportsOverflow(rendering, limit);
+                    Assert.Equal(OverflowResponse(limit), rendering.Text);
+                }
+                else
+                {
+                    AssertWithinLimit(rendering);
+                    Assert.Equal(natural, rendering.Text);
+                }
+            }
+        }
+    }
+
+    [Fact]
+    public void RenderDisplay_NamesTheEffectiveLimit_WhichAPerCallOptionCanOnlyLower()
+    {
+        var run = KatLangEngine.Run(
+            "1, 2, 3",
+            new RunOptions { EvaluationLimits = new EvaluationLimits { MaxDisplayLength = 5 } });
+
+        foreach (var formatter in OutputFormatters.All)
+        {
+            // A larger per-call option cannot raise the run's limit: its own 5 is enforced and reported.
+            AssertReportsOverflow(formatter.RenderDisplay(run, Options(1_000)), 5);
+            // A smaller one lowers it, and the report names the limit actually enforced.
+            AssertReportsOverflow(formatter.RenderDisplay(run, Options(3)), 3);
+        }
+    }
+
+    [Fact]
+    public void RenderDisplay_FailureAndNoOutputRendering_ReportOverflowLikeCanonicalDisplay()
+    {
+        foreach (var source in new[] { ")(", "1 div 0", "Value = 1" })
+        {
+            var naturalLength = KatLangEngine.Run(source).ToDisplayString().Length;
+            for (var limit = 0; limit <= naturalLength + 2; limit++)
+            {
+                var run = KatLangEngine.Run(source, new RunOptions
+                {
+                    EvaluationLimits = new EvaluationLimits { MaxDisplayLength = limit },
+                });
+                var canonical = run.RenderDisplay();
+                Assert.Equal(limit < naturalLength, canonical.LimitExceeded);
+                foreach (var formatter in OutputFormatters.All)
+                {
+                    var rendering = formatter.RenderDisplay(run);
+                    Assert.Equal(canonical.Text, rendering.Text);
+                    Assert.Equal(canonical.LimitExceeded, rendering.LimitExceeded);
+                    if (rendering.LimitExceeded)
+                        AssertReportsOverflow(rendering, limit);
+                }
+            }
+        }
+    }
+
+    [Fact]
+    public void RenderDisplay_OutputEqualToTheOverflowResponse_IsNotOverflow_ForEveryFormatter()
+    {
+        // A program whose genuine output is the limit message renders (under exact display)
+        // byte-identically to an overflow under that limit; only the structured signal
+        // tells them apart, so it must stay silent here for every formatter.
+        const int limit = 200;
+        var genuine = KatLangEngine.Run($"'{OverflowResponse(limit)}'");
+        foreach (var formatter in OutputFormatters.All)
+        {
+            var rendering = formatter.RenderDisplay(genuine, Options(limit));
+            AssertWithinLimit(rendering);
+            Assert.Equal(formatter.Format(genuine, Options(limit)), rendering.Text);
+        }
+
+        var genuineText = OutputFormatters.Exact.RenderDisplay(genuine, Options(limit));
+        var overflow = OutputFormatters.Exact.RenderDisplay(KatLangEngine.Run("range(1, 100)"), Options(limit));
+        Assert.Equal(genuineText.Text, overflow.Text);   // identical text...
+        AssertWithinLimit(genuineText);                   // ...opposite verdicts
+        AssertReportsOverflow(overflow, limit);
     }
 }

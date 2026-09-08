@@ -1,7 +1,7 @@
 namespace KatLang;
 
 /// <summary>
-/// Unified public error type representing both parse and evaluation errors.
+/// Unified public error type representing parse, evaluation, and display-rendering errors.
 /// <see cref="Message"/> is the human-readable rendering; the supported host
 /// classification channel is <see cref="Code"/> (with <see cref="Source"/> and
 /// <see cref="IsResourceLimit"/> for structured access), never message text.
@@ -29,6 +29,7 @@ public sealed class KatLangError
     /// <summary>
     /// The original structured evaluation error this facade was projected from
     /// — the same <see cref="EvalError"/> instance, context wrappers included —
+    /// including <see cref="EvalError.DisplayLengthLimitExceeded"/> for display refusal,
     /// or <c>null</c> for an error originating from a front-end
     /// <see cref="Diagnostic"/>, whose stable identity is still available
     /// through <see cref="Code"/>. This preserves the pre-existing public error
@@ -39,7 +40,9 @@ public sealed class KatLangError
     public EvalError? Source { get; }
 
     /// <summary>
-    /// True when this error is a host resource-limit outcome of evaluation.
+    /// True when this error is a host resource-limit outcome of evaluation or display rendering.
+    /// Display overflow is reported by <see cref="DisplayRendering.LimitError"/> and does not
+    /// turn a successful evaluation into a <see cref="RunResult.EvalFailure"/>.
     /// Delegates to the one authoritative classifier,
     /// <see cref="EvalError.IsResourceLimit"/>, so it resolves through
     /// contextual wrappers and never inspects message text. Front-end errors

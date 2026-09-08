@@ -377,7 +377,11 @@ public sealed record EvaluationLimits
     /// <see cref="KatLangEngine.EvaluateToString(string, RunOptions)"/>, or <c>null</c>
     /// to use <see cref="MaxSupportedDisplayLength"/>. This applies to success, parse
     /// failure, evaluation failure, no-output text, and the overflow replacement itself.
-    /// Values above the supported maximum are clamped down to it.
+    /// Values above the supported maximum are clamped down to it. Whether a rendering
+    /// exceeded the limit is reported structurally by <see cref="RunResult.RenderDisplay"/>
+    /// (and the output formatters' <c>RenderDisplay</c>) through
+    /// <see cref="DisplayRendering.LimitExceeded"/>; the replacement text is never the
+    /// signal.
     /// </summary>
     /// <exception cref="ArgumentOutOfRangeException">The value is negative.</exception>
     public int? MaxDisplayLength

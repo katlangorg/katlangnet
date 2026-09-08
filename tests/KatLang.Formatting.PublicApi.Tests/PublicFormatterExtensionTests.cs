@@ -121,6 +121,44 @@ public class PublicFormatterExtensionTests
         Assert.True(allocated < 64_000, $"external formatter allocated {allocated} bytes");
     }
 
+    [Fact]
+    public void CustomFormatter_ReportsDisplayOverflowStructurally_ThroughTheSharedTemplate()
+    {
+        var formatter = new ShapeFormatter();
+        var run = KatLangEngine.Run("1, 2, 3");
+        var options = new OutputFormattingOptions { NewLine = "\n", RootOutputSpacing = 0 };
+
+        var complete = formatter.RenderDisplay(run, options);
+        Assert.False(complete.LimitExceeded);
+        Assert.Null(complete.LimitError);
+        Assert.Equal(formatter.Format(run, options), complete.Text);
+
+        var bounded = options with { MaxDisplayLength = 4 };
+        var overflow = formatter.RenderDisplay(run, bounded);
+        Assert.True(overflow.LimitExceeded);
+        Assert.Equal("…", overflow.Text);
+        Assert.Equal(formatter.Format(run, bounded), overflow.Text);
+        Assert.Equal(KatLangErrorCode.DisplayLengthLimitExceeded, overflow.LimitError!.Code);
+        Assert.True(overflow.LimitError.IsResourceLimit);
+        Assert.Equal(4, Assert.IsType<EvalError.DisplayLengthLimitExceeded>(overflow.LimitError.Source).Limit);
+
+        var repeated = formatter.RenderDisplay(run, options);
+        Assert.False(repeated.LimitExceeded);
+        Assert.Null(repeated.LimitError);
+        Assert.Equal(complete.Text, repeated.Text);
+    }
+
+    [Fact]
+    public void CustomFormatter_CannotSuppressTheOverflowSignalByIgnoringRefusedAppends()
+    {
+        var rendering = new IgnoresAppendResultFormatter().RenderDisplay(
+            KatLangEngine.Run("1"),
+            new OutputFormattingOptions { MaxDisplayLength = 4 });
+
+        Assert.True(rendering.LimitExceeded);
+        Assert.Equal("…", rendering.Text);
+    }
+
     /// <summary>Minimal external formatter exercising <see cref="BoundedOutputWriter.AppendSpaces"/>.</summary>
     private sealed class IndentedRowsFormatter : OutputFormatter
     {
@@ -166,6 +204,9 @@ public class PublicFormatterExtensionTests
         {
             for (var i = 0; i < 100; i++)
                 writer.Append("x");
+            // A later empty append on either writer path cannot clear refusal.
+            writer.Append(string.Empty);
+            writer.AppendSpaces(0);
             return true;
         }
     }

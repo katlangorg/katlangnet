@@ -171,8 +171,26 @@ public abstract record RunResult
     /// when it fits, otherwise the complete <c>…</c> marker is used when one UTF-16 unit
     /// fits, otherwise the result is empty. Structured values and diagnostics are unchanged;
     /// truncated previews for editor UI belong in a separate, explicitly named API.
+    ///
+    /// <para>This is the <see cref="DisplayRendering.Text"/> projection of
+    /// <see cref="RenderDisplay"/>. Overflow must be detected through that method's
+    /// <see cref="DisplayRendering.LimitExceeded"/>, never by inspecting this string: a
+    /// program whose legitimate output equals the limit message renders byte-identically.</para>
     /// </summary>
-    public string ToDisplayString() => this switch
+    public string ToDisplayString() => RenderDisplay().Text;
+
+    /// <summary>
+    /// Renders this result to bounded display text exactly like <see cref="ToDisplayString"/>
+    /// and additionally reports, structurally, whether the rendering exceeded the effective
+    /// <see cref="EvaluationLimits.MaxDisplayLength"/>. Overflow is a property of the
+    /// RENDERING, not of the run: a <see cref="Success"/> stays a success with its structured
+    /// <see cref="Success.Value"/> intact and only the requested text representation is
+    /// unavailable, while diagnostics that do not fit the limit report the same condition for
+    /// the failure variants. Every rendering surface derives its signal from the same bounded
+    /// writer state, so <see cref="Formatting.OutputFormatter.RenderDisplay"/> agrees with this
+    /// method for the canonical <c>exact</c> layout.
+    /// </summary>
+    public DisplayRendering RenderDisplay() => this switch
     {
         Success s => FormatSuccess(s),
         NoProgramOutput n => FormatText(n.Message, n.DisplayOptions.MaxDisplayLength),
@@ -181,7 +199,7 @@ public abstract record RunResult
         _ => throw new InvalidOperationException("Unknown RunResult variant."),
     };
 
-    private static string FormatSuccess(Success success)
+    private static DisplayRendering FormatSuccess(Success success)
     {
         var writer = new BoundedDisplayWriter(success.DisplayOptions.MaxDisplayLength);
         AppendSuccessRows(success.OutputRows, success.DisplayOptions, writer);
@@ -215,7 +233,7 @@ public abstract record RunResult
     /// public rendering surface is bounded. Shared with every output formatter,
     /// so failures render identically regardless of the selected formatter.
     /// </summary>
-    internal static string FormatErrors(IReadOnlyList<KatLangError> errors, int limit)
+    internal static DisplayRendering FormatErrors(IReadOnlyList<KatLangError> errors, int limit)
     {
         var writer = new BoundedDisplayWriter(limit);
 
@@ -228,24 +246,32 @@ public abstract record RunResult
         return Finish(writer, limit);
     }
 
-    internal static string FormatText(string text, int limit)
+    internal static DisplayRendering FormatText(string text, int limit)
     {
         var writer = new BoundedDisplayWriter(limit);
         writer.Append(text);
         return Finish(writer, limit);
     }
 
-    internal static string Finish(BoundedDisplayWriter writer, int limit)
+    /// <summary>
+    /// Completes one bounded rendering. The writer's refusal state is the ONE place display
+    /// overflow becomes known, and it is surfaced here structurally — as the
+    /// <see cref="KatLangError"/> projected from <see cref="EvalError.DisplayLengthLimitExceeded"/>
+    /// for the limit actually enforced — beside the established bounded text, so no rendering
+    /// surface has to rediscover the condition from the text it returns.
+    /// </summary>
+    internal static DisplayRendering Finish(BoundedDisplayWriter writer, int limit)
     {
         if (!writer.LimitExceeded)
-            return writer.ToString();
+            return new DisplayRendering(writer.ToString(), limitError: null);
 
-        var message = KatLangError.FromEvalError(new EvalError.DisplayLengthLimitExceeded(limit)).Message;
+        var limitError = KatLangError.FromEvalError(new EvalError.DisplayLengthLimitExceeded(limit));
+        var message = limitError.Message;
         if (message.Length <= limit)
-            return message;
+            return new DisplayRendering(message, limitError);
 
         const string marker = "…";
-        return marker.Length <= limit ? marker : string.Empty;
+        return new DisplayRendering(marker.Length <= limit ? marker : string.Empty, limitError);
     }
 
     /// <summary>
@@ -557,6 +583,13 @@ public static class KatLangEngine
     /// <summary>
     /// Parse and evaluate, returning atoms joined by spaces as a display string.
     /// Returns error text on failure instead of throwing.
+    /// <para>This is a lossy convenience: success drops strings and structure boundaries,
+    /// and the returned text does not distinguish display overflow from ordinary output.
+    /// It is not the canonical <see cref="RunResult.RenderDisplay"/> text projection and
+    /// its atom-only rendering may fit where canonical display overflows.
+    /// To retain values and distinguish evaluation from rendering failure, use
+    /// <see cref="Run(string, RunOptions?)"/> followed by <see cref="RunResult.RenderDisplay"/>
+    /// or <see cref="Formatting.OutputFormatter.RenderDisplay"/> for the desired layout.</para>
     /// </summary>
     /// <exception cref="OperationCanceledException">
     /// The configured source-processing token was cancelled during front-end processing,
@@ -573,6 +606,9 @@ public static class KatLangEngine
     /// <summary>
     /// Asynchronous counterpart of <see cref="EvaluateToString"/>: a thin projection
     /// over <see cref="RunAsync"/> with identical rendering and failure semantics.
+    /// It has the same lossy atom-only output and no structured display-overflow signal;
+    /// use <see cref="RunAsync"/> followed by <see cref="RunResult.RenderDisplay"/> or
+    /// <see cref="Formatting.OutputFormatter.RenderDisplay"/> when those distinctions matter.
     /// Like <see cref="RunAsync"/>, it completes synchronously unless an incomplete
     /// <see cref="RunOptions.DownloadCode"/> download or asynchronous
     /// <see cref="RunOptions.HostOperations"/> awaitable genuinely suspends the run.
@@ -604,7 +640,7 @@ public static class KatLangEngine
             if (!writer.Append(ValueTextRenderer.FormatAtom(success.Atoms[i], success.DisplayOptions))) break;
         }
 
-        return RunResult.Finish(writer, success.DisplayOptions.MaxDisplayLength);
+        return RunResult.Finish(writer, success.DisplayOptions.MaxDisplayLength).Text;
     }
 
     private static SourceSpan? FindTopLevelPropertyDeclarationSpan(Algorithm root, string name)

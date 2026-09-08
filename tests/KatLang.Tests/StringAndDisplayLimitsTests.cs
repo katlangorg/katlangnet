@@ -466,6 +466,120 @@ public class StringAndDisplayLimitsTests
         Assert.Equal(2, ((Result.ListValue)success.Value).Items.Count);
     }
 
+    // ── Rendering: the structured overflow signal ────────────────────────────
+
+    private static string LimitMessage(int limit)
+        => KatLangError.FromEvalError(new EvalError.DisplayLengthLimitExceeded(limit)).Message;
+
+    /// <summary>
+    /// Overflow is reported through the structured channel only — the same facade
+    /// evaluation failures use — and names the limit actually enforced.
+    /// </summary>
+    private static void AssertReportsOverflow(DisplayRendering rendering, int limit)
+    {
+        Assert.True(rendering.LimitExceeded);
+        var limitError = rendering.LimitError;
+        Assert.NotNull(limitError);
+        Assert.Equal(KatLangErrorCode.DisplayLengthLimitExceeded, limitError.Code);
+        Assert.True(limitError.IsResourceLimit);
+        Assert.Equal(limit, Assert.IsType<EvalError.DisplayLengthLimitExceeded>(limitError.Source).Limit);
+        // The notice is complete on the structured channel even when it did not fit the text.
+        Assert.Equal(LimitMessage(limit), limitError.Message);
+    }
+
+    private static void AssertWithinLimit(DisplayRendering rendering)
+    {
+        Assert.False(rendering.LimitExceeded);
+        Assert.Null(rendering.LimitError);
+    }
+
+    [Fact]
+    public void RenderDisplay_ReportsARefusedRenderingStructurally_WhileEvaluationStaysASuccess()
+    {
+        var result = KatLangEngine.Run(NestedStringDoubling, new RunOptions { EvaluationLimits = Display(1_000) });
+
+        var success = Assert.IsType<RunResult.Success>(result);   // evaluation is unaffected
+        var rendering = success.RenderDisplay();
+        AssertReportsOverflow(rendering, 1_000);
+        Assert.Equal(LimitMessage(1_000), rendering.Text);        // the established bounded text...
+        Assert.Equal(success.ToDisplayString(), rendering.Text);  // ...of which the string surface is the projection
+    }
+
+    [Fact]
+    public void RenderDisplay_OutputEqualToTheLimitMessage_IsNotOverflow()
+    {
+        // Text alone cannot tell these apart: this program's genuine output IS the limit
+        // message, so a prefix match would fire. The structured signal stays silent.
+        foreach (var limit in new[] { 1_000, EvaluationLimits.MaxSupportedDisplayLength })
+        {
+            var message = LimitMessage(limit);
+            var success = Assert.IsType<RunResult.Success>(
+                KatLangEngine.Run($"'{message}'", new RunOptions { EvaluationLimits = Display(limit) }));
+
+            var rendering = success.RenderDisplay();
+            AssertWithinLimit(rendering);
+            Assert.Equal(message, rendering.Text);
+            Assert.StartsWith(LimitPrefix, rendering.Text);
+        }
+    }
+
+    [Fact]
+    public void RenderDisplay_ReportsOverflow_WhenTheTextCarriesNoNoticeAtAll()
+    {
+        // Under a limit smaller than the notice the text is only the marker, or empty:
+        // nothing a text-matching consumer could recognize, while the structured channel
+        // still names the limit and carries the complete notice.
+        var marker = KatLangEngine.Run("[1, 2, 3]", new RunOptions { EvaluationLimits = Display(8) }).RenderDisplay();
+        Assert.Equal("…", marker.Text);
+        AssertReportsOverflow(marker, 8);
+
+        var empty = KatLangEngine.Run("1, 2, 3", new RunOptions { EvaluationLimits = Display(0) }).RenderDisplay();
+        Assert.Equal(string.Empty, empty.Text);
+        AssertReportsOverflow(empty, 0);
+    }
+
+    [Fact]
+    public void RenderDisplay_EveryVariant_AgreesWithToDisplayString_AndFlagsExactlyTheRefusedRenderings()
+    {
+        var cases = new (string Source, Type ExpectedType)[]
+        {
+            ("[(1, 2), [3, [4]]]", typeof(RunResult.Success)),
+            (")(", typeof(RunResult.ParseFailure)),
+            ("1 div 0", typeof(RunResult.EvalFailure)),
+            ("Value = 1", typeof(RunResult.NoProgramOutput)),
+        };
+
+        foreach (var (source, expectedType) in cases)
+        {
+            var naturalLength = KatLangEngine.Run(source).ToDisplayString().Length;
+            for (var limit = 0; limit <= naturalLength + 2; limit++)
+            {
+                var result = KatLangEngine.Run(source, new RunOptions { EvaluationLimits = Display(limit) });
+                Assert.Equal(expectedType, result.GetType());   // rendering never changes the variant
+
+                var rendering = result.RenderDisplay();
+                Assert.Equal(result.ToDisplayString(), rendering.Text);
+                if (limit < naturalLength)
+                    AssertReportsOverflow(rendering, limit);
+                else
+                    AssertWithinLimit(rendering);
+            }
+        }
+    }
+
+    [Fact]
+    public void RenderDisplay_ManuallyConstructedResults_UseTheDefaultHardDisplayCeiling()
+    {
+        var success = new RunResult.Success(
+            new Algorithm.User(null, [], [], [], []),
+            new Result.Str(new string('x', EvaluationLimits.MaxSupportedDisplayLength + 1)),
+            []);
+
+        var rendering = success.RenderDisplay();
+        AssertReportsOverflow(rendering, EvaluationLimits.MaxSupportedDisplayLength);
+        Assert.True(rendering.Text.Length <= EvaluationLimits.MaxSupportedDisplayLength);
+    }
+
     [Fact]
     public void DeeplyNestedValues_RenderIterativelyWithoutStackGrowth()
     {
@@ -486,6 +600,20 @@ public class StringAndDisplayLimitsTests
     }
 
     // ── API surfaces ─────────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task EvaluateToString_KeepsItsSeparateLossyRendering_SynchronouslyAndAsynchronously()
+    {
+        const string source = "[1, 'text', 2]";
+        var options = new RunOptions { EvaluationLimits = Display(3) };
+        var success = Assert.IsType<RunResult.Success>(KatLangEngine.Run(source, options));
+        AssertReportsOverflow(success.RenderDisplay(), 3);
+
+        // Dropping strings and structure makes the atom-only text fit exactly.
+        // The canonical rendering verdict cannot be reused for this convenience.
+        Assert.Equal("1 2", KatLangEngine.EvaluateToString(source, options));
+        Assert.Equal("1 2", await KatLangEngine.EvaluateToStringAsync(source, options));
+    }
 
     [Fact]
     public void EvaluateToString_IsBounded()
@@ -530,8 +658,30 @@ public class StringAndDisplayLimitsTests
             {
                 EvaluationLimits = new EvaluationLimits { MaxCollectionItems = 10, MaxDisplayLength = 1 },
             }));
-        Assert.Contains("Collection size limit", failure.Errors[0].Message);
-        Assert.Equal("…", failure.ToDisplayString());
+        var originalError = Assert.Single(failure.Errors);
+        Assert.Equal(KatLangErrorCode.CollectionSizeLimitExceeded, originalError.Code);
+        Assert.True(originalError.IsResourceLimit);
+        var rendering = failure.RenderDisplay();
+        AssertReportsOverflow(rendering, 1);
+        Assert.Equal("…", rendering.Text);
+        Assert.Same(originalError, Assert.Single(failure.Errors));
+        Assert.Equal(KatLangErrorCode.CollectionSizeLimitExceeded, originalError.Code);
+    }
+
+    [Theory]
+    [InlineData("range(1, 20)", KatLangErrorCode.CollectionSizeLimitExceeded)]
+    [InlineData("'abc'", KatLangErrorCode.StringSizeLimitExceeded)]
+    public void RenderingAnEvaluationLimitNotice_IsNotItselfDisplayOverflow(string source, KatLangErrorCode code)
+    {
+        var failure = Assert.IsType<RunResult.EvalFailure>(KatLangEngine.Run(source, new RunOptions
+        {
+            EvaluationLimits = new EvaluationLimits { MaxCollectionItems = 10, MaxStringLength = 2 },
+        }));
+        Assert.Equal(code, Assert.Single(failure.Errors).Code);
+        Assert.True(failure.Errors[0].IsResourceLimit);
+        var rendering = failure.RenderDisplay();
+        AssertWithinLimit(rendering);
+        Assert.Equal(failure.Errors[0].ToString(), rendering.Text);
     }
 
     [Fact]

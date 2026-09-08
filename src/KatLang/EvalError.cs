@@ -309,7 +309,9 @@ public abstract record EvalError
     /// limit (<see cref="EvaluationLimits.MaxDisplayLength"/>, bounded by
     /// <see cref="EvaluationLimits.MaxSupportedDisplayLength"/>). This is a property of the
     /// RENDERING, not of the value: the structured result is unaffected and remains
-    /// available through <see cref="KatLangEngine.Run(string, RunOptions)"/>.
+    /// available through <see cref="KatLangEngine.Run(string, RunOptions)"/>. It is never
+    /// placed in a <see cref="RunResult"/> failure list; rendering surfaces report it
+    /// structurally through <see cref="DisplayRendering.LimitError"/>.
     /// </summary>
     public sealed record DisplayLengthLimitExceeded(int Limit) : EvalError;
 
