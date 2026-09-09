@@ -651,7 +651,8 @@ reaches this binder through the deconstruction receiver.
 theorem variadic_is_lone_collecting (xs : Supply) :
     bindArgs [Pat.collecting "x"] xs = some [("x", collect xs)] := by
   unfold bindArgs
-  simp [bindPats, bindFixed, Pat.isCollecting, Pat.key, List.take_length, List.drop_length]
+  simp [bindPats, bindFixed, Pat.isCollecting, Pat.key, List.filter_cons, List.filter_nil,
+        List.take_length, List.drop_length]
 
 /-! ## Generic segment collection (the `bindPats` split theorem)
 
@@ -685,7 +686,7 @@ private theorem filter_isCollecting_single_collecting (front back : List Pat) (r
     (hf : ∀ p ∈ front, p.isCollecting = false) (hb : ∀ p ∈ back, p.isCollecting = false) :
     (front ++ Pat.collecting r :: back).filter Pat.isCollecting = [Pat.collecting r] := by
   rw [List.filter_append, filter_isCollecting_eq_nil hf]
-  simp [Pat.isCollecting, filter_isCollecting_eq_nil hb]
+  simp [List.filter_cons, Pat.isCollecting, filter_isCollecting_eq_nil hb]
 
 private theorem findIdx?_isCollecting_first_collecting : ∀ (front : List Pat) (r : String)
     (back : List Pat), (∀ p ∈ front, p.isCollecting = false) ->
@@ -773,7 +774,7 @@ theorem bindPats_trailing_collecting (a : String) (x : Val) (r : String) (mid : 
     (by intro p hp; simp at hp; simp [hp, Pat.isCollecting])
     (by intro p hp; simp at hp)
     rfl rfl
-  simpa [bindFixed] using h
+  simpa [bindFixed, Pat.key] using h
 
 /-- Leading collecting binding (`Init(*init, last)`), for every middle supply. -/
 theorem bindPats_leading_collecting (r : String) (mid : Supply) (z : String) (y : Val) :
@@ -783,7 +784,7 @@ theorem bindPats_leading_collecting (r : String) (mid : Supply) (z : String) (y 
     (by intro p hp; simp at hp)
     (by intro p hp; simp at hp; simp [hp, Pat.isCollecting])
     rfl rfl
-  simpa [bindFixed] using h
+  simpa [bindFixed, Pat.key] using h
 
 /-- Middle collecting binding (`F(x, *y, z)`), for every middle supply. -/
 theorem bindPats_middle_collecting (a : String) (x : Val) (r : String) (mid : Supply)
@@ -794,7 +795,7 @@ theorem bindPats_middle_collecting (a : String) (x : Val) (r : String) (mid : Su
     (by intro p hp; simp at hp; simp [hp, Pat.isCollecting])
     (by intro p hp; simp at hp; simp [hp, Pat.isCollecting])
     rfl rfl
-  simpa [bindFixed] using h
+  simpa [bindFixed, Pat.key] using h
 
 /-- Lone collecting binding (`F(*items)`), re-derived as the degenerate split instance —
 agrees with the directly proved `variadic_is_lone_collecting`/`bindArgs_lone_collecting`. -/
@@ -804,7 +805,7 @@ theorem bindPats_lone_collecting (r : String) (xs : Supply) :
     (by intro p hp; simp at hp)
     (by intro p hp; simp at hp)
     rfl rfl
-  simpa [bindFixed] using h
+  simpa [bindFixed, Pat.key] using h
 
 /-! ## Receiver theorems
 
@@ -885,7 +886,8 @@ theorem deconstruct_spread_capture_can_open_further :
 theorem bindArgs_lone_collecting (r : String) (xs : Supply) :
     bindArgs [Pat.collecting r] xs = some [(r, collect xs)] := by
   unfold bindArgs
-  simp [bindPats, bindFixed, Pat.isCollecting, Pat.key, List.take_length, List.drop_length]
+  simp [bindPats, bindFixed, Pat.isCollecting, Pat.key, List.filter_cons, List.filter_nil,
+        List.take_length, List.drop_length]
 
 /-- Grouped/spread DISTINCTION for a single collecting parameter: `F(A)` with
 a stored sequence `A` binds `rest = [A]` (one collected argument), while
@@ -1004,7 +1006,7 @@ private theorem receivers_never_same_on_singleton (ps : List Pat) (v : Val)
         | name x =>
           cases q with
           | name y =>
-            simp [bindArgs, bindPats, Pat.isCollecting] at hA
+            simp [bindArgs, bindPats, Pat.isCollecting, List.filter_nil] at hA
           | collecting r =>
             have eA : bindArgs [Pat.name x, Pat.collecting r] [v]
                 = some [(x, v), (r, Val.list [])] := rfl
@@ -1018,6 +1020,7 @@ private theorem receivers_never_same_on_singleton (ps : List Pat) (v : Val)
               have eD : bindPats [Pat.name x, Pat.collecting r] (w :: t)
                   = some [(x, w), (r, collect t)] := by
                 simp [bindPats, Pat.isCollecting, Pat.key, bindFixed,
+                      List.filter_cons, List.filter_nil,
                       show List.findIdx? Pat.isCollecting [Pat.name x, Pat.collecting r]
                         = some 1 from rfl]
               rw [eD] at hD
@@ -1030,7 +1033,7 @@ private theorem receivers_never_same_on_singleton (ps : List Pat) (v : Val)
         | collecting r =>
           cases q with
           | collecting b =>
-            simp [bindArgs, bindPats, Pat.isCollecting] at hA
+            simp [bindArgs, bindPats, Pat.isCollecting, List.filter_cons, List.filter_nil] at hA
           | name y =>
             have eA : bindArgs [Pat.collecting r, Pat.name y] [v]
                 = some [(r, Val.list []), (y, v)] := rfl
@@ -1045,6 +1048,7 @@ private theorem receivers_never_same_on_singleton (ps : List Pat) (v : Val)
                   = some ((r, collect ((w :: t).take t.length))
                       :: bindFixed [Pat.name y] ((w :: t).drop t.length)) := by
                 simp [bindPats, Pat.isCollecting, Pat.key, bindFixed,
+                      List.filter_cons, List.filter_nil,
                       show List.findIdx? Pat.isCollecting [Pat.collecting r, Pat.name y]
                         = some 0 from rfl]
               rw [eD] at hD

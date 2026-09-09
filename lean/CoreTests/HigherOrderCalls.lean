@@ -1092,7 +1092,7 @@ def test19aSequenceValuePatternIsOrdinaryStructuredParameter : Bool :=
       ]
       body := alg [] [] [] [.param "x"]
     }] with
-  | .mk _ [.capture { name := "x" }, .sequenceValue [.capture { name := "acc" }, .capture { name := "counter" }]] _ _ _ => true
+  | .mk _ [.capture { name := "x", kind := .normal }, .sequenceValue [.capture { name := "acc", kind := .normal }, .capture { name := "counter", kind := .normal }]] _ _ _ => true
   | _ => false
 
 #guard test19aSequenceValuePatternIsOrdinaryStructuredParameter
