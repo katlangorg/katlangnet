@@ -420,6 +420,16 @@ SpreadMarker    = "*" ;
                      x.Calculate*, (a + b)*, [1, 2]*, (1, 2)*, ()*, []*. *)
 
 CallArgs        = BraceArgs | ParenArgs ;
+                  (* An argument list is purely syntactic: the grammar admits
+                     ANY number of argument slots for ANY callee, and no
+                     production is conditioned on the callee's spelling.
+                     Builtin names are ordinary Identifiers (see Identifier)
+                     that a nearer declaration may shadow, so which callable a
+                     call denotes — and therefore how many arguments it
+                     accepts — is settled by name resolution and checked
+                     against that callable's signature during evaluation, not
+                     here. `if(1, 2)` and `count(1, 2, 3)` are both well-formed
+                     syntax and both evaluation-time arity errors. *)
 BraceArgs       = "{" Algorithm "}" ;
 ParenArgs       = "(" ExpressionAlgorithm ")" ;
 

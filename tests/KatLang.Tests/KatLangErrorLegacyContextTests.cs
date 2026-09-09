@@ -221,7 +221,7 @@ public class KatLangErrorLegacyContextTests
     [InlineData("while evaluating dotCall M of Obj")]
     [InlineData("evaluating property P")]
     [InlineData("while evaluating property P and more")]
-    [InlineData("Builtin 'if' expects 3 arguments: condition, whenTrue, whenFalse. Got 2.")]
+    [InlineData("Callable `if(condition, whenTrue, whenFalse)` expects 3 arguments, but was called with 2 arguments.")]
     [InlineData("please retry")]
     public void UnrecognizedProse_StaysOrdinaryHostContext(string context)
     {

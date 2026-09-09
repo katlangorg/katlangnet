@@ -1443,6 +1443,27 @@ X
 
 **Result:** `1`
 
+#### Builtin names are ordinary bindings
+
+The prelude is the outermost owner, so builtin callables are ordinary bindings and a nearer legal declaration shadows one like any other name. Builtin callable names are not reserved — `count`, `sum`, and `if` are all plain identifiers:
+
+```
+count(x) = x + 1
+count(7)
+```
+
+**Result:** `8`
+
+Resolution never considers how many arguments the call supplies. It selects exactly one callable, and only then checks that callable's signature, so KatLang has no overloading by argument count: a user `if(x)` replaces builtin `if` completely, and `if(1, 2, 3)` reports an arity error against `if(x)` instead of quietly falling back to `if(condition, whenTrue, whenFalse)`. A parameter shadows the prelude the same way, which is what lets you pass a callable in under a builtin's name:
+
+```
+Apply(if, x) = if(x)
+Inc(x) = x + 1
+Apply(Inc, 7)
+```
+
+**Result:** `8`
+
 This ownership-first model makes name lookup more predictable in larger algorithms. In particular, adding an `open` does not silently change the meaning of names you already defined in the current algorithm or its parents, and adding a property somewhere far out in the program does not change what a parameter name means inside a nested body.
 
 ---
@@ -1958,6 +1979,8 @@ Divide(2, 10)
 
 `if` is a builtin algorithm with exactly three argument slots: `if(condition, whenTrue, whenFalse)`. Usually you pass the three arguments directly. There is no two-argument form. A grouped value used without spread is still one argument, so `if(X)` is invalid when `X = 1, 2, 3`; explicit spread in call-argument position supplies one value's items across the three slots, so `if(X*)` works (the arguments are counted after spread expansion).
 
+Like every builtin, `if` is an ordinary prelude binding: it is found by the usual [name resolution](#name-resolution), a nearer property or parameter shadows it, and its arity is checked when the call runs — against whichever callable resolution selected. What is special about `if` is only its invocation.
+
 The condition is numeric: `0` is false and any nonzero number is true.
 
 Examples:
@@ -2024,7 +2047,55 @@ if(X*)
 2
 ```
 
-This makes a direct `if(X*)` behave the same as a user-defined wrapper such as `MyIF(a, b, c) = if(a, b, c)` called as `MyIF(X*)`. A spread that does not expand to three values is an evaluation-time arity error, just like any other builtin.
+This makes a direct `if(X*)` behave the same as a user-defined wrapper such as `MyIF(a, b, c) = if(a, b, c)` called as `MyIF(X*)`. A supply that does not come to three values is an evaluation-time arity error, just like any other builtin.
+
+#### `if` composes like any other callable
+
+Because `if` is reached by ordinary resolution, it also composes by ordinary rules. A dot-call injects the receiver as the leading argument, a spread supplies argument slots, and a bare `if` is a legal [higher-order](#higher-order-algorithms) reference. All of these assemble the same three arguments, so they all select the same branch:
+
+<!-- spec:if-composition-forms-agree -->
+
+```
+Cond = 1
+Branches = (10, 20)
+Apply3(f, a, b, c) = f(a, b, c)
+
+if(Cond, 10, 20)
+Cond.if(10, 20)
+if(Cond, Branches*)
+Cond.if(Branches*)
+Apply3(if, Cond, 10, 20)
+```
+
+**Results:**
+```
+10
+10
+10
+10
+10
+```
+
+Evaluating only the selected branch belongs to the builtin **identity**, not to the name. It survives dot-calls and higher-order invocation:
+
+<!-- spec:if-laziness-follows-the-resolved-identity -->
+
+```
+Boom = 1 / 0
+
+if(1, 10, Boom)
+0.if(Boom, 20)
+```
+
+**Results:**
+```
+10
+20
+```
+
+Two things do *not* follow from it. Shadow the name and the laziness goes with it — `if(a, b, c) = b + c` is an ordinary algorithm, so it binds every argument eagerly and `if(1, 10, Boom)` then fails. And spread is not laziness: `if(1, Risky*)` has to build `Risky` before there are any argument slots to fill, so a failing row inside it fails first. That is the ordinary [value-then-supply](#value-and-supply-at-a-glance) order, not an exception for `if`.
+
+A higher-order wrapper also binds its own arguments before invoking the received callable. Thus `Apply3(if, 1, Tick(10), Tick(20))` would run both host callbacks before builtin `if` chooses. To give the builtin the branch expressions directly, write `Apply(f) = f(1, Tick(10), Tick(20))` and call `Apply(if)`; only `Tick(10)` runs. Naming a failing argument as a property can preserve its algorithm binding after an attempted value evaluation fails, so a successful wrapper call alone does not prove that the caller skipped that evaluation.
 
 ---
 
@@ -4161,7 +4232,7 @@ Only `public` exported properties are exposed through `load` and `open`.
 - **No hidden rounding of math functions:** trig, logarithm, root, and power results carry full Decimal128 precision and are never snapped toward "nice" values. `Math.Pi` is π rounded to 34 digits, so `Math.Sin(Math.Pi)` is the tiny residual of that rounding (about `-1.158e-34`), not `0` — compare against a tolerance when testing near-zero trig identities. Irrational results such as `Math.Sin(1)` are approximations at 34 digits, correct to roughly the last digit or two. `Math.Acos`/`acos` and `Math.Asin`/`asin` are sensitive to input error near ±1. For `0.9999 < |x| <= 1`, KatLang uses a decimal endpoint reformulation to avoid the tested runtime's accuracy loss (`acos(1 - 1e-30)` previously retained about 9 digits). A deterministic sweep of 23,080 distinct signed inputs, including every representable gap `n * 1e-34` for `n = 1..999`, observed maximum errors of about 1.526 result ulp for `acos` near +1, 0.504 near −1, and 0.503 for `asin` on either side. These are sample measurements, not universal error bounds or a correct-rounding guarantee; some previously correctly rounded in-band results change by one last-place digit. `acos(-1) == Math.Pi` and `asin(±1)` retains the existing Decimal128 ±π/2 value: both identities involve rounded constants. For finite nonzero bases and integer exponents with magnitude at most 9223372036854775807, successful certified powers (`0.9999999 ^ 10000000`, `2 ^ 113`, `1.1 ^ -34`) round the exact mathematical power once to Decimal128, ties to even. If refinement cannot certify the result within 4096 working digits, evaluation reports a structured error. Fractional, non-finite, and larger exponents, plus negative integer powers whose previous positive-power computation overflows, retain the existing Decimal128.Pow delegation; those approximations are outside the certification guarantee. Exact results retain compatible existing display quanta, including the trailing zeros of `5 ^ -50`.
 - **IEEE special values:** `NaN`, `Infinity`, `-Infinity`, and `-0` are ordinary numeric values (from domain violations like `Math.Sqrt(-1)`, overflow, or writing `-0`). Ordering comparisons involving `NaN` are always false, while `==`/`!=` use structural value identity (so `NaN == NaN` is `1`). Dividing by any zero-valued divisor (including `-0` and computed zeros) is still an error, not `Infinity`.
 - **Parameter order surprises:** parameter order is determined by first appearance reading left to right. If your expression reads `b - a`, the first parameter is `b`, not `a`. Use Grace (`~`) to override when needed.
-- **`if` arity:** builtin `if` requires three arguments after spread expansion: `if(cond, a, b)`. There is no two-argument form. A grouped value is one argument, so `if(X)` is invalid when `X = 1, 2, 3`; spread it with `if(X*)` to supply the three slots.
+- **`if` arity:** builtin `if` requires three arguments after spread expansion: `if(cond, a, b)`. There is no two-argument form. A grouped value is one argument, so `if(X)` is invalid when `X = 1, 2, 3`; spread it with `if(X*)` to supply the three slots. The check happens when the call runs, against the callable that [name resolution](#name-resolution) selected — declaring your own `if` shadows the builtin, and a wrong-arity call then reports *your* signature.
 - **`()` vs `{}` confusion:** `(expr)` groups an expression in the current scope. `{expr}` creates a new algorithm with its own parameters. Passing `(a + 1)` as an argument doesn't create a callable — it evaluates `a + 1` immediately in the enclosing scope. Bare `()` is the empty sequence value (a real value); bare `{}` is a no-output body and is not a value. Declarations follow the same split: `open` and property definitions belong to `{ ... }` blocks (or the root) and are parse errors inside `( ... )`.
 - **Ignoring a parameter:** there is no special "ignore" syntax for implicit parameters — every undeclared name becomes a required argument. If you want to accept and discard an argument, use an explicit parameter pattern. Bind the unwanted argument to a variable in the pattern, then simply don't reference it in the body:
 

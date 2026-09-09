@@ -144,9 +144,17 @@ public enum DiagnosticCode
     MisplacedSpread = 20,
 
     /// <summary>
-    /// A parse-time arity gate rejected a call (the <c>if</c> builtin's
-    /// three-argument requirement). Runtime arity failures surface as
-    /// <see cref="EvalError.ArityMismatch"/> instead.
+    /// A parse-time arity gate rejected a call. NO front-end path produces this
+    /// today: its only producer was the parser gate that counted a call's arguments
+    /// when its callee was spelled <c>if</c>, retired by SYN-05 because arity belongs
+    /// to the callable lexical resolution SELECTS and the parser cannot know that
+    /// (a builtin name is an ordinary prelude binding any nearer declaration may
+    /// shadow). Runtime fixed-arity call mismatches surface as
+    /// <see cref="EvalError.ArityMismatch"/> against the resolved signature. The
+    /// code is retained as public API and stays reserved for a genuine future
+    /// front-end arity check — one decided by a resolved declaration, never by a
+    /// callee's spelling. Pinned unproduced by
+    /// <c>DiagnosticCodeTests.NoFrontEndPath_ProducesTheParseTimeArityCode</c>.
     /// </summary>
     ArityMismatch = 21,
 

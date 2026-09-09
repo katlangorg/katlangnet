@@ -534,10 +534,10 @@ Builtin `if` requires three arguments (after explicit spread expansion):
 
 Condition is numeric. Use `0` for false and nonzero for true.
 
-There is no two-argument `if`. For conditional numeric contribution, use an explicit neutral else value:
+Builtin `if` has no two-argument form. For conditional numeric contribution, use an explicit neutral else value:
     10 + if(x > 0, 5, 0)
 
-Normally generate the three arguments directly. Explicit spread in call-argument position is valid only when the spread value supplies exactly three values: `if(X*)` with `X = 1, 2, 3` opens into the three slots and equals `if(1, 2, 3)`. A non-spread `if(X)` is one argument and is invalid.
+Normally generate the three arguments directly. Explicit spread in call-argument position is valid only when the spread value supplies exactly three values: `if(X*)` with `X = 1, 2, 3` opens into the three slots and equals `if(1, 2, 3)`. A non-spread `if(X)` is one argument and is invalid. Builtin names are ordinary prelude bindings, not reserved words: declaring `if`, `count`, or `sum` yourself SHADOWS the builtin completely (resolution ignores arity, so there is no fallback to the builtin at a different argument count). Do not reuse a builtin name for a property or parameter unless shadowing is the intent.
 
 For conditional inclusion over sequences, prefer `filter`.
 
@@ -1053,7 +1053,7 @@ Idiomatic structure:
 
 === BEGIN GENERATED: katlang-spec-examples (DO NOT EDIT BY HAND) ===
 
-Verified reference examples (61 of the 215-case canonical language specification,
+Verified reference examples (65 of the 223-case canonical language specification,
 tests/KatLang.Tests/LanguageSpec/LanguageSpecCorpus.cs). Every program and expected
 output below is executed against the KatLang engine and (where representable)
 guarded against the Lean model on every build. Treat these as ground truth for the
@@ -1673,5 +1673,56 @@ Regenerate this block from the repo root with:
 
   Displays:
     1
+
+[builtin-callable-is-an-ordinary-prelude-binding] Builtin callables live at the prelude level of ordinary name resolution, so any nearer binding — a property or a parameter — shadows one completely. `if` is no different from `count` or `sum`: the three spellings here all select the user's `if`, because lexical resolution picks the binding and only then does the resolved callable decide the semantics.
+
+    if(x) = x + 1
+
+    if(7)
+    7.if
+    if((7)*)
+
+  Displays:
+    8
+    8
+    8
+
+[no-arity-based-callable-selection] KatLang never overloads by argument count. Lexical resolution selects exactly one callable, the argument supply is assembled, and only then is that callable's signature validated — so a user `if(x)` shadows builtin `if` COMPLETELY and a three-argument call fails against `if(x)` instead of falling back to the builtin.
+
+    if(x) = x + 1
+
+    if(1, 2, 3)
+
+  Fails with an evaluation error (arity).
+
+[if-composition-forms-agree] Builtin `if` composes through the ordinary callable rules and nothing else: a dot-call injects the receiver as the leading argument, a spread supplies argument slots, and a higher-order parameter carries the resolved callable. All five spellings assemble the same three-argument supply, so they select the same branch.
+
+    Cond = 1
+    Branches = (10, 20)
+    Apply3(f, a, b, c) = f(a, b, c)
+
+    if(Cond, 10, 20)
+    Cond.if(10, 20)
+    if(Cond, Branches*)
+    Cond.if(Branches*)
+    Apply3(if, Cond, 10, 20)
+
+  Displays:
+    10
+    10
+    10
+    10
+    10
+
+[if-laziness-follows-the-resolved-identity] The one intrinsic thing about `if` is its invocation: evaluate the condition, then only the selected branch. That belongs to the resolved builtin — shadow the name and an ordinary eager user call takes over — and it is not a promise about arguments the CALLER already evaluated, so building a value before spreading it follows the ordinary expression-to-value-to-supply rule.
+
+    Boom = 1 / 0
+
+    if(1, 10, Boom)
+    0.if(Boom, 20)
+
+  Displays:
+    10
+    20
 
 === END GENERATED: katlang-spec-examples ===

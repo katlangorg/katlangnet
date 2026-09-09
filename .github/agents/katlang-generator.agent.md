@@ -272,7 +272,7 @@ GOOD — assumed values in final call:
 - Do not bake task-specific cutoff constants into helper predicates when the problem defines a reusable concept.
 - Do not specialize a predicate to one requested limit unless the user explicitly asks for a bounded shortcut.
 - Do not invent hidden default values inside algorithm definitions.
-- Builtin `if` has exactly 3 arguments: `if(condition, whenTrue, whenFalse)`. Normally generate the three arguments directly. `if(X*)` is valid only when `X` is known to supply exactly three values (explicit spread opens it into the three slots); a non-spread `if(X)` is one argument and is invalid. Never generate a 2-argument `if`.
+- Builtin `if` has exactly 3 arguments: `if(condition, whenTrue, whenFalse)`. Normally generate the three arguments directly. `if(X*)` is valid when `X` supplies exactly three values (explicit spread opens it into the three slots); a non-spread `if(X)` is one argument and is invalid. Never generate a 2-argument call to builtin `if`. Builtin names are ordinary prelude bindings, not reserved words: declaring `if`, `count`, or `sum` yourself SHADOWS the builtin completely (resolution ignores arity, so there is no fallback to the builtin at a different argument count). Do not reuse a builtin name for a property or parameter unless shadowing is the intent.
 - For concrete-result tasks, assumed sample values are allowed and often required in the final call, but they must appear only in the final call or output expression — never inside algorithm bodies.
 - When necessary, choose a reasonable, conventional sample value so the generated KatLang remains runnable. Use a short KatLang comment for assumptions when clarity benefits, e.g., `# assumed annual salary = 50000`.
 - Do not shadow builtin or prelude algorithm names with implicit parameters, branch binders, or helper placeholders. No name is hard-reserved at the parser level, but these are unsafe to shadow. If a concept is naturally named `atoms`, `sum`, `min`, `max`, `avg`, `count`, `first`, `last`, `map`, `filter`, `order`, `orderDesc`, `reduce`, or `range`, rename it to a non-builtin alternative such as `flatValues`, `total`, `minimumValue`, `maximumValue`, `averageValue`, `itemCount`, `firstValue`, `lastValue`, `transform`, `predicate`, `sortedValues`, `descendingValues`, `reducer`, or `span`.
@@ -300,7 +300,7 @@ Before emitting code, verify silently:
 - Parentheses and braces are used correctly.
 - Parenthesized sub-expressions in call arguments parse correctly (no double-paren trap).
 - Nested property bodies use `{ ... }`; `( ... )` cannot contain declarations; simple property bodies are not wrapped.
-- Builtin `if` has exactly 3 arguments: `if(condition, whenTrue, whenFalse)`. Normally generate the three arguments directly. `if(X*)` is valid only when `X` is known to supply exactly three values (explicit spread opens it into the three slots); a non-spread `if(X)` is one argument and is invalid. Never generate a 2-argument `if`.
+- Builtin `if` has exactly 3 arguments: `if(condition, whenTrue, whenFalse)`. Normally generate the three arguments directly. `if(X*)` is valid when `X` supplies exactly three values (explicit spread opens it into the three slots); a non-spread `if(X)` is one argument and is invalid. Never generate a 2-argument call to builtin `if`. Builtin names are ordinary prelude bindings, not reserved words: declaring `if`, `count`, or `sum` yourself SHADOWS the builtin completely (resolution ignores arity, so there is no fallback to the builtin at a different argument count). Do not reuse a builtin name for a property or parameter unless shadowing is the intent.
 - `if` multi-output branches are parenthesized; single-value branches need no parens.
 - `repeat` and `while` use the correct step/state shape.
 - Every `repeat`/`while` step's state is validated against its parameter pattern (explicit pattern, or inferred implicit parameters when there is no explicit list): fixed and implicit interfaces need an exact slot count, a top-level variadic interface binds the state as an item supply (fixed prefix and suffix slots required, the collecting parameter collects the remaining middle slots as one exact list, max unbounded), and captured enclosing names are not state slots.
@@ -797,7 +797,7 @@ Grace only affects parameter detection order. It does not change the runtime val
 
 ### `if`
 
-Builtin `if` has exactly 3 arguments: `if(condition, thenExpr, elseExpr)`. The condition is numeric. Normally generate the three arguments directly. Explicit spread in call-argument position is valid when the spread value supplies exactly three values: `if(X*)` with `X = 1, 2, 3` opens into the three slots and equals `if(1, 2, 3)`, and `if(1, Pair*)` with `Pair = 2, 3` is also valid. A direct `if(X*)` behaves the same as a user-defined wrapper such as `MyIF(a, b, c) = if(a, b, c)` called as `MyIF(X*)`. A non-spread `if(X)` is one argument and is invalid; never generate a 2-argument `if`. Parenthesize branch bodies only when they contain multiple comma-separated outputs: `if(cond, (a, b), (c, d))`. Single-value branches need no parentheses: `if(x > 0, 1, 0)`. `if` returns the selected branch as one value boundary, so a multi-output property branch such as `X = 1, 2, 3` yields the grouped sequence value `(1, 2, 3)` (emitted count 1), exactly like referencing `X` directly; use a result spread `if(cond, X, Y)*` to contribute that result as separate output slots.
+Builtin `if` has exactly 3 arguments: `if(condition, thenExpr, elseExpr)`. The condition is numeric. Normally generate the three arguments directly. Explicit spread in call-argument position is valid when the spread value supplies exactly three values: `if(X*)` with `X = 1, 2, 3` opens into the three slots and equals `if(1, 2, 3)`, and `if(1, Pair*)` with `Pair = 2, 3` is also valid. A direct `if(X*)` behaves the same as a user-defined wrapper such as `MyIF(a, b, c) = if(a, b, c)` called as `MyIF(X*)`. A non-spread `if(X)` is one argument and is invalid; never generate a 2-argument call to builtin `if`. Parenthesize branch bodies only when they contain multiple comma-separated outputs: `if(cond, (a, b), (c, d))`. Single-value branches need no parentheses: `if(x > 0, 1, 0)`. `if` returns the selected branch as one value boundary, so a multi-output property branch such as `X = 1, 2, 3` yields the grouped sequence value `(1, 2, 3)` (emitted count 1), exactly like referencing `X` directly; use a result spread `if(cond, X, Y)*` to contribute that result as separate output slots. Builtin names are ordinary prelude bindings, not reserved words: declaring `if`, `count`, or `sum` yourself SHADOWS the builtin completely (resolution ignores arity, so there is no fallback to the builtin at a different argument count). Do not reuse a builtin name for a property or parameter unless shadowing is the intent.
 
 ### `repeat`
 
@@ -1529,7 +1529,7 @@ Without trailing output, `Order` has no direct result — use `Order.Total(25, 4
 
 === BEGIN GENERATED: katlang-spec-examples (DO NOT EDIT BY HAND) ===
 
-Verified reference examples (61 of the 215-case canonical language specification,
+Verified reference examples (65 of the 223-case canonical language specification,
 tests/KatLang.Tests/LanguageSpec/LanguageSpecCorpus.cs). Every program and expected
 output below is executed against the KatLang engine and (where representable)
 guarded against the Lean model on every build. Treat these as ground truth for the
@@ -2149,5 +2149,56 @@ Regenerate this block from the repo root with:
 
   Displays:
     1
+
+[builtin-callable-is-an-ordinary-prelude-binding] Builtin callables live at the prelude level of ordinary name resolution, so any nearer binding — a property or a parameter — shadows one completely. `if` is no different from `count` or `sum`: the three spellings here all select the user's `if`, because lexical resolution picks the binding and only then does the resolved callable decide the semantics.
+
+    if(x) = x + 1
+
+    if(7)
+    7.if
+    if((7)*)
+
+  Displays:
+    8
+    8
+    8
+
+[no-arity-based-callable-selection] KatLang never overloads by argument count. Lexical resolution selects exactly one callable, the argument supply is assembled, and only then is that callable's signature validated — so a user `if(x)` shadows builtin `if` COMPLETELY and a three-argument call fails against `if(x)` instead of falling back to the builtin.
+
+    if(x) = x + 1
+
+    if(1, 2, 3)
+
+  Fails with an evaluation error (arity).
+
+[if-composition-forms-agree] Builtin `if` composes through the ordinary callable rules and nothing else: a dot-call injects the receiver as the leading argument, a spread supplies argument slots, and a higher-order parameter carries the resolved callable. All five spellings assemble the same three-argument supply, so they select the same branch.
+
+    Cond = 1
+    Branches = (10, 20)
+    Apply3(f, a, b, c) = f(a, b, c)
+
+    if(Cond, 10, 20)
+    Cond.if(10, 20)
+    if(Cond, Branches*)
+    Cond.if(Branches*)
+    Apply3(if, Cond, 10, 20)
+
+  Displays:
+    10
+    10
+    10
+    10
+    10
+
+[if-laziness-follows-the-resolved-identity] The one intrinsic thing about `if` is its invocation: evaluate the condition, then only the selected branch. That belongs to the resolved builtin — shadow the name and an ordinary eager user call takes over — and it is not a promise about arguments the CALLER already evaluated, so building a value before spreading it follows the ordinary expression-to-value-to-supply rule.
+
+    Boom = 1 / 0
+
+    if(1, 10, Boom)
+    0.if(Boom, 20)
+
+  Displays:
+    10
+    20
 
 === END GENERATED: katlang-spec-examples ===

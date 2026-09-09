@@ -3,14 +3,18 @@ namespace KatLang.Tests;
 /// <summary>
 /// Exact diagnostic-span regressions for parser error reporting.
 /// The repository convention is inclusive spans: EndColumn is the last
-/// offending source column. These tests pin three families:
-/// - direct `if` arity diagnostics cover the whole call (identical to the
-///   resulting <see cref="Expr.Call"/> node span), never the token after it;
+/// offending source column. These tests pin two families:
 /// - clause-head grace diagnostics cover the offending marker run plus its
 ///   pattern atom, never the delimiter after the atom;
 /// - the at-most-one-collecting-binding deconstruction diagnostic includes
 ///   the collect marker, not just the binding name.
 /// Every test asserts all four span coordinates and the exact source slice.
+///
+/// <para>The `if` arity family that used to live here left with SYN-05: the
+/// parser no longer counts a call's arguments from its callee SPELLING, so the
+/// whole-call span guarantee moved to the authoritative arity boundary and is
+/// pinned by <see cref="BuiltinCallableIdentityTests.ArityDiagnostic_SpansTheWholeCall"/>
+/// against the RESOLVED signature.</para>
 /// </summary>
 public class ParserDiagnosticSpanTests
 {
@@ -46,93 +50,6 @@ public class ParserDiagnosticSpanTests
         Assert.Equal(span.StartLineNumber, span.EndLineNumber);
         var line = source.Split('\n')[span.StartLineNumber - 1].TrimEnd('\r');
         return line.Substring(span.StartColumn - 1, span.EndColumn - span.StartColumn + 1);
-    }
-
-    // ── F3: direct `if` arity diagnostics span the whole call ───────────────
-
-    [Fact]
-    public void IfArity_CallFollowedByOutputRow_SpansTheCall()
-    {
-        const string source = "if(1, 2)\nNext";
-        var result = Parser.ParseSyntax(source);
-        var diagnostic = Assert.Single(
-            result.Diagnostics,
-            d => d.Message == "Builtin 'if' expects 3 arguments: condition, whenTrue, whenFalse. Got 2.");
-
-        AssertSpan(source, diagnostic, 1, 1, 1, 8, "if(1, 2)");
-        var call = Assert.IsType<Expr.Call>(result.Root.Output[0]);
-        Assert.Equal(call.Span, diagnostic.Span);
-    }
-
-    [Fact]
-    public void IfArity_CallFollowedByPropertyDeclaration_SpansTheCall()
-    {
-        const string source = "X = 1\nif(1, 2)\nLongIdentifierHere = 3\nLongIdentifierHere";
-        var result = Parser.ParseSyntax(source);
-        var diagnostic = Assert.Single(
-            result.Diagnostics,
-            d => d.Message == "Builtin 'if' expects 3 arguments: condition, whenTrue, whenFalse. Got 2.");
-
-        AssertSpan(source, diagnostic, 2, 1, 2, 8, "if(1, 2)");
-        var call = Assert.IsType<Expr.Call>(result.Root.Output[0]);
-        Assert.Equal(call.Span, diagnostic.Span);
-    }
-
-    [Fact]
-    public void IfArity_CallInsidePropertyValue_SpansTheCall()
-    {
-        const string source = "P = if(1, 2)\nP";
-        var result = Parser.ParseSyntax(source);
-        var diagnostic = Assert.Single(
-            result.Diagnostics,
-            d => d.Message == "Builtin 'if' expects 3 arguments: condition, whenTrue, whenFalse. Got 2.");
-
-        AssertSpan(source, diagnostic, 1, 5, 1, 12, "if(1, 2)");
-        var property = Assert.Single(result.Root.Properties, p => p.Name == "P");
-        var call = Assert.IsType<Expr.Call>(Assert.Single(property.Value.Output));
-        Assert.Equal(call.Span, diagnostic.Span);
-    }
-
-    [Fact]
-    public void IfArity_CallAtEndOfFile_SpansTheCall()
-    {
-        const string source = "if(1, 2)";
-        var result = Parser.ParseSyntax(source);
-        var diagnostic = Assert.Single(
-            result.Diagnostics,
-            d => d.Message == "Builtin 'if' expects 3 arguments: condition, whenTrue, whenFalse. Got 2.");
-
-        AssertSpan(source, diagnostic, 1, 1, 1, 8, "if(1, 2)");
-        var call = Assert.IsType<Expr.Call>(Assert.Single(result.Root.Output));
-        Assert.Equal(call.Span, diagnostic.Span);
-    }
-
-    [Fact]
-    public void IfArity_ZeroArguments_SpansTheCall()
-    {
-        const string source = "if()\nNext";
-        var result = Parser.ParseSyntax(source);
-        var diagnostic = Assert.Single(
-            result.Diagnostics,
-            d => d.Message == "Builtin 'if' expects 3 arguments: condition, whenTrue, whenFalse. Got 0.");
-
-        AssertSpan(source, diagnostic, 1, 1, 1, 4, "if()");
-        var call = Assert.IsType<Expr.Call>(result.Root.Output[0]);
-        Assert.Equal(call.Span, diagnostic.Span);
-    }
-
-    [Fact]
-    public void IfArity_TooManyArguments_SpansTheCall()
-    {
-        const string source = "if(1, 2, 3, 4)";
-        var result = Parser.ParseSyntax(source);
-        var diagnostic = Assert.Single(
-            result.Diagnostics,
-            d => d.Message == "Builtin 'if' expects 3 arguments: condition, whenTrue, whenFalse. Got 4.");
-
-        AssertSpan(source, diagnostic, 1, 1, 1, 14, "if(1, 2, 3, 4)");
-        var call = Assert.IsType<Expr.Call>(Assert.Single(result.Root.Output));
-        Assert.Equal(call.Span, diagnostic.Span);
     }
 
     // ── F4: clause-head grace diagnostics span the marker + atom ────────────

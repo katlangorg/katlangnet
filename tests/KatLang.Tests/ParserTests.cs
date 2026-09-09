@@ -4868,118 +4868,90 @@ public class ParserTests
         Assert.Equal(2, dotCall.Args!.Count);
     }
 
-    // ── if arity validation ─────────────────────────────────────────────────
+    // ── `if` is parsed like any other callee (SYN-05) ───────────────────────
+    //
+    // The parser is purely syntactic: it never inspects a callee's SPELLING to
+    // decide how many arguments the call may have. Arity belongs to the callable
+    // that lexical resolution SELECTS, and the parser cannot know that — `if` is
+    // an ordinary prelude binding a nearer property or parameter may shadow.
+    // These tests pin the syntactic shape only; the arity contract itself lives
+    // in BuiltinCallableIdentityTests against the resolved signature.
 
-    [Fact]
-    public void Parse_If_TwoArgs_ReportsBuiltinArityError()
+    /// <summary>
+    /// Every argument count parses cleanly into the same `Call(Resolve("if"), args)`
+    /// shape, exactly as a call to any other name does. Before SYN-05 the counts
+    /// other than 3 were parse errors, which made the direct call disagree with the
+    /// dot-call and spread surfaces and — with a user `if` in scope — with itself.
+    /// </summary>
+    [Theory]
+    [InlineData("if()", 0)]
+    [InlineData("if(1)", 1)]
+    [InlineData("if(1, 2)", 2)]
+    [InlineData("if(1, 2, 3)", 3)]
+    [InlineData("if(1, 2, 3, 4)", 4)]
+    [InlineData("if(X)", 1)]
+    [InlineData("if(X*)", 1)]
+    [InlineData("if(1, Pair*)", 2)]
+    [InlineData("if(A*, B*)", 2)]
+    [InlineData("if((X*), 1)", 2)]
+    public void Parse_If_AnyArgumentCount_ParsesAsAnOrdinaryCall(string source, int expectedArgCount)
     {
-        var result = Parser.ParseSyntax("if(1, 2)");
-        Assert.True(result.HasErrors);
-        Assert.Contains(result.Diagnostics, diagnostic =>
-            diagnostic.Message.Contains("Builtin 'if' expects 3 arguments: condition, whenTrue, whenFalse."));
-    }
+        var result = Parser.ParseSyntax(source);
+        Assert.False(result.HasErrors, string.Join(" | ", result.Diagnostics.Select(d => d.Message)));
 
-    [Fact]
-    public void Parse_If_ThreeArgs_RemainsIf()
-    {
-        var result = Parser.ParseSyntax("if(1, 2, 3)");
-        Assert.False(result.HasErrors);
         var call = Assert.IsType<Expr.Call>(result.Root.Output[0]);
         var resolve = Assert.IsType<Expr.Resolve>(call.Function);
         Assert.Equal("if", resolve.Name);
-        Assert.Equal(3, call.Args.Count);
+        Assert.Equal(expectedArgCount, call.Args.Count);
     }
 
+    /// <summary>
+    /// The written spread marker survives to the evaluator unchanged — the parser
+    /// neither expands it nor treats it as an arity escape hatch, because it never
+    /// counted arguments in the first place.
+    /// </summary>
     [Fact]
-    public void Parse_If_TwoArgs_InsideExpression_ReportsBuiltinArityError()
-    {
-        var result = Parser.ParseSyntax("10 * if(7 < 6, 1)");
-        Assert.True(result.HasErrors);
-        Assert.Contains(result.Diagnostics, diagnostic =>
-            diagnostic.Message.Contains("Builtin 'if' expects 3 arguments: condition, whenTrue, whenFalse."));
-    }
-
-    [Fact]
-    public void Parse_If_ZeroArgs_ReportsError()
-    {
-        var result = Parser.ParseSyntax("if()");
-        Assert.True(result.HasErrors);
-    }
-
-    [Fact]
-    public void Parse_If_OneArg_ReportsError()
-    {
-        var result = Parser.ParseSyntax("if(1)");
-        Assert.True(result.HasErrors);
-    }
-
-    [Fact]
-    public void Parse_If_FourArgs_ReportsError()
-    {
-        var result = Parser.ParseSyntax("if(1, 2, 3, 4)");
-        Assert.True(result.HasErrors);
-    }
-
-    // Issue #131: an explicit spread argument has a runtime-only count, so the
-    // static if-arity gate is skipped and the spread marker is preserved for the
-    // evaluator to expand.
-    [Fact]
-    public void Parse_If_SpreadArgument_NoArityError_KeepsSpread()
+    public void Parse_If_SpreadArgument_KeepsSpread()
     {
         var result = Parser.ParseSyntax("if(X*)");
         Assert.False(result.HasErrors);
         var call = Assert.IsType<Expr.Call>(result.Root.Output[0]);
-        var resolve = Assert.IsType<Expr.Resolve>(call.Function);
-        Assert.Equal("if", resolve.Name);
-        var argument = Assert.Single(call.Args);
-        var spread = Assert.IsType<Expr.SequenceSpread>(argument);
+        var spread = Assert.IsType<Expr.SequenceSpread>(Assert.Single(call.Args));
         Assert.IsType<Expr.Resolve>(spread.Operand);
     }
 
-    [Fact]
-    public void Parse_If_MixedLiteralAndSpread_NoArityError_KeepsSpread()
+    /// <summary>
+    /// A wrong-arity `if` nested in a larger expression is likewise a clean parse:
+    /// the identical shape with another builtin name always was.
+    /// </summary>
+    [Theory]
+    [InlineData("10 * if(7 < 6, 1)")]
+    [InlineData("10 * count(1, 2, 3)")]
+    public void Parse_WrongArityBuiltinCall_InsideExpression_ParsesCleanly(string source)
     {
-        var result = Parser.ParseSyntax("if(1, Pair*)");
-        Assert.False(result.HasErrors);
-        var call = Assert.IsType<Expr.Call>(result.Root.Output[0]);
-        var resolve = Assert.IsType<Expr.Resolve>(call.Function);
-        Assert.Equal("if", resolve.Name);
-        Assert.Equal(2, call.Args.Count);
-        Assert.IsType<Expr.SequenceSpread>(call.Args[1]);
+        var result = Parser.ParseSyntax(source);
+        Assert.False(result.HasErrors, string.Join(" | ", result.Diagnostics.Select(d => d.Message)));
     }
 
-    // A bare grouped value used without spread is still one structural argument,
-    // so the friendly parse-time diagnostic must still fire.
-    [Fact]
-    public void Parse_If_SingleNonSpreadArgument_ReportsBuiltinArityError()
+    /// <summary>
+    /// `if` is declarable: no reserved-name rule, no grammar production excluding
+    /// it from binding identifiers. A property, a clause family, a parameter and a
+    /// deconstruction target may all spell it, exactly like `count` or `sum`.
+    /// </summary>
+    [Theory]
+    [InlineData("if = 7\nif")]
+    [InlineData("if(x) = x + 1\nif(7)")]
+    [InlineData("if(a, b, c) = a + b + c\nif(1, 10, 20)")]
+    [InlineData("F(if) = if\nF(5)")]
+    [InlineData("F(*if) = if\nF(5)")]
+    [InlineData("if, y = (1, 2)\nif")]
+    [InlineData("F(0) = 1\nF(if) = if\nF(3)")]
+    [InlineData("count = 7\ncount")]
+    [InlineData("sum(x) = x + 100\nsum(5)")]
+    public void Parse_BuiltinName_IsAnOrdinaryBindingIdentifier(string source)
     {
-        var result = Parser.ParseSyntax("if(X)");
-        Assert.True(result.HasErrors);
-        Assert.Contains(result.Diagnostics, diagnostic =>
-            diagnostic.Message.Contains("Builtin 'if' expects 3 arguments: condition, whenTrue, whenFalse."));
-    }
-
-    // Only a TOP-LEVEL argument spread relaxes the gate. A spread nested inside
-    // parentheses materializes one sequence-value argument, so `if((X*), 1)`
-    // is two structural arguments and must still report the arity diagnostic.
-    [Fact]
-    public void Parse_If_ParenthesizedNestedSpread_StillReportsBuiltinArityError()
-    {
-        var result = Parser.ParseSyntax("if((X*), 1)");
-        Assert.True(result.HasErrors);
-        Assert.Contains(result.Diagnostics, diagnostic =>
-            diagnostic.Message.Contains("Builtin 'if' expects 3 arguments: condition, whenTrue, whenFalse."));
-    }
-
-    // Two top-level spreads also defer arity to the evaluator.
-    [Fact]
-    public void Parse_If_MultipleSpreads_NoArityError()
-    {
-        var result = Parser.ParseSyntax("if(A*, B*)");
-        Assert.False(result.HasErrors);
-        var call = Assert.IsType<Expr.Call>(result.Root.Output[0]);
-        Assert.Equal(2, call.Args.Count);
-        Assert.All(call.Args, argument => Assert.IsType<Expr.SequenceSpread>(argument));
+        var result = Parser.Parse(source);
+        Assert.False(result.HasErrors, string.Join(" | ", result.Diagnostics.Select(d => d.Message)));
     }
 
     // ── Clause definition classification ────────────────────────────────────

@@ -2927,12 +2927,13 @@ public sealed class Parser
                     // included — builtin semantics belong to elaboration and the
                     // evaluator/registry, never to argument parsing.
                     var callArgs = ParseCallArgs();
-                    // The complete call span (callee through the consumed ')'),
-                    // computed once so the arity diagnostic and the Call node
-                    // report the same source range.
+                    // The complete call span: callee through the consumed ')'.
+                    // No callee spelling is inspected here. Arity belongs to the
+                    // callable that lexical resolution SELECTS, which only the
+                    // evaluator knows, so `if(1, 2)` is diagnosed exactly like
+                    // `count(1, 2, 3)`: at the binding boundary, against the
+                    // resolved signature, reported on this same call span.
                     var callSpan = SpanFrom(lhs);
-                    // Validate if arity.
-                    ValidateIfArity(lhs, callArgs, callSpan);
                     var call = new Expr.Call(lhs, callArgs) { Span = callSpan };
                     lhs = GuardExpressionChainDepth(call, TokenSpan(callToken), lhs);
                     break;
@@ -3110,10 +3111,7 @@ public sealed class Parser
             ? [spreadReceiver, .. ParseCallArgs()]
             : [spreadReceiver];
 
-        // The leading spread argument slot always defers `if` arity to the
-        // evaluator's spread expansion, exactly like `if(X*)`.
         var callSpan = SpanFrom(spreadReceiver);
-        ValidateIfArity(callee, args, callSpan);
         var call = new Expr.Call(callee, args) { Span = callSpan };
         return GuardExpressionChainDepth(call, TokenSpan(dotToken), spreadReceiver);
     }
@@ -3431,39 +3429,6 @@ public sealed class Parser
                     Advance(); // skip for recovery
                     return new Expr.Num(0) { Span = TokenSpan(token) }; // error placeholder
                 }
-        }
-    }
-
-    /// <summary>
-    /// Validates that <c>if(...)</c> has exactly 3 arguments.
-    /// For non-<c>if</c> callees, does nothing.
-    /// When any top-level argument slot is an explicit spread
-    /// (<c>expr*</c>), the expanded argument count is only known at
-    /// evaluation time, so this static gate is skipped and the evaluator's
-    /// spread expansion decides arity — exactly like every other builtin.
-    /// This keeps direct <c>if(X*)</c> consistent with a user wrapper such
-    /// as <c>MyIF(a, b, c) = if(a, b, c)</c> called as <c>MyIF(X*)</c>.
-    /// Without a spread the friendly parse-time diagnostic is preserved, so
-    /// <c>if(X)</c>, <c>if(1, 2)</c>, and <c>if()</c> still fail here.
-    /// The diagnostic is reported at <paramref name="callSpan"/> — the span of
-    /// the whole offending call, the same span the caller assigns to the
-    /// resulting <see cref="Expr.Call"/> node.
-    /// </summary>
-    private void ValidateIfArity(Expr callee, OutputBundle args, SourceSpan callSpan)
-    {
-        if (callee is Expr.Resolve("if"))
-        {
-            if (args.Any(static arg => arg is Expr.SequenceSpread))
-                return;
-
-            var argCount = args.Count;
-            if (argCount != 3)
-            {
-                ReportError(
-                    DiagnosticCode.ArityMismatch,
-                    $"Builtin 'if' expects 3 arguments: condition, whenTrue, whenFalse. Got {argCount}.",
-                    callSpan);
-            }
         }
     }
 

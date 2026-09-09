@@ -14,11 +14,11 @@ This is bounded differential validation over the Lean-guarded partition,
 not a formal verification of the evaluators.
 
 Partition (machine-checked by the `specCaseIds.length` guard below):
-- specification surface cases: 215
+- specification surface cases: 223
 - excluded parse-level cases (Lean has no surface parser): 17
 - excluded C#-only cases (each carries an explicit reason in the corpus): 10
-- Lean-guarded cases: 188
-- probe observations (C#-only by design): 377
+- Lean-guarded cases: 196
+- probe observations (C#-only by design): 403
 - internal-node cases live in the semantic-explorer corpus, not here: see
   lean/SemanticExplorerCases.lean
 
@@ -1038,7 +1038,47 @@ def case_conditional_branch_local_library_is_openable_within_the_branch : Expr :
   .algorithmExpr (alg [] [] [privateProp "F" (.conditional none [] [⟨.litInt 0, (alg [] [] [privateProp "Lib" (alg [] [] [publicProp "X" (alg [] [] [] [.num 1])] []), privateProp "G" (alg [] [.resolve "Lib"] [] [.resolve "X"])] [.resolve "G"])⟩, ⟨.bind "n", (alg [] [] [] [.param "n"])⟩])] [(.call (.resolve "F") [.num 0])])
 #guard obs case_conditional_branch_local_library_is_openable_within_the_branch == "ok raw=1 n=1"
 
--- 188 canonical Lean-guarded specification cases.
+-- builtin-callable-is-an-ordinary-prelude-binding [name-resolution]: if(x) = x + 1 \n  \n if(7) \n 7.if \n if((7)*)
+def case_builtin_callable_is_an_ordinary_prelude_binding : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "if" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))])] [(.call (.resolve "if") [.num 7]), (.dotCall (.num 7) "if" none), (.call (.resolve "if") [(.sequenceSpread (.num 7))])])
+#guard obs case_builtin_callable_is_an_ordinary_prelude_binding == "ok raw=S[8, 8, 8] n=3"
+
+-- no-arity-based-callable-selection [name-resolution]: if(x) = x + 1 \n  \n if(1, 2, 3)
+def case_no_arity_based_callable_selection : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "if" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))])] [(.call (.resolve "if") [.num 1, .num 2, .num 3])])
+#guard obs case_no_arity_based_callable_selection == "err arity"
+
+-- if-composition-forms-agree [conditionals]: Cond = 1 \n Branches = (10, 20) \n Apply3(f, a, b, c) = f(a, b, c) \n  \n if(Cond, 10, 20) \n Cond.if(10, 20) \n if(Cond, Branches*) \n Cond.if(Branches*) \n Apply3(if, Cond, 10, 20)
+def case_if_composition_forms_agree : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Cond" (alg [] [] [] [.num 1]), privateProp "Branches" (alg [] [] [] [(.capture [.num 10, .num 20])]), privateProp "Apply3" (alg ["f", "a", "b", "c"] [] [] [(.call (.param "f") [.param "a", .param "b", .param "c"])])] [(.call (.resolve "if") [.resolve "Cond", .num 10, .num 20]), (.dotCall (.resolve "Cond") "if" (some [.num 10, .num 20])), (.call (.resolve "if") [.resolve "Cond", (.sequenceSpread (.resolve "Branches"))]), (.dotCall (.resolve "Cond") "if" (some [(.sequenceSpread (.resolve "Branches"))])), (.call (.resolve "Apply3") [.resolve "if", .resolve "Cond", .num 10, .num 20])])
+#guard obs case_if_composition_forms_agree == "ok raw=S[10, 10, 10, 10, 10] n=5"
+
+-- if-arity-is-uniform-across-spellings [conditionals]: if(1, 2)
+def case_if_arity_is_uniform_across_spellings : Expr :=
+  .algorithmExpr (alg [] [] [] [(.call (.resolve "if") [.num 1, .num 2])])
+#guard obs case_if_arity_is_uniform_across_spellings == "err arity"
+
+-- if-laziness-follows-the-resolved-identity [conditionals]: Boom = 1 / 0 \n  \n if(1, 10, Boom) \n 0.if(Boom, 20)
+def case_if_laziness_follows_the_resolved_identity : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Boom" (alg [] [] [] [(.binary .div (.num 1) (.num 0))])] [(.call (.resolve "if") [.num 1, .num 10, .resolve "Boom"]), (.dotCall (.num 0) "if" (some [.resolve "Boom", .num 20]))])
+#guard obs case_if_laziness_follows_the_resolved_identity == "ok raw=S[10, 20] n=2"
+
+-- same-arity-user-if-keeps-user-identity [name-resolution]: if(a, b, c) = a + b + c \n if(1, 10, 20) \n 1.if(10, 20)
+def case_same_arity_user_if_keeps_user_identity : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "if" (alg ["a", "b", "c"] [] [] [(.binary .add (.binary .add (.param "a") (.param "b")) (.param "c"))])] [(.call (.resolve "if") [.num 1, .num 10, .num 20]), (.dotCall (.num 1) "if" (some [.num 10, .num 20]))])
+#guard obs case_same_arity_user_if_keeps_user_identity == "ok raw=S[31, 31] n=2"
+
+-- parameter-named-if-carries-the-supplied-callable [name-resolution]: Apply(if, x) = { Inner = if(x) \n  Inner } \n Inc(x) = x + 1 \n Apply(Inc, 7)
+def case_parameter_named_if_carries_the_supplied_callable : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Apply" (alg ["if", "x"] [] [privateLocalProp "Inner" .localCapturedAncestorParams (alg [] [] [] [(.call (.param "if") [.param "x"])])] [.resolve "Inner"]), privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))])] [(.call (.resolve "Apply") [.resolve "Inc", .num 7])])
+#guard obs case_parameter_named_if_carries_the_supplied_callable == "ok raw=8 n=1"
+
+-- if-spread-builds-values-before-branch-selection [conditionals]: Risky = (10, 1 / 0) \n if(1, Risky*)
+def case_if_spread_builds_values_before_branch_selection : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Risky" (alg [] [] [] [(.capture [.num 10, (.binary .div (.num 1) (.num 0))])])] [(.call (.resolve "if") [.num 1, (.sequenceSpread (.resolve "Risky"))])])
+#guard obs case_if_spread_builds_values_before_branch_selection == "err div0"
+
+-- 196 canonical Lean-guarded specification cases.
 
 /--
 Machine-checked Lean-guarded partition count: the id list is built by the
@@ -1233,8 +1273,16 @@ def specCaseIds : List String := [
   "clause-family-nested-in-branch-body-binds-its-own-binders",
   "conditional-branch-pattern-is-a-closed-input-specification",
   "conditional-branch-inline-open-exposes-members-to-the-branch",
-  "conditional-branch-local-library-is-openable-within-the-branch"
+  "conditional-branch-local-library-is-openable-within-the-branch",
+  "builtin-callable-is-an-ordinary-prelude-binding",
+  "no-arity-based-callable-selection",
+  "if-composition-forms-agree",
+  "if-arity-is-uniform-across-spellings",
+  "if-laziness-follows-the-resolved-identity",
+  "same-arity-user-if-keeps-user-identity",
+  "parameter-named-if-carries-the-supplied-callable",
+  "if-spread-builds-values-before-branch-selection"
 ]
-#guard specCaseIds.length == 188
+#guard specCaseIds.length == 196
 
 end LanguageSpecCases

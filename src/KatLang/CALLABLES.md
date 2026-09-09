@@ -33,6 +33,24 @@ Generic `Algorithm.User` loop-step shape selection uses `CallableBindingPlan` to
 
 Non-user loop steps stay on the runtime-specific path. Optimized loops remain separate and keep their existing fallback checks and scalar assumptions.
 
+## Identity before arity
+
+Builtin callables are ORDINARY prelude bindings. Lexical resolution selects one binding without considering arity; the resolved callable then determines its signature and semantics:
+
+```text
+resolve the lexical name
+  -> select exactly one callable identity
+  -> construct the ordinary argument supply
+  -> bind against THAT callable's signature
+  -> invoke it
+```
+
+Never `name + argument count -> choose matching callable`. KatLang has no overloading by arity, so a nearer property or parameter named `count`, `sum`, or `if` shadows the prelude binding COMPLETELY — a user `if(x) = x + 1` does not coexist beside builtin `if/3`, and `if(1, 2, 3)` fails against `if(x)` rather than falling back. Conditional clause families remain branches of ONE callable contract, not arity overloads.
+
+Nothing may short-circuit that order from a written callable spelling. The parser is purely syntactic about callees: it never counts a call's arguments from the callee's name, so a wrong-arity builtin call is an ordinary evaluation-time `ArityMismatch` against the resolved signature (and, like every other builtin, is inert in an unevaluated property). A builtin recognizer, such as the loop optimizer's `if` planning, may use a registry-derived spelling as a lookup key, but must confirm the resolved builtin identity before applying intrinsic behavior (`Evaluator.ResolvesToBuiltinAlgorithm` on the loop path). The `load` front-end/module directive still uses spelling recognition; it is outside this callable rule.
+
+Builtin `if` is the instance where this matters most, because its INVOCATION is intrinsic: `if(condition, whenTrue, whenFalse)` evaluates the condition and then only the selected branch. That laziness belongs to the resolved builtin identity, not to the name — shadow it and an ordinary eager user call takes over — and it is not a promise about arguments the CALLER already evaluated, so `if(1, Risky*)` still evaluates all of `Risky` under the ordinary `expression -> value -> supply -> argument binding` rule. Composition is otherwise entirely ordinary: `c.if(a, b)` injects the receiver as the leading argument, `if(args*)` supplies argument slots, and a bare `if` is a legal higher-order reference on the algorithm channel. Lean models this directly — `if` is one `publicProp "if" (Algorithm.builtin .ifBuiltin)` in `preludeAlg`, and `NameOwnership` treats the prelude as the outermost property level of the owner walk.
+
 ## Builtins and callbacks
 
 Builtin metadata uses `CallableSignature` and `CallableBindingPlan` where it is safe to describe builtin call shape. A collection builtin is an ordinary FIXED-ARITY callable (`sum(collection)`, `contains(collection, item)`, `take(collection, count)`): `BindSequenceBuiltinArguments` / `bindSequenceBuiltinArguments` collect the ordinary call items (only explicit spread alters argument boundaries) and require exactly `1 + control count` arguments — anything else is an ordinary `ArityMismatch` carrying the fixed signature. `sum(1, 2, 3)`, `sum()`, `count(Values*)` (unless the spread opens exactly one item), and `take((1, 2, 3))` are arity errors; `sum((1, 2, 3))` and `sum([1, 2, 3])` are the valid forms. The bound `collection` argument is then interpreted through the POST-BINDING one-level collection view (`BuiltinCollectionItems` / `builtinCollectionItems`): a lone sequence or exact list opens one outer boundary, any other value is a one-element collection, never recursively — nested collections stay single opaque items. Nothing is ever opened before binding, and no suffix-from-the-back binding remains. What stays builtin-owned is the phase *after* binding: collection extraction shape constraints, control-argument preparation, callback invocation, and result materialization (`MakeCollectionListResult` / `makeCollectionListResult` for the collection-producing builtins, which builds ONE exact immutable list — zero items form `[]`, a single kept item forms `[item]`, sibling boundaries and item internals are preserved raw and never renormalized) and result-count rules (a list result always counts as one value).

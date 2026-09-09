@@ -11,16 +11,19 @@ namespace KatLang.Tests;
 /// pin the C# side of the cross-implementation contract. Lean twins: the
 /// CoreTests guards <c>ifDotCallUnderArityCarriesExpectedThree</c> /
 /// <c>ifDotCallOverArityCarriesExpectedThree</c> against the same dot-call
-/// reproducers (direct malformed <c>if(...)</c> forms are parser-gated by
-/// <c>ValidateIfArity</c>, so the dot-call surface is the one that reaches the
-/// evaluator's arity payload).
+/// reproducers.
+///
+/// <para>SYN-05: the DIRECT spellings reach this payload too, because the parser
+/// no longer counts a call's arguments from its callee spelling. Both surfaces
+/// are pinned below and the payload is identical — which surface assembled the
+/// argument supply is deliberately not observable in it.</para>
 /// </summary>
 public class IfBuiltinArityPayloadTests
 {
     private static Expr Program(string source)
     {
         var parsed = Parser.Parse(source);
-        Assert.False(parsed.HasErrors, "dot-call reproducers must not be parser-gated");
+        Assert.False(parsed.HasErrors, "arity reproducers must reach the evaluator, not fail in the front end");
         return new Expr.AlgorithmExpr(parsed.Root);
     }
 
@@ -45,7 +48,8 @@ public class IfBuiltinArityPayloadTests
         return chain;
     }
 
-    private static EvalError.ArityMismatch AssertIfArityPayload(string source, int expectedActual)
+    private static EvalError.ArityMismatch AssertIfArityPayload(
+        string source, int expectedActual, string expectedContext)
     {
         var result = Evaluator.Run(Program(source));
 
@@ -54,7 +58,7 @@ public class IfBuiltinArityPayloadTests
         Assert.Equal(3, arity.Expected);
         Assert.Equal(expectedActual, arity.Actual);
         Assert.Equal("if", arity.Signature?.Name);
-        Assert.Contains("while evaluating dotCall .if of A", ContextChain(result.Error));
+        Assert.Contains(expectedContext, ContextChain(result.Error));
         return arity;
     }
 
@@ -62,14 +66,16 @@ public class IfBuiltinArityPayloadTests
     public void DotCallUnderArity_CarriesExpectedThreeActualTwo()
     {
         // `A.if(2)` assembles the receiver plus one written argument: actual 2.
-        AssertIfArityPayload("A = 1\nA.if(2)", expectedActual: 2);
+        AssertIfArityPayload(
+            "A = 1\nA.if(2)", expectedActual: 2, "while evaluating dotCall .if of A");
     }
 
     [Fact]
     public void DotCallOverArity_CarriesExpectedThreeActualFour()
     {
         // `A.if(2, 3, 4)` assembles the receiver plus three written arguments: actual 4.
-        AssertIfArityPayload("A = 1\nA.if(2, 3, 4)", expectedActual: 4);
+        AssertIfArityPayload(
+            "A = 1\nA.if(2, 3, 4)", expectedActual: 4, "while evaluating dotCall .if of A");
     }
 
     [Fact]
@@ -85,4 +91,18 @@ public class IfBuiltinArityPayloadTests
         Assert.False(lazyElse.IsError);
         Assert.Equal([20m], lazyElse.Value);
     }
+
+    /// <summary>
+    /// SYN-05: the direct spellings carry the identical payload. Before SYN-05 the
+    /// parser rejected these ahead of evaluation, so the dot-call was the only
+    /// surface that could reach the payload at all — which is exactly why the two
+    /// surfaces were free to disagree about whether a call was legal.
+    /// </summary>
+    [Theory]
+    [InlineData("if()", 0)]
+    [InlineData("if(1)", 1)]
+    [InlineData("if(1, 2)", 2)]
+    [InlineData("if(1, 2, 3, 4)", 4)]
+    public void DirectCall_CarriesTheSamePayload(string source, int expectedActual)
+        => AssertIfArityPayload(source, expectedActual, "while evaluating call to if");
 }

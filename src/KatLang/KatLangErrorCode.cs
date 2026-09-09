@@ -84,7 +84,8 @@ public enum KatLangErrorCode
     /// count vs argument count, a variadic callable's fixed-parameter minimum,
     /// or a shape/unpacking failure (<see cref="EvalError.ArityMismatch"/>,
     /// <see cref="EvalError.VariadicArityMismatch"/>, <see cref="EvalError.BadArity"/>,
-    /// and the parse-time <see cref="DiagnosticCode.ArityMismatch"/> gate).
+    /// plus <see cref="DiagnosticCode.ArityMismatch"/>, which no front-end path
+    /// produces since SYN-05 — see that member).
     /// </summary>
     ArityMismatch = 10,
 

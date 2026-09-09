@@ -377,14 +377,21 @@ public class KatLangEngineTests
         Assert.IsType<RunResult.EvalFailure>(result);
     }
 
-    [Fact]
-    public void Run_If_TwoArgs_ReturnsParseFailure()
+    /// <summary>
+    /// SYN-05: a wrong-arity `if` call is an EVALUATION failure against the
+    /// resolved builtin signature, not a parse failure from its spelling — the
+    /// same partition every other fixed-arity builtin has always been in.
+    /// </summary>
+    [Theory]
+    [InlineData("10 * if(7 < 6, 1)", "Callable `if(condition, whenTrue, whenFalse)` expects 3 arguments, but was called with 2 arguments.")]
+    [InlineData("10 * count(1, 2, 3)", "Callable `count(collection)` expects 1 argument, but was called with 3 arguments.")]
+    public void Run_WrongArityBuiltinCall_ReturnsEvalFailure(string source, string expectedMessage)
     {
-        var result = KatLangEngine.Run("10 * if(7 < 6, 1)");
+        var result = KatLangEngine.Run(source);
 
-        var failure = Assert.IsType<RunResult.ParseFailure>(result);
+        var failure = Assert.IsType<RunResult.EvalFailure>(result);
         var error = Assert.Single(failure.Errors);
-        Assert.Contains("Builtin 'if' expects 3 arguments: condition, whenTrue, whenFalse.", error.Message);
+        Assert.Contains(expectedMessage, error.Message);
     }
 
     [Fact]

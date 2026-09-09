@@ -65,6 +65,33 @@ def chainPreludeAlias : List OwnerLevel :=
 #guard selectOwnedDeclaration chainPreludeAlias "pi" == OwnedDeclaration.parameter 1
 #guard selectOwnedDeclaration chainPreludeAlias "count" == OwnedDeclaration.property 3
 
+/-- SYN-05: every builtin CALLABLE sits at that same outermost property level
+    (`preludeAlg` declares `if` with one `publicProp`, exactly like `count`), so
+    the walk treats `if` as an ordinary name. A nearer property wins, a nearer
+    parameter wins, and with neither the prelude still provides it. Arity plays
+    no part: selection happens before any signature is consulted, so a user
+    `if` of ANY arity — including the builtin's own three — is what a call to
+    that name denotes. -/
+def chainShadowedBuiltin : List OwnerLevel :=
+  [level [] [], level [] ["if"], level [] [], level [] ["if", "count"]]
+
+#guard selectOwnedDeclaration chainShadowedBuiltin "if" == OwnedDeclaration.property 1
+#guard selectOwnedDeclaration chainShadowedBuiltin "count" == OwnedDeclaration.property 3
+
+/-- The same through a parameter, which is how `Apply(if, x) = if(x)` binds. -/
+def chainBuiltinNameAsParameter : List OwnerLevel :=
+  [level [] [], level ["if"] [], level [] ["if", "count"]]
+
+#guard selectOwnedDeclaration chainBuiltinNameAsParameter "if" == OwnedDeclaration.parameter 1
+#guard elaboratesToParameter chainBuiltinNameAsParameter "if" == true
+
+/-- Nothing nearer declares it, so the prelude level provides the builtin. -/
+def chainUnshadowedBuiltin : List OwnerLevel :=
+  [level [] [], level [] [], level [] ["if", "count"]]
+
+#guard selectOwnedDeclaration chainUnshadowedBuiltin "if" == OwnedDeclaration.property 2
+#guard elaboratesToParameter chainUnshadowedBuiltin "if" == false
+
 /-- A binder-owning branch body behaves exactly like a parameter-owning
     algorithm: the binder level decides for its own body and every body nested
     in it. -/

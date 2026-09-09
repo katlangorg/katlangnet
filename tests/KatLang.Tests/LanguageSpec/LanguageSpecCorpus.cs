@@ -3389,5 +3389,147 @@ public static class LanguageSpecCorpus
             ],
             Explanation = "A branch-local library is visible only inside the branch that declares it: the sibling branch `F(1)` resolves through its own lookup chain, which never contains the first branch's declarations, so its `X` is an undeclared identifier under the closed branch-pattern rule.",
         },
+        // ============ SYN-05: builtins are ordinary prelude bindings ============
+        new()
+        {
+            Id = "builtin-callable-is-an-ordinary-prelude-binding",
+            Category = "name-resolution",
+            Source = "if(x) = x + 1\n\nif(7)\n7.if\nif((7)*)",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "8\n8\n8",
+            ExpectedRaw = "S[8, 8, 8]",
+            ExpectedEmittedCount = 3,
+            Probes =
+            [
+                // The same rule for every other builtin name — `if` is not special.
+                new SpecProbe("count(x) = x + 1\ncount(7)", "ok raw=8 n=1"),
+                new SpecProbe("sum(x) = x + 100\nsum(5)", "ok raw=105 n=1"),
+                // A parameter is a binding too, so it shadows the prelude the same way.
+                new SpecProbe("Apply(if, x) = if(x)\nInc(x) = x + 1\nApply(Inc, 7)", "ok raw=8 n=1"),
+                new SpecProbe("F(count) = count + 1\nF(4)", "ok raw=5 n=1"),
+                // Nothing nearer: the same spellings resolve the builtin.
+                new SpecProbe("if(1, 10, 20)", "ok raw=10 n=1"),
+                new SpecProbe("count((1, 2, 3))", "ok raw=3 n=1"),
+            ],
+            IncludeInGeneratorPrompt = true,
+            Explanation = "Builtin callables live at the prelude level of ordinary name resolution, so any nearer binding — a property or a parameter — shadows one completely. `if` is no different from `count` or `sum`: the three spellings here all select the user's `if`, because lexical resolution picks the binding and only then does the resolved callable decide the semantics.",
+        },
+        new()
+        {
+            Id = "no-arity-based-callable-selection",
+            Category = "name-resolution",
+            Source = "if(x) = x + 1\n\nif(1, 2, 3)",
+            Outcome = SpecOutcome.EvalError,
+            ExpectedErrorCategory = "arity",
+            Probes =
+            [
+                // A user `if` of the builtin's own arity still wins: 31 is the user's sum,
+                // 10 would be the builtin's selected branch.
+                new SpecProbe("if(a, b, c) = a + b + c\nif(1, 10, 20)", "ok raw=31 n=1"),
+                new SpecProbe("if(a, b, c) = a + b + c\n1.if(10, 20)", "ok raw=31 n=1"),
+                // The same for another builtin.
+                new SpecProbe("count(x) = x + 1\ncount(1, 2)", "err arity"),
+                // And with nothing shadowing it, the builtin's own arity applies.
+                new SpecProbe("if(1, 2)", "err arity"),
+            ],
+            IncludeInGeneratorPrompt = true,
+            Explanation = "KatLang never overloads by argument count. Lexical resolution selects exactly one callable, the argument supply is assembled, and only then is that callable's signature validated — so a user `if(x)` shadows builtin `if` COMPLETELY and a three-argument call fails against `if(x)` instead of falling back to the builtin.",
+        },
+        new()
+        {
+            Id = "if-composition-forms-agree",
+            Category = "conditionals",
+            Source = "Cond = 1\nBranches = (10, 20)\nApply3(f, a, b, c) = f(a, b, c)\n\nif(Cond, 10, 20)\nCond.if(10, 20)\nif(Cond, Branches*)\nCond.if(Branches*)\nApply3(if, Cond, 10, 20)",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "10\n10\n10\n10\n10",
+            ExpectedRaw = "S[10, 10, 10, 10, 10]",
+            ExpectedEmittedCount = 5,
+            IncludeInGeneratorPrompt = true,
+            Explanation = "Builtin `if` composes through the ordinary callable rules and nothing else: a dot-call injects the receiver as the leading argument, a spread supplies argument slots, and a higher-order parameter carries the resolved callable. All five spellings assemble the same three-argument supply, so they select the same branch.",
+        },
+        new()
+        {
+            Id = "if-arity-is-uniform-across-spellings",
+            Category = "conditionals",
+            Source = "if(1, 2)",
+            Outcome = SpecOutcome.EvalError,
+            ExpectedErrorCategory = "arity",
+            Probes =
+            [
+                // Every spelling that assembles other than three arguments fails alike,
+                // at the same boundary, against the same resolved signature.
+                new SpecProbe("if()", "err arity"),
+                new SpecProbe("if(1)", "err arity"),
+                new SpecProbe("if(1, 2, 3, 4)", "err arity"),
+                new SpecProbe("if((1, 2)*)", "err arity"),
+                new SpecProbe("if((1, 2, 3, 4)*)", "err arity"),
+                new SpecProbe("1.if(2)", "err arity"),
+                new SpecProbe("1.if(2, 3, 4)", "err arity"),
+                new SpecProbe("Apply2(f, a, b) = f(a, b)\nApply2(if, 1, 2)", "err arity"),
+                // ...and every spelling that assembles exactly three succeeds.
+                new SpecProbe("if((1, 10, 20)*)", "ok raw=10 n=1"),
+                new SpecProbe("if(1, (10, 20)*)", "ok raw=10 n=1"),
+                new SpecProbe("1.if((10, 20)*)", "ok raw=10 n=1"),
+            ],
+            Explanation = "`if(condition, whenTrue, whenFalse)` is one fixed signature checked once, after receiver injection and spread expansion have produced the argument supply. A wrong count is therefore an ordinary evaluation-time arity mismatch, identical whichever spelling built the supply — never a rule attached to how the call was written.",
+        },
+        new()
+        {
+            Id = "if-laziness-follows-the-resolved-identity",
+            Category = "conditionals",
+            Source = "Boom = 1 / 0\n\nif(1, 10, Boom)\n0.if(Boom, 20)",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "10\n20",
+            ExpectedRaw = "S[10, 20]",
+            ExpectedEmittedCount = 2,
+            Probes =
+            [
+                // The wrapper can retain a failed value's algorithm binding; builtin if
+                // leaves that binding unused (success does not prove no eager attempt).
+                new SpecProbe("Boom = 1 / 0\nApply3(f, a, b, c) = f(a, b, c)\nApply3(if, 1, 10, Boom)", "ok raw=10 n=1"),
+                // The builtin still demands the selected binding.
+                new SpecProbe("Boom = 1 / 0\nApply3(f, a, b, c) = f(a, b, c)\nApply3(if, 1, Boom, 20)", "err div0"),
+                // Shadow the builtin and the laziness goes with it: an ordinary user call
+                // binds every argument eagerly.
+                new SpecProbe("if(a, b, c) = b + c\nBoom = 1 / 0\nif(1, 10, Boom)", "err div0"),
+                // Spread is NOT laziness: building the value evaluates its rows before any
+                // argument slot exists, exactly as it does for a user-defined callable.
+                new SpecProbe("Risky = (10, 1 / 0)\nif(1, Risky*)", "err div0"),
+                new SpecProbe("Risky = (10, 1 / 0)\nMyIf(a, b, c) = if(a, b, c)\nMyIf(1, Risky*)", "err div0"),
+            ],
+            IncludeInGeneratorPrompt = true,
+            Explanation = "The one intrinsic thing about `if` is its invocation: evaluate the condition, then only the selected branch. That belongs to the resolved builtin — shadow the name and an ordinary eager user call takes over — and it is not a promise about arguments the CALLER already evaluated, so building a value before spreading it follows the ordinary expression-to-value-to-supply rule.",
+        },
+        new()
+        {
+            Id = "same-arity-user-if-keeps-user-identity",
+            Category = "name-resolution",
+            Source = "if(a, b, c) = a + b + c\nif(1, 10, 20)\n1.if(10, 20)",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "31\n31",
+            ExpectedRaw = "S[31, 31]",
+            ExpectedEmittedCount = 2,
+            Explanation = "A user callable with the builtin's arity still shadows it: both calls compute the user's sum, never the builtin's selected branch.",
+        },
+        new()
+        {
+            Id = "parameter-named-if-carries-the-supplied-callable",
+            Category = "name-resolution",
+            Source = "Apply(if, x) = { Inner = if(x)\n Inner }\nInc(x) = x + 1\nApply(Inc, 7)",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "8",
+            ExpectedRaw = "8",
+            ExpectedEmittedCount = 1,
+            Explanation = "A parameter named if owns that name in nested bodies too; its algorithm channel carries the supplied Inc callable.",
+        },
+        new()
+        {
+            Id = "if-spread-builds-values-before-branch-selection",
+            Category = "conditionals",
+            Source = "Risky = (10, 1 / 0)\nif(1, Risky*)",
+            Outcome = SpecOutcome.EvalError,
+            ExpectedErrorCategory = "div0",
+            Explanation = "Spread evaluates its operand before supplying argument slots, so the failing row is evaluated before builtin if can select a branch.",
+        },
     ];
 }

@@ -156,7 +156,6 @@ public class DiagnosticCodeTests
         { "two-collecting-deconstruction", "*a, *b = 1, 2, 3\na", DiagnosticCode.InvalidCollectingBinding },
         { "spread-as-binary-operand", "A = (1, 2)\nA* == A*", DiagnosticCode.MisplacedSpread },
         { "spread-selection", "A = (1, 2)\nA*:0", DiagnosticCode.MisplacedSpread },
-        { "if-arity-gate", "if(1, 2)", DiagnosticCode.ArityMismatch },
         { "explicit-params-require-output", "Algo(x, y) = {\n  Prop = 7\n}", DiagnosticCode.ExplicitParametersRequireOutput },
         { "undeclared-in-explicit-list", "F(x) = x + y\nF(1)", DiagnosticCode.UndeclaredIdentifier },
         { "undeclared-in-branch", "F(0) = y\nF(x) = x\nF(0)", DiagnosticCode.UndeclaredIdentifier },
@@ -178,6 +177,34 @@ public class DiagnosticCodeTests
         Assert.All(
             parsed.Diagnostics.Where(d => d.Severity == DiagnosticSeverity.Error),
             d => Assert.NotEqual(DiagnosticCode.Unspecified, d.Code));
+    }
+
+    /// <summary>
+    /// SYN-05 retired the ONE front-end producer of
+    /// <see cref="DiagnosticCode.ArityMismatch"/> — the parser gate that counted a
+    /// call's arguments when its callee was spelled <c>if</c>. Arity belongs to the
+    /// callable lexical resolution selects, which the parser cannot know, so these
+    /// sources now parse cleanly and fail at the binding boundary instead (see
+    /// <c>BuiltinCallableIdentityTests</c>). The code itself is retained as public
+    /// API; this pins that nothing produces it, so re-introducing a spelling-based
+    /// arity gate has to be a deliberate, reviewed change rather than a silent one.
+    /// </summary>
+    [Theory]
+    [InlineData("if()")]
+    [InlineData("if(1)")]
+    [InlineData("if(1, 2)")]
+    [InlineData("if(1, 2, 3, 4)")]
+    [InlineData("if(x) = x + 1\nif(1, 2, 3)")]
+    [InlineData("count(1, 2, 3)")]
+    public void NoFrontEndPath_ProducesTheParseTimeArityCode(string source)
+    {
+        var parsed = Parser.Parse(source);
+
+        Assert.False(
+            parsed.HasErrors,
+            "expected a clean parse; got: "
+            + string.Join(" | ", parsed.Diagnostics.Select(d => $"[{d.Code}] {d.Message}")));
+        Assert.DoesNotContain(parsed.Diagnostics, d => d.Code == DiagnosticCode.ArityMismatch);
     }
 
     [Fact]

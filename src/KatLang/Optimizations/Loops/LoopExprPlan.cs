@@ -59,6 +59,13 @@ internal abstract record LoopExprPlan(Expr Source)
 
 internal static partial class LoopOptimizer
 {
+    /// <summary>
+    /// The written spelling of the <c>if</c> builtin, taken from the builtin registry
+    /// rather than a literal, so the planner's lookup key cannot drift from the
+    /// callable it plans.
+    /// </summary>
+    private static readonly string IfBuiltinName = Evaluator.BuiltinDisplayName(BuiltinId.@if);
+
     private readonly record struct LoopExprPlanBuild(LoopExprPlan Plan, bool IsFullyPlanned);
 
     private readonly record struct LoopExprPlanTryBuildResult(LoopExprPlan? Plan, string? FallbackReason);
@@ -181,8 +188,13 @@ internal static partial class LoopOptimizer
                 return new LoopExprPlanTryBuildResult(null, $"unsupported local property reference: {name}");
 
             case Expr.Call(var func, var callArgs):
-                if (func is Expr.Resolve { Name: "if" }
-                    && Evaluator.ResolvesToBuiltinAlgorithm("if", BuiltinId.@if, ctx))
+                // The spelling is only a lookup KEY; the RESOLVED identity decides.
+                // `if` is an ordinary prelude binding that a nearer property or
+                // parameter may shadow, so a step body calling a user-defined `if`
+                // must plan as an ordinary call — never as the intrinsic conditional.
+                if (func is Expr.Resolve resolvedCallee
+                    && resolvedCallee.Name == IfBuiltinName
+                    && Evaluator.ResolvesToBuiltinAlgorithm(IfBuiltinName, BuiltinId.@if, ctx))
                 {
                     return TryBuildLoopIfExprPlan(expr, func, callArgs, stateNames, ctx, parentValEnv, tempPlans, memo);
                 }
