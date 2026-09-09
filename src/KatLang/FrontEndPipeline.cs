@@ -288,7 +288,6 @@ internal static class FrontEndPipeline
         // it into an implicit parameter — the front-end half of the same name-level
         // agreement the built-in Math module relies on.
         var (parameterizedRoot, parameterDiagnostics) = ParameterDetector.DetectPrevalidated(loadElaboratedRoot, hostOperations);
-        diagnostics.AddRange(parameterDiagnostics);
 
         cancellationToken.ThrowIfCancellationRequested();
 
@@ -299,9 +298,28 @@ internal static class FrontEndPipeline
         // closed interface — the same rule parameter detection applies to a directly written
         // undeclared identifier, one indirection further out.
         var implicitDiagnostics = new List<Diagnostic>();
+        var origins = new ImplicitArgumentResolver.ResolutionOrigins();
         var implicitResolvedRoot = ImplicitArgumentResolver.ResolvePrevalidated(
-            parameterizedRoot, observations: null, implicitDiagnostics);
+            parameterizedRoot, observations: null, implicitDiagnostics, origins);
+        if (origins.HasLiftedParameters)
+        {
+            var completed = ParameterDetector.CompleteOwnership(implicitResolvedRoot, origins, hostOperations);
+            if (completed.Changed)
+            {
+                // A completed enclosing signature can change an earlier nested binding.
+                // Rebuild forwarding and its diagnostics from written expressions with
+                // those signatures fixed; inference and Grace ordering are not replayed.
+                parameterDiagnostics = completed.Diagnostics;
+                implicitDiagnostics.Clear();
+                implicitResolvedRoot = ImplicitArgumentResolver.ResolvePrevalidated(
+                    completed.Root, diagnostics: implicitDiagnostics, preserveSignatures: true);
+            }
+        }
+        diagnostics.AddRange(parameterDiagnostics);
         diagnostics.AddRange(implicitDiagnostics);
+
+        new ParameterPropertyCollisionValidator(diagnostics).VisitAlgorithm(implicitResolvedRoot);
+        canEvaluateAfterLoadErrors &= !diagnostics.Any(d => d.Code == DiagnosticCode.ParameterPropertyCollision);
 
         cancellationToken.ThrowIfCancellationRequested();
         var propertyExposedRoot = PropertyExposureResolver.Resolve(implicitResolvedRoot);

@@ -270,15 +270,17 @@ public class EvaluatorOpenVisibilityTests
     public void Eval_Open_PrivateMemberRemainsHidden()
     {
         var source = """
-            open Vec
             Vec = {
                 Hidden = 10
                 public Test = 1
             }
-            Hidden
+            Read = { open Vec
+                Hidden
+            }
+            Read()
             """;
         var result = Eval(source);
-        Assert.True(result.IsError);
+        Assert.IsType<EvalError.ArityMismatch>(Innermost(result.Error));
     }
 
     [Fact]
@@ -489,16 +491,18 @@ public class EvaluatorOpenVisibilityTests
     {
         // Lib1's opens should not be visible to the opener
         var source = """
-            open Lib1
             Inner = { public Z = 42 }
             Lib1 = {
                 open Inner
                 W = Z
             }
-            Z
+            Read = { open Lib1
+                Z
+            }
+            Read()
             """;
         // Z is not transitively visible â†’ fail
-        AssertEvalAllPublicFails(source);
+        Assert.IsType<EvalError.ArityMismatch>(Innermost(EvalAllPublic(source).Error));
     }
 
     [Fact]
@@ -507,11 +511,13 @@ public class EvaluatorOpenVisibilityTests
         // "self" is no longer a keyword — it's now just an identifier.
         // Using it in open position fails because there's no algorithm named "self".
         var source = """
-            open self.HiddenLib
             HiddenLib = { X = 42 }
-            X
+            Read = { open self.HiddenLib
+                X
+            }
+            Read()
             """;
-        AssertEvalFails(source);
+        Assert.IsType<EvalError.ArityMismatch>(Innermost(Eval(source).Error));
     }
 
     [Fact]
@@ -578,12 +584,14 @@ public class EvaluatorOpenVisibilityTests
 
         // Now try Y (private) â€” should fail
         var sourceY = """
-            open Lib
             public Lib = { public X = 42
             Y = 99 }
-            Y
+            Read = { open Lib
+                Y
+            }
+            Read()
             """;
-        AssertEvalFails(sourceY);
+        Assert.IsType<EvalError.ArityMismatch>(Innermost(Eval(sourceY).Error));
     }
 
     [Fact]
@@ -666,11 +674,13 @@ public class EvaluatorOpenVisibilityTests
     {
         // Acceptance D: private intermediate on open path
         var source = """
-            open Lib.Sub
             Lib = { Sub = { public X = 1 } }
-            X
+            Read = { open Lib.Sub
+                X
+            }
+            Read()
             """;
-        AssertEvalFails(source);
+        Assert.IsType<EvalError.ArityMismatch>(Innermost(Eval(source).Error));
     }
 
     [Fact]
@@ -726,12 +736,14 @@ public class EvaluatorOpenVisibilityTests
         // Opening a user-defined library with default visibility should
         // not expose any properties through opens.
         var source = """
-            open Lib
             Lib = { X = 42 }
-            X
+            Read = { open Lib
+                X
+            }
+            Read()
             """;
         // Without MakeAllPublic, X should NOT be visible through opens
-        AssertEvalFails(source);
+        Assert.IsType<EvalError.ArityMismatch>(Innermost(Eval(source).Error));
     }
 
     // â”€â”€ Public keyword syntax tests â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -776,12 +788,14 @@ public class EvaluatorOpenVisibilityTests
 
         // Y is private, should fail
         var sourceY = """
-            open Lib
             public Lib = { public X = 1
             Y = 2 }
-            Y
+            Read = { open Lib
+                Y
+            }
+            Read()
             """;
-        AssertEvalFails(sourceY);
+        Assert.IsType<EvalError.ArityMismatch>(Innermost(Eval(sourceY).Error));
     }
 
     [Fact]
@@ -879,14 +893,16 @@ public class EvaluatorOpenVisibilityTests
     {
         // open imports only public members. Non-public members must not be visible.
         var source = """
-            open Lib
             Lib = {
                 Pi = 3
             }
-            Pi
+            Read = { open Lib
+                Pi
+            }
+            Read()
             """;
         var result = Eval(source);
-        Assert.True(result.IsError);
+        Assert.IsType<EvalError.ArityMismatch>(Innermost(result.Error));
     }
 
     [Fact]

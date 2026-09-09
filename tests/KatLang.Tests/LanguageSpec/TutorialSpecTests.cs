@@ -87,6 +87,20 @@ public class TutorialSpecTests
             if (!cases.TryGetValue(example.CaseId, out var specCase))
                 continue;
 
+            // Declaration-error examples have no evaluated Result claim. Their source
+            // and structured error are still executable documentation, checked here and
+            // by the canonical runner, rather than passed to the evaluator as recovery ASTs.
+            if (specCase.Outcome == SpecOutcome.ParseError)
+            {
+                Assert.Null(example.InlineResult);
+                Assert.Null(example.ResultsFence);
+                Assert.False(example.InlineErrorResult);
+                var parsed = SourceProvenance.ParseAllowingDiagnostics(example.FenceSource);
+                Assert.Contains(parsed.Diagnostics, d => d.Severity == DiagnosticSeverity.Error
+                    && d.Code == specCase.ExpectedDiagnosticCode);
+                continue;
+            }
+
             if (example.InlineErrorResult)
             {
                 Assert.True(specCase.Outcome == SpecOutcome.EvalError,

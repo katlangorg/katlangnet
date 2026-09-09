@@ -137,6 +137,7 @@ public sealed class KatLangError
             DiagnosticCode.InvalidLoadedSource => KatLangErrorCode.InvalidLoadedSource,
             DiagnosticCode.LoadElaborationUnavailable => KatLangErrorCode.LoadElaborationUnavailable,
             DiagnosticCode.InternalError => KatLangErrorCode.InternalError,
+            DiagnosticCode.ParameterPropertyCollision => KatLangErrorCode.ParameterPropertyCollision,
             _ when !Enum.IsDefined(code) => KatLangErrorCode.Unspecified,
             _ => throw new InvalidOperationException(
                 $"Unhandled declared {nameof(DiagnosticCode)} family in {nameof(KatLangError)}: {code}. "

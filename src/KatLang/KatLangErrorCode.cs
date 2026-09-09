@@ -262,4 +262,7 @@ public enum KatLangErrorCode
 
     /// <summary>Front-end <see cref="DiagnosticCode.InternalError"/>.</summary>
     InternalError = 61,
+
+    /// <summary>Front-end <see cref="DiagnosticCode.ParameterPropertyCollision"/>.</summary>
+    ParameterPropertyCollision = 62,
 }

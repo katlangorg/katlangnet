@@ -213,17 +213,36 @@ public class ElaboratedLookupAccelerationTests
     }
 
     /// <summary>
-    /// Deep nested chain: every queried non-empty level (root, each of the
-    /// depth nested algorithm levels, and the prelude — reached by the
-    /// captured-parameter shadow misses) builds its index at most once.
+    /// Deep nested chain: every queried non-empty level builds its index at most
+    /// once — the root plus each of the depth nested algorithm levels. The
+    /// prelude is NOT among them: a captured-parameter reference is decided by
+    /// the owner walk at the level that binds it, so the walk never continues
+    /// past it (it previously ran the full chain to the prelude to ask whether
+    /// any property anywhere shadowed the parameter). Ownership-decided lookup
+    /// is therefore strictly less work than the superseded whole-chain probe.
     /// </summary>
     [Fact]
     public void NestedChainBuildsEachQueriedLevelIndexOnce()
     {
         const int depth = 8;
-        var observations = MeasureDetection(BuildNestedChainSource(depth));
+        var syntax = SourceProvenance.ParseSyntaxValidRoot(BuildNestedChainSource(depth));
+        var observations = new FrontEndTraversalObservations();
+        var (detected, diagnostics) = ParameterDetector.DetectPrevalidated(syntax, observations: observations);
+        Assert.Empty(diagnostics);
 
-        Assert.Equal(depth + 2, observations.LookupNameIndexBuilds);
+        var owner = detected;
+        for (var level = 0; level < depth; level++)
+        {
+            owner = owner.Properties.Single(property => property.Name == $"L{level}").Value;
+            Assert.Equal([$"x{level}"], owner.Params);
+            var nested = owner.Properties.Single(property => property.Name == $"A{level}").Value;
+            Assert.Empty(nested.Params);
+            var reference = Assert.IsType<Expr.Param>(Assert.IsType<Expr.Binary>(nested.Output.Single()).Left);
+            Assert.Equal($"x{level}", reference.Name);
+        }
+
+        Assert.Equal(depth + 1, observations.LookupNameIndexBuilds);
+        Assert.True(observations.LookupLevelVisits > depth);
         Assert.Equal(0, observations.LookupPropertyComparisons);
         Assert.Equal(0, observations.LookupRootDiscoveryWalks);
     }
@@ -681,18 +700,21 @@ public class ElaboratedLookupAccelerationTests
         Assert.Same(innerLib, Assert.Single(bProviders).Target);
     }
 
-    // ── prelude-shadow decisions on the cached chain root ────────────────────
+    // ── captured-parameter shadow decisions over the ordered level chain ─────
 
     /// <summary>
-    /// A captured ancestor parameter sharing a PRELUDE property's name stays
-    /// the parameter (the prelude root is always farther than the capturing
-    /// algorithm), while a NON-prelude ancestor property with that name
-    /// shadows the captured parameter. The decision anchors on the chain's
-    /// cached root; both directions are pinned structurally (Param vs Resolve
-    /// in the elaborated AST) and at runtime.
+    /// Which same-named declaration a captured ancestor parameter loses to is
+    /// decided by the ORDERED level chain alone
+    /// (<see cref="ElaboratedScopeLookup.SelectOwnedDeclaration"/>): a property
+    /// owned by a NEARER level shadows it, while the prelude — and every other
+    /// FARTHER owner — never does, because the walk stops at the parameter's
+    /// owner first. Both directions are pinned structurally (Param vs Resolve in
+    /// the elaborated AST) and at runtime, and neither performs a root-discovery
+    /// walk: the chain root is captured at construction and the ownership
+    /// decision no longer consults it at all.
     /// </summary>
     [Fact]
-    public void CapturedParameterShadowDecisionsAnchorOnChainRoot()
+    public void CapturedParameterShadowDecisionsFollowTheOrderedLevelChain()
     {
         const string preludeCollision = """
             Outer(count) = {
@@ -708,7 +730,9 @@ public class ElaboratedLookupAccelerationTests
         var innerBody = InnerOf(preludeRoot);
         Assert.IsType<Expr.Param>(innerBody.Output[0]);
 
-        const string ancestorShadow = """
+        // A FARTHER property does not shadow: `Outer` owns the parameter and is
+        // reached before the root's declaration.
+        const string fartherProperty = """
             value = 505
             Outer(value) = {
                 Inner = {
@@ -718,13 +742,29 @@ public class ElaboratedLookupAccelerationTests
             }
             Outer(707)
             """;
-        Assert.Equal("ok raw=505 n=1", SemanticExplorerHarness.Observe("m18.ancestorShadow", ancestorShadow).Neutral);
-        var shadowRoot = Assert.IsType<Algorithm.User>(SourceProvenance.ParseValid(ancestorShadow).Root);
-        Assert.IsType<Expr.Resolve>(InnerOf(shadowRoot).Output[0]);
+        Assert.Equal("ok raw=707 n=1", SemanticExplorerHarness.Observe("m18.fartherProperty", fartherProperty).Neutral);
+        var fartherRoot = Assert.IsType<Algorithm.User>(SourceProvenance.ParseValid(fartherProperty).Root);
+        Assert.IsType<Expr.Param>(InnerOf(fartherRoot).Output[0]);
 
-        // The direct-hit shadow decision reads the cached chain root — no
-        // per-decision parent walk happens even on this hit-branch workload.
-        Assert.Equal(0, MeasureDetection(ancestorShadow).LookupRootDiscoveryWalks);
+        // In invalid recovery source a NEARER property shadows: `Inner` owns it, so the walk decides
+        // there and never reaches `Outer`'s parameter.
+        const string nearerProperty = """
+            Outer(value) = {
+                Inner = {
+                    value = 505
+                    value
+                }
+                Inner
+            }
+            Outer(707)
+            """;
+        var nearerParsed = SourceProvenance.ParseAllowingDiagnostics(nearerProperty);
+        Assert.Equal(DiagnosticCode.ParameterPropertyCollision, Assert.Single(nearerParsed.Diagnostics).Code);
+        var nearerRoot = Assert.IsType<Algorithm.User>(nearerParsed.Root);
+        Assert.IsType<Expr.Resolve>(InnerOf(nearerRoot).Output[^1]);
+
+        Assert.Equal(0, MeasureDetection(nearerProperty).LookupRootDiscoveryWalks);
+        Assert.Equal(0, MeasureDetection(fartherProperty).LookupRootDiscoveryWalks);
 
         static Algorithm.User InnerOf(Algorithm.User root)
         {
@@ -761,11 +801,14 @@ public class ElaboratedLookupAccelerationTests
     }
 
     /// <summary>
-    /// An open-provided hit is non-prelude visibility and therefore shadows a
-    /// captured ancestor parameter, even though no direct declaration does.
+    /// An open is consulted only AFTER the whole owner walk, so an open-provided
+    /// hit never shadows a captured ancestor parameter — the same precedence an
+    /// ancestor-owned PROPERTY has over an inner open, applied to the other kind
+    /// of owned declaration. Without the parameter, the open provides the name
+    /// exactly as before.
     /// </summary>
     [Fact]
-    public void OpenHitShadowsCapturedAncestorParameter()
+    public void OpenHitDoesNotShadowCapturedAncestorParameter()
     {
         const string source = """
             Lib = {
@@ -781,11 +824,30 @@ public class ElaboratedLookupAccelerationTests
             Outer(707)
             """;
 
-        Assert.Equal("ok raw=101 n=1", SemanticExplorerHarness.Observe("m18.openCapturedShadow", source).Neutral);
+        Assert.Equal("ok raw=707 n=1", SemanticExplorerHarness.Observe("m18.openCapturedShadow", source).Neutral);
         var root = Assert.IsType<Algorithm.User>(SourceProvenance.ParseValid(source).Root);
         var outer = Assert.IsType<Algorithm.User>(root.Properties.Single(p => p.Name == "Outer").Value);
         var inner = Assert.IsType<Algorithm.User>(outer.Properties.Single(p => p.Name == "Inner").Value);
-        Assert.IsType<Expr.Resolve>(inner.Output[0]);
+        Assert.IsType<Expr.Param>(inner.Output[0]);
+
+        const string withoutParameter = """
+            Lib = {
+                public x = 101
+            }
+            Outer(q) = {
+                Inner = {
+                    open Lib
+                    x
+                }
+                Inner
+            }
+            Outer(707)
+            """;
+        Assert.Equal("ok raw=101 n=1", SemanticExplorerHarness.Observe("m18.openNoCapture", withoutParameter).Neutral);
+        var openRoot = Assert.IsType<Algorithm.User>(SourceProvenance.ParseValid(withoutParameter).Root);
+        var openOuter = Assert.IsType<Algorithm.User>(openRoot.Properties.Single(p => p.Name == "Outer").Value);
+        var openInner = Assert.IsType<Algorithm.User>(openOuter.Properties.Single(p => p.Name == "Inner").Value);
+        Assert.IsType<Expr.Resolve>(openInner.Output[0]);
     }
 
     /// <summary>

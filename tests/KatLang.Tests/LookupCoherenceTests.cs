@@ -233,9 +233,20 @@ public class LookupCoherenceTests
             "L1 = {\n    public X = 101\n}\nL2 = {\n    public X = 202\n}\nA = {\n    open L1\n    Inner = {\n        open L2\n        X\n    }\n    Inner\n}\nA",
             "X", "ok raw=202 n=1", new Declared("X", 2)),
 
+        // The open does not leak outward: `A`'s own `X` is unresolvable there and
+        // becomes A's implicit parameter. That parameter is then an owned declaration
+        // of a scope enclosing `Q`, so it also decides `X` INSIDE `Q` — an inner open
+        // loses to an enclosing owner's parameter exactly as it loses to an enclosing
+        // owner's property (ownership.ancestorPropertyBeatsOpenedName).
         new("scope.braceBlockOpenDoesNotLeakOutward",
             "Lib = {\n    public X = 101\n}\nA = {\n    Q = {\n        open Lib\n        X\n    }\n    Q, X\n}\nA(707)",
-            "X", "ok raw=S[101, 707] n=1", new ImplicitParameter("root.A")),
+            "X", "ok raw=S[707, 707] n=1", new ImplicitParameter("root.A")),
+
+        // The same program without the outward reference: nothing owns `X`, so the
+        // brace block's own open provides it and the control still holds.
+        new("scope.braceBlockOpenProvidesItsOwnBody",
+            "Lib = {\n    public X = 101\n}\nA = {\n    Q = {\n        open Lib\n        X\n    }\n    Q\n}\nA",
+            "X", "ok raw=101 n=1", new Declared("X", 1)),
 
         new("scope.openHeadMayBeDefinedLaterInTheSameBody",
             "A = {\n    open Lib\n    X\n}\nLib = {\n    public X = 101\n}\nA",
@@ -254,6 +265,54 @@ public class LookupCoherenceTests
             "Lib = {\n    public X = 101\n}\nA(X) = {\n    open Lib\n    X\n}\nA(707)",
             "X", "ok raw=707 n=1",
             new Declared("X", 2, IdentifierClassification.ExplicitParameterReference)),
+
+        // ---- ownership: parameters take part in the owner walk ---------------
+        // The owner walk searches outward by owning scope over BOTH kinds of owned
+        // declaration. A captured ancestor parameter therefore beats a property of a
+        // farther owner in all three views, exactly as it always did when the
+        // reference was written directly in the owning algorithm's body.
+        new("ownership.capturedParameterBeatsFartherProperty",
+            "v = 303\nOuter(v) = {\n    Inner = v\n    Inner\n}\nOuter(707)",
+            "v", "ok raw=707 n=1",
+            new Declared("v", 2, IdentifierClassification.ExplicitParameterReference)),
+
+        // Invalid same-owner source: recovery lookup still selects the parameter.
+        new("ownership.sameOwnerParameterBeatsProperty",
+            "Outer(v) = {\n    v = 101\n    Inner = v\n    Inner\n}\nOuter(707)",
+            "v", "parseError",
+            new Declared("v", 1, IdentifierClassification.ExplicitParameterReference)),
+
+        // Invalid-source recovery still reaches the nearer property first.
+        new("ownership.nearerPropertyBeatsCapturedParameter",
+            "v = 303\nOuter(v) = {\n    Mid = {\n        v = 101\n        Inner = v\n        Inner\n    }\n    Mid\n}\nOuter(707)",
+            "v", "parseError", new Declared("v", 3)),
+
+        // With several enclosing parameters of one name, the nearest wins. Each
+        // candidate carries a distinct sentinel, so the observed value names the winner.
+        new("ownership.nearestEnclosingParameterWins",
+            "v = 303\nOuter(v) = {\n    Mid(v) = {\n        Inner = v\n        Inner\n    }\n    Mid(707)\n}\nOuter(202)",
+            "v", "ok raw=707 n=1",
+            new Declared("v", 3, IdentifierClassification.ExplicitParameterReference)),
+
+        // `open` keeps its separate later policy: it is consulted only after the whole
+        // owner walk, so an owned parameter beats an opened name from a nested body
+        // exactly as ownership.explicitParameterBeatsOpenedName does directly.
+        new("ownership.capturedParameterBeatsOpenedName",
+            "Lib = {\n    public v = 101\n}\nOuter(v) = {\n    open Lib\n    Inner = v\n    Inner\n}\nOuter(707)",
+            "v", "ok raw=707 n=1",
+            new Declared("v", 2, IdentifierClassification.ExplicitParameterReference)),
+
+        // A clause-family binder is owned by its branch body the same way.
+        new("ownership.branchBinderBeatsFartherProperty",
+            "v = 303\nF(0) = 0\nF(v) = {\n    Inner = v\n    Inner\n}\nF(707)",
+            "v", "ok raw=707 n=1",
+            new Declared("v", 2, IdentifierClassification.ConditionalBinderReference)),
+
+        // The control that keeps the fix honest: a name no enclosing owner BINDS is
+        // still an ordinary ancestor property reference.
+        new("ownership.unboundNameStaysAnAncestorProperty",
+            "v = 303\nOuter(q) = {\n    Inner = v\n    Inner\n}\nOuter(707)",
+            "v", "ok raw=303 n=1", new Declared("v", 1)),
 
         // ---- builtin collision -------------------------------------------------
         // The prelude is the outermost lexical scope, so it is reached by the
@@ -314,14 +373,15 @@ public class LookupCoherenceTests
     {
         var lookupCase = Case(caseId);
         var parsed = Parser.Parse(lookupCase.Source);
-        Assert.False(
-            parsed.HasErrors,
-            $"[{caseId}] unexpected parse diagnostics: " +
-            string.Join(" | ", parsed.Diagnostics.Select(d => d.Message)));
+        if (lookupCase.ExpectedRuntime == "parseError")
+            Assert.Equal(DiagnosticCode.ParameterPropertyCollision, Assert.Single(parsed.Diagnostics).Code);
+        else
+            Assert.False(parsed.HasErrors, $"[{caseId}] unexpected parse diagnostics: " +
+                string.Join(" | ", parsed.Diagnostics.Select(d => d.Message)));
 
         AssertSentinelsAreUnique(lookupCase);
 
-        // View 1 — runtime.
+        // View 1 — execution or the declaration error that prevents it.
         var runtime = SemanticExplorerHarness.Observe(caseId, lookupCase.Source).Neutral;
         Assert.Equal(lookupCase.ExpectedRuntime, runtime);
 
@@ -432,7 +492,7 @@ public class LookupCoherenceTests
         foreach (var lookupCase in Cases)
         {
             var parsed = Parser.Parse(lookupCase.Source);
-            Assert.False(parsed.HasErrors, $"[{lookupCase.Id}] parse errors.");
+            Assert.Equal(lookupCase.ExpectedRuntime == "parseError", parsed.HasErrors);
 
             var site = TokenSite(lookupCase.Source, lookupCase.ReferenceName, lookupCase.ReferenceOccurrence);
             var model = SemanticModelBuilder.Build(parsed);

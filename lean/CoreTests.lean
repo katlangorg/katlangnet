@@ -19,3 +19,4 @@ import CoreTests.ValueBoundary
 import CoreTests.ListValues
 import CoreTests.CollectingBindings
 import CoreTests.OutputBundle
+import CoreTests.NameOwnership

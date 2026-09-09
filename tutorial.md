@@ -455,7 +455,7 @@ The complete alias table:
 
 An alias binding points to the SAME function, not a copy: `pi` points to `Math.Pi`, and `sin(radians)` computes exactly `Math.Sin(radians)` with the same parameters, precision, domain behavior, and errors. `Math.X` remains the canonical qualified spelling; the aliases are synthetic ordinary prelude bindings resolved by the ordinary name-resolution rules:
 
-- Your own definitions win. A local property `sin(x) = x * 10`, an explicit parameter `F(sin) = ...`, or an ancestor definition shadows the alias, and your `sin` behaves like any ordinary callable.
+- Your own definitions win. A local property `sin(x) = x * 10`, an explicit parameter `F(sin) = ...`, or an ancestor definition shadows the alias, and your `sin` behaves like any ordinary callable. The prelude is the outermost owner in the [owner walk](#name-resolution), so a parameter shadows an alias from a nested body exactly as from its own body.
 - The aliases are prelude bindings, not members of `Math`: `Math.cos(1)` is still invalid — inside `Math` only the canonical PascalCase names exist.
 - `open Math` still exposes only the canonical PascalCase names (`Cos`, `Pi`, ...); it is never needed for the aliases and is not implied by them.
 - Aliases work everywhere ordinary names work: as values (`K = cos` infers `K(radians)`), through dot-call fallback (`v.cos` is `cos(v)`), and as higher-order references (`Apply(cos, 0)`).
@@ -1295,13 +1295,19 @@ Exposure analysis is unaffected by Grace because it analyzes the same DotCall. A
 
 Name resolution is especially important in KatLang because it may behave differently from what users expect from other languages. KatLang uses a fixed search order called **ownership-first lookup**. The idea is simple: a name belongs first to the algorithm that owns it, then to its parent structure, and only after that to anything brought in through `open`.
 
-When KatLang sees a name, it checks these places in order and stops at the first match:
+When KatLang sees a name, it searches **outward by owning scope** and stops at the first scope that declares it. A scope is one owner: an algorithm — or the root, or a conditional branch body — together with the names it binds. Two kinds of declaration are owned this way:
 
-1. **Local properties** — properties defined in the current algorithm (any visibility).
-2. **Parent chain** — properties defined in enclosing algorithms, walking upward through the nesting structure. In this step, KatLang checks only structural properties; parent-level opens are not considered yet.
-3. **Opens** — public properties from `open` targets, checked for the current algorithm first and then upward through the parent chain.
+- the **parameters** it binds (written in its parameter list, inferred for it, or bound by its branch pattern), and
+- the **properties** it declares (any visibility).
+
+The search is therefore:
+
+1. **The owner walk** — the algorithm containing the reference, then each enclosing algorithm outward, ending at the prelude (the builtins and the `Math` aliases, which form the outermost owner). The first owner that declares the name decides. A property may not share a name with a completed parameter of the **same or an enclosing lexical algorithm**; the front end reports a declaration error.
+2. **Opens** — public properties from `open` targets, checked for the current algorithm first and then upward through the parent chain. Opens are consulted only when the whole owner walk found nothing, which is why an `open` never overrides something you own — and why a builtin name beats an opened one while still losing to anything you declare or bind yourself.
 
 If the name is not found at any of these levels, KatLang treats it as an implicit parameter only when the current algorithm has no explicit parameter list (see [Parameters](#parameters)). Explicit parameter lists are closed, so an unresolved extra name is reported as an error instead.
+
+The owner walk uses the complete parameter declarations, including parameters passed along implicitly from another property. For example, `Need = v` gives `Need` a parameter; using `Need` as a value can then give its enclosing algorithm that parameter too. Earlier nested references in that enclosing algorithm select the parameter, even inside a block that opens another `v`. This final selection preserves the inferred parameter lists, pattern shapes, and Grace order; it does not infer extra names from a newly available dot fallback.
 
 Closedness also covers what a name needs *indirectly*. Referring to a property that has its own implicit parameters normally passes them along for you, and an explicit list can only do that for the parameters it declares. Where a value is definitely required — a math function's argument, for example — KatLang reports the gap instead of leaving it to fail at run time. Declaring the required name keeps the program legal:
 
@@ -1320,8 +1326,8 @@ Leaving the list off entirely works too (`F = Math.Abs(A)` infers `q` for you), 
 X = 1
 Inner = {
     Y = 2
-    # X is found at level 2 (parent chain)
-    # Y is found at level 1 (local)
+    # X is declared by the enclosing owner
+    # Y is declared by this owner
     X + Y
 }
 Inner
@@ -1329,9 +1335,9 @@ Inner
 
 **Result:** `3`
 
-In this example, `Y` is found immediately in `Inner`, because it is local. `X` is not local to `Inner`, so KatLang continues to the parent chain and finds `X` in the enclosing algorithm.
+In this example, `Y` is found immediately in `Inner`, because `Inner` owns it. `X` is not owned by `Inner`, so the walk continues outward and finds `X` in the enclosing algorithm.
 
-Local properties always win. If the same name exists both locally and in a parent, the local one is used:
+Among properties, the nearer owner wins. If the same property name exists both locally and in a parent, the local one is used:
 
 ```
 X = 10
@@ -1346,7 +1352,82 @@ Inner
 
 Here `Inner.X` hides the outer `X`, so the result is `99`.
 
-Opens are checked only after local and parent-owned properties. This means a name introduced with `open` never overrides a name you already defined structurally.
+#### Parameters take part in the walk
+
+A parameter is a declaration of the algorithm that binds it, so it participates in exactly the same outward search — and it participates the same way whether the reference is written directly in that algorithm's body or in a body nested inside it:
+
+<!-- spec:ownership-captured-parameter-beats-outer-property -->
+
+```
+v = 99
+Outer(v) = {
+    Inner = v + 1
+    Inner
+}
+Outer(7)
+```
+
+**Result:** `8`
+
+`Inner` is nested inside `Outer`, so the walk starts at `Inner`, reaches `Outer` — which binds `v` — and stops. The root property `v = 99` belongs to a farther owner and is never reached. `Inner` is evaluated inside the call that bound `v`, so it reads that call's argument.
+
+When one owner declares both a parameter and a property of the same name, the program is invalid:
+
+<!-- spec:ownership-same-owner-parameter-beats-property -->
+
+```
+Outer(v) = {
+    v = 5
+    Inner = v + 1
+    Inner + v
+}
+Outer(7)
+```
+
+The front end reports a declaration error at the property name in `v = 5`, identifying the conflicting parameter. No evaluation takes place. The rule uses completed parameter signatures, including later lifted parameters, grouped and collecting parameters, and branch binders; it applies to private and public properties even when unused.
+
+Declaring the property in a nested algorithm is also invalid:
+
+<!-- spec:ownership-nearer-property-beats-outer-parameter -->
+
+```
+v = 99
+Outer(v) = {
+    Mid = {
+        v = 5
+        Inner = v + 1
+        Inner
+    }
+    Mid
+}
+Outer(7)
+```
+
+The front end rejects `Mid`'s property `v` because `Outer` binds a parameter named `v`. Rename the property or parameter. Properties may still hide other properties, and a nested parameter may still reuse an outer parameter's name.
+
+With several enclosing parameters of one name, the nearest one wins for the same reason:
+
+<!-- spec:ownership-nearest-enclosing-parameter-wins -->
+
+```
+v = 99
+Outer(v) = {
+    Mid(v) = {
+        Inner = v + 1
+        Inner
+    }
+    Mid(7)
+}
+Outer(20)
+```
+
+**Result:** `8`
+
+`Mid`'s parameter is reached before `Outer`'s, and the root property is never reached at all.
+
+**Compatibility note:** SYN-03 initially allowed parameter/property collisions. The front end now rejects any property matching a completed parameter of its own or an enclosing lexical algorithm, including parameters discovered by later implicit forwarding. Moving the property into a nested body does not make it legal; rename one declaration. Captured parameters still beat farther properties and inner opens, and the nearest enclosing parameter still wins. A root property outside the parameter's owner remains legal, as in the first example above. Inline open targets keep their separate owner region; importing a name does not declare a property in the importing algorithm.
+
+Opens are checked only after the owner walk. This means a name introduced with `open` never overrides a name you already own — a property you defined structurally, and equally a parameter or branch binder bound by any enclosing scope.
 
 In the next example, `open` appears first because KatLang requires opened sources to be declared before properties and output:
 
@@ -1362,7 +1443,7 @@ X
 
 **Result:** `1`
 
-This ownership-first model makes name lookup more predictable in larger algorithms. In particular, adding an `open` does not silently change the meaning of names you already defined in the current algorithm or its parents.
+This ownership-first model makes name lookup more predictable in larger algorithms. In particular, adding an `open` does not silently change the meaning of names you already defined in the current algorithm or its parents, and adding a property somewhere far out in the program does not change what a parameter name means inside a nested body.
 
 ---
 

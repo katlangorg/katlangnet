@@ -46,6 +46,26 @@ public class BranchLazyModuleLoadingTests
     private static CountingModules Modules()
         => new((ModuleA, "public A = 1"), (ModuleB, "public B = 2"), (ModuleC, "public C = 3"));
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task LiftedParameterOwnership_CompletesBothDeferredAndEnclosingOwners(bool liftInsideLoadedBody)
+    {
+        var modules = new CountingModules((ModuleA, "public v = 99"));
+        var body = $"Inner = {{ open '{ModuleA}'\nv }}\nNeed = v\nInner + Need";
+        var source = liftInsideLoadedBody
+            ? $"F(0) = 0\nF(n) = {{ Outer = {{ {body} }}\nOuter(7) }}\nF(1)"
+            : $"Need(v) = 0\nOuter = {{ F(0) = 0\nF(n) = {{ open '{ModuleA}'\nv }}\nF(1) + Need }}\nOuter(14)";
+        var parsed = await Parser.ParseAsync(source, modules.Options);
+        Assert.False(parsed.HasErrors, string.Join(Environment.NewLine, parsed.Diagnostics));
+        Assert.Equal(0, modules[ModuleA]);
+        var result = await Evaluator.RunCountedAsync(new Expr.AlgorithmExpr(parsed.Root),
+            new AsyncEvaluation.PassThroughAsyncZeroArgPropertyResultCache());
+        Assert.False(result.IsError, result.IsError ? result.Error.ToString() : "");
+        Assert.Equal([14m], result.Value.Value.ToAtoms());
+        Assert.Equal(1, modules[ModuleA]);
+    }
+
     private static string Display(RunResult result) => result.ToDisplayString().ReplaceLineEndings("\n");
 
     private static int LineOf(string source, string fragment)
@@ -889,6 +909,61 @@ public class BranchLazyModuleLoadingTests
 
     // ── Diagnostics timing ─────────────────────────────────────────────────
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task DeclarationCollisionInDeferredBody_IsCheckedAfterCompletionBeforeBodyEvaluation(bool lifted)
+    {
+        var modules = Modules();
+        var calls = 0;
+        var options = new RunOptions
+        {
+            DownloadCode = modules.Download,
+            HostOperations = HostOperations.Create(HostOperation.Create("Touch", (_, _) =>
+            {
+                calls++;
+                return new Result.Atom(1);
+            })),
+        };
+        var body = lifted
+            ? "Need(v) = v\nOuter = { v = 5\nNeed + Touch() }\nOuter(7)"
+            : "v = 5\nTouch()";
+        var prefix = $"F(0) = 42\nF(v) = {{ open '{ModuleB}'\n{body}\n}}\n";
+        Assert.Equal("42", Assert.IsType<RunResult.Success>(await KatLangEngine.RunAsync(prefix + "F(0)", options)).ToDisplayString());
+        Assert.Equal(0, modules[ModuleB]);
+        var failure = Assert.IsType<RunResult.EvalFailure>(await KatLangEngine.RunAsync(prefix + "F(7)", options));
+        Assert.Equal(KatLangErrorCode.ParameterPropertyCollision, Assert.Single(failure.Errors).Code);
+        Assert.Equal(1, modules[ModuleB]);
+        Assert.Equal(0, calls);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task EnclosingParameterCollisionInDeferredBody_UsesCompletedAncestorSignature(bool lifted)
+    {
+        var modules = Modules();
+        var calls = 0;
+        var options = new RunOptions
+        {
+            DownloadCode = modules.Download,
+            HostOperations = HostOperations.Create(HostOperation.Create("Touch", (_, _) =>
+            {
+                calls++;
+                return new Result.Atom(1);
+            })),
+        };
+        var outer = lifted ? "Need(v) = v\nOuter" : "Outer(v)";
+        var source = outer + $" = {{\nF(0) = 42\nF(n) = {{ open '{ModuleB}'\nv = 5\nTouch()\n}}\nF(SELECT)"
+            + (lifted ? " + Need" : "") + "\n}\nOuter(7)";
+        Assert.IsType<RunResult.Success>(await KatLangEngine.RunAsync(source.Replace("SELECT", "0"), options));
+        Assert.Empty(modules.Fetches);
+        var failure = Assert.IsType<RunResult.EvalFailure>(await KatLangEngine.RunAsync(source.Replace("SELECT", "1"), options));
+        Assert.Equal(KatLangErrorCode.ParameterPropertyCollision, Assert.Single(failure.Errors).Code);
+        Assert.Equal(1, modules[ModuleB]);
+        Assert.Equal(0, calls);
+    }
+
     [Fact]
     public async Task ElaborationDiagnosticsInsideADeferredBranch_AreReportedWhenTheBranchIsSelected()
     {
@@ -1008,6 +1083,7 @@ public class BranchLazyModuleLoadingTests
         var loaded = await new ModuleLoader(diagnostics, modules.Download).ElaborateAsync(root);
         var (detected, detectionDiagnostics) = ParameterDetector.Detect(loaded);
         var resolved = ImplicitArgumentResolver.ResolvePrevalidated(detected, diagnostics: diagnostics);
+        new ParameterPropertyCollisionValidator(diagnostics).VisitAlgorithm(resolved);
         var exposed = PropertyExposureResolver.Resolve(resolved);
         Assert.Empty(diagnostics);
         Assert.Empty(detectionDiagnostics);

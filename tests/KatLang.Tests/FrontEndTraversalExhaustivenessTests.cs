@@ -288,7 +288,7 @@ public class FrontEndTraversalExhaustivenessTests
         new Dictionary<string, Func<Expr, Task>>(StringComparer.Ordinal)
         {
             ["ParameterDetector.ProcessOpenExpr"] = RunParameterDetectorOpenExpr,
-            ["ParameterDetector.RewriteBinderRefs"] = RunParameterDetectorConditionalRewrite,
+            ["ParameterDetector.RewriteParams (conditional body)"] = RunParameterDetectorConditionalRewrite,
             ["ParameterDetector.CollectFreeParams"] = RunParameterDetectorOutputWalks,
             ["ParameterDetector.RewriteParams"] = RunParameterDetectorOutputWalks,
             ["ParameterDetector.ProcessExpr"] = RunParameterDetectorProcessExpr,

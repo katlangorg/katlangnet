@@ -47,8 +47,7 @@ internal static class NameSuggestions
     internal static NameSuggestion? SuggestVisibleName(
         string name,
         ElaboratedPropertyScope scope,
-        IReadOnlyCollection<string> localParameterNames,
-        IReadOnlyCollection<string> capturedParameterNames,
+        ParameterOwnership parameters,
         Algorithm? dotMemberReceiver)
     {
         if (name.Length == 0 || name.Length > MaxNameLength)
@@ -76,24 +75,16 @@ internal static class NameSuggestions
             }
         }
 
-        // A parameter owned by this algorithm always rewrites to Param. A
-        // captured ancestor name rewrites only when a visible non-builtin does
-        // not shadow it; with one shadowing hit the corrected spelling still
-        // resolves, while multiple hits would be an AmbiguousOpen and must not
-        // be suggested confidently.
-        foreach (var boundName in localParameterNames)
+        // Every parameter binding in scope is a safe suggestion, because the
+        // owner walk always resolves such a name uniquely: the walk reaches the
+        // level that binds it unless a nearer level owns a PROPERTY of that name,
+        // and a direct property hit is a single declaration by construction. So
+        // the corrected spelling reads either the runtime binding or that one
+        // shadowing declaration — never an AmbiguousOpen, which only an unowned
+        // name can be (opens are consulted after the whole owner walk). The
+        // suggestion machinery deliberately does not need to distinguish the two.
+        foreach (var boundName in parameters.Names)
         {
-            if (!TryAddCandidate(candidates, boundName, LexicalTier, requiredExportedProperty: null))
-                return null;
-        }
-
-        foreach (var boundName in capturedParameterNames)
-        {
-            var hits = ElaboratedScopeLookup.LookupLexicalPropertyMatches(scope, boundName);
-            var hasNonBuiltinHit = hits.Any(static hit => hit.Property.Value is not Algorithm.Builtin);
-            if (hasNonBuiltinHit && hits.Count > 1)
-                continue;
-
             if (!TryAddCandidate(candidates, boundName, LexicalTier, requiredExportedProperty: null))
                 return null;
         }

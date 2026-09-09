@@ -151,9 +151,14 @@ public class ConditionalBranchElaborationTests
     [InlineData(true)]
     public void Source_InlineBranchOpen_DoesNotEscapeToTheEnclosingAlgorithm(bool nested)
     {
-        // Outside the branch the opened name resolves to nothing: the enclosing body (the root,
-        // or a brace algorithm) treats it as its own implicit parameter, while the branch's own
-        // reference stays an ordinary lexical resolve and the branch body acquires no parameter.
+        // Outside the branch the opened name resolves to nothing, so the enclosing body (the
+        // root, or a brace algorithm) treats it as its OWN implicit parameter — the branch's
+        // open never leaks outward, and the branch body still acquires no parameter of its own.
+        //
+        // That enclosing parameter is then an owned declaration of a scope the branch is nested
+        // in, and the owner walk reaches it before any open is consulted, so the branch's own
+        // reference reads it: an inner open loses to an enclosing owner's parameter exactly as
+        // it loses to an enclosing owner's property.
         var body = "F(0) = {\n    open {\n        public Helper = 5\n    }\n\n    Helper\n}\nF(n) = n\nF(0), Helper";
         var source = nested ? $"Outer = {{\n{body}\n}}\nOuter(7)" : body;
         var root = SourceProvenance.ParseValid(source).Root;
@@ -161,9 +166,23 @@ public class ConditionalBranchElaborationTests
         Assert.Equal(["Helper"], owner.Params);
         var branch = owner.Properties.Single(property => property.Name == "F").Value.Branches[0].Body;
         Assert.Empty(branch.Params);
-        Assert.Equal("Helper", Assert.IsType<Expr.Resolve>(Assert.Single(branch.Output)).Name);
+        Assert.Equal("Helper", Assert.IsType<Expr.Param>(Assert.Single(branch.Output)).Name);
         if (nested)
-            Assert.Equal("(5, 7)", Assert.IsType<RunResult.Success>(KatLangEngine.Run(source)).ToDisplayString());
+            Assert.Equal("(7, 7)", Assert.IsType<RunResult.Success>(KatLangEngine.Run(source)).ToDisplayString());
+
+        // Control: with no outward reference nothing owns the name, so the branch's own open
+        // provides it and the reference stays an ordinary lexical resolve.
+        var ownedByNothing = nested
+            ? "Outer = {\nF(0) = {\n    open {\n        public Helper = 5\n    }\n\n    Helper\n}\nF(n) = n\nF(0)\n}\nOuter"
+            : "F(0) = {\n    open {\n        public Helper = 5\n    }\n\n    Helper\n}\nF(n) = n\nF(0)";
+        var unownedRoot = SourceProvenance.ParseValid(ownedByNothing).Root;
+        var unownedOwner = nested
+            ? unownedRoot.Properties.Single(property => property.Name == "Outer").Value
+            : unownedRoot;
+        Assert.Empty(unownedOwner.Params);
+        var unownedBranch = unownedOwner.Properties.Single(property => property.Name == "F").Value.Branches[0].Body;
+        Assert.Equal("Helper", Assert.IsType<Expr.Resolve>(Assert.Single(unownedBranch.Output)).Name);
+        Assert.Equal("5", Assert.IsType<RunResult.Success>(KatLangEngine.Run(ownedByNothing)).ToDisplayString());
     }
 
     [Theory]
@@ -644,7 +663,10 @@ public class ConditionalBranchElaborationTests
         // dotted-open path through the family is refused AT THE FAMILY with the family-level
         // reason — the declaration's own (Exported) classification never enters into it.
         var body = "F(0) = {\n    Lib = { public X = 1 }\n    G = {\n        open Lib\n        X\n    }\n    G\n}\nF(n) = n\n";
-        var root = SourceProvenance.ParseValid(body + "F(0), X, Lib").Root;
+        var parsed = SourceProvenance.ParseAllowingDiagnostics(body + "F(0), X, Lib");
+        Assert.Equal(2, parsed.Diagnostics.Count);
+        Assert.All(parsed.Diagnostics, d => Assert.Equal(DiagnosticCode.ParameterPropertyCollision, d.Code));
+        var root = parsed.Root;
         Assert.Equal(["X", "Lib"], root.Params);
         var declared = root.Properties.Single(property => property.Name == "F").Value.Branches[0].Body
             .Properties.Single(property => property.Name == "Lib");
@@ -663,7 +685,9 @@ public class ConditionalBranchElaborationTests
         // side is pinned on the raw syntax tree, where X is still a bare resolve that forces
         // open resolution.
         const string dottedOpen = "G = {\n    open F.Lib\n    X\n}\nG";
-        var opener = SourceProvenance.ParseValid(body + dottedOpen).Root.Properties.Single(property => property.Name == "G").Value;
+        // Supplying G's inferred input keeps it out of the root signature, where it
+        // would now conflict with the branch-local property X.
+        var opener = SourceProvenance.ParseValid(body + dottedOpen + "(7)").Root.Properties.Single(property => property.Name == "G").Value;
         Assert.Equal(["X"], opener.Params);
         var dotted = Evaluator.RunFlat(new Expr.AlgorithmExpr(SourceProvenance.ParseSyntaxValidRoot(body + dottedOpen)));
         Assert.True(dotted.IsError);

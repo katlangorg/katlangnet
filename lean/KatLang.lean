@@ -5801,10 +5801,19 @@ end
     | error e  => report diagnostic (e.g., ambiguous open)
     ```
 
-    IMPORTANT: Opens CAN suppress implicit parameters. If an opened library
-    provides `name`, the surface layer emits `Expr.resolve name`, not a param.
-    This is intentional: opens have lexical precedence in the ownership-first model.
-    The trade-off is accepted: shadowing via opens is rare and explicit (listed in `opens:`).
+    SCOPE: this is the PROMOTION question only — whether a name that NOTHING
+    binds becomes a new implicit parameter of the algorithm being elaborated.
+    It is not the ownership question. Once a name IS bound, which binding the
+    occurrence selects — an enclosing scope's parameter or a property — is
+    `selectOwnedDeclaration` below, and the two are independent: promotion
+    still stops at any visible property or opened name, while ownership
+    decides between an already-established parameter and a property by owning
+    scope. The caller must exclude already-established parameter bindings BEFORE
+    invoking this probe. The probe itself only calls `lookupLexical`, the
+    projection of `lookupLexicalProperty`: it does not inspect the owner's
+    parameter declarations or the value/algorithm binding environments.
+    A captured parameter therefore bypasses this probe; ownership selection
+    below keeps it from losing to a farther property.
 
     NOTE: This function is used only for ordinary algorithms without an explicit
     parameter-pattern list.  Explicit ordinary algorithms and conditional branch
@@ -5818,6 +5827,105 @@ def shouldTreatAsImplicitParam (a : Algorithm) (name : Ident) (ctx : EvalCtx) : 
   | .ok _ => .ok false                      -- Name resolves → NOT a param
   | .error (Error.unknownName _) => .ok true  -- Name doesn't resolve → IS a param
   | .error e => .error e                    -- Propagate other errors (ambiguousOpen, etc.)
+
+
+--------------------------------------------------------------------------------
+-- Surface syntax support: owner-aware binding selection
+--------------------------------------------------------------------------------
+
+/-- One level of the surface layer's ordered OWNER CHAIN for a bare-name
+    occurrence: the scopes enclosing that occurrence, innermost first.
+
+    `parameters` are the parameter BINDINGS the level owns — an algorithm's
+    written and inferred parameters (including parameters later lifted through
+    implicit forwarding), or a conditional branch body's pattern binders.
+    The chain contains COMPLETE declarations: selection is applied after signature
+    completion, retaining the discovered parameter lists, pattern shapes, and Grace
+    order. A changed selection requires rebuilding forwarding and closed-input
+    diagnostics from the written expressions, not inferring additional names from
+    a newly available receiver fallback. `properties` are the property names the level declares. Both are
+    OWNED declarations; `opens` are deliberately absent, because they are not
+    owned by the level and keep the separate later fallback policy of
+    `lookupLexicalProperty`.
+
+    A `ScopeCtx` cannot serve as this chain: it carries `props` but no
+    parameters, since by the time an `Algorithm` exists every ancestor-parameter
+    reference in it is already an `Expr.param` and the binding lives in
+    `ValEnv`. The chain is therefore surface-layer information, supplied to the
+    walk while the front end is still deciding `param` vs `resolve`.
+
+    The CHAIN, not a separately counted depth, is what says which owner is
+    nearer: level `i` is nearer than level `j` exactly when `i < j`. -/
+structure OwnerLevel where
+  parameters : List Ident
+  properties : List Ident
+  deriving Repr, DecidableEq
+
+/-- Surface declaration validity, checked after parameter-signature completion and
+    before evaluation. Each property whose name is bound by this or an enclosing owner is a
+    declaration error, regardless of visibility or reference order. Pattern binders
+    belong to their branch body. Open targets have separate lexical owner chains. The surface
+    layer reports each written conflicting declaration at its source name.
+    C#: ParameterPropertyCollisionValidator. This is a front-end validity boundary;
+    raw/recovery AST evaluation and lookup do not substitute for this check. -/
+def conflictingOwnedNames (owner : OwnerLevel) (ancestors : List OwnerLevel := []) : List Ident :=
+  owner.properties.filter fun name =>
+    owner.parameters.contains name || ancestors.any (fun outer => outer.parameters.contains name)
+
+def validOwnedDeclarations : List OwnerLevel -> Bool
+  | [] => true
+  | owner :: ancestors =>
+      (conflictingOwnedNames owner ancestors).isEmpty && validOwnedDeclarations ancestors
+
+/-- What the owner walk selects for a bare name, with the position of the
+    DECIDING level in the supplied chain (0 = the occurrence's own body). -/
+inductive OwnedDeclaration where
+  | none
+  | parameter (level : Nat)
+  | property  (level : Nat)
+  deriving Repr, DecidableEq
+
+/-- THE owner walk, and the specification the surface layer's
+    parameter/receiver classification and the editor's visible-name view all
+    implement (C#: `ElaboratedScopeLookup.SelectOwnedDeclaration`).
+
+    Search outward by owning scope: the first level that DECLARES `name` wins,
+    and within that level an established PARAMETER takes precedence over a
+    property. Consequences, in the order they matter:
+
+    * a captured ancestor parameter beats a property owned by any FARTHER scope
+      (the root's, and the prelude's — the prelude is simply the outermost
+      property level, so `F(pi) = { pi + 1 }` binds the parameter);
+    * a nearer property beats an outer parameter in an invalid recovery tree;
+    * a level owning BOTH is invalid source (`validOwnedDeclarations`), but its
+      recovery tree still selects the parameter consistently for direct and nested
+      references, so editor behavior stays deterministic;
+    * with several enclosing parameters of one name, the nearest wins, because
+      it is reached first.
+
+    `.none` means no owner declares the name; the caller then applies the
+    unchanged lookup/promotion policy — `shouldTreatAsImplicitParam`
+    above for a body that infers implicit parameters, and an ordinary
+    `Expr.resolve` otherwise. -/
+def selectOwnedDeclarationFrom : Nat -> List OwnerLevel -> Ident -> OwnedDeclaration
+  | _, [],             _    => .none
+  | i, level :: outer, name =>
+      if level.parameters.contains name then .parameter i
+      else if level.properties.contains name then .property i
+      else selectOwnedDeclarationFrom (i + 1) outer name
+
+def selectOwnedDeclaration (chain : List OwnerLevel) (name : Ident) : OwnedDeclaration :=
+  selectOwnedDeclarationFrom 0 chain name
+
+/-- Whether a bare-name occurrence elaborates to `Expr.param name` (a runtime
+    parameter read, resolved through the inherited `ValEnv`/`AlgEnv`) rather
+    than to `Expr.resolve name` (ordinary lexical property lookup). The value
+    and the callable view of one occurrence share this single decision: the
+    elaborated node is the same in both positions. -/
+def elaboratesToParameter (chain : List OwnerLevel) (name : Ident) : Bool :=
+  match selectOwnedDeclaration chain name with
+  | .parameter _ => true
+  | _            => false
 
 --------------------------------------------------------------------------------
 -- Surface syntax support: implicit argument resolution

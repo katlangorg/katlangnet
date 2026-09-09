@@ -60,6 +60,7 @@ internal sealed class DeferredModuleRegion
         NestedTraversalBase = source.NestedTraversalBase;
         Detection = source.Detection;
         Resolution = source.Resolution;
+        Validation = source.Validation;
         Exposure = source.Exposure;
     }
 
@@ -84,6 +85,8 @@ internal sealed class DeferredModuleRegion
 
     internal PropertyExposureResolver.DeferredBranchContext? Exposure { get; private init; }
 
+    internal ParameterPropertyCollisionValidator.ParameterBindings? Validation { get; private init; }
+
     internal DeferredModuleRegion WithDetection(ParameterDetector.DeferredBranchContext detection)
         => new(this) { Detection = detection };
 
@@ -92,6 +95,9 @@ internal sealed class DeferredModuleRegion
 
     internal DeferredModuleRegion WithExposure(PropertyExposureResolver.DeferredBranchContext exposure)
         => new(this) { Exposure = exposure };
+
+    internal DeferredModuleRegion WithValidation(ParameterPropertyCollisionValidator.ParameterBindings validation)
+        => new(this) { Validation = validation };
 
     /// <summary>Completed materializations plus failed attempts; test-observable, never a decision input.</summary>
     internal int MaterializationAttempts => Volatile.Read(ref _materializationAttempts);
@@ -130,12 +136,12 @@ internal sealed class DeferredModuleRegion
         if (TryGetMaterialized(out var ready))
             return EvalResult<Algorithm>.Ok(ready);
 
-        if (Detection is null || Resolution is null || Exposure is null)
+        if (Detection is null || Resolution is null || Validation is null || Exposure is null)
         {
             throw new InvalidOperationException(
                 "Internal error: a deferred module region reached evaluation without its complete elaboration context. " +
                 "The front-end pipeline registers every deferred branch through parameter detection, implicit-argument " +
-                "resolution, and exposure resolution before a tree is evaluated.");
+                "resolution, declaration validation, and exposure resolution before a tree is evaluated.");
         }
 
         Loader.SourceProcessingCancellationToken.ThrowIfCancellationRequested();
@@ -261,10 +267,28 @@ internal sealed class DeferredModuleRegion
                 {
                     cancellationToken.ThrowIfCancellationRequested();
                     var observations = Loader.TraversalObservations;
+                    var parameterDiagnosticStart = diagnostics.Count;
                     var detected = ParameterDetector.ElaborateDeferredBranch(loaded, Detection!, diagnostics, observations);
                     cancellationToken.ThrowIfCancellationRequested();
-                    var resolved = ImplicitArgumentResolver.ElaborateDeferredBranch(detected, Resolution!, diagnostics, observations);
+                    var origins = new ImplicitArgumentResolver.ResolutionOrigins();
+                    var resolved = ImplicitArgumentResolver.ElaborateDeferredBranch(detected, Resolution!, diagnostics, observations, origins);
+                    if (origins.HasLiftedParameters)
+                    {
+                        var completed = ParameterDetector.CompleteOwnership(
+                            resolved, origins, branchContext: Detection!, observations: observations);
+                        if (completed.Changed)
+                        {
+                            diagnostics.RemoveRange(parameterDiagnosticStart, diagnostics.Count - parameterDiagnosticStart);
+                            diagnostics.AddRange(completed.Diagnostics);
+                            resolved = ImplicitArgumentResolver.ElaborateDeferredBranch(
+                                completed.Root, Resolution!, diagnostics, observations, preserveSignatures: true);
+                        }
+                    }
                     cancellationToken.ThrowIfCancellationRequested();
+                    if (!HasErrors(diagnostics))
+                    {
+                        new ParameterPropertyCollisionValidator(diagnostics, Validation).VisitAlgorithm(resolved);
+                    }
                     if (!HasErrors(diagnostics))
                     {
                         var exposed = PropertyExposureResolver.ElaborateDeferredBranch(resolved, Exposure!, observations);

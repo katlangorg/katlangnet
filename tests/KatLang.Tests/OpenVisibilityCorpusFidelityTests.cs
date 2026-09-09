@@ -134,9 +134,14 @@ public class OpenVisibilityCorpusFidelityTests
                     + "[.resolve \"Inner\"])",
                 ResolveA),
 
+            // `A`'s own `X` is unresolvable there, so it becomes A's implicit parameter — the
+            // nested open never leaks outward. That parameter is an owned declaration of a
+            // scope enclosing `Inner`, and the owner walk reaches it before any open is
+            // consulted, so `Inner`'s `X` reads it too (and `Inner` is therefore local-only).
             ["openNestedDoesNotLeakOutward"] = Golden(
                 LibPublicX
-                    + ", privateProp \"A\" (alg [\"X\"] [] [privateProp \"Inner\" (alg [] [.resolve \"Lib\"] [] [.resolve \"X\"])] "
+                    + ", privateProp \"A\" (alg [\"X\"] [] [privateLocalProp \"Inner\" .localCapturedAncestorParams "
+                    + "(alg [] [.resolve \"Lib\"] [] [.param \"X\"])] "
                     + "[.param \"X\"])",
                 CallA707),
 

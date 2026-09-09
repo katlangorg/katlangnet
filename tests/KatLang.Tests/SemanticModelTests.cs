@@ -4,6 +4,28 @@ namespace KatLang.Tests;
 
 public class SemanticModelTests
 {
+    [Fact]
+    public void SameOwnerCollision_RecoveryRetainsParameterAndPropertyDeclarationIdentity()
+    {
+        const string source = "Outer(v) = {\n    v = 5\n    Inner = v + 1\n    Inner + v\n}\nOuter(7)";
+        var parsed = SourceProvenance.ParseAllowingDiagnostics(source);
+        Assert.Equal(DiagnosticCode.ParameterPropertyCollision, Assert.Single(parsed.Diagnostics).Code);
+        for (var analysis = 0; analysis < 2; analysis++)
+        {
+            var model = SemanticModelBuilder.Build(parsed.Parsed);
+            foreach (var line in new[] { 3, 4 })
+            {
+                var resolution = model.FindResolutionAt(line, 13);
+                Assert.Equal(IdentifierClassification.ExplicitParameterReference, resolution!.Classification);
+                Assert.Equal(new SourceSpan(1, 7, 1, 7), resolution.ResolvedDeclaration!.Span);
+                Assert.Null(model.FindPropertyAt(line, 13));
+                var visible = Assert.Single(model.GetVisibleSymbolsAt(line, 13), s => s.Name == "v");
+                Assert.Equal(resolution.ResolvedDeclaration, visible.Declaration);
+            }
+            Assert.Equal(new SourceSpan(2, 5, 2, 5), model.FindPropertyAt(2, 5)!.Declaration!.Span);
+        }
+    }
+
     private static Func<string, CancellationToken, ValueTask<string>> MockDownloader(
         Dictionary<string, string> files)
     {
@@ -881,7 +903,7 @@ public class SemanticModelTests
     [Fact]
     public void Build_DotCall_SequenceSpreadDoesNotMergePropertySurface()
     {
-        var model = BuildModel(
+        var parsed = SourceProvenance.ParseAllowingDiagnostics(
             """
             public A = {
             public X = 1
@@ -895,6 +917,9 @@ public class SemanticModelTests
             C.X
             C.Y
             """);
+        Assert.Equal(2, parsed.Diagnostics.Count);
+        Assert.All(parsed.Diagnostics, d => Assert.Equal(DiagnosticCode.ParameterPropertyCollision, d.Code));
+        var model = SemanticModelBuilder.Build(parsed.Parsed);
 
         Assert.Single(model.FindDeclarations("X"));
         Assert.Single(model.FindDeclarations("Y"));
@@ -1440,18 +1465,20 @@ public class SemanticModelTests
     }
 
     [Fact]
-    public void Build_AliasToLoadedModule_DoesNotUseLegacyLoadFallback()
+    public async Task Build_AliasToLoadedModule_DoesNotUseLegacyLoadFallback()
     {
-        var model = BuildModel(
+        var parsed = await Parser.ParseAsync(
             """
             Lib = load('https://katlang.org/algorithm.kat')
             Alias = Lib
             Alias.X
             """,
-            new Dictionary<string, string>
+            new RunOptions { DownloadCode = MockDownloader(new Dictionary<string, string>
             {
                 ["https://katlang.org/algorithm.kat"] = "\n\npublic X = 1"
-            });
+            }) });
+        Assert.Equal(DiagnosticCode.ParameterPropertyCollision, Assert.Single(parsed.Diagnostics).Code);
+        var model = SemanticModelBuilder.Build(parsed);
 
         var aliasReference = ResolutionAt(model, 3, 1);
         Assert.Equal(IdentifierClassification.PropertyReference, aliasReference.Classification);

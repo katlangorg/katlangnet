@@ -45,8 +45,8 @@ internal sealed class FrontEndTraversalObservations
         => DetectorCollectExpansions = checked(DetectorCollectExpansions + 1);
 
     /// <summary>
-    /// Rewrite expansions of the detector's four rewriting walks
-    /// (<c>RewriteParams</c>, <c>RewriteBinderRefs</c>, <c>ProcessExpr</c>, <c>ProcessOpenExpr</c>).
+    /// Rewrite expansions of the detector's three rewriting walks
+    /// (<c>RewriteParams</c>, <c>ProcessExpr</c>, <c>ProcessOpenExpr</c>).
     /// </summary>
     public long DetectorRewriteExpansions { get; private set; }
 

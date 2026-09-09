@@ -27,6 +27,7 @@ public class LeanCoreTestsCompositionTests
         "ListValues",
         "CollectingBindings",
         "OutputBundle",
+        "NameOwnership",
     ];
 
     [Fact]

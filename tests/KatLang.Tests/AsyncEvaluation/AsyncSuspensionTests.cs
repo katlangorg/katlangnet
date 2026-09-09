@@ -44,13 +44,19 @@ public class AsyncSuspensionTests
         { "range-pipeline", "N = 3\nrange(1, N + 0).sum" },
         { "index-projection", "S = ((1, 2), (3, 4))\nS:1" },
         { "zero-arg-cache-shape", "A = 1, 2\nA, A, A()" },
+        // Ownership: the nested `Inner` reads `Outer`'s parameter, which the owner walk
+        // selects over the root property of the same name. `Inner` is a zero-argument
+        // property: the seam suspends before evaluating that property's body, and
+        // its captured parameter read executes after resumption. The Param read
+        // itself does not use the property cache.
+        { "captured-parameter-ownership", "v = 99\nOuter(v) = {\n    Inner = v + 1\n    Inner\n}\nOuter(7)" },
+        { "lifted-parameter-ownership", "Lib = { public v = 99 }\nOuter = { Inner = { open Lib\nv }\nNeed = v\nInner + Need }\nOuter(7)" },
     };
 
     [Theory]
     [MemberData(nameof(ConstructPrograms))]
     public async Task SuspendingRun_ProducesTheSynchronousOutcome(string caseId, string source)
     {
-        _ = caseId;
         var ast = AsyncEvaluationHarness.Ast(source);
         var sync = Evaluator.RunCounted(ast);
 
@@ -67,6 +73,15 @@ public class AsyncSuspensionTests
         Assert.True(cache.AsyncAccesses > 0);
         Assert.Equal(0, cache.SyncAccesses);
         Assert.Equal(cache.AsyncAccesses, cache.ThreadHops.Count);
+        if (caseId is "captured-parameter-ownership" or "lifted-parameter-ownership")
+        {
+            // Outer(7) is an explicit call; Inner is the only property access.
+            // Need(v) is synthesized forwarding in the lifted case. Neither the
+            // shadowed root v nor the opened v must ever reach this seam.
+            Assert.Equal(1, cache.AsyncAccesses);
+            Assert.Equal(caseId == "captured-parameter-ownership" ? "ok raw=8 n=1" : "ok raw=14 n=1",
+                AsyncEvaluationHarness.NeutralOf(async));
+        }
     }
 
     [Fact]

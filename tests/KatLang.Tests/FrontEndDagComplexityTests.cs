@@ -1285,7 +1285,9 @@ public class FrontEndDagComplexityTests
             // is its own provisional region over the same nested chain: two chains of `depth`
             // regions, not 2^depth.
             Assert.Equal(2 * depth, detectorObservations.DetectorBranchBodyRegionExpansions);
-            var exposed = PropertyExposureResolver.Resolve(ImplicitArgumentResolver.Resolve(detected));
+            var resolved = ImplicitArgumentResolver.Resolve(detected);
+            new ParameterPropertyCollisionValidator(diagnostics).VisitAlgorithm(resolved);
+            var exposed = PropertyExposureResolver.Resolve(resolved);
             DeferredModuleRegions.MarkRootRequiresAsyncEvaluation(exposed);
             var demandObservations = new FrontEndTraversalObservations();
             loader.TraversalObservations = demandObservations;

@@ -400,6 +400,7 @@ public class KatLangErrorCodeTests
             ["InvalidLoadedSource"] = 36,
             ["LoadElaborationUnavailable"] = 37,
             ["InternalError"] = 38,
+            ["ParameterPropertyCollision"] = 39,
         };
 
         var actual = Enum.GetValues<DiagnosticCode>().ToDictionary(v => v.ToString(), v => (int)v);
@@ -473,6 +474,7 @@ public class KatLangErrorCodeTests
             ["InvalidLoadedSource"] = 59,
             ["LoadElaborationUnavailable"] = 60,
             ["InternalError"] = 61,
+            ["ParameterPropertyCollision"] = 62,
         };
 
         var actual = Enum.GetValues<KatLangErrorCode>().ToDictionary(v => v.ToString(), v => (int)v);

@@ -210,6 +210,50 @@ internal sealed class ResolvedOpenProvider
 internal readonly record struct PropertyLookupHit(Algorithm Owner, Property Property);
 
 /// <summary>
+/// What the ownership-first OWNER WALK selects for a bare name.
+/// </summary>
+internal enum OwnedDeclarationKind
+{
+    /// <summary>No level of the chain declares the name.</summary>
+    None,
+
+    /// <summary>The deciding level owns a PARAMETER binding of that name.</summary>
+    Parameter,
+
+    /// <summary>The deciding level owns a PROPERTY of that name and no parameter.</summary>
+    Property,
+}
+
+/// <summary>
+/// The declaration the owner walk selected together with the level that OWNS
+/// it. <see cref="PropertyHit"/> carries the selected property for
+/// <see cref="OwnedDeclarationKind.Property"/> and is null otherwise.
+/// </summary>
+internal readonly record struct OwnedDeclaration(
+    OwnedDeclarationKind Kind,
+    ElaboratedPropertyScope? OwnerScope,
+    PropertyLookupHit? PropertyHit);
+
+/// <summary>
+/// Parameter ownership beside the scope chain's property tables. During discovery,
+/// inferred bindings may not yet appear in an algorithm's stored signature; branch
+/// binders are supplied by their pattern. Completion supplies established signatures.
+/// The detector uses <c>ParameterOwnership</c>; editor frames carry equivalent tables.
+/// </summary>
+internal interface IOwnedParameterBindings
+{
+    /// <summary>
+    /// Whether <paramref name="level"/> ITSELF binds <paramref name="name"/> as
+    /// a parameter: an explicit or inferred parameter of the algorithm that owns
+    /// the level, or a conditional branch body's pattern binder. Only the
+    /// NEAREST enclosing binding of a name answers true — an outer parameter of
+    /// the same name is already shadowed by the inner one and must never decide
+    /// a level the walk reaches first.
+    /// </summary>
+    bool DeclaresParameter(ElaboratedPropertyScope level, string name);
+}
+
+/// <summary>
 /// One spelling that authoritative lexical lookup resolves uniquely. Opened
 /// names carry the exact provider property because their eligibility also
 /// depends on its later final exposure classification; direct lexical names
@@ -278,6 +322,60 @@ internal static class ElaboratedScopeLookup
         }
 
         return null;
+    }
+
+    /// <summary>
+    /// THE ownership-first owner walk over OWNED declarations, and the single
+    /// owner of the parameter-vs-property precedence rule for the front end and
+    /// the editor.
+    ///
+    /// <para>Search outward by owning scope: the first level that DECLARES
+    /// <paramref name="name"/> wins, and within that level an established
+    /// PARAMETER binding takes precedence over a property in invalid recovery trees;
+    /// ParameterPropertyCollisionValidator rejects properties matching same-owner or enclosing parameters in source.
+    /// "Declares" means the
+    /// two kinds of owned declaration — a parameter binding
+    /// (<see cref="IOwnedParameterBindings"/>) and a property of the level's own
+    /// declaration list — so a captured ancestor parameter beats a property of
+    /// any FARTHER owner and, in invalid recovery source, a nearer property beats an outer
+    /// parameter. A level owning both selects the parameter, which is what makes
+    /// a direct reference and a reference from a nested body agree.</para>
+    ///
+    /// <para><c>open</c> targets are not owned declarations and are consulted only
+    /// after the whole direct chain, by <see cref="LookupLexicalPropertyMatches"/>.
+    /// The prelude participates as the chain's outermost ordinary property level,
+    /// farther than any capturing algorithm: <c>F(pi) = { pi + 1 }</c> binds the
+    /// parameter rather than the <c>pi</c> alias. A
+    /// <see cref="OwnedDeclarationKind.None"/> verdict leaves lookup to opens.</para>
+    ///
+    /// <para>The property arm selects EXACTLY what
+    /// <see cref="TryLookupDirectLexicalProperty"/> selects whenever no
+    /// parameter intervenes: the same per-level
+    /// <see cref="ElaboratedPropertyScope.TryLookupOwnProperty"/> over the same
+    /// ordered level chain.</para>
+    /// </summary>
+    public static OwnedDeclaration SelectOwnedDeclaration(
+        ElaboratedPropertyScope scope,
+        string name,
+        IOwnedParameterBindings parameters)
+    {
+        var observations = scope.Observations;
+        for (var current = scope; current is not null; current = current.Parent)
+        {
+            observations?.RecordLookupLevelVisit();
+
+            // Same owner: the parameter wins. Asking the parameter question
+            // first at EVERY level is the whole rule — an outer property can
+            // never be reached while a nearer or same-level parameter binds the
+            // name, and a nearer property is reached before a farther parameter.
+            if (parameters.DeclaresParameter(current, name))
+                return new OwnedDeclaration(OwnedDeclarationKind.Parameter, current, PropertyHit: null);
+
+            if (current.TryLookupOwnProperty(name) is { } hit)
+                return new OwnedDeclaration(OwnedDeclarationKind.Property, current, hit);
+        }
+
+        return default;
     }
 
     public static Algorithm? ResolveOpenTarget(ElaboratedPropertyScope scope, Expr openExpr)

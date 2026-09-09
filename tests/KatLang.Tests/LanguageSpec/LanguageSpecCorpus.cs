@@ -39,6 +39,7 @@ public static class LanguageSpecCorpus
         "strings",
         "lists",
         "conditionals",
+        "name-resolution",
     ];
 
     /// <summary>
@@ -1305,7 +1306,7 @@ public static class LanguageSpecCorpus
                 new SpecProbe("Obj = {public V = 42}\nK(a, V) = a.V\nK(Obj, {a+1})", "ok raw=42 n=1"),
             ],
             IncludeInGeneratorPrompt = true,
-            Explanation = "After structural member lookup fails, a dot member name that is a parameter of the calling context resolves exactly like the plain callee: `a.t` and `t(a)` agree, including algorithm-valued parameters. A parameter of the current algorithm wins over a same-name visible property, a captured ancestor parameter yields to a visible non-builtin declaration, and structural members of the resolved receiver always take precedence first.",
+            Explanation = "After structural member lookup fails, a dot member name that is a parameter of the calling context resolves exactly like the plain callee: `a.t` and `t(a)` agree, including algorithm-valued parameters. The lexical fallback uses the owner walk, so a captured parameter beats farther properties and opens. Properties matching same-owner or enclosing parameters are declaration errors. Structural members of the resolved receiver always take precedence first.",
         },
         new()
         {
@@ -3016,6 +3017,183 @@ public static class LanguageSpecCorpus
             ],
             Explanation = "Shadowing removes only the names the callee itself binds. `Inner` declares `x`, not `f`, so `f` still resolves outward to the callable `Apply` received, and `Inner(5)` computes `Inc(5)`.",
         },
+        // ==================== name-resolution ====================
+        new()
+        {
+            Id = "ownership-same-owner-nested-reference-rejected",
+            Category = "name-resolution",
+            Source = "Outer(v) = {\n    v = 5\n    Inner = v + 1\n    Inner\n}\nOuter(7)",
+            Outcome = SpecOutcome.ParseError,
+            ExpectedDiagnosticCode = DiagnosticCode.ParameterPropertyCollision,
+            Explanation = "SYN-03 C1: the same-owner collision is a declaration error even when v is referenced only inside Inner.",
+        },
+        new()
+        {
+            Id = "ownership-same-owner-later-property-rejected",
+            Category = "name-resolution",
+            Source = "Outer(v) = {\n    Inner = v + 1\n    v = 5\n    Inner\n}\nOuter(7)",
+            Outcome = SpecOutcome.ParseError,
+            ExpectedDiagnosticCode = DiagnosticCode.ParameterPropertyCollision,
+            Explanation = "Writing the conflicting property after the nested reference does not change declaration validity.",
+        },
+        new()
+        {
+            Id = "ownership-branch-binder-property-collision",
+            Category = "name-resolution",
+            Source = "F(0) = 0\nF(v) = {\n    v = 5\n    Inner = v + 1\n    Inner\n}\nF(7)",
+            Outcome = SpecOutcome.ParseError,
+            ExpectedDiagnosticCode = DiagnosticCode.ParameterPropertyCollision,
+            Explanation = "A branch body owns its pattern binders, so a property that body declares cannot have the same name as a binder.",
+        },
+        new()
+        {
+            Id = "ownership-lifted-parameter-property-collision",
+            Category = "name-resolution",
+            Source = "Need(v) = v\nOuter = { v = 5\nInner = v\nNeed + Inner }\nOuter(7)",
+            Outcome = SpecOutcome.ParseError,
+            ExpectedDiagnosticCode = DiagnosticCode.ParameterPropertyCollision,
+            Explanation = "Using Need completes Outer's signature with v. Its property v then conflicts with that parameter, so the front end rejects the declaration even though v was not in Outer's initially inferred signature.",
+        },
+        new()
+        {
+            Id = "ownership-later-lifted-parameter-beats-inner-open",
+            Category = "name-resolution",
+            Source = "Lib = { public v = 99 }\nOuter = {\n    Inner = { open Lib\n        v\n    }\n    Need = v\n    Inner + Need\n}\nOuter(7)",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "14",
+            ExpectedRaw = "14",
+            ExpectedEmittedCount = 1,
+            Probes =
+            [
+                // Forwarding Need completes Outer's signature before final binding selection.
+                new SpecProbe("Need(v) = v\nOuter = { F(0) = 0\nF(n) = v\nF(1) + Need }\nOuter(7)", "ok raw=14 n=1"),
+                // The original bare v must not retain the synthesized v(x) call.
+                new SpecProbe("v = x + 99\nOuter = { Inner = v\nNeed(v) = v\nInner + Need }\nOuter(2, 7)", "ok raw=14 n=1"),
+            ],
+            Explanation = "Established parameters include those lifted by implicit argument resolution: referencing Need supplies v to Outer's completed signature. The earlier nested v therefore selects Outer's parameter before Inner's open and both terms read 7. Completion preserves the inferred signatures and ordering, then rebuilds forwarding and closed-input diagnostics for the selected bindings.",
+        },
+        new()
+        {
+            Id = "ownership-captured-parameter-beats-outer-property",
+            Category = "name-resolution",
+            Source = "v = 99\nOuter(v) = {\n    Inner = v + 1\n    Inner\n}\nOuter(7)",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "8",
+            ExpectedRaw = "8",
+            ExpectedEmittedCount = 1,
+            Probes =
+            [
+                // The root property is not what makes this work: removing it changes nothing.
+                new SpecProbe("Outer(v) = {\n    Inner = v + 1\n    Inner\n}\nOuter(7)", "ok raw=8 n=1"),
+                // The unnested reference always selected the parameter; the nested one now agrees.
+                new SpecProbe("v = 99\nOuter(v) = v + 1\nOuter(7)", "ok raw=8 n=1"),
+                // Both references in one body select the same binding.
+                new SpecProbe("v = 99\nOuter(v) = {\n    Inner = v + 1\n    Inner + v\n}\nOuter(7)", "ok raw=15 n=1"),
+                // The owning scope need not be a child of the root.
+                new SpecProbe("Wrapper = {\n    v = 99\n    Outer(v) = {\n        Inner = v + 1\n        Inner\n    }\n    Outer(7)\n}\nWrapper", "ok raw=8 n=1"),
+                // Declaration order is not ownership: a property written after the algorithm decides nothing.
+                new SpecProbe("Outer(v) = {\n    Inner = v + 1\n    Inner\n}\nv = 99\nOuter(7)", "ok raw=8 n=1"),
+                // Depth is irrelevant: every level between the reference and the owner is silent about `v`.
+                new SpecProbe("v = 99\nOuter(v) = {\n    Mid = {\n        Inner = v + 1\n        Inner\n    }\n    Mid\n}\nOuter(7)", "ok raw=8 n=1"),
+                // A clause-family binder owns its name the same way.
+                new SpecProbe("v = 99\nF(0) = 0\nF(v) = {\n    Inner = v + 1\n    Inner\n}\nF(7)", "ok raw=8 n=1"),
+                // So do a sequence-value pattern capture and a collecting parameter.
+                new SpecProbe("v = 99\nOuter((v, w)) = {\n    Inner = v + 1\n    Inner\n}\nOuter((7, 1))", "ok raw=8 n=1"),
+                new SpecProbe("v = 99\nOuter(*v) = {\n    Inner = v.count\n    Inner\n}\nOuter(7, 8)", "ok raw=2 n=1"),
+                // The callable view selects the same binding as the value view.
+                new SpecProbe("v = 99\nOuter(v) = {\n    Inner = v(1)\n    Inner\n}\nOuter({a + 1})", "ok raw=2 n=1"),
+                // A lexical dot receiver reads the parameter, not the outer property.
+                new SpecProbe("v = 99\nAdd1(n) = n + 1\nOuter(v) = {\n    Inner = v.Add1\n    Inner\n}\nOuter(7)", "ok raw=8 n=1"),
+                // A callback callee and a loop step read the same binding per element and per iteration.
+                new SpecProbe("v = 99\nOuter(v) = {\n    Add(n) = n + v\n    [1, 2].map(Add)\n}\nOuter(7)", "ok raw=L[8, 9] n=1"),
+                new SpecProbe("v = 99\nOuter(v) = {\n    Step(s) = s + v\n    repeat(Step, 2, 0)\n}\nOuter(7)", "ok raw=14 n=1"),
+                new SpecProbe("v = 99\nOuter(v) = repeat({x + v}, 2, 0)\nOuter(7)", "ok raw=14 n=1"),
+            ],
+            IncludeInGeneratorPrompt = true,
+            Explanation = "Name resolution searches outward by owning scope. `Inner` is nested inside `Outer`, which binds the parameter `v`, so the walk stops there; the root property `v = 99` belongs to a farther owner and is never reached. A parameter therefore means the same thing written directly in its algorithm's body and written inside a body nested in it.",
+        },
+        new()
+        {
+            Id = "ownership-same-owner-parameter-beats-property",
+            Category = "name-resolution",
+            Source = "Outer(v) = {\n    v = 5\n    Inner = v + 1\n    Inner + v\n}\nOuter(7)",
+            Outcome = SpecOutcome.ParseError,
+            ExpectedDiagnosticCode = DiagnosticCode.ParameterPropertyCollision,
+            Explanation = "A property cannot share a name with a completed parameter of the same or an enclosing owner. This is a declaration error before evaluation, regardless of whether the name is referenced directly, from a nested body, or not at all. Rename one declaration.",
+        },
+        new()
+        {
+            Id = "ownership-nearer-property-beats-outer-parameter",
+            Category = "name-resolution",
+            Source = "v = 99\nOuter(v) = {\n    Mid = {\n        v = 5\n        Inner = v + 1\n        Inner\n    }\n    Mid\n}\nOuter(7)",
+            Outcome = SpecOutcome.ParseError,
+            ExpectedDiagnosticCode = DiagnosticCode.ParameterPropertyCollision,
+            Probes =
+            [
+                // Removing the intervening property hands the name back to the parameter.
+                new SpecProbe("v = 99\nOuter(v) = {\n    Mid = {\n        Inner = v + 1\n        Inner\n    }\n    Mid\n}\nOuter(7)", "ok raw=8 n=1"),
+                // Renaming the outer parameter makes the nested property legal.
+                new SpecProbe("v = 99\nOuter(q) = {\n    Mid = {\n        v = 5\n        v + 1\n    }\n    Mid\n}\nOuter(7)", "ok raw=6 n=1"),
+                // A name no owner declares still resolves to the ancestor property.
+                new SpecProbe("v = 99\nOuter(q) = {\n    Inner = v + 1\n    Inner\n}\nOuter(7)", "ok raw=100 n=1"),
+            ],
+            Explanation = "Mid's property v conflicts with the completed parameter v of enclosing Outer. A nested algorithm does not make this declaration legal; rename the property or parameter. Editor recovery retains the nearer property's identity, but source evaluation is blocked.",
+        },
+        new()
+        {
+            Id = "ownership-nearest-enclosing-parameter-wins",
+            Category = "name-resolution",
+            Source = "v = 99\nOuter(v) = {\n    Mid(v) = {\n        Inner = v + 1\n        Inner\n    }\n    Mid(7)\n}\nOuter(20)",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "8",
+            ExpectedRaw = "8",
+            ExpectedEmittedCount = 1,
+            Probes =
+            [
+                // Each candidate binding would give a different answer: 20 gives 21, 99 gives 100.
+                new SpecProbe("Outer(v) = {\n    Mid(v) = {\n        Inner = v + 1\n        Inner\n    }\n    Mid(7)\n}\nOuter(20)", "ok raw=8 n=1"),
+                new SpecProbe("v = 99\nOuter(v) = {\n    Mid(w) = {\n        Inner = v + 1\n        Inner\n    }\n    Mid(7)\n}\nOuter(20)", "ok raw=21 n=1"),
+            ],
+            Explanation = "With several enclosing parameters of one name the nearest wins, because the outward walk reaches it first: `Mid`'s `v` is `7`, so `Inner` is `8` — never `Outer`'s `20` and never the root's `99`.",
+        },
+        new()
+        {
+            Id = "ownership-parameter-beats-prelude-alias",
+            Category = "name-resolution",
+            Source = "Outer(pi) = {\n    Inner = pi + 1\n    Inner\n}\nOuter(7)",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "8",
+            ExpectedRaw = "8",
+            ExpectedEmittedCount = 1,
+            Probes =
+            [
+                // A builtin name binds the same way.
+                new SpecProbe("Outer(count) = {\n    Inner = count + 1\n    Inner\n}\nOuter(7)", "ok raw=8 n=1"),
+                // The alias is still there for anyone who did not bind the name.
+                new SpecProbe("Outer(q) = {\n    Inner = count([1, 2, 3])\n    Inner\n}\nOuter(7)", "ok raw=3 n=1"),
+            ],
+            Explanation = "The prelude is simply the outermost owner, so any parameter is nearer than a builtin or a `Math` alias of the same name — from a nested body exactly as from the algorithm's own body.",
+        },
+        new()
+        {
+            Id = "ownership-parameter-beats-opened-name",
+            Category = "name-resolution",
+            Source = "Lib = {\n    public v = 99\n}\nOuter(v) = {\n    open Lib\n    Inner = v + 1\n    Inner\n}\nOuter(7)",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "8",
+            ExpectedRaw = "8",
+            ExpectedEmittedCount = 1,
+            Probes =
+            [
+                // A reference written directly in the opening body always selected the parameter.
+                new SpecProbe("Lib = {\n    public v = 99\n}\nOuter(v) = {\n    open Lib\n    v + 1\n}\nOuter(7)", "ok raw=8 n=1"),
+                // Without the parameter the opened name resolves normally.
+                new SpecProbe("Lib = {\n    public v = 99\n}\nOuter(q) = {\n    open Lib\n    Inner = v + 1\n    Inner\n}\nOuter(7)", "ok raw=100 n=1"),
+                // An ancestor-owned property still beats an inner open, unchanged.
+                new SpecProbe("Lib = {\n    public v = 99\n}\nOuter = {\n    v = 5\n    Inner = {\n        open Lib\n        v + 1\n    }\n    Inner\n}\nOuter", "ok raw=6 n=1"),
+            ],
+            Explanation = "`open` is consulted only after the whole owner walk, so an owned parameter beats an opened name exactly as an owned property does — and the nested reference agrees with the one written directly in `Outer`'s body.",
+        },
         new()
         {
             Id = "native-argument-value-demand",
@@ -3137,7 +3315,12 @@ public static class LanguageSpecCorpus
                 new SpecProbe("Helpers = {\n  public Helper = n\n}\nF(0) = 0\nF(n) = {\n  open Helpers\n  Helper\n}\nF(5)", "err arity"),
                 // Outside the branch the name resolves to nothing: the enclosing algorithm treats
                 // it as its own implicit parameter.
-                new SpecProbe("Outer = {\n  F(0) = {\n    open { public Helper = 5 }\n    Helper\n  }\n  F(n) = n\n  F(0), Helper\n}\nOuter(7)", "ok raw=S[5, 7] n=1"),
+                new SpecProbe("Outer = {\n  F(0) = {\n    open { public Helper = 5 }\n    1\n  }\n  F(n) = n\n  F(0), Helper\n}\nOuter(7)", "ok raw=S[1, 7] n=1"),
+                // ...and that parameter is then an OWNED declaration of an enclosing scope, so
+                // inside the branch it decides the name ahead of the branch's own open — the same
+                // precedence an enclosing property has over an inner open.
+                new SpecProbe("Outer = {\n  F(0) = {\n    open { public Helper = 5 }\n    Helper\n  }\n  F(n) = n\n  F(0), Helper\n}\nOuter(7)", "ok raw=S[7, 7] n=1"),
+                new SpecProbe("Outer = {\n  Helper = 9\n  F(0) = {\n    open { public Helper = 5 }\n    Helper\n  }\n  F(n) = n\n  F(0)\n}\nOuter", "ok raw=9 n=1"),
             ],
             IncludeInGeneratorPrompt = true,
             Explanation = "An `open` target is a provider for the body that opens it, not a definition of that body. An inline block opened by a conditional branch therefore exposes its self-contained public members to that branch exactly as an equivalent named open of an outer library would — `Helper` is 5 inside `F(0)` — while the block lives only for that branch: sibling branches, the enclosing algorithm, and callers never see `Helper`. Properties DECLARED in the branch stay branch-local as before, and the branch pattern stays closed — a binder reaches an opened helper as an explicit argument, never as a captured name inside the block.",
@@ -3179,7 +3362,13 @@ public static class LanguageSpecCorpus
                 new SpecProbe("F(0) = 0\nF(n) = {\n  Lib = { public X = n }\n  G = {\n    open Lib\n    X\n  }\n  G\n}\nF(5)", "err unknownName"),
                 // By name, nothing declared in a branch is reachable from outside the family.
                 new SpecProbe("F(0) = {\n  Lib = { public X = 1 }\n  Lib.X\n}\nF(n) = n\nF.Lib", "err localOnlyProperty"),
-                new SpecProbe("Outer = {\n  F(0) = {\n    Lib = { public X = 1 }\n    G = {\n      open Lib\n      X\n    }\n    G\n  }\n  F(n) = n\n  F(0), X\n}\nOuter(7)", "ok raw=S[1, 7] n=1"),
+                new SpecProbe("Outer = {\n  F(0) = {\n    Lib = { public X = 1 }\n    G = {\n      open Lib\n      X\n    }\n    G\n  }\n  F(n) = n\n  F(0)\n}\nOuter", "ok raw=1 n=1"),
+                // A same-named implicit parameter of the ENCLOSING algorithm is an owned
+                // declaration of a scope the branch is nested in, so it decides `X` inside `G`
+                // ahead of `G`'s own open — exactly as an enclosing property would.
+                // The library is outside the parameter's owner; declaring its X inside
+                // Outer would now be a parameter/property declaration error.
+                new SpecProbe("Lib = { public X = 1 }\nOuter = {\n  F(0) = {\n    G = {\n      open Lib\n      X\n    }\n    G\n  }\n  F(n) = n\n  F(0), X\n}\nOuter(7)", "ok raw=S[7, 7] n=1"),
             ],
             IncludeInGeneratorPrompt = true,
             Explanation = "A library declared inside a conditional branch classifies exactly like one declared in a parameterized body: its self-contained public members are exported, so any body nested in that branch may `open` it (or reach its members with dot access) — `X` is 1 inside `G`. What stays branch-local is the declaration's reach by name: a conditional exposes no members of its branches, so `F.Lib` and `open F.Lib` are refused at the family, and a sibling branch or the enclosing algorithm never sees `Lib` or `X`. A member that captures the branch's pattern binder is local-only for the same reason a parameter-capturing member is.",

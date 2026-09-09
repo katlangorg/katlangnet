@@ -1057,7 +1057,9 @@ public class ModuleLoaderTests
 
         var (detected, detectorDiagnostics) = ParameterDetector.Detect(elaborated);
         Assert.Empty(detectorDiagnostics);
-        var exposed = PropertyExposureResolver.Resolve(ImplicitArgumentResolver.Resolve(detected));
+        var resolved = ImplicitArgumentResolver.Resolve(detected);
+        new ParameterPropertyCollisionValidator(diagnostics).VisitAlgorithm(resolved);
+        var exposed = PropertyExposureResolver.Resolve(resolved);
         family = Assert.IsType<Algorithm.Conditional>(Assert.Single(exposed.Properties).Value);
         Assert.True(DeferredModuleRegions.TryGet(family.Branches[0].Body, out var region0));
         Assert.True(DeferredModuleRegions.TryGet(family.Branches[1].Body, out var region1));

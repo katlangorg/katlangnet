@@ -439,6 +439,7 @@ public enum KatLang.DiagnosticCode : int
   InvalidLoadedSource = 36
   LoadElaborationUnavailable = 37
   InternalError = 38
+  ParameterPropertyCollision = 39
 
 public enum KatLang.DiagnosticSeverity : int
   Hint = 1
@@ -1512,6 +1513,7 @@ public enum KatLang.KatLangErrorCode : int
   InvalidLoadedSource = 59
   LoadElaborationUnavailable = 60
   InternalError = 61
+  ParameterPropertyCollision = 62
 
 public sealed class KatLang.KatLangException : System.Exception
   ctor     public KatLangException(System.Collections.Generic.IReadOnlyList<KatLang.KatLangError> errors)

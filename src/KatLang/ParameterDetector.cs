@@ -99,17 +99,51 @@ internal static class ParameterDetector
         var processed = ProcessAlgorithm(
             root,
             preludeScope,
-            capturedParamNames: [],
+            capturedParameters: ParameterOwnership.Empty,
             diagnostics,
             observations,
             new DetectionRun());
         return (processed, diagnostics);
     }
 
+    /// <summary>
+    /// Selects bindings once implicit forwarding has completed the owner signatures.
+    /// Retains those signatures and their ordering/pattern/provenance metadata exactly;
+    /// this is selection of established bindings, not another inference pass. Restoring
+    /// synthesized calls lets the resolver rebuild forwarding under the selected bindings.
+    /// Uses the ordinary region memos and owner construction, including deferred branches.
+    /// The caller has already applied the pipeline's structural preflight.
+    /// </summary>
+    internal static (Algorithm Root, IReadOnlyList<Diagnostic> Diagnostics, bool Changed) CompleteOwnership(
+        Algorithm root,
+        ImplicitArgumentResolver.ResolutionOrigins origins,
+        HostOperations? hostOperations = null,
+        DeferredBranchContext? branchContext = null,
+        FrontEndTraversalObservations? observations = null)
+    {
+        var diagnostics = new List<Diagnostic>();
+        var run = new DetectionRun { ImplicitCallOrigins = origins.ImplicitCalls };
+        Algorithm processed;
+        if (branchContext is not null)
+        {
+            processed = ProcessConditionalBranchBody(
+                root, branchContext.ParentScope, new HashSet<string>(branchContext.BinderNames),
+                branchContext.BranchName, branchContext.CapturedParameters, diagnostics, observations, run);
+        }
+        else
+        {
+            var prelude = hostOperations?.SemanticPreludeAlgorithm ?? BuiltinRegistry.CreateSemanticPreludeAlgorithm();
+            FinalPropertyExposure.MarkTreeFinal(prelude);
+            processed = ProcessAlgorithm(root, ElaboratedScopeLookup.CreateScope(prelude, observations: observations),
+                ParameterOwnership.Empty, diagnostics, observations, run);
+        }
+        return (processed, diagnostics, run.OwnershipChanged);
+    }
+
     private static Algorithm ProcessAlgorithm(
         Algorithm alg,
         ElaboratedPropertyScope parentScope,
-        HashSet<string> capturedParamNames,
+        ParameterOwnership capturedParameters,
         List<Diagnostic>? diagnostics,
         FrontEndTraversalObservations? observations,
         DetectionRun run)
@@ -119,14 +153,14 @@ internal static class ParameterDetector
 
         if (alg is Algorithm.Conditional conditional)
             return ProcessConditionalProperty(
-                conditional, "<anonymous>", parentScope, capturedParamNames, diagnostics, observations, run);
+                conditional, "<anonymous>", parentScope, capturedParameters, diagnostics, observations, run);
 
         // A synthetic assignment-deconstruction helper (`x, *y, z = RHS`) is already a
         // fully-formed elaboration leaf: an explicit N-capture sequence-value pattern, no
         // opens, no properties, and an output that is exactly the single bound target name.
         // Its only required elaboration is rewriting that bound Resolve to a Param. Running
         // it through the general path builds an O(N) param-name set, param-order list,
-        // captured-name union, and MergeParameterPatterns per helper, so a wide
+        // parameter-ownership map, and MergeParameterPatterns per helper, so a wide
         // deconstruction is O(N^2) across its N sibling helpers. This leaf path is O(1) in
         // the capture count and produces the identical elaborated helper.
         if (alg is Algorithm.User { IsAssignmentDeconstructionHelper: true } deconstructionHelper)
@@ -141,9 +175,11 @@ internal static class ParameterDetector
         var graceWeights = new Dictionary<string, int>();
         var hasExplicitParameterList = alg.ExplicitParameterPatterns.Count > 0;
 
-        // Ordinary nested algorithms close over already-known outer params.
-        // These should rewrite to Expr.Param but must not become new local params.
-        var boundNames = UnionNames(capturedParamNames, alg.Params);
+        // The parameter bindings in force while this body's OWN rows are collected: the
+        // inherited ones plus this algorithm's written parameters, all owned by THIS level.
+        // Ordinary nested algorithms close over already-known outer params: those rewrite to
+        // Expr.Param but must not become new local params.
+        var boundParameters = capturedParameters.Extend(scope, alg.Params);
 
         // Every row this body WRITES: its output rows plus each hoisted assignment-
         // deconstruction right-hand side (see WrittenRows) — the right-hand side obeys this
@@ -153,16 +189,13 @@ internal static class ParameterDetector
         ImplicitParameterOccurrenceRecorder? provenanceRecorder = null;
         if (hasExplicitParameterList)
         {
-            ReportUndeclaredExplicitParameterNames(writtenRows, scope, boundNames, diagnostics, observations);
+            ReportUndeclaredExplicitParameterNames(writtenRows, scope, boundParameters, diagnostics, observations);
         }
-        else
+        else if (run.ImplicitCallOrigins is null)
         {
-            provenanceRecorder = new ImplicitParameterOccurrenceRecorder(
-                scope,
-                alg.Params,
-                capturedParamNames);
+            provenanceRecorder = new ImplicitParameterOccurrenceRecorder(scope, boundParameters);
             CollectFreeParams(
-                writtenRows, scope, boundNames, paramNames, paramOrder, graceWeights,
+                writtenRows, scope, boundParameters, paramNames, paramOrder, graceWeights,
                 FreeNameCollection.ImplicitSignature,
                 provenanceRecorder,
                 new FreeNameWalkMemo(observations));
@@ -171,7 +204,15 @@ internal static class ParameterDetector
                 ApplyGraceReordering(paramOrder, graceWeights);
         }
 
-        var nestedCapturedParamNames = UnionNames(capturedParamNames, paramOrder);
+        // The bindings in force inside this body: every inferred parameter is now known, and
+        // all of them are owned by THIS level. One object serves both the rewrite of this
+        // body's own rows and every nested descent, because a nested body sees exactly the
+        // same bindings with exactly the same owners.
+        // Collection only adds names; Grace changes their order, not this map's contents.
+        // Reuse the established map when no names were inferred, including completion runs.
+        var bodyParameters = paramOrder.Count == alg.Params.Count
+            ? boundParameters
+            : capturedParameters.Extend(scope, paramOrder);
 
         // Process properties recursively (each property body is an algorithm scope).
         // Two properties may legally share ONE value algorithm by reference (host-built
@@ -196,14 +237,14 @@ internal static class ParameterDetector
             else if (prop.Value is Algorithm.Conditional condAlg)
             {
                 newProperties.Add(prop.WithValue(ProcessConditionalProperty(
-                    condAlg, prop.Name, scope, nestedCapturedParamNames, diagnostics, observations, run)));
+                    condAlg, prop.Name, scope, bodyParameters, diagnostics, observations, run)));
             }
             else if (processedSharedValues is null)
             {
                 newProperties.Add(prop.WithValue(ProcessAlgorithm(
                     prop.Value,
                     scope,
-                    nestedCapturedParamNames,
+                    bodyParameters,
                     diagnostics,
                     observations,
                     run)));
@@ -215,7 +256,7 @@ internal static class ParameterDetector
                     processedBody = ProcessAlgorithm(
                         prop.Value,
                         scope,
-                        nestedCapturedParamNames,
+                        bodyParameters,
                         diagnostics,
                         observations,
                         run);
@@ -232,11 +273,14 @@ internal static class ParameterDetector
         var rewriteMemo = new RewriteWalkMemo(run, observations, diagnostics);
         var rewrittenOutput = new List<Expr>(alg.Output.Count);
         foreach (var expr in alg.Output)
-            rewrittenOutput.Add(RewriteParams(expr, paramNames, scope, capturedParamNames, rewriteMemo));
+            rewrittenOutput.Add(RewriteParams(expr, scope, bodyParameters, rewriteMemo));
         AstHelpers.RewriteDeconstructionSourceRows(
-            alg, newProperties, expr => RewriteParams(expr, paramNames, scope, capturedParamNames, rewriteMemo));
+            alg, newProperties, expr => RewriteParams(expr, scope, bodyParameters, rewriteMemo));
 
-        return algWithProcessedOpens.WithParams(paramOrder, provenanceRecorder?.Provenance) with
+        var parameterized = run.ImplicitCallOrigins is null
+            ? algWithProcessedOpens.WithParams(paramOrder, provenanceRecorder?.Provenance)
+            : algWithProcessedOpens;
+        return parameterized with
         {
             Properties = newProperties,
             Output = rewrittenOutput,
@@ -261,7 +305,7 @@ internal static class ParameterDetector
         Algorithm.Conditional condAlg,
         string propertyName,
         ElaboratedPropertyScope scope,
-        HashSet<string> capturedParamNames,
+        ParameterOwnership capturedParameters,
         List<Diagnostic>? diagnostics,
         FrontEndTraversalObservations? observations,
         DetectionRun run)
@@ -282,6 +326,10 @@ internal static class ParameterDetector
             var binderNames = new HashSet<string>(branch.Pattern.BoundNames());
             if (DeferredModuleRegions.TryGet(branch.Body, out var region))
             {
+                // Even a body with no provisional reference to the lifted name must carry
+                // the completed owner chain: its loaded source may reference it later.
+                if (run.ImplicitCallOrigins is not null)
+                    run.OwnershipChanged = true;
                 // B2c: a deferred module region. The body's modules — and with them its full
                 // elaboration and every diagnostic that could depend on their members — wait
                 // for the branch to be selected. Eagerly the body is elaborated PROVISIONALLY:
@@ -296,7 +344,7 @@ internal static class ParameterDetector
                     branchParentScope,
                     binderNames,
                     propertyName,
-                    capturedParamNames,
+                    capturedParameters,
                     diagnostics: null,
                     observations,
                     run);
@@ -306,7 +354,7 @@ internal static class ParameterDetector
                         branchParentScope,
                         new HashSet<string>(binderNames),
                         propertyName,
-                        new HashSet<string>(capturedParamNames))));
+                        capturedParameters)));
                 processedBranches.Add(new CondBranch(branch.Pattern, provisionalBody));
                 continue;
             }
@@ -316,7 +364,7 @@ internal static class ParameterDetector
                 branchParentScope,
                 binderNames,
                 propertyName,
-                capturedParamNames,
+                capturedParameters,
                 diagnostics,
                 observations,
                 run);
@@ -330,13 +378,15 @@ internal static class ParameterDetector
     /// The detection context of one deferred module region (B2c): exactly what
     /// <see cref="ProcessConditionalBranchBody"/> received when the eager walk reached the
     /// branch, so the demand-time run elaborates the loaded body under the same scope chain,
-    /// binder names, family name, and captured ancestor names.
+    /// binder names, family name, and captured ancestor parameter bindings — the last WITH
+    /// their owning levels, so the deferred elaboration makes the same ownership decisions
+    /// the eager provisional one did.
     /// </summary>
     internal sealed record DeferredBranchContext(
         ElaboratedPropertyScope ParentScope,
         IReadOnlySet<string> BinderNames,
         string BranchName,
-        IReadOnlySet<string> CapturedParamNames);
+        ParameterOwnership CapturedParameters);
 
     /// <summary>
     /// Demand-time detection of a deferred region's LOADED body: the ordinary branch-body
@@ -353,7 +403,7 @@ internal static class ParameterDetector
             context.ParentScope,
             new HashSet<string>(context.BinderNames),
             context.BranchName,
-            new HashSet<string>(context.CapturedParamNames),
+            context.CapturedParameters,
             diagnostics,
             observations,
             new DetectionRun());
@@ -375,8 +425,7 @@ internal static class ParameterDetector
         private const int MaxSuggestionAttempts = 64;
 
         private readonly ElaboratedPropertyScope _scope;
-        private readonly IReadOnlyCollection<string> _localParameterNames;
-        private readonly IReadOnlyCollection<string> _capturedParameterNames;
+        private readonly ParameterOwnership _parameters;
         private Dictionary<string, ImplicitParameterProvenance>? _provenance;
         private int _suggestionAttempts;
 
@@ -389,14 +438,10 @@ internal static class ParameterDetector
         /// </summary>
         private Algorithm? _dotMemberReceiver;
 
-        public ImplicitParameterOccurrenceRecorder(
-            ElaboratedPropertyScope scope,
-            IReadOnlyCollection<string> localParameterNames,
-            IReadOnlyCollection<string> capturedParameterNames)
+        public ImplicitParameterOccurrenceRecorder(ElaboratedPropertyScope scope, ParameterOwnership parameters)
         {
             _scope = scope;
-            _localParameterNames = localParameterNames;
-            _capturedParameterNames = capturedParameterNames;
+            _parameters = parameters;
         }
 
         public IReadOnlyDictionary<string, ImplicitParameterProvenance>? Provenance => _provenance;
@@ -420,8 +465,7 @@ internal static class ParameterDetector
                 ? NameSuggestions.SuggestVisibleName(
                     name,
                     _scope,
-                    _localParameterNames,
-                    _capturedParameterNames,
+                    _parameters,
                     _dotMemberReceiver)
                 : null;
             _provenance[name] = new ImplicitParameterProvenance(name, occurrence.Span, suggestion);
@@ -437,6 +481,11 @@ internal static class ParameterDetector
     /// </summary>
     private sealed class DetectionRun
     {
+        // Non-null only at the completion boundary. Read-only for this run; every memo is
+        // still local to its ownership region, so shared nodes cannot reuse another owner's
+        // selection. Existing Param nodes retain their classification.
+        public IReadOnlyDictionary<Expr, Expr>? ImplicitCallOrigins;
+        public bool OwnershipChanged;
         /// <summary>
         /// Conditional branch bodies elaborated so far, by <see cref="BranchBodyRegionKey"/>.
         /// A branch body's rewrite depends on exactly the key's dimensions (parent scope,
@@ -488,7 +537,7 @@ internal static class ParameterDetector
     private sealed record BranchBodyRegion(Algorithm Rewritten, IReadOnlyList<(string Name, SourceSpan Span)>? UndeclaredNames);
 
     /// <summary>
-    /// Reference-identity memo state for ONE <see cref="CollectFreeParams(IReadOnlyList{Expr}, ElaboratedPropertyScope, HashSet{string}, HashSet{string}, List{string}, Dictionary{string, int}, FreeNameCollection, ImplicitParameterOccurrenceRecorder?, FreeNameWalkMemo)"/>
+    /// Reference-identity memo state for ONE <see cref="CollectFreeParams(IReadOnlyList{Expr}, ElaboratedPropertyScope, ParameterOwnership, HashSet{string}, List{string}, Dictionary{string, int}, FreeNameCollection, ImplicitParameterOccurrenceRecorder?, FreeNameWalkMemo)"/>
     /// walk (one algorithm's collection region — scope, bound names, target sets, mode and
     /// recorder are all constant for the walk's lifetime). A legal shared (acyclic) subtree is
     /// expanded once; a later reach of the same node reference re-applies only the node's
@@ -555,11 +604,9 @@ internal static class ParameterDetector
     }
 
     /// <summary>
-    /// Reference-identity memo state for ONE detector rewrite region — a
-    /// <see cref="RewriteParams(Expr, HashSet{string}, ElaboratedPropertyScope, HashSet{string}, RewriteWalkMemo)"/>
-    /// walk over one algorithm's output rows, or a
-    /// <see cref="RewriteBinderRefs(Expr, HashSet{string}, ElaboratedPropertyScope, HashSet{string}, RewriteWalkMemo)"/>
-    /// walk over one conditional branch body. The rewrite context (name sets, scope) is constant
+    /// Reference-identity memo state for ONE <see cref="RewriteParams"/> region:
+    /// an algorithm's output rows or a conditional branch body. Both use the same
+    /// owner-aware rewrite. The rewrite context (parameter ownership, scope) is constant
     /// for the region, so an original node reference maps to exactly one rewritten node: shared
     /// input rewrites once and stays shared in the output. <see cref="Algorithms"/> additionally
     /// memoizes the region's nested-algorithm processing so two distinct
@@ -587,7 +634,7 @@ internal static class ParameterDetector
     /// Reference-identity memo state for ONE open-target region
     /// (<see cref="ProcessOpenExprs"/> over one algorithm's open list). The region runs two
     /// distinct walks over the same nodes — <see cref="ProcessOpenExpr(Expr, ElaboratedPropertyScope, List{Diagnostic}?, OpenWalkMemo)"/>
-    /// (open-form rewriting) and <see cref="ProcessExpr(Expr, ElaboratedPropertyScope, HashSet{string}, OpenWalkMemo)"/>
+    /// (open-form rewriting) and <see cref="ProcessExpr"/>
     /// (transparent argument/capture rewriting) — with different results for the same node, so
     /// each keeps its own map; both contexts are constant for the region (the open-parent
     /// prelude scope, empty captured names, one diagnostics sink). The two algorithm maps stay
@@ -749,7 +796,7 @@ internal static class ParameterDetector
                 if (!memo.OpenAlgorithms.TryGetValue(algorithm, out var processedAlgorithm))
                 {
                     processedAlgorithm = ProcessAlgorithm(
-                        algorithm, openParentScope, [], diagnostics, memo.Observations, memo.Run);
+                        algorithm, openParentScope, ParameterOwnership.Empty, diagnostics, memo.Observations, memo.Run);
                     memo.OpenAlgorithms[algorithm] = processedAlgorithm;
                 }
 
@@ -761,7 +808,7 @@ internal static class ParameterDetector
                 // open-target parent scope (the pre-split transparent wrapper
                 // added only an empty lookup level here).
                 return new Expr.Capture(new OutputBundle(
-                    captureBody.Select(row => ProcessExpr(row, openParentScope, [], memo)).ToList()))
+                    captureBody.Select(row => ProcessExpr(row, openParentScope, memo)).ToList()))
                 { Span = expr.Span };
 
             case Expr.DotCall dotCall:
@@ -775,7 +822,7 @@ internal static class ParameterDetector
                 {
                     Target = ProcessOpenExpr(dotCall.Target, openParentScope, diagnostics, memo),
                     Args = dotCall.Args is { } dotArgs
-                        ? new OutputBundle(dotArgs.Select(argExpr => ProcessExpr(argExpr, openParentScope, [], memo)).ToList())
+                        ? new OutputBundle(dotArgs.Select(argExpr => ProcessExpr(argExpr, openParentScope, memo)).ToList())
                         : null,
                     LexicalFallback = ProcessOpenExpr(
                         dotCall.EffectiveLexicalFallback, openParentScope, diagnostics, memo),
@@ -802,7 +849,7 @@ internal static class ParameterDetector
             case Expr.Call(var function, var args):
                 return new Expr.Call(
                     ProcessOpenExpr(function, openParentScope, diagnostics, memo),
-                    new OutputBundle(args.Select(argExpr => ProcessExpr(argExpr, openParentScope, [], memo)).ToList())) { Span = expr.Span };
+                    new OutputBundle(args.Select(argExpr => ProcessExpr(argExpr, openParentScope, memo)).ToList())) { Span = expr.Span };
 
             // Intentional leaves: name/literal leaves carry no nested algorithm
             // to process (a bare Resolve IS the ordinary open-target form), and
@@ -850,7 +897,7 @@ internal static class ParameterDetector
         ElaboratedPropertyScope parentScope,
         HashSet<string> binderNames,
         string branchName,
-        HashSet<string> capturedParamNames,
+        ParameterOwnership capturedParameters,
         List<Diagnostic>? diagnostics,
         FrontEndTraversalObservations? observations,
         DetectionRun run)
@@ -860,11 +907,17 @@ internal static class ParameterDetector
         // per distinct parent scope, binder set, captured set, and reporting mode; a later
         // reach reuses the rewritten body (sharing preserved in the output) and re-issues only
         // the closed-branch diagnostics, which are the one thing that names THIS family.
+        //
+        // The captured dimension stays the NAME SET even though ownership decisions also read
+        // the owning LEVEL of each name: a scope level is allocated once per descent step and
+        // every use of that instance carries the one ownership object built beside it, so the
+        // parent scope — already in the key by reference identity — determines the owner map.
+        // Two contexts that agree on the parent scope instance cannot disagree on owners.
         var regionKey = new BranchBodyRegionKey(
             body,
             parentScope,
             FrontEndRegionKeys.NameSet(binderNames),
-            FrontEndRegionKeys.NameSet(capturedParamNames),
+            FrontEndRegionKeys.NameSet(capturedParameters.Names),
             ReportsDiagnostics: diagnostics is not null);
         var regions = run.BranchBodyRegions ??= new();
         if (regions.TryGetValue(regionKey, out var completedRegion))
@@ -883,7 +936,11 @@ internal static class ParameterDetector
         var bodyWithProcessedOpens = body with { Opens = newOpens };
         var bodyScope = ElaboratedScopeLookup.CreateScope(bodyWithProcessedOpens, parentScope);
 
-        var bodyCapturedParamNames = UnionNames(capturedParamNames, binderNames);
+        // The branch's pattern binders are owned by the branch BODY level, exactly like an
+        // ordinary algorithm's parameters are owned by its own level. In invalid same-owner
+        // collisions, recovery selects the binder for direct and nested references alike;
+        // declaration validity is checked after signature completion.
+        var bodyParameters = capturedParameters.Extend(bodyScope, binderNames);
 
         // Every row this branch body WRITES, hoisted deconstruction right-hand sides
         // included (see WrittenRows): they obey the same full-input-specification rule.
@@ -900,7 +957,7 @@ internal static class ParameterDetector
             CollectFreeParams(
                 writtenRows,
                 bodyScope,
-                bodyCapturedParamNames,
+                bodyParameters,
                 freeNames,
                 freeOrder,
                 dummyWeights,
@@ -939,14 +996,14 @@ internal static class ParameterDetector
             if (prop.Value is Algorithm.Conditional nestedCondAlg)
             {
                 processedProp = ProcessConditionalProperty(
-                    nestedCondAlg, prop.Name, bodyScope, bodyCapturedParamNames, diagnostics, observations, run);
+                    nestedCondAlg, prop.Name, bodyScope, bodyParameters, diagnostics, observations, run);
             }
             else if (processedSharedValues is null)
             {
                 processedProp = ProcessAlgorithm(
                     prop.Value,
                     bodyScope,
-                    bodyCapturedParamNames,
+                    bodyParameters,
                     diagnostics,
                     observations,
                     run);
@@ -956,7 +1013,7 @@ internal static class ParameterDetector
                 processedProp = ProcessAlgorithm(
                     prop.Value,
                     bodyScope,
-                    bodyCapturedParamNames,
+                    bodyParameters,
                     diagnostics,
                     observations,
                     run);
@@ -966,15 +1023,15 @@ internal static class ParameterDetector
             newProperties.Add(prop.WithValue(processedProp));
         }
 
-        // Rewrite only binder names Resolve → Param; leave all others as-is.
+        // The shared owner walk selects both branch binders and ancestor parameters.
         // Process nested blocks/calls normally for their own parameter detection.
         // ONE reference memo spans the branch body's rows (constant rewrite context).
         var rewriteMemo = new RewriteWalkMemo(run, observations, diagnostics);
         var rewrittenOutput = new List<Expr>(body.Output.Count);
         foreach (var expr in body.Output)
-            rewrittenOutput.Add(RewriteBinderRefs(expr, binderNames, bodyScope, capturedParamNames, rewriteMemo));
+            rewrittenOutput.Add(RewriteParams(expr, bodyScope, bodyParameters, rewriteMemo));
         AstHelpers.RewriteDeconstructionSourceRows(
-            body, newProperties, expr => RewriteBinderRefs(expr, binderNames, bodyScope, capturedParamNames, rewriteMemo));
+            body, newProperties, expr => RewriteParams(expr, bodyScope, bodyParameters, rewriteMemo));
 
         var rewritten = bodyWithProcessedOpens with
         {
@@ -1027,7 +1084,7 @@ internal static class ParameterDetector
     private static void ReportUndeclaredExplicitParameterNames(
         IReadOnlyList<Expr> output,
         ElaboratedPropertyScope scope,
-        HashSet<string> boundNames,
+        ParameterOwnership boundParameters,
         List<Diagnostic>? diagnostics,
         FrontEndTraversalObservations? observations = null)
     {
@@ -1038,7 +1095,7 @@ internal static class ParameterDetector
         var freeOrder = new List<string>();
         var dummyWeights = new Dictionary<string, int>();
         CollectFreeParams(
-            output, scope, boundNames, freeNames, freeOrder, dummyWeights,
+            output, scope, boundParameters, freeNames, freeOrder, dummyWeights,
             FreeNameCollection.DeclaredNameCheck,
             recorder: null,
             new FreeNameWalkMemo(observations));
@@ -1053,164 +1110,6 @@ internal static class ParameterDetector
             {
                 Code = DiagnosticCode.UndeclaredIdentifier,
             });
-        }
-    }
-
-    /// <summary>
-    /// Rewrites <see cref="Expr.Resolve"/> → <see cref="Expr.Param"/> ONLY for pattern binder names.
-    /// Other identifiers remain as <see cref="Expr.Resolve"/> (lexical lookup at runtime).
-    /// Grace wrappers are stripped (they should not appear in conditional bodies, but handle gracefully).
-    /// Nested algorithms are processed via <see cref="ProcessAlgorithm"/> for their own scope.
-    /// </summary>
-    private static Expr RewriteBinderRefs(
-        Expr expr,
-        HashSet<string> binderNames,
-        ElaboratedPropertyScope scope,
-        HashSet<string> capturedParamNames,
-        RewriteWalkMemo memo)
-    {
-        // A Resolve leaf may itself be replaced by a fresh Param, so it participates in the
-        // rewrite memo even though it has no children; otherwise a shared input leaf would
-        // become several output objects. Other childless leaves return themselves.
-        var hasTraversableChildren = AstTraversalDagSafety.HasTraversableExprChildren(expr);
-        if (!hasTraversableChildren && expr is not Expr.Resolve)
-            return RewriteBinderRefsCore(expr, binderNames, scope, capturedParamNames, memo);
-
-        if (memo.Rewrites.TryGetValue(expr, out var rewritten))
-            return rewritten;
-
-        if (hasTraversableChildren)
-            memo.Observations?.RecordDetectorRewriteExpansion();
-        rewritten = RewriteBinderRefsCore(expr, binderNames, scope, capturedParamNames, memo);
-        memo.Rewrites[expr] = rewritten;
-        return rewritten;
-    }
-
-    private static Expr RewriteBinderRefsCore(
-        Expr expr,
-        HashSet<string> binderNames,
-        ElaboratedPropertyScope scope,
-        HashSet<string> capturedParamNames,
-        RewriteWalkMemo memo)
-    {
-        switch (expr)
-        {
-            case Expr.Grace(var inner, _):
-                // Grace in conditional branch body is a parse error (already reported).
-                // Strip it here for error recovery so downstream processing doesn't crash.
-                return RewriteBinderRefs(inner, binderNames, scope, capturedParamNames, memo);
-
-            case Expr.Resolve(var name) when ShouldRewriteAsParam(name, binderNames, scope, capturedParamNames):
-                return new Expr.Param(name) { Span = expr.Span };
-
-            case Expr.Binary(var op, var left, var right):
-                return new Expr.Binary(op,
-                    RewriteBinderRefs(left, binderNames, scope, capturedParamNames, memo),
-                    RewriteBinderRefs(right, binderNames, scope, capturedParamNames, memo)) { Span = expr.Span };
-
-            case Expr.Unary(var op, var operand):
-                return new Expr.Unary(op, RewriteBinderRefs(operand, binderNames, scope, capturedParamNames, memo)) { Span = expr.Span };
-
-            case Expr.Index(var target, var selector):
-                return new Expr.Index(
-                    RewriteBinderRefs(target, binderNames, scope, capturedParamNames, memo),
-                    RewriteBinderRefs(selector, binderNames, scope, capturedParamNames, memo)) { Span = expr.Span };
-
-            case Expr.SequenceSpread(var operand):
-                return new Expr.SequenceSpread(
-                    RewriteBinderRefs(operand, binderNames, scope, capturedParamNames, memo))
-                {
-                    Span = expr.Span,
-                    SpreadMarkerSpan = ((Expr.SequenceSpread)expr).SpreadMarkerSpan,
-                };
-
-            case Expr.SequenceConstruct(var left, var right):
-                return new Expr.SequenceConstruct(
-                    RewriteBinderRefs(left, binderNames, scope, capturedParamNames, memo),
-                    RewriteBinderRefs(right, binderNames, scope, capturedParamNames, memo)) { Span = expr.Span };
-
-            case Expr.ListLiteral(var items):
-                return new Expr.ListLiteral(
-                    items.Select(item => RewriteBinderRefs(item, binderNames, scope, capturedParamNames, memo)).ToList())
-                { Span = expr.Span };
-
-            case Expr.DotCall dotCall:
-            {
-                // Argument bundles own no scope: slots rewrite in the enclosing
-                // binder scope, exactly like capture rows. The stored
-                // lexical-fallback identity rewrites by the SAME rule as a bare
-                // callee name (Resolve → Param when the member is a known
-                // binder).
-                OutputBundle? rewrittenArgs = null;
-                if (dotCall.Args is { } dotArgs)
-                {
-                    var rewrittenSlots = new List<Expr>(dotArgs.Count);
-                    foreach (var argExpr in dotArgs)
-                        rewrittenSlots.Add(RewriteBinderRefs(argExpr, binderNames, scope, capturedParamNames, memo));
-                    rewrittenArgs = new OutputBundle(rewrittenSlots);
-                }
-
-                return dotCall with
-                {
-                    Target = RewriteBinderRefs(dotCall.Target, binderNames, scope, capturedParamNames, memo),
-                    Args = rewrittenArgs,
-                    LexicalFallback = RewriteBinderRefs(dotCall.EffectiveLexicalFallback, binderNames, scope, capturedParamNames, memo),
-                };
-            }
-
-            case Expr.AlgorithmExpr(var alg):
-            {
-                memo.Algorithms ??= new(ReferenceEqualityComparer.Instance);
-                if (!memo.Algorithms.TryGetValue(alg, out var processedAlg))
-                {
-                    processedAlg = ProcessAlgorithm(
-                        alg, scope, UnionNames(capturedParamNames, binderNames), memo.Diagnostics, memo.Observations, memo.Run);
-                    memo.Algorithms[alg] = processedAlg;
-                }
-
-                return new Expr.AlgorithmExpr(processedAlg) { Span = expr.Span };
-            }
-
-            case Expr.Capture(var captureBody):
-                {
-                    // Captures are transparent: rows rewrite in the enclosing
-                    // binder scope (no scope of their own, no properties).
-                    var rewrittenRows = new List<Expr>(captureBody.Count);
-                    foreach (var row in captureBody)
-                        rewrittenRows.Add(RewriteBinderRefs(row, binderNames, scope, capturedParamNames, memo));
-                    return new Expr.Capture(new OutputBundle(rewrittenRows)) { Span = expr.Span };
-                }
-
-            case Expr.Call(var func, var args):
-            {
-                // Argument bundles own no scope: slots rewrite in the enclosing
-                // binder scope.
-                var rewrittenArgs = new List<Expr>(args.Count);
-                foreach (var argExpr in args)
-                    rewrittenArgs.Add(RewriteBinderRefs(argExpr, binderNames, scope, capturedParamNames, memo));
-                return new Expr.Call(
-                    RewriteBinderRefs(func, binderNames, scope, capturedParamNames, memo),
-                    new OutputBundle(rewrittenArgs)) { Span = expr.Span };
-            }
-
-            // Intentional leaves: a Resolve that failed the guarded binder test
-            // above stays an ordinary lexical reference, and the remaining
-            // leaves contain no binder references to rewrite.
-            case Expr.Resolve:
-            case Expr.Param:
-            case Expr.Num:
-            case Expr.StringLiteral:
-            case Expr.EmptySequence:
-            case Expr.NativeCall:
-                return expr;
-
-            // Exhaustiveness guard, matching AstWalker.VisitExpr: a new Expr
-            // variant must be classified above rather than silently keeping
-            // binder references inside it unrewritten.
-            default:
-                throw new InvalidOperationException(
-                    $"Unhandled Expr variant in {nameof(ParameterDetector)}.{nameof(RewriteBinderRefs)}: {expr.GetType().Name}. " +
-                    "Classify the new variant explicitly as a recursive rewrite case or an intentional leaf.");
         }
     }
 
@@ -1247,7 +1146,7 @@ internal static class ParameterDetector
     private static void CollectFreeParams(
         IReadOnlyList<Expr> exprs,
         ElaboratedPropertyScope scope,
-        HashSet<string> extraBoundNames,
+        ParameterOwnership boundParameters,
         HashSet<string> paramNames,
         List<string> paramOrder,
         Dictionary<string, int> graceWeights,
@@ -1256,13 +1155,13 @@ internal static class ParameterDetector
         FreeNameWalkMemo memo)
     {
         foreach (var expr in exprs)
-            CollectFreeParams(expr, scope, extraBoundNames, paramNames, paramOrder, graceWeights, mode, recorder, memo);
+            CollectFreeParams(expr, scope, boundParameters, paramNames, paramOrder, graceWeights, mode, recorder, memo);
     }
 
     private static void CollectFreeParams(
         Expr expr,
         ElaboratedPropertyScope scope,
-        HashSet<string> extraBoundNames,
+        ParameterOwnership boundParameters,
         HashSet<string> paramNames,
         List<string> paramOrder,
         Dictionary<string, int> graceWeights,
@@ -1277,7 +1176,7 @@ internal static class ParameterDetector
         // equivalent duplicated tree would have. Childless leaves skip the memo (O(1) each).
         if (!AstTraversalDagSafety.HasTraversableExprChildren(expr))
         {
-            CollectFreeParamsCore(expr, scope, extraBoundNames, paramNames, paramOrder, graceWeights, mode, recorder, memo);
+            CollectFreeParamsCore(expr, scope, boundParameters, paramNames, paramOrder, graceWeights, mode, recorder, memo);
             return;
         }
 
@@ -1290,7 +1189,7 @@ internal static class ParameterDetector
         memo.Observations?.RecordDetectorCollectExpansion();
         memo.OpenSlots.Add(null);
         var slotIndex = memo.OpenSlots.Count - 1;
-        CollectFreeParamsCore(expr, scope, extraBoundNames, paramNames, paramOrder, graceWeights, mode, recorder, memo);
+        CollectFreeParamsCore(expr, scope, boundParameters, paramNames, paramOrder, graceWeights, mode, recorder, memo);
         var completedVector = memo.OpenSlots[slotIndex];
         memo.OpenSlots.RemoveAt(slotIndex);
         memo.CompletedVectors[expr] = completedVector;
@@ -1299,7 +1198,7 @@ internal static class ParameterDetector
     private static void CollectFreeParamsCore(
         Expr expr,
         ElaboratedPropertyScope scope,
-        HashSet<string> extraBoundNames,
+        ParameterOwnership boundParameters,
         HashSet<string> paramNames,
         List<string> paramOrder,
         Dictionary<string, int> graceWeights,
@@ -1334,7 +1233,7 @@ internal static class ParameterDetector
 
                 if (gracedCore is Expr.Resolve(var gracedName))
                 {
-                    if (!IsBoundName(gracedName, scope, extraBoundNames) && gracedName.Length > 0)
+                    if (!IsBoundName(gracedName, scope, boundParameters) && gracedName.Length > 0)
                     {
                         if (paramNames.Add(gracedName))
                         {
@@ -1348,14 +1247,14 @@ internal static class ParameterDetector
                 }
                 else
                 {
-                    CollectFreeParams(gracedCore, scope, extraBoundNames, paramNames, paramOrder, graceWeights, mode, recorder, memo);
+                    CollectFreeParams(gracedCore, scope, boundParameters, paramNames, paramOrder, graceWeights, mode, recorder, memo);
                 }
 
                 break;
             }
 
             case Expr.Resolve(var name):
-                if (!IsBoundName(name, scope, extraBoundNames) && name.Length > 0)
+                if (!IsBoundName(name, scope, boundParameters) && name.Length > 0)
                 {
                     if (paramNames.Add(name))
                     {
@@ -1366,33 +1265,33 @@ internal static class ParameterDetector
                 break;
 
             case Expr.Binary(_, var left, var right):
-                CollectFreeParams(left, scope, extraBoundNames, paramNames, paramOrder, graceWeights, mode, recorder, memo);
-                CollectFreeParams(right, scope, extraBoundNames, paramNames, paramOrder, graceWeights, mode, recorder, memo);
+                CollectFreeParams(left, scope, boundParameters, paramNames, paramOrder, graceWeights, mode, recorder, memo);
+                CollectFreeParams(right, scope, boundParameters, paramNames, paramOrder, graceWeights, mode, recorder, memo);
                 break;
 
             case Expr.Unary(_, var operand):
-                CollectFreeParams(operand, scope, extraBoundNames, paramNames, paramOrder, graceWeights, mode, recorder, memo);
+                CollectFreeParams(operand, scope, boundParameters, paramNames, paramOrder, graceWeights, mode, recorder, memo);
                 break;
 
             case Expr.Index(var target, var selector):
-                CollectFreeParams(target, scope, extraBoundNames, paramNames, paramOrder, graceWeights, mode, recorder, memo);
-                CollectFreeParams(selector, scope, extraBoundNames, paramNames, paramOrder, graceWeights, mode, recorder, memo);
+                CollectFreeParams(target, scope, boundParameters, paramNames, paramOrder, graceWeights, mode, recorder, memo);
+                CollectFreeParams(selector, scope, boundParameters, paramNames, paramOrder, graceWeights, mode, recorder, memo);
                 break;
 
             case Expr.SequenceSpread(var operand):
-                CollectFreeParams(operand, scope, extraBoundNames, paramNames, paramOrder, graceWeights, mode, recorder, memo);
+                CollectFreeParams(operand, scope, boundParameters, paramNames, paramOrder, graceWeights, mode, recorder, memo);
                 break;
 
             case Expr.SequenceConstruct(var left, var right):
-                CollectFreeParams(left, scope, extraBoundNames, paramNames, paramOrder, graceWeights, mode, recorder, memo);
-                CollectFreeParams(right, scope, extraBoundNames, paramNames, paramOrder, graceWeights, mode, recorder, memo);
+                CollectFreeParams(left, scope, boundParameters, paramNames, paramOrder, graceWeights, mode, recorder, memo);
+                CollectFreeParams(right, scope, boundParameters, paramNames, paramOrder, graceWeights, mode, recorder, memo);
                 break;
 
             case Expr.ListLiteral(var items):
                 // List-literal elements are transparent to the enclosing
                 // parameter scope, like spread operands and sequence joins.
                 foreach (var item in items)
-                    CollectFreeParams(item, scope, extraBoundNames, paramNames, paramOrder, graceWeights, mode, recorder, memo);
+                    CollectFreeParams(item, scope, boundParameters, paramNames, paramOrder, graceWeights, mode, recorder, memo);
                 break;
 
             case Expr.DotCall dotCall:
@@ -1406,7 +1305,7 @@ internal static class ParameterDetector
                 // reorder the enclosing algorithm's signature. Thus `a.t(b)`
                 // contributes `a, t, b`, while the direct call `t(a)` keeps its
                 // own source order `t, a`.
-                CollectFreeParams(dotCall.Target, scope, extraBoundNames, paramNames, paramOrder, graceWeights, mode, recorder, memo);
+                CollectFreeParams(dotCall.Target, scope, boundParameters, paramNames, paramOrder, graceWeights, mode, recorder, memo);
 
                 // A statically impossible fallback — a guaranteed structural
                 // member, a conditional-branch member (a local-only ERROR at
@@ -1417,7 +1316,7 @@ internal static class ParameterDetector
                 // definite dependency (see FreeNameCollection).
                 if (mode == FreeNameCollection.ImplicitSignature)
                 {
-                    var receiverProvider = ResolveDotCallReceiverProvider(dotCall, scope, extraBoundNames);
+                    var receiverProvider = ResolveDotCallReceiverProvider(dotCall, scope, boundParameters);
                     if (dotCall.GetLexicalFallbackSelection(receiverProvider) != LexicalFallbackSelection.Never)
                     {
                         // While collecting the member/fallback occurrence, the
@@ -1430,18 +1329,18 @@ internal static class ParameterDetector
                             receiverProvider.Kind == StaticStructuralMemberProviderKind.KnownAlgorithm
                                 ? receiverProvider.Algorithm
                                 : null);
-                        CollectFreeParams(dotCall.EffectiveLexicalFallback, scope, extraBoundNames, paramNames, paramOrder, graceWeights, mode, recorder, memo);
+                        CollectFreeParams(dotCall.EffectiveLexicalFallback, scope, boundParameters, paramNames, paramOrder, graceWeights, mode, recorder, memo);
                         recorder?.ExitDotMemberContext(previousReceiver);
                     }
                 }
                 if (dotCall.Args is { } dotArgs)
-                    CollectFreeParams(dotArgs, scope, extraBoundNames, paramNames, paramOrder, graceWeights, mode, recorder, memo);
+                    CollectFreeParams(dotArgs, scope, boundParameters, paramNames, paramOrder, graceWeights, mode, recorder, memo);
                 break;
 
             case Expr.Capture(var captureBody):
                 // Captures are transparent: free identifiers bubble up to the
                 // enclosing param scope.
-                CollectFreeParams(captureBody, scope, extraBoundNames, paramNames, paramOrder, graceWeights, mode, recorder, memo);
+                CollectFreeParams(captureBody, scope, boundParameters, paramNames, paramOrder, graceWeights, mode, recorder, memo);
                 break;
 
             case Expr.AlgorithmExpr:
@@ -1449,11 +1348,11 @@ internal static class ParameterDetector
                 break;
 
             case Expr.Call(var func, var args):
-                CollectFreeParams(func, scope, extraBoundNames, paramNames, paramOrder, graceWeights, mode, recorder, memo);
+                CollectFreeParams(func, scope, boundParameters, paramNames, paramOrder, graceWeights, mode, recorder, memo);
                 // Argument bundles are transparent: free identifiers inside
                 // argument slots belong to the enclosing algorithm. (A brace
                 // block argument is an AlgorithmExpr slot and owns its names.)
-                CollectFreeParams(args, scope, extraBoundNames, paramNames, paramOrder, graceWeights, mode, recorder, memo);
+                CollectFreeParams(args, scope, boundParameters, paramNames, paramOrder, graceWeights, mode, recorder, memo);
                 break;
 
             // Intentional leaves with no free-name occurrences: literals, the
@@ -1482,30 +1381,31 @@ internal static class ParameterDetector
     /// The receiver provider of one dot edge at implicit-signature collection
     /// time, resolving a lexical-reference receiver through the SAME
     /// elaborated scope the collection itself uses; the caller applies the
-    /// shared MAY-selection law to it. The receiver's
-    /// provider mirrors the receiver occurrence's own elaboration fate:
-    /// a name that will elaborate to a parameter (unbound and therefore
-    /// inferred, or a known parameter name not shadowed by a visible
-    /// non-prelude property — the <see cref="ShouldRewriteAsParam"/>
-    /// decision) is a runtime value; a name resolving to exactly one visible
-    /// property is that property's statically known algorithm; an ambiguous
-    /// name stays an unresolved reference. The Never/Conditional/Always
-    /// mapping itself is the shared
-    /// <see cref="AstHelpers.GetLexicalFallbackSelection"/> law — this
-    /// method only supplies the detector's resolution power, exactly like
-    /// the editor's provider resolution.
+    /// shared MAY-selection law to it. The receiver's provider mirrors the
+    /// receiver occurrence's own elaboration fate, and it must do so through the
+    /// SAME owner walk that decides it: a name the walk selects a parameter for —
+    /// or one nothing declares and no open provides, which is therefore about to
+    /// be inferred as a parameter — is a runtime value; a name the walk selects a
+    /// property for, or exactly one open provides, is that property's statically
+    /// known algorithm; an ambiguous opened name stays an unresolved reference.
+    /// Reusing <see cref="ElaboratedScopeLookup.SelectOwnedDeclaration"/> here is
+    /// what keeps receiver classification from drifting away from
+    /// <see cref="ShouldRewriteAsParam"/>. The Never/Conditional/Always mapping
+    /// itself is the shared <see cref="AstHelpers.GetLexicalFallbackSelection"/>
+    /// law — this method only supplies the detector's resolution power, exactly
+    /// like the editor's provider resolution.
     /// </summary>
     private static StaticStructuralMemberProvider ResolveDotCallReceiverProvider(
         Expr.DotCall dotCall,
         ElaboratedPropertyScope scope,
-        HashSet<string> extraBoundNames)
+        ParameterOwnership boundParameters)
     {
         var receiver = dotCall.Target.UnwrapGraceOperand();
         var provider = receiver.GetStaticStructuralMemberProvider();
         if (provider.Kind == StaticStructuralMemberProviderKind.LexicalReference
             && receiver is Expr.Resolve(var receiverName))
         {
-            provider = ResolveReceiverNameProvider(receiverName, scope, extraBoundNames);
+            provider = ResolveReceiverNameProvider(receiverName, scope, boundParameters);
         }
 
         return provider;
@@ -1514,18 +1414,33 @@ internal static class ParameterDetector
     private static StaticStructuralMemberProvider ResolveReceiverNameProvider(
         string name,
         ElaboratedPropertyScope scope,
-        HashSet<string> extraBoundNames)
+        ParameterOwnership boundParameters)
     {
-        if (!IsBoundName(name, scope, extraBoundNames)
-            || (extraBoundNames.Contains(name) && !HasVisibleNonPreludePropertyName(scope, name)))
+        var owned = ElaboratedScopeLookup.SelectOwnedDeclaration(scope, name, boundParameters);
+        switch (owned.Kind)
         {
-            return new(StaticStructuralMemberProviderKind.RuntimeParameter);
-        }
+            case OwnedDeclarationKind.Parameter:
+                return new(StaticStructuralMemberProviderKind.RuntimeParameter);
 
-        var hits = ElaboratedScopeLookup.LookupLexicalPropertyMatches(scope, name);
-        return hits.Count == 1
-            ? new(StaticStructuralMemberProviderKind.KnownAlgorithm, hits[0].Property.Value)
-            : new(StaticStructuralMemberProviderKind.LexicalReference);
+            case OwnedDeclarationKind.Property:
+                return new(
+                    StaticStructuralMemberProviderKind.KnownAlgorithm,
+                    owned.PropertyHit!.Value.Property.Value);
+
+            default:
+            {
+                // Undecided by ownership: the ordinary open fallback, and — when
+                // that provides nothing either — the name this collection is
+                // about to promote to an implicit parameter.
+                var openHits = ElaboratedScopeLookup.LookupOpenPropertyMatches(scope, name);
+                return openHits.Count switch
+                {
+                    0 => new(StaticStructuralMemberProviderKind.RuntimeParameter),
+                    1 => new(StaticStructuralMemberProviderKind.KnownAlgorithm, openHits[0].Property.Value),
+                    _ => new(StaticStructuralMemberProviderKind.LexicalReference),
+                };
+            }
+        }
     }
 
     /// <summary>
@@ -1577,81 +1492,96 @@ internal static class ParameterDetector
         }
     }
 
-    private static HashSet<string> UnionNames(HashSet<string> baseNames, IEnumerable<string> extraNames)
-    {
-        var names = new HashSet<string>(baseNames);
-        foreach (var extraName in extraNames)
-            names.Add(extraName);
-        return names;
-    }
-
+    /// <summary>
+    /// THE parameter-classification decision: whether this bare-name occurrence
+    /// elaborates to <see cref="Expr.Param"/> (a runtime parameter read) rather
+    /// than staying an <see cref="Expr.Resolve"/> lexical property reference.
+    ///
+    /// <para>It is exactly the shared owner walk
+    /// (<see cref="ElaboratedScopeLookup.SelectOwnedDeclaration"/>) reading
+    /// <see cref="OwnedDeclarationKind.Parameter"/>: the first owning scope that
+    /// declares the name decides; invalid same-owner ties select the parameter for
+    /// recovery. A parameter of the algorithm being rewritten decides at once (it
+    /// owns the walk's first level), a captured ancestor parameter beats a
+    /// property owned by any FARTHER scope — the root, the prelude, or any level
+    /// beyond the capturing one — and a nearer property still wins in invalid recovery source.
+    /// Nothing here consults <c>open</c>: a name the walk leaves undecided is
+    /// handed to the ordinary open/prelude fallback by staying a Resolve.</para>
+    ///
+    /// <para>The membership test is a pure fast path — the walk can only answer
+    /// Parameter for a name some level binds — and keeps the common
+    /// non-parameter occurrence at one dictionary probe.</para>
+    /// </summary>
     private static bool ShouldRewriteAsParam(
         string name,
-        HashSet<string> localParamNames,
         ElaboratedPropertyScope scope,
-        HashSet<string> capturedParamNames)
-        => localParamNames.Contains(name)
-            || (capturedParamNames.Contains(name) && !HasVisibleNonPreludePropertyName(scope, name));
+        ParameterOwnership parameters)
+        => parameters.Contains(name)
+            && ElaboratedScopeLookup.SelectOwnedDeclaration(scope, name, parameters).Kind
+                == OwnedDeclarationKind.Parameter;
 
     /// <summary>
-    /// Rewrites <see cref="Expr.Resolve"/> to <see cref="Expr.Param"/> for detected parameter names.
+    /// Rewrites owned parameter references in ordinary and conditional bodies using the
+    /// same owner walk. Signature inference and closed-branch diagnostics precede this step.
     /// Also recursively processes nested algorithms.
     /// </summary>
     private static Expr RewriteParams(
         Expr expr,
-        HashSet<string> paramNames,
         ElaboratedPropertyScope scope,
-        HashSet<string> capturedParamNames,
+        ParameterOwnership parameters,
         RewriteWalkMemo memo)
     {
         // Resolve leaves can rewrite to newly allocated Params and therefore must be memoized
         // to preserve leaf sharing. Other childless leaves return themselves unchanged.
         var hasTraversableChildren = AstTraversalDagSafety.HasTraversableExprChildren(expr);
         if (!hasTraversableChildren && expr is not Expr.Resolve)
-            return RewriteParamsCore(expr, paramNames, scope, capturedParamNames, memo);
+            return RewriteParamsCore(expr, scope, parameters, memo);
 
         if (memo.Rewrites.TryGetValue(expr, out var rewritten))
             return rewritten;
 
         if (hasTraversableChildren)
             memo.Observations?.RecordDetectorRewriteExpansion();
-        rewritten = RewriteParamsCore(expr, paramNames, scope, capturedParamNames, memo);
+        rewritten = RewriteParamsCore(expr, scope, parameters, memo);
         memo.Rewrites[expr] = rewritten;
         return rewritten;
     }
 
     private static Expr RewriteParamsCore(
         Expr expr,
-        HashSet<string> paramNames,
         ElaboratedPropertyScope scope,
-        HashSet<string> capturedParamNames,
+        ParameterOwnership parameters,
         RewriteWalkMemo memo)
     {
+        if (memo.Run.ImplicitCallOrigins?.TryGetValue(expr, out var original) == true)
+            expr = original;
         switch (expr)
         {
             case Expr.Grace(var inner, _):
-                // Strip Grace wrapper — weight has been consumed during collection
-                return RewriteParams(inner, paramNames, scope, capturedParamNames, memo);
+                // Ordinary collection consumed the weight. In a conditional body, the
+                // parser already diagnosed Grace; strip it there for recovery as well.
+                return RewriteParams(inner, scope, parameters, memo);
 
-            case Expr.Resolve(var name) when ShouldRewriteAsParam(name, paramNames, scope, capturedParamNames):
+            case Expr.Resolve(var name) when ShouldRewriteAsParam(name, scope, parameters):
+                memo.Run.OwnershipChanged = true;
                 return new Expr.Param(name) { Span = expr.Span };
 
             case Expr.Binary(var op, var left, var right):
                 return new Expr.Binary(op,
-                    RewriteParams(left, paramNames, scope, capturedParamNames, memo),
-                    RewriteParams(right, paramNames, scope, capturedParamNames, memo)) { Span = expr.Span };
+                    RewriteParams(left, scope, parameters, memo),
+                    RewriteParams(right, scope, parameters, memo)) { Span = expr.Span };
 
             case Expr.Unary(var op, var operand):
-                return new Expr.Unary(op, RewriteParams(operand, paramNames, scope, capturedParamNames, memo)) { Span = expr.Span };
+                return new Expr.Unary(op, RewriteParams(operand, scope, parameters, memo)) { Span = expr.Span };
 
             case Expr.Index(var target, var selector):
                 return new Expr.Index(
-                    RewriteParams(target, paramNames, scope, capturedParamNames, memo),
-                    RewriteParams(selector, paramNames, scope, capturedParamNames, memo)) { Span = expr.Span };
+                    RewriteParams(target, scope, parameters, memo),
+                    RewriteParams(selector, scope, parameters, memo)) { Span = expr.Span };
 
             case Expr.SequenceSpread(var operand):
                 return new Expr.SequenceSpread(
-                    RewriteParams(operand, paramNames, scope, capturedParamNames, memo))
+                    RewriteParams(operand, scope, parameters, memo))
                 {
                     Span = expr.Span,
                     SpreadMarkerSpan = ((Expr.SequenceSpread)expr).SpreadMarkerSpan,
@@ -1659,12 +1589,12 @@ internal static class ParameterDetector
 
             case Expr.SequenceConstruct(var left, var right):
                 return new Expr.SequenceConstruct(
-                    RewriteParams(left, paramNames, scope, capturedParamNames, memo),
-                    RewriteParams(right, paramNames, scope, capturedParamNames, memo)) { Span = expr.Span };
+                    RewriteParams(left, scope, parameters, memo),
+                    RewriteParams(right, scope, parameters, memo)) { Span = expr.Span };
 
             case Expr.ListLiteral(var items):
                 return new Expr.ListLiteral(
-                    items.Select(item => RewriteParams(item, paramNames, scope, capturedParamNames, memo)).ToList())
+                    items.Select(item => RewriteParams(item, scope, parameters, memo)).ToList())
                 { Span = expr.Span };
 
             case Expr.DotCall dotCall:
@@ -1680,15 +1610,15 @@ internal static class ParameterDetector
                 {
                     var rewrittenSlots = new List<Expr>(dotArgs.Count);
                     foreach (var argExpr in dotArgs)
-                        rewrittenSlots.Add(RewriteParams(argExpr, paramNames, scope, capturedParamNames, memo));
+                        rewrittenSlots.Add(RewriteParams(argExpr, scope, parameters, memo));
                     rewrittenArgs = new OutputBundle(rewrittenSlots);
                 }
 
                 return dotCall with
                 {
-                    Target = RewriteParams(dotCall.Target, paramNames, scope, capturedParamNames, memo),
+                    Target = RewriteParams(dotCall.Target, scope, parameters, memo),
                     Args = rewrittenArgs,
-                    LexicalFallback = RewriteParams(dotCall.EffectiveLexicalFallback, paramNames, scope, capturedParamNames, memo),
+                    LexicalFallback = RewriteParams(dotCall.EffectiveLexicalFallback, scope, parameters, memo),
                 };
             }
 
@@ -1698,7 +1628,7 @@ internal static class ParameterDetector
                 if (!memo.Algorithms.TryGetValue(alg, out var processedAlg))
                 {
                     processedAlg = ProcessAlgorithm(
-                        alg, scope, UnionNames(capturedParamNames, paramNames), memo.Diagnostics, memo.Observations, memo.Run);
+                        alg, scope, parameters, memo.Diagnostics, memo.Observations, memo.Run);
                     memo.Algorithms[alg] = processedAlg;
                 }
 
@@ -1710,7 +1640,7 @@ internal static class ParameterDetector
                     // Captures are transparent: rewrite rows in the enclosing param scope.
                     var rewrittenRows = new List<Expr>(captureBody.Count);
                     foreach (var row in captureBody)
-                        rewrittenRows.Add(RewriteParams(row, paramNames, scope, capturedParamNames, memo));
+                        rewrittenRows.Add(RewriteParams(row, scope, parameters, memo));
                     return new Expr.Capture(new OutputBundle(rewrittenRows)) { Span = expr.Span };
                 }
 
@@ -1721,9 +1651,9 @@ internal static class ParameterDetector
                 // slot and processes as an independent algorithm.)
                 var rewrittenArgs = new List<Expr>(args.Count);
                 foreach (var argExpr in args)
-                    rewrittenArgs.Add(RewriteParams(argExpr, paramNames, scope, capturedParamNames, memo));
+                    rewrittenArgs.Add(RewriteParams(argExpr, scope, parameters, memo));
                 return new Expr.Call(
-                    RewriteParams(func, paramNames, scope, capturedParamNames, memo),
+                    RewriteParams(func, scope, parameters, memo),
                     new OutputBundle(rewrittenArgs)) { Span = expr.Span };
             }
 
@@ -1749,27 +1679,27 @@ internal static class ParameterDetector
     }
 
     /// <summary>
-    /// Processes an expression in a transparent context (capture rows, list elements,
-    /// argument slots): just recurse into nested algorithms.
+    /// Processes transparent expressions inside an open target (capture rows, list elements,
+    /// argument slots). Open-target regions always start with empty parameter ownership;
+    /// only their nested algorithms introduce parameters.
     /// </summary>
     private static Expr ProcessExpr(
         Expr expr,
         ElaboratedPropertyScope scope,
-        HashSet<string> capturedParamNames,
         OpenWalkMemo memo)
     {
         // DAG-safety: one rewrite per shared node reference per open-target region. The
         // transparent walk keeps its own map — the same node can also be reached by
         // ProcessOpenExpr, whose open-form rewriting legitimately differs.
         if (!AstTraversalDagSafety.HasTraversableExprChildren(expr))
-            return ProcessExprCore(expr, scope, capturedParamNames, memo);
+            return ProcessExprCore(expr, scope, memo);
 
         memo.TransparentRewrites ??= new(ReferenceEqualityComparer.Instance);
         if (memo.TransparentRewrites.TryGetValue(expr, out var rewritten))
             return rewritten;
 
         memo.Observations?.RecordDetectorRewriteExpansion();
-        rewritten = ProcessExprCore(expr, scope, capturedParamNames, memo);
+        rewritten = ProcessExprCore(expr, scope, memo);
         memo.TransparentRewrites[expr] = rewritten;
         return rewritten;
     }
@@ -1777,51 +1707,50 @@ internal static class ParameterDetector
     private static Expr ProcessExprCore(
         Expr expr,
         ElaboratedPropertyScope scope,
-        HashSet<string> capturedParamNames,
         OpenWalkMemo memo)
     {
         return expr switch
         {
-            Expr.Grace(var inner, _) => ProcessExpr(inner, scope, capturedParamNames, memo),
+            Expr.Grace(var inner, _) => ProcessExpr(inner, scope, memo),
             Expr.AlgorithmExpr(var alg) => new Expr.AlgorithmExpr(
-                ProcessSharedTransparentAlgorithm(alg, scope, capturedParamNames, memo)) { Span = expr.Span },
+                ProcessSharedTransparentAlgorithm(alg, scope, memo)) { Span = expr.Span },
             Expr.Capture(var captureBody) => new Expr.Capture(new OutputBundle(
-                captureBody.Select(row => ProcessExpr(row, scope, capturedParamNames, memo)).ToList()))
+                captureBody.Select(row => ProcessExpr(row, scope, memo)).ToList()))
             { Span = expr.Span },
             Expr.Call(var func, var args) => new Expr.Call(
-                ProcessExpr(func, scope, capturedParamNames, memo),
-                new OutputBundle(args.Select(argExpr => ProcessExpr(argExpr, scope, capturedParamNames, memo)).ToList())) { Span = expr.Span },
+                ProcessExpr(func, scope, memo),
+                new OutputBundle(args.Select(argExpr => ProcessExpr(argExpr, scope, memo)).ToList())) { Span = expr.Span },
             Expr.Binary(var op, var l, var r) => new Expr.Binary(op,
-                ProcessExpr(l, scope, capturedParamNames, memo),
-                ProcessExpr(r, scope, capturedParamNames, memo)) { Span = expr.Span },
+                ProcessExpr(l, scope, memo),
+                ProcessExpr(r, scope, memo)) { Span = expr.Span },
             Expr.Unary(var op, var operand) => new Expr.Unary(op,
-                ProcessExpr(operand, scope, capturedParamNames, memo)) { Span = expr.Span },
+                ProcessExpr(operand, scope, memo)) { Span = expr.Span },
             Expr.Index(var t, var s) => new Expr.Index(
-                ProcessExpr(t, scope, capturedParamNames, memo),
-                ProcessExpr(s, scope, capturedParamNames, memo)) { Span = expr.Span },
+                ProcessExpr(t, scope, memo),
+                ProcessExpr(s, scope, memo)) { Span = expr.Span },
             Expr.SequenceSpread(var operand) => new Expr.SequenceSpread(
-                ProcessExpr(operand, scope, capturedParamNames, memo))
+                ProcessExpr(operand, scope, memo))
             {
                 Span = expr.Span,
                 SpreadMarkerSpan = ((Expr.SequenceSpread)expr).SpreadMarkerSpan,
             },
             Expr.SequenceConstruct(var l, var r) => new Expr.SequenceConstruct(
-                ProcessExpr(l, scope, capturedParamNames, memo),
-                ProcessExpr(r, scope, capturedParamNames, memo)) { Span = expr.Span },
+                ProcessExpr(l, scope, memo),
+                ProcessExpr(r, scope, memo)) { Span = expr.Span },
             Expr.ListLiteral(var items) => new Expr.ListLiteral(
-                items.Select(item => ProcessExpr(item, scope, capturedParamNames, memo)).ToList())
+                items.Select(item => ProcessExpr(item, scope, memo)).ToList())
             { Span = expr.Span },
             // The detector is the normalization owner: every DotCall it emits
             // carries an EXPLICIT fallback identity (null is only a
             // host-construction shorthand for Resolve(Name)).
             Expr.DotCall dotCall => dotCall with
             {
-                Target = ProcessExpr(dotCall.Target, scope, capturedParamNames, memo),
+                Target = ProcessExpr(dotCall.Target, scope, memo),
                 Args = dotCall.Args is { } da
-                    ? new OutputBundle(da.Select(argExpr => ProcessExpr(argExpr, scope, capturedParamNames, memo)).ToList())
+                    ? new OutputBundle(da.Select(argExpr => ProcessExpr(argExpr, scope, memo)).ToList())
                     : null,
                 LexicalFallback = ProcessExpr(
-                    dotCall.EffectiveLexicalFallback, scope, capturedParamNames, memo),
+                    dotCall.EffectiveLexicalFallback, scope, memo),
             },
             // Intentional leaves: bare references and literals rewrite nothing
             // in a transparent context (parameter classification happened in
@@ -1846,54 +1775,33 @@ internal static class ParameterDetector
     private static Algorithm ProcessSharedTransparentAlgorithm(
         Algorithm alg,
         ElaboratedPropertyScope scope,
-        HashSet<string> capturedParamNames,
         OpenWalkMemo memo)
     {
         memo.TransparentAlgorithms ??= new(ReferenceEqualityComparer.Instance);
         if (!memo.TransparentAlgorithms.TryGetValue(alg, out var processed))
         {
-            processed = ProcessAlgorithm(alg, scope, capturedParamNames, diagnostics: null, memo.Observations, memo.Run);
+            processed = ProcessAlgorithm(alg, scope, ParameterOwnership.Empty, diagnostics: null, memo.Observations, memo.Run);
             memo.TransparentAlgorithms[alg] = processed;
         }
 
         return processed;
     }
 
+    /// <summary>
+    /// Whether the name is already bound and therefore must NOT be promoted to a
+    /// new implicit parameter: a parameter binding is in scope, or lexical lookup
+    /// finds a property (direct or open-provided). This is the PROMOTION question
+    /// and is deliberately independent of the ownership question — which of the
+    /// two bindings a bound name selects is <see cref="ShouldRewriteAsParam"/>.
+    /// </summary>
     private static bool IsBoundName(
         string name,
         ElaboratedPropertyScope scope,
-        HashSet<string> extraBoundNames)
-        => extraBoundNames.Contains(name) || HasVisiblePropertyName(scope, name);
+        ParameterOwnership boundParameters)
+        => boundParameters.Contains(name) || HasVisiblePropertyName(scope, name);
 
     private static bool HasVisiblePropertyName(ElaboratedPropertyScope scope, string name)
         => ElaboratedScopeLookup.LookupLexicalPropertyMatches(scope, name).Count > 0;
-
-    /// <summary>
-    /// Whether a visible property hit can shadow a captured ancestor PARAMETER
-    /// of the same name. Only a NON-PRELUDE hit can: the prelude is the scope
-    /// chain's root (<see cref="ElaboratedPropertyScope.Root"/>), always FARTHER than
-    /// any capturing algorithm's parameter, so ownership-first resolution
-    /// selects the parameter over every prelude property — builtins and the
-    /// prelude's <see cref="Algorithm.User"/>-valued members (<c>Math</c>, host
-    /// operations, and the Math member aliases such as <c>sin</c> and
-    /// <c>pi</c>) uniformly. <c>F(pi) = {pi + 1}</c> therefore binds the
-    /// parameter, not <c>Math.Pi</c>. The first direct hit in the
-    /// ownership-first walk decides (mirroring
-    /// <see cref="ElaboratedScopeLookup.LookupLexicalPropertyMatches"/>); a
-    /// direct hit at any nearer level, and any open-provided hit, may win at
-    /// runtime and keeps the name a lexical reference.
-    /// </summary>
-    private static bool HasVisibleNonPreludePropertyName(ElaboratedPropertyScope scope, string name)
-    {
-        if (ElaboratedScopeLookup.TryLookupDirectLexicalProperty(scope, name) is { } directHit)
-        {
-            var preludeScope = scope.Root;
-            return preludeScope.Properties.Count == 0
-                || !ReferenceEquals(directHit.Owner, preludeScope.Properties[0].Owner);
-        }
-
-        return ElaboratedScopeLookup.LookupOpenPropertyMatches(scope, name).Count > 0;
-    }
 
     /// <summary>
     /// Finds the <see cref="SourceSpan"/> of the first <see cref="Expr.Resolve"/> with the given name

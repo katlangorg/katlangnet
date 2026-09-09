@@ -115,14 +115,14 @@ public class BraceScopedExpressionTests
     public void OpenInsideBraceBlock_DoesNotExposeTheNameAfterTheBlock()
     {
         // After Y's block, `P` is not in scope: it falls back to the standard
-        // implicit-parameter convention on the root and evaluation fails
-        // because no argument supplies it.
+        // implicit-parameter convention on the root. The completed parameter now
+        // conflicts with the library's nested property, so evaluation is blocked.
         var source = Module + "Y = {\n    open M\n    P\n}\nY + P";
         var parsed = Parser.Parse(source);
-        Assert.False(parsed.HasErrors);
+        Assert.Equal(DiagnosticCode.ParameterPropertyCollision, Assert.Single(parsed.Diagnostics).Code);
         Assert.Equal("P", Assert.Single(parsed.Root.Params));
 
-        Assert.IsType<RunResult.EvalFailure>(KatLangEngine.Run(source));
+        Assert.IsType<RunResult.ParseFailure>(KatLangEngine.Run(source));
     }
 
     [Fact]
@@ -130,10 +130,10 @@ public class BraceScopedExpressionTests
     {
         var source = "Identity(x) = x\nIdentity({\n    A = 5\n    A\n})\nA";
         var parsed = Parser.Parse(source);
-        Assert.False(parsed.HasErrors);
+        Assert.Equal(DiagnosticCode.ParameterPropertyCollision, Assert.Single(parsed.Diagnostics).Code);
         Assert.Equal("A", Assert.Single(parsed.Root.Params));
 
-        Assert.IsType<RunResult.EvalFailure>(KatLangEngine.Run(source));
+        Assert.IsType<RunResult.ParseFailure>(KatLangEngine.Run(source));
     }
 
     // ── plain brace controls ─────────────────────────────────────────────────

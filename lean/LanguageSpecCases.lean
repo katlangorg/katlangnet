@@ -14,11 +14,11 @@ This is bounded differential validation over the Lean-guarded partition,
 not a formal verification of the evaluators.
 
 Partition (machine-checked by the `specCaseIds.length` guard below):
-- specification surface cases: 204
-- excluded parse-level cases (Lean has no surface parser): 11
+- specification surface cases: 215
+- excluded parse-level cases (Lean has no surface parser): 17
 - excluded C#-only cases (each carries an explicit reason in the corpus): 10
-- Lean-guarded cases: 183
-- probe observations (C#-only by design): 348
+- Lean-guarded cases: 188
+- probe observations (C#-only by design): 377
 - internal-node cases live in the semantic-explorer corpus, not here: see
   lean/SemanticExplorerCases.lean
 
@@ -993,6 +993,31 @@ def case_ancestor_callable_visible_without_same_named_parameter : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))]), privateProp "Apply" (alg ["f"] [] [privateLocalProp "Inner" .localCapturedAncestorParams (alg ["x"] [] [] [(.call (.param "f") [.param "x"])])] [(.call (.resolve "Inner") [.num 5])])] [(.call (.resolve "Apply") [.resolve "Inc"])])
 #guard obs case_ancestor_callable_visible_without_same_named_parameter == "ok raw=6 n=1"
 
+-- ownership-later-lifted-parameter-beats-inner-open [name-resolution]: Lib = { public v = 99 } \n Outer = { \n     Inner = { open Lib \n         v \n     } \n     Need = v \n     Inner + Need \n } \n Outer(7)
+def case_ownership_later_lifted_parameter_beats_inner_open : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Lib" (alg [] [] [publicProp "v" (alg [] [] [] [.num 99])] []), privateProp "Outer" (alg ["v"] [] [privateLocalProp "Inner" .localCapturedAncestorParams (alg [] [.resolve "Lib"] [] [.param "v"]), privateProp "Need" (alg ["v"] [] [] [.param "v"])] [(.binary .add (.resolve "Inner") (.call (.resolve "Need") [.param "v"]))])] [(.call (.resolve "Outer") [.num 7])])
+#guard obs case_ownership_later_lifted_parameter_beats_inner_open == "ok raw=14 n=1"
+
+-- ownership-captured-parameter-beats-outer-property [name-resolution]: v = 99 \n Outer(v) = { \n     Inner = v + 1 \n     Inner \n } \n Outer(7)
+def case_ownership_captured_parameter_beats_outer_property : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "v" (alg [] [] [] [.num 99]), privateProp "Outer" (alg ["v"] [] [privateLocalProp "Inner" .localCapturedAncestorParams (alg [] [] [] [(.binary .add (.param "v") (.num 1))])] [.resolve "Inner"])] [(.call (.resolve "Outer") [.num 7])])
+#guard obs case_ownership_captured_parameter_beats_outer_property == "ok raw=8 n=1"
+
+-- ownership-nearest-enclosing-parameter-wins [name-resolution]: v = 99 \n Outer(v) = { \n     Mid(v) = { \n         Inner = v + 1 \n         Inner \n     } \n     Mid(7) \n } \n Outer(20)
+def case_ownership_nearest_enclosing_parameter_wins : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "v" (alg [] [] [] [.num 99]), privateProp "Outer" (alg ["v"] [] [privateProp "Mid" (alg ["v"] [] [privateLocalProp "Inner" .localCapturedAncestorParams (alg [] [] [] [(.binary .add (.param "v") (.num 1))])] [.resolve "Inner"])] [(.call (.resolve "Mid") [.num 7])])] [(.call (.resolve "Outer") [.num 20])])
+#guard obs case_ownership_nearest_enclosing_parameter_wins == "ok raw=8 n=1"
+
+-- ownership-parameter-beats-prelude-alias [name-resolution]: Outer(pi) = { \n     Inner = pi + 1 \n     Inner \n } \n Outer(7)
+def case_ownership_parameter_beats_prelude_alias : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Outer" (alg ["pi"] [] [privateLocalProp "Inner" .localCapturedAncestorParams (alg [] [] [] [(.binary .add (.param "pi") (.num 1))])] [.resolve "Inner"])] [(.call (.resolve "Outer") [.num 7])])
+#guard obs case_ownership_parameter_beats_prelude_alias == "ok raw=8 n=1"
+
+-- ownership-parameter-beats-opened-name [name-resolution]: Lib = { \n     public v = 99 \n } \n Outer(v) = { \n     open Lib \n     Inner = v + 1 \n     Inner \n } \n Outer(7)
+def case_ownership_parameter_beats_opened_name : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Lib" (alg [] [] [publicProp "v" (alg [] [] [] [.num 99])] []), privateProp "Outer" (alg ["v"] [.resolve "Lib"] [privateLocalProp "Inner" .localCapturedAncestorParams (alg [] [] [] [(.binary .add (.param "v") (.num 1))])] [.resolve "Inner"])] [(.call (.resolve "Outer") [.num 7])])
+#guard obs case_ownership_parameter_beats_opened_name == "ok raw=8 n=1"
+
 -- clause-family-nested-in-branch-body-binds-its-own-binders [conditionals]: n = 99 \n F(0) = { \n   G(0) = 'zero' \n   G(n) = n \n   G(5) \n } \n F(k) = k \n  \n F(0)
 def case_clause_family_nested_in_branch_body_binds_its_own_binders : Expr :=
   .algorithmExpr (alg [] [] [privateProp "n" (alg [] [] [] [.num 99]), privateProp "F" (.conditional none [] [⟨.litInt 0, (alg [] [] [privateProp "G" (.conditional none [] [⟨.litInt 0, (alg [] [] [] [.stringLiteral "zero"])⟩, ⟨.bind "n", (alg [] [] [] [.param "n"])⟩])] [(.call (.resolve "G") [.num 5])])⟩, ⟨.bind "k", (alg [] [] [] [.param "k"])⟩])] [(.call (.resolve "F") [.num 0])])
@@ -1013,7 +1038,7 @@ def case_conditional_branch_local_library_is_openable_within_the_branch : Expr :
   .algorithmExpr (alg [] [] [privateProp "F" (.conditional none [] [⟨.litInt 0, (alg [] [] [privateProp "Lib" (alg [] [] [publicProp "X" (alg [] [] [] [.num 1])] []), privateProp "G" (alg [] [.resolve "Lib"] [] [.resolve "X"])] [.resolve "G"])⟩, ⟨.bind "n", (alg [] [] [] [.param "n"])⟩])] [(.call (.resolve "F") [.num 0])])
 #guard obs case_conditional_branch_local_library_is_openable_within_the_branch == "ok raw=1 n=1"
 
--- 183 canonical Lean-guarded specification cases.
+-- 188 canonical Lean-guarded specification cases.
 
 /--
 Machine-checked Lean-guarded partition count: the id list is built by the
@@ -1200,11 +1225,16 @@ def specCaseIds : List String := [
   "value-parameter-shadowing-through-nested-scope",
   "value-binder-parameter-shadowing",
   "ancestor-callable-visible-without-same-named-parameter",
+  "ownership-later-lifted-parameter-beats-inner-open",
+  "ownership-captured-parameter-beats-outer-property",
+  "ownership-nearest-enclosing-parameter-wins",
+  "ownership-parameter-beats-prelude-alias",
+  "ownership-parameter-beats-opened-name",
   "clause-family-nested-in-branch-body-binds-its-own-binders",
   "conditional-branch-pattern-is-a-closed-input-specification",
   "conditional-branch-inline-open-exposes-members-to-the-branch",
   "conditional-branch-local-library-is-openable-within-the-branch"
 ]
-#guard specCaseIds.length == 183
+#guard specCaseIds.length == 188
 
 end LanguageSpecCases

@@ -396,7 +396,7 @@ If ANY checklist item fails, fix the output before emitting it.
 ## Open Visibility, Ambiguity, and Load
 
 - Place the single `open` declaration before all property definitions and output — even when opening a sibling library defined later in the same algorithm (the forward reference resolves). An `open` after any property or output is a parse error.
-- `open` imports public properties from the target. Ownership-first lookup applies: local properties, then the parent chain, then opened public properties. Local and parent-scope names win over opened names.
+- `open` imports public properties from the target. Ownership-first lookup applies: the owner walk first (each enclosing scope outward, where a scope owns both the parameters it binds and the properties it declares, and a property may not have the same name as a completed parameter of that or any enclosing lexical algorithm), then opened public properties. Every owned name — a local or parent-scope property, and a parameter or branch binder of any enclosing scope — wins over an opened name.
 - If two opened providers export the same bare name, bare lookup is ambiguous and is an error — qualify the reference (`A.X`) or open only the provider you need:
 
       open A, B
@@ -1529,7 +1529,7 @@ Without trailing output, `Order` has no direct result — use `Order.Total(25, 4
 
 === BEGIN GENERATED: katlang-spec-examples (DO NOT EDIT BY HAND) ===
 
-Verified reference examples (60 of the 204-case canonical language specification,
+Verified reference examples (61 of the 215-case canonical language specification,
 tests/KatLang.Tests/LanguageSpec/LanguageSpecCorpus.cs). Every program and expected
 output below is executed against the KatLang engine and (where representable)
 guarded against the Lean model on every build. Treat these as ground truth for the
@@ -1785,7 +1785,7 @@ Regenerate this block from the repo root with:
   Displays:
     42
 
-[dot-member-higher-order-parameter] After structural member lookup fails, a dot member name that is a parameter of the calling context resolves exactly like the plain callee: `a.t` and `t(a)` agree, including algorithm-valued parameters. A parameter of the current algorithm wins over a same-name visible property, a captured ancestor parameter yields to a visible non-builtin declaration, and structural members of the resolved receiver always take precedence first.
+[dot-member-higher-order-parameter] After structural member lookup fails, a dot member name that is a parameter of the calling context resolves exactly like the plain callee: `a.t` and `t(a)` agree, including algorithm-valued parameters. The lexical fallback uses the owner walk, so a captured parameter beats farther properties and opens. Properties matching same-owner or enclosing parameters are declaration errors. Structural members of the resolved receiver always take precedence first.
 
     K(a, t) = t(a)
     D(a, t) = a.t
@@ -2079,6 +2079,18 @@ Regenerate this block from the repo root with:
     F(7)
 
   Fails with an evaluation error (arity).
+
+[ownership-captured-parameter-beats-outer-property] Name resolution searches outward by owning scope. `Inner` is nested inside `Outer`, which binds the parameter `v`, so the walk stops there; the root property `v = 99` belongs to a farther owner and is never reached. A parameter therefore means the same thing written directly in its algorithm's body and written inside a body nested in it.
+
+    v = 99
+    Outer(v) = {
+        Inner = v + 1
+        Inner
+    }
+    Outer(7)
+
+  Displays:
+    8
 
 [closed-list-strict-value-forwarding] An explicit parameter list is closed, and that applies to what a value position needs indirectly as well as directly. `Math.Abs` needs `A`'s value, producing it needs `A`'s inferred `q`, and `F(x)` declares no `q` — so the program is rejected before it runs, naming `A` and `q` rather than the math function. Declare `q` in the list, call `A` with explicit arguments, or leave the list off so `q` is inferred. Passing `A` where a callable is wanted is unaffected: only a proven value demand is checked this way.
 

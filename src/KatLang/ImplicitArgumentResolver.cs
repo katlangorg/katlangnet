@@ -70,7 +70,9 @@ internal static class ImplicitArgumentResolver
     internal static Algorithm ResolvePrevalidated(
         Algorithm root,
         FrontEndTraversalObservations? observations = null,
-        List<Diagnostic>? diagnostics = null)
+        List<Diagnostic>? diagnostics = null,
+        ResolutionOrigins? origins = null,
+        bool preserveSignatures = false)
     {
         return ProcessAlgorithm(
             root,
@@ -79,7 +81,18 @@ internal static class ImplicitArgumentResolver
             observations,
             diagnostics,
             branchContext: null,
-            new ResolutionRun());
+            new ResolutionRun(origins, preserveSignatures));
+    }
+
+    /// <summary>
+    /// Run-local source origins for the ownership completion boundary. A synthesized call
+    /// is not a written call: if a later lifted parameter changes its binding (or a strict
+    /// consumer's binding), forwarding must be rebuilt from the original expression.
+    /// </summary>
+    internal sealed class ResolutionOrigins
+    {
+        public bool HasLiftedParameters;
+        public Dictionary<Expr, Expr> ImplicitCalls { get; } = new(ReferenceEqualityComparer.Instance);
     }
 
     /// <summary>
@@ -91,8 +104,16 @@ internal static class ImplicitArgumentResolver
     /// SEMANTIC REGION rather than once per path (M4). Run-local: created per resolution,
     /// garbage afterwards — never static, never ambient.
     /// </summary>
-    private sealed class ResolutionRun
+    private sealed class ResolutionRun(ResolutionOrigins? origins = null, bool preserveSignatures = false)
     {
+        public readonly ResolutionOrigins? Origins = origins;
+        public readonly bool PreserveSignatures = preserveSignatures;
+
+        public Expr RecordImplicitCall(Expr rewritten, Expr original)
+        {
+            Origins?.ImplicitCalls.Add(rewritten, original);
+            return rewritten;
+        }
         /// <summary>
         /// Nested algorithms rewritten so far, by <see cref="AlgorithmRegionKey"/>. A family's
         /// NAME only words a branch body's blocked strict-value diagnostics, so a second
@@ -751,7 +772,7 @@ internal static class ImplicitArgumentResolver
         var deps = new List<(string Name, CallableSignature Signature)>();
         var seen = new HashSet<string>();
         var depsMemo = new DepsWalkMemo(observations);
-        foreach (var expr in AstHelpers.WrittenRows(
+        foreach (var expr in run.PreserveSignatures ? [] : AstHelpers.WrittenRows(
             alg, isRoot ? expr => !ShouldPreserveBareRootResolve(expr, visibleParamMap, isRoot: true) : null))
         {
             CollectImplicitDeps(expr, visibleParamMap, seen, deps, inCallPosition: false, depsMemo);
@@ -773,6 +794,8 @@ internal static class ImplicitArgumentResolver
                     continue;
 
                 newPatterns.Add(missingPattern);
+                if (run.Origins is { } origins)
+                    origins.HasLiftedParameters = true;
                 foreach (var capture in missingPattern.Captures)
                     existingParams.Add(capture.Name);
             }
@@ -919,7 +942,9 @@ internal static class ImplicitArgumentResolver
         Algorithm detectedBody,
         DeferredBranchContext context,
         List<Diagnostic> diagnostics,
-        FrontEndTraversalObservations? observations = null)
+        FrontEndTraversalObservations? observations = null,
+        ResolutionOrigins? origins = null,
+        bool preserveSignatures = false)
         => ProcessAlgorithm(
             detectedBody,
             new Dictionary<string, CallableSignature>(context.ParentParamMap),
@@ -927,7 +952,7 @@ internal static class ImplicitArgumentResolver
             observations,
             diagnostics,
             new ConditionalBranchContext(context.BranchName, context.Pattern),
-            new ResolutionRun());
+            new ResolutionRun(origins, preserveSignatures));
 
     private static Expr ProcessOpenExpr(Expr expr, ResolverWalkMemos memos)
     {
@@ -1695,7 +1720,8 @@ internal static class ImplicitArgumentResolver
 
                     var implicitArgs = OutputBundle.From(BuildImplicitCallArguments(
                         ps.ParameterPatterns, context.CallerParameterPatterns, context.SourceBindingKinds));
-                    return new Expr.Call(new Expr.Resolve(name) { Span = expr.Span }, implicitArgs) { Span = expr.Span };
+                    return memos.Run.RecordImplicitCall(
+                        new Expr.Call(new Expr.Resolve(name) { Span = expr.Span }, implicitArgs) { Span = expr.Span }, expr);
                 }
 
                 // Bare Math ALIAS in value position: lift exactly like the bare
@@ -1717,7 +1743,8 @@ internal static class ImplicitArgumentResolver
 
                     var aliasArgs = OutputBundle.From(BuildImplicitCallArguments(
                         bareAliasFacts.Signature.ParameterPatterns, context.CallerParameterPatterns, context.SourceBindingKinds));
-                    return new Expr.Call(new Expr.Resolve(name) { Span = expr.Span }, aliasArgs) { Span = expr.Span };
+                    return memos.Run.RecordImplicitCall(
+                        new Expr.Call(new Expr.Resolve(name) { Span = expr.Span }, aliasArgs) { Span = expr.Span }, expr);
                 }
                 return expr;
 
@@ -1786,11 +1813,11 @@ internal static class ImplicitArgumentResolver
 
                 var liftedDotArgs = OutputBundle.From(BuildImplicitCallArguments(
                     builtinSignature.ParameterPatterns, context.CallerParameterPatterns, context.SourceBindingKinds));
-                return ((Expr.DotCall)expr) with
+                return memos.Run.RecordImplicitCall(((Expr.DotCall)expr) with
                 {
                     Target = RewriteImplicitCalls(target, paramMap, context, inCallPosition: true, memos),
                     Args = liftedDotArgs,
-                };
+                }, expr);
 
             case Expr.DotCall dotCall:
                 // DotCall target is in algorithm position (resolveAlg, not eval).

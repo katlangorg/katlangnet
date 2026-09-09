@@ -27,9 +27,8 @@ namespace KatLang.Tests;
 /// ungraced twin — Grace changes only the enclosing signature's
 /// parameter order.
 ///
-/// Every case pins BOTH the exposure classification and the runtime
-/// result/error, so classification changes can never silently diverge from
-/// evaluation semantics.
+/// Valid cases pin exposure and runtime results; the invalid literal collision
+/// additionally pins recovery exposure and rejection before evaluation.
 /// </summary>
 public class DotCallFallbackExposureTests
 {
@@ -164,16 +163,16 @@ public class DotCallFallbackExposureTests
     [Fact]
     public void OrdinaryDot_HiddenParamName_StructuralWinnerStaysExported()
     {
-        // The sibling receiver declares the member, so structural resolution
+        // The outer-scope receiver declares the member, so structural resolution
         // may (and does) win; the CONDITIONAL Param fallback is excluded and
         // P keeps exported structural/open access.
         AssertExposureAndResult(
             """
+            Obj = {
+                public t = 42
+                0
+            }
             Outer(t) = {
-                Obj = {
-                    public t = 42
-                    0
-                }
                 P = Obj.t
                 P
             }
@@ -187,11 +186,11 @@ public class DotCallFallbackExposureTests
         // the parameterized owner works precisely because P stays Exported.
         var structuralAccess = Assert.IsType<RunResult.Success>(KatLangEngine.Run(
             """
+            Obj = {
+                public t = 42
+                0
+            }
             Outer(t) = {
-                Obj = {
-                    public t = 42
-                    0
-                }
                 public P = Obj.t
                 P
             }
@@ -206,11 +205,11 @@ public class DotCallFallbackExposureTests
         // structural winner as the ungraced twin above: Exported, and 42.
         => AssertExposureAndResult(
             """
+            Obj = {
+                public t = 42
+                0
+            }
             Outer(t) = {
-                Obj = {
-                    public t = 42
-                    0
-                }
                 P = Obj~.t
                 P
             }
@@ -226,18 +225,22 @@ public class DotCallFallbackExposureTests
         // A literal algorithm receiver is statically decidable on the node:
         // member present → structural certainty → Exported; member absent →
         // the fallback is unconditional → LocalOnly.
-        AssertExposureAndResult(
-            """
+        const string collision = """
             Outer(t) = {
                 P = {public t = 42
                 0}.t
                 P
             }
             Outer({x+1})
-            """,
-            PropertyExposure.Exported,
-            "42",
-            "Outer", "P");
+            """;
+        // This structural-hit shape is now invalid source: the literal's t property
+        // conflicts with Outer.t. Recovery must still exclude the unreachable fallback.
+        var recovery = SourceProvenance.ParseAllowingDiagnostics(collision);
+        Assert.Equal(DiagnosticCode.ParameterPropertyCollision, Assert.Single(recovery.Diagnostics).Code);
+        Assert.Equal(PropertyExposure.Exported, FindProperty(recovery.Root, "Outer", "P").Exposure);
+        Assert.IsType<RunResult.ParseFailure>(KatLangEngine.Run(collision));
+        AssertExposureAndResult(collision.Replace("Outer(t)", "Outer(q)"),
+            PropertyExposure.Exported, "42", "Outer", "P");
 
         AssertExposureAndResult(
             """
@@ -274,11 +277,11 @@ public class DotCallFallbackExposureTests
     // ── 8: same-name visible property shadowing ─────────────────────────────
 
     [Fact]
-    public void VisiblePropertyShadow_KeepsResolveFallback_Exported()
+    public void FartherProperty_DoesNotOverrideCapturedFallback_StaysExported()
     {
-        // The visible root property `t` keeps the edge's fallback as
-        // Resolve("t") in both spellings. Neither captures the ancestor
-        // parameter, and both resolve structurally on the member-bearing
+        // The captured parameter beats the root property `t` in the stored
+        // Param("t") fallback in both spellings. Neither charges the ancestor
+        // parameter to exposure, and both resolve structurally on the member-bearing
         // receiver (42) — the marker only reorders inferred parameters.
         AssertExposureAndResult(
             """
@@ -473,11 +476,11 @@ public class DotCallFallbackExposureTests
         // edge's Param fallback is unconditional and marks the capture.
         => AssertExposureAndResult(
             """
+            Obj = {
+                public t = 42
+                0
+            }
             Outer(t) = {
-                Obj = {
-                    public t = 42
-                    0
-                }
                 P = (Obj).t
                 P
             }
@@ -516,15 +519,15 @@ public class DotCallFallbackExposureTests
     [Fact]
     public void DirectStructuralReference_And_OrdinaryDot_AgreeWhenStructuralWins()
     {
-        // `Obj.t` (structural winner) classifies like referencing the sibling
+        // `Obj.t` (structural winner) classifies like referencing the outer-scope
         // object directly: no captured-parameter requirement in either form.
         var structural = ParseValidRoot(
             """
+            Obj = {
+                public t = 42
+                0
+            }
             Outer(t) = {
-                Obj = {
-                    public t = 42
-                    0
-                }
                 P = Obj.t
                 P
             }
@@ -532,11 +535,11 @@ public class DotCallFallbackExposureTests
             """);
         var reference = ParseValidRoot(
             """
+            Obj = {
+                public t = 42
+                0
+            }
             Outer(t) = {
-                Obj = {
-                    public t = 42
-                    0
-                }
                 P = Obj
                 P
             }

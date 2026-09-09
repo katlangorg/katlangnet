@@ -240,4 +240,7 @@ public enum DiagnosticCode
     /// KatLang defect, not a problem with the source program.
     /// </summary>
     InternalError = 38,
+
+    /// <summary>A property matches a completed parameter in its own or an enclosing lexical algorithm.</summary>
+    ParameterPropertyCollision = 39,
 }

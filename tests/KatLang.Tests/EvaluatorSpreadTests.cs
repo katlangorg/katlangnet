@@ -484,9 +484,10 @@ public class EvaluatorSpreadTests
             }
 
             C = A*, B
-            C.X
+            Read = C.X
+            Read()
             """;
-        AssertEvalFails(xSource);
+        Assert.IsType<EvalError.ArityMismatch>(Innermost(Eval(xSource).Error));
 
         var ySource = """
             A = {
@@ -500,9 +501,10 @@ public class EvaluatorSpreadTests
             }
 
             C = A*, B
-            C.Y
+            Read = C.Y
+            Read()
             """;
-        AssertEvalFails(ySource);
+        Assert.IsType<EvalError.ArityMismatch>(Innermost(Eval(ySource).Error));
     }
 
     [Fact]

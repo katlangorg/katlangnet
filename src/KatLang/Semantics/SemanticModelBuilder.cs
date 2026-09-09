@@ -1672,9 +1672,22 @@ public static class SemanticModelBuilder
         /// emitted symbol agrees with what identifier resolution selects for that
         /// name in this scope. Prelude names participate in shadowing but are
         /// emitted once through <see cref="PreludeCatalog.Symbols"/>, not per scope.
+        ///
+        /// <para>The per-level loop below IS the ENUMERATION form of the shared owner
+        /// walk (<see cref="ElaboratedScopeLookup.SelectOwnedDeclaration"/>, the
+        /// per-name form the front end's parameter and receiver classification use):
+        /// same aligned level chain — <see cref="ScopeFrame.PropertyScope"/> is the
+        /// level of the frame's own algorithm — parameters asked before that level's
+        /// own properties, and the first deciding level winning. Keep the two in step;
+        /// this must never become a third precedence rule. Frames whose parameter
+        /// tables carry names no level of the chain would answer for cannot arise:
+        /// each frame's table holds exactly that algorithm's own parameters.</para>
         /// </summary>
         private IReadOnlyList<VisibleSymbol> ComputeVisibleSymbols(ScopeFrame scope)
         {
+            // Properties matching same-owner or enclosing parameters are front-end declaration errors.
+            // Keep parameter-first recovery lookup deterministic; the conflicting property's
+            // declaration still has its own PropertyInfo and source site for editor repair.
             var decided = new HashSet<string>(StringComparer.Ordinal);
             var symbols = new List<VisibleSymbol>();
 

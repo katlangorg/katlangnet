@@ -481,17 +481,17 @@ public class ImplicitParameterDiagnosticsTests
     }
 
     [Fact]
-    public void CapturedNameCandidate_SuppressesAmbiguousOpenShadow()
+    public void CapturedNameCandidate_IsSuggestedOverAnAmbiguousOpenOfTheSameName()
     {
-        // Captured parameters normally qualify as nearby visible names, but
-        // this exact spelling is shadowed by two opened non-builtin providers.
-        // Parameter rewriting deliberately leaves it to lexical lookup, whose
-        // real outcome is ambiguity.
+        // `Value` is bound by an enclosing scope, and the owner walk reaches that
+        // binding before any open is consulted — so the corrected spelling really
+        // does resolve, to the parameter, and suggesting it is right. (The two
+        // ambiguous providers would decide the name only if nothing owned it.)
         var (message, error) = FailWithParity(
             """
+            A = { public Value = 1 }
+            B = { public Value = 2 }
             Outer(Value) = {
-              A = { public Value = 1 }
-              B = { public Value = 2 }
               Use = {
                 open A, B
                 Valeu
@@ -501,8 +501,56 @@ public class ImplicitParameterDiagnosticsTests
             Outer(9)
             """);
 
+        Assert.Equal("Value", SingleNote(error).SuggestedName);
+        Assert.Contains("Did you mean 'Value'?", message, StringComparison.Ordinal);
+
+        // The suggestion is actionable: the corrected program evaluates, and it
+        // reads the parameter rather than either opened provider.
+        var corrected = SourceProvenance.ParseValid(
+            """
+            A = { public Value = 1 }
+            B = { public Value = 2 }
+            Outer(Value) = {
+              Use = {
+                open A, B
+                Value
+              }
+              Use
+            }
+            Outer(9)
+            """).Evaluate();
+        Assert.False(corrected.IsError);
+        Assert.Equal([9m], corrected.Value.ToAtoms());
+    }
+
+    [Fact]
+    public void UnownedAmbiguousOpenName_IsStillNotSuggested()
+    {
+        // The control the case above no longer exercises: with NO enclosing
+        // binding of the name, the two providers really are ambiguous, so the
+        // corrected spelling would not resolve and must not be offered.
+        var (message, error) = FailWithParity(
+            """
+            Outer(seed) = {
+              A = { public Value = 1 }
+              B = { public Value = 2 }
+              Use = {
+                open A, B
+                Valeu + seed
+              }
+              Use
+            }
+            Outer(9)
+            """);
+
         Assert.Null(SingleNote(error).SuggestedName);
         Assert.DoesNotContain("Did you mean", message, StringComparison.Ordinal);
+
+        var corrected = SourceProvenance.ParseValid(
+            "Outer(seed) = { A = { public Value = 1 }\nB = { public Value = 2 }\nUse = { open A, B\nValue + seed }\nUse }\nOuter(9)")
+            .Evaluate();
+        Assert.True(corrected.IsError);
+        Assert.Equal(KatLangErrorCode.AmbiguousOpen, corrected.Error.Code);
     }
 
     [Fact]
