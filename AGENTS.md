@@ -103,6 +103,7 @@
 - Add or update focused tests near the changed layer.
 - Include negative coverage when failure modes are meaningful.
 - When changing language behavior, update Lean tests and C# tests together.
+- Run Lean tests/builds only when the task changes `.lean` files (including generated Lean artifacts). If Lean files are unchanged, skip Lean validation; semantic alignment still requires reviewing and updating Lean when the behavior change calls for it.
 - If a change crosses parser, evaluator, semantics, or docs boundaries, cover the affected layers in the same task when feasible.
 - **A source-based evaluator test must PARSE CLEANLY, and must assert the error TYPE, not merely that something failed.** `Parser.Parse(source).Root` silently discards diagnostics, so a test whose source the parser rejects still evaluates the recovery tree and can pass for an unrelated reason — that is how a `NotPublicProperty` regression passed without ever reaching the branch, and how 41 `EvaluatorTests` came to run on illegal source. Use `SourceProvenance.ParseValid(...)` (or `EvaluatorTestSupport.ParseValidRoot`) for ordinary source semantics; `SourceProvenance.ExpectFrontEndError(...)` when the parser/elaborator is the subject; `SourceProvenance.ParseAllowingDiagnostics(...)` only where malformed source is the point (recovery, fuzz, editor tooling). Never assert an evaluator outcome on a source you have not shown to be legal.
 - **Before writing a source test for an evaluator branch, check the branch is surface-reachable at all.** Front-end elaboration can make it dead: clause-family elaboration turns every single-clause binder form into an `Algorithm.User`, so the flat-binder arm of `ConditionalValueAccessError` cannot be reached from any written program, and implicit-parameter promotion hides the dotted-`open` visibility checks. A source test for such a branch passes while the branch stays dead — pin these from a prebuilt AST instead (`EvaluatorDefensiveBranchTests`).
@@ -125,43 +126,46 @@
 
 ## Validation
 
-Run the full validation script from repo root:
+Select validation from the task's changed files, including committed, staged,
+unstaged, and untracked changes. Adding, modifying, deleting, or renaming a
+`.lean` file requires Lean validation; regenerating a Lean artifact without a
+content change does not. If no `.lean` files changed, do not run Lean tests,
+`lake build`, or the script's `All` / `Lean` phases.
 
-```powershell
-pwsh -NoProfile -File ./scripts/validate-all.ps1
-```
-
-The optional phase switch is the shared local/CI boundary:
+For changes without Lean file edits, run the .NET phase from repo root:
 
 ```powershell
 pwsh -NoProfile -File ./scripts/validate-all.ps1 -Phase DotNet
-pwsh -NoProfile -File ./scripts/validate-all.ps1 -Phase Lean
 ```
 
-Omitting `-Phase` means `All`. The .NET phase owns the full solution build,
+When Lean files changed, run both phases:
+
+```powershell
+pwsh -NoProfile -File ./scripts/validate-all.ps1 -Phase All
+```
+
+Use `-Phase Lean` only when Lean files changed and the .NET phase has already
+passed for the current changes. Omitting `-Phase` means `All`; the script does
+not select phases from changed files, so always pass the appropriate phase.
+The .NET phase owns the full solution build,
 C# suite, and diff whitespace check. The Lean phase owns the one canonical
 seven-target list. Each phase fingerprints the existing staged, unstaged, and
 untracked state and fails if validation changes it; a developer checkout may
 already be dirty, but validation must leave it exactly as it started.
 
-This runs the FULL solution build (every project — `dotnet test` alone builds only test projects and their dependencies, so benchmark/demo compile breaks escape it), the C# test suite, `git diff --check`, and Lean targets:
+The .NET phase runs the FULL solution build (every project — `dotnet test` alone builds only test projects and their dependencies, so benchmark/demo compile breaks escape it), the C# test suite, and `git diff --check`.
 
-```powershell
-lake build CoreTests
-lake build KatLangArityLaws
-lake build AstDemo
-lake build CoreArityAlgebra
-lake build CoreArityAlgebraProofs
-lake build SemanticExplorerCases
-lake build LanguageSpecCases
-```
-
-Manual fallback:
+Manual .NET fallback:
 
 ```powershell
 dotnet build .\KatLang.slnx -p:UseSharedCompilation=false
 dotnet test .\KatLang.slnx -p:UseSharedCompilation=false --no-build
 git diff --check
+```
+
+Manual Lean fallback, only when `.lean` files changed (all seven targets):
+
+```powershell
 Push-Location .\lean
 lake build CoreTests
 lake build KatLangArityLaws
@@ -205,7 +209,7 @@ Lean CoreTests now use `#guard` for semantic assertions, so a failing assertion 
   are pinned to immutable commit SHAs and `.github/dependabot.yml` proposes
   reviewable GitHub Actions pin updates.
 
-`lean/SemanticExplorerCases.lean` is a GENERATED Lean/C# differential corpus — do not edit it by hand. A failing `#guard` there is a Lean/C# divergence (or a Lean-internal plain/counted evaluator mismatch) on that case. After an intentional semantics change, regenerate it with `$env:KATLANG_REGENERATE_SEMANTIC_EXPLORER = "1"; dotnet test .\KatLang.slnx --filter SemanticExplorerLeanArtifact` (writes, then fails by design), review the diff, and rebuild the Lean target. See `docs/design/sequence-boundary-audit-2026-07.md`.
+`lean/SemanticExplorerCases.lean` is a GENERATED Lean/C# differential corpus — do not edit it by hand. A failing `#guard` there is a Lean/C# divergence (or a Lean-internal plain/counted evaluator mismatch) on that case. After an intentional semantics change, regenerate it with `$env:KATLANG_REGENERATE_SEMANTIC_EXPLORER = "1"; dotnet test .\KatLang.slnx --filter SemanticExplorerLeanArtifact` (writes, then fails by design), review the diff, and run Lean validation only if `.lean` files changed. See `docs/design/sequence-boundary-audit-2026-07.md`.
 
 ## Public API Baseline And Release Version
 
@@ -216,7 +220,7 @@ Lean CoreTests now use `#guard` for semantic assertions, so a failing assertion 
 
 - `tests/KatLang.Tests/LanguageSpec/LanguageSpecCorpus.cs` is the canonical executable specification: named cases with stable IDs and HAND-WRITTEN canonical expectations. Never regenerate its expectations from observed behavior — a failing `LanguageSpec*` test means either fix the implementation or edit the canonical case in a reviewed diff.
 - Same-program fidelity (M11): the Lean program of every Lean-comparable case in BOTH differential corpora (`LanguageSpecCorpus` and `SemanticExplorerCorpus`, internal-node cases included) is DERIVED from the source's real elaborated AST through `tests/KatLang.Tests/LeanAstEncoder.cs` — never authored by hand and never rebuilt by test-side parser-rule templates. C#-only cases carry an explicit non-blank `LeanExclusionReason`, a hand-authored LanguageSpec Lean program requires the exceptional `LeanProgramOverride` + `LeanOverrideReason` (currently unused), and per-corpus exact-ID exclusions plus `FidelityRatchet_*` tests pin the derived-case partitions. The encoder is FAIL-LOUD: extend it deliberately (with reviewed goldens in `LeanAstEncoderTests`) rather than approximating, and expected strings in encoder tests are manually reviewed constants. See `docs/design/executable-language-spec.md` §5.
-- GENERATED from it (do not edit by hand): `lean/LanguageSpecCases.lean` and the `=== BEGIN GENERATED: katlang-spec-examples ===` block in `.github/agents/katlang-generator.agent.md` and `experimental/prompts/katlang-generator.txt`. Regenerate all three with `$env:KATLANG_REGENERATE_LANGUAGE_SPEC = "1"; dotnet test .\KatLang.slnx --filter LanguageSpecArtifacts` (writes, then fails by design), review the diff, then `lake build LanguageSpecCases`.
+- GENERATED from it (do not edit by hand): `lean/LanguageSpecCases.lean` and the `=== BEGIN GENERATED: katlang-spec-examples ===` block in `.github/agents/katlang-generator.agent.md` and `experimental/prompts/katlang-generator.txt`. Regenerate all three with `$env:KATLANG_REGENERATE_LANGUAGE_SPEC = "1"; dotnet test .\KatLang.slnx --filter LanguageSpecArtifacts` (writes, then fails by design), review the diff, and run Lean validation only if `.lean` files changed.
 - Tutorial examples marked `<!-- spec:case-id -->` are verified against the corpus (source and expected output) by `TutorialSpecTests`; when changing a linked example, update the canonical case and the tutorial together.
 - EVERY tutorial fence followed by a `**Result(s):**` claim is executable documentation (M13): `TutorialResultSweepTests` runs it through `KatLangEngine.Run` and display-matches the claim — no marker needed, so an ordinary new example enters the sweep automatically. A genuinely non-standalone example (e.g. one needing a network downloader) carries `<!-- spec:skip nonblank reason -->` before the fence; the skip inventory is exact-pinned, and result-bearing coverage is monotonic (pinned minimum baseline — removing an existing claim requires a reviewed ratchet reduction, while additions need no pin edit). The shared grammar lives in `TutorialCorpus` and fails loudly on malformed/detached claims, so a result claim can never silently drop out of verification.
 - When language behavior intentionally changes, update the affected canonical cases in the same task as the Lean/C#/tutorial/generator changes.
