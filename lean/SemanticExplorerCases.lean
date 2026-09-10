@@ -10,11 +10,11 @@ the neutral observation recorded from the C# evaluator. A failing guard is a
 Lean/C# divergence on that case.
 
 Partition (machine-checked by the `*CaseIds.length` guards below):
-- surface corpus cases: 1559
+- surface corpus cases: 1565
 - excluded parse-level cases (Lean has no surface parser): 31
-- Lean-representable surface cases: 1528
+- Lean-representable surface cases: 1534
 - internal-node cases: 14
-- total generated guards: 1542 case guards + 2 count guards
+- total generated guards: 1548 case guards + 2 count guards
 
 Regenerate from the repo root with:
   $env:KATLANG_REGENERATE_SEMANTIC_EXPLORER = "1"
@@ -7160,17 +7160,47 @@ def case_special__atomsNested : Expr :=
 -- special__emptyOpGreater: () > 1
 def case_special__emptyOpGreater : Expr :=
   .algorithmExpr (alg [] [] [] [(.binary .gt (.emptySequence 0) (.num 1))])
-#guard obs case_special__emptyOpGreater == "ok raw=1 n=1"
+#guard obs case_special__emptyOpGreater == "err type"
 
 -- special__emptyOpPlus: () + 1
 def case_special__emptyOpPlus : Expr :=
   .algorithmExpr (alg [] [] [] [(.binary .add (.emptySequence 0) (.num 1))])
-#guard obs case_special__emptyOpPlus == "ok raw=1 n=1"
+#guard obs case_special__emptyOpPlus == "err type"
+
+-- special__emptyOpPlusRight: 1 + ()
+def case_special__emptyOpPlusRight : Expr :=
+  .algorithmExpr (alg [] [] [] [(.binary .add (.num 1) (.emptySequence 0))])
+#guard obs case_special__emptyOpPlusRight == "err type"
+
+-- special__emptyOpDivRight: 10 / ()
+def case_special__emptyOpDivRight : Expr :=
+  .algorithmExpr (alg [] [] [] [(.binary .div (.num 10) (.emptySequence 0))])
+#guard obs case_special__emptyOpDivRight == "err type"
+
+-- special__emptyOpAnd: () and 7
+def case_special__emptyOpAnd : Expr :=
+  .algorithmExpr (alg [] [] [] [(.binary .and (.emptySequence 0) (.num 7))])
+#guard obs case_special__emptyOpAnd == "err type"
+
+-- special__emptyOpString: () + 'text'
+def case_special__emptyOpString : Expr :=
+  .algorithmExpr (alg [] [] [] [(.binary .add (.emptySequence 0) (.stringLiteral "text"))])
+#guard obs case_special__emptyOpString == "err type"
 
 -- special__emptyOpBoth: () + ()
 def case_special__emptyOpBoth : Expr :=
   .algorithmExpr (alg [] [] [] [(.binary .add (.emptySequence 0) (.emptySequence 0))])
-#guard obs case_special__emptyOpBoth == "ok raw=S[] n=1"
+#guard obs case_special__emptyOpBoth == "err type"
+
+-- special__emptyUnaryMinus: -()
+def case_special__emptyUnaryMinus : Expr :=
+  .algorithmExpr (alg [] [] [] [(.unary .minus (.emptySequence 0))])
+#guard obs case_special__emptyUnaryMinus == "err arity"
+
+-- special__emptyUnaryNot: not ()
+def case_special__emptyUnaryNot : Expr :=
+  .algorithmExpr (alg [] [] [] [(.unary .not (.emptySequence 0))])
+#guard obs case_special__emptyUnaryNot == "err arity"
 
 -- special__emptyEqEmpty: () == ()
 def case_special__emptyEqEmpty : Expr :=
@@ -7732,7 +7762,7 @@ def case_special__openLocalOnlyMemberIsNotASecondProvider : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Pub" (alg [] [] [publicProp "X" (alg [] [] [] [.num 101])] []), privateProp "A" (alg [] [.resolve "Pub", .resolve "Lib"] [] [.resolve "X"]), privateProp "Lib" (alg ["p"] [] [publicLocalProp "X" .localCapturedAncestorParams (alg [] [] [] [(.binary .add (.param "p") (.num 202))])] [.resolve "X"])] [.resolve "A"])
 #guard obs case_special__openLocalOnlyMemberIsNotASecondProvider == "ok raw=101 n=1"
 
--- 1528 differential cases.
+-- 1534 differential cases.
 
 /--
 Machine-checked surface partition count: the id list is built by the same
@@ -9155,7 +9185,13 @@ def surfaceCaseIds : List String := [
   "special__atomsNested",
   "special__emptyOpGreater",
   "special__emptyOpPlus",
+  "special__emptyOpPlusRight",
+  "special__emptyOpDivRight",
+  "special__emptyOpAnd",
+  "special__emptyOpString",
   "special__emptyOpBoth",
+  "special__emptyUnaryMinus",
+  "special__emptyUnaryNot",
   "special__emptyEqEmpty",
   "special__emptyEqNestedEmpty",
   "special__emptyNeNestedEmpty",
@@ -9269,7 +9305,7 @@ def surfaceCaseIds : List String := [
   "special__openPrivateMemberIsNotASecondProvider",
   "special__openLocalOnlyMemberIsNotASecondProvider"
 ]
-#guard surfaceCaseIds.length == 1528
+#guard surfaceCaseIds.length == 1534
 
 /-!
 Direct internal-node cases: `Expr.sequenceConstruct` is an INTERNAL node —
@@ -9371,5 +9407,5 @@ def internalNodeCaseIds : List String := [
 #guard internalNodeCaseIds.length == 14
 
 -- 14 internal-node cases.
--- Total: 1542 case guards (1528 surface + 14 internal-node).
+-- Total: 1548 case guards (1534 surface + 14 internal-node).
 end SemanticExplorerCases

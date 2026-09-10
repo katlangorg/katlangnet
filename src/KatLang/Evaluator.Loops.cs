@@ -363,20 +363,15 @@ public static partial class Evaluator
     /// Applies a unary operator to one evaluated operand value. This is the SINGLE
     /// unary application semantics and error/span policy, shared by the generic
     /// expression-spine machine, its async twin, and the planned loop evaluator's
-    /// non-numeric arm, so evaluation strategies cannot drift: the empty sequence
-    /// value propagates through unchanged, the string rejection is stamped with the
+    /// non-numeric arm, so evaluation strategies cannot drift: the empty sequence value
+    /// follows ordinary numeric-conversion validation (SYN-01), string rejection uses the
     /// unary expression's span, and the numeric-conversion failure
     /// (<see cref="ExpectInt"/>) is returned UNSPANNED — the innermost error's span
     /// is public structured state, so only the surrounding evaluation boundaries may
-    /// attach one (<see cref="AtSpanIfMissing"/>). Lean: the <c>.unary</c> arm of
-    /// <c>eval</c>.
+    /// attach one (<see cref="AtSpanIfMissing"/>). Lean: <c>evalUnaryCounted</c>.
     /// </summary>
     internal static EvalResult<Result> ApplyUnaryOperator(UnaryOp op, Result operandValue, SourceSpan? span)
     {
-        // Empty result propagation through unary operators.
-        if (operandValue is Result.SequenceValue(var items) && items.Count == 0)
-            return EvalResult<Result>.Ok(Result.SequenceValue.TakeOwnership([]));
-
         if (operandValue is Result.Str)
             return new EvalError.TypeMismatch("Unary operator is not supported for strings") { Span = span };
 
@@ -410,16 +405,13 @@ public static partial class Evaluator
         if (op == BinaryOp.Ne)
             return EvalResult<Result>.Ok(new Result.Atom(ValueEquals(leftValue, rightValue) ? 0 : 1));
 
-        var leftEmpty = leftValue is Result.SequenceValue(var leftItems) && leftItems.Count == 0;
-        var rightEmpty = rightValue is Result.SequenceValue(var rightItems) && rightItems.Count == 0;
-        if (leftEmpty || rightEmpty)
-        {
-            // Empty results stay transparent for the non-comparison operators.
-            if (leftEmpty && rightEmpty) return EvalResult<Result>.Ok(Result.SequenceValue.TakeOwnership([]));
-            if (leftEmpty) return EvalResult<Result>.Ok(rightValue);
-            return EvalResult<Result>.Ok(leftValue);
-        }
-
+        // SYN-01: the empty sequence value is NOT an identity for scalar operators.
+        // `()` is an ordinary operand here — it carries no numeric scalar value, so
+        // it reaches the string contract and the numeric-scalar validation below
+        // exactly like `(1, 2)` or `[]`, and `10 / ()`, `() > 10`, `() and 7`, and
+        // `() + 'text'` are operand errors rather than a passthrough of the other
+        // operand. Empty NEUTRALITY is a property of the arity algebra's SUPPLY
+        // operations (capture/collect/spread), never of scalar operators.
         if (leftValue is Result.Str && rightValue is Result.Str)
             return new EvalError.TypeMismatch("Strings only support == and != operators") { Span = span };
 

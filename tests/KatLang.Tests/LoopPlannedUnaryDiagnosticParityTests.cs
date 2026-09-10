@@ -28,7 +28,8 @@ namespace KatLang.Tests;
 /// unary fails on a later iteration. The regressions here use those genuinely
 /// planned shapes and prove the routing through the loop diagnostics; the
 /// review's initial-state shape is kept as a generic-vs-generic parity pin at
-/// the gate boundary.</para>
+/// the gate boundary. A captured caller parameter can also supply any value
+/// directly to a planned unary, including `()` without a zero-emission handover.</para>
 ///
 /// <para>The structured comparison machinery is shared with
 /// <see cref="LoopPlannedIfDiagnosticParityTests"/> via
@@ -524,28 +525,70 @@ public class LoopPlannedUnaryDiagnosticParityTests
         Assert.Contains("non-scalar loop state slot", loop.FallbackReasons.Keys);
     }
 
-    [Fact]
-    public void Repeat_EmptySequenceState_StaysTransparentInBothModes()
+    [Theory]
+    [InlineData("-")]
+    [InlineData("not ")]
+    public void Repeat_EmptySequenceInitialState_IsRejectedInBothModes(string op)
     {
-        // `-()` propagates the empty sequence value unchanged (the shared
-        // application's empty arm). An empty INITIAL state routes generic at
-        // the same gate as above, and a mid-loop `()` state forces the generic
-        // continuation (zero-emission slots), so this pins value parity across
-        // that boundary.
-        var source = """
-            S(a) = -a
+        // This initial state is generic-only. The captured-operand matrix below
+        // separately proves that the planned unary also rejects the empty value.
+        var source = $"""
+            S(a) = {op}a
             repeat(S, 2, ())
             """;
 
-        var generic = Run(source, enableLoopOptimization: false);
-        Assert.False(generic.IsError, $"Expected generic success but got: {(generic.IsError ? generic.Error : null)}");
-        var genericValue = Assert.IsType<Result.SequenceValue>(generic.Value);
-        Assert.Empty(genericValue.Items);
+        var error = AssertOptimizerTransparentFailure(source);
+        Assert.Null(Assert.IsType<EvalError.BadArity>(Innermost(error)).Span);
 
-        var optimized = Run(source, enableLoopOptimization: true);
-        Assert.False(optimized.IsError, $"Expected optimized success but got: {(optimized.IsError ? optimized.Error : null)}");
-        var optimizedValue = Assert.IsType<Result.SequenceValue>(optimized.Value);
-        Assert.Empty(optimizedValue.Items);
+        var (_, loop, _) = RunObserved(source, enableLoopOptimization: true);
+        Assert.Equal(0, loop.OptimizedLoopHits);
+        Assert.Contains("non-scalar loop state slot", loop.FallbackReasons.Keys);
+    }
+
+    public static IEnumerable<object[]> CapturedUnaryNonScalarOperands()
+    {
+        foreach (var (op, plan) in new[] { ("-", "Negate"), ("not ", "Not") })
+        foreach (var operand in new[] { "()", "(1, 2)", "[1, 2]" })
+        foreach (var position in new[] { "repeat", "while-output", "while-continuation" })
+            yield return [op, plan, operand, position];
+    }
+
+    [Theory]
+    [MemberData(nameof(CapturedUnaryNonScalarOperands))]
+    public void PlannedUnary_CapturedNonScalarOperand_MatchesGenericDiagnosticExactly(
+        string op, string unaryPlan, string operand, string position)
+    {
+        // Empty initial state and a zero-emission state update both bypass the
+        // planned unary. Capture an ordinary user parameter instead: the loop
+        // starts numeric, and its unary application is wholly planned.
+        var continuation = position == "while-continuation";
+        var step = continuation ? $"x, {op}value" : $"{op}value";
+        if (position == "while-output") step += ", 1";
+        var call = position == "repeat" ? "repeat(S, 1, 0)" : "while(S, 0)";
+        var source = $$"""
+            Use(value) = {
+                S(x) = {{step}}
+                {{call}}
+            }
+            Use({{operand}})
+            """;
+
+        var error = AssertOptimizerTransparentFailure(source);
+        Assert.Null(Assert.IsType<EvalError.BadArity>(Innermost(error)).Span);
+        var (generic, _) = RunCountedObserved(source, enableLoopOptimization: false);
+        var (optimized, loop) = RunCountedObserved(source, enableLoopOptimization: true);
+        Assert.True(generic.IsError);
+        Assert.True(optimized.IsError);
+        Assert.Equal(DescribeErrorTree(error), DescribeErrorTree(generic.Error));
+        Assert.Equal(DescribeErrorTree(error), DescribeErrorTree(optimized.Error));
+
+        AssertPlannedUnarySlot(loop, position == "repeat" ? "Use.S.repeat" : "Use.S.while",
+            continuation ? "continuation" : "output", continuation ? null : 0,
+            $"{unaryPlan}(CapturedSlot(value))");
+        Assert.Equal(1, loop.LoopIterations);
+        Assert.Equal(1, loop.PlannedBuiltinOperations);
+        Assert.Equal(0, loop.PlannedExpressionFallbacks);
+        Assert.Equal(0, loop.GenericExpressionEvaluationsInsideOptimizedLoops);
     }
 
     // ── Outer evaluation layers do not re-span the unspanned innermost ───────

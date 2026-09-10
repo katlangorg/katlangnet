@@ -14,11 +14,11 @@ This is bounded differential validation over the Lean-guarded partition,
 not a formal verification of the evaluators.
 
 Partition (machine-checked by the `specCaseIds.length` guard below):
-- specification surface cases: 223
+- specification surface cases: 224
 - excluded parse-level cases (Lean has no surface parser): 17
 - excluded C#-only cases (each carries an explicit reason in the corpus): 10
-- Lean-guarded cases: 196
-- probe observations (C#-only by design): 403
+- Lean-guarded cases: 197
+- probe observations (C#-only by design): 444
 - internal-node cases live in the semantic-explorer corpus, not here: see
   lean/SemanticExplorerCases.lean
 
@@ -838,6 +838,11 @@ def case_scalar_op_rejects_sequence : Expr :=
   .algorithmExpr (alg [] [] [] [(.binary .add (.capture [.num 1, .num 2]) (.num 1))])
 #guard obs case_scalar_op_rejects_sequence == "err type"
 
+-- empty-sequence-is-not-an-operator-identity [errors]: 10 / ()
+def case_empty_sequence_is_not_an_operator_identity : Expr :=
+  .algorithmExpr (alg [] [] [] [(.binary .div (.num 10) (.emptySequence 0))])
+#guard obs case_empty_sequence_is_not_an_operator_identity == "err type"
+
 -- order-rejects-non-numeric [errors]: order((1, 'hello'))
 def case_order_rejects_non_numeric : Expr :=
   .algorithmExpr (alg [] [] [] [(.call (.resolve "order") [(.capture [.num 1, .stringLiteral "hello"])])])
@@ -1078,7 +1083,7 @@ def case_if_spread_builds_values_before_branch_selection : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Risky" (alg [] [] [] [(.capture [.num 10, (.binary .div (.num 1) (.num 0))])])] [(.call (.resolve "if") [.num 1, (.sequenceSpread (.resolve "Risky"))])])
 #guard obs case_if_spread_builds_values_before_branch_selection == "err div0"
 
--- 196 canonical Lean-guarded specification cases.
+-- 197 canonical Lean-guarded specification cases.
 
 /--
 Machine-checked Lean-guarded partition count: the id list is built by the
@@ -1234,6 +1239,7 @@ def specCaseIds : List String := [
   "missing-output-not-a-value",
   "missing-output-as-builtin-arg",
   "scalar-op-rejects-sequence",
+  "empty-sequence-is-not-an-operator-identity",
   "order-rejects-non-numeric",
   "division-by-zero",
   "spread-arguments-fail-left-to-right",
@@ -1283,6 +1289,6 @@ def specCaseIds : List String := [
   "parameter-named-if-carries-the-supplied-callable",
   "if-spread-builds-values-before-branch-selection"
 ]
-#guard specCaseIds.length == 196
+#guard specCaseIds.length == 197
 
 end LanguageSpecCases

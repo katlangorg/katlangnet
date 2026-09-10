@@ -126,8 +126,10 @@ public enum CountedConsumer
     /// element stays), spread slots splice, result always one list value.</summary>
     ListLiteralSlots,
 
-    /// <summary>Binary operator operand positions: value boundaries with the
-    /// empty-sequence transparent-passthrough rule for non-equality operators.</summary>
+    /// <summary>Scalar operator operand positions: value boundaries whose operands
+    /// must carry a numeric scalar value for the non-equality operators. Producer
+    /// cardinality never grants an exemption — a zero-output producer's `()` is
+    /// rejected like any other non-scalar operand (SYN-01).</summary>
     OperatorOperandBoundary,
 
     /// <summary>The higher-order algorithm channel: brace/named algorithms passed as

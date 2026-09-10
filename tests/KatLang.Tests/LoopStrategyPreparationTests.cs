@@ -464,7 +464,13 @@ public class LoopStrategyPreparationTests
         // emission), which the optimized frame cannot pack: the iteration finishes,
         // hands its assembled slots over ONCE, and the generic loop runs the
         // remaining iterations (preparing its own binding once).
-        const string source = "Empty = ()\nStep = if(v == 3, Empty, v + 1)\nStep.repeat(10, 0)";
+        //
+        // The inner `if` restarts the counter from an empty state EXPLICITLY. `()`
+        // is an ordinary operand for `+` (SYN-01), so the empty state must be tested
+        // and replaced rather than fed to arithmetic; equality is total over value
+        // kinds, so `v == ()` is the test. The state sequence, iteration counts, and
+        // final value are unchanged by that spelling.
+        const string source = "Empty = ()\nStep = if(v == 3, Empty, if(v == (), 1, v + 1))\nStep.repeat(10, 0)";
 
         var observations = new EvaluationObservations();
         var (result, budget, diagnostics) = RunOptimized(source, observations);
@@ -542,8 +548,11 @@ public class LoopStrategyPreparationTests
         // Two state slots; the SECOND output stops emitting exactly one value while
         // the first stays scalar. The materialized handover slots must keep the
         // written output order (state slot 0 first), or the generic continuation
-        // binds the wrong values.
-        const string source = "Empty = ()\nStepTwo = a + 1, if(a == 1, Empty, b * 2)\nStepTwo.repeat(3, 0, 5)";
+        // binds the wrong values — and a swap is now doubly visible, because the
+        // first slot's `a + 1` would then receive `()` and type-error (SYN-01).
+        // The inner `if` recovers slot 1 from its empty state explicitly, since `()`
+        // is an ordinary operand for `*`; slot values and counts are unchanged.
+        const string source = "Empty = ()\nStepTwo = a + 1, if(a == 1, Empty, if(b == (), 2, b * 2))\nStepTwo.repeat(3, 0, 5)";
 
         var observations = new EvaluationObservations();
         var (result, budget, diagnostics) = RunOptimized(source, observations);

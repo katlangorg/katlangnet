@@ -73,4 +73,139 @@ def fractionalReciprocalExponentIsExplicitError : Bool :=
 
 #guard fractionalReciprocalExponentIsExplicitError
 
+--------------------------------------------------------------------------------
+-- SYN-01: the empty sequence VALUE is not a scalar-operator identity
+--------------------------------------------------------------------------------
+-- `()` is a real KatLang value with no numeric scalar value. It therefore
+-- reaches the SAME operand validation as any other non-scalar operand
+-- (`(1, 2)`, `[]`, a string) for every non-equality operator, on either side,
+-- instead of being returned as the operator's result. This is the OPERAND
+-- rule; empty NEUTRALITY belongs to the arity algebra's supply operations
+-- (capture/collect/spread), which are unchanged and pinned below.
+
+def emptyOperandExpr : KatLang.Expr := .emptySequence 0
+
+def emptyOperandMessage (op : KatLang.BinaryOp) (side : String) : String :=
+  s!"operator `{op.symbol}` expects numeric scalar operands, but the {side} operand was a sequence value with 0 sequence elements: ()"
+
+def rejectsEmptyOperand (op : KatLang.BinaryOp) : Bool :=
+  (match runResult (.binary op emptyOperandExpr (.num 10)) with
+   | Except.error err => innermostIsTypeMismatch (emptyOperandMessage op "left") err
+   | _ => false) &&
+  (match runResult (.binary op (.num 10) emptyOperandExpr) with
+   | Except.error err => innermostIsTypeMismatch (emptyOperandMessage op "right") err
+   | _ => false) &&
+  (match runResult (.binary op emptyOperandExpr emptyOperandExpr) with
+   | Except.error err => innermostIsTypeMismatch (emptyOperandMessage op "left") err
+   | _ => false)
+
+/-- Every operator except the structural `==`/`!=` pair. -/
+def nonEqualityOperators : List KatLang.BinaryOp :=
+  [.add, .sub, .mul, .div, .idiv, .mod, .pow, .lt, .gt, .le, .ge, .and, .or, .xor]
+
+-- Left-empty, right-empty, and both-empty for every non-equality operator.
+def emptyOperandRejectedByEveryScalarOperator : Bool :=
+  nonEqualityOperators.all rejectsEmptyOperand
+
+#guard emptyOperandRejectedByEveryScalarOperator
+
+-- The four SYN-01 reproductions specifically (plus the mirrored string case):
+-- none of them yields the other operand. `() + 'text'` reaches the unchanged
+-- string/non-string contract rather than passing the string through.
+def syn01ReproductionsRejected : Bool :=
+  (match runResult (.binary .div (.num 10) emptyOperandExpr) with
+   | Except.error err => innermostIsTypeMismatch (emptyOperandMessage .div "right") err
+   | _ => false) &&
+  (match runResult (.binary .gt emptyOperandExpr (.num 10)) with
+   | Except.error err => innermostIsTypeMismatch (emptyOperandMessage .gt "left") err
+   | _ => false) &&
+  (match runResult (.binary .and emptyOperandExpr (.num 7)) with
+   | Except.error err => innermostIsTypeMismatch (emptyOperandMessage .and "left") err
+   | _ => false) &&
+  (match runResult (.binary .add emptyOperandExpr (.stringLiteral "text")) with
+   | Except.error err =>
+       innermostIsTypeMismatch "Cannot apply operator to string and non-string operands" err
+   | _ => false) &&
+  (match runResult (.binary .add (.stringLiteral "text") emptyOperandExpr) with
+   | Except.error err =>
+       innermostIsTypeMismatch "Cannot apply operator to string and non-string operands" err
+   | _ => false)
+
+#guard syn01ReproductionsRejected
+
+/-- `runResult e` succeeded with exactly `expected`. (`Error` has no `BEq`, so
+    the whole `Except` cannot be compared directly.) -/
+def evaluatesTo (e : KatLang.Expr) (expected : Result) : Bool :=
+  match runResult e with
+  | Except.ok value => value == expected
+  | _ => false
+
+-- Positive control 1: structural equality is decided BEFORE operand
+-- validation and is unaffected -- `()` compares as an ordinary value.
+def emptyStructuralEqualityUnaffected : Bool :=
+  evaluatesTo (.binary .eq emptyOperandExpr emptyOperandExpr) (.atom 1) &&
+  evaluatesTo (.binary .ne emptyOperandExpr emptyOperandExpr) (.atom 0) &&
+  evaluatesTo (.binary .eq emptyOperandExpr (.emptySequence 1)) (.atom 1) &&
+  evaluatesTo (.binary .ne emptyOperandExpr (.emptySequence 1)) (.atom 0) &&
+  evaluatesTo (.binary .eq emptyOperandExpr (.num 0)) (.atom 0) &&
+  evaluatesTo (.binary .ne emptyOperandExpr (.capture [.num 1, .num 2])) (.atom 1) &&
+  evaluatesTo (.binary .eq emptyOperandExpr (.stringLiteral "text")) (.atom 0) &&
+  evaluatesTo (.binary .eq (.listLiteral []) emptyOperandExpr) (.atom 0)
+
+#guard emptyStructuralEqualityUnaffected
+
+-- Positive control 2: ordinary scalar operators still compute, and the
+-- ordering operators still return the numeric boolean representation rather
+-- than one of their operands.
+def ordinaryScalarOperatorsUnaffected : Bool :=
+  binaryAtomResult? .add 1 2 == some 3 &&
+  binaryAtomResult? .sub 1 2 == some (-1) &&
+  binaryAtomResult? .gt 10 1 == some 1 &&
+  binaryAtomResult? .gt 1 10 == some 0 &&
+  binaryAtomResult? .ge 1 1 == some 1 &&
+  binaryAtomResult? .and 1 7 == some 1 &&
+  binaryAtomResult? .and 0 7 == some 0 &&
+  binaryAtomResult? .or 0 0 == some 0
+
+#guard ordinaryScalarOperatorsUnaffected
+
+-- Unary operators use the existing expectInt validation: every unsupported
+-- sequence/list value is badArity, including `()`; strings keep typeMismatch.
+def unaryNonScalarOperandsRejected : Bool :=
+  ([KatLang.UnaryOp.minus, .not]).all fun op =>
+    ([emptyOperandExpr, .emptySequence 2, .capture [.num 1, .num 2],
+      .listLiteral [], .listLiteral [.num 1], .listLiteral [.num 1, .num 2]]).all
+      (fun operand => match runResult (.unary op operand) with
+       | Except.error err => innermostIsBadArity err
+       | _ => false) &&
+    (match runResult (.unary op (.stringLiteral "text")) with
+     | Except.error err =>
+         innermostIsTypeMismatch "Unary operator is not supported for strings" err
+     | _ => false)
+
+#guard unaryNonScalarOperandsRejected
+
+def ordinaryUnaryOperatorsUnaffected : Bool :=
+  evaluatesTo (.unary .minus (.num 7)) (.atom (-7)) &&
+  evaluatesTo (.unary .minus (.num (-7))) (.atom 7) &&
+  evaluatesTo (.unary .minus (.num 0)) (.atom 0) &&
+  evaluatesTo (.unary .not (.num 0)) (.atom 1) &&
+  evaluatesTo (.unary .not (.num 7)) (.atom 0) &&
+  evaluatesTo (.unary .not (.num (-7))) (.atom 0)
+
+#guard ordinaryUnaryOperatorsUnaffected
+
+-- Positive control 3: empty SUPPLY neutrality is untouched. `()` is still a
+-- real value that captures, counts, spreads to zero items, and stays a
+-- VISIBLE non-spread slot.
+def emptySupplyNeutralityUnchanged : Bool :=
+  evaluatesTo emptyOperandExpr (.sequenceValue []) &&
+  evaluatesTo (.capture [emptyOperandExpr]) (.sequenceValue []) &&
+  evaluatesTo (.capture [sequenceSpread emptyOperandExpr, .num 1]) (.atom 1) &&
+  evaluatesTo (.capture [emptyOperandExpr, .num 1]) (.sequenceValue [.sequenceValue [], .atom 1]) &&
+  evaluatesTo (.call (.resolve "count") [emptyOperandExpr]) (.atom 0) &&
+  evaluatesTo (.listLiteral [emptyOperandExpr]) (.listValue [.sequenceValue []])
+
+#guard emptySupplyNeutralityUnchanged
+
 end KatLangTests

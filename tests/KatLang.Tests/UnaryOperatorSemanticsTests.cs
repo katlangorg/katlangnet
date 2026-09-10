@@ -21,13 +21,13 @@ public class UnaryOperatorSemanticsTests
     [Theory]
     [InlineData(UnaryOp.Minus)]
     [InlineData(UnaryOp.Not)]
-    public void EmptySequence_PropagatesAsTheZeroEmittingEmptyValue(UnaryOp op)
+    public void EmptySequence_UsesTheExistingUnspannedNumericConversionFailure(UnaryOp op)
     {
-        var value = Assert.IsType<Result.SequenceValue>(
-            Apply(op, Result.SequenceValue.TakeOwnership([])));
+        var result = Evaluator.ApplyUnaryOperator(
+            op, Result.SequenceValue.TakeOwnership([]), new SourceSpan(7, 3, 7, 8));
 
-        Assert.Empty(value.Items);
-        Assert.Equal(0, value.ValueCount());
+        Assert.True(result.IsError);
+        Assert.Null(Assert.IsType<EvalError.BadArity>(result.Error).Span);
     }
 
     [Fact]

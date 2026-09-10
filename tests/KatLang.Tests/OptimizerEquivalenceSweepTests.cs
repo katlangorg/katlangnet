@@ -264,10 +264,15 @@ public class OptimizerEquivalenceSweepTests
             ("state-becomes-sequence", "S(x) = if(x > 0, x - 1, (1, 2))\nrepeat(S, 3, 2)"),
             ("state-becomes-empty", "S(x) = if(x > 0, x - 1, ())\nrepeat(S, 3, 2)"),
             ("while-state-becomes-sequence", "S(x) = if(x > 0, x - 1, (1, 2)), 1\nwhile(S, 2)"),
-            // A bounded counter drives the loop so the state slot can become `()`
-            // (and stay `()`, which is transparent to `>` and would otherwise
-            // never falsify a numeric continuation) without looping forever.
+            // A bounded counter `k` drives the loop, so the second state slot can
+            // become `()` and stay `()` without the continuation ever depending on
+            // it. The guarded `if` keeps `x - 1` off the empty slot; the companion
+            // case below is the one that feeds `()` straight into an operator.
             ("while-state-becomes-empty", "S(k, x) = k - 1, if(k > 1, x - 1, ()), k > 0\nwhile(S, 3, 2)"),
+            // SYN-01: an empty state slot reaching an operator is a type error, and
+            // the planned and generic strategies must agree on that error.
+            ("empty-state-reaches-operator", "S(x) = x - 1\nrepeat(S, 2, ())"),
+            ("empty-state-reaches-continuation", "S(x) = x - 1, x > 0\nwhile(S, ())"),
             ("multi-slot-state-kind-change", "S(x, y) = y, if(x > 0, x - 1, (1, 2))\nrepeat(S, 3, 2, 2)"),
             ("step-shadows-outer-name", "x = 99\nS(x) = x + 1\nrepeat(S, 3, 0)"),
             ("cached-property-in-step", "P = 1, 2\nS(x) = x + P.count\nrepeat(S, 3, 0)"),

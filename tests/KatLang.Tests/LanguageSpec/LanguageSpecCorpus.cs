@@ -2327,11 +2327,78 @@ public static class LanguageSpecCorpus
             ExpectedErrorCategory = "type",
             Probes =
             [
-                new SpecProbe("() > 1", "ok raw=1 n=1"),
-                new SpecProbe("() + 1", "ok raw=1 n=1"),
+                new SpecProbe("() > 1", "err type"),
+                new SpecProbe("() + 1", "err type"),
+                new SpecProbe("1 + ()", "err type"),
+                new SpecProbe("[] + 1", "err type"),
             ],
-            Notes = "The probes pin the documented `()` operator transparency: for non-comparison operators `()` is a transparent passthrough, not a comparison result.",
-            Explanation = "Scalar operators require numeric scalar operands; a multi-item sequence value is a type error. `()` alone is transparent for non-equality operators.",
+            Notes = "The probes pin that operand cardinality grants no exemption: an empty sequence value and an empty list are rejected exactly like a multi-item sequence value (SYN-01), on either operand side.",
+            Explanation = "Binary scalar operators require numeric scalar operands; a sequence value is a type error whatever its item count, including the empty sequence value `()`.",
+        },
+        new()
+        {
+            Id = "empty-sequence-is-not-an-operator-identity",
+            Category = "errors",
+            Source = "10 / ()",
+            Outcome = SpecOutcome.EvalError,
+            ExpectedErrorCategory = "type",
+            Probes =
+            [
+                // The other three SYN-01 reproductions; the case source is the
+                // fourth. Each returned the OTHER operand before this rule — the
+                // source was `10`, and these were `10`, `7`, and `text`.
+                new SpecProbe("() > 10", "err type"),
+                new SpecProbe("() and 7", "err type"),
+                new SpecProbe("() + 'text'", "err type"),
+                // Left-empty and right-empty across the operator families.
+                new SpecProbe("() + 1", "err type"),
+                new SpecProbe("1 + ()", "err type"),
+                new SpecProbe("() - 1", "err type"),
+                new SpecProbe("1 - ()", "err type"),
+                new SpecProbe("() * 2", "err type"),
+                new SpecProbe("2 * ()", "err type"),
+                new SpecProbe("() / 2", "err type"),
+                new SpecProbe("() div 2", "err type"),
+                new SpecProbe("() mod 2", "err type"),
+                new SpecProbe("() ^ 2", "err type"),
+                new SpecProbe("2 ^ ()", "err type"),
+                new SpecProbe("() < 1", "err type"),
+                new SpecProbe("1 < ()", "err type"),
+                new SpecProbe("() >= 1", "err type"),
+                new SpecProbe("1 >= ()", "err type"),
+                new SpecProbe("() or 0", "err type"),
+                new SpecProbe("0 or ()", "err type"),
+                new SpecProbe("() xor 1", "err type"),
+                new SpecProbe("() + ()", "err type"),
+                // Redundant parentheses canonicalize to `()` and change nothing.
+                new SpecProbe("(()) + 1", "err type"),
+                // A NAMED empty operand takes the same path as the literal.
+                new SpecProbe("A = ()\nA / 2", "err type"),
+                // Unary scalar operators use their existing numeric conversion
+                // (arity category), with no empty-sequence bypass either.
+                new SpecProbe("-()", "err arity"),
+                new SpecProbe("not ()", "err arity"),
+                new SpecProbe("-(1, 2)", "err arity"),
+                new SpecProbe("not (1, 2)", "err arity"),
+                new SpecProbe("-[1, 2]", "err arity"),
+                new SpecProbe("not [1, 2]", "err arity"),
+                new SpecProbe("-7", "ok raw=-7 n=1"),
+                new SpecProbe("not 0", "ok raw=1 n=1"),
+                new SpecProbe("not 7", "ok raw=0 n=1"),
+                // Positive controls: equality stays total over empty operands, and
+                // ordinary comparisons still produce the numeric boolean.
+                new SpecProbe("() == ()", "ok raw=1 n=1"),
+                new SpecProbe("() != (1, 2)", "ok raw=1 n=1"),
+                new SpecProbe("10 > 1", "ok raw=1 n=1"),
+                new SpecProbe("1 > 10", "ok raw=0 n=1"),
+                // Positive control: empty SUPPLY neutrality is a different rule and
+                // is unchanged — the spread of `()` still contributes no items.
+                new SpecProbe("Empty = ()\nEmpty*\n7", "ok raw=7 n=1"),
+                new SpecProbe("count(())", "ok raw=0 n=1"),
+            ],
+            IncludeInGeneratorPrompt = true,
+            Notes = "SYN-01. Binary operators previously returned the other operand when either was `()`; unary operators propagated `()`. Both bypasses are removed. Unary sequence/list rejection retains the existing arity category; binary rejection retains type. Empty NEUTRALITY belongs to the arity algebra's supply operations (capture/collect/spread) and is deliberately untouched, as the last two probes pin.",
+            Explanation = "The empty sequence value is a real value, not an operator identity: scalar operators apply their ordinary operand validation to `()` just as to any other non-scalar value. `10 / ()`, `-()`, and `not ()` are errors.",
         },
         new()
         {

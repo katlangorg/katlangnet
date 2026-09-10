@@ -171,11 +171,18 @@ public class ListValueTests
         => Assert.True(Fails("[5] + 1"));
 
     [Fact]
-    public void EmptyList_IsNotTransparentInArithmetic()
+    public void EmptyCollections_AreNotTransparentInArithmetic()
     {
-        // `() > 1` passes through, but `[]` is an exact value and type-errors.
-        AssertAtoms("() > 1", 1);
+        // Neither empty collection kind has a numeric scalar value, so both are
+        // rejected as operands (SYN-01 removed the `()` passthrough that used to
+        // make these two differ here). They remain DIFFERENT VALUES: the
+        // distinction is carried by structural equality, which is decided before
+        // operand validation — `[] == ()` is `0`, pinned in the equality theory
+        // above and unaffected by SYN-01.
+        Assert.True(Fails("() > 1"));
         Assert.True(Fails("[] > 1"));
+        Assert.True(Fails("() + 1"));
+        Assert.True(Fails("[] + 1"));
     }
 
     [Fact]

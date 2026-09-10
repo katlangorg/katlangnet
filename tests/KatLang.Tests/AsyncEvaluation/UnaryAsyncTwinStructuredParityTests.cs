@@ -16,7 +16,8 @@ public class UnaryAsyncTwinStructuredParityTests
             { "minus zero", "X = 0\n-X" },
             { "not zero", "X = 0\nnot X" },
             { "not non-zero", "X = 3\nnot X" },
-            { "empty sequence", "X = ()\n-X" },
+            { "minus empty sequence", "X = ()\n-X" },
+            { "not empty sequence", "X = ()\nnot X" },
             { "minus string", "X = 'text'\n-X" },
             { "not string", "X = 'text'\nnot X" },
             { "list", "X = [1, 2]\n-X" },
@@ -55,6 +56,27 @@ public class UnaryAsyncTwinStructuredParityTests
         }
 
         Assert.True(cache.AsyncAccesses > 0, "the operand property must route through the async cache seam");
+        Assert.Equal(0, cache.SyncAccesses);
+    }
+
+    [Theory]
+    [InlineData("-")]
+    [InlineData("not ")]
+    public async Task AsyncTwin_EmptyOperandAfterSuspension_KeepsExistingBadArityAndBlame(string op)
+    {
+        var ast = Program($"X = ()\n{op}X");
+        var sync = Evaluator.RunCountedObserved(ast, enableOptimizations: false).Result;
+        Assert.True(sync.IsError);
+        Assert.Null(Assert.IsType<EvalError.BadArity>(Innermost(sync.Error)).Span);
+
+        var cache = new SuspendingAsyncZeroArgPropertyResultCache();
+        var result = await AsyncEvaluationHarness.Complete(Evaluator.RunCountedAsync(ast, cache));
+        Assert.True(result.IsError);
+        Assert.Equal(DescribeErrorTree(sync.Error), DescribeErrorTree(result.Error));
+        Assert.Equal(Span(sync.Error), Span(result.Error));
+        Assert.Equal(KatLangError.FromEvalError(sync.Error).Message, KatLangError.FromEvalError(result.Error).Message);
+        Assert.True(cache.AsyncAccesses > 0);
+        Assert.NotEmpty(cache.ThreadHops);
         Assert.Equal(0, cache.SyncAccesses);
     }
 }

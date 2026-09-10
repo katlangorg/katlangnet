@@ -322,9 +322,18 @@ public static class SemanticExplorerCorpus
         Special("orderSingle", "order(5)"),
         Special("orderEmpty", "order(())"),
         Special("atomsNested", "atoms(((1, 2), (3, 4)))"),
+        // SYN-01: `()` is an ordinary non-scalar operand for the non-equality
+        // operators, on either side. These pin the Lean/C# agreement on the
+        // FAILURE, exactly as the equality cases below pin it on success.
         Special("emptyOpGreater", "() > 1"),
         Special("emptyOpPlus", "() + 1"),
+        Special("emptyOpPlusRight", "1 + ()"),
+        Special("emptyOpDivRight", "10 / ()"),
+        Special("emptyOpAnd", "() and 7"),
+        Special("emptyOpString", "() + 'text'"),
         Special("emptyOpBoth", "() + ()"),
+        Special("emptyUnaryMinus", "-()"),
+        Special("emptyUnaryNot", "not ()"),
         Special("emptyEqEmpty", "() == ()"),
         Special("emptyEqNestedEmpty", "() == (())"),
         Special("emptyNeNestedEmpty", "() != (())"),

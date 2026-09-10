@@ -704,7 +704,9 @@ public class SemanticExplorerTests
         { "x = ((), ())\nx:0", "ok raw=S[] n=1" },
         { "P = (), 99\nP", "ok raw=S[S[], 99] n=1" },
         { "F(*a) = a\nF(1, 2, 3)", "ok raw=L[1, 2, 3] n=1" },
-        { "() > 1", "ok raw=1 n=1" },
+        // SYN-01: `()` carries no numeric scalar value, so an ordering operator
+        // rejects it instead of passing the other operand through.
+        { "() > 1", "err type" },
         { "() == (())", "ok raw=1 n=1" },
         { "x = (1, 2)\n(x*, 99)", "ok raw=S[1, 2, 99] n=1" },
         { "(1*, (), 2*)", "ok raw=S[1, S[], 2] n=1" },

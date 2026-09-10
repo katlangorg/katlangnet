@@ -980,6 +980,36 @@ A == ()
 
 **Result:** `1`
 
+#### `()` is a value, not an operator identity
+
+`()` is an ordinary operand. It carries no numeric scalar value, so the arithmetic, ordering, and logical operators reject it exactly as they reject any other non-scalar operand — on either side, and whichever operand is empty:
+
+<!-- spec:empty-sequence-is-not-an-operator-identity -->
+```
+10 / ()
+```
+
+**Result:** error
+
+`() > 10`, `() and 7`, `1 + ()`, and `() + 'text'` are errors for the same reason. An operator never returns the other operand, so an unexpectedly empty divisor or comparand fails loudly instead of yielding an apparently valid result.
+
+Unary `-()` and `not ()` are errors too. They use the same numeric conversion that rejects nonempty sequence and list operands, with no special rule for `()`.
+
+Equality is different by design: `==` and `!=` compare values structurally across every value kind, so they take `()` as a first-class operand and keep working.
+
+```
+() == ()
+() == (1, 2)
+```
+
+**Results:**
+```
+1
+0
+```
+
+Do not confuse the empty sequence **value** with an empty item **supply**. The value `()` is one thing you can store, compare, count, and pass as an argument. A supply is the temporary item stream that comma slots, adjacency, and the spread marker feed into a receiver, and an *empty supply* is genuinely neutral there — `Empty*` contributes no items to the surrounding slots. That neutrality is a fact about supplies alone; it gives operators no passthrough rule.
+
 #### Empty output slots stay visible; only spread opens
 
 A normal output expression that evaluates to `()` is still a visible output slot. Only spreading an empty sequence with the spread marker (`value*`) contributes zero items:
@@ -3556,7 +3586,7 @@ Ordinary parentheses stay a redundant SEQUENCE grouping even around lists:
 
 **Result:** `1`
 
-Unlike `()`, the empty list `[]` is never transparent: `[] > 1` is a type error while `() > 1` passes the operand through, and `F([])` passes one empty-list argument while `F([]*)` supplies zero arguments.
+Neither empty collection is an operator identity: `[] > 1` and `() > 1` are both type errors, because neither value is a numeric scalar. They still differ as values — `[] == ()` is `0` — and they differ at the supply boundary: `F([])` passes one empty-list argument while `F([]*)` supplies zero arguments.
 
 ### Indexing Lists
 

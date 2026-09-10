@@ -61,11 +61,13 @@ public static partial class Evaluator
     /// <c>Eval</c> cases and the <c>EvalIndexSelectionCounted</c> /
     /// <c>EvalListLiteralCounted</c> helpers):</para>
     /// <list type="bullet">
-    ///   <item><b>Unary</b>: empty sequence propagates; strings are a
+    ///   <item><b>Unary</b>: non-scalar values, including <c>()</c>, are rejected; strings are a
     ///   <see cref="EvalError.TypeMismatch"/> at the unary expression's span; operand
     ///   errors propagate untouched. Lean: <c>eval</c> unary case.</item>
     ///   <item><b>Binary</b>: left then right, each error propagating untouched, then
-    ///   <see cref="ApplyBinaryOperator"/>. Lean: <c>eval</c> binary case.</item>
+    ///   <see cref="ApplyBinaryOperator"/> — where the empty sequence value is an
+    ///   ORDINARY operand, not an identity (SYN-01). Lean: <c>eval</c> binary
+    ///   case.</item>
     ///   <item><b>Index</b>: target then selector; every child or coercion error gains
     ///   the index expression's span when it has none; the selected item re-emits its
     ///   PROJECTED count (<c>S:0</c> re-emits, never re-counts). Lean:
@@ -491,8 +493,8 @@ public static partial class Evaluator
 
             case Expr.Unary or Expr.Binary:
                 // Unary and binary spines evaluate iteratively; the machine
-                // preserves the recursive semantics exactly (empty-result
-                // propagation, string rejection, ApplyBinaryOperator).
+                // preserves operand validation, error propagation, and spans
+                // through the shared unary and binary applications.
                 return ProjectCountedValue(EvalExpressionSpineCounted(expr, ctx, valEnv));
 
             case Expr.SequenceConstruct:

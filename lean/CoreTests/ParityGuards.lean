@@ -711,22 +711,29 @@ def directCallProjectionParityHolds : Bool :=
 -- `eval` is its TOTAL value projection with no arms of its own. These probes
 -- pin `eval e == Prod.fst <$> evalCounted e` — values, error Reprs, and final
 -- evaluator state — across one representative expression per variant plus the
--- operator edges whose semantics moved into the counted arms (empty
--- transparency, string rejection, division by zero, negative power). The
--- expected-success flag keeps each probe honest.
+-- operator edges whose semantics moved into the counted arms (the SYN-01
+-- empty-operand rejection, string rejection, division by zero, negative
+-- power). The expected-success flag keeps each probe honest.
 
 def evalProjectionProbes : List (String × KatLang.Expr × Bool) :=
   [ ("num", .num 42, true),
     ("string", .stringLiteral "text", true),
     ("unary-minus", .unary .minus (.num 7), true),
     ("unary-not-zero", .unary .not (.num 0), true),
-    ("unary-empty-propagates", .unary .minus (.emptySequence 0), true),
+    ("unary-minus-empty-rejected", .unary .minus (.emptySequence 0), false),
+    ("unary-not-empty-rejected", .unary .not (.emptySequence 0), false),
     ("unary-string-rejected", .unary .minus (.stringLiteral "s"), false),
     ("binary-add", .binary .add (.num 2) (.num 3), true),
     ("binary-eq-mixed-kinds", .binary .eq (.num 1) (.stringLiteral "1"), true),
     ("binary-ne-strings", .binary .ne (.stringLiteral "a") (.stringLiteral "b"), true),
-    ("binary-empty-left-transparent", .binary .add (.emptySequence 0) (.num 5), true),
-    ("binary-both-empty", .binary .add (.emptySequence 0) (.emptySequence 0), true),
+    -- SYN-01: `()` is an ordinary non-scalar operand for the non-equality
+    -- operators, so both sides and the both-empty case are operand errors.
+    ("binary-empty-left-rejected", .binary .add (.emptySequence 0) (.num 5), false),
+    ("binary-empty-right-rejected", .binary .add (.num 5) (.emptySequence 0), false),
+    ("binary-both-empty-rejected", .binary .add (.emptySequence 0) (.emptySequence 0), false),
+    ("binary-empty-order-rejected", .binary .gt (.emptySequence 0) (.num 10), false),
+    ("binary-empty-logical-rejected", .binary .and (.emptySequence 0) (.num 7), false),
+    ("binary-empty-string-rejected", .binary .add (.emptySequence 0) (.stringLiteral "text"), false),
     ("binary-string-op-rejected", .binary .add (.stringLiteral "a") (.stringLiteral "b"), false),
     ("binary-mixed-string-rejected", .binary .lt (.num 1) (.stringLiteral "b"), false),
     ("binary-div-by-zero", .binary .div (.num 1) (.num 0), false),

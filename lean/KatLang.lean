@@ -5530,16 +5530,15 @@ mutual
     loop (sequenceConstructLeaves e) []
 
   /-- Evaluate a unary operator expression as one counted value. The operand is
-      read at its value boundary; the empty sequence value propagates through
-      unary operators, strings are rejected, and any other operand must be a
-      numeric scalar. Owned here so `eval` (the value projection) never carries
-      independent operator semantics. C#: the unary case of
+      read at its value boundary; strings are rejected, and any other operand
+      must be a numeric scalar. The empty sequence value follows the same
+      validation as other non-scalar values (SYN-01). Owned here so `eval`
+      (the value projection) never carries independent operator semantics. C#: the unary case of
       `EvalExpressionSpineCounted`. -/
   partial def evalUnaryCounted (op : UnaryOp) (operand : Expr) (ctx : EvalCtx) (env : ValEnv)
       : EvalM CountedResult := do
     let r <- eval operand ctx env
     match r with
-    | .sequenceValue [] => pure (Result.sequenceValue [], 0)   -- empty propagates through unary
     | .str _ => .error (Error.typeMismatch "Unary operator is not supported for strings")
     | _ => do
       let v <- expectInt r
@@ -5550,10 +5549,14 @@ mutual
 
   /-- Evaluate a binary operator expression as one counted value. Both operands
       are read at their value boundaries. `==`/`!=` compare KatLang values
-      structurally across all value kinds; empty results stay transparent for
-      the non-comparison operators; strings reject the non-equality operators;
-      everything else follows the numeric-scalar core. Owned here so `eval`
-      (the value projection) never carries independent operator semantics.
+      structurally across all value kinds; strings reject the non-equality
+      operators; everything else follows the numeric-scalar core. The empty
+      sequence value `()` is an ORDINARY operand here — it has no numeric
+      scalar value, so it is rejected by the same operand validation as any
+      other non-scalar value (SYN-01). Empty NEUTRALITY belongs to the arity
+      algebra's supply operations (capture/collect/spread), never to scalar
+      operators. Owned here so `eval` (the value projection) never carries
+      independent operator semantics.
       C#: the binary case of `EvalExpressionSpineCounted` / `ApplyBinaryOperator`. -/
   partial def evalBinaryCounted (op : BinaryOp) (a b : Expr) (ctx : EvalCtx) (env : ValEnv)
       : EvalM CountedResult := do
@@ -5568,11 +5571,12 @@ mutual
     | .eq => pure (Result.atom (if resultValueEq lr rr then 1 else 0), 1)
     | .ne => pure (Result.atom (if resultValueEq lr rr then 0 else 1), 1)
     | _ =>
-      -- Empty results remain transparent for the non-comparison operators.
+      -- SYN-01: the empty sequence value is NOT an identity for scalar
+      -- operators. `()` carries no numeric scalar value, so it falls through to
+      -- the ordinary operand validation below exactly like `(1, 2)` or `[]` —
+      -- `10 / ()`, `() > 10`, `() and 7`, and `() + 'text'` are operand errors,
+      -- never a passthrough of the other operand.
       match lr, rr with
-      | .sequenceValue [], .sequenceValue [] => pure (Result.sequenceValue [], 0)
-      | .sequenceValue [], _ => pure (rr, Result.valueCount rr)
-      | _, .sequenceValue [] => pure (lr, Result.valueCount lr)
       -- Non-equality operators are not defined on strings (they fail here rather
       -- than via expectInt so the diagnostic names the string operands).
       | .str _, .str _ => .error (Error.typeMismatch "Strings only support == and != operators")

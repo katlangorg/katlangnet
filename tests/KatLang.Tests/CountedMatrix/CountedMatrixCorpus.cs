@@ -1150,15 +1150,25 @@ public static class CountedMatrixCorpus
             "L[L[#, #]]", 1,
             "a nested list literal is one exact element — no flattening"),
 
-        // ── Binary operator operand boundary ─────────────────────────────────
-        Raw("op/empty-left-passthrough", OperatorOperandBoundary, Zero, NamedReference,
+        // ── Scalar operator operand boundary ─────────────────────────────────
+        // SYN-01: a zero-output producer is an ORDINARY non-scalar operand — it is
+        // rejected exactly like the Two/Many rows below, not returned as the result.
+        Err("op/empty-left-rejected", OperatorOperandBoundary, Zero, NamedReference,
             P + "P0 + 5",
-            "5", 1,
-            "() is transparent for non-equality operators: the other operand passes through"),
-        Raw("op/empty-right-passthrough", OperatorOperandBoundary, Zero, NamedReference,
+            "type",
+            "() has no numeric scalar value: it is an invalid left operand, never a passthrough"),
+        Err("op/empty-right-rejected", OperatorOperandBoundary, Zero, NamedReference,
             P + "5 + P0",
-            "5", 1,
-            "() passthrough is symmetric"),
+            "type",
+            "the rejection is symmetric: () is an invalid right operand too"),
+        Err("op/unary-minus-empty-rejected", OperatorOperandBoundary, Zero, NamedReference,
+            P + "-P0",
+            "arity",
+            "unary minus uses ordinary numeric conversion; () is not a number"),
+        Err("op/unary-not-empty-rejected", OperatorOperandBoundary, Zero, NamedReference,
+            P + "not P0",
+            "arity",
+            "unary not rejects () through the same conversion as other sequence/list values"),
         Raw("op/one", OperatorOperandBoundary, One, NamedReference,
             P + "P1 + 5",
             "12", 1,
