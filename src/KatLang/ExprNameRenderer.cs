@@ -420,7 +420,7 @@ internal static class ExprNameRenderer
             case Expr.Param(var name):
                 return Append(builder, name);
             case Expr.Num(var value):
-                return Append(builder, value.ToString(System.Globalization.CultureInfo.InvariantCulture));
+                return Append(builder, Rendering.ValueTextRenderer.FormatNumberInvariant(value));
             case Expr.StringLiteral(var value):
                 return Append(builder, "'") && Append(builder, value) && Append(builder, "'");
 

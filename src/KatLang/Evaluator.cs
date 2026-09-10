@@ -1153,7 +1153,7 @@ public static partial class Evaluator
     {
         Result.SequenceValue(var items) => $"a sequence value with {items.Count} {Pluralize(items.Count, "sequence element")}: {FormatResultForDiagnostic(value)}",
         Result.Str => $"a string: {FormatResultForDiagnostic(value)}",
-        Result.Atom(var number) => $"numeric value {number.ToString(System.Globalization.CultureInfo.InvariantCulture)}",
+        Result.Atom(var number) => $"numeric value {Rendering.ValueTextRenderer.FormatNumberInvariant(number)}",
         Result.ListValue(var items) => $"a list value with {items.Count} {Pluralize(items.Count, "element")}: {FormatResultForDiagnostic(value)}",
         _ => $"a value: {FormatResultForDiagnostic(value)}",
     };
@@ -1266,7 +1266,7 @@ public static partial class Evaluator
         if (canonical != whole)
         {
             throw new InvalidOperationException(
-                $"range bound {whole.ToString(System.Globalization.CultureInfo.InvariantCulture)} has no exact canonical "
+                $"range bound {Rendering.ValueTextRenderer.FormatNumberInvariant(whole)} has no exact canonical "
                 + "integer representation, so it bypassed ValidateRangeBound's whole-integer and magnitude checks.");
         }
 
@@ -1338,7 +1338,7 @@ public static partial class Evaluator
 
     private static InvalidOperationException UnvalidatedRangeBoundInvariantViolation(Decimal128 cursor)
         => new(
-            $"range enumeration cannot advance from {cursor.ToString(System.Globalization.CultureInfo.InvariantCulture)}: "
+            $"range enumeration cannot advance from {Rendering.ValueTextRenderer.FormatNumberInvariant(cursor)}: "
             + "a unit step was absorbed, so the bounds bypassed ValidateRangeBound. "
             + "Every InclusiveRange producer must validate bounds through that shared policy.");
 
@@ -1415,7 +1415,7 @@ public static partial class Evaluator
     private static EvalResult<Result> ResultToString(EvalCtx ctx, Result r)
     {
         if (r is Result.Atom(var n))
-            return MakeStringResult(ctx, n.ToString(System.Globalization.CultureInfo.InvariantCulture));
+            return MakeStringResult(ctx, Rendering.ValueTextRenderer.FormatNumberInvariant(n));
         return new EvalError.TypeMismatch("builtin property `string` expects a numeric receiver");
     }
 
@@ -1658,7 +1658,7 @@ public static partial class Evaluator
                     return new EvalError.NotAnAlgorithm($"param({x})") { Span = expr.Span };
                 }
             case Expr.Num(var n):
-                return new EvalError.NotAnAlgorithm($"num({n.ToString(System.Globalization.CultureInfo.InvariantCulture)})") { Span = expr.Span };
+                return new EvalError.NotAnAlgorithm($"num({Rendering.ValueTextRenderer.FormatNumberInvariant(n)})") { Span = expr.Span };
             case Expr.EmptySequence:
                 return new EvalError.NotAnAlgorithm("empty sequence value") { Span = expr.Span };
             case Expr.ListLiteral:
@@ -2518,7 +2518,7 @@ public static partial class Evaluator
     }
 
     private static string FormatNumber(Decimal128 value)
-        => value.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        => Rendering.ValueTextRenderer.FormatNumberInvariant(value);
 
     private static bool TryDecimal128Pow(
         Decimal128 b, Decimal128 exp, int? initialWorkingDigits, int maxWorkingDigits, out Decimal128 result)

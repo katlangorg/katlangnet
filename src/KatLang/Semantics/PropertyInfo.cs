@@ -1,5 +1,3 @@
-using System.Globalization;
-
 namespace KatLang.Semantics;
 
 /// <summary>
@@ -263,7 +261,7 @@ internal static class ConditionalBranchHeadFormatter
             Pattern.Bind bind => bind.ParameterKind == ParameterKind.Collecting
                 ? $"*{bind.Name}"
                 : bind.Name,
-            Pattern.LitInt litInt => litInt.Value.ToString(CultureInfo.InvariantCulture),
+            Pattern.LitInt litInt => Rendering.ValueTextRenderer.FormatNumberInvariant(litInt.Value),
             Pattern.LitString litString => $"'{litString.Value}'",
             Pattern.SequenceValue sequenceValue => FormatSequenceValue(sequenceValue, nested),
             _ => string.Empty,

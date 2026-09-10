@@ -769,7 +769,7 @@ public static partial class Evaluator
 
     private static string DescribeSequenceItem(Result item) => item switch
     {
-        Result.Atom(var n) => $"numeric value {n.ToString(System.Globalization.CultureInfo.InvariantCulture)}",
+        Result.Atom(var n) => $"numeric value {Rendering.ValueTextRenderer.FormatNumberInvariant(n)}",
         Result.Str(var s) => $"string value {Rendering.DiagnosticValueRenderer.RenderDoubleQuotedString(s)}",
         Result.SequenceValue(var items) when items.Count == 0 => "empty sequence value",
         Result.SequenceValue => "sequence value",

@@ -306,7 +306,10 @@ public class RangeBoundCanonicalizationTests
         var canonical = Assert.Single(Atoms($"range({spelling}, {spelling})"));
 
         Assert.Equal(written, canonical); // value-preserving (Decimal128 equality ignores quantum)
-        Assert.Equal(expectedText, canonical.ToString(CultureInfo.InvariantCulture));
+        // KatLang's canonical text, not the runtime's default format: `Decimal128.ToString`
+        // switches to IEEE `to-scientific-string` notation once the exponent is
+        // positive, which is exactly the `1e34` row below.
+        Assert.Equal(expectedText, KatLang.Rendering.ValueTextRenderer.FormatNumberInvariant(canonical));
         Assert.Equal(expectedQuantumExponent, QuantumExponent(canonical));
         Assert.False(canonical == Decimal128.Zero && Decimal128.IsNegative(canonical), "negative zero survived");
 

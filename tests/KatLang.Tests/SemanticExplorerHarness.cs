@@ -1,5 +1,3 @@
-using System.Globalization;
-
 namespace KatLang.Tests;
 
 /// <summary>
@@ -164,7 +162,7 @@ public static class SemanticExplorerHarness
     /// </summary>
     public static string Neutral(Result result) => result switch
     {
-        Result.Atom a => a.Value.ToString(CultureInfo.InvariantCulture),
+        Result.Atom a => KatLang.Rendering.ValueTextRenderer.FormatNumberInvariant(a.Value),
         Result.Str s => "'" + s.Value + "'",
         Result.SequenceValue g => "S[" + string.Join(", ", g.Items.Select(Neutral)) + "]",
         Result.ListValue l => "L[" + string.Join(", ", l.Items.Select(Neutral)) + "]",

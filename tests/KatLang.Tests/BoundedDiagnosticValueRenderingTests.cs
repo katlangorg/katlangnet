@@ -42,11 +42,13 @@ public class BoundedDiagnosticValueRenderingTests
     /// <summary>
     /// Test-only replica of the pre-fix renderer: a plain recursive expansion with no budget of
     /// any kind. It is the semantic oracle for values that fit the cap, and is deliberately never
-    /// invoked on a shared or oversized graph.
+    /// invoked on a shared or oversized graph. Atom text comes from the shared canonical
+    /// owner rather than a second copy of the number formatting, so the replica isolates
+    /// exactly what it is here to check: the bounding, not the leaf spelling.
     /// </summary>
     private static string NaiveFormat(Result value) => value switch
     {
-        Result.Atom(var number) => number.ToString(System.Globalization.CultureInfo.InvariantCulture),
+        Result.Atom(var number) => KatLang.Rendering.ValueTextRenderer.FormatNumberInvariant(number),
         Result.Str(var text) => $"'{text}'",
         Result.SequenceValue(var items) => $"({string.Join(", ", items.Select(NaiveFormat))})",
         Result.ListValue(var items) => $"[{string.Join(", ", items.Select(NaiveFormat))}]",

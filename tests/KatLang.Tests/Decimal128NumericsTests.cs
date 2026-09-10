@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Numerics;
+using KatLang.Rendering;
 
 namespace KatLang.Tests;
 
@@ -1044,12 +1045,20 @@ public class Decimal128NumericsTests
 
         foreach (var value in representationSamples.Concat(sweep))
         {
-            var rendered = value.ToString(CultureInfo.InvariantCulture);
+            // The contract belongs to KatLang's canonical rendering, not to the
+            // runtime's default format: `Decimal128.ToString` follows the IEEE 754
+            // `to-scientific-string` conversion and does emit a marker once the
+            // exponent turns positive or the adjusted exponent drops below -6.
+            var rendered = ValueTextRenderer.FormatNumberInvariant(value);
             Assert.DoesNotContain('E', rendered);
             Assert.DoesNotContain('e', rendered);
 
             var reparsed = N(rendered);
             Assert.Equal(value, reparsed);
+
+            // The layout is a pure re-spelling of the same number, so re-rendering
+            // the reparsed value cannot drift, and the expansion is idempotent.
+            Assert.Equal(rendered, ValueTextRenderer.FormatNumberInvariant(reparsed));
         }
     }
 

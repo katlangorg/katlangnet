@@ -294,7 +294,7 @@ public static class LeanAstEncoder
     /// </summary>
     private static string EncodeNumber(Decimal128 value)
     {
-        var display = value.ToString(CultureInfo.InvariantCulture);
+        var display = KatLang.Rendering.ValueTextRenderer.FormatNumberInvariant(value);
         if (!Decimal128.IsFinite(value) || !Decimal128.IsInteger(value))
         {
             throw new NotSupportedException(
