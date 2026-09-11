@@ -116,11 +116,14 @@ public class EvaluatorOpenVisibilityTests
     public void Eval_Open_SpreadExpressionTargetFails()
     {
         // A spread expression is not an open form: the parser rejects
-        // it before evaluation ever runs.
+        // it before evaluation ever runs. (The open comes first so the star
+        // is followed by a declaration head and stays a spread; `open A*`
+        // newline `X` would be the multiplication `A * X` under the
+        // layout-independent star rule — a different rejected open form.)
         var source = """
+            open A*
             A = { public X = 1
             X }
-            open A*
             X
             """;
         var parseResult = Parser.Parse(source);

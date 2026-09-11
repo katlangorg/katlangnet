@@ -323,7 +323,7 @@ public class ListValueImmutabilityTests
     [InlineData("[1, 2] != (1, 2)", "1")]
     [InlineData("A = [1, 2, 3]\n[A*]", "[1, 2, 3]")]
     [InlineData("A = [1, 2, 3]\nx = A\nx", "[1, 2, 3]")]
-    [InlineData("A = [1, 2, 3]\nx = A*\nx", "(1, 2, 3)")]
+    [InlineData("A = [1, 2, 3]\nx = (A*)\nx", "(1, 2, 3)")]
     [InlineData("F(x) = x\nA = [1, 2, 3]\nF(A)", "[1, 2, 3]")]
     [InlineData("F(a, b, c) = a + b + c\nA = [1, 2, 3]\nF(A*)", "6")]
     public void RepresentativeListSemantics_Unchanged(string source, string expected)

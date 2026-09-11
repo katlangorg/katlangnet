@@ -176,25 +176,47 @@ OutputBundle    = ExpressionList ;
 ExpressionList        = SequenceAtom { ExpressionListSeparator SequenceAtom } ;
 ExpressionListSeparator = "," | ImplicitAdjacency ;
 SequenceAtom          = Expression ;
-                     (* A spread expression — a completed expression with a
-                        DIRECTLY attached postfix "*" that has no valid
-                        same-line right operand after it — is legal ONLY as a
+                     (* A spread expression — a completed expression followed
+                        on the same physical line by a postfix "*" that no
+                        valid right operand follows — is legal ONLY as a
                         whole expression-list slot, as the operand of another
                         spread (`value**`), or as the receiver of the fluent
                         dot continuation (`operand*.Target`, which lowers to
                         the lexical call `Target(operand*)`).
-                        THE STAR RULE: when "*" has a valid same-line
-                        expression-start token after it (identifier, number,
-                        string, "(", "[", "{", "-", "not", "~"), it is infix
-                        MULTIPLICATION regardless of spacing — `a*b`, `a* b`,
-                        `a *b`, and `a * b` all multiply. Spreading before
-                        another same-line supplied item therefore requires a
-                        comma: `a*, b` is spread-then-item, because `a* b` is
-                        multiplication. An attached line-final star is a
-                        spread (`a*` newline `b` is a spread row and then a
-                        `b` row); an unattached trailing star is
-                        multiplication whose right operand continues on the
-                        next physical line (`a *` newline `b`). A spread
+                        THE STAR RULE (SYN-07B, layout-independent): the next
+                        significant token after the star decides, never
+                        whitespace and never the physical newline. When an
+                        expression-start token follows (identifier, number,
+                        string, "(", "[", "{", "-", "not", "~") — on the same
+                        line or on a later one — the star is infix
+                        MULTIPLICATION: `a*b`, `a* b`, `a *b`, `a * b`,
+                        `a*` newline `b`, and `a *` newline `b` all multiply.
+                        The one exception is a following DECLARATION head
+                        (`Name = ...`, `Name(pattern) = ...`, a binding
+                        pattern `x, *y = ...`, `open`, `public`, `~Name = ...`):
+                        a declaration head is never an operand, so `a*`
+                        newline `b = 1` is a spread row followed by a
+                        definition — the same declaration-starter relation the
+                        adjacency boundary stops at. Spreading before another
+                        supplied item therefore requires a comma: `a*, b` is
+                        spread-then-item, and the trailing comma keeps the
+                        list open across a line (`a*,` newline `b`), because
+                        `a* b` and `a*` newline `b` are multiplication. The
+                        star is the spread marker when the surrounding syntax
+                        closes the expression before any operand could follow:
+                        a comma, a closing ")", "]", or "}", end of input, a
+                        token that cannot start an expression (".", ";", "==",
+                        ...), or a declaration head. THE MARKER ATTACHMENT
+                        LAW then applies to that spread marker, as to every
+                        structural/annotation marker (`*name`, `name*`,
+                        `~name`, `name~`): it must be DIRECTLY attached to
+                        the expression it spreads. A detached `values *` that
+                        no operand follows is a targeted parse error
+                        (InvalidSpreadMarker) — never silently a spread and
+                        never silently a multiplication — so whitespace can
+                        separate the valid `values*` from the rejected
+                        `values *`, but can never turn one valid operation
+                        into another. A spread
                         expression contributes the items of one item-producing
                         boundary of the evaluated operand (sequence and list
                         values supply their contained items; an atom or string
@@ -242,8 +264,10 @@ SequenceAtom          = Expression ;
                      expression-list structure: F, (1) has two slots, and
                      F newline (1) also has two slots. The collect marker "*"
                      is prefix-only and must be directly attached to its
-                     binding name; the spread marker "*" is postfix-only and
-                     must be directly attached to its completed operand.
+                     binding name; the spread marker "*" is postfix-only,
+                     is classified by the token after it (see the star rule
+                     above), and must then be directly attached to its
+                     completed operand.
                      Adjacency
                      applies only between complete expressions: it never
                      splits identifiers or numbers, and a token sequence that
@@ -263,9 +287,11 @@ SequenceAtom          = Expression ;
                      line — call delimiters, indexing ":", postfix grace "~",
                      the postfix spread marker "*", and binary operators all
                      require the same physical line (write a trailing
-                     operator, e.g. A - newline 1, to continue arithmetic; an
-                     attached trailing "*" is a spread, an unattached one is
-                     multiplication continuing on the next line). Comments are
+                     operator, e.g. A - newline 1, to continue arithmetic; a
+                     trailing "*", spaced or not, is multiplication continuing
+                     on the next line whenever an operand starts that line,
+                     and otherwise a spread marker that must be attached:
+                     `A*` spreads, `A *` is rejected). Comments are
                      semantically invisible for these decisions: A newline -1
                      and A # note newline -1 parse identically as the expression
                      list A, -1, never the subtraction A - 1. *)
@@ -286,11 +312,12 @@ AdditiveExpr    = MultiplicativeExpr { ( "+" | "-" ) MultiplicativeExpr } ;
 MultiplicativeExpr
               = UnaryExpr { ( "*" | "/" | "div" | "mod" ) UnaryExpr } ;
                   (* The "*" alternative applies exactly when the star is NOT
-                     a postfix spread marker: any same-line expression-start
-                     token after the star selects multiplication regardless
-                     of spacing, and an unattached star with no same-line
-                     right operand is multiplication whose operand continues
-                     on the next line. See SpreadExpression. *)
+                     a postfix spread marker: an expression-start token after
+                     the star that does not begin a declaration selects
+                     multiplication regardless of spacing and regardless of an
+                     intervening newline (the right operand may start the next
+                     physical line, as for every trailing binary operator).
+                     See SpreadExpression. *)
 
 UnaryExpr       = "-" UnaryExpr
                 | "not" UnaryExpr
@@ -351,14 +378,18 @@ PostfixOp       = ":" Primary   (* indexing is same-physical-line only: a ':'-le
                                    compound receiver because it decorates the
                                    bare member/fallback name, not the receiver.
                                    Call arguments are unrestricted.
-                                   A detached tilde (`a ~ .t`) is ordinary
-                                   postfix Grace on the receiver name under the
-                                   ordinary whitespace-insensitive token grammar,
-                                   and therefore has the same `(t, a)` order in
-                                   the two-name case. Postfix Grace is
+                                   The marker attachment law applies: postfix
+                                   Grace is directly attached to the receiver
+                                   name (`a~.t`, or `a~ .t` — the space before
+                                   the same-line dot is ordinary), while a
+                                   detached `a ~ .t` / `a ~.t` is a targeted
+                                   parse error that recovers as the graceless
+                                   edge `a.t` (order `(a, t)`). Postfix Grace is
                                    same-physical-line only. A cross-line chain
                                    uses the '.'-led continuation; prefix member
-                                   Grace must be directly attached after that dot.
+                                   Grace must be directly attached after that
+                                   dot AND to the member name (`a.~t`; `a.~ t`
+                                   is the attachment error).
                                    A grace-marked
                                    open target is rejected (`open M~.C`).
                                    When the target of the "." is a spread
@@ -393,13 +424,19 @@ PostfixOp       = ":" Primary   (* indexing is same-physical-line only: a ':'-le
 SpreadMarker    = "*" ;
                   (* SpreadExpression ::= CompletedValueExpression "*".
                      Postfix "*" is the SPREAD MARKER. It forms a spread
-                     expression exactly when (1) the star is DIRECTLY attached
-                     to the completed expression's last token — exact
-                     source-offset adjacency; whitespace, comments, and
-                     newlines all break attachment — and (2) no valid
-                     expression-start token follows the star on the star's own
-                     physical line. Otherwise the star is infix multiplication
-                     (see MultiplicativeExpr). A spread expression evaluates
+                     expression exactly when (1) the star is on the same
+                     physical line as the completed expression's last token,
+                     (2) no valid right operand follows the star — the next
+                     significant token, on ANY line, either cannot start an
+                     expression or begins a declaration — and (3) the star is
+                     DIRECTLY attached to that last token (exact source-offset
+                     adjacency; the marker attachment law). A star that (2)
+                     rules out is infix multiplication (see
+                     MultiplicativeExpr) however it is spaced — a physical
+                     newline after the star never decides; a star that (2)
+                     admits but (3) rejects (`value *` with nothing to
+                     multiply) is a targeted parse error, InvalidSpreadMarker,
+                     that recovers to the operand alone. A spread expression evaluates
                      its operand exactly once and contributes the operand's
                      items to the surrounding item supply (conceptually
                      spread : Value -> Supply; the RECEIVER decides what the
@@ -412,11 +449,11 @@ SpreadMarker    = "*" ;
                      inner star's item supply is re-captured into one value
                      at the ordinary expression boundary before the outer
                      star spreads it. Repeated spread is not recursive
-                     flattening. `value**next` and `value** next` are
-                     rejected — the second star has a same-line right operand,
-                     so it is multiplication whose left operand is a spread
-                     (a targeted scalar-operand error); this is never
-                     exponentiation. Examples: items*, Calculate(x)*,
+                     flattening. `value**next`, `value** next`, and
+                     `value**` newline `next` are rejected — the second star
+                     has a right operand, so it is multiplication whose left
+                     operand is a spread (a targeted scalar-operand error);
+                     this is never exponentiation. Examples: items*, Calculate(x)*,
                      x.Calculate*, (a + b)*, [1, 2]*, (1, 2)*, ()*, []*. *)
 
 CallArgs        = BraceArgs | ParenArgs ;
@@ -442,7 +479,14 @@ Primary         = NumberLiteral
 
 GraceIdentifier = { "~" } Identifier { "~" } ;
                   (* Grace `~` applies ONLY to one bare parameter/name
-                     occurrence — this production is its entire surface.
+                     occurrence — this production is its entire surface, and
+                     it is written WITHOUT whitespace: every marker is
+                     directly attached to the identifier or to its
+                     neighbouring marker (`~x`, `x~`, `~~x`, `~x~`). The
+                     marker attachment law makes a detached marker (`~ x`,
+                     `x ~`, `~ ~x`) a targeted parse error (InvalidGraceMarker)
+                     that recovers to the plain identifier with no weight —
+                     never silently reordered, never silently ignored.
                      A marker run attached to any other completed
                      expression (`(x + y)~`, `f(x)~`, `x.y~`, `[x]~`, `5~`,
                      `~(x)`) is a targeted parse error spanning the run:

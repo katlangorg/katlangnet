@@ -630,7 +630,7 @@ Add(
 
 The same applies to dot calls and callback braces: `A.B (1)` is the dot call `A.B(1)` and `values.map { n * 2 }` is `values.map{n * 2}`, but `A.B` followed by `(1)` on the next line is the expression list `A.B, (1)`, and `values.map` followed by `{ n * 2 }` on the next line is not a callback call (write `values.map{` and break inside the braces instead). This is only about same-line whitespace between the callee and its delimiter — inside the argument list adjacency still creates argument slots, so `Add (1 2)` is the two-argument call `Add(1, 2)`. Comma and a newline both keep separate slots: `F, (1)` and `F` followed by `(1)` are expression-list structure. Non-callable targets never become calls: `2 (3)` stays the expression list `2, 3`.
 
-Postfix indexing follows the same line rule: `Pair:0`, `Pair :0`, and `Pair : 0` all index on the same line, but a `:`-led line never continues the previous expression — it is a parse error rather than a silent continuation, so `P = Pair` followed by a line `:0` does not define `P = Pair:0`. Postfix grace `~` is same-line only in the same way: `A~B` graces `A`, while `A` followed by a line `~B` keeps `A` ungraced and parses `~B` as its own prefix-grace row. Binary operators follow the rule too: an operator-led line never continues the previous expression, so `A` followed by a line `-1` is the expression list `A, -1`, never the subtraction `A - 1` — put the operator at the end of the line (`A -` then `1` on the next line) when you want the arithmetic to continue. For `*` the trailing operator must stay detached: `A *` at the end of a line continues as the multiplication `A * B` onto the next line, while the directly attached `A*` is a completed spread expression, so `A*` followed by `B` is a spread slot and a separate row (see [Spread with the Postfix Star](#spread-with-the-postfix-star)). Comments never change any of these decisions: `A # note` followed by `-1` parses exactly like `A` followed by `-1`. Leading-dot lines are the one intentionally supported continuation: a line starting with `.` continues the dot-call chain, so method-chain layout works as long as each argument delimiter stays on the same line as its member name:
+Postfix indexing follows the same line rule: `Pair:0`, `Pair :0`, and `Pair : 0` all index on the same line, but a `:`-led line never continues the previous expression — it is a parse error rather than a silent continuation, so `P = Pair` followed by a line `:0` does not define `P = Pair:0`. Postfix grace `~` is same-line only in the same way: `A~B` graces `A`, while `A` followed by a line `~B` keeps `A` ungraced and parses `~B` as its own prefix-grace row. Binary operators follow the rule too: an operator-led line never continues the previous expression, so `A` followed by a line `-1` is the expression list `A, -1`, never the subtraction `A - 1` — put the operator at the end of the line (`A -` then `1` on the next line) when you want the arithmetic to continue. A trailing `*` is no exception, and it does not matter whether it is spaced: `A *` and `A*` at the end of a line both continue as the multiplication `A * B` onto the next line whenever that line begins with a right operand. Only where no operand can follow — before a comma, a closing delimiter, the end of the program, or a definition — is the star the spread marker, and then it must be written attached: `A*` spreads, while a detached `A *` in that position is an error (see [Spread with the Postfix Star](#spread-with-the-postfix-star)). Comments never change any of these decisions: `A # note` followed by `-1` parses exactly like `A` followed by `-1`. Leading-dot lines are the one intentionally supported continuation: a line starting with `.` continues the dot-call chain, so method-chain layout works as long as each argument delimiter stays on the same line as its member name:
 
 ```
 (1, 2, 3)
@@ -647,7 +647,7 @@ Sum(vector) = vector.sum
 
 A leading semicolon after a definition body is invalid and produces a diagnostic. During error recovery the parser may still attach the following expression to the current body so later diagnostics stay useful, but that recovery is not valid KatLang syntax — semicolon is never an expression operator.
 
-Comma is the explicit expression-list separator. Where an expression list is already open, same-line adjacency acts as an implicit comma, so `a b` means `a, b`. A newline is a different mechanism — a body, statement, or output boundary, not a global implicit comma — so it does not extend an expression list across lines unless the syntax explicitly keeps the context open (for example an open `(`/`{`, a trailing comma, a same-line binary operator, or a leading `.`). Expression spreading uses the postfix spread marker `value*`; a `*` with a valid same-line right operand is instead the multiplication operator regardless of spacing, so a comma is required between a spread and a following same-line item (`a*, b` — `a* b` is the product `a * b`), while a spread whose star ends the line leaves the next line a separate slot. The prefix `*` in a binding pattern is the collect marker: it must be directly attached to its binding name in a parameter or deconstruction pattern (`*name`; `* name` is an error), and it is not an expression operator.
+Comma is the explicit expression-list separator. Where an expression list is already open, same-line adjacency acts as an implicit comma, so `a b` means `a, b`. A newline is a different mechanism — a body, statement, or output boundary, not a global implicit comma — so it does not extend an expression list across lines unless the syntax explicitly keeps the context open (for example an open `(`/`{`, a trailing comma, a same-line binary operator, or a leading `.`). Expression spreading uses the postfix spread marker `value*`; a `*` followed by a valid right operand — on the same line or on the next — is instead the multiplication operator regardless of spacing, so a comma is required between a spread and a following item (`a*, b`, or `a*,` newline `b` — both `a* b` and `a*` newline `b` are the product `a * b`). The prefix `*` in a binding pattern is the collect marker: it must be directly attached to its binding name in a parameter or deconstruction pattern (`*name`; `* name` is an error), and it is not an expression operator.
 
 Because same-line adjacency creates expression-list slots in the current body, an expression that follows a definition on the same line becomes another output slot in that definition's body. Start a new line after a definition body when the next expression should be a separate output contribution.
 
@@ -680,7 +680,7 @@ Use parentheses when sequence-valued output intent is clearer:
 | `1 2` | Implicit expression-list separator by adjacency: exactly `1, 2` |
 | `X*` | Spread expression: open one item boundary of the evaluated value and contribute the items to the surrounding slot context |
 | `X*, 2` | Spread then a separate expression-list slot — the comma is required, because `X* 2` is the multiplication `X * 2` |
-| `X * 2` (any spacing) | Multiplication: a `*` with a valid same-line right operand always multiplies — `X*2`, `X* 2`, `X *2`, and `X * 2` are the same product |
+| `X * 2` (any spacing, even across a line break) | Multiplication: a `*` followed by a valid right operand always multiplies — `X*2`, `X* 2`, `X *2`, `X * 2`, and `X*` followed by a line `2` are the same product |
 | `*name` in a binding pattern | Collecting binding: collect the matched supply into one exact list |
 
 Comma and adjacency create expression lists. Root output consumes a bare expression list as output slots, call syntax consumes it as argument slots, parentheses materialize it as one sequence value, and square brackets materialize it as one exact [list value](#lists). Semicolon is not an expression separator; use comma/adjacency for separate slots or parentheses for one sequence value. A spread expression is one whole slot: `A B*, C` is the expression list `A, B*, C` — adjacency separates `A` from `B*`, and the comma after the spread is required because `B* C` would be the multiplication `B * C`. Comma and adjacency slots stay structural (`F(a*, b)` is a two-argument call). Physical line breaks do not create sequence-value boundaries. Explicit parentheses do:
@@ -694,7 +694,7 @@ Comma and adjacency create expression lists. Root output consumes a bare express
 
 Comma creates multiple top-level output slots; parentheses create one sequence-valued slot. The result window may show comma slots on separate rows, while sequence values display as sequence values. `EvaluateToString()` is a separate convenience stringification path that extracts atoms and joins them with spaces. See [Spread with the Postfix Star](#spread-with-the-postfix-star).
 
-A spread expression `x*` is the spread of `x` followed by nothing: the star must be directly attached to its operand, and it is the spread marker only when nothing usable follows it on the same line. When a valid right operand does follow, the star is multiplication regardless of spacing — `x*y`, `x* y`, `x *y`, and `x * y` are all the product `x * y`. To spread and then supply another same-line item, the comma is required: `x*, y`. At a line ending the attachment decides: `x*` closes the line as a spread and the next line starts a new expression-list slot, while a detached trailing `x *` continues as multiplication onto the next line. Use parentheses, such as `(x*, y)`, when the spread value and the following expression should form one sequence value.
+A spread expression `x*` is the spread of `x` followed by nothing: the star is the spread marker only when no right operand can follow it, and it is then written directly attached to `x` (a detached `x *` with nothing to multiply is an error, not a spread). When a valid right operand does follow — spaced or not, on the same line or on the next — the star is multiplication: `x*y`, `x* y`, `x *y`, `x * y`, and `x*` newline `y` are all the product `x * y`. To spread and then supply another item, the comma is required: `x*, y`, or `x*,` at the end of the line with `y` on the next. Use parentheses, such as `(x*, y)`, when the spread value and the following expression should form one sequence value.
 
 Flat fixed calls preserve expression boundaries. A property reference used as one argument is one argument expression, even if that property evaluates to multiple outputs. KatLang does not implicitly unpack one argument expression to satisfy additional fixed parameters; use separate arguments, explicit indexing/projection, or an explicit spread (`value*`) where that is the intended shape.
 
@@ -1028,7 +1028,7 @@ Empty
 
 ```
 Empty = ()
-Empty*
+Empty*,
 1
 ```
 
@@ -1050,7 +1050,7 @@ x
 
 ```
 x, *rest = 1
-rest*
+rest*,
 x
 ```
 
@@ -1317,7 +1317,7 @@ Grace still applies only to **one bare name occurrence**. Consequently `(x + y)~
 
 Everything else is ordinary DotCall behavior: `.string` (`v~.string` and `v.~string`), dotted sequence builtins (`S~.count` and `S.~count`), and receiver-segment supply all use the same runtime paths as their ungraced forms. Chaining an ordinary dot afterward is fine — `a~.t.string` has the same executable body as `a.t.string`.
 
-`a ~ .t` is lexically distinct from `a~.t` by source offsets, but whitespace is insignificant between these postfix tokens. The normal grammar therefore gives it the same postfix Grace on `a`, the same ordinary dot, and the same `(t, a)` inferred order. Prefix member Grace must begin directly after the dot (`a.~t`). A grace-marked target is not a valid `open` target: `open M~.C` is rejected because `open` consumes structural algorithm identity and has no parameter inference to reorder.
+The markers follow the marker attachment law: postfix Grace is written directly attached to its name (`a~.t`, or `a~ .t` — the space before a same-line dot is ordinary whitespace before a postfix continuation), while a detached `a ~ .t` or `a ~.t` is an error rather than Grace on `a`. Prefix member Grace must begin directly after the dot and be attached to the member name (`a.~t`; `a.~ t` is an error). A grace-marked target is not a valid `open` target: `open M~.C` is rejected because `open` consumes structural algorithm identity and has no parameter inference to reorder.
 
 Exposure analysis is unaffected by Grace because it analyzes the same DotCall. A dot member marks a captured-parameter dependency only when static analysis proves its lexical fallback must be selected; when the receiver may own the member structurally, the possible fallback does not by itself change the property's exposure. That MUST-selection rule is deliberately stricter than signature inference, which includes a fallback whenever it MAY be needed.
 
@@ -1681,7 +1681,7 @@ G(1, 2, 3, 4, 5)
 
 Both forms supply five numeric argument slots, collected as `x = [1, 2, 3, 4, 5]`; `x.sum` opens the bound list and adds its elements. An UNSPREAD structure is one argument slot: `G(A)` and `G((1, 2, 3, 4, 5))` each supply one sequence-valued slot, so `x = [A]` — a one-element list holding the whole sequence — and the numeric `sum` element constraint rejects it. Supplying a value's items is always the explicit spread `A*`; there is no implicit opening at calls. An empty call `G()` collects `x = []`, and `G(*x) = x.count` reports `1` for `G(A)` and `5` for `G(A*)`.
 
-The collect marker and the spread marker have opposite meanings and are never interchangeable — they match the semantic directions `collect : Supply → ListValue` and `spread : Value → Supply`. Prefix `*name` in a binding position is a **collecting binding**: it collects its matched items into an exact list, and when it appears in a function signature it is called a **collecting parameter**. Postfix `value*` is instead a **spread expression** that contributes the operand's items to the surrounding item supply. Each marker must be directly attached to its name or operand: `* items` is not a collecting binding, a detached trailing `value *` is not a spread, and a `*` with a valid same-line right operand is always the multiplication operator — position and attachment, not spacing, decide which of the three meanings a star has.
+The collect marker and the spread marker have opposite meanings and are never interchangeable — they match the semantic directions `collect : Supply → ListValue` and `spread : Value → Supply`. Prefix `*name` in a binding position is a **collecting binding**: it collects its matched items into an exact list, and when it appears in a function signature it is called a **collecting parameter**. Postfix `value*` is instead a **spread expression** that contributes the operand's items to the surrounding item supply. Both markers must be directly attached to what they modify: `*items` is a collecting binding while `* items` is an error, and `value*` is a spread while `value *` is an error. Which of the three meanings a star has is decided by position, never by spacing: a `*` followed by a valid right operand — on the same line or on the next — is always the multiplication operator, however it is spaced, and a `*` that nothing can follow (a comma, a closing delimiter, the end of the program, or a definition comes next) is the spread marker — which must then be attached. Whitespace therefore never turns one valid operation into another; it only separates the valid `value*` from the rejected `value *`.
 
 Multiple sibling sequence values are **not** auto-flattened — they are preserved unless you open them explicitly with a spread marker. With `A = 1, 2` and `B = 3, 4`, `G(A, B)` collects `x = [(1, 2), (3, 4)]` (count 2), while `G(A*, B*)` collects `x = [1, 2, 3, 4]` (count 4):
 
@@ -1991,7 +1991,7 @@ Only one collecting binding is allowed in each comma-separated pattern level, co
 
 Sometimes the natural reading order of parameters in a definition does not match the intended calling convention. Grace (`~`) shifts a parameter's position.
 
-Prefix `~x` moves `x` one position earlier in the parameter list. Postfix `x~` moves `x` one position later. Grace applies only to a bare parameter/name occurrence — `~x` and `x~` are the two supported forms. Attaching `~` to anything else (a parenthesized expression, a call result, a dot result, a list, a literal) is an error: `(x + y)~`, `f(x)~`, and `5~` are rejected, and parentheses never smuggle an expression into Grace (`(x)~` is rejected too). The marker and the name it decorates must also share one physical line: `f(x)~` at the end of a line is that same error rather than prefix Grace on the next line's name, and a prefix-grace slot after another slot on one line needs a comma (`f(x), ~c`). A marker written before a call, `~f(x)`, is grace on the callee name `f` itself — the call applies to the graced name, exactly like the postfix `f~(x)` idiom.
+Prefix `~x` moves `x` one position earlier in the parameter list. Postfix `x~` moves `x` one position later. Grace applies only to a bare parameter/name occurrence — `~x` and `x~` are the two supported forms — and the marker must be written directly attached to that name: `~ x` and `x ~` are errors, not Grace (a detached marker decorates nothing; the program is rejected rather than silently reordered or silently left in place). Repeated markers stay attached to each other and to the name (`~~x`, `~x~`). Attaching `~` to anything else (a parenthesized expression, a call result, a dot result, a list, a literal) is an error: `(x + y)~`, `f(x)~`, and `5~` are rejected, and parentheses never smuggle an expression into Grace (`(x)~` is rejected too). The marker and the name it decorates must also share one physical line: `f(x)~` at the end of a line is that same error rather than prefix Grace on the next line's name, and a prefix-grace slot after another slot on one line needs a comma (`f(x), ~c`). A marker written before a call, `~f(x)`, is grace on the callee name `f` itself — the call applies to the graced name, exactly like the postfix `f~(x)` idiom.
 
 ```
 # Without Grace, parameter order would be (y, x) since 'y' appears first.
@@ -2172,7 +2172,7 @@ A `range` call is a value boundary: each bare call materializes one exact immuta
 
 ```
 range(1, 3)
-range(1, 3)*
+range(1, 3)*,
 sum(range(1, 3))
 ```
 
@@ -2389,7 +2389,7 @@ Data = (7, 6, 4, 2, 1), (1, 2, 3, 4, 5)
 ```
 X = 3, 1, 2
 X.order
-X.order*
+X.order*,
 X.orderDesc*
 ```
 
@@ -3211,9 +3211,9 @@ Add(1, 2)
 
 > **Core idea:** postfix `*` opens exactly one sequence or list boundary and supplies those items to the surrounding context. It is explicit, one level deep, and different from multiplication and the prefix collect marker.
 
-Expression spreading is written with the postfix star — the **spread marker**. A spread expression `value*` evaluates `value` exactly once and contributes the items of its evaluated value to the surrounding item supply (output rows, call argument slots, or list/sequence elements), opening exactly ONE item-producing boundary. Conceptually `spread : Value → Supply` — a spread expression does not return or create a sequence or list by itself; the RECEIVER decides what the supplied items become. A sequence value or an exact [list value](#lists) supplies its contained items; an atom or string supplies itself as one item. The marker attaches to any completed expression — `items*`, `Calculate(x)*`, `(a + b)*`, `[1, 2]*`, `()*`, `[]*` — and repeated attached stars compose through an intermediate capture: `value**` means `(value*)*` (see [Repeated Spread Is Composition](#repeated-spread-is-composition)).
+Expression spreading is written with the postfix star — the **spread marker**. A spread expression `value*` evaluates `value` exactly once and contributes the items of its evaluated value to the surrounding item supply (output rows, call argument slots, or list/sequence elements), opening exactly ONE item-producing boundary. Conceptually `spread : Value → Supply` — a spread expression does not return or create a sequence or list by itself; the RECEIVER decides what the supplied items become. A sequence value or an exact [list value](#lists) supplies its contained items; an atom or string supplies itself as one item. The marker follows any completed expression — `items*`, `Calculate(x)*`, `(a + b)*`, `[1, 2]*`, `()*`, `[]*` — and repeated stars compose through an intermediate capture: `value**` means `(value*)*` (see [Repeated Spread Is Composition](#repeated-spread-is-composition)).
 
-The same star is the multiplication operator, and multiplication wins whenever it can: **a `*` with a valid same-line right operand is multiplication regardless of spacing** — `a*b`, `a* b`, `a *b`, and `a * b` are all the product `a * b`. A directly attached `*` is the spread marker only when nothing on the same line can serve as a right operand: before a comma, before a closing delimiter, or at the end of the line. To spread `a` and then supply another same-line item, the comma is REQUIRED: `a*, b` — because `a* b` multiplies. The line ending separates the two readings as well: `a*` at the end of a line is a completed spread and the next line is a separate slot, while a detached trailing `a *` is a binary operator awaiting its operand, continuing the multiplication `a * b` across the newline.
+The same star is the multiplication operator, and multiplication wins whenever it can: **a `*` followed by a valid right operand is multiplication, and neither whitespace nor a line break decides** — `a*b`, `a* b`, `a *b`, `a * b`, and `a*` followed by `b` on the next line are all the product `a * b`, exactly like the trailing operator `a *` followed by a line `b`. The `*` is the spread marker only when the surrounding syntax closes the expression before any right operand could follow: before a comma, before a closing `)`, `]`, or `}`, at the end of the program, or before a declaration (`a*` followed by a line `b = 1` is the spread of `a` and then the definition of `b`, because a definition head is never an operand). To spread `a` and then supply another item, the comma is REQUIRED — `a*, b`, or `a*,` at the end of a line with `b` on the next — because `a* b` and `a*` newline `b` both multiply. The spread marker itself must be written directly attached to its operand: `a*`, `Calculate(x)*`, `(a + b)*`. A detached `a *` that no right operand follows — `F(values *)`, `(values *)`, `values *` at the end of the program — is neither multiplication nor spread; it is an error that tells you to write `values*` (or to supply the missing operand). This is the general **marker attachment law**: the structural and annotation markers — collect `*items`, spread `items*`, Grace `~x` and `x~` — are directly attached to the syntax they modify, while ordinary operators such as multiplication may be spaced freely. Whitespace can therefore never turn one valid operation into another: `a* b` and `a *` newline `b` multiply exactly like `a * b`, and the only thing spacing decides is whether a marker is well-formed.
 
 The most common receiver for a spread is a call. The explicit form to learn first is `Target(A*)`: it evaluates `A` once, spreads its items, and supplies them as separate argument slots of `Target`. The same call has a fluent left-to-right spelling — the **fluent supply chain**: a dot may chain directly after a spread, and `A*.Target` is exactly equivalent to `Target(A*)`. The spread receiver is an item supply, not a value, so the parser lowers the dotted form to that same lexical call with the spread items as the leading arguments — both spellings build one AST and evaluate the operand once. This reads a multi-step calculation left to right instead of inside out: `x.Calculate*.Target` evaluates `x.Calculate`, spreads the completed result, and supplies the items to `Target(...)`; `Forward(*items) = items*.Target` forwards collected items and is the same call as `Forward(*items) = Target(items*)`.
 
@@ -3235,7 +3235,7 @@ Collect(5*)
 [5]
 ```
 
-A spread whose star closes the line does not continue onto the next line. In an algorithm body, the next complete expression is another expression-list item:
+A line break after the star changes nothing. When the next line begins with a right operand, the star is multiplication whichever way it is spaced:
 
 ```
 X*
@@ -3245,19 +3245,31 @@ Y
 is interpreted as:
 
 ```
-X*, Y
+X * Y
 ```
 
-(Contrast the detached form: `X *` at the end of a line is the multiplication operator awaiting its right operand, so `X *` followed by a line `Y` is the product `X * Y`.)
-
-You may still write an explicit comma for clarity:
+To spread `X` and then emit `Y` as the next output row, end the spread row with a comma — the trailing comma keeps the expression list open across the newline, and the comma is exactly what tells the parser the spread slot is complete:
 
 ```
 X*,
 Y
 ```
 
-This has the same expression-list shape. If `x*` has no following expression, it simply spreads `x` followed by nothing.
+This is the two-slot expression list `X*, Y`. When nothing follows the star — end of the program, a closing delimiter, or a definition on the next line — `x*` simply spreads `x` followed by nothing:
+
+```
+X = 1, 2
+X*
+Y = 5
+```
+
+**Result:**
+```
+1
+2
+```
+
+The same applies to a definition body that ends with a spread: `P = a*` on one line followed by `b` on the next is the multiplication `P = a * b`, since a trailing operator continues a definition body across the newline. Close the body when an output row follows — with capture parentheses, `P = (a*)`, which capture the spread supply exactly as the single-name definition does anyway, or with a brace body, `P = { a* }`.
 
 Use parentheses for one sequence value:
 
@@ -3284,9 +3296,9 @@ Use(a
 b*)
 ```
 
-mean exactly the same `Use(a, b*)`. Adjacency can precede a spread because the star sits at the end of its own slot; only a slot that FOLLOWS a spread on the same line needs the explicit comma.
+mean exactly the same `Use(a, b*)`. Adjacency can precede a spread because the star sits at the end of its own slot; only a slot that FOLLOWS a spread — on the same line or on the next — needs the explicit comma.
 
-A spread applies only to its own operand. `a, b*, c` and its three-line form are expression lists of three slots — the comma after `b*` is required, because `a b* c` contains the multiplication `b * c` (two slots: `a` and `b * c`). Use `(a, b*, c)` for one sequence value.
+A spread applies only to its own operand. `a, b*, c` is an expression list of three slots — the comma after `b*` is required, because `a b* c` contains the multiplication `b * c` (two slots: `a` and `b * c`), and the three-line form needs the same comma after `b*` for the same reason. Use `(a, b*, c)` for one sequence value.
 
 The explicit parenthesized form can intentionally force a different value boundary around a spread expression, but it does not change which operand the spread owns. `Use((a, b*))` and `Use((a, (b*)))` both spread only `b`.
 
@@ -3387,7 +3399,7 @@ Spread projects only one immediate level. Each spread contributes its spread ite
 |---|---|
 | `1, 2, 3` | Single algorithm producing 3 outputs |
 | `1*, 2, 3` | Three expression-list slots: the spread `1*`, then `2`, then `3` |
-| `1* 2, 3` | The star has a same-line right operand, so it multiplies regardless of spacing: the slots are `1 * 2` and `3`, producing `2, 3` |
+| `1* 2, 3` | The star has a right operand, so it multiplies regardless of spacing: the slots are `1 * 2` and `3`, producing `2, 3` (`1*` followed by a line `2, 3` reads the same way) |
 | `(1*, 2), 3` | The parenthesized expression list `(1*, 2)` is one sequence-valued output, followed by the separate output `3` |
 | `(1, 2)*, 3` | The spread applies to `(1, 2)` (spreading its items `1, 2`); after the required comma, `3` is a separate expression-list slot. Produces `1, 2, 3` |
 | `(1, (2, 3))*, 4` | Spread opens one level: `1` and the intact inner sequence value `(2, 3)` become items, and `4` is a separate slot, producing `1, (2, 3), 4` |
@@ -3425,7 +3437,7 @@ Grouping only the operand changes nothing: `(A)*.count` groups `A` before the st
 
 ### Repeated Spread Is Composition
 
-A spread expression is itself a completed expression, so it can wear another attached star. There is no special depth operator — the second star is ordinary postfix composition:
+A spread expression is itself a completed expression, so it can wear another star. There is no special depth operator — the second star is ordinary postfix composition:
 
 `value**` means exactly `(value*)*`.
 
@@ -3505,7 +3517,7 @@ Select-then-spread and capture-then-select are different operations:
 ```
 A = [[1, 2], [3, 4]]
 
-(A:0)*
+(A:0)*,
 (A*):0
 ```
 
@@ -3516,7 +3528,7 @@ A = [[1, 2], [3, 4]]
 [1, 2]
 ```
 
-`(A:0)*` selects the stored list `[1, 2]` and spreads its elements into two rows; `(A*):0` captures the two-item spread supply as one sequence value and selects its first item — the intact list `[1, 2]`. Writing `A*:0` directly is a targeted parse error: "Selection cannot be applied directly to a spread expression — a spread supplies items to the surrounding item supply, not one selectable value," and the message names both rewrites so you can pick the intended one.
+`(A:0)*` selects the stored list `[1, 2]` and spreads its elements into two rows; `(A*):0` captures the two-item spread supply as one sequence value and selects its first item — the intact list `[1, 2]`. The comma after `(A:0)*` matters: without it the `(` on the next line is a right operand and the star is the multiplication `(A:0) * (A*):0`, which fails on the list operands. Writing `A*:0` directly is a targeted parse error: "Selection cannot be applied directly to a spread expression — a spread supplies items to the surrounding item supply, not one selectable value," and the message names both rewrites so you can pick the intended one.
 
 ---
 
@@ -3631,7 +3643,7 @@ A spread expression opens exactly ONE list boundary into the surrounding item su
 A = [1, 2, 3]
 
 x = A
-y = A*
+y = (A*)
 
 x
 y
@@ -3643,7 +3655,7 @@ y
 (1, 2, 3)
 ```
 
-This distinction is essential: `x = value` preserves the value, `x = value*` opens one boundary and captures the resulting item supply.
+This distinction is essential: `x = value` preserves the value, `x = (value*)` opens one boundary and captures the resulting item supply. The parentheses close the definition body: a bare `y = A*` followed by the output row `x` on the next line would be the multiplication `y = A * x`, because a line break never separates a `*` from a right operand (see [Spread with the Postfix Star](#spread-with-the-postfix-star)).
 
 Spread opens only the outermost boundary:
 
@@ -3653,8 +3665,8 @@ A = []
 B = [7]
 C = [[7]]
 
-A*
-B*
+A*,
+B*,
 C*
 ```
 
@@ -3664,7 +3676,7 @@ C*
 [7]
 ```
 
-`A*` supplies zero items (its output row vanishes), `B*` supplies `7`, and `C*` supplies the inner list `[7]` intact.
+`A*` supplies zero items (its output row vanishes), `B*` supplies `7`, and `C*` supplies the inner list `[7]` intact. Each spread row that another row follows ends with a comma: `A*` directly followed by a line `B*` would be the multiplication `A * B*`, which is rejected because a spread is not a scalar operand.
 
 Spread also works INSIDE list literals — a spread element inserts its item supply into the list being constructed:
 
@@ -3821,7 +3833,7 @@ Collecting bindings and collection builtins now agree on the result kind — bot
 ```
 A = [1, 2, 3]
 
-x = A.take(1)*
+x = (A.take(1)*)
 x
 
 head, *rest = A
@@ -3836,7 +3848,7 @@ rest == A.skip(1)
 1
 ```
 
-`x = A.take(1)*` spreads the one-element list `[1]` and CAPTURES the single item canonically (`x = 1`), while the collecting binding COLLECTS the remaining items as the exact list `[2, 3]` — equal to `A.skip(1)`. The rule of thumb is the operation triple: **ordinary value capture canonicalizes (`capture`), collecting binding collects an exact list (`collect`), and the spread marker spreads one boundary (`spread`).**
+`x = (A.take(1)*)` spreads the one-element list `[1]` and CAPTURES the single item canonically (`x = 1`), while the collecting binding COLLECTS the remaining items as the exact list `[2, 3]` — equal to `A.skip(1)`. The rule of thumb is the operation triple: **ordinary value capture canonicalizes (`capture`), collecting binding collects an exact list (`collect`), and the spread marker spreads one boundary (`spread`).**
 
 `range` and `order` produce lists too:
 
@@ -4351,9 +4363,9 @@ Only `public` exported properties are exposed through `load` and `open`.
 | `:` | Output selection (zero-based index over a sequence or exact list target, one-level content projection) | Postfix |
 | `.` | Dot-call / property access | Postfix |
 | `*` (prefix, directly attached) | Collect marker (binding positions only: `*name` collects the matched segment as one exact list) | — |
-| `*` (postfix, directly attached) | Spread marker (`value*` contributes the operand's items to the surrounding supply; a `*` with a valid same-line right operand is multiplication instead) | — |
-| `~` (prefix) | Grace: move parameter one position earlier | — |
-| `~` (postfix) | Grace: move parameter one position later | — |
+| `*` (postfix, directly attached) | Spread marker (`value*` contributes the operand's items to the surrounding supply; a `*` followed by a valid right operand, on the same line or the next, is multiplication instead — spacing never decides that, but a spread marker must be attached: `value *` with no operand is an error) | — |
+| `~` (prefix, directly attached) | Grace: move parameter one position earlier (`~x`; `~ x` is an error) | — |
+| `~` (postfix, directly attached) | Grace: move parameter one position later (`x~`; `x ~` is an error) | — |
 | `[` `]` | Exact immutable list literal (`[1, 2, 3]`; never a call or indexing delimiter — `A[1]` is the adjacency list `A, [1]`) | — |
 
 ### Builtin Algorithms, Intrinsics, and Keywords

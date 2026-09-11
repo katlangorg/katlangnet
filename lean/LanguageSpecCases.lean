@@ -14,11 +14,11 @@ This is bounded differential validation over the Lean-guarded partition,
 not a formal verification of the evaluators.
 
 Partition (machine-checked by the `specCaseIds.length` guard below):
-- specification surface cases: 224
-- excluded parse-level cases (Lean has no surface parser): 17
+- specification surface cases: 229
+- excluded parse-level cases (Lean has no surface parser): 20
 - excluded C#-only cases (each carries an explicit reason in the corpus): 10
-- Lean-guarded cases: 197
-- probe observations (C#-only by design): 444
+- Lean-guarded cases: 199
+- probe observations (C#-only by design): 454
 - internal-node cases live in the semantic-explorer corpus, not here: see
   lean/SemanticExplorerCases.lean
 
@@ -218,7 +218,7 @@ def case_scalar_spread_neutral : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Collect" (algWithParameters [{ name := "items", kind := .collecting }] [] [] [.param "items"])] [(.call (.resolve "Collect") [.num 5]), (.call (.resolve "Collect") [(.sequenceSpread (.num 5))])])
 #guard obs case_scalar_spread_neutral == "ok raw=S[L[5], L[5]] n=2"
 
--- select-spread-vs-capture-select [item-supply-vs-value]: A = [[1, 2], [3, 4]] \n  \n (A:0)* \n (A*):0
+-- select-spread-vs-capture-select [item-supply-vs-value]: A = [[1, 2], [3, 4]] \n  \n (A:0)*, \n (A*):0
 def case_select_spread_vs_capture_select : Expr :=
   .algorithmExpr (alg [] [] [privateProp "A" (alg [] [] [] [(.listLiteral [(.listLiteral [.num 1, .num 2]), (.listLiteral [.num 3, .num 4])])])] [(.sequenceSpread (.index (.resolve "A") (.num 0))), (.index (.capture [(.sequenceSpread (.resolve "A"))]) (.num 0))])
 #guard obs case_select_spread_vs_capture_select == "ok raw=S[1, 2, L[1, 2]] n=3"
@@ -783,6 +783,16 @@ def case_trailing_comma_continues_line : Expr :=
   .algorithmExpr (alg [] [] [] [.num 1, .num 2])
 #guard obs case_trailing_comma_continues_line == "ok raw=S[1, 2] n=2"
 
+-- star-before-operand-row-is-multiplication [parser-layout]: A = 4 \n B = 6 \n A* \n B
+def case_star_before_operand_row_is_multiplication : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "A" (alg [] [] [] [.num 4]), privateProp "B" (alg [] [] [] [.num 6])] [(.binary .mul (.resolve "A") (.resolve "B"))])
+#guard obs case_star_before_operand_row_is_multiplication == "ok raw=24 n=1"
+
+-- star-before-declaration-or-boundary-is-spread [parser-layout]: A = (1, 2) \n A* \n B = 5 \n B
+def case_star_before_declaration_or_boundary_is_spread : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "A" (alg [] [] [] [(.capture [.num 1, .num 2])]), privateProp "B" (alg [] [] [] [.num 5])] [(.sequenceSpread (.resolve "A")), .resolve "B"])
+#guard obs case_star_before_declaration_or_boundary_is_spread == "ok raw=S[1, 2, 5] n=3"
+
 -- grace-prefix-marker-led-row [parser-layout]: K = { \n   a \n   ~b \n } \n K(10, 20)
 def case_grace_prefix_marker_led_row : Expr :=
   .algorithmExpr (alg [] [] [privateProp "K" (alg ["b", "a"] [] [] [.param "a", .param "b"])] [(.call (.resolve "K") [.num 10, .num 20])])
@@ -913,12 +923,12 @@ def case_list_redundant_parens_canonicalize : Expr :=
   .algorithmExpr (alg [] [] [] [(.binary .eq (.listLiteral [.num 1, .num 2]) (.listLiteral [.num 1, .num 2]))])
 #guard obs case_list_redundant_parens_canonicalize == "ok raw=1 n=1"
 
--- list-spread-capture [lists]: A = [1, 2, 3] \n  \n x = A \n y = A* \n  \n x \n y
+-- list-spread-capture [lists]: A = [1, 2, 3] \n  \n x = A \n y = (A*) \n  \n x \n y
 def case_list_spread_capture : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "A" (alg [] [] [] [(.listLiteral [.num 1, .num 2, .num 3])]), privateProp "x" (alg [] [] [] [.resolve "A"]), privateProp "y" (alg [] [] [] [(.sequenceSpread (.resolve "A"))])] [.resolve "x", .resolve "y"])
+  .algorithmExpr (alg [] [] [privateProp "A" (alg [] [] [] [(.listLiteral [.num 1, .num 2, .num 3])]), privateProp "x" (alg [] [] [] [.resolve "A"]), privateProp "y" (alg [] [] [] [(.capture [(.sequenceSpread (.resolve "A"))])])] [.resolve "x", .resolve "y"])
 #guard obs case_list_spread_capture == "ok raw=S[L[1, 2, 3], S[1, 2, 3]] n=2"
 
--- list-spread-edges [lists]: A = [] \n B = [7] \n C = [[7]] \n  \n A* \n B* \n C*
+-- list-spread-edges [lists]: A = [] \n B = [7] \n C = [[7]] \n  \n A*, \n B*, \n C*
 def case_list_spread_edges : Expr :=
   .algorithmExpr (alg [] [] [privateProp "A" (alg [] [] [] [(.listLiteral [])]), privateProp "B" (alg [] [] [] [(.listLiteral [.num 7])]), privateProp "C" (alg [] [] [] [(.listLiteral [(.listLiteral [.num 7])])])] [(.sequenceSpread (.resolve "A")), (.sequenceSpread (.resolve "B")), (.sequenceSpread (.resolve "C"))])
 #guard obs case_list_spread_edges == "ok raw=S[7, L[7]] n=2"
@@ -1083,7 +1093,7 @@ def case_if_spread_builds_values_before_branch_selection : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Risky" (alg [] [] [] [(.capture [.num 10, (.binary .div (.num 1) (.num 0))])])] [(.call (.resolve "if") [.num 1, (.sequenceSpread (.resolve "Risky"))])])
 #guard obs case_if_spread_builds_values_before_branch_selection == "err div0"
 
--- 197 canonical Lean-guarded specification cases.
+-- 199 canonical Lean-guarded specification cases.
 
 /--
 Machine-checked Lean-guarded partition count: the id list is built by the
@@ -1228,6 +1238,8 @@ def specCaseIds : List String := [
   "index-captured-requality",
   "output-rows-interleave-definitions",
   "trailing-comma-continues-line",
+  "star-before-operand-row-is-multiplication",
+  "star-before-declaration-or-boundary-is-spread",
   "grace-prefix-marker-led-row",
   "adjacency-call-across-space",
   "multiline-call-open-delimiter",
@@ -1289,6 +1301,6 @@ def specCaseIds : List String := [
   "parameter-named-if-carries-the-supplied-callable",
   "if-spread-builds-values-before-branch-selection"
 ]
-#guard specCaseIds.length == 197
+#guard specCaseIds.length == 199
 
 end LanguageSpecCases

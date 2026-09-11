@@ -39,8 +39,8 @@ public class EvaluatorProgramOutputTests
 
     [Fact]
     public void Eval_MixedOutput_SpreadOfEmptyContributesNoSlot()
-        // Only an explicit spread drops to zero: `()*` adds no slot, so `()*` then `1` is just `1`.
-        => AssertEval("()*\n1", 1);
+        // Only an explicit spread drops to zero: `()*` adds no slot, so `()*, 1` is just `1`.
+        => AssertEval("()*, 1", 1);
 
     [Fact]
     public void Eval_PropertyOnlyProgram_HasNoDefinedOutput()

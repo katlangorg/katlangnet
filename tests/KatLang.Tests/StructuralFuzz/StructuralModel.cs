@@ -409,6 +409,14 @@ public sealed class ScopeGraph
 /// one-item plain parens are never emitted (parse-time unwrap) — only
 /// <c>(spread*)</c> groups keep a one-item form; declarations render before
 /// rows in every scope so references never depend on declaration order.
+/// The star rule is layout-independent (SYN-07B): a line-final <c>*</c>
+/// followed by an operand on the next line is multiplication, so a spread ROW
+/// followed by another row is closed with the trailing comma (<c>X*,</c>
+/// newline <c>Y</c> — the same two slots), and the last declaration before the
+/// rows closes a spread-ending body explicitly: a brace body for definitions
+/// (<c>F(x) = { x* }</c>, merged into the definition exactly like the bare
+/// body) and capture parentheses for a deconstruction right-hand side
+/// (<c>x, y = (V*)</c>, the capture the deconstruction performs anyway).
 /// </summary>
 public static class StructuralRenderer
 {
@@ -423,17 +431,43 @@ public static class StructuralRenderer
         MScope scope, IReadOnlyDictionary<Sym, string> names, StringBuilder sb, int indent)
     {
         var first = true;
-        foreach (var decl in scope.Decls)
+        for (var d = 0; d < scope.Decls.Count; d++)
         {
             NewLine(sb, indent, ref first);
-            RenderDecl(decl, names, sb, indent);
+            // Only the declaration directly followed by an output row can run
+            // into the next line's operand; a declaration followed by another
+            // declaration is closed by the declaration head itself.
+            var rowFollows = d == scope.Decls.Count - 1 && scope.Rows.Count > 0;
+            RenderDecl(scope.Decls[d], names, sb, indent, closeTrailingSpread: rowFollows);
         }
 
-        foreach (var row in scope.Rows)
+        for (var r = 0; r < scope.Rows.Count; r++)
         {
             NewLine(sb, indent, ref first);
-            RenderExpr(row, names, sb, indent);
+            RenderExpr(scope.Rows[r], names, sb, indent);
+            if (scope.Rows[r] is MExpr.Spread && r < scope.Rows.Count - 1)
+                sb.Append(',');
         }
+    }
+
+    /// <summary>
+    /// Renders one definition body: bare on its line, or as a brace body when
+    /// <paramref name="closeTrailingSpread"/> is set and the body's last row is
+    /// a spread (the brace algorithm is merged into the definition at parse
+    /// time, so the tree is the same as the bare body's).
+    /// </summary>
+    private static void RenderBodyRows(
+        IReadOnlyList<MExpr> rows, IReadOnlyDictionary<Sym, string> names, StringBuilder sb, int indent, bool closeTrailingSpread)
+    {
+        var brace = closeTrailingSpread && rows[^1] is MExpr.Spread;
+        if (brace) sb.Append("{ ");
+        for (var i = 0; i < rows.Count; i++)
+        {
+            if (i > 0) sb.Append(", ");
+            RenderExpr(rows[i], names, sb, indent);
+        }
+
+        if (brace) sb.Append(" }");
     }
 
     private static void NewLine(StringBuilder sb, int indent, ref bool first)
@@ -444,18 +478,14 @@ public static class StructuralRenderer
         first = false;
     }
 
-    private static void RenderDecl(MDecl decl, IReadOnlyDictionary<Sym, string> names, StringBuilder sb, int indent)
+    private static void RenderDecl(
+        MDecl decl, IReadOnlyDictionary<Sym, string> names, StringBuilder sb, int indent, bool closeTrailingSpread)
     {
         switch (decl)
         {
             case MDecl.Value v:
                 sb.Append(names[v.Symbol]).Append(" = ");
-                for (var i = 0; i < v.Rows.Count; i++)
-                {
-                    if (i > 0) sb.Append(", ");
-                    RenderExpr(v.Rows[i], names, sb, indent);
-                }
-
+                RenderBodyRows(v.Rows, names, sb, indent, closeTrailingSpread);
                 return;
             case MDecl.Func f:
                 sb.Append(names[f.Symbol]).Append('(');
@@ -467,13 +497,14 @@ public static class StructuralRenderer
                 }
 
                 sb.Append(") = ");
-                RenderExpr(f.Body, names, sb, indent);
+                RenderBodyRows([f.Body], names, sb, indent, closeTrailingSpread);
                 return;
             case MDecl.Family fam:
             {
                 var firstClause = true;
-                foreach (var clause in fam.Clauses)
+                for (var c = 0; c < fam.Clauses.Count; c++)
                 {
+                    var clause = fam.Clauses[c];
                     if (!firstClause)
                     {
                         sb.Append('\n').Append(new string(' ', indent * 2));
@@ -497,7 +528,9 @@ public static class StructuralRenderer
                     }
 
                     sb.Append(") = ");
-                    RenderExpr(clause.Body, names, sb, indent);
+                    // Only the family's last clause is followed by anything
+                    // other than another clause head.
+                    RenderBodyRows([clause.Body], names, sb, indent, closeTrailingSpread && c == fam.Clauses.Count - 1);
                 }
 
                 return;
@@ -513,7 +546,7 @@ public static class StructuralRenderer
                 }
 
                 sb.Append(")) = ");
-                RenderExpr(sp.Body, names, sb, indent);
+                RenderBodyRows([sp.Body], names, sb, indent, closeTrailingSpread);
                 return;
             case MDecl.Deconstruction d:
                 for (var i = 0; i < d.Binders.Count; i++)
@@ -524,7 +557,13 @@ public static class StructuralRenderer
                 }
 
                 sb.Append(" = ");
+                // A deconstruction right-hand side is captured into one shared
+                // value anyway, so explicit capture parentheses close a
+                // spread-ending right-hand side without changing what is bound.
+                var captureRhs = closeTrailingSpread && d.Rhs is MExpr.Spread;
+                if (captureRhs) sb.Append('(');
                 RenderExpr(d.Rhs, names, sb, indent);
+                if (captureRhs) sb.Append(')');
                 return;
             default:
                 throw new InvalidOperationException($"Unhandled decl kind {decl.GetType().Name}");

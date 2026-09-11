@@ -72,7 +72,7 @@ public class SequenceConstructContainmentTests
         "P = (), 99\nP",
         "take(((), ()), 2)",
         "f(a, b) = a\nf(1, 2)",
-        "x, y = (1, 2)*\nx",
+        "x, y = ((1, 2)*)\nx",
         "F(*a) = a\nF((1, 2)*, 3)",
         "(1*, (), 2*)",
         // Exact list literals are a genuine surface node (Expr.ListLiteral),

@@ -1791,14 +1791,14 @@ public class EvaluatorLoopTests
         // empty sequence value `()`.
         AssertEvalResultLoopModes(
             """
-            Step(*x) = x.skip(1)*
+            Step(*x) = { x.skip(1)* }
             repeat(Step, 3, 7, 8)
             """,
             SequenceValue());
 
         AssertEvalResultLoopModes(
             """
-            Step(*x) = x.skip(1)*
+            Step(*x) = { x.skip(1)* }
             repeat(Step, 1, 7, 8)
             """,
             ResultFromAtoms(8));

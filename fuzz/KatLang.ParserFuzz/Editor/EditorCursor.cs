@@ -133,11 +133,14 @@ internal static class EditorCursor
     }
 
     /// <summary>
-    /// Lands on a star's ATTACHMENT boundary — immediately before the star or immediately
-    /// after it. That boundary is where the spread-versus-multiplication decision flips
-    /// (a star directly attached to the preceding token with no same-line right operand is
-    /// the spread marker; anything else multiplies), so it is the cursor position where
-    /// editor tooling is most likely to disagree with the parser.
+    /// Lands on a star's boundary — immediately before the star or immediately after it.
+    /// The token AFTER the star is where the spread-versus-multiplication decision is made
+    /// (a star that no right operand follows is the spread marker; a star followed by an
+    /// operand — on the same line or the next — multiplies; spacing never decides that),
+    /// and the gap BEFORE the star is where the marker attachment law bites (a spread
+    /// marker must be directly attached to its operand; a detached one is a diagnostic),
+    /// so it is the cursor position where editor tooling is most likely to disagree with
+    /// the parser.
     /// </summary>
     private static int AtSpreadMarker(string source, int bias)
     {

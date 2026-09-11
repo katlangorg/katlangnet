@@ -126,7 +126,7 @@ Output shaping:
 - Comma `,` creates top-level outputs and ordinary call argument slots.
 - Comma `,` and allowed expression adjacency create expression-list slots. `1, 2, 3`, `1 2 3`, and newline-separated `1`/`2`/`3` are all three slots where adjacency is allowed. Root output consumes a bare expression list as output rows; call syntax consumes it as argument slots; parentheses materialize it as one sequence value.
 - Semicolon `;` is not supported as expression syntax. Never generate it as a separator or collection constructor. Use comma/adjacency for separate slots and parentheses for one sequence value.
-- Expression spreading is the postfix spread star: `value*`, with the star directly attached to a completed expression. A spread evaluates its operand exactly once and contributes the items of ONE item-producing boundary (sequence and list values supply their contained items; an atom or string supplies itself as one item) to the surrounding item supply. A spread RETURNS NO VALUE — the receiver decides what the items become. The same star is the multiplication operator, and the right operand decides, not spacing: any same-line right operand makes the star infix multiplication (`a* b`, `a*b`, and `a * b` all multiply), so write `a*, b` to spread `a` before another same-line supplied item. Line endings disambiguate the same way: `a*` newline `b` is a spread followed by a new row, while a detached trailing star `a *` newline `b` continues as a multiline multiplication. A spread is one whole slot, so `Use(a b*)` means `Use(a, b*)`; use `Use((a, b*))` for one sequence-value argument. A dot may chain after a spread: `x.Calculate*.Target` means `Target(x.Calculate*)` — the spread receiver's items become the leading call arguments, resolved lexically. Repeated attached stars compose through capture (`value**` means `(value*)*`; a multi-item supply is a fixed point, and only a lone structured item opens one more boundary); `value**next` is an error. `spread` is an ordinary identifier — not reserved, not an intrinsic; a call or member access spelled with that name is an ordinary call or member access, never a spread.
+- Expression spreading is the postfix spread star: `value*`, written after a completed expression on the same line. A spread evaluates its operand exactly once and contributes the items of ONE item-producing boundary (sequence and list values supply their contained items; an atom or string supplies itself as one item) to the surrounding item supply. A spread RETURNS NO VALUE — the receiver decides what the items become. The same star is the multiplication operator, and the right operand decides — never spacing and never a line break: any following right operand makes the star infix multiplication (`a* b`, `a*b`, `a * b`, and `a*` newline `b` all multiply), so write `a*, b` to spread `a` before another supplied item, and end a spread ROW with a trailing comma when another output row follows (`a*,` newline `b`). The star is a spread only where no operand can follow it: before `,`, `)`, `]`, `}`, at the end of the program, or before a definition (`a*` newline `b = 1` is a spread row and a definition) — and a spread marker is ALWAYS written directly attached to its operand (`a*`; a detached `a *` with nothing to multiply is a parse error, never a spread). A definition body that ends in a spread and is followed by an output row must be closed — write `y = (a*)` (capture parentheses) or `y = { a* }`, never a bare `y = a*` above an output row, which would be `y = a * row`. A spread is one whole slot, so `Use(a b*)` means `Use(a, b*)`; use `Use((a, b*))` for one sequence-value argument. A dot may chain after a spread: `x.Calculate*.Target` means `Target(x.Calculate*)` — the spread receiver's items become the leading call arguments, resolved lexically. Repeated stars compose through capture (`value**` means `(value*)*`; a multi-item supply is a fixed point, and only a lone structured item opens one more boundary); `value**next` is an error. `spread` is an ordinary identifier — not reserved, not an intrinsic; a call or member access spelled with that name is an ordinary call or member access, never a spread.
 - A property/call/builtin RESULT is ONE value (a value boundary). A multi-output body returns one sequence value, displayed on a single row as `(…)`, not as separate rows: `F(x) = x, x + 1` then `F(5)` is `(5, 6)`. Collection-producing builtins (`order`, `orderDesc`, `distinct`, `take`, `skip`, `filter`, `map`, `range`, `atoms`) return ONE exact immutable list value, displayed as `[…]`: `X = 1, 2, 3` then `X.order` is `[1, 2, 3]`. `atoms` recursively collects numeric atoms through both sequence and list boundaries and returns them as one exact list (`atoms(7)` is `[7]`, `atoms([1, [2]])` is `[1, 2]`, `atoms('text')` is `[]`); lists still have no truth value, so an `atoms` result is not an `if` condition. Use an explicit spread star at the call site to re-spread the returned value into separate rows/items (`F(5)*`, `X.order*` — spread opens one returned boundary). This mirrors `if`. A collecting binding stores an exact list, so `F(*a) = sum(a)` works because the builtin opens the bound list after binding, while `a*` explicitly spreads that list for forwarding. List results are EXACT — no singleton or empty erasure: a collection builtin that keeps exactly ONE item returns a one-element list, so `take(((1, 2), (3, 4)), 1)` is `[(1, 2)]`, and zero kept items return `[]` (never `()`) — never generate code assuming the single survivor is unwrapped. NOT value boundaries (still multi-output): root program output (`1, 2, 3` shows three rows), explicit caller-site spread, and `while`/`repeat` loop state. Scalar/reduction builtins already return one value; a `map`/`reduce` callback must still return exactly one element.
 - Collection-builtin results index directly: `Sorted = X.order` stores an exact list and `Sorted:0` selects its first element (`range(1, 3):2` is `3`, `[3, 1, 2].order:0` is `1`), so no spread-capture step is needed for `:` indexing. Scalar arithmetic, ordering, and logical operators reject whole list and sequence values, including `()`, through ordinary operand validation; structural `==` and `!=` remain valid — select an element first (`Sorted:0 + 1`) or spread-capture (`Sorted = X.order*`) when a canonical sequence VALUE is specifically wanted. Unary `-()` and `not ()` also fail ordinary numeric conversion, exactly like other unsupported sequence/list operands. Terminal builtin steps need no spread-capture: a lone list result supplied as the next builtin's collection is opened one boundary, so pipelines like `range(1, 10).filter(IsEven).sum` keep working.
 - Postfix continuations win over adjacency on the same physical line only. A `(` or `{` after a callable name on the same line continues the call even across whitespace: `F (1, 2)` is the call `F(1, 2)`, `A.B (1)` is the dot call `A.B(1)`, and `values.map { n * 2 }` is `values.map{n * 2}`. A physical newline never continues a closed expression into a call: newline-separated `F` + `(1, 2)` is the expression list `F, (1, 2)`, and a `(`- or `{`-led line after a definition body is a following output row, not call arguments for that body. For multiline calls, open the delimiter before the newline (`F(` newline `1, 2` newline `)`); an already-open argument list spans lines normally. Indexing `:` is same-line only — never start a line with `:` (parse error). Postfix grace `~` is same-line only and only on a bare name — a `~`-led line is its own prefix-grace row whose name must be on that same line, and a line-final `~` after anything else (`F(1)~`) is an error, never prefix grace for the next line. Never start a line with a binary operator expecting continuation (`A` newline `-1` is the expression list `A, -1`, not subtraction; write `A -` newline `1` to continue arithmetic), and comments never change line-boundary decisions. A `.`-led line is the supported exception and continues the dot-call chain. Prefer the compact `F(1, 2)` style. Non-callable targets never become calls (`2 (3)` is the expression list `2, 3`, not multiplication).
@@ -343,12 +343,12 @@ Flat fixed calls preserve expression boundaries. A property reference used as on
     Use(1, Tail)        # invalid: two expression boundaries
     Use(1, Tail*)       # OK: Tail* spreads its items into the b and c slots
 
-Spread (postfix star, directly attached to a completed expression):
+Spread (postfix star after a completed expression, on the same line):
     expr*
 
-Expression spreading is the postfix spread star: `expr*`. It evaluates its one operand and contributes that value's immediate items to the surrounding item supply; it returns no value and never materializes a sequence or list by itself. The surrounding receiver decides how to bind, capture, collect, or emit the supply. The same star is the multiplication operator, and the right operand decides, not spacing: any same-line right operand makes the star infix multiplication (`a* b`, `a*b`, and `a * b` all multiply), so write `a*, b` to spread `a` before another same-line supplied item. At a line ending, `a*` newline `b` is a spread followed by a new row, while a detached trailing `a *` newline `b` continues as a multiline multiplication. At boundary-sensitive sites this matters: `Use(1*, Tail)` has argument slots `1*` and `Tail`; use `Use((1*, Tail))` for one sequence-value argument. Prefix `*name` directly attached to a name is the collecting-binding marker, valid only in parameter and deconstruction binding patterns; it is never an expression operator. Repeated attached stars compose through capture (`value**` means `(value*)*`; a multi-item supply is a fixed point, and only a lone structured item opens one more boundary); `value**next` is an error. A dot may chain after a spread: `x.Calculate*.Target` means `Target(x.Calculate*)` (lexical resolution). `spread` is an ordinary identifier — not reserved, not an intrinsic.
+Expression spreading is the postfix spread star: `expr*`. It evaluates its one operand and contributes that value's immediate items to the surrounding item supply; it returns no value and never materializes a sequence or list by itself. The surrounding receiver decides how to bind, capture, collect, or emit the supply. The same star is the multiplication operator, and the right operand decides — never spacing and never a line break: any following right operand makes the star infix multiplication (`a* b`, `a*b`, `a * b`, and `a*` newline `b` all multiply), so write `a*, b` to spread `a` before another supplied item and `a*,` newline `b` before another output row. The star is a spread only before `,`, `)`, `]`, `}`, the end of the program, or a definition head (`a*` newline `b = 1` is a spread row and a definition), and is then written directly attached (`a*`; a detached `a *` with nothing to multiply is a parse error); close a spread-ending definition body that an output row follows with capture parentheses (`y = (a*)`). At boundary-sensitive sites this matters: `Use(1*, Tail)` has argument slots `1*` and `Tail`; use `Use((1*, Tail))` for one sequence-value argument. Prefix `*name` directly attached to a name is the collecting-binding marker, valid only in parameter and deconstruction binding patterns; it is never an expression operator. Repeated stars compose through capture (`value**` means `(value*)*`; a multi-item supply is a fixed point, and only a lone structured item opens one more boundary); `value**next` is an error. A dot may chain after a spread: `x.Calculate*.Target` means `Target(x.Calculate*)` (lexical resolution). `spread` is an ordinary identifier — not reserved, not an intrinsic.
 
-The spread star binds to its completed receiver expression before expression-list handling. `Use(a b*)` and `Use(a` newline `b*)` both mean `Use(a, b*)` — the star in `b*` has no same-line right operand, so it is a spread, and `a` is a separate adjacency slot. Comma slots stay structural (`Use(a*, b)` is a two-argument call; `Use(a* b)` would multiply instead). Use explicit parentheses when one sequence value is intended.
+The spread star binds to its completed receiver expression before expression-list handling. `Use(a b*)` and `Use(a` newline `b*)` both mean `Use(a, b*)` — the closing `)` prevents a multiplication right operand after the star, so the attached `b*` is a spread, and `a` is a separate adjacency slot. Comma slots stay structural (`Use(a*, b)` is a two-argument call; `Use(a* b)` would multiply instead). Use explicit parentheses when one sequence value is intended.
 
 Use comma for ordinary multi-result data and argument slots. Do not scatter spread stars as a decorative list separator. Prefer:
     Values = 3, 4, 2, 1
@@ -422,6 +422,9 @@ Use grace `~` to adjust parameter order without dummy arithmetic:
 - Repeat tildes for more movement.
 - Grace applies ONLY to one bare parameter/name occurrence; attaching it to an
   expression (`(x + y)~`, `f(x)~`, `x.y~`, `[x]~`, `5~`) is a parse error.
+- Write the marker directly attached to its name: `~x` / `x~`. A detached
+  `~ x` or `x ~` is a parse error (the marker attachment law shared with the
+  collect marker `*items` and the spread marker `value*`).
 
 Do not use fake arithmetic like `a * 0 + b` to force parameter order.
 
@@ -1043,7 +1046,7 @@ Sequence, loop, reducer, and module correctness:
 Idiomatic structure:
 - sequence builtins are preferred over loops when natural;
 - dot-call is not used as ordinary multi-output spreading;
-- postfix spread stars appear only where spreading is intended, directly attached to their operand, with a comma before any following same-line item (`A*, B` — `A* B` would multiply); prefix collecting stars appear only in binding patterns, directly attached to their name;
+- postfix spread stars appear only where spreading is intended, with a comma before any following item on the same line OR the next (`A*, B` and `A*,` newline `B` — `A* B` and `A*` newline `B` would multiply), and a spread-ending definition body followed by an output row is closed with capture parentheses (`y = (A*)`); prefix collecting stars appear only in binding patterns, directly attached to their name;
 - `repeat` / `while` state arity and parameter order are correct;
 - a `while` result does not depend on state changes produced only by the terminating step where `continue_flag = 0` — required updates are committed on an earlier continuing step;
 - conditional branches have consistent top-level input and output arity;
@@ -1053,7 +1056,7 @@ Idiomatic structure:
 
 === BEGIN GENERATED: katlang-spec-examples (DO NOT EDIT BY HAND) ===
 
-Verified reference examples (66 of the 224-case canonical language specification,
+Verified reference examples (69 of the 229-case canonical language specification,
 tests/KatLang.Tests/LanguageSpec/LanguageSpecCorpus.cs). Every program and expected
 output below is executed against the KatLang engine and (where representable)
 guarded against the Lean model on every build. Treat these as ground truth for the
@@ -1446,6 +1449,35 @@ Regenerate this block from the repo root with:
 
   Rejected by the parser: "Semicolon is not supported as an expression separator ..."
 
+[star-before-operand-row-is-multiplication] SYN-07B: the star is read by the token that follows it, never by spacing or by the line break. `A*` newline `B`, `A *` newline `B`, `A* B`, and `A * B` are all the multiplication `A * B` — a line-final star continues onto the next line exactly like every trailing binary operator, in a definition body too. To spread `A` and then emit `B` as the next row, close the spread slot with a comma (`A*,` newline `B`).
+
+    A = 4
+    B = 6
+    A*
+    B
+
+  Displays:
+    24
+
+[star-before-declaration-or-boundary-is-spread] A declaration head is never a multiplication operand, so a line-final star before `B = 5` is the spread marker — through the same declaration relation that ends an adjacency row. The star is likewise a spread before a comma, a closing delimiter, or the end of the program. A spread marker must be directly attached to its operand (`A*`): the detached `A *` in any of these positions is a parse error, never silently a spread and never silently a multiplication. A definition body that ends in a spread must be closed when an output row follows: `X = (A*)` captures the spread supply, while a bare `X = A*` above the row `B` is the multiplication `X = A * B`.
+
+    A = (1, 2)
+    A*
+    B = 5
+    B
+
+  Displays:
+    1
+    2
+    5
+
+[spread-marker-must-be-attached] The marker attachment law: a structural marker is directly attached to the syntax it modifies (`A*`, `*items`, `~x`, `x~`), while the multiplication operator may be spaced freely. `A *` with nothing that could be a right operand after it is classified as a spread marker (SYN-07B) and then rejected for being detached — whitespace never turns one valid operation into another; it only separates the valid `A*` from this error. Write `A*` to spread, or give the star a right operand to multiply.
+
+    A = (1, 2)
+    A *
+
+  Rejected by the parser: "The spread marker `*` must be directly attached to the expression it spreads ..."
+
 [missing-output-not-a-value] A no-output body is not a value: accessing it, comparing it with `()`, or spreading it are errors — `()` is a value, `{}` is not.
 
     A = {
@@ -1516,7 +1548,7 @@ Regenerate this block from the repo root with:
     A = [1, 2, 3]
 
     x = A
-    y = A*
+    y = (A*)
 
     x
     y

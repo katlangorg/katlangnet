@@ -476,10 +476,17 @@ public sealed class Parser
     // operator itself sits on the same line; only its right operand starts a
     // new line. The star '*' is covered by the binary-operator row: a
     // same-line star continues the expression either as infix multiplication
-    // or as the directly attached postfix spread marker (disambiguated in
-    // ParsePostfix), while a star on a later line never continues — `a*`
-    // newline `b` is a spread row followed by a `b` row, and a '*'-led line
-    // is collect-marker (binding) syntax or an error. Comments are
+    // or as the postfix spread marker — disambiguated in ParsePostfix by
+    // WHAT FOLLOWS the star, never by spacing or by the newline: a star is
+    // the spread marker exactly when no multiplication operand can follow it
+    // (a closing delimiter, a comma, end of input, a token that cannot start
+    // an expression, or a declaration head comes next), so `a*` newline `b`
+    // and `a *` newline `b` are both the multiplication `a * b` (SYN-07B);
+    // a star classified as a spread marker must additionally be directly
+    // attached to its operand (`a *` with nothing to multiply is a
+    // malformed marker, not a spread). A star on a later line never
+    // continues — a '*'-led line is collect-marker (binding) syntax or an
+    // error. Comments are
     // semantically invisible for all of these decisions: Current/Advance/
     // Previous skip comment tokens and no rule may consult skipped comments
     // to relax a newline boundary, so `A` newline `-1` and `A # note`
@@ -1093,19 +1100,29 @@ public sealed class Parser
 
     // ── Spread marker ───────────────────────────────────────────────
     // Expression spreading is written with the postfix spread marker `*`:
-    // a star DIRECTLY attached to a completed expression's last token
-    // (zero-width gap — no whitespace, comment, or newline between) that has
-    // no valid same-line right operand after it lowers to the one unary AST
-    // node SequenceSpread(expr) (shared with Lean). When a same-line
-    // expression-start token follows the star, the star is infix
-    // multiplication regardless of spacing (`a*b`, `a* b`, `a *b`, `a * b`
-    // all multiply), so spreading before another same-line supplied item
-    // requires a comma: `a*, b`. An unattached star with nothing after it on
-    // its line is multiplication whose right operand continues on the next
-    // line (`a *` newline `b`), while an attached line-final star is a
-    // spread (`a*` newline `b` is a spread row and a `b` row). Chained
-    // spread is `value**` — each directly attached star nests one more
-    // unary spread node, building SequenceSpread(SequenceSpread(expr)).
+    // a same-line star after a completed expression that has no valid
+    // right operand after it lowers to the one unary AST node
+    // SequenceSpread(expr) (shared with Lean). The multiplication-versus-
+    // spread decision is made by the NEXT significant token alone — never
+    // by whitespace, attachment, or the physical newline (SYN-07B): when a
+    // token that can begin a multiplication operand follows the star, on
+    // the same line or on a later one, the star is infix multiplication
+    // (`a*b`, `a* b`, `a *b`, `a * b`, and `a*` newline `b` all multiply),
+    // so spreading before another supplied item requires a comma (`a*, b`;
+    // a trailing comma continues the list across the newline: `a*,` newline
+    // `b`). The star is the spread marker when the surrounding syntax
+    // closes the expression before any operand could follow: a closing
+    // `)`, `]`, or `}`, a comma, end of input, a token that cannot start an
+    // expression (`.`, `;`, `==`, ...), or a declaration head (`a*` newline
+    // `b = 1` is a spread row followed by a property definition). A spread
+    // marker must then be DIRECTLY attached to its operand (the marker
+    // attachment law shared with `*name`, `~name`, `name~`): the detached
+    // `values *` that no operand follows is a malformed marker with a
+    // targeted diagnostic (ParseSpreadMarkerContinuation), so whitespace can
+    // never turn one valid reading into another — it only separates the
+    // valid `values*` from the rejected `values *`. Chained spread is
+    // `value**` — each further attached star nests one more unary spread
+    // node, building SequenceSpread(SequenceSpread(expr)).
     // The parser only records the written layers; evaluation applies them
     // compositionally, `value**` agreeing with `(value*)*` (each layer
     // spreads the value the previous layer's supply re-captures — see
@@ -1292,17 +1309,33 @@ public sealed class Parser
     /// Used to distinguish property definitions from output expressions.
     /// </summary>
     private bool LookaheadIsEquals()
-        => PeekSignificant(1).Kind == TokenKind.Equals;
+        => LookaheadIsEqualsFrom(NextSignificantIndex(_pos));
+
+    /// <summary>
+    /// Index form of <see cref="LookaheadIsEquals"/>: true when the significant
+    /// token after the significant token at <paramref name="index"/> is '='.
+    /// </summary>
+    private bool LookaheadIsEqualsFrom(int index)
+        => _tokens[NextSignificantIndex(index + 1)].Kind == TokenKind.Equals;
 
     // ── Star-marker diagnostics ─────────────────────────────────────────────
     // Prefix `*name` (directly attached) is the ONLY collecting-binding
     // spelling, valid only in binding positions. Postfix `expr*` (directly
-    // attached, no same-line right operand) is the ONLY spread spelling,
-    // valid only as a whole expression-list slot or fluent dot-chain
-    // receiver. Every other star is infix multiplication.
+    // attached, and no right operand follows the star on any line) is the
+    // ONLY spread spelling, valid only as a whole expression-list slot or
+    // fluent dot-chain receiver. A star that a right operand follows is infix
+    // multiplication, however it is spaced; a star that no operand follows
+    // and that is NOT attached to the expression before it (`values *`) is a
+    // malformed spread marker — never silently a multiplication and never
+    // silently a spread (MARKER ATTACHMENT LAW: structural/annotation
+    // markers `*name`, `name*`, `~name`, `name~` are directly attached;
+    // ordinary operators may be spaced freely).
 
     private static string CollectMarkerAttachmentDiagnostic(string name) =>
         $"The collect marker `*` must be directly attached to its binding name: write `*{name}`.";
+
+    private static string SpreadMarkerAttachmentDiagnostic(Expr operand) =>
+        $"The spread marker `*` must be directly attached to the expression it spreads: write `{ExprNameRenderer.Render(operand, ExprNameMode.SpreadOperand)}*` (a detached `*` that no right operand follows is not multiplication either).";
 
     private static string RepeatedCollectMarkerDiagnostic(string name) =>
         $"A collecting binding uses exactly one collect marker: write `*{name}`.";
@@ -1398,8 +1431,15 @@ public sealed class Parser
     /// expression parsing.
     /// </summary>
     private bool LookaheadIsBindingPatternAssignment()
+        => LookaheadIsBindingPatternAssignmentFrom(NextSignificantIndex(_pos));
+
+    /// <summary>
+    /// Index form of <see cref="LookaheadIsBindingPatternAssignment"/>: the
+    /// same memoized scan, started at the significant token at
+    /// <paramref name="start"/>.
+    /// </summary>
+    private bool LookaheadIsBindingPatternAssignmentFrom(int start)
     {
-        var start = NextSignificantIndex(_pos);
         if (start >= _bindingPatternScanFailStart && start < _bindingPatternScanFailBreak)
             return false;
 
@@ -1655,9 +1695,14 @@ public sealed class Parser
     /// <summary>
     /// Exact source-offset adjacency: <paramref name="second"/> starts at the
     /// code unit where <paramref name="first"/> ends, with nothing — no
-    /// whitespace, comment, or newline — between them. This is the attachment
-    /// test for both star markers (prefix collect marker to its binding name,
-    /// completed expression to its postfix spread marker).
+    /// whitespace, comment, or newline — between them. This is the ONE
+    /// attachment test of the marker attachment law: the prefix collect
+    /// marker to its binding name (`*name`), the postfix spread marker to
+    /// its operand's last token (`value*`, checked only after the star has
+    /// been classified as a spread — see <see cref="IsPostfixSpreadMarkerStar"/>
+    /// and <see cref="ParseSpreadMarkerContinuation"/>), every Grace marker
+    /// to the name or neighbouring marker it belongs to (`~x`, `x~`), and the
+    /// `.~` member-Grace pair. Ordinary operators never consult it.
     /// </summary>
     private static bool IsDirectlyAttached(Token first, Token second)
         => second.Position == first.Position + first.Length;
@@ -1671,6 +1716,77 @@ public sealed class Parser
     /// </summary>
     private const string GraceEligibilityMessage =
         "Grace `~` can only be applied to a parameter or name occurrence.";
+
+    /// <summary>
+    /// The marker attachment law for Grace: every marker of a prefix run is
+    /// directly attached to the next marker or to the name, and every marker
+    /// of a postfix run to the name or to the previous marker (`~x`, `x~`,
+    /// `~~x`, `~x~`). A gap anywhere in the occurrence (`~ x`, `x ~`,
+    /// `~ ~x`) reports this diagnostic once, over the whole occurrence, and
+    /// the recovered tree keeps the plain name: a detached marker decorates
+    /// nothing, mirroring the collect marker's never-a-collecting-binding
+    /// recovery.
+    /// </summary>
+    private static string GraceMarkerAttachmentDiagnostic(string name) =>
+        $"The Grace marker `~` must be directly attached to the name it decorates: write `~{name}` or `{name}~`.";
+
+    /// <summary>
+    /// Consumes one same-line postfix Grace run after a bare name (the name
+    /// token already consumed, <paramref name="lastToken"/> being the name or
+    /// the last marker consumed so far), accumulating <paramref name="weight"/>
+    /// and clearing <paramref name="attached"/> at the first gap. Returns the
+    /// last consumed token so callers can span their diagnostics.
+    /// </summary>
+    private Token ConsumePostfixGraceRun(Token lastToken, ref int weight, ref bool attached)
+    {
+        while (Current.Kind == TokenKind.Tilde && MayContinueClosedExpression(TokenKind.Tilde))
+        {
+            attached &= IsDirectlyAttached(lastToken, Current);
+            lastToken = Advance();
+            weight++;
+        }
+
+        return lastToken;
+    }
+
+    /// <summary>
+    /// Builds the graced (or, at net weight zero, plain) occurrence of a bare
+    /// name, or reports the attachment law and recovers to the plain name when
+    /// any marker of the occurrence was detached. Kept out of
+    /// <see cref="ParsePrimary"/> so its locals never enlarge that hot
+    /// recursive frame (native stack-margin calibration).
+    /// </summary>
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private Expr CreateGracedName(Token firstToken, Token nameToken, Token lastToken, int weight, bool attached)
+    {
+        var resolve = new Expr.Resolve(nameToken.StringValue!) { Span = TokenSpan(nameToken) };
+        if (!attached)
+        {
+            ReportError(
+                DiagnosticCode.InvalidGraceMarker,
+                GraceMarkerAttachmentDiagnostic(nameToken.StringValue!),
+                CombineSpans(TokenSpan(firstToken), TokenSpan(lastToken))!);
+            return resolve;
+        }
+
+        return weight == 0 ? resolve : new Expr.Grace(resolve, weight) { Span = MakeSpan(firstToken) };
+    }
+
+    /// <summary>
+    /// Parses the same-line postfix Grace run after an already-consumed bare
+    /// name (`x~`, `x~~`): the postfix half of the one-name Grace law, with
+    /// the attachment law enforced by <see cref="CreateGracedName"/>. Kept out
+    /// of <see cref="ParsePrimary"/> so its locals never enlarge that hot
+    /// recursive frame (native stack-margin calibration).
+    /// </summary>
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private Expr ParsePostfixGraceOnName(Token nameToken)
+    {
+        var weight = 0;
+        var attached = true;
+        var lastToken = ConsumePostfixGraceRun(nameToken, ref weight, ref attached);
+        return CreateGracedName(nameToken, nameToken, lastToken, weight, attached);
+    }
 
     /// <summary>
     /// Reports the one-name Grace law for a same-line postfix marker run that
@@ -1721,8 +1837,12 @@ public sealed class Parser
         var firstTilde = Current;
         var lastTilde = Advance(); // the run always owns its first marker
         var weight = -1;
+        // The attachment law (GraceMarkerAttachmentDiagnostic): every marker
+        // is directly attached to the next marker or to the name.
+        var attached = true;
         while (Current.Kind == TokenKind.Tilde && MayContinueClosedExpression(TokenKind.Tilde))
         {
+            attached &= IsDirectlyAttached(lastTilde, Current);
             lastTilde = Advance();
             weight--;
         }
@@ -1736,18 +1856,13 @@ public sealed class Parser
             return new Expr.Num(0) { Span = MakeSpan(firstTilde) };
         }
 
+        attached &= IsDirectlyAttached(lastTilde, Current);
         var nameToken = Advance();
         // Postfix grace: each same-line marker after the name increments the
         // weight; a marker on a later line never continues, including one
         // immediately before an ordinary dot.
-        while (Current.Kind == TokenKind.Tilde && MayContinueClosedExpression(TokenKind.Tilde))
-        {
-            Advance();
-            weight++;
-        }
-
-        var resolve = new Expr.Resolve(nameToken.StringValue!) { Span = TokenSpan(nameToken) };
-        return weight == 0 ? resolve : new Expr.Grace(resolve, weight) { Span = MakeSpan(firstTilde) };
+        var lastToken = ConsumePostfixGraceRun(nameToken, ref weight, ref attached);
+        return CreateGracedName(firstTilde, nameToken, lastToken, weight, attached);
     }
 
     /// <summary>
@@ -1769,8 +1884,15 @@ public sealed class Parser
     /// the produced tree are exactly those of the offset walk.</para>
     /// </summary>
     private bool LookaheadThroughTildesToPropertyDef()
+        => LookaheadThroughTildesToPropertyDefFrom(NextSignificantIndex(_pos));
+
+    /// <summary>
+    /// Index form of <see cref="LookaheadThroughTildesToPropertyDef"/>: the
+    /// same memoized scan, started at the significant token at
+    /// <paramref name="start"/>.
+    /// </summary>
+    private bool LookaheadThroughTildesToPropertyDefFrom(int start)
     {
-        var start = NextSignificantIndex(_pos);
         if (start == _graceRunScanStart)
             return _graceRunScanVerdict;
 
@@ -2230,21 +2352,17 @@ public sealed class Parser
 
                     // Postfix `*` after a binding name is spread syntax, never
                     // binding syntax. Report the targeted marker-side diagnostic
-                    // when the star is clearly meant as a marker (list-final:
-                    // followed by ',', ')', '}', another '*', end of input, or a
-                    // line break); a star followed by an operand-like token is
-                    // left for the caller's ordinary unexpected-token handling so
+                    // when the star is clearly meant as a marker — nothing that
+                    // could begin a multiplication operand follows it (the ONE
+                    // classifier the expression-level star decision uses, so
+                    // spacing and line breaks never matter here either); a star
+                    // followed by an operand-like token is left for the
+                    // caller's ordinary unexpected-token handling so
                     // multiplication-shaped mistakes keep their generic error.
                     if (Current.Kind == TokenKind.Star
                         && MayContinueClosedExpression(TokenKind.Star))
                     {
-                        var next = PeekSignificant(1);
-                        var looksLikeMarker = next.Kind is TokenKind.Comma
-                            or TokenKind.RParen
-                            or TokenKind.RBrace
-                            or TokenKind.Star
-                            or TokenKind.EndOfFile
-                            || next.Line != Current.Line;
+                        var looksLikeMarker = !CanStartMultiplicationOperand(PeekSignificant(1).Kind);
                         if (looksLikeMarker)
                         {
                             var lastStar = Advance();
@@ -2490,12 +2608,13 @@ public sealed class Parser
     private List<Expr> ParseExpressionListOperand(
         bool allowNewlineImplicitExpressionListSeparator)
     {
-        // Spread slots need no extra handling here: an attached postfix `*`
-        // parses as a postfix continuation directly to Expr.SequenceSpread.
-        // A spread expression is always one whole slot — a same-line token
-        // after the star that could start an expression makes the star
-        // multiplication instead, so spreading before another same-line
-        // supplied item requires an explicit comma (`a*, b`).
+        // Spread slots need no extra handling here: a postfix `*` with no
+        // right operand after it parses as a postfix continuation directly
+        // to Expr.SequenceSpread. A spread expression is always one whole
+        // slot — a following token that could start an expression (on this
+        // line or the next) makes the star multiplication instead, so
+        // spreading before another supplied item requires an explicit comma
+        // (`a*, b`, or the trailing `a*,` newline `b`).
         var exprs = new List<Expr>();
         exprs.Add(ParseExpression());
 
@@ -2600,20 +2719,36 @@ public sealed class Parser
     ///
     /// <para>`public`-led declarations need no arm here: `public` cannot
     /// start an expression (<see cref="CanStartExpression"/>), so both
-    /// consumers stop before consulting this relation. The Star arm is
-    /// equally unreachable through them today, but keeps the relation
-    /// faithful to the algorithm loop's own declaration dispatch.</para>
+    /// consumers stop before consulting this relation. The Star arm is also
+    /// unreachable through the expression-start filters (including the star
+    /// classifier's operand filter), but keeps the relation faithful to the
+    /// algorithm loop's own declaration dispatch.</para>
     /// </summary>
     private bool StartsDeclaration(bool includeCommaSpanningBindingPatterns)
-        => Current.Kind == TokenKind.KeywordOpen
-            || (Current.Kind == TokenKind.Identifier
-                && (LookaheadIsEquals()
-                    || (includeCommaSpanningBindingPatterns && LookaheadIsBindingPatternAssignment())
-                    || LookaheadIsClauseDefinition()))
-            || (Current.Kind == TokenKind.Star
+        => StartsDeclarationAt(NextSignificantIndex(_pos), includeCommaSpanningBindingPatterns);
+
+    /// <summary>
+    /// Index form of <see cref="StartsDeclaration"/>: the same relation
+    /// evaluated at the significant token at <paramref name="index"/> instead
+    /// of the current position. The postfix spread/multiplication decision
+    /// (<see cref="IsPostfixSpreadMarkerStar"/>) consults it for the token
+    /// after a star, so a star followed by a declaration head is a spread
+    /// through the SAME relation the adjacency boundary stops at — the two
+    /// boundary decisions cannot drift apart.
+    /// </summary>
+    private bool StartsDeclarationAt(int index, bool includeCommaSpanningBindingPatterns)
+    {
+        var kind = _tokens[index].Kind;
+        return kind == TokenKind.KeywordOpen
+            || (kind == TokenKind.Identifier
+                && (LookaheadIsEqualsFrom(index)
+                    || (includeCommaSpanningBindingPatterns && LookaheadIsBindingPatternAssignmentFrom(index))
+                    || LookaheadIsParenEqualsFrom(index + 1)))
+            || (kind == TokenKind.Star
                 && includeCommaSpanningBindingPatterns
-                && LookaheadIsBindingPatternAssignment())
-            || (Current.Kind == TokenKind.Tilde && LookaheadThroughTildesToPropertyDef());
+                && LookaheadIsBindingPatternAssignmentFrom(index))
+            || (kind == TokenKind.Tilde && LookaheadThroughTildesToPropertyDefFrom(index));
+    }
 
     private static bool CanStartExpression(TokenKind kind) => kind switch
     {
@@ -2703,9 +2838,10 @@ public sealed class Parser
             // expression is a whole expression-list slot, never a binary
             // operand (`A* + B`, `1 + values*`, and `value* * 2` are errors;
             // spread the whole expression instead: `(A + B)*`). This is also
-            // the documented deterministic rejection for `value**next` /
-            // `value** next`: the second star has a same-line right operand,
-            // so it is multiplication whose left operand is a spread.
+            // the documented deterministic rejection for `value**next`,
+            // `value** next`, and `value**` newline `next`: the second star
+            // has a right operand, so it is multiplication whose left
+            // operand is a spread.
             lhs = CreateBinaryExpression(op, lhs, rhs, operatorToken);
         }
 
@@ -2855,17 +2991,22 @@ public sealed class Parser
             {
                 case TokenKind.Star when MayContinueClosedExpression(TokenKind.Star)
                     && IsPostfixSpreadMarkerStar():
-                    // Postfix spread marker: expr* — the star is DIRECTLY
-                    // attached to the completed expression's last token and
-                    // has no valid same-line right operand after it. Every
-                    // other same-line star is left for the multiplicative
-                    // level (`a*b`, `a* b`, `a *b`, `a * b` all multiply, and
-                    // `a *` newline `b` continues as multiplication), so
-                    // spreading before another same-line supplied item
-                    // requires a comma: `a*, b`. Each additional attached
-                    // star adds one spread layer (`value**`).
-                    var starToken = Advance(); // consume the spread marker '*'
-                    lhs = CreateSpreadExpression(lhs, starToken);
+                    // Postfix spread marker: expr* — a same-line star after
+                    // the completed expression with no valid right operand
+                    // after it (IsPostfixSpreadMarkerStar decides from the
+                    // next significant token, on any line). Every other
+                    // same-line star is left for the multiplicative level
+                    // (`a*b`, `a* b`, `a *b`, `a * b`, `a *` newline `b`, and
+                    // `a*` newline `b` all multiply), so spreading before
+                    // another supplied item requires a comma: `a*, b`. Each
+                    // additional star adds one spread layer (`value**`;
+                    // every same-line star belongs to the expression before
+                    // it, so a collecting deconstruction `*r = ...` starts
+                    // its own line — the '*'-led-line rule). Only AFTER that
+                    // classification is the marker's attachment enforced:
+                    // a detached `values *` is a malformed marker
+                    // (ParseSpreadMarkerContinuation), never a multiplication.
+                    lhs = ParseSpreadMarkerContinuation(lhs);
                     break;
 
                 case TokenKind.Colon when MayContinueClosedExpression(TokenKind.Colon):
@@ -2961,32 +3102,51 @@ public sealed class Parser
 
     /// <summary>
     /// True when the current same-line star is the postfix SPREAD marker for
-    /// the just-completed expression rather than infix multiplication: the
-    /// star must be DIRECTLY attached to the expression's last token
-    /// (exact source-offset adjacency — whitespace, comments, and newlines
-    /// all break attachment) AND no expression-start token may follow it on
-    /// the star's own physical line. When a valid same-line right operand
-    /// follows, the star is multiplication regardless of spacing; when the
-    /// star is unattached, it is multiplication whose right operand may
-    /// continue on the next line under ordinary operator continuation.
-    /// Comments after the star are invisible, exactly like every other
-    /// line-sensitive decision.
+    /// the just-completed expression rather than infix multiplication. The
+    /// decision is made by the NEXT significant token alone (SYN-07B):
+    /// whitespace before the star, source attachment, and the physical
+    /// newline after it never take part in it. The star is multiplication
+    /// when a token that can begin a multiplication operand follows it — on
+    /// the same line or on a later one, so `a*` newline `b` continues exactly
+    /// like the trailing operator `a *` newline `b` — unless those tokens
+    /// begin a DECLARATION: a declaration head is never an operand (`a*`
+    /// newline `b = 1` is a spread row followed by a property definition),
+    /// decided through the same <see cref="StartsDeclarationAt"/> relation
+    /// the adjacency boundary stops at. The star is the spread marker when
+    /// the surrounding syntax closes the expression before any operand could
+    /// follow: a closing delimiter, a comma, end of input, a token that
+    /// cannot start an expression, or a declaration head. Comments after the
+    /// star are invisible, exactly like every other line-sensitive decision.
+    /// Attachment is a SEPARATE, later check: once a star is classified as a
+    /// spread marker, <see cref="ParseSpreadMarkerContinuation"/> requires it
+    /// to be directly attached to the expression it spreads and reports a
+    /// detached marker (`values *` that no operand follows) as malformed —
+    /// this method must never consult attachment, or `values *` newline
+    /// `other` would stop being the multiplication it is.
     /// </summary>
     private bool IsPostfixSpreadMarkerStar()
     {
-        if (!IsDirectlyAttached(Previous, Current))
-            return false;
-        var next = PeekSignificant(1);
-        if (next.Line != Current.Line || !CanStartMultiplicationOperand(next.Kind))
+        var starIndex = NextSignificantIndex(_pos);
+        var nextIndex = NextSignificantIndex(starIndex + 1);
+        var next = _tokens[nextIndex];
+        if (!CanStartMultiplicationOperand(next.Kind))
+            return true;
+        if (StartsDeclarationAt(nextIndex, includeCommaSpanningBindingPatterns: true))
             return true;
 
-        // In `x*~.F`, the tilde would apply postfix Grace to the completed
-        // spread expression, which is not a bare name. Keep the star as a
-        // spread marker so the postfix/dot recovery reports the one-name Grace
-        // diagnostic; never reinterpret the sequence as multiplication.
-        return next.Kind == TokenKind.Tilde
-            && PeekSignificant(2) is { Kind: TokenKind.Dot } dotAfterTilde
-            && IsDirectlyAttached(next, dotAfterTilde);
+        // A Grace run followed by a dot cannot begin a multiplication RHS:
+        // Grace needs a bare name. Keep the spread and let postfix recovery
+        // reject the annotation on that non-name operand. Inspect the whole
+        // run structurally, so `x*~.F`, `x*~ .F`, and `x*~~.F` recover alike;
+        // attachment and line checks must never classify the star.
+        if (next.Kind != TokenKind.Tilde)
+            return false;
+        do
+        {
+            nextIndex = NextSignificantIndex(nextIndex + 1);
+        }
+        while (_tokens[nextIndex].Kind == TokenKind.Tilde);
+        return _tokens[nextIndex].Kind == TokenKind.Dot;
     }
 
     /// <summary>
@@ -3002,6 +3162,51 @@ public sealed class Parser
     {
         var spreadNode = CreateSequenceSpread(operand, SpanFrom(operand), TokenSpan(starToken));
         return GuardExpressionChainDepth(spreadNode, TokenSpan(starToken), operand);
+    }
+
+    /// <summary>
+    /// Consumes the postfix spread marker that
+    /// <see cref="IsPostfixSpreadMarkerStar"/> has already classified as a
+    /// spread (the current star) and enforces the marker attachment law: the
+    /// marker must be DIRECTLY attached to the completed expression's last
+    /// token (<see cref="IsDirectlyAttached"/> — the same source-offset
+    /// adjacency the collect marker and Grace require). Attachment is checked
+    /// only here, AFTER classification, so it never participates in the
+    /// spread-versus-multiplication decision: `values *` newline `other` is
+    /// the multiplication `values * other` exactly like `values*` newline
+    /// `other`, while `values *` that no operand follows is a malformed
+    /// marker. A detached marker decorates nothing: the diagnostic spans the
+    /// operand through the last consumed star, the whole same-line run of
+    /// further spread-classified stars is consumed with it (one diagnostic
+    /// per malformed run), and the recovered tree keeps the plain operand —
+    /// no <see cref="Expr.SequenceSpread"/> is built from a detached marker,
+    /// mirroring the collect marker's never-a-collecting-binding recovery.
+    /// Kept out of <see cref="ParsePostfix"/> so its locals never enlarge that
+    /// hot recursive frame (native stack-margin calibration).
+    /// </summary>
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private Expr ParseSpreadMarkerContinuation(Expr operand)
+    {
+        var operandEnd = Previous;
+        var starToken = Advance(); // consume the spread marker '*'
+        if (IsDirectlyAttached(operandEnd, starToken))
+            return CreateSpreadExpression(operand, starToken);
+
+        // Detached marker: consume the rest of the malformed same-line run
+        // (further stars that would themselves be spread markers), report
+        // once, and recover to the operand itself.
+        while (Current.Kind == TokenKind.Star
+            && MayContinueClosedExpression(TokenKind.Star)
+            && IsPostfixSpreadMarkerStar())
+        {
+            Advance();
+        }
+
+        ReportError(
+            DiagnosticCode.InvalidSpreadMarker,
+            SpreadMarkerAttachmentDiagnostic(operand),
+            SpanFrom(operand));
+        return operand;
     }
 
     /// <summary>
@@ -3026,15 +3231,22 @@ public sealed class Parser
     {
         // Prefix Grace on the member/fallback occurrence. The first marker is
         // recognized when it is attached to the dot; once that syntax has
-        // begun, repeated markers use the ordinary prefix accumulation law.
+        // begun, repeated markers use the ordinary prefix accumulation law,
+        // and the marker attachment law applies as for every prefix run: the
+        // markers are contiguous and the last one is attached to the member
+        // name (`a.~t`, `a.~~t`; never `a.~ t`), a gap reporting the
+        // attachment diagnostic and recovering to the plain member.
         Token? memberGraceStart = null;
         var memberGraceWeight = 0;
+        var memberGraceAttached = true;
         if (Current.Kind == TokenKind.Tilde && IsDirectlyAttached(dotToken, Current))
         {
             memberGraceStart = Current;
+            var lastMarker = dotToken; // the first marker is attached to the dot
             while (Current.Kind == TokenKind.Tilde && Current.Line == memberGraceStart.Line)
             {
-                Advance();
+                memberGraceAttached &= IsDirectlyAttached(lastMarker, Current);
+                lastMarker = Advance();
                 memberGraceWeight--;
             }
 
@@ -3046,6 +3258,8 @@ public sealed class Parser
                     CombineSpans(TokenSpan(memberGraceStart), TokenSpan(Previous))!);
                 return lhs;
             }
+
+            memberGraceAttached &= IsDirectlyAttached(lastMarker, Current);
         }
 
         if (Current.Kind != TokenKind.Identifier)
@@ -3059,7 +3273,14 @@ public sealed class Parser
         var memberSpan = TokenSpan(propNameToken);
 
         Expr lexicalFallback = new Expr.Resolve(propName) { Span = memberSpan };
-        if (memberGraceWeight != 0)
+        if (!memberGraceAttached)
+        {
+            ReportError(
+                DiagnosticCode.InvalidGraceMarker,
+                GraceMarkerAttachmentDiagnostic(propName),
+                CombineSpans(TokenSpan(memberGraceStart!), memberSpan)!);
+        }
+        else if (memberGraceWeight != 0)
         {
             lexicalFallback = new Expr.Grace(lexicalFallback, memberGraceWeight)
             {
@@ -3249,20 +3470,11 @@ public sealed class Parser
                     // continuation of the previous line's identifier. A tilde
                     // before a following dot is still ordinary postfix Grace
                     // on this same bare name; the postfix loop then builds the
-                    // ordinary dot continuation.
+                    // ordinary dot continuation. The run must be directly
+                    // attached (`x~`, never `x ~`): ParsePostfixGraceOnName
+                    // enforces the marker attachment law.
                     if (Current.Kind == TokenKind.Tilde && MayContinueClosedExpression(TokenKind.Tilde))
-                    {
-                        var weight = 0;
-                        while (Current.Kind == TokenKind.Tilde && MayContinueClosedExpression(TokenKind.Tilde))
-                        {
-                            Advance();
-                            weight++;
-                        }
-                        return new Expr.Grace(
-                            new Expr.Resolve(token.StringValue!) { Span = TokenSpan(token) },
-                            weight)
-                        { Span = MakeSpan(token) };
-                    }
+                        return ParsePostfixGraceOnName(token);
                     return new Expr.Resolve(token.StringValue!) { Span = TokenSpan(token) };
                 }
 

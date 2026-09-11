@@ -117,7 +117,9 @@ public enum DiagnosticCode
     /// <summary>
     /// The grace marker <c>~</c> used where it is not defined: on a property
     /// name, on a compound (non-name) occurrence, on a collecting binding, or
-    /// inside clause-head patterns and conditional branch bodies.
+    /// inside clause-head patterns and conditional branch bodies — or written
+    /// detached from the name it decorates (<c>~ x</c>, <c>x ~</c>; the marker
+    /// must be directly attached: <c>~x</c>, <c>x~</c>).
     /// </summary>
     InvalidGraceMarker = 17,
 
@@ -251,4 +253,12 @@ public enum DiagnosticCode
 
     /// <summary>A property matches a completed parameter in its own or an enclosing lexical algorithm.</summary>
     ParameterPropertyCollision = 39,
+
+    /// <summary>
+    /// A postfix spread marker written detached from the expression it spreads
+    /// (<c>values *</c> with no right operand after the star). The marker must
+    /// be directly attached (<c>values*</c>); a detached star that no operand
+    /// follows is neither a spread nor a multiplication.
+    /// </summary>
+    InvalidSpreadMarker = 40,
 }

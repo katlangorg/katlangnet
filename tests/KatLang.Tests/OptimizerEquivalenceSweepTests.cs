@@ -281,8 +281,8 @@ public class OptimizerEquivalenceSweepTests
             ("div-zero-in-continuation", "S(x) = x + 1, 10 div (x - 2)\nwhile(S, 0)"),
             ("string-state-planned", "S(x) = x\nrepeat(S, 3, 'ab')"),
             ("error-in-planned-branch", "S(x) = if(x > 1, x - 1, min(()))\nrepeat(S, 4, 3)"),
-            ("spread-step-output", "S(x) = (x, 1)*\nrepeat(S, 2, 0)"),
-            ("spread-while-output", "S(x) = (x - 1, x > 0)*\nwhile(S, 3)"),
+            ("spread-step-output", "S(x) = { (x, 1)* }\nrepeat(S, 2, 0)"),
+            ("spread-while-output", "S(x) = { (x - 1, x > 0)* }\nwhile(S, 3)"),
             ("zero-emission-step", "S(x) = ()\nrepeat(S, 2, 1)"),
             ("zero-emission-while", "S(x) = (), 0\nwhile(S, 1)"),
         };

@@ -141,7 +141,7 @@ public class EmptySequenceOperandTests
     public void EmptyOperand_FromASpreadCapture_IsRejected()
         // `A*` over an empty list captures `()`; the captured value is an ordinary
         // operand and is rejected like any other.
-        => AssertEmptyOperandRejected("A = []\nB = A*\nB + 1", "left");
+        => AssertEmptyOperandRejected("A = []\nB = { A* }\nB + 1", "left");
 
     // ── Controls: the string contract is intact everywhere else ─────────────
 
@@ -210,7 +210,7 @@ public class EmptySequenceOperandTests
     [InlineData("not ")]
     public void UnaryEmptyValue_FromAPropertyOrSpreadCapture_IsRejected(string op)
     {
-        foreach (var definition in new[] { "Empty = ()", "Items = []\nEmpty = Items*" })
+        foreach (var definition in new[] { "Empty = ()", "Items = []\nEmpty = (Items*)" })
         {
             var ast = new Expr.AlgorithmExpr(SourceProvenance.ParseValid($"{definition}\n{op}Empty").Root);
             var result = Evaluator.Run(ast);
@@ -304,7 +304,7 @@ public class EmptySequenceOperandTests
     {
         // Supply neutrality — the genuine arity-algebra law — is untouched: the
         // spread of `()` adds nothing to the surrounding item supply.
-        AssertAtom(7, "Empty = ()\nEmpty*\n7");
+        AssertAtom(7, "Empty = ()\nEmpty*, 7");
         AssertAtom(7, "(()*, 7)");
         AssertAtom(7, "F(a) = a\nF(()*, 7)");
     }

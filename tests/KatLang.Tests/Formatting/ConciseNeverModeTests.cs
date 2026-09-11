@@ -64,7 +64,7 @@ public class ConciseNeverModeTests
             ('total' grossSalary + EmployerSocTax + BusinessRiskStateDutyAmount)
         }
 
-        SalaryExpenses(2000, 1, 0)*
+        SalaryExpenses(2000, 1, 0)*,
         ''
         SalaryExpenses(502, 0, 0)*
         """;

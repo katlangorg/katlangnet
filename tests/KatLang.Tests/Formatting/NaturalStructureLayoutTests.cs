@@ -66,7 +66,7 @@ public class NaturalStructureLayoutTests
 
     /// <summary>The secondary comparison program: spread deliberately discards the outer structure.</summary>
     private const string SpreadSource = SalaryDefinitions + """
-        SalaryExpenses(2000, 1, 0)*
+        SalaryExpenses(2000, 1, 0)*,
         ''
         SalaryExpenses(502, 0, 0)*
         """;

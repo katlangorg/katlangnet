@@ -126,7 +126,7 @@ public class EvaluatorPropertyBindingTests
         var source = """
             reduceCollection(values) = {
                 list = atoms(values)
-                rest = list.skip(1)*
+                rest = { list.skip(1)* }
                 if(
                     list.count <= 1,
                     list,

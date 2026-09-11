@@ -612,17 +612,23 @@ public class EvaluatorSpreadTests
             """,
             3m);
 
-        // A newline inside the open call delimiter also separates slots, so a
-        // line-ending spread followed by `2` on the next line is the same TWO
-        // argument slots. (`F(X* 2)` would instead be the multiplication X * 2.)
+        // A trailing comma inside the open call delimiter keeps the same TWO
+        // argument slots across the newline.
         AssertEval(
             """
             X = 1
             F(a, b) = a + b
-            F(X*
+            F(X*,
             2)
             """,
             3m);
+
+        // Without the comma the newline changes nothing about the star
+        // (SYN-07B): `2` is a valid right operand, so `F(X*` newline `2)` is
+        // the ONE-argument multiplication `F(X * 2)` exactly like `F(X* 2)`,
+        // and the two-parameter F reports an arity error.
+        foreach (var source in new[] { "X = 1\nF(a, b) = a + b\nF(X*\n2)", "X = 1\nF(a, b) = a + b\nF(X* 2)" })
+            AssertEvalFailsWithArityMismatch(source, expected: 2, actual: 1);
     }
 
     [Fact]
@@ -639,14 +645,16 @@ public class EvaluatorSpreadTests
 
     [Theory]
     [InlineData("A*, B")]
-    [InlineData("A*\nB")]
+    [InlineData("A*,\nB")]
     public void Eval_SpreadThenJoin_CreatesExpressionListSlots(string tail)
     {
-        // A spread expression never consumes a right operand: a comma (or a
-        // row-separating newline) after `A*` starts the next expression-list
-        // slot, so B stays one separate sequence-valued slot. (An adjacent
-        // same-line expression after the star — `A* B` — would instead be the
-        // multiplication A * B.)
+        // A spread expression never consumes a right operand: the comma after
+        // `A*` — same-line or trailing before the newline — starts the next
+        // expression-list slot, so B stays one separate sequence-valued slot.
+        // (An expression after the star with no comma between — `A* B` or
+        // `A*` newline `B` — is instead the multiplication A * B, and the
+        // detached `A *, B` is the marker attachment error; see
+        // MarkerAttachmentTests.)
         var program = "A = 1, 2\nB = 3, 4\n" + tail;
         AssertEvalCounted(program, 3, Result.FromItems([Atom(1), Atom(2), SequenceValue(Atom(3), Atom(4))]));
     }
@@ -770,7 +778,7 @@ public class EvaluatorSpreadTests
             """
             Seq1 = (1, 2, 3)
             Seq2 = (1, 2, 3)
-            Seq1*
+            Seq1*,
             Seq2*
             """,
             1m,

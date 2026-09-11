@@ -120,7 +120,7 @@ public class CollectingBindingTests
     public void DeconstructionCollectingBinding_ImplicitOpeningMatchesSpread()
     {
         AssertCollects("first, *rest = [1, 2, 3]\nrest", List(Atom(2), Atom(3)));
-        AssertCollects("first, *rest = [1, 2, 3]*\nrest", List(Atom(2), Atom(3)));
+        AssertCollects("first, *rest = ([1, 2, 3]*)\nrest", List(Atom(2), Atom(3)));
     }
 
     [Fact]
@@ -134,7 +134,7 @@ public class CollectingBindingTests
         Assert.IsType<RunResult.EvalFailure>(
             KatLangEngine.Run("x, y = [(1, 2)]\nx, y"));
         AssertCollects(
-            "x, y = [(1, 2)]*\nx, y",
+            "x, y = ([(1, 2)]*)\nx, y",
             Seq(Atom(1), Atom(2)));
     }
 
@@ -144,10 +144,10 @@ public class CollectingBindingTests
     public void DeconstructionCollectingBinding_CollectsAssembledSupplyRegardlessOfSpreadSources()
     {
         AssertCollects(
-            "first, *rest = 1, [2, 3]*, (4, 5)*\nfirst",
+            "first, *rest = (1, [2, 3]*, (4, 5)*)\nfirst",
             Atom(1));
         AssertCollects(
-            "first, *rest = 1, [2, 3]*, (4, 5)*\nrest",
+            "first, *rest = (1, [2, 3]*, (4, 5)*)\nrest",
             List(Atom(2), Atom(3), Atom(4), Atom(5)));
     }
 
@@ -574,7 +574,7 @@ public class CollectingBindingTests
     {
         AssertCollects("x = 1, 2, 3\nx", Seq(Atom(1), Atom(2), Atom(3)));
         AssertCollects("x = [1, 2, 3]\nx", List(Atom(1), Atom(2), Atom(3)));
-        AssertCollects("x = [1, 2, 3]*\nx", Seq(Atom(1), Atom(2), Atom(3)));
+        AssertCollects("x = { [1, 2, 3]* }\nx", Seq(Atom(1), Atom(2), Atom(3)));
     }
 
     // ── Immutability of collected lists ─────────────────────────────────

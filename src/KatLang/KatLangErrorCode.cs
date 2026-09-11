@@ -266,4 +266,7 @@ public enum KatLangErrorCode
 
     /// <summary>Front-end <see cref="DiagnosticCode.ParameterPropertyCollision"/>.</summary>
     ParameterPropertyCollision = 62,
+
+    /// <summary>Front-end <see cref="DiagnosticCode.InvalidSpreadMarker"/>.</summary>
+    InvalidSpreadMarker = 63,
 }

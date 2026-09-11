@@ -850,6 +850,29 @@ public class GraceDotCompositionTests
         AssertParseFails("K = xs*~.F", GraceEligibilityFragment);
     }
 
+    [Theory]
+    [InlineData("~.F", 8)]
+    [InlineData("~ .F", 8)]
+    [InlineData("~~.F", 9)]
+    [InlineData("~ ~.F", 10)]
+    [InlineData("~\n.F", 8)]
+    public void InvalidGraceBeforeDot_KeepsSpreadRecoveryIndependentOfLayout(string continuation, int markerEnd)
+    {
+        var syntax = Parser.ParseSyntax("K = xs*" + continuation);
+        var error = Assert.Single(syntax.Diagnostics);
+        Assert.Equal(DiagnosticCode.InvalidGraceMarker, error.Code);
+        Assert.Contains(GraceEligibilityFragment, error.Message);
+        Assert.Equal(new SourceSpan(1, 8, 1, markerEnd), error.Span);
+
+        // A Grace run followed by a dot cannot supply a multiplication RHS.
+        // Recovery removes the invalid annotation and keeps the same fluent
+        // call F(xs*) in every layout, never xs * 0.F.
+        var call = Assert.IsType<Expr.Call>(Assert.Single(Assert.Single(syntax.Root.Properties).Value.Output));
+        Assert.Equal("F", Assert.IsType<Expr.Resolve>(call.Function).Name);
+        var spread = Assert.IsType<Expr.SequenceSpread>(Assert.Single(call.Args));
+        Assert.Equal("xs", Assert.IsType<Expr.Resolve>(spread.Operand).Name);
+    }
+
     [Fact]
     public void Eligibility_InvalidReceiver_RecoversAsTheOrdinaryGracelessEdge()
     {
@@ -883,15 +906,66 @@ public class GraceDotCompositionTests
     // ── I. Adjacency and Grace preservation ─────────────────────────────────
 
     [Fact]
-    public void Adjacency_DetachedTilde_KeepsGraceMeaning()
-        // `a ~ .t`: the tilde is not attached to the dot, so it stays postfix
-        // grace on `a` and the dot edge is ordinary. Postfix grace (+1) moves
-        // `a` later than the following member/fallback occurrence.
-        => AssertResult("K(a, t) = a ~ .t\nK(7, {a+1})", Atom(8));
+    public void Adjacency_AttachedTildeBeforeASpacedDot_KeepsGraceMeaning()
+        // `a~ .t`: the postfix marker is attached to `a` (the marker attachment
+        // law), and the space before the dot is ordinary whitespace before a
+        // same-line postfix continuation, so this is postfix grace on `a` plus
+        // the ordinary dot edge. Postfix grace (+1) moves `a` later than the
+        // following member/fallback occurrence.
+        => AssertResult("K(a, t) = a~ .t\nK(7, {a+1})", Atom(8));
 
     [Fact]
-    public void Adjacency_DetachedTilde_HasTheOrdinaryPostfixGraceOrder()
-        => Assert.Equal(["t", "a"], ParamsOf("K = a ~ .t"));
+    public void Adjacency_AttachedTildeBeforeASpacedDot_HasTheOrdinaryPostfixGraceOrder()
+        => Assert.Equal(["t", "a"], ParamsOf("K = a~ .t"));
+
+    [Theory]
+    [InlineData("K = a ~ .t", 5, 7)]
+    [InlineData("K = a ~.t", 5, 7)]
+    public void Adjacency_DetachedTilde_IsRejectedByTheAttachmentLaw_AndRecoversToThePlainEdge(
+        string source, int startColumn, int endColumn)
+    {
+        // `a ~ .t`: the postfix marker is NOT attached to `a`, so it decorates
+        // nothing. The marker attachment law reports it (the diagnostic spans
+        // the name through the marker), and the recovered tree is the plain
+        // ordinary dot edge `a.t` with the ungraced occurrence order `(a, t)` —
+        // a detached marker never silently keeps the `(t, a)` meaning of `a~.t`.
+        var syntax = Parser.ParseSyntax(source);
+        var error = Assert.Single(syntax.Diagnostics);
+        Assert.Equal(DiagnosticCode.InvalidGraceMarker, error.Code);
+        Assert.Equal(
+            "The Grace marker `~` must be directly attached to the name it decorates: write `~a` or `a~`.",
+            error.Message);
+        Assert.Equal(new SourceSpan(1, startColumn, 1, endColumn), error.Span);
+
+        var elaborated = Parser.Parse(source);
+        Assert.Equal(["a", "t"], Assert.Single(elaborated.Root.Properties).Value.Params);
+        var dotCall = Assert.IsType<Expr.DotCall>(Assert.Single(elaborated.Root.Properties).Value.Output[0]);
+        Assert.IsType<Expr.Param>(dotCall.Target); // no Grace wrapper survives
+        Assert.Null(DotCallElaborationInvariant.CheckElaborated(elaborated.Root));
+    }
+
+    [Theory]
+    [InlineData("K = a.~ t", 7, 9)]
+    [InlineData("K = a.~ ~t", 7, 10)]
+    [InlineData("K = a.~~ ~t", 7, 11)]
+    public void MemberGrace_DetachedFromTheMemberName_IsRejectedByTheAttachmentLaw(
+        string source, int startColumn, int endColumn)
+    {
+        // `a.~ t`: the member prefix marker begins at the dot (member Grace
+        // syntax) but is not attached to `t`, so the attachment law rejects it
+        // and the recovered edge is the plain `a.t` with the `(a, t)` order.
+        var syntax = Parser.ParseSyntax(source);
+        var error = Assert.Single(syntax.Diagnostics);
+        Assert.Equal(DiagnosticCode.InvalidGraceMarker, error.Code);
+        Assert.Equal(
+            "The Grace marker `~` must be directly attached to the name it decorates: write `~t` or `t~`.",
+            error.Message);
+        Assert.Equal(new SourceSpan(1, startColumn, 1, endColumn), error.Span);
+
+        var elaborated = Parser.Parse(source);
+        Assert.Equal(["a", "t"], Assert.Single(elaborated.Root.Properties).Value.Params);
+        Assert.Null(DotCallElaborationInvariant.CheckElaborated(elaborated.Root));
+    }
 
     [Fact]
     public void Adjacency_RepeatedPostfixGrace_ComposesWithDot()

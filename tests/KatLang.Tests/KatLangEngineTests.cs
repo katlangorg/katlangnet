@@ -115,7 +115,7 @@ public class KatLangEngineTests
         AssertDisplay("x, *rest = 1\nrest", "[]");
         AssertDisplay("x, *rest = 1\nrest\nx", "[]\n1");
         // Spreading the empty list opens it and contributes zero items.
-        AssertDisplay("x, *rest = 1\nrest*\nx", "1");
+        AssertDisplay("x, *rest = 1\nrest*, x", "1");
     }
 
     [Fact]

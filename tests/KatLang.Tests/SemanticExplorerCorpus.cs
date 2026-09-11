@@ -184,11 +184,11 @@ public static class SemanticExplorerCorpus
         new("deconPair_y",
             v => $"x, y = {v.Source}\ny"),
         new("deconPairSpread_x",
-            v => $"x, y = {v.Source}*\nx"),
+            v => $"x, y = ({v.Source}*)\nx"),
         new("deconCollect_t",
             v => $"h, *t = {v.Source}\nt"),
         new("deconCollectSpread_t",
-            v => $"h, *t = {v.Source}*\nt"),
+            v => $"h, *t = ({v.Source}*)\nt"),
         new("deconPrefix_p",
             v => $"*p, z = {v.Source}\np"),
         new("deconPrefix_z",
@@ -269,7 +269,7 @@ public static class SemanticExplorerCorpus
         new("collectingStacked",
             v => $"F(*a) = a\nF({v.Source}**)"),
         new("captureStacked",
-            v => $"x = {v.Source}**\nx"),
+            v => $"x = ({v.Source}**)\nx"),
     ];
 
     // ----- Specials -----------------------------------------------------------
@@ -383,7 +383,7 @@ public static class SemanticExplorerCorpus
         Special("listEmptyNeEmptySeq", "[] == ()"),
         Special("listSingletonNeItem", "[7] == 7"),
         Special("listWrapCanonicalizes", "([1, 2]) == [1, 2]"),
-        Special("listSpreadCaptureRoundTrip", "A = [1, 2, 3]\nB = A*\nB == (1, 2, 3)"),
+        Special("listSpreadCaptureRoundTrip", "A = [1, 2, 3]\nB = { A* }\nB == (1, 2, 3)"),
         Special("listCollectingNotSequenceKind", "x, *rest = [1, 2, 3]\nrest == (2, 3)"),
         Special("listCollectingCollectsExactList", "x, *rest = [1, 2, 3]\nrest == [2, 3]"),
         Special("implicitForwardOrdinarySource", "Target(*items) = items\nUse(items) = Target\nUse([1, 2])"),

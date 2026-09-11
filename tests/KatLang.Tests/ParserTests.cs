@@ -587,14 +587,16 @@ public class ParserTests
     [Theory]
     [InlineData("A*, B")]
     [InlineData("A*,B")]
-    [InlineData("A*\nB")]
+    [InlineData("A*,\nB")]
     public void Parse_SpreadFollowedByExpression_IsSpreadThenExpressionListSlot(string source)
     {
-        // A spread expression never consumes a right operand. A comma (tight
-        // or spaced) or a following line starts a new expression-list slot,
-        // so every spelling parses as the two slots A*, B. (Same-line
-        // adjacency after a star is multiplication, so spreading before
-        // another same-line item requires the comma.)
+        // A spread expression never consumes a right operand. A comma (tight,
+        // spaced, or trailing before a newline) ends the spread slot and starts
+        // the next expression-list slot, so every spelling parses as the two
+        // slots A*, B. (An operand after the star — on the same line OR on the
+        // next line — makes the star multiplication instead, so spreading
+        // before another item requires the comma; see
+        // Parse_LineEndingStarBeforeOperand_IsMultiplication.)
         var result = Parser.ParseSyntax(source);
 
         Assert.False(result.HasErrors);
@@ -604,9 +606,25 @@ public class ParserTests
         Assert.Equal("B", Assert.IsType<Expr.Resolve>(result.Root.Output[1]).Name);
     }
 
+    [Fact]
+    public void Parse_DetachedSpreadMarkerBeforeComma_IsRejected_AndRecoversToTwoPlainSlots()
+    {
+        // The comma still classifies the star as a spread marker (no operand
+        // can follow), but the marker attachment law rejects the detached
+        // spelling `A *, B`: one InvalidSpreadMarker diagnostic, and the
+        // recovered tree keeps the two plain slots `A, B` (no spread node).
+        var result = Parser.ParseSyntax("A *, B");
+
+        var error = Assert.Single(result.Diagnostics);
+        Assert.Equal(DiagnosticCode.InvalidSpreadMarker, error.Code);
+        Assert.Equal(2, result.Root.Output.Count);
+        Assert.Equal("A", Assert.IsType<Expr.Resolve>(result.Root.Output[0]).Name);
+        Assert.Equal("B", Assert.IsType<Expr.Resolve>(result.Root.Output[1]).Name);
+    }
+
     [Theory]
     [InlineData("A*, empty")]
-    [InlineData("A*\nempty")]
+    [InlineData("A*,\nempty")]
     public void Parse_SpreadFollowedByEmpty_IsSpreadThenEmptyExpressionListSlot(string source)
     {
         // `A*, empty` is not a binary spread with `empty` as a right operand:
@@ -631,22 +649,45 @@ public class ParserTests
         Assert.Equal("A", Assert.IsType<Expr.Resolve>(sequenceSpread.Operand).Name);
     }
 
-    [Fact]
-    public void Parse_LineEndingSpreadMarker_SeparatesExpressionListSlots()
+    [Theory]
+    [InlineData("A = range(1, 3)\n\nA*\nA")]
+    [InlineData("A = range(1, 3)\n\nA *\nA")]
+    public void Parse_LineEndingStarBeforeOperand_IsMultiplication(string source)
     {
+        // SYN-07B: the star's meaning never depends on whitespace or on the
+        // physical newline. `A` on the next line is a valid right operand, so
+        // the line-final star — attached or detached — is the multiplication
+        // `A * A`: ONE output row, no spread node anywhere.
+        var result = Parser.ParseSyntax(source);
+
+        Assert.False(result.HasErrors);
+        var binary = Assert.IsType<Expr.Binary>(Assert.Single(result.Root.Output));
+        Assert.Equal(BinaryOp.Mul, binary.Op);
+        Assert.Equal("A", Assert.IsType<Expr.Resolve>(binary.Left).Name);
+        Assert.Equal("A", Assert.IsType<Expr.Resolve>(binary.Right).Name);
+    }
+
+    [Fact]
+    public void Parse_LineEndingSpreadMarkerBeforeDeclaration_StaysASpread()
+    {
+        // A declaration head is never a multiplication operand, so a line-final
+        // star before `Name = ...` is the spread marker: one spread row, then
+        // the definition, then the later output row.
         var result = Parser.ParseSyntax(
             """
             A = range(1, 3)
 
             A*
-            A
+            B = 5
+            B
             """);
 
         Assert.False(result.HasErrors);
         Assert.Equal(2, result.Root.Output.Count);
         var sequenceSpread = Assert.IsType<Expr.SequenceSpread>(result.Root.Output[0]);
         Assert.Equal("A", Assert.IsType<Expr.Resolve>(sequenceSpread.Operand).Name);
-        Assert.Equal("A", Assert.IsType<Expr.Resolve>(result.Root.Output[1]).Name);
+        Assert.Equal("B", Assert.IsType<Expr.Resolve>(result.Root.Output[1]).Name);
+        Assert.Contains(result.Root.Properties, static p => p.Name == "B");
     }
 
     [Fact]
@@ -702,21 +743,36 @@ public class ParserTests
     }
 
     [Fact]
-    public void Parse_LineEndingSpreadMarkerWithTrailingComment_SeparatesExpressionListSlots()
+    public void Parse_LineEndingStarWithTrailingComment_IsInvisibleToTheStarDecision()
     {
-        var result = Parser.ParseSyntax(
+        // Comments are semantically invisible: `A* # note` newline `A` parses
+        // exactly like `A*` newline `A` — the multiplication `A * A` — and
+        // `A*, # note` newline `A` exactly like `A*,` newline `A`.
+        var multiplied = Parser.ParseSyntax(
             """
             A = range(1, 3)
 
-            A* # a newline never continues a closed expression
+            A* # a comment never changes the star decision
             A
             """);
 
-        Assert.False(result.HasErrors);
-        Assert.Equal(2, result.Root.Output.Count);
-        var sequenceSpread = Assert.IsType<Expr.SequenceSpread>(result.Root.Output[0]);
+        Assert.False(multiplied.HasErrors);
+        var binary = Assert.IsType<Expr.Binary>(Assert.Single(multiplied.Root.Output));
+        Assert.Equal(BinaryOp.Mul, binary.Op);
+
+        var separated = Parser.ParseSyntax(
+            """
+            A = range(1, 3)
+
+            A*, # the comma ends the spread slot
+            A
+            """);
+
+        Assert.False(separated.HasErrors);
+        Assert.Equal(2, separated.Root.Output.Count);
+        var sequenceSpread = Assert.IsType<Expr.SequenceSpread>(separated.Root.Output[0]);
         Assert.Equal("A", Assert.IsType<Expr.Resolve>(sequenceSpread.Operand).Name);
-        Assert.Equal("A", Assert.IsType<Expr.Resolve>(result.Root.Output[1]).Name);
+        Assert.Equal("A", Assert.IsType<Expr.Resolve>(separated.Root.Output[1]).Name);
     }
 
     [Theory]
@@ -1245,7 +1301,7 @@ public class ParserTests
 
     [Theory]
     [InlineData("A B*, C")]
-    [InlineData("A\nB*\nC")]
+    [InlineData("A\nB*,\nC")]
     public void Parse_MiddlePostfixSequenceSpread_AppliesToImmediateExpressionAndLaterOutputContinues(string source)
     {
         var result = Parser.ParseSyntax(source);
@@ -1663,13 +1719,15 @@ public class ParserTests
     }
 
     [Theory]
-    [InlineData("A*\nC")]
+    [InlineData("A*,\nC")]
     [InlineData("A*\nP = 9\nC")]
     public void Parse_PostfixSpreadLaterOutput_ContinuesAfterSpread(string source)
     {
         // Postfix `A*` lets later output continue after the spread in every
-        // spelling: a newline at root and definition-separated rows both
-        // produce expression-list slots after the spread.
+        // spelling that closes the spread slot: a trailing comma at root and a
+        // definition between the rows both produce expression-list slots after
+        // the spread. (A bare `C` row directly after `A*` would be the
+        // multiplication `A * C` — see Parse_LineEndingStarBeforeOperand_IsMultiplication.)
         var result = Parser.ParseSyntax(source);
 
         Assert.False(result.HasErrors);
@@ -4048,9 +4106,7 @@ public class ParserTests
     [Fact]
     public void Parse_PropertyBody_SpreadSameLineVsNewline_DiffersInBodyMembership()
     {
-        // Contrast: same-line `P = a*, b` keeps `b` as a sibling slot inside P;
-        // a newline after the spread ends P's body, so `b` becomes a separate
-        // root output. Spread does not change the newline boundary.
+        // Same-line `P = a*, b` keeps `b` as a sibling slot inside P.
         var sameLine = Parser.ParseSyntax("P = a*, b");
         Assert.False(sameLine.HasErrors);
         var sameLineProperty = Assert.Single(sameLine.Root.Properties);
@@ -4059,13 +4115,35 @@ public class ParserTests
         Assert.Equal("a", Assert.IsType<Expr.Resolve>(Assert.IsType<Expr.SequenceSpread>(sameLineProperty.Value.Output[0]).Operand).Name);
         Assert.Equal("b", Assert.IsType<Expr.Resolve>(sameLineProperty.Value.Output[1]).Name);
 
-        var newline = Parser.ParseSyntax("P = a*\nb");
-        Assert.False(newline.HasErrors);
-        var newlineProperty = Assert.Single(newline.Root.Properties);
-        var bodySpread = Assert.IsType<Expr.SequenceSpread>(Assert.Single(newlineProperty.Value.Output));
+        // A line-final star before an operand row is multiplication (SYN-07B):
+        // the trailing operator continues P's line-bounded body across the
+        // newline exactly like `P = a *` newline `b`, so P is `a * b` and there
+        // is no root output row at all.
+        foreach (var source in new[] { "P = a*\nb", "P = a *\nb" })
+        {
+            var newline = Parser.ParseSyntax(source);
+            Assert.False(newline.HasErrors);
+            var newlineProperty = Assert.Single(newline.Root.Properties);
+            var body = Assert.IsType<Expr.Binary>(Assert.Single(newlineProperty.Value.Output));
+            Assert.Equal(BinaryOp.Mul, body.Op);
+            Assert.Empty(newline.Root.Output);
+        }
+
+        // Closing the body keeps the spread a spread and `b` a separate root
+        // output row: capture parentheses (`P = (a*)`) or a brace body.
+        var captured = Parser.ParseSyntax("P = (a*)\nb");
+        Assert.False(captured.HasErrors);
+        var capturedProperty = Assert.Single(captured.Root.Properties);
+        var capture = Assert.IsType<Expr.Capture>(Assert.Single(capturedProperty.Value.Output));
+        Assert.IsType<Expr.SequenceSpread>(Assert.Single(capture.Body));
+        Assert.Equal("b", Assert.IsType<Expr.Resolve>(Assert.Single(captured.Root.Output)).Name);
+
+        var braced = Parser.ParseSyntax("P = { a* }\nb");
+        Assert.False(braced.HasErrors);
+        var bracedProperty = Assert.Single(braced.Root.Properties);
+        var bodySpread = Assert.IsType<Expr.SequenceSpread>(Assert.Single(bracedProperty.Value.Output));
         Assert.Equal("a", Assert.IsType<Expr.Resolve>(bodySpread.Operand).Name);
-        // `b` is a separate root output row, not part of P's body.
-        Assert.Equal("b", Assert.IsType<Expr.Resolve>(Assert.Single(newline.Root.Output)).Name);
+        Assert.Equal("b", Assert.IsType<Expr.Resolve>(Assert.Single(braced.Root.Output)).Name);
     }
 
     [Fact]

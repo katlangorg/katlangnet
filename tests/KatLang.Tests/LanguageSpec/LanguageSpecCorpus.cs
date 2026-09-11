@@ -456,7 +456,7 @@ public static class LanguageSpecCorpus
         {
             Id = "select-spread-vs-capture-select",
             Category = "item-supply-vs-value",
-            Source = "A = [[1, 2], [3, 4]]\n\n(A:0)*\n(A*):0",
+            Source = "A = [[1, 2], [3, 4]]\n\n(A:0)*,\n(A*):0",
             Outcome = SpecOutcome.Evaluates,
             ExpectedDisplay = "1\n2\n[1, 2]",
             ExpectedRaw = "S[1, 2, L[1, 2]]",
@@ -464,8 +464,9 @@ public static class LanguageSpecCorpus
             Probes =
             [
                 new SpecProbe("A = [[1, 2], [3, 4]]\nA:0*", "ok raw=S[1, 2] n=2"),
+                new SpecProbe("A = [[1, 2], [3, 4]]\n(A:0)*\n(A*):0", "err type"),
             ],
-            Explanation = "Select-then-spread and capture-then-select are different operations: `(A:0)*` selects the stored list `[1, 2]` and spreads its elements into two rows, while `(A*):0` captures the two-item spread supply as one sequence value and selects its first item — the intact list `[1, 2]`. (`A:0*` is the same select-then-spread: the star attaches to the completed index. `A*:0` is a targeted parse error — selection cannot be applied directly to an item supply.)",
+            Explanation = "Select-then-spread and capture-then-select are different operations: `(A:0)*` selects the stored list `[1, 2]` and spreads its elements into two rows, while `(A*):0` captures the two-item spread supply as one sequence value and selects its first item — the intact list `[1, 2]`. The trailing comma closes the spread row: without it the `(` on the next line is a right operand and the star is the multiplication `(A:0) * (A*):0` (SYN-07B), which fails on the list operands. (`A:0*` is the same select-then-spread: the star follows the completed index. `A*:0` is a targeted parse error — selection cannot be applied directly to an item supply.)",
         },
         new()
         {
@@ -704,7 +705,7 @@ public static class LanguageSpecCorpus
             Probes =
             [
                 new SpecProbe("x, *rest = 1\nrest.count", "ok raw=0 n=1"),
-                new SpecProbe("x, *rest = 1\nrest*\nx", "ok raw=1 n=1"),
+                new SpecProbe("x, *rest = 1\nrest*, x", "ok raw=1 n=1"),
                 new SpecProbe("x, *rest = 1\nrest == []", "ok raw=1 n=1"),
             ],
             Explanation = "A collecting binding that collects zero items binds the exact empty list `[]`, one visible output slot; spreading it contributes zero items.",
@@ -738,7 +739,7 @@ public static class LanguageSpecCorpus
             ExpectedEmittedCount = 1,
             Probes =
             [
-                new SpecProbe("A = 1, 2, 3\nx, y, z = A*\ny", "ok raw=2 n=1"),
+                new SpecProbe("A = 1, 2, 3\nx, y, z = (A*)\ny", "ok raw=2 n=1"),
             ],
             IncludeInGeneratorPrompt = true,
             Explanation = "Assignment deconstruction is an unpacking receiver: a single stored sequence value is opened and matched element-by-element, so `= A` and `= A*` bind identically. Function calls do NOT unpack this way — `F(A)` still passes one argument.",
@@ -1743,7 +1744,7 @@ public static class LanguageSpecCorpus
             [
                 new SpecProbe("count(range(1, 5))", "ok raw=5 n=1"),
                 new SpecProbe("range(1, 3):0", "ok raw=1 n=1"),
-                new SpecProbe("x = range(1, 3)*\nx:0", "ok raw=1 n=1"),
+                new SpecProbe("x = (range(1, 3)*)\nx:0", "ok raw=1 n=1"),
             ],
             Explanation = "`range` returns every integer from start to stop inclusive as one exact list value; `:` selects one element directly from the list result.",
         },
@@ -2173,6 +2174,80 @@ public static class LanguageSpecCorpus
         },
         new()
         {
+            Id = "star-before-operand-row-is-multiplication",
+            Category = "parser-layout",
+            Source = "A = 4\nB = 6\nA*\nB",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "24",
+            ExpectedRaw = "24",
+            ExpectedEmittedCount = 1,
+            Probes =
+            [
+                new SpecProbe("A = 4\nB = 6\nA *\nB", "ok raw=24 n=1"),
+                new SpecProbe("A = 4\nB = 6\nA* B", "ok raw=24 n=1"),
+                new SpecProbe("A = 4\nB = 6\nA * B", "ok raw=24 n=1"),
+                new SpecProbe("A = 4\nB = 6\nX = A*\nB\nX", "ok raw=24 n=1"),
+                new SpecProbe("A = (1, 2)\nB = 5\nA*,\nB", "ok raw=S[1, 2, 5] n=3"),
+            ],
+            IncludeInGeneratorPrompt = true,
+            Explanation = "SYN-07B: the star is read by the token that follows it, never by spacing or by the line break. `A*` newline `B`, `A *` newline `B`, `A* B`, and `A * B` are all the multiplication `A * B` — a line-final star continues onto the next line exactly like every trailing binary operator, in a definition body too. To spread `A` and then emit `B` as the next row, close the spread slot with a comma (`A*,` newline `B`).",
+        },
+        new()
+        {
+            Id = "star-before-declaration-or-boundary-is-spread",
+            Category = "parser-layout",
+            Source = "A = (1, 2)\nA*\nB = 5\nB",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "1\n2\n5",
+            ExpectedRaw = "S[1, 2, 5]",
+            ExpectedEmittedCount = 3,
+            Probes =
+            [
+                new SpecProbe("A = (1, 2)\nA*", "ok raw=S[1, 2] n=2"),
+                new SpecProbe("F(*items) = items\nA = (1, 2)\nF(A*, 3)", "ok raw=L[1, 2, 3] n=1"),
+                new SpecProbe("A = (1, 2)\nX = (A*)\nX", "ok raw=S[1, 2] n=1"),
+                new SpecProbe("A = (1, 2)\nB = 3\nX = A*\nB\nX", "err type"),
+                // The detached spellings (`A *` before the declaration, at the
+                // end of the program, or inside the call) are neither spread
+                // nor multiplication: the marker attachment law rejects them —
+                // a parse-level outcome, pinned by `spread-marker-must-be-attached`.
+            ],
+            IncludeInGeneratorPrompt = true,
+            Explanation = "A declaration head is never a multiplication operand, so a line-final star before `B = 5` is the spread marker — through the same declaration relation that ends an adjacency row. The star is likewise a spread before a comma, a closing delimiter, or the end of the program. A spread marker must be directly attached to its operand (`A*`): the detached `A *` in any of these positions is a parse error, never silently a spread and never silently a multiplication. A definition body that ends in a spread must be closed when an output row follows: `X = (A*)` captures the spread supply, while a bare `X = A*` above the row `B` is the multiplication `X = A * B`.",
+        },
+        new()
+        {
+            Id = "spread-marker-must-be-attached",
+            Category = "parser-layout",
+            Source = "A = (1, 2)\nA *",
+            Outcome = SpecOutcome.ParseError,
+            ExpectedParseDiagnosticFragment = "The spread marker `*` must be directly attached to the expression it spreads",
+            ExpectedDiagnosticCode = DiagnosticCode.InvalidSpreadMarker,
+            IncludeInGeneratorPrompt = true,
+            Explanation = "The marker attachment law: a structural marker is directly attached to the syntax it modifies (`A*`, `*items`, `~x`, `x~`), while the multiplication operator may be spaced freely. `A *` with nothing that could be a right operand after it is classified as a spread marker (SYN-07B) and then rejected for being detached — whitespace never turns one valid operation into another; it only separates the valid `A*` from this error. Write `A*` to spread, or give the star a right operand to multiply.",
+        },
+        new()
+        {
+            Id = "grace-marker-must-be-attached",
+            Category = "parser-layout",
+            Source = "Divide = y / ~ x\nDivide(2, 10)",
+            Outcome = SpecOutcome.ParseError,
+            ExpectedParseDiagnosticFragment = "The Grace marker `~` must be directly attached to the name it decorates",
+            ExpectedDiagnosticCode = DiagnosticCode.InvalidGraceMarker,
+            Explanation = "Grace decorates exactly one bare name and must be written directly attached to it: `~x` or `x~`. A detached `~ x` (or `x ~`) is rejected rather than silently reordering — or silently not reordering — the parameters; the attached `Divide = y / ~x` infers `(x, y)` and `Divide(2, 10)` is `5`.",
+        },
+        new()
+        {
+            Id = "collect-marker-must-be-attached",
+            Category = "parser-layout",
+            Source = "F(* items) = items\nF(1, 2)",
+            Outcome = SpecOutcome.ParseError,
+            ExpectedParseDiagnosticFragment = "The collect marker `*` must be directly attached to its binding name",
+            ExpectedDiagnosticCode = DiagnosticCode.InvalidCollectMarker,
+            Explanation = "A collecting binding is written `*items`, the collect marker directly attached to its name, on every binding surface (explicit parameter lists, nested sequence-value patterns, assignment deconstruction). A detached `* items` never creates a collecting binding; it is a parse error.",
+        },
+        new()
+        {
             Id = "spread-not-binary-operand",
             Category = "parser-layout",
             Source = "A = (1, 2)\nA* == A*",
@@ -2393,7 +2468,7 @@ public static class LanguageSpecCorpus
                 new SpecProbe("1 > 10", "ok raw=0 n=1"),
                 // Positive control: empty SUPPLY neutrality is a different rule and
                 // is unchanged — the spread of `()` still contributes no items.
-                new SpecProbe("Empty = ()\nEmpty*\n7", "ok raw=7 n=1"),
+                new SpecProbe("Empty = ()\nEmpty*, 7", "ok raw=7 n=1"),
                 new SpecProbe("count(())", "ok raw=0 n=1"),
             ],
             IncludeInGeneratorPrompt = true,
@@ -2619,7 +2694,7 @@ public static class LanguageSpecCorpus
         {
             Id = "list-spread-capture",
             Category = "lists",
-            Source = "A = [1, 2, 3]\n\nx = A\ny = A*\n\nx\ny",
+            Source = "A = [1, 2, 3]\n\nx = A\ny = (A*)\n\nx\ny",
             Outcome = SpecOutcome.Evaluates,
             ExpectedDisplay = "[1, 2, 3]\n(1, 2, 3)",
             ExpectedRaw = "S[L[1, 2, 3], S[1, 2, 3]]",
@@ -2631,16 +2706,16 @@ public static class LanguageSpecCorpus
         {
             Id = "list-spread-edges",
             Category = "lists",
-            Source = "A = []\nB = [7]\nC = [[7]]\n\nA*\nB*\nC*",
+            Source = "A = []\nB = [7]\nC = [[7]]\n\nA*,\nB*,\nC*",
             Outcome = SpecOutcome.Evaluates,
             ExpectedDisplay = "7\n[7]",
             ExpectedRaw = "S[7, L[7]]",
             ExpectedEmittedCount = 2,
             Probes =
             [
-                new SpecProbe("A = []\nx = A*\nx", "ok raw=S[] n=1"),
+                new SpecProbe("A = []\nx = (A*)\nx", "ok raw=S[] n=1"),
             ],
-            Explanation = "Spread opens ONE boundary: `[]*` supplies zero items (the row vanishes), `[7]*` supplies `7`, and `[[7]]*` supplies the inner list `[7]` intact.",
+            Explanation = "Spread opens ONE boundary: `[]*` supplies zero items (the row vanishes), `[7]*` supplies `7`, and `[[7]]*` supplies the inner list `[7]` intact. Each spread row that is followed by another row ends with a comma: a line-final `*` directly before an operand on the next line would be multiplication (SYN-07B).",
         },
         new()
         {
@@ -2726,7 +2801,7 @@ public static class LanguageSpecCorpus
             ExpectedEmittedCount = 3,
             Probes =
             [
-                new SpecProbe("x, y, z = [1, 2, 3]*\nx, y, z", "ok raw=S[1, 2, 3] n=3"),
+                new SpecProbe("x, y, z = ([1, 2, 3]*)\nx, y, z", "ok raw=S[1, 2, 3] n=3"),
                 new SpecProbe("A = [1, 2, 3]\nx, y, z = A\nx, y, z", "ok raw=S[1, 2, 3] n=3"),
             ],
             IncludeInGeneratorPrompt = true,
@@ -2763,7 +2838,7 @@ public static class LanguageSpecCorpus
                 new SpecProbe("x, *rest = [1, 2]\nrest", "ok raw=L[2] n=1"),
                 new SpecProbe("x, *rest = [[1, 2, 3]]\nx", "ok raw=L[1, 2, 3] n=1"),
                 new SpecProbe("x, *rest = 1, [2, 3], 4\nrest", "ok raw=L[L[2, 3], 4] n=1"),
-                new SpecProbe("x, *rest = 1, [2, 3]*, (4, 5)*\nrest", "ok raw=L[2, 3, 4, 5] n=1"),
+                new SpecProbe("x, *rest = (1, [2, 3]*, (4, 5)*)\nrest", "ok raw=L[2, 3, 4, 5] n=1"),
                 new SpecProbe("Rows = [[1, 2], [3, 4]]\nfirst, *rest = Rows\nrest", "ok raw=L[L[3, 4]] n=1"),
                 new SpecProbe("Rows = [[1, 2], [3, 4]]\nfirst, *rest = Rows\nrest.count", "ok raw=1 n=1"),
                 new SpecProbe("skip([1, 2, 3], 1)", "ok raw=L[2, 3] n=1"),

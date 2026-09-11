@@ -878,7 +878,10 @@ public class ParameterDetectorTests
     [InlineData("K = -x", typeof(Expr.Unary))]
     [InlineData("K = x + 1", typeof(Expr.Binary))]
     [InlineData("K = [x]", typeof(Expr.ListLiteral))]
-    [InlineData("K = x*", typeof(Expr.SequenceSpread))]
+    // The brace body keeps the body-final spread a spread before the `K` row
+    // (`K = x*` newline `K` would be the multiplication `x * K`, SYN-07B); the
+    // brace algorithm merges into the definition, so the body node is the spread.
+    [InlineData("K = { x* }", typeof(Expr.SequenceSpread))]
     public void ImplicitParameterRewrite_PreservesRewrittenNodeSpan(string definition, Type expectedShape)
     {
         var parsed = SourceProvenance.ParseValid(definition + "\nK");

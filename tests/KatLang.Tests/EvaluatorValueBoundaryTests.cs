@@ -26,7 +26,7 @@ public class EvaluatorValueBoundaryTests
 
     [Fact]
     public void Eval_UserCall_VariadicReturnWithBodySpread_IsOneSequenceValue()
-        => AssertEvalCounted("F(*a) = a*\nF(5, 9)", 1, ResultFromAtoms(5, 9));
+        => AssertEvalCounted("F(*a) = { a* }\nF(5, 9)", 1, ResultFromAtoms(5, 9));
 
     // Body `a, 0`: the collecting capture stays grouped as a nested list value.
     [Fact]
@@ -69,7 +69,7 @@ public class EvaluatorValueBoundaryTests
     [Theory]
     [InlineData("F(*a) = sum(a)\nF(5, 9)", 14)]
     [InlineData("F(*a) = count(a)\nF(5, 9)", 2)]
-    [InlineData("G(*a) = a*\nsum(G(5, 9))", 14)]
+    [InlineData("G(*a) = { a* }\nsum(G(5, 9))", 14)]
     [InlineData("F(*a) = a\nsum(F(5, 9))", 14)]
     public void Eval_VariadicForwarding_UsesCollectedListViews(string source, int expected)
         => AssertEval(source, expected);

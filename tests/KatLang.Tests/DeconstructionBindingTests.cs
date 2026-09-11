@@ -55,7 +55,7 @@ public class DeconstructionBindingTests
     [Fact]
     public void Assignment_MovableCollectingBinding_ExplicitSpread_SuppliesSameItems()
         // Explicit `*` supplies the same items as the bare unpack above.
-        => AssertAtoms("A = 1, 2, 3, 4, 5\nx, *y, z = A*\nx, y.count, z", 1, 3, 5);
+        => AssertAtoms("A = 1, 2, 3, 4, 5\nx, *y, z = (A*)\nx, y.count, z", 1, 3, 5);
 
     [Fact]
     public void Assignment_StoredSequenceValue_AgainstFixedTargets_IsUnpacked()
@@ -71,7 +71,7 @@ public class DeconstructionBindingTests
     public void Assignment_StoredSequenceValue_ExplicitSpread_BindsFixedTargets()
     {
         // Explicit `*` supplies the same items as the bare unpack above.
-        const string define = "A = 1, 2, 3\nx, y, z = A*\n";
+        const string define = "A = 1, 2, 3\nx, y, z = (A*)\n";
         AssertAtoms(define + "x", 1);
         AssertAtoms(define + "y", 2);
         AssertAtoms(define + "z", 3);
@@ -101,7 +101,7 @@ public class DeconstructionBindingTests
     public void Assignment_CollectingBindingForStoredSequenceValue_ExplicitSpread_SuppliesSameItems()
     {
         // `first, *rest = A*` supplies the same items as the bare unpack above.
-        const string define = "A = 1, 2, 3\nfirst, *rest = A*\n";
+        const string define = "A = 1, 2, 3\nfirst, *rest = (A*)\n";
         AssertAtoms(define + "first", 1);
         AssertAtoms(define + "rest", 2, 3);
     }
@@ -194,7 +194,7 @@ public class DeconstructionBindingTests
     public void Assignment_CollectingBindingAtStart_ForStoredSequenceValue_ExplicitSpread_SuppliesSameItems()
     {
         // `*head, last = A*` supplies the same items as the bare unpack above.
-        const string define = "A = 1, 2, 3\n*head, last = A*\n";
+        const string define = "A = 1, 2, 3\n*head, last = (A*)\n";
         AssertAtoms(define + "head", 1, 2);
         AssertAtoms(define + "head.count", 2);
         AssertAtoms(define + "last", 3);

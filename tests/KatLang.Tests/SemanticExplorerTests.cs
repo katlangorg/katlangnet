@@ -712,7 +712,7 @@ public class SemanticExplorerTests
         { "(1*, (), 2*)", "ok raw=S[1, S[], 2] n=1" },
         { "A = (1, 2)\nA*, 99", "ok raw=S[1, 2, 99] n=3" },
         { "a = 6\nb = 7\na* b", "ok raw=42 n=1" },
-        { "a = (1, 2)\na*\n9", "ok raw=S[1, 2, 9] n=3" },
+        { "a = (1, 2)\na*, 9", "ok raw=S[1, 2, 9] n=3" },
     };
 
     [Theory]

@@ -506,7 +506,7 @@ public static class ArityDifferentialMatrix
         var captured = Capture(supply);
         var (rootValue, emitted) = RootNonSpreadRow(captured, ValueCount(captured));
         b.Add("assign-capture", ReceiverKind.Assignment, BindingForm.Capture, shape, m,
-            $"V = {shape.Literal}\nX = {arg}\nX",
+            $"V = {shape.Literal}\nX\nX = {arg}",
             SupplyLaw(m, ReceiverLaw.CAPTURE_CANONICALIZES_SUPPLY),
             Ok(rootValue, emitted),
             baseTrace.Append($"X = capture(supply) = {captured.Neutral}; access re-counts to valueCount, root keeps a non-spread row visible (n={emitted})"));
@@ -530,7 +530,7 @@ public static class ArityDifferentialMatrix
         // T6: lone-collecting deconstruction.
         var loneCollect = Collect(opened);
         b.Add("assign-collect-lone", ReceiverKind.Assignment, BindingForm.Collect, shape, m,
-            $"V = {shape.Literal}\n*R = {arg}\nR",
+            $"V = {shape.Literal}\nR\n*R = {arg}",
             deconLaw,
             Ok(loneCollect, 1),
             sharedTrace.Append($"*R collects the opened supply: R = {loneCollect.Neutral}"));
@@ -540,7 +540,7 @@ public static class ArityDifferentialMatrix
         if (pairEnv is null)
         {
             b.Add("assign-decon-pair", ReceiverKind.Assignment, BindingForm.Capture, shape, m,
-                $"V = {shape.Literal}\nx, y = {arg}\n[x, y]",
+                $"V = {shape.Literal}\n[x, y]\nx, y = {arg}",
                 deconLaw,
                 Err(Arity),
                 sharedTrace.Append($"bindPats [x, y] over {opened.Count} opened item(s) -> arity mismatch"));
@@ -549,7 +549,7 @@ public static class ArityDifferentialMatrix
         {
             var pairList = OracleVal.List(pairEnv[0].Value, pairEnv[1].Value);
             b.Add("assign-decon-pair", ReceiverKind.Assignment, BindingForm.Capture, shape, m,
-                $"V = {shape.Literal}\nx, y = {arg}\n[x, y]",
+                $"V = {shape.Literal}\n[x, y]\nx, y = {arg}",
                 deconLaw,
                 Ok(pairList, 1),
                 sharedTrace.Append($"bindPats [x, y] -> {pairList.Neutral}"));
@@ -560,7 +560,7 @@ public static class ArityDifferentialMatrix
         if (mixedEnv is null)
         {
             b.Add("assign-decon-mixed", ReceiverKind.Assignment, BindingForm.Collect, shape, m,
-                $"V = {shape.Literal}\na, *r = {arg}\n[a, r]",
+                $"V = {shape.Literal}\n[a, r]\na, *r = {arg}",
                 deconLaw,
                 Err(Arity),
                 sharedTrace.Append($"bindPats [a, *r] over {opened.Count} opened item(s) -> arity mismatch (fixed captures set the minimum)"));
@@ -569,7 +569,7 @@ public static class ArityDifferentialMatrix
         {
             var mixedList = OracleVal.List(mixedEnv[0].Value, mixedEnv[1].Value);
             b.Add("assign-decon-mixed", ReceiverKind.Assignment, BindingForm.Collect, shape, m,
-                $"V = {shape.Literal}\na, *r = {arg}\n[a, r]",
+                $"V = {shape.Literal}\n[a, r]\na, *r = {arg}",
                 deconLaw,
                 Ok(mixedList, 1),
                 sharedTrace.Append($"bindPats [a, *r] -> a = {mixedEnv[0].Value.Neutral}, r = {mixedEnv[1].Value.Neutral}"));
@@ -588,7 +588,7 @@ public static class ArityDifferentialMatrix
         var bodySupply = new[] { OracleVal.Atom(0) }.Concat(supply).ToArray();
         var reified = Capture(bodySupply);
         b.Add("prop-reify", ReceiverKind.Property, BindingForm.Capture, shape, m,
-            $"V = {shape.Literal}\nP = 0, {arg}\nP",
+            $"V = {shape.Literal}\nP\nP = 0, {arg}",
             m == SpreadMultiplicity.Repeated
                 ? ReceiverLaw.REPEATED_SPREAD_CAPTURE_COMPOSITION
                 : ReceiverLaw.PROPERTY_REIFIES_OUTPUT,
@@ -600,7 +600,7 @@ public static class ArityDifferentialMatrix
         {
             var parity = OracleVal.List(reified, reified);
             b.Add("prop-call-parity", ReceiverKind.Property, BindingForm.Capture, shape, m,
-                $"V = {shape.Literal}\nP = 0, {arg}\n[P, P()]",
+                $"V = {shape.Literal}\n[P, P()]\nP = 0, {arg}",
                 ReceiverLaw.PROPERTY_CALL_EQUIVALENT_VALUE,
                 Ok(parity, 1),
                 baseTrace.Append($"P and P() observe the same value {reified.Neutral} (cache vs bypass is behavioral only)"));
@@ -1147,7 +1147,7 @@ public static class ArityDifferentialMatrix
                 Family = "decon-rhs-capture",
                 ShapeId = shape.Id,
                 Multiplicity = SpreadMultiplicity.One,
-                LeftSource = $"V = {shape.Literal}\nx, y = V*\n[x, y]",
+                LeftSource = $"V = {shape.Literal}\n[x, y]\nx, y = V*",
                 RightSource = $"V = {shape.Literal}\n{Pair2Def}\nPair2(V*)",
                 ExpectAgreement = deconSpreadExpected.Neutral == itemViewExpected.Neutral,
                 PrimaryLaw = ReceiverLaw.DECONSTRUCTION_RHS_CAPTURE_BOUNDARY,

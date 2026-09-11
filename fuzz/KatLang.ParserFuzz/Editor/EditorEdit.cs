@@ -133,8 +133,8 @@ internal static class EditorEdit
     /// Adds one star to the supply marker: an existing star grows into the chained-spread
     /// run (`value*` becomes `value**`), otherwise a star is inserted at the cursor, which
     /// turns a completed expression into a spread — or into a multiplication, depending on
-    /// attachment and what follows on the line. Both outcomes are intended: the star rule
-    /// is exactly what this edit probes.
+    /// what follows the star (on the same line or the next). Both outcomes are intended:
+    /// the star rule is exactly what this edit probes.
     /// </summary>
     private static ImmutableArray<ushort>? AddSpreadMarker(ImmutableArray<ushort> units, int at)
     {

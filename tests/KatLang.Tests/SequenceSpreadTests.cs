@@ -122,17 +122,33 @@ public class SequenceSpreadTests
             """,
             15m);
 
+    [Theory]
+    [InlineData("Sum4(A*\nA)")]
+    [InlineData("Sum4(A *\nA)")]
+    public void LineEndingStar_InsideAnOpenCall_IsMultiplicationAcrossTheNewline(string call)
+        // The newline inside the open call-argument list does not change the
+        // star (SYN-07B): `A` on the next line is a valid right operand, so
+        // `Sum4(A*` newline `A)` is the ONE-argument call `Sum4(A * A)` —
+        // attached or detached — and the four-parameter callee reports an
+        // arity error for one supplied argument (the scalar operands keep the
+        // multiplication itself valid, so arity is the only failure).
+        => AssertArityFailure(
+            $"""
+            A = 3
+            Sum4(a, b, c, d) = a + b + c + d
+            {call}
+            """);
+
     [Fact]
-    public void LineEndingAttachedStar_DoesNotContinueSequenceSpreadForFixedCall()
-        // A line-ending attached `A*` is a spread; inside the open
-        // call-argument list the newline separates slots, so the call sees the
-        // two argument slots `A*` and `A` — three supplied arguments after
+    public void LineEndingSpreadWithTrailingComma_SuppliesSeparateSlotsToFixedCall()
+        // With the comma the spread slot closes: the call sees the two
+        // argument slots `A*` and `A` — three supplied arguments after
         // spreading, not four.
         => AssertArityFailure(
             """
             A = 1, 2
             Sum4(a, b, c, d) = a + b + c + d
-            Sum4(A*
+            Sum4(A*,
             A)
             """);
 

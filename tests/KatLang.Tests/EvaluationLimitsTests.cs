@@ -316,7 +316,7 @@ public class EvaluationLimitsTests
 
     [Theory]
     [InlineData("A = A.string\nA")]
-    [InlineData("A = A.string*\nA")]
+    [InlineData("A = { A.string* }\nA")]
     [InlineData("A(n) = A.string\nA(1)")]
     public void DotStringLexicalSelfRecursion_TerminatesWithStructuredDepthError(string source)
     {
@@ -344,7 +344,7 @@ public class EvaluationLimitsTests
 
     [Theory]
     [InlineData("F(v) = v.string\nF({1 / 0})")]
-    [InlineData("F(v) = v.string*\nF({1 / 0})")]
+    [InlineData("F(v) = { v.string* }\nF({1 / 0})")]
     public void DotStringSemanticErrorParamDemand_ChargesDepthWithoutSteps(string source)
     {
         // The brace argument has an algorithm channel, but its eager value-channel

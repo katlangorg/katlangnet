@@ -257,15 +257,15 @@ public class AtomsBuiltinTests
 
     [Fact]
     public void Atoms_Spread_OpensOneListBoundary()
-        => AssertEvalCounted("A = atoms((10, 20))\nB = A*\nB", 1, SequenceValue(Atom(10), Atom(20)));
+        => AssertEvalCounted("A = atoms((10, 20))\nB = { A* }\nB", 1, SequenceValue(Atom(10), Atom(20)));
 
     [Fact]
     public void Atoms_SingletonSpread_CapturesItem()
-        => AssertEvalCounted("A = atoms(7)\nB = A*\nB", 1, Atom(7));
+        => AssertEvalCounted("A = atoms(7)\nB = { A* }\nB", 1, Atom(7));
 
     [Fact]
     public void Atoms_EmptySpread_ContributesNoItems()
-        => AssertEvalCounted("A = atoms('text')\nB = A*\nB", 1, SequenceValue());
+        => AssertEvalCounted("A = atoms('text')\nB = { A* }\nB", 1, SequenceValue());
 
     [Fact]
     public void Atoms_DirectSpread_OpensIntoItems()

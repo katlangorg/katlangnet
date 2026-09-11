@@ -392,7 +392,7 @@ public class EvaluatorExpressionListTests
 
     [Theory]
     [InlineData("A B*, C")]
-    [InlineData("A\nB*\nC")]
+    [InlineData("A\nB*,\nC")]
     public void Eval_MiddlePostfixSequenceSpread_CreatesExpressionListSlots(string source)
     {
         var program = "A = 1\nB = 2, 3\nC = 4\n" + source;

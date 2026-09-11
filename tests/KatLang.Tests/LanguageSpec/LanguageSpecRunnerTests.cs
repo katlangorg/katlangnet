@@ -245,6 +245,11 @@ public class LanguageSpecRunnerTests
             "semicolon-not-expression-syntax",
             "spread-not-binary-operand",
             "trailing-comma-in-parens-rejected",
+            // The marker attachment law (SYN-07B follow-up): surface-lexical,
+            // parse-level by construction.
+            "spread-marker-must-be-attached",
+            "grace-marker-must-be-attached",
+            "collect-marker-must-be-attached",
         ];
         string[] expectedModelDivergences =
         [

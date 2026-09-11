@@ -193,21 +193,21 @@ public class ListValueTests
 
     [Fact]
     public void Spread_OpensOneListBoundary()
-        => AssertEvalCounted("A = [1, 2, 3]\nB = A*\nB", 1, SequenceValue(Atom(1), Atom(2), Atom(3)));
+        => AssertEvalCounted("A = [1, 2, 3]\nB = { A* }\nB", 1, SequenceValue(Atom(1), Atom(2), Atom(3)));
 
     [Fact]
     public void Spread_EmptyList_CapturesEmptySequence()
         // The capture is the empty sequence value; at root output the
         // non-spread row stays one VISIBLE `()` slot (visible-empty rule).
-        => AssertEvalCounted("A = []\nB = A*\nB", 1, SequenceValue());
+        => AssertEvalCounted("A = []\nB = { A* }\nB", 1, SequenceValue());
 
     [Fact]
     public void Spread_SingletonList_CapturesItem()
-        => AssertEvalCounted("A = [7]\nB = A*\nB", 1, Atom(7));
+        => AssertEvalCounted("A = [7]\nB = { A* }\nB", 1, Atom(7));
 
     [Fact]
     public void Spread_NestedList_OpensExactlyOneBoundary()
-        => AssertEvalCounted("A = [[7]]\nB = A*\nB", 1, ListValue(Atom(7)));
+        => AssertEvalCounted("A = [[7]]\nB = { A* }\nB", 1, ListValue(Atom(7)));
 
     [Fact]
     public void Spread_ListLiteral_Directly()
@@ -222,7 +222,7 @@ public class ListValueTests
     public void Spread_ListContainingSequence_KeepsSequenceItem()
         // Spread supplies the sequence item; the single-name CAPTURE boundary
         // then singleton-collapses, so B stores (1, 2).
-        => AssertEvalCounted("A = [(1, 2)]\nB = A*\nB", 1, SequenceValue(Atom(1), Atom(2)));
+        => AssertEvalCounted("A = [(1, 2)]\nB = { A* }\nB", 1, SequenceValue(Atom(1), Atom(2)));
 
     [Fact]
     public void StackedSpread_AgreesWithTheGroupedCompositionalForm()
@@ -360,7 +360,7 @@ public class ListValueTests
 
     [Fact]
     public void SingleNameCapture_OfSpread_CapturesSequence()
-        => AssertEvalCounted("A = [1, 2, 3]\ny = A*\ny", 1, SequenceValue(Atom(1), Atom(2), Atom(3)));
+        => AssertEvalCounted("A = [1, 2, 3]\ny = { A* }\ny", 1, SequenceValue(Atom(1), Atom(2), Atom(3)));
 
     [Fact]
     public void SingleNameCapture_EmptyList()
@@ -369,7 +369,7 @@ public class ListValueTests
     [Fact]
     public void SingleNameCapture_EmptyListSpread_IsEmptySequence()
         // The capture is `()`; the root row keeps it one visible slot.
-        => AssertEvalCounted("x = []*\nx", 1, SequenceValue());
+        => AssertEvalCounted("x = { []* }\nx", 1, SequenceValue());
 
     // ── Lone-list deconstruction ─────────────────────────────────────────────
 
@@ -379,7 +379,7 @@ public class ListValueTests
 
     [Fact]
     public void Deconstruction_ExplicitSpread_BindsIdentically()
-        => AssertAtoms("x, y, z = [1, 2, 3]*\nx\ny\nz", 1, 2, 3);
+        => AssertAtoms("x, y, z = ([1, 2, 3]*)\nx\ny\nz", 1, 2, 3);
 
     [Fact]
     public void Deconstruction_OpensLoneListThroughVariable()
@@ -428,7 +428,7 @@ public class ListValueTests
 
     [Fact]
     public void CollectingBinding_SpreadProvenance_DoesNotAffectResultKind()
-        => AssertEvalCounted("x, *rest = [1, 2]*, [3, 4]*\n(x, rest)", 1,
+        => AssertEvalCounted("x, *rest = ([1, 2]*, [3, 4]*)\n(x, rest)", 1,
             SequenceValue(Atom(1), ListValue(Atom(2), Atom(3), Atom(4))));
 
     [Fact]
@@ -444,7 +444,7 @@ public class ListValueTests
 
     [Fact]
     public void LoneCollectingBinding_EmptySupply_CollectsEmptyExactList()
-        => AssertDisplay("*items = ()*\nitems", "[]");
+        => AssertDisplay("*items = (()*)\nitems", "[]");
 
     [Fact]
     public void SingleCollectingParameter_StillWorks()
@@ -452,7 +452,7 @@ public class ListValueTests
 
     [Fact]
     public void ExplicitOpeningForm_IsProducerSideSpread()
-        => AssertEvalCounted("value = [1, 2, 3]\nitems = value*\nitems", 1,
+        => AssertEvalCounted("value = [1, 2, 3]\nitems = { value* }\nitems", 1,
             SequenceValue(Atom(1), Atom(2), Atom(3)));
 
     // ── Builtins: lone-list collection view (one boundary opens) ─────────────
@@ -599,8 +599,8 @@ public class ListValueTests
     [InlineData("head, *rest = [1, 2, 3]\nrest", "[2, 3]")]
     [InlineData("head, *rest = [1]\nrest", "[]")]
     [InlineData("head, *rest = [1, 2]\nrest", "[2]")]
-    [InlineData("first, *rest = 1, [2, 3]*, (4, 5)*\nfirst", "1")]
-    [InlineData("first, *rest = 1, [2, 3]*, (4, 5)*\nrest", "[2, 3, 4, 5]")]
+    [InlineData("first, *rest = (1, [2, 3]*, (4, 5)*)\nfirst", "1")]
+    [InlineData("first, *rest = (1, [2, 3]*, (4, 5)*)\nrest", "[2, 3, 4, 5]")]
     public void CollectingBinding_CollectsExactList_AcrossListSources(string source, string expected)
         => AssertDisplay(source, expected);
 
@@ -683,7 +683,7 @@ public class ListValueTests
     {
         // A stored builtin list result spreads like any other list value.
         AssertDisplay("A = take([1, 2, 3], 1)\nA*", "1");
-        AssertDisplay("A = take([1, 2, 3], 2)\nB = A*\nB", "(1, 2)");
+        AssertDisplay("A = take([1, 2, 3], 2)\nB = { A* }\nB", "(1, 2)");
     }
 
     [Fact]
@@ -692,7 +692,7 @@ public class ListValueTests
         AssertDisplay("range(1, 3)", "[1, 2, 3]");
         AssertDisplay("range(3, 3)", "[3]");
         AssertDisplay("range(3, 1)", "[3, 2, 1]");
-        AssertDisplay("A = range(1, 3)\nB = A*\nB", "(1, 2, 3)");
+        AssertDisplay("A = range(1, 3)\nB = { A* }\nB", "(1, 2, 3)");
         Assert.True(Fails("range(1.5, 3)"));
     }
 
@@ -857,10 +857,10 @@ public class ListValueTests
     {
         AssertEvalCounted("A = [1, 2]\nA:0", 1, Atom(1));
         AssertEvalCounted("A = [1, 2]\nA*", 2, SequenceValue(Atom(1), Atom(2)));
-        AssertEvalCounted("A = [1, 2]\nB = A*\nB", 1, SequenceValue(Atom(1), Atom(2)));
+        AssertEvalCounted("A = [1, 2]\nB = { A* }\nB", 1, SequenceValue(Atom(1), Atom(2)));
         AssertEvalCounted("A = [7]\nA:0", 1, Atom(7));
-        AssertEvalCounted("A = [7]\nB = A*\nB", 1, Atom(7));
-        AssertEvalCounted("A = []\nB = A*\nB", 1, SequenceValue());
+        AssertEvalCounted("A = [7]\nB = { A* }\nB", 1, Atom(7));
+        AssertEvalCounted("A = []\nB = { A* }\nB", 1, SequenceValue());
     }
 
     [Fact]

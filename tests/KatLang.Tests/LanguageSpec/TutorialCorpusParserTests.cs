@@ -135,11 +135,11 @@ public class TutorialCorpusParserTests
     [Fact]
     public void NeighboringFences_StayIndependentExamples()
     {
-        var examples = TutorialCorpus.Parse("```\nX*\nY\n```\n\nis interpreted as:\n\n```\nX*, Y\n```\n");
+        var examples = TutorialCorpus.Parse("```\nX*\nY\n```\n\nis interpreted as:\n\n```\nX * Y\n```\n");
 
         Assert.Equal(2, examples.Count);
         Assert.All(examples, e => Assert.False(e.HasResultClaim));
-        Assert.Equal(["X*\nY", "X*, Y"], examples.Select(e => e.Source));
+        Assert.Equal(["X*\nY", "X * Y"], examples.Select(e => e.Source));
     }
 
     [Fact]

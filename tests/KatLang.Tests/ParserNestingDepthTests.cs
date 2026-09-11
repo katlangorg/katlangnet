@@ -407,6 +407,7 @@ public class ParserNestingDepthTests
     [InlineData("{0}1\n42", 1)]
     [InlineData("{0}# comment\n{0}x\n42", 1)]
     [InlineData("a.{0}b\n42", 0)]
+    [InlineData("a*{0}.F\n42", 1)]
     [InlineData("a.{0}\n{0}b\n42", 1)]
     [InlineData("F({0}x) = x\n42", 1)]
     [InlineData("x{0}\n42", 0)]

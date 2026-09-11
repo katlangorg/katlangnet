@@ -41,7 +41,7 @@ public class LoopStepSpreadContributionTests
         // value slot) would under-supply the state instead.
         Assert.Equal(
             [12m, 22m],
-            FlatValues("Step(x, y) = (x + 1, y + 1)*\nStep.repeat(2, 10, 20)"));
+            FlatValues("Step(x, y) = { (x + 1, y + 1)* }\nStep.repeat(2, 10, 20)"));
     }
 
     [Fact]
@@ -61,7 +61,7 @@ public class LoopStepSpreadContributionTests
         foreach (var source in new[]
         {
             "E = ()\nStep(x, y) = E*, x + 1, y + 1\nStep.repeat(2, 10, 20)",
-            "Step(x, y) = (x + 1, y + 1)*\nStep.repeat(2, 10, 20)",
+            "Step(x, y) = { (x + 1, y + 1)* }\nStep.repeat(2, 10, 20)",
             "E = ()\nStep(x, y) = E*, x + 1, y + 1, x < 12\nStep.while(10, 20)",
         })
         {

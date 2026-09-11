@@ -2172,134 +2172,134 @@ def case_deconPair_y__pl1 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.listLiteral [.num 1])]), privateProp "x" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "x"])) [.resolve "$deconstruct$0"])]), privateProp "y" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "y"])) [.resolve "$deconstruct$0"])])] [.resolve "y"])
 #guard obs case_deconPair_y__pl1 == "err arity"
 
--- deconPairSpread_x__e: x, y = ()* \n x
+-- deconPairSpread_x__e: x, y = (()*) \n x
 def case_deconPairSpread_x__e : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.sequenceSpread (.emptySequence 0))]), privateProp "x" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "x"])) [.resolve "$deconstruct$0"])]), privateProp "y" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "y"])) [.resolve "$deconstruct$0"])])] [.resolve "x"])
+  .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.capture [(.sequenceSpread (.emptySequence 0))])]), privateProp "x" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "x"])) [.resolve "$deconstruct$0"])]), privateProp "y" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "y"])) [.resolve "$deconstruct$0"])])] [.resolve "x"])
 #guard obs case_deconPairSpread_x__e == "err arity"
 
--- deconPairSpread_x__n0: x, y = 0* \n x
+-- deconPairSpread_x__n0: x, y = (0*) \n x
 def case_deconPairSpread_x__n0 : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.sequenceSpread (.num 0))]), privateProp "x" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "x"])) [.resolve "$deconstruct$0"])]), privateProp "y" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "y"])) [.resolve "$deconstruct$0"])])] [.resolve "x"])
+  .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.capture [(.sequenceSpread (.num 0))])]), privateProp "x" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "x"])) [.resolve "$deconstruct$0"])]), privateProp "y" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "y"])) [.resolve "$deconstruct$0"])])] [.resolve "x"])
 #guard obs case_deconPairSpread_x__n0 == "err arity"
 
--- deconPairSpread_x__n1: x, y = 1* \n x
+-- deconPairSpread_x__n1: x, y = (1*) \n x
 def case_deconPairSpread_x__n1 : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.sequenceSpread (.num 1))]), privateProp "x" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "x"])) [.resolve "$deconstruct$0"])]), privateProp "y" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "y"])) [.resolve "$deconstruct$0"])])] [.resolve "x"])
+  .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.capture [(.sequenceSpread (.num 1))])]), privateProp "x" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "x"])) [.resolve "$deconstruct$0"])]), privateProp "y" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "y"])) [.resolve "$deconstruct$0"])])] [.resolve "x"])
 #guard obs case_deconPairSpread_x__n1 == "err arity"
 
--- deconPairSpread_x__p1: x, y = (1)* \n x
+-- deconPairSpread_x__p1: x, y = ((1)*) \n x
 def case_deconPairSpread_x__p1 : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.sequenceSpread (.num 1))]), privateProp "x" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "x"])) [.resolve "$deconstruct$0"])]), privateProp "y" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "y"])) [.resolve "$deconstruct$0"])])] [.resolve "x"])
+  .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.capture [(.sequenceSpread (.num 1))])]), privateProp "x" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "x"])) [.resolve "$deconstruct$0"])]), privateProp "y" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "y"])) [.resolve "$deconstruct$0"])])] [.resolve "x"])
 #guard obs case_deconPairSpread_x__p1 == "err arity"
 
--- deconPairSpread_x__p12: x, y = (1, 2)* \n x
+-- deconPairSpread_x__p12: x, y = ((1, 2)*) \n x
 def case_deconPairSpread_x__p12 : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.sequenceSpread (.capture [.num 1, .num 2]))]), privateProp "x" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "x"])) [.resolve "$deconstruct$0"])]), privateProp "y" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "y"])) [.resolve "$deconstruct$0"])])] [.resolve "x"])
+  .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.capture [(.sequenceSpread (.capture [.num 1, .num 2]))])]), privateProp "x" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "x"])) [.resolve "$deconstruct$0"])]), privateProp "y" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "y"])) [.resolve "$deconstruct$0"])])] [.resolve "x"])
 #guard obs case_deconPairSpread_x__p12 == "ok raw=1 n=1"
 
--- deconPairSpread_x__p123: x, y = (1, 2, 3)* \n x
+-- deconPairSpread_x__p123: x, y = ((1, 2, 3)*) \n x
 def case_deconPairSpread_x__p123 : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.sequenceSpread (.capture [.num 1, .num 2, .num 3]))]), privateProp "x" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "x"])) [.resolve "$deconstruct$0"])]), privateProp "y" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "y"])) [.resolve "$deconstruct$0"])])] [.resolve "x"])
+  .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.capture [(.sequenceSpread (.capture [.num 1, .num 2, .num 3]))])]), privateProp "x" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "x"])) [.resolve "$deconstruct$0"])]), privateProp "y" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "y"])) [.resolve "$deconstruct$0"])])] [.resolve "x"])
 #guard obs case_deconPairSpread_x__p123 == "err arity"
 
--- deconPairSpread_x__pee: x, y = ((), ())* \n x
+-- deconPairSpread_x__pee: x, y = (((), ())*) \n x
 def case_deconPairSpread_x__pee : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.sequenceSpread (.capture [(.emptySequence 0), (.emptySequence 0)]))]), privateProp "x" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "x"])) [.resolve "$deconstruct$0"])]), privateProp "y" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "y"])) [.resolve "$deconstruct$0"])])] [.resolve "x"])
+  .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.capture [(.sequenceSpread (.capture [(.emptySequence 0), (.emptySequence 0)]))])]), privateProp "x" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "x"])) [.resolve "$deconstruct$0"])]), privateProp "y" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "y"])) [.resolve "$deconstruct$0"])])] [.resolve "x"])
 #guard obs case_deconPairSpread_x__pee == "ok raw=S[] n=1"
 
--- deconPairSpread_x__pe1: x, y = ((), 1)* \n x
+-- deconPairSpread_x__pe1: x, y = (((), 1)*) \n x
 def case_deconPairSpread_x__pe1 : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.sequenceSpread (.capture [(.emptySequence 0), .num 1]))]), privateProp "x" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "x"])) [.resolve "$deconstruct$0"])]), privateProp "y" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "y"])) [.resolve "$deconstruct$0"])])] [.resolve "x"])
+  .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.capture [(.sequenceSpread (.capture [(.emptySequence 0), .num 1]))])]), privateProp "x" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "x"])) [.resolve "$deconstruct$0"])]), privateProp "y" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "y"])) [.resolve "$deconstruct$0"])])] [.resolve "x"])
 #guard obs case_deconPairSpread_x__pe1 == "ok raw=S[] n=1"
 
--- deconPairSpread_x__p1e: x, y = (1, ())* \n x
+-- deconPairSpread_x__p1e: x, y = ((1, ())*) \n x
 def case_deconPairSpread_x__p1e : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.sequenceSpread (.capture [.num 1, (.emptySequence 0)]))]), privateProp "x" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "x"])) [.resolve "$deconstruct$0"])]), privateProp "y" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "y"])) [.resolve "$deconstruct$0"])])] [.resolve "x"])
+  .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.capture [(.sequenceSpread (.capture [.num 1, (.emptySequence 0)]))])]), privateProp "x" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "x"])) [.resolve "$deconstruct$0"])]), privateProp "y" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "y"])) [.resolve "$deconstruct$0"])])] [.resolve "x"])
 #guard obs case_deconPairSpread_x__p1e == "ok raw=1 n=1"
 
--- deconPairSpread_x__p12_3: x, y = ((1, 2), 3)* \n x
+-- deconPairSpread_x__p12_3: x, y = (((1, 2), 3)*) \n x
 def case_deconPairSpread_x__p12_3 : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.sequenceSpread (.capture [(.capture [.num 1, .num 2]), .num 3]))]), privateProp "x" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "x"])) [.resolve "$deconstruct$0"])]), privateProp "y" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "y"])) [.resolve "$deconstruct$0"])])] [.resolve "x"])
+  .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.capture [(.sequenceSpread (.capture [(.capture [.num 1, .num 2]), .num 3]))])]), privateProp "x" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "x"])) [.resolve "$deconstruct$0"])]), privateProp "y" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "y"])) [.resolve "$deconstruct$0"])])] [.resolve "x"])
 #guard obs case_deconPairSpread_x__p12_3 == "ok raw=S[1, 2] n=1"
 
--- deconPairSpread_x__p12_34: x, y = ((1, 2), (3, 4))* \n x
+-- deconPairSpread_x__p12_34: x, y = (((1, 2), (3, 4))*) \n x
 def case_deconPairSpread_x__p12_34 : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.sequenceSpread (.capture [(.capture [.num 1, .num 2]), (.capture [.num 3, .num 4])]))]), privateProp "x" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "x"])) [.resolve "$deconstruct$0"])]), privateProp "y" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "y"])) [.resolve "$deconstruct$0"])])] [.resolve "x"])
+  .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.capture [(.sequenceSpread (.capture [(.capture [.num 1, .num 2]), (.capture [.num 3, .num 4])]))])]), privateProp "x" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "x"])) [.resolve "$deconstruct$0"])]), privateProp "y" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "y"])) [.resolve "$deconstruct$0"])])] [.resolve "x"])
 #guard obs case_deconPairSpread_x__p12_34 == "ok raw=S[1, 2] n=1"
 
--- deconPairSpread_x__pe_12: x, y = ((), (1, 2))* \n x
+-- deconPairSpread_x__pe_12: x, y = (((), (1, 2))*) \n x
 def case_deconPairSpread_x__pe_12 : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.sequenceSpread (.capture [(.emptySequence 0), (.capture [.num 1, .num 2])]))]), privateProp "x" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "x"])) [.resolve "$deconstruct$0"])]), privateProp "y" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "y"])) [.resolve "$deconstruct$0"])])] [.resolve "x"])
+  .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.capture [(.sequenceSpread (.capture [(.emptySequence 0), (.capture [.num 1, .num 2])]))])]), privateProp "x" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "x"])) [.resolve "$deconstruct$0"])]), privateProp "y" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "y"])) [.resolve "$deconstruct$0"])])] [.resolve "x"])
 #guard obs case_deconPairSpread_x__pe_12 == "ok raw=S[] n=1"
 
--- deconPairSpread_x__ppe1_2: x, y = (((), 1), 2)* \n x
+-- deconPairSpread_x__ppe1_2: x, y = ((((), 1), 2)*) \n x
 def case_deconPairSpread_x__ppe1_2 : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.sequenceSpread (.capture [(.capture [(.emptySequence 0), .num 1]), .num 2]))]), privateProp "x" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "x"])) [.resolve "$deconstruct$0"])]), privateProp "y" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "y"])) [.resolve "$deconstruct$0"])])] [.resolve "x"])
+  .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.capture [(.sequenceSpread (.capture [(.capture [(.emptySequence 0), .num 1]), .num 2]))])]), privateProp "x" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "x"])) [.resolve "$deconstruct$0"])]), privateProp "y" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "y"])) [.resolve "$deconstruct$0"])])] [.resolve "x"])
 #guard obs case_deconPairSpread_x__ppe1_2 == "ok raw=S[S[], 1] n=1"
 
--- deconPairSpread_x__p12_e: x, y = ((1, 2), ())* \n x
+-- deconPairSpread_x__p12_e: x, y = (((1, 2), ())*) \n x
 def case_deconPairSpread_x__p12_e : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.sequenceSpread (.capture [(.capture [.num 1, .num 2]), (.emptySequence 0)]))]), privateProp "x" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "x"])) [.resolve "$deconstruct$0"])]), privateProp "y" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "y"])) [.resolve "$deconstruct$0"])])] [.resolve "x"])
+  .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.capture [(.sequenceSpread (.capture [(.capture [.num 1, .num 2]), (.emptySequence 0)]))])]), privateProp "x" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "x"])) [.resolve "$deconstruct$0"])]), privateProp "y" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "y"])) [.resolve "$deconstruct$0"])])] [.resolve "x"])
 #guard obs case_deconPairSpread_x__p12_e == "ok raw=S[1, 2] n=1"
 
--- deconPairSpread_x__ppe: x, y = (())* \n x
+-- deconPairSpread_x__ppe: x, y = ((())*) \n x
 def case_deconPairSpread_x__ppe : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.sequenceSpread (.emptySequence 0))]), privateProp "x" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "x"])) [.resolve "$deconstruct$0"])]), privateProp "y" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "y"])) [.resolve "$deconstruct$0"])])] [.resolve "x"])
+  .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.capture [(.sequenceSpread (.emptySequence 0))])]), privateProp "x" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "x"])) [.resolve "$deconstruct$0"])]), privateProp "y" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "y"])) [.resolve "$deconstruct$0"])])] [.resolve "x"])
 #guard obs case_deconPairSpread_x__ppe == "err arity"
 
--- deconPairSpread_x__pp1: x, y = ((1))* \n x
+-- deconPairSpread_x__pp1: x, y = (((1))*) \n x
 def case_deconPairSpread_x__pp1 : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.sequenceSpread (.num 1))]), privateProp "x" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "x"])) [.resolve "$deconstruct$0"])]), privateProp "y" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "y"])) [.resolve "$deconstruct$0"])])] [.resolve "x"])
+  .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.capture [(.sequenceSpread (.num 1))])]), privateProp "x" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "x"])) [.resolve "$deconstruct$0"])]), privateProp "y" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "y"])) [.resolve "$deconstruct$0"])])] [.resolve "x"])
 #guard obs case_deconPairSpread_x__pp1 == "err arity"
 
--- deconPairSpread_x__ppp12: x, y = (((1, 2)))* \n x
+-- deconPairSpread_x__ppp12: x, y = ((((1, 2)))*) \n x
 def case_deconPairSpread_x__ppp12 : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.sequenceSpread (.capture [(.capture [(.capture [.num 1, .num 2])])]))]), privateProp "x" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "x"])) [.resolve "$deconstruct$0"])]), privateProp "y" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "y"])) [.resolve "$deconstruct$0"])])] [.resolve "x"])
+  .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.capture [(.sequenceSpread (.capture [(.capture [(.capture [.num 1, .num 2])])]))])]), privateProp "x" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "x"])) [.resolve "$deconstruct$0"])]), privateProp "y" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "y"])) [.resolve "$deconstruct$0"])])] [.resolve "x"])
 #guard obs case_deconPairSpread_x__ppp12 == "ok raw=1 n=1"
 
--- deconPairSpread_x__le: x, y = []* \n x
+-- deconPairSpread_x__le: x, y = ([]*) \n x
 def case_deconPairSpread_x__le : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.sequenceSpread (.listLiteral []))]), privateProp "x" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "x"])) [.resolve "$deconstruct$0"])]), privateProp "y" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "y"])) [.resolve "$deconstruct$0"])])] [.resolve "x"])
+  .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.capture [(.sequenceSpread (.listLiteral []))])]), privateProp "x" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "x"])) [.resolve "$deconstruct$0"])]), privateProp "y" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "y"])) [.resolve "$deconstruct$0"])])] [.resolve "x"])
 #guard obs case_deconPairSpread_x__le == "err arity"
 
--- deconPairSpread_x__l7: x, y = [7]* \n x
+-- deconPairSpread_x__l7: x, y = ([7]*) \n x
 def case_deconPairSpread_x__l7 : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.sequenceSpread (.listLiteral [.num 7]))]), privateProp "x" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "x"])) [.resolve "$deconstruct$0"])]), privateProp "y" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "y"])) [.resolve "$deconstruct$0"])])] [.resolve "x"])
+  .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.capture [(.sequenceSpread (.listLiteral [.num 7]))])]), privateProp "x" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "x"])) [.resolve "$deconstruct$0"])]), privateProp "y" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "y"])) [.resolve "$deconstruct$0"])])] [.resolve "x"])
 #guard obs case_deconPairSpread_x__l7 == "err arity"
 
--- deconPairSpread_x__l12: x, y = [1, 2]* \n x
+-- deconPairSpread_x__l12: x, y = ([1, 2]*) \n x
 def case_deconPairSpread_x__l12 : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.sequenceSpread (.listLiteral [.num 1, .num 2]))]), privateProp "x" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "x"])) [.resolve "$deconstruct$0"])]), privateProp "y" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "y"])) [.resolve "$deconstruct$0"])])] [.resolve "x"])
+  .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.capture [(.sequenceSpread (.listLiteral [.num 1, .num 2]))])]), privateProp "x" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "x"])) [.resolve "$deconstruct$0"])]), privateProp "y" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "y"])) [.resolve "$deconstruct$0"])])] [.resolve "x"])
 #guard obs case_deconPairSpread_x__l12 == "ok raw=1 n=1"
 
--- deconPairSpread_x__l12_3: x, y = [[1, 2], 3]* \n x
+-- deconPairSpread_x__l12_3: x, y = ([[1, 2], 3]*) \n x
 def case_deconPairSpread_x__l12_3 : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.sequenceSpread (.listLiteral [(.listLiteral [.num 1, .num 2]), .num 3]))]), privateProp "x" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "x"])) [.resolve "$deconstruct$0"])]), privateProp "y" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "y"])) [.resolve "$deconstruct$0"])])] [.resolve "x"])
+  .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.capture [(.sequenceSpread (.listLiteral [(.listLiteral [.num 1, .num 2]), .num 3]))])]), privateProp "x" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "x"])) [.resolve "$deconstruct$0"])]), privateProp "y" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "y"])) [.resolve "$deconstruct$0"])])] [.resolve "x"])
 #guard obs case_deconPairSpread_x__l12_3 == "ok raw=L[1, 2] n=1"
 
--- deconPairSpread_x__lle: x, y = [[]]* \n x
+-- deconPairSpread_x__lle: x, y = ([[]]*) \n x
 def case_deconPairSpread_x__lle : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.sequenceSpread (.listLiteral [(.listLiteral [])]))]), privateProp "x" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "x"])) [.resolve "$deconstruct$0"])]), privateProp "y" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "y"])) [.resolve "$deconstruct$0"])])] [.resolve "x"])
+  .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.capture [(.sequenceSpread (.listLiteral [(.listLiteral [])]))])]), privateProp "x" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "x"])) [.resolve "$deconstruct$0"])]), privateProp "y" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "y"])) [.resolve "$deconstruct$0"])])] [.resolve "x"])
 #guard obs case_deconPairSpread_x__lle == "err arity"
 
--- deconPairSpread_x__l_e: x, y = [()]* \n x
+-- deconPairSpread_x__l_e: x, y = ([()]*) \n x
 def case_deconPairSpread_x__l_e : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.sequenceSpread (.listLiteral [(.emptySequence 0)]))]), privateProp "x" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "x"])) [.resolve "$deconstruct$0"])]), privateProp "y" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "y"])) [.resolve "$deconstruct$0"])])] [.resolve "x"])
+  .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.capture [(.sequenceSpread (.listLiteral [(.emptySequence 0)]))])]), privateProp "x" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "x"])) [.resolve "$deconstruct$0"])]), privateProp "y" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "y"])) [.resolve "$deconstruct$0"])])] [.resolve "x"])
 #guard obs case_deconPairSpread_x__l_e == "err arity"
 
--- deconPairSpread_x__l_p12: x, y = [(1, 2)]* \n x
+-- deconPairSpread_x__l_p12: x, y = ([(1, 2)]*) \n x
 def case_deconPairSpread_x__l_p12 : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.sequenceSpread (.listLiteral [(.capture [.num 1, .num 2])]))]), privateProp "x" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "x"])) [.resolve "$deconstruct$0"])]), privateProp "y" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "y"])) [.resolve "$deconstruct$0"])])] [.resolve "x"])
+  .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.capture [(.sequenceSpread (.listLiteral [(.capture [.num 1, .num 2])]))])]), privateProp "x" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "x"])) [.resolve "$deconstruct$0"])]), privateProp "y" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "y"])) [.resolve "$deconstruct$0"])])] [.resolve "x"])
 #guard obs case_deconPairSpread_x__l_p12 == "ok raw=1 n=1"
 
--- deconPairSpread_x__p_l12: x, y = ([1, 2], 3)* \n x
+-- deconPairSpread_x__p_l12: x, y = (([1, 2], 3)*) \n x
 def case_deconPairSpread_x__p_l12 : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.sequenceSpread (.capture [(.listLiteral [.num 1, .num 2]), .num 3]))]), privateProp "x" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "x"])) [.resolve "$deconstruct$0"])]), privateProp "y" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "y"])) [.resolve "$deconstruct$0"])])] [.resolve "x"])
+  .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.capture [(.sequenceSpread (.capture [(.listLiteral [.num 1, .num 2]), .num 3]))])]), privateProp "x" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "x"])) [.resolve "$deconstruct$0"])]), privateProp "y" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "y"])) [.resolve "$deconstruct$0"])])] [.resolve "x"])
 #guard obs case_deconPairSpread_x__p_l12 == "ok raw=L[1, 2] n=1"
 
--- deconPairSpread_x__pl1: x, y = ([1])* \n x
+-- deconPairSpread_x__pl1: x, y = (([1])*) \n x
 def case_deconPairSpread_x__pl1 : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.sequenceSpread (.listLiteral [.num 1]))]), privateProp "x" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "x"])) [.resolve "$deconstruct$0"])]), privateProp "y" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "y"])) [.resolve "$deconstruct$0"])])] [.resolve "x"])
+  .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.capture [(.sequenceSpread (.listLiteral [.num 1]))])]), privateProp "x" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "x"])) [.resolve "$deconstruct$0"])]), privateProp "y" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "y"])) [.resolve "$deconstruct$0"])])] [.resolve "x"])
 #guard obs case_deconPairSpread_x__pl1 == "err arity"
 
 -- deconCollect_t__e: h, *t = () \n t
@@ -2432,134 +2432,134 @@ def case_deconCollect_t__pl1 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.listLiteral [.num 1])]), privateProp "h" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [.param "h"])) [.resolve "$deconstruct$0"])]), privateProp "t" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [.param "t"])) [.resolve "$deconstruct$0"])])] [.resolve "t"])
 #guard obs case_deconCollect_t__pl1 == "ok raw=L[] n=1"
 
--- deconCollectSpread_t__e: h, *t = ()* \n t
+-- deconCollectSpread_t__e: h, *t = (()*) \n t
 def case_deconCollectSpread_t__e : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.sequenceSpread (.emptySequence 0))]), privateProp "h" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [.param "h"])) [.resolve "$deconstruct$0"])]), privateProp "t" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [.param "t"])) [.resolve "$deconstruct$0"])])] [.resolve "t"])
+  .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.capture [(.sequenceSpread (.emptySequence 0))])]), privateProp "h" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [.param "h"])) [.resolve "$deconstruct$0"])]), privateProp "t" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [.param "t"])) [.resolve "$deconstruct$0"])])] [.resolve "t"])
 #guard obs case_deconCollectSpread_t__e == "err arity"
 
--- deconCollectSpread_t__n0: h, *t = 0* \n t
+-- deconCollectSpread_t__n0: h, *t = (0*) \n t
 def case_deconCollectSpread_t__n0 : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.sequenceSpread (.num 0))]), privateProp "h" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [.param "h"])) [.resolve "$deconstruct$0"])]), privateProp "t" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [.param "t"])) [.resolve "$deconstruct$0"])])] [.resolve "t"])
+  .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.capture [(.sequenceSpread (.num 0))])]), privateProp "h" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [.param "h"])) [.resolve "$deconstruct$0"])]), privateProp "t" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [.param "t"])) [.resolve "$deconstruct$0"])])] [.resolve "t"])
 #guard obs case_deconCollectSpread_t__n0 == "ok raw=L[] n=1"
 
--- deconCollectSpread_t__n1: h, *t = 1* \n t
+-- deconCollectSpread_t__n1: h, *t = (1*) \n t
 def case_deconCollectSpread_t__n1 : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.sequenceSpread (.num 1))]), privateProp "h" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [.param "h"])) [.resolve "$deconstruct$0"])]), privateProp "t" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [.param "t"])) [.resolve "$deconstruct$0"])])] [.resolve "t"])
+  .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.capture [(.sequenceSpread (.num 1))])]), privateProp "h" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [.param "h"])) [.resolve "$deconstruct$0"])]), privateProp "t" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [.param "t"])) [.resolve "$deconstruct$0"])])] [.resolve "t"])
 #guard obs case_deconCollectSpread_t__n1 == "ok raw=L[] n=1"
 
--- deconCollectSpread_t__p1: h, *t = (1)* \n t
+-- deconCollectSpread_t__p1: h, *t = ((1)*) \n t
 def case_deconCollectSpread_t__p1 : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.sequenceSpread (.num 1))]), privateProp "h" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [.param "h"])) [.resolve "$deconstruct$0"])]), privateProp "t" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [.param "t"])) [.resolve "$deconstruct$0"])])] [.resolve "t"])
+  .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.capture [(.sequenceSpread (.num 1))])]), privateProp "h" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [.param "h"])) [.resolve "$deconstruct$0"])]), privateProp "t" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [.param "t"])) [.resolve "$deconstruct$0"])])] [.resolve "t"])
 #guard obs case_deconCollectSpread_t__p1 == "ok raw=L[] n=1"
 
--- deconCollectSpread_t__p12: h, *t = (1, 2)* \n t
+-- deconCollectSpread_t__p12: h, *t = ((1, 2)*) \n t
 def case_deconCollectSpread_t__p12 : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.sequenceSpread (.capture [.num 1, .num 2]))]), privateProp "h" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [.param "h"])) [.resolve "$deconstruct$0"])]), privateProp "t" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [.param "t"])) [.resolve "$deconstruct$0"])])] [.resolve "t"])
+  .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.capture [(.sequenceSpread (.capture [.num 1, .num 2]))])]), privateProp "h" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [.param "h"])) [.resolve "$deconstruct$0"])]), privateProp "t" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [.param "t"])) [.resolve "$deconstruct$0"])])] [.resolve "t"])
 #guard obs case_deconCollectSpread_t__p12 == "ok raw=L[2] n=1"
 
--- deconCollectSpread_t__p123: h, *t = (1, 2, 3)* \n t
+-- deconCollectSpread_t__p123: h, *t = ((1, 2, 3)*) \n t
 def case_deconCollectSpread_t__p123 : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.sequenceSpread (.capture [.num 1, .num 2, .num 3]))]), privateProp "h" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [.param "h"])) [.resolve "$deconstruct$0"])]), privateProp "t" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [.param "t"])) [.resolve "$deconstruct$0"])])] [.resolve "t"])
+  .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.capture [(.sequenceSpread (.capture [.num 1, .num 2, .num 3]))])]), privateProp "h" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [.param "h"])) [.resolve "$deconstruct$0"])]), privateProp "t" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [.param "t"])) [.resolve "$deconstruct$0"])])] [.resolve "t"])
 #guard obs case_deconCollectSpread_t__p123 == "ok raw=L[2, 3] n=1"
 
--- deconCollectSpread_t__pee: h, *t = ((), ())* \n t
+-- deconCollectSpread_t__pee: h, *t = (((), ())*) \n t
 def case_deconCollectSpread_t__pee : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.sequenceSpread (.capture [(.emptySequence 0), (.emptySequence 0)]))]), privateProp "h" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [.param "h"])) [.resolve "$deconstruct$0"])]), privateProp "t" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [.param "t"])) [.resolve "$deconstruct$0"])])] [.resolve "t"])
+  .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.capture [(.sequenceSpread (.capture [(.emptySequence 0), (.emptySequence 0)]))])]), privateProp "h" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [.param "h"])) [.resolve "$deconstruct$0"])]), privateProp "t" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [.param "t"])) [.resolve "$deconstruct$0"])])] [.resolve "t"])
 #guard obs case_deconCollectSpread_t__pee == "ok raw=L[S[]] n=1"
 
--- deconCollectSpread_t__pe1: h, *t = ((), 1)* \n t
+-- deconCollectSpread_t__pe1: h, *t = (((), 1)*) \n t
 def case_deconCollectSpread_t__pe1 : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.sequenceSpread (.capture [(.emptySequence 0), .num 1]))]), privateProp "h" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [.param "h"])) [.resolve "$deconstruct$0"])]), privateProp "t" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [.param "t"])) [.resolve "$deconstruct$0"])])] [.resolve "t"])
+  .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.capture [(.sequenceSpread (.capture [(.emptySequence 0), .num 1]))])]), privateProp "h" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [.param "h"])) [.resolve "$deconstruct$0"])]), privateProp "t" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [.param "t"])) [.resolve "$deconstruct$0"])])] [.resolve "t"])
 #guard obs case_deconCollectSpread_t__pe1 == "ok raw=L[1] n=1"
 
--- deconCollectSpread_t__p1e: h, *t = (1, ())* \n t
+-- deconCollectSpread_t__p1e: h, *t = ((1, ())*) \n t
 def case_deconCollectSpread_t__p1e : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.sequenceSpread (.capture [.num 1, (.emptySequence 0)]))]), privateProp "h" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [.param "h"])) [.resolve "$deconstruct$0"])]), privateProp "t" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [.param "t"])) [.resolve "$deconstruct$0"])])] [.resolve "t"])
+  .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.capture [(.sequenceSpread (.capture [.num 1, (.emptySequence 0)]))])]), privateProp "h" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [.param "h"])) [.resolve "$deconstruct$0"])]), privateProp "t" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [.param "t"])) [.resolve "$deconstruct$0"])])] [.resolve "t"])
 #guard obs case_deconCollectSpread_t__p1e == "ok raw=L[S[]] n=1"
 
--- deconCollectSpread_t__p12_3: h, *t = ((1, 2), 3)* \n t
+-- deconCollectSpread_t__p12_3: h, *t = (((1, 2), 3)*) \n t
 def case_deconCollectSpread_t__p12_3 : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.sequenceSpread (.capture [(.capture [.num 1, .num 2]), .num 3]))]), privateProp "h" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [.param "h"])) [.resolve "$deconstruct$0"])]), privateProp "t" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [.param "t"])) [.resolve "$deconstruct$0"])])] [.resolve "t"])
+  .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.capture [(.sequenceSpread (.capture [(.capture [.num 1, .num 2]), .num 3]))])]), privateProp "h" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [.param "h"])) [.resolve "$deconstruct$0"])]), privateProp "t" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [.param "t"])) [.resolve "$deconstruct$0"])])] [.resolve "t"])
 #guard obs case_deconCollectSpread_t__p12_3 == "ok raw=L[3] n=1"
 
--- deconCollectSpread_t__p12_34: h, *t = ((1, 2), (3, 4))* \n t
+-- deconCollectSpread_t__p12_34: h, *t = (((1, 2), (3, 4))*) \n t
 def case_deconCollectSpread_t__p12_34 : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.sequenceSpread (.capture [(.capture [.num 1, .num 2]), (.capture [.num 3, .num 4])]))]), privateProp "h" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [.param "h"])) [.resolve "$deconstruct$0"])]), privateProp "t" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [.param "t"])) [.resolve "$deconstruct$0"])])] [.resolve "t"])
+  .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.capture [(.sequenceSpread (.capture [(.capture [.num 1, .num 2]), (.capture [.num 3, .num 4])]))])]), privateProp "h" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [.param "h"])) [.resolve "$deconstruct$0"])]), privateProp "t" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [.param "t"])) [.resolve "$deconstruct$0"])])] [.resolve "t"])
 #guard obs case_deconCollectSpread_t__p12_34 == "ok raw=L[S[3, 4]] n=1"
 
--- deconCollectSpread_t__pe_12: h, *t = ((), (1, 2))* \n t
+-- deconCollectSpread_t__pe_12: h, *t = (((), (1, 2))*) \n t
 def case_deconCollectSpread_t__pe_12 : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.sequenceSpread (.capture [(.emptySequence 0), (.capture [.num 1, .num 2])]))]), privateProp "h" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [.param "h"])) [.resolve "$deconstruct$0"])]), privateProp "t" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [.param "t"])) [.resolve "$deconstruct$0"])])] [.resolve "t"])
+  .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.capture [(.sequenceSpread (.capture [(.emptySequence 0), (.capture [.num 1, .num 2])]))])]), privateProp "h" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [.param "h"])) [.resolve "$deconstruct$0"])]), privateProp "t" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [.param "t"])) [.resolve "$deconstruct$0"])])] [.resolve "t"])
 #guard obs case_deconCollectSpread_t__pe_12 == "ok raw=L[S[1, 2]] n=1"
 
--- deconCollectSpread_t__ppe1_2: h, *t = (((), 1), 2)* \n t
+-- deconCollectSpread_t__ppe1_2: h, *t = ((((), 1), 2)*) \n t
 def case_deconCollectSpread_t__ppe1_2 : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.sequenceSpread (.capture [(.capture [(.emptySequence 0), .num 1]), .num 2]))]), privateProp "h" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [.param "h"])) [.resolve "$deconstruct$0"])]), privateProp "t" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [.param "t"])) [.resolve "$deconstruct$0"])])] [.resolve "t"])
+  .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.capture [(.sequenceSpread (.capture [(.capture [(.emptySequence 0), .num 1]), .num 2]))])]), privateProp "h" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [.param "h"])) [.resolve "$deconstruct$0"])]), privateProp "t" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [.param "t"])) [.resolve "$deconstruct$0"])])] [.resolve "t"])
 #guard obs case_deconCollectSpread_t__ppe1_2 == "ok raw=L[2] n=1"
 
--- deconCollectSpread_t__p12_e: h, *t = ((1, 2), ())* \n t
+-- deconCollectSpread_t__p12_e: h, *t = (((1, 2), ())*) \n t
 def case_deconCollectSpread_t__p12_e : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.sequenceSpread (.capture [(.capture [.num 1, .num 2]), (.emptySequence 0)]))]), privateProp "h" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [.param "h"])) [.resolve "$deconstruct$0"])]), privateProp "t" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [.param "t"])) [.resolve "$deconstruct$0"])])] [.resolve "t"])
+  .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.capture [(.sequenceSpread (.capture [(.capture [.num 1, .num 2]), (.emptySequence 0)]))])]), privateProp "h" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [.param "h"])) [.resolve "$deconstruct$0"])]), privateProp "t" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [.param "t"])) [.resolve "$deconstruct$0"])])] [.resolve "t"])
 #guard obs case_deconCollectSpread_t__p12_e == "ok raw=L[S[]] n=1"
 
--- deconCollectSpread_t__ppe: h, *t = (())* \n t
+-- deconCollectSpread_t__ppe: h, *t = ((())*) \n t
 def case_deconCollectSpread_t__ppe : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.sequenceSpread (.emptySequence 0))]), privateProp "h" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [.param "h"])) [.resolve "$deconstruct$0"])]), privateProp "t" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [.param "t"])) [.resolve "$deconstruct$0"])])] [.resolve "t"])
+  .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.capture [(.sequenceSpread (.emptySequence 0))])]), privateProp "h" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [.param "h"])) [.resolve "$deconstruct$0"])]), privateProp "t" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [.param "t"])) [.resolve "$deconstruct$0"])])] [.resolve "t"])
 #guard obs case_deconCollectSpread_t__ppe == "err arity"
 
--- deconCollectSpread_t__pp1: h, *t = ((1))* \n t
+-- deconCollectSpread_t__pp1: h, *t = (((1))*) \n t
 def case_deconCollectSpread_t__pp1 : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.sequenceSpread (.num 1))]), privateProp "h" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [.param "h"])) [.resolve "$deconstruct$0"])]), privateProp "t" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [.param "t"])) [.resolve "$deconstruct$0"])])] [.resolve "t"])
+  .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.capture [(.sequenceSpread (.num 1))])]), privateProp "h" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [.param "h"])) [.resolve "$deconstruct$0"])]), privateProp "t" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [.param "t"])) [.resolve "$deconstruct$0"])])] [.resolve "t"])
 #guard obs case_deconCollectSpread_t__pp1 == "ok raw=L[] n=1"
 
--- deconCollectSpread_t__ppp12: h, *t = (((1, 2)))* \n t
+-- deconCollectSpread_t__ppp12: h, *t = ((((1, 2)))*) \n t
 def case_deconCollectSpread_t__ppp12 : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.sequenceSpread (.capture [(.capture [(.capture [.num 1, .num 2])])]))]), privateProp "h" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [.param "h"])) [.resolve "$deconstruct$0"])]), privateProp "t" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [.param "t"])) [.resolve "$deconstruct$0"])])] [.resolve "t"])
+  .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.capture [(.sequenceSpread (.capture [(.capture [(.capture [.num 1, .num 2])])]))])]), privateProp "h" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [.param "h"])) [.resolve "$deconstruct$0"])]), privateProp "t" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [.param "t"])) [.resolve "$deconstruct$0"])])] [.resolve "t"])
 #guard obs case_deconCollectSpread_t__ppp12 == "ok raw=L[2] n=1"
 
--- deconCollectSpread_t__le: h, *t = []* \n t
+-- deconCollectSpread_t__le: h, *t = ([]*) \n t
 def case_deconCollectSpread_t__le : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.sequenceSpread (.listLiteral []))]), privateProp "h" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [.param "h"])) [.resolve "$deconstruct$0"])]), privateProp "t" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [.param "t"])) [.resolve "$deconstruct$0"])])] [.resolve "t"])
+  .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.capture [(.sequenceSpread (.listLiteral []))])]), privateProp "h" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [.param "h"])) [.resolve "$deconstruct$0"])]), privateProp "t" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [.param "t"])) [.resolve "$deconstruct$0"])])] [.resolve "t"])
 #guard obs case_deconCollectSpread_t__le == "err arity"
 
--- deconCollectSpread_t__l7: h, *t = [7]* \n t
+-- deconCollectSpread_t__l7: h, *t = ([7]*) \n t
 def case_deconCollectSpread_t__l7 : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.sequenceSpread (.listLiteral [.num 7]))]), privateProp "h" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [.param "h"])) [.resolve "$deconstruct$0"])]), privateProp "t" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [.param "t"])) [.resolve "$deconstruct$0"])])] [.resolve "t"])
+  .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.capture [(.sequenceSpread (.listLiteral [.num 7]))])]), privateProp "h" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [.param "h"])) [.resolve "$deconstruct$0"])]), privateProp "t" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [.param "t"])) [.resolve "$deconstruct$0"])])] [.resolve "t"])
 #guard obs case_deconCollectSpread_t__l7 == "ok raw=L[] n=1"
 
--- deconCollectSpread_t__l12: h, *t = [1, 2]* \n t
+-- deconCollectSpread_t__l12: h, *t = ([1, 2]*) \n t
 def case_deconCollectSpread_t__l12 : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.sequenceSpread (.listLiteral [.num 1, .num 2]))]), privateProp "h" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [.param "h"])) [.resolve "$deconstruct$0"])]), privateProp "t" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [.param "t"])) [.resolve "$deconstruct$0"])])] [.resolve "t"])
+  .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.capture [(.sequenceSpread (.listLiteral [.num 1, .num 2]))])]), privateProp "h" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [.param "h"])) [.resolve "$deconstruct$0"])]), privateProp "t" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [.param "t"])) [.resolve "$deconstruct$0"])])] [.resolve "t"])
 #guard obs case_deconCollectSpread_t__l12 == "ok raw=L[2] n=1"
 
--- deconCollectSpread_t__l12_3: h, *t = [[1, 2], 3]* \n t
+-- deconCollectSpread_t__l12_3: h, *t = ([[1, 2], 3]*) \n t
 def case_deconCollectSpread_t__l12_3 : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.sequenceSpread (.listLiteral [(.listLiteral [.num 1, .num 2]), .num 3]))]), privateProp "h" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [.param "h"])) [.resolve "$deconstruct$0"])]), privateProp "t" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [.param "t"])) [.resolve "$deconstruct$0"])])] [.resolve "t"])
+  .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.capture [(.sequenceSpread (.listLiteral [(.listLiteral [.num 1, .num 2]), .num 3]))])]), privateProp "h" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [.param "h"])) [.resolve "$deconstruct$0"])]), privateProp "t" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [.param "t"])) [.resolve "$deconstruct$0"])])] [.resolve "t"])
 #guard obs case_deconCollectSpread_t__l12_3 == "ok raw=L[3] n=1"
 
--- deconCollectSpread_t__lle: h, *t = [[]]* \n t
+-- deconCollectSpread_t__lle: h, *t = ([[]]*) \n t
 def case_deconCollectSpread_t__lle : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.sequenceSpread (.listLiteral [(.listLiteral [])]))]), privateProp "h" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [.param "h"])) [.resolve "$deconstruct$0"])]), privateProp "t" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [.param "t"])) [.resolve "$deconstruct$0"])])] [.resolve "t"])
+  .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.capture [(.sequenceSpread (.listLiteral [(.listLiteral [])]))])]), privateProp "h" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [.param "h"])) [.resolve "$deconstruct$0"])]), privateProp "t" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [.param "t"])) [.resolve "$deconstruct$0"])])] [.resolve "t"])
 #guard obs case_deconCollectSpread_t__lle == "err arity"
 
--- deconCollectSpread_t__l_e: h, *t = [()]* \n t
+-- deconCollectSpread_t__l_e: h, *t = ([()]*) \n t
 def case_deconCollectSpread_t__l_e : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.sequenceSpread (.listLiteral [(.emptySequence 0)]))]), privateProp "h" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [.param "h"])) [.resolve "$deconstruct$0"])]), privateProp "t" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [.param "t"])) [.resolve "$deconstruct$0"])])] [.resolve "t"])
+  .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.capture [(.sequenceSpread (.listLiteral [(.emptySequence 0)]))])]), privateProp "h" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [.param "h"])) [.resolve "$deconstruct$0"])]), privateProp "t" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [.param "t"])) [.resolve "$deconstruct$0"])])] [.resolve "t"])
 #guard obs case_deconCollectSpread_t__l_e == "err arity"
 
--- deconCollectSpread_t__l_p12: h, *t = [(1, 2)]* \n t
+-- deconCollectSpread_t__l_p12: h, *t = ([(1, 2)]*) \n t
 def case_deconCollectSpread_t__l_p12 : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.sequenceSpread (.listLiteral [(.capture [.num 1, .num 2])]))]), privateProp "h" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [.param "h"])) [.resolve "$deconstruct$0"])]), privateProp "t" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [.param "t"])) [.resolve "$deconstruct$0"])])] [.resolve "t"])
+  .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.capture [(.sequenceSpread (.listLiteral [(.capture [.num 1, .num 2])]))])]), privateProp "h" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [.param "h"])) [.resolve "$deconstruct$0"])]), privateProp "t" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [.param "t"])) [.resolve "$deconstruct$0"])])] [.resolve "t"])
 #guard obs case_deconCollectSpread_t__l_p12 == "ok raw=L[2] n=1"
 
--- deconCollectSpread_t__p_l12: h, *t = ([1, 2], 3)* \n t
+-- deconCollectSpread_t__p_l12: h, *t = (([1, 2], 3)*) \n t
 def case_deconCollectSpread_t__p_l12 : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.sequenceSpread (.capture [(.listLiteral [.num 1, .num 2]), .num 3]))]), privateProp "h" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [.param "h"])) [.resolve "$deconstruct$0"])]), privateProp "t" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [.param "t"])) [.resolve "$deconstruct$0"])])] [.resolve "t"])
+  .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.capture [(.sequenceSpread (.capture [(.listLiteral [.num 1, .num 2]), .num 3]))])]), privateProp "h" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [.param "h"])) [.resolve "$deconstruct$0"])]), privateProp "t" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [.param "t"])) [.resolve "$deconstruct$0"])])] [.resolve "t"])
 #guard obs case_deconCollectSpread_t__p_l12 == "ok raw=L[3] n=1"
 
--- deconCollectSpread_t__pl1: h, *t = ([1])* \n t
+-- deconCollectSpread_t__pl1: h, *t = (([1])*) \n t
 def case_deconCollectSpread_t__pl1 : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.sequenceSpread (.listLiteral [.num 1]))]), privateProp "h" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [.param "h"])) [.resolve "$deconstruct$0"])]), privateProp "t" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [.param "t"])) [.resolve "$deconstruct$0"])])] [.resolve "t"])
+  .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.capture [(.sequenceSpread (.listLiteral [.num 1]))])]), privateProp "h" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [.param "h"])) [.resolve "$deconstruct$0"])]), privateProp "t" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [.param "t"])) [.resolve "$deconstruct$0"])])] [.resolve "t"])
 #guard obs case_deconCollectSpread_t__pl1 == "ok raw=L[] n=1"
 
 -- deconPrefix_p__e: *p, z = () \n p
@@ -6852,134 +6852,134 @@ def case_collectingStacked__pl1 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "F" (algWithParameters [{ name := "a", kind := .collecting }] [] [] [.param "a"])] [(.call (.resolve "F") [(.sequenceSpread (.sequenceSpread (.listLiteral [.num 1])))])])
 #guard obs case_collectingStacked__pl1 == "ok raw=L[1] n=1"
 
--- captureStacked__e: x = ()** \n x
+-- captureStacked__e: x = (()**) \n x
 def case_captureStacked__e : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.sequenceSpread (.sequenceSpread (.emptySequence 0)))])] [.resolve "x"])
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [(.sequenceSpread (.sequenceSpread (.emptySequence 0)))])])] [.resolve "x"])
 #guard obs case_captureStacked__e == "ok raw=S[] n=1"
 
--- captureStacked__n0: x = 0** \n x
+-- captureStacked__n0: x = (0**) \n x
 def case_captureStacked__n0 : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.sequenceSpread (.sequenceSpread (.num 0)))])] [.resolve "x"])
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [(.sequenceSpread (.sequenceSpread (.num 0)))])])] [.resolve "x"])
 #guard obs case_captureStacked__n0 == "ok raw=0 n=1"
 
--- captureStacked__n1: x = 1** \n x
+-- captureStacked__n1: x = (1**) \n x
 def case_captureStacked__n1 : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.sequenceSpread (.sequenceSpread (.num 1)))])] [.resolve "x"])
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [(.sequenceSpread (.sequenceSpread (.num 1)))])])] [.resolve "x"])
 #guard obs case_captureStacked__n1 == "ok raw=1 n=1"
 
--- captureStacked__p1: x = (1)** \n x
+-- captureStacked__p1: x = ((1)**) \n x
 def case_captureStacked__p1 : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.sequenceSpread (.sequenceSpread (.num 1)))])] [.resolve "x"])
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [(.sequenceSpread (.sequenceSpread (.num 1)))])])] [.resolve "x"])
 #guard obs case_captureStacked__p1 == "ok raw=1 n=1"
 
--- captureStacked__p12: x = (1, 2)** \n x
+-- captureStacked__p12: x = ((1, 2)**) \n x
 def case_captureStacked__p12 : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.sequenceSpread (.sequenceSpread (.capture [.num 1, .num 2])))])] [.resolve "x"])
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [(.sequenceSpread (.sequenceSpread (.capture [.num 1, .num 2])))])])] [.resolve "x"])
 #guard obs case_captureStacked__p12 == "ok raw=S[1, 2] n=1"
 
--- captureStacked__p123: x = (1, 2, 3)** \n x
+-- captureStacked__p123: x = ((1, 2, 3)**) \n x
 def case_captureStacked__p123 : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.sequenceSpread (.sequenceSpread (.capture [.num 1, .num 2, .num 3])))])] [.resolve "x"])
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [(.sequenceSpread (.sequenceSpread (.capture [.num 1, .num 2, .num 3])))])])] [.resolve "x"])
 #guard obs case_captureStacked__p123 == "ok raw=S[1, 2, 3] n=1"
 
--- captureStacked__pee: x = ((), ())** \n x
+-- captureStacked__pee: x = (((), ())**) \n x
 def case_captureStacked__pee : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.sequenceSpread (.sequenceSpread (.capture [(.emptySequence 0), (.emptySequence 0)])))])] [.resolve "x"])
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [(.sequenceSpread (.sequenceSpread (.capture [(.emptySequence 0), (.emptySequence 0)])))])])] [.resolve "x"])
 #guard obs case_captureStacked__pee == "ok raw=S[S[], S[]] n=1"
 
--- captureStacked__pe1: x = ((), 1)** \n x
+-- captureStacked__pe1: x = (((), 1)**) \n x
 def case_captureStacked__pe1 : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.sequenceSpread (.sequenceSpread (.capture [(.emptySequence 0), .num 1])))])] [.resolve "x"])
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [(.sequenceSpread (.sequenceSpread (.capture [(.emptySequence 0), .num 1])))])])] [.resolve "x"])
 #guard obs case_captureStacked__pe1 == "ok raw=S[S[], 1] n=1"
 
--- captureStacked__p1e: x = (1, ())** \n x
+-- captureStacked__p1e: x = ((1, ())**) \n x
 def case_captureStacked__p1e : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.sequenceSpread (.sequenceSpread (.capture [.num 1, (.emptySequence 0)])))])] [.resolve "x"])
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [(.sequenceSpread (.sequenceSpread (.capture [.num 1, (.emptySequence 0)])))])])] [.resolve "x"])
 #guard obs case_captureStacked__p1e == "ok raw=S[1, S[]] n=1"
 
--- captureStacked__p12_3: x = ((1, 2), 3)** \n x
+-- captureStacked__p12_3: x = (((1, 2), 3)**) \n x
 def case_captureStacked__p12_3 : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.sequenceSpread (.sequenceSpread (.capture [(.capture [.num 1, .num 2]), .num 3])))])] [.resolve "x"])
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [(.sequenceSpread (.sequenceSpread (.capture [(.capture [.num 1, .num 2]), .num 3])))])])] [.resolve "x"])
 #guard obs case_captureStacked__p12_3 == "ok raw=S[S[1, 2], 3] n=1"
 
--- captureStacked__p12_34: x = ((1, 2), (3, 4))** \n x
+-- captureStacked__p12_34: x = (((1, 2), (3, 4))**) \n x
 def case_captureStacked__p12_34 : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.sequenceSpread (.sequenceSpread (.capture [(.capture [.num 1, .num 2]), (.capture [.num 3, .num 4])])))])] [.resolve "x"])
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [(.sequenceSpread (.sequenceSpread (.capture [(.capture [.num 1, .num 2]), (.capture [.num 3, .num 4])])))])])] [.resolve "x"])
 #guard obs case_captureStacked__p12_34 == "ok raw=S[S[1, 2], S[3, 4]] n=1"
 
--- captureStacked__pe_12: x = ((), (1, 2))** \n x
+-- captureStacked__pe_12: x = (((), (1, 2))**) \n x
 def case_captureStacked__pe_12 : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.sequenceSpread (.sequenceSpread (.capture [(.emptySequence 0), (.capture [.num 1, .num 2])])))])] [.resolve "x"])
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [(.sequenceSpread (.sequenceSpread (.capture [(.emptySequence 0), (.capture [.num 1, .num 2])])))])])] [.resolve "x"])
 #guard obs case_captureStacked__pe_12 == "ok raw=S[S[], S[1, 2]] n=1"
 
--- captureStacked__ppe1_2: x = (((), 1), 2)** \n x
+-- captureStacked__ppe1_2: x = ((((), 1), 2)**) \n x
 def case_captureStacked__ppe1_2 : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.sequenceSpread (.sequenceSpread (.capture [(.capture [(.emptySequence 0), .num 1]), .num 2])))])] [.resolve "x"])
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [(.sequenceSpread (.sequenceSpread (.capture [(.capture [(.emptySequence 0), .num 1]), .num 2])))])])] [.resolve "x"])
 #guard obs case_captureStacked__ppe1_2 == "ok raw=S[S[S[], 1], 2] n=1"
 
--- captureStacked__p12_e: x = ((1, 2), ())** \n x
+-- captureStacked__p12_e: x = (((1, 2), ())**) \n x
 def case_captureStacked__p12_e : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.sequenceSpread (.sequenceSpread (.capture [(.capture [.num 1, .num 2]), (.emptySequence 0)])))])] [.resolve "x"])
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [(.sequenceSpread (.sequenceSpread (.capture [(.capture [.num 1, .num 2]), (.emptySequence 0)])))])])] [.resolve "x"])
 #guard obs case_captureStacked__p12_e == "ok raw=S[S[1, 2], S[]] n=1"
 
--- captureStacked__ppe: x = (())** \n x
+-- captureStacked__ppe: x = ((())**) \n x
 def case_captureStacked__ppe : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.sequenceSpread (.sequenceSpread (.emptySequence 0)))])] [.resolve "x"])
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [(.sequenceSpread (.sequenceSpread (.emptySequence 0)))])])] [.resolve "x"])
 #guard obs case_captureStacked__ppe == "ok raw=S[] n=1"
 
--- captureStacked__pp1: x = ((1))** \n x
+-- captureStacked__pp1: x = (((1))**) \n x
 def case_captureStacked__pp1 : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.sequenceSpread (.sequenceSpread (.num 1)))])] [.resolve "x"])
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [(.sequenceSpread (.sequenceSpread (.num 1)))])])] [.resolve "x"])
 #guard obs case_captureStacked__pp1 == "ok raw=1 n=1"
 
--- captureStacked__ppp12: x = (((1, 2)))** \n x
+-- captureStacked__ppp12: x = ((((1, 2)))**) \n x
 def case_captureStacked__ppp12 : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.sequenceSpread (.sequenceSpread (.capture [(.capture [(.capture [.num 1, .num 2])])])))])] [.resolve "x"])
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [(.sequenceSpread (.sequenceSpread (.capture [(.capture [(.capture [.num 1, .num 2])])])))])])] [.resolve "x"])
 #guard obs case_captureStacked__ppp12 == "ok raw=S[1, 2] n=1"
 
--- captureStacked__le: x = []** \n x
+-- captureStacked__le: x = ([]**) \n x
 def case_captureStacked__le : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.sequenceSpread (.sequenceSpread (.listLiteral [])))])] [.resolve "x"])
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [(.sequenceSpread (.sequenceSpread (.listLiteral [])))])])] [.resolve "x"])
 #guard obs case_captureStacked__le == "ok raw=S[] n=1"
 
--- captureStacked__l7: x = [7]** \n x
+-- captureStacked__l7: x = ([7]**) \n x
 def case_captureStacked__l7 : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.sequenceSpread (.sequenceSpread (.listLiteral [.num 7])))])] [.resolve "x"])
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [(.sequenceSpread (.sequenceSpread (.listLiteral [.num 7])))])])] [.resolve "x"])
 #guard obs case_captureStacked__l7 == "ok raw=7 n=1"
 
--- captureStacked__l12: x = [1, 2]** \n x
+-- captureStacked__l12: x = ([1, 2]**) \n x
 def case_captureStacked__l12 : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.sequenceSpread (.sequenceSpread (.listLiteral [.num 1, .num 2])))])] [.resolve "x"])
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [(.sequenceSpread (.sequenceSpread (.listLiteral [.num 1, .num 2])))])])] [.resolve "x"])
 #guard obs case_captureStacked__l12 == "ok raw=S[1, 2] n=1"
 
--- captureStacked__l12_3: x = [[1, 2], 3]** \n x
+-- captureStacked__l12_3: x = ([[1, 2], 3]**) \n x
 def case_captureStacked__l12_3 : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.sequenceSpread (.sequenceSpread (.listLiteral [(.listLiteral [.num 1, .num 2]), .num 3])))])] [.resolve "x"])
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [(.sequenceSpread (.sequenceSpread (.listLiteral [(.listLiteral [.num 1, .num 2]), .num 3])))])])] [.resolve "x"])
 #guard obs case_captureStacked__l12_3 == "ok raw=S[L[1, 2], 3] n=1"
 
--- captureStacked__lle: x = [[]]** \n x
+-- captureStacked__lle: x = ([[]]**) \n x
 def case_captureStacked__lle : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.sequenceSpread (.sequenceSpread (.listLiteral [(.listLiteral [])])))])] [.resolve "x"])
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [(.sequenceSpread (.sequenceSpread (.listLiteral [(.listLiteral [])])))])])] [.resolve "x"])
 #guard obs case_captureStacked__lle == "ok raw=S[] n=1"
 
--- captureStacked__l_e: x = [()]** \n x
+-- captureStacked__l_e: x = ([()]**) \n x
 def case_captureStacked__l_e : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.sequenceSpread (.sequenceSpread (.listLiteral [(.emptySequence 0)])))])] [.resolve "x"])
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [(.sequenceSpread (.sequenceSpread (.listLiteral [(.emptySequence 0)])))])])] [.resolve "x"])
 #guard obs case_captureStacked__l_e == "ok raw=S[] n=1"
 
--- captureStacked__l_p12: x = [(1, 2)]** \n x
+-- captureStacked__l_p12: x = ([(1, 2)]**) \n x
 def case_captureStacked__l_p12 : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.sequenceSpread (.sequenceSpread (.listLiteral [(.capture [.num 1, .num 2])])))])] [.resolve "x"])
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [(.sequenceSpread (.sequenceSpread (.listLiteral [(.capture [.num 1, .num 2])])))])])] [.resolve "x"])
 #guard obs case_captureStacked__l_p12 == "ok raw=S[1, 2] n=1"
 
--- captureStacked__p_l12: x = ([1, 2], 3)** \n x
+-- captureStacked__p_l12: x = (([1, 2], 3)**) \n x
 def case_captureStacked__p_l12 : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.sequenceSpread (.sequenceSpread (.capture [(.listLiteral [.num 1, .num 2]), .num 3])))])] [.resolve "x"])
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [(.sequenceSpread (.sequenceSpread (.capture [(.listLiteral [.num 1, .num 2]), .num 3])))])])] [.resolve "x"])
 #guard obs case_captureStacked__p_l12 == "ok raw=S[L[1, 2], 3] n=1"
 
--- captureStacked__pl1: x = ([1])** \n x
+-- captureStacked__pl1: x = (([1])**) \n x
 def case_captureStacked__pl1 : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.sequenceSpread (.sequenceSpread (.listLiteral [.num 1])))])] [.resolve "x"])
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [(.sequenceSpread (.sequenceSpread (.listLiteral [.num 1])))])])] [.resolve "x"])
 #guard obs case_captureStacked__pl1 == "ok raw=1 n=1"
 
 -- special__multiProp: P = 1, 2, 3 \n P
@@ -7402,7 +7402,7 @@ def case_special__listWrapCanonicalizes : Expr :=
   .algorithmExpr (alg [] [] [] [(.binary .eq (.listLiteral [.num 1, .num 2]) (.listLiteral [.num 1, .num 2]))])
 #guard obs case_special__listWrapCanonicalizes == "ok raw=1 n=1"
 
--- special__listSpreadCaptureRoundTrip: A = [1, 2, 3] \n B = A* \n B == (1, 2, 3)
+-- special__listSpreadCaptureRoundTrip: A = [1, 2, 3] \n B = { A* } \n B == (1, 2, 3)
 def case_special__listSpreadCaptureRoundTrip : Expr :=
   .algorithmExpr (alg [] [] [privateProp "A" (alg [] [] [] [(.listLiteral [.num 1, .num 2, .num 3])]), privateProp "B" (alg [] [] [] [(.sequenceSpread (.resolve "A"))])] [(.binary .eq (.resolve "B") (.capture [.num 1, .num 2, .num 3]))])
 #guard obs case_special__listSpreadCaptureRoundTrip == "ok raw=1 n=1"
