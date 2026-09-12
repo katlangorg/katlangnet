@@ -325,7 +325,7 @@ public class ChainedDotStructuralPrecedenceTests
             (localOnly.ObjectDesc, localOnly.PropertyName, localOnly.Exposure));
 
         // Exactly the error that evaluating the intermediate edge itself reports.
-        Assert.Equal(localOnly, InnermostErrorOf(LocalOnlyIntermediate + "\nG.Sub"));
+        Assert.Equal(localOnly with { Span = null }, InnermostErrorOf(LocalOnlyIntermediate + "\nG.Sub"));
     }
 
     [Fact]
@@ -335,6 +335,46 @@ public class ChainedDotStructuralPrecedenceTests
         var localOnly = Assert.IsType<EvalError.LocalOnlyProperty>(chained);
         Assert.Equal(("C", "Q", PropertyExposure.LocalOnlyConditionalAlgorithm),
             (localOnly.ObjectDesc, localOnly.PropertyName, localOnly.Exposure));
+    }
+
+    [Theory]
+    [InlineData(LocalOnlyIntermediate, "G.Sub", "\n    .Q")]
+    [InlineData(LocalOnlyIntermediate, "G.Sub", "\n    .Q.R")]
+    [InlineData(LocalOnlyIntermediate, "G.Sub", "\n    .filter({x > 0}).count")]
+    [InlineData(ConditionalIntermediate, "C.Q", "\n    .R")]
+    [InlineData(ConditionalIntermediate, "C.Q", "\n    .R.S")]
+    [InlineData(ConditionalIntermediate, "C.Q", "\n    .filter({x > 0}).count")]
+    public async Task InaccessibleIntermediate_PreservesTheFailingEdgeSpan(
+        string declarations, string receiver, string tail)
+    {
+        // Keep every tail name bound so the root's unresolved-input check
+        // cannot pre-empt the structural failure under test.
+        var prefix = declarations + "\nR(v) = 99\nS(v) = 99\n";
+        var direct = EvalFull(prefix + receiver);
+        Assert.True(direct.IsError);
+        var expected = Assert.IsType<EvalError.LocalOnlyProperty>(Innermost(direct.Error));
+        Assert.NotNull(direct.Error.Span);
+
+        var ast = AsyncEvaluationHarness.Ast(prefix + receiver + tail);
+        var plain = Evaluator.Run(ast);
+        Assert.True(plain.IsError);
+        Assert.Equal(direct.Error.Span, plain.Error.Span);
+
+        foreach (var optimized in new[] { false, true })
+        {
+            var (counted, _) = Evaluator.RunCountedObserved(ast, enableOptimizations: optimized);
+            Assert.True(counted.IsError);
+            var error = Assert.IsType<EvalError.LocalOnlyProperty>(Innermost(counted.Error));
+            Assert.Equal((expected.ObjectDesc, expected.PropertyName, expected.Exposure),
+                (error.ObjectDesc, error.PropertyName, error.Exposure));
+            Assert.Equal(direct.Error.Span, counted.Error.Span);
+        }
+
+        var (twin, _) = await AsyncEvaluationHarness.Complete(Evaluator.RunCountedObservedAsync(
+            ast, zeroArgPropertyResultCache: new PassThroughAsyncZeroArgPropertyResultCache()));
+        Assert.True(twin.IsError);
+        Assert.IsType<EvalError.LocalOnlyProperty>(Innermost(twin.Error));
+        Assert.Equal(direct.Error.Span, twin.Error.Span);
     }
 
     [Fact]

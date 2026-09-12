@@ -1243,7 +1243,7 @@ D(7, {a+1})
 8
 ```
 
-Parameter precedence in the fallback mirrors plain calls: a parameter of the current algorithm wins over a same-name visible property, while a parameter captured from an enclosing algorithm yields to a visible non-builtin declaration of the same name. Structural members of the resolved receiver always win before any of this — a receiver's own property is never bypassed in favor of a parameter.
+Parameter precedence in the fallback mirrors plain calls: the nearest lexical owner declaring the name supplies its parameter or property. An ancestor-owned parameter beats properties of farther owners and all opened providers; a property conflicting with a parameter in the same or an enclosing algorithm is a declaration error. Structural members of the resolved receiver always win before any of this — a receiver's own property is never bypassed in favor of a parameter.
 
 ### Chained Dot Access
 

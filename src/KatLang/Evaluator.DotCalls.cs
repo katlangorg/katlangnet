@@ -469,14 +469,16 @@ public static partial class Evaluator
         if (member is not null)
         {
             if (!IsExported(member))
-                return new EvalError.LocalOnlyProperty(OpenExprName(edge.Target), edge.Name, member.Exposure);
+                return new EvalError.LocalOnlyProperty(OpenExprName(edge.Target), edge.Name, member.Exposure)
+                { Span = edge.Span };
 
             isStructuralMember = true;
             return EvalResult<Algorithm>.Ok(ChildOf(receiver, member.Value));
         }
 
         if (receiver.DefinesConditionalBranchProperty(edge.Name))
-            return new EvalError.LocalOnlyProperty(OpenExprName(edge.Target), edge.Name, PropertyExposure.LocalOnlyConditionalAlgorithm);
+            return new EvalError.LocalOnlyProperty(OpenExprName(edge.Target), edge.Name, PropertyExposure.LocalOnlyConditionalAlgorithm)
+            { Span = edge.Span };
 
         return ResolveAlg(target, ctx);
     }
