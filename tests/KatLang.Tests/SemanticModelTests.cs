@@ -917,8 +917,9 @@ public class SemanticModelTests
             C.X
             C.Y
             """);
-        Assert.Equal(2, parsed.Diagnostics.Count);
-        Assert.All(parsed.Diagnostics, d => Assert.Equal(DiagnosticCode.ParameterPropertyCollision, d.Code));
+        // The root's inferred `X`/`Y` are phantom parameters no call can bind; they
+        // are not declaration conflicts with A's and B's own members.
+        Assert.Empty(parsed.Diagnostics);
         var model = SemanticModelBuilder.Build(parsed.Parsed);
 
         Assert.Single(model.FindDeclarations("X"));
@@ -1477,7 +1478,9 @@ public class SemanticModelTests
             {
                 ["https://katlang.org/algorithm.kat"] = "\n\npublic X = 1"
             }) });
-        Assert.Equal(DiagnosticCode.ParameterPropertyCollision, Assert.Single(parsed.Diagnostics).Code);
+        // The root's inferred `X` is a phantom parameter, not a conflict with the
+        // module's own `X`.
+        Assert.Empty(parsed.Diagnostics);
         var model = SemanticModelBuilder.Build(parsed);
 
         var aliasReference = ResolutionAt(model, 3, 1);

@@ -318,7 +318,7 @@ internal static class FrontEndPipeline
         diagnostics.AddRange(parameterDiagnostics);
         diagnostics.AddRange(implicitDiagnostics);
 
-        new ParameterPropertyCollisionValidator(diagnostics).VisitAlgorithm(implicitResolvedRoot);
+        new ParameterPropertyCollisionValidator(diagnostics, programRoot: implicitResolvedRoot).VisitAlgorithm(implicitResolvedRoot);
         canEvaluateAfterLoadErrors &= !diagnostics.Any(d => d.Code == DiagnosticCode.ParameterPropertyCollision);
 
         cancellationToken.ThrowIfCancellationRequested();

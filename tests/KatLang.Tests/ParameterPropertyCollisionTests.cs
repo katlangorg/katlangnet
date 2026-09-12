@@ -212,4 +212,89 @@ public class ParameterPropertyCollisionTests
         _ = SourceProvenance.ParseValid(source);
         Assert.Equal(expected, Assert.IsType<RunResult.Success>(KatLangEngine.Run(source)).ToDisplayString());
     }
+
+    /// <summary>
+    /// The ROOT program is never called, so a name the root could not resolve becomes a
+    /// phantom implicit parameter that no call can bind. Such a name must be reported as
+    /// exactly that — the unresolved root identifier (with its suggestion) — and never as a
+    /// declaration conflict blamed on a same-named property nested in a deeper owner: the
+    /// nested property cannot hide an input that no call establishes, and "rename one of
+    /// the declarations" would point at the wrong place (the fix is <c>open Lib</c> or
+    /// <c>Lib.Q</c>). Before this pin the collision validator reported the nested property.
+    /// </summary>
+    [Theory]
+    [InlineData("Lib = { public Q = 1 }\nQ + 1", "Q")]
+    [InlineData("Lib = { public Total = 1 }\nLib.Totl + Total", "Total")]
+    [InlineData("Lib = { public Q = 1\nQ + 1 }\nQ", "Q")]
+    [InlineData("Outer = { Inner = { public Q = 1 }\nInner.Q }\nQ + Outer", "Q")]
+    [InlineData("Need = v\nLib = { v = 5\nv }\nNeed + Lib", "v")]
+    public void RootPhantomParameter_IsReportedAsTheUnresolvedRootName_NotAsANestedCollision(
+        string source, string name)
+    {
+        var parsed = SourceProvenance.ParseValid(source);
+        Assert.DoesNotContain(parsed.Diagnostics, d => d.Code == DiagnosticCode.ParameterPropertyCollision);
+
+        var failure = Assert.IsType<RunResult.EvalFailure>(KatLangEngine.Run(source));
+        var error = Assert.Single(failure.Errors);
+        Assert.Equal(KatLangErrorCode.UnresolvedImplicitParams, error.Code);
+        Assert.Contains($"'{name}'", error.Message);
+    }
+
+    /// <summary>
+    /// The root exemption is exactly that: a NESTED owner's completed signature is bound by
+    /// its calls, so a deeper property of the same name really would hide the parameter and
+    /// stays a declaration error, and the root's own declarations still meet the root's
+    /// lifted names (the <c>Need(v) = v / v = 5 / Need + 1</c> row of <see cref="Conflicts"/>).
+    /// </summary>
+    [Theory]
+    [InlineData("F = { Lib = { public Q = 1 }\nQ + 1 }\nF(5)", 1, 22)]
+    [InlineData("F(0) = 0\nF(n) = { Lib = { public n = 1 }\nn }\nF(5)", 2, 25)]
+    public void NestedOwnerInferredParameter_StillCollidesWithDeeperProperty(string source, int line, int column)
+    {
+        var parsed = SourceProvenance.ParseAllowingDiagnostics(source);
+        var diagnostic = Assert.Single(parsed.Diagnostics);
+        Assert.Equal(DiagnosticCode.ParameterPropertyCollision, diagnostic.Code);
+        Assert.Equal(new SourceSpan(line, column, line, column), diagnostic.Span);
+    }
+
+    [Fact]
+    public async Task RootPhantomParameter_ModuleRootIsStillANestedOwner()
+    {
+        var options = new RunOptions { DownloadCode = (_, _) => ValueTask.FromResult("public Total = 1") };
+        const string phantom = "Lib = load('https://katlang.org/lib.kat')\nTotal + 1";
+        var parsed = await Parser.ParseAsync(phantom, options);
+        Assert.Empty(parsed.Diagnostics);
+        Assert.Equal("Total", Assert.Single(parsed.Root.Params));
+        var failure = Assert.IsType<RunResult.EvalFailure>(await KatLangEngine.RunAsync(phantom, options));
+        Assert.Equal(KatLangErrorCode.UnresolvedImplicitParams, Assert.Single(failure.Errors).Code);
+
+        // A spliced module is not the program root. Its declarations must still
+        // be checked against real enclosing callable parameters.
+        const string callable = "Outer(Total) = {\nLib = load('https://katlang.org/lib.kat')\nLib.Total\n}\nOuter(7)";
+        var rejected = await Parser.ParseAsync(callable, options);
+        var diagnostic = Assert.Single(rejected.Diagnostics);
+        Assert.Equal(DiagnosticCode.ParameterPropertyCollision, diagnostic.Code);
+        Assert.Equal(new SourceSpan(1, 8, 1, 12), diagnostic.Span);
+    }
+
+    [Fact]
+    public async Task RootPhantomParameter_DeferredValidationRetainsOnlyRealEnclosingBindings()
+    {
+        var downloads = 0;
+        var options = new RunOptions { DownloadCode = (_, _) =>
+        {
+            downloads++;
+            return ValueTask.FromResult("public Loaded = 1");
+        } };
+        const string source = "F(0) = 0\nF(n) = { open 'https://katlang.org/lib.kat'\nQ = 5\nQ + n\n}\nQ + F(1)";
+        var parsed = await Parser.ParseAsync(source, options);
+        Assert.Empty(parsed.Diagnostics);
+        Assert.Equal("Q", Assert.Single(parsed.Root.Params));
+        var family = Assert.Single(parsed.Root.Properties).Value;
+        Assert.True(DeferredModuleRegions.TryGet(family.Branches[1].Body, out var region));
+        Assert.Equal("n", Assert.Single(region!.Validation!.Declarations).Key);
+        var failure = Assert.IsType<RunResult.EvalFailure>(await KatLangEngine.RunAsync(source, options));
+        Assert.Equal(KatLangErrorCode.UnresolvedImplicitParams, Assert.Single(failure.Errors).Code);
+        Assert.Equal(0, downloads);
+    }
 }

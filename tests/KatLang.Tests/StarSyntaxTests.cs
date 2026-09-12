@@ -1057,6 +1057,95 @@ public class StarSyntaxTests
         Assert.Contains(parse.Diagnostics, static d => d.Message.Contains("scalar operand"));
     }
 
+    /// <summary>
+    /// `A*` newline `B*` is the layout-independent star rule's one trap for two
+    /// intended spread rows: the first line's final star has an operand on the next
+    /// line, so it multiplies, and the second line's spread becomes its right operand.
+    /// The rejection keeps the ordinary structured code (MisplacedSpread, spanning the
+    /// second spread) but explains the actual cause — the line-final `*` — and the two
+    /// spellings that separate the expressions, instead of the generic scalar-operand wording that
+    /// would send the user to the wrong star.
+    /// </summary>
+    [Theory]
+    [InlineData("A = 1, 2\nB = 3, 4\nA*\nB*", 4, 1, 4, 2)]
+    [InlineData("A = 1, 2\nB = 3, 4\nA * # a comment\n\nB*", 5, 1, 5, 2)]
+    [InlineData("A = 1, 2\nB = 3, 4\nX = A*\nB*\nY = X\nY", 4, 1, 4, 2)]
+    [InlineData("A*\r\nB*", 2, 1, 2, 2)]
+    [InlineData("A*# comment\r\n\tB*# end", 2, 2, 2, 3)]
+    [InlineData("A*\nB**", 2, 1, 2, 3)]
+    [InlineData("A~*\nB~*", 2, 1, 2, 3)]
+    [InlineData("A*\n~B*", 2, 1, 2, 3)]
+    public void SpreadRowFollowedBySpreadRow_ExplainsTheLineFinalStarContinuation(
+        string source, int line, int column, int endLine, int endColumn)
+    {
+        var error = SingleError(source);
+        Assert.Equal(DiagnosticCode.MisplacedSpread, error.Code);
+        Assert.Equal(new SourceSpan(line, column, endLine, endColumn), error.Span);
+        Assert.Contains("on an earlier line continued as multiplication", error.Message);
+        Assert.Contains("`A*,`", error.Message);
+        Assert.Contains("`(A*)`", error.Message);
+    }
+
+    [Theory]
+    [InlineData("A = 1, 2\nB = 3, 4\nA* B*")]
+    [InlineData("A = 1, 2\n1 + A*")]
+    [InlineData("A * (\nB)*")]
+    public void SameLineSpreadOperand_KeepsTheGenericScalarOperandWording(string source)
+    {
+        // The tailored wording is only for a spread that starts on a LATER line than
+        // its `*`; a same-line spread operand is the ordinary misplaced spread.
+        var error = SingleError(source);
+        Assert.Equal(DiagnosticCode.MisplacedSpread, error.Code);
+        Assert.DoesNotContain("earlier line", error.Message);
+        Assert.Contains("scalar operand", error.Message);
+    }
+
+    [Fact]
+    public void LineFinalStarAdvice_DistinguishesCaptureAndSpread_AndRepairsMultiplication()
+    {
+        var error = SingleError("A* # continuation\n\n# another comment\nB*");
+        Assert.Contains("earlier line", error.Message);
+        Assert.Contains("captures", error.Message);
+        Assert.Contains("remove the right operand's spread marker", error.Message);
+        Assert.DoesNotContain("write both operands on one line", error.Message);
+        // Reflowing alone is not a repair. Removing the misplaced spread works
+        // on either layout; grouping the first spread changes its value boundary.
+        Assert.Equal(DiagnosticCode.MisplacedSpread, SingleError("A* B*").Code);
+        Assert.Equal("24", Display("A = 4\nB = 6\nA * B"));
+        Assert.Equal("24", Display("A = 4\nB = 6\nA *\nB"));
+        Assert.Equal("1\n2\n3\n4", Display("A = 1, 2\nB = 3, 4\nA*,\nB*"));
+        Assert.Equal("(1, 2)\n3\n4", Display("A = 1, 2\nB = 3, 4\n(A*)\nB*"));
+    }
+
+    [Fact]
+    public void LineFinalStarDiagnostic_RecoversWithoutConsumingTheNextDeclaration()
+    {
+        var parsed = Parser.ParseSyntax("A*\nB*\nAfter = 5\nAfter");
+        Assert.Equal(DiagnosticCode.MisplacedSpread, Assert.Single(parsed.Diagnostics).Code);
+        Assert.Equal("After", Assert.Single(parsed.Root.Properties).Name);
+        Assert.Equal(2, parsed.Root.Output.Count);
+        var recovered = Assert.IsType<Expr.Binary>(parsed.Root.Output[0]);
+        Assert.Equal(BinaryOp.Mul, recovered.Op);
+        Assert.Equal("A", Assert.IsType<Expr.Resolve>(recovered.Left).Name);
+        Assert.Equal("B", Assert.IsType<Expr.Resolve>(recovered.Right).Name);
+        Assert.Equal("After", Assert.IsType<Expr.Resolve>(parsed.Root.Output[1]).Name);
+    }
+
+    [Fact]
+    public void ConsecutiveLineFinalMultiplicationsInDefinition_StillHaveNoProgramOutput()
+    {
+        // F13b is a separate language-design question: every star here has a
+        // scalar operand, so the diagnostic-only fix must not reject this source.
+        const string source = "A = 4\nB = 6\nX = A*\nB*\nX";
+        var parsed = SourceProvenance.ParseValid(source);
+        Assert.Empty(parsed.Root.Output);
+        var body = Assert.Single(parsed.Root.Properties, p => p.Name == "X").Value;
+        var outer = Assert.IsType<Expr.Binary>(Assert.Single(body.Output));
+        Assert.Equal(BinaryOp.Mul, outer.Op);
+        Assert.Equal(BinaryOp.Mul, Assert.IsType<Expr.Binary>(outer.Left).Op);
+        Assert.IsType<RunResult.NoProgramOutput>(KatLangEngine.Run(source));
+    }
+
     // Repeated spread is ordinary composition, not recursive flattening:
     // `value**` means `(value*)*`. The first star produces an item supply,
     // the ordinary expression boundary captures that supply back into one

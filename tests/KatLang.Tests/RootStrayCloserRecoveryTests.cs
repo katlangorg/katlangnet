@@ -334,7 +334,7 @@ public class RootStrayCloserRecoveryTests
             new[]
             {
                 "[DeclarationInParentheses] 2:1-2:1 A property declaration is not allowed inside parentheses. Use a `{ ... }` block for a scoped algorithm.",
-                "[UnexpectedToken] 3:2-3:2 Expected 'RParen', got 'EndOfFile'.",
+                "[UnexpectedToken] 3:2-3:2 Expected ')' but found end of input.",
             },
             parsed.Diagnostics.Select(Describe));
 
@@ -360,7 +360,7 @@ public class RootStrayCloserRecoveryTests
         Assert.Equal(
             new[]
             {
-                "[UnexpectedToken] 1:5-1:5 Expected 'RBrace', got 'RParen'.",
+                "[UnexpectedToken] 1:5-1:5 Expected '}' but found ')'.",
                 "[UnexpectedToken] 1:5-1:5 " + StrayParenMessage,
                 "[UnexpectedToken] 1:9-1:9 " + StrayBraceMessage,
             },
@@ -386,7 +386,7 @@ public class RootStrayCloserRecoveryTests
         Assert.Equal(
             new[]
             {
-                "[UnexpectedToken] 1:4-1:4 Expected 'RParen', got 'RBrace'.",
+                "[UnexpectedToken] 1:4-1:4 Expected ')' but found '}'.",
                 "[UnexpectedToken] 1:4-1:4 " + StrayBraceMessage,
             },
             parsed.Diagnostics.Select(Describe));
@@ -407,7 +407,7 @@ public class RootStrayCloserRecoveryTests
         // here. Pinned so the root closer recovery is provably not widened.
         var parsed = Parser.ParseSyntax("Before = 1\n]\nAfter = 2\nAfter");
 
-        Assert.Equal(new[] { "[UnexpectedToken] 2:1-2:1 Unexpected token: 'RBracket'." }, parsed.Diagnostics.Select(Describe));
+        Assert.Equal(new[] { "[UnexpectedToken] 2:1-2:1 Unexpected ']'." }, parsed.Diagnostics.Select(Describe));
         var root = Assert.IsType<Algorithm.User>(parsed.Root);
         Assert.Equal(new[] { "Before", "After" }, root.Properties.Select(p => p.Name));
         Assert.Equal(2, root.Output.Count);

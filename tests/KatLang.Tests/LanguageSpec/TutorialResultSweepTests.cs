@@ -42,6 +42,10 @@ public class TutorialResultSweepTests
                     "**Result:** error — `A` has no defined output.",
                     KatLangErrorCode.MissingOutput),
                 new(
+                    "Lib = {\n    public Total = 1\n}\nTotal + 1",
+                    "**Result:** error — `Total` does not resolve at the root (write `open Lib` or `Lib.Total`); `Lib`'s own `Total` is not the problem and is not blamed.",
+                    KatLangErrorCode.UnresolvedImplicitParams),
+                new(
                     "A = q + 1\nAdd1(x) = x + 1\nF(x) = Add1(A)\n\nF(7)",
                     "**Result:** error — `Add1`'s parameter `x` is bound to the callable `A`, and `A` still needs its implicit `q`, so demanding `x` as a value is an arity error.",
                     KatLangErrorCode.ArityMismatch),

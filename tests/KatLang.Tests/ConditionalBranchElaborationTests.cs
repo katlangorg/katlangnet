@@ -659,13 +659,13 @@ public class ConditionalBranchElaborationTests
     public void Source_BranchLocalLibrary_IsUnreachableByNameFromOutsideTheBranch()
     {
         // After the branch, neither the library nor its member is visible: the enclosing
-        // algorithm treats the names as its own implicit parameters, and a structural or
-        // dotted-open path through the family is refused AT THE FAMILY with the family-level
-        // reason — the declaration's own (Exported) classification never enters into it.
+        // algorithm treats the names as its own implicit parameters (the root's phantom
+        // parameters are not declaration conflicts with the branch-local declarations), and a
+        // structural or dotted-open path through the family is refused AT THE FAMILY with the
+        // family-level reason — the declaration's own (Exported) classification never enters
+        // into it.
         var body = "F(0) = {\n    Lib = { public X = 1 }\n    G = {\n        open Lib\n        X\n    }\n    G\n}\nF(n) = n\n";
-        var parsed = SourceProvenance.ParseAllowingDiagnostics(body + "F(0), X, Lib");
-        Assert.Equal(2, parsed.Diagnostics.Count);
-        Assert.All(parsed.Diagnostics, d => Assert.Equal(DiagnosticCode.ParameterPropertyCollision, d.Code));
+        var parsed = SourceProvenance.ParseValid(body + "F(0), X, Lib");
         var root = parsed.Root;
         Assert.Equal(["X", "Lib"], root.Params);
         var declared = root.Properties.Single(property => property.Name == "F").Value.Branches[0].Body
@@ -685,8 +685,8 @@ public class ConditionalBranchElaborationTests
         // side is pinned on the raw syntax tree, where X is still a bare resolve that forces
         // open resolution.
         const string dottedOpen = "G = {\n    open F.Lib\n    X\n}\nG";
-        // Supplying G's inferred input keeps it out of the root signature, where it
-        // would now conflict with the branch-local property X.
+        // Supplying G's inferred input keeps the root signature empty; without
+        // it, the program reports an unresolved root input before evaluating G.
         var opener = SourceProvenance.ParseValid(body + dottedOpen + "(7)").Root.Properties.Single(property => property.Name == "G").Value;
         Assert.Equal(["X"], opener.Params);
         var dotted = Evaluator.RunFlat(new Expr.AlgorithmExpr(SourceProvenance.ParseSyntaxValidRoot(body + dottedOpen)));

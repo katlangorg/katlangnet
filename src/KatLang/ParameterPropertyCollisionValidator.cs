@@ -5,10 +5,24 @@ namespace KatLang;
 /// name from its own or an enclosing lexical algorithm. Lookup in invalid recovery trees
 /// is unchanged. Lean: conflictingOwnedNames / validOwnedDeclarations.
 /// Callers have already performed the front-end structural preflight.
+/// <para><paramref name="programRoot"/> names the ROOT program algorithm when the caller
+/// validates a whole program. The root is never called, so its completed signature
+/// binds nothing: every root parameter is a name the root itself could not resolve (or
+/// a name forwarding lifted into it), and evaluation reports exactly that
+/// (<see cref="EvalError.UnresolvedImplicitParams"/>, with the reference and its
+/// suggestion). Those phantom inputs are therefore checked only against the root's OWN
+/// declarations — where a lifted name meets the property it would have been forwarded
+/// from — and never blamed on a declaration nested in a deeper owner: a nested property
+/// cannot hide an input no call establishes, and reporting it as the collision would
+/// point the user at the wrong declaration (<c>Lib = { public Q = 1 }</c> followed by the
+/// root row <c>Q + 1</c> is a missing <c>open Lib</c> / <c>Lib.Q</c>, not a conflict in
+/// <c>Lib</c>). A nested owner's completed signature keeps the full rule: its parameters
+/// are bound by its calls, so a deeper property of the same name really would hide them.</para>
 /// </summary>
 internal sealed class ParameterPropertyCollisionValidator(
     List<Diagnostic> diagnostics,
-    ParameterPropertyCollisionValidator.ParameterBindings? enclosingParameters = null) : AstWalker
+    ParameterPropertyCollisionValidator.ParameterBindings? enclosingParameters = null,
+    Algorithm? programRoot = null) : AstWalker
 {
     // Validity depends on the names in scope, not the route through a shared DAG. The
     // first conflicting source reach supplies diagnostic metadata for a shared declaration.
@@ -80,6 +94,10 @@ internal sealed class ParameterPropertyCollisionValidator(
         {
             if (_parameters.Declarations.Count > 0)
                 ReportOwner(algorithm);
+            // The root program's phantom signature is checked against its own declarations
+            // only (see the class documentation): nested owners descend without it.
+            if (ReferenceEquals(algorithm, programRoot))
+                _parameters = saved;
             base.VisitUserAlgorithm(algorithm);
         }
         finally { _parameters = saved; }

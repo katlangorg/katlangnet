@@ -291,7 +291,7 @@ public sealed class Parser
             {
                 parser.ReportError(
                     DiagnosticCode.UnexpectedToken,
-                    $"Expected end of input, got '{parser.Current.Kind}'.");
+                    $"Expected end of input but found {DescribeTokenKind(parser.Current.Kind)}.");
             }
         }
         catch (ParserLimitExceededException)
@@ -417,9 +417,60 @@ public sealed class Parser
         if (Current.Kind == kind)
             return Advance();
 
-        ReportError(DiagnosticCode.UnexpectedToken, $"Expected '{kind}', got '{Current.Kind}'.");
+        ReportError(
+            DiagnosticCode.UnexpectedToken,
+            $"Expected {DescribeTokenKind(kind)} but found {DescribeTokenKind(Current.Kind)}.");
         return Token.Bad(Current.Position, 0, Current.Line, Current.Column);
     }
+
+    /// <summary>
+    /// The KatLang-facing spelling of a token kind for diagnostics: the written
+    /// character(s) for punctuation and keywords, a category for the literal and
+    /// name classes, and plain English for the two non-source kinds. Diagnostics
+    /// are phrased in KatLang terms, never in the lexer's internal enum names
+    /// (<c>RParen</c>, <c>EndOfFile</c>, <c>KeywordPublic</c>).
+    /// </summary>
+    internal static string DescribeTokenKind(TokenKind kind, bool includeArticle = true) => kind switch
+    {
+        TokenKind.Number => includeArticle ? "a number" : "number",
+        TokenKind.Identifier => includeArticle ? "a name" : "name",
+        TokenKind.StringLiteral => includeArticle ? "a string" : "string",
+        TokenKind.Plus => "'+'",
+        TokenKind.Minus => "'-'",
+        TokenKind.Star => "'*'",
+        TokenKind.Slash => "'/'",
+        TokenKind.Caret => "'^'",
+        TokenKind.LessThan => "'<'",
+        TokenKind.GreaterThan => "'>'",
+        TokenKind.LessEqual => "'<='",
+        TokenKind.GreaterEqual => "'>='",
+        TokenKind.EqualEqual => "'=='",
+        TokenKind.BangEqual => "'!='",
+        TokenKind.KeywordDiv => "'div'",
+        TokenKind.KeywordMod => "'mod'",
+        TokenKind.KeywordAnd => "'and'",
+        TokenKind.KeywordOr => "'or'",
+        TokenKind.KeywordXor => "'xor'",
+        TokenKind.KeywordNot => "'not'",
+        TokenKind.KeywordPublic => "'public'",
+        TokenKind.KeywordOpen => "'open'",
+        TokenKind.LParen => "'('",
+        TokenKind.RParen => "')'",
+        TokenKind.LBrace => "'{'",
+        TokenKind.RBrace => "'}'",
+        TokenKind.LBracket => "'['",
+        TokenKind.RBracket => "']'",
+        TokenKind.Comma => "','",
+        TokenKind.Semicolon => "';'",
+        TokenKind.Equals => "'='",
+        TokenKind.Colon => "':'",
+        TokenKind.Dot => "'.'",
+        TokenKind.Tilde => "'~'",
+        TokenKind.Comment => includeArticle ? "a comment" : "comment",
+        TokenKind.EndOfFile => "end of input",
+        TokenKind.Bad => includeArticle ? "an unrecognized character" : "unrecognized character",
+        _ => throw new InvalidOperationException($"Unhandled token kind in diagnostic rendering: {kind}"),
+    };
 
     // Every parser diagnostic funnels through these two overloads with an
     // explicit DiagnosticCode — the required parameter is what keeps
@@ -1351,6 +1402,16 @@ public sealed class Parser
 
     private const string MisplacedSpreadDiagnostic =
         "A spread expression contributes items to the surrounding item supply and cannot be used as a scalar operand. Spread the whole expression instead, e.g. `(A + B)*`.";
+
+    /// <summary>
+    /// The <see cref="MisplacedSpreadDiagnostic"/> variant for `A*` newline `B*`: the
+    /// first line's final `*` is multiplication because an operand follows it on the
+    /// next line (the star rule is layout-independent), so the second line's spread
+    /// became a scalar operand. Names the cause and distinguishes separate spread
+    /// rows from capturing the first spread as one value.
+    /// </summary>
+    private const string LineFinalStarContinuationDiagnostic =
+        "The final `*` on an earlier line continued as multiplication, making this spread expression its right operand. A spread cannot be a scalar operand. For separate spread rows, add a comma (`A*,`). Grouping (`(A*)`) also ends the row but captures its items as one value. For multiplication, remove the right operand's spread marker (`A * B`); the operands may be on different lines.";
 
     /// <summary>
     /// Targeted message for the indexing continuation (`A*:0`): selection
@@ -2393,7 +2454,7 @@ public sealed class Parser
 
             default:
                 {
-                    ReportError(DiagnosticCode.UnexpectedToken, $"Unexpected token in pattern: '{Current.Kind}'.");
+                    ReportError(DiagnosticCode.UnexpectedToken, $"Unexpected {DescribeTokenKind(Current.Kind, includeArticle: false)} in a pattern.");
                     Advance(); // skip for recovery
                     return new Pattern.Bind("_error_");
                 }
@@ -2858,7 +2919,17 @@ public sealed class Parser
     private Expr CreateBinaryExpression(BinaryOp op, Expr lhs, Expr rhs, Token operatorToken)
     {
         lhs = RejectMisplacedSpreadOperand(lhs);
-        rhs = RejectMisplacedSpreadOperand(rhs);
+        // A spread right operand of a `*` whose operand starts on a LATER line is the
+        // one place the layout-independent star rule (SYN-07B) turns two intended
+        // spread rows (`A*` newline `B*`) into a multiplication with a spread operand:
+        // the line-final star continued as multiplication onto the next row. The
+        // structured code is the ordinary misplaced-spread rejection; only the
+        // explanation names the cause and distinguishes the possible repairs.
+        rhs = RejectMisplacedSpreadOperand(
+            rhs,
+            op == BinaryOp.Mul && rhs is Expr.SequenceSpread { Span: { } rhsSpan } && rhsSpan.StartLineNumber > operatorToken.Line
+                ? LineFinalStarContinuationDiagnostic
+                : MisplacedSpreadDiagnostic);
         var binary = new Expr.Binary(op, lhs, rhs) { Span = SpanFrom(lhs) };
         return GuardExpressionChainDepth(binary, TokenSpan(operatorToken), lhs, rhs);
     }
@@ -3637,7 +3708,7 @@ public sealed class Parser
             default:
                 {
                     var token = Current;
-                    ReportError(DiagnosticCode.UnexpectedToken, $"Unexpected token: '{Current.Kind}'.");
+                    ReportError(DiagnosticCode.UnexpectedToken, $"Unexpected {DescribeTokenKind(Current.Kind, includeArticle: false)}.");
                     Advance(); // skip for recovery
                     return new Expr.Num(0) { Span = TokenSpan(token) }; // error placeholder
                 }

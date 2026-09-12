@@ -115,25 +115,32 @@ public class BraceScopedExpressionTests
     public void OpenInsideBraceBlock_DoesNotExposeTheNameAfterTheBlock()
     {
         // After Y's block, `P` is not in scope: it falls back to the standard
-        // implicit-parameter convention on the root. The completed parameter now
-        // conflicts with the library's nested property, so evaluation is blocked.
+        // implicit-parameter convention on the root, and evaluation fails because
+        // no argument supplies it. The root's phantom parameter is reported as
+        // exactly that unresolved root name — never as a collision blamed on the
+        // library's own nested `P`, which the block scope kept out of the root.
         var source = Module + "Y = {\n    open M\n    P\n}\nY + P";
         var parsed = Parser.Parse(source);
-        Assert.Equal(DiagnosticCode.ParameterPropertyCollision, Assert.Single(parsed.Diagnostics).Code);
+        Assert.False(parsed.HasErrors);
         Assert.Equal("P", Assert.Single(parsed.Root.Params));
 
-        Assert.IsType<RunResult.ParseFailure>(KatLangEngine.Run(source));
+        var failure = Assert.IsType<RunResult.EvalFailure>(KatLangEngine.Run(source));
+        Assert.Equal(KatLangErrorCode.UnresolvedImplicitParams, Assert.Single(failure.Errors).Code);
     }
 
     [Fact]
     public void LocalPropertyInsideBraceArgument_DoesNotLeakToFollowingOutput()
     {
+        // The brace argument owns `A`; the root's trailing `A` is an unresolved
+        // root name (reported as such at evaluation), not a conflict with the
+        // block's local declaration.
         var source = "Identity(x) = x\nIdentity({\n    A = 5\n    A\n})\nA";
         var parsed = Parser.Parse(source);
-        Assert.Equal(DiagnosticCode.ParameterPropertyCollision, Assert.Single(parsed.Diagnostics).Code);
+        Assert.False(parsed.HasErrors);
         Assert.Equal("A", Assert.Single(parsed.Root.Params));
 
-        Assert.IsType<RunResult.ParseFailure>(KatLangEngine.Run(source));
+        var failure = Assert.IsType<RunResult.EvalFailure>(KatLangEngine.Run(source));
+        Assert.Equal(KatLangErrorCode.UnresolvedImplicitParams, Assert.Single(failure.Errors).Code);
     }
 
     // ── plain brace controls ─────────────────────────────────────────────────

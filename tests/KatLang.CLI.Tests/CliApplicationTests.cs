@@ -173,9 +173,22 @@ public sealed class CliApplicationTests
 
         Assert.Equal(Failure, result.ExitCode);
         Assert.Equal("", result.Output);
-        Assert.Contains("Unexpected token", result.TrimmedError);
+        Assert.Contains("Unexpected end of input", result.TrimmedError);
         // KatLang's source location is preserved, not rewritten away.
         Assert.Matches(@"^\[\d+:\d+\] ", result.TrimmedError);
+    }
+
+    [Theory]
+    [InlineData("(1", "[1:3] Expected ')' but found end of input.")]
+    [InlineData("public = 1", "[1:1] Unexpected 'public'.")]
+    [InlineData("1 + @", "[1:5] Unexpected unrecognized character.")]
+    [InlineData("A*\r\nB*", "[2:1] The final `*` on an earlier line continued as multiplication")]
+    public async Task Eval_ReportsUserFacingParserWordingAndLocations(string source, string expected)
+    {
+        var result = await Cli.InvokeAsync("eval", source);
+        Assert.Equal(Failure, result.ExitCode);
+        Assert.Equal("", result.Output);
+        Assert.Contains(expected, result.TrimmedError);
     }
 
     // ── run ─────────────────────────────────────────────────────────────────
@@ -364,7 +377,7 @@ public sealed class CliApplicationTests
 
         Assert.Equal(Failure, result.ExitCode);
         Assert.Equal("", result.Output);
-        Assert.Contains("Unexpected token", result.TrimmedError);
+        Assert.Contains("Unexpected end of input", result.TrimmedError);
         Assert.Matches(@"^\[\d+:\d+\] ", result.TrimmedError);
     }
 

@@ -2498,7 +2498,7 @@ public class ParserTests
         var result = Parser.ParseSyntax(source);
 
         Assert.True(result.HasErrors);
-        Assert.Contains(result.Diagnostics, d => d.Message.Contains("Unexpected token"));
+        Assert.Contains(result.Diagnostics, d => d.Message == "Unexpected '+'.");
     }
 
     [Fact]

@@ -1457,6 +1457,17 @@ Outer(20)
 
 **Compatibility note:** SYN-03 initially allowed parameter/property collisions. The front end now rejects any property matching a completed parameter of its own or an enclosing lexical algorithm, including parameters discovered by later implicit forwarding. Moving the property into a nested body does not make it legal; rename one declaration. Captured parameters still beat farther properties and inner opens, and the nearest enclosing parameter still wins. A root property outside the parameter's owner remains legal, as in the first example above. Inline open targets keep their separate owner region; importing a name does not declare a property in the importing algorithm.
 
+The root program is the one owner that is never called, so its implicit parameters are names it could not resolve rather than inputs a nested body could hide. A nested property that happens to share such a name is therefore not reported as a collision; the program fails with the unresolved-name error at the root reference instead, which is where the fix belongs:
+
+```
+Lib = {
+    public Total = 1
+}
+Total + 1
+```
+
+**Result:** error — `Total` does not resolve at the root (write `open Lib` or `Lib.Total`); `Lib`'s own `Total` is not the problem and is not blamed.
+
 Opens are checked only after the owner walk. This means a name introduced with `open` never overrides a name you already own — a property you defined structurally, and equally a parameter or branch binder bound by any enclosing scope.
 
 In the next example, `open` appears first because KatLang requires opened sources to be declared before properties and output:

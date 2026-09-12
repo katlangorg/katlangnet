@@ -882,7 +882,7 @@ public class ListValueTests
     {
         var parseResult = Parser.Parse("[1, 2");
         Assert.True(parseResult.HasErrors);
-        Assert.Contains(parseResult.Diagnostics, static d => d.Message.Contains("RBracket"));
+        Assert.Contains(parseResult.Diagnostics, static d => d.Message == "Expected ']' but found end of input.");
     }
 
     [Fact]
