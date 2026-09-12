@@ -378,12 +378,27 @@ internal static class ElaboratedScopeLookup
         return default;
     }
 
+    /// <summary>
+    /// The static target of one open expression, or null when it provides nothing.
+    /// A bare <see cref="Expr.Resolve"/> head resolves through the direct property
+    /// chain (local properties, then the parent chain — the evaluator's
+    /// <c>LookupLexicalDirect</c>), which is sound only because parameter detection
+    /// has already classified every head by ownership: a head the owner walk found
+    /// parameter-owned is an <see cref="Expr.Param"/> by the time any scope is built
+    /// over the list, and a parameter provides nothing (static-open ownership, F2).
+    /// </summary>
     public static Algorithm? ResolveOpenTarget(ElaboratedPropertyScope scope, Expr openExpr)
     {
         switch (openExpr)
         {
             case Expr.Resolve(var name):
                 return TryLookupDirectLexicalProperty(scope, name)?.Property.Value;
+
+            case Expr.Param:
+                // A parameter-owned head (see ParameterDetector.ClassifyOpenTargetHeads):
+                // not an open form, never a provider, and never a reason to look farther
+                // outward for a same-named property.
+                return null;
 
             case Expr.DotCall dotCall when dotCall.IsCoreOpenForm():
             {

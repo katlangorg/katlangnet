@@ -60,7 +60,14 @@ ValidatedOpenExpression = ? an Expression not starting with a string token and s
                      ungrouped counterparts. A dot receiver still has to
                      resolve to an openable algorithm at evaluation time;
                      passing the outer-form check alone does not establish it
-                     (e.g. open (M).N passes that parser check).
+                     (e.g. open (M).N passes that parser check). The head
+                     name of a bare or dotted target is classified by the
+                     front end through ordinary lexical ownership: when the
+                     nearest binding is a parameter of the opening algorithm
+                     or of an enclosing one, the head is not a static open
+                     target and the program is rejected
+                     (OpenTargetIsParameter) — open never searches past a
+                     parameter for a farther same-named declaration.
                      Bare names open directly, but open (M), open ((M)),
                      open (A, B), and open (A*) retain a captured VALUE and
                      receive the targeted BadOpenForm diagnostic. Empty groups,

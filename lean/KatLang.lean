@@ -3520,6 +3520,12 @@ def prepareLexicalDotCallArgs (receiver : Expr) (extraArgs : Option OutputBundle
       The head may be private if it is lexically visible. This includes the
       common surface form where `open Lib` appears before a later
       `Lib = { ... }` definition in the same algorithm body.
+    - A head that a PARAMETER owns never arrives here as `.resolve`: the
+      surface layer classifies every open head by the ordinary owner walk
+      (`elaborateOpenHead`) and elaborates a parameter-owned head to `.param`,
+      which `Expr.openForm?` rejects — so a static open can never bypass an
+      established parameter and reach a farther same-named property, and
+      nothing is opened dynamically.
     - Builtins are still rejected: even if lexical lookup finds one, it is
       not a valid open target.
     - **Public-path policy**: Qualified property access in open paths
@@ -5929,7 +5935,8 @@ structure OwnerLevel where
 /-- Surface declaration validity, checked after parameter-signature completion and
     before evaluation. Each property whose name is bound by this or an enclosing owner is a
     declaration error, regardless of visibility or reference order. Pattern binders
-    belong to their branch body. Open targets have separate lexical owner chains. The surface
+    belong to their branch body. Open targets are not declarations and never conflict,
+    but their HEAD name obeys the same owner chain (`elaborateOpenHead`). The surface
     layer reports each written conflicting declaration at its source name.
     C#: ParameterPropertyCollisionValidator. This is a front-end validity boundary;
     raw/recovery AST evaluation and lookup do not substitute for this check. -/
@@ -5991,6 +5998,30 @@ def elaboratesToParameter (chain : List OwnerLevel) (name : Ident) : Bool :=
   match selectOwnedDeclaration chain name with
   | .parameter _ => true
   | _            => false
+
+/-- Static-open ownership (SYN-03 / F2). `open` is STATIC — it never opens a
+    runtime value — but lexical ownership still applies to the target name:
+    the HEAD of a static open target (`Lib` in `open Lib` or `open Lib.Sub`)
+    is a bare-name occurrence like any other, so the surface layer classifies
+    it with the SAME owner walk. When the nearest established binding is a
+    parameter — written, inferred, lifted, collecting, grouped, a branch
+    binder, or any of these captured from an enclosing owner — that parameter
+    owns the name and the head elaborates to `.param`, exactly as every other
+    parameter-owned occurrence does. A `.param` head is NOT an open form
+    (`Expr.openForm?` maps it to `none`), so open resolution rejects the
+    target with `badOpenForm` and can never reach a farther same-named
+    property: whether such a declaration exists changes nothing. The surface
+    layer reports the parameter-owned head before evaluation (C#:
+    `ParameterDetector.ClassifyOpenTargetHeads`,
+    `DiagnosticCode.OpenTargetIsParameter`); `resolveAlgForOpen` therefore
+    receives `.resolve` heads only for names no callable parameter owns, and
+    its direct lexical lookup (`lookupLexicalDirect`) is sound for them.
+    The chain carries CALLABLE bindings: the never-called program root's
+    phantom signature is omitted from it by the surface layer (its names are
+    unresolved root inputs, reported as such by evaluation, not parameters
+    that could own an open target). -/
+def elaborateOpenHead (chain : List OwnerLevel) (name : Ident) : Expr :=
+  if elaboratesToParameter chain name then .param name else .resolve name
 
 --------------------------------------------------------------------------------
 -- Surface syntax support: implicit argument resolution

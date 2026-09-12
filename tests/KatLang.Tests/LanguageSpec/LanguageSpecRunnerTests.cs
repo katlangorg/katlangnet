@@ -242,6 +242,12 @@ public class LanguageSpecRunnerTests
             "ownership-same-owner-later-property-rejected",
             "ownership-branch-binder-property-collision",
             "ownership-lifted-parameter-property-collision",
+            // Static-open ownership (SYN-03 / F2): a parameter-owned open head is a
+            // front-end rejection, so these are parse-level by construction.
+            "ownership-open-target-parameter-rejected",
+            "ownership-open-target-parameter-without-farther-declaration",
+            "ownership-open-qualified-target-parameter-rejected",
+            "ownership-open-target-enclosing-parameter-rejected",
             "semicolon-not-expression-syntax",
             "spread-not-binary-operand",
             "trailing-comma-in-parens-rejected",

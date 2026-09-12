@@ -102,7 +102,7 @@ internal static class ParameterDetector
             capturedParameters: ParameterOwnership.Empty,
             diagnostics,
             observations,
-            new DetectionRun());
+            new DetectionRun { ProgramRoot = root });
         return (processed, diagnostics);
     }
 
@@ -122,7 +122,13 @@ internal static class ParameterDetector
         FrontEndTraversalObservations? observations = null)
     {
         var diagnostics = new List<Diagnostic>();
-        var run = new DetectionRun { ImplicitCallOrigins = origins.ImplicitCalls };
+        var run = new DetectionRun
+        {
+            ImplicitCallOrigins = origins.ImplicitCalls,
+            // A whole-program completion re-enters at the program root; a deferred branch
+            // completion re-enters at that branch body, which is a nested (called) owner.
+            ProgramRoot = branchContext is null ? root : null,
+        };
         Algorithm processed;
         if (branchContext is not null)
         {
@@ -175,11 +181,34 @@ internal static class ParameterDetector
         var graceWeights = new Dictionary<string, int>();
         var hasExplicitParameterList = alg.ExplicitParameterPatterns.Count > 0;
 
+        // The program root is never called: its signature (unresolved root names, and names
+        // forwarding lifted into it) binds nothing, so this level is recorded as the
+        // never-called owner of its bindings (see ParameterOwnership) — reference
+        // classification still captures them, callable-binding decisions never do.
+        var isProgramRoot = ReferenceEquals(alg, run.ProgramRoot);
+
         // The parameter bindings in force while this body's OWN rows are collected: the
         // inherited ones plus this algorithm's written parameters, all owned by THIS level.
         // Ordinary nested algorithms close over already-known outer params: those rewrite to
         // Expr.Param but must not become new local params.
-        var boundParameters = capturedParameters.Extend(scope, alg.Params);
+        var boundParameters = capturedParameters.Extend(scope, alg.Params, isProgramRoot);
+
+        // Static-open ownership (F2): the head name of every open target is classified by the
+        // SAME owner walk as every other bare-name occurrence, against the bindings established
+        // BEFORE this body's rows are read — written parameters, captured ancestor parameters
+        // and binders, and on a completion run the completed signature. A parameter-owned head
+        // is not an open target: it elaborates to Expr.Param and is reported, and the scope is
+        // rebuilt over the corrected list so a farther same-named declaration can never provide
+        // names through it — not to the closed-list check, not to inference, not to the editor.
+        var ownedOpens = ClassifyOpenTargetHeads(
+            newOpens, scope, boundParameters, diagnostics, run, reclassifyParameterHeads: true);
+        if (!ReferenceEquals(ownedOpens, newOpens))
+        {
+            newOpens = ownedOpens;
+            algWithProcessedOpens = alg with { Opens = newOpens };
+            scope = ElaboratedScopeLookup.CreateScope(algWithProcessedOpens, parentScope);
+            boundParameters = capturedParameters.Extend(scope, alg.Params, isProgramRoot);
+        }
 
         // Every row this body WRITES: its output rows plus each hoisted assignment-
         // deconstruction right-hand side (see WrittenRows) — the right-hand side obeys this
@@ -212,7 +241,24 @@ internal static class ParameterDetector
         // Reuse the established map when no names were inferred, including completion runs.
         var bodyParameters = paramOrder.Count == alg.Params.Count
             ? boundParameters
-            : capturedParameters.Extend(scope, paramOrder);
+            : capturedParameters.Extend(scope, paramOrder, isProgramRoot);
+
+        // Static-open ownership (F2), inferred bindings: a head this body's own rows just
+        // promoted to an implicit parameter (`open Lib` beside `Lib.X` with no visible `Lib`)
+        // is parameter-owned by exactly the same rule. Such a head resolved to nothing during
+        // collection (an inferred name has no visible property, and open-head lookup is the
+        // direct chain), so the scope's providers are unchanged: only the stored target and
+        // the report change. Heads already classified above are not reported twice.
+        if (!ReferenceEquals(bodyParameters, boundParameters))
+        {
+            var reclassifiedOpens = ClassifyOpenTargetHeads(
+                newOpens, scope, bodyParameters, diagnostics, run, reclassifyParameterHeads: false);
+            if (!ReferenceEquals(reclassifiedOpens, newOpens))
+            {
+                newOpens = reclassifiedOpens;
+                algWithProcessedOpens = alg with { Opens = newOpens };
+            }
+        }
 
         // Process properties recursively (each property body is an algorithm scope).
         // Two properties may legally share ONE value algorithm by reference (host-built
@@ -315,6 +361,21 @@ internal static class ParameterDetector
         var branchParentScope = newOpens.Count == 0
             ? scope
             : ElaboratedScopeLookup.CreateScope(processedConditional, scope);
+
+        // Static-open ownership (F2) for a host-built family's own open list (parsed families
+        // own no opens): the family binds nothing itself, so its heads are classified against
+        // the captured bindings from the family's level outward.
+        if (newOpens.Count > 0)
+        {
+            var ownedOpens = ClassifyOpenTargetHeads(
+                newOpens, branchParentScope, capturedParameters, diagnostics, run, reclassifyParameterHeads: true);
+            if (!ReferenceEquals(ownedOpens, newOpens))
+            {
+                newOpens = ownedOpens;
+                processedConditional = condAlg with { Opens = newOpens };
+                branchParentScope = ElaboratedScopeLookup.CreateScope(processedConditional, scope);
+            }
+        }
 
         // Process each conditional branch body with the full-input-specification rule:
         // - Pattern binder names are rewritten to Expr.Param (resolved via valEnv at runtime)
@@ -486,6 +547,14 @@ internal static class ParameterDetector
         // selection. Existing Param nodes retain their classification.
         public IReadOnlyDictionary<Expr, Expr>? ImplicitCallOrigins;
         public bool OwnershipChanged;
+        /// <summary>
+        /// The PROGRAM ROOT this run entered at (by reference), or null for a run that enters
+        /// at a nested owner (a deferred branch body). The root is never called, so its
+        /// signature is recorded as the never-called owner of its bindings (see
+        /// <see cref="ParameterOwnership"/>): reference classification still captures them,
+        /// callable-binding decisions — the static open-target head classification — never do.
+        /// </summary>
+        public Algorithm? ProgramRoot;
         /// <summary>
         /// Conditional branch bodies elaborated so far, by <see cref="BranchBodyRegionKey"/>.
         /// A branch body's rewrite depends on exactly the key's dimensions (parent scope,
@@ -753,6 +822,224 @@ internal static class ParameterDetector
         return processed;
     }
 
+    /// <summary>
+    /// Static-open ownership (SYN-03 / F2): classifies the HEAD NAME of every open target in
+    /// one algorithm's open list by THE owner walk
+    /// (<see cref="ElaboratedScopeLookup.SelectOwnedDeclaration"/>) from the opening
+    /// algorithm's own level outward, exactly as <see cref="ShouldRewriteAsParam"/> classifies
+    /// every other bare-name occurrence. The head is the innermost name of a core open form —
+    /// the bare name of <c>open Lib</c>, or <c>Root</c> in <c>open Root.Sub.Leaf</c>; every
+    /// other form (an inline block, a capture, a spread, a call-like dot edge) has no lexical
+    /// head and passes through unchanged to its own validation.
+    ///
+    /// <para><c>open</c> is STATIC, and the nearest established binding owns the name. When the
+    /// walk selects a parameter — written, inferred, lifted, collecting, grouped, a branch
+    /// binder, or any of these captured from an enclosing owner — that parameter owns the head,
+    /// and a parameter cannot be opened: the head elaborates to <see cref="Expr.Param"/>, which
+    /// is not an open form in either engine (<c>IsCoreOpenForm</c> / Lean
+    /// <c>Expr.openForm?</c>), so no evaluation of the elaborated or recovery tree can reach a
+    /// farther same-named declaration, and the front end reports
+    /// <see cref="DiagnosticCode.OpenTargetIsParameter"/> at the head's own span. Nothing is
+    /// evaluated dynamically and nothing searches farther outward: whether a farther
+    /// <c>Lib</c> exists changes neither the verdict nor the report. The walk receives the
+    /// CALLABLE bindings (<see cref="ParameterOwnership.CallableBindings"/>), so the never-called
+    /// program root's phantom signature decides nothing here (see F1: a root name nothing
+    /// resolves is reported by evaluation as the unresolved root input it is, not as a
+    /// parameter that cannot be opened).</para>
+    ///
+    /// <para><paramref name="reclassifyParameterHeads"/> re-verifies heads an EARLIER run
+    /// already elaborated to <see cref="Expr.Param"/> (a completion run re-enters on the
+    /// discovery run's tree, and the pipeline keeps only the latest run's diagnostics): a head
+    /// the completed bindings still own as a parameter is reported again, and one they no
+    /// longer own is restored to its written <see cref="Expr.Resolve"/>. The same region's
+    /// second pass (after inference added names) passes <c>false</c>, so a head classified by
+    /// the first pass is never reported twice within one run.</para>
+    ///
+    /// <para>Returns the same list instance when nothing changed. A shared open-target node
+    /// reached twice within one list rewrites once and is reported once (reference-identity
+    /// memo per region), and rewriting allocates only the rewritten spine: sharing outside the
+    /// spine is preserved.</para>
+    /// </summary>
+    private static IReadOnlyList<Expr> ClassifyOpenTargetHeads(
+        IReadOnlyList<Expr> opens,
+        ElaboratedPropertyScope scope,
+        ParameterOwnership parameters,
+        List<Diagnostic>? diagnostics,
+        DetectionRun run,
+        bool reclassifyParameterHeads)
+    {
+        if (opens.Count == 0)
+            return opens;
+
+        var callableBindings = parameters.CallableBindings;
+        List<Expr>? classified = null;
+        Dictionary<Expr, Expr>? rewrites = null;
+        for (var i = 0; i < opens.Count; i++)
+        {
+            var open = opens[i];
+            var head = OpenTargetHead(open);
+            string? headName;
+            switch (head)
+            {
+                case Expr.Resolve resolve:
+                    headName = resolve.Name;
+                    break;
+
+                case Expr.Param parameter:
+                    headName = reclassifyParameterHeads ? parameter.Name : null;
+                    break;
+
+                // Intentional no-head forms: an inline algorithm or capture owns no lexical
+                // head (inline targets are separate owner regions), an argument-bearing dot
+                // edge, a spread, a join, a list, a literal, an operator form, a call, a
+                // native call, and a Grace wrapper are never lexical heads — the parser and
+                // open-form validation reject the illegal ones with their own diagnostics.
+                case Expr.AlgorithmExpr:
+                case Expr.Capture:
+                case Expr.DotCall:
+                case Expr.SequenceSpread:
+                case Expr.SequenceConstruct:
+                case Expr.ListLiteral:
+                case Expr.Call:
+                case Expr.Num:
+                case Expr.StringLiteral:
+                case Expr.EmptySequence:
+                case Expr.NativeCall:
+                case Expr.Unary:
+                case Expr.Binary:
+                case Expr.Index:
+                case Expr.Grace:
+                    headName = null;
+                    break;
+
+                // Exhaustiveness guard, matching AstWalker.VisitExpr: a new Expr variant must
+                // be classified above as a lexical open head or an intentional no-head form,
+                // never silently skipped (a skipped name-like head would be a bypass).
+                default:
+                    throw new InvalidOperationException(
+                        $"Unhandled Expr variant in {nameof(ParameterDetector)}.{nameof(ClassifyOpenTargetHeads)}: {head.GetType().Name}. " +
+                        "Classify the new variant explicitly as a lexical open head or an intentional no-head form.");
+            }
+
+            var rewritten = open;
+            if (headName is not null)
+            {
+                // The membership test is the same pure fast path ShouldRewriteAsParam uses: the
+                // walk can only select a parameter for a name some level binds.
+                var parameterOwned = parameters.Contains(headName)
+                    && ElaboratedScopeLookup.SelectOwnedDeclaration(scope, headName, callableBindings).Kind
+                        == OwnedDeclarationKind.Parameter;
+
+                if (parameterOwned)
+                {
+                    if (rewrites is null || !rewrites.TryGetValue(open, out var memoized))
+                    {
+                        if (head is Expr.Resolve)
+                        {
+                            rewritten = ReplaceOpenTargetHead(open, new Expr.Param(headName) { Span = head.Span });
+                            run.OwnershipChanged = true;
+                        }
+
+                        diagnostics?.Add(CreateOpenTargetIsParameterDiagnostic(open, headName, head.Span ?? open.Span));
+                        if (opens.Count > 1)
+                            (rewrites ??= new(ReferenceEqualityComparer.Instance))[open] = rewritten;
+                    }
+                    else
+                    {
+                        rewritten = memoized;
+                    }
+                }
+                else if (head is Expr.Param)
+                {
+                    // A parameter head of an earlier run that the completed bindings no longer
+                    // own: restore the written lexical reference (same span) and let ordinary
+                    // open resolution decide.
+                    if (rewrites is null || !rewrites.TryGetValue(open, out var memoized))
+                    {
+                        rewritten = ReplaceOpenTargetHead(open, new Expr.Resolve(headName) { Span = head.Span });
+                        run.OwnershipChanged = true;
+                        if (opens.Count > 1)
+                            (rewrites ??= new(ReferenceEqualityComparer.Instance))[open] = rewritten;
+                    }
+                    else
+                    {
+                        rewritten = memoized;
+                    }
+                }
+            }
+
+            if (classified is null && !ReferenceEquals(rewritten, open))
+            {
+                classified = new List<Expr>(opens.Count);
+                for (var j = 0; j < i; j++)
+                    classified.Add(opens[j]);
+            }
+
+            classified?.Add(rewritten);
+        }
+
+        return classified ?? opens;
+    }
+
+    /// <summary>
+    /// The lexical head of a core open form: the target itself for a bare name, or the
+    /// innermost receiver of an argumentless dot path (<c>Root</c> in <c>Root.Sub.Leaf</c>).
+    /// Iterative over the dot spine; an argument-bearing edge is not an open form and stops
+    /// the descent (the edge itself is then returned and classified as no head).
+    /// </summary>
+    private static Expr OpenTargetHead(Expr open)
+    {
+        while (open is Expr.DotCall { Args: null } dotCall)
+            open = dotCall.Target;
+        return open;
+    }
+
+    /// <summary>
+    /// Rebuilds the argumentless dot spine of <paramref name="open"/> over a new head,
+    /// keeping every stored dot-edge fact (member span, fallback identity, span) and
+    /// allocating only the spine. Iterative, mirroring <see cref="OpenTargetHead"/>.
+    /// </summary>
+    private static Expr ReplaceOpenTargetHead(Expr open, Expr newHead)
+    {
+        List<Expr.DotCall>? spine = null;
+        while (open is Expr.DotCall { Args: null } dotCall)
+        {
+            (spine ??= []).Add(dotCall);
+            open = dotCall.Target;
+        }
+
+        var rebuilt = newHead;
+        if (spine is not null)
+        {
+            for (var i = spine.Count - 1; i >= 0; i--)
+                rebuilt = spine[i] with { Target = rebuilt };
+        }
+
+        return rebuilt;
+    }
+
+    private static Diagnostic CreateOpenTargetIsParameterDiagnostic(Expr open, string headName, SourceSpan? span)
+        => new(
+            FormatOpenTargetIsParameter(Evaluator.OpenExprName(open), headName),
+            DiagnosticSeverity.Error,
+            span ?? new SourceSpan(0, 0, 0, 0))
+        {
+            Code = DiagnosticCode.OpenTargetIsParameter,
+        };
+
+    /// <summary>
+    /// Wording for <see cref="DiagnosticCode.OpenTargetIsParameter"/>: both facts the user
+    /// needs — the name resolves to a parameter, and a parameter is not a static open target —
+    /// plus the two repairs, in KatLang terms and without implementation vocabulary.
+    /// </summary>
+    private static string FormatOpenTargetIsParameter(string targetName, string headName)
+        => string.Join(
+            Environment.NewLine,
+            targetName == headName
+                ? $"Cannot open '{headName}': '{headName}' refers to a parameter, and a parameter cannot be used as an open target."
+                : $"Cannot open '{targetName}': its first name '{headName}' refers to a parameter, and a parameter cannot be used as an open target.",
+            $"'open' is resolved statically and never looks past the parameter for another declaration named '{headName}'. Open a declared algorithm instead, or access the parameter's members directly (for example {headName}.Member).");
+
     private static Expr ProcessOpenExpr(
         Expr expr,
         ElaboratedPropertyScope openParentScope,
@@ -941,6 +1228,19 @@ internal static class ParameterDetector
         // collisions, recovery selects the binder for direct and nested references alike;
         // declaration validity is checked after signature completion.
         var bodyParameters = capturedParameters.Extend(bodyScope, binderNames);
+
+        // Static-open ownership (F2): a branch body's own open heads are classified against
+        // its binders and captured ancestor parameters exactly like an ordinary body's (see
+        // ProcessAlgorithm); a branch body infers nothing, so this is its only pass.
+        var ownedOpens = ClassifyOpenTargetHeads(
+            newOpens, bodyScope, bodyParameters, diagnostics, run, reclassifyParameterHeads: true);
+        if (!ReferenceEquals(ownedOpens, newOpens))
+        {
+            newOpens = ownedOpens;
+            bodyWithProcessedOpens = body with { Opens = newOpens };
+            bodyScope = ElaboratedScopeLookup.CreateScope(bodyWithProcessedOpens, parentScope);
+            bodyParameters = capturedParameters.Extend(bodyScope, binderNames);
+        }
 
         // Every row this branch body WRITES, hoisted deconstruction right-hand sides
         // included (see WrittenRows): they obey the same full-input-specification rule.

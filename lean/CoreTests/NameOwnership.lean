@@ -2,7 +2,7 @@ import KatLang
 import CoreTests.Common
 
 namespace KatLangTests
-open KatLang (OwnerLevel OwnedDeclaration selectOwnedDeclaration elaboratesToParameter validOwnedDeclarations conflictingOwnedNames)
+open KatLang (OwnerLevel OwnedDeclaration selectOwnedDeclaration elaboratesToParameter elaborateOpenHead validOwnedDeclarations conflictingOwnedNames Expr Error Result alg algPrivate publicProp runResult)
 
 --------------------------------------------------------------------------------
 -- Surface-layer owner walk (selectOwnedDeclaration / elaboratesToParameter)
@@ -155,5 +155,127 @@ def ownershipMaskLevel (mask : Nat) : OwnerLevel :=
 #guard !validOwnedDeclarations [level [] ["v"], level [] [], level ["v"] []]
 #guard conflictingOwnedNames (level ["w"] ["v", "w", "x", "v"])
   [level ["v"] [], level [] ["x"]] == ["v", "w", "v"]
+
+--------------------------------------------------------------------------------
+-- Static-open ownership (SYN-03 / F2): an open target's head uses the SAME walk
+--------------------------------------------------------------------------------
+-- `open` is static, and lexical ownership still applies to the target name. The
+-- head of a static open target is a bare-name occurrence like any other, so
+-- `elaborateOpenHead` classifies it with `selectOwnedDeclaration`: a
+-- parameter-owned head elaborates to `.param`, which is NOT an open form, so
+-- open resolution rejects it and can never reach a farther property of the
+-- same name. The chains carry callable bindings only (the never-called program
+-- root's phantom signature is omitted by the surface layer).
+
+/-- The two head forms `elaborateOpenHead` can produce, made decidable without a
+    structural `Expr` equality: the parameter form and the lexical form, each
+    carrying exactly the classified name. -/
+def isParameterHead (name : String) : Expr -> Bool
+  | .param n => n == name
+  | _ => false
+
+def isLexicalHead (name : String) : Expr -> Bool
+  | .resolve n => n == name
+  | _ => false
+
+/-- `Lib = { public X = 7 }` / `Other = { public X = 8 }` / `F(Lib) = { open Lib  X }`:
+    the open sits in F's own body, F binds the parameter, and the root declares
+    the farther property of that name. -/
+def chainOpenHeadParameter : List OwnerLevel :=
+  [level ["Lib"] [], level [] ["Lib", "Other"], level [] ["pi", "count"]]
+
+#guard isParameterHead "Lib" (elaborateOpenHead chainOpenHeadParameter "Lib")
+#guard Expr.isOpenForm (elaborateOpenHead chainOpenHeadParameter "Lib") == false
+
+/-- Farther-declaration independence: the same chain without the root's `Lib`
+    classifies the head identically — the nearer parameter owns the name, and
+    whether a farther declaration exists changes nothing. -/
+def chainOpenHeadParameterNoFarther : List OwnerLevel :=
+  [level ["Lib"] [], level [] ["Other"], level [] ["pi", "count"]]
+
+#guard isParameterHead "Lib" (elaborateOpenHead chainOpenHeadParameterNoFarther "Lib")
+#guard Expr.isOpenForm (elaborateOpenHead chainOpenHeadParameterNoFarther "Lib")
+  == Expr.isOpenForm (elaborateOpenHead chainOpenHeadParameter "Lib")
+
+/-- `Outer(Lib) = { Inner = { open Lib ... }  Inner }` beside a root `Lib`: the
+    enclosing owner's parameter owns the head of the nested body's open. -/
+def chainOpenHeadCapturedParameter : List OwnerLevel :=
+  [level [] [], level ["Lib"] [], level [] ["Lib"], level [] ["pi", "count"]]
+
+#guard isParameterHead "Lib" (elaborateOpenHead chainOpenHeadCapturedParameter "Lib")
+
+/-- A binder-owning branch body (`F(0) = 0` / `F(Lib) = { open Lib  X }`) is a
+    parameter owner like any other. -/
+def chainOpenHeadBranchBinder : List OwnerLevel :=
+  [level ["Lib"] [], level [] ["Lib", "F"], level [] ["pi", "count"]]
+
+#guard isParameterHead "Lib" (elaborateOpenHead chainOpenHeadBranchBinder "Lib")
+
+/-- `F = { open Lib  X }` beside a root `Lib`: a property-owned head stays the
+    ordinary static open target, and so does a head no owner declares (left to
+    the unchanged open policy). -/
+def chainOpenHeadProperty : List OwnerLevel :=
+  [level [] [], level [] ["Lib"], level [] ["pi", "count"]]
+
+#guard isLexicalHead "Lib" (elaborateOpenHead chainOpenHeadProperty "Lib")
+#guard Expr.isOpenForm (elaborateOpenHead chainOpenHeadProperty "Lib") == true
+#guard isLexicalHead "Absent" (elaborateOpenHead chainOpenHeadProperty "Absent")
+
+-- One decision, two positions: the elaborated head is an open form exactly when
+-- the ordinary occurrence would NOT elaborate to a parameter.
+#guard [chainOpenHeadParameter, chainOpenHeadParameterNoFarther, chainOpenHeadCapturedParameter,
+        chainOpenHeadBranchBinder, chainOpenHeadProperty, chainCapturedParameter,
+        chainNearerProperty, chainNestedParameters].all fun chain =>
+  Expr.isOpenForm (elaborateOpenHead chain "Lib") == !elaboratesToParameter chain "Lib"
+  && Expr.isOpenForm (elaborateOpenHead chain "v") == !elaboratesToParameter chain "v"
+
+def innermostIsAnyBadOpenForm : Error -> Bool
+  | .withContext _ inner => innermostIsAnyBadOpenForm inner
+  | .badOpenForm _ => true
+  | _ => false
+
+/-- Evaluation half. The elaborated program of
+    `Lib = { public X = 7 }` / `Other = { public X = 8 }` / `F(Lib) = { open Lib  X }` /
+    `F(Other)`: F's open head is the `.param` the surface layer produced, so
+    resolving `X` through F's opens is rejected as a bad open form — neither the
+    farther root `Lib`'s 7 nor the argument's 8 is ever reached. -/
+def parameterOwnedOpenHeadIsRejected : Bool :=
+  let lib := alg [] [] [publicProp "X" (alg [] [] [] [.num 7])] []
+  let other := alg [] [] [publicProp "X" (alg [] [] [] [.num 8])] []
+  let f := alg ["Lib"] [.param "Lib"] [] [.resolve "X"]
+  let program := algPrivate [] [] [("Lib", lib), ("Other", other), ("F", f)]
+    [.call (.resolve "F") [.resolve "Other"]]
+  match runResult (.algorithmExpr program) with
+  | .error err => innermostIsAnyBadOpenForm err
+  | _ => false
+
+#guard parameterOwnedOpenHeadIsRejected
+
+/-- The same for a qualified target whose first segment is parameter-owned:
+    `open Root.Sub` inside `F(Root)` fails at the head, never through the
+    farther root `Root`. -/
+def parameterOwnedQualifiedOpenHeadIsRejected : Bool :=
+  let sub := alg [] [] [publicProp "X" (alg [] [] [] [.num 7])] []
+  let root := alg [] [] [publicProp "Sub" sub] []
+  let f := alg ["Root"] [Expr.dotCall (.param "Root") "Sub" none] [] [.resolve "X"]
+  let program := algPrivate [] [] [("Root", root), ("F", f)]
+    [.call (.resolve "F") [.resolve "Root"]]
+  match runResult (.algorithmExpr program) with
+  | .error err => innermostIsAnyBadOpenForm err
+  | _ => false
+
+#guard parameterOwnedQualifiedOpenHeadIsRejected
+
+/-- Control: the `.resolve` head of a property-owned target still opens the
+    declared algorithm (`F = { open Lib  X }` is 7), unchanged. -/
+def propertyOwnedOpenHeadStillOpens : Bool :=
+  let lib := alg [] [] [publicProp "X" (alg [] [] [] [.num 7])] []
+  let f := alg [] [.resolve "Lib"] [] [.resolve "X"]
+  let program := algPrivate [] [] [("Lib", lib), ("F", f)] [.resolve "F"]
+  match runResult (.algorithmExpr program) with
+  | .ok (Result.atom 7) => true
+  | _ => false
+
+#guard propertyOwnedOpenHeadStillOpens
 
 end KatLangTests

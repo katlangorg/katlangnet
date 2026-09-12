@@ -768,6 +768,28 @@ public static class SemanticModelBuilder
                     break;
                 }
 
+                case Expr.Param parameter:
+                {
+                    // Static-open ownership (F2): parameter detection elaborated this head to
+                    // the parameter that OWNS the name (a parameter of this algorithm or an
+                    // enclosing one, or a branch binder), because the nearest binding decides
+                    // an open target's head exactly like every other bare-name occurrence. A
+                    // parameter is not an open target — the front end reported that — so the
+                    // site is NOT an OpenTarget and provides nothing, but it is not unresolved
+                    // either: it classifies and navigates as the parameter reference it is,
+                    // coherent with completion, which lists the name as that parameter. It
+                    // never resolves to a farther same-named property.
+                    var parameterClassification = ClassifyParameterReference(scope, parameter.Name, out var symbol);
+                    AddReference(
+                        parameter.Name,
+                        parameter.Span,
+                        OccurrenceKind.OpenTargetReference,
+                        parameterClassification,
+                        symbol?.Declaration,
+                        propertyInfo: null);
+                    break;
+                }
+
                 case Expr.DotCall dotCall when dotCall.IsCoreOpenForm():
                 {
                     var targetAlgorithm = VisitOpenExpressionAndResolve(dotCall.Target, scope);

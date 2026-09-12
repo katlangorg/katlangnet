@@ -3455,6 +3455,60 @@ public static class LanguageSpecCorpus
         },
         new()
         {
+            Id = "ownership-open-target-parameter-rejected",
+            Category = "name-resolution",
+            Source = "Lib = {\n    public X = 7\n}\nOther = {\n    public X = 8\n}\nF(Lib) = {\n    open Lib\n    X, Lib.X\n}\nF(Other)",
+            Outcome = SpecOutcome.ParseError,
+            ExpectedDiagnosticCode = DiagnosticCode.OpenTargetIsParameter,
+            ExpectedParseDiagnosticFragment = "Cannot open 'Lib': 'Lib' refers to a parameter",
+            Probes =
+            [
+                // Ordinary parameter use keeps its meaning: the parameter is the dot receiver.
+                new SpecProbe("Other = {\n    public X = 8\n}\nF(Lib) = Lib.X\nF(Other)", "ok raw=8 n=1"),
+                // A static open of a declared algorithm is unchanged, bare and qualified alike.
+                new SpecProbe("Lib = {\n    public X = 7\n}\nF = {\n    open Lib\n    X\n}\nF", "ok raw=7 n=1"),
+                new SpecProbe("Root = {\n    public Sub = {\n        public X = 7\n    }\n}\nF = {\n    open Root.Sub\n    X\n}\nF", "ok raw=7 n=1"),
+                // A parameter that merely shares its name with an OPENED member is not this rule:
+                // the open target `Lib` is property-owned, and the owned parameter `v` simply
+                // beats the opened `v` (ownership-parameter-beats-opened-name).
+                new SpecProbe("Lib = {\n    public v = 99\n}\nOuter(v) = {\n    open Lib\n    v + 1\n}\nOuter(7)", "ok raw=8 n=1"),
+                // The root is never called: an unresolved root name beside a nested `open` of that
+                // name is the root's unresolved input, reported by evaluation — not a parameter
+                // that cannot be opened.
+                new SpecProbe("Q.X\nM = {\n    open Q\n    1\n}\nM", "err unresolvedImplicitParams"),
+            ],
+            Explanation = "`open` is static, and lexical ownership still applies to its target name. Inside `F` the nearest binding of `Lib` is the parameter `Lib`, so the parameter owns the name; a parameter cannot be opened, and KatLang reports that instead of looking farther outward for the root property `Lib`. Adding or removing that farther declaration changes nothing — `Lib.X` in the same body reads the parameter, and so does `open Lib`.",
+        },
+        new()
+        {
+            Id = "ownership-open-target-parameter-without-farther-declaration",
+            Category = "name-resolution",
+            Source = "Other = {\n    public X = 8\n}\nF(Lib) = {\n    open Lib\n    X\n}\nF(Other)",
+            Outcome = SpecOutcome.ParseError,
+            ExpectedDiagnosticCode = DiagnosticCode.OpenTargetIsParameter,
+            Explanation = "The same rejection without any farther `Lib`: the verdict depends only on the nearest binding of the target name, never on whether a farther declaration of that name exists.",
+        },
+        new()
+        {
+            Id = "ownership-open-qualified-target-parameter-rejected",
+            Category = "name-resolution",
+            Source = "Root = {\n    public Sub = {\n        public X = 7\n    }\n}\nF(Root) = {\n    open Root.Sub\n    X\n}\nF(Root)",
+            Outcome = SpecOutcome.ParseError,
+            ExpectedDiagnosticCode = DiagnosticCode.OpenTargetIsParameter,
+            ExpectedParseDiagnosticFragment = "Cannot open 'Root.Sub': its first name 'Root' refers to a parameter",
+            Explanation = "A qualified target is decided at its first name: `Root` is owned by the parameter, so `open Root.Sub` is rejected there and is never resolved through the farther root declaration `Root`.",
+        },
+        new()
+        {
+            Id = "ownership-open-target-enclosing-parameter-rejected",
+            Category = "name-resolution",
+            Source = "Lib = {\n    public X = 7\n}\nOuter(Lib) = {\n    Inner = {\n        open Lib\n        X\n    }\n    Inner\n}\nOuter(3)",
+            Outcome = SpecOutcome.ParseError,
+            ExpectedDiagnosticCode = DiagnosticCode.OpenTargetIsParameter,
+            Explanation = "Ownership is inherited by nested bodies: `Inner`'s `open Lib` names the parameter `Lib` of the enclosing `Outer`, exactly as a reference to `Lib` written in `Inner` would, so it is rejected the same way.",
+        },
+        new()
+        {
             Id = "native-argument-value-demand",
             Category = "errors",
             Source = "Z = 1 / 0\n\nMath.Abs(Z)",

@@ -308,6 +308,16 @@ public class LookupCoherenceTests
             "v", "ok raw=707 n=1",
             new Declared("v", 2, IdentifierClassification.ConditionalBinderReference)),
 
+        // Static-open ownership (F2): the HEAD of an open target is a bare-name occurrence
+        // and obeys the same walk. `Lib` inside `F(Lib)` is the parameter, so `open Lib` is
+        // a front-end rejection (a parameter cannot be opened), the editor resolves the
+        // open head to the PARAMETER declaration — never to the farther root `Lib` — and
+        // the runtime never reaches either candidate.
+        new("ownership.parameterOwnedOpenHeadResolvesToTheParameter",
+            "Lib = {\n    public X = 101\n}\nF(Lib) = {\n    open Lib\n    1\n}\nF(707)",
+            "Lib", "parseError",
+            new Declared("Lib", 2, IdentifierClassification.ExplicitParameterReference)),
+
         // The control that keeps the fix honest: a name no enclosing owner BINDS is
         // still an ordinary ancestor property reference.
         new("ownership.unboundNameStaysAnAncestorProperty",
@@ -374,7 +384,13 @@ public class LookupCoherenceTests
         var lookupCase = Case(caseId);
         var parsed = Parser.Parse(lookupCase.Source);
         if (lookupCase.ExpectedRuntime == "parseError")
-            Assert.Equal(DiagnosticCode.ParameterPropertyCollision, Assert.Single(parsed.Diagnostics).Code);
+        {
+            // The two ownership rejections the matrix probes through: a property hiding a
+            // completed parameter, and an open target whose head a parameter owns.
+            Assert.Contains(
+                Assert.Single(parsed.Diagnostics).Code,
+                new[] { DiagnosticCode.ParameterPropertyCollision, DiagnosticCode.OpenTargetIsParameter });
+        }
         else
             Assert.False(parsed.HasErrors, $"[{caseId}] unexpected parse diagnostics: " +
                 string.Join(" | ", parsed.Diagnostics.Select(d => d.Message)));

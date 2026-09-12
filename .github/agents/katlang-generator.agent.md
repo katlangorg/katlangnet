@@ -403,6 +403,7 @@ If ANY checklist item fails, fix the output before emitting it.
       X                  # error: Ambiguous open 'X': provided by A, B
 
 - `open` imports only public/exported members; in an `open Lib.Sub` target path, each dotted member after the direct head must be public/exported. Ordinary structural dot-access is more permissive — `Lib.UseHelper` may reach a private self-contained structural member (e.g. `Lib = { UseHelper = x + 1 }` then `Lib.UseHelper(10)` is `11`). Capturing, conditional, or otherwise local-only members remain inaccessible externally even when marked `public`, so do not assume `public` on a nested helper makes it importable through `open`.
+- `open` is static, and the target name obeys the same lexical ownership as every other name: if the target's first name is owned by a PARAMETER of the opening algorithm or of an enclosing one (written, inferred, collecting, grouped, or a branch-pattern binder), that parameter owns the name and cannot be opened — the program is rejected (`Cannot open 'Lib': 'Lib' refers to a parameter`), and KatLang never looks farther outward for another declaration named `Lib`. Never generate `open Lib` inside `F(Lib) = { ... }` or in a body nested in it; use the parameter directly (`Lib.X`) or open a declared algorithm the body does not bind.
 - The `open` target itself only needs to be lexically visible — it may be a private property; `open` still imports only its public members:
 
       open Lib
@@ -1533,7 +1534,7 @@ Without trailing output, `Order` has no direct result — use `Order.Total(25, 4
 
 === BEGIN GENERATED: katlang-spec-examples (DO NOT EDIT BY HAND) ===
 
-Verified reference examples (76 of the 237-case canonical language specification,
+Verified reference examples (76 of the 241-case canonical language specification,
 tests/KatLang.Tests/LanguageSpec/LanguageSpecCorpus.cs). Every program and expected
 output below is executed against the KatLang engine and (where representable)
 guarded against the Lean model on every build. Treat these as ground truth for the

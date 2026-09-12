@@ -169,6 +169,9 @@ public class DiagnosticCodeTests
         { "explicit-params-require-output", "Algo(x, y) = {\n  Prop = 7\n}", DiagnosticCode.ExplicitParametersRequireOutput },
         { "undeclared-in-explicit-list", "F(x) = x + y\nF(1)", DiagnosticCode.UndeclaredIdentifier },
         { "undeclared-in-branch", "F(0) = y\nF(x) = x\nF(0)", DiagnosticCode.UndeclaredIdentifier },
+        { "open-target-is-parameter", "Other = { public X = 8 }\nF(Lib) = {\n    open Lib\n    1\n}\nF(Other)", DiagnosticCode.OpenTargetIsParameter },
+        { "open-qualified-target-is-parameter", "F(Root) = {\n    open Root.Sub\n    1\n}\nF({ public Sub = { public X = 1 } })", DiagnosticCode.OpenTargetIsParameter },
+        { "open-target-is-enclosing-parameter", "Outer(Lib) = {\n    Inner = {\n        open Lib\n        1\n    }\n    Inner\n}\nOuter(1)", DiagnosticCode.OpenTargetIsParameter },
         { "load-elaboration-unavailable", "open 'https://katlang.org/lib.kat'\n1", DiagnosticCode.LoadElaborationUnavailable },
     };
 

@@ -140,6 +140,7 @@ public sealed class KatLangError
             DiagnosticCode.ParameterPropertyCollision => KatLangErrorCode.ParameterPropertyCollision,
             DiagnosticCode.InvalidSpreadMarker => KatLangErrorCode.InvalidSpreadMarker,
             DiagnosticCode.UnseparatedSameLineItem => KatLangErrorCode.UnseparatedSameLineItem,
+            DiagnosticCode.OpenTargetIsParameter => KatLangErrorCode.OpenTargetIsParameter,
             _ when !Enum.IsDefined(code) => KatLangErrorCode.Unspecified,
             _ => throw new InvalidOperationException(
                 $"Unhandled declared {nameof(DiagnosticCode)} family in {nameof(KatLangError)}: {code}. "

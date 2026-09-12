@@ -272,4 +272,7 @@ public enum KatLangErrorCode
 
     /// <summary>Front-end <see cref="DiagnosticCode.UnseparatedSameLineItem"/>.</summary>
     UnseparatedSameLineItem = 64,
+
+    /// <summary>Front-end <see cref="DiagnosticCode.OpenTargetIsParameter"/>.</summary>
+    OpenTargetIsParameter = 65,
 }

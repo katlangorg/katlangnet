@@ -4315,6 +4315,22 @@ Sqrt(16)
 
 **Ambiguity:** if two open sources both provide a property with the same name, KatLang raises an error. Define a local property with that name to shadow the ambiguity.
 
+**Ownership:** `open` is resolved statically, and the target name follows the ordinary lexical ownership rules. If the nearest binding of the target's first name is a parameter — of the algorithm containing the `open`, or of an enclosing one — that parameter owns the name, and a parameter cannot be opened. KatLang reports an error instead of searching farther outward for another declaration with the same name, so a farther library that happens to be called `Lib` never takes over silently:
+
+```
+Lib = {
+    public X = 7
+}
+
+F(Lib) = {
+    open Lib
+    # error: cannot open 'Lib' — it refers to the parameter 'Lib', which cannot be used as an open target
+    X
+}
+```
+
+Use the parameter directly instead (`F(Lib) = Lib.X`), or open a declared algorithm from a body that does not bind its name: without the parameter, `open Lib` inside `F = { ... }` opens the declared `Lib` exactly as before.
+
 ### Visibility
 
 By default, properties are private — accessible within their own algorithm and its children, but not visible to outside callers who load or open the algorithm. Marking a property `public` makes it eligible for external exposure, but a property is exported only if it is self-contained. A nested property is not exported if it depends on parameters owned by an enclosing algorithm, including the pattern binders of a conditional branch. Properties defined inside a conditional branch are additionally unreachable by name from outside that branch — a conditional exposes no members of its branches — but inside the branch they follow the ordinary rules: a self-contained branch-local library, whether declared there, opened inline, or backed by `open 'url'`, exposes its public members to the branch body and to any body nested in it, and nowhere else.

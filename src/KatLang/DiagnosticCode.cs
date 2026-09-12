@@ -277,4 +277,17 @@ public enum DiagnosticCode
     /// parameter list, or as the declaration.
     /// </summary>
     UnseparatedSameLineItem = 41,
+
+    /// <summary>
+    /// An <c>open</c> target's first name is owned by a PARAMETER. <c>open</c> is
+    /// resolved statically, and lexical ownership still applies to the target
+    /// name: the nearest binding of the head name of <c>open Lib</c> or
+    /// <c>open Lib.Sub</c> is a parameter of the opening algorithm or of an
+    /// enclosing one (written, inferred, lifted, collecting, grouped, or a
+    /// branch pattern binder), so that parameter owns the name — and a parameter
+    /// cannot be opened. The front end reports this instead of searching farther
+    /// outward for a same-named property or algorithm (SYN-03 / F2). The program
+    /// root's phantom signature is not a callable binding and never produces it.
+    /// </summary>
+    OpenTargetIsParameter = 42,
 }

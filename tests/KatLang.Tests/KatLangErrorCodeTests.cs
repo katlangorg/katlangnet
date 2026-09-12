@@ -403,6 +403,7 @@ public class KatLangErrorCodeTests
             ["ParameterPropertyCollision"] = 39,
             ["InvalidSpreadMarker"] = 40,
             ["UnseparatedSameLineItem"] = 41,
+            ["OpenTargetIsParameter"] = 42,
         };
 
         var actual = Enum.GetValues<DiagnosticCode>().ToDictionary(v => v.ToString(), v => (int)v);
@@ -479,6 +480,7 @@ public class KatLangErrorCodeTests
             ["ParameterPropertyCollision"] = 62,
             ["InvalidSpreadMarker"] = 63,
             ["UnseparatedSameLineItem"] = 64,
+            ["OpenTargetIsParameter"] = 65,
         };
 
         var actual = Enum.GetValues<KatLangErrorCode>().ToDictionary(v => v.ToString(), v => (int)v);
