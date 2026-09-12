@@ -838,9 +838,12 @@ mutual
     --   member's lexical-fallback callee identity as an ordinary name
     --   expression (`.resolve f`, or `.param f` once a front-end decides the
     --   member is a parameter reference). Resolution is structural-first with
-    --   the fallback applying only on a structural miss. Runtime consumers
-    --   CONSUME these facts (`resolveAlg fallback`) instead of reconstructing
-    --   the Param-vs-Resolve decision from environments. The C# front end
+    --   the fallback applying only on a structural miss — at EVERY level of
+    --   a chain: a receiver that is itself an argumentless dot edge navigates
+    --   its exported structural members (`resolveDotReceiver`), so
+    --   `Lib.Sub.Q` reads `Sub`'s own `Q` before any lexical `Q`. Runtime
+    --   consumers CONSUME these facts (`resolveAlg fallback`) instead of
+    --   reconstructing the Param-vs-Resolve decision from environments. The C# front end
     --   consumes ordinary Grace composed with dot syntax (`a~.f` / `a.~f`),
     --   so Lean receives the SAME `dotMember` executable body as for `a.f`.
     --   Hand-built ordinary/lexical edges use the `Expr.dotCall` smart
@@ -3765,7 +3768,11 @@ def resolveAlg (e : Expr) (ctx : EvalCtx) : EvalM Algorithm :=
       -- Lift a.f / a.f(args) to a wrapper algorithm; evalDotCall handles all
       -- semantics (builtin property special cases, structural property,
       -- receiver injection, lexical fallback). The whole node — including its
-      -- elaborated fallback identity — rides along unchanged.
+      -- elaborated fallback identity — rides along unchanged. This is the
+      -- higher-order/value identity of a dot RESULT; a dot edge in RECEIVER
+      -- position resolves through `resolveDotReceiver` below, which navigates
+      -- an argumentless chain's exported structural members before falling
+      -- back to this memberless wrapper.
       pure (wireToCaller ctx (Algorithm.ofExpr (.dotMember o n fallback args)))
   -- Explicit errors for syntactic forms that cannot resolve to algorithms
   | .param x =>
@@ -3785,6 +3792,56 @@ def resolveAlg (e : Expr) (ctx : EvalCtx) : EvalM Algorithm :=
   | .index _ _ => .error (Error.notAnAlgorithm "index expression")
   | .call _ _ => .error (Error.notAnAlgorithm "call expression")
   | .stringLiteral _ => .error (Error.notAnAlgorithm "string literal")
+
+/-- Resolve a dot edge's RECEIVER in algorithm position — the structural half
+    of the ordinary DotCall law applied at EVERY level of a chain.
+
+    Every receiver shape resolves through canonical `resolveAlg` except an
+    argumentless, non-`string` dot edge `X.M`, which NAVIGATES: when `X`
+    (resolved the same way, recursively) is an algorithm that declares an
+    exported `M`, the receiver IS that member algorithm wired to `X`
+    (`Algorithm.childOf`), so `Lib.Sub.Q` reads `Sub`'s own `Q` before any
+    lexical `Q(x)` is considered, exactly as `Lib.Q` reads `Lib`'s. A declared
+    but local-only `M`, or one defined only inside conditional branches, is
+    the same structural error that evaluating `X.M` itself reports — never a
+    fallback. When `X` does not declare `M` (or is not an algorithm at all),
+    the edge is an ordinary dot RESULT — its lexical fallback's value, or the
+    `string` intrinsic — and resolves to `resolveAlg`'s memberless wrapper, so
+    the chain continues by value (`3.A.B` stays `B(A(3))`). An argument-bearing
+    edge is a call, hence a value, and never navigates; a capture receiver
+    keeps suppressing structural identity (`(Obj).V` falls back — the C#
+    parser keeps a capture layer only around a bare name, so the source
+    `(Lib.Sub).Q` is simply `Lib.Sub.Q`).
+
+    The resolution is identity navigation only: no intermediate edge is
+    evaluated, so a parameterized or output-less container navigates exactly
+    as it does at the first level (`F.Q` works while `F` alone is an arity or
+    missing-output error). The higher-order channel is untouched: `resolveAlg`
+    still lifts every general argumentless dot expression to its
+    zero-parameter wrapper identity. C#: `ResolveDotReceiver`. -/
+def resolveDotReceiver (e : Expr) (ctx : EvalCtx) : EvalM Algorithm :=
+  match e with
+  | .dotMember o n _ none =>
+      if n = "string" then resolveAlg e ctx
+      else do
+        match <- evalAttempt (resolveDotReceiver o ctx) with
+        | .ok a =>
+            match Algorithm.lookupPropDefAny? a n with
+            | some p =>
+                if !p.exposure.isExported then
+                  .error (Error.localOnlyProperty (openExprName o) n p.exposure)
+                else
+                  pure (Algorithm.childOf a p.alg)
+            | none =>
+                if Algorithm.conditionalBranchesDefineProperty a n then
+                  .error (Error.localOnlyProperty (openExprName o) n .localConditional)
+                else
+                  -- Structural miss: the edge is an ordinary dot result.
+                  resolveAlg e ctx
+        -- A value receiver makes the edge an ordinary dot result too.
+        | .error (.notAnAlgorithm _) => resolveAlg e ctx
+        | .error err => .error err
+  | _ => resolveAlg e ctx
 
 
 def resolveArgAlgExpr (e : Expr) (ctx : EvalCtx) (env : ValEnv) : EvalM Algorithm := do
@@ -5345,6 +5402,9 @@ mutual
       it. This is the single owner
       of dot-call dispatch; `evalDotCall` is its Result projection.
       Smart dispatch:
+      - Receiver resolution through `resolveDotReceiver`: a chained receiver
+        navigates its exported structural members, so the property-first
+        rule below holds at every level of `A.B.C.D`
       - "string" value intrinsic → evaluate target, convert numeric result to string
       - Structural property found (navigation-only):
         - If no args and 0-param → value access
@@ -5352,8 +5412,8 @@ mutual
         - If args → direct argument binding (no receiver injection)
       - No property → lexical fallback (receiver injection)
 
-      When resolveAlg returns notAnAlgorithm (e.g. numeric literal target),
-      value-based intrinsics are checked before lexical fallback.
+      When receiver resolution returns notAnAlgorithm (e.g. numeric literal
+      target), value-based intrinsics are checked before lexical fallback.
 
       (The C# front end consumes the Grace annotation in `a~.f` / `a.~f`, so
       Lean receives the same dotMember and the same structural-first dispatch
@@ -5368,7 +5428,7 @@ mutual
   partial def evalDotCallCounted (target : Expr) (name : Ident)
       (fallback : Expr) (argsOpt : Option OutputBundle)
       (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult := do
-    match <- evalAttempt (resolveAlg target ctx) with
+    match <- evalAttempt (resolveDotReceiver target ctx) with
     | .ok targetAlg =>
       if name = "string" then do
         let val <- evalAlgOutput targetAlg ctx env

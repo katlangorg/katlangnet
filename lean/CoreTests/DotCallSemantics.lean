@@ -1106,4 +1106,240 @@ def test5b : Bool :=
     .dotCall (.algorithmExpr receiver5) "G" (some [.num 5])
   ]))
 
+
+--------------------------------------------------------------------------------
+-- Chained dot resolution: property-first / extension-fallback at EVERY level
+-- `resolveDotReceiver` navigates an argumentless dot edge used as a RECEIVER
+-- through its exported structural members, so `Lib.Sub.Q` reads Sub's own Q
+-- before any lexical `Q(x)` is considered. A receiver that lacks the member
+-- stays an ordinary dot RESULT and the chain continues by value (`3.A.B` is
+-- `B(A(3))`), and the established one-level accessibility rule holds at every
+-- level: a declared local-only or conditional-branch intermediate member is
+-- the structural error, never a fallback. C#: `ChainedDotStructuralPrecedenceTests`.
+--------------------------------------------------------------------------------
+
+-- Lib = { public Sub = { public Q = 1 } }
+def chainedLibSub : Algorithm :=
+  alg [] [] [publicProp "Q" (alg [] [] [] [.num 1])] []
+
+def chainedLib : Algorithm :=
+  alg [] [] [publicProp "Sub" chainedLibSub] []
+
+-- Q(x) = 99: the same-named visible extension.
+def chainedExtensionQ : Algorithm :=
+  alg ["x"] [] [] [.num 99]
+
+-- Lib.Sub.Q with a visible Q(x) = 99: the structural member wins (1), exactly
+-- as `Lib.Q` would read Lib's own Q.
+def chainedStructuralMemberBeatsExtension : Bool :=
+  match runFlat (.algorithmExpr (algPrivate [] [] [
+    ("Lib", chainedLib), ("Q", chainedExtensionQ)
+  ] [
+    .dotCall (.dotCall (.resolve "Lib") "Sub" none) "Q" none
+  ])) with
+  | Except.ok [1] => true
+  | _ => false
+
+#guard chainedStructuralMemberBeatsExtension
+
+-- The same edge with the extension declared NEARER than the root (inside the
+-- accessing algorithm) still selects the structural member.
+def chainedStructuralMemberBeatsNestedExtension : Bool :=
+  match runFlat (.algorithmExpr (algPrivate [] [] [
+    ("Lib", chainedLib),
+    ("Outer", algPrivate [] [] [("Q", chainedExtensionQ)] [
+      .dotCall (.dotCall (.resolve "Lib") "Sub" none) "Q" none
+    ])
+  ] [.resolve "Outer"])) with
+  | Except.ok [1] => true
+  | _ => false
+
+#guard chainedStructuralMemberBeatsNestedExtension
+
+-- A = x + 7, B = x * 5: `3.A.B` is `B(A(3))` and `B(3.A)` -- a value receiver
+-- keeps falling back at every level of the chain.
+def chainedExtensionA : Algorithm :=
+  alg ["x"] [] [] [.binary .add (.param "x") (.num 7)]
+
+def chainedExtensionB : Algorithm :=
+  alg ["x"] [] [] [.binary .mul (.param "x") (.num 5)]
+
+def chainedExtensionFallbackComposes : Bool :=
+  match runFlat (.algorithmExpr (algPrivate [] [] [
+    ("A", chainedExtensionA), ("B", chainedExtensionB)
+  ] [
+    .dotCall (.dotCall (.num 3) "A" none) "B" none,
+    .call (.resolve "B") [.call (.resolve "A") [.num 3]],
+    .call (.resolve "B") [.dotCall (.num 3) "A" none]
+  ])) with
+  | Except.ok [50, 50, 50] => true
+  | _ => false
+
+#guard chainedExtensionFallbackComposes
+
+-- A = { public B = { public C = { public D = 7 } } } with a lexical D(x) = 93:
+-- `A.B.C.D` traverses the accessible members at every level.
+def chainedDeepC : Algorithm :=
+  alg [] [] [publicProp "D" (alg [] [] [] [.num 7])] []
+
+def chainedDeepB : Algorithm :=
+  alg [] [] [publicProp "C" chainedDeepC] []
+
+def chainedDeepA : Algorithm :=
+  alg [] [] [publicProp "B" chainedDeepB] []
+
+def chainedNestedStructuralMembers : Bool :=
+  match runFlat (.algorithmExpr (algPrivate [] [] [
+    ("A", chainedDeepA), ("D", alg ["x"] [] [] [.num 93])
+  ] [
+    .dotCall (.dotCall (.dotCall (.resolve "A") "B" none) "C" none) "D" none
+  ])) with
+  | Except.ok [7] => true
+  | _ => false
+
+#guard chainedNestedStructuralMembers
+
+-- Structural access ignores `public` (but not exposure) at every level: a
+-- PRIVATE intermediate `Sub` is still navigated.
+def chainedPrivateLib : Algorithm :=
+  alg [] [] [privateProp "Sub" chainedLibSub] []
+
+def chainedPrivateIntermediateIsReachable : Bool :=
+  match runFlat (.algorithmExpr (algPrivate [] [] [
+    ("Lib", chainedPrivateLib), ("Q", chainedExtensionQ)
+  ] [
+    .dotCall (.dotCall (.resolve "Lib") "Sub" none) "Q" none
+  ])) with
+  | Except.ok [1] => true
+  | _ => false
+
+#guard chainedPrivateIntermediateIsReachable
+
+-- G(x) = { public Sub = { public Q = 1, x }, 0 } with Sub local-only (it reads
+-- the captured x) and Q(v) = 99 visible: `G.Sub.Q` is the structural
+-- localOnlyProperty error at Sub -- exactly what `G.Sub` reports -- never the
+-- extension call.
+def chainedLocalOnlySub : Algorithm :=
+  alg [] [] [publicProp "Q" (alg [] [] [] [.num 1])] [.param "x"]
+
+def chainedLocalOnlyG : Algorithm :=
+  alg ["x"] [] [publicLocalProp "Sub" .localCapturedAncestorParams chainedLocalOnlySub] [.num 0]
+
+def chainedLocalOnlyIntermediateIsAnError : Bool :=
+  match runResult (.algorithmExpr (algPrivate [] [] [
+    ("G", chainedLocalOnlyG), ("Q", chainedExtensionQ)
+  ] [
+    .dotCall (.dotCall (.resolve "G") "Sub" none) "Q" none
+  ])) with
+  | Except.error err => innermostIsLocalOnlyProperty "G" "Sub" .localCapturedAncestorParams err
+  | Except.ok _ => false
+
+#guard chainedLocalOnlyIntermediateIsAnError
+
+-- A member defined only inside conditional branches is equally an error at an
+-- intermediate level: C(0) = { public Q = { public R = 1 }, 0 }, C(1) = 2,
+-- R(v) = 99, then `C.Q.R` reports the conditional local-only error at Q.
+def chainedConditionalBranchBody : Algorithm :=
+  alg [] [] [publicProp "Q" (alg [] [] [publicProp "R" (alg [] [] [] [.num 1])] [])] [.num 0]
+
+def chainedConditionalC : Algorithm :=
+  Algorithm.conditional none [] [
+    { pattern := .litInt 0, body := chainedConditionalBranchBody },
+    { pattern := .litInt 1, body := alg [] [] [] [.num 2] }
+  ]
+
+def chainedConditionalIntermediateIsAnError : Bool :=
+  match runResult (.algorithmExpr (algPrivate [] [] [
+    ("C", chainedConditionalC), ("R", alg ["v"] [] [] [.num 99])
+  ] [
+    .dotCall (.dotCall (.resolve "C") "Q" none) "R" none
+  ])) with
+  | Except.error err => innermostIsLocalOnlyProperty "C" "Q" .localConditional err
+  | Except.ok _ => false
+
+#guard chainedConditionalIntermediateIsAnError
+
+-- The `.string` intrinsic over a chained STRUCTURAL receiver reads the member's
+-- value: Lib = { public Sub = { 7 } }, `Lib.Sub.string` is "7".
+def chainedStringLib : Algorithm :=
+  alg [] [] [publicProp "Sub" (alg [] [] [] [.num 7])] []
+
+def chainedStringIntrinsicReadsMemberValue : Bool :=
+  match runResult (.algorithmExpr (algPrivate [] [] [("Lib", chainedStringLib)] [
+    .dotCall (.dotCall (.resolve "Lib") "Sub" none) "string" none
+  ])) with
+  | Except.ok (.str "7") => true
+  | _ => false
+
+#guard chainedStringIntrinsicReadsMemberValue
+
+-- Lib = { public Sub = { public Q = 1, 5 } }, Q(x) = x * 10.
+def chainedValueLib : Algorithm :=
+  alg [] [] [publicProp "Sub" (alg [] [] [publicProp "Q" (alg [] [] [] [.num 1])] [.num 5])] []
+
+def chainedTimesTenQ : Algorithm :=
+  alg ["x"] [] [] [.binary .mul (.param "x") (.num 10)]
+
+-- A hand-built CAPTURE over the chain (the C# parser keeps a capture layer only
+-- around a bare name, so this is the model-level twin of `(Obj).V`): a capture
+-- is a VALUE, never algorithm identity, so the
+-- extension call over Sub's value (5) is selected -- 50.
+def chainedCaptureReceiverFallsBack : Bool :=
+  match runFlat (.algorithmExpr (algPrivate [] [] [
+    ("Lib", chainedValueLib), ("Q", chainedTimesTenQ)
+  ] [
+    .dotCall (.capture [.dotCall (.resolve "Lib") "Sub" none]) "Q" none
+  ])) with
+  | Except.ok [50] => true
+  | _ => false
+
+#guard chainedCaptureReceiverFallsBack
+
+-- `Lib.Sub().Q`: an argument-bearing edge is a CALL, hence a value -- 50 again.
+def chainedExplicitCallReceiverIsAValue : Bool :=
+  match runFlat (.algorithmExpr (algPrivate [] [] [
+    ("Lib", chainedValueLib), ("Q", chainedTimesTenQ)
+  ] [
+    .dotCall (.dotCall (.resolve "Lib") "Sub" (some [])) "Q" none
+  ])) with
+  | Except.ok [50] => true
+  | _ => false
+
+#guard chainedExplicitCallReceiverIsAValue
+
+-- Lib = { public Sub = { public Q(y) = y + 1 } }, Q(x) = 99: `Lib.Sub.Q(5)`
+-- calls the STRUCTURAL member directly (no receiver injection) -- 6.
+def chainedArgsLib : Algorithm :=
+  alg [] [] [publicProp "Sub" (alg [] [] [
+    publicProp "Q" (alg ["y"] [] [] [.binary .add (.param "y") (.num 1)])
+  ] [])] []
+
+def chainedArgumentBearingEdgeCallsStructuralMember : Bool :=
+  match runFlat (.algorithmExpr (algPrivate [] [] [
+    ("Lib", chainedArgsLib), ("Q", chainedExtensionQ)
+  ] [
+    .dotCall (.dotCall (.resolve "Lib") "Sub" none) "Q" (some [.num 5])
+  ])) with
+  | Except.ok [6] => true
+  | _ => false
+
+#guard chainedArgumentBearingEdgeCallsStructuralMember
+
+-- Lib = { public Sub = { 5 } }, F(a, b) = a * 100 + b: when structural lookup
+-- does not apply, the free-call/dot-call law is untouched -- `Lib.Sub.F(2)` is
+-- `F(Lib.Sub, 2)` (502 both ways).
+def chainedFreeCallLawHolds : Bool :=
+  match runFlat (.algorithmExpr (algPrivate [] [] [
+    ("Lib", alg [] [] [publicProp "Sub" (alg [] [] [] [.num 5])] []),
+    ("F", alg ["a", "b"] [] [] [
+      .binary .add (.binary .mul (.param "a") (.num 100)) (.param "b")])
+  ] [
+    .dotCall (.dotCall (.resolve "Lib") "Sub" none) "F" (some [.num 2]),
+    .call (.resolve "F") [.dotCall (.resolve "Lib") "Sub" none, .num 2]
+  ])) with
+  | Except.ok [502, 502] => true
+  | _ => false
+
+#guard chainedFreeCallLawHolds
+
 end KatLangTests

@@ -1392,24 +1392,19 @@ internal static class ParameterDetector
     /// what keeps receiver classification from drifting away from
     /// <see cref="ShouldRewriteAsParam"/>. The Never/Conditional/Always mapping
     /// itself is the shared <see cref="AstHelpers.GetLexicalFallbackSelection"/>
-    /// law — this method only supplies the detector's resolution power, exactly
-    /// like the editor's provider resolution.
+    /// law, and a chained receiver (<c>Lib.Sub</c> in <c>Lib.Sub.Q</c>) is
+    /// navigated structurally by the shared compositional classification
+    /// (<see cref="AstHelpers.ResolveStaticStructuralMemberProvider"/>, the
+    /// static twin of the evaluator's receiver resolution) — this method only
+    /// supplies the detector's resolution power for the bare names it meets,
+    /// exactly like the editor's provider resolution.
     /// </summary>
     private static StaticStructuralMemberProvider ResolveDotCallReceiverProvider(
         Expr.DotCall dotCall,
         ElaboratedPropertyScope scope,
         ParameterOwnership boundParameters)
-    {
-        var receiver = dotCall.Target.UnwrapGraceOperand();
-        var provider = receiver.GetStaticStructuralMemberProvider();
-        if (provider.Kind == StaticStructuralMemberProviderKind.LexicalReference
-            && receiver is Expr.Resolve(var receiverName))
-        {
-            provider = ResolveReceiverNameProvider(receiverName, scope, boundParameters);
-        }
-
-        return provider;
-    }
+        => dotCall.Target.UnwrapGraceOperand().ResolveStaticStructuralMemberProvider(
+            name => ResolveReceiverNameProvider(name, scope, boundParameters));
 
     private static StaticStructuralMemberProvider ResolveReceiverNameProvider(
         string name,

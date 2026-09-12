@@ -1413,6 +1413,76 @@ public static class LanguageSpecCorpus
         },
         new()
         {
+            Id = "dot-chain-structural-member-beats-extension",
+            Category = "access-boundaries",
+            Source = "Lib = {\n    public Sub = {\n        public Q = 1\n    }\n}\n\nQ(x) = 99\n\nLib.Sub.Q",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "1",
+            ExpectedRaw = "1",
+            ExpectedEmittedCount = 1,
+            Probes =
+            [
+                new SpecProbe("Lib = {\n    Sub = {\n        public Q = 1\n    }\n}\nQ(x) = 99\nLib.Sub.Q", "ok raw=1 n=1"),
+                new SpecProbe("Lib = {\n    public Sub = {\n        public Q = 1\n    }\n}\nK(Q) = Lib.Sub.Q\nK({x + 1})", "ok raw=1 n=1"),
+                new SpecProbe("Lib = {\n    public Sub = {\n        public Q(y) = y + 1\n    }\n}\nQ(x) = 99\nLib.Sub.Q(5)", "ok raw=6 n=1"),
+                new SpecProbe("Lib = {\n    public Sub = {\n        public Q = 1\n    }\n}\nOuter = {\n    Q(x) = 99\n    Lib.Sub.Q\n}\nOuter", "ok raw=1 n=1"),
+            ],
+            IncludeInGeneratorPrompt = true,
+            Explanation = "Dot syntax is property-first at EVERY level of a chain: the receiver `Lib.Sub` is navigated to `Sub`'s algorithm, and because `Sub` exposes an accessible `Q`, that member is read before the visible extension `Q(x)` is ever considered — exactly as `Lib.Q` reads `Lib`'s own `Q`. Only a receiver without the member falls back to the extension call `Q(receiver)`; a same-named extension, whether declared at the root, in the enclosing algorithm, or as a parameter of it, never pre-empts a structural member.",
+        },
+        new()
+        {
+            Id = "dot-chain-extension-fallback-composes",
+            Category = "access-boundaries",
+            Source = "A = x + 7\nB = x * 5\n\n3.A.B\nB(A(3))\nB(3.A)",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "50\n50\n50",
+            ExpectedRaw = "S[50, 50, 50]",
+            ExpectedEmittedCount = 3,
+            Probes =
+            [
+                new SpecProbe("Q(x) = x * 10\n[1, 2, 3].count.Q", "ok raw=30 n=1"),
+                new SpecProbe("Q(x) = x + 1\n3.Q", "ok raw=4 n=1"),
+                new SpecProbe("Lib = {\n    public Sub = {\n        5\n    }\n}\nF(a, b) = a * 100 + b\nLib.Sub.F(2)", "ok raw=502 n=1"),
+            ],
+            IncludeInGeneratorPrompt = true,
+            Explanation = "When a receiver has no such member, the dot edge falls back to the extension call with the receiver as the leading argument, and the fallbacks compose along a chain: the number `3` has no structural `A`, so `3.A` is `A(3)`; that result has no `B`, so `3.A.B` is `B(A(3))`, the same as `B(3.A)`. The free-call/dot-call law `receiver.F(args...) = F(receiver, args...)` is untouched wherever structural lookup does not apply.",
+        },
+        new()
+        {
+            Id = "dot-chain-nested-structural-members",
+            Category = "access-boundaries",
+            Source = "A = {\n    public B = {\n        public C = {\n            public D = 7\n        }\n    }\n}\nD(x) = 93\n\nA.B.C.D",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "7",
+            ExpectedRaw = "7",
+            ExpectedEmittedCount = 1,
+            Probes =
+            [
+                new SpecProbe("G(x) = {\n    public Sub = {\n        public Q = 1\n    }\n    x\n}\nQ(v) = 99\nG.Sub.Q", "ok raw=1 n=1"),
+                new SpecProbe("Lib = {\n    public Sub = {\n        public Q = 1\n        5\n    }\n}\nQ(x) = x * 10\nLib.Sub().Q", "ok raw=50 n=1"),
+                new SpecProbe("Lib = {\n    public Sub = {\n        public Q = 1\n        5\n    }\n}\nQ(x) = x * 10\n(Lib.Sub).Q", "ok raw=1 n=1"),
+                new SpecProbe("Lib = {\n    public Sub = {\n        7\n    }\n}\nLib.Sub.string", "ok raw='7' n=1"),
+            ],
+            IncludeInGeneratorPrompt = true,
+            Explanation = "A chain of argumentless dot edges navigates accessible structural members at every level without evaluating the intermediate containers, so a container that has no output, or declares parameters, still exposes its members through the chain. A written call such as `Lib.Sub()` is a VALUE, so a member after it is resolved by extension fallback on that value; parentheses around a single dot expression are ordinary redundant grouping, so `(Lib.Sub).Q` is `Lib.Sub.Q`.",
+        },
+        new()
+        {
+            Id = "dot-chain-local-only-member-is-not-a-fallback",
+            Category = "access-boundaries",
+            Source = "G(x) = {\n    public Sub = {\n        public Q = 1\n        x\n    }\n    0\n}\nQ(v) = 99\n\nG.Sub.Q",
+            Outcome = SpecOutcome.EvalError,
+            ExpectedErrorCategory = "localOnlyProperty",
+            Probes =
+            [
+                new SpecProbe("G(x) = {\n    public Sub = {\n        public Q = 1\n        x\n    }\n    0\n}\nG.Sub", "err localOnlyProperty"),
+                new SpecProbe("C(0) = {\n    public Q = {\n        public R = 1\n    }\n    0\n}\nC(1) = 2\nR(v) = 99\nC.Q.R", "err localOnlyProperty"),
+            ],
+            Explanation = "Accessibility is the established one-level rule applied at every level: `Sub` is declared but local-only (its value reads the enclosing parameter `x`), so `G.Sub.Q` reports that structural error at `Sub` — never a fallback to the visible extension `Q(v)` — exactly as `G.Sub` itself reports it, and a member defined only inside conditional branches fails the same way. Private members remain reachable: structural access ignores `public`, not exposure.",
+        },
+        new()
+        {
             Id = "open-capture-target-rejected",
             Category = "access-boundaries",
             Source = "M = {\n    public C = 5\n}\nR = {\n    open (M)\n    C\n}\nR",

@@ -1742,13 +1742,18 @@ public static partial class Evaluator
     /// first honors its binding's retained resource-limit value error exactly like the
     /// ordinary <c>Expr.Param</c> value paths (retention stays governed by the
     /// <c>IsResourceLimit</c> policy at the binding sites; this consumer only reads it).
-    /// Written receiver shapes (brace block, capture, dot-chain wrapper) carry no name
+    /// A dot chain that <see cref="ResolveDotReceiver"/> navigated structurally
+    /// (<paramref name="receiverIsStructuralMember"/>) is such a name-resolved property
+    /// algorithm too — <c>Lib.Sub.string</c> re-enters <c>Sub</c>'s body exactly as
+    /// <c>Sub.string</c> would — so it takes the same charged funnel.
+    /// Written receiver shapes (brace block, capture, dot-result wrapper) carry no name
     /// to cycle back through and their nesting is parser-bounded, so they stay on the
     /// uncharged written-syntax policy like every other block/capture evaluation.
     /// </summary>
     private static EvalResult<Result> EvalDotStringReceiverAlgOutput(
         Expr target,
         Algorithm targetAlg,
+        bool receiverIsStructuralMember,
         EvalCtx ctx,
         IReadOnlyList<(string, Result)> valEnv)
     {
@@ -1760,6 +1765,9 @@ public static partial class Evaluator
                 return EvalResolvedAlgOutputForValueDemand(targetAlg, ctx, valEnv);
 
             case Expr.Resolve:
+                return EvalResolvedAlgOutputForValueDemand(targetAlg, ctx, valEnv);
+
+            case Expr.DotCall when receiverIsStructuralMember:
                 return EvalResolvedAlgOutputForValueDemand(targetAlg, ctx, valEnv);
 
             default:

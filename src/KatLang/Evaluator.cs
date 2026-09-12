@@ -1636,7 +1636,11 @@ public static partial class Evaluator
                     }
 
                     // Lean: resolveAlg (.dotCall o n args) — lift to wrapper algorithm;
-                    // evalDotCall handles all semantics (builtin property special cases, structural lookup, lexical fallback)
+                    // evalDotCall handles all semantics (builtin property special cases, structural lookup, lexical fallback).
+                    // This is the higher-order/value identity of a dot RESULT. A dot edge in
+                    // RECEIVER position resolves through ResolveDotReceiver instead, which
+                    // navigates an argumentless chain's exported structural members before
+                    // falling back to this memberless wrapper (Lean: resolveDotReceiver).
                     var wrapper = new Algorithm.User(
                         Parent: null, Parameters: [], Opens: [],
                         Properties: [], Output: [expr]);

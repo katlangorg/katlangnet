@@ -19,6 +19,15 @@ internal enum StaticStructuralMemberProviderKind
 
     /// <summary>The expression denotes this statically known algorithm.</summary>
     KnownAlgorithm,
+
+    /// <summary>
+    /// The expression is a dot edge that is statically known to FAIL at
+    /// runtime before yielding anything: its receiver declares the member
+    /// local-only, or defines it only inside conditional branches. The
+    /// evaluator reports that structural error before either channel of any
+    /// outer edge is consulted, so no member of this expression is ever reached.
+    /// </summary>
+    KnownFailure,
 }
 
 /// <summary>
@@ -263,24 +272,64 @@ internal static class AstHelpers
 
     /// <summary>
     /// Classifies an expression by the GENERAL algorithm-position capability
-    /// relevant to structural lookup. The switch is intentionally exhaustive
-    /// and fail-loud: adding a new <see cref="Expr"/> form requires deciding
-    /// this one fundamental capability, rather than adding DotCall-specific
-    /// receiver cases in every static consumer.
+    /// relevant to structural lookup, with the scope-free resolution power: a
+    /// bare lexical reference stays a
+    /// <see cref="StaticStructuralMemberProviderKind.LexicalReference"/>.
+    /// See <see cref="ResolveStaticStructuralMemberProvider"/> for the one
+    /// classification and the scope-aware entry the detector and the editor use.
     /// </summary>
     internal static StaticStructuralMemberProvider GetStaticStructuralMemberProvider(this Expr expr)
+        => expr.ResolveStaticStructuralMemberProvider(resolveLexicalReference: null);
+
+    /// <summary>
+    /// The ONE static classification of an expression's algorithm-position
+    /// capability relevant to structural lookup. The switch is intentionally
+    /// exhaustive and fail-loud: adding a new <see cref="Expr"/> form requires
+    /// deciding this one fundamental capability, rather than adding
+    /// DotCall-specific receiver cases in every static consumer.
+    /// <para><paramref name="resolveLexicalReference"/> is the caller's
+    /// resolution power for a bare lexical reference — the detector's owner
+    /// walk, the editor's scope lookup — and is consulted for every bare name
+    /// the classification meets, including the innermost receiver of a dot
+    /// chain; <c>null</c> keeps such names
+    /// <see cref="StaticStructuralMemberProviderKind.LexicalReference"/> (the
+    /// scope-free dependency/exposure view).</para>
+    /// <para>An argumentless dot edge <c>X.M</c> is classified COMPOSITIONALLY,
+    /// mirroring the evaluator's receiver resolution (<c>ResolveDotReceiver</c>;
+    /// Lean <c>resolveDotReceiver</c>) so the static view agrees with runtime
+    /// dispatch at every level of a chain: on a statically known receiver that
+    /// declares an exported <c>M</c>, the edge IS that member's algorithm; a
+    /// declared local-only or conditional-branch member is a
+    /// <see cref="StaticStructuralMemberProviderKind.KnownFailure"/> (the
+    /// evaluator errors there, never falls back); a known receiver WITHOUT
+    /// the member makes the edge a value — its lexical fallback's result —
+    /// which is <see cref="StaticStructuralMemberProviderKind.DefinitelyAbsent"/>;
+    /// and a runtime-valued or unresolved receiver propagates its own
+    /// indeterminacy outward. The dot-only <c>string</c> intrinsic and every
+    /// argument-bearing edge are values, exactly like a written call.</para>
+    /// </summary>
+    internal static StaticStructuralMemberProvider ResolveStaticStructuralMemberProvider(
+        this Expr expr,
+        Func<string, StaticStructuralMemberProvider>? resolveLexicalReference)
         => expr switch
         {
-            Expr.Resolve => new(StaticStructuralMemberProviderKind.LexicalReference),
+            Expr.Resolve(var name) => resolveLexicalReference?.Invoke(name)
+                ?? new(StaticStructuralMemberProviderKind.LexicalReference),
             Expr.Param => new(StaticStructuralMemberProviderKind.RuntimeParameter),
             Expr.AlgorithmExpr(var algorithm) => new(
                 StaticStructuralMemberProviderKind.KnownAlgorithm,
                 algorithm),
 
-            // Capture and a lifted dot result resolve through memberless
-            // algorithm wrappers. All remaining value/expression forms are
-            // rejected by ResolveAlg. Either way, no structural member can
-            // pre-empt a dot edge's lexical fallback.
+            Expr.DotCall { Args: null } edge when !edge.UsesOrdinaryDotStringIntrinsic()
+                => ResolveDotEdgeStructuralMemberProvider(edge, resolveLexicalReference),
+
+            // Capture, the `.string` intrinsic, and an argument-bearing dot
+            // result resolve through memberless algorithm wrappers. All
+            // remaining value/expression forms are rejected by ResolveAlg.
+            // Either way, no structural member can pre-empt a dot edge's
+            // lexical fallback. (Grace is stripped by callers before
+            // classification — see UnwrapGraceOperand — and is classified
+            // here only as the raw shape it is.)
             Expr.Capture
                 or Expr.DotCall
                 or Expr.Num
@@ -300,6 +349,57 @@ internal static class AstHelpers
             _ => throw new InvalidOperationException(
                 $"Unhandled Expr type in static structural-member classification: {expr.GetType().Name}"),
         };
+
+    /// <summary>
+    /// The dot-edge arm of <see cref="ResolveStaticStructuralMemberProvider"/>:
+    /// the static twin of the evaluator's <c>ResolveDotReceiver</c> for ONE
+    /// argumentless, non-<c>string</c> edge, classified over its own receiver's
+    /// classification. Structural member lookup is the shared
+    /// <see cref="ElaboratedScopeLookup.TryLookupProperty"/> (any visibility —
+    /// structural access ignores <c>public</c>) plus the exposure check the
+    /// evaluator applies, so the front end cannot navigate a member the
+    /// evaluator would refuse.
+    /// </summary>
+    private static StaticStructuralMemberProvider ResolveDotEdgeStructuralMemberProvider(
+        Expr.DotCall edge,
+        Func<string, StaticStructuralMemberProvider>? resolveLexicalReference)
+    {
+        var receiver = edge.Target.UnwrapGraceOperand()
+            .ResolveStaticStructuralMemberProvider(resolveLexicalReference);
+        switch (receiver.Kind)
+        {
+            case StaticStructuralMemberProviderKind.KnownAlgorithm:
+            {
+                var algorithm = receiver.Algorithm!;
+                if (ElaboratedScopeLookup.TryLookupProperty(algorithm, edge.Name) is { } hit)
+                {
+                    return hit.Property.Exposure == PropertyExposure.Exported
+                        ? new(StaticStructuralMemberProviderKind.KnownAlgorithm, hit.Property.Value)
+                        : new(StaticStructuralMemberProviderKind.KnownFailure);
+                }
+
+                return algorithm.DefinesConditionalBranchProperty(edge.Name)
+                    ? new(StaticStructuralMemberProviderKind.KnownFailure)
+                    // The receiver lacks the member: the edge selects its lexical
+                    // fallback, whose result is a value.
+                    : new(StaticStructuralMemberProviderKind.DefinitelyAbsent);
+            }
+
+            // A runtime-valued or unresolved receiver may or may not own the
+            // member, so the edge's own capability is equally undecided; a
+            // value receiver makes the edge a value; a failing receiver never
+            // yields this edge at all.
+            case StaticStructuralMemberProviderKind.LexicalReference:
+            case StaticStructuralMemberProviderKind.RuntimeParameter:
+            case StaticStructuralMemberProviderKind.DefinitelyAbsent:
+            case StaticStructuralMemberProviderKind.KnownFailure:
+                return receiver;
+
+            default:
+                throw new InvalidOperationException(
+                    $"Unhandled static structural-member provider kind: {receiver.Kind}");
+        }
+    }
 
     /// <summary>
     /// True when a conditional algorithm declares <paramref name="name"/> in
@@ -341,7 +441,10 @@ internal static class AstHelpers
     /// local-only ERROR, not a fallback) never selects the fallback; a
     /// statically known algorithm without the member, and every
     /// definitely-memberless value shape, always selects it; runtime-valued
-    /// receivers may select it.
+    /// receivers may select it; and a receiver edge that is statically known
+    /// to fail (<see cref="StaticStructuralMemberProviderKind.KnownFailure"/>)
+    /// never reaches this edge's channels at all, so the fallback is never
+    /// selected there either — an error is not a fallback.
     /// </summary>
     internal static LexicalFallbackSelection GetLexicalFallbackSelection(
         this Expr.DotCall dotCall,
@@ -363,6 +466,8 @@ internal static class AstHelpers
                 HasStructuralMemberOrConditionalBranchMember(receiverProvider.Algorithm!, dotCall.Name)
                     ? LexicalFallbackSelection.Never
                     : LexicalFallbackSelection.Always,
+            StaticStructuralMemberProviderKind.KnownFailure
+                => LexicalFallbackSelection.Never,
             _ => throw new InvalidOperationException(
                 $"Unhandled static structural-member provider kind: {receiverProvider.Kind}"),
         };
@@ -384,15 +489,8 @@ internal static class AstHelpers
             == LexicalFallbackSelection.Always;
 
     private static bool HasStructuralMemberOrConditionalBranchMember(Algorithm receiver, string name)
-    {
-        foreach (var property in receiver.Properties)
-        {
-            if (string.Equals(property.Name, name, StringComparison.Ordinal))
-                return true;
-        }
-
-        return receiver.DefinesConditionalBranchProperty(name);
-    }
+        => ElaboratedScopeLookup.TryLookupProperty(receiver, name) is not null
+            || receiver.DefinesConditionalBranchProperty(name);
 
     /// <summary>
     /// Collapses a wrapper algorithm whose single output row is a scope-owning

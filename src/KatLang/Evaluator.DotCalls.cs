@@ -389,7 +389,7 @@ public static partial class Evaluator
         if (dotCall.EffectiveLexicalFallback is not Expr.Resolve(var fallbackName))
             return $"{name} is bound as a parameter in the calling context";
 
-        var targetResult = ResolveAlg(dotCall.Target, ctx);
+        var targetResult = ResolveDotReceiver(dotCall.Target, ctx, out _);
         if (targetResult.IsOk)
         {
             if (LookupPropBinding(targetResult.Value, name) is not null)
@@ -415,9 +415,79 @@ public static partial class Evaluator
     }
 
     /// <summary>
+    /// Resolve a dot edge's RECEIVER in algorithm position — the structural
+    /// half of the ordinary DotCall law applied at EVERY level of a chain.
+    /// Every receiver shape resolves through canonical <see cref="ResolveAlg"/>
+    /// except an argumentless, non-<c>string</c> dot edge <c>X.M</c>, which
+    /// NAVIGATES: when <c>X</c> (resolved the same way, recursively) is an
+    /// algorithm that declares an exported <c>M</c>, the receiver IS that
+    /// member algorithm wired to <c>X</c> — so <c>Lib.Sub.Q</c> reads
+    /// <c>Sub</c>'s own <c>Q</c> before any lexical <c>Q(x)</c> is considered,
+    /// exactly as <c>Lib.Q</c> reads <c>Lib</c>'s. A declared but local-only
+    /// <c>M</c>, or one defined only inside conditional branches, is the same
+    /// structural error that evaluating <c>X.M</c> itself reports — never a
+    /// fallback. When <c>X</c> does not declare <c>M</c> (or is not an
+    /// algorithm at all), the edge is an ordinary dot RESULT — its lexical
+    /// fallback's value, or the <c>string</c> intrinsic — and resolves to
+    /// <see cref="ResolveAlg"/>'s memberless wrapper, so the chain continues
+    /// by value (<c>3.A.B</c> stays <c>B(A(3))</c>). An argument-bearing edge
+    /// is a call, hence a value, and never navigates; a capture receiver keeps
+    /// suppressing structural identity (<c>(Obj).V</c> falls back — and since
+    /// the parser keeps a capture layer only around a bare name,
+    /// <c>(Lib.Sub).Q</c> is simply <c>Lib.Sub.Q</c>).
+    /// <para>The resolution is identity navigation only: no intermediate edge
+    /// is evaluated, so a parameterized or output-less container navigates
+    /// exactly as it does at the first level (<c>F.Q</c> works while <c>F</c>
+    /// alone is an arity or missing-output error). The higher-order channel is
+    /// untouched — <see cref="ResolveAlg"/> still lifts every general
+    /// argumentless dot expression to its zero-parameter wrapper identity —
+    /// and the recursion is bounded by the structural depth preflight like the
+    /// dot-chain evaluation it mirrors.
+    /// <paramref name="isStructuralMember"/> reports whether the receiver was
+    /// reached by navigation, i.e. is a name-resolved property algorithm rather
+    /// than a written value shape (the <c>.string</c> intrinsic uses it to
+    /// select the depth-charged value-demand funnel exactly as for a bare
+    /// <see cref="Expr.Resolve"/> receiver).</para>
+    /// Lean: <c>resolveDotReceiver</c>.
+    /// </summary>
+    private static EvalResult<Algorithm> ResolveDotReceiver(Expr target, EvalCtx ctx, out bool isStructuralMember)
+    {
+        isStructuralMember = false;
+        if (target is not Expr.DotCall { Args: null } edge || edge.UsesOrdinaryDotStringIntrinsic())
+            return ResolveAlg(target, ctx);
+
+        var receiverResult = ResolveDotReceiver(edge.Target, ctx, out _);
+        if (receiverResult.IsError)
+        {
+            return receiverResult.Error is EvalError.NotAnAlgorithm
+                ? ResolveAlg(target, ctx)
+                : receiverResult.Error;
+        }
+
+        var receiver = receiverResult.Value;
+        var member = LookupPropBinding(receiver, edge.Name);
+        if (member is not null)
+        {
+            if (!IsExported(member))
+                return new EvalError.LocalOnlyProperty(OpenExprName(edge.Target), edge.Name, member.Exposure);
+
+            isStructuralMember = true;
+            return EvalResult<Algorithm>.Ok(ChildOf(receiver, member.Value));
+        }
+
+        if (receiver.DefinesConditionalBranchProperty(edge.Name))
+            return new EvalError.LocalOnlyProperty(OpenExprName(edge.Target), edge.Name, PropertyExposure.LocalOnlyConditionalAlgorithm);
+
+        return ResolveAlg(target, ctx);
+    }
+
+    /// <summary>
     /// Counted dotCall evaluation — the CANONICAL owner of dot-call dispatch
     /// (<see cref="EvalDotCall"/> is its value projection).
     /// Smart dispatch:
+    /// 0. Receiver resolution through <see cref="ResolveDotReceiver"/>: a
+    ///    chained receiver navigates its exported structural members, so the
+    ///    property-first rule below holds at every level of <c>A.B.C.D</c>
     /// 1. Value-based intrinsic (string) → evaluate target, convert numeric result to string
     /// 2. Structural property found (navigation-only):
     ///    - No args + 0-param → value access
@@ -426,7 +496,7 @@ public static partial class Evaluator
     ///      (dual-view binding, no receiver injection)
     /// 3. No property → lexical fallback (receiver injection via
     ///    <see cref="CallLexicalWithReceiverCounted"/>)
-    /// When resolveAlg returns notAnAlgorithm (e.g. numeric literal target),
+    /// When receiver resolution returns notAnAlgorithm (e.g. numeric literal target),
     /// value-based intrinsics are checked before lexical fallback.
     /// (The graced sources <c>a~.f</c> / <c>a.~f</c> arrive here as the SAME
     /// node as <c>a.f</c>: Grace is a front-end parameter-order annotation that
@@ -450,7 +520,7 @@ public static partial class Evaluator
         var name = dotCall.Name;
         var argsOpt = dotCall.Args;
 
-        var targetResult = ResolveAlg(target, ctx);
+        var targetResult = ResolveDotReceiver(target, ctx, out var receiverIsStructuralMember);
         if (targetResult.IsError)
         {
             if (targetResult.Error is EvalError.NotAnAlgorithm)
@@ -473,7 +543,7 @@ public static partial class Evaluator
 
         if (dotCall.UsesOrdinaryDotStringIntrinsic())
         {
-            var val = EvalDotStringReceiverAlgOutput(target, targetAlg, ctx, valEnv);
+            var val = EvalDotStringReceiverAlgOutput(target, targetAlg, receiverIsStructuralMember, ctx, valEnv);
             if (val.IsError) return val.Error;
             var outR = ResultToString(ctx, val.Value);
             if (outR.IsError) return outR.Error;

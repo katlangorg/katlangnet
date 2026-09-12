@@ -587,6 +587,8 @@ If a property receives a sequence-valued or multi-output value as one parameter,
 
 If `f` is a structural property of receiver `a`, `a.f(args)` calls it directly without receiver injection. Otherwise lexical fallback injects `a` as the first argument and resolves `f` exactly like the plain callee in `f(a, args)`, including parameters: with `K(a, t) = a.t`, the member `t` calls the algorithm bound to the parameter `t`, exactly like `t(a)`. A parameter of the current algorithm wins over a same-name visible property; a parameter captured from an enclosing algorithm yields to a visible non-builtin declaration. Structural members of the receiver always win before either.
 
+Chained access is property-first at EVERY level: a receiver that is itself an argumentless dot access (`Lib.Sub` in `Lib.Sub.Q`) is navigated to that member's algorithm first, so `Lib.Sub.Q` reads `Sub`'s own `Q` whenever `Sub` exposes an accessible `Q` — even when a same-named `Q(x)` is visible — and `A.B.C.D` traverses nested public members at any depth without evaluating the containers. Only a receiver WITHOUT the member falls back, and the fallbacks compose along the chain (`3.A.B` is `B(A(3))`). A written call such as `Lib.Sub()` is a value, so a member after it is an extension call on that value; a declared local-only or conditional-branch intermediate member is an error at that edge, never a fallback.
+
 GRACE WITH DOTCALL: `a~.f(args)` is ordinary postfix Grace on the bare receiver name followed by an ORDINARY DOT EDGE; `a.~f(args)` is ordinary dot with prefix Grace on the participating member/fallback occurrence. Base semantic occurrence order is receiver, participating fallback, then written arguments: `K = a.f` infers `(a, f)`, while both graced two-name forms infer `(f, a)` through the ONE general Grace pass. Runtime fallback still invokes `f(a, args)`, but that assembly does not order the enclosing signature. Postfix Grace requires its receiver operand to be one bare name, so `(x + y)~.t`, `f(x)~.t`, `[x, y]~.t`, `5~.t`, and a second `~.` in `a~.t~.u` reject; prefix member Grace remains valid with a compound receiver because it decorates the bare member name. Call arguments are unrestricted (`a~.t(b, c)` and `a.~t(b, c)` infer `(t, a, b, c)`). Grace NEVER changes member selection or any other executable semantics: `Obj~.V` and `Obj.~V` read Obj's structural `V` exactly like `Obj.V` (write `V(Obj)` to reach a lexical `V`), `x~.string` / `x.~string` keep the dot-only intrinsic, `S~.count` / `S.~count` keep the dotted builtin view, and receiver-segment supply is unchanged. A member participates in inference when fallback MAY be selected, but not when structural resolution is certain and not in a CLOSED explicit list. `a ~ .t` follows the ordinary whitespace-insensitive postfix-Grace grammar and therefore has the same inferred order as `a~.t`; prefix member Grace must begin directly after the dot. A grace-marked `open` target is rejected (`open M~.C`).
 
 Collection builtins are ordinary fixed-arity callables such as `count(collection)`, `map(collection, mapper)`, and `take(collection, count)`. Each receives ONE collection object plus its fixed controls; after binding, a single grouped sequence value OR exact list value is opened one outer boundary as the collection (a builtin-collection rule; user function variadics do NOT open a single sequence or list argument). A dot-call receiver fills the collection parameter:
@@ -1056,7 +1058,7 @@ Idiomatic structure:
 
 === BEGIN GENERATED: katlang-spec-examples (DO NOT EDIT BY HAND) ===
 
-Verified reference examples (72 of the 232-case canonical language specification,
+Verified reference examples (75 of the 236-case canonical language specification,
 tests/KatLang.Tests/LanguageSpec/LanguageSpecCorpus.cs). Every program and expected
 output below is executed against the KatLang engine and (where representable)
 guarded against the Lean model on every build. Treat these as ground truth for the
@@ -1384,6 +1386,51 @@ Regenerate this block from the repo root with:
 
   Displays:
     42
+
+[dot-chain-structural-member-beats-extension] Dot syntax is property-first at EVERY level of a chain: the receiver `Lib.Sub` is navigated to `Sub`'s algorithm, and because `Sub` exposes an accessible `Q`, that member is read before the visible extension `Q(x)` is ever considered — exactly as `Lib.Q` reads `Lib`'s own `Q`. Only a receiver without the member falls back to the extension call `Q(receiver)`; a same-named extension, whether declared at the root, in the enclosing algorithm, or as a parameter of it, never pre-empts a structural member.
+
+    Lib = {
+        public Sub = {
+            public Q = 1
+        }
+    }
+
+    Q(x) = 99
+
+    Lib.Sub.Q
+
+  Displays:
+    1
+
+[dot-chain-extension-fallback-composes] When a receiver has no such member, the dot edge falls back to the extension call with the receiver as the leading argument, and the fallbacks compose along a chain: the number `3` has no structural `A`, so `3.A` is `A(3)`; that result has no `B`, so `3.A.B` is `B(A(3))`, the same as `B(3.A)`. The free-call/dot-call law `receiver.F(args...) = F(receiver, args...)` is untouched wherever structural lookup does not apply.
+
+    A = x + 7
+    B = x * 5
+
+    3.A.B
+    B(A(3))
+    B(3.A)
+
+  Displays:
+    50
+    50
+    50
+
+[dot-chain-nested-structural-members] A chain of argumentless dot edges navigates accessible structural members at every level without evaluating the intermediate containers, so a container that has no output, or declares parameters, still exposes its members through the chain. A written call such as `Lib.Sub()` is a VALUE, so a member after it is resolved by extension fallback on that value; parentheses around a single dot expression are ordinary redundant grouping, so `(Lib.Sub).Q` is `Lib.Sub.Q`.
+
+    A = {
+        public B = {
+            public C = {
+                public D = 7
+            }
+        }
+    }
+    D(x) = 93
+
+    A.B.C.D
+
+  Displays:
+    7
 
 [open-capture-target-rejected] `open` consumes algorithm identity, and a capture is a value boundary that never exposes the identity of what it encloses: `open (M)` is rejected at parse time. Open the algorithm directly (`open M`), or use a brace block — parentheses around a brace block normalize away, so `open ({ ... })` still opens the block.
 

@@ -1111,22 +1111,20 @@ public static class SemanticModelBuilder
                     ? algorithm
                     : null;
 
+        /// <summary>
+        /// The editor's receiver classification: the shared compositional
+        /// classification (<see cref="AstHelpers.ResolveStaticStructuralMemberProvider"/>,
+        /// which navigates a chained receiver such as <c>Lib.Sub</c> structurally
+        /// exactly like the evaluator) with this model's lexical lookup as the
+        /// resolution power for every bare name it meets.
+        /// </summary>
         private StaticStructuralMemberProvider ResolveStructuralMemberProvider(Expr expr, ScopeFrame scope)
-        {
-            var provider = expr.GetStaticStructuralMemberProvider();
-            if (provider.Kind != StaticStructuralMemberProviderKind.LexicalReference)
-                return provider;
-
-            if (expr is Expr.Resolve(var name)
-                && ResolveLexicalProperty(scope, name)?.AlgorithmValue is { } algorithm)
-            {
-                return new StaticStructuralMemberProvider(
-                    StaticStructuralMemberProviderKind.KnownAlgorithm,
-                    algorithm);
-            }
-
-            return provider;
-        }
+            => expr.ResolveStaticStructuralMemberProvider(
+                name => ResolveLexicalProperty(scope, name)?.AlgorithmValue is { } algorithm
+                    ? new StaticStructuralMemberProvider(
+                        StaticStructuralMemberProviderKind.KnownAlgorithm,
+                        algorithm)
+                    : new StaticStructuralMemberProvider(StaticStructuralMemberProviderKind.LexicalReference));
 
         private SymbolDefinition? TryResolveDeclaredProperty(Algorithm algorithm, string name)
         {

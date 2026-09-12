@@ -3142,7 +3142,7 @@ public static partial class Evaluator
         var name = dotCall.Name;
         var argsOpt = dotCall.Args;
 
-        var targetResult = ResolveAlg(target, ctx);
+        var targetResult = ResolveDotReceiver(target, ctx, out var receiverIsStructuralMember);
         if (targetResult.IsError)
         {
             if (targetResult.Error is EvalError.NotAnAlgorithm)
@@ -3167,7 +3167,7 @@ public static partial class Evaluator
 
         if (dotCall.UsesOrdinaryDotStringIntrinsic())
         {
-            var val = await EvalDotStringReceiverAlgOutputAsync(target, targetAlg, ctx, valEnv).ConfigureAwait(false);
+            var val = await EvalDotStringReceiverAlgOutputAsync(target, targetAlg, receiverIsStructuralMember, ctx, valEnv).ConfigureAwait(false);
             if (val.IsError) return val.Error;
             var outR = ResultToString(ctx, val.Value);
             if (outR.IsError) return outR.Error;
@@ -3345,6 +3345,7 @@ public static partial class Evaluator
     private static async ValueTask<EvalResult<Result>> EvalDotStringReceiverAlgOutputAsync(
         Expr target,
         Algorithm targetAlg,
+        bool receiverIsStructuralMember,
         EvalCtx ctx,
         IReadOnlyList<(string, Result)> valEnv)
     {
@@ -3356,6 +3357,9 @@ public static partial class Evaluator
                 return await EvalResolvedAlgOutputForValueDemandAsync(targetAlg, ctx, valEnv).ConfigureAwait(false);
 
             case Expr.Resolve:
+                return await EvalResolvedAlgOutputForValueDemandAsync(targetAlg, ctx, valEnv).ConfigureAwait(false);
+
+            case Expr.DotCall when receiverIsStructuralMember:
                 return await EvalResolvedAlgOutputForValueDemandAsync(targetAlg, ctx, valEnv).ConfigureAwait(false);
 
             default:

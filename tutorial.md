@@ -1224,7 +1224,7 @@ Both item-supplying call forms agree: `factor` binds `10` from the back, `*value
 
 An UNSPREAD structured argument is one collected slot, not an item supply: `Scale(Arg, 10)` (and the dotted `Arg.Scale(10)`, whose named receiver supplies its one stored value) binds `values = [Arg]` — a one-element list holding the whole sequence — so the numeric `map` callback fails on the sequence element. To supply a stored property's items, spread them (`Scale(Arg*, 10)`); a WRITTEN group receiver supplies its rows directly (`(1, 2, 3).Scale(10)` binds `values = [1, 2, 3]` — see [Dotted Receivers and Collecting Parameters](#dotted-receivers-and-collecting-parameters)). A lone collecting parameter such as `Helper(*values)` is the degenerate lone-collecting-binding case of the same item-supply binding (see [Collecting Explicit Parameters](#collecting-explicit-parameters)).
 
-**Resolution rule:** KatLang first checks whether the property name exists as a structural property of the target algorithm. If found, it calls that property. If not found, it falls back to the same callable resolution a plain call would use, with the receiver as the leading argument.
+**Resolution rule:** KatLang first checks whether the property name exists as a structural property of the target algorithm. If found, it calls that property. If not found, it falls back to the same callable resolution a plain call would use, with the receiver as the leading argument. The rule applies at every level of a chained dot expression: a receiver that is itself an argumentless dot access such as `Lib.Sub` is navigated to `Sub`'s algorithm first, so `Lib.Sub.Q` reads `Sub`'s own `Q` whenever `Sub` has one (see [Chained Dot Access](#chained-dot-access)).
 
 That fallback includes parameters: a member name that is a parameter of the calling context resolves exactly like the plain callee, so higher-order algorithm-valued parameters work in both spellings:
 
@@ -1244,6 +1244,64 @@ D(7, {a+1})
 ```
 
 Parameter precedence in the fallback mirrors plain calls: a parameter of the current algorithm wins over a same-name visible property, while a parameter captured from an enclosing algorithm yields to a visible non-builtin declaration of the same name. Structural members of the resolved receiver always win before any of this — a receiver's own property is never bypassed in favor of a parameter.
+
+### Chained Dot Access
+
+Dot syntax is property-first at every level of a chain. When the receiver is itself an argumentless dot access, it is navigated to the member's algorithm before the next name is resolved, so an accessible structural member always beats a same-named extension — whether that extension is declared at the root, in the enclosing algorithm, or as a parameter of it:
+
+<!-- spec:dot-chain-structural-member-beats-extension -->
+```
+Lib = {
+    public Sub = {
+        public Q = 1
+    }
+}
+
+Q(x) = 99
+
+Lib.Sub.Q
+```
+
+**Result:** `1`
+
+`Lib.Sub` is navigated to `Sub`, and because `Sub` exposes an accessible `Q`, that member is read; the visible extension `Q(x)` is never considered, exactly as `Lib.Q` would read `Lib`'s own `Q`. Navigation does not evaluate the intermediate containers, so a container without output, or one that declares parameters, still exposes its members through a chain of any depth:
+
+<!-- spec:dot-chain-nested-structural-members -->
+```
+A = {
+    public B = {
+        public C = {
+            public D = 7
+        }
+    }
+}
+D(x) = 93
+
+A.B.C.D
+```
+
+**Result:** `7`
+
+Only a receiver that has no such member falls back to the extension call with the receiver as the leading argument, and those fallbacks compose along the chain like nested calls:
+
+<!-- spec:dot-chain-extension-fallback-composes -->
+```
+A = x + 7
+B = x * 5
+
+3.A.B
+B(A(3))
+B(3.A)
+```
+
+**Results:**
+```
+50
+50
+50
+```
+
+The number `3` has no structural `A`, so `3.A` is `A(3)`; that result has no `B`, so `3.A.B` is `B(A(3))`. Structural access ignores `public` (a private intermediate member is still navigated) but never exposure: a declared member that is local-only — or defined only inside conditional branches — is the same structural error at that edge that accessing it directly reports, never a fallback to a visible extension. A written call such as `Lib.Sub()` is a value, so a member after it is resolved by extension fallback on that value, while parentheses around a single dot expression are ordinary grouping (`(Lib.Sub).Q` is `Lib.Sub.Q`).
 
 ### Dot Members and Implicit Parameters
 

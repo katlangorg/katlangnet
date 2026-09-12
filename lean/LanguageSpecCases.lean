@@ -14,11 +14,11 @@ This is bounded differential validation over the Lean-guarded partition,
 not a formal verification of the evaluators.
 
 Partition (machine-checked by the `specCaseIds.length` guard below):
-- specification surface cases: 232
+- specification surface cases: 236
 - excluded parse-level cases (Lean has no surface parser): 24
 - excluded C#-only cases (each carries an explicit reason in the corpus): 10
-- Lean-guarded cases: 198
-- probe observations (C#-only by design): 454
+- Lean-guarded cases: 202
+- probe observations (C#-only by design): 467
 - internal-node cases live in the semantic-explorer corpus, not here: see
   lean/SemanticExplorerCases.lean
 
@@ -522,6 +522,26 @@ def case_grace_dot_keeps_structural_precedence : Expr :=
 def case_dot_member_fallback_in_closed_parameter_list : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Obj" (alg [] [] [publicProp "V" (alg [] [] [] [.num 42])] []), privateProp "K" (alg ["x"] [] [] [(.dotCall (.param "x") "V" none)])] [(.call (.resolve "K") [.resolve "Obj"])])
 #guard obs case_dot_member_fallback_in_closed_parameter_list == "ok raw=42 n=1"
+
+-- dot-chain-structural-member-beats-extension [access-boundaries]: Lib = { \n     public Sub = { \n         public Q = 1 \n     } \n } \n  \n Q(x) = 99 \n  \n Lib.Sub.Q
+def case_dot_chain_structural_member_beats_extension : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Lib" (alg [] [] [publicProp "Sub" (alg [] [] [publicProp "Q" (alg [] [] [] [.num 1])] [])] []), privateProp "Q" (alg ["x"] [] [] [.num 99])] [(.dotCall (.dotCall (.resolve "Lib") "Sub" none) "Q" none)])
+#guard obs case_dot_chain_structural_member_beats_extension == "ok raw=1 n=1"
+
+-- dot-chain-extension-fallback-composes [access-boundaries]: A = x + 7 \n B = x * 5 \n  \n 3.A.B \n B(A(3)) \n B(3.A)
+def case_dot_chain_extension_fallback_composes : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "A" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 7))]), privateProp "B" (alg ["x"] [] [] [(.binary .mul (.param "x") (.num 5))])] [(.dotCall (.dotCall (.num 3) "A" none) "B" none), (.call (.resolve "B") [(.call (.resolve "A") [.num 3])]), (.call (.resolve "B") [(.dotCall (.num 3) "A" none)])])
+#guard obs case_dot_chain_extension_fallback_composes == "ok raw=S[50, 50, 50] n=3"
+
+-- dot-chain-nested-structural-members [access-boundaries]: A = { \n     public B = { \n         public C = { \n             public D = 7 \n         } \n     } \n } \n D(x) = 93 \n  \n A.B.C.D
+def case_dot_chain_nested_structural_members : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "A" (alg [] [] [publicProp "B" (alg [] [] [publicProp "C" (alg [] [] [publicProp "D" (alg [] [] [] [.num 7])] [])] [])] []), privateProp "D" (alg ["x"] [] [] [.num 93])] [(.dotCall (.dotCall (.dotCall (.resolve "A") "B" none) "C" none) "D" none)])
+#guard obs case_dot_chain_nested_structural_members == "ok raw=7 n=1"
+
+-- dot-chain-local-only-member-is-not-a-fallback [access-boundaries]: G(x) = { \n     public Sub = { \n         public Q = 1 \n         x \n     } \n     0 \n } \n Q(v) = 99 \n  \n G.Sub.Q
+def case_dot_chain_local_only_member_is_not_a_fallback : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "G" (alg ["x"] [] [publicLocalProp "Sub" .localCapturedAncestorParams (alg [] [] [publicProp "Q" (alg [] [] [] [.num 1])] [.param "x"])] [.num 0]), privateProp "Q" (alg ["v"] [] [] [.num 99])] [(.dotCall (.dotCall (.resolve "G") "Sub" none) "Q" none)])
+#guard obs case_dot_chain_local_only_member_is_not_a_fallback == "err localOnlyProperty"
 
 -- capture-suppresses-higher-order-identity [access-boundaries]: Apply = f(9) \n Increment(x) = x + 1 \n Apply((Increment))
 def case_capture_suppresses_higher_order_identity : Expr :=
@@ -1088,7 +1108,7 @@ def case_if_spread_builds_values_before_branch_selection : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Risky" (alg [] [] [] [(.capture [.num 10, (.binary .div (.num 1) (.num 0))])])] [(.call (.resolve "if") [.num 1, (.sequenceSpread (.resolve "Risky"))])])
 #guard obs case_if_spread_builds_values_before_branch_selection == "err div0"
 
--- 198 canonical Lean-guarded specification cases.
+-- 202 canonical Lean-guarded specification cases.
 
 /--
 Machine-checked Lean-guarded partition count: the id list is built by the
@@ -1181,6 +1201,10 @@ def specCaseIds : List String := [
   "grace-dot-higher-order-implicit",
   "grace-dot-keeps-structural-precedence",
   "dot-member-fallback-in-closed-parameter-list",
+  "dot-chain-structural-member-beats-extension",
+  "dot-chain-extension-fallback-composes",
+  "dot-chain-nested-structural-members",
+  "dot-chain-local-only-member-is-not-a-fallback",
   "capture-suppresses-higher-order-identity",
   "capture-suppresses-structural-members",
   "output-dotted-access-ordinary",
@@ -1295,6 +1319,6 @@ def specCaseIds : List String := [
   "parameter-named-if-carries-the-supplied-callable",
   "if-spread-builds-values-before-branch-selection"
 ]
-#guard specCaseIds.length == 198
+#guard specCaseIds.length == 202
 
 end LanguageSpecCases
