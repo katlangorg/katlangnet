@@ -18,7 +18,7 @@ public class OutputRowsTests
     public void TwoRootOutputs_AndOneSequenceValue_HaveEqualValuesButDifferentRows()
     {
         var twoRows = Success("A = 1\nB = 2\nA()\nB()");
-        var oneSequence = Success("(A() B())\nA = 1\nB = 2");
+        var oneSequence = Success("(A(), B())\nA = 1\nB = 2");
 
         // The structural values are KatLang-equal…
         Assert.True(Result.ValueComparer.Equals(twoRows.Value, oneSequence.Value));

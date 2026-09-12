@@ -183,6 +183,12 @@ public sealed class CliApplicationTests
     [InlineData("public = 1", "[1:1] Unexpected 'public'.")]
     [InlineData("1 + @", "[1:5] Unexpected unrecognized character.")]
     [InlineData("A*\r\nB*", "[2:1] The final `*` on an earlier line continued as multiplication")]
+    // SYN-07A: the same-line separator rule is reported at the second item's
+    // first token, with the generic three-repair wording, exactly like every
+    // other parser diagnostic.
+    [InlineData("1 2", "[1:3] Unexpected item after a closed expression on the same line. Add ',' to separate slots, add an operator to continue the expression, or start a declaration on a new line.")]
+    [InlineData("F(a, b) = a + b\r\nF(1 2)", "[2:5] Unexpected item after a closed expression on the same line.")]
+    [InlineData("x = 3 y = 4", "[1:7] Unexpected item after a closed expression on the same line.")]
     public async Task Eval_ReportsUserFacingParserWordingAndLocations(string source, string expected)
     {
         var result = await Cli.InvokeAsync("eval", source);

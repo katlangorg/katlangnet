@@ -269,4 +269,7 @@ public enum KatLangErrorCode
 
     /// <summary>Front-end <see cref="DiagnosticCode.InvalidSpreadMarker"/>.</summary>
     InvalidSpreadMarker = 63,
+
+    /// <summary>Front-end <see cref="DiagnosticCode.UnseparatedSameLineItem"/>.</summary>
+    UnseparatedSameLineItem = 64,
 }

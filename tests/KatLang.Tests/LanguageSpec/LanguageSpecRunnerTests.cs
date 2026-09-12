@@ -245,6 +245,12 @@ public class LanguageSpecRunnerTests
             "semicolon-not-expression-syntax",
             "spread-not-binary-operand",
             "trailing-comma-in-parens-rejected",
+            // The same-line separator rule (SYN-07A): surface-lexical,
+            // parse-level by construction.
+            "same-line-slots-need-comma",
+            "same-line-call-arguments-need-comma",
+            "same-line-declaration-begins-a-line",
+            "same-line-slot-before-spread-needs-comma",
             // The marker attachment law (SYN-07B follow-up): surface-lexical,
             // parse-level by construction.
             "spread-marker-must-be-attached",

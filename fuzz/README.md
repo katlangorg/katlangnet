@@ -166,7 +166,8 @@ Minimize a crashing input with libFuzzer before triaging:
 `Testcases/` holds many tiny inputs — both valid and intentionally invalid — spanning
 every grammar area: numbers (decimals, exponents, digit separators, malformed forms),
 strings (incl. unterminated and Unicode), identifiers, operators and precedence,
-parentheses/braces/exact-list brackets and their empty/nested forms, comma vs adjacency,
+parentheses/braces/exact-list brackets and their empty/nested forms, comma vs bare same-line
+adjacency (the latter now a targeted parse error, SYN-07A — kept as recovery input),
 newline/CRLF/lone-CR boundaries, comments, property/`public` definitions,
 ordinary and conditional clause definitions, calls/brace-calls, dot-calls and
 leading-dot continuation, `open` declarations, `:` indexing, `~` grace, prefix `*name` collect markers, postfix `expr*` spreading,

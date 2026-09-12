@@ -43,6 +43,17 @@ public sealed class Parser
     // re-parses.
     private int _deconstructionCounter;
 
+    // SYN-07A separator-rule bookkeeping (see ReportUnseparatedSameLineItem).
+    // A recovery that consumes or diagnoses a malformed run leaves the token
+    // after it as the start of a same-line item that its own diagnostic
+    // already explains; it records that token's source position here so the
+    // separator rule stays silent for exactly that boundary. The second field
+    // makes the report idempotent per item start, so the expression-list
+    // operand and the body loop can both observe one boundary without
+    // reporting it twice.
+    private int _ownedSameLineItemPosition = -1;
+    private int _reportedSameLineItemPosition = -1;
+
     private Parser(
         IReadOnlyList<Token> tokens,
         List<Diagnostic> diagnostics,
@@ -575,10 +586,11 @@ public sealed class Parser
             : policy.CanContinueAcrossLine;
     }
 
-    // The line primitive used by the policy. The only direct use outside
-    // MayContinueClosedExpression is StartsImplicitExpressionListSeparator, which
-    // is a contribution-policy decision (may a NEW expression start here?),
-    // not a continuation decision about the current expression.
+    // The line primitive used by the policy. Its only direct uses outside
+    // MayContinueClosedExpression are the contribution-policy decisions (may a
+    // NEW item start here, and did it need a comma?): StartsNextExpressionListSlot
+    // and the body loop's row-boundary check — never a continuation decision
+    // about the current expression.
     private bool IsSamePhysicalLineAsPreviousToken() => Current.Line == Previous.Line;
 
     // ── Comment-skipping declaration lookahead ──────────────────────────────
@@ -643,7 +655,7 @@ public sealed class Parser
         "A property declaration is not allowed inside parentheses. Use a `{ ... }` block for a scoped algorithm.";
 
     // Scoped algorithm bodies and parenthesized expression lists share the
-    // same output-row grammar (comma/adjacency/newline expression lists) and
+    // same output-row grammar (comma/newline expression lists) and
     // the same declaration productions, so one low-level body loop collects
     // rows and declarations into syntactic PARTS without constructing a
     // semantic Algorithm. The two semantic entry points lower the parts
@@ -918,6 +930,19 @@ public sealed class Parser
             }
         }
 
+        // SYN-07A row boundary. The first item of a body may share the line of
+        // the delimiter that opened it (`{ public X = 1 }`, `(1, 2)`). A
+        // declaration inside parentheses still receives DeclarationInParentheses
+        // from the declaration parser, including the first item after `(`.
+        // Later items that reach this loop — a declaration head, an `open`, or
+        // an output contribution — must begin a new physical line, because a
+        // same-line item after closed content is exactly the boundary the
+        // separator rule rejects. Expression-list slots never reach this check
+        // (ParseExpressionListOperand consumes them and reports its own same-line
+        // slots), so what does reach it is a declaration or a recovery leftover;
+        // ReportUnseparatedSameLineItem stays silent for the boundaries a
+        // recovery already owns. Recovery: the item is parsed as written.
+        var itemsParsed = false;
         while (Current.Kind != TokenKind.EndOfFile)
         {
             if (Current.Kind is TokenKind.RParen or TokenKind.RBrace)
@@ -935,15 +960,34 @@ public sealed class Parser
                     break;
 
                 ReportStrayRootCloser(Advance());
+                // The stray closer's own diagnostic explains this boundary: the
+                // item after it (`A = 1 ) 2` keeps `2` as a root row) is not
+                // reported again by the separator rule.
+                OwnSameLineItem(Current);
                 continue;
             }
 
-            // Skip bad tokens for error recovery
+            // Skip bad tokens for error recovery (the lexer has already reported
+            // the character; the token after it is a recovery-owned boundary).
             if (Current.Kind == TokenKind.Bad)
             {
                 Advance();
+                OwnSameLineItem(Current);
                 continue;
             }
+
+            // Only a real item has a row boundary. A stray ']', '=', or a
+            // malformed 'public' has its own UnexpectedToken recovery below;
+            // recommending a comma before that token would be a cascade.
+            if (itemsParsed && IsSamePhysicalLineAsPreviousToken()
+                && (CanStartExpression(Current.Kind)
+                    || StartsDeclaration(includeCommaSpanningBindingPatterns: true)
+                    || (Current.Kind == TokenKind.KeywordPublic
+                        && (LookaheadIsPublicPropertyDef()
+                            || LookaheadIsPublicClauseDefinition()
+                            || LookaheadIsPublicOpen()))))
+                ReportUnseparatedSameLineItem(Current);
+            itemsParsed = true;
 
             // Check for invalid grace on property name: ~Name = ... or ~public Name = ...
             if (Current.Kind == TokenKind.Tilde && LookaheadThroughTildesToPropertyDef())
@@ -997,7 +1041,10 @@ public sealed class Parser
                     DiagnosticCode.InvalidOpenDeclaration,
                     "'public' cannot be applied to open declarations.");
                 Advance(); // consume 'public'
-                // Fall through: next iteration will parse the open declaration normally
+                // Fall through: next iteration will parse the open declaration
+                // normally. The consumed modifier's diagnostic owns the boundary
+                // before `open`, so the row check does not report it again.
+                OwnSameLineItem(Current);
             }
             // Check for public property definition: public Name = ...
             else if (Current.Kind == TokenKind.KeywordPublic && LookaheadIsPublicPropertyDef())
@@ -1029,14 +1076,15 @@ public sealed class Parser
             }
             else
             {
-                // Output expression line, or an additional output
-                // contribution. Adjacency between complete expressions is an
-                // implicit expression-list separator in output contexts — root
-                // output, algorithm and brace bodies, explicit parenthesized
-                // groups, and call argument lists. This loop appends
-                // contributions that are separated by definitions.
-                var exprs = ParseExpressionListOperand(
-                    allowNewlineImplicitExpressionListSeparator: true);
+                // Output expression row, or an additional output contribution
+                // separated from an earlier one by definitions. Within one
+                // contribution, commas and — in these contexts (root output,
+                // algorithm and brace bodies, explicit parenthesized groups, and
+                // call argument lists) — physical newlines separate the
+                // expression-list slots; a second slot on the same line without
+                // a comma is the SYN-07A separator error, reported and recovered
+                // as the next slot by ParseExpressionListOperand.
+                var exprs = ParseExpressionListOperand(allowNewlineSeparator: true);
                 AppendOutputContribution(output, exprs);
             }
         }
@@ -1147,7 +1195,48 @@ public sealed class Parser
                     right.EndColumn);
 
     private const string UnsupportedSemicolonExpressionMessage =
-        "Semicolon is not supported as an expression separator. Use comma or adjacency for separate expressions, or parentheses for one sequence value.";
+        "Semicolon is not supported as an expression separator. Use ',' between expressions on one line (a new line separates them where the context allows it), or parentheses for one sequence value.";
+
+    // ── SYN-07A: same-line items need a separator ───────────────────────────
+    // Whitespace never creates a slot boundary. Once an expression is closed,
+    // a second independent slot on the same physical line needs ','; a
+    // declaration must begin a new row. The rule is
+    // decided at ONE ownership point for slots (StartsNextExpressionListSlot,
+    // reached by every expression-list context through ParseExpressionListOperand)
+    // and at the body loop's row check for declarations and recovery leftovers;
+    // both report through this helper. Recovery admits the item where it was
+    // written — as the next slot of the SAME list, or as the declaration — so
+    // the structure the programmer most plausibly meant survives for later
+    // diagnostics and editor tooling (`P = a b` keeps `b` in P's body; it never
+    // leaks to the enclosing scope), while the parse stays invalid. The message
+    // names the three repairs without guessing intent: a comma, an operator, or
+    // a new line for a declaration.
+    private const string UnseparatedSameLineItemMessage =
+        "Unexpected item after a closed expression on the same line. Add ',' to separate slots, add an operator to continue the expression, or start a declaration on a new line.";
+
+    private void ReportUnseparatedSameLineItem(Token item)
+    {
+        if (item.Position == _ownedSameLineItemPosition || item.Position == _reportedSameLineItemPosition)
+            return;
+        _reportedSameLineItemPosition = item.Position;
+        ReportError(DiagnosticCode.UnseparatedSameLineItem, UnseparatedSameLineItemMessage, TokenSpan(item));
+    }
+
+    // Cascade suppression: a recovery that has consumed or diagnosed a
+    // malformed run calls this for the token that follows it, so the boundary
+    // its diagnostic already explains is not reported a second time by the
+    // separator rule. Only that one boundary is owned — a later independent
+    // same-line item still receives its own diagnostic.
+    private void OwnSameLineItem(Token item) => _ownedSameLineItemPosition = item.Position;
+
+    // Consumes the current token as error recovery and marks the token after it
+    // as a recovery-owned same-line boundary.
+    private Token SkipForRecovery()
+    {
+        var skipped = Advance();
+        OwnSameLineItem(Current);
+        return skipped;
+    }
 
     // ── Spread marker ───────────────────────────────────────────────
     // Expression spreading is written with the postfix spread marker `*`:
@@ -1215,8 +1304,10 @@ public sealed class Parser
     /// Parses the open-target list after the <c>open</c> keyword. `open` is
     /// a declaration/import directive, not an output expression, so its
     /// target list is a dedicated COMMA list — never semicolon sequence syntax:
-    /// `open A, B, C` opens three targets, while `;` and same-line adjacency
-    /// are not separators and report a missing-comma diagnostic. The first
+    /// `open A, B, C` opens three targets, while `;` and a bare same-line
+    /// second target are not separators and report a missing-comma
+    /// diagnostic (the same explicit-comma rule every expression list follows
+    /// since SYN-07A). The first
     /// target must begin on the same physical line as `open`. Comma keeps
     /// its normal explicit line-continuation behavior — `open A,` newline
     /// `B` and `open A` newline `, B` both continue the list — and a leading
@@ -1276,6 +1367,7 @@ public sealed class Parser
                     "Open target lists use ',' separators, not ';'. Write `open A, B` to open multiple targets.",
                     TokenSpan(Current));
                 Advance(); // consume ';' so it is not re-reported at statement level
+                OwnSameLineItem(Current); // the leftover after ';' is this diagnostic's boundary
             }
             else
             {
@@ -1294,6 +1386,11 @@ public sealed class Parser
                 // describe binding syntax the user never wrote.
                 while (Current.Kind == TokenKind.Star)
                     Advance();
+
+                // The missing-comma diagnostic owns this boundary: the leftover
+                // is parsed by the statement level as written (`open A B` keeps
+                // `B` as a row) without a second, separator-rule diagnostic.
+                OwnSameLineItem(Current);
             }
         }
 
@@ -1302,7 +1399,7 @@ public sealed class Parser
 
     // A token that can begin an open target atom. Declaration starters are
     // excluded so recovery leaves a following declaration intact — through
-    // the SAME declaration-starter relation the adjacency rule stops at
+    // the SAME declaration-starter relation the slot-boundary rule stops at
     // (StartsDeclaration), so the two boundary decisions cannot drift apart
     // again. (A historical independently written copy here missed the
     // binding-pattern form, so `open A,` newline `x, y = 1` swallowed `x` as
@@ -1340,7 +1437,7 @@ public sealed class Parser
         // One plain expression: resolve, dotted path (a leading '.' may
         // continue it across a newline via the dot whitelist), or block
         // parenthesized block. This is the expression layer, not generic
-        // output-precedence parsing — no joins, adjacency, or spread slots.
+        // output-precedence parsing — no joins, slot boundaries, or spread slots.
         return ParseExpression();
     }
 
@@ -1800,12 +1897,20 @@ public sealed class Parser
     /// </summary>
     private Token ConsumePostfixGraceRun(Token lastToken, ref int weight, ref bool attached)
     {
+        var detachedPostfix = false;
         while (Current.Kind == TokenKind.Tilde && MayContinueClosedExpression(TokenKind.Tilde))
         {
-            attached &= IsDirectlyAttached(lastToken, Current);
+            detachedPostfix |= !IsDirectlyAttached(lastToken, Current);
+            attached &= !detachedPostfix;
             lastToken = Advance();
             weight++;
         }
+
+        // Only a malformed POSTFIX run owns the following boundary (`x ~ y`).
+        // A detached prefix has already recovered its name (`~ x`), so a later
+        // item in `~ x y` still needs its own separator diagnostic at `y`.
+        if (detachedPostfix)
+            OwnSameLineItem(Current);
 
         return lastToken;
     }
@@ -1858,7 +1963,8 @@ public sealed class Parser
     /// proven to be on the operand's line) and stops before the first token
     /// on a later line, so a marker that begins the next row is never
     /// consumed here and the caller resumes on whatever follows — an
-    /// ordinary dot edge, a same-line adjacent operand, or the next row. The
+    /// ordinary dot edge, a same-line operand (a recovery-owned item that the
+    /// separator rule does not report again), or the next row. The
     /// diagnostic spans the run itself, first marker through last. Kept out
     /// of <see cref="ParsePostfix"/> so its locals never enlarge that hot
     /// recursive frame (native stack-margin calibration).
@@ -1874,6 +1980,10 @@ public sealed class Parser
             DiagnosticCode.InvalidGraceMarker,
             GraceEligibilityMessage,
             CombineSpans(TokenSpan(firstTilde), TokenSpan(lastTilde))!);
+        // The rejected run owns the boundary after it: `f(x)~ c` reports the
+        // Grace law once and leaves `c` as a recovery-owned item, never a
+        // second separator-rule diagnostic.
+        OwnSameLineItem(Current);
     }
 
     /// <summary>
@@ -1914,6 +2024,9 @@ public sealed class Parser
                 DiagnosticCode.InvalidGraceMarker,
                 GraceEligibilityMessage,
                 CombineSpans(TokenSpan(firstTilde), TokenSpan(lastTilde))!);
+            // The lone run owns the boundary after it (`~ 5` reports the Grace
+            // law once; `5` is not additionally a separator error).
+            OwnSameLineItem(Current);
             return new Expr.Num(0) { Span = MakeSpan(firstTilde) };
         }
 
@@ -2455,7 +2568,7 @@ public sealed class Parser
             default:
                 {
                     ReportError(DiagnosticCode.UnexpectedToken, $"Unexpected {DescribeTokenKind(Current.Kind, includeArticle: false)} in a pattern.");
-                    Advance(); // skip for recovery
+                    SkipForRecovery(); // the token after it is a recovery-owned boundary
                     return new Pattern.Bind("_error_");
                 }
         }
@@ -2480,14 +2593,16 @@ public sealed class Parser
         // Definition bodies are line-bounded: a newline ends the body and never
         // continues it as another expression-list row. An expression on a
         // following line is parsed by the surrounding output/algorithm context,
-        // not absorbed into this body. Same-line adjacency, an already-open
+        // not absorbed into this body. A same-line comma, an already-open
         // delimiter, a same-line trailing/leading binary operator, and a
-        // leading '.' (method-chain layout) still continue the body's single
-        // expression. A ';' is invalid expression syntax and reports the
-        // unsupported-semicolon diagnostic; any tokens consumed after it are
-        // error recovery, not a valid continuation.
-        var exprs = ParseExpressionListOperand(
-            allowNewlineImplicitExpressionListSeparator: false);
+        // leading '.' (method-chain layout) still continue the body. A second
+        // same-line item without a comma is the SYN-07A separator error and is
+        // RECOVERED INTO THIS BODY as its next slot (`P = a b` keeps `b` in P),
+        // never leaked to the enclosing scope as an output row. A ';' is
+        // invalid expression syntax and reports the unsupported-semicolon
+        // diagnostic; any tokens consumed after it are error recovery, not a
+        // valid continuation.
+        var exprs = ParseExpressionListOperand(allowNewlineSeparator: false);
 
         // Unwrap only scope-owning algorithm expressions (brace blocks and
         // recovery blocks with declarations/opens): `X = { ... }` merges the
@@ -2651,23 +2766,26 @@ public sealed class Parser
     };
 
     /// <summary>
-    /// Parses one output contribution. Comma and allowed adjacency create
-    /// expression-list items. Semicolon is no longer an expression operator;
-    /// when encountered here it reports a targeted diagnostic and recovers as
-    /// an expression-list separator.
-    /// Returns the root expression-list items consumed by the surrounding
-    /// output/call context.
-    /// When <paramref name="allowNewlineImplicitExpressionListSeparator"/> is
-    /// true (root output and algorithm/brace bodies), an expression starting on
-    /// a later physical line is an implicit expression-list separator. When
-    /// false (definition bodies), the body is
-    /// line-bounded: a newline ends it and a following expression is parsed by
-    /// the surrounding output/algorithm context instead. Open target lists never
-    /// use this method: `open` has its own dedicated comma-list parser
+    /// Parses one output contribution: an expression list whose slots are
+    /// separated by commas and, when <paramref name="allowNewlineSeparator"/>
+    /// is true (root output, algorithm/brace bodies, parenthesized groups,
+    /// argument lists, list literals), by physical newlines. When it is false
+    /// (definition bodies) the body is line-bounded: a newline ends it and a
+    /// following expression is parsed by the surrounding output/algorithm
+    /// context instead. A second slot beginning on the SAME physical line
+    /// without a comma is the SYN-07A separator error
+    /// (<see cref="DiagnosticCode.UnseparatedSameLineItem"/>): it is reported
+    /// and then recovered as the next slot of THIS list, so the structure the
+    /// programmer most plausibly meant survives for later diagnostics and
+    /// tooling, and a definition body never leaks an expression into the
+    /// enclosing scope. Semicolon is not an expression operator; when
+    /// encountered here it reports its own targeted diagnostic and recovers as
+    /// a separator. Returns the expression-list items consumed by the
+    /// surrounding output/call context. Open target lists never use this
+    /// method: `open` has its own dedicated comma-list parser
     /// (<see cref="ParseOpenTargetList"/>).
     /// </summary>
-    private List<Expr> ParseExpressionListOperand(
-        bool allowNewlineImplicitExpressionListSeparator)
+    private List<Expr> ParseExpressionListOperand(bool allowNewlineSeparator)
     {
         // Spread slots need no extra handling here: a postfix `*` with no
         // right operand after it parses as a postfix continuation directly
@@ -2694,8 +2812,7 @@ public sealed class Parser
                 ReportUnsupportedSemicolon(Current);
                 Advance();
             }
-            else if (!StartsImplicitExpressionListSeparator(
-                allowNewlineImplicitExpressionListSeparator))
+            else if (!StartsNextExpressionListSlot(allowNewlineSeparator))
             {
                 break;
             }
@@ -2710,41 +2827,54 @@ public sealed class Parser
         => ReportError(DiagnosticCode.UnsupportedSemicolon, UnsupportedSemicolonExpressionMessage, TokenSpan(token));
 
     /// <summary>
-    /// True when the current token starts another complete expression, so the
-    /// adjacency parses as an implicit expression-list separator. Same-line
-    /// adjacency always qualifies; adjacency across a physical newline qualifies
-    /// only in contexts that opt into multiline expression lists (root output and
-    /// algorithm/brace bodies). Definition bodies opt out, so a newline ends them.
-    /// Tokens that begin a declaration are never adjacent expressions: the
-    /// algorithm loop owns those forms and their diagnostics.
-    /// Implicit list separation fires only for tokens that start a new independent
-    /// expression. A token that legally continues the current expression is
-    /// consumed before this check runs: in particular, a '(' or '{' after a
-    /// callable target on the same physical line is a call delimiter handled
-    /// by <see cref="ParsePostfix"/>, so `F (1, 2)` is the call `F(1, 2)`.
-    /// A physical newline never continues a closed expression into a call,
-    /// so `F` newline `(1, 2)` reaches this check and separates as the
-    /// expression list `F, (1, 2)`. Non-callable targets always separate:
-    /// `2 (3)` is the expression list `2, 3`, never a call or multiplication.
+    /// True when the current token starts the next slot of the expression list
+    /// being parsed. A slot that begins on a later physical line is admitted
+    /// silently only in contexts that opt into multiline expression lists
+    /// (<paramref name="allowNewlineSeparator"/>); definition bodies opt out,
+    /// so a newline ends them. A slot that begins on the SAME physical line as
+    /// the closed expression before it is the SYN-07A separator error: it is
+    /// reported at its first token and then admitted anyway (recovery as a
+    /// slot boundary), so whitespace never silently creates structure and the
+    /// list keeps the shape the programmer wrote.
+    /// Tokens that begin a declaration never start a slot: the algorithm loop
+    /// owns those forms, their diagnostics, and the same-line row check.
+    /// Only tokens that start a new independent expression reach this decision.
+    /// A token that legally continues the current expression is consumed
+    /// before this check runs: a '(' or '{' after a callable target on the
+    /// same physical line is a call delimiter handled by
+    /// <see cref="ParsePostfix"/> (`F (1, 2)` is the call `F(1, 2)`), a
+    /// same-line binary operator continues arithmetic (`F(1 -2)` is the one
+    /// argument `1 - 2`), and a leading '.' continues a dot chain across
+    /// lines. A physical newline never continues a closed expression into a
+    /// call, so `F` newline `(1, 2)` reaches this check and separates as the
+    /// expression list `F, (1, 2)`; non-callable targets never become calls,
+    /// so `2 (3)` reaches it too — and is the separator error.
     /// </summary>
-    private bool StartsImplicitExpressionListSeparator(
-        bool allowNewlineImplicitExpressionListSeparator)
+    private bool StartsNextExpressionListSlot(bool allowNewlineSeparator)
     {
-        if (!IsSamePhysicalLineAsPreviousToken()
-            && !allowNewlineImplicitExpressionListSeparator)
-        {
+        if (!IsSamePhysicalLineAsPreviousToken() && !allowNewlineSeparator)
             return false;
-        }
 
         if (!CanStartExpression(Current.Kind))
             return false;
 
-        // Tokens that begin a declaration are never adjacent expressions:
-        // the algorithm loop owns those forms and their diagnostics. The
-        // binding-pattern arm is always included here — an expression list's
-        // commas are consumed BEFORE this check runs, so any comma run after
-        // the candidate belongs to the candidate's own form.
-        return !StartsDeclaration(includeCommaSpanningBindingPatterns: true);
+        // Tokens that begin a declaration never start a slot: the algorithm
+        // loop owns those forms and their diagnostics. The binding-pattern arm
+        // is always included here — an expression list's commas are consumed
+        // BEFORE this check runs, so any comma run after the candidate belongs
+        // to the candidate's own form.
+        if (StartsDeclaration(includeCommaSpanningBindingPatterns: true))
+            return false;
+
+        if (IsSamePhysicalLineAsPreviousToken())
+        {
+            // SYN-07A: whitespace never separates two slots. Report at the
+            // second item's first token and recover it as the next slot.
+            ReportUnseparatedSameLineItem(Current);
+            return true;
+        }
+
+        return true;
     }
 
     /// <summary>
@@ -2755,8 +2885,8 @@ public sealed class Parser
     /// <c>x, *y, z = ...</c> (including the collect-marker-led form
     /// <c>*items = ...</c>), a clause definition <c>Name(pattern) = ...</c>,
     /// or the invalid-grace property prefix <c>~Name = ...</c>.
-    /// Both boundary consumers — the adjacency rule
-    /// (<see cref="StartsImplicitExpressionListSeparator"/>) and open-target
+    /// Both boundary consumers — the slot-boundary rule
+    /// (<see cref="StartsNextExpressionListSlot"/>) and open-target
     /// recovery (<see cref="StartsOpenTargetAtom"/>) — stop before this
     /// relation, so a following declaration stays intact and its diagnostics
     /// stay owned by the algorithm loop; encoding the set once keeps the two
@@ -2765,8 +2895,8 @@ public sealed class Parser
     ///
     /// <para><paramref name="includeCommaSpanningBindingPatterns"/> gates the
     /// ONE arm whose lookahead scans across commas (the deconstruction
-    /// binding pattern). It is a consumer-adjacency question, not a second
-    /// copy of the relation: the adjacency rule always includes it (its
+    /// binding pattern). It is a consumer-position question, not a second
+    /// copy of the relation: the slot-boundary rule always includes it (its
     /// expression list consumes commas before the boundary check, so trailing
     /// commas always belong to the candidate), while open-target recovery
     /// includes it only for a candidate that starts a NEW physical line —
@@ -2794,7 +2924,7 @@ public sealed class Parser
     /// of the current position. The postfix spread/multiplication decision
     /// (<see cref="IsPostfixSpreadMarkerStar"/>) consults it for the token
     /// after a star, so a star followed by a declaration head is a spread
-    /// through the SAME relation the adjacency boundary stops at — the two
+    /// through the SAME relation the slot boundary stops at — the two
     /// boundary decisions cannot drift apart.
     /// </summary>
     private bool StartsDeclarationAt(int index, bool includeCommaSpanningBindingPatterns)
@@ -2822,9 +2952,10 @@ public sealed class Parser
         or TokenKind.LParen
         or TokenKind.LBrace
         // '[' always starts a NEW list-literal expression; it is deliberately
-        // absent from the continuation policy table, so `A[1]` is the
-        // adjacency expression list `A, [1]` (indexing is ':', never brackets)
-        // and `F[1]` is never a call form.
+        // absent from the continuation policy table, so `A[1]` is a second
+        // same-line item after `A` — the SYN-07A separator error, never
+        // indexing (indexing is ':') — while `A, [1]` and `A` newline `[1]`
+        // are the two-slot expression list, and `F[1]` is never a call form.
         or TokenKind.LBracket
         or TokenKind.KeywordOpen => true,
         _ => false,
@@ -2886,7 +3017,7 @@ public sealed class Parser
             // physical newline (write the operator before the newline to
             // continue arithmetic: `A -` newline `1` is the subtraction).
             // Comments are invisible here: `A # note` newline `-1` breaks
-            // exactly like `A` newline `-1` and joins as output adjacency.
+            // exactly like `A` newline `-1` and starts the next output row.
             if (!MayContinueClosedExpression(Current.Kind)) break;
 
             var operatorToken = Advance(); // consume operator token
@@ -3103,7 +3234,8 @@ public sealed class Parser
                     // discard every marker in it; the loop then resumes
                     // ordinarily: a following dot still builds the ordinary
                     // dot edge (`(x + y)~.t` keeps a graceless DotCall), a
-                    // same-line operand is ordinary adjacency (`f(x)~ c` is
+                    // same-line operand is a recovery-owned item that the
+                    // separator rule does not report again (`f(x)~ c` is
                     // never the prefix-grace slot `~c` — write `f(x), ~c`),
                     // and a token on the next physical line stays the start
                     // of the next row: the run never becomes prefix Grace on
@@ -3127,8 +3259,9 @@ public sealed class Parser
                     // Multiline calls must open the delimiter before the newline
                     // (`F(` ... `)`); an already-open argument list spans lines
                     // normally. Non-callable targets (numbers, calls, blocks,
-                    // operators) do not pass this gate, so `2 (3)` stays
-                    // adjacency.
+                    // operators) do not pass this gate, so `2 (3)` reaches the
+                    // expression-list boundary and is the SYN-07A separator
+                    // error — never a call and never multiplication.
                     when (lhs is Expr.Resolve or Expr.DotCall or Expr.Grace)
                         && IsCallArgumentStart():
                     // Direct call: Name(args), Name~(args), or expr.Name(args) already handled above
@@ -3183,7 +3316,7 @@ public sealed class Parser
     /// begin a DECLARATION: a declaration head is never an operand (`a*`
     /// newline `b = 1` is a spread row followed by a property definition),
     /// decided through the same <see cref="StartsDeclarationAt"/> relation
-    /// the adjacency boundary stops at. The star is the spread marker when
+    /// the slot boundary stops at. The star is the spread marker when
     /// the surrounding syntax closes the expression before any operand could
     /// follow: a closing delimiter, a comma, end of input, a token that
     /// cannot start an expression, or a declaration head. Comments after the
@@ -3277,6 +3410,10 @@ public sealed class Parser
             DiagnosticCode.InvalidSpreadMarker,
             SpreadMarkerAttachmentDiagnostic(operand),
             SpanFrom(operand));
+        // The malformed run owns the boundary after it: whatever follows a
+        // detached star on the same line is explained by this diagnostic, not
+        // by a second separator-rule diagnostic.
+        OwnSameLineItem(Current);
         return operand;
     }
 
@@ -3327,6 +3464,9 @@ public sealed class Parser
                     DiagnosticCode.InvalidGraceMarker,
                     GraceEligibilityMessage,
                     CombineSpans(TokenSpan(memberGraceStart), TokenSpan(Previous))!);
+                // The rejected run owns the boundary after it (`a.~~ 7` blames
+                // the run once; `7` is not additionally a separator error).
+                OwnSameLineItem(Current);
                 return lhs;
             }
 
@@ -3336,6 +3476,8 @@ public sealed class Parser
         if (Current.Kind != TokenKind.Identifier)
         {
             ReportError(DiagnosticCode.UnexpectedToken, "Expected property name after '.'.");
+            // The dangling dot's diagnostic owns whatever follows it on the line.
+            OwnSameLineItem(Current);
             return lhs;
         }
 
@@ -3641,7 +3783,7 @@ public sealed class Parser
                         GuardNestingDepth();
                         items = Current.Kind == TokenKind.RBracket
                             ? []
-                            : ParseExpressionListOperand(allowNewlineImplicitExpressionListSeparator: true);
+                            : ParseExpressionListOperand(allowNewlineSeparator: true);
                     }
                     finally { _nestingDepth -= ListNestingSurcharge; }
 
@@ -3655,7 +3797,7 @@ public sealed class Parser
                     ReportError(
                         DiagnosticCode.InvalidOpenDeclaration,
                         "'open' is a declaration and cannot be used in expression position.");
-                    Advance(); // skip for recovery
+                    SkipForRecovery(); // the token after it is a recovery-owned boundary
                     return new Expr.Num(0) { Span = TokenSpan(token) }; // error placeholder
                 }
 
@@ -3681,6 +3823,9 @@ public sealed class Parser
                         && IsSamePhysicalLineAsPreviousToken())
                         return ParseUnary(); // recovery: the operand the star was attached to
 
+                    // No operand was consumed: the collect-marker diagnostic
+                    // owns this boundary, including a following declaration.
+                    OwnSameLineItem(Current);
                     return new Expr.Num(0) { Span = TokenSpan(starToken) }; // error placeholder
                 }
 
@@ -3688,7 +3833,7 @@ public sealed class Parser
                 {
                     var token = Current;
                     ReportUnsupportedSemicolon(token);
-                    Advance(); // skip for recovery
+                    SkipForRecovery(); // the token after it is a recovery-owned boundary
                     return new Expr.Num(0) { Span = TokenSpan(token) };
                 }
 
@@ -3701,7 +3846,7 @@ public sealed class Parser
                     ReportError(
                         DiagnosticCode.UnexpectedToken,
                         "Unexpected ':'. Indexing is postfix and must follow the indexed expression on the same physical line, as in 'Pair:0'.");
-                    Advance(); // skip for recovery
+                    SkipForRecovery(); // the token after it is a recovery-owned boundary
                     return new Expr.Num(0) { Span = TokenSpan(token) }; // error placeholder
                 }
 
@@ -3709,7 +3854,7 @@ public sealed class Parser
                 {
                     var token = Current;
                     ReportError(DiagnosticCode.UnexpectedToken, $"Unexpected {DescribeTokenKind(Current.Kind, includeArticle: false)}.");
-                    Advance(); // skip for recovery
+                    SkipForRecovery(); // the token after it is a recovery-owned boundary
                     return new Expr.Num(0) { Span = TokenSpan(token) }; // error placeholder
                 }
         }

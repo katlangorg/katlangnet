@@ -224,8 +224,8 @@ public class EvaluatorIndexingTests
     /// <summary>
     /// Diagnostic expression names use KatLang source syntax, so an index must
     /// render as `target:selector`. Bracket text would be actively misleading:
-    /// `[...]` is exact list literal syntax, so `Rows[0]` reads back as the
-    /// adjacency `Rows, [0]`. <paramref name="forbiddenBracketName"/> is the
+    /// `[...]` is exact list literal syntax, so `Rows[0]` is a
+    /// missing-separator error, never an index. <paramref name="forbiddenBracketName"/> is the
     /// pre-fix rendering; a bracket selector such as `Rows:[0]` is legitimate
     /// syntax, so only the bracket form of this specific index is banned.
     /// </summary>

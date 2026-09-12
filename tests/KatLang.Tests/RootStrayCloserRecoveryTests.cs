@@ -310,7 +310,7 @@ public class RootStrayCloserRecoveryTests
         // `A = 1 ) 2`: the closer ends A's body at `1`; `2` becomes a new ROOT
         // output row (never absorbed into the property body), followed by the
         // `A` row. This is the one shape where the whitespace control differs:
-        // `A = 1   2` would be the adjacency body `A = 1, 2`.
+        // `A = 1   2` reports a missing separator and recovers both slots inside A.
         var parsed = Parser.ParseSyntax("A = 1 ) 2\nA");
 
         Assert.Equal(new[] { "[UnexpectedToken] 1:7-1:7 " + StrayParenMessage }, parsed.Diagnostics.Select(Describe));

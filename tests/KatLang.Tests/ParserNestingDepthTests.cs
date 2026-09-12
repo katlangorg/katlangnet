@@ -468,8 +468,8 @@ public class ParserNestingDepthTests
         // containing Grace is already unwrapped by the raw parser.
         var expectedSource = shape switch
         {
-            GraceRunShape.PostfixRunAtRoot => "1 x",
-            GraceRunShape.PostfixRunInDefinitionBody => "F(x) = 1 x\nF(2)",
+            GraceRunShape.PostfixRunAtRoot => "1, x",
+            GraceRunShape.PostfixRunInDefinitionBody => "F(x) = 1, x\nF(2)",
             GraceRunShape.PrefixRunBeforeDeclaration => "0\nx = 1\nx",
             GraceRunShape.PrefixRunOnRootName or GraceRunShape.PrefixRunInGroup => "x",
             _ => throw new ArgumentOutOfRangeException(nameof(shape)),

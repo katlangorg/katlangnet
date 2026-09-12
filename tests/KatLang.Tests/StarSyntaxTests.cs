@@ -403,7 +403,21 @@ public class StarSyntaxTests
             Assert.Equal(sameLine.Root.Output.Select(static e => e.GetType()), nextLine.Root.Output.Select(static e => e.GetType()));
             Assert.Equal(sameLine.Root.Properties.Count, nextLine.Root.Properties.Count);
             Assert.Equal(sameLine.Root.Opens.Count, nextLine.Root.Opens.Count);
-            Assert.Equal(sameLine.HasErrors, nextLine.HasErrors);
+            // The STAR decision never differs. The one diagnostic that may
+            // differ is SYN-07A's separator/declaration-row error, which is
+            // about the second item's line, not about the star: a same-line
+            // declaration head after the spread row is reported, the next-line
+            // one is not, and every other diagnostic agrees.
+            var declarationHead = follower is "B = 1" or "F(x) = x"
+                or "x, y = 1, 2" or "open B" or "public B = 1";
+            Assert.Equal(declarationHead ? 1 : 0,
+                sameLine.Diagnostics.Count(static d => d.Code == DiagnosticCode.UnseparatedSameLineItem));
+            Assert.All(sameLine.Diagnostics.Where(static d => d.Code == DiagnosticCode.UnseparatedSameLineItem),
+                static d => Assert.Equal((3, 4), (d.Span.StartLineNumber, d.Span.StartColumn)));
+            Assert.DoesNotContain(nextLine.Diagnostics, static d => d.Code == DiagnosticCode.UnseparatedSameLineItem);
+            Assert.Equal(
+                sameLine.Diagnostics.Where(static d => d.Code != DiagnosticCode.UnseparatedSameLineItem).Select(static d => d.Code),
+                nextLine.Diagnostics.Select(static d => d.Code));
         }
     }
 

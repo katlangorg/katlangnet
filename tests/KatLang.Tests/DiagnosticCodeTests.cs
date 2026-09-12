@@ -96,7 +96,7 @@ public class DiagnosticCodeTests
         var diagnostic = Assert.Single(parsed.Diagnostics);
 
         Assert.Equal(
-            "Semicolon is not supported as an expression separator. Use comma or adjacency for separate expressions, or parentheses for one sequence value.",
+            "Semicolon is not supported as an expression separator. Use ',' between expressions on one line (a new line separates them where the context allows it), or parentheses for one sequence value.",
             diagnostic.Message);
         Assert.Equal(DiagnosticSeverity.Error, diagnostic.Severity);
         Assert.Equal(new SourceSpan(1, 3, 1, 3), diagnostic.Span);
@@ -151,6 +151,10 @@ public class DiagnosticCodeTests
         { "grace-member-detached", "K(a, t) = a.~ t\nK(7, {a+1})", DiagnosticCode.InvalidGraceMarker },
         { "spread-marker-detached", "A = (1, 2)\nA *", DiagnosticCode.InvalidSpreadMarker },
         { "spread-marker-detached-in-call", "F(*items) = items\nA = (1, 2)\nF(A *)", DiagnosticCode.InvalidSpreadMarker },
+        { "same-line-slots-without-comma", "1 2", DiagnosticCode.UnseparatedSameLineItem },
+        { "same-line-call-arguments-without-comma", "F(a, b) = a + b\nF(1 2)", DiagnosticCode.UnseparatedSameLineItem },
+        { "same-line-definition-body-slots", "a = 1\nb = 2\nP = a b\nP", DiagnosticCode.UnseparatedSameLineItem },
+        { "same-line-declaration-after-content", "x = 3 y = 4\nx + y", DiagnosticCode.UnseparatedSameLineItem },
         { "collect-marker-detached", "* items = (1, 2)\nitems", DiagnosticCode.InvalidCollectMarker },
         { "collect-marker-repeated", "**items = (1, 2, 3)\nitems", DiagnosticCode.InvalidCollectMarker },
         { "collect-marker-in-expression", "x = *values\nx", DiagnosticCode.InvalidCollectMarker },

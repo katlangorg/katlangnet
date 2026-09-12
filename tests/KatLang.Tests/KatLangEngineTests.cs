@@ -662,9 +662,9 @@ public class KatLangEngineTests
     }
 
     [Theory]
-    [InlineData("1 2")]
+    [InlineData("1, 2")]
     [InlineData("(1, 2)")]
-    public void RunResult_ToDisplayString_SameLineAdjacencyAndSequenceValueComma_DisplayExpectedShape(string source)
+    public void RunResult_ToDisplayString_CommaRowsAndSequenceValue_DisplayExpectedShape(string source)
     {
         var result = KatLangEngine.Run(source);
 
@@ -672,9 +672,9 @@ public class KatLangEngineTests
     }
 
     [Theory]
-    [InlineData("1, 2 3")]
+    [InlineData("1, 2, 3")]
     [InlineData("1, (2, 3)")]
-    public void RunResult_ToDisplayString_AdjacencyAfterComma_DisplaysRowsOrSequenceValue(string source)
+    public void RunResult_ToDisplayString_CommaSlots_DisplayRowsOrSequenceValue(string source)
     {
         var result = KatLangEngine.Run(source);
 
@@ -682,9 +682,9 @@ public class KatLangEngineTests
     }
 
     [Theory]
-    [InlineData("(1 2)")]
+    [InlineData("(1, 2)")]
     [InlineData("((1, 2))")]
-    public void RunResult_ToDisplayString_ParenthesizedAdjacency_DisplaysOneSequenceValue(string source)
+    public void RunResult_ToDisplayString_ParenthesizedSlots_DisplayOneSequenceValue(string source)
     {
         var result = KatLangEngine.Run(source);
 
@@ -692,15 +692,14 @@ public class KatLangEngineTests
     }
 
     [Fact]
-    public void Run_CallArgumentAdjacency_SpreadsTwoArguments()
+    public void Run_CallArgumentsWithoutComma_IsAParseFailure_CommaCallSucceeds()
     {
-        var source = """
-            Add(x, y) = x + y
-            Add(1 2)
-            """;
-        var result = KatLangEngine.Run(source);
+        // SYN-07A at the public engine: `Add(1 2)` is a parse failure carrying
+        // the separator family; `Add(1, 2)` is the two-argument call.
+        var failure = Assert.IsType<RunResult.ParseFailure>(KatLangEngine.Run("Add(x, y) = x + y\nAdd(1 2)"));
+        Assert.Equal(KatLangErrorCode.UnseparatedSameLineItem, Assert.Single(failure.Errors).Code);
 
-        var success = Assert.IsType<RunResult.Success>(result);
+        var success = Assert.IsType<RunResult.Success>(KatLangEngine.Run("Add(x, y) = x + y\nAdd(1, 2)"));
         Assert.Equal([3m], success.Atoms);
     }
 

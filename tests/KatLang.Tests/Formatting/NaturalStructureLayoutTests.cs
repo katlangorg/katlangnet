@@ -47,12 +47,12 @@ public class NaturalStructureLayoutTests
             EmployeeTax = SocTax + IncomeTax
             EmployerSocTax = (grossSalary * EmployerSocContributionRate).Round
 
-            ('neto' NetSalary)
-            ('taxes' EmployeeTax + EmployerSocTax + BusinessRiskStateDutyAmount)
-            ('social' SocTax + EmployerSocTax
-            'income' IncomeTax
-            'risk' BusinessRiskStateDutyAmount)
-            ('total' grossSalary + EmployerSocTax + BusinessRiskStateDutyAmount)
+            ('neto', NetSalary)
+            ('taxes', EmployeeTax + EmployerSocTax + BusinessRiskStateDutyAmount)
+            ('social', SocTax + EmployerSocTax
+            'income', IncomeTax
+            'risk', BusinessRiskStateDutyAmount)
+            ('total', grossSalary + EmployerSocTax + BusinessRiskStateDutyAmount)
         }
 
         """;
@@ -390,7 +390,7 @@ public class NaturalStructureLayoutTests
     public void RootRowsAndRootSequence_StayDistinctAtZeroSpacing()
     {
         var rows = OutputFormatters.Concise.Format(KatLangEngine.Run("A = 1\nB = 2\nA()\nB()"), Acceptance());
-        var sequence = OutputFormatters.Concise.Format(KatLangEngine.Run("(A() B())\nA = 1\nB = 2"), Acceptance());
+        var sequence = OutputFormatters.Concise.Format(KatLangEngine.Run("(A(), B())\nA = 1\nB = 2"), Acceptance());
 
         Assert.Equal("1\n2", rows);
         Assert.Equal("1 2", sequence);

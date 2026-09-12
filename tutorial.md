@@ -544,7 +544,7 @@ Per-value formatting such as `value.displayDecimals(n)` and `displayDecimals(val
 
 ## Multiple Outputs
 
-> **Core idea:** commas, allowed adjacency, and output rows create separate slots. Parentheses capture slots into one sequence value; square brackets capture them into one exact list value.
+> **Core idea:** commas and output rows create separate slots; whitespace alone never does. Parentheses capture slots into one sequence value; square brackets capture them into one exact list value.
 
 A KatLang algorithm can produce more than one value. Use commas to list multiple outputs:
 
@@ -562,7 +562,7 @@ A KatLang algorithm can produce more than one value. Use commas to list multiple
 
 The result window displays multiple top-level outputs on separate visual rows for readability. Those visual rows are presentation only; they do not create semantic groups. Parentheses create sequence values.
 
-KatLang puts complete expressions next to each other with expression lists. Comma and allowed expression adjacency create separate slots; parentheses materialize those slots as one sequence value. Semicolon is not expression syntax.
+KatLang puts complete expressions next to each other with expression lists. A comma — or a new line, where the context keeps the list open — creates separate slots; parentheses materialize those slots as one sequence value. Whitespace alone never separates two slots, and semicolon is not expression syntax.
 
 ```
 1 + 1
@@ -577,7 +577,7 @@ KatLang puts complete expressions next to each other with expression lists. Comm
 6
 ```
 
-The same program can be written `1 + 1, 2 + 2, 3 + 3` or `1 + 1 2 + 2 3 + 3`; all three produce three expression-list slots. Use parentheses when you want one sequence value:
+The same program can be written `1 + 1, 2 + 2, 3 + 3`; both spellings produce three expression-list slots (`1 + 1 2 + 2 3 + 3`, with only whitespace between the slots, is a parse error). Use parentheses when you want one sequence value:
 
 <!-- spec:value-three-items -->
 ```
@@ -595,11 +595,11 @@ The same expression-list rule applies inside brace bodies:
 }
 ```
 
-This is equivalent to `{ 1, 2, 3 }` and to `{ 1, 2 3 }`: all three items are expression-list slots. Parentheses materialize an expression list as one sequence value, so `(1 2)` is the sequence value `(1, 2)`. Call syntax consumes expression lists as argument slots, so `F(A B)` is the two-argument call `F(A, B)`.
+This is equivalent to `{ 1, 2, 3 }`: all three items are expression-list slots (`{ 1, 2 3 }` is a parse error, because nothing separates `2` from `3`). Parentheses materialize an expression list as one sequence value, so `(1, 2)` is one sequence value. Call syntax consumes expression lists as argument slots, so `F(A, B)` is the two-argument call.
 
-Adjacency is an implicit expression-list separator only between complete independent expressions where adjacency is allowed. It never splits tokens: `ab` stays one identifier, `12` stays one number, and `2(3)` is the expression list `2, 3`, never multiplication.
+**Same-line slots need a comma.** A second complete expression on the same physical line as a closed expression, with nothing but whitespace between them, is a parse error — never a silent second slot. `1 2`, `F(1 2)`, `(1 2)`, `[1 2]`, `2(3)`, `2m`, `2pi`, `A[1]`, and `sqrt 2` are all rejected with one diagnostic that names the three repairs: add `,` to separate slots, add an operator to continue the expression, or start a declaration on a new line. The parser recovers by keeping the second item as the next slot of the same list, so later diagnostics stay useful, but the program is invalid. Whitespace never splits tokens either: `ab` stays one identifier and `12` stays one number.
 
-Postfix continuations win over adjacency on the same physical line. An implicit expression-list separator is inserted only when the next token cannot legally continue the current expression; a token that continues it — such as a call argument delimiter — continues it instead. You may therefore write whitespace between a callable name and its argument list:
+Whitespace inside one expression is formatting, not structure. A token that continues the current expression — a binary operator, a call argument delimiter, `:`, `.`, or an attached marker — continues it, and only then does the parser ask whether a new slot begins; `F(1 -2)` is therefore the one argument `1 - 2`, and `F(1, -2)` is the two-argument call. You may write whitespace between a callable name and its argument list:
 
 <!-- spec:adjacency-call-across-space -->
 ```
@@ -628,9 +628,9 @@ Add(
 )            # the call Add(1, 2): 3
 ```
 
-The same applies to dot calls and callback braces: `A.B (1)` is the dot call `A.B(1)` and `values.map { n * 2 }` is `values.map{n * 2}`, but `A.B` followed by `(1)` on the next line is the expression list `A.B, (1)`, and `values.map` followed by `{ n * 2 }` on the next line is not a callback call (write `values.map{` and break inside the braces instead). This is only about same-line whitespace between the callee and its delimiter — inside the argument list adjacency still creates argument slots, so `Add (1 2)` is the two-argument call `Add(1, 2)`. Comma and a newline both keep separate slots: `F, (1)` and `F` followed by `(1)` are expression-list structure. Non-callable targets never become calls: `2 (3)` stays the expression list `2, 3`.
+The same applies to dot calls and callback braces: `A.B (1)` is the dot call `A.B(1)` and `values.map { n * 2 }` is `values.map{n * 2}`, but `A.B` followed by `(1)` on the next line is the expression list `A.B, (1)`, and `values.map` followed by `{ n * 2 }` on the next line is not a callback call (write `values.map{` and break inside the braces instead). This is only about same-line whitespace between the callee and its delimiter — inside the argument list every same-line slot still needs its comma (`Add (1, 2)` is the call; `Add (1 2)` is a parse error). Comma and a newline both keep separate slots: `F, (1)` and `F` followed by `(1)` are expression-list structure. Non-callable targets never become calls: `2 (3)` is neither a call nor multiplication, it is the same missing-separator error as `2(3)`.
 
-Postfix indexing follows the same line rule: `Pair:0`, `Pair :0`, and `Pair : 0` all index on the same line, but a `:`-led line never continues the previous expression — it is a parse error rather than a silent continuation, so `P = Pair` followed by a line `:0` does not define `P = Pair:0`. Postfix grace `~` is same-line only in the same way: `A~B` graces `A`, while `A` followed by a line `~B` keeps `A` ungraced and parses `~B` as its own prefix-grace row. Binary operators follow the rule too: an operator-led line never continues the previous expression, so `A` followed by a line `-1` is the expression list `A, -1`, never the subtraction `A - 1` — put the operator at the end of the line (`A -` then `1` on the next line) when you want the arithmetic to continue. A trailing `*` is no exception, and it does not matter whether it is spaced: `A *` and `A*` at the end of a line both continue as the multiplication `A * B` onto the next line whenever that line begins with a right operand. Only where no operand can follow — before a comma, a closing delimiter, the end of the program, or a definition — is the star the spread marker, and then it must be written attached: `A*` spreads, while a detached `A *` in that position is an error (see [Spread with the Postfix Star](#spread-with-the-postfix-star)). Comments never change any of these decisions: `A # note` followed by `-1` parses exactly like `A` followed by `-1`. Leading-dot lines are the one intentionally supported continuation: a line starting with `.` continues the dot-call chain, so method-chain layout works as long as each argument delimiter stays on the same line as its member name:
+Postfix indexing follows the same line rule: `Pair:0`, `Pair :0`, and `Pair : 0` all index on the same line, but a `:`-led line never continues the previous expression — it is a parse error rather than a silent continuation, so `P = Pair` followed by a line `:0` does not define `P = Pair:0`. Postfix grace `~` is same-line only in the same way: `A~, B` graces `A` before the slot `B` (`A~B` without the comma is the missing-separator error), while `A` followed by a line `~B` keeps `A` ungraced and parses `~B` as its own prefix-grace row. Binary operators follow the rule too: an operator-led line never continues the previous expression, so `A` followed by a line `-1` is the expression list `A, -1`, never the subtraction `A - 1` — put the operator at the end of the line (`A -` then `1` on the next line) when you want the arithmetic to continue. A trailing `*` is no exception, and it does not matter whether it is spaced: `A *` and `A*` at the end of a line both continue as the multiplication `A * B` onto the next line whenever that line begins with a right operand. Only where no operand can follow — before a comma, a closing delimiter, the end of the program, or a definition — is the star the spread marker, and then it must be written attached: `A*` spreads, while a detached `A *` in that position is an error (see [Spread with the Postfix Star](#spread-with-the-postfix-star)). Comments never change any of these decisions: `A # note` followed by `-1` parses exactly like `A` followed by `-1`. Leading-dot lines are the one intentionally supported continuation: a line starting with `.` continues the dot-call chain, so method-chain layout works as long as each argument delimiter stays on the same line as its member name:
 
 ```
 (1, 2, 3)
@@ -647,9 +647,9 @@ Sum(vector) = vector.sum
 
 A leading semicolon after a definition body is invalid and produces a diagnostic. During error recovery the parser may still attach the following expression to the current body so later diagnostics stay useful, but that recovery is not valid KatLang syntax — semicolon is never an expression operator.
 
-Comma is the explicit expression-list separator. Where an expression list is already open, same-line adjacency acts as an implicit comma, so `a b` means `a, b`. A newline is a different mechanism — a body, statement, or output boundary, not a global implicit comma — so it does not extend an expression list across lines unless the syntax explicitly keeps the context open (for example an open `(`/`{`, a trailing comma, a same-line binary operator, or a leading `.`). Expression spreading uses the postfix spread marker `value*`; a `*` followed by a valid right operand — on the same line or on the next — is instead the multiplication operator regardless of spacing, so a comma is required between a spread and a following item (`a*, b`, or `a*,` newline `b` — both `a* b` and `a*` newline `b` are the product `a * b`). The prefix `*` in a binding pattern is the collect marker: it must be directly attached to its binding name in a parameter or deconstruction pattern (`*name`; `* name` is an error), and it is not an expression operator.
+Comma is the explicit expression-list separator, and on one physical line it is the only one: `a b` is a parse error, `a, b` is two slots. A newline is a different mechanism — a body, statement, or output boundary — so it does not extend an expression list across lines unless the syntax explicitly keeps the context open (for example an open `(`/`[`/`{`, a trailing comma, a same-line trailing binary operator, or a leading `.`); where the context is open, a newline between two closed expressions separates slots without a comma. Expression spreading uses the postfix spread marker `value*`; a `*` followed by a valid right operand — on the same line or on the next — is instead the multiplication operator regardless of spacing, so a comma is required between a spread and a following item (`a*, b`, or `a*,` newline `b` — both `a* b` and `a*` newline `b` are the product `a * b`). The prefix `*` in a binding pattern is the collect marker: it must be directly attached to its binding name in a parameter or deconstruction pattern (`*name`; `* name` is an error), and it is not an expression operator.
 
-Because same-line adjacency creates expression-list slots in the current body, an expression that follows a definition on the same line becomes another output slot in that definition's body. Start a new line after a definition body when the next expression should be a separate output contribution.
+A definition body ends at the end of its line, and a declaration must begin a line (or be the first item after an opening `{`): `x = 1 y = 2`, `1 P = 3`, and `{ d = 2 n * d }` are parse errors, so a forgotten line break can never silently move a declaration or an expression into the preceding definition's body. Start a new line after a definition body for the next declaration or output row.
 
 At root output, you can mix commas and newlines freely:
 
@@ -677,13 +677,13 @@ Use parentheses when sequence-valued output intent is clearer:
 |---|---|
 | `1, 2` | Two top-level comma outputs |
 | `(1, 2)` | One sequence value containing `1` followed by `2` |
-| `1 2` | Implicit expression-list separator by adjacency: exactly `1, 2` |
+| `1 2` | Parse error: two slots on one line need a comma — write `1, 2`, or put `2` on its own line |
 | `X*` | Spread expression: open one item boundary of the evaluated value and contribute the items to the surrounding slot context |
 | `X*, 2` | Spread then a separate expression-list slot — the comma is required, because `X* 2` is the multiplication `X * 2` |
 | `X * 2` (any spacing, even across a line break) | Multiplication: a `*` followed by a valid right operand always multiplies — `X*2`, `X* 2`, `X *2`, `X * 2`, and `X*` followed by a line `2` are the same product |
 | `*name` in a binding pattern | Collecting binding: collect the matched supply into one exact list |
 
-Comma and adjacency create expression lists. Root output consumes a bare expression list as output slots, call syntax consumes it as argument slots, parentheses materialize it as one sequence value, and square brackets materialize it as one exact [list value](#lists). Semicolon is not an expression separator; use comma/adjacency for separate slots or parentheses for one sequence value. A spread expression is one whole slot: `A B*, C` is the expression list `A, B*, C` — adjacency separates `A` from `B*`, and the comma after the spread is required because `B* C` would be the multiplication `B * C`. Comma and adjacency slots stay structural (`F(a*, b)` is a two-argument call). Physical line breaks do not create sequence-value boundaries. Explicit parentheses do:
+Commas and permitted newline boundaries create expression lists. Root output consumes a bare expression list as output slots, call syntax consumes it as argument slots, parentheses materialize it as one sequence value, and square brackets materialize it as one exact [list value](#lists). Semicolon is not an expression separator; use commas (or separate lines) for separate slots or parentheses for one sequence value. A spread expression is one whole slot: `A, B*, C` is an expression list of three slots — the comma before `B*` is required like every same-line comma (`A B*` is the missing-separator error), and the comma after the spread is required for a second reason too, because `B* C` would be the multiplication `B * C`. Written slots stay structural (`F(a*, b)` has two written slots; its supplied argument count depends on a's spread items). Physical line breaks do not create sequence-value boundaries. Explicit parentheses do:
 
 ```
 1, (2, 3)    # two slots: 1 and (2, 3)
@@ -741,7 +741,7 @@ Answer()
 
 ### Calls Return One Value
 
-A property/call boundary is a **value boundary**: it always returns exactly one value. A body may internally produce an item supply — comma slots, adjacency, or a body spread — but when you *call* it (or access a property, or invoke a builtin), the caller receives a single value. If the body produced several items, that value is a sequence containing them. To contribute its items back into the surrounding item supply, append the spread marker at the call site: `value*`. This is analogous to Python, where `return 1, 2, 3` returns one tuple, not three independent results.
+A property/call boundary is a **value boundary**: it always returns exactly one value. A body may internally produce an item supply — comma slots, newline rows, or a body spread — but when you *call* it (or access a property, or invoke a builtin), the caller receives a single value. If the body produced several items, that value is a sequence containing them. To contribute its items back into the surrounding item supply, append the spread marker at the call site: `value*`. This is analogous to Python, where `return 1, 2, 3` returns one tuple, not three independent results.
 
 <!-- spec:call-value-boundary -->
 ```
@@ -1008,7 +1008,7 @@ Equality is different by design: `==` and `!=` compare values structurally acros
 0
 ```
 
-Do not confuse the empty sequence **value** with an empty item **supply**. The value `()` is one thing you can store, compare, count, and pass as an argument. A supply is the temporary item stream that comma slots, adjacency, and the spread marker feed into a receiver, and an *empty supply* is genuinely neutral there — `Empty*` contributes no items to the surrounding slots. That neutrality is a fact about supplies alone; it gives operators no passthrough rule.
+Do not confuse the empty sequence **value** with an empty item **supply**. The value `()` is one thing you can store, compare, count, and pass as an argument. A supply is the temporary item stream that comma slots, output rows, and the spread marker feed into a receiver, and an *empty supply* is genuinely neutral there — `Empty*` contributes no items to the surrounding slots. That neutrality is a fact about supplies alone; it gives operators no passthrough rule.
 
 #### Empty output slots stay visible; only spread opens
 
@@ -3291,25 +3291,19 @@ Use parentheses for one sequence value:
 A spread expression is one whole expression-list slot, so:
 
 ```
-Use(a b*)
-```
-
-means:
-
-```
 Use(a, b*)
 ```
 
-Inside the open call-argument list the comma may be implicit — same-line adjacency separates slots, and because the `(` keeps the list open across lines a newline separates slots there too — so `Use(a b*)` and
+supplies `a` and then `b`'s items as separate argument slots. Because the `(` keeps the argument list open across lines, a newline separates slots there too, so
 
 ```
 Use(a
 b*)
 ```
 
-mean exactly the same `Use(a, b*)`. Adjacency can precede a spread because the star sits at the end of its own slot; only a slot that FOLLOWS a spread — on the same line or on the next — needs the explicit comma.
+means exactly the same `Use(a, b*)`. On one line the comma is never optional: `Use(a b*)` is the missing-separator error like every other same-line pair, and a slot that FOLLOWS a spread — on the same line or on the next — needs the explicit comma for a second reason as well (`b* c` is multiplication).
 
-A spread applies only to its own operand. `a, b*, c` is an expression list of three slots — the comma after `b*` is required, because `a b* c` contains the multiplication `b * c` (two slots: `a` and `b * c`), and the three-line form needs the same comma after `b*` for the same reason. Use `(a, b*, c)` for one sequence value.
+A spread applies only to its own operand. `a, b*, c` is an expression list of three slots — every same-line comma is required, and the comma after `b*` is required even across a line break, because `b* c` and `b*` newline `c` are the multiplication `b * c`. Use `(a, b*, c)` for one sequence value.
 
 The explicit parenthesized form can intentionally force a different value boundary around a spread expression, but it does not change which operand the spread owns. `Use((a, b*))` and `Use((a, (b*)))` both spread only `b`.
 
@@ -3333,7 +3327,7 @@ This behaves like comma-separated output rows:
 SalaryExpenses(3800, 1, 0), '', SalaryExpenses(50, 0, 0)
 ```
 
-Inside call argument lists and explicit parenthesized sequence values the list stays open across lines, so both same-line adjacency and a newline separate slots. Use parentheses when one sequence value is intended, such as `(a, b, c)`.
+Inside call argument lists and explicit parenthesized sequence values the list stays open across lines, so a newline separates slots there just as a comma does; on one line the comma is required. Use parentheses when one sequence value is intended, such as `(a, b, c)`.
 
 <!-- spec:root-spread-then-value-slot -->
 ```
@@ -3556,7 +3550,7 @@ Square brackets construct an **exact immutable list value** — KatLang's second
 
 **Result:** `[1, 2, 3]`
 
-A list literal always evaluates to exactly ONE list value. Its elements use the ordinary expression-list rules (comma or adjacency separate elements, and an already-open `[` spans lines just like `(` and `{`), but unlike parenthesized sequence values, **no canonicalization ever applies to list structure**: lists preserve exact cardinality and nesting.
+A list literal always evaluates to exactly ONE list value. Its elements use the ordinary expression-list rules (commas separate elements on one line, a newline separates elements while the `[` is open, and an already-open `[` spans lines just like `(` and `{`), but unlike parenthesized sequence values, **no canonicalization ever applies to list structure**: lists preserve exact cardinality and nesting.
 
 <!-- spec:list-exactness -->
 ```
@@ -4377,7 +4371,7 @@ Only `public` exported properties are exposed through `load` and `open`.
 | `*` (postfix, directly attached) | Spread marker (`value*` contributes the operand's items to the surrounding supply; a `*` followed by a valid right operand, on the same line or the next, is multiplication instead — spacing never decides that, but a spread marker must be attached: `value *` with no operand is an error) | — |
 | `~` (prefix, directly attached) | Grace: move parameter one position earlier (`~x`; `~ x` is an error) | — |
 | `~` (postfix, directly attached) | Grace: move parameter one position later (`x~`; `x ~` is an error) | — |
-| `[` `]` | Exact immutable list literal (`[1, 2, 3]`; never a call or indexing delimiter — `A[1]` is the adjacency list `A, [1]`) | — |
+| `[` `]` | Exact immutable list literal (`[1, 2, 3]`; never a call or indexing delimiter — `A[1]` is a missing-separator parse error, `A, [1]` is two slots, and `A:1` indexes) | — |
 
 ### Builtin Algorithms, Intrinsics, and Keywords
 

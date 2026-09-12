@@ -451,7 +451,8 @@ internal static class ExprNameRenderer
 
             // Diagnostic expression names use KatLang source syntax: indexing is
             // postfix `target:selector`, never `target[selector]` (`[...]` is exact
-            // list literal syntax, so bracket text would read back as adjacency).
+            // list literal syntax, so bracket text would read back as a list
+            // literal after the target, not as an index).
             case Expr.Index(var target, var selector):
                 pending.Push(new Piece(selector, ExprNameMode.IndexSelector));
                 pending.Push(new Piece(":"));

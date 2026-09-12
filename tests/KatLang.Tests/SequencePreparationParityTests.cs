@@ -142,7 +142,7 @@ public class SequencePreparationParityTests
     [InlineData("count(filter(range(1 / 0, 3), (D)))", "Mark()", 1)]
     [InlineData("range(1 / 0, 3).filter((D)).count", "Mark()", 0)]
     [InlineData("E.filter((D)).count", "Mark() / 0", 1)]
-    [InlineData("E.filter((D)).count", "{Mark() range(1, 5)}", 1)]
+    [InlineData("E.filter((D)).count", "{Mark(), range(1, 5)}", 1)]
     [InlineData("count(filter(E, (D)))", "Mark()", 1)]
     public void EagerAttemptAndNonRangeFallback_DoNotReplayHostEffects(string pipeline, string body, int expectedCalls)
     {

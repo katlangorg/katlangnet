@@ -1468,12 +1468,14 @@ public class EvaluatorDotCallTests
     }
 
     [Fact]
-    public void Eval_DotCall_SameLineAdjacencyJoinsIntoPropertyBody()
+    public void Eval_DotCall_SameLineItemAfterDefinitionBody_IsAParseError()
     {
-        // Same-line adjacency is an implicit comma, so the body is the
-        // expression list `a + b, 2.Add(6)`, leaving no root output.
-        var source = "Add = a + b 2.Add(6)";
-        AssertEvalFailsWithMissingOutput(source);
+        // SYN-07A: `2.Add(6)` after the body `a + b` on the same line is
+        // rejected (never silently a second body slot, never a root row), so no
+        // evaluator outcome exists; on its own line it is the root row.
+        var diagnostic = Assert.Single(SourceProvenance.ExpectFrontEndError("Add = a + b 2.Add(6)"));
+        Assert.Equal(DiagnosticCode.UnseparatedSameLineItem, diagnostic.Code);
+        AssertEval("Add = a + b\n2.Add(6)", 8);
     }
 
     [Fact]

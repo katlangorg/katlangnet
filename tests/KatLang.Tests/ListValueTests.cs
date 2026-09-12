@@ -112,8 +112,15 @@ public class ListValueTests
         => AssertEvalCounted("[1, (), 2]", 1, ListValue(Atom(1), SequenceValue(), Atom(2)));
 
     [Fact]
-    public void ListLiteral_AdjacencyElementsSeparate()
-        => AssertEvalCounted("[1 2 3]", 1, ListValue(Atom(1), Atom(2), Atom(3)));
+    public void ListLiteral_SameLineElementsWithoutComma_AreAParseError()
+    {
+        // SYN-07A: `[1 2 3]` is rejected at `2` and `3`; the elements need
+        // commas (or their own lines inside the open bracket).
+        var diagnostics = SourceProvenance.ExpectFrontEndError("[1 2 3]");
+        Assert.Equal(2, diagnostics.Count);
+        Assert.All(diagnostics, static d => Assert.Equal(DiagnosticCode.UnseparatedSameLineItem, d.Code));
+        AssertEvalCounted("[1, 2, 3]", 1, ListValue(Atom(1), Atom(2), Atom(3)));
+    }
 
     [Fact]
     public void ListLiteral_SpansPhysicalLinesInsideOpenBracket()
@@ -124,9 +131,18 @@ public class ListValueTests
         => AssertEvalCounted("[1\n2]", 1, ListValue(Atom(1), Atom(2)));
 
     [Fact]
-    public void BracketAfterExpression_IsAdjacency_NeverIndexing()
-        // `A[1]` is the two output rows `A, [1]`, exactly like `2 (3)` is `2, 3`.
-        => AssertEvalCounted("A = 5\nA[1]", 2, SequenceValue(Atom(5), ListValue(Atom(1))));
+    public void BracketAfterExpression_IsRejected_NeverIndexing()
+    {
+        // `A[1]` is a second same-line item after `A` (SYN-07A) — never
+        // indexing (indexing is `:`), and never silently the two rows `A, [1]`.
+        var diagnostic = Assert.Single(SourceProvenance.ExpectFrontEndError("A = 5\nA[1]"));
+        Assert.Equal(DiagnosticCode.UnseparatedSameLineItem, diagnostic.Code);
+        Assert.DoesNotContain(
+            SourceProvenance.ParseSyntaxAllowingDiagnosticsRoot("A = 5\nA[1]").Output,
+            static expr => expr is Expr.Index);
+        AssertEvalCounted("A = 5\nA, [1]", 2, SequenceValue(Atom(5), ListValue(Atom(1))));
+        AssertEvalCounted("A = 5\nA\n[1]", 2, SequenceValue(Atom(5), ListValue(Atom(1))));
+    }
 
     [Fact]
     public void ListDisplay_RoundTripsThroughParser()
@@ -922,10 +938,16 @@ public class ListValueTests
         => Assert.True(Fails("open [1]"));
 
     [Fact]
-    public void ListLiteral_FollowedByParens_IsAdjacency_NotACall()
-        // Like `2 (3)`, a '(' after a non-callable list literal separates:
-        // two output slots, never a call.
-        => AssertEvalCounted("[1, 2](3)", 2, SequenceValue(ListValue(Atom(1), Atom(2)), Atom(3)));
+    public void ListLiteral_FollowedByParens_IsRejected_NotACall()
+    {
+        // Like `2 (3)`, a '(' after a non-callable list literal never becomes
+        // a call: on the same line it is the SYN-07A separator error (recovered
+        // as two slots, still no call), and on its own line it is the next row.
+        var diagnostic = Assert.Single(SourceProvenance.ExpectFrontEndError("[1, 2](3)"));
+        Assert.Equal(DiagnosticCode.UnseparatedSameLineItem, diagnostic.Code);
+        Assert.DoesNotContain(SourceProvenance.ParseSyntaxAllowingDiagnosticsRoot("[1, 2](3)").Output, static expr => expr is Expr.Call);
+        AssertEvalCounted("[1, 2]\n(3)", 2, SequenceValue(ListValue(Atom(1), Atom(2)), Atom(3)));
+    }
 
     // ── While/repeat state can hold lists (generic loop path) ────────────────
 

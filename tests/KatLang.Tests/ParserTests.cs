@@ -958,8 +958,9 @@ public class ParserTests
     [Fact]
     public void Parse_PropertyDetectionWithSpreadMarker()
     {
-        // A = 1*, 2 B = 3 -> two properties; A's body is the expression list (1*, 2).
-        var result = Parser.ParseSyntax("A = 1*, 2 B = 3");
+        // A = 1*, 2 / B = 3 -> two properties; A's body is the expression list (1*, 2).
+        // (The declaration `B = 3` begins its own line: SYN-07A rejects a same-line one.)
+        var result = Parser.ParseSyntax("A = 1*, 2\nB = 3");
         Assert.False(result.HasErrors);
         Assert.Equal(2, result.Root.Properties.Count);
     }
@@ -1095,11 +1096,14 @@ public class ParserTests
 
     [Theory]
     [InlineData("1 2")]
-    public void Parse_SameLineAdjacentExpressions_ParseAsExpressionList(string source)
+    public void Parse_SameLineSlotsWithoutComma_AreRejectedButRecoverAsSlots(string source)
     {
+        // SYN-07A: whitespace never separates slots. The second item is
+        // reported and then recovered as the next slot, so the tree keeps the
+        // shape of `1, 2`.
         var result = Parser.ParseSyntax(source);
 
-        Assert.False(result.HasErrors);
+        Assert.Equal([DiagnosticCode.UnseparatedSameLineItem], result.Diagnostics.Select(static d => d.Code));
         Assert.Equal(2, result.Root.Output.Count);
         Assert.Equal([1m, 2m], result.Root.Output.Select(static expr => Assert.IsType<Expr.Num>(expr).Value));
     }
@@ -1116,13 +1120,17 @@ public class ParserTests
     }
 
     [Theory]
-    [InlineData("{ 1 2 }")]
-    [InlineData("{\n1 2\n}")]
-    public void Parse_BraceBodySameLineAdjacency_ParsesAsExpressionList(string source)
+    [InlineData("{ 1, 2 }", false)]
+    [InlineData("{\n1\n2\n}", false)]
+    [InlineData("{ 1 2 }", true)]
+    [InlineData("{\n1 2\n}", true)]
+    public void Parse_BraceBodySlots_CommaOrNewlineSeparate_SameLineWithoutCommaIsRejected(string source, bool rejected)
     {
         var result = Parser.ParseSyntax(source);
 
-        Assert.False(result.HasErrors);
+        Assert.Equal(
+            rejected ? [DiagnosticCode.UnseparatedSameLineItem] : Array.Empty<DiagnosticCode>(),
+            result.Diagnostics.Select(static d => d.Code));
         var block = Assert.IsType<Expr.AlgorithmExpr>(Assert.Single(result.Root.Output));
         Assert.Equal(2, block.Algorithm.Output.Count);
         Assert.Equal([1m, 2m], block.Algorithm.Output.Select(static expr => Assert.IsType<Expr.Num>(expr).Value));
@@ -1140,9 +1148,9 @@ public class ParserTests
     }
 
     [Theory]
-    [InlineData("1 2 3")]
+    [InlineData("1, 2, 3")]
     [InlineData("1\n2\n3")]
-    public void Parse_AdjacencyNewline_CreateExpressionList(string source)
+    public void Parse_CommaAndNewlineSlots_CreateExpressionList(string source)
     {
         var result = Parser.ParseSyntax(source);
 
@@ -1162,9 +1170,9 @@ public class ParserTests
     }
 
     [Theory]
-    [InlineData("1, 2 3")]
+    [InlineData("1, 2, 3")]
     [InlineData("1, (2, 3)")]
-    public void Parse_AdjacencyAfterComma_PreservesExpressionListStructure(string source)
+    public void Parse_CommaSlots_PreserveExpressionListStructure(string source)
     {
         var result = Parser.ParseSyntax(source);
 
@@ -1184,9 +1192,9 @@ public class ParserTests
     }
 
     [Theory]
-    [InlineData("A B*")]
+    [InlineData("A, B*")]
     [InlineData("A\nB*")]
-    public void Parse_AdjacencyBeforePostfixSequenceSpread_CreatesExpressionListSlots(string source)
+    public void Parse_SlotBeforePostfixSequenceSpread_CreatesExpressionListSlots(string source)
     {
         var result = Parser.ParseSyntax(source);
 
@@ -1198,9 +1206,9 @@ public class ParserTests
     }
 
     [Theory]
-    [InlineData("A B C*")]
+    [InlineData("A, B, C*")]
     [InlineData("A\nB\nC*")]
-    public void Parse_MultipleAdjacencyBeforePostfixSequenceSpread_SpreadsImmediateExpression(string source)
+    public void Parse_MultipleSlotsBeforePostfixSequenceSpread_SpreadsImmediateExpression(string source)
     {
         var result = Parser.ParseSyntax(source);
 
@@ -1228,9 +1236,9 @@ public class ParserTests
     }
 
     [Theory]
-    [InlineData("A, B C*")]
+    [InlineData("A, B, C*")]
     [InlineData("A, B\nC*")]
-    public void Parse_CommaContributionBeforeJoinedPostfixSequenceSpread_PreservesCommaStructure(string source)
+    public void Parse_CommaSlotsBeforePostfixSequenceSpread_PreserveCommaStructure(string source)
     {
         var result = Parser.ParseSyntax(source);
 
@@ -1243,9 +1251,9 @@ public class ParserTests
     }
 
     [Theory]
-    [InlineData("A B, C*")]
+    [InlineData("A,\nB, C*")]
     [InlineData("A\nB, C*")]
-    public void Parse_JoinContributionBeforeCommaSlotPostfixSequenceSpread_PreservesCommaStructure(string source)
+    public void Parse_NewlineRowBeforeCommaSlotPostfixSequenceSpread_PreservesCommaStructure(string source)
     {
         var result = Parser.ParseSyntax(source);
 
@@ -1300,7 +1308,7 @@ public class ParserTests
     }
 
     [Theory]
-    [InlineData("A B*, C")]
+    [InlineData("A, B*, C")]
     [InlineData("A\nB*,\nC")]
     public void Parse_MiddlePostfixSequenceSpread_AppliesToImmediateExpressionAndLaterOutputContinues(string source)
     {
@@ -1315,9 +1323,9 @@ public class ParserTests
     }
 
     [Theory]
-    [InlineData("(A B*)")]
+    [InlineData("(A, B*)")]
     [InlineData("(A\nB*)")]
-    public void Parse_ParenthesizedAdjacencyBeforePostfixSequenceSpread_IsOneSequenceValue(string source)
+    public void Parse_ParenthesizedSlotBeforePostfixSequenceSpread_IsOneSequenceValue(string source)
     {
         var result = Parser.ParseSyntax(source);
 
@@ -1330,9 +1338,9 @@ public class ParserTests
     }
 
     [Theory]
-    [InlineData("F(A B*)")]
+    [InlineData("F(A, B*)")]
     [InlineData("F(A\nB*)")]
-    public void Parse_CallArgumentAdjacencyBeforePostfixSequenceSpread_IsExpressionListArguments(string source)
+    public void Parse_CallArgumentSlotBeforePostfixSequenceSpread_IsExpressionListArguments(string source)
     {
         var result = Parser.ParseSyntax(source);
 
@@ -1383,9 +1391,9 @@ public class ParserTests
     }
 
     [Theory]
-    [InlineData("(1 2)")]
+    [InlineData("(1, 2)")]
     [InlineData("(1\n2)")]
-    public void Parse_ParenthesizedAdjacency_IsOneSequenceValue(string source)
+    public void Parse_ParenthesizedSlots_AreOneSequenceValue(string source)
     {
         var result = Parser.ParseSyntax(source);
 
@@ -1396,11 +1404,11 @@ public class ParserTests
     }
 
     [Theory]
-    [InlineData("F(1 2)")]
-    [InlineData("F (1 2)")]
+    [InlineData("F(1, 2)")]
+    [InlineData("F (1, 2)")]
     [InlineData("F((1, 2))")]
     [InlineData("F ((1, 2))")]
-    public void Parse_CallArgumentAdjacency_IsExpressionListArguments(string source)
+    public void Parse_CallArgumentSlots_AreExpressionListArguments(string source)
     {
         var result = Parser.ParseSyntax(source);
 
@@ -1587,9 +1595,9 @@ public class ParserTests
     }
 
     [Theory]
-    [InlineData("A B")]
+    [InlineData("A, B")]
     [InlineData("A\nB")]
-    public void Parse_AdjacencySpellings_ProduceExpressionListSlots(string source)
+    public void Parse_CommaAndNewlineSpellings_ProduceExpressionListSlots(string source)
     {
         var result = Parser.ParseSyntax(source);
 
@@ -1671,8 +1679,9 @@ public class ParserTests
     public void Parse_SameLinePostfixGrace_BindsToPrecedingIdentifier()
     {
         // Same-line '~' after an identifier is postfix grace on that
-        // identifier; the adjacent expression joins after it.
-        var result = Parser.ParseSyntax("A~B");
+        // identifier; the next slot follows after the comma (`A~B` without
+        // the comma is the SYN-07A separator error).
+        var result = Parser.ParseSyntax("A~, B");
 
         Assert.False(result.HasErrors);
         Assert.Equal(2, result.Root.Output.Count);
@@ -1881,7 +1890,7 @@ public class ParserTests
     {
         // Architecture regression: `open` has a dedicated comma-list parser.
         // The open-target parsing region must never invoke the generic
-        // expression-LIST machinery (implicit adjacency separators, semicolon
+        // expression-LIST machinery (comma/newline slots, semicolon
         // recovery, spread slots) — open atoms are single plain expressions
         // parsed by ParseExpression, with spread-marked targets rejected by
         // open-form validation. ParseExpressionListOperand is that machinery's
@@ -1898,7 +1907,7 @@ public class ParserTests
         var openRegion = source[start..end];
         Assert.Contains("return ParseExpression();", openRegion, StringComparison.Ordinal);
         Assert.DoesNotContain("ParseExpressionListOperand", openRegion, StringComparison.Ordinal);
-        Assert.DoesNotContain("StartsImplicitExpressionListSeparator", openRegion, StringComparison.Ordinal);
+        Assert.DoesNotContain("StartsNextExpressionListSlot", openRegion, StringComparison.Ordinal);
     }
 
     private static string ReadParserSource()
@@ -1985,9 +1994,9 @@ public class ParserTests
     }
 
     [Theory]
-    [InlineData("A B C*")]
+    [InlineData("A, B, C*")]
     [InlineData("A\nB\nC*")]
-    public void Parse_TrailingPostfixSpreadAfterJoinChain_SpreadsImmediateExpression(string source)
+    public void Parse_TrailingPostfixSpreadAfterSlotChain_SpreadsImmediateExpression(string source)
     {
         var result = Parser.ParseSyntax(source);
 
@@ -2125,24 +2134,26 @@ public class ParserTests
     }
 
     [Fact]
-    public void Parse_CallArgumentAdjacency_BecomesTwoArguments()
+    public void Parse_CallArgumentsWithoutComma_AreRejectedButRecoverAsTheCommaCall()
     {
-        var adjacency = Parser.ParseSyntax("F(1 2)");
+        // SYN-07A: `F(1 2)` is rejected at `2`; recovery keeps two argument
+        // slots, so the recovered call has the shape of `F(1, 2)`.
+        var unseparated = Parser.ParseSyntax("F(1 2)");
         var commaSeparated = Parser.ParseSyntax("F(1, 2)");
 
-        Assert.False(adjacency.HasErrors);
+        Assert.Equal([DiagnosticCode.UnseparatedSameLineItem], unseparated.Diagnostics.Select(static d => d.Code));
         Assert.False(commaSeparated.HasErrors);
-        var adjacencyCall = Assert.IsType<Expr.Call>(Assert.Single(adjacency.Root.Output));
-        Assert.Equal(2, adjacencyCall.Args.Count);
+        var recoveredCall = Assert.IsType<Expr.Call>(Assert.Single(unseparated.Root.Output));
+        Assert.Equal(2, recoveredCall.Args.Count);
         var commaCall = Assert.IsType<Expr.Call>(Assert.Single(commaSeparated.Root.Output));
         Assert.Equal(2, commaCall.Args.Count);
         Assert.DoesNotContain(commaCall.Args, static expr => expr is Expr.SequenceConstruct);
     }
 
     [Theory]
-    [InlineData("F(1, 2 3)")]
+    [InlineData("F(1, 2, 3)")]
     [InlineData("F(1, (2, 3))")]
-    public void Parse_CallArgumentMixedCommaAndAdjacency_UsesExpressionListStructure(string source)
+    public void Parse_CallArgumentCommaSlotsAndGroup_UseExpressionListStructure(string source)
     {
         var result = Parser.ParseSyntax(source);
 
@@ -2163,19 +2174,23 @@ public class ParserTests
     }
 
     [Fact]
-    public void Parse_IfArityUsesSyntacticArguments_AdjacencySatisfiesArity()
+    public void Parse_IfArgumentsAreSyntactic_TheSeparatorRuleNotArityDecidesTheSlots()
     {
+        // The parser never counts arguments from a callee's spelling: the
+        // only diagnostic `if(1, 2 3)` gets is the SYN-07A separator error at
+        // `3`, and recovery keeps three argument slots for the evaluator.
         var threeArguments = Parser.ParseSyntax("if(1, 2, 3)");
         Assert.False(threeArguments.HasErrors);
 
-        var adjacencyArguments = Parser.ParseSyntax("if(1, 2 3)");
-        Assert.False(adjacencyArguments.HasErrors);
+        var unseparatedArguments = Parser.ParseSyntax("if(1, 2 3)");
+        Assert.Equal([DiagnosticCode.UnseparatedSameLineItem], unseparatedArguments.Diagnostics.Select(static d => d.Code));
+        Assert.Equal(3, Assert.IsType<Expr.Call>(Assert.Single(unseparatedArguments.Root.Output)).Args.Count);
     }
 
     [Theory]
-    [InlineData("P = 1 2", "P")]
+    [InlineData("P = 1, 2", "P")]
     [InlineData("P = (1, 2)", "P")]
-    public void Parse_PropertyBodySameLineAdjacency_UsesExpressionListOrSequenceValue(string source, string propertyName)
+    public void Parse_PropertyBodyCommaSlots_UseExpressionListOrSequenceValue(string source, string propertyName)
     {
         var result = Parser.ParseSyntax(source);
 
@@ -2196,11 +2211,14 @@ public class ParserTests
     }
 
     [Fact]
-    public void Parse_ClauseBodySameLineAdjacency_JoinsIntoBody()
+    public void Parse_ClauseBodySecondSameLineSlot_IsRejectedButStaysInTheBody()
     {
+        // SYN-07A: `y` is reported, and recovery keeps it as the clause body's
+        // second slot rather than leaking it to the root output.
         var result = Parser.ParseSyntax("F(x) = x y");
 
-        Assert.False(result.HasErrors);
+        Assert.Equal([DiagnosticCode.UnseparatedSameLineItem], result.Diagnostics.Select(static d => d.Code));
+        Assert.Empty(result.Root.Output);
         var property = Assert.Single(result.Root.Properties);
         Assert.Equal("F", property.Name);
         var body = Assert.IsType<Algorithm.User>(property.Value);
@@ -2210,11 +2228,14 @@ public class ParserTests
     }
 
     [Fact]
-    public void Parse_AdjacencyDoesNotConsumePropertyDefinitionOnSameLine()
+    public void Parse_SameLineDeclarationAfterOutput_IsRejectedButStaysADeclaration()
     {
+        // SYN-07A declaration-row rule: `P = 3` after the row `1` on the same
+        // line is reported at `P`, and recovery still parses it as the
+        // property (never as a slot of the row before it).
         var result = Parser.ParseSyntax("1 P = 3");
 
-        Assert.False(result.HasErrors);
+        Assert.Equal([DiagnosticCode.UnseparatedSameLineItem], result.Diagnostics.Select(static d => d.Code));
         var property = Assert.Single(result.Root.Properties);
         Assert.Equal("P", property.Name);
         var output = Assert.Single(result.Root.Output);
@@ -2275,18 +2296,22 @@ public class ParserTests
     }
 
     [Theory]
-    [InlineData("(F) (1)")]
-    [InlineData("(F)\n(1)")]
-    [InlineData("(1 + 2)(3)")]
-    [InlineData("(1 + 2) (3)")]
-    [InlineData("(1 + 2)\n(3)")]
-    public void Parse_SequenceValueArbitraryExpressionBeforeParen_IsAdjacencyNotCall(string source)
+    [InlineData("(F) (1)", true)]
+    [InlineData("(F)\n(1)", false)]
+    [InlineData("(1 + 2)(3)", true)]
+    [InlineData("(1 + 2) (3)", true)]
+    [InlineData("(1 + 2)\n(3)", false)]
+    public void Parse_SequenceValueArbitraryExpressionBeforeParen_IsNeverACall(string source, bool sameLineRejected)
     {
         // Sequence values and arithmetic results are not callable targets, so
-        // a following '(' joins as adjacency and never becomes a call.
+        // a following '(' never becomes a call: on a new line it is the next
+        // row, and on the same line it is the SYN-07A separator error
+        // (recovered as the next slot, still never a call).
         var result = Parser.ParseSyntax(source);
 
-        Assert.False(result.HasErrors);
+        Assert.Equal(
+            sameLineRejected ? [DiagnosticCode.UnseparatedSameLineItem] : Array.Empty<DiagnosticCode>(),
+            result.Diagnostics.Select(static d => d.Code));
         Assert.Equal(2, result.Root.Output.Count);
         Assert.DoesNotContain(result.Root.Output, static expr => expr is Expr.Call);
     }
@@ -2306,17 +2331,20 @@ public class ParserTests
     }
 
     [Theory]
-    [InlineData("2(3)")]
-    [InlineData("2 (3)")]
-    [InlineData("2\n(3)")]
-    public void Parse_NumberBeforeParenthesizedExpression_IsAdjacencyNotMultiplicationOrCall(string source)
+    [InlineData("2(3)", true)]
+    [InlineData("2 (3)", true)]
+    [InlineData("2\n(3)", false)]
+    public void Parse_NumberBeforeParenthesizedExpression_IsNeverMultiplicationOrACall(string source, bool sameLineRejected)
     {
         // Numbers are not callable targets, so the relaxed call-whitespace
-        // rule does not apply; the parenthesized expression joins as
-        // adjacency and never becomes multiplication or a call.
+        // rule does not apply, and a number is never implicitly multiplied:
+        // on a new line the group is the next row, and on the same line it is
+        // the SYN-07A separator error, recovered as the next slot.
         var result = Parser.ParseSyntax(source);
 
-        Assert.False(result.HasErrors);
+        Assert.Equal(
+            sameLineRejected ? [DiagnosticCode.UnseparatedSameLineItem] : Array.Empty<DiagnosticCode>(),
+            result.Diagnostics.Select(static d => d.Code));
         Assert.Equal(2, result.Root.Output.Count);
         Assert.Equal(2, Assert.IsType<Expr.Num>(result.Root.Output[0]).Value);
         Assert.Equal(3, Assert.IsType<Expr.Num>(result.Root.Output[1]).Value);
@@ -3699,13 +3727,15 @@ public class ParserTests
     {
         // `a b, c = 1` is the output row `a` followed by the deconstruction
         // `b, c = 1`: the statement-head binding-pattern scan at `a` fails
-        // exactly AT `b` (identifier after identifier), and the adjacency
+        // exactly AT `b` (identifier after identifier), and the slot
         // boundary then consults the relation at `b` itself. A failed-scan
         // memo that included its breaking token would answer false there and
-        // tear the deconstruction into output rows and a stray `=`.
+        // tear the deconstruction into output rows and a stray `=`. Under
+        // SYN-07A the same-line declaration is reported once (at `b`) and
+        // recovered intact as the deconstruction.
         var result = Parser.ParseSyntax("a b, c = 1");
 
-        Assert.False(result.HasErrors, string.Join(Environment.NewLine, result.Diagnostics));
+        Assert.Equal([DiagnosticCode.UnseparatedSameLineItem], result.Diagnostics.Select(static d => d.Code));
         Assert.Equal("a", Assert.IsType<Expr.Resolve>(Assert.Single(result.Root.Output)).Name);
         Assert.Equal(
             ["$deconstruct$0", "b", "c"],
@@ -4040,7 +4070,7 @@ public class ParserTests
     [Fact]
     public void Parse_PropertyBody_SameLineComma_StaysOneBodyWithMultipleSlots()
     {
-        // Line-bounded bodies still accept same-line adjacency/comma: `P = 1, 2`
+        // Line-bounded bodies still accept same-line commas: `P = 1, 2`
         // is one body with two slots.
         var result = Parser.ParseSyntax("P = 1, 2\nP");
 
@@ -4051,16 +4081,18 @@ public class ParserTests
     }
 
     [Theory]
-    [InlineData("P = a b")]
-    [InlineData("P = a, b")]
-    public void Parse_PropertyBody_SameLineAdjacencyMatchesComma_KeepsBothSlotsInBody(string source)
+    [InlineData("P = a b", true)]
+    [InlineData("P = a, b", false)]
+    public void Parse_PropertyBody_SecondSameLineSlot_IsRejectedButRecoversLikeTheCommaForm(string source, bool rejected)
     {
-        // Same-line adjacency is an implicit comma inside a property body: `P = a b`
-        // parses to the same two-slot body as `P = a, b`. Both `a` and `b` belong
-        // to P, and nothing escapes to root output.
+        // SYN-07A: `P = a b` is rejected at `b`, but recovery keeps the same
+        // two-slot body as `P = a, b`. Both `a` and `b` belong to P, and
+        // nothing escapes to root output.
         var result = Parser.ParseSyntax(source);
 
-        Assert.False(result.HasErrors);
+        Assert.Equal(
+            rejected ? [DiagnosticCode.UnseparatedSameLineItem] : Array.Empty<DiagnosticCode>(),
+            result.Diagnostics.Select(static d => d.Code));
         var property = Assert.Single(result.Root.Properties);
         Assert.Equal("P", property.Name);
         Assert.Empty(result.Root.Output);
@@ -5519,14 +5551,17 @@ public class ParserTests
     {
         // Old `when` syntax no longer exists. `when` is now a regular identifier.
         // `F when (1) = 100` parses as: F (output), then when(1)=100 (conditional branch named "when").
-        // This is semantically different from the old meaning but NOT a parse error.
+        // This is semantically different from the old meaning; the only diagnostics
+        // are the SYN-07A declaration-row errors (a clause head after the row `F` on
+        // the same line), never a `when`-syntax error.
         var source = """
             F when (1) = 100
             F when ((x)) = 0
             """;
         var result = Parser.ParseSyntax(source);
         // F is output, when(1)=100 and when(x)=0 are branches of conditional "when"
-        Assert.False(result.HasErrors);
+        Assert.All(result.Diagnostics, static d => Assert.Equal(DiagnosticCode.UnseparatedSameLineItem, d.Code));
+        Assert.Equal(2, result.Diagnostics.Count);
         // The old name-based conditional algorithm "F" does NOT exist
         Assert.DoesNotContain(result.Root.Properties, p => p.Name == "F");
         // Instead, "when" is the conditional algorithm name
@@ -5536,9 +5571,10 @@ public class ParserTests
     [Fact]
     public void Parse_Conditional_WhenSyntax_SingleBranch_NotRecognized()
     {
-        // K when ((a, b)) = a → parses as K (output), when((a,b))=a (conditional branch named "when")
+        // K when ((a, b)) = a → parses as K (output), when((a,b))=a (conditional branch named "when");
+        // the SYN-07A declaration-row error at `when` is the only diagnostic.
         var result = Parser.ParseSyntax("K when ((a, b)) = a");
-        Assert.False(result.HasErrors);
+        Assert.Equal([DiagnosticCode.UnseparatedSameLineItem], result.Diagnostics.Select(static d => d.Code));
         Assert.Contains(result.Root.Properties, p => p.Name == "when");
         Assert.Single(result.Root.Output); // K is output
     }

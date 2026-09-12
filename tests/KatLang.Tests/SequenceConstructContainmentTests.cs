@@ -68,7 +68,7 @@ public class SequenceConstructContainmentTests
         "A = (1, 2)\nA* 99",
         "A = (1, 2)\nA*, 99",
         "1, 2",
-        "1 2 3",
+        "1\n2\n3",
         "P = (), 99\nP",
         "take(((), ()), 2)",
         "f(a, b) = a\nf(1, 2)",

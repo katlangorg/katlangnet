@@ -277,8 +277,8 @@ public class GraceDotCompositionTests
 
         // Their bodies are also NOT equivalent: only the dot edge consults
         // structural members first.
-        AssertResult(StructuralSplit + "K(o) = o.V\nK(Obj)", Atom(42));
-        AssertResult(StructuralSplit + "K(o) = V(o)\nK(Obj)", Atom(99));
+        AssertResult(StructuralSplit + "\nK(o) = o.V\nK(Obj)", Atom(42));
+        AssertResult(StructuralSplit + "\nK(o) = V(o)\nK(Obj)", Atom(99));
     }
 
     [Fact]
@@ -483,8 +483,8 @@ public class GraceDotCompositionTests
             K = Obj.t
             K
             """));
-        Assert.Empty(ParamsOf("Obj = { public t = 42 0 }\nK = Obj~.t"));
-        Assert.Empty(ParamsOf("Obj = { public t = 42 0 }\nK = Obj.~t"));
+        Assert.Empty(ParamsOf("Obj = { public t = 42\n0 }\nK = Obj~.t"));
+        Assert.Empty(ParamsOf("Obj = { public t = 42\n0 }\nK = Obj.~t"));
         AssertResult(
             """
             Obj = {

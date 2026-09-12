@@ -56,12 +56,12 @@ public class ConciseNeverModeTests
             EmployeeTax = SocTax + IncomeTax
             EmployerSocTax = (grossSalary * EmployerSocContributionRate).Round
 
-            ('neto' NetSalary)
-            ('taxes' EmployeeTax + EmployerSocTax + BusinessRiskStateDutyAmount)
-            ('social' SocTax + EmployerSocTax
-            'income' IncomeTax
-            'risk' BusinessRiskStateDutyAmount)
-            ('total' grossSalary + EmployerSocTax + BusinessRiskStateDutyAmount)
+            ('neto', NetSalary)
+            ('taxes', EmployeeTax + EmployerSocTax + BusinessRiskStateDutyAmount)
+            ('social', SocTax + EmployerSocTax
+            'income', IncomeTax
+            'risk', BusinessRiskStateDutyAmount)
+            ('total', grossSalary + EmployerSocTax + BusinessRiskStateDutyAmount)
         }
 
         SalaryExpenses(2000, 1, 0)*,
@@ -250,7 +250,7 @@ public class ConciseNeverModeTests
     public void SeveralRootRows_AndOneRootSequence_StayDistinctUnderThePreset()
     {
         var twoRows = Concise("A = 1\nB = 2\nA()\nB()");
-        var oneSequence = Concise("(A() B())\nA = 1\nB = 2");
+        var oneSequence = Concise("(A(), B())\nA = 1\nB = 2");
 
         Assert.Equal("1\n2", twoRows);
         Assert.Equal("1 2", oneSequence);

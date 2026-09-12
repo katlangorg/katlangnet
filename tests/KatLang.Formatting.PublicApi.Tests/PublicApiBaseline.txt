@@ -441,6 +441,7 @@ public enum KatLang.DiagnosticCode : int
   InternalError = 38
   ParameterPropertyCollision = 39
   InvalidSpreadMarker = 40
+  UnseparatedSameLineItem = 41
 
 public enum KatLang.DiagnosticSeverity : int
   Hint = 1
@@ -1516,6 +1517,7 @@ public enum KatLang.KatLangErrorCode : int
   InternalError = 61
   ParameterPropertyCollision = 62
   InvalidSpreadMarker = 63
+  UnseparatedSameLineItem = 64
 
 public sealed class KatLang.KatLangException : System.Exception
   ctor     public KatLangException(System.Collections.Generic.IReadOnlyList<KatLang.KatLangError> errors)

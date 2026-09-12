@@ -32,11 +32,11 @@ OpenTargetList  = OpenTarget { "," OpenTarget } ;
                      normal explicit line-continuation behavior — open A,
                      newline B and open A newline , B both continue the
                      list — and a leading "." continues a dotted target
-                     (open A newline .B is open A.B), but plain newline
-                     adjacency never continues open: open Math newline
-                     Math.Pi is an open plus a report row. ";" and same-line
-                     adjacency are NOT open-target separators (open A ; B
-                     and open A B report a missing-comma diagnostic).
+                     (open A newline .B is open A.B), but a plain newline
+                     never continues open: open Math newline Math.Pi is an
+                     open plus a report row. ";" and a bare same-line second
+                     target are NOT open-target separators (open A ; B and
+                     open A B report a missing-comma diagnostic).
                      A spread-marked open target (open A*) parses to a
                      spread expression and is rejected by open-form
                      validation: spread is not an open form. The parser
@@ -152,29 +152,48 @@ OutputLine      = OutputBundle ;
 OutputBundle    = ExpressionList ;
 
 (* Canonical output shape:
-      1. "," / adjacency — comma and allowed expression adjacency create a
-               syntax-level expression list. Root output consumes a
-               bare list as output slots, call syntax consumes it as
-               argument slots, and parentheses materialize it as one
-               sequence value. A spread expression (an attached postfix
-               "*") stands as one whole slot and contributes its
+      1. ","     — the explicit slot separator of an expression list. Root
+               output consumes a bare list as output slots, call syntax
+               consumes it as argument slots, and parentheses materialize
+               it as one sequence value. A spread expression (an attached
+               postfix "*") stands as one whole slot and contributes its
                operand's items to the surrounding supply.
-      2. ";"   — unsupported expression syntax. It reports a targeted
-               semicolon diagnostic and recovers as an expression-list separator.
+      2. newline — a PHYSICAL LINE BREAK between two closed expressions
+               separates slots in the contexts that stay open across
+               lines (root output, brace bodies, parenthesized groups,
+               call argument lists, list literals); it ENDS a definition
+               body and an open target list instead. It is not a token:
+               the parser reads line numbers from the tokens (see the
+               layout rules below).
+      3. ";"     — unsupported expression syntax. It reports a targeted
+               semicolon diagnostic and recovers as a slot separator.
+    Whitespace NEVER separates slots (SYN-07A, September 2026): a second
+      closed expression on the same physical line without a comma is the
+      targeted parse error UnseparatedSameLineItem, recovered as the next
+      slot of the same list.
     The tricky cases this implies:
       F(1, 2, 3)      has three argument slots.
-      F(1 2 3)        has three argument slots.
+      F(1 2 3)        is rejected (one separator diagnostic per missing
+                      comma), recovering as three argument slots.
       F((1, 2, 3))    has one sequence-value argument.
       1, (2, 3)       has two output slots: 1 and sequence value (2, 3).
       A*, B, C        is spread-of-A, B, C.
       A* B            is the multiplication A * B (see the star rule below).
       A, B*           keeps B* local to its comma slot.
+      A B*            is rejected: a same-line slot before a spread needs
+                      the comma like every other slot.
     Parsing is purely syntactic: callable arity, runtime values, and
       inferred types never change comma, parentheses, star, or spread
       behavior. *)
 
 ExpressionList        = SequenceAtom { ExpressionListSeparator SequenceAtom } ;
-ExpressionListSeparator = "," | ImplicitAdjacency ;
+ExpressionListSeparator = "," | PhysicalNewline ;
+                     (* PhysicalNewline is not a token: it stands for "the
+                        next slot begins on a later physical line", and it
+                        is admitted only in the multiline expression-list
+                        contexts named above (a definition body ends at
+                        the newline instead). There is NO whitespace
+                        separator: two slots on one line need ",". *)
 SequenceAtom          = Expression ;
                      (* A spread expression — a completed expression followed
                         on the same physical line by a postfix "*" that no
@@ -197,7 +216,7 @@ SequenceAtom          = Expression ;
                         a declaration head is never an operand, so `a*`
                         newline `b = 1` is a spread row followed by a
                         definition — the same declaration-starter relation the
-                        adjacency boundary stops at. Spreading before another
+                        slot boundary stops at. Spreading before another
                         supplied item therefore requires a comma: `a*, b` is
                         spread-then-item, and the trailing comma keeps the
                         list open across a line (`a*,` newline `b`), because
@@ -230,31 +249,41 @@ SequenceAtom          = Expression ;
                      (* Semicolon is intentionally absent from ExpressionList.
                      `1 ; 2`, `A* ; B`, `P = 1 ; 2`, and `F(1 ; 2)`
                      all report the unsupported-semicolon diagnostic.
-                     ImplicitAdjacency is not a token: a complete expression
-                     followed by the start of another complete expression
-                     implies an expression-list separator where adjacency is
-                     allowed. Same-line whitespace adjacency: 1 2 parses like
-                     1, 2, F(1 2) is the two-argument call F(1, 2), and (1 2)
-                     is the sequence value (1, 2). In output contexts, a
-                     physical newline between complete expressions implies the
-                     same expression-list separation. A spread expression applies
-                     only to its own operand: A, B* and A newline B*
-                     parse as A, B*.
+                     THE SEPARATOR RULE (SYN-07A): two slots on the same
+                     physical line are separated by an explicit ",". A
+                     complete expression followed on the same physical line by the
+                     start of another complete expression is the targeted
+                     parse error UnseparatedSameLineItem — 1 2, F(1 2),
+                     (1 2), [1 2], 2(3), A[1], 2m, sqrt 2, and P = a b are
+                     all rejected — and recovers as the next slot of the
+                     SAME list (the arguments of F(1 2) stay two arguments;
+                     the body of P = a b keeps both slots and leaks nothing
+                     into the enclosing scope). In the multiline contexts
+                     (root output, brace bodies, parenthesized groups, call
+                     argument lists, list literals) a physical newline
+                     between complete expressions separates slots without a
+                     comma. A spread expression applies only to its own
+                     operand: A, B* and A newline B* parse as A, B*, while
+                     A B* is rejected like every other same-line pair.
                      Definition bodies and open targets are
-                     line-bounded instead: a newline ends a definition body
-                     unless a leading-dot continuation carries it on, and ends an open target list unless an
+                     line-bounded instead: a newline before a new independent
+                     expression ends a definition body. A comma, an already-open
+                     delimiter, a trailing operator, or a leading dot may
+                     continue that body. A newline ends an open target list unless an
                      explicit comma (trailing or leading) or a leading-dot
                      continuation carries it on (a "("- or "{"-led line
                      never continues either), so properties, clauses, and
                      opens on later lines keep their
-                     declaration meaning. Implicit expression-list separation is
-                     inserted only when the next token cannot legally continue
-                     the current expression; a token that continues it as a
-                     postfix/call form on the same physical line wins over adjacency. In
+                     declaration meaning. A slot boundary is considered only
+                     when the next token cannot legally continue the current
+                     expression; a token that continues it as a postfix/call
+                     form on the same physical line continues it. In
                      particular a "(" or "{" after a callable target on the
                      same physical line is a call delimiter even across
                      whitespace, so F (1, 2) is the call F(1, 2) and A.B (1)
-                     is the dot call A.B(1). A physical newline never
+                     is the dot call A.B(1), and a same-line binary operator
+                     continues arithmetic, so F(1 -2) is the one argument
+                     1 - 2 (write F(1, -2) for two). A physical newline never
                      continues a closed expression into a call: F newline
                      (1, 2) is the expression list F, (1, 2) and A.B newline (1)
                      is A.B, (1). For a multiline call, open the delimiter
@@ -268,13 +297,21 @@ SequenceAtom          = Expression ;
                      is classified by the token after it (see the star rule
                      above), and must then be directly attached to its
                      completed operand.
-                     Adjacency
-                     applies only between complete expressions: it never
-                     splits identifiers or numbers, and a token sequence that
-                     begins a property, clause, or open definition is
-                     a definition, not an adjacent expression. A star never
-                     participates in adjacency: it is multiplication, a
-                     collect marker, or a spread marker. Physical line
+                     THE DECLARATION-ROW RULE (SYN-07A): a declaration — open,
+                     a property or clause definition, a deconstruction
+                     binding pattern, or a public declaration — begins a
+                     physical line, or is the first item directly after the
+                     "{" that opens a brace body. A declaration head after
+                     other content on the same line (1 P = 3, x = 3 y = 4,
+                     { x = 1 y = 2 }) is the same UnseparatedSameLineItem
+                     error, recovered as the declaration it spells. In
+                     { d = 2 n * d }, the missing separator before n instead
+                     recovers n * d as another slot inside d's body. A token
+                     sequence that begins a property, clause, or open
+                     definition is a definition, never a slot; whitespace
+                     never splits identifiers or numbers. A star never
+                     participates in slot separation: it is multiplication,
+                     a collect marker, or a spread marker. Physical line
                      boundaries are not structural groups, and parsing never
                      depends on callable arity. In an output context a physical
                      newline between complete expressions separates
@@ -526,8 +563,9 @@ ListLiteral     = "[" [ ExpressionList ] "]" ;
                      parentheses AROUND a list remain redundant sequence
                      grouping: "([1, 2])" is the same value as "[1, 2]".
                      "[" always begins a NEW expression: it is not a call or
-                     indexing delimiter, so same-line "A[1]" is the adjacency
-                     expression list "A, [1]" (indexing is ":"). An already-open
+                     indexing delimiter, so same-line "A[1]" is a second item
+                     after "A" and is rejected by the separator rule (indexing
+                     is ":"; "A, [1]" is the two-slot list). An already-open
                      "[" spans physical lines exactly like "(" and "{" until
                      its "]" closes. A spread of a list opens exactly one list
                      boundary: "[1, 2, 3]*" supplies 1, 2, 3 and "[]*"

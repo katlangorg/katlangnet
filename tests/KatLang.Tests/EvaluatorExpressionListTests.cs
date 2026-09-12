@@ -100,19 +100,23 @@ public class EvaluatorExpressionListTests
             1,
             SequenceValue(Atom(1), Atom(2), Atom(3)));
 
-    // ── Implicit expression-list separator by adjacency ─────────────────────
+    // ── Comma and newline slot separation (SYN-07A: whitespace never separates) ──
 
     [Fact]
-    public void Eval_SameLineAdjacency_ConstructsExpressionList()
+    public void Eval_SameLineSlotsWithoutComma_AreAParseError()
     {
-        AssertEval("1 2", 1, 2);
-        AssertEvalCounted("1 2", 2, ResultFromAtoms(1, 2));
+        // `1 2` is no longer the expression list `1, 2`: it is rejected by the
+        // parser (SYN-07A), so no evaluator outcome exists for it.
+        var diagnostic = Assert.Single(SourceProvenance.ExpectFrontEndError("1 2"));
+        Assert.Equal(DiagnosticCode.UnseparatedSameLineItem, diagnostic.Code);
+        AssertEval("1, 2", 1, 2);
+        AssertEvalCounted("1, 2", 2, ResultFromAtoms(1, 2));
     }
 
     [Theory]
-    [InlineData("1 2 3")]
+    [InlineData("1, 2, 3")]
     [InlineData("1\n2\n3")]
-    public void Eval_AdjacencyNewline_ConstructExpressionList(string source)
+    public void Eval_CommaAndNewline_ConstructExpressionList(string source)
         => AssertEvalCounted(source, 3, ResultFromAtoms(1, 2, 3));
 
     [Fact]
@@ -120,9 +124,9 @@ public class EvaluatorExpressionListTests
         => AssertEvalCounted("(1, 2, 3)", 1, ResultFromAtoms(1, 2, 3));
 
     [Theory]
-    [InlineData("1, 2 3")]
+    [InlineData("1, 2, 3")]
     [InlineData("1, (2, 3)")]
-    public void Eval_AdjacencyAfterComma_UsesExpressionListStructure(string source)
+    public void Eval_CommaSlots_UseExpressionListStructure(string source)
     {
         if (source.Contains("(2, 3)", StringComparison.Ordinal))
             AssertEvalCounted(source, 2, Result.FromItems([Atom(1), SequenceValue(Atom(2), Atom(3))]));
@@ -131,25 +135,25 @@ public class EvaluatorExpressionListTests
     }
 
     [Theory]
-    [InlineData("(1 2)")]
+    [InlineData("(1, 2)")]
     [InlineData("((1, 2))")]
     [InlineData("(1\n2)")]
-    public void Eval_ParenthesizedAdjacency_EmitsOneSequenceValue(string source)
+    public void Eval_ParenthesizedSlots_EmitOneSequenceValue(string source)
         => AssertEvalCounted(source, 1, SequenceValue(Atom(1), Atom(2)));
 
     [Theory]
-    [InlineData("(1 2 3)")]
+    [InlineData("(1, 2, 3)")]
     [InlineData("(1\n2\n3)")]
     [InlineData("((1, 2, 3))")]
-    public void Eval_ParenthesizedAdjacencyTriple_EmitsOneSequenceValue(string source)
+    public void Eval_ParenthesizedSlotsTriple_EmitOneSequenceValue(string source)
         => AssertEvalCounted(source, 1, SequenceValue(Atom(1), Atom(2), Atom(3)));
 
     [Theory]
-    [InlineData("X(*values) = values.count\nX(1 2)")]
-    [InlineData("X(*values) = values.count\nX (1 2)")]
-    public void Eval_CallArgumentAdjacency_BindsAsItemSupply(string source)
-        // X(*values) collects the supplied argument slots. The adjacency form `1 2`
-        // supplies two slots, so the collecting parameter captures two supplied arguments.
+    [InlineData("X(*values) = values.count\nX(1, 2)")]
+    [InlineData("X(*values) = values.count\nX (1, 2)")]
+    public void Eval_CallArgumentSlots_BindAsItemSupply(string source)
+        // X(*values) collects the supplied argument slots. `1, 2` supplies two
+        // slots, so the collecting parameter captures two supplied arguments.
         => AssertEval(source, 2);
 
     [Theory]
@@ -239,11 +243,11 @@ public class EvaluatorExpressionListTests
     }
 
     [Theory]
-    [InlineData("Add(a, b) = a + b\nAdd(1 2)")]
-    [InlineData("Add(a, b) = a + b\nAdd (1 2)")]
+    [InlineData("Add(a, b) = a + b\nAdd(1, 2)")]
+    [InlineData("Add(a, b) = a + b\nAdd (1, 2)")]
     [InlineData("Add(a, b) = a + b\nAdd((1, 2))")]
     [InlineData("Add(a, b) = a + b\nAdd ((1, 2))")]
-    public void Eval_CallArgumentAdjacency_IsImplicitComma(string source)
+    public void Eval_CallArgumentSlots_AreSeparateArguments_GroupIsOne(string source)
     {
         if (source.Contains("((1, 2))", StringComparison.Ordinal))
             AssertEvalFailsWithArityMismatch(source, expected: 2, actual: 1);
@@ -347,11 +351,11 @@ public class EvaluatorExpressionListTests
     }
 
     [Theory]
-    [InlineData("X(*values) = values.count\nX(1, 2 3)")]
+    [InlineData("X(*values) = values.count\nX(1, 2, 3)")]
     [InlineData("X(*values) = values.count\nX(1, (2, 3))")]
-    public void Eval_CallArgumentMixedCommaAndAdjacency_BindsItemSupply(string source)
+    public void Eval_CallArgumentCommaSlotsAndGroup_BindItemSupply(string source)
     {
-        // X(*values) collects the argument slots. `1, 2 3` is three slots
+        // X(*values) collects the argument slots. `1, 2, 3` is three slots
         // (count 3); `1, (2, 3)` is two slots, the second a grouped value
         // preserved as a sibling (count 2).
         if (source.Contains("(2, 3)", StringComparison.Ordinal))
@@ -361,20 +365,20 @@ public class EvaluatorExpressionListTests
     }
 
     [Theory]
-    [InlineData("A B*")]
+    [InlineData("A, B*")]
     [InlineData("A\nB*")]
-    public void Eval_AdjacencyBeforePostfixSequenceSpread_CreatesExpressionListSlots(string source)
+    public void Eval_SlotBeforePostfixSequenceSpread_CreatesExpressionListSlots(string source)
     {
         var program = "A = 1\nB = 2, 3\n" + source;
         AssertEvalCounted(program, 3, ResultFromAtoms(1, 2, 3));
     }
 
     [Theory]
-    [InlineData("X(a b*)")]
+    [InlineData("X(a, b*)")]
     [InlineData("X(a\nb*)")]
-    public void Eval_CallArgumentAdjacencyBeforePostfixSequenceSpread_BindsItemSupply(string source)
+    public void Eval_CallArgumentSlotBeforePostfixSequenceSpread_BindsItemSupply(string source)
     {
-        // `a b*` is three slots (1, 2, 3); X(*values) collects them as separate arguments.
+        // `a, b*` is three slots (1, 2, 3); X(*values) collects them as separate arguments.
         var program = "a = 1\nb = 2, 3\nX(*values) = values.count\n" + source;
         AssertEval(program, 3);
     }
@@ -391,7 +395,7 @@ public class EvaluatorExpressionListTests
     }
 
     [Theory]
-    [InlineData("A B*, C")]
+    [InlineData("A, B*, C")]
     [InlineData("A\nB*,\nC")]
     public void Eval_MiddlePostfixSequenceSpread_CreatesExpressionListSlots(string source)
     {
@@ -400,19 +404,19 @@ public class EvaluatorExpressionListTests
     }
 
     [Theory]
-    [InlineData("A, B C*")]
+    [InlineData("A, B, C*")]
     [InlineData("A, B\nC*")]
-    public void Eval_CommaContributionBeforeJoinedPostfixSequenceSpread_PreservesCommaStructure(string source)
+    public void Eval_CommaSlotsBeforePostfixSequenceSpread_PreserveCommaStructure(string source)
     {
         var program = "A = 1, 2\nB = 3\nC = 4\n" + source;
         AssertEvalCounted(program, 3, Result.FromItems([SequenceValue(Atom(1), Atom(2)), Atom(3), Atom(4)]));
     }
 
     [Theory]
-    [InlineData("F(a, b, c) = a + b + c\nF(1 2, 3*)")]
+    [InlineData("F(a, b, c) = a + b + c\nF(1, 2, 3*)")]
     [InlineData("F(a, b, c) = a + b + c\nF(1\n2, 3*)")]
     [InlineData("F(a, b, c) = a + b + c\nF(1, (2, 3)*)")]
-    public void Eval_MixedCommaAndJoinWithSpreadSlot_SpreadAppliesOnlyToItsOperand(string source)
+    public void Eval_MixedCommaNewlineAndSpreadSlot_SpreadAppliesOnlyToItsOperand(string source)
         => AssertEval(source, 6);
 
     [Fact]
@@ -486,10 +490,19 @@ public class EvaluatorExpressionListTests
         AssertEval("12", 12);
     }
 
+    [Fact]
+    public void Eval_NumberBeforeParenthesizedExpressionOnTheNextLine_IsTwoRowsNotMultiplication()
+        => AssertEvalCounted("2\n(3)", 2, ResultFromAtoms(2, 3));
+
     [Theory]
     [InlineData("2(3)")]
     [InlineData("2 (3)")]
-    [InlineData("2\n(3)")]
-    public void Eval_NumberBeforeParenthesizedExpression_IsAdjacencyNotMultiplication(string source)
-        => AssertEvalCounted(source, 2, ResultFromAtoms(2, 3));
+    public void Eval_NumberBeforeParenthesizedExpressionOnTheSameLine_IsAParseErrorNotMultiplication(string source)
+    {
+        // SYN-07A: a number is never implicitly multiplied by a following
+        // group, and whitespace never separates two slots — the program is
+        // rejected by the parser, so no evaluator outcome exists.
+        var diagnostic = Assert.Single(SourceProvenance.ExpectFrontEndError(source));
+        Assert.Equal(DiagnosticCode.UnseparatedSameLineItem, diagnostic.Code);
+    }
 }

@@ -14,10 +14,10 @@ This is bounded differential validation over the Lean-guarded partition,
 not a formal verification of the evaluators.
 
 Partition (machine-checked by the `specCaseIds.length` guard below):
-- specification surface cases: 229
-- excluded parse-level cases (Lean has no surface parser): 20
+- specification surface cases: 232
+- excluded parse-level cases (Lean has no surface parser): 24
 - excluded C#-only cases (each carries an explicit reason in the corpus): 10
-- Lean-guarded cases: 199
+- Lean-guarded cases: 198
 - probe observations (C#-only by design): 454
 - internal-node cases live in the semantic-explorer corpus, not here: see
   lean/SemanticExplorerCases.lean
@@ -167,11 +167,6 @@ def case_supply_three_rows : Expr :=
 def case_value_three_items : Expr :=
   .algorithmExpr (alg [] [] [] [(.capture [(.binary .add (.num 1) (.num 1)), (.binary .add (.num 2) (.num 2)), (.binary .add (.num 3) (.num 3))])])
 #guard obs case_value_three_items == "ok raw=S[2, 4, 6] n=1"
-
--- adjacency-is-comma [item-supply-vs-value]: 1 2 3
-def case_adjacency_is_comma : Expr :=
-  .algorithmExpr (alg [] [] [] [.num 1, .num 2, .num 3])
-#guard obs case_adjacency_is_comma == "ok raw=S[1, 2, 3] n=3"
 
 -- capture-supply [item-supply-vs-value]: A = 1, 2, 3 \n A
 def case_capture_supply : Expr :=
@@ -818,7 +813,7 @@ def case_comment_does_not_change_parse : Expr :=
   .algorithmExpr (alg [] [] [] [(.binary .add (.num 1) (.num 1))])
 #guard obs case_comment_does_not_change_parse == "ok raw=2 n=1"
 
--- spread-binds-before-list [parser-layout]: X(*vals) = vals.count \n b = (1, 2) \n X(7 b*)
+-- spread-binds-before-list [parser-layout]: X(*vals) = vals.count \n b = (1, 2) \n X(7, b*)
 def case_spread_binds_before_list : Expr :=
   .algorithmExpr (alg [] [] [privateProp "b" (alg [] [] [] [(.capture [.num 1, .num 2])]), privateProp "X" (algWithParameters [{ name := "vals", kind := .collecting }] [] [] [(.dotCall (.param "vals") "count" none)])] [(.call (.resolve "X") [.num 7, (.sequenceSpread (.resolve "b"))])])
 #guard obs case_spread_binds_before_list == "ok raw=3 n=1"
@@ -1093,7 +1088,7 @@ def case_if_spread_builds_values_before_branch_selection : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Risky" (alg [] [] [] [(.capture [.num 10, (.binary .div (.num 1) (.num 0))])])] [(.call (.resolve "if") [.num 1, (.sequenceSpread (.resolve "Risky"))])])
 #guard obs case_if_spread_builds_values_before_branch_selection == "err div0"
 
--- 199 canonical Lean-guarded specification cases.
+-- 198 canonical Lean-guarded specification cases.
 
 /--
 Machine-checked Lean-guarded partition count: the id list is built by the
@@ -1115,7 +1110,6 @@ def specCaseIds : List String := [
   "empty-capture",
   "supply-three-rows",
   "value-three-items",
-  "adjacency-is-comma",
   "capture-supply",
   "capture-supply-spread",
   "call-reentry-identity",
@@ -1301,6 +1295,6 @@ def specCaseIds : List String := [
   "parameter-named-if-carries-the-supplied-callable",
   "if-spread-builds-values-before-branch-selection"
 ]
-#guard specCaseIds.length == 199
+#guard specCaseIds.length == 198
 
 end LanguageSpecCases

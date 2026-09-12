@@ -2689,7 +2689,8 @@ def indexTargetNeedsParens : Expr -> Bool
 
 /-- The index selector is a primary in source syntax, so any form that would
   continue the postfix chain rebinds to the target instead (`A:B.C` reads as
-  `(A:B).C`, `A:B:C` as `(A:B):C`, `A:f(0)` as adjacency), and a bare negative
+  `(A:B).C`, `A:B:C` as `(A:B):C`, while `A:f(0)` leaves an
+  unseparated same-line group after `A:f` and is rejected), and a bare negative
   literal (`A:-1`) is not selector syntax at all.
   C#: `Evaluator.OpenExprIndexSelectorName`. -/
 def indexSelectorNeedsParens : Expr -> Bool

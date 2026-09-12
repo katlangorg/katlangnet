@@ -48,8 +48,8 @@ public enum DiagnosticCode
 
     /// <summary>
     /// Semicolon used as an expression separator, which KatLang does not support
-    /// (use comma or adjacency for separate expressions, parentheses for one
-    /// sequence value).
+    /// (use a comma between expressions on one line, a new line where the
+    /// context separates slots, or parentheses for one sequence value).
     /// </summary>
     UnsupportedSemicolon = 5,
 
@@ -261,4 +261,17 @@ public enum DiagnosticCode
     /// follows is neither a spread nor a multiplication.
     /// </summary>
     InvalidSpreadMarker = 40,
+
+    /// <summary>
+    /// A second independent item — another expression-list slot or a
+    /// declaration — begins on the same physical line as preceding content
+    /// without the required slot separator or declaration row boundary
+    /// (SYN-07A: whitespace never
+    /// creates a slot boundary; <c>1 2</c>, <c>F(1 2)</c>, <c>2(3)</c>,
+    /// <c>A[1]</c>, <c>P = a b</c>, <c>x = 1 y = 2</c>). Same-line slots need
+    /// <c>,</c>, a continuation needs an operator, and a declaration begins a
+    /// new line. Recovery keeps the item where it was written, as the next
+    /// slot of the same list or as the declaration.
+    /// </summary>
+    UnseparatedSameLineItem = 41,
 }

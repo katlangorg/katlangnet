@@ -707,11 +707,11 @@ public class EvaluatorSpreadTests
 
     [Theory]
     [InlineData("Sum(1, 2, 3)")]
-    [InlineData("Sum(1 2 3)")]
-    public void Eval_SingleVariadic_InlineCommaOrAdjacencyBindsItemSupply(string call)
-        // Inline comma and adjacency both supply three argument slots, bound by the
-        // item-supply matcher as one sequence value of count 3 — the same as the
-        // grouped form `Sum((1, 2, 3))`.
+    [InlineData("Sum(1\n2\n3)")]
+    public void Eval_SingleVariadic_InlineCommaOrNewlineBindsItemSupply(string call)
+        // Inline commas and newlines inside the open argument list both supply
+        // three argument slots, collected into the exact list [1, 2, 3].
+        // The grouped form `Sum((1, 2, 3))` supplies one slot and counts 1. (`Sum(1 2 3)` is the SYN-07A separator error.)
         => AssertEval(
             $$"""
             Sum(*values) = values.count
@@ -815,8 +815,8 @@ public class EvaluatorSpreadTests
 
     [Theory]
     [InlineData("1\n2\n3")]
-    [InlineData("1 2 3")]
-    public void Eval_Adjacency_IsImplicitExpressionList(string source)
+    [InlineData("1, 2, 3")]
+    public void Eval_NewlineAndComma_AreExpressionListSeparators(string source)
     {
         AssertEvalCounted(
             source,

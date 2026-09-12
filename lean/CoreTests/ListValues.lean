@@ -528,7 +528,7 @@ def listIndexingSelectorValidationUnchanged : Bool :=
 
 -- Diagnostic expression names use KatLang SOURCE syntax: an index renders as
 -- `target:selector`, never `target[selector]` (`[...]` is exact list literal
--- syntax, so bracket text would read back as the adjacency `Rows, [0]`).
+-- syntax, so `Rows[0]` would be a missing-separator error, never an index).
 -- These pin the exact text C# produces; C#:
 -- `Eval_Index_DiagnosticName_RendersSourceFaithfulColonSyntax` and
 -- `Eval_Index_ChainedDiagnosticName_RendersEachSelector`.

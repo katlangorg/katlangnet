@@ -315,15 +315,50 @@ public static class LanguageSpecCorpus
         },
         new()
         {
-            Id = "adjacency-is-comma",
-            Category = "item-supply-vs-value",
+            Id = "same-line-slots-need-comma",
+            Category = "parser-layout",
             Source = "1 2 3",
-            Outcome = SpecOutcome.Evaluates,
-            ExpectedDisplay = "1\n2\n3",
-            ExpectedRaw = "S[1, 2, 3]",
-            ExpectedEmittedCount = 3,
-            Notes = "Adjacency is a parser-level implicit comma; the elaborated AST is identical to `1, 2, 3`.",
-            Explanation = "Same-line adjacency is an implicit expression-list separator: `1 2 3` is exactly `1, 2, 3`.",
+            Outcome = SpecOutcome.ParseError,
+            ExpectedParseDiagnosticFragment = "Unexpected item after a closed expression on the same line",
+            ExpectedDiagnosticCode = DiagnosticCode.UnseparatedSameLineItem,
+            IncludeInGeneratorPrompt = true,
+            Notes = "SYN-07A retired the implicit same-line comma (`adjacency-is-comma` used to pin `1 2 3` as `1, 2, 3`). Source-level separator diagnostic; the recovered AST is that of `1, 2, 3`, but no elaborated Lean program exists for a rejected parse.",
+            Explanation = "Whitespace never separates slots: two slots on one physical line need an explicit comma (`1, 2, 3`), while a newline separates rows where the context permits (`1` newline `2` newline `3`). `1 2 3` reports the separator diagnostic once per missing comma, at the second item.",
+        },
+        new()
+        {
+            Id = "same-line-call-arguments-need-comma",
+            Category = "parser-layout",
+            Source = "F(a, b) = a + b\nF(1 2)",
+            Outcome = SpecOutcome.ParseError,
+            ExpectedParseDiagnosticFragment = "Unexpected item after a closed expression on the same line",
+            ExpectedDiagnosticCode = DiagnosticCode.UnseparatedSameLineItem,
+            IncludeInGeneratorPrompt = true,
+            Notes = "Source-level SYN-07A separator diagnostic; no elaborated Lean program exists. Recovery keeps the two argument slots, so later diagnostics see the call `F(1, 2)`.",
+            Explanation = "Argument slots are separated by commas: `F(1, 2)` is the two-argument call, `F(1 2)` is rejected at `2`, and `F(1 -2)` is one argument (the subtraction `1 - 2`) because a same-line operator continues the expression before any slot boundary is considered.",
+        },
+        new()
+        {
+            Id = "same-line-declaration-begins-a-line",
+            Category = "parser-layout",
+            Source = "x = 3 y = 4\nx + y",
+            Outcome = SpecOutcome.ParseError,
+            ExpectedParseDiagnosticFragment = "Unexpected item after a closed expression on the same line",
+            ExpectedDiagnosticCode = DiagnosticCode.UnseparatedSameLineItem,
+            IncludeInGeneratorPrompt = true,
+            Notes = "Source-level SYN-07A declaration-row diagnostic; no elaborated Lean program exists. Recovery keeps `y = 4` a declaration (never swallowed into x's body), so `x + y` still resolves both names.",
+            Explanation = "A declaration begins a physical line (or is the first item directly after `{`). `x = 3 y = 4` is rejected at `y`; write the two definitions on separate lines. The same rule rejects `1 P = 3` and the one-line block `{ d = 2 n * d }`, so a missing line break can never silently move a declaration or an expression into the preceding definition's body.",
+        },
+        new()
+        {
+            Id = "same-line-slot-before-spread-needs-comma",
+            Category = "parser-layout",
+            Source = "A = (1, 2)\nB = (3, 4)\nA B*",
+            Outcome = SpecOutcome.ParseError,
+            ExpectedParseDiagnosticFragment = "Unexpected item after a closed expression on the same line",
+            ExpectedDiagnosticCode = DiagnosticCode.UnseparatedSameLineItem,
+            Notes = "Source-level SYN-07A separator diagnostic; no elaborated Lean program exists. SYN-07B star classification is unchanged: `B*` is still the spread marker, only the missing comma before it is rejected.",
+            Explanation = "A slot before a spread needs the comma like every other same-line slot: `A, B*` supplies `A` and then B's items, while `A B*` is rejected at `B`. The comma after a spread is required for a second reason as well (`B* C` is the multiplication `B * C`).",
         },
         new()
         {
@@ -2150,7 +2185,7 @@ public static class LanguageSpecCorpus
             ExpectedParseDiagnosticFragment = "Semicolon is not supported as an expression separator",
             ExpectedDiagnosticCode = DiagnosticCode.UnsupportedSemicolon,
             IncludeInGeneratorPrompt = true,
-            Explanation = "Semicolon is not expression syntax: use comma or adjacency for separate slots, or parentheses for one sequence value.",
+            Explanation = "Semicolon is not expression syntax: use a comma between slots on one line (or a new line where the context separates rows), or parentheses for one sequence value.",
         },
         new()
         {
@@ -2300,7 +2335,7 @@ public static class LanguageSpecCorpus
             ExpectedDisplay = "3\n3",
             ExpectedRaw = "S[3, 3]",
             ExpectedEmittedCount = 2,
-            Explanation = "Postfix continuations win over adjacency on the same physical line: `Add (1, 2)` is still the call.",
+            Explanation = "A call delimiter continues the callable across same-line whitespace: `Add (1, 2)` is still the call (whitespace inside one expression is formatting, never a slot boundary).",
         },
         new()
         {
@@ -2340,12 +2375,12 @@ public static class LanguageSpecCorpus
         {
             Id = "spread-binds-before-list",
             Category = "parser-layout",
-            Source = "X(*vals) = vals.count\nb = (1, 2)\nX(7 b*)",
+            Source = "X(*vals) = vals.count\nb = (1, 2)\nX(7, b*)",
             Outcome = SpecOutcome.Evaluates,
             ExpectedDisplay = "3",
             ExpectedRaw = "3",
             ExpectedEmittedCount = 1,
-            Explanation = "A spread expression is one whole expression-list slot: `X(7 b*)` is `X(7, b*)`.",
+            Explanation = "A spread expression is one whole expression-list slot: `X(7, b*)` supplies `7` and then b's two items, so the collecting parameter collects three values (the comma before `b*` is required like every same-line comma; `X(7 b*)` is rejected).",
         },
         new()
         {

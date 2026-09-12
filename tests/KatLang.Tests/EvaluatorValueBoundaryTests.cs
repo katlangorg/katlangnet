@@ -61,7 +61,7 @@ public class EvaluatorValueBoundaryTests
     // Structural dot zero-arg access now matches lexical access (arity 1).
     [Fact]
     public void Eval_StructuralDotZeroArgAccess_IsOneSequenceValue()
-        => AssertEvalCounted("M = {\n  Public P = 1, 2, 3\n  P\n}\nM.P", 1, ResultFromAtoms(1, 2, 3));
+        => AssertEvalCounted("M = {\n  public P = 1, 2, 3\n  P\n}\nM.P", 1, ResultFromAtoms(1, 2, 3));
 
     // Internal variadic forwarding is unaffected: the body still sees the raw item
     // exact list, so collection builtins open it after binding and explicit
