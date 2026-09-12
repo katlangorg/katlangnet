@@ -628,7 +628,8 @@ public static partial class Evaluator
                     Value: null,
                     arg,
                     ValueError: null,
-                    resolvedArg.PreparedValue));
+                    resolvedArg.PreparedValue,
+                    resolvedArg.Source));
                 continue;
             }
 
@@ -659,17 +660,29 @@ public static partial class Evaluator
                         outputR.Value.Value,
                         arg,
                         ValueError: null,
-                        outputR.Value));
+                        outputR.Value,
+                        resolvedArg.Source));
                 }
 
                 continue;
             }
 
-            items.Add(new VariadicCallItem(Value: null, arg, outputR.Error));
+            items.Add(new VariadicCallItem(Value: null, arg, outputR.Error, Source: resolvedArg.Source));
         }
 
         return EvalResult<IReadOnlyList<VariadicCallItem>>.Ok(items);
     }
+
+    /// <summary>
+    /// Call-item assembly preserves callable arguments without entering their bodies.
+    /// Once binding selects a VALUE position, report its zero-argument demand using
+    /// the original source, or preserve the failure of a valid value's body. Callback
+    /// positions never call this helper; retained resource limits remain authoritative.
+    /// </summary>
+    private static EvalError? SequenceBuiltinValueDemandError(VariadicCallItem item)
+        => RetainResourceLimitForAlgorithmBinding(item.ValueError)
+            ?? (item.Algorithm is { } algorithm ? ZeroArgumentValueDemandError(item.Source, algorithm) : null)
+            ?? item.ValueError;
 
     private static EvalResult<PreparedSequenceBuiltinSuffixArg> PrepareSequenceBuiltinSuffixArg(
         BuiltinId builtin,
@@ -704,6 +717,7 @@ public static partial class Evaluator
                             new PreparedSequenceBuiltinSuffixArg.AlgorithmArg(algorithm)
                             {
                                 PreparedValue = item.PreparedValue,
+                                Source = item.Source,
                             });
                     }
 
@@ -719,14 +733,14 @@ public static partial class Evaluator
                         new PreparedSequenceBuiltinSuffixArg.ValueArg(item.Value));
                 }
 
-                return item.ValueError ?? new EvalError.WithContext(
+                return SequenceBuiltinValueDemandError(item) ?? new EvalError.WithContext(
                     SequenceBuiltinSuffixArgErrorContext(builtin, descriptor),
                     new EvalError.BadArity());
 
             case SequenceBuiltinSuffixArgKind.WholeNumber:
                 {
                     if (item.Value is null)
-                        return item.ValueError ?? new EvalError.WithContext(
+                        return SequenceBuiltinValueDemandError(item) ?? new EvalError.WithContext(
                             SequenceBuiltinSuffixArgErrorContext(builtin, descriptor),
                             new EvalError.BadArity());
 
@@ -786,24 +800,6 @@ public static partial class Evaluator
             new ReduceInitialAccumulatorContext(initialAlg.Params.ToList()),
             new EvalError.BadArity());
 
-    private static bool IsLikelyUnevaluatedParameterError(Algorithm algorithm, EvalError error)
-    {
-        if (algorithm.Params.Count == 0)
-            return false;
-
-        var parameterNames = algorithm.Params.ToHashSet(StringComparer.Ordinal);
-        return ErrorReferencesAnyName(error, parameterNames);
-    }
-
-    private static bool ErrorReferencesAnyName(EvalError error, IReadOnlySet<string> names)
-        => error switch
-        {
-            EvalError.UnknownName(var name) => names.Contains(name),
-            EvalError.UnresolvedImplicitParams(var paramNames) => paramNames.Any(names.Contains),
-            EvalError.WithContext(_, var inner) => ErrorReferencesAnyName(inner, names),
-            _ => false,
-        };
-
     /// <summary>
     /// Evaluate <c>reduce(collection, reducer, initial)</c> while
     /// preserving the accumulator's emitted-value count for the empty-sequence
@@ -822,22 +818,26 @@ public static partial class Evaluator
         Algorithm stepAlg,
         Algorithm initialAlg,
         CountedResult? preparedInitial,
+        Expr? initialSource,
         EvalCtx ctx,
         IReadOnlyList<(string, Result)> valEnv)
     {
-        // The initial accumulator is a written value slot: when call-item assembly
+        // The initial accumulator is a written VALUE slot: when call-item assembly
         // already evaluated it (a value-shaped argument), that result IS the slot's
         // value — evaluating the algorithm channel again would run the body twice.
+        // A parameterized algorithm there is rejected from its signature at this
+        // boundary — never by entering its body and reinterpreting the failure —
+        // with reduce's dedicated hint, the same rejection the dotted
+        // `Values.reduce(Add)` form reports for a visibly parameterized reducer.
+        if (preparedInitial is null && ZeroArgumentValueDemandError(initialSource, initialAlg) is { } rejection)
+            return initialAlg.Params.Count != 0
+                ? ReduceInitialAccumulatorRequiresValueError(initialAlg)
+                : rejection;
+
         var initialR = preparedInitial is { } preparedValue
             ? EvalResult<CountedResult>.Ok(preparedValue)
             : EvalArgumentAlgOutputCounted(initialAlg, ctx, valEnv);
-        if (initialR.IsError)
-        {
-            if (IsLikelyUnevaluatedParameterError(initialAlg, initialR.Error))
-                return ReduceInitialAccumulatorRequiresValueError(initialAlg);
-
-            return initialR.Error;
-        }
+        if (initialR.IsError) return initialR.Error;
 
         // The initial accumulator expression occupies ONE written accumulator
         // slot: its result is reified as one persistent value at the ordinary
@@ -1076,7 +1076,7 @@ public static partial class Evaluator
 
         var collectionItem = items[0];
         if (collectionItem.Value is null)
-            return collectionItem.ValueError ?? new EvalError.BadArity();
+            return SequenceBuiltinValueDemandError(collectionItem) ?? new EvalError.BadArity();
 
         // The one-level builtin collection view applies AFTER binding, to the
         // bound collection value only: a lone sequence or exact list value
@@ -1668,6 +1668,7 @@ public static partial class Evaluator
                             stepR.Value,
                             initialR.Value.AlgorithmValue,
                             initialR.Value.PreparedValue,
+                            initialR.Value.Source,
                             ctx,
                             valEnv);
                     }),
@@ -1749,6 +1750,14 @@ public static partial class Evaluator
     /// Written receiver shapes (brace block, capture, dot-result wrapper) carry no name
     /// to cycle back through and their nesting is parser-bounded, so they stay on the
     /// uncharged written-syntax policy like every other block/capture evaluation.
+    /// Whatever the shape, the receiver is demanded for its VALUE with zero
+    /// arguments, so the ONE zero-argument value-demand law
+    /// (<see cref="ZeroArgumentValueDemandError"/>) decides from the resolved
+    /// receiver's signature BEFORE its body is entered: <c>Inc.string</c> with
+    /// <c>Inc(x)</c> is the property arity error, a navigated parameterized member
+    /// the bare one, and a written parameterized block
+    /// <see cref="EvalError.UnresolvedImplicitParams"/> — never <c>Unknown name: x</c>
+    /// from inside the receiver. Lean: the <c>string</c> arm of <c>evalDotCallCounted</c>.
     /// </summary>
     private static EvalResult<Result> EvalDotStringReceiverAlgOutput(
         Expr target,
@@ -1757,13 +1766,18 @@ public static partial class Evaluator
         EvalCtx ctx,
         IReadOnlyList<(string, Result)> valEnv)
     {
+        if (target is Expr.Param(var paramName)
+            && LookupAlgBinding(ctx.AlgEnv, paramName) is { ValueError: { } stickyLimit })
+        {
+            return AtSpanIfMissing(stickyLimit, target.Span);
+        }
+
+        if (ZeroArgumentValueDemandError(target, targetAlg) is { } rejection)
+            return rejection;
+
         switch (target)
         {
-            case Expr.Param(var name):
-                if (LookupAlgBinding(ctx.AlgEnv, name) is { ValueError: { } stickyLimit })
-                    return AtSpanIfMissing(stickyLimit, target.Span);
-                return EvalResolvedAlgOutputForValueDemand(targetAlg, ctx, valEnv);
-
+            case Expr.Param:
             case Expr.Resolve:
                 return EvalResolvedAlgOutputForValueDemand(targetAlg, ctx, valEnv);
 
@@ -1775,15 +1789,35 @@ public static partial class Evaluator
         }
     }
 
+    /// <summary>
+    /// Demand a builtin argument slot for its VALUE with zero explicit arguments. The
+    /// ONE zero-argument value-demand law (<see cref="ZeroArgumentValueDemandError"/>)
+    /// decides from the resolved algorithm's effective signature BEFORE any body is
+    /// entered — and before the depth-only argument level is entered, exactly as the
+    /// value-position arms reject before their invocation chokepoint — so a selected
+    /// <c>if</c> branch, a loop's initial state, the <c>repeat</c> count, and the
+    /// <c>atoms</c>/<c>range</c> arguments reject a parameterized algorithm exactly like
+    /// value-position access does (<c>if(1, Inc, 0)</c> with <c>Inc(x)</c> is the
+    /// property arity error, never <c>Unknown name: x</c> from inside <c>Inc</c>), while
+    /// a zero-parameter algorithm evaluates its output through the charged funnel as
+    /// before. Laziness is untouched: a slot is demanded only when the builtin selects
+    /// it, so an unselected parameterized branch is never even signature-checked.
+    /// Lean: <c>evalArgumentValueCounted</c>.
+    /// </summary>
     private static EvalResult<CountedResult> EvalResolvedArgumentCounted(
         ResolvedArgumentAlgorithm arg,
         EvalCtx ctx,
         IReadOnlyList<(string, Result)> valEnv)
-        => arg.PreparedValue is { } prepared
-            ? EvalResult<CountedResult>.Ok(prepared)
-            : arg.Algorithm is { } algorithm
-                ? EvalArgumentAlgOutputCounted(algorithm, ctx, valEnv)
-                : new EvalError.BadArity();
+    {
+        if (arg.PreparedValue is { } prepared)
+            return EvalResult<CountedResult>.Ok(prepared);
+        if (arg.Algorithm is not { } algorithm)
+            return new EvalError.BadArity();
+        if (ZeroArgumentValueDemandError(arg.Source, algorithm) is { } rejection)
+            return rejection;
+
+        return EvalArgumentAlgOutputCounted(algorithm, ctx, valEnv);
+    }
 
     /// <summary>
     /// Returns the argument's algorithm channel. Already evaluated callback data and dotted

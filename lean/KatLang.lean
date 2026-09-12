@@ -296,12 +296,6 @@ inductive Error where
 -- Lean requires `Nonempty` for the function types of partial defs.
 instance : Nonempty Error := Nonempty.intro Error.badArity
 
-def Error.referencesAnyName (names : List Ident) : Error -> Bool
-  | .unknownName name => names.contains name
-  | .unresolvedImplicitParams paramNames => paramNames.any (fun name => names.contains name)
-  | .withContext _ inner => Error.referencesAnyName names inner
-  | _ => false
-
 def CallableSignature.validate (signature : CallableSignature) : Except Error Unit :=
   match signature.validationError? with
   | some message => .error (Error.illegalInEval message)
@@ -2159,6 +2153,7 @@ structure CallableCallItem where
   algorithm? : Option Algorithm := none
   error? : Option Error := none
   skipMissingValue : Bool := false
+  source? : Option Expr := none
   deriving Repr
 
 structure ParameterPatternInput where
@@ -2626,7 +2621,7 @@ structure PreparedSequenceBuiltinInput where
   deriving Repr
 
 inductive PreparedSequenceBuiltinSuffixArg where
-  | algorithm (value : Algorithm)
+  | algorithm (value : Algorithm) (source? : Option Expr := none)
   | value (value : Result)
   | wholeNumber (value : Int)
   deriving Repr
@@ -2640,6 +2635,12 @@ structure BoundSequenceBuiltinArguments where
 structure ResolvedArgumentAlgorithm where
   algorithm : Algorithm
   spreadsSequence : Bool := false
+  /-- The written argument expression this algorithm was resolved from: the
+      demand-site identity `zeroArgumentDemandError?` reports through when a
+      builtin VALUE slot demands the algorithm with zero arguments. `none` for
+      value-reified arguments (prepared callback data, expanded spread items,
+      dotted receivers), whose algorithms carry no parameters. -/
+  source? : Option Expr := none
   deriving Repr
 
 def intPow (b : Int) : Nat -> Int
@@ -2883,6 +2884,40 @@ namespace CtxMsg
   def property (n : Ident)            := s!"while evaluating property {n}"
   def dotCall (obj : Expr) (n : Ident) := s!"while evaluating dotCall .{n} of {openExprName obj}"
 end CtxMsg
+
+/-- The ONE zero-argument value-demand law (its rejection half), keyed by the
+    written shape that names the demanded algorithm. It is consulted BEFORE an
+    algorithm's body is entered wherever a resolved algorithm is demanded for its
+    VALUE with zero explicit arguments: the value-position `param` / `resolve` /
+    `algorithmExpr` arms of `evalCounted`, every lazy builtin VALUE slot (the `if`
+    condition and branches, `while`/`repeat` initial state, the `repeat` count,
+    `atoms`, `range` — `evalArgumentValueCounted`), and the ordinary-dot `string`
+    intrinsic's receiver. Only the report's shape depends on the source:
+    - a lexical property reference `X` (`.resolve`): a conditional cannot be
+      accessed as a value (`conditionalValueAccessError?`), and a parameterized
+      property is `withContext (property X) (arityMismatch k 0)`;
+    - an algorithm-channel parameter `x` (`.param`) and a structurally navigated
+      member `A.M` (an argumentless `.dotMember` receiver): the same conditional
+      rule, then the bare `arityMismatch k 0`;
+    - a written brace block (`.algorithmExpr`): `unresolvedImplicitParams`;
+    - an anonymous or value-reified argument (`none`): the bare `arityMismatch`.
+    `none` means the demand may proceed to the algorithm's output. A builtin
+    CALLBACK slot (`map`/`filter`/`reduce` steps, loop steps) supplies arguments
+    and never consults this law. C#: `ZeroArgumentValueDemandError`. -/
+def zeroArgumentDemandError? (source? : Option Expr) (a : Algorithm) : Option Error :=
+  let arity := Error.arityMismatch (Algorithm.params a).length 0
+  let named (name : Ident) (reject : Error) : Option Error :=
+    match conditionalValueAccessError? name a with
+    | some err => some err
+    | none => if (Algorithm.params a).length = 0 then none else some reject
+  match source? with
+  | some (.resolve n) => named n (Error.withContext (CtxMsg.property n) arity)
+  | some (.param x) => named x arity
+  | some (.dotMember _ n _ _) => named n arity
+  | some (.algorithmExpr _) =>
+      if (Algorithm.params a).length = 0 then none
+      else some (Error.unresolvedImplicitParams (Algorithm.params a))
+  | _ => if (Algorithm.params a).length = 0 then none else some arity
 
 --------------------------------------------------------------------------------
 -- Open resolution structures
@@ -3262,13 +3297,21 @@ def internalSequenceBuiltinSuffixArgMetadataError
     s!"internal sequence metadata for {builtinDisplayName b} {detail}"
     Error.badArity)
 
+/-- After binding chooses a VALUE position, apply the shared demand rejection to
+    an unevaluated callable using its written source. Preserve a valid value's
+    body error; callback positions never consult this helper. -/
+def sequenceBuiltinValueDemandError? (item : CallableCallItem) : Option Error :=
+  match item.algorithm? with
+  | some alg => (zeroArgumentDemandError? item.source? alg).or item.error?
+  | none => item.error?
+
 def prepareSequenceBuiltinSuffixArgItem
     (b : Builtin) (descriptor : SequenceBuiltinSuffixArgDescriptor)
     (item : CallableCallItem) : EvalM PreparedSequenceBuiltinSuffixArg := do
   match descriptor.kind with
   | .algorithm =>
     match item.algorithm? with
-    | some alg => pure (.algorithm alg)
+    | some alg => pure (.algorithm alg item.source?)
     | none =>
         match item.error? with
         | some err => .error err
@@ -3280,7 +3323,7 @@ def prepareSequenceBuiltinSuffixArgItem
     match item.value? with
     | some value => pure (.value value)
     | none =>
-        match item.error? with
+        match sequenceBuiltinValueDemandError? item with
         | some err => .error err
         | none =>
         .error (Error.withContext
@@ -3296,7 +3339,7 @@ def prepareSequenceBuiltinSuffixArgItem
             (sequenceBuiltinSuffixArgErrorContext b descriptor)
             Error.badArity)
     | none =>
-        match item.error? with
+        match sequenceBuiltinValueDemandError? item with
         | some err => .error err
         | none =>
         .error (Error.withContext
@@ -3323,15 +3366,21 @@ def expectPreparedSequenceBuiltinSuffixArgAt
         internalSequenceBuiltinSuffixArgMetadataError b
           s!"expected suffix argument {index + 1} to have metadata kind {sequenceBuiltinSuffixArgKindDesc expectedKind}"
 
-def expectPreparedSequenceBuiltinAlgorithmSuffixArg
+def expectPreparedSequenceBuiltinAlgorithmSuffixArgFull
     (b : Builtin) (descriptors : List SequenceBuiltinSuffixArgDescriptor)
-    (args : List PreparedSequenceBuiltinSuffixArg) (index : Nat) : EvalM Algorithm :=
+    (args : List PreparedSequenceBuiltinSuffixArg) (index : Nat) : EvalM ResolvedArgumentAlgorithm :=
   expectPreparedSequenceBuiltinSuffixArgAt b descriptors args index .algorithm fun descriptor arg =>
     match arg with
-    | .algorithm algorithm => pure algorithm
+    | .algorithm algorithm source? => pure { algorithm := algorithm, source? := source? }
     | _ =>
         internalSequenceBuiltinSuffixArgMetadataError b
           s!"prepared suffix argument {index + 1} ({descriptor.name}) did not match metadata kind {sequenceBuiltinSuffixArgKindDesc .algorithm}"
+
+def expectPreparedSequenceBuiltinAlgorithmSuffixArg
+    (b : Builtin) (descriptors : List SequenceBuiltinSuffixArgDescriptor)
+    (args : List PreparedSequenceBuiltinSuffixArg) (index : Nat) : EvalM Algorithm := do
+  let arg <- expectPreparedSequenceBuiltinAlgorithmSuffixArgFull b descriptors args index
+  pure arg.algorithm
 
 def expectPreparedSequenceBuiltinWholeNumberSuffixArg
     (b : Builtin) (descriptors : List SequenceBuiltinSuffixArgDescriptor)
@@ -3364,11 +3413,6 @@ def expectPreparedNumericItems (b : Builtin)
 
 def reduceInitialAccumulatorRequiresValueError : Error :=
   Error.withContext "while preparing reduce initial accumulator" Error.badArity
-
-def isLikelyUnevaluatedParameterError (algorithm : Algorithm) (err : Error) : Bool :=
-  match Algorithm.params algorithm with
-  | [] => false
-  | paramNames => Error.referencesAnyName paramNames err
 
 /-- Evaluate `order(collection)`.
     `order` eagerly evaluates the full top-level collection, sorts its numeric
@@ -3962,7 +4006,7 @@ def resolveArgAlgsWithSequenceSpread (args : OutputBundle) (ctx : EvalCtx) (env 
       match e with
       | .sequenceSpread _ => true
       | _ => false
-    pure { algorithm := alg, spreadsSequence := spreadsSequence })
+    pure { algorithm := alg, spreadsSequence := spreadsSequence, source? := some e })
 
 /-- Try to resolve each argument expression to an algorithm.
     Returns `some alg` for expressions that resolve, `none` for those that don't
@@ -4328,9 +4372,9 @@ mutual
       starts with two slots, while `repeat(Step, 3, Pair)` starts with one slot even when
       `Pair` evaluates to multiple values. Step outputs define later state slots; capture a
       step result to keep one structured slot across iterations. -/
-  partial def evalInitialLoopStateSlots (inits : List Algorithm)
+  partial def evalInitialLoopStateSlots (inits : List ResolvedArgumentAlgorithm)
       (ctx : EvalCtx) (env : ValEnv) : EvalM (List Result) :=
-    inits.mapM (fun init => evalAlgOutput init ctx env)
+    inits.mapM (fun init => evalArgumentValue init ctx env)
 
   /-- Evaluate a higher-order sequence callback on one collected iteration
       item. -/
@@ -4441,6 +4485,28 @@ mutual
       : EvalM CountedResult :=
     evalAlgOutputCountedCore a ctx env
 
+  /-- Demand a builtin argument slot for its VALUE with zero explicit arguments.
+      The ONE zero-argument value-demand law (`zeroArgumentDemandError?`) decides
+      from the resolved algorithm's effective signature BEFORE any body is
+      entered — a selected `if` branch, a loop's initial state, the `repeat`
+      count, and the `atoms`/`range` arguments reject a parameterized algorithm
+      exactly like value-position access does (`if(1, Inc, 0)` with `Inc(x)` is
+      the property arity error, never `unknownName x` from inside `Inc`), while a
+      zero-parameter algorithm (a property, a captured-binding thunk, a written
+      value) evaluates its output as before. Laziness is untouched: a slot is
+      demanded only when the builtin selects it. C#: `EvalResolvedArgumentCounted`. -/
+  partial def evalArgumentValueCounted (arg : ResolvedArgumentAlgorithm)
+      (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult :=
+    match zeroArgumentDemandError? arg.source? arg.algorithm with
+    | some err => .error err
+    | none => evalAlgOutputCounted arg.algorithm ctx env
+
+  /-- Value projection of `evalArgumentValueCounted`. C#: `EvalResolvedArgument`. -/
+  partial def evalArgumentValue (arg : ResolvedArgumentAlgorithm)
+      (ctx : EvalCtx) (env : ValEnv) : EvalM Result := do
+    let counted <- evalArgumentValueCounted arg ctx env
+    pure counted.fst
+
   /-- Property-style zero-parameter access may reuse the per-run cache.
       Explicit calls do not use this helper, so `A()` bypasses only `A`'s
       direct cache entry and does not change nested property references. -/
@@ -4500,7 +4566,7 @@ mutual
       : EvalM CountedResult := do
     match callee with
     | .builtin b =>
-        applyBuiltinCounted b (args.map countedArgAlgorithm) ctx env
+        applyBuiltinCounted b (args.map fun arg => { algorithm := countedArgAlgorithm arg }) ctx env
     | .conditional _ _ _ =>
         match flatBinderUserEquivalent? callee with
         | some simple => do
@@ -4609,7 +4675,7 @@ mutual
           -- never settles. Keep the algorithm unevaluated so it is applied with bound
           -- parameters later; only value-shaped arguments are materialized eagerly.
           if !(Algorithm.params alg).isEmpty || !(Algorithm.parameterPatterns alg).isEmpty then
-            pure ({ value? := none, algorithm? := some alg, error? := none, skipMissingValue := false } :: tail)
+            pure ({ value? := none, algorithm? := some alg, error? := none, skipMissingValue := false, source? := arg.source? } :: tail)
           else
           match <- evalAttempt (evalAlgOutputCounted alg ctx env) with
           | .ok counted =>
@@ -4621,9 +4687,9 @@ mutual
                       { value? := some value, algorithm? := some alg, error? := none, skipMissingValue := false })
                     pure (head ++ tail)
               else
-                pure ({ value? := some counted.fst, algorithm? := some alg, error? := none, skipMissingValue := false } :: tail)
+                pure ({ value? := some counted.fst, algorithm? := some alg, error? := none, skipMissingValue := false, source? := arg.source? } :: tail)
           | .error err =>
-              pure ({ value? := none, algorithm? := some alg, error? := some err, skipMissingValue := false } :: tail)
+              pure ({ value? := none, algorithm? := some alg, error? := some err, skipMissingValue := false, source? := arg.source? } :: tail)
     loop args
 
 
@@ -4650,7 +4716,7 @@ mutual
           match collectionItem.value? with
           | some value => pure value
           | none =>
-              match collectionItem.error? with
+              match sequenceBuiltinValueDemandError? collectionItem with
               | some err => .error err
               | none => .error Error.badArity
         -- The one-level builtin collection view applies AFTER binding, to the
@@ -4695,16 +4761,19 @@ mutual
       slot (reified via `reCountValueBoundary` before reduction), so empty
       collections return the initial accumulator as ONE value. -/
   partial def evalReduceCounted (collection : List CountedResult)
-      (stepAlg initialAlg : Algorithm)
+      (stepAlg : Algorithm) (initial : ResolvedArgumentAlgorithm)
       (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult := do
+    -- The initial accumulator is a VALUE slot: a parameterized algorithm there is
+    -- rejected from its signature at this boundary — never by entering its body
+    -- and reinterpreting the failure — with reduce's dedicated hint, the same
+    -- rejection the dotted `Values.reduce(Add)` form reports for a visibly
+    -- parameterized reducer.
     let initOut <-
-      match <- evalAttempt (evalAlgOutputCounted initialAlg ctx env) with
-      | .ok value => pure value
-      | .error err =>
-          if isLikelyUnevaluatedParameterError initialAlg err then
-            .error reduceInitialAccumulatorRequiresValueError
-          else
-            .error err
+      match zeroArgumentDemandError? initial.source? initial.algorithm with
+      | some err =>
+          if (Algorithm.params initial.algorithm).isEmpty then .error err
+          else .error reduceInitialAccumulatorRequiresValueError
+      | none => evalAlgOutputCounted initial.algorithm ctx env
     let rec reduceLoop : List CountedResult -> CountedResult -> EvalM CountedResult
       | [], acc => pure acc
       | item :: rest, (accValue, _) => do
@@ -4857,25 +4926,30 @@ mutual
               let stepAlg <-
                 expectPreparedSequenceBuiltinAlgorithmSuffixArg b metadata.suffixArgs preparedSuffixArgs 0
               let initialAlg <-
-                expectPreparedSequenceBuiltinAlgorithmSuffixArg b metadata.suffixArgs preparedSuffixArgs 1
+                expectPreparedSequenceBuiltinAlgorithmSuffixArgFull b metadata.suffixArgs preparedSuffixArgs 1
               evalReduceCounted bound.iterationItems stepAlg initialAlg ctx env
         | _ =>
             .error (builtinArityError b args.length)
 
   /-- Builtin application with counted output shape.
       Used by `reduce` to validate that the step emits exactly one accumulator
-      value without flattening sequence values. -/
+      value without flattening sequence values.
+      Every VALUE slot (the `if` condition and branches, loop initial state, the
+      `repeat` count, `atoms`, `range`) is demanded through
+      `evalArgumentValueCounted`, so a parameterized algorithm in a selected slot
+      is the ordinary zero-argument arity rejection and never enters its body;
+      ALGORITHM slots (loop steps) take the argument's algorithm as supplied. -/
   partial def applyBuiltinCounted
-      (b : Builtin) (args : List Algorithm)
+      (b : Builtin) (args : List ResolvedArgumentAlgorithm)
       (ctx : EvalCtx) (env : ValEnv)
       : EvalM CountedResult :=
     match sequenceBuiltinMetadata? b with
     | some metadata =>
-      applyBuiltinCountedSequence b metadata (args.map fun alg => { algorithm := alg }) ctx env
+      applyBuiltinCountedSequence b metadata args ctx env
     | none =>
         match b, args with
         | .ifBuiltin, [c,t,e] => do
-            let cr <- evalAlgOutput c ctx env
+            let cr <- evalArgumentValue c ctx env
             -- The selected branch is one argument expression, so `if` observes it
             -- as a single value boundary -- exactly like value-position property
             -- access. A multi-output branch property such as `X = 1, 2, 3`
@@ -4885,10 +4959,10 @@ mutual
             -- re-counts the chosen branch value via `Result.valueCount`.
             match Result.truthValue? cr with
             | some false => do
-                let r <- evalAlgOutputCounted e ctx env
+                let r <- evalArgumentValueCounted e ctx env
                 pure (r.fst, Result.valueCount r.fst)
             | some true => do
-                let r <- evalAlgOutputCounted t ctx env
+                let r <- evalArgumentValueCounted t ctx env
                 pure (r.fst, Result.valueCount r.fst)
             | none => .error Error.badArity
 
@@ -4898,7 +4972,7 @@ mutual
             else
             let initialSlots <- evalInitialLoopStateSlots initAlgs ctx env
             let rec loop (stateSlots : List Result) : EvalM (List Result) := do
-              let outputSlots <- runStepSlots step ctx env stateSlots
+              let outputSlots <- runStepSlots step.algorithm ctx env stateSlots
               let (nextSlots, cont) <- splitContSlots outputSlots
               if cont = 0 then pure stateSlots else loop nextSlots
             let finalSlots <- loop initialSlots
@@ -4909,7 +4983,7 @@ mutual
             if initAlgs.isEmpty then
               .error (builtinArityError b args.length)
             else
-            let cr <- evalAlgOutput countAlg ctx env
+            let cr <- evalArgumentValue countAlg ctx env
             let n <- expectInt cr
             if n < 0 then
               .error (Error.illegalInEval "Repeat count must be >= 0")
@@ -4917,22 +4991,22 @@ mutual
               let initialSlots <- evalInitialLoopStateSlots initAlgs ctx env
               let rec repeatLoop (k : Int) (stateSlots : List Result) : EvalM (List Result) :=
                 if k = 0 then pure stateSlots else do
-                  let outputSlots <- runStepSlots step ctx env stateSlots
+                  let outputSlots <- runStepSlots step.algorithm ctx env stateSlots
                   repeatLoop (k-1) outputSlots
               let finalSlots <- repeatLoop n initialSlots
               let final := loopStateResult finalSlots
               pure (final, finalSlots.length)
 
         | .atomsBuiltin, [a] => do
-            let r <- evalAlgOutput a ctx env
+            let r <- evalArgumentValue a ctx env
             -- `atoms` materializes a collection: one exact immutable list of
             -- the recursively collected numeric atoms (sequence AND list
             -- boundaries open; truth testing stays list-opaque).
             pure (makeCollectionListResult ((Result.languageAtoms r).map Result.atom))
 
         | .rangeBuiltin, [startAlg, stopAlg] => do
-            let start <- expectInt (<- evalAlgOutput startAlg ctx env)
-            let stop <- expectInt (<- evalAlgOutput stopAlg ctx env)
+            let start <- expectInt (<- evalArgumentValue startAlg ctx env)
+            let stop <- expectInt (<- evalArgumentValue stopAlg ctx env)
             let xs := inclusiveRange start stop
             -- `range` materializes a collection: one exact immutable list value.
             pure (makeCollectionListResult (xs.map Result.atom))
@@ -4947,7 +5021,7 @@ mutual
       parity guards pin this equivalence (values, error diagnostics, and
       evaluator state) case by case. -/
   partial def applyBuiltin
-      (b : Builtin) (args : List Algorithm)
+      (b : Builtin) (args : List ResolvedArgumentAlgorithm)
       (ctx : EvalCtx) (env : ValEnv)
       : EvalM Result := do
     let out <- applyBuiltinCounted b args ctx env
@@ -4955,7 +5029,7 @@ mutual
 
   partial def expandSequenceSpreadBuiltinArguments
       (args : List ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env : ValEnv)
-      : EvalM (List Algorithm) := do
+      : EvalM (List ResolvedArgumentAlgorithm) := do
     -- Spread-marked argument slots are forced exactly once, in left-to-right written
     -- order, and expanding a spread slot is part of evaluating that slot: evaluate and
     -- expand the CURRENT spread slot before recursing into the remaining ones, then
@@ -4966,17 +5040,18 @@ mutual
     -- it ran the spread slots' effects and reported their failures right to left, so
     -- two failing spread slots reported the RIGHTMOST failure while the C# runtime
     -- reported the leftmost.
-    let rec loop : List ResolvedArgumentAlgorithm -> EvalM (List Algorithm)
+    let rec loop : List ResolvedArgumentAlgorithm -> EvalM (List ResolvedArgumentAlgorithm)
       | [] => pure []
       | arg :: rest => do
           if arg.spreadsSequence then
-            let counted <- evalAlgOutputCounted arg.algorithm ctx env
-            let expanded := (countedTopLevelValues counted).map (fun value => countedArgAlgorithm (value, 1))
+            let counted <- evalArgumentValueCounted arg ctx env
+            let expanded := (countedTopLevelValues counted).map
+              (fun value => ({ algorithm := countedArgAlgorithm (value, 1) } : ResolvedArgumentAlgorithm))
             let tail <- loop rest
             pure (expanded ++ tail)
           else
             let tail <- loop rest
-            pure (arg.algorithm :: tail)
+            pure (arg :: tail)
     loop args
 
   partial def applyBuiltinCountedResolved
@@ -5505,6 +5580,15 @@ mutual
     match <- evalAttempt (resolveDotReceiver target ctx) with
     | .ok targetAlg =>
       if name = "string" then do
+        -- The receiver is demanded for its VALUE with zero arguments, so the ONE
+        -- zero-argument demand law decides from the resolved receiver's
+        -- signature before its body is entered: `Inc.string` with `Inc(x)` is
+        -- the property arity error, a navigated parameterized member the bare
+        -- one, and a written parameterized block `unresolvedImplicitParams`.
+        -- C#: `EvalDotStringReceiverAlgOutput`.
+        match zeroArgumentDemandError? (some target) targetAlg with
+        | some err => .error err
+        | none => pure ()
         let val <- evalAlgOutput targetAlg ctx env
         let out <- resultToString val
         pure (out, Result.valueCount out)
@@ -5780,14 +5864,11 @@ mutual
             | none =>
                 match ctx.algEnv.lookup x with
                 | some alg =>
-                    match conditionalValueAccessError? x alg with
+                    match zeroArgumentDemandError? (some e) alg with
                     | some err => .error err
-                    | none =>
-                        if (Algorithm.params alg).length = 0 then do
-                          let value <- evalAlgOutput alg ctx env
-                          pure (value, Result.valueCount value)
-                        else
-                          .error (Error.arityMismatch (Algorithm.params alg).length 0)
+                    | none => do
+                        let value <- evalAlgOutput alg ctx env
+                        pure (value, Result.valueCount value)
                 | none => .error (Error.unknownName x)
     | .sequenceConstruct _ _ =>
       evalSequenceConstructCounted e ctx env
@@ -5800,11 +5881,11 @@ mutual
         evalListLiteralCounted elements ctx env
     | .algorithmExpr a => do
         let wired := wireToCaller ctx a
-        if (Algorithm.params wired).length = 0 then
+        match zeroArgumentDemandError? (some e) wired with
+        | some err => .error err
+        | none =>
           let r <- evalAlgOutput wired ctx env
           pure (r, Result.valueCount r)
-        else
-          .error (Error.unresolvedImplicitParams (Algorithm.params wired))
     | .capture rows => do
         -- A capture in value position is a value boundary: the body's supply
         -- is captured to one canonical value and re-counted as that value's
@@ -5815,15 +5896,12 @@ mutual
         match ctx.callStack with
         | owner :: _ =>
             let resolved <- lookupLexicalProperty owner n ctx
-            match conditionalValueAccessError? n resolved.alg with
+            match zeroArgumentDemandError? (some e) resolved.alg with
             | some err => .error err
             | none =>
-                if (Algorithm.params resolved.alg).length = 0 then
-                  withMissingOutputCtx (CtxMsg.property n) <| do
-                    let counted <- evalZeroArgPropertyAccessCounted .lexical resolved.owner resolved.binding resolved.alg ctx env
-                    pure (counted.fst, Result.valueCount counted.fst)
-                else
-                  .error (Error.withContext (CtxMsg.property n) (Error.arityMismatch (Algorithm.params resolved.alg).length 0))
+                withMissingOutputCtx (CtxMsg.property n) <| do
+                  let counted <- evalZeroArgPropertyAccessCounted .lexical resolved.owner resolved.binding resolved.alg ctx env
+                  pure (counted.fst, Result.valueCount counted.fst)
         | [] => .error (Error.unknownName n)
     | .index a i => do
         let ar <- eval a ctx env

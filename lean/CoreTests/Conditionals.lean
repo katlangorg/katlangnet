@@ -468,7 +468,7 @@ def conditionalCollectionArgumentFails : Bool :=
   match runResult (.algorithmExpr (algPrivate [] [] [("F", valueAccessConditionalAlg)] [
     .call (resolve "sum") [resolve "F"]
   ])) with
-  | Except.error err => innermostIsNoMatchingBranch "conditional" err
+  | Except.error err => innermostIsNoMatchingBranch "F" err
   | _ => false
 
 #guard conditionalCollectionArgumentFails

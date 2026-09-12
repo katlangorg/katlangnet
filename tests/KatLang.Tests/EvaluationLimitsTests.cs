@@ -317,15 +317,16 @@ public class EvaluationLimitsTests
     [Theory]
     [InlineData("A = A.string\nA")]
     [InlineData("A = { A.string* }\nA")]
-    [InlineData("A(n) = A.string\nA(1)")]
     public void DotStringLexicalSelfRecursion_TerminatesWithStructuredDepthError(string source)
     {
         // A name-resolved `.string` receiver re-enters the named algorithm's body
         // with no dynamic-invocation chokepoint on the path, so the receiver
         // evaluation must consume depth: uncharged, these shapes recursed outside
         // every budget and terminated the process with an uncatchable
-        // StackOverflowException. The zero-parameter and parameterized receiver
-        // forms exercise the same funnel; the spread body reaches the plain twin.
+        // StackOverflowException. The zero-parameter receiver forms exercise the
+        // funnel (a parameterized receiver never reaches it — see
+        // DotStringParameterizedLexicalReceiver_IsRejectedBeforeReentry); the
+        // spread body reaches the plain twin.
         const int maxDepth = 24;
         var expr = new Expr.AlgorithmExpr(SourceProvenance.ParseValid(source).Root);
         var (result, budget) = Evaluator.RunCountedObserved(
@@ -340,6 +341,27 @@ public class EvaluationLimitsTests
         Assert.True(
             budget.ConsumedSteps <= 2L * maxDepth,
             $"expected work linear in MaxDepth, observed {budget.ConsumedSteps} steps at depth {maxDepth}");
+    }
+
+    [Fact]
+    public void DotStringParameterizedLexicalReceiver_IsRejectedBeforeReentry()
+    {
+        // `A(n) = A.string` used to re-enter A's body through the `.string`
+        // receiver and terminate only at the depth limit. The receiver is a
+        // zero-argument value demand of a PARAMETERIZED algorithm, so the ONE
+        // zero-argument demand law rejects it at the demand boundary: the ordinary
+        // property arity error, no re-entry, and the only depth consumed is the
+        // invocation of A(1) itself.
+        var expr = new Expr.AlgorithmExpr(SourceProvenance.ParseValid("A(n) = A.string\nA(1)").Root);
+        var (result, budget) = Evaluator.RunCountedObserved(
+            expr,
+            new EvaluationLimits { MaxDepth = 24 });
+
+        Assert.True(result.IsError);
+        var arity = Assert.IsType<EvalError.ArityMismatch>(Innermost(result.Error));
+        Assert.Equal(1, arity.Expected);
+        Assert.Equal(0, arity.Actual);
+        Assert.Equal(1, budget.PeakDepth);
     }
 
     [Theory]

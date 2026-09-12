@@ -343,6 +343,7 @@ public static partial class Evaluator
         public sealed record AlgorithmArg(KatLang.Algorithm AlgorithmValue) : PreparedSequenceBuiltinSuffixArg
         {
             public CountedResult? PreparedValue { get; init; }
+            public Expr? Source { get; init; }
         }
 
         public sealed record ValueArg(Result ResultValue) : PreparedSequenceBuiltinSuffixArg;

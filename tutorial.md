@@ -2223,6 +2223,29 @@ Two things do *not* follow from it. Shadow the name and the laziness goes with i
 
 A higher-order wrapper also binds its own arguments before invoking the received callable. Thus `Apply3(if, 1, Tick(10), Tick(20))` would run both host callbacks before builtin `if` chooses. To give the builtin the branch expressions directly, write `Apply(f) = f(1, Tick(10), Tick(20))` and call `Apply(if)`; only `Tick(10)` runs. Naming a failing argument as a property can preserve its algorithm binding after an attempted value evaluation fails, so a successful wrapper call alone does not prove that the caller skipped that evaluation.
 
+#### A selected branch is an ordinary value demand
+
+The selected branch follows the same zero-argument signature check as a bare property reference. A branch that names an algorithm still needing arguments is therefore the same arity error that writing the name alone reports, and the body of that algorithm is never entered:
+
+<!-- spec:lazy-slot-demand-is-the-ordinary-zero-argument-demand -->
+```
+Inc(x) = x + 1
+if(1, Inc, 0)
+```
+
+**Result:** error — `Inc` expects 1 parameter, but the selected branch demands it with 0 arguments; the report names `Inc` at its reference, exactly as writing `Inc` alone would.
+
+Only the selected branch is demanded, so the same name in the branch that is not taken is never demanded or evaluated:
+
+```
+Inc(x) = x + 1
+if(0, Inc, 7)
+```
+
+**Result:** `7`
+
+The same rule applies to every builtin value slot — the `if` condition, a loop's initial state and `repeat` count, `atoms`, `range`, collection arguments and fixed value controls, and the `.string` receiver — while callback slots (`map`, `filter`, `reduce` steps, loop steps) supply arguments and are unaffected. `reduce`'s initial accumulator is also a value demand and keeps its dedicated hint when arguments are missing. Call the algorithm, as in `if(1, Inc(4), 0)`, when you mean its result.
+
 ---
 
 <a id="repetition"></a>

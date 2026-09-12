@@ -756,6 +756,15 @@ public static partial class Evaluator
     }
 
     private static EvalResult<T> MissingImplicitArguments<T>(Algorithm wired, SourceSpan? span)
+        => MissingImplicitArgumentsError(wired, span);
+
+    /// <summary>
+    /// The value-position rejection of a written brace block whose implicit
+    /// parameters nobody can supply: the <see cref="Expr.AlgorithmExpr"/> arm of
+    /// the zero-argument value-demand law
+    /// (<see cref="ZeroArgumentValueDemandRejection"/>).
+    /// </summary>
+    private static EvalError MissingImplicitArgumentsError(Algorithm wired, SourceSpan? span)
     {
         var paramNames = wired.Params;
         var inner = new EvalError.UnresolvedImplicitParams(paramNames)
@@ -778,6 +787,104 @@ public static partial class Evaluator
         => new(callee.Params.Count, 0)
         {
             InferredImplicitParameters = ImplicitParameterProvenance.CollectFrom(callee.Parameters),
+        };
+
+    /// <summary>
+    /// The written shape through which an algorithm is demanded as a zero-argument
+    /// VALUE; it selects the report of <see cref="ZeroArgumentValueDemandRejection"/>.
+    /// Lean: the <c>source?</c> match of <c>zeroArgumentDemandError?</c>.
+    /// </summary>
+    private enum ZeroArgumentDemandShape
+    {
+        /// <summary>A lexical property reference <c>X</c> (<see cref="Expr.Resolve"/>).</summary>
+        Property,
+
+        /// <summary>An algorithm-channel parameter <c>x</c> (<see cref="Expr.Param"/>).</summary>
+        Parameter,
+
+        /// <summary>
+        /// A structurally navigated member <c>A.M</c> (a <see cref="Expr.DotCall"/>
+        /// receiver resolved through <see cref="ResolveDotReceiver"/>).
+        /// </summary>
+        StructuralMember,
+
+        /// <summary>A written brace block (<see cref="Expr.AlgorithmExpr"/>).</summary>
+        Block,
+
+        /// <summary>An anonymous or value-reified algorithm (no written source).</summary>
+        Anonymous,
+    }
+
+    /// <summary>
+    /// The ONE zero-argument value-demand law (its rejection half). It is consulted
+    /// BEFORE an algorithm's body is entered wherever a resolved algorithm is
+    /// demanded for its VALUE with zero explicit arguments: the value-position
+    /// <c>Param</c>/<c>Resolve</c>/<c>AlgorithmExpr</c> arms (both dispatch twins),
+    /// every lazy builtin VALUE slot (<see cref="EvalResolvedArgumentCounted"/>: the
+    /// <c>if</c> condition and branches, <c>while</c>/<c>repeat</c> initial state,
+    /// the <c>repeat</c> count, <c>atoms</c>, <c>range</c>), and the ordinary-dot
+    /// <c>string</c> intrinsic's receiver (<see cref="EvalDotStringReceiverAlgOutput"/>).
+    /// A conditional cannot be accessed as a value
+    /// (<see cref="ConditionalValueAccessError"/>), and an algorithm with parameters
+    /// is not a zero-argument value: a property reports the property-context arity
+    /// mismatch, a parameter or a navigated member the bare one, and a written block
+    /// <see cref="EvalError.UnresolvedImplicitParams"/>. <c>null</c> means the demand
+    /// may proceed to the algorithm's output. The decision is the effective
+    /// signature's alone — a body that would happen to succeed without its parameter
+    /// is rejected all the same — and a builtin CALLBACK slot
+    /// (<c>map</c>/<c>filter</c>/<c>reduce</c> steps, loop steps) supplies arguments
+    /// and never consults this law. Lean: <c>zeroArgumentDemandError?</c>.
+    /// </summary>
+    private static EvalError? ZeroArgumentValueDemandRejection(
+        ZeroArgumentDemandShape shape,
+        string? name,
+        SourceSpan? span,
+        Algorithm algorithm)
+    {
+        if (shape == ZeroArgumentDemandShape.Block)
+        {
+            return algorithm.Params.Count == 0
+                ? null
+                : MissingImplicitArgumentsError(algorithm, span);
+        }
+
+        if (name is not null && ConditionalValueAccessError(name, algorithm) is { } conditionalError)
+            return conditionalError with { Span = span };
+
+        if (algorithm.Params.Count == 0)
+            return null;
+
+        var arity = ZeroArgumentDemandArityMismatch(algorithm);
+        return shape == ZeroArgumentDemandShape.Property
+            ? AtSpanIfMissing(new EvalError.WithContext(CtxProperty(name!), arity), span)
+            : arity with { Span = span };
+    }
+
+    /// <summary>
+    /// <see cref="ZeroArgumentValueDemandRejection"/> keyed by the written expression
+    /// the demanded algorithm was resolved from: a lexical reference, an
+    /// algorithm-channel parameter, a dot receiver, a written block, or nothing
+    /// (a value-reified argument, which carries no parameters). Every other written
+    /// shape resolves to a zero-parameter thunk and is never rejected.
+    /// Lean: <c>zeroArgumentDemandError?</c>.
+    /// </summary>
+    private static EvalError? ZeroArgumentValueDemandError(Expr? source, Algorithm algorithm)
+        => source switch
+        {
+            Expr.Resolve(var name) =>
+                ZeroArgumentValueDemandRejection(ZeroArgumentDemandShape.Property, name, source.Span, algorithm),
+            Expr.Param(var name) =>
+                ZeroArgumentValueDemandRejection(ZeroArgumentDemandShape.Parameter, name, source.Span, algorithm),
+            Expr.DotCall dotCall =>
+                ZeroArgumentValueDemandRejection(ZeroArgumentDemandShape.StructuralMember, dotCall.Name, source.Span, algorithm),
+            Expr.AlgorithmExpr =>
+                ZeroArgumentValueDemandRejection(
+                    ZeroArgumentDemandShape.Block,
+                    name: null,
+                    PreferExpressionSpan(source.Span, algorithm.Output),
+                    algorithm),
+            _ =>
+                ZeroArgumentValueDemandRejection(ZeroArgumentDemandShape.Anonymous, name: null, source?.Span, algorithm),
         };
 
     /// <summary>

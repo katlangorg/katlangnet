@@ -657,18 +657,15 @@ public static partial class Evaluator
             if (bound.ValueError is { } stickyLimit)
                 return AtSpanIfMissing(stickyLimit, span);
             var algBound = bound.Algorithm;
-            if (ConditionalValueAccessError(name, algBound) is { } conditionalError)
-                return conditionalError with { Span = span };
-            if (algBound.Params.Count == 0)
-            {
-                var valueR = WithSpan(
-                    span,
-                    await EvalResolvedAlgOutputForValueDemandAsync(algBound, ctx, valEnv).ConfigureAwait(false));
-                return valueR.IsError
-                    ? valueR.Error
-                    : EvalResult<CountedResult>.Ok(new CountedResult(valueR.Value, valueR.Value.ValueCount()));
-            }
-            return ZeroArgumentDemandArityMismatch(algBound) with { Span = span };
+            if (ZeroArgumentValueDemandRejection(ZeroArgumentDemandShape.Parameter, name, span, algBound) is { } rejection)
+                return rejection;
+
+            var valueR = WithSpan(
+                span,
+                await EvalResolvedAlgOutputForValueDemandAsync(algBound, ctx, valEnv).ConfigureAwait(false));
+            return valueR.IsError
+                ? valueR.Error
+                : EvalResult<CountedResult>.Ok(new CountedResult(valueR.Value, valueR.Value.ValueCount()));
         }
 
         return new EvalError.UnknownName(name) { Span = span };
@@ -813,17 +810,15 @@ public static partial class Evaluator
                     // Sync counted case calls the plain EvalAlgOutput; the twin awaits the
                     // counted core and projects its value (the plain wrapper is that projection).
                     var wired = WireToCaller(ctx, alg);
-                    if (wired.Params.Count == 0)
-                    {
-                        var blockR = WithSpan(
-                            PreferExpressionSpan(expr.Span, wired.Output),
-                            await EvalAlgOutputValueAsync(wired, ctx, valEnv).ConfigureAwait(false));
-                        if (blockR.IsError) return blockR.Error;
-                        return EvalResult<CountedResult>.Ok(new CountedResult(blockR.Value, blockR.Value.ValueCount()));
-                    }
-
                     var blockSpan = PreferExpressionSpan(expr.Span, wired.Output);
-                    return MissingImplicitArguments<CountedResult>(wired, blockSpan);
+                    if (ZeroArgumentValueDemandRejection(ZeroArgumentDemandShape.Block, name: null, blockSpan, wired) is { } rejection)
+                        return rejection;
+
+                    var blockR = WithSpan(
+                        blockSpan,
+                        await EvalAlgOutputValueAsync(wired, ctx, valEnv).ConfigureAwait(false));
+                    if (blockR.IsError) return blockR.Error;
+                    return EvalResult<CountedResult>.Ok(new CountedResult(blockR.Value, blockR.Value.ValueCount()));
                 }
 
             case Expr.Capture(var captureBody):
@@ -844,17 +839,8 @@ public static partial class Evaluator
                     if (resolvedR.IsError)
                         return AtSpanIfMissing(resolvedR.Error, expr.Span);
 
-                    if (ConditionalValueAccessError(name, resolvedR.Value.ResolvedAlgorithm) is { } conditionalError)
-                        return conditionalError with { Span = expr.Span };
-
-                    if (resolvedR.Value.ResolvedAlgorithm.Params.Count != 0)
-                    {
-                        return WithSpan<CountedResult>(
-                            expr.Span,
-                            new EvalError.WithContext(
-                                CtxProperty(name),
-                                ZeroArgumentDemandArityMismatch(resolvedR.Value.ResolvedAlgorithm)));
-                    }
+                    if (ZeroArgumentValueDemandRejection(ZeroArgumentDemandShape.Property, name, expr.Span, resolvedR.Value.ResolvedAlgorithm) is { } rejection)
+                        return rejection;
 
                     var propertyR = WithPropertyContextOnMissingOutput(name, expr.Span,
                         await EvalZeroArgPropertyAccessCountedAsync(resolvedR.Value, ctx, valEnv).ConfigureAwait(false));
@@ -2332,11 +2318,19 @@ public static partial class Evaluator
         ResolvedArgumentAlgorithm arg,
         EvalCtx ctx,
         IReadOnlyList<(string, Result)> valEnv)
-        => arg.PreparedValue is { } prepared
-            ? EvalResult<CountedResult>.Ok(prepared)
-            : arg.Algorithm is { } algorithm
-                ? await EvalArgumentAlgOutputCountedAsync(algorithm, ctx, valEnv).ConfigureAwait(false)
-                : new EvalError.BadArity();
+    {
+        if (arg.PreparedValue is { } prepared)
+            return EvalResult<CountedResult>.Ok(prepared);
+        if (arg.Algorithm is not { } algorithm)
+            return new EvalError.BadArity();
+
+        // The ONE zero-argument value-demand law decides before any body (or the
+        // argument level) is entered — see the synchronous twin.
+        if (ZeroArgumentValueDemandError(arg.Source, algorithm) is { } rejection)
+            return rejection;
+
+        return await EvalArgumentAlgOutputCountedAsync(algorithm, ctx, valEnv).ConfigureAwait(false);
+    }
 
     /// <summary>MIRROR OF <see cref="EvalResolvedArgument"/> — keep in lock-step.</summary>
     private static async ValueTask<EvalResult<Result>> EvalResolvedArgumentValueAsync(
@@ -2419,7 +2413,8 @@ public static partial class Evaluator
                     Value: null,
                     arg,
                     ValueError: null,
-                    resolvedArg.PreparedValue));
+                    resolvedArg.PreparedValue,
+                    resolvedArg.Source));
                 continue;
             }
 
@@ -2447,13 +2442,14 @@ public static partial class Evaluator
                         outputR.Value.Value,
                         arg,
                         ValueError: null,
-                        outputR.Value));
+                        outputR.Value,
+                        resolvedArg.Source));
                 }
 
                 continue;
             }
 
-            items.Add(new VariadicCallItem(Value: null, arg, outputR.Error));
+            items.Add(new VariadicCallItem(Value: null, arg, outputR.Error, Source: resolvedArg.Source));
         }
 
         return EvalResult<IReadOnlyList<VariadicCallItem>>.Ok(items);
@@ -2485,7 +2481,7 @@ public static partial class Evaluator
 
         var collectionItem = items[0];
         if (collectionItem.Value is null)
-            return collectionItem.ValueError ?? new EvalError.BadArity();
+            return SequenceBuiltinValueDemandError(collectionItem) ?? new EvalError.BadArity();
 
         var collectionValues = BuiltinCollectionItems(collectionItem.Value);
 
@@ -2648,6 +2644,7 @@ public static partial class Evaluator
                         stepR.Value,
                         initialR.Value.AlgorithmValue,
                         initialR.Value.PreparedValue,
+                        initialR.Value.Source,
                         ctx,
                         valEnv).ConfigureAwait(false);
                 }
@@ -2888,19 +2885,21 @@ public static partial class Evaluator
         Algorithm stepAlg,
         Algorithm initialAlg,
         CountedResult? preparedInitial,
+        Expr? initialSource,
         EvalCtx ctx,
         IReadOnlyList<(string, Result)> valEnv)
     {
+        // A parameterized initial accumulator is rejected from its signature at this
+        // boundary, never by entering its body — see the synchronous twin.
+        if (preparedInitial is null && ZeroArgumentValueDemandError(initialSource, initialAlg) is { } rejection)
+            return initialAlg.Params.Count != 0
+                ? ReduceInitialAccumulatorRequiresValueError(initialAlg)
+                : rejection;
+
         var initialR = preparedInitial is { } preparedValue
             ? EvalResult<CountedResult>.Ok(preparedValue)
             : await EvalArgumentAlgOutputCountedAsync(initialAlg, ctx, valEnv).ConfigureAwait(false);
-        if (initialR.IsError)
-        {
-            if (IsLikelyUnevaluatedParameterError(initialAlg, initialR.Error))
-                return ReduceInitialAccumulatorRequiresValueError(initialAlg);
-
-            return initialR.Error;
-        }
+        if (initialR.IsError) return initialR.Error;
 
         // The initial accumulator expression occupies ONE written accumulator slot —
         // see the synchronous twin.
@@ -3349,13 +3348,20 @@ public static partial class Evaluator
         EvalCtx ctx,
         IReadOnlyList<(string, Result)> valEnv)
     {
+        if (target is Expr.Param(var paramName)
+            && LookupAlgBinding(ctx.AlgEnv, paramName) is { ValueError: { } stickyLimit })
+        {
+            return AtSpanIfMissing(stickyLimit, target.Span);
+        }
+
+        // The receiver is demanded for its VALUE with zero arguments — see the
+        // synchronous twin.
+        if (ZeroArgumentValueDemandError(target, targetAlg) is { } rejection)
+            return rejection;
+
         switch (target)
         {
-            case Expr.Param(var name):
-                if (LookupAlgBinding(ctx.AlgEnv, name) is { ValueError: { } stickyLimit })
-                    return AtSpanIfMissing(stickyLimit, target.Span);
-                return await EvalResolvedAlgOutputForValueDemandAsync(targetAlg, ctx, valEnv).ConfigureAwait(false);
-
+            case Expr.Param:
             case Expr.Resolve:
                 return await EvalResolvedAlgOutputForValueDemandAsync(targetAlg, ctx, valEnv).ConfigureAwait(false);
 

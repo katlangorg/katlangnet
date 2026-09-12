@@ -30,11 +30,17 @@ inductive BuiltinApplyOutcome where
 
 def builtinProbeCtx : KatLang.EvalCtx := { callStack := [KatLang.preludeAlg] }
 
+/-- Hand-built probe algorithms enter builtin application as anonymous resolved
+    arguments (no written source): the zero-argument demand law then judges them
+    by their signature alone, exactly like a value-reified argument. -/
+def builtinProbeArgs (args : List Algorithm) : List KatLang.ResolvedArgumentAlgorithm :=
+  args.map (fun a => { algorithm := a })
+
 /-- Apply a builtin through both the plain and the counted dispatch path. -/
 def builtinApplyResults (b : KatLang.Builtin) (args : List Algorithm)
     : List (Except Error Unit) :=
-  [ (KatLang.runEvalM (KatLang.applyBuiltin b args builtinProbeCtx [])).map (fun _ => ()),
-    (KatLang.runEvalM (KatLang.applyBuiltinCounted b args builtinProbeCtx [])).map (fun _ => ()) ]
+  [ (KatLang.runEvalM (KatLang.applyBuiltin b (builtinProbeArgs args) builtinProbeCtx [])).map (fun _ => ()),
+    (KatLang.runEvalM (KatLang.applyBuiltinCounted b (builtinProbeArgs args) builtinProbeCtx [])).map (fun _ => ()) ]
 
 def classifyBuiltinApply : Except Error Unit -> BuiltinApplyOutcome
   | .ok _ => .succeeded
@@ -192,8 +198,8 @@ def builtinEmptyPolicyFailuresAreNotArityErrors : Bool :=
 -- builtin semantics.
 
 def builtinProjectionParityAt (b : KatLang.Builtin) (args : List Algorithm) : Bool :=
-  let plain := (KatLang.applyBuiltin b args builtinProbeCtx []).run KatLang.EvalState.empty
-  let counted := (KatLang.applyBuiltinCounted b args builtinProbeCtx []).run KatLang.EvalState.empty
+  let plain := (KatLang.applyBuiltin b (builtinProbeArgs args) builtinProbeCtx []).run KatLang.EvalState.empty
+  let counted := (KatLang.applyBuiltinCounted b (builtinProbeArgs args) builtinProbeCtx []).run KatLang.EvalState.empty
   match plain, counted with
   | .ok (value, plainState), .ok ((countedValue, _), countedState) =>
       value == countedValue && reprStr plainState == reprStr countedState
@@ -301,7 +307,7 @@ def ifBranchSequenceValue : Algorithm :=
 /-- Run counted `if` with an integer condition and two branch algorithms. -/
 def ifCountedResult (cond : Int) (t e : Algorithm) : Except KatLang.Error KatLang.CountedResult :=
   match (KatLang.applyBuiltinCounted .ifBuiltin
-      [builtinProbeValueArg cond, t, e] builtinProbeCtx []).run KatLang.EvalState.empty with
+      (builtinProbeArgs [builtinProbeValueArg cond, t, e]) builtinProbeCtx []).run KatLang.EvalState.empty with
   | .ok (counted, _) => .ok counted
   | .error err => .error err
 

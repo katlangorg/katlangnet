@@ -14,11 +14,11 @@ This is bounded differential validation over the Lean-guarded partition,
 not a formal verification of the evaluators.
 
 Partition (machine-checked by the `specCaseIds.length` guard below):
-- specification surface cases: 242
+- specification surface cases: 245
 - excluded parse-level cases (Lean has no surface parser): 29
 - excluded C#-only cases (each carries an explicit reason in the corpus): 10
-- Lean-guarded cases: 203
-- probe observations (C#-only by design): 472
+- Lean-guarded cases: 206
+- probe observations (C#-only by design): 505
 - internal-node cases live in the semantic-explorer corpus, not here: see
   lean/SemanticExplorerCases.lean
 
@@ -1098,6 +1098,21 @@ def case_if_laziness_follows_the_resolved_identity : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Boom" (alg [] [] [] [(.binary .div (.num 1) (.num 0))])] [(.call (.resolve "if") [.num 1, .num 10, .resolve "Boom"]), (.dotCall (.num 0) "if" (some [.resolve "Boom", .num 20]))])
 #guard obs case_if_laziness_follows_the_resolved_identity == "ok raw=S[10, 20] n=2"
 
+-- lazy-slot-demand-is-the-ordinary-zero-argument-demand [conditionals]: Inc(x) = x + 1 \n if(1, Inc, 0)
+def case_lazy_slot_demand_is_the_ordinary_zero_argument_demand : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))])] [(.call (.resolve "if") [.num 1, .resolve "Inc", .num 0])])
+#guard obs case_lazy_slot_demand_is_the_ordinary_zero_argument_demand == "err arity"
+
+-- lazy-slot-demand-covers-every-builtin-value-slot [collection-builtins]: Inc(x) = x + 1 \n Step(s) = s + 1 \n repeat(Step, 1, Inc)
+def case_lazy_slot_demand_covers_every_builtin_value_slot : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))]), privateProp "Step" (alg ["s"] [] [] [(.binary .add (.param "s") (.num 1))])] [(.call (.resolve "repeat") [.resolve "Step", .num 1, .resolve "Inc"])])
+#guard obs case_lazy_slot_demand_covers_every_builtin_value_slot == "err arity"
+
+-- dot-string-receiver-is-a-zero-argument-value-demand [strings]: Inc(x) = x + 1 \n Inc.string
+def case_dot_string_receiver_is_a_zero_argument_value_demand : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))])] [(.dotCall (.resolve "Inc") "string" none)])
+#guard obs case_dot_string_receiver_is_a_zero_argument_value_demand == "err arity"
+
 -- same-arity-user-if-keeps-user-identity [name-resolution]: if(a, b, c) = a + b + c \n if(1, 10, 20) \n 1.if(10, 20)
 def case_same_arity_user_if_keeps_user_identity : Expr :=
   .algorithmExpr (alg [] [] [privateProp "if" (alg ["a", "b", "c"] [] [] [(.binary .add (.binary .add (.param "a") (.param "b")) (.param "c"))])] [(.call (.resolve "if") [.num 1, .num 10, .num 20]), (.dotCall (.num 1) "if" (some [.num 10, .num 20]))])
@@ -1113,7 +1128,7 @@ def case_if_spread_builds_values_before_branch_selection : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Risky" (alg [] [] [] [(.capture [.num 10, (.binary .div (.num 1) (.num 0))])])] [(.call (.resolve "if") [.num 1, (.sequenceSpread (.resolve "Risky"))])])
 #guard obs case_if_spread_builds_values_before_branch_selection == "err div0"
 
--- 203 canonical Lean-guarded specification cases.
+-- 206 canonical Lean-guarded specification cases.
 
 /--
 Machine-checked Lean-guarded partition count: the id list is built by the
@@ -1321,10 +1336,13 @@ def specCaseIds : List String := [
   "if-composition-forms-agree",
   "if-arity-is-uniform-across-spellings",
   "if-laziness-follows-the-resolved-identity",
+  "lazy-slot-demand-is-the-ordinary-zero-argument-demand",
+  "lazy-slot-demand-covers-every-builtin-value-slot",
+  "dot-string-receiver-is-a-zero-argument-value-demand",
   "same-arity-user-if-keeps-user-identity",
   "parameter-named-if-carries-the-supplied-callable",
   "if-spread-builds-values-before-branch-selection"
 ]
-#guard specCaseIds.length == 203
+#guard specCaseIds.length == 206
 
 end LanguageSpecCases

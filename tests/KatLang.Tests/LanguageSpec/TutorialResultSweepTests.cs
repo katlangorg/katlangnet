@@ -46,6 +46,10 @@ public class TutorialResultSweepTests
                     "**Result:** error — `Total` does not resolve at the root (write `open Lib` or `Lib.Total`); `Lib`'s own `Total` is not the problem and is not blamed.",
                     KatLangErrorCode.UnresolvedImplicitParams),
                 new(
+                    "Inc(x) = x + 1\nif(1, Inc, 0)",
+                    "**Result:** error — `Inc` expects 1 parameter, but the selected branch demands it with 0 arguments; the report names `Inc` at its reference, exactly as writing `Inc` alone would.",
+                    KatLangErrorCode.ArityMismatch),
+                new(
                     "A = q + 1\nAdd1(x) = x + 1\nF(x) = Add1(A)\n\nF(7)",
                     "**Result:** error — `Add1`'s parameter `x` is bound to the callable `A`, and `A` still needs its implicit `q`, so demanding `x` as a value is an arity error.",
                     KatLangErrorCode.ArityMismatch),

@@ -547,7 +547,7 @@ For conditional inclusion over sequences, prefer `filter`.
 If an `if` branch returns multiple outputs, parenthesize that branch:
     if(flag, (1, 2), (3, 4))
 
-`if` returns the selected branch as one value boundary, so a multi-output property branch such as `X = 1, 2, 3` yields the grouped sequence value `(1, 2, 3)` (emitted count 1), exactly like referencing `X` directly. Use a result spread `if(flag, X, Y)*` to contribute that result as separate output slots.
+`if` returns the selected branch as one value boundary, so a multi-output property branch such as `X = 1, 2, 3` yields the grouped sequence value `(1, 2, 3)` (emitted count 1), exactly like referencing `X` directly. Use a result spread `if(flag, X, Y)*` to contribute that result as separate output slots. A branch must be a value or a call: a bare reference to an algorithm that still needs arguments (`if(c, Inc, 0)` with `Inc(x) = x + 1`) is an arity error whenever that branch is selected, exactly as writing `Inc` alone would be — write `Inc(4)`. The same holds for every builtin value slot (the `if` condition, `repeat`/`while` initial state, the `repeat` count, `atoms`, `range`, collection arguments and fixed value controls), never for callback slots such as `map`'s mapper or a loop step.
 
 Prefer `if(...)` for simple numeric/value branching. Prefer conditional algorithms only for literal pattern matching, string/category dispatch, or multi-branch structural behavior. For a single sequence-value input formula, use an ordinary recursive parameter pattern instead.
 
@@ -1060,7 +1060,7 @@ Idiomatic structure:
 
 === BEGIN GENERATED: katlang-spec-examples (DO NOT EDIT BY HAND) ===
 
-Verified reference examples (76 of the 242-case canonical language specification,
+Verified reference examples (78 of the 245-case canonical language specification,
 tests/KatLang.Tests/LanguageSpec/LanguageSpecCorpus.cs). Every program and expected
 output below is executed against the KatLang engine and (where representable)
 guarded against the Lean model on every build. Treat these as ground truth for the
@@ -1838,5 +1838,20 @@ Regenerate this block from the repo root with:
   Displays:
     10
     20
+
+[lazy-slot-demand-is-the-ordinary-zero-argument-demand] The selected branch is demanded exactly like a bare property reference: `Inc` still needs its `x`, so the ordinary zero-argument arity error is reported at the reference and `Inc`'s body is never entered — the same report writing `Inc` alone produces. Only the selected slot is demanded, so a parameterized algorithm in the unselected branch is harmless, and an explicit call (`Inc(4)`) is an ordinary value.
+
+    Inc(x) = x + 1
+    if(1, Inc, 0)
+
+  Fails with an evaluation error (arity).
+
+[lazy-slot-demand-covers-every-builtin-value-slot] Every builtin value slot — a loop's initial state, the `repeat` count, `atoms`, `range`, a collection, or a fixed value control — applies the ordinary zero-argument value-demand law to its argument. An algorithm that still needs arguments is rejected at its reference before its body runs; `reduce` keeps its dedicated initial-accumulator hint. Callback slots (`repeat`/`while` steps, `map`, `filter`, `reduce` steps) supply arguments and are unaffected.
+
+    Inc(x) = x + 1
+    Step(s) = s + 1
+    repeat(Step, 1, Inc)
+
+  Fails with an evaluation error (arity).
 
 === END GENERATED: katlang-spec-examples ===

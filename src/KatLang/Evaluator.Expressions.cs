@@ -346,9 +346,10 @@ public static partial class Evaluator
     /// Dual-view lookup order (Lean: <c>evalCounted</c> Param(x)):
     /// 1. Counted callback-param env (projected higher-order item meaning)
     /// 2. ValEnv (ordinary value meaning)
-    /// 3. AlgEnv fallback (algorithm meaning):
-    ///    - 0-param algorithm → auto-evaluate (thunk semantics)
-    ///    - multi-param algorithm → arityMismatch (needs explicit call)
+    /// 3. AlgEnv fallback (algorithm meaning): the ONE zero-argument value-demand
+    ///    law (<see cref="ZeroArgumentValueDemandRejection"/>) — a 0-param
+    ///    algorithm auto-evaluates (thunk semantics), a parameterized one is the
+    ///    bare arityMismatch (it needs an explicit call).
     /// </summary>
     private static EvalResult<CountedResult> EvalParamCounted(
         string name,
@@ -370,16 +371,13 @@ public static partial class Evaluator
             if (bound.ValueError is { } stickyLimit)
                 return AtSpanIfMissing(stickyLimit, span);
             var algBound = bound.Algorithm;
-            if (ConditionalValueAccessError(name, algBound) is { } conditionalError)
-                return conditionalError with { Span = span };
-            if (algBound.Params.Count == 0)
-            {
-                var valueR = WithSpan(span, EvalResolvedAlgOutputForValueDemand(algBound, ctx, valEnv));
-                return valueR.IsError
-                    ? valueR.Error
-                    : EvalResult<CountedResult>.Ok(new CountedResult(valueR.Value, valueR.Value.ValueCount()));
-            }
-            return ZeroArgumentDemandArityMismatch(algBound) with { Span = span };
+            if (ZeroArgumentValueDemandRejection(ZeroArgumentDemandShape.Parameter, name, span, algBound) is { } rejection)
+                return rejection;
+
+            var valueR = WithSpan(span, EvalResolvedAlgOutputForValueDemand(algBound, ctx, valEnv));
+            return valueR.IsError
+                ? valueR.Error
+                : EvalResult<CountedResult>.Ok(new CountedResult(valueR.Value, valueR.Value.ValueCount()));
         }
 
         return new EvalError.UnknownName(name) { Span = span };
@@ -406,17 +404,8 @@ public static partial class Evaluator
         if (resolvedR.IsError)
             return AtSpanIfMissing(resolvedR.Error, span);
 
-        if (ConditionalValueAccessError(name, resolvedR.Value.ResolvedAlgorithm) is { } conditionalError)
-            return conditionalError with { Span = span };
-
-        if (resolvedR.Value.ResolvedAlgorithm.Params.Count != 0)
-        {
-            return WithSpan<CountedResult>(
-                span,
-                new EvalError.WithContext(
-                    CtxProperty(name),
-                    ZeroArgumentDemandArityMismatch(resolvedR.Value.ResolvedAlgorithm)));
-        }
+        if (ZeroArgumentValueDemandRejection(ZeroArgumentDemandShape.Property, name, span, resolvedR.Value.ResolvedAlgorithm) is { } rejection)
+            return rejection;
 
         var propertyR = WithPropertyContextOnMissingOutput(name, span,
             EvalZeroArgPropertyAccessCounted(resolvedR.Value, ctx, valEnv));
@@ -512,10 +501,10 @@ public static partial class Evaluator
             case Expr.AlgorithmExpr(var alg):
                 {
                     var wired = WireToCaller(ctx, alg);
-                    if (wired.Params.Count == 0)
-                        return WithSpan(PreferExpressionSpan(expr.Span, wired.Output), EvalAlgOutput(wired, ctx, valEnv));
                     var blockSpan = PreferExpressionSpan(expr.Span, wired.Output);
-                    return MissingImplicitArguments<Result>(wired, blockSpan);
+                    if (ZeroArgumentValueDemandRejection(ZeroArgumentDemandShape.Block, name: null, blockSpan, wired) is { } rejection)
+                        return rejection;
+                    return WithSpan(blockSpan, EvalAlgOutput(wired, ctx, valEnv));
                 }
 
             case Expr.Capture(var captureBody):
@@ -596,15 +585,13 @@ public static partial class Evaluator
             case Expr.AlgorithmExpr(var alg):
                 {
                     var wired = WireToCaller(ctx, alg);
-                    if (wired.Params.Count == 0)
-                    {
-                        var blockR = WithSpan(PreferExpressionSpan(expr.Span, wired.Output), EvalAlgOutput(wired, ctx, valEnv));
-                        if (blockR.IsError) return blockR.Error;
-                        return EvalResult<CountedResult>.Ok(new CountedResult(blockR.Value, blockR.Value.ValueCount()));
-                    }
-
                     var blockSpan = PreferExpressionSpan(expr.Span, wired.Output);
-                    return MissingImplicitArguments<CountedResult>(wired, blockSpan);
+                    if (ZeroArgumentValueDemandRejection(ZeroArgumentDemandShape.Block, name: null, blockSpan, wired) is { } rejection)
+                        return rejection;
+
+                    var blockR = WithSpan(blockSpan, EvalAlgOutput(wired, ctx, valEnv));
+                    if (blockR.IsError) return blockR.Error;
+                    return EvalResult<CountedResult>.Ok(new CountedResult(blockR.Value, blockR.Value.ValueCount()));
                 }
 
             case Expr.Capture(var captureBody):

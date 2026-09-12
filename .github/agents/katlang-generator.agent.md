@@ -801,7 +801,7 @@ Grace only affects parameter detection order. It does not change the runtime val
 
 ### `if`
 
-Builtin `if` has exactly 3 arguments: `if(condition, thenExpr, elseExpr)`. The condition is numeric. Normally generate the three arguments directly. Explicit spread in call-argument position is valid when the spread value supplies exactly three values: `if(X*)` with `X = 1, 2, 3` opens into the three slots and equals `if(1, 2, 3)`, and `if(1, Pair*)` with `Pair = 2, 3` is also valid. A direct `if(X*)` behaves the same as a user-defined wrapper such as `MyIF(a, b, c) = if(a, b, c)` called as `MyIF(X*)`. A non-spread `if(X)` is one argument and is invalid; never generate a 2-argument call to builtin `if`. Parenthesize branch bodies only when they contain multiple comma-separated outputs: `if(cond, (a, b), (c, d))`. Single-value branches need no parentheses: `if(x > 0, 1, 0)`. `if` returns the selected branch as one value boundary, so a multi-output property branch such as `X = 1, 2, 3` yields the grouped sequence value `(1, 2, 3)` (emitted count 1), exactly like referencing `X` directly; use a result spread `if(cond, X, Y)*` to contribute that result as separate output slots. Builtin names are ordinary prelude bindings, not reserved words: declaring `if`, `count`, or `sum` yourself SHADOWS the builtin completely (resolution ignores arity, so there is no fallback to the builtin at a different argument count). Do not reuse a builtin name for a property or parameter unless shadowing is the intent.
+Builtin `if` has exactly 3 arguments: `if(condition, thenExpr, elseExpr)`. The condition is numeric. Normally generate the three arguments directly. Explicit spread in call-argument position is valid when the spread value supplies exactly three values: `if(X*)` with `X = 1, 2, 3` opens into the three slots and equals `if(1, 2, 3)`, and `if(1, Pair*)` with `Pair = 2, 3` is also valid. A direct `if(X*)` behaves the same as a user-defined wrapper such as `MyIF(a, b, c) = if(a, b, c)` called as `MyIF(X*)`. A non-spread `if(X)` is one argument and is invalid; never generate a 2-argument call to builtin `if`. A branch must be a value or a call: a bare reference to an algorithm that still needs arguments (`if(c, Inc, 0)` with `Inc(x) = x + 1`) is an arity error whenever that branch is selected, exactly as writing `Inc` alone would be — write `Inc(4)`. The same holds for every builtin value slot (the `if` condition, `repeat`/`while` initial state, the `repeat` count, `atoms`, `range`, collection arguments and fixed value controls), never for callback slots such as `map`'s mapper or a loop step. Parenthesize branch bodies only when they contain multiple comma-separated outputs: `if(cond, (a, b), (c, d))`. Single-value branches need no parentheses: `if(x > 0, 1, 0)`. `if` returns the selected branch as one value boundary, so a multi-output property branch such as `X = 1, 2, 3` yields the grouped sequence value `(1, 2, 3)` (emitted count 1), exactly like referencing `X` directly; use a result spread `if(cond, X, Y)*` to contribute that result as separate output slots. Builtin names are ordinary prelude bindings, not reserved words: declaring `if`, `count`, or `sum` yourself SHADOWS the builtin completely (resolution ignores arity, so there is no fallback to the builtin at a different argument count). Do not reuse a builtin name for a property or parameter unless shadowing is the intent.
 
 ### `repeat`
 
@@ -1534,7 +1534,7 @@ Without trailing output, `Order` has no direct result — use `Order.Total(25, 4
 
 === BEGIN GENERATED: katlang-spec-examples (DO NOT EDIT BY HAND) ===
 
-Verified reference examples (76 of the 242-case canonical language specification,
+Verified reference examples (78 of the 245-case canonical language specification,
 tests/KatLang.Tests/LanguageSpec/LanguageSpecCorpus.cs). Every program and expected
 output below is executed against the KatLang engine and (where representable)
 guarded against the Lean model on every build. Treat these as ground truth for the
@@ -2312,5 +2312,20 @@ Regenerate this block from the repo root with:
   Displays:
     10
     20
+
+[lazy-slot-demand-is-the-ordinary-zero-argument-demand] The selected branch is demanded exactly like a bare property reference: `Inc` still needs its `x`, so the ordinary zero-argument arity error is reported at the reference and `Inc`'s body is never entered — the same report writing `Inc` alone produces. Only the selected slot is demanded, so a parameterized algorithm in the unselected branch is harmless, and an explicit call (`Inc(4)`) is an ordinary value.
+
+    Inc(x) = x + 1
+    if(1, Inc, 0)
+
+  Fails with an evaluation error (arity).
+
+[lazy-slot-demand-covers-every-builtin-value-slot] Every builtin value slot — a loop's initial state, the `repeat` count, `atoms`, `range`, a collection, or a fixed value control — applies the ordinary zero-argument value-demand law to its argument. An algorithm that still needs arguments is rejected at its reference before its body runs; `reduce` keeps its dedicated initial-accumulator hint. Callback slots (`repeat`/`while` steps, `map`, `filter`, `reduce` steps) supply arguments and are unaffected.
+
+    Inc(x) = x + 1
+    Step(s) = s + 1
+    repeat(Step, 1, Inc)
+
+  Fails with an evaluation error (arity).
 
 === END GENERATED: katlang-spec-examples ===

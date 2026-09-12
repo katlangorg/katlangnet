@@ -70,7 +70,8 @@ public static partial class Evaluator
         Result? Value,
         Algorithm? Algorithm,
         EvalError? ValueError,
-        CountedResult? PreparedValue = null);
+        CountedResult? PreparedValue = null,
+        Expr? Source = null);
 
     private readonly record struct ResolvedArgumentAlgorithm(
         Algorithm? Algorithm,
@@ -89,6 +90,19 @@ public static partial class Evaluator
         /// a reconstructed literal.</para>
         /// </summary>
         public CountedResult? PreparedValue { get; init; }
+
+        /// <summary>
+        /// The written argument expression <see cref="Algorithm"/> was resolved from
+        /// (<see cref="ResolveArgAlgsWithSequenceSpread"/>): the demand-site identity the
+        /// zero-argument value-demand law (<see cref="ZeroArgumentValueDemandError"/>)
+        /// reports through — its span, and whether the algorithm was named as a property,
+        /// a parameter, a dot receiver, or a written block — when a builtin VALUE slot
+        /// demands the algorithm with zero arguments. <c>null</c> for value-reified
+        /// arguments (prepared callback data, expanded spread items, dotted receivers),
+        /// whose algorithms carry no parameters. Diagnostic identity only: it never
+        /// changes which algorithm a slot resolves to. Lean: <c>source?</c>.
+        /// </summary>
+        public Expr? Source { get; init; }
     }
 
     private readonly record struct UserCallBindings(

@@ -3847,6 +3847,93 @@ public static class LanguageSpecCorpus
         },
         new()
         {
+            Id = "lazy-slot-demand-is-the-ordinary-zero-argument-demand",
+            Category = "conditionals",
+            Source = "Inc(x) = x + 1\nif(1, Inc, 0)",
+            Outcome = SpecOutcome.EvalError,
+            ExpectedErrorCategory = "arity",
+            Probes =
+            [
+                // The false branch and the condition are the same demand.
+                new SpecProbe("Inc(x) = x + 1\nif(0, 0, Inc)", "err arity"),
+                new SpecProbe("Inc(x) = x + 1\nif(Inc, 1, 0)", "err arity"),
+                // An unselected slot is never demanded: laziness is untouched.
+                new SpecProbe("Inc(x) = x + 1\nif(0, Inc, 7)", "ok raw=7 n=1"),
+                new SpecProbe("Inc(x) = x + 1\nif(1, 7, Inc)", "ok raw=7 n=1"),
+                // A zero-parameter algorithm is an ordinary value, even one that captures an enclosing binding.
+                new SpecProbe("A = 7\nif(1, A, 0)", "ok raw=7 n=1"),
+                new SpecProbe("Outer(v) = { Inner = v + 1\n if(1, Inner, 0) }\nOuter(7)", "ok raw=8 n=1"),
+                // The decision is the signature's, not the body's: K never reads x.
+                new SpecProbe("K(x) = 5\nif(1, K, 0)", "err arity"),
+                // An explicit call is a value; an explicit zero-argument call is the ordinary call arity error.
+                new SpecProbe("Inc(x) = x + 1\nif(1, Inc(4), 0)", "ok raw=5 n=1"),
+                new SpecProbe("Inc(x) = x + 1\nif(1, Inc(), 0)", "err arity"),
+                // Inferred and collecting parameters count exactly like explicit ones.
+                new SpecProbe("A = q + 1\nif(1, A, 0)", "err arity"),
+                new SpecProbe("Collect(*xs) = xs\nif(1, Collect, 0)", "err arity"),
+                new SpecProbe("Collect(*xs) = xs\nif(1, Collect(), 0)", "ok raw=L[] n=1"),
+                // A clause family cannot be accessed as a value at all.
+                new SpecProbe("F(0) = 10\nF(x) = x + 1\nif(1, F, 0)", "err branch"),
+                // A parameter bound only on the callable channel is the same demand.
+                new SpecProbe("Inc(x) = x + 1\nApply(g) = if(1, g, 0)\nApply(Inc)", "err arity"),
+                // A zero-parameter branch that fails still reports its own failure.
+                new SpecProbe("Boom = 1 / 0\nif(1, Boom, 0)", "err div0"),
+            ],
+            IncludeInGeneratorPrompt = true,
+            Explanation = "The selected branch is demanded exactly like a bare property reference: `Inc` still needs its `x`, so the ordinary zero-argument arity error is reported at the reference and `Inc`'s body is never entered — the same report writing `Inc` alone produces. Only the selected slot is demanded, so a parameterized algorithm in the unselected branch is harmless, and an explicit call (`Inc(4)`) is an ordinary value.",
+        },
+        new()
+        {
+            Id = "lazy-slot-demand-covers-every-builtin-value-slot",
+            Category = "collection-builtins",
+            Source = "Inc(x) = x + 1\nStep(s) = s + 1\nrepeat(Step, 1, Inc)",
+            Outcome = SpecOutcome.EvalError,
+            ExpectedErrorCategory = "arity",
+            Probes =
+            [
+                // The repeat count and while's initial state are value slots too.
+                new SpecProbe("Inc(x) = x + 1\nStep(s) = s + 1\nrepeat(Step, Inc, 0)", "err arity"),
+                new SpecProbe("Inc(x) = x + 1\nDown(s) = s - 1, s\nwhile(Down, Inc)", "err arity"),
+                // So are the atoms and range arguments.
+                new SpecProbe("Inc(x) = x + 1\natoms(Inc)", "err arity"),
+                new SpecProbe("Inc(x) = x + 1\nrange(1, Inc)", "err arity"),
+                // Zero-parameter controls evaluate as before.
+                new SpecProbe("A = 0\nStep(s) = s + 1\nrepeat(Step, 1, A)", "ok raw=1 n=1"),
+                new SpecProbe("A = 7\natoms(A)", "ok raw=L[7] n=1"),
+                // Callback slots supply arguments and never consult the rule.
+                new SpecProbe("Inc(x) = x + 1\nrepeat(Inc, 2, 0)", "ok raw=2 n=1"),
+                new SpecProbe("Inc(x) = x + 1\nmap([1, 2], Inc)", "ok raw=L[2, 3] n=1"),
+                new SpecProbe("Add(e, a) = e + a\nreduce([1, 2], Add, 0)", "ok raw=3 n=1"),
+                // reduce's initial accumulator keeps its dedicated hint, decided from the signature: K never runs.
+                new SpecProbe("K(x) = 5\nAdd(e, a) = e + a\nreduce([1, 2], Add, K)", "err arity"),
+                // Collection and fixed value controls use the same demand law after binding.
+                new SpecProbe("K(x) = 5\ncount(K)", "err arity"),
+                new SpecProbe("K(x) = 5\ncontains([1], K)", "err arity"),
+                new SpecProbe("K(x) = 5\ntake([1], K)", "err arity"),
+                new SpecProbe("K(x) = 5\nskip([1], K)", "err arity"),
+            ],
+            IncludeInGeneratorPrompt = true,
+            Explanation = "Every builtin value slot — a loop's initial state, the `repeat` count, `atoms`, `range`, a collection, or a fixed value control — applies the ordinary zero-argument value-demand law to its argument. An algorithm that still needs arguments is rejected at its reference before its body runs; `reduce` keeps its dedicated initial-accumulator hint. Callback slots (`repeat`/`while` steps, `map`, `filter`, `reduce` steps) supply arguments and are unaffected.",
+        },
+        new()
+        {
+            Id = "dot-string-receiver-is-a-zero-argument-value-demand",
+            Category = "strings",
+            Source = "Inc(x) = x + 1\nInc.string",
+            Outcome = SpecOutcome.EvalError,
+            ExpectedErrorCategory = "arity",
+            Probes =
+            [
+                new SpecProbe("A = 7\nA.string", "ok raw='7' n=1"),
+                new SpecProbe("Inc(x) = x + 1\nInc(4).string", "ok raw='5' n=1"),
+                // A navigated parameterized member and a callable-channel parameter receiver are the same demand.
+                new SpecProbe("Lib = { Sub(x) = x }\nLib.Sub.string", "err arity"),
+                new SpecProbe("Inc(x) = x + 1\nF(g) = g.string\nF(Inc)", "err arity"),
+            ],
+            Explanation = "`.string` demands its receiver as a zero-argument value, so a receiver that still needs arguments is the ordinary arity error at the receiver and its body is never entered; `Inc(4).string` converts the call's result.",
+        },
+        new()
+        {
             Id = "same-arity-user-if-keeps-user-identity",
             Category = "name-resolution",
             Source = "if(a, b, c) = a + b + c\nif(1, 10, 20)\n1.if(10, 20)",

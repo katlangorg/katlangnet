@@ -102,17 +102,21 @@ public static partial class Evaluator
         var result = new List<ResolvedArgumentAlgorithm>(args.Count);
         foreach (var argExpr in args)
         {
+            // Every resolved argument records the written expression it came from: a
+            // builtin VALUE slot demands the algorithm through the zero-argument
+            // value-demand law, which reports at that expression's span and in its
+            // shape (property, parameter, dot receiver, written block).
             var spreadsSequence = argExpr is Expr.SequenceSpread;
             if (ShouldWrapBuiltinArgExprAsValue(argExpr, ctx, valEnv))
             {
-                result.Add(new ResolvedArgumentAlgorithm(WrapArgExprAsValue(argExpr, ctx), spreadsSequence));
+                result.Add(new ResolvedArgumentAlgorithm(WrapArgExprAsValue(argExpr, ctx), spreadsSequence) { Source = argExpr });
                 continue;
             }
 
             var r = ResolveAlg(argExpr, ctx);
             if (r.IsOk)
             {
-                result.Add(new ResolvedArgumentAlgorithm(r.Value, spreadsSequence));
+                result.Add(new ResolvedArgumentAlgorithm(r.Value, spreadsSequence) { Source = argExpr });
             }
             else if (IsLiftableError(r.Error))
             {
@@ -121,7 +125,7 @@ public static partial class Evaluator
                 var wrapper = new Algorithm.User(
                     Parent: null, Parameters: [], Opens: [],
                     Properties: [], Output: [argExpr]);
-                result.Add(new ResolvedArgumentAlgorithm(WireToCaller(ctx, wrapper), spreadsSequence));
+                result.Add(new ResolvedArgumentAlgorithm(WireToCaller(ctx, wrapper), spreadsSequence) { Source = argExpr });
             }
             else
             {

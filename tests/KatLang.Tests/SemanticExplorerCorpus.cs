@@ -554,6 +554,30 @@ public static class SemanticExplorerCorpus
 
         Special("openLocalOnlyMemberIsNotASecondProvider",
             "Pub = {\n    public X = 101\n}\nLib(p) = {\n    public X = p + 202\n    X\n}\nA = {\n    open Pub, Lib\n    X\n}\nA"),
+
+        // F9: a builtin VALUE slot and the `.string` receiver demand their algorithm
+        // through the ONE zero-argument demand law. A selected parameterized
+        // algorithm is the arity rejection — never `unknownName x` from inside its
+        // body, pinned on both sides of the differential — the unselected slot is
+        // never demanded, a zero-parameter algorithm is a value, and callback
+        // slots are untouched.
+        Special("ifSelectedParameterizedBranchIsArity", "Inc(x) = x + 1\nif(1, Inc, 0)"),
+        Special("ifSelectedParameterizedFalseBranchIsArity", "Inc(x) = x + 1\nif(0, 0, Inc)"),
+        Special("ifParameterizedConditionIsArity", "Inc(x) = x + 1\nif(Inc, 1, 0)"),
+        Special("ifUnselectedParameterizedBranchStaysLazy", "Inc(x) = x + 1\nif(0, Inc, 7)"),
+        Special("ifZeroParameterBranchIsValue", "A = 7\nif(1, A, 0)"),
+        Special("ifParameterIgnoringBodyStillArity", "K(x) = 5\nif(1, K, 0)"),
+        Special("ifCollectingCallableSlotIsArity", "Collect(*xs) = xs\nif(1, Collect, 0)"),
+        Special("ifAlgorithmChannelParameterSlotIsArity", "Inc(x) = x + 1\nApply(g) = if(1, g, 0)\nApply(Inc)"),
+        Special("repeatInitialParameterizedSlotIsArity", "Inc(x) = x + 1\nStep(s) = s + 1\nrepeat(Step, 1, Inc)"),
+        Special("repeatCountParameterizedSlotIsArity", "Inc(x) = x + 1\nStep(s) = s + 1\nrepeat(Step, Inc, 0)"),
+        Special("whileInitialParameterizedSlotIsArity", "Inc(x) = x + 1\nDown(s) = s - 1, s\nwhile(Down, Inc)"),
+        Special("atomsParameterizedSlotIsArity", "Inc(x) = x + 1\natoms(Inc)"),
+        Special("rangeParameterizedSlotIsArity", "Inc(x) = x + 1\nrange(1, Inc)"),
+        Special("dotStringParameterizedReceiverIsArity", "Inc(x) = x + 1\nInc.string"),
+        Special("dotStringNavigatedParameterizedMemberIsArity", "Lib = { Sub(x) = x }\nLib.Sub.string"),
+        Special("reduceParameterIgnoringInitialStillRejected", "K(x) = 5\nAdd(e, a) = e + a\nreduce([1, 2], Add, K)"),
+        Special("repeatParameterizedStepIsCallback", "Inc(x) = x + 1\nrepeat(Inc, 2, 0)"),
     ];
 
     // ----- Direct internal-node cases (Expr.SequenceConstruct) -----------------
