@@ -155,6 +155,7 @@ public class DiagnosticCodeTests
         { "same-line-call-arguments-without-comma", "F(a, b) = a + b\nF(1 2)", DiagnosticCode.UnseparatedSameLineItem },
         { "same-line-definition-body-slots", "a = 1\nb = 2\nP = a b\nP", DiagnosticCode.UnseparatedSameLineItem },
         { "same-line-declaration-after-content", "x = 3 y = 4\nx + y", DiagnosticCode.UnseparatedSameLineItem },
+        { "same-line-parameter-patterns-without-comma", "F(a b) = a + b\nF(1, 2)", DiagnosticCode.UnseparatedSameLineItem },
         { "collect-marker-detached", "* items = (1, 2)\nitems", DiagnosticCode.InvalidCollectMarker },
         { "collect-marker-repeated", "**items = (1, 2, 3)\nitems", DiagnosticCode.InvalidCollectMarker },
         { "collect-marker-in-expression", "x = *values\nx", DiagnosticCode.InvalidCollectMarker },

@@ -1533,7 +1533,7 @@ Without trailing output, `Order` has no direct result — use `Order.Total(25, 4
 
 === BEGIN GENERATED: katlang-spec-examples (DO NOT EDIT BY HAND) ===
 
-Verified reference examples (75 of the 236-case canonical language specification,
+Verified reference examples (76 of the 237-case canonical language specification,
 tests/KatLang.Tests/LanguageSpec/LanguageSpecCorpus.cs). Every program and expected
 output below is executed against the KatLang engine and (where representable)
 guarded against the Lean model on every build. Treat these as ground truth for the
@@ -1604,6 +1604,13 @@ Regenerate this block from the repo root with:
     x + y
 
   Rejected by the parser: "Unexpected item after a closed expression on the same line ..."
+
+[same-line-parameter-patterns-need-comma] Parameter lists are comma-separated like every other same-line list: `F(a, b) = a + b` declares two parameters, while `F(a b) = a + b` is rejected once, at `b`, with the pattern-list report (inside a parameter list the comma is the only repair). The same rule covers literal, nested, and collecting patterns: `F(1 2) = 3`, `F((a b)) = a`, and `F(a, *b c) = a` are each rejected at their unseparated item.
+
+    F(a b) = a + b
+    F(1, 2)
+
+  Rejected by the parser: "Unexpected item after a parameter pattern on the same line ..."
 
 [capture-supply] Property access is a value boundary: a multi-item body is observed by the caller as one canonical sequence value.
 

@@ -362,6 +362,18 @@ public static class LanguageSpecCorpus
         },
         new()
         {
+            Id = "same-line-parameter-patterns-need-comma",
+            Category = "parser-layout",
+            Source = "F(a b) = a + b\nF(1, 2)",
+            Outcome = SpecOutcome.ParseError,
+            ExpectedParseDiagnosticFragment = "Unexpected item after a parameter pattern on the same line",
+            ExpectedDiagnosticCode = DiagnosticCode.UnseparatedSameLineItem,
+            IncludeInGeneratorPrompt = true,
+            Notes = "Source-level SYN-07A separator diagnostic for parameter-pattern lists (clause heads and nested sequence-value patterns); no elaborated Lean program exists. Recovery keeps `b` a parameter of F — the head recovers as `F(a, b)` — so `a + b` stays F's body and nothing leaks into the root as output rows or implicit parameters.",
+            Explanation = "Parameter lists are comma-separated like every other same-line list: `F(a, b) = a + b` declares two parameters, while `F(a b) = a + b` is rejected once, at `b`, with the pattern-list report (inside a parameter list the comma is the only repair). The same rule covers literal, nested, and collecting patterns: `F(1 2) = 3`, `F((a b)) = a`, and `F(a, *b c) = a` are each rejected at their unseparated item.",
+        },
+        new()
+        {
             Id = "capture-supply",
             Category = "item-supply-vs-value",
             Source = "A = 1, 2, 3\nA",

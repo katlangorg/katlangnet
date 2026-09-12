@@ -34,6 +34,14 @@ public class SameLineSeparatorTests
     private const string Message =
         "Unexpected item after a closed expression on the same line. Add ',' to separate slots, add an operator to continue the expression, or start a declaration on a new line.";
 
+    /// <summary>
+    /// The same family's report for a parameter-pattern list (a clause head
+    /// or a nested sequence-value pattern): the comma is the only repair
+    /// there, so the wording names just that and the construct.
+    /// </summary>
+    private const string PatternMessage =
+        "Unexpected item after a parameter pattern on the same line. Add ',' to separate the patterns of a parameter list.";
+
     private static string Display(string source)
     {
         var result = KatLangEngine.Run(source);
@@ -59,11 +67,13 @@ public class SameLineSeparatorTests
     /// The raw syntax phase reports EXACTLY the separator diagnostics listed
     /// in <paramref name="itemStarts"/> ("line:column" of the first token of
     /// each unseparated second item, in source order), each with the exact
-    /// generic wording and a one-token primary span starting there; the
-    /// elaborated parse keeps them, and the engine surfaces the family as a
-    /// parse failure under the same-named public error code.
+    /// wording <paramref name="message"/> (the generic expression-list wording
+    /// unless the list is a parameter-pattern list) and a one-token primary
+    /// span starting there; the elaborated parse keeps them, and the engine
+    /// surfaces the family as a parse failure under the same-named public
+    /// error code.
     /// </summary>
-    private static IReadOnlyList<Diagnostic> AssertRejected(string source, string itemStarts)
+    private static IReadOnlyList<Diagnostic> AssertRejected(string source, string itemStarts, string message = Message)
     {
         var expectedStarts = itemStarts.Split(';', StringSplitOptions.RemoveEmptyEntries)
             .Select(static s => s.Split(':'))
@@ -76,7 +86,7 @@ public class SameLineSeparatorTests
         {
             Assert.Equal(DiagnosticSeverity.Error, diagnostic.Severity);
             Assert.Equal(DiagnosticCode.UnseparatedSameLineItem, diagnostic.Code);
-            Assert.Equal(Message, diagnostic.Message);
+            Assert.Equal(message, diagnostic.Message);
             Assert.Equal(expected.Line, diagnostic.Span.StartLineNumber);
             Assert.Equal(expected.Column, diagnostic.Span.StartColumn);
             Assert.Equal(expected.Line, diagnostic.Span.EndLineNumber);
@@ -86,6 +96,8 @@ public class SameLineSeparatorTests
         }
 
         var elaborated = Parser.Parse(source);
+        if (message == PatternMessage)
+            Assert.Equal(syntax.Diagnostics, elaborated.Diagnostics);
         Assert.Equal(
             syntax.Diagnostics.Where(static d => d.Code == DiagnosticCode.UnseparatedSameLineItem),
             elaborated.Diagnostics.Where(static d => d.Code == DiagnosticCode.UnseparatedSameLineItem));
@@ -93,7 +105,7 @@ public class SameLineSeparatorTests
         var failure = Assert.IsType<RunResult.ParseFailure>(KatLangEngine.Run(source));
         Assert.Contains(failure.Errors, static e => e.Code == KatLangErrorCode.UnseparatedSameLineItem);
         Assert.All(failure.Errors.Where(static e => e.Code == KatLangErrorCode.UnseparatedSameLineItem),
-            static e => Assert.Equal(Message, e.Message));
+            e => Assert.Equal(message, e.Message));
         return syntax.Diagnostics;
     }
 
@@ -458,14 +470,335 @@ public class SameLineSeparatorTests
         Assert.Equal(["P", "Q"], syntax.Root.Properties.Select(static p => p.Name));
     }
 
-    [Fact]
-    public void MalformedPatternDeclaration_KeepsItsOwnDiagnostics()
+    // ── Parameter-pattern lists: the same rule, the comma as the one repair ──
+    // Clause heads and nested sequence-value patterns are comma-separated
+    // lists too. A same-line token that can begin another pattern item without
+    // a comma is the same family's diagnostic (pattern-worded, since a pattern
+    // has no operator to continue with and no declaration to move), reported
+    // ONCE at that item and recovered as the next pattern of the SAME list, so
+    // the head's ')' and '=' are found where written and the body stays the
+    // head's body — never the generic closing-delimiter cascade that used to
+    // recover `= a + b` as unrelated root rows with root implicit parameters.
+
+    [Theory]
+    [InlineData("F(a b) = a + b\nF(1, 2)", "1:5")]
+    [InlineData("F(x y) = x + y\nF(1, 2)", "1:5")]
+    [InlineData("F(1 2) = 3\nF(1, 2)", "1:5")]
+    [InlineData("F((a b)) = a\nF((1, 2))", "1:6")]
+    [InlineData("F(a, *b c) = a\nF(1, 2, 3)", "1:9")]
+    [InlineData("F(a *b) = a\nF(1, 2)", "1:5")]
+    [InlineData("F(a (b, c)) = a\nF(1, (2, 3))", "1:5")]
+    [InlineData("F((a) b) = a\nF((1), 2)", "1:7")]
+    [InlineData("F(1 -2) = 3\nF(1, -2)", "1:5")]
+    [InlineData("F(a 'x') = a\nF(1, 'x')", "1:5")]
+    [InlineData("F(a b c) = a\nF(1, 2, 3)", "1:5;1:7")]
+    [InlineData("F(a b, c d) = a\nF(1, 2, 3, 4)", "1:5;1:10")]
+    [InlineData("public F(a b) = a + b\nF(1, 2)", "1:12")]
+    [InlineData("F(0, 0) = 0\nF(x y) = x + y\nF(1, 2)", "2:5")]
+    [InlineData("M = {\n    public F(a b) = a + b\n}\nM.F(1, 2)", "2:16")]
+    [InlineData("F(a bee) = a + bee", "1:5")]
+    [InlineData("F(a b) = a + b\r\nF(1, 2)", "1:5")]
+    [InlineData("F(\n a, # first\n b c # missing comma\n) = a\nF(1, 2, 3)", "3:4")]
+    [InlineData("F(a (b c)) = a\nF(1, (2, 3))", "1:5;1:8")]
+    [InlineData("F((a b) c) = a\nF((1, 2), 3)", "1:6;1:9")]
+    [InlineData("F(a b) = a + b\nG(x) = x\nG(4)", "1:5")]
+    public void ParameterPatternList_WithoutComma_IsRejectedOnceAtTheNextPattern(string source, string itemStarts)
     {
-        // `F(x y) = x + y` is rejected by the pattern grammar; the separator
-        // rule never adds to that recovery.
-        var syntax = Parser.ParseSyntax("F(x y) = x + y\nF(1, 2)");
-        Assert.NotEmpty(syntax.Diagnostics);
+        var diagnostics = AssertRejected(source, itemStarts, PatternMessage);
+        // Compare the WHOLE recovered program with the clean comma spelling,
+        // including nested patterns, clause families, bodies, and later rows.
+        // The existing AST encoder omits source coordinates but retains the
+        // language's structural distinctions; never evaluate malformed source.
+        var repaired = source;
+        var tokens = Lexer.Tokenize(source).Tokens;
+        foreach (var diagnostic in diagnostics.Reverse())
+        {
+            var token = Assert.Single(tokens, t => t.Line == diagnostic.Span.StartLineNumber
+                && t.Column == diagnostic.Span.StartColumn);
+            repaired = repaired.Insert(token.Position, ",");
+        }
+        var recovered = SourceProvenance.ParseAllowingDiagnostics(source).Root;
+        Assert.Empty(recovered.Parameters);
+        Assert.Equal(LeanAstEncoder.EncodeProgram(SourceProvenance.ParseValid(repaired).Root),
+            LeanAstEncoder.EncodeProgram(recovered));
+    }
+
+    [Fact]
+    public void Recovery_ParameterPatternList_KeepsTheItemInTheSameHead()
+    {
+        // `F(a b) = a + b`: `b` is F's SECOND parameter and `a + b` is F's body.
+        // Nothing leaks to the root — no stray rows, no implicit parameters —
+        // and the call row stays the only root output.
+        var parse = SourceProvenance.ParseAllowingDiagnostics("F(a b) = a + b\nF(1, 2)");
+        Assert.Equal([DiagnosticCode.UnseparatedSameLineItem], parse.Diagnostics.Select(static d => d.Code));
+        var root = Assert.IsType<Algorithm.User>(parse.Root);
+        var f = Assert.IsType<Algorithm.User>(Assert.Single(root.Properties).Value);
+        Assert.Equal(["a", "b"], f.Params);
+        Assert.IsType<Expr.Binary>(Assert.Single(f.Output));
+        Assert.Empty(root.Parameters);
+        var call = Assert.IsType<Expr.Call>(Assert.Single(root.Output));
+        Assert.Equal(2, call.Args.Count);
+
+        // Literal heads recover as the clause pattern their comma spelling writes.
+        var literal = Assert.IsType<Algorithm.Conditional>(
+            Assert.Single(SourceProvenance.ParseSyntaxAllowingDiagnosticsRoot("F(1 2) = 3").Properties).Value);
+        var pattern = Assert.IsType<Pattern.SequenceValue>(Assert.Single(literal.Branches).Pattern);
+        Assert.Equal(2, pattern.Items.Count);
+        Assert.Equal(1m, Assert.IsType<Pattern.LitInt>(pattern.Items[0]).Value);
+        Assert.Equal(2m, Assert.IsType<Pattern.LitInt>(pattern.Items[1]).Value);
+
+        // A nested pattern recovers inside ITS parentheses.
+        var nested = Assert.IsType<Algorithm.User>(
+            Assert.Single(SourceProvenance.ParseSyntaxAllowingDiagnosticsRoot("F((a b)) = a").Properties).Value);
+        var sequence = Assert.IsType<SequenceValueParameterPattern>(Assert.Single(nested.ExplicitParameterPatterns));
+        Assert.Equal(["a", "b"], sequence.Items.Select(static item => Assert.IsType<CaptureParameterPattern>(item).Name));
+
+        // The item after a collecting binding recovers as the fixed suffix parameter.
+        var collecting = Assert.IsType<Algorithm.User>(
+            Assert.Single(SourceProvenance.ParseSyntaxAllowingDiagnosticsRoot("F(a, *b c) = a").Properties).Value);
+        Assert.Equal(
+            [("a", ParameterKind.Normal), ("b", ParameterKind.Collecting), ("c", ParameterKind.Normal)],
+            collecting.Parameters.Select(static p => (p.Name, p.Kind)));
+    }
+
+    [Theory]
+    [InlineData("F(a, b) = a + b\nF(1, 2)", "3")]
+    [InlineData("F(\n    a,\n    b\n) = a + b\nF(1, 2)", "3")]
+    [InlineData("F(a,\n  b) = a + b\nF(1, 2)", "3")]
+    [InlineData("F(\n    a\n    , b\n) = a + b\nF(1, 2)", "3")]
+    [InlineData("F( a , b ) = a + b\nF(1, 2)", "3")]
+    [InlineData("F((a, b)) = a * b\nF((3, 4))", "12")]
+    [InlineData("F(a, *b, c) = b\nF(1, 2, 3, 4)", "[2, 3]")]
+    [InlineData("F(1, -2) = 'pair'\nF(x, y) = x + y\nF(1, -2)", "pair")]
+    [InlineData("F(0) = 1\nF(x) = x\nF(0)", "1")]
+    [InlineData("F(\r\n a, # first\r\n b # last\r\n) = a + b\r\nF(1, 2)", "3")]
+    [InlineData("F((a, (*b, c))) = b\nF((1, (2, 3, 4)))", "[2, 3]")]
+    [InlineData("F(a, b) = a~ + b\nF(1, 2)", "3")]
+    public void ParameterPatternLists_WithCommas_StayValid(string source, string expected)
+        => AssertValid(source, expected);
+
+    [Theory]
+    // A malformed atom that diagnosed the token after it owns that boundary.
+    [InlineData("F(-x) = 1\nF(1)", "UnexpectedToken")]
+    [InlineData("F(a, ] b) = a\nF(1, 2)", "UnexpectedToken")]
+    // A star nothing can follow is the atom's own spread-marker diagnostic.
+    [InlineData("F(a *) = a\nF(1)", "InvalidCollectMarker")]
+    // A star an operand follows is a next collecting binding missing its comma;
+    // the marker grammar then reports the detached or nameless marker itself.
+    [InlineData("F(a * b) = a\nF(1, 2)", "UnseparatedSameLineItem;InvalidCollectMarker")]
+    [InlineData("F(a *2) = a\nF(1, 2)", "UnseparatedSameLineItem;InvalidCollectMarker")]
+    [InlineData("F(a, *b *c) = a\nF(1, 2, 3)", "UnseparatedSameLineItem;InvalidCollectingBinding")]
+    // Grace in a clause head is rejected on its own; a missing comma beside it
+    // is a separate defect, reported at the item it belongs to.
+    [InlineData("F(a ~b) = a\nF(1, 2)", "InvalidGraceMarker;UnseparatedSameLineItem")]
+    [InlineData("F(1 ~b) = 1\nF(1, 2)", "UnseparatedSameLineItem;InvalidGraceMarker")]
+    public void ParameterPatternRecovery_ReportsEachDefectOnce(string source, string expectedCodes)
+    {
+        var syntax = Parser.ParseSyntax(source);
+        Assert.Equal(
+            expectedCodes.Split(';').Select(Enum.Parse<DiagnosticCode>),
+            syntax.Diagnostics.Select(static d => d.Code));
+    }
+
+    [Theory]
+    [InlineData("F(-x) = 1", 4)]
+    [InlineData("F((-x)) = 1", 5)]
+    public void MalformedNegativePattern_BlamesTheNameOnceInsideItsHead(string source, int column)
+    {
+        var parse = SourceProvenance.ParseAllowingDiagnostics(source);
+        var diagnostic = Assert.Single(parse.Diagnostics);
+        Assert.Equal(DiagnosticCode.UnexpectedToken, diagnostic.Code);
+        Assert.Equal("Expected number after '-' in pattern.", diagnostic.Message);
+        Assert.Equal(new SourceSpan(1, column, 1, column), diagnostic.Span);
+        Assert.Equal("F", Assert.Single(parse.Root.Properties).Name);
+        Assert.Empty(parse.Root.Output);
+        Assert.Empty(parse.Root.Parameters);
+        var failure = Assert.IsType<RunResult.ParseFailure>(KatLangEngine.Run(source));
+        Assert.Equal(KatLangErrorCode.UnexpectedToken, Assert.Single(failure.Errors).Code);
+    }
+
+    [Theory]
+    [InlineData("\n")]
+    [InlineData("\r\n")]
+    public void PatternStarOperandLookahead_CrossesCommentsAndNewlines(string newline)
+    {
+        var source = $"F(a * # marker{newline}b) = a";
+        var parse = SourceProvenance.ParseAllowingDiagnostics(source);
+        Assert.Collection(parse.Diagnostics,
+            separator =>
+            {
+                Assert.Equal(DiagnosticCode.UnseparatedSameLineItem, separator.Code);
+                Assert.Equal(PatternMessage, separator.Message);
+                Assert.Equal(new SourceSpan(1, 5, 1, 5), separator.Span);
+            },
+            marker =>
+            {
+                Assert.Equal(DiagnosticCode.InvalidCollectMarker, marker.Code);
+                Assert.Equal("The collect marker `*` must be directly attached to its binding name: write `*b`.", marker.Message);
+                Assert.Equal(new SourceSpan(1, 5, 2, 1), marker.Span);
+            });
+        var f = Assert.IsType<Algorithm.User>(Assert.Single(parse.Root.Properties).Value);
+        Assert.Equal([("a", ParameterKind.Normal), ("b", ParameterKind.Normal)],
+            f.Parameters.Select(static p => (p.Name, p.Kind)));
+        Assert.Empty(parse.Root.Output);
+        Assert.Empty(parse.Root.Parameters);
+    }
+
+    [Theory]
+    [InlineData("F(a b) =", 5)]
+    [InlineData("F((a b)) =", 6)]
+    public void RecoveredPatternHead_WithMissingBodyAtEof_KeepsItsDeclaration(string source, int column)
+    {
+        var parse = SourceProvenance.ParseAllowingDiagnostics(source);
+        Assert.Collection(parse.Diagnostics,
+            separator =>
+            {
+                Assert.Equal(DiagnosticCode.UnseparatedSameLineItem, separator.Code);
+                Assert.Equal(PatternMessage, separator.Message);
+                Assert.Equal(new SourceSpan(1, column, 1, column), separator.Span);
+            },
+            eof =>
+            {
+                Assert.Equal(DiagnosticCode.UnexpectedToken, eof.Code);
+                Assert.Equal("Unexpected end of input.", eof.Message);
+                Assert.Equal(new SourceSpan(1, source.Length + 1, 1, source.Length + 1), eof.Span);
+            });
+        Assert.Equal("F", Assert.Single(parse.Root.Properties).Name);
+        Assert.Empty(parse.Root.Output);
+        Assert.Empty(parse.Root.Parameters);
+        Assert.IsType<RunResult.ParseFailure>(KatLangEngine.Run(source));
+    }
+
+    [Theory]
+    [InlineData("F(a b")]
+    [InlineData("F((a b)")]
+    public void UnclosedHeadAtEof_RemainsAnInvalidCallWithoutDeclarationLookahead(string source)
+    {
+        // Without the closing head and '=', lookahead cannot identify a
+        // declaration. Keep expression recovery and reject the incomplete call.
+        var syntax = Parser.ParseSyntax(source);
+        Assert.Empty(syntax.Root.Properties);
+        Assert.Contains(syntax.Diagnostics, d => d.Message == Message);
+        Assert.Contains(syntax.Diagnostics, d => d.Code == DiagnosticCode.UnexpectedToken
+            && d.Message == "Expected ')' but found end of input.");
+        Assert.DoesNotContain(syntax.Diagnostics, d => d.Message == PatternMessage);
+        Assert.IsType<RunResult.ParseFailure>(KatLangEngine.Run(source));
+    }
+
+    [Theory]
+    [InlineData("F(1*) = 1\nF(1)", 1, 4, "'*'")]
+    [InlineData("F(1 *) = 1\nF(1)", 1, 5, "'*'")]
+    [InlineData("F(\n    a\n    b\n) = a + b\nF(1, 2)", 3, 5, "a name")]
+    [InlineData("F(a # comment\nb) = a", 2, 1, "a name")]
+    [InlineData("F(a # comment\r\nb) = a", 2, 1, "a name")]
+    [InlineData("F(a\n*b) = a", 2, 1, "'*'")]
+    public void PatternListWithoutANextSameLinePattern_KeepsTheClosingDelimiterDiagnostic(
+        string source, int line, int column, string found)
+    {
+        // A star that no operand can follow is never a next pattern, and a
+        // parameter list has no newline separator: both reach the ordinary
+        // closing-delimiter check unchanged, and the separator rule stays silent.
+        var syntax = Parser.ParseSyntax(source);
+        var first = syntax.Diagnostics[0];
+        Assert.Equal(DiagnosticCode.UnexpectedToken, first.Code);
+        Assert.Equal($"Expected ')' but found {found}.", first.Message);
+        Assert.Equal((line, column), (first.Span.StartLineNumber, first.Span.StartColumn));
         Assert.DoesNotContain(syntax.Diagnostics, static d => d.Code == DiagnosticCode.UnseparatedSameLineItem);
+    }
+
+    /// <summary>
+    /// The pattern-atom starter set behind the boundary decision, pinned for
+    /// EVERY token kind: after the literal pattern <c>1</c>, a same-line sample
+    /// of a starter kind is the pattern-list report at the sample (and the
+    /// first diagnostic); every other kind never produces that report — it
+    /// reaches the closing-delimiter check, or never forms a clause head at
+    /// all. A new token kind must be classified here deliberately.
+    /// </summary>
+    [Fact]
+    public void PatternAtomStarters_ArePinnedForEveryTokenKind()
+    {
+        var samples = new Dictionary<TokenKind, (string Sample, bool StartsPattern)>
+        {
+            [TokenKind.Number] = ("2", true),
+            [TokenKind.StringLiteral] = ("'s'", true),
+            [TokenKind.Identifier] = ("y", true),
+            [TokenKind.Minus] = ("-2", true),
+            [TokenKind.Tilde] = ("~y", true),
+            [TokenKind.LParen] = ("(y)", true),
+            [TokenKind.Star] = ("*y", true),
+            [TokenKind.Plus] = ("+", false),
+            [TokenKind.Slash] = ("/", false),
+            [TokenKind.Caret] = ("^", false),
+            [TokenKind.LessThan] = ("<", false),
+            [TokenKind.GreaterThan] = (">", false),
+            [TokenKind.LessEqual] = ("<=", false),
+            [TokenKind.GreaterEqual] = (">=", false),
+            [TokenKind.EqualEqual] = ("==", false),
+            [TokenKind.BangEqual] = ("!=", false),
+            [TokenKind.KeywordDiv] = ("div", false),
+            [TokenKind.KeywordMod] = ("mod", false),
+            [TokenKind.KeywordAnd] = ("and", false),
+            [TokenKind.KeywordOr] = ("or", false),
+            [TokenKind.KeywordXor] = ("xor", false),
+            [TokenKind.KeywordNot] = ("not", false),
+            [TokenKind.KeywordPublic] = ("public", false),
+            [TokenKind.KeywordOpen] = ("open", false),
+            [TokenKind.RParen] = (")", false),
+            [TokenKind.LBrace] = ("{", false),
+            [TokenKind.RBrace] = ("}", false),
+            [TokenKind.LBracket] = ("[", false),
+            [TokenKind.RBracket] = ("]", false),
+            [TokenKind.Comma] = (",", false),
+            [TokenKind.Semicolon] = (";", false),
+            [TokenKind.Equals] = ("=", false),
+            [TokenKind.Colon] = (":", false),
+            [TokenKind.Dot] = (".", false),
+            [TokenKind.Comment] = ("# note", false),
+            [TokenKind.Bad] = ("@", false),
+            [TokenKind.EndOfFile] = ("", false),
+        };
+        Assert.Equal(Enum.GetValues<TokenKind>().Order(), samples.Keys.Order());
+
+        // Exercise the actual atom dispatch independently of declaration
+        // lookahead and the separator predicate. Otherwise a missing starter
+        // (or a sample that never forms a head) can pass vacuously. This pins
+        // BOTH directions: an atom arm missing from the classifier, and a
+        // classified starter missing its atom arm. No public test seam needed.
+        const System.Reflection.BindingFlags instanceFlags =
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance;
+        var constructor = Assert.Single(typeof(Parser).GetConstructors(instanceFlags));
+        var parseAtom = typeof(Parser).GetMethod("ParsePatternAtomCore", instanceFlags)!;
+        var classify = typeof(Parser).GetMethod("CanStartPatternAtom",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)!;
+
+        foreach (var (kind, (sample, startsPattern)) in samples)
+        {
+            var sampleTokens = Lexer.Tokenize(sample).Tokens;
+            Assert.Equal(kind, sampleTokens[0].Kind);
+            Assert.Equal(startsPattern, Assert.IsType<bool>(classify.Invoke(null, [kind])));
+            var atomDiagnostics = new List<Diagnostic>();
+            var parser = constructor.Invoke([sampleTokens, atomDiagnostics, null]);
+            Assert.IsAssignableFrom<Pattern>(parseAtom.Invoke(parser, null));
+            // Comments are transparent to Current, so a comment-only stream
+            // reaches the ordinary EOF recovery arm.
+            var currentKind = kind == TokenKind.Comment ? TokenKind.EndOfFile : kind;
+            Assert.Equal(!startsPattern, atomDiagnostics.Any(d => d.Message ==
+                $"Unexpected {Parser.DescribeTokenKind(currentKind, includeArticle: false)} in a pattern."));
+
+            var source = kind == TokenKind.EndOfFile ? "F(1 " : $"F(1 {sample}) = 1";
+            var syntax = Parser.ParseSyntax(source);
+            var reports = syntax.Diagnostics.Where(static d => d.Message == PatternMessage).ToList();
+            if (!startsPattern)
+            {
+                Assert.True(reports.Count == 0, $"{kind}: a non-starter must never be a next pattern.");
+                continue;
+            }
+
+            var report = Assert.Single(reports);
+            Assert.Equal(DiagnosticCode.UnseparatedSameLineItem, report.Code);
+            Assert.Equal((1, 5), (report.Span.StartLineNumber, report.Span.StartColumn));
+            Assert.Equal(report, syntax.Diagnostics[0]);
+        }
     }
 
     // ── The semicolon diagnostic no longer recommends adjacency ────────────

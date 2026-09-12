@@ -1202,24 +1202,36 @@ public sealed class Parser
     // a second independent slot on the same physical line needs ','; a
     // declaration must begin a new row. The rule is
     // decided at ONE ownership point for slots (StartsNextExpressionListSlot,
-    // reached by every expression-list context through ParseExpressionListOperand)
-    // and at the body loop's row check for declarations and recovery leftovers;
-    // both report through this helper. Recovery admits the item where it was
-    // written — as the next slot of the SAME list, or as the declaration — so
+    // reached by every expression-list context through ParseExpressionListOperand),
+    // at ONE ownership point for parameter-pattern items
+    // (StartsUnseparatedPatternItem, reached by clause heads and nested
+    // sequence-value patterns through ParsePatternItems), and at the body
+    // loop's row check for declarations and recovery leftovers; all report
+    // through this helper. Recovery admits the item where it was
+    // written — as the next slot of the SAME list, as the next pattern of the
+    // SAME parameter list, or as the declaration — so
     // the structure the programmer most plausibly meant survives for later
     // diagnostics and editor tooling (`P = a b` keeps `b` in P's body; it never
-    // leaks to the enclosing scope), while the parse stays invalid. The message
+    // leaks to the enclosing scope; `F(a b) = a + b` keeps `b` a parameter of
+    // F, so its body never leaks to the enclosing scope as unrelated rows),
+    // while the parse stays invalid. The expression-list message
     // names the three repairs without guessing intent: a comma, an operator, or
-    // a new line for a declaration.
+    // a new line for a declaration. A parameter-pattern list has only the
+    // comma — a pattern has no operator to continue with and no declaration to
+    // move to a new line — so its report of the same family names that one
+    // repair and the construct it applies to.
     private const string UnseparatedSameLineItemMessage =
         "Unexpected item after a closed expression on the same line. Add ',' to separate slots, add an operator to continue the expression, or start a declaration on a new line.";
 
-    private void ReportUnseparatedSameLineItem(Token item)
+    private const string UnseparatedPatternItemMessage =
+        "Unexpected item after a parameter pattern on the same line. Add ',' to separate the patterns of a parameter list.";
+
+    private void ReportUnseparatedSameLineItem(Token item, string message = UnseparatedSameLineItemMessage)
     {
         if (item.Position == _ownedSameLineItemPosition || item.Position == _reportedSameLineItemPosition)
             return;
         _reportedSameLineItemPosition = item.Position;
-        ReportError(DiagnosticCode.UnseparatedSameLineItem, UnseparatedSameLineItemMessage, TokenSpan(item));
+        ReportError(DiagnosticCode.UnseparatedSameLineItem, message, TokenSpan(item));
     }
 
     // Cascade suppression: a recovery that has consumed or diagnosed a
@@ -2317,14 +2329,80 @@ public sealed class Parser
         var items = new List<Pattern>();
         items.Add(ParsePatternAtom());
 
-        while (Current.Kind == TokenKind.Comma)
+        while (true)
         {
-            Advance(); // consume ','
+            if (Current.Kind == TokenKind.Comma)
+                Advance(); // consume ','
+            else if (!StartsUnseparatedPatternItem())
+                break;
+
             items.Add(ParsePatternAtom());
         }
 
         return items;
     }
+
+    /// <summary>
+    /// SYN-07A for parameter-pattern lists — the ONE boundary decision of
+    /// <see cref="ParsePatternItems"/> (clause heads <c>F(a, b) = …</c> and
+    /// nested sequence-value patterns <c>(x, *y)</c>): true when the current
+    /// token begins another pattern item on the SAME physical line as the
+    /// pattern just parsed, without the comma the list requires. The item is
+    /// reported at its first token — the pattern-worded report of the
+    /// <see cref="DiagnosticCode.UnseparatedSameLineItem"/> family — and then
+    /// admitted as the next pattern of THIS list, so <c>F(a b) = a + b</c>
+    /// recovers as the clause head <c>F(a, b)</c>: its <c>)</c> and <c>=</c>
+    /// are then found where they were written, the body stays F's body, and
+    /// nothing leaks into the enclosing scope as unrelated rows or implicit
+    /// parameters. A boundary a pattern-atom recovery already owns
+    /// (<see cref="OwnSameLineItem"/>) is admitted silently, exactly like the
+    /// expression-list rule. A token on a later line is never admitted here:
+    /// parameter lists have no newline separator, so it reaches the ordinary
+    /// closing-delimiter check unchanged. What can begin a pattern item is
+    /// the atom grammar's own starter set (<see cref="CanStartPatternAtom"/>),
+    /// with one refinement for the star: a star that no operand can follow is
+    /// a (misplaced) spread marker on the pattern before it, never the collect
+    /// marker of a next binding — the same classifier the atom grammar and the
+    /// expression-level star decision use — so it is left to the closing
+    /// delimiter path and keeps the marker diagnostics the pattern grammar
+    /// owns (<c>F(a *)</c>, <c>F(1*)</c>). A star an operand follows begins a
+    /// collecting binding missing its comma (<c>F(a *b)</c> recovers as
+    /// <c>F(a, *b)</c>), and the marker grammar then reports a detached or
+    /// nameless marker on its own (<c>F(a * b)</c>, <c>F(a *2)</c>).
+    /// </summary>
+    private bool StartsUnseparatedPatternItem()
+    {
+        if (!IsSamePhysicalLineAsPreviousToken() || !CanStartPatternAtom(Current.Kind))
+            return false;
+
+        if (Current.Kind == TokenKind.Star && !CanStartMultiplicationOperand(PeekSignificant(1).Kind))
+            return false;
+
+        ReportUnseparatedSameLineItem(Current, UnseparatedPatternItemMessage);
+        return true;
+    }
+
+    /// <summary>
+    /// THE pattern-atom starter set: exactly the token kinds
+    /// <see cref="ParsePatternAtomCore"/> parses as the beginning of a pattern
+    /// item (its non-default arms). The switch's default arm guards the
+    /// relation in the fail-loud direction — a starter without an arm throws —
+    /// and <c>SameLineSeparatorTests</c> pins the classification of every
+    /// <see cref="TokenKind"/>, so the predicate and the grammar cannot drift
+    /// apart. Deliberately narrower than <see cref="CanStartExpression"/>: a
+    /// pattern has no <c>not</c>, block, or list form.
+    /// </summary>
+    private static bool CanStartPatternAtom(TokenKind kind) => kind switch
+    {
+        TokenKind.Star          // collecting binding `*name`
+        or TokenKind.Tilde      // rejected Grace, recovered to its name
+        or TokenKind.Number
+        or TokenKind.Minus      // negative literal
+        or TokenKind.StringLiteral
+        or TokenKind.Identifier
+        or TokenKind.LParen => true, // nested sequence-value pattern
+        _ => false,
+    };
 
     /// <summary>
     /// Parses a single atomic pattern element:
@@ -2497,6 +2575,10 @@ public sealed class Parser
                     if (Current.Kind != TokenKind.Number)
                     {
                         ReportError(DiagnosticCode.UnexpectedToken, "Expected number after '-' in pattern.");
+                        // The diagnosed token owns this boundary: `F(-x)`
+                        // reports the missing number once, and `x` is not
+                        // additionally an unseparated pattern item.
+                        OwnSameLineItem(Current);
                         return new Pattern.Bind("_error_");
                     }
                     var token = Advance();
@@ -2530,9 +2612,11 @@ public sealed class Parser
                     // could begin a multiplication operand follows it (the ONE
                     // classifier the expression-level star decision uses, so
                     // spacing and line breaks never matter here either); a star
-                    // followed by an operand-like token is left for the
-                    // caller's ordinary unexpected-token handling so
-                    // multiplication-shaped mistakes keep their generic error.
+                    // followed by an operand-like token is left to the caller:
+                    // the pattern list reads it as the collect marker of a next
+                    // binding missing its comma (StartsUnseparatedPatternItem,
+                    // `F(a *b)`), and the marker grammar then reports a detached
+                    // or nameless marker on its own (`F(a * b)`, `F(a *2)`).
                     if (Current.Kind == TokenKind.Star
                         && MayContinueClosedExpression(TokenKind.Star))
                     {
@@ -2567,6 +2651,9 @@ public sealed class Parser
 
             default:
                 {
+                    if (CanStartPatternAtom(Current.Kind))
+                        throw new InvalidOperationException($"Pattern-atom starter {Current.Kind} has no ParsePatternAtomCore arm.");
+
                     ReportError(DiagnosticCode.UnexpectedToken, $"Unexpected {DescribeTokenKind(Current.Kind, includeArticle: false)} in a pattern.");
                     SkipForRecovery(); // the token after it is a recovery-owned boundary
                     return new Pattern.Bind("_error_");

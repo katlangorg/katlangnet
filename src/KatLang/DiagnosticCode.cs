@@ -263,15 +263,18 @@ public enum DiagnosticCode
     InvalidSpreadMarker = 40,
 
     /// <summary>
-    /// A second independent item — another expression-list slot or a
-    /// declaration — begins on the same physical line as preceding content
-    /// without the required slot separator or declaration row boundary
-    /// (SYN-07A: whitespace never
+    /// A second independent item — another expression-list slot, another
+    /// parameter pattern, or a declaration — begins on the same physical line
+    /// as preceding content without the required slot separator or
+    /// declaration row boundary (SYN-07A: whitespace never
     /// creates a slot boundary; <c>1 2</c>, <c>F(1 2)</c>, <c>2(3)</c>,
-    /// <c>A[1]</c>, <c>P = a b</c>, <c>x = 1 y = 2</c>). Same-line slots need
+    /// <c>A[1]</c>, <c>P = a b</c>, <c>x = 1 y = 2</c>, and the clause head
+    /// <c>F(a b) = a + b</c>). Same-line slots need
     /// <c>,</c>, a continuation needs an operator, and a declaration begins a
-    /// new line. Recovery keeps the item where it was written, as the next
-    /// slot of the same list or as the declaration.
+    /// new line; inside a parameter-pattern list the comma is the only repair,
+    /// and the report says so. Recovery keeps the item where it was written,
+    /// as the next slot of the same list, the next pattern of the same
+    /// parameter list, or as the declaration.
     /// </summary>
     UnseparatedSameLineItem = 41,
 }

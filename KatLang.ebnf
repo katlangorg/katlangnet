@@ -258,7 +258,17 @@ SequenceAtom          = Expression ;
                      all rejected — and recovers as the next slot of the
                      SAME list (the arguments of F(1 2) stay two arguments;
                      the body of P = a b keeps both slots and leaks nothing
-                     into the enclosing scope). In the multiline contexts
+                     into the enclosing scope). Parameter-pattern lists
+                     (clause heads and nested sequence-value patterns) follow
+                     the same rule: F(a b) = a + b, F(1 2) = 3, F((a b)) = a,
+                     and F(a, *b c) = a are the same UnseparatedSameLineItem
+                     error, worded for patterns (the comma is the only
+                     repair), reported once at the unseparated item and
+                     recovered as the next pattern of the SAME head (F(a, b)
+                     = a + b), so the head's ")" and "=" are found where
+                     written; a pattern on a later line without a comma is
+                     not admitted (parameter lists have no newline separator)
+                     and keeps the closing-delimiter diagnostic. In the multiline contexts
                      (root output, brace bodies, parenthesized groups, call
                      argument lists, list literals) a physical newline
                      between complete expressions separates slots without a

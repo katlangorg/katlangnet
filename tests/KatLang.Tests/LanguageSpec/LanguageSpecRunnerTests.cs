@@ -251,6 +251,7 @@ public class LanguageSpecRunnerTests
             "same-line-call-arguments-need-comma",
             "same-line-declaration-begins-a-line",
             "same-line-slot-before-spread-needs-comma",
+            "same-line-parameter-patterns-need-comma",
             // The marker attachment law (SYN-07B follow-up): surface-lexical,
             // parse-level by construction.
             "spread-marker-must-be-attached",
