@@ -1,26 +1,40 @@
+using KatLang.Semantics;
+
 namespace KatLang.Tests;
 
 /// <summary>
 /// Regression matrix for how an ordinary dot edge's lexical fallback
 /// participates in property dependency/exposure analysis.
 ///
-/// The rule (see <c>AstHelpers.LexicalFallbackIsUnconditional</c> and the
+/// The rule (see <c>AstHelpers.LexicalFallbackMayBeSelected</c> and the
 /// <c>PropertyDependencyGraphBuilder</c> DotCall arm): the stored fallback is
 /// an ordinary elaborated name expression and flows through the SAME
-/// expression dependency walk as a written callee name — but only when the
-/// edge's resolution facts make the fallback the unconditional selection
-/// (<see cref="LexicalFallbackSelection.Always"/>: the receiver's
-/// algorithm-position capability makes structural resolution statically
-/// impossible). A CONDITIONAL fallback — a receiver that may resolve
-/// structurally at runtime, including every lexical NAME receiver this
-/// scope-free view cannot resolve — contributes nothing, so a
-/// structurally-resolving property is never made LocalOnly by an unreached
-/// fallback that happens to name a parameter.
+/// expression dependency walk as a written callee name whenever the fallback
+/// MAY be the selected resolution at runtime. The deciding fact is the
+/// detector's SCOPE-AWARE verdict stamped on the elaborated edge
+/// (<c>Expr.DotCall.ElaboratedFallbackSelection</c>): a receiver that declares
+/// the member (<see cref="LexicalFallbackSelection.Never"/>) never selects the
+/// fallback, so a structurally-resolving property is never made LocalOnly by
+/// an unreached fallback that happens to name a parameter; a receiver known
+/// to lack it (<see cref="LexicalFallbackSelection.Always"/>: a literal, a
+/// call result, a sibling whose value has no such member) always selects it,
+/// so a parameter-naming fallback marks the capture exactly like the direct
+/// call would; a runtime-valued receiver may. The scope-free raw shape
+/// classification is only the fallback for unstamped (host-built) edges,
+/// where an unresolved lexical reference stays Conditional and is treated as
+/// MAY-selected — the safe direction.
 ///
-/// This is deliberately the MUST-selection question, distinct from implicit
-/// parameter inference's MAY-selection question (a fallback that CAN be
-/// selected must be representable in the inferred signature). The two are
-/// pinned apart by <c>GraceDotCompositionTests.MayVsMust_*</c>.
+/// This is the same MAY-selection question implicit parameter inference asks
+/// (a fallback that CAN be selected must be representable in the inferred
+/// signature), consumed from the same shared classification; the earlier
+/// MUST-selection rule left a property whose value the runtime derives from a
+/// parameter-naming fallback exported, which let structural navigation read a
+/// dynamic binding through it and would have let the run-wide zero-argument
+/// property cache of an exported binding serve one activation's value to
+/// another (F3). The DEFINITE questions stay separate and still take no
+/// fallback contribution: the closed explicit-parameter-list rule and the
+/// conditional-branch full-input-specification rule
+/// (<c>GraceDotCompositionTests.MayVsMust_*</c>).
 ///
 /// Graced sources are a CONTROL family here: `a~.t` is the same ordinary
 /// dot edge as `a.t`, so every graced case must classify exactly like its
@@ -32,6 +46,86 @@ namespace KatLang.Tests;
 /// </summary>
 public class DotCallFallbackExposureTests
 {
+    [Fact]
+    public void OpenedReceiver_ExposureRemovalPropagatesThroughSeveralProviders()
+    {
+        const string source = """
+            open Fallback
+            Make(x) = {
+                public Box = { g = 42
+                    x }
+                0
+            }
+            Middle(g) = {
+                open Make
+                public Box2 = { h = 42
+                    Box.g }
+                0
+            }
+            Fallback = { public Box = 5
+                public Box2 = 7 }
+            Outer(h) = {
+                open Middle
+                P = Box2.h
+                P
+            }
+            Outer({x+1}), Outer({x*10})
+            """;
+        // Make.Box is removed first, then Middle.Box2 loses its structural proof,
+        // then Outer.P loses its own proof. One refresh would still export P.
+        AssertExposureAndResult(source, PropertyExposure.LocalOnlyCapturedAncestorParameters,
+            $"8{Environment.NewLine}70", "Outer", "P");
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void OpenedReceiver_RemovedByExposure_UsesTheAncestorProvidersFallback(bool chained)
+    {
+        var source = $$"""
+            open Fallback
+            Make(x) = {
+                public Data = {
+                    {{(chained ? "Sub = { f = 42 }" : "f = 42")}}
+                    x
+                }
+                0
+            }
+            Fallback = { public Data = {{(chained ? "{ Sub = 5 }" : "5")}} }
+            Outer(f) = {
+                open Make
+                P = Data.{{(chained ? "Sub.f" : "f")}}
+                P
+            }
+            Outer({x+1}), Outer({x*10})
+            """;
+
+        // Detection initially sees Make.Data's structural f. Exposure removes that
+        // opened provider, so runtime selects Fallback.Data and Outer.f instead.
+        AssertExposureAndResult(source, PropertyExposure.LocalOnlyCapturedAncestorParameters,
+            $"6{Environment.NewLine}50", "Outer", "P");
+
+        var parsed = SourceProvenance.ParseValid(source);
+        var edge = Assert.IsType<Expr.DotCall>(Assert.Single(FindProperty(parsed.Root, "Outer", "P").Value.Output));
+        Assert.Equal(LexicalFallbackSelection.Always, edge.ElaboratedFallbackSelection);
+        var span = edge.MemberSpan!;
+        var member = SemanticModelBuilder.Build(parsed.Parsed).FindResolutionAt(span.StartLineNumber, span.StartColumn);
+        Assert.Equal(IdentifierClassification.ExplicitParameterReference, member!.Classification);
+        Assert.Equal(OccurrenceKind.ExplicitParameterDefinition, member.ResolvedDeclaration!.Kind);
+
+        var structural = SourceProvenance.ParseValid(source.Replace("Outer({x+1}), Outer({x*10})", "Outer.P"));
+        var result = Evaluator.Run(new Expr.AlgorithmExpr(structural.Root));
+        Assert.True(result.IsError);
+        var error = result.Error;
+        while (error is EvalError.WithContext context) error = context.Inner;
+        Assert.Equal("P", Assert.IsType<EvalError.LocalOnlyProperty>(error).PropertyName);
+
+        // With no capture the nearer provider remains eligible: its structural f
+        // really wins, and a same-named caller parameter must not hide P.
+        AssertExposureAndResult(source.Replace("\n        x", "\n        0"),
+            PropertyExposure.Exported, $"42{Environment.NewLine}42", "Outer", "P");
+    }
+
     private static Algorithm ParseValidRoot(string source)
         => SourceProvenance.ParseValid(source).Root;
 
@@ -124,13 +218,15 @@ public class DotCallFallbackExposureTests
             "Outer", "P");
 
     [Fact]
-    public void SiblingNameReceiver_ConditionalFallback_StaysExported_InBothSpellings()
+    public void SiblingNameReceiver_CertainMiss_FallbackParameterMarksLocalOnly_InBothSpellings()
     {
-        // A NAME receiver is not resolvable by this scope-free view, so the
-        // fallback stays conditional and is not charged — even though the
-        // runtime does take it here. That imprecision is the long-standing
-        // exposure policy (a conditional fallback is treated as unselected),
-        // and both spellings inherit it identically.
+        // A sibling NAME receiver is unresolvable by the scope-free view, but the
+        // detector resolved it: `Five`'s algorithm declares no member `t`, so the
+        // stamped verdict is Always — the runtime takes the Param fallback and P's
+        // value depends on `t`. The earlier policy left P exported here (a
+        // conditional fallback was treated as unselected), which let a run-wide
+        // cached P serve a second activation of Outer; both spellings now classify
+        // the capture identically.
         AssertExposureAndResult(
             """
             Outer(t) = {
@@ -140,7 +236,7 @@ public class DotCallFallbackExposureTests
             }
             Outer({x+1})
             """,
-            PropertyExposure.Exported,
+            PropertyExposure.LocalOnlyCapturedAncestorParameters,
             "6",
             "Outer", "P");
 
@@ -153,9 +249,24 @@ public class DotCallFallbackExposureTests
             }
             Outer({x+1})
             """,
-            PropertyExposure.Exported,
+            PropertyExposure.LocalOnlyCapturedAncestorParameters,
             "6",
             "Outer", "P");
+
+        // The classification is what keeps two activations apart: each call of
+        // Outer reads its own `t` through P, and structural navigation into the
+        // parameterized owner is refused as local-only instead of reading a
+        // dynamic binding.
+        var twoActivations = Assert.IsType<RunResult.Success>(KatLangEngine.Run(
+            """
+            Outer(t) = {
+                Five = 5
+                P = Five.t
+                P
+            }
+            Outer({x+1}), Outer({x*10})
+            """));
+        Assert.Equal($"6{Environment.NewLine}50", twoActivations.ToDisplayString());
     }
 
     // ── 5-6: structural winner, both spellings ─────────────────────────────
@@ -164,7 +275,7 @@ public class DotCallFallbackExposureTests
     public void OrdinaryDot_HiddenParamName_StructuralWinnerStaysExported()
     {
         // The outer-scope receiver declares the member, so structural resolution
-        // may (and does) win; the CONDITIONAL Param fallback is excluded and
+        // definitively wins; the Never-selected Param fallback is excluded and
         // P keeps exported structural/open access.
         AssertExposureAndResult(
             """
@@ -403,7 +514,9 @@ public class DotCallFallbackExposureTests
     {
         // (Postfix Grace on a chained dot result rejects under the one-name law, so the
         // two-step pipeline is written as an ordinary call around the edge.)
-        // The name receiver keeps the fallback conditional in both spellings.
+        // The sibling receiver `v` declares no member `t`, so the stamped verdict is
+        // Always and the parameter-naming fallback marks the capture through the
+        // transparent argument slot — in both spellings.
         AssertExposureAndResult(
             """
             Inc(x) = x + 1
@@ -414,7 +527,7 @@ public class DotCallFallbackExposureTests
             }
             Outer({x*3})
             """,
-            PropertyExposure.Exported,
+            PropertyExposure.LocalOnlyCapturedAncestorParameters,
             "16",
             "Outer", "P");
 
@@ -428,7 +541,7 @@ public class DotCallFallbackExposureTests
             }
             Outer({x*3})
             """,
-            PropertyExposure.Exported,
+            PropertyExposure.LocalOnlyCapturedAncestorParameters,
             "16",
             "Outer", "P");
     }
@@ -562,9 +675,12 @@ public class DotCallFallbackExposureTests
             return graph[0].RequiredAncestorOwnedParameterNames;
         }
 
-        // A direct call requires BOTH names; the dot edge requires only the
-        // receiver, because its parameter-named fallback is conditional. The
-        // graced source belongs to the DOT family, not the call family.
+        // A direct call requires BOTH names, and so does the dot edge: its
+        // receiver is a runtime parameter, so the parameter-named fallback MAY
+        // be selected and is charged like the written callee. (The earlier rule
+        // charged only CERTAIN selections and left the edge requiring just the
+        // receiver.) The graced source belongs to the DOT family, not the call
+        // family, and classifies identically.
         var direct = RequiredNames(
             """
             Outer(a, t) = {
@@ -591,7 +707,7 @@ public class DotCallFallbackExposureTests
             """);
 
         Assert.Equal(["a", "t"], direct);
-        Assert.Equal(["a"], ordinaryDot);
+        Assert.Equal(["a", "t"], ordinaryDot);
         Assert.Equal(ordinaryDot, graced);
     }
 
@@ -644,13 +760,16 @@ public class DotCallFallbackExposureTests
             var source = $"Id(x) = x\nChosen(x) = 77\n{receiver}.Chosen";
             var root = SourceProvenance.ParseValid(source).Root;
             var dotCall = Assert.IsType<Expr.DotCall>(root.Output[^1]);
-            Assert.True(dotCall.LexicalFallbackIsUnconditional(), $"expected unconditional for receiver {receiver}");
+            Assert.Equal(LexicalFallbackSelection.Always, dotCall.ElaboratedFallbackSelection);
+            Assert.True(dotCall.LexicalFallbackMayBeSelected(), $"expected a selectable fallback for receiver {receiver}");
 
             var success = Assert.IsType<RunResult.Success>(KatLangEngine.Run(source));
             Assert.Equal("77", success.ToDisplayString());
         }
 
-        // Structurally-possible shapes: the predicate must stay conditional.
+        // A structural winner: the detector resolved the sibling receiver and found
+        // the member, so the stamped verdict is Never and the fallback is not
+        // selectable (the scope-free raw view alone would only say Conditional).
         var structuralSource =
             """
             Chosen(x) = 77
@@ -662,7 +781,8 @@ public class DotCallFallbackExposureTests
             """;
         var structuralRoot = SourceProvenance.ParseValid(structuralSource).Root;
         var structuralDot = Assert.IsType<Expr.DotCall>(structuralRoot.Output[^1]);
-        Assert.False(structuralDot.LexicalFallbackIsUnconditional());
+        Assert.Equal(LexicalFallbackSelection.Never, structuralDot.ElaboratedFallbackSelection);
+        Assert.False(structuralDot.LexicalFallbackMayBeSelected());
         var structuralRun = Assert.IsType<RunResult.Success>(KatLangEngine.Run(structuralSource));
         Assert.Equal("42", structuralRun.ToDisplayString());
 
@@ -670,7 +790,8 @@ public class DotCallFallbackExposureTests
         var stringSource = "string(x) = 0\n5.string";
         var stringRoot = SourceProvenance.ParseValid(stringSource).Root;
         var stringDot = Assert.IsType<Expr.DotCall>(stringRoot.Output[^1]);
-        Assert.False(stringDot.LexicalFallbackIsUnconditional());
+        Assert.Equal(LexicalFallbackSelection.Never, stringDot.ElaboratedFallbackSelection);
+        Assert.False(stringDot.LexicalFallbackMayBeSelected());
         var stringRun = Assert.IsType<RunResult.Success>(KatLangEngine.Run(stringSource));
         Assert.Equal("5", stringRun.ToDisplayString());
     }
@@ -720,14 +841,31 @@ public class DotCallFallbackExposureTests
             SelectionOf(Assert.IsType<Expr.DotCall>(
                 SourceProvenance.ParseValid("K(a) = a.t\nK(1)").Root.Properties[0].Value.Output[0])));
 
-        // The exposure predicate is exactly the Always projection.
-        foreach (var source in new[] { "5.t", "{public u = 1\n0}.t", "5.string", "V = 5\nV.t" })
+        // The exposure predicate is the MAY projection of the STAMPED scope-aware
+        // verdict, which the detector derives from the same shared classification
+        // with its elaborated scope: it agrees with the raw shape view wherever
+        // that view is decided, and decides the lexical-name receiver the raw view
+        // cannot (`V` is a known algorithm without `t`: Always, selectable).
+        foreach (var source in new[] { "5.t", "{public u = 1\n0}.t", "5.string" })
         {
             var edge = LastEdge(source);
+            Assert.Equal(SelectionOf(edge), edge.ElaboratedFallbackSelection);
             Assert.Equal(
-                SelectionOf(edge) == LexicalFallbackSelection.Always,
-                edge.LexicalFallbackIsUnconditional());
+                SelectionOf(edge) != LexicalFallbackSelection.Never,
+                edge.LexicalFallbackMayBeSelected());
         }
+
+        var siblingEdge = LastEdge("V = 5\nV.t");
+        Assert.Equal(LexicalFallbackSelection.Conditional, SelectionOf(siblingEdge));
+        Assert.Equal(LexicalFallbackSelection.Always, siblingEdge.ElaboratedFallbackSelection);
+        Assert.True(siblingEdge.LexicalFallbackMayBeSelected());
+
+        // An unstamped edge (a host-built tree) falls back to the raw shape view,
+        // where the undecided lexical receiver is treated as MAY-selected.
+        var unstamped = new Expr.DotCall(new Expr.Resolve("V"), "t");
+        Assert.Null(unstamped.ElaboratedFallbackSelection);
+        Assert.True(unstamped.LexicalFallbackMayBeSelected());
+        Assert.False(new Expr.DotCall(new Expr.Num(5m), "string").LexicalFallbackMayBeSelected());
     }
 
     [Fact]

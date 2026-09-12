@@ -186,13 +186,16 @@ internal sealed class LoopRunFrame
     /// (<see cref="LoopExprPlan.TempCall"/>) and returns the state
     /// <see cref="RestoreTempMemo"/> reinstates. A generic user call runs its callee in
     /// FRESH value, counted, and algorithm environments, and the run's zero-argument
-    /// property cache is keyed by their identities: a bare temp read inside the callee
-    /// therefore neither hits nor populates the caller's entries, and the call's own reads
-    /// memoize only among themselves until it returns. Mirroring that exactly is what
-    /// keeps the two strategies' depth peaks and string materialization equal for a temp
-    /// that reads another temp. Call memos are sparse and allocated only on a bare-temp
-    /// miss. Suspension and restoration touch no root slots and take constant time;
-    /// neither copies storage proportional to the step's declared property count.
+    /// property cache keys every LOCAL-ONLY entry by their identities: a bare read of a
+    /// local-only temp inside the callee therefore neither hits nor populates the caller's
+    /// entries, and the call's own reads memoize only among themselves until it returns.
+    /// (An EXPORTED temp never uses this memo: its read goes to the run cache under an
+    /// environment-independent key, exactly like the generic callee's read.) Mirroring
+    /// that exactly is what keeps the two strategies' depth peaks and string
+    /// materialization equal for a temp that reads another temp. Call memos are sparse
+    /// and allocated only on a bare-temp miss. Suspension and restoration touch no root
+    /// slots and take constant time; neither copies storage proportional to the step's
+    /// declared property count.
     /// </summary>
     public Dictionary<int, PlannedLoopValue>? SuspendTempMemo()
     {

@@ -501,10 +501,13 @@ public static partial class Evaluator
         if (boundR.IsError) return boundR.Error;
 
         // The concatenation must build a FRESH list per iteration: the counted
-        // environment's reference identity is a zero-arg property cache key component,
-        // so reusing one instance across iterations would create cross-iteration cache
-        // hits the generic strategy never had. The algorithm tier carries no
-        // per-iteration bindings, so its prepared shadowed instance is reused.
+        // environment's reference identity is the zero-arg property cache key component
+        // that separates one iteration's LOCAL-ONLY property entries (a step-local
+        // property reading the state) from the next's, so reusing one instance across
+        // iterations would let a state-dependent value leak between iterations. (An
+        // EXPORTED property's key carries no environment identity and hits across
+        // iterations by design.) The algorithm tier carries no per-iteration bindings,
+        // so its prepared shadowed instance is reused.
         var stepCtx = ctx
             .WithAlgEnv(prepared.ShadowedAlgEnv)
             .WithCountedParamEnv(Concat(boundR.Value.CountedBindings, prepared.ShadowedCountedParamEnv));

@@ -555,6 +555,22 @@ public abstract record Expr
         /// </summary>
         public Expr EffectiveLexicalFallback
             => LexicalFallback ?? new Resolve(Name) { Span = MemberSpan };
+
+        /// <summary>
+        /// The front end's SCOPE-AWARE verdict on whether the stored lexical
+        /// fallback can be the selected resolution at runtime
+        /// (<see cref="LexicalFallbackSelection"/>), stamped by parameter
+        /// detection from the receiver's elaborated static structural-member
+        /// provider — the same classification implicit-signature inference acts
+        /// on. Exposure rechecks structural-winner proofs as local-only open
+        /// providers are removed. The dependency summary consumes it through
+        /// <see cref="AstHelpers.LexicalFallbackMayBeSelected"/>, so a fallback
+        /// that names an enclosing owner's parameter is charged exactly when
+        /// the runtime may take it. <c>null</c> on an unelaborated tree (a raw
+        /// parser tree or a host-built one), where consumers fall back to the
+        /// receiver expression's raw shape classification.
+        /// </summary>
+        internal LexicalFallbackSelection? ElaboratedFallbackSelection { get; init; }
     }
 
     /// <summary>
@@ -1049,6 +1065,10 @@ public sealed record CondBranch(Pattern Pattern, Algorithm Body)
 /// Lean: <c>PropExposure</c>. <c>open</c> exposes public <see cref="Exported"/> members and
 /// structural dot access reaches <see cref="Exported"/> members; the classification is a
 /// fact about the property's VALUE, never about where the declaration is written.
+/// The evaluator also trusts this classification for zero-parameter caching:
+/// exported results are shared across the run; local-only results retain binding
+/// context. Publicly constructed ASTs must supply accurate exposure themselves;
+/// Evaluator.Run* performs preflight but does not elaborate or reclassify them.
 /// </summary>
 public enum PropertyExposure
 {

@@ -1914,6 +1914,13 @@ internal static class ParameterDetector
                     Target = RewriteParams(dotCall.Target, scope, parameters, memo),
                     Args = rewrittenArgs,
                     LexicalFallback = RewriteParams(dotCall.EffectiveLexicalFallback, scope, parameters, memo),
+                    // The scope-aware selection verdict this walk already derives
+                    // for implicit-signature collection (CollectFreeParams),
+                    // stamped on the edge so the scope-free exposure walk charges
+                    // a parameter-naming fallback exactly when the runtime may
+                    // take it (AstHelpers.LexicalFallbackMayBeSelected).
+                    ElaboratedFallbackSelection = dotCall.GetLexicalFallbackSelection(
+                        ResolveDotCallReceiverProvider(dotCall, scope, parameters)),
                 };
             }
 

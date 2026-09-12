@@ -77,7 +77,8 @@ internal sealed class RunScopedAsyncZeroArgPropertyResultCache : IAsyncZeroArgPr
         if (result.IsError)
             return result.Error;
 
-        _results[key] = result.Value;
+        // A nested read may have stored its first successful result already.
+        _results.TryAdd(key, result.Value);
         return result;
     }
 
@@ -93,7 +94,8 @@ internal sealed class RunScopedAsyncZeroArgPropertyResultCache : IAsyncZeroArgPr
         if (result.IsError)
             return result.Error;
 
-        _results[key] = result.Value;
+        // A nested read may have stored its first successful result already.
+        _results.TryAdd(key, result.Value);
         return result;
     }
 }

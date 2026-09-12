@@ -721,22 +721,29 @@ internal static class PropertyDependencyGraphBuilder
                 // The stored lexical-fallback identity is an ordinary
                 // elaborated name expression (Resolve/Param) and participates
                 // in dependency analysis EXACTLY like a written callee name —
-                // through this same walk with the enclosing attribution — but
-                // only when the receiver's static algorithm-position
-                // capability makes the fallback the unconditional selection
-                // (structural resolution is statically impossible). A
-                // CONDITIONAL fallback — a receiver that may resolve
-                // structurally at runtime — is deliberately excluded: marking
-                // a structurally-resolving property LocalOnly because its
-                // unreached fallback names a parameter would revoke working
-                // structural/open access
-                // (see AstHelpers.LexicalFallbackIsUnconditional).
+                // through this same walk with the enclosing attribution —
+                // whenever the fallback MAY be selected at runtime
+                // (AstHelpers.LexicalFallbackMayBeSelected: the detector's
+                // stamped scope-aware verdict, or the raw shape classification
+                // on an unstamped edge). A receiver that declares the member
+                // never selects the fallback, so a Param fallback hidden behind
+                // a structural winner charges nothing and the property keeps
+                // its exported structural/open access; a receiver known to
+                // lack it — a sibling property whose value is a list, a call
+                // result, a literal — always does, so `Big = Data.f` with `f`
+                // an enclosing parameter is local-only exactly like the direct
+                // call `f(Data)`. Charging only CERTAIN selections left such a
+                // property exported although its value depends on the
+                // parameter: structural navigation could then read a dynamic
+                // binding through it, and the run-wide zero-argument property
+                // cache of an exported binding would have served one
+                // activation's value to another (SEMANTIC-ALIGNMENT, F3).
                 // The sibling evaluation-order channel
                 // (CollectSiblingDependencyIndices) deliberately takes no
                 // fallback contribution: the fallback is a CALLED name, and
                 // called siblings are not order dependencies there (the same
                 // rule as Call function position).
-                if (dotCall.LexicalFallbackIsUnconditional())
+                if (dotCall.LexicalFallbackMayBeSelected())
                 {
                     seed.UnionWith(CollectSummarySeed(
                         dotCall.EffectiveLexicalFallback,

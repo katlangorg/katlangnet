@@ -5,13 +5,18 @@ namespace KatLang.Optimizations.Loops;
 /// property's first declared-name span — the span the generic zero-argument property
 /// access stamps on a rejected depth enter — retained so a planned bare read
 /// (<see cref="LoopExprPlan.TempSlot"/>) reports the same limit-error span.
+/// <see cref="Binding"/> is the declared
+/// <see cref="Property"/> itself: a bare read of an EXPORTED temp goes through the
+/// run's zero-argument property cache under that binding (the same entry the
+/// generic evaluator uses), while a local-only temp is memoized per iteration.
 /// </summary>
 internal sealed record LoopTempPlan(
     string Name,
     int Index,
     IReadOnlyList<string> ParameterNames,
     LoopExprPlan Plan,
-    SourceSpan? DeclarationSpan);
+    SourceSpan? DeclarationSpan,
+    Property Binding);
 
 internal sealed record LoopTempPlanBuild(
     IReadOnlyList<LoopTempPlan> Plans,
@@ -45,7 +50,8 @@ internal static partial class LoopOptimizer
                     tempIndex,
                     parameterNames,
                     tempR.Plan,
-                    property.DeclarationSpans.FirstOrDefault());
+                    property.DeclarationSpans.FirstOrDefault(),
+                    property);
                 plans.Add(plan);
                 diagnostics?.Add(new LoopTempDiagnosticSnapshot(
                     property.Name,

@@ -109,9 +109,13 @@ public class CacheKeyDifferentialTests
     public void ZeroArgPropertyKey_ChangingExactlyOneDimension_MissesForEveryKeyDimension()
     {
         var comparer = ZeroArgPropertyCacheKeyComparer.Instance;
+        // A LOCAL-ONLY binding carries the full key: declaring scope plus all three
+        // environment identities. (An exported binding's key drops the environment
+        // dimensions and identifies the owner by declaring scope — see
+        // ZeroArgPropertyKey_ExportedBinding_KeepsOnlyScopeBindingAndRun below.)
         var baseline = new ZeroArgPropertyExecution(
             NewAlgorithm(),
-            NewProperty("Value"),
+            NewProperty("Value") with { Exposure = PropertyExposure.LocalOnlyCapturedAncestorParameters },
             ZeroArgPropertyAccessKind.Lexical,
             new object(),
             new object(),
@@ -137,7 +141,7 @@ public class CacheKeyDifferentialTests
             ("access shape", ZeroArgPropertyCacheKey.FromExecution(
                 baseline with { AccessKind = ZeroArgPropertyAccessKind.Structural })),
             ("owner", ZeroArgPropertyCacheKey.FromExecution(
-                baseline with { Owner = NewAlgorithm() })),
+                baseline with { Owner = NewAlgorithm() with { Properties = [baseline.Binding] } })),
             ("binding", ZeroArgPropertyCacheKey.FromExecution(
                 baseline with { Binding = NewProperty("Value") })),
             ("value environment", ZeroArgPropertyCacheKey.FromExecution(
@@ -152,6 +156,60 @@ public class CacheKeyDifferentialTests
 
         foreach (var (dimension, key) in changed)
             Assert.False(comparer.Equals(baselineKey, key), $"changed {dimension} must miss");
+    }
+
+    /// <summary>
+    /// The exported twin of the one-dimension matrix (the cache's scope law, F3): an
+    /// exported binding's value is self-contained, so the three environment identities
+    /// are NOT key components — fresh environments HIT — while the declaring scope
+    /// (resolution-relevant declaration lists), the binding, and the
+    /// run still separate entries.
+    /// </summary>
+    [Fact]
+    public void ZeroArgPropertyKey_ExportedBinding_KeepsOnlyScopeBindingAndRun()
+    {
+        var comparer = ZeroArgPropertyCacheKeyComparer.Instance;
+        var binding = NewProperty("Value");
+        var owner = NewAlgorithm() with { Properties = [binding] };
+        var baseline = new ZeroArgPropertyExecution(
+            owner,
+            binding,
+            ZeroArgPropertyAccessKind.Lexical,
+            new object(),
+            new object(),
+            new object(),
+            new object());
+        var baselineKey = ZeroArgPropertyCacheKey.FromExecution(baseline);
+
+        // Environment identities, a rebuilt owner record over the same scope, and the
+        // plain/counted spelling: HIT.
+        var hits = new[]
+        {
+            ("value environment", baseline with { ValueEnvironmentIdentity = new object() }),
+            ("algorithm environment", baseline with { AlgorithmEnvironmentIdentity = new object() }),
+            ("counted environment", baseline with { CountedParamEnvironmentIdentity = new object() }),
+            ("rebuilt owner", baseline with { Owner = owner with { } }),
+            ("counted spelling", baseline with { AccessKind = ZeroArgPropertyAccessKind.CountedLexical }),
+            ("structural spelling", baseline with { AccessKind = ZeroArgPropertyAccessKind.Structural }),
+            ("counted structural spelling", baseline with { AccessKind = ZeroArgPropertyAccessKind.CountedStructural }),
+        };
+        foreach (var (dimension, execution) in hits)
+        {
+            var key = ZeroArgPropertyCacheKey.FromExecution(execution);
+            Assert.True(comparer.Equals(baselineKey, key), $"changed {dimension} must hit");
+            Assert.Equal(comparer.GetHashCode(baselineKey), comparer.GetHashCode(key));
+        }
+
+        // A resolution-distinct declaring scope, another binding,
+        // and another run: MISS.
+        var misses = new[]
+        {
+            ("declaring scope", baseline with { Owner = NewAlgorithm() with { Properties = [binding, NewProperty("Other")] } }),
+            ("binding", baseline with { Binding = NewProperty("Value") }),
+            ("run identity", baseline with { RunIdentity = new object() }),
+        };
+        foreach (var (dimension, execution) in misses)
+            Assert.False(comparer.Equals(baselineKey, ZeroArgPropertyCacheKey.FromExecution(execution)), $"changed {dimension} must miss");
     }
 
     /// <summary>Deconstruction-cache twin of the one-dimension key matrix.</summary>

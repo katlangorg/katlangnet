@@ -209,10 +209,15 @@ def recursiveDotCallRestAlg : Algorithm :=
     .sequenceSpread (.dotCall (resolve "list") "skip" (some [.num 1]))
   ]
 
+-- `list` reads the ancestor-owned parameter `values` (and `rest` reads `list`), so
+-- both are local-only: the front end classifies them so, and the per-run
+-- zero-argument property cache keys a local-only property by its binding
+-- context. Declaring them exported would cache `list` once for the whole run and
+-- make the recursion below read the OUTER call's list forever.
 def recursiveDotCallReduceCollectionAlg : Algorithm :=
-  algPrivate ["values"] [] [
-    ("list", recursiveDotCallListAlg),
-    ("rest", recursiveDotCallRestAlg)
+  alg ["values"] [] [
+    privateLocalProp "list" .localCapturedAncestorParams recursiveDotCallListAlg,
+    privateLocalProp "rest" .localCapturedAncestorParams recursiveDotCallRestAlg
   ] [
     .call (resolve "if") [
       .binary .le (.dotCall (resolve "list") "count" none) (.num 1),

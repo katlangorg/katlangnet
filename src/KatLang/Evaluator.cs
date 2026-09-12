@@ -11,8 +11,8 @@ namespace KatLang;
 
 /// <summary>
 /// KatLang 0.75 evaluator matching the Lean specification.
-/// Uses <see cref="EvalResult{T}"/> (<c>EvalM := Except Error</c>) for structured errors
-/// instead of nullable returns.
+/// Uses <see cref="EvalResult{T}"/> for structured errors instead of nullable returns;
+/// Lean's <c>EvalM</c> also carries the per-run cache and binding-context state.
 /// Ownership-first lookup: local → parent chain structural → opens fallback across chain.
 /// Property visibility: opens only expose PUBLIC exported properties; structural lookup sees exported properties only.
 ///
@@ -28,6 +28,18 @@ namespace KatLang;
 ///   (0-param algorithm → auto-evaluate; multi-param → arity mismatch)
 /// - <c>ResolveAlg(Param(x))</c>: checks AlgEnv before returning NotAnAlgorithm
 /// </summary>
+/// <remarks>
+/// All Run* entry points evaluate supplied ASTs as-is after structural and core
+/// validity preflight; they do not perform front-end elaboration. Hosts may build
+/// ASTs through the public records, but must supply correct name ownership and
+/// <see cref="Property.Exposure"/> metadata and keep executable metadata unchanged
+/// during evaluation. Exported properties must not capture caller bindings: the
+/// evaluator trusts this for open/structural visibility and for reuse of the first
+/// successful zero-argument property result across the run. A falsely exported
+/// capture can therefore expose an inaccessible member or reuse another call's
+/// value. Use <see cref="Parser.Parse(string)"/> or <see cref="KatLangEngine"/> for
+/// source programs and the complete front-end invariants.
+/// </remarks>
 public static partial class Evaluator
 {
     private readonly record struct ResolvedLexicalProperty(
@@ -141,7 +153,7 @@ public static partial class Evaluator
 
     // ── Environment types ────────────────────────────────────────────────────
 
-    private static object ValueEnvironmentCacheIdentity(IReadOnlyList<(string, Result)> valEnv)
+    internal static object ValueEnvironmentCacheIdentity(IReadOnlyList<(string, Result)> valEnv)
         => valEnv is IValueEnvironmentCacheIdentityProvider provider
             ? provider.CacheIdentity
             : valEnv;
@@ -246,7 +258,8 @@ public static partial class Evaluator
     /// instead of failing as not-callable, exactly as the standalone
     /// <c>Inner(5)</c> does.</para>
     /// Returns the SAME instance when nothing is removed: the environment's
-    /// reference identity is a zero-arg property cache key component.
+    /// reference identity is a key component of a LOCAL-ONLY property's
+    /// zero-arg cache entry (an exported property's key carries no environment).
     /// Lean: <c>AlgEnv.shadow</c>.
     /// </summary>
     internal static IReadOnlyList<(string Name, Algorithm Value, EvalError? ValueError)> ShadowAlgEnv(
@@ -302,8 +315,8 @@ public static partial class Evaluator
     /// planned, synchronous and async twin — derives its callee context from
     /// this ONE helper and then prepends its own bindings, so no path can
     /// shadow one tier and forget another. Each tier keeps its instance when
-    /// nothing is removed, because both identities are zero-arg property cache
-    /// key components.</para>
+    /// nothing is removed, because both identities are key components of a
+    /// LOCAL-ONLY property's zero-arg cache entry.</para>
     /// Lean: <c>EvalCtx.bindParameters</c> (which also performs the prepend).
     /// </summary>
     internal static EvalCtx ShadowInheritedParameterEnvironments(EvalCtx ctx, IReadOnlyList<string> parameterNames)

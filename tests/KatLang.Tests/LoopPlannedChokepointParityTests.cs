@@ -112,6 +112,11 @@ public class LoopPlannedChokepointParityTests
     }
 
     [Theory]
+    // Every temp of the template is EXPORTED (self-contained), so a bare `W` read hits
+    // the run-wide entry after the first one — inside `A()`/`B()` calls, on the `if`
+    // argument channel, and across iterations alike — and the four-unit string is
+    // materialized ONCE per run wherever `W` is reached at all (the third column is the
+    // run total, not a per-iteration amount).
     [InlineData("if(1, 1, 2)", 1, 0, 1)]
     [InlineData("if(0, 1, 2)", 2, 0, 1)]
     [InlineData("if(C, 1, 2)", 1, 0, 1)]
@@ -126,16 +131,16 @@ public class LoopPlannedChokepointParityTests
     [InlineData("if(0, A(), A)", 1, 4, 2)]
     [InlineData("if(1, if(0, A(), A), B())", 1, 4, 3)]
     [InlineData("(W == W) + if(1, A, 0) + (W == W)", 3, 4, 2)]
-    [InlineData("(W == W) + if(1, A(), 0) + (W == W)", 3, 8, 3)]
-    [InlineData("A + A() + A", 3, 8, 2)]
-    [InlineData("A() + A + A()", 3, 12, 2)]
-    [InlineData("A + if(1, B, 0)", 3, 8, 3)]
-    [InlineData("B() + B()", 4, 16, 3)]
-    [InlineData("B + B", 4, 8, 3)]
+    [InlineData("(W == W) + if(1, A(), 0) + (W == W)", 3, 4, 3)]
+    [InlineData("A + A() + A", 3, 4, 2)]
+    [InlineData("A() + A + A()", 3, 4, 2)]
+    [InlineData("A + if(1, B, 0)", 3, 4, 3)]
+    [InlineData("B() + B()", 4, 4, 3)]
+    [InlineData("B + B", 4, 4, 3)]
     [InlineData("if(0, 1 / 0, C)", 1, 0, 1)]
     [InlineData("if(1, C, B() / 0)", 1, 0, 1)]
     public async Task PlannedArgumentAndMemoMatrix_MatchesAllBoundariesAndAsyncTwin(
-        string expression, int increment, int charsPerIteration, int peakDepth)
+        string expression, int increment, int materializedChars, int peakDepth)
     {
         var source = "Step = {\n    W = 'aaaa'\n    C = 1\n    D = C\n    A = W == W\n    B = A + A()\n    n + "
             + expression + "\n}\nStep.repeat(3, 0)";
@@ -145,20 +150,20 @@ public class LoopPlannedChokepointParityTests
         Assert.Equal(3m * increment, Atom(optimized.Result));
         Assert.Equal(peakDepth, generic.Budget.PeakDepth);
         Assert.Equal(peakDepth, optimized.Budget.PeakDepth);
-        Assert.Equal(3L * charsPerIteration, generic.Budget.MaterializedStringChars);
-        Assert.Equal(3L * charsPerIteration, optimized.Budget.MaterializedStringChars);
+        Assert.Equal(materializedChars, generic.Budget.MaterializedStringChars);
+        Assert.Equal(materializedChars, optimized.Budget.MaterializedStringChars);
         AssertWhollyPlanned(optimized.Loop);
 
         for (var depth = 1; depth <= peakDepth + 1; depth++)
             await AssertThreeWayParity(source, new EvaluationLimits { MaxDepth = depth }, whollyPlanned: true);
 
-        if (charsPerIteration != 0)
+        if (materializedChars != 0)
         {
-            foreach (var chars in new[] { 3L * charsPerIteration - 1, 3L * charsPerIteration })
+            foreach (var chars in new[] { (long)materializedChars - 1, (long)materializedChars })
             {
                 var limits = new EvaluationLimits { MaxMaterializedStringChars = chars };
                 var boundary = Observe(source, optimized: false, limits);
-                Assert.Equal(chars < 3L * charsPerIteration, boundary.Result.IsError);
+                Assert.Equal(chars < materializedChars, boundary.Result.IsError);
                 await AssertThreeWayParity(source, limits, whollyPlanned: true);
             }
 
@@ -286,12 +291,34 @@ public class LoopPlannedChokepointParityTests
     }
 
     [Fact]
-    public void BareTempRead_IsMemoizedPerIterationLikeThePropertyCache()
+    public void BareTempRead_OfAnExportedTemp_IsServedFromTheRunEntryLikeThePropertyCache()
     {
-        // Two bare reads per iteration: the generic property cache serves the second from
-        // the first (same iteration environment), so the four-unit string is materialized
-        // once per iteration; the planned per-iteration memo must do exactly the same.
+        // `W` is exported (self-contained), so the generic property cache serves every
+        // bare read after the first from ONE run-wide entry — across the two reads of an
+        // iteration and across iterations alike — and the four-unit string is
+        // materialized once per run; the planned strategy reads the same run entry.
         const string source = "Step = {\n    W = if(1, 'aaaa', 'bb')\n    n + (W == W)\n}\nStep.repeat(40, 0)";
+
+        var generic = Observe(source, optimized: false);
+        var optimized = Observe(source, optimized: true);
+
+        Assert.Equal(40m, Atom(generic.Result));
+        Assert.Equal(40m, Atom(optimized.Result));
+        Assert.Equal(4, generic.Budget.MaterializedStringChars);
+        Assert.Equal(4, optimized.Budget.MaterializedStringChars);
+        Assert.Equal(generic.Budget.PeakDepth, optimized.Budget.PeakDepth);
+        AssertWhollyPlanned(optimized.Loop);
+    }
+
+    [Fact]
+    public void BareTempRead_OfALocalOnlyTemp_IsMemoizedPerIterationLikeThePropertyCache()
+    {
+        // `W` reads the enclosing function's parameter `k`, so it is LOCAL-ONLY and keyed
+        // by the iteration's environments: two bare reads per iteration, the second served
+        // from the first (same iteration environment), so the four-unit string is
+        // materialized once per iteration; the planned per-iteration memo does the same.
+        const string source =
+            "G(k) = {\n    Step = {\n        W = if(k, 'aaaa', 'bb')\n        n + (W == W)\n    }\n    Step.repeat(40, 0)\n}\nG(1)";
 
         var generic = Observe(source, optimized: false);
         var optimized = Observe(source, optimized: true);
@@ -310,9 +337,10 @@ public class LoopPlannedChokepointParityTests
         // A bare property reference passed DIRECTLY as an `if` argument resolves to the
         // property's own algorithm: the generic `if` evaluates that body under the
         // argument level — fresh, outside the property cache and without the invocation
-        // charge — while the bare reads elsewhere in the same iteration go through the
-        // cache. Per iteration: the direct branch materializes 4 units, the first bare
-        // read another 4 (a miss), the remaining reads hit — 8 units, 40 iterations.
+        // charge — while the bare reads elsewhere go through the cache, where the
+        // exported `W` has ONE run-wide entry. The direct branch materializes 4 units on
+        // every iteration (160 over 40 iterations); the very first bare read materializes
+        // another 4 once, and every other bare read of the run hits — 164 units.
         const string source = "Step = {\n    W = if(1, 'aaaa', 'bb')\n    n + (if(1, W, 0) == W) + (W == W)\n}\nStep.repeat(40, 0)";
 
         var generic = Observe(source, optimized: false);
@@ -320,8 +348,8 @@ public class LoopPlannedChokepointParityTests
 
         Assert.Equal(80m, Atom(generic.Result));
         Assert.Equal(80m, Atom(optimized.Result));
-        Assert.Equal(320, generic.Budget.MaterializedStringChars);
-        Assert.Equal(320, optimized.Budget.MaterializedStringChars);
+        Assert.Equal(164, generic.Budget.MaterializedStringChars);
+        Assert.Equal(164, optimized.Budget.MaterializedStringChars);
         Assert.Equal(2, generic.Budget.PeakDepth);
         Assert.Equal(2, optimized.Budget.PeakDepth);
         var plan = AssertWhollyPlanned(optimized.Loop);
@@ -419,15 +447,17 @@ public class LoopPlannedChokepointParityTests
         Assert.False(generic.Result.IsError);
         Assert.False(optimized.Result.IsError);
         Assert.True(Result.ValueComparer.Equals(generic.Result.Value.Value, optimized.Result.Value.Value));
-        Assert.Equal(12, generic.Budget.MaterializedStringChars);
+        // `T` is exported: the planned row and the generic fallback row read the SAME
+        // run-wide entry, so the four-unit string is materialized once for the whole run.
+        Assert.Equal(4, generic.Budget.MaterializedStringChars);
         Assert.Equal(generic.Budget.MaterializedStringChars, optimized.Budget.MaterializedStringChars);
         Assert.Equal(1, optimized.Loop.OptimizedLoopHits);
         Assert.True(optimized.Loop.GenericExpressionEvaluationsInsideOptimizedLoops > 0);
         var plan = Assert.Single(optimized.Loop.LoopPlans);
         Assert.All(plan.Temps, temp => Assert.False(temp.Planned));
         Assert.True(Assert.Single(plan.Expressions, expression => expression.Index == 2).Planned);
-        await AssertThreeWayParity(source, new EvaluationLimits { MaxMaterializedStringChars = 11 }, whollyPlanned: false);
-        await AssertThreeWayParity(source, new EvaluationLimits { MaxMaterializedStringChars = 12 }, whollyPlanned: false);
+        await AssertThreeWayParity(source, new EvaluationLimits { MaxMaterializedStringChars = 3 }, whollyPlanned: false);
+        await AssertThreeWayParity(source, new EvaluationLimits { MaxMaterializedStringChars = 4 }, whollyPlanned: false);
     }
 
     [Fact]
@@ -637,15 +667,16 @@ public class LoopPlannedChokepointParityTests
     }
 
     [Fact]
-    public void TempCall_SuspendsTheCallersTempMemo_LikeAFreshCallEnvironment()
+    public void TempCall_ExportedTempReadInsideTheCall_SharesTheRunEntry()
     {
-        // A generic user call runs its callee in fresh environments, and the property
-        // cache is keyed by their identities: a bare `T` read inside `A(x)` misses on
-        // every call even though the caller already cached `T`, and the caller's entry is
-        // still served after the call returns. Per iteration: the caller's first `T` read
-        // (10 units), one miss inside each of the two `A(x)` calls (10 each), and the
-        // caller's final `T == T` served from its untouched entry — 30 units, 20
-        // iterations. `n` walks 0, 1, 3, 7, ... (2^20 - 1).
+        // `T` is an EXPORTED step-local temp: the run's zero-argument property cache keys it
+        // by its declaring scope alone, so the caller's first read materializes it ONCE
+        // for the whole run, and every later read — inside the two `A(x)` calls (each a
+        // fresh generic environment), in later iterations, after the calls return — is
+        // served from that entry on both strategies: 10 units total. (A LOCAL-ONLY temp,
+        // by contrast, is keyed by the call's fresh environments and re-evaluated inside
+        // each call; see TempCall_LocalOnlyTempReadInsideTheCall_MissesLikeAFreshCallEnvironment.)
+        // `n` walks 0, 1, 3, 7, ... (2^20 - 1).
         const string source =
             "Step = {\n    T = 'xxxxxxxxxx'\n    A = x + (T == T)\n    (T == T) + A + A - 2 + (T == T) - 1\n}\nStep.repeat(20, 0)";
 
@@ -654,10 +685,38 @@ public class LoopPlannedChokepointParityTests
 
         Assert.Equal(1_048_575m, Atom(generic.Result));
         Assert.Equal(1_048_575m, Atom(optimized.Result));
-        Assert.Equal(600, generic.Budget.MaterializedStringChars);
-        Assert.Equal(600, optimized.Budget.MaterializedStringChars);
+        Assert.Equal(10, generic.Budget.MaterializedStringChars);
+        Assert.Equal(10, optimized.Budget.MaterializedStringChars);
         Assert.Equal(2, generic.Budget.PeakDepth);
         Assert.Equal(2, optimized.Budget.PeakDepth);
+        var plan = AssertWhollyPlanned(optimized.Loop);
+        Assert.Contains("TempCall(A)", OutputSummary(plan), StringComparison.Ordinal);
+        Assert.Contains("TempSlot(T)", OutputSummary(plan), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void TempCall_LocalOnlyTempReadInsideTheCall_MissesLikeAFreshCallEnvironment()
+    {
+        // `T` reads the enclosing function's parameter `k` (a captured slot), so it is
+        // LOCAL-ONLY and keyed by the environments at the access: a bare `T` read inside
+        // `A(x)` misses on every call even though the caller already cached `T` for this
+        // iteration, and the caller's entry is still served after the call returns. Per
+        // iteration: the caller's first `T` read (10 units), one miss inside each of the
+        // two `A(x)` calls (10 each), and the caller's final `T == T` served from its
+        // untouched entry — 30 units, 20 iterations. The planned strategy mirrors this
+        // with its per-iteration memo suspended for the call's duration. `x` walks 0, 1,
+        // 3, 7, ... (2^20 - 1).
+        const string source =
+            "G(k) = {\n    Step = {\n        T = if(k < 0, 'y', 'xxxxxxxxxx')\n        A = x + (T == T)\n        (T == T) + A + A - 2 + (T == T) - 1\n    }\n    Step.repeat(20, 0)\n}\nG(1)";
+
+        var generic = Observe(source, optimized: false);
+        var optimized = Observe(source, optimized: true);
+
+        Assert.Equal(1_048_575m, Atom(generic.Result));
+        Assert.Equal(1_048_575m, Atom(optimized.Result));
+        Assert.Equal(600, generic.Budget.MaterializedStringChars);
+        Assert.Equal(600, optimized.Budget.MaterializedStringChars);
+        Assert.Equal(generic.Budget.PeakDepth, optimized.Budget.PeakDepth);
         var plan = AssertWhollyPlanned(optimized.Loop);
         Assert.Contains("TempCall(A)", OutputSummary(plan), StringComparison.Ordinal);
         Assert.Contains("TempSlot(T)", OutputSummary(plan), StringComparison.Ordinal);

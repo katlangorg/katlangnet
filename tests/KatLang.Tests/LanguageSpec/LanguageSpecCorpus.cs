@@ -1425,6 +1425,38 @@ public static class LanguageSpecCorpus
         },
         new()
         {
+            Id = "dot-fallback-after-open-provider-exposure",
+            Category = "name-resolution",
+            Source = """
+                open Fallback
+                Make(x) = {
+                    public Box = { g = 42
+                        x }
+                    0
+                }
+                Middle(g) = {
+                    open Make
+                    public Box2 = { h = 42
+                        Box.g }
+                    0
+                }
+                Fallback = { public Box = 5
+                    public Box2 = 7 }
+                Outer(h) = {
+                    open Middle
+                    P = Box2.h
+                    P
+                }
+                Outer({x+1}), Outer({x*10})
+                """,
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "8\n70",
+            ExpectedRaw = "S[8, 70]",
+            ExpectedEmittedCount = 2,
+            Explanation = "Local-only members do not participate in open lookup. Removing Make.Box reveals the ancestor provider and makes Middle.Box2 capture g; removing that provider in turn makes Outer.P capture h. A provisional structural winner cannot suppress a fallback dependency after exposure removes its provider. The local-only cache keeps the two calls separate.",
+        },
+        new()
+        {
             Id = "dot-chain-structural-member-beats-extension",
             Category = "access-boundaries",
             Source = "Lib = {\n    public Sub = {\n        public Q = 1\n    }\n}\n\nQ(x) = 99\n\nLib.Sub.Q",

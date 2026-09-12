@@ -781,7 +781,7 @@ Three things are intentionally **not** value boundaries and keep emitting multip
 
 ### Zero-Parameter Property Caching
 
-For pure calculations these forms produce the same visible value, but the call shape controls reuse. A zero-parameter property read without parentheses may reuse a cached result during the current evaluation:
+For pure calculations these forms produce the same visible value, but the call shape controls reuse. During one evaluation run, repeated property-style reads of the same self-contained zero-parameter property reuse its first successful result:
 
 ```
 Fun = 1 + 2
@@ -793,7 +793,7 @@ When the property produces values that can change, property-style access and exp
 ```
 Fun = Math.Random(0, 1), Math.Random(0, 1)
 
-Fun, Fun     # property-style access: the same pair may be reused
+Fun, Fun     # property-style access: the same pair is reused
 Fun(), Fun() # explicit calls: the body is evaluated again for each call
 ```
 
@@ -808,6 +808,33 @@ C = A(), A()    # explicitly asks for fresh A values
 B()             # re-evaluates B, but A remains cached inside B
 C()             # re-evaluates C, and A() is fresh because it is explicit
 ```
+
+How long a cached value stays reusable follows the property's scope. A self-contained (exported) zero-parameter property does not depend on a caller's bindings. Its first successful property-style result is reused across calls, callbacks, loop iterations, and both structural and `open` access to that declaration. A local-only property that captures an enclosing input instead caches within its current binding context. Separate calls, callbacks, and loop iterations have separate contexts, even when their argument values are equal. Calling a nested helper also creates a new context; returning restores the caller's context and its cached values. Evaluating an algorithm argument without binding parameters keeps the current context; rebuilding a lookup record alone does not create a new cache scope.
+
+```
+Big = range(1, 100000).sum          # self-contained: computed once for the whole program
+F(x) = Big + x                      # every call of F reuses the same Big
+Scaled(k) = {
+    Base = k * 10                   # captures k: computed once per call of Scaled
+    Base + Base
+}
+range(1, 2000).map(F).count, Scaled(2), Scaled(10)
+```
+
+**Results:**
+```
+2000
+40
+200
+```
+
+The same rule applies to values that can change: `A = Math.RandomInt(0, 10)` read property-style from several calls of one function yields the same draw in all of them during one evaluation, and `A()` draws afresh each time.
+
+Host-backed properties follow the same rule. Every independent evaluation starts with an empty cache. Errors and interrupted property evaluations are not cached; a successful nested property's entry remains available if an enclosing evaluation fails and the program continues. An explicit call neither reads nor replaces that property's cached entry.
+
+A recursive read entered before any result is stored still evaluates the body. The first successful completion supplies the cache entry; reads already in progress finish with their own results and do not replace it.
+
+The guarantee concerns property-value reads. Passing a name as an algorithm argument follows the receiving callable's rules: for example, `if(1, A, 0)` evaluates the selected algorithm body directly, while `if(1, (A), 0)` evaluates the captured property read and uses A's cache.
 
 A property body may produce several items, but property-style access is a value boundary: the caller observes them as one sequence value. Caller-site spread (`value*`) turns that value back into separate output rows:
 

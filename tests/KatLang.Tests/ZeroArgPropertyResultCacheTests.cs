@@ -91,8 +91,12 @@ public class ZeroArgPropertyResultCacheTests
         var cache = new RunScopedZeroArgPropertyResultCache();
         var binding = NewProperty("Value");
         var runIdentity = new object();
+        // Two resolution-DISTINCT declaring scopes for one exported binding (each owner
+        // carries its own non-empty declaration list): the environment identities are not
+        // key components of an exported binding, so the scopes are what keeps the two
+        // executions apart.
         var first = new ZeroArgPropertyExecution(
-            NewAlgorithm(),
+            NewAlgorithm() with { Properties = [binding] },
             binding,
             ZeroArgPropertyAccessKind.Structural,
             new object(),
@@ -100,7 +104,7 @@ public class ZeroArgPropertyResultCacheTests
             new object(),
             runIdentity);
         var second = new ZeroArgPropertyExecution(
-            NewAlgorithm(),
+            NewAlgorithm() with { Properties = [binding] },
             binding,
             ZeroArgPropertyAccessKind.Structural,
             new object(),
@@ -454,6 +458,11 @@ public class ZeroArgPropertyResultCacheTests
     [Fact]
     public void Evaluator_ZeroArgPropertyCaching_OuterFreshCallsDoNotForceNestedPropertyFreshness()
     {
+        // `B()` re-evaluates B on each call, but the property-style `A` inside it is an
+        // exported root property: ONE value per run, so the second call's reads hit the
+        // entry the first call stored. (Before the cache's scope law each call's fresh
+        // environments split the entry — two misses — although nothing about A depended
+        // on the call.)
         var source = """
             A = Math.RandomInt(0, 10)
             B = A, A
@@ -470,8 +479,7 @@ public class ZeroArgPropertyResultCacheTests
         var atoms = result.Value.ToAtoms();
         Assert.Equal(4, atoms.Count);
         Assert.All(atoms, value => Assert.True(value >= 0m && value < 10m));
-        Assert.Equal(atoms[0], atoms[1]);
-        Assert.Equal(atoms[2], atoms[3]);
+        Assert.All(atoms, value => Assert.Equal(atoms[0], value));
         Assert.Equal(4, cache.Requests.Count);
         Assert.All(cache.Requests, request =>
         {
@@ -479,13 +487,13 @@ public class ZeroArgPropertyResultCacheTests
             Assert.Equal(ZeroArgPropertyAccessKind.CountedLexical, request.AccessKind);
         });
         Assert.Equal(4, snapshot.TotalRequests);
-        Assert.Equal(2, snapshot.Hits);
-        Assert.Equal(2, snapshot.Misses);
-        Assert.Equal(2, snapshot.Stores);
+        Assert.Equal(3, snapshot.Hits);
+        Assert.Equal(1, snapshot.Misses);
+        Assert.Equal(1, snapshot.Stores);
         Assert.Equal(4, countedLexical.Requests);
-        Assert.Equal(2, countedLexical.Hits);
-        Assert.Equal(2, countedLexical.Misses);
-        Assert.Equal(2, countedLexical.Stores);
+        Assert.Equal(3, countedLexical.Hits);
+        Assert.Equal(1, countedLexical.Misses);
+        Assert.Equal(1, countedLexical.Stores);
     }
 
     [Fact]

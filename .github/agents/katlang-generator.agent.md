@@ -1277,7 +1277,7 @@ BETTER — specific branch first:
 
 ## Zero-Parameter Property Calls
 
-- A zero-parameter property read without parentheses, such as `Fun`, may reuse a zero-argument cached result during the current evaluation. Use this form when a cached property-style value is desired.
+- A zero-parameter property read without parentheses, such as `Fun`, reuses its first successful result within the applicable cache scope. Use this form when a cached property-style value is desired. A self-contained property (one that does not read a parameter of an enclosing function) shares its first successfully completed result throughout the evaluation wherever it is read from — repeated calls, `map` callbacks, loop iterations, `open` — so an expensive constant such as `Big = range(1, 100000).sum` referenced inside `F(x) = Big + x` is computed once; a property that captures an enclosing parameter caches within the current binding context (each call, callback, or loop iteration creates a fresh context, even for equal arguments). Structural and opened reads of the same exported declaration share an entry. Independent runs have fresh caches; failed evaluations are never stored. Recursive reads already in progress can finish with their own results but do not replace the first successful entry. Passing a name as an algorithm argument follows the receiver's argument rules rather than forcing a property-value read.
 - An explicit zero-parameter call, such as `Fun()`, bypasses the zero-argument cache for that property itself. It does not recursively force nested property references to bypass their caches. To request fresh nested values, write the nested calls explicitly with `()`: `B = A, A` keeps cached/property-style `A` inside `B()`, while `C = A(), A()` asks for fresh `A` values inside `C()`.
 
 ## Math Usage
@@ -1534,7 +1534,7 @@ Without trailing output, `Order` has no direct result — use `Order.Total(25, 4
 
 === BEGIN GENERATED: katlang-spec-examples (DO NOT EDIT BY HAND) ===
 
-Verified reference examples (76 of the 241-case canonical language specification,
+Verified reference examples (76 of the 242-case canonical language specification,
 tests/KatLang.Tests/LanguageSpec/LanguageSpecCorpus.cs). Every program and expected
 output below is executed against the KatLang engine and (where representable)
 guarded against the Lean model on every build. Treat these as ground truth for the

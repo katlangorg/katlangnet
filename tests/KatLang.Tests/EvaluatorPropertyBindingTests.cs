@@ -189,6 +189,12 @@ public class EvaluatorPropertyBindingTests
     [Fact]
     public void Eval_Keeps_CallerBoundZeroParamLexicalProperty_Contextual()
     {
+        // `Shared` reads the caller's parameter `x`, so it is LOCAL-ONLY: the front end
+        // classifies such a property so, and the zero-argument property cache keys a
+        // local-only property by its binding context (one value per activation of
+        // Caller). A host-built tree must declare that classification itself — the
+        // evaluator trusts the declared exposure exactly as it does for open/dot access,
+        // and the default Exported would make one run-wide entry serve both calls.
         var shared = new Property(
             "Shared",
             new Algorithm.User(
@@ -196,7 +202,8 @@ public class EvaluatorPropertyBindingTests
                 Parameters: [],
                 Opens: [],
                 Properties: [],
-                Output: [new Expr.Param("x")]));
+                Output: [new Expr.Param("x")]),
+            Exposure: PropertyExposure.LocalOnlyCapturedAncestorParameters);
 
         var caller = new Property(
             "Caller",

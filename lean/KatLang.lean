@@ -92,16 +92,6 @@
 
 universe u v
 
-namespace StateT
-  def error {σ : Type u} {errT : Type v} {α : Type u} (err : errT)
-      : StateT σ (Except errT) α :=
-    throw err
-
-  def ok {σ : Type u} {errT : Type v} {α : Type u} (value : α)
-      : StateT σ (Except errT) α :=
-    pure value
-end StateT
-
 namespace KatLang
 
 --------------------------------------------------------------------------------
@@ -751,6 +741,15 @@ end Pattern
 -- Syntax
 --------------------------------------------------------------------------------
 
+/-- Declaration identity is independent of executable body equality. Ordinary
+    tree declarations receive a fresh `syntax` identity once at run preparation.
+    `shared` represents a host AST declaration reused at several syntax sites
+    (C# binding plus declaring-scope identity); encoders preserve that sharing explicitly. -/
+inductive PropertyIdentity where
+  | syntax : Nat -> PropertyIdentity
+  | shared : Nat -> PropertyIdentity
+  deriving Repr, BEq
+
 mutual
   inductive Expr where
     | param   : Ident -> Expr
@@ -861,6 +860,7 @@ mutual
     alg      : Algorithm
     isPublic : Bool
     exposure : PropExposure := .exported
+    identity : Option PropertyIdentity := none
     deriving Repr
 
   /-- A branch of a conditional algorithm: a pattern and a body algorithm.
@@ -1280,19 +1280,40 @@ inductive ZeroArgPropertyAccessKind where
   | structural
   deriving Repr, BEq
 
-/-- Lean cache keys use structural representations because the model has
-    immutable AST values rather than C# object identities.  The key still
-    distinguishes access shape, resolved owner/property, and the current
-    lexical/value binding context, so it is intentionally more specific than a
-    simple property name. -/
+/-- Key of the per-run zero-parameter property cache — and with it the cache's
+    semantic LAW (C#: `ZeroArgPropertyCacheKey`). The scope of a stored value
+    follows the binding's exposure classification:
+
+    * an EXPORTED binding is self-contained — its value depends on no input that
+      an enclosing owner's call binds — so the binding context at the access is
+      not a determinant of the value: ONE entry per run per declaring scope
+      serves every property-style access, from any call, callback, loop
+      iteration, or explicit outer call. Its environment components are `none`.
+    * a LOCAL-ONLY binding reads an input an enclosing owner's call binds
+      through the dynamically threaded environments, so its value is a
+      function of the binding context: the key carries the three environments
+      at the access (`some`) plus a fresh binding-context identity, and two
+      activations never share an entry, even if all their values are equal.
+
+    Lean keys use structural representations (`reprStr`) because the model has
+    immutable AST values rather than C# object identities. Run preparation
+    assigns declaration identities before wiring, so separate declarations with
+    equal bodies never alias; explicit `shared` identities preserve host DAGs.
+    The owner is its `asScopeCtx` (including parent chain), and exported
+    lexical/structural spellings have one key. Explicit calls neither read
+    nor replace their own cache entry. Only successful results are stored, and
+    an enclosing failure never rolls back a successful nested store. Recursive
+    reads entered before the first store still evaluate, but their later
+    completions do not replace the first successful entry. -/
 structure ZeroArgPropertyCacheKey where
   accessKind : ZeroArgPropertyAccessKind
   owner      : String
   propertyName : Ident
   propertyAlgorithm : String
-  valEnv : String
-  algEnv : String
-  countedParamEnv : String
+  valEnv : Option String
+  algEnv : Option String
+  countedParamEnv : Option String
+  bindingContext : Option Nat
   deriving Repr, BEq
 
 abbrev ZeroArgPropertyCache := List (Prod ZeroArgPropertyCacheKey CountedResult)
@@ -1311,7 +1332,7 @@ namespace ZeroArgPropertyCache
     | [] => [(key, value)]
     | (existingKey, existingValue) :: rest =>
         if existingKey == key then
-          (key, value) :: rest
+          (existingKey, existingValue) :: rest
         else
           (existingKey, existingValue) :: insert rest key value
 end ZeroArgPropertyCache
@@ -1323,24 +1344,56 @@ end ZeroArgPropertyCache
     arbitrary calls or expression results. -/
 structure EvalState where
   zeroArgPropertyCache : ZeroArgPropertyCache := []
+  nextBindingContext : Nat := 1
   deriving Repr
 
 namespace EvalState
   def empty : EvalState := {}
 end EvalState
 
-abbrev EvalM (α : Type) := StateT EvalState (Except Error) α
+/-- Errors retain completed evaluator state. A failed value probe may be
+    accepted through its algorithm channel; successful nested properties keep
+    their first run result even when that enclosing probe fails. The wrapper's
+    `run` projection preserves the public Except-shaped result API. -/
+structure EvalM (α : Type) where
+  runState : ExceptT Error (StateM EvalState) α
+
+instance : Monad EvalM where
+  pure a := ⟨pure a⟩
+  bind m f := ⟨m.runState >>= fun a => (f a).runState⟩
+
+instance : MonadStateOf EvalState EvalM where
+  get := ⟨get⟩
+  set s := ⟨set s⟩
+  modifyGet f := ⟨modifyGet f⟩
+
+instance : MonadExceptOf Error EvalM where
+  throw err := ⟨throw err⟩
+  tryCatch m handler := ⟨tryCatch m.runState (fun err => (handler err).runState)⟩
+
+instance : MonadLift (Except Error) EvalM where
+  monadLift e := ⟨match e with | .ok a => pure a | .error err => throw err⟩
+
+namespace EvalM
+  def error {A : Type} (err : Error) : EvalM A := ⟨throw err⟩
+  def ok {A : Type} (value : A) : EvalM A := pure value
+
+  @[simp] theorem pure_bind {A B : Type} (value : A) (next : A -> EvalM B) :
+      (pure value >>= next : EvalM B) = next value := rfl
+
+  def run {A : Type} (m : EvalM A) (state : EvalState) : Except Error (A × EvalState) :=
+    let (result, nextState) := m.runState state
+    result.map (fun value => (value, nextState))
+end EvalM
 
 instance {A : Type} : Nonempty (EvalM A) := Nonempty.intro (.error Error.badArity)
 
-/-- Run a sub-computation and capture its `Except` result without committing
-    state changes from the failing path. This preserves the older Except-style
-    probing behavior used by fallback resolution. -/
+/-- Capture a probe's error without rolling back successful nested cache
+    stores or binding identities. The failed property itself is never stored. -/
 def evalAttempt {A : Type} (m : EvalM A) : EvalM (Except Error A) :=
-  fun state =>
-    match m.run state with
-    | .ok (value, nextState) => .ok (.ok value, nextState)
-    | .error err => .ok (.error err, state)
+  ⟨fun state =>
+    let (result, nextState) := m.runState state
+    (.ok result, nextState)⟩
 
 def runEvalM (m : EvalM A) : Except Error A :=
   match m.run EvalState.empty with
@@ -1362,17 +1415,18 @@ structure EvalCtx where
   callStack : List Algorithm
   algEnv    : AlgEnv := []
   countedParamEnv : CountedParamEnv := []
+  bindingContext : Nat := 0
   deriving Repr
 
 namespace EvalCtx
   def empty : EvalCtx := { callStack := [], algEnv := [], countedParamEnv := [] }
   def push (a : Algorithm) (ctx : EvalCtx) : EvalCtx :=
-    { callStack := a :: ctx.callStack, algEnv := ctx.algEnv, countedParamEnv := ctx.countedParamEnv }
+    { ctx with callStack := a :: ctx.callStack }
   def head? (ctx : EvalCtx) : Option Algorithm := ctx.callStack.head?
   def withAlgEnv (env : AlgEnv) (ctx : EvalCtx) : EvalCtx :=
-    { callStack := ctx.callStack, algEnv := env, countedParamEnv := ctx.countedParamEnv }
+    { ctx with algEnv := env }
   def withCountedParamEnv (env : CountedParamEnv) (ctx : EvalCtx) : EvalCtx :=
-    { callStack := ctx.callStack, algEnv := ctx.algEnv, countedParamEnv := env }
+    { ctx with countedParamEnv := env }
 
   /-- The callee-side context of a parameter binding: the callee's own
       algorithm and counted bindings prepended to the CALLER's tiers with the
@@ -1390,8 +1444,15 @@ namespace EvalCtx
       can shadow one tier and forget another.
       C#: `ShadowInheritedParameterEnvironments` plus the site's own prepend. -/
   def bindParameters (names : List Ident) (algBindings : AlgEnv)
-      (countedBindings : CountedParamEnv) (ctx : EvalCtx) : EvalCtx :=
-    { callStack := ctx.callStack,
+      (countedBindings : CountedParamEnv) (ctx : EvalCtx) : EvalM EvalCtx := do
+    -- Equal values in separate calls are still distinct bindings. Allocate at
+    -- every binding boundary, including an explicit zero-argument call, just
+    -- as C# creates fresh environment lists there. A property read only pushes
+    -- its algorithm and preserves this identity.
+    let state <- get
+    set { state with nextBindingContext := state.nextBindingContext + 1 }
+    pure { ctx with
+      bindingContext := state.nextBindingContext,
       algEnv := algBindings ++ AlgEnv.shadow ctx.algEnv names,
       countedParamEnv := countedBindings ++ CountedParamEnv.shadow ctx.countedParamEnv names }
 end EvalCtx
@@ -2172,18 +2233,16 @@ def conditionalValueAccessError? (name : String) (a : Algorithm) : Option Error 
   | _ => none
 
 /-- Attach context to any error raised by `m`. -/
-def withCtx (ctx : String) (m : EvalM A) : EvalM A :=
-  fun state =>
-    match m.run state with
-    | .ok result => .ok result
+def withCtx (ctx : String) (m : EvalM A) : EvalM A := do
+    match <- evalAttempt m with
+    | .ok result => pure result
     | .error err => .error (Error.withContext ctx err)
 
 /-- Attach property context specifically to a missing-output failure.
     Other errors are preserved unchanged. -/
-def withMissingOutputCtx (ctx : String) (m : EvalM A) : EvalM A :=
-  fun state =>
-    match m.run state with
-    | .ok result => .ok result
+def withMissingOutputCtx (ctx : String) (m : EvalM A) : EvalM A := do
+    match <- evalAttempt m with
+    | .ok result => pure result
     | .error .missingOutput => .error (.withContext ctx .missingOutput)
     | .error err => .error err
 
@@ -3089,17 +3148,22 @@ def countedSequenceCallbackItem (item : CountedResult) : CountedResult :=
 def isCacheableZeroArgPropertyAlgorithm (a : Algorithm) : Bool :=
   (Algorithm.params a).isEmpty
 
+/-- The cache key of one property-style access (see `ZeroArgPropertyCacheKey`
+    for the law it encodes): an exported binding's key carries no environment
+    components, a local-only binding's key carries all three. -/
 def zeroArgPropertyCacheKey (accessKind : ZeroArgPropertyAccessKind)
     (owner : Algorithm) (binding : PropDef) (ctx : EvalCtx) (env : ValEnv)
     : ZeroArgPropertyCacheKey :=
+  let bindingContextFree := binding.exposure.isExported
   {
-    accessKind := accessKind,
-    owner := reprStr owner,
+    accessKind := if bindingContextFree then .lexical else accessKind,
+    owner := reprStr owner.asScopeCtx,
     propertyName := binding.name,
     propertyAlgorithm := reprStr binding.alg,
-    valEnv := reprStr env,
-    algEnv := reprStr ctx.algEnv,
-    countedParamEnv := reprStr ctx.countedParamEnv
+    valEnv := if bindingContextFree then none else some (reprStr env),
+    algEnv := if bindingContextFree then none else some (reprStr ctx.algEnv),
+    countedParamEnv := if bindingContextFree then none else some (reprStr ctx.countedParamEnv),
+    bindingContext := if bindingContextFree then none else some ctx.bindingContext
   }
 
 def reducerAccumulatorSideHasTopLevelCollecting : Algorithm -> Bool
@@ -3679,7 +3743,11 @@ def lookupInParentsStructuralProperty (sc : ScopeCtx) (name : Ident)
     : Option ResolvedProperty :=
   match lookupPropDefAny? (ScopeCtx.props sc) name with
   | some prop =>
-      let owner := Algorithm.forOpens sc
+      -- The binding belongs to sc itself. `forOpens sc` is a lookup wrapper
+      -- whose PARENT is sc; using it as owner adds a spurious scope level to
+      -- the property key, splitting an ancestor read from a direct read.
+      let owner := match sc with
+        | .mk parent opens props => Algorithm.mk parent [] opens props []
       some {
         owner := owner,
         binding := prop,
@@ -4248,7 +4316,7 @@ mutual
   partial def runStepSlots (step : Algorithm) (ctx : EvalCtx) (env : ValEnv)
       (stateSlots : List Result) : EvalM (List Result) := do
     let (argEnv, countedParamEnv) <- bindLoopStepState step stateSlots
-    let stepCtx := ctx.bindParameters (Algorithm.params step) [] countedParamEnv
+    let stepCtx <- ctx.bindParameters (Algorithm.params step) [] countedParamEnv
     evalAlgOutputSlots step stepCtx (argEnv ++ env) (Algorithm.requiresPatternBinding step)
 
   /-- Run a step algorithm with the given state bound to its params. -/
@@ -4413,7 +4481,7 @@ mutual
       | some (branch, bindings) =>
           let wiredBody := Algorithm.childOf callee branch.body
           let names := bindings.map Prod.fst
-          let newCtx := (EvalCtx.push callee ctx).bindParameters names [] bindings
+          let newCtx <- (EvalCtx.push callee ctx).bindParameters names [] bindings
           let newEnv := (bindings.map fun | (name, value) => (name, value.fst)) ++ env
           evalAlgOutputCounted wiredBody newCtx newEnv
       | none =>
@@ -4440,7 +4508,7 @@ mutual
               .error Error.missingOutput
             else do
               let countedParamEnv <- bindCountedCallbackParams (Algorithm.params simple) args
-              let newCtx := ctx.bindParameters (Algorithm.params simple) [] countedParamEnv
+              let newCtx <- ctx.bindParameters (Algorithm.params simple) [] countedParamEnv
               evalAlgOutputCounted simple newCtx env
         | none =>
             evalConditionalCallbackCallCounted callee args ctx env calleeName
@@ -4451,7 +4519,7 @@ mutual
           if Algorithm.requiresPatternBinding callee then do
             let bindings <- bindCountedParameterPatternList (Algorithm.parameterPatterns callee) args
             let names := bindings.countedParamEnv.map Prod.fst
-            let newCtx := ctx.bindParameters names [] bindings.countedParamEnv
+            let newCtx <- ctx.bindParameters names [] bindings.countedParamEnv
             evalAlgOutputCounted callee newCtx env
           -- A flat callee with a top-level collecting parameter (`Rows.map(F)` with
           -- `F(x, *y, z)` or a single-collecting `Collect(*items)`) binds through
@@ -4464,7 +4532,7 @@ mutual
             let bindings <- bindCountedCallbackParameterPatternList
               (Algorithm.parameterPatterns callee) args
             let names := bindings.countedParamEnv.map Prod.fst
-            let newCtx := ctx.bindParameters names [] bindings.countedParamEnv
+            let newCtx <- ctx.bindParameters names [] bindings.countedParamEnv
             evalAlgOutputCounted callee newCtx env
           else do
             -- Fixed-only flat callback binding projects each callback item into
@@ -4474,7 +4542,7 @@ mutual
             -- Scalar callback deconstruction stays deferred so the counted
             -- callback path keeps Lean/C# parity.
             let countedParamEnv <- bindCountedCallbackParams (Algorithm.params callee) args
-            let newCtx := ctx.bindParameters (Algorithm.params callee) [] countedParamEnv
+            let newCtx <- ctx.bindParameters (Algorithm.params callee) [] countedParamEnv
             evalAlgOutputCounted callee newCtx env
 
   /-- Non-counted wrapper for callback calls that still preserve projected item
@@ -4497,7 +4565,7 @@ mutual
         else do
           let bindings <- bindCountedParameterPatternList patterns args
           let names := bindings.countedParamEnv.map Prod.fst
-          let newCtx := ctx.bindParameters names [] bindings.countedParamEnv
+          let newCtx <- ctx.bindParameters names [] bindings.countedParamEnv
           evalAlgOutputCounted callee newCtx env
     | _ =>
         evalResolvedCallbackCallCounted callee args ctx env calleeName
@@ -5213,7 +5281,7 @@ mutual
           let (argEnv, countedParamEnv, algBindings) <-
             bindPatternedUserCall callee args ctx env assembly
           let shadowedEnv := ValEnv.shadow env (Algorithm.params callee)
-          let newCtx := ctx.bindParameters (Algorithm.params callee) algBindings countedParamEnv
+          let newCtx <- ctx.bindParameters (Algorithm.params callee) algBindings countedParamEnv
           reCountValueBoundary <$> evalAlgOutputCounted callee newCtx (argEnv ++ shadowedEnv)
     else match Algorithm.collectingParam? callee with
       | some _ =>
@@ -5221,12 +5289,12 @@ mutual
           let (argEnv, countedParamEnv, algBindings) <-
             bindDeconstructionUserCall callee args ctx env assembly
           let shadowedEnv := ValEnv.shadow env (Algorithm.params callee)
-          let newCtx := ctx.bindParameters (Algorithm.params callee) algBindings countedParamEnv
+          let newCtx <- ctx.bindParameters (Algorithm.params callee) algBindings countedParamEnv
           reCountValueBoundary <$> evalAlgOutputCounted callee newCtx (argEnv ++ shadowedEnv)
       | none =>
       do
         let (argEnv, algBindings) <- bindFlatFixedUserCall callee args ctx env
-        let newCtx := ctx.bindParameters (Algorithm.params callee) algBindings []
+        let newCtx <- ctx.bindParameters (Algorithm.params callee) algBindings []
         let shadowedEnv := ValEnv.shadow env (Algorithm.params callee)
         reCountValueBoundary <$> evalAlgOutputCounted callee newCtx (argEnv ++ shadowedEnv)
 
@@ -5281,7 +5349,7 @@ mutual
       | some (branch, bindings) =>
           let wiredBody := Algorithm.childOf callee branch.body
           let names := bindings.map Prod.fst
-          let newCtx := (EvalCtx.push callee ctx).bindParameters names [] []
+          let newCtx <- (EvalCtx.push callee ctx).bindParameters names [] []
           reCountValueBoundary <$> evalAlgOutputCounted wiredBody newCtx (bindings ++ env)
       | none =>
           .error (Error.noMatchingBranch calleeName)
@@ -6277,7 +6345,59 @@ def preludeAlg : Algorithm :=
     ]
     []
 
+/- Allocate declaration identities once, before execution. Lean ASTs are
+    immutable values: two different declarations can have identical bodies,
+    so `reprStr` alone cannot identify them. These numbers identify written
+    declarations, not activations. Host-supplied sharing identities survive.
+    This pass changes no names, ownership, exposure, or executable expression. -/
+mutual
+  partial def identifyPropertyExpr : Expr -> StateM Nat Expr
+    | .param n => pure (.param n)
+    | .num n => pure (.num n)
+    | .stringLiteral s => pure (.stringLiteral s)
+    | .resolve n => pure (.resolve n)
+    | .emptySequence n => pure (.emptySequence n)
+    | .unary op e => return .unary op (<- identifyPropertyExpr e)
+    | .binary op a b => return .binary op (<- identifyPropertyExpr a) (<- identifyPropertyExpr b)
+    | .index a b => return .index (<- identifyPropertyExpr a) (<- identifyPropertyExpr b)
+    | .sequenceConstruct a b => return .sequenceConstruct (<- identifyPropertyExpr a) (<- identifyPropertyExpr b)
+    | .sequenceSpread e => return .sequenceSpread (<- identifyPropertyExpr e)
+    | .listLiteral es => return .listLiteral (<- es.mapM identifyPropertyExpr)
+    | .capture es => return .capture (<- es.mapM identifyPropertyExpr)
+    | .algorithmExpr a => return .algorithmExpr (<- identifyPropertyAlgorithm a)
+    | .call f args => return .call (<- identifyPropertyExpr f) (<- args.mapM identifyPropertyExpr)
+    | .dotMember target name fallback args =>
+        return .dotMember (<- identifyPropertyExpr target) name
+          (<- identifyPropertyExpr fallback) (<- args.mapM (List.mapM identifyPropertyExpr))
+
+  partial def identifyPropertyAlgorithm : Algorithm -> StateM Nat Algorithm
+    | .builtin b => pure (.builtin b)
+    | .mk parent parameters opens props output =>
+        return .mk (<- parent.mapM identifyPropertyScope) parameters
+          (<- opens.mapM identifyPropertyExpr) (<- props.mapM identifyPropertyDefinition)
+          (<- output.mapM identifyPropertyExpr)
+    | .conditional parent opens branches =>
+        return .conditional (<- parent.mapM identifyPropertyScope)
+          (<- opens.mapM identifyPropertyExpr)
+          (<- branches.mapM fun b => return { b with body := (<- identifyPropertyAlgorithm b.body) })
+
+  partial def identifyPropertyScope : ScopeCtx -> StateM Nat ScopeCtx
+    | .mk parent opens props =>
+        return .mk (<- parent.mapM identifyPropertyScope)
+          (<- opens.mapM identifyPropertyExpr) (<- props.mapM identifyPropertyDefinition)
+
+  partial def identifyPropertyDefinition (p : PropDef) : StateM Nat PropDef := do
+    let identity <- match p.identity with
+      | some (.shared n) => pure (.shared n)
+      | _ => do
+          let next <- get
+          set (next + 1)
+          pure (.syntax next)
+    return { p with identity := some identity, alg := (<- identifyPropertyAlgorithm p.alg) }
+end
+
 def runResultM (e : Expr) : EvalM Result := do
+  let e := (identifyPropertyExpr e).run' 0
   validateExplicitParamOutputInvariantExpr e
   let ctx := { callStack := [preludeAlg], algEnv := [] }
   match e with

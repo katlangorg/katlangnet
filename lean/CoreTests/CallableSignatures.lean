@@ -252,9 +252,9 @@ def zeroArgOuterFreshCallKeepsNestedPropertyStyleCache : Bool :=
 
 def zeroArgStructuralPropertyCacheRoot : Algorithm :=
   let box := alg [] [] [publicProp "A" (alg [] [] [] [.num 4])] []
-  alg [] [] [] [
-    .dotCall (.algorithmExpr box) "A" none,
-    .dotCall (.algorithmExpr box) "A" none
+  algPrivate [] [] [("Box", box)] [
+    .dotCall (.resolve "Box") "A" none,
+    .dotCall (.resolve "Box") "A" none
   ]
 
 def zeroArgStructuralPropertyAccessUsesCache : Bool :=
@@ -262,7 +262,7 @@ def zeroArgStructuralPropertyAccessUsesCache : Bool :=
   | Except.ok (Result.sequenceValue [Result.atom 4, Result.atom 4], state) =>
       match state.zeroArgPropertyCache with
       | [(key, (Result.atom 4, 1))] =>
-          key.propertyName == "A" && key.accessKind == .structural
+          key.propertyName == "A" && key.accessKind == .lexical
       | _ => false
   | _ => false
 
@@ -321,6 +321,207 @@ def zeroArgCacheKeyDistinguishesLexicalContext : Bool :=
   | _ => false
 
 #guard zeroArgCacheKeyDistinguishesLexicalContext
+
+-- The cache's SCOPE law (F3): an EXPORTED property is self-contained, so its key
+-- carries no environment components and ONE entry serves every property-style
+-- access — here `Big` read from two calls of `F(x)` with different bindings.
+def zeroArgExportedPropertyAcrossCallsRoot : Algorithm :=
+  algPrivate [] [] [
+    ("Big", alg [] [] [] [.binary .add (.num 1) (.num 2)]),
+    ("F", alg ["x"] [] [] [.binary .add (.resolve "Big") (.param "x")])
+  ] [
+    .call (.resolve "F") [.num 1],
+    .call (.resolve "F") [.num 2]
+  ]
+
+def zeroArgExportedPropertyIsEvaluatedOncePerRunAcrossCalls : Bool :=
+  match KatLang.runResultWithState (.algorithmExpr zeroArgExportedPropertyAcrossCallsRoot) with
+  | Except.ok (Result.sequenceValue [Result.atom 4, Result.atom 5], state) =>
+      match state.zeroArgPropertyCache with
+      | [(key, (Result.atom 3, 1))] =>
+          key.propertyName == "Big" && key.accessKind == .lexical
+            && key.valEnv == none && key.algEnv == none && key.countedParamEnv == none
+      | _ => false
+  | _ => false
+
+#guard zeroArgExportedPropertyIsEvaluatedOncePerRunAcrossCalls
+
+-- A LOCAL-ONLY property reads an input its owner's call binds, so its key carries
+-- the environments at the access: two activations of `Outer` never share `P`,
+-- while the two reads within one activation do.
+def zeroArgLocalOnlyPropertyPerActivationRoot : Algorithm :=
+  algPrivate [] [] [
+    ("Outer", alg ["x"] [] [
+      privateLocalProp "P" .localCapturedAncestorParams
+        (alg [] [] [] [.binary .mul (.param "x") (.num 10)])
+    ] [.binary .add (.resolve "P") (.resolve "P")])
+  ] [
+    .call (.resolve "Outer") [.num 2],
+    .call (.resolve "Outer") [.num 10]
+  ]
+
+def zeroArgLocalOnlyPropertyIsKeyedByBindingContext : Bool :=
+  match KatLang.runResultWithState (.algorithmExpr zeroArgLocalOnlyPropertyPerActivationRoot) with
+  | Except.ok (Result.sequenceValue [Result.atom 40, Result.atom 200], state) =>
+      let pEntries := state.zeroArgPropertyCache.filter (fun entry => entry.fst.propertyName == "P")
+      pEntries.length == 2
+        && pEntries.all (fun entry =>
+          entry.fst.valEnv.isSome && entry.fst.algEnv.isSome && entry.fst.countedParamEnv.isSome)
+  | _ => false
+
+#guard zeroArgLocalOnlyPropertyIsKeyedByBindingContext
+
+-- Equal argument values do not identify an activation. This used to leave one
+-- entry because `reprStr env` erased the difference between the two bindings.
+def zeroArgLocalOnlyEqualActivations : Bool :=
+  let root := alg [] [] (Algorithm.props zeroArgLocalOnlyPropertyPerActivationRoot) [
+      .call (.resolve "Outer") [.num 2],
+      .call (.resolve "Outer") [.num 2]]
+  match KatLang.runResultWithState (.algorithmExpr root) with
+  | .ok (_, state) =>
+      let entries := state.zeroArgPropertyCache.filter (fun entry => entry.fst.propertyName == "P")
+      entries.length == 2 && (entries.map (fun entry => entry.fst.bindingContext)).eraseDups.length == 2
+  | _ => false
+
+#guard zeroArgLocalOnlyEqualActivations
+
+-- A property read pushes a lexical scope but binds no new parameters. The
+-- ancestor lookup inside Q must share P's entry with its direct owner read.
+def zeroArgLocalOnlyNestedPropertyRead : Bool :=
+  let root := algPrivate [] [] [("Outer", alg ["x"] [] [
+    privateLocalProp "P" .localCapturedAncestorParams (alg [] [] [] [.param "x"]),
+    privateLocalProp "Q" .localCapturedAncestorParams (alg [] [] [] [.resolve "P", .resolve "P"])
+  ] [.resolve "P", .resolve "Q", .resolve "P"])] [.call (.resolve "Outer") [.num 1]]
+  match KatLang.runResultWithState (.algorithmExpr root) with
+  | .ok (_, state) =>
+      (state.zeroArgPropertyCache.filter (fun entry => entry.fst.propertyName == "P")).length == 1
+  | _ => false
+
+#guard zeroArgLocalOnlyNestedPropertyRead
+
+-- Selecting A's algorithm body binds no arguments. Rebuilt resolution owners
+-- are still one declaring scope in the same Outer binding context.
+def zeroArgLocalOnlyAlgorithmArgumentReads : Bool :=
+  let root := algPrivate [] [] [("Outer", alg ["x"] [] [
+    privateLocalProp "A" .localCapturedAncestorParams (alg [] [] [
+      privateLocalProp "P" .localCapturedAncestorParams (alg [] [] [] [.param "x"])
+    ] [.resolve "P"])
+  ] [.call (.resolve "if") [.num 1, .resolve "A", .num 0],
+     .call (.resolve "if") [.num 1, .resolve "A", .num 0]])]
+    [.call (.resolve "Outer") [.num 1]]
+  match KatLang.runResultWithState (.algorithmExpr root) with
+  | .ok (_, state) =>
+      (state.zeroArgPropertyCache.filter (fun entry => entry.fst.propertyName == "P")).length == 1
+  | _ => false
+
+#guard zeroArgLocalOnlyAlgorithmArgumentReads
+
+-- Recursive reads can finish before an earlier read of the same property.
+-- The insertion law preserves that first completion, even when the pending
+-- outer evaluation eventually produces a different result.
+def zeroArgFirstSuccessfulStoreWins : Bool :=
+  let binding := privateProp "A" (alg [] [] [] [.num 7])
+  let key := KatLang.zeroArgPropertyCacheKey .lexical
+    (alg [] [] [binding] []) binding KatLang.EvalCtx.empty []
+  let cache := KatLang.ZeroArgPropertyCache.insert [] key (Result.atom 7, 1)
+  let cache := KatLang.ZeroArgPropertyCache.insert cache key (Result.atom 8, 1)
+  KatLang.ZeroArgPropertyCache.lookup cache key == some (Result.atom 7, 1)
+
+#guard zeroArgFirstSuccessfulStoreWins
+
+-- An open and a structural edge select the same declaration, in either order.
+def zeroArgMixedAccessSpellings (structuralFirst : Bool) : Bool :=
+  let lexical : KatLang.Expr := .resolve "A"
+  let structural : KatLang.Expr := .dotCall (.resolve "Lib") "A" none
+  let root := alg [] [.resolve "Lib"] [
+    privateProp "Lib" (alg [] [] [publicProp "A" (alg [] [] [] [.num 7])] [])
+  ] (if structuralFirst then [structural, lexical] else [lexical, structural])
+  match KatLang.runResultWithState (.algorithmExpr root) with
+  | .ok (Result.sequenceValue [Result.atom 7, Result.atom 7], state) =>
+      state.zeroArgPropertyCache.length == 1
+  | _ => false
+
+#guard zeroArgMixedAccessSpellings false
+#guard zeroArgMixedAccessSpellings true
+
+-- A direct owner and the scope-only owner reconstructed for ancestor lookup
+-- identify the same declaring scope. Its executable output is not key data.
+def zeroArgRootAndNestedAccess : Bool :=
+  let root := algPrivate [] [] [
+    ("A", alg [] [] [] [.num 7]),
+    ("F", alg [] [] [] [.resolve "A"])
+  ] [.resolve "A", .call (.resolve "F") [], .resolve "A"]
+  match KatLang.runResultWithState (.algorithmExpr root) with
+  | .ok (_, state) => state.zeroArgPropertyCache.length == 1
+  | _ => false
+
+#guard zeroArgRootAndNestedAccess
+
+-- The value probe fails, but the algorithm channel lets Ignore accept Bad.
+-- A completed successfully inside that probe: failure of its parent must not
+-- roll back A's first successful run entry (C# keeps it as well).
+def zeroArgSuccessfulChildSurvivesFailedProbe : Bool :=
+  let root := algPrivate [] [] [
+    ("A", alg [] [] [] [.num 7]),
+    ("Bad", alg [] [] [] [.resolve "A", .binary .div (.num 1) (.num 0)]),
+    ("Ignore", alg ["f"] [] [] [.num 0])
+  ] [.call (.resolve "Ignore") [.resolve "Bad"]]
+  match KatLang.runResultWithState (.algorithmExpr root) with
+  | .ok (Result.atom 0, state) =>
+      match state.zeroArgPropertyCache with
+      | [(key, (Result.atom 7, 1))] => key.propertyName == "A"
+      | _ => false
+  | _ => false
+
+#guard zeroArgSuccessfulChildSurvivesFailedProbe
+
+def zeroArgDistinctIdenticalDeclarations : Bool :=
+  let body := algPrivate ["x"] [] [("P", alg [] [] [] [.num 7])]
+    [.binary .add (.resolve "P") (.param "x")]
+  let root := algPrivate [] [] [("F", body), ("G", body)] [
+    .call (.resolve "F") [.num 1], .call (.resolve "G") [.num 1]]
+  match KatLang.runResultWithState (.algorithmExpr root) with
+  | .ok (_, state) => state.zeroArgPropertyCache.length == 2
+  | _ => false
+
+#guard zeroArgDistinctIdenticalDeclarations
+
+-- Host DAGs express sharing explicitly. Without that identity these are two
+-- inline declaration sites, just as two written `{ A = 4 }` blocks are.
+def zeroArgInlineDeclarationIdentity (shared : Bool) : Bool :=
+  let member := publicProp "A" (alg [] [] [] [.num 4])
+  let member := if shared then { member with identity := some (.shared 0) } else member
+  let box := alg [] [] [member] []
+  let root := alg [] [] [] [
+    .dotCall (.algorithmExpr box) "A" none,
+    .dotCall (.algorithmExpr box) "A" none]
+  match KatLang.runResultWithState (.algorithmExpr root) with
+  | .ok (_, state) => state.zeroArgPropertyCache.length == (if shared then 1 else 2)
+  | _ => false
+
+#guard zeroArgInlineDeclarationIdentity false
+#guard zeroArgInlineDeclarationIdentity true
+
+-- An explicit outer call `B()` re-evaluates B on every call, and the property-style
+-- `A` inside it keeps its one run-wide entry across both calls.
+def zeroArgNestedPropertyAcrossExplicitOuterCallsRoot : Algorithm :=
+  algPrivate [] [] [
+    ("A", alg [] [] [] [.num 3]),
+    ("B", alg [] [] [] [.resolve "A", .resolve "A"])
+  ] [
+    .call (.resolve "B") [],
+    .call (.resolve "B") []
+  ]
+
+def zeroArgNestedPropertyKeepsOneEntryAcrossExplicitOuterCalls : Bool :=
+  match KatLang.runResultWithState (.algorithmExpr zeroArgNestedPropertyAcrossExplicitOuterCallsRoot) with
+  | Except.ok (Result.sequenceValue [
+        Result.sequenceValue [Result.atom 3, Result.atom 3],
+        Result.sequenceValue [Result.atom 3, Result.atom 3]], state) =>
+      state.zeroArgPropertyCache.length == 1
+  | _ => false
+
+#guard zeroArgNestedPropertyKeepsOneEntryAcrossExplicitOuterCalls
 
 def helperOutputAlg : Algorithm :=
   algPrivate [] [] [

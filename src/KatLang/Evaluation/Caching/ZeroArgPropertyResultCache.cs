@@ -28,6 +28,35 @@ internal interface IZeroArgPropertyResultCache
         Func<EvalResult<ZeroArgPropertyResult>> evaluate);
 }
 
+/// <summary>
+/// The cache key, and with it the cache's semantic LAW (Lean:
+/// <c>zeroArgPropertyCacheKey</c>). The scope of a stored value follows the
+/// binding's exposure classification:
+/// <list type="bullet">
+///   <item>An <see cref="PropertyExposure.Exported"/> binding is self-contained:
+///   its value depends on no input that an enclosing owner's call binds (the front
+///   end's classification, which the evaluator trusts here exactly as it does for
+///   <c>open</c> and structural access). The binding context at the access is
+///   therefore not a determinant of the value, and ONE entry per run per declaring
+///   scope (<see cref="StructuralOwnerIdentity"/> — the same identity for every
+///   activation, open-provided wiring, or rebuilt structural receiver of that scope)
+///   serves every property-style access: <c>Big</c> read from two thousand calls of
+///   <c>F(x) = Big + x</c>, from each callback of a <c>map</c>, from every
+///   iteration of a loop step, or inside an explicit <c>B()</c> call is evaluated
+///   once. The environment components are the shared
+///   <see cref="RunWideEnvironmentIdentity"/> sentinel.</item>
+///   <item>A local-only binding (<see cref="PropertyExposure.LocalOnlyCapturedAncestorParameters"/>)
+///   reads an input an enclosing owner's call binds, through the dynamically
+///   threaded environments; its value is a function of the binding context, so the
+///   key carries the identities of the three environments at the access and the
+///   declaring scope. Two distinct binding contexts never share an
+///   entry, and within one activation the property reuses its entry.</item>
+/// </list>
+/// Explicit calls (<c>A()</c>) never consult the cache on either side, and the run
+/// identity keeps entries from crossing runs even on a host-shared cache instance.
+/// Recursive reads entered before a result is stored still evaluate; the first
+/// successful completion owns the entry, and later completions never replace it.
+/// </summary>
 internal readonly record struct ZeroArgPropertyCacheKey(
     ZeroArgPropertyCacheAccessShape AccessShape,
     object OwnerIdentity,
@@ -37,36 +66,54 @@ internal readonly record struct ZeroArgPropertyCacheKey(
     object CountedParamEnvironmentIdentity,
     object RunIdentity)
 {
+    /// <summary>
+    /// Environment identity of every key of an exported binding: the binding context
+    /// is not a determinant of a self-contained value, so all three environment
+    /// components collapse to this one process-wide sentinel (the run identity still
+    /// separates runs).
+    /// </summary>
+    internal static object RunWideEnvironmentIdentity { get; } = new();
+
     public static ZeroArgPropertyCacheKey FromExecution(ZeroArgPropertyExecution execution)
-        => new(
-            GetAccessShape(execution.AccessKind),
-            GetOwnerIdentity(execution),
-            execution.Binding,
-            execution.ValueEnvironmentIdentity,
-            execution.AlgorithmEnvironmentIdentity,
-            execution.CountedParamEnvironmentIdentity,
-            execution.RunIdentity);
+        => execution.Binding.Exposure == PropertyExposure.Exported
+            ? new(
+                // Both spellings select the same exported declaration. Keep the
+                // original access kind on the execution for instrumentation only.
+                ZeroArgPropertyCacheAccessShape.Lexical,
+                StructuralOwnerIdentity.FromOwner(execution.Owner),
+                execution.Binding,
+                RunWideEnvironmentIdentity,
+                RunWideEnvironmentIdentity,
+                RunWideEnvironmentIdentity,
+                execution.RunIdentity)
+            : new(
+                GetAccessShape(execution.AccessKind),
+                StructuralOwnerIdentity.FromOwner(execution.Owner),
+                execution.Binding,
+                execution.ValueEnvironmentIdentity,
+                execution.AlgorithmEnvironmentIdentity,
+                execution.CountedParamEnvironmentIdentity,
+                execution.RunIdentity);
 
     private static ZeroArgPropertyCacheAccessShape GetAccessShape(ZeroArgPropertyAccessKind accessKind)
         => accessKind is ZeroArgPropertyAccessKind.Structural or ZeroArgPropertyAccessKind.CountedStructural
             ? ZeroArgPropertyCacheAccessShape.Structural
             : ZeroArgPropertyCacheAccessShape.Lexical;
 
-    private static object GetOwnerIdentity(ZeroArgPropertyExecution execution)
-        => GetAccessShape(execution.AccessKind) is ZeroArgPropertyCacheAccessShape.Structural
-            ? StructuralOwnerIdentity.FromOwner(execution.Owner)
-            : execution.Owner;
 }
 
 /// <summary>
-/// Owner identity for STRUCTURAL zero-arg property access. The evaluator
-/// rebuilds the receiver <see cref="Algorithm"/> record on every structural
-/// access (<c>ChildOf</c>/<c>AsScopeCtx</c> mint fresh records and scope
-/// contexts), so keying on the owner REFERENCE would defeat structural reuse
-/// entirely — but erasing the owner altogether (the previous process-wide
-/// sentinel) let one shared <see cref="Property"/> object placed under two
-/// different owners alias to a single cache entry and return the other owner's
-/// value. The value actually evaluated is the property wired to
+/// Declaring-scope identity of a zero-arg property owner: the owner identity
+/// of every binding's key (lexical and structural access alike).
+/// The evaluator rebuilds the owner
+/// <see cref="Algorithm"/> record on every structural access, every lexical
+/// resolution through an <c>open</c>, and every activation of a nested owner
+/// (<c>ChildOf</c>/<c>AsScopeCtx</c> mint fresh records and scope contexts),
+/// so keying on the owner REFERENCE would defeat reuse across those paths —
+/// but erasing the owner altogether (the previous process-wide sentinel) let
+/// one shared <see cref="Property"/> object placed under two different owners
+/// alias to a single cache entry and return the other owner's value. The
+/// value actually evaluated is the property wired to
 /// <c>ScopeCtx(Owner.Parent, Owner.Opens, Owner.Properties)</c>, so this
 /// identity captures that scope and its complete parent chain. Non-empty
 /// opens/property-list components compare BY REFERENCE; separately allocated
@@ -170,8 +217,7 @@ internal sealed class ZeroArgPropertyCacheKeyComparer : IEqualityComparer<ZeroAr
             && ReferenceEquals(x.RunIdentity, y.RunIdentity);
 
     /// <summary>
-    /// Lexical owners are live per-run objects compared by reference; a
-    /// structural owner identity is a computed <see cref="StructuralOwnerIdentity"/>
+    /// Declaring-scope identity is a computed <see cref="StructuralOwnerIdentity"/>
     /// whose equality treats empty scope components as resolution-equivalent and
     /// compares non-empty components by reference.
     /// </summary>
@@ -281,8 +327,10 @@ internal sealed class RunScopedZeroArgPropertyResultCache : IZeroArgPropertyResu
         if (result.IsError)
             return result.Error;
 
-        _results[key] = result.Value;
-        _stats.RecordStore(execution.AccessKind);
+        // A recursive read may already have completed and stored this key while
+        // evaluate() was pending. Its first successful result owns the entry.
+        if (_results.TryAdd(key, result.Value))
+            _stats.RecordStore(execution.AccessKind);
         _missedKeysWithoutStore.Remove(key);
         if (_results.Count > _maxCacheSize)
             _maxCacheSize = _results.Count;

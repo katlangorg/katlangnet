@@ -24,23 +24,86 @@ internal static class PropertyExposureResolver
     /// node referenced from several parents matches the equivalent duplicated tree (summary
     /// seeds are name SETS, so multiplicities never mattered), while the rewrite walk is
     /// reference-identity memoized per constant-context region — work is bounded by the
-    /// DISTINCT reachable nodes, never the number of root-to-node paths, and the rewritten
-    /// output preserves the input's sharing. Memos are run-local: one resolution creates one
+    /// DISTINCT reachable nodes per exposure round, never the number of root-to-node paths,
+    /// and the rewritten output preserves sharing within a scope. Each round has one
     /// completed-summary memo (see <see cref="PropertyDependencyGraphBuilder.SummaryMemo"/>)
-    /// plus per-region rewrite memos, all garbage afterwards.
+    /// plus per-region rewrite memos. Removing open providers can require another round
+    /// to widen a provisional structural-winner proof; signatures are never reinferred.
     /// </summary>
     public static Algorithm Resolve(Algorithm root)
         => Resolve(root, observations: null);
 
     internal static Algorithm Resolve(Algorithm root, FrontEndTraversalObservations? observations)
-        => ProcessAlgorithm(
-            root,
-            visiblePropertySummaries: new Dictionary<string, AnalysisSummary>(StringComparer.Ordinal),
-            // ONE completed-summary memo per resolution: every BuildSummaries call below
-            // shares it, so a context-independent descendant summary is computed once per
-            // resolution instead of once per ancestor level (M17).
-            new PropertyDependencyGraphBuilder.SummaryMemo(),
-            observations);
+        => ResolveInScope(root, new Dictionary<string, AnalysisSummary>(StringComparer.Ordinal),
+            ElaboratedScopeLookup.CreateScope(BuiltinRegistry.CreateSemanticPreludeAlgorithm()), observations);
+
+    private static Algorithm ResolveInScope(
+        Algorithm root,
+        IReadOnlyDictionary<string, AnalysisSummary> visiblePropertySummaries,
+        ElaboratedPropertyScope parentScope,
+        FrontEndTraversalObservations? observations)
+    {
+        while (true)
+        {
+            var run = new ExposureRun();
+            root = ProcessAlgorithm(root, visiblePropertySummaries,
+                new PropertyDependencyGraphBuilder.SummaryMemo(), observations, parentScope, run);
+            // Exposure can remove an opened receiver, revealing a different ancestor
+            // provider. Recheck Never proofs against the classified tree before trusting
+            // them. Only widen proofs, never infer parameters or rewrite forwarding here:
+            // each non-final round removes a Never proof or demotes an exported property.
+            if (!run.FallbackWidened && !(run.ExposureChanged && run.HasOpens && run.HasNeverFallback))
+                return root;
+        }
+    }
+
+    private sealed class ExposureRun
+    {
+        public bool ExposureChanged;
+        public bool FallbackWidened;
+        public bool HasOpens;
+        public bool HasNeverFallback;
+        public readonly FallbackProofScan DeferredProofs = new();
+    }
+
+    // A deferred body's provisional capture summary needs revisiting only if it
+    // contains a structural-winner proof. Keep ordinary load-only regions lazy;
+    // scanning shared syntax is bounded by nodes, not paths through the DAG.
+    private sealed class FallbackProofScan : AstWalker
+    {
+        private readonly Dictionary<Algorithm, bool> _algorithms = new(ReferenceEqualityComparer.Instance);
+        private readonly Dictionary<Expr, bool> _expressions = new(ReferenceEqualityComparer.Instance);
+        private bool _found;
+        protected override bool VisitsExplicitParameterDeclarations => false;
+
+        public bool Contains(Algorithm algorithm)
+        {
+            _found = false;
+            VisitAlgorithm(algorithm);
+            return _found;
+        }
+
+        public override void VisitAlgorithm(Algorithm algorithm)
+        {
+            if (_algorithms.TryGetValue(algorithm, out var found)) { _found |= found; return; }
+            var outer = _found;
+            _found = false;
+            base.VisitAlgorithm(algorithm);
+            _algorithms[algorithm] = _found;
+            _found |= outer;
+        }
+
+        public override void VisitExpr(Expr expr)
+        {
+            if (_expressions.TryGetValue(expr, out var found)) { _found |= found; return; }
+            var outer = _found;
+            _found = expr is Expr.DotCall { ElaboratedFallbackSelection: LexicalFallbackSelection.Never } dot
+                && !dot.UsesOrdinaryDotStringIntrinsic();
+            base.VisitExpr(expr);
+            _expressions[expr] = _found;
+            _found |= outer;
+        }
+    }
 
     /// <summary>
     /// The ONE classification rule, applied to every property declared in every body — the
@@ -86,7 +149,9 @@ internal static class PropertyExposureResolver
     /// </summary>
     private sealed class ExposureWalkMemos(
         PropertyDependencyGraphBuilder.SummaryMemo summaryMemo,
-        FrontEndTraversalObservations? observations)
+        FrontEndTraversalObservations? observations,
+        ElaboratedPropertyScope scope,
+        ExposureRun run)
     {
         public Dictionary<Expr, Expr>? Rewrites;
 
@@ -95,26 +160,34 @@ internal static class PropertyExposureResolver
         public readonly PropertyDependencyGraphBuilder.SummaryMemo SummaryMemo = summaryMemo;
 
         public readonly FrontEndTraversalObservations? Observations = observations;
+
+        public readonly ElaboratedPropertyScope Scope = scope;
+
+        public readonly ExposureRun Run = run;
     }
 
     private static Algorithm ProcessAlgorithm(
         Algorithm algorithm,
         IReadOnlyDictionary<string, AnalysisSummary> visiblePropertySummaries,
         PropertyDependencyGraphBuilder.SummaryMemo summaryMemo,
-        FrontEndTraversalObservations? observations)
+        FrontEndTraversalObservations? observations,
+        ElaboratedPropertyScope parentScope,
+        ExposureRun run)
         => algorithm switch
         {
             Algorithm.User user => ProcessUserAlgorithm(
                 user,
                 visiblePropertySummaries,
                 summaryMemo,
-                observations),
+                observations,
+                parentScope,
+                run),
             // A family reached outside any region (a host root, or a deferred branch's own
             // demand-time elaboration) opens a region of its own.
             Algorithm.Conditional conditional => ProcessConditionalAlgorithm(
                 conditional,
                 visiblePropertySummaries,
-                new ExposureWalkMemos(summaryMemo, observations)),
+                new ExposureWalkMemos(summaryMemo, observations, parentScope, run)),
             _ => algorithm,
         };
 
@@ -122,7 +195,9 @@ internal static class PropertyExposureResolver
         Algorithm.User algorithm,
         IReadOnlyDictionary<string, AnalysisSummary> visiblePropertySummaries,
         PropertyDependencyGraphBuilder.SummaryMemo summaryMemo,
-        FrontEndTraversalObservations? observations)
+        FrontEndTraversalObservations? observations,
+        ElaboratedPropertyScope parentScope,
+        ExposureRun run)
     {
         // A synthetic assignment-deconstruction helper (`x, *y, z = RHS`) is a fully-elaborated
         // leaf: no properties, no opens, and an output that is exactly its own bound Param. It
@@ -132,6 +207,7 @@ internal static class PropertyExposureResolver
             return algorithm;
 
         observations?.RecordExposureAlgorithmExpansion();
+        run.HasOpens |= algorithm.Opens.Count != 0;
 
         // The summary channel is the ONLY builder data this pass consumes: what ancestors own
         // is not an input to it (a captured parameter is reported by name regardless), so no
@@ -176,10 +252,10 @@ internal static class PropertyExposureResolver
         }
 
         var finalVisiblePropertySummaries = MergeVisiblePropertySummaries(visiblePropertySummaries, currentPropertySummaries);
-        // ONE memo bundle spans this algorithm's property-value processing AND its
-        // opens/output rewrite below: all of it runs under the identical, already-final
-        // context (finalVisiblePropertySummaries).
-        var memos = new ExposureWalkMemos(summaryMemo, observations);
+        // Properties and output share one lexical scope and summary context. Inline
+        // open providers below have their own memo because they resolve at global scope.
+        var memos = new ExposureWalkMemos(summaryMemo, observations,
+            ElaboratedScopeLookup.CreateScope(algorithm, parentScope), run);
         var rewrittenProperties = new List<Property>(algorithm.Properties.Count);
         for (var propertyIndex = 0; propertyIndex < algorithm.Properties.Count; propertyIndex++)
         {
@@ -190,6 +266,7 @@ internal static class PropertyExposureResolver
                 memos);
 
             var exposure = ClassifyDeclaredProperty(currentPropertySummaries[property.Name]);
+            run.ExposureChanged |= exposure != property.Exposure;
 
             var rewrittenProperty = new Property(property.Name, rewrittenPropertyValue, property.IsPublic, exposure)
             {
@@ -207,7 +284,7 @@ internal static class PropertyExposureResolver
         var rewrittenOpens = RewriteExprList(
             algorithm.Opens,
             finalVisiblePropertySummaries,
-            memos);
+            new ExposureWalkMemos(summaryMemo, observations, parentScope.Root, run));
         var rewrittenOutput = RewriteExprList(
             algorithm.Output,
             finalVisiblePropertySummaries,
@@ -242,7 +319,9 @@ internal static class PropertyExposureResolver
                     algorithm,
                     visiblePropertySummaries,
                     memos.SummaryMemo,
-                    memos.Observations);
+                    memos.Observations,
+                    memos.Scope,
+                    memos.Run);
             memos.Algorithms[algorithm] = rewritten;
         }
 
@@ -283,27 +362,35 @@ internal static class PropertyExposureResolver
         IReadOnlyDictionary<string, AnalysisSummary> visiblePropertySummaries,
         ExposureWalkMemos memos)
     {
+        memos.Run.HasOpens |= algorithm.Opens.Count != 0;
+        var branchMemos = algorithm.Opens.Count == 0 ? memos
+            : new ExposureWalkMemos(memos.SummaryMemo, memos.Observations,
+                ElaboratedScopeLookup.CreateScope(algorithm, memos.Scope), memos.Run);
         // Family-owned opens exist in host trees only (parsed families own none; the branch
         // bodies own theirs). They are rewritten like any open list: an open target's nested
         // algorithms classify under the one rule exactly like every other body.
         var rewrittenOpens = RewriteExprList(
             algorithm.Opens,
             visiblePropertySummaries,
-            memos);
+            new ExposureWalkMemos(memos.SummaryMemo, memos.Observations, memos.Scope.Root, memos.Run));
 
         var rewrittenBranches = new List<CondBranch>(algorithm.Branches.Count);
         foreach (var branch in algorithm.Branches)
         {
             if (DeferredModuleRegions.TryGet(branch.Body, out var region))
             {
-                // B2c: a deferred module region is not classified eagerly (its provisional
-                // body is never evaluated; the FAMILY's own classification already read the
+                // B2c: a deferred module region is not materialized eagerly (its provisional
+                // body is never evaluated; the FAMILY's classification reads the
                 // provisional body's captures through the summary channel above). The region
                 // records the visible summaries and is re-keyed by this region's output body.
-                var placeholder = branch.Body with { };
+                // Keep provisional fallback proofs sound too: a cached enclosing property
+                // uses this body's capture summary before demand-time module loading.
+                var placeholder = memos.Run.DeferredProofs.Contains(branch.Body)
+                    ? ProcessSharedNestedAlgorithm(branch.Body, visiblePropertySummaries, branchMemos)
+                    : branch.Body with { };
                 DeferredModuleRegions.Register(
                     placeholder,
-                    region.WithExposure(new DeferredBranchContext(visiblePropertySummaries)));
+                    region.WithExposure(new DeferredBranchContext(visiblePropertySummaries, branchMemos.Scope)));
                 rewrittenBranches.Add(new CondBranch(branch.Pattern, placeholder));
                 continue;
             }
@@ -321,7 +408,7 @@ internal static class PropertyExposureResolver
             var rewrittenBody = ProcessSharedNestedAlgorithm(
                 branch.Body,
                 visiblePropertySummaries,
-                memos);
+                branchMemos);
 
             rewrittenBranches.Add(new CondBranch(branch.Pattern, rewrittenBody));
         }
@@ -339,7 +426,8 @@ internal static class PropertyExposureResolver
     /// under the same ancestor facts.
     /// </summary>
     internal sealed record DeferredBranchContext(
-        IReadOnlyDictionary<string, AnalysisSummary> VisiblePropertySummaries);
+        IReadOnlyDictionary<string, AnalysisSummary> VisiblePropertySummaries,
+        ElaboratedPropertyScope? ParentScope = null);
 
     /// <summary>
     /// Demand-time exposure classification of a deferred region's RESOLVED body — the
@@ -349,10 +437,10 @@ internal static class PropertyExposureResolver
         Algorithm resolvedBody,
         DeferredBranchContext context,
         FrontEndTraversalObservations? observations = null)
-        => ProcessAlgorithm(
+        => ResolveInScope(
             resolvedBody,
             context.VisiblePropertySummaries,
-            new PropertyDependencyGraphBuilder.SummaryMemo(),
+            context.ParentScope ?? ElaboratedScopeLookup.CreateScope(BuiltinRegistry.CreateSemanticPreludeAlgorithm()),
             observations);
 
     private static IReadOnlyList<Expr> RewriteExprList(
@@ -563,6 +651,7 @@ internal static class PropertyExposureResolver
                 {
                     Target = rewrittenTarget,
                     Args = rewrittenArgs,
+                    ElaboratedFallbackSelection = RecheckFallbackSelection((Expr.DotCall)expr, memos),
                 };
             }
 
@@ -584,6 +673,27 @@ internal static class PropertyExposureResolver
                     $"Unhandled Expr variant in {nameof(PropertyExposureResolver)}.{nameof(RewriteExpr)}: {expr.GetType().Name}. " +
                     "Classify the new variant explicitly as a recursive rewrite case or an intentional leaf.");
         }
+    }
+
+    private static LexicalFallbackSelection? RecheckFallbackSelection(Expr.DotCall dotCall, ExposureWalkMemos memos)
+    {
+        if (dotCall.ElaboratedFallbackSelection != LexicalFallbackSelection.Never)
+            return dotCall.ElaboratedFallbackSelection;
+
+        memos.Run.HasNeverFallback = true;
+        var receiver = dotCall.Target.UnwrapGraceOperand().ResolveStaticStructuralMemberProvider(name =>
+        {
+            // Resolve/Param ownership is already elaborated. Resolve uses the same
+            // direct-then-open lookup as the evaluator; missing/ambiguous names cannot
+            // establish a structural winner. No source inference is performed here.
+            var hits = ElaboratedScopeLookup.LookupLexicalPropertyMatches(memos.Scope, name);
+            return hits.Count == 1
+                ? new(StaticStructuralMemberProviderKind.KnownAlgorithm, hits[0].Property.Value)
+                : new StaticStructuralMemberProvider(StaticStructuralMemberProviderKind.LexicalReference);
+        });
+        var selection = dotCall.GetLexicalFallbackSelection(receiver);
+        memos.Run.FallbackWidened |= selection != LexicalFallbackSelection.Never;
+        return selection;
     }
 
     private static IReadOnlyDictionary<string, AnalysisSummary> MergeVisiblePropertySummaries(

@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Numerics;
+using KatLang.Evaluation.Caching;
 
 namespace KatLang.Tests;
 
@@ -18,7 +19,64 @@ public class LeanAstEncoderTests
     private static string EncodeSource(string source)
         => LeanAstEncoder.EncodeProgram(SourceProvenance.ParseValid(source).Root);
 
+    [Fact]
+    public void SharedDeclarations_PreserveIdentityWithoutMergingDistinctOwners()
+    {
+        var member = new Property("A", new Algorithm.User(null, [], [], [], [new Expr.Num(4)]));
+        var box = new Algorithm.User(null, [], [], [member], []);
+        var otherBox = new Algorithm.User(null, [], [], [member], []);
+        static Expr Pair(Algorithm first, Algorithm second) => new Expr.Capture(
+            [new Expr.AlgorithmExpr(first), new Expr.AlgorithmExpr(second)]);
+
+        const string box0 = "(.algorithmExpr (alg [] [] [{ (privateProp \"A\" (alg [] [] [] [.num 4])) with identity := some (.shared 0) }] []))";
+        const string box1 = "(.algorithmExpr (alg [] [] [{ (privateProp \"A\" (alg [] [] [] [.num 4])) with identity := some (.shared 1) }] []))";
+        Assert.Equal($"(.capture [{box0}, {box0}])", LeanAstEncoder.EncodeExpr(Pair(box, box)));
+        Assert.Equal($"(.capture [{box0}, {box1}])", LeanAstEncoder.EncodeExpr(Pair(box, otherBox)));
+    }
+
     // ----- parameter channel: the three constructor spellings -----------------
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void SharedDeclarations_IncludeAncestorOpenListIdentity(bool sameOpens)
+    {
+        var member = new Property("P", new Algorithm.User(null, [], [], [], [new Expr.Num(7)]));
+        var shared = new Algorithm.User(null, [], [], [member], [new Expr.Resolve("P")]);
+        IReadOnlyList<Expr> opens = [new Expr.Resolve("Lib")];
+        var left = new Algorithm.User(null, [], opens, [], [new Expr.AlgorithmExpr(shared)]);
+        var right = new Algorithm.User(null, [], sameOpens ? opens : [new Expr.Resolve("Lib")], [], [new Expr.AlgorithmExpr(shared)]);
+        var root = new Algorithm.User(null, [], [],
+            [new Property("Lib", new Algorithm.User(null, [], [], [], []))],
+            [new Expr.AlgorithmExpr(left), new Expr.AlgorithmExpr(right)]);
+
+        const string member0 = "{ (privateProp \"P\" (alg [] [] [] [.num 7])) with identity := some (.shared 0) }";
+        const string member1 = "{ (privateProp \"P\" (alg [] [] [] [.num 7])) with identity := some (.shared 1) }";
+        var encoded = LeanAstEncoder.EncodeProgram(root);
+        Assert.Contains(member0, encoded);
+        if (sameOpens) Assert.DoesNotContain(member1, encoded);
+        else Assert.Contains(member1, encoded);
+
+        var cache = new RunScopedZeroArgPropertyResultCache();
+        Assert.False(Evaluator.Run(new Expr.AlgorithmExpr(root), cache).IsError);
+        Assert.Equal(sameOpens ? 1 : 2, cache.GetSnapshot().Stores);
+    }
+
+    [Fact]
+    public void SharedInlineOpenProvider_UsesGlobalScopeIdentity()
+    {
+        var shared = new Algorithm.User(null, [], [],
+            [new Property("P", new Algorithm.User(null, [], [], [], [new Expr.Num(7)]), IsPublic: true)], []);
+        Algorithm Owner(int number) => new Algorithm.User(null, [], [new Expr.AlgorithmExpr(shared)],
+            [new Property("Other", new Algorithm.User(null, [], [], [], [new Expr.Num(number)]))], [new Expr.Resolve("P")]);
+        var root = new Algorithm.User(null, [], [], [], [new Expr.AlgorithmExpr(Owner(1)), new Expr.AlgorithmExpr(Owner(2))]);
+        var encoded = LeanAstEncoder.EncodeProgram(root);
+        Assert.Equal(2, encoded.Split("identity := some (.shared 0)").Length - 1);
+        Assert.DoesNotContain("identity := some (.shared 1)", encoded);
+        var cache = new RunScopedZeroArgPropertyResultCache();
+        Assert.False(Evaluator.Run(new Expr.AlgorithmExpr(root), cache).IsError);
+        Assert.Equal(1, cache.GetSnapshot().Stores);
+    }
 
     [Fact]
     public void FixedParameters_EncodeAsPlainAlg()

@@ -439,9 +439,13 @@ def reduceEmptyAlg81 : Algorithm :=
 def reduceMultiAlg82 : Algorithm :=
   alg ["x", "acc"] [] [] [.param "acc", .param "x"]
 
+-- `T` reads the ancestor-owned step parameter `tt`, so it is local-only (the
+-- front end classifies it so): the per-run zero-argument property cache keys a
+-- local-only property by its binding context, one value per reduce step. An
+-- exported declaration would cache the first step's `T` for every element.
 def sequenceBoundaryLawAocCountMatchStepAlg : Algorithm :=
-  algPrivate ["element", "tt"] [] [
-    ("T", alg [] [] [] [
+  alg ["element", "tt"] [] [
+    privateLocalProp "T" .localCapturedAncestorParams (alg [] [] [] [
       .call (resolve "atoms") [.param "tt"]
     ])
   ] [

@@ -1,4 +1,5 @@
 using System.Numerics;
+using KatLang.Evaluation.Caching;
 
 namespace KatLang.Optimizations.Loops;
 
@@ -383,12 +384,16 @@ internal static partial class LoopOptimizer
     /// <summary>
     /// A bare zero-parameter temp read. MIRROR of the generic zero-argument property
     /// access (<c>Evaluator.GetOrEvaluateZeroArgPropertyResult</c>): the dynamic
-    /// invocation is charged through the SAME helper, BEFORE the memo is consulted, so a
-    /// memo hit and a miss charge the identical access (one step, one depth level, the
-    /// property's declaration span on a rejected enter) and only a miss additionally
-    /// charges what the temp's body evaluates. The memo is the per-iteration counterpart
-    /// of the run's property cache: its entries live exactly as long as the iteration's
-    /// environment identities the cache keys on.
+    /// invocation is charged through the SAME helper, BEFORE any cache or memo is
+    /// consulted, so a hit and a miss charge the identical access (one step, one depth
+    /// level, the property's declaration span on a rejected enter) and only a miss
+    /// additionally charges what the temp's body evaluates. Reuse follows the run
+    /// cache's law (<c>ZeroArgPropertyCacheKey</c>): an EXPORTED temp is served from the
+    /// run's cache itself — one entry per run per declaring scope, shared with the
+    /// generic evaluator across iterations, temp calls, and loop invocations — while a
+    /// local-only temp (its value reads the step's state or a captured input) is
+    /// memoized per iteration, the counterpart of the per-iteration environment
+    /// identities the generic path keys such a property on.
     /// </summary>
     private static EvalResult<PlannedLoopValue> EvalLoopTempSlot(
         LoopRunFrame frame,
@@ -412,13 +417,53 @@ internal static partial class LoopOptimizer
         LoopRunFrame frame,
         int index)
     {
+        var temp = frame.Template.TempPlans[index];
+        if (temp.Binding.Exposure == PropertyExposure.Exported)
+            return EvalRunCachedLoopTemp(frame, temp);
+
         if (frame.TryGetTempSlot(index, out var value))
             return EvalResult<PlannedLoopValue>.Ok(value);
 
-        var tempR = EvalLoopExprPlan(frame.Template.TempPlans[index].Plan, frame);
+        var tempR = EvalLoopExprPlan(temp.Plan, frame);
         if (tempR.IsError) return tempR.Error;
         frame.SetTempSlot(index, tempR.Value);
         return tempR;
+    }
+
+    /// <summary>
+    /// An exported temp read served from the run's zero-argument property cache under
+    /// the SAME execution the generic evaluator presents for the property (the step
+    /// algorithm as owner, the declared binding, the counted lexical access shape):
+    /// the key of an exported binding does not depend on the environment identities,
+    /// so the planned and generic strategies share one entry and one evaluation of
+    /// the temp's body per run, keeping their evaluation counts, budget charges, and
+    /// string materialization identical.
+    /// </summary>
+    private static EvalResult<PlannedLoopValue> EvalRunCachedLoopTemp(
+        LoopRunFrame frame,
+        LoopTempPlan temp)
+    {
+        var ctx = frame.IterationCtx;
+        var cachedR = ctx.ZeroArgPropertyResultCache.GetOrEvaluate(
+            new ZeroArgPropertyExecution(
+                frame.Template.Step,
+                temp.Binding,
+                ZeroArgPropertyAccessKind.CountedLexical,
+                Evaluator.ValueEnvironmentCacheIdentity(frame.ValueEnvironment),
+                ctx.AlgEnv,
+                ctx.CountedParamEnv,
+                ctx.Budget),
+            () =>
+            {
+                var tempR = EvalLoopExprPlan(temp.Plan, frame);
+                if (tempR.IsError) return tempR.Error;
+                return EvalResult<ZeroArgPropertyResult>.Ok(
+                    new ZeroArgPropertyResult(tempR.Value.ToResult(), tempR.Value.EmittedCount));
+            });
+        if (cachedR.IsError) return cachedR.Error;
+
+        return EvalResult<PlannedLoopValue>.Ok(
+            PlannedLoopValue.FromResult(cachedR.Value.Value, cachedR.Value.EmittedCount));
     }
 
     /// <summary>
@@ -426,11 +471,12 @@ internal static partial class LoopOptimizer
     /// inside the call-expression boundary of <c>EvalCallCountedExpr</c>): the dynamic
     /// invocation is charged through the SAME helper with the same limit-span rule, the
     /// body is evaluated FRESH on every call (a call bypasses the property cache — the
-    /// <c>A</c> versus <c>A()</c> rule), and the caller's temp memo is suspended for the
-    /// call's duration because the generic callee runs in fresh environments that share
-    /// no cache entries with its caller (<see cref="LoopRunFrame.SuspendTempMemo"/>).
-    /// Only the RETURNED result is decorated by the boundary, exactly like the planned
-    /// <c>if</c>.
+    /// <c>A</c> versus <c>A()</c> rule), and the caller's per-iteration temp memo is
+    /// suspended for the call's duration because the generic callee runs in fresh
+    /// environments, whose identities key every LOCAL-ONLY property entry
+    /// (<see cref="LoopRunFrame.SuspendTempMemo"/>); an EXPORTED temp read inside the
+    /// call keeps hitting the run cache exactly like the generic callee's read. Only the
+    /// RETURNED result is decorated by the boundary, exactly like the planned <c>if</c>.
     /// </summary>
     private static EvalResult<PlannedLoopValue> EvalLoopTempCall(
         LoopExprPlan.TempCall tempCall,

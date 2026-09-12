@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Numerics;
 using System.Text;
+using KatLang.Evaluation.Caching;
 
 namespace KatLang.Tests;
 
@@ -40,15 +41,90 @@ namespace KatLang.Tests;
 /// </summary>
 public static class LeanAstEncoder
 {
+    public static string EncodeProgram(Algorithm root) => new LeanAstEncoding(root).EncodeProgram(root);
+    public static string EncodeAlgorithm(Algorithm algorithm) => new LeanAstEncoding(algorithm).EncodeAlgorithm(algorithm);
+    public static string EncodeExpr(Expr expression) => new LeanAstEncoding(expression).EncodeExpr(expression);
+    public static string EncodeProperty(Property property) => new LeanAstEncoding(property.Value).EncodeProperty(property);
+    public static string EncodePattern(Pattern pattern) => LeanAstEncoding.EncodePattern(pattern);
+}
+
+internal sealed class LeanAstEncoding
+{
+    private readonly SharedDeclarations _sharing = new();
+    private readonly Dictionary<StructuralOwnerIdentity, Dictionary<Property, int>> _identities = new();
+    private int _nextIdentity;
+    private ScopeCtx? _scope;
+
+    public LeanAstEncoding(Algorithm root) => _sharing.VisitAlgorithm(root);
+    public LeanAstEncoding(Expr root) => _sharing.VisitExpr(root);
+
+    private int DeclarationIdentity(Property property, Algorithm owner)
+    {
+        var scopeIdentity = StructuralOwnerIdentity.FromOwner(owner with { Parent = _scope?.Parent });
+        if (!_identities.TryGetValue(scopeIdentity, out var byProperty))
+            _identities[scopeIdentity] = byProperty = new(ReferenceEqualityComparer.Instance);
+        if (!byProperty.TryGetValue(property, out var identity))
+            byProperty[property] = identity = _nextIdentity++;
+        return identity;
+    }
+
+    // Two graph-bounded walks preserve host sharing without confusing equal
+    // bodies with one declaration. A repeated subtree marks all its properties.
+    private sealed class SharedDeclarations : AstWalker
+    {
+        private readonly HashSet<Algorithm> _algorithms = new(ReferenceEqualityComparer.Instance);
+        private readonly HashSet<Expr> _expressions = new(ReferenceEqualityComparer.Instance);
+        private readonly HashSet<Property> _properties = new(ReferenceEqualityComparer.Instance);
+        private readonly SharedMarker _marker = new();
+        public bool Contains(Property property) => _marker.Properties.Contains(property);
+        protected override bool VisitsExplicitParameterDeclarations => false;
+        public override void VisitAlgorithm(Algorithm algorithm)
+        {
+            if (_algorithms.Add(algorithm)) base.VisitAlgorithm(algorithm);
+            else _marker.VisitAlgorithm(algorithm);
+        }
+        public override void VisitExpr(Expr expression)
+        {
+            if (_expressions.Add(expression)) base.VisitExpr(expression);
+            else _marker.VisitExpr(expression);
+        }
+        protected override void VisitProperty(Property property)
+        {
+            if (!_properties.Add(property)) _marker.Properties.Add(property);
+            base.VisitProperty(property);
+        }
+    }
+
+    private sealed class SharedMarker : AstWalker
+    {
+        private readonly HashSet<Algorithm> _algorithms = new(ReferenceEqualityComparer.Instance);
+        private readonly HashSet<Expr> _expressions = new(ReferenceEqualityComparer.Instance);
+        public readonly HashSet<Property> Properties = new(ReferenceEqualityComparer.Instance);
+        protected override bool VisitsExplicitParameterDeclarations => false;
+        public override void VisitAlgorithm(Algorithm algorithm)
+        {
+            if (_algorithms.Add(algorithm)) base.VisitAlgorithm(algorithm);
+        }
+        public override void VisitExpr(Expr expression)
+        {
+            if (_expressions.Add(expression)) base.VisitExpr(expression);
+        }
+        protected override void VisitProperty(Property property)
+        {
+            Properties.Add(property);
+            base.VisitProperty(property);
+        }
+    }
+
     /// <summary>Encodes a parsed root algorithm as a Lean <c>.algorithmExpr (alg ...)</c> program.</summary>
-    public static string EncodeProgram(Algorithm root) => $".algorithmExpr {EncodeAlgorithm(root)}";
+    public string EncodeProgram(Algorithm root) => $".algorithmExpr {EncodeAlgorithm(root)}";
 
     /// <summary>
     /// Bare encoding, suitable where a delimiter already separates terms (list
     /// elements). Use <see cref="Arg"/> for anything in Lean application
     /// position, which needs parentheses around multi-token terms.
     /// </summary>
-    public static string EncodeExpr(Expr expr) => expr switch
+    public string EncodeExpr(Expr expr) => expr switch
     {
         Expr.Num(var value) => $".num {EncodeNumber(value)}",
         Expr.StringLiteral(var value) => $".stringLiteral {Quote(value)}",
@@ -76,7 +152,7 @@ public static class LeanAstEncoder
     };
 
     /// <summary>Encoding for Lean application position: parenthesized unless already delimited.</summary>
-    private static string Arg(Expr expr)
+    private string Arg(Expr expr)
     {
         var encoded = EncodeExpr(expr);
         return encoded.StartsWith('(') ? encoded : $"({encoded})";
@@ -91,7 +167,7 @@ public static class LeanAstEncoder
     /// consumes. (A graced dot source encodes identically to its ungraced
     /// twin: Grace is consumed before encoding.)
     /// </summary>
-    private static string EncodeDotCall(Expr.DotCall dotCall)
+    private string EncodeDotCall(Expr.DotCall dotCall)
     {
         var argsEncoding = dotCall.Args is null ? "none" : $"(some {EncodeBundle(dotCall.Args)})";
         var fallback = dotCall.EffectiveLexicalFallback;
@@ -105,9 +181,27 @@ public static class LeanAstEncoder
     }
 
     /// <summary>Call/dot-call argument bundle: a plain Lean list of the slot expressions.</summary>
-    private static string EncodeBundle(OutputBundle args) => $"[{EncodeList(args, EncodeExpr)}]";
+    private string EncodeBundle(OutputBundle args) => $"[{EncodeList(args, EncodeExpr)}]";
 
-    public static string EncodeAlgorithm(Algorithm algorithm)
+    public string EncodeAlgorithm(Algorithm algorithm)
+    {
+        var parent = _scope;
+        _scope = new ScopeCtx(parent, algorithm.Opens, algorithm.Properties);
+        try { return EncodeAlgorithmCore(algorithm); }
+        finally { _scope = parent; }
+    }
+
+    private string EncodeOpens(IReadOnlyList<Expr> opens)
+    {
+        // Inline open providers are wired to the global prelude, not the opener.
+        // Its common outer scope adds no distinguishing identity within a run.
+        var opener = _scope;
+        _scope = null;
+        try { return EncodeList(opens, EncodeExpr); }
+        finally { _scope = opener; }
+    }
+
+    private string EncodeAlgorithmCore(Algorithm algorithm)
     {
         if (algorithm.Parent is not null)
         {
@@ -118,7 +212,7 @@ public static class LeanAstEncoder
 
         if (algorithm is Algorithm.Conditional conditional)
         {
-            var conditionalOpens = EncodeList(conditional.Opens, EncodeExpr);
+            var conditionalOpens = EncodeOpens(conditional.Opens);
             var branches = EncodeList(
                 conditional.Branches,
                 branch => $"⟨{EncodePattern(branch.Pattern)}, {EncodeAlgorithm(branch.Body)}⟩");
@@ -132,8 +226,8 @@ public static class LeanAstEncoder
                 $"not {algorithm.GetType().Name}.");
         }
 
-        var opens = EncodeList(user.Opens, EncodeExpr);
-        var properties = EncodeList(user.Properties, EncodeProperty);
+        var opens = EncodeOpens(user.Opens);
+        var properties = EncodeList(user.Properties, property => EncodeProperty(property, user));
         var output = EncodeList(user.Output, EncodeExpr);
         var (constructor, parameters) = EncodeParameterChannel(user);
         return $"({constructor} [{parameters}] [{opens}] [{properties}] [{output}])";
@@ -213,16 +307,19 @@ public static class LeanAstEncoder
     /// only when it is public AND exported, while structural dot access ignores
     /// visibility entirely.
     /// </summary>
-    public static string EncodeProperty(Property property)
+    public string EncodeProperty(Property property, Algorithm? owner = null)
     {
         var value = EncodeAlgorithm(property.Value);
-        return (property.IsPublic, property.Exposure) switch
+        var encoded = (property.IsPublic, property.Exposure) switch
         {
             (false, PropertyExposure.Exported) => $"privateProp {Quote(property.Name)} {value}",
             (true, PropertyExposure.Exported) => $"publicProp {Quote(property.Name)} {value}",
             (false, var exposure) => $"privateLocalProp {Quote(property.Name)} .{EncodeExposure(exposure)} {value}",
             (true, var exposure) => $"publicLocalProp {Quote(property.Name)} .{EncodeExposure(exposure)} {value}",
         };
+        return owner is not null && _sharing.Contains(property)
+            ? $"{{ ({encoded}) with identity := some (.shared {DeclarationIdentity(property, owner)}) }}"
+            : encoded;
     }
 
     /// <summary>

@@ -49,9 +49,14 @@ internal readonly record struct StaticStructuralMemberProvider(
 /// <see cref="Conditional"/> and <see cref="Always"/> (a MAY-selection
 /// question: if the fallback can be needed, its callable identity must be
 /// representable in the inferred signature);</item>
-/// <item>dependency/exposure analysis charges the fallback only for
-/// <see cref="Always"/> (a MUST-selection question: charging a conditional
-/// fallback would revoke working structural/open access).</item>
+/// <item>dependency/exposure analysis charges the fallback for the same
+/// MAY-selected states, read from the ELABORATED scope-aware verdict the
+/// detector stamps on the edge (<see cref="Expr.DotCall.ElaboratedFallbackSelection"/>,
+/// consumed through <see cref="AstHelpers.LexicalFallbackMayBeSelected"/>): a
+/// property whose fallback names an enclosing owner's parameter is local-only
+/// exactly when the runtime may read that parameter, while a receiver that
+/// declares the member (<see cref="Never"/>) keeps working structural/open
+/// access.</item>
 /// </list>
 /// </summary>
 internal enum LexicalFallbackSelection
@@ -474,19 +479,28 @@ internal static class AstHelpers
     }
 
     /// <summary>
-    /// The MUST-selection projection of <see cref="GetLexicalFallbackSelection"/>
-    /// for scope-free static consumers (dependency/exposure analysis).
-    /// Returns true when the edge's stored lexical fallback is
-    /// UNCONDITIONALLY the selected resolution. A conditional fallback — a
-    /// receiver that may resolve structurally at runtime, including every
-    /// lexical reference this scope-free view cannot resolve — must be
-    /// treated as unselected rather than guessed: the evaluator remains the
-    /// only place that decides the actual dispatch.
+    /// The MAY-selection projection of <see cref="GetLexicalFallbackSelection"/>
+    /// for the scope-free dependency/exposure walk: true when the edge's stored
+    /// lexical fallback can be the selected resolution at runtime. The
+    /// ELABORATED scope-aware verdict decides when present
+    /// (<see cref="Expr.DotCall.ElaboratedFallbackSelection"/>, stamped by
+    /// parameter detection and rechecked by exposure against eligible opens): a receiver
+    /// that declares the member never selects the fallback, so a Param
+    /// fallback hidden behind a structural winner charges nothing; a receiver
+    /// known to lack it — a sibling property whose value is a list, a literal,
+    /// a call result — always does; a runtime-valued receiver may. An
+    /// unstamped edge (a raw parser or host-built tree) falls back to the
+    /// receiver expression's raw shape classification, where an unresolved
+    /// lexical reference stays <see cref="LexicalFallbackSelection.Conditional"/>
+    /// and is therefore treated as MAY-selected — the safe direction for a
+    /// property whose value the runtime may derive from the fallback. The
+    /// evaluator remains the only place that decides the actual dispatch.
     /// </summary>
-    internal static bool LexicalFallbackIsUnconditional(this Expr.DotCall dotCall)
-        => dotCall.GetLexicalFallbackSelection(
-                dotCall.Target.UnwrapGraceOperand().GetStaticStructuralMemberProvider())
-            == LexicalFallbackSelection.Always;
+    internal static bool LexicalFallbackMayBeSelected(this Expr.DotCall dotCall)
+        => (dotCall.ElaboratedFallbackSelection
+                ?? dotCall.GetLexicalFallbackSelection(
+                    dotCall.Target.UnwrapGraceOperand().GetStaticStructuralMemberProvider()))
+            != LexicalFallbackSelection.Never;
 
     private static bool HasStructuralMemberOrConditionalBranchMember(Algorithm receiver, string name)
         => ElaboratedScopeLookup.TryLookupProperty(receiver, name) is not null

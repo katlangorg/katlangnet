@@ -125,6 +125,46 @@ public class ValueChannelParameterShadowingTests
     }
 
     /// <summary>
+    /// The planned strategy's own binding surface is the PARTIALLY planned loop: the
+    /// step is planned as a whole, but <c>f(2)</c> — a call on a state parameter — is a
+    /// <c>LoopExprPlan.Fallback</c> row evaluated generically INSIDE the planned loop, in
+    /// the step context the planner built (<c>ShadowLoopStepParameterEnvironments</c>
+    /// over the shared <c>ShadowInheritedParameterEnvironments</c>). That context must
+    /// shadow the algorithm tier exactly as the generic step binding does: the fallback
+    /// row's <c>f</c> is the value-bound state parameter and the call is not callable —
+    /// the caller's <c>f = Inc</c> never answers it (a counted-tier-only shadow let the
+    /// loop return <c>3</c>). Pinned through the optimizer's own diagnostics, so the row
+    /// cannot silently move to a wholly generic or a wholly planned loop and stop
+    /// exercising this path, and as whole-error-tree parity with the generic strategy.
+    /// </summary>
+    [Theory]
+    [InlineData(RepeatBody)]
+    [InlineData(WhileBody)]
+    public void PartiallyPlannedLoop_FallbackRow_BindsTheValueBoundStateParameterLikeTheGenericStep(string body)
+    {
+        var source = InsideApply(body);
+        var generic = LoopDiagnosticParityAssertions.RunCountedObserved(source, enableLoopOptimization: false);
+        var optimized = LoopDiagnosticParityAssertions.RunCountedObserved(source, enableLoopOptimization: true);
+
+        // The optimized run planned the loop, and the `f(2)` state row fell back inside it.
+        Assert.Equal(1, optimized.Loop.OptimizedLoopHits);
+        var plan = Assert.Single(optimized.Loop.LoopPlans);
+        Assert.True(plan.Optimized, plan.FallbackReason);
+        var callRow = Assert.Single(plan.Expressions, e => e.Role == "output" && e.Index == 0);
+        Assert.False(callRow.Planned, callRow.PlanSummary);
+        Assert.Equal(1, optimized.Loop.PlannedExpressionFallbacks);
+        Assert.Equal(1, optimized.Loop.GenericExpressionEvaluationsInsideOptimizedLoops);
+
+        // The fallback row binds `f` like the generic step: not callable, never the caller's `Inc`.
+        Assert.True(generic.Result.IsError, "generic: the program must fail");
+        Assert.True(optimized.Result.IsError, "planned fallback: the program must fail instead of invoking the caller's callable");
+        Assert.Equal("param(f)", Assert.IsType<EvalError.NotAnAlgorithm>(Innermost(optimized.Result.Error)).Description);
+        Assert.Equal(
+            LoopDiagnosticParityAssertions.DescribeErrorTree(generic.Result.Error),
+            LoopDiagnosticParityAssertions.DescribeErrorTree(optimized.Result.Error));
+    }
+
+    /// <summary>
     /// The async twin family re-implements the flat-fixed binder, the conditional call
     /// core, and the loop-step iteration; every row must reach the synchronous outcome
     /// through the twin path.

@@ -536,11 +536,14 @@ public class ChainedDotStructuralPrecedenceTests
             missingInner.Target.ResolveStaticStructuralMemberProvider(Resolve).Kind);
 
         // The scope-free view cannot resolve `Lib`, so the chained receiver stays
-        // conditional — the MUST-selection predicate never charges it.
+        // conditional there — but the detector stamped its scope-aware verdict
+        // (Never: `Sub` declares `Q`) on the elaborated edge, and that verdict is
+        // what the exposure predicate consumes, so the fallback is never charged.
         Assert.Equal(
             LexicalFallbackSelection.Conditional,
             edge.GetLexicalFallbackSelection(edge.Target.GetStaticStructuralMemberProvider()));
-        Assert.False(edge.LexicalFallbackIsUnconditional());
+        Assert.Equal(LexicalFallbackSelection.Never, edge.ElaboratedFallbackSelection);
+        Assert.False(edge.LexicalFallbackMayBeSelected());
 
         // A local-only or conditional-branch intermediate member is a known
         // failure: no outer edge is ever reached, so nothing is selected there.

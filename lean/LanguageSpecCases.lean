@@ -14,10 +14,10 @@ This is bounded differential validation over the Lean-guarded partition,
 not a formal verification of the evaluators.
 
 Partition (machine-checked by the `specCaseIds.length` guard below):
-- specification surface cases: 241
+- specification surface cases: 242
 - excluded parse-level cases (Lean has no surface parser): 29
 - excluded C#-only cases (each carries an explicit reason in the corpus): 10
-- Lean-guarded cases: 202
+- Lean-guarded cases: 203
 - probe observations (C#-only by design): 472
 - internal-node cases live in the semantic-explorer corpus, not here: see
   lean/SemanticExplorerCases.lean
@@ -522,6 +522,11 @@ def case_grace_dot_keeps_structural_precedence : Expr :=
 def case_dot_member_fallback_in_closed_parameter_list : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Obj" (alg [] [] [publicProp "V" (alg [] [] [] [.num 42])] []), privateProp "K" (alg ["x"] [] [] [(.dotCall (.param "x") "V" none)])] [(.call (.resolve "K") [.resolve "Obj"])])
 #guard obs case_dot_member_fallback_in_closed_parameter_list == "ok raw=42 n=1"
+
+-- dot-fallback-after-open-provider-exposure [name-resolution]: open Fallback \n Make(x) = { \n     public Box = { g = 42 \n         x } \n     0 \n } \n Middle(g) = { \n     open Make \n     public Box2 = { h = 42 \n         Box.g } \n     0 \n } \n Fallback = { public Box = 5 \n     public Box2 = 7 } \n Outer(h) = { \n     open Middle \n     P = Box2.h \n     P \n } \n Outer({x+1}), Outer({x*10})
+def case_dot_fallback_after_open_provider_exposure : Expr :=
+  .algorithmExpr (alg [] [.resolve "Fallback"] [privateProp "Fallback" (alg [] [] [publicProp "Box" (alg [] [] [] [.num 5]), publicProp "Box2" (alg [] [] [] [.num 7])] []), privateProp "Make" (alg ["x"] [] [publicLocalProp "Box" .localCapturedAncestorParams (alg [] [] [privateProp "g" (alg [] [] [] [.num 42])] [.param "x"])] [.num 0]), privateProp "Middle" (alg ["g"] [.resolve "Make"] [publicLocalProp "Box2" .localCapturedAncestorParams (alg [] [] [privateProp "h" (alg [] [] [] [.num 42])] [(.dotMember (.resolve "Box") "g" (.param "g") none)])] [.num 0]), privateProp "Outer" (alg ["h"] [.resolve "Middle"] [privateLocalProp "P" .localCapturedAncestorParams (alg [] [] [] [(.dotMember (.resolve "Box2") "h" (.param "h") none)])] [.resolve "P"])] [(.call (.resolve "Outer") [(.algorithmExpr (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))]))]), (.call (.resolve "Outer") [(.algorithmExpr (alg ["x"] [] [] [(.binary .mul (.param "x") (.num 10))]))])])
+#guard obs case_dot_fallback_after_open_provider_exposure == "ok raw=S[8, 70] n=2"
 
 -- dot-chain-structural-member-beats-extension [access-boundaries]: Lib = { \n     public Sub = { \n         public Q = 1 \n     } \n } \n  \n Q(x) = 99 \n  \n Lib.Sub.Q
 def case_dot_chain_structural_member_beats_extension : Expr :=
@@ -1108,7 +1113,7 @@ def case_if_spread_builds_values_before_branch_selection : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Risky" (alg [] [] [] [(.capture [.num 10, (.binary .div (.num 1) (.num 0))])])] [(.call (.resolve "if") [.num 1, (.sequenceSpread (.resolve "Risky"))])])
 #guard obs case_if_spread_builds_values_before_branch_selection == "err div0"
 
--- 202 canonical Lean-guarded specification cases.
+-- 203 canonical Lean-guarded specification cases.
 
 /--
 Machine-checked Lean-guarded partition count: the id list is built by the
@@ -1201,6 +1206,7 @@ def specCaseIds : List String := [
   "grace-dot-higher-order-implicit",
   "grace-dot-keeps-structural-precedence",
   "dot-member-fallback-in-closed-parameter-list",
+  "dot-fallback-after-open-provider-exposure",
   "dot-chain-structural-member-beats-extension",
   "dot-chain-extension-fallback-composes",
   "dot-chain-nested-structural-members",
@@ -1319,6 +1325,6 @@ def specCaseIds : List String := [
   "parameter-named-if-carries-the-supplied-callable",
   "if-spread-builds-values-before-branch-selection"
 ]
-#guard specCaseIds.length == 202
+#guard specCaseIds.length == 203
 
 end LanguageSpecCases
