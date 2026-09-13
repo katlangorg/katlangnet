@@ -12,9 +12,6 @@ public class ChainedDotExecutionPathTests
     [Theory]
     [InlineData("Lib.Sub.Q", "7")]
     [InlineData("((Lib.Sub)).Q", "7")]
-    [InlineData("Lib~.Sub.Q", "7")]
-    [InlineData("Lib.~Sub.Q", "7")]
-    [InlineData("Lib.~~Sub.~Q", "7")]
     [InlineData("Q(x) = 99\nLib.Sub.Q", "7")]
     [InlineData("Ext(x) = x + 1\nLib.Sub.Q.Ext.Ext", "9")]
     [InlineData("Q(x) = x + 1\nLib.Sub().Q", "4")]
@@ -51,6 +48,22 @@ public class ChainedDotExecutionPathTests
         Assert.Equal(AsyncEvaluationHarness.NeutralOf(generic), AsyncEvaluationHarness.NeutralOf(twin));
         Assert.Equal(budget.ConsumedSteps, twinBudget.ConsumedSteps);
         Assert.Equal(budget.PeakDepth, twinBudget.PeakDepth);
+    }
+
+    [Theory]
+    [InlineData("Lib~.Sub.Q", "Lib")]
+    [InlineData("Lib.~Sub.Q", "Sub")]
+    [InlineData("Lib.~~Sub.~Q", "Sub")]
+    public void GracedChainOnBoundNames_IsRejectedAsIneffective(string tail, string gracedName)
+    {
+        // `Lib` is a root property and `Sub`/`Q` are members the receiver is
+        // known to declare, so no marker on this chain can reorder anything: the
+        // ineffective-Grace error (F10), never a silently ignored annotation.
+        var parse = Parser.Parse(Lib + tail);
+        Assert.Contains(parse.Diagnostics, d =>
+            d.Code == DiagnosticCode.InvalidGraceMarker
+            && d.Message.StartsWith($"Grace has no effect on '{gracedName}'", StringComparison.Ordinal));
+        Assert.IsType<RunResult.ParseFailure>(KatLangEngine.Run(Lib + tail));
     }
 
     [Theory]

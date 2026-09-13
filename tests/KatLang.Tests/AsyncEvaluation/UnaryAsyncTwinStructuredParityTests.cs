@@ -62,12 +62,14 @@ public class UnaryAsyncTwinStructuredParityTests
     [Theory]
     [InlineData("-")]
     [InlineData("not ")]
-    public async Task AsyncTwin_EmptyOperandAfterSuspension_KeepsExistingBadArityAndBlame(string op)
+    public async Task AsyncTwin_EmptyOperandAfterSuspension_KeepsTheSpannedBadArityAndBlame(string op)
     {
         var ast = Program($"X = ()\n{op}X");
         var sync = Evaluator.RunCountedObserved(ast, enableOptimizations: false).Result;
         Assert.True(sync.IsError);
-        Assert.Null(Assert.IsType<EvalError.BadArity>(Innermost(sync.Error)).Span);
+        // The unary BadArity carries the unary expression's span (F5); after a genuine
+        // suspension the twin must report the identical span, not a spanless copy.
+        Assert.Equal(new SourceSpan(2, 1, 2, op.Length + 1), Assert.IsType<EvalError.BadArity>(Innermost(sync.Error)).Span);
 
         var cache = new SuspendingAsyncZeroArgPropertyResultCache();
         var result = await AsyncEvaluationHarness.Complete(Evaluator.RunCountedAsync(ast, cache));

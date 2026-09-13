@@ -263,6 +263,11 @@ public class LanguageSpecRunnerTests
             "spread-marker-must-be-attached",
             "grace-marker-must-be-attached",
             "collect-marker-must-be-attached",
+            // The declaration-head line rule (F7) and the Grace effectiveness
+            // rule (F10): front-end rejections, parse-level by construction.
+            "declaration-head-never-spans-lines",
+            "grace-on-bound-name-rejected",
+            "grace-under-explicit-list-rejected",
         ];
         string[] expectedModelDivergences =
         [

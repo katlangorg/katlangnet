@@ -268,9 +268,10 @@ internal sealed class DeferredModuleRegion
                     cancellationToken.ThrowIfCancellationRequested();
                     var observations = Loader.TraversalObservations;
                     var parameterDiagnosticStart = diagnostics.Count;
-                    var detected = ParameterDetector.ElaborateDeferredBranch(loaded, Detection!, diagnostics, observations);
-                    cancellationToken.ThrowIfCancellationRequested();
                     var origins = new ImplicitArgumentResolver.ResolutionOrigins();
+                    var detected = ParameterDetector.ElaborateDeferredBranch(
+                        loaded, Detection!, diagnostics, observations, origins.Grace);
+                    cancellationToken.ThrowIfCancellationRequested();
                     var resolved = ImplicitArgumentResolver.ElaborateDeferredBranch(detected, Resolution!, diagnostics, observations, origins);
                     if (origins.HasLiftedParameters)
                     {

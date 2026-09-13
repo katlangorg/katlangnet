@@ -144,7 +144,10 @@ public class StarSyntaxTests
     [InlineData("a = 2\nb = 3\na*\n-b", "-6")]
     [InlineData("a = 2\na*\n(3)", "6")]
     [InlineData("a = 2\na*\n{3}", "6")]
-    [InlineData("a = 2\nb = 3\na*\n~b", "6")]
+    // A `~`-led operand: Grace on a FREE name (`K(3, 2)` binds b = 3, a = 2 after
+    // `~b` moves `b` first); Grace on a bound property would be the
+    // ineffective-Grace error instead (GraceEffectivenessTests).
+    [InlineData("K = a*\n~b\nK(3, 2)", "6")]
     [InlineData("a = 2\nb = 0\na*\nnot b", "2")]
     [InlineData("a = 2\na*\n3", "6")]
     public void OperandLikeTokensOnTheNextLine_AreMultiplicationOperands(string source, string expected)
@@ -253,7 +256,10 @@ public class StarSyntaxTests
         { "values = (1, 2)\nvalues * *", "(1, 2)", new SourceSpan(2, 1, 2, 10), "values*" },
         { "values = (1, 2)\nvalues** *", "1\n2", new SourceSpan(2, 1, 2, 10), "values***" },
         { "F(x) = x, x\n(F(1) *)", "(1, 1)", new SourceSpan(2, 2, 2, 7), "F(...)*" },
-        { "((1 + 2) *)", "3", new SourceSpan(1, 3, 1, 10), "(1 + 2)*" },
+        // The detached star's operand is the group `(1 + 2)` (its unwrapped binary
+        // carries the group's extent — the grouped-expression span rule, F6), so
+        // the diagnostic spans from that group's `(` through the star.
+        { "((1 + 2) *)", "3", new SourceSpan(1, 2, 1, 10), "(1 + 2)*" },
     };
 
     [Theory]
@@ -432,7 +438,7 @@ public class StarSyntaxTests
     [InlineData("a = 2\nb = 3\na* b", "6")]
     [InlineData("a = 2\na* 3", "6")]
     [InlineData("a = 2\na* {3}", "6")]
-    [InlineData("a = 2\nb = 3\na* ~b", "6")]
+    [InlineData("K = a* ~b\nK(3, 2)", "6")]
     [InlineData("a = 2\nb = 0\na* not b", "2")]
     public void OperandLikeTokensAfterStar_AreMultiplication(string source, string expected)
     {

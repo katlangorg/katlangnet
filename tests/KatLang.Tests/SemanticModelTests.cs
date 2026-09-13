@@ -805,8 +805,11 @@ public class SemanticModelTests
         // `Obj~.V` IS the ordinary dot edge `Obj.V`, so the member navigates
         // to Obj's STRUCTURAL V (line 3) — the same target the marker-free
         // spelling gives, and the same one the evaluator selects (42). The
-        // marker never redirects navigation to the lexical V(x) = 99.
-        var model = BuildModel(
+        // marker never redirects navigation to the lexical V(x) = 99. The
+        // program itself is rejected — Grace on the bound `Obj` can reorder
+        // nothing (F10) — but the editor model is built on the recovery tree,
+        // which is exactly the ordinary edge.
+        var parseResult = Parser.Parse(
             """
             V(x) = 99
             Obj = {
@@ -815,6 +818,10 @@ public class SemanticModelTests
             }
             Obj~.V
             """);
+        var diagnostic = Assert.Single(parseResult.Diagnostics);
+        Assert.Equal(DiagnosticCode.InvalidGraceMarker, diagnostic.Code);
+        Assert.StartsWith("Grace has no effect on 'Obj'", diagnostic.Message, StringComparison.Ordinal);
+        var model = SemanticModelBuilder.Build(parseResult);
 
         var structuralDeclaration = Assert.Single(
             model.FindDeclarations("V"),

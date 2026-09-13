@@ -15,7 +15,9 @@ public class ParserDiagnosticWordingTests
     [InlineData("F(x) = x\nF({ 1 )", "Expected '}' but found ')'.")]
     [InlineData("[1, 2", "Expected ']' but found end of input.")]
     [InlineData("F() = 1\nF()", "Unexpected ')' in a pattern.")]
-    [InlineData("= 1", "Unexpected '='.")]
+    // A stray '=' names the token and then states the declaration-head line rule
+    // (the one repair for `A` newline `= 1` and `Foo` newline `(x) = x + 1`).
+    [InlineData("= 1", "Unexpected '='. A declaration head cannot be assembled across a physical newline. Keep `Name =` together, or keep a clause head's name and '(' together and its closing ')' and '=' together. A pattern list inside already-open parentheses and the body after '=' may span lines; deconstruction targets and '=' must share a line.")]
     [InlineData("1 ]", "Unexpected ']'.")]
     [InlineData("public = 1", "Unexpected 'public'.")]
     [InlineData("1,", "Unexpected end of input.")]

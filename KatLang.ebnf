@@ -318,7 +318,24 @@ SequenceAtom          = Expression ;
                      a property or clause definition, a deconstruction
                      binding pattern, or a public declaration — begins a
                      physical line, or is the first item directly after the
-                     "{" that opens a brace body. A declaration head after
+                     "{" that opens a brace body.
+                     THE DECLARATION-HEAD LINE RULE (F7): a simple definition or
+                     deconstruction head is written on one physical line. A clause
+                     head's name and "(" share a line, and its closing ")" and "="
+                     share a line; the list inside those open parentheses may span
+                     lines. A visibility modifier shares its name's line. A physical
+                     newline never assembles a head: Foo newline (x) = x + 1,
+                     A newline = 1, Foo(x) newline = x + 1, and x, y newline
+                     = 1, 2 keep the first line as the closed output row it
+                     is (a name, a call, a group, an expression list) and
+                     report the stray "=" on the next line with the repair;
+                     a comment, a blank line, or indentation at the boundary
+                     changes nothing. Explicit continuation AFTER a
+                     recognized head is unaffected: the body of A = or
+                     Foo(x) = may begin on the next line exactly like the
+                     operand of a trailing binary operator, and a trailing
+                     "." continues its dot chain the same way (a. newline b
+                     is a.b). A declaration head after
                      other content on the same line (1 P = 3, x = 3 y = 4,
                      { x = 1 y = 2 }) is the same UnseparatedSameLineItem
                      error, recovered as the declaration it spells. In
@@ -556,7 +573,21 @@ GraceIdentifier = { "~" } Identifier { "~" } ;
                      on the previous line's identifier, and a run ending a
                      line never becomes prefix grace on the next line's
                      identifier (`~` newline `~a` reports the first line's
-                     lone marker and keeps `~a` intact). *)
+                     lone marker and keeps `~a` intact).
+                     GRACE MUST BE EFFECTIVE (F10): the marker is meaningful
+                     only on a FREE name that parameter detection promotes to
+                     an implicit parameter of the enclosing algorithm — the
+                     one place its weight is consumed. A marker on a name
+                     whose binding is already fixed — an explicit parameter
+                     (`K(b, a) = b, ~a`), a parameter of an enclosing
+                     algorithm, a visible property, a builtin (`~count`), an
+                     opened property, a dot member the receiver is known to
+                     declare (`Obj.~V`), the `.string` intrinsic, or ANY
+                     occurrence under a closed explicit parameter list — is
+                     the front-end error InvalidGraceMarker ("Grace has no
+                     effect on 'a' because …"), reported by parameter
+                     detection with the reason, never a silent no-op; the
+                     recovery tree strips the marker like every other Grace. *)
 ParenBundleExpr = "(" ExpressionAlgorithm ")" ;
                   (* Empty parentheses "()" construct the empty sequence value,
                      displayed as (). Ordinary repeated parentheses around the empty

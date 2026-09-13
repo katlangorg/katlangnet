@@ -373,9 +373,10 @@ public class EvaluatorIndexingTests
     [InlineData("[[1, 2]]:5:0", 1, 1, 1, 10)]
     [InlineData("[[1, 2]]:0:5", 1, 1, 1, 12)]
     // A selector sub-expression that fails on its own keeps its own, more
-    // specific span; WithSpan only fills a missing one.
-    [InlineData("[1, 2]:(1 div 0)", 1, 9, 1, 15)]
-    [InlineData("[[1, 2]]:0:(1 div 0)", 1, 13, 1, 19)]
+    // specific span — the written group `(1 div 0)` the index consumes (the
+    // grouped-expression span rule, F6); WithSpan only fills a missing one.
+    [InlineData("[1, 2]:(1 div 0)", 1, 8, 1, 16)]
+    [InlineData("[[1, 2]]:0:(1 div 0)", 1, 12, 1, 20)]
     public void Eval_Index_SelectorError_CarriesIndexExpressionSpan(
         string source, int startLine, int startColumn, int endLine, int endColumn)
     {

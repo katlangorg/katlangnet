@@ -196,7 +196,8 @@ public class EmptySequenceOperandTests
             Assert.True(plain.IsError, $"`{source}` must reject the non-scalar operand");
             Assert.True(counted.IsError);
             Assert.IsType<EvalError.BadArity>(LoopDiagnosticParityAssertions.Innermost(plain.Error));
-            Assert.Null(LoopDiagnosticParityAssertions.Innermost(plain.Error).Span);
+            // The BadArity is located at the whole unary expression (F5).
+            Assert.Equal(new SourceSpan(1, 1, 1, source.Length), LoopDiagnosticParityAssertions.Innermost(plain.Error).Span);
             Assert.Equal(
                 LoopDiagnosticParityAssertions.DescribeErrorTree(plain.Error),
                 LoopDiagnosticParityAssertions.DescribeErrorTree(counted.Error));
@@ -225,13 +226,14 @@ public class EmptySequenceOperandTests
     public void UnaryOperandFailure_PreservesChildDiagnosticBlame(string unary)
     {
         // Evaluation of the operand fails first; the outer unary must preserve
-        // the division's error and its narrower absolute span.
+        // the division's error and its narrower absolute span — the written group
+        // `(1 / 0)` the unary consumes (the grouped-expression span rule, F6).
         var source = unary.Replace("()", "(1 / 0)");
         var result = Evaluator.Run(new Expr.AlgorithmExpr(SourceProvenance.ParseValid(source).Root));
         Assert.True(result.IsError);
         var error = Assert.IsType<EvalError.DivByZero>(LoopDiagnosticParityAssertions.Innermost(result.Error));
-        var start = source.IndexOf('1') + 1;
-        Assert.Equal(new SourceSpan(1, start, 1, start + 4), error.Span);
+        var start = source.IndexOf('(') + 1;
+        Assert.Equal(new SourceSpan(1, start, 1, start + 6), error.Span);
     }
 
     [Fact]

@@ -127,12 +127,16 @@ public class DotCallFallbackInvariantTests
     public void GracedKnownLexicalMember_ElaboratesToTheOrdinaryResolveFallback()
     {
         // The marker does NOT imply Param: a visible declaration keeps the
-        // ordinary Resolve fallback, exactly like the ungraced edge.
-        var root = SourceProvenance.ParseValid("Known(x) = x + 1\nv = 5\nv~.Known").Root;
-        var edge = SingleOutputDotCall(root);
+        // ordinary Resolve fallback, exactly like the ungraced edge. (The graced
+        // receiver `v` is a FREE name — Grace on a bound receiver is the
+        // ineffective-Grace error, see GraceEffectivenessTests.)
+        var root = SourceProvenance.ParseValid("Known(x) = x + 1\nK = v~.Known\nK(5)").Root;
+        var k = Assert.Single(root.Properties, property => property.Name == "K").Value;
+        Assert.Equal(["v"], k.Params);
+        var edge = Assert.IsType<Expr.DotCall>(Assert.Single(k.Output));
         Assert.Equal("Known", edge.Name);
         Assert.Equal("Known", Assert.IsType<Expr.Resolve>(edge.LexicalFallback).Name);
-        Assert.Equal("v", Assert.IsType<Expr.Resolve>(edge.Target).Name);
+        Assert.Equal("v", Assert.IsType<Expr.Param>(edge.Target).Name);
     }
 
     // ── 7-8: the checker rejects incoherent hand-built edges ────────────────
@@ -263,11 +267,11 @@ public class DotCallFallbackInvariantTests
         string[] sources =
         [
             "K(a, t) = a.t\nK(7, {a+1})",
-            "K(a, t) = a~.t\nK(7, {a+1})",
+            "K = a~.t\nK({a+1}, 7)",
             "K = a.~t\nK({a+1}, 7)",
-            "K(a, t) = a~.t.string\nK(7, {a+1})",
-            "Inc(x) = x + 1\nv = 5\nv~.Inc",
-            "Mean(*Vector) = Vector.sum / Vector.count\nV = 1, 2, 2.718\nV~.Mean",
+            "K = a~.t.string\nK({a+1}, 7)",
+            "Inc(x) = x + 1\nK = v~.Inc\nK(5)",
+            "Mean(*Vector) = Vector.sum / Vector.count\nK = V~.Mean",
             "Obj = {public V = 42}\nK(a, V) = a.V\nK(Obj, {a+1})",
             "x, *rest = (1, 2, 3)\nrest.count",
             "A = {\n    public X = 1, 2, 3\n}\nA.X",
@@ -317,12 +321,13 @@ public class DotCallFallbackInvariantTests
                 public V = 42
                 0
             }
-            K(a, t) = a~.t.string
-            K(7, {a+1})
+            K = a~.t.string
+            K({a+1}, 7)
             Obj.V
             """);
         var k = Assert.IsType<Algorithm.User>(
             Assert.Single(provenance.Root.Properties, property => property.Name == "K").Value);
+        Assert.Equal(["t", "a"], k.Params);
         var outerChain = Assert.IsType<Expr.DotCall>(k.Output[0]);
 
         // The full pipeline (detector, implicit-argument resolution, exposure
@@ -346,7 +351,9 @@ public class DotCallFallbackInvariantTests
     {
         // Regression family: a module-path rebuild once silently dropped
         // stored dot-edge facts. Both spellings must survive the load-enabled
-        // pipeline as the SAME structural edge — 42 twice.
+        // pipeline as the SAME structural edge — 42 twice. (The graced receiver
+        // `o` is a free name of `Read`; Grace on the bound `Obj` itself would be
+        // the ineffective-Grace error.)
         var run = await KatLangEngine.RunAsync(
             """
             V(x) = 99
@@ -354,9 +361,10 @@ public class DotCallFallbackInvariantTests
                 public V = 42
                 0
             }
+            Read = o~.V
 
             Obj.V
-            Obj~.V
+            Read(Obj)
             """,
             new RunOptions { DownloadCode = (_, _) => ValueTask.FromResult("public C = 5") });
         var success = Assert.IsType<RunResult.Success>(run);

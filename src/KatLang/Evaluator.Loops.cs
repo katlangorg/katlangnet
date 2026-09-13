@@ -364,11 +364,15 @@ public static partial class Evaluator
     /// unary application semantics and error/span policy, shared by the generic
     /// expression-spine machine, its async twin, and the planned loop evaluator's
     /// non-numeric arm, so evaluation strategies cannot drift: the empty sequence value
-    /// follows ordinary numeric-conversion validation (SYN-01), string rejection uses the
-    /// unary expression's span, and the numeric-conversion failure
-    /// (<see cref="ExpectInt"/>) is returned UNSPANNED — the innermost error's span
-    /// is public structured state, so only the surrounding evaluation boundaries may
-    /// attach one (<see cref="AtSpanIfMissing"/>). Lean: <c>evalUnaryCounted</c>.
+    /// follows ordinary numeric-conversion validation (SYN-01), and BOTH operand
+    /// rejections — the string rejection and the numeric-conversion failure of
+    /// <see cref="ExpectInt"/> (a multi-item or empty sequence value, or a list value:
+    /// <see cref="EvalError.BadArity"/>) — carry the unary expression's span, exactly as
+    /// the binary operators attach their expression span to an operand rejection. The
+    /// innermost error's span is public structured state, so it is attached HERE, at the
+    /// one unary application site, and the surrounding evaluation boundaries never
+    /// overwrite it (<see cref="AtSpanIfMissing"/>). Lean: <c>evalUnaryCounted</c>
+    /// (spans are C#-only diagnostic metadata; the error kind is unchanged).
     /// </summary>
     internal static EvalResult<Result> ApplyUnaryOperator(UnaryOp op, Result operandValue, SourceSpan? span)
     {
@@ -376,7 +380,7 @@ public static partial class Evaluator
             return new EvalError.TypeMismatch("Unary operator is not supported for strings") { Span = span };
 
         var vR = ExpectInt(operandValue);
-        if (vR.IsError) return vR.Error;
+        if (vR.IsError) return AtSpanIfMissing(vR.Error, span);
 
         var value = op switch
         {

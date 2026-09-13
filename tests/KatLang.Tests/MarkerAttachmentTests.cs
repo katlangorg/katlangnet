@@ -109,16 +109,18 @@ public class MarkerAttachmentTests
     }
 
     [Theory]
-    [InlineData("(PRODUCT)", "24")]
-    [InlineData("[PRODUCT]", "[24]")]
-    [InlineData("Add(x, y) = x + y\n0.Add(PRODUCT)", "24")]
-    [InlineData("Id(x) = x\n[Id((PRODUCT))]", "[24]")]
+    [InlineData("K = (PRODUCT)", "24")]
+    [InlineData("K = [PRODUCT]", "[24]")]
+    [InlineData("Add(x, y) = x + y\nK = 0.Add(PRODUCT)", "24")]
+    [InlineData("Id(x) = x\nK = [Id((PRODUCT))]", "[24]")]
     public void NestedMultiplicationLayouts_HaveTheSameElaboratedStructureAndValue(string context, string expected)
     {
+        // The `~~B` operand graces a FREE name (K's implicit parameter, bound by
+        // `K(6)`): Grace on a bound property would be the ineffective-Grace error.
         string? baseline = null;
         foreach (var product in new[] { "A*~~B", "A * ~~B", "A*\n~~B", "A *\r\n# comment\r\n~~B" })
         {
-            var source = "A = 4\nB = 6\n" + context.Replace("PRODUCT", product);
+            var source = "A = 4\n" + context.Replace("PRODUCT", product) + "\nK(6)";
             var parsed = SourceProvenance.ParseValid(source);
             // Compare the entire semantic tree, including bundle boundaries
             // and binding identities; source spans alone differ by layout.
@@ -233,11 +235,13 @@ public class MarkerAttachmentTests
     [InlineData("Divide = y / ~x~\nDivide(2, 10)", "0.2")]
     // Grace on a callee name and in a brace body.
     [InlineData("K = {\n  a\n  ~b\n}\nK(10, 20)", "(20, 10)")]
-    // Grace composed with ordinary dot syntax (the two supported forms).
-    [InlineData("K(a, t) = a~.t\nK(7, {a+1})", "8")]
-    [InlineData("K(a, t) = a.~t\nK(7, {a+1})", "8")]
-    [InlineData("K(a, t) = a~~.t\nK(7, {a+1})", "8")]
-    [InlineData("K(a, t) = a~.~t\nK(7, {a+1})", "8")]
+    // Grace composed with ordinary dot syntax (the two supported forms) on free
+    // names: base order (a, t) becomes (t, a). (A graced EXPLICIT parameter is
+    // the ineffective-Grace error — see GraceEffectivenessTests.)
+    [InlineData("K = a~.t\nK({a+1}, 7)", "8")]
+    [InlineData("K = a.~t\nK({a+1}, 7)", "8")]
+    [InlineData("K = a~~.t\nK({a+1}, 7)", "8")]
+    [InlineData("K = a~.~t\nK({a+1}, 7)", "8")]
     public void AttachedGrace_KeepsItsParameterOrderSemantics(string source, string expected)
         => AssertValid(source, expected);
 

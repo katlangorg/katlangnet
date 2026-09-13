@@ -21,10 +21,26 @@ public class UnaryOperatorSemanticsTests
     [Theory]
     [InlineData(UnaryOp.Minus)]
     [InlineData(UnaryOp.Not)]
-    public void EmptySequence_UsesTheExistingUnspannedNumericConversionFailure(UnaryOp op)
+    public void EmptySequence_IsTheNumericConversionFailureAtTheUnarySpan(UnaryOp op)
     {
-        var result = Evaluator.ApplyUnaryOperator(
-            op, Result.SequenceValue.TakeOwnership([]), new SourceSpan(7, 3, 7, 8));
+        // SYN-01: `()` is an ordinary operand and fails numeric conversion like
+        // `(1, 2)`; the BadArity carries the unary expression's span (F5) — the
+        // same location policy as the string rejection below.
+        var span = new SourceSpan(7, 3, 7, 8);
+        var result = Evaluator.ApplyUnaryOperator(op, Result.SequenceValue.TakeOwnership([]), span);
+
+        Assert.True(result.IsError);
+        Assert.Equal(span, Assert.IsType<EvalError.BadArity>(result.Error).Span);
+    }
+
+    [Theory]
+    [InlineData(UnaryOp.Minus)]
+    [InlineData(UnaryOp.Not)]
+    public void SpanlessApplication_InventsNoSpan(UnaryOp op)
+    {
+        // A host-built unary node without a source span still reports the same
+        // structured BadArity; the helper attaches a span only when it has one.
+        var result = Evaluator.ApplyUnaryOperator(op, Result.SequenceValue.TakeOwnership([]), span: null);
 
         Assert.True(result.IsError);
         Assert.Null(Assert.IsType<EvalError.BadArity>(result.Error).Span);
@@ -81,22 +97,26 @@ public class UnaryOperatorSemanticsTests
     }
 
     [Fact]
-    public void OtherNonNumericFailures_KeepExpectIntBadArityUnspanned()
+    public void OtherNonNumericFailures_CarryTheUnaryExpressionSpan()
     {
+        // A list value and a multi-item sequence value are the other operand
+        // shapes that fail numeric conversion; every one of them reports the
+        // BadArity AT the unary expression (F5), never a spanless error.
         Result[] operands =
         [
             Result.ListValue.TakeOwnership([new Result.Atom(1), new Result.Atom(2)]),
             Result.SequenceValue.TakeOwnership([new Result.Atom(1), new Result.Atom(2)]),
         ];
+        var span = new SourceSpan(9, 2, 9, 8);
 
         foreach (var op in new[] { UnaryOp.Minus, UnaryOp.Not })
         {
             foreach (var operand in operands)
             {
-                var result = Evaluator.ApplyUnaryOperator(op, operand, new SourceSpan(9, 2, 9, 8));
+                var result = Evaluator.ApplyUnaryOperator(op, operand, span);
 
                 Assert.True(result.IsError);
-                Assert.Null(Assert.IsType<EvalError.BadArity>(result.Error).Span);
+                Assert.Equal(span, Assert.IsType<EvalError.BadArity>(result.Error).Span);
             }
         }
     }

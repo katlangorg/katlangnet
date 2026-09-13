@@ -1385,27 +1385,27 @@ public static class LanguageSpecCorpus
             Probes =
             [
                 new SpecProbe("K = a.~t\nK({a+1}, 7)", "ok raw=8 n=1"),
-                new SpecProbe("K(t, a) = a~.t\nK({a+1}, 7)", "ok raw=8 n=1"),
-                new SpecProbe("K(t, a) = a.~t\nK({a+1}, 7)", "ok raw=8 n=1"),
+                new SpecProbe("K(t, a) = a.t\nK({a+1}, 7)", "ok raw=8 n=1"),
+                new SpecProbe("K = a~~.t\nK({a+1}, 7)", "ok raw=8 n=1"),
             ],
             IncludeInGeneratorPrompt = true,
-            Explanation = "Grace composes with ordinary DotCall. Base occurrence order for `a.t` is receiver then participating fallback: `(a, t)`. In `a~.t`, ordinary postfix Grace moves `a` one place later; in `a.~t`, ordinary prefix Grace moves `t` one place earlier. Both infer `(t, a)`, while all three sources elaborate to the same ordinary `a.t` body.",
+            Explanation = "Grace composes with ordinary DotCall. Base occurrence order for `a.t` is receiver then participating fallback: `(a, t)`. In `a~.t`, ordinary postfix Grace moves `a` one place later; in `a.~t`, ordinary prefix Grace moves `t` one place earlier. Both infer `(t, a)` — the order the explicit spelling `K(t, a) = a.t` declares — and all three sources elaborate to the same ordinary `a.t` body. Grace is meaningful only on such FREE names: under an explicit parameter list (`K(t, a) = a~.t`) the marker could reorder nothing and is a front-end error.",
         },
         new()
         {
             Id = "grace-dot-keeps-structural-precedence",
             Category = "access-boundaries",
-            Source = "V(x) = 99\nObj = {\n    public V = 42\n    0\n}\n\nObj.V\nObj~.V",
+            Source = "V(x) = 99\nObj = {\n    public V = 42\n    0\n}\nRead = o~.V\n\nObj.V\nRead(Obj)",
             Outcome = SpecOutcome.Evaluates,
             ExpectedDisplay = "42\n42",
             ExpectedRaw = "S[42, 42]",
             ExpectedEmittedCount = 2,
             Probes =
             [
-                new SpecProbe("V(x) = 99\nObj = {\n    public V = 42\n    0\n}\nObj.~V", "ok raw=42 n=1"),
+                new SpecProbe("Obj = {\n    public V = 42\n    0\n}\nRead = o.~V\nRead({x}, Obj)", "ok raw=42 n=1"),
             ],
             IncludeInGeneratorPrompt = true,
-            Explanation = "`~` changes inferred parameter ORDER only — never member selection. `Obj.V`, `Obj~.V`, and `Obj.~V` all perform ordinary structural-first DotCall lookup, so each reads Obj's own property even though a lexical `V` exists. To call the lexical `V` with Obj's value, write the call `V(Obj)`.",
+            Explanation = "`~` changes inferred parameter ORDER only — never member selection. `Read = o~.V` graces the FREE receiver name `o` (the marker is effective: `o` becomes Read's implicit parameter), and `Read(Obj)` performs ordinary structural-first DotCall lookup, reading Obj's own `V` even though a lexical `V` exists — exactly like the direct `Obj.V`. With no lexical `V` declaration, prefix member Grace behaves the same way on an opaque receiver: `Read = o.~V` infers `(V, o)`, and `Read({x}, Obj)` still reads Obj's structural `V`. To call the lexical `V` with Obj's value, write the call `V(Obj)`. A marker on the bound `Obj` itself (`Obj~.V`) could reorder nothing and is rejected instead of being ignored.",
         },
         new()
         {
@@ -2387,6 +2387,39 @@ public static class LanguageSpecCorpus
         },
         new()
         {
+            Id = "grace-on-bound-name-rejected",
+            Category = "parser-layout",
+            Source = "X = 1\nK = ~X + 2\nK",
+            Outcome = SpecOutcome.ParseError,
+            ExpectedParseDiagnosticFragment = "Grace has no effect on 'X' because it already resolves to a property",
+            ExpectedDiagnosticCode = DiagnosticCode.InvalidGraceMarker,
+            IncludeInGeneratorPrompt = true,
+            Explanation = "Grace is meaningful only on a FREE name that becomes an implicit parameter of the enclosing algorithm — that is the one place its weight is consumed. `X` is a visible property, so `~X` could reorder nothing; instead of being silently ignored the marker is a front-end error naming what fixed the binding. Cancelling markers (`~X~`) still validate this binding. The same rule covers a builtin (`~count`), an opened name, a parameter of an enclosing algorithm, and a dot member the receiver is known to declare (`Obj.~V`).",
+        },
+        new()
+        {
+            Id = "grace-under-explicit-list-rejected",
+            Category = "parser-layout",
+            Source = "K(b, a) = b, ~a\nK(1, 2)",
+            Outcome = SpecOutcome.ParseError,
+            ExpectedParseDiagnosticFragment = "Grace has no effect on 'a' because it already resolves to an explicit parameter",
+            ExpectedDiagnosticCode = DiagnosticCode.InvalidGraceMarker,
+            IncludeInGeneratorPrompt = true,
+            Explanation = "An explicit parameter list fixes the parameter order, so nothing is inferred under it and a Grace marker there can reorder nothing: `K(b, a) = b, ~a` is rejected rather than silently keeping `(b, a)`. Write the order in the list (`K(a, b) = b, a`) or drop the list and let `~a` reorder the inferred parameters (`K = b, ~a` infers `(a, b)`).",
+        },
+        new()
+        {
+            Id = "declaration-head-never-spans-lines",
+            Category = "parser-layout",
+            Source = "Foo\n(x) = x + 1\nFoo(1)",
+            Outcome = SpecOutcome.ParseError,
+            ExpectedParseDiagnosticFragment = "A declaration head cannot be assembled across a physical newline",
+            ExpectedDiagnosticCode = DiagnosticCode.UnexpectedToken,
+            IncludeInGeneratorPrompt = true,
+            Explanation = "A simple definition or deconstruction head stays on one physical line. A clause head's name and `(` share a line, its closing `)` and `=` share a line, and the pattern list inside those parentheses may span lines. A newline never assembles a head: `Foo` on its own line is a closed output row, `(x)` the next row, and the `=` is a stray token reported with the repair. `A` newline `= 1` and `Foo(x)` newline `= x + 1` are rejected the same way (before this rule they silently became `Foo(x) = x + 1`, and `Foo(1)` newline `= 3` even added a clause to an existing family). The body of a recognized head may still begin on the next line: `A =` newline `1` defines `A = 1`, and `F(a,` newline `b) = a + b` keeps its pattern list open across the line.",
+        },
+        new()
+        {
             Id = "collect-marker-must-be-attached",
             Category = "parser-layout",
             Source = "F(* items) = items\nF(1, 2)",
@@ -2434,9 +2467,11 @@ public static class LanguageSpecCorpus
             ExpectedEmittedCount = 1,
             Probes =
             [
-                // At root, `A` newline `~B` stays two rows: the marker belongs
-                // to its own line and never continues `A` as postfix Grace.
-                new SpecProbe("A = 1\nB = 2\nA\n~B", "ok raw=S[1, 2] n=2"),
+                // `A` newline `~b` stays two rows of the block: the marker belongs
+                // to its own line and never continues `A` as postfix Grace, so
+                // `K(2)` yields the pair (1, 2) as one value. (`b` is a free name of
+                // the block — Grace on the bound `A` would be rejected.)
+                new SpecProbe("A = 1\nK = {\n  A\n  ~b\n}\nK(2)", "ok raw=S[1, 2] n=1"),
             ],
             Explanation = "A `~`-led row is its own prefix-grace expression, and the marker and its name share one physical line: `~b` moves `b` one position earlier, so the block's implicit parameters are `(b, a)` and `K(10, 20)` binds `b = 10`, `a = 20`.",
         },

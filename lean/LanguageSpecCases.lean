@@ -14,8 +14,8 @@ This is bounded differential validation over the Lean-guarded partition,
 not a formal verification of the evaluators.
 
 Partition (machine-checked by the `specCaseIds.length` guard below):
-- specification surface cases: 245
-- excluded parse-level cases (Lean has no surface parser): 29
+- specification surface cases: 248
+- excluded parse-level cases (Lean has no surface parser): 32
 - excluded C#-only cases (each carries an explicit reason in the corpus): 10
 - Lean-guarded cases: 206
 - probe observations (C#-only by design): 505
@@ -513,9 +513,9 @@ def case_grace_dot_higher_order_implicit : Expr :=
   .algorithmExpr (alg [] [] [privateProp "K" (alg ["t", "a"] [] [] [(.dotMember (.param "a") "t" (.param "t") none)])] [(.call (.resolve "K") [(.algorithmExpr (alg ["a"] [] [] [(.binary .add (.param "a") (.num 1))])), .num 7])])
 #guard obs case_grace_dot_higher_order_implicit == "ok raw=8 n=1"
 
--- grace-dot-keeps-structural-precedence [access-boundaries]: V(x) = 99 \n Obj = { \n     public V = 42 \n     0 \n } \n  \n Obj.V \n Obj~.V
+-- grace-dot-keeps-structural-precedence [access-boundaries]: V(x) = 99 \n Obj = { \n     public V = 42 \n     0 \n } \n Read = o~.V \n  \n Obj.V \n Read(Obj)
 def case_grace_dot_keeps_structural_precedence : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "Obj" (alg [] [] [publicProp "V" (alg [] [] [] [.num 42])] [.num 0]), privateProp "V" (alg ["x"] [] [] [.num 99])] [(.dotCall (.resolve "Obj") "V" none), (.dotCall (.resolve "Obj") "V" none)])
+  .algorithmExpr (alg [] [] [privateProp "Obj" (alg [] [] [publicProp "V" (alg [] [] [] [.num 42])] [.num 0]), privateProp "Read" (alg ["o"] [] [] [(.dotCall (.param "o") "V" none)]), privateProp "V" (alg ["x"] [] [] [.num 99])] [(.dotCall (.resolve "Obj") "V" none), (.call (.resolve "Read") [.resolve "Obj"])])
 #guard obs case_grace_dot_keeps_structural_precedence == "ok raw=S[42, 42] n=2"
 
 -- dot-member-fallback-in-closed-parameter-list [access-boundaries]: K(x) = x.V \n Obj = {public V = 42} \n  \n K(Obj)

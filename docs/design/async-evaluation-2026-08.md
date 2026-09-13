@@ -155,8 +155,9 @@ Largest recursion request completing without the structured stack backstop
 | collection-callback  | 21         | 11         | 31           | 15           |
 | nested-bodies (AST)  | 149        | 86         | 149          | 114          |
 
-The twin's per-level stack cost is roughly 1.8–2× the synchronous cost for
-call-shaped recursion. Beyond the boundary both paths stay structured
+In this measurement, the twin's per-level stack cost was roughly 1.8–2× the
+synchronous cost for call-shaped recursion; this is not a fixed ratio or a host
+contract. Beyond the boundary both paths stay structured
 (`evaluationDepthExceeded` / `evaluationStackExhausted`). A genuine suspension unwinds
 the evaluator frames that led to the await, but it does **not** promise a fresh
 thread-pool stack: continuation thread and stack placement belong to the awaited host
@@ -171,6 +172,21 @@ The capacity sweep is a diagnostic characterization, not a semantic threshold. N
 boundary, JIT/runtime stack-check placement can move the largest successful request by
 one level (the Release plain-clause twin was observed at both 63 and 64); every request
 beyond the available headroom still returns a structured resource error.
+
+> **Update 2026-09-13 (pre-release audit finding F8).** The lower synchronous-completion
+> capacity of the twin path reflects its larger frames during synchronous completion.
+> Async state-machine storage and JIT frame layout contribute to that cost; neither
+> the frame size nor a sync/async capacity ratio is a language guarantee. The shared
+> budget counts the same dynamic depth on both paths, while the independent CLR
+> `TryEnsureSufficientExecutionStack` backstop may trip earlier on the twin path.
+> Runtime behavior and stack protection are UNCHANGED, and the
+> limitation is now stated on the public surface: `EvaluationLimits.MaxDepth`, the
+> host-operation `Evaluator.RunAsync` overload, and `KatLangEngine.RunAsync` document
+> that a run taking the twin path may report `EvaluationStackExhausted` at a shallower
+> recursion depth than the synchronous evaluator, that the exact depth is implementation-
+> and platform-dependent, and that both outcomes are structured resource-limit errors.
+> `AsyncStackDepthTests.PublicAsyncHostOperationSurface_DeepRecursion_FailsStructurallyNeverCrashes`
+> pins that contract through the public overload without pinning any depth number.
 
 ## Divergence pinning
 

@@ -480,8 +480,18 @@ public class EvaluatorExpressionListTests
     [Theory]
     [InlineData("P\n= 1\nP")]
     [InlineData("P # comment\n= 1\nP")]
-    public void Eval_CommentBeforeEqualsLine_DefinesPropertyIdentically(string source)
-        => AssertEval(source, 1);
+    public void Eval_EqualsLedLineAfterANameRow_IsNotADeclarationHead(string source)
+    {
+        // The declaration-head line rule (F7): `P` on its own line is a closed
+        // output row — with or without a trailing comment, which is invisible for
+        // every line decision — and the `=` on the next line never turns it into
+        // `P = 1` retroactively. The program is rejected at the stray '=' with the
+        // one repair message; nothing is silently declared.
+        var diagnostic = Assert.Single(SourceProvenance.ExpectFrontEndError(source));
+        Assert.Equal(DiagnosticCode.UnexpectedToken, diagnostic.Code);
+        Assert.Equal(2, diagnostic.Span.StartLineNumber);
+        Assert.Contains("A declaration head cannot be assembled across a physical newline", diagnostic.Message, StringComparison.Ordinal);
+    }
 
     [Fact]
     public void Eval_AdjacencyNeverSplitsTokens()

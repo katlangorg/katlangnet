@@ -99,9 +99,18 @@ public class GraceEligibilityTests
     }
 
     [Fact]
-    public void GraceOnBoundName_IsAValidNoOp()
+    public void GraceOnBoundName_IsRejectedAsIneffective()
     {
-        AssertAtom("X = 1\nK = ~X + 2\nK", 3m);
+        // `X` is a visible property, so `~X` can reorder nothing: the marker is not
+        // a silent no-op but a front-end error naming what fixed the binding (F10).
+        // The full effectiveness boundary is pinned in GraceEffectivenessTests.
+        var diagnostic = Assert.Single(SourceProvenance.ExpectFrontEndError("X = 1\nK = ~X + 2\nK"));
+        Assert.Equal(DiagnosticCode.InvalidGraceMarker, diagnostic.Code);
+        Assert.Contains(
+            "Grace has no effect on 'X' because it already resolves to a property",
+            diagnostic.Message,
+            StringComparison.Ordinal);
+        Assert.Equal(new SourceSpan(2, 5, 2, 6), diagnostic.Span);
     }
 
     [Fact]

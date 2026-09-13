@@ -148,6 +148,16 @@ public static partial class Evaluator
     /// propagate through the returned task unchanged (see <see cref="HostOperation"/>
     /// for the full contract). All parameters are explicit on this overload so existing
     /// <c>RunAsync</c> call sites keep binding exactly as before.</para>
+    ///
+    /// <para><b>Recursion depth on the async twin path.</b> The twin path's per-level
+    /// frames are larger than the calibrated synchronous frames, so a deeply recursive
+    /// program can reach the host-stack backstop — the structured
+    /// <see cref="EvalError.EvaluationStackExhausted"/> — at a SHALLOWER recursion depth
+    /// than the synchronous evaluator, and before the deterministic
+    /// <see cref="EvaluationLimits.MaxDepth"/> verdict. The outcome is always a structured
+    /// resource-limit error, never a process crash; the exact depth is implementation-
+    /// and platform-dependent and is not a language guarantee (see
+    /// <see cref="EvaluationLimits.MaxDepth"/>).</para>
     /// </summary>
     /// <exception cref="OperationCanceledException">
     /// <paramref name="cancellationToken"/> was cancelled before or during evaluation

@@ -651,6 +651,8 @@ Comma is the explicit expression-list separator, and on one physical line it is 
 
 A definition body ends at the end of its line, and a declaration must begin a line (or be the first item after an opening `{`): `x = 1 y = 2`, `1 P = 3`, and `{ d = 2 n * d }` are parse errors, so a forgotten line break can never silently move a declaration or an expression into the preceding definition's body. Start a new line after a definition body for the next declaration or output row.
 
+A simple definition or deconstruction head stays on one physical line. A clause head's name and `(` share a line, and its closing `)` and `=` share a line; the pattern list inside the open parentheses may span lines. These boundaries prevent retroactive declarations, so a newline never assembles a head after the fact: `Foo` followed by a line `(x) = x + 1` is the output row `Foo` and then a stray `=` (a parse error that names this rule), never the clause `Foo(x) = x + 1`; `A` followed by a line `= 1`, `Foo(x)` followed by a line `= x + 1`, and `x, y` followed by a line `= 1, 2` are rejected the same way, with or without a comment or indentation at the boundary. Explicit continuation after a recognized head is still fine: the body may begin on the line after the `=` (`A =` then `1` defines `A = 1`, exactly like the operand of a trailing operator), a clause head's pattern list may span lines inside its parentheses (`F(a,` then `b) = a + b`), and a trailing `.` continues a dot chain onto the next line (`a.` then `b` is `a.b`).
+
 At root output, you can mix commas and newlines freely:
 
 ```
@@ -805,11 +807,27 @@ A = Math.RandomInt(0, 10)
 B = A, A        # uses cached/property-style A access
 C = A(), A()    # explicitly asks for fresh A values
 
-B()             # re-evaluates B, but A remains cached inside B
+B()             # re-evaluates B's body; the property-style A inside it reuses A's cached entry
 C()             # re-evaluates C, and A() is fresh because it is explicit
 ```
 
-How long a cached value stays reusable follows the property's scope. A self-contained (exported) zero-parameter property does not depend on a caller's bindings. Its first successful property-style result is reused across calls, callbacks, loop iterations, and both structural and `open` access to that declaration. A local-only property that captures an enclosing input instead caches within its current binding context. Separate calls, callbacks, and loop iterations have separate contexts, even when their argument values are equal. Calling a nested helper also creates a new context; returning restores the caller's context and its cached values. Evaluating an algorithm argument without binding parameters keeps the current context; rebuilding a lookup record alone does not create a new cache scope.
+Here `A` is self-contained — its value depends on no caller input — so within one evaluation it has exactly one cached entry: whichever read comes first stores it, and every later property-style read of `A` in that evaluation reuses it, including the reads inside a second `B()` call. Both `B()` calls therefore show the same pair. That reuse is a promise about ONE evaluation and about self-contained properties; it is bounded in two ways:
+
+- **Per evaluation.** Every independent evaluation (each `KatLangEngine.Run` or `RunAsync`, each CLI invocation) starts with an empty cache. Nothing is remembered between two evaluations of the same program, so `B()` in one evaluation and `B()` in the next draw independently.
+- **Per binding context for local-only properties.** A property whose value captures an enclosing input — a parameter of the algorithm that declares it, or the pattern binder of an enclosing branch — is cached only within its current binding context. Separate calls, callbacks, and loop iterations of the enclosing algorithm are separate contexts even when their argument values are equal, and an explicit call such as `B()` opens a new context for the local-only properties that `B`'s body reads. Returning restores the caller's context and its cached values. Evaluating an algorithm argument without binding parameters keeps the current context; rebuilding a lookup record alone does not create a new cache scope.
+
+So "the property-style `A` inside `B` is reused" holds for the self-contained `A` above. For a local-only `A` it does not: each explicit `B()` re-draws it, while property-style reads of `B` in one context still share one pair.
+
+```
+F(x) = {
+    A = Math.RandomInt(0, 10) + x    # captures x: local-only
+    B = A, A
+    B, B                             # property-style reads in one context: the same pair twice
+    B(), B()                         # each explicit call opens a new context: A is drawn afresh in each
+}
+```
+
+A self-contained (exported) zero-parameter property, by contrast, keeps its first successful property-style result for the whole evaluation — across calls, callbacks, loop iterations, and both structural and `open` access to that declaration.
 
 ```
 Big = range(1, 100000).sum          # self-contained: computed once for the whole program
@@ -1371,9 +1389,10 @@ Obj = {
     public V = 42
     0
 }
+Read = o~.V
 
 Obj.V
-Obj~.V
+Read(Obj)
 ```
 
 **Results:**
@@ -1382,7 +1401,7 @@ Obj~.V
 42
 ```
 
-`Obj.V`, `Obj~.V`, and `Obj.~V` all read Obj's own property. To call the lexical `V` with Obj's value instead, write the direct call `V(Obj)`.
+`Read = o~.V` graces the free receiver name `o` — the marker is effective because `o` becomes `Read`'s implicit parameter — and `Read(Obj)` still reads Obj's own `V`, exactly like the direct `Obj.V`, even though a lexical `V` exists. With no lexical `V` declaration, prefix member Grace behaves the same way on an opaque receiver: `Read = o.~V` infers `(V, o)`, and `Read({x}, Obj)` still reads Obj's structural `V`. To call the lexical `V` with Obj's value instead, write the direct call `V(Obj)`. Grace is meaningful only on such free names: `Obj~.V` on the bound property `Obj`, or `Obj.~V` on a member Obj is known to declare, could reorder nothing and is rejected rather than silently ignored (see [Reordering Parameters with Grace](#reordering-parameters-with-grace)).
 
 For an opaque receiver, ordinary DotCall occurrence order is receiver, participating fallback, then written arguments. Therefore `a.t` starts as `(a, t)`. Postfix Grace in `a~.t` moves `a` one position later; prefix Grace in `a.~t` moves `t` one position earlier. Both graced forms infer `(t, a)`:
 
@@ -1400,7 +1419,7 @@ Repeated markers use ordinary weight arithmetic. `a~~.t` is two postfix markers 
 
 Grace still applies only to **one bare name occurrence**. Consequently `(x + y)~.t`, `f(x)~.t`, `[x, y]~.t`, `5~.t`, and `a~.t~.u` reject because postfix Grace would decorate a compound receiver at the failing edge. By contrast, `(x + y).~t` is valid: its prefix Grace decorates the bare fallback name `t`, not the receiver. Ordinary ungraced dot retains full receiver generality (`(x + y).t` and `(1, 2, 3).Mean` are unchanged).
 
-Everything else is ordinary DotCall behavior: `.string` (`v~.string` and `v.~string`), dotted sequence builtins (`S~.count` and `S.~count`), and receiver-segment supply all use the same runtime paths as their ungraced forms. Chaining an ordinary dot afterward is fine — `a~.t.string` has the same executable body as `a.t.string`.
+Everything else is ordinary DotCall behavior: `.string` (`v~.string` with a free `v`), dotted sequence builtins (`S~.count` with a free `S`), and receiver-segment supply all use the same runtime paths as their ungraced forms. Prefix member Grace on a member that can never join the implicit parameters — the dot-only `.string` intrinsic (`v.~string`) or a builtin such as `count` in `S.~count` — is rejected as ineffective, like any marker on an already-bound name. Chaining an ordinary dot afterward is fine — `a~.t.string` has the same executable body as `a.t.string`.
 
 The markers follow the marker attachment law: postfix Grace is written directly attached to its name (`a~.t`, or `a~ .t` — the space before a same-line dot is ordinary whitespace before a postfix continuation), while a detached `a ~ .t` or `a ~.t` is an error rather than Grace on `a`. Prefix member Grace must begin directly after the dot and be attached to the member name (`a.~t`; `a.~ t` is an error). A grace-marked target is not a valid `open` target: `open M~.C` is rejected because `open` consumes structural algorithm identity and has no parameter inference to reorder.
 
@@ -2088,6 +2107,15 @@ Only one collecting binding is allowed in each comma-separated pattern level, co
 Sometimes the natural reading order of parameters in a definition does not match the intended calling convention. Grace (`~`) shifts a parameter's position.
 
 Prefix `~x` moves `x` one position earlier in the parameter list. Postfix `x~` moves `x` one position later. Grace applies only to a bare parameter/name occurrence — `~x` and `x~` are the two supported forms — and the marker must be written directly attached to that name: `~ x` and `x ~` are errors, not Grace (a detached marker decorates nothing; the program is rejected rather than silently reordered or silently left in place). Repeated markers stay attached to each other and to the name (`~~x`, `~x~`). Attaching `~` to anything else (a parenthesized expression, a call result, a dot result, a list, a literal) is an error: `(x + y)~`, `f(x)~`, and `5~` are rejected, and parentheses never smuggle an expression into Grace (`(x)~` is rejected too). The marker and the name it decorates must also share one physical line: `f(x)~` at the end of a line is that same error rather than prefix Grace on the next line's name, and a prefix-grace slot after another slot on one line needs a comma (`f(x), ~c`). A marker written before a call, `~f(x)`, is grace on the callee name `f` itself — the call applies to the graced name, exactly like the postfix `f~(x)` idiom.
+
+Grace is meaningful in exactly one place: on a free name that becomes an implicit parameter of the enclosing algorithm, because that inferred parameter list is the only thing Grace reorders. A marker on a name whose binding is already fixed cannot reorder anything, and KatLang rejects it instead of silently ignoring it: an explicit parameter (`K(b, a) = b, ~a` — the list already fixes the order), a parameter of an enclosing algorithm, a visible property (`X = 1` followed by `K = ~X + 2`), a builtin (`~count(...)`), an opened property, a dot member the receiver is known to declare (`Obj.~V`), or any occurrence under an explicit parameter list. Cancelling markers such as `~a~` still require a free name; their zero weight only cancels the reordering. The error names the reason:
+
+```
+K(b, a) = b, ~a
+K(1, 2)
+```
+
+The report is `Grace has no effect on 'a' because it already resolves to an explicit parameter.` Write the order in the parameter list instead (`K(a, b) = b, a`), or drop the list and let Grace order the inferred parameters (`K = b, ~a` infers `(a, b)`).
 
 ```
 # Without Grace, parameter order would be (y, x) since 'y' appears first.

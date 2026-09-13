@@ -146,6 +146,22 @@ public class GraceDotCompositionTests
         Assert.Contains(parse.Diagnostics, diagnostic => diagnostic.Message.Contains(diagnosticFragment, StringComparison.Ordinal));
     }
 
+    /// <summary>
+    /// F10: a marker on an occurrence whose binding is already fixed — an explicit
+    /// parameter, a visible property, a builtin, a structurally resolved member —
+    /// cannot reorder anything and is the ineffective-Grace error. The recovery tree
+    /// is still the ordinary ungraced program (the marker is stripped), which the
+    /// callers below use to keep the "same executable body" law observable.
+    /// </summary>
+    private static ParseResult AssertGraceIneffective(string source, string name, string reasonFragment)
+    {
+        var parse = Parser.Parse(source);
+        var diagnostic = Assert.Single(parse.Diagnostics, d => d.Code == DiagnosticCode.InvalidGraceMarker);
+        Assert.StartsWith($"Grace has no effect on '{name}' because {reasonFragment}", diagnostic.Message, StringComparison.Ordinal);
+        Assert.Null(DotCallElaborationInvariant.CheckElaborated(parse.Root));
+        return parse;
+    }
+
     // ── A. THE CENTRAL LAW: source occurrence order, same executable body ──
 
     [Fact]
@@ -232,25 +248,30 @@ public class GraceDotCompositionTests
     public void Law_EquivalenceMatrix_ImplicitAndExplicitAgree()
     {
         // Inference differs only by ordinary Grace; explicit declarations keep
-        // their written parameter order. Every property body is the same edge.
+        // their written parameter order — and because an explicit list FIXES the
+        // order, a marker under one is the ineffective-Grace error (F10), never a
+        // silent no-op. Every property body is the same edge.
         AssertResult("K1 = a.t\nK1(7, {x+1})", Atom(8));
         AssertResult("K2(a, t) = a.t\nK2(7, {x+1})", Atom(8));
         AssertResult("K3 = a~.t\nK3({x+1}, 7)", Atom(8));
-        AssertResult("K4(t, a) = a~.t\nK4({x+1}, 7)", Atom(8));
+        AssertResult("K4(t, a) = a.t\nK4({x+1}, 7)", Atom(8));
         AssertResult("K5 = a.~t\nK5({x+1}, 7)", Atom(8));
-        AssertResult("K6(t, a) = a.~t\nK6({x+1}, 7)", Atom(8));
+        AssertResult("K6(t, a) = a.t\nK6({x+1}, 7)", Atom(8));
+        AssertGraceIneffective("K4(t, a) = a~.t\nK4({x+1}, 7)", "a", "it already resolves to an explicit parameter");
+        AssertGraceIneffective("K6(t, a) = a.~t\nK6({x+1}, 7)", "t", "it already resolves to an explicit parameter");
     }
 
     [Fact]
     public void Law_BothSpellings_ElaborateToTheOrdinaryDotBody()
     {
-        // The marker leaves NO trace: all three spellings share one elaborated
-        // body (with the same param names bound), and none of them is a Call.
-        AssertSameElaboratedBody("K(t, a) = a~.t", "K(a, t) = a.t");
-        AssertSameElaboratedBody("K(t, a) = a.~t", "K(a, t) = a.t");
+        // The marker leaves NO trace: the graced spellings elaborate to the same
+        // ordinary dot body as `K(t, a) = a.t` — the explicit spelling of the order
+        // they infer — with the same param names bound, and none of them is a Call.
+        AssertSameElaboratedBody("K = a~.t", "K(t, a) = a.t");
+        AssertSameElaboratedBody("K = a.~t", "K(t, a) = a.t");
 
         var body = Assert.IsType<Expr.DotCall>(
-            Assert.Single(SourceProvenance.ParseValid("K(t, a) = a~.t\nK({a+1}, 7)")
+            Assert.Single(SourceProvenance.ParseValid("K = a~.t\nK({a+1}, 7)")
                 .Root.Properties[0].Value.Output));
         Assert.Equal("t", body.Name);
         Assert.Equal("a", Assert.IsType<Expr.Param>(body.Target).Name);
@@ -259,12 +280,23 @@ public class GraceDotCompositionTests
     }
 
     [Fact]
-    public void Law_ExplicitParameterLists_KeepTheirDeclaredOrder()
+    public void Law_ExplicitParameterLists_FixTheOrder_SoGraceUnderThemIsAnError()
     {
-        Assert.Equal(["a", "t"], ParamsOf("K(a, t) = a~.t"));
-        Assert.Equal(["t", "a"], ParamsOf("K(t, a) = a~.t"));
-        Assert.Equal(["a", "t"], ParamsOf("K(a, t) = a.~t"));
-        Assert.Equal(["t", "a"], ParamsOf("K(t, a) = a.~t"));
+        // Written parameter order IS the declared order; a marker on a declared
+        // parameter could only contradict it, so it is rejected instead of ignored
+        // (F10). The recovery tree keeps the declared order exactly.
+        Assert.Equal(["a", "t"], ParamsOf("K(a, t) = a.t"));
+        Assert.Equal(["t", "a"], ParamsOf("K(t, a) = a.t"));
+        foreach (var (source, name) in new[]
+        {
+            ("K(a, t) = a~.t", "a"), ("K(t, a) = a~.t", "a"),
+            ("K(a, t) = a.~t", "t"), ("K(t, a) = a.~t", "t"),
+        })
+        {
+            var recovery = AssertGraceIneffective(source, name, "it already resolves to an explicit parameter");
+            string[] declaredOrder = source.StartsWith("K(a, t)", StringComparison.Ordinal) ? ["a", "t"] : ["t", "a"];
+            Assert.Equal(declaredOrder, Assert.Single(recovery.Root.Properties).Value.Params);
+        }
     }
 
     [Fact]
@@ -326,8 +358,8 @@ public class GraceDotCompositionTests
         Assert.Equal(["a", "t", "b", "c"], ParamsOf("K = a.t(b, c)"));
         Assert.Equal(["t", "a", "b", "c"], ParamsOf("K = a~.t(b, c)"));
         Assert.Equal(["t", "a", "b", "c"], ParamsOf("K = a.~t(b, c)"));
-        AssertSameElaboratedBody("K(t, a, b, c) = a~.t(b, c)", "K(a, t, b, c) = a.t(b, c)");
-        AssertSameElaboratedBody("K(t, a, b, c) = a.~t(b, c)", "K(a, t, b, c) = a.t(b, c)");
+        AssertSameElaboratedBody("K = a~.t(b, c)", "K(t, a, b, c) = a.t(b, c)");
+        AssertSameElaboratedBody("K = a.~t(b, c)", "K(t, a, b, c) = a.t(b, c)");
         AssertResult("K = a.t(b, c)\nK(1, {a+b+c}, 10, 100)", Atom(111));
         AssertResult("K = a~.t(b, c)\nK({a+b+c}, 1, 10, 100)", Atom(111));
         AssertResult("K = a.~t(b, c)\nK({a+b+c}, 1, 10, 100)", Atom(111));
@@ -359,7 +391,7 @@ public class GraceDotCompositionTests
         // follows it, so the final order is still t,a.
         Assert.Equal(["t", "a"], ParamsOf("K = a~~.t\nK({x + 1}, 7)"));
         AssertResult("K = a~~.t\nK({x + 1}, 7)", Atom(8));
-        AssertSameElaboratedBody("K(t, a) = a~~.t", "K(a, t) = a.t");
+        AssertSameElaboratedBody("K = a~~.t", "K(t, a) = a.t");
     }
 
     [Fact]
@@ -387,27 +419,37 @@ public class GraceDotCompositionTests
     public void Law_ReceiverEvaluatesExactlyOnce()
     {
         // The receiver is ONE expression in ONE dot edge, so a failing
-        // receiver surfaces its one failure identically on both paths.
-        var error = AssertBothEvaluatorsFail("F(x) = x + 1\nbad = 1/0\nbad~.F");
+        // receiver surfaces its one failure identically on both paths. (The
+        // graced receiver is a free name bound to a failing block at the call;
+        // Grace on a bound property receiver would be the ineffective-Grace error.)
+        var error = AssertBothEvaluatorsFail("F(x) = x + 1\nK = bad~.F\nK({1/0})");
         Assert.IsType<EvalError.DivByZero>(error);
     }
 
     [Fact]
     public void Law_NestedLexicalScope_ResolvesLikeTheOrdinaryEdge()
-        => AssertResult(
+    {
+        // `t` is a visible sibling, so the member occurrence never joins the
+        // signature: `K2 = a~.t` graces the FREE receiver (effective, inert at the
+        // boundary), while `K3 = a.~t` would grace the bound member — that marker
+        // is the ineffective-Grace error (F10), not a silent no-op.
+        AssertResult(
             """
             Outer = {
                 t(a) = a + 1
                 K1 = a.t
                 K2 = a~.t
-                K3 = a.~t
                 K1(41)
                 K2(41)
-                K3(41)
             }
             Outer
             """,
-            Seq(Atom(42), Atom(42), Atom(42)));
+            Seq(Atom(42), Atom(42)));
+        AssertGraceIneffective(
+            "Outer = {\n    t(a) = a + 1\n    K3 = a.~t\n    K3(41)\n}\nOuter",
+            "t",
+            "it already resolves to a property");
+    }
 
     // ── B. Structural precedence: Grace NEVER changes member selection ─────
 
@@ -423,48 +465,64 @@ public class GraceDotCompositionTests
     [Fact]
     public void Law_StructuralCollision_AllSpellingsSelectTheStructuralMember()
     {
-        // The receiver HAS the member, so every spelling uses it. `~` orders
-        // parameters; it does not bypass structural lookup.
+        // The receiver HAS the member, so the edge uses it. `~` orders parameters;
+        // it does not bypass structural lookup — and on THIS edge it can order
+        // nothing: `Obj` is a bound property and `V` a member Obj is known to
+        // declare, so both graced spellings are the ineffective-Grace error (F10)
+        // whose recovery tree is exactly the ordinary edge.
         AssertResult(StructuralSplit + "\nObj.V", Atom(42));
-        AssertResult(StructuralSplit + "\nObj~.V", Atom(42));
-        AssertResult(StructuralSplit + "\nObj.~V", Atom(42));
+        AssertGraceIneffective(StructuralSplit + "\nObj~.V", "Obj", "it already resolves to a property");
+        AssertGraceIneffective(StructuralSplit + "\nObj.~V", "V", "the member 'V' always resolves structurally on its receiver");
+
+        // With a FREE receiver the marker is effective and structural lookup still
+        // wins at runtime (the spec case `grace-dot-keeps-structural-precedence`).
+        AssertResult(StructuralSplit + "\nRead = o~.V\nRead(Obj)", Atom(42));
     }
 
     [Fact]
     public void Law_StructuralCollision_OnOpaqueReceiver_AllFormsAgree()
     {
         // With a runtime receiver the selection is decided at runtime, and the
-        // two spellings agree in BOTH directions — only the argument ORDER of
-        // the enclosing signature differs.
+        // spellings agree in BOTH directions — only the argument ORDER of the
+        // enclosing signature differs. The graced forms infer their signatures
+        // (`V` is then a free name, so the lexical `V` is omitted); under a closed
+        // explicit list the markers are the ineffective-Grace error (F10).
+        const string objOnly = "Obj = {\n    public V = 42\n    0\n}";
         AssertResult(StructuralSplit + "\nK(o, V) = o.V\nK(Obj, {x + 1})", Atom(42));
-        AssertResult(StructuralSplit + "\nK(o, V) = o~.V\nK(Obj, {x + 1})", Atom(42));
-        AssertResult(StructuralSplit + "\nK(o, V) = o.~V\nK(Obj, {x + 1})", Atom(42));
+        AssertResult(objOnly + "\nK = o~.V\nK({x + 1}, Obj)", Atom(42));
+        AssertResult(objOnly + "\nK = o.~V\nK({x + 1}, Obj)", Atom(42));
+        AssertGraceIneffective(StructuralSplit + "\nK(o, V) = o~.V\nK(Obj, {x + 1})", "o", "it already resolves to an explicit parameter");
+        AssertGraceIneffective(StructuralSplit + "\nK(o, V) = o.~V\nK(Obj, {x + 1})", "V", "it already resolves to an explicit parameter");
         // No structural member on the receiver → the lexical parameter is used.
         AssertResult("K(o, V) = o.V\nK(7, {x + 1})", Atom(8));
-        AssertResult("K(o, V) = o~.V\nK(7, {x + 1})", Atom(8));
-        AssertResult("K(o, V) = o.~V\nK(7, {x + 1})", Atom(8));
+        AssertResult("K = o~.V\nK({x + 1}, 7)", Atom(8));
+        AssertResult("K = o.~V\nK({x + 1}, 7)", Atom(8));
     }
 
     [Fact]
     public void Law_StructuralPrivateMember_IsReachedByBothSpellings()
     {
         // Structural dot access ignores `public`: a private member is still
-        // reached, and Grace does not change that.
+        // reached, and Grace does not change that — the graced forms infer their
+        // signatures (receiver and `V` free) and the private member still wins.
         const string privateMember = "Obj = {\n    V = 42\n    0\n}\n";
         AssertResult(privateMember + "K(o, V) = o.V\nK(Obj, {x + 100})", Atom(42));
-        AssertResult(privateMember + "K(o, V) = o~.V\nK(Obj, {x + 100})", Atom(42));
-        AssertResult(privateMember + "K(o, V) = o.~V\nK(Obj, {x + 100})", Atom(42));
+        AssertResult(privateMember + "K = o~.V\nK({x + 100}, Obj)", Atom(42));
+        AssertResult(privateMember + "K = o.~V\nK({x + 100}, Obj)", Atom(42));
     }
 
     [Fact]
     public void Law_NoStructuralMember_FallsBackInAllSpellings()
     {
-        // `Obj` has no `Inc`, so both spellings call `Inc` lexically with the
-        // receiver's own value (its output row `0`).
+        // `Obj` has no `Inc`, so the edge calls `Inc` lexically with the
+        // receiver's own value (its output row `0`). A graced FREE receiver bound
+        // to Obj at the call behaves identically; a marker on the bound `Obj`
+        // itself, or on the visible `Inc`, is the ineffective-Grace error (F10).
         const string defs = "Inc(x) = x + 1\nObj = {\n    V = 42\n    0\n}\n";
         AssertResult(defs + "Obj.Inc", Atom(1));
-        AssertResult(defs + "Obj~.Inc", Atom(1));
-        AssertResult(defs + "Obj.~Inc", Atom(1));
+        AssertResult(defs + "K = o~.Inc\nK(Obj)", Atom(1));
+        AssertGraceIneffective(defs + "Obj~.Inc", "Obj", "it already resolves to a property");
+        AssertGraceIneffective(defs + "Obj.~Inc", "Inc", "it already resolves to a property");
     }
 
     // ── C. Static fallback certainty drives inference ───────────────────────
@@ -473,7 +531,9 @@ public class GraceDotCompositionTests
     public void Certainty_GuaranteedStructuralMember_InfersNoFallbackParameter()
     {
         // The receiver's statically known algorithm declares `t`, so the
-        // fallback can NEVER be selected: no spurious `t` parameter.
+        // fallback can NEVER be selected: no spurious `t` parameter — and a marker
+        // on either name of that edge could reorder nothing (F10): the graced
+        // spellings are rejected, their recovery trees keeping the empty signature.
         Assert.Empty(ParamsOf(
             """
             Obj = {
@@ -483,8 +543,10 @@ public class GraceDotCompositionTests
             K = Obj.t
             K
             """));
-        Assert.Empty(ParamsOf("Obj = { public t = 42\n0 }\nK = Obj~.t"));
-        Assert.Empty(ParamsOf("Obj = { public t = 42\n0 }\nK = Obj.~t"));
+        var gracedReceiver = AssertGraceIneffective("Obj = { public t = 42\n0 }\nK = Obj~.t", "Obj", "it already resolves to a property");
+        Assert.Empty(Assert.Single(gracedReceiver.Root.Properties, p => p.Name == "K").Value.Params);
+        var gracedMember = AssertGraceIneffective("Obj = { public t = 42\n0 }\nK = Obj.~t", "t", "the member 't' always resolves structurally on its receiver");
+        Assert.Empty(Assert.Single(gracedMember.Root.Properties, p => p.Name == "K").Value.Params);
         AssertResult(
             """
             Obj = {
@@ -502,11 +564,14 @@ public class GraceDotCompositionTests
     {
         // The receiver is a statically known algorithm WITHOUT the member, so
         // the fallback is unconditionally selected and its callable
-        // participates. (`S` itself is a visible sibling, not a free name.)
+        // participates. (`S` itself is a visible sibling, not a free name — so
+        // `S~.t` graces a bound name and is rejected (F10), while `S.~t` graces
+        // the participating free member and is effective.)
         Assert.Equal(["t"], ParamsOf("S = 1, 2, 3\nK = S.t\nK({a:0 + 100})"));
-        Assert.Equal(["t"], ParamsOf("S = 1, 2, 3\nK = S~.t"));
+        AssertGraceIneffective("S = 1, 2, 3\nK = S~.t", "S", "it already resolves to a property");
         Assert.Equal(["t"], ParamsOf("S = 1, 2, 3\nK = S.~t"));
         AssertResult("S = 1, 2, 3\nK = S.t\nK({a:0 + 100})", Atom(101));
+        AssertResult("S = 1, 2, 3\nK = S.~t\nK({a:0 + 100})", Atom(101));
     }
 
     [Fact]
@@ -521,21 +586,25 @@ public class GraceDotCompositionTests
     public void Certainty_VisibleLexicalMember_IsNotAFreeName()
     {
         // A member name that resolves lexically is not free, so it never
-        // becomes a parameter regardless of fallback certainty.
+        // becomes a parameter regardless of fallback certainty — and a marker on
+        // it is the ineffective-Grace error (F10); the graced receiver `a` is free.
         Assert.Equal(["a"], ParamsOf("t(x) = x + 1\nK = a.t\nK(7)"));
         Assert.Equal(["a"], ParamsOf("t(x) = x + 1\nK = a~.t\nK(7)"));
-        Assert.Equal(["a"], ParamsOf("t(x) = x + 1\nK = a.~t\nK(7)"));
+        AssertGraceIneffective("t(x) = x + 1\nK = a.~t\nK(7)", "t", "it already resolves to a property");
         AssertResult("t(x) = x + 1\nK = a.t\nK(7)", Atom(8));
+        AssertResult("t(x) = x + 1\nK = a~.t\nK(7)", Atom(8));
     }
 
     [Fact]
     public void Certainty_StringIntrinsic_IsNeverAFallback()
     {
         // The dot-only `.string` intrinsic pre-empts both channels on every
-        // receiver shape, so it contributes no fallback parameter in any spelling.
+        // receiver shape, so it contributes no fallback parameter — and prefix
+        // Grace on it is the ineffective-Grace error (F10), while postfix Grace on
+        // the free receiver stays effective.
         Assert.Equal(["v"], ParamsOf("K = v.string"));
         Assert.Equal(["v"], ParamsOf("K = v~.string"));
-        Assert.Equal(["v"], ParamsOf("K = v.~string"));
+        AssertGraceIneffective("K = v.~string", "string", "'.string' is the dot-only intrinsic");
     }
 
     // ── D. May-selection (signature) vs must-selection (closed lists) ───────
@@ -563,9 +632,11 @@ public class GraceDotCompositionTests
         AssertResult("Get(obj) = obj.size\nsize(v) = 77\nGet(3)", Atom(77));
 
         // And an unresolvable member in a closed list is a RUNTIME miss, not a
-        // parse-time undeclared-identifier error — in both spellings.
+        // parse-time undeclared-identifier error. (Under the closed list the
+        // graced spelling `K(a) = a~.t` is the ineffective-Grace error instead —
+        // F10 — while the free-name spelling stays a runtime miss.)
         Assert.IsType<EvalError.UnknownName>(AssertBothEvaluatorsFail("K(a) = a.t\nK(7)"));
-        Assert.IsType<EvalError.UnknownName>(AssertBothEvaluatorsFail("K(a) = a~.t\nK(7)"));
+        AssertGraceIneffective("K(a) = a~.t\nK(7)", "a", "it already resolves to an explicit parameter");
     }
 
     [Fact]
@@ -587,40 +658,47 @@ public class GraceDotCompositionTests
     [Fact]
     public void SpecialForm_StringIntrinsic_IsIdenticalInBothSpellings()
     {
+        // The graced receiver is a FREE name bound at the call; `v = 5` then
+        // `v~.string` would grace a bound property and `v.~string` the intrinsic
+        // itself — both the ineffective-Grace error (F10), never a silent no-op.
         AssertResult("v = 5\nv.string", Str("5"));
-        AssertResult("v = 5\nv~.string", Str("5"));
-        AssertResult("v = 5\nv.~string", Str("5"));
-        AssertSameElaboratedBody("K(v) = v~.string", "K(v) = v.string");
+        AssertResult("K = v~.string\nK(5)", Str("5"));
+        AssertGraceIneffective("v = 5\nv~.string", "v", "it already resolves to a property");
+        AssertGraceIneffective("v = 5\nv.~string", "string", "'.string' is the dot-only intrinsic");
+        AssertSameElaboratedBody("K = v~.string", "K(v) = v.string");
 
         // The intrinsic pre-empts a same-named lexical callable in every
         // spelling — it is an ordinary-dot member rule, not a Grace rule.
         AssertResult("string(x) = x + 100\nv = 5\nv.string", Str("5"));
-        AssertResult("string(x) = x + 100\nv = 5\nv~.string", Str("5"));
-        AssertResult("string(x) = x + 100\nv = 5\nv.~string", Str("5"));
+        AssertResult("string(x) = x + 100\nK = v~.string\nK(5)", Str("5"));
     }
 
     [Fact]
     public void SpecialForm_SequenceBuiltins_AreIdenticalInBothSpellings()
     {
+        // Graced spellings use a FREE receiver bound at the call (`K = v~.count`,
+        // `K(S)`); a marker on the bound property `S` or on the builtin member
+        // (`S.~count`) is the ineffective-Grace error (F10).
         Assert.Equal(["v"], ParamsOf("K = v.count"));
         Assert.Equal(["v", "n"], ParamsOf("K = v.take(n)"));
+        Assert.Equal(["v"], ParamsOf("K = v~.count"));
         AssertResult("S = 1, 2, 3\nS.count", Atom(3));
-        AssertResult("S = 1, 2, 3\nS~.count", Atom(3));
-        AssertResult("S = 1, 2, 3\nS.~count", Atom(3));
+        AssertResult("S = 1, 2, 3\nK = v~.count\nK(S)", Atom(3));
+        AssertGraceIneffective("S = 1, 2, 3\nS~.count", "S", "it already resolves to a property");
+        AssertGraceIneffective("S = 1, 2, 3\nS.~count", "count", "it already resolves to the builtin 'count'");
         AssertResult("S = 1, 2, 3\nS.take(2)", List(Atom(1), Atom(2)));
-        AssertResult("S = 1, 2, 3\nS~.take(2)", List(Atom(1), Atom(2)));
-        AssertResult("S = 1, 2, 3\nS.~take(2)", List(Atom(1), Atom(2)));
-        AssertSameElaboratedBody("K(S) = S~.take(2)", "K(S) = S.take(2)");
+        AssertResult("S = 1, 2, 3\nK = v~.take(2)\nK(S)", List(Atom(1), Atom(2)));
+        AssertSameElaboratedBody("K = v~.take(2)", "K(v) = v.take(2)");
 
         // A user `count` shadows the builtin in BOTH spellings.
         AssertResult("count(x) = 99\nS = 1, 2, 3\nS.count", Atom(99));
-        AssertResult("count(x) = 99\nS = 1, 2, 3\nS~.count", Atom(99));
+        AssertResult("count(x) = 99\nS = 1, 2, 3\nK = v~.count\nK(S)", Atom(99));
 
         // The dotted-receiver view stays DIFFERENT from the direct call — that
         // distinction belongs to DotCall, not to Grace.
-        AssertResult("S = 1, 2, 3\nS~.count", Atom(3));
+        AssertResult("S = 1, 2, 3\nK = v~.count\nK(S)", Atom(3));
         AssertResult("S = 1, 2, 3\ncount(S)", Atom(3));
-        AssertResult("Collect(*items) = items\nS = 1, 2, 3\nS~.Collect", List(Seq(Atom(1), Atom(2), Atom(3))));
+        AssertResult("Collect(*items) = items\nS = 1, 2, 3\nK = v~.Collect\nK(S)", List(Seq(Atom(1), Atom(2), Atom(3))));
         AssertResult("Collect(*items) = items\n(1, 2, 3).Collect", List(Atom(1), Atom(2), Atom(3)));
     }
 
@@ -634,34 +712,50 @@ public class GraceDotCompositionTests
         // form has both spellings — and they agree exactly.
         AssertResult("Mean(*Vector) = Vector.sum / Vector.count\n(1, 2, 2.718).Mean", Atom(1.906m));
         AssertResult("Collect(*items) = items\nS = 1, 2, 3\nS.Collect", List(Seq(Atom(1), Atom(2), Atom(3))));
-        AssertResult("Collect(*items) = items\nS = 1, 2, 3\nS~.Collect", List(Seq(Atom(1), Atom(2), Atom(3))));
-        AssertSameElaboratedBody("K(S) = S~.Collect", "K(S) = S.Collect");
+        AssertResult("Collect(*items) = items\nS = 1, 2, 3\nK = v~.Collect\nK(S)", List(Seq(Atom(1), Atom(2), Atom(3))));
+        AssertGraceIneffective("Collect(*items) = items\nS = 1, 2, 3\nS~.Collect", "S", "it already resolves to a property");
+        AssertSameElaboratedBody("Collect(*items) = items\nK = v~.Collect", "Collect(*items) = items\nK(v) = v.Collect");
         AssertParseFails("Collect(*items) = items\n(1, 2, 3)~.Collect", GraceEligibilityFragment);
     }
 
     [Fact]
-    public void SpecialForm_ValueKindsWorkThroughBoundNames()
+    public void SpecialForm_ValueKindsWorkThroughFreeReceivers()
     {
-        AssertResult("L = [1, 2, 3]\nL~.sum", Atom(6));
-        AssertResult("E = ()\nE~.count", Atom(0));
-        AssertResult("S = 1, 2, 3\nS~.first", Atom(1));
+        // Every value kind flows through the graced edge when the receiver is a
+        // FREE name bound at the call; on the bound property itself the marker is
+        // the ineffective-Grace error (F10).
+        AssertResult("L = [1, 2, 3]\nK = v~.sum\nK(L)", Atom(6));
+        AssertResult("E = ()\nK = v~.count\nK(E)", Atom(0));
+        AssertResult("S = 1, 2, 3\nK = v~.first\nK(S)", Atom(1));
+        AssertGraceIneffective("L = [1, 2, 3]\nL~.sum", "L", "it already resolves to a property");
     }
 
     [Fact]
     public void SpecialForm_MemberResolvesThroughOpen()
-        => AssertResult(
+    {
+        AssertResult(
             """
             Lib = {
                 public V(x) = 99
             }
             R = {
                 open Lib
-                v = 5
-                v~.V
+                K = v~.V
+                K(5)
             }
             R
             """,
             Atom(99));
+        // A marker on the sibling property `v` (or on the opened `V`) is rejected.
+        AssertGraceIneffective(
+            "Lib = {\n    public V(x) = 99\n}\nR = {\n    open Lib\n    v = 5\n    v~.V\n}\nR",
+            "v",
+            "it already resolves to a property");
+        AssertGraceIneffective(
+            "Lib = {\n    public V(x) = 99\n}\nR = {\n    open Lib\n    K = v.~V\n    K(5)\n}\nR",
+            "V",
+            "it already resolves to an opened property");
+    }
 
     [Fact]
     public void SpecialForm_GracedDotIsNotAnOpenTarget()
@@ -684,18 +778,23 @@ public class GraceDotCompositionTests
     [Fact]
     public void SpecialForm_InArgumentListAndCallbackSlots()
     {
-        AssertResult("Inc(x) = x + 1\nF(a, b) = a * 10 + b\nv = 5\nF(v~.Inc, 2)", Atom(62));
-        AssertResult("Inc(x) = x + 1\nv = 5\n[v~.Inc, 9]", List(Atom(6), Atom(9)));
+        // The graced receiver is a FREE name in every slot kind (call argument,
+        // list element, callback body, reduce initial); `v = 5` then `v~.Inc`
+        // would grace a bound property — the ineffective-Grace error (F10).
+        AssertResult("Inc(x) = x + 1\nF(a, b) = a * 10 + b\nK = F(v~.Inc, 2)\nK(5)", Atom(62));
+        AssertResult("Inc(x) = x + 1\nK = [v~.Inc, 9]\nK(5)", List(Atom(6), Atom(9)));
         AssertResult("Inc(x) = x + 1\nmap((1, 2, 3), {a~.Inc})", List(Atom(2), Atom(3), Atom(4)));
-        AssertResult("Id(x) = x\nv = 5\nreduce((1, 2, 3), {a + b}, v~.Id)", Atom(11));
+        AssertResult("Id(x) = x\nK = reduce((1, 2, 3), {a + b}, v~.Id)\nK(5)", Atom(11));
+        AssertGraceIneffective("Inc(x) = x + 1\nv = 5\n[v~.Inc, 9]", "v", "it already resolves to a property");
     }
 
     [Fact]
     public void SpecialForm_SequencePipelineEdge_IsSharedByBothSpellings()
     {
         AssertResult("K(xs) = xs.filter({a > 1}).count\nK((1, 2, 3))", Atom(2));
-        AssertResult("K(xs) = xs~.filter({a > 1}).count\nK((1, 2, 3))", Atom(2));
-        AssertSameElaboratedBody("K(xs) = xs~.filter({a > 1}).count", "K(xs) = xs.filter({a > 1}).count");
+        AssertResult("K = xs~.filter({a > 1}).count\nK((1, 2, 3))", Atom(2));
+        AssertSameElaboratedBody("K = xs~.filter({a > 1}).count", "K(xs) = xs.filter({a > 1}).count");
+        AssertGraceIneffective("K(xs) = xs~.filter({a > 1}).count\nK((1, 2, 3))", "xs", "it already resolves to an explicit parameter");
     }
 
     // ── F. Argument-list forms ──────────────────────────────────────────────
@@ -703,8 +802,9 @@ public class GraceDotCompositionTests
     [Fact]
     public void ArgumentList_ExtraArgumentsFollowTheReceiver()
     {
+        // The graced receiver is a FREE name bound at the call (`K(3)`).
         AssertResult("F(x, y, z) = x*100 + y*10 + z\nv = 3\nv.F(1, 2)", Atom(312));
-        AssertResult("F(x, y, z) = x*100 + y*10 + z\nv = 3\nv~.F(1, 2)", Atom(312));
+        AssertResult("F(x, y, z) = x*100 + y*10 + z\nK = v~.F(1, 2)\nK(3)", Atom(312));
         AssertResult("F(x, y, z) = x*100 + y*10 + z\nF(3, 1, 2)", Atom(312));
     }
 
@@ -713,18 +813,22 @@ public class GraceDotCompositionTests
     {
         // `v~.F()` and `v~.F` keep the ordinary dot edge's property-style vs
         // explicit-argument-list distinction (Args null vs empty) — the marker
-        // changes neither.
-        var withArgs = Assert.IsType<Expr.DotCall>(
-            SourceProvenance.ParseValid("F(x) = x + 1\nv = 3\nv~.F()").Root.Output[^1]);
+        // changes neither. (`v` is K's free receiver name, bound by `K(3)`.)
+        static Expr.DotCall BodyOfK(string source)
+        {
+            var root = SourceProvenance.ParseValid(source).Root;
+            return Assert.IsType<Expr.DotCall>(Assert.Single(root.Properties, p => p.Name == "K").Value.Output[0]);
+        }
+
+        var withArgs = BodyOfK("F(x) = x + 1\nK = v~.F()\nK(3)");
         Assert.NotNull(withArgs.Args);
         Assert.Empty(withArgs.Args);
 
-        var propertyStyle = Assert.IsType<Expr.DotCall>(
-            SourceProvenance.ParseValid("F(x) = x + 1\nv = 3\nv~.F").Root.Output[^1]);
+        var propertyStyle = BodyOfK("F(x) = x + 1\nK = v~.F\nK(3)");
         Assert.Null(propertyStyle.Args);
 
-        AssertResult("F(x) = x + 1\nv = 3\nv~.F()", Atom(4));
-        AssertResult("F(x) = x + 1\nv = 3\nv~.F", Atom(4));
+        AssertResult("F(x) = x + 1\nK = v~.F()\nK(3)", Atom(4));
+        AssertResult("F(x) = x + 1\nK = v~.F\nK(3)", Atom(4));
     }
 
     [Fact]
@@ -737,12 +841,14 @@ public class GraceDotCompositionTests
         }
 
         // The member identifier keeps its exact source span in every spelling
-        // (hover/navigation anchor), and the receiver keeps its own span.
-        foreach (var source in new[] { "K(a, t) = a~.t\nK(7, {a+1})", "K(a, t) = a.~t\nK(7, {a+1})" })
+        // (hover/navigation anchor), and the receiver keeps its own span: in
+        // `K = a~.t` / `K = a.~t` the member is at column 8 and the receiver
+        // name at column 5 (the marker occupies its own column).
+        foreach (var source in new[] { "K = a~.t\nK({a+1}, 7)", "K = a.~t\nK({a+1}, 7)" })
         {
             var dotCall = Body(source);
-            Assert.Equal(new SourceSpan(1, 14, 1, 14), dotCall.MemberSpan);
-            Assert.Equal(new SourceSpan(1, 11, 1, 11), dotCall.Target.Span);
+            Assert.Equal(new SourceSpan(1, 8, 1, 8), dotCall.MemberSpan);
+            Assert.Equal(new SourceSpan(1, 5, 1, 5), dotCall.Target.Span);
         }
 
         var ordinary = Body("K(a, t) = a.t\nK(7, {a+1})");
@@ -755,10 +861,13 @@ public class GraceDotCompositionTests
     public void Chain_GracedDotThenOrdinaryContinuation()
     {
         // The first edge is an ordinary dot edge; `.string` then applies to
-        // its result exactly as after an ungraced edge.
-        AssertResult("K(a, t) = a~.t.string\nK(7, {a+1})", Str("8"));
-        AssertResult("K(a, t) = a.~t.string\nK(7, {a+1})", Str("8"));
-        AssertSameElaboratedBody("K(a, t) = a~.t.string", "K(a, t) = a.t.string");
+        // its result exactly as after an ungraced edge. (The graced names are
+        // free: under an explicit list the markers are the ineffective-Grace
+        // error, F10.)
+        AssertResult("K = a~.t.string\nK({a+1}, 7)", Str("8"));
+        AssertResult("K = a.~t.string\nK({a+1}, 7)", Str("8"));
+        AssertSameElaboratedBody("K = a~.t.string", "K(t, a) = a.t.string");
+        AssertGraceIneffective("K(a, t) = a~.t.string\nK(7, {a+1})", "a", "it already resolves to an explicit parameter");
     }
 
     [Fact]
@@ -803,8 +912,11 @@ public class GraceDotCompositionTests
         // The ORDINARY complex-receiver edge stays valid.
         AssertResult("K(x, y) = (x + y).t\nt(v) = v * 2\nK(1, 2)", Atom(6));
         // Prefix Grace after the dot decorates the bare fallback name, not the
-        // compound receiver, and therefore remains eligible.
-        AssertResult("K(x, y, t) = (x + y).~t\nK(1, 2, {v * 2})", Atom(6));
+        // compound receiver, and therefore remains eligible — on a FREE member
+        // name: base order (x, y, t) becomes (x, t, y). (On a declared `t` the
+        // marker is the ineffective-Grace error, F10.)
+        AssertResult("K = (x + y).~t\nK(1, {v * 2}, 2)", Atom(6));
+        AssertGraceIneffective("K(x, y, t) = (x + y).~t\nK(1, 2, {v * 2})", "t", "it already resolves to an explicit parameter");
     }
 
     [Fact]
@@ -826,9 +938,12 @@ public class GraceDotCompositionTests
         AssertParseFails("(1, 2, 3)~.first", GraceEligibilityFragment);
 
         // The corresponding prefix-member forms are eligible because the
-        // decorated occurrence is the bare member/fallback name.
-        AssertResult("t(a) = a + 1\n5.~t", Atom(6));
-        AssertResult("t(a) = a\n[1, 2].~t", List(Atom(1), Atom(2)));
+        // decorated occurrence is the bare member/fallback name — a FREE name
+        // that joins the enclosing signature (on a declared `t` the marker is
+        // the ineffective-Grace error, F10).
+        AssertResult("K = 5.~t\nK({a + 1})", Atom(6));
+        AssertResult("K = [1, 2].~t\nK({a})", List(Atom(1), Atom(2)));
+        AssertGraceIneffective("t(a) = a + 1\n5.~t", "t", "it already resolves to a property");
     }
 
     [Fact]
@@ -846,7 +961,11 @@ public class GraceDotCompositionTests
     {
         AssertResult("Collect(*items) = items\n[1, 2]*.Collect", List(Atom(1), Atom(2)));
         AssertParseFails("Collect(*items) = items\n[1, 2]*~.Collect", GraceEligibilityFragment);
-        AssertResult("Collect(*items) = items\n[1, 2]*.~Collect", List(Atom(1), Atom(2)));
+        // Prefix member Grace on the lowered lexical callee is effective on a FREE
+        // callee name (bound by the call); on the declared `Collect` it is the
+        // ineffective-Grace error (F10).
+        AssertResult("K = [1, 2]*.~F\nK({a + b})", Atom(3));
+        AssertGraceIneffective("Collect(*items) = items\n[1, 2]*.~Collect", "Collect", "it already resolves to a property");
         AssertParseFails("K = xs*~.F", GraceEligibilityFragment);
     }
 
@@ -911,8 +1030,8 @@ public class GraceDotCompositionTests
         // law), and the space before the dot is ordinary whitespace before a
         // same-line postfix continuation, so this is postfix grace on `a` plus
         // the ordinary dot edge. Postfix grace (+1) moves `a` later than the
-        // following member/fallback occurrence.
-        => AssertResult("K(a, t) = a~ .t\nK(7, {a+1})", Atom(8));
+        // following member/fallback occurrence: `K` infers `(t, a)`.
+        => AssertResult("K = a~ .t\nK({a+1}, 7)", Atom(8));
 
     [Fact]
     public void Adjacency_AttachedTildeBeforeASpacedDot_HasTheOrdinaryPostfixGraceOrder()
@@ -969,7 +1088,7 @@ public class GraceDotCompositionTests
 
     [Fact]
     public void Adjacency_RepeatedPostfixGrace_ComposesWithDot()
-        => AssertResult("K(a, t) = a~~.t\nK(7, {a+1})", Atom(8));
+        => AssertResult("K = a~~.t\nK({a+1}, 7)", Atom(8));
 
     [Fact]
     public void Adjacency_PostfixReceiverAndPrefixMemberGrace_BothCompose()
@@ -987,9 +1106,13 @@ public class GraceDotCompositionTests
     [Fact]
     public void Adjacency_LeadingDotContinuation_CanCarryPrefixMemberGrace()
     {
-        var source = "K(a, t) = a\n.~t\nK(7, {a+1})";
+        // The graced member is a FREE name (K infers `(t, a)`); on a declared
+        // `t` the marker would be the ineffective-Grace error (F10).
+        var source = "K = a\n.~t\nK({a+1}, 7)";
         var root = SourceProvenance.ParseValid(source).Root;
-        var edge = Assert.IsType<Expr.DotCall>(root.Properties[0].Value.Output[0]);
+        var k = Assert.Single(root.Properties, p => p.Name == "K").Value;
+        Assert.Equal(["t", "a"], k.Params);
+        var edge = Assert.IsType<Expr.DotCall>(k.Output[0]);
         Assert.Equal("t", edge.Name);
         AssertResult(source, Atom(8));
     }
@@ -1077,16 +1200,17 @@ public class GraceDotCompositionTests
             return evaluated.Value;
         }
 
+        // Every graced spelling graces a FREE name (a marker on a bound receiver,
+        // a builtin member, or a member the receiver declares is the
+        // ineffective-Grace error, F10, and never reaches the evaluator).
         foreach (var (ordinary, graced) in new[]
         {
             ("K = a.t\nK(7, {x + 1})", "K = a~.t\nK({x + 1}, 7)"),
             ("K = a.t\nK(7, {x + 1})", "K = a.~t\nK({x + 1}, 7)"),
-            ("K(xs) = xs.filter({a > 1}).count\nK((1, 2, 3))", "K(xs) = xs~.filter({a > 1}).count\nK((1, 2, 3))"),
-            ("K(xs) = xs.filter({a > 1}).count\nK((1, 2, 3))", "K(xs) = xs.~filter({a > 1}).count\nK((1, 2, 3))"),
-            ("S = 1, 2, 3\nS.take(2)", "S = 1, 2, 3\nS~.take(2)"),
-            ("S = 1, 2, 3\nS.take(2)", "S = 1, 2, 3\nS.~take(2)"),
-            ("V(x) = 99\nObj = {\n    public V = 42\n    0\n}\nObj.V", "V(x) = 99\nObj = {\n    public V = 42\n    0\n}\nObj~.V"),
-            ("V(x) = 99\nObj = {\n    public V = 42\n    0\n}\nObj.V", "V(x) = 99\nObj = {\n    public V = 42\n    0\n}\nObj.~V"),
+            ("K(xs) = xs.filter({a > 1}).count\nK((1, 2, 3))", "K = xs~.filter({a > 1}).count\nK((1, 2, 3))"),
+            ("S = 1, 2, 3\nS.take(2)", "S = 1, 2, 3\nK = v~.take(2)\nK(S)"),
+            ("V(x) = 99\nObj = {\n    public V = 42\n    0\n}\nObj.V", "V(x) = 99\nObj = {\n    public V = 42\n    0\n}\nRead = o~.V\nRead(Obj)"),
+            ("Obj = {\n    public V = 42\n    0\n}\nObj.V", "Obj = {\n    public V = 42\n    0\n}\nRead = o.~V\nRead({x}, Obj)"),
         })
         {
             foreach (var (loops, pipelines) in new[] { (true, true), (false, false) })
@@ -1107,17 +1231,19 @@ public class GraceDotCompositionTests
     }
 
     [Fact]
-    public void UnknownMember_RendersTheOrdinaryDotDiagnostic_InBothSpellings()
+    public void UnknownMember_RendersTheOrdinaryDotDiagnostic_AndTheGracedClosedListTwinIsRejected()
     {
-        // Both spellings ARE the dot edge, so a member miss renders the dot
-        // diagnostic — the marker never switches to call-style wording.
+        // The dot edge renders the dot diagnostic on a member miss — never
+        // call-style wording. A member can only miss at runtime under a CLOSED
+        // list (a free member name would join the signature instead), and under a
+        // closed list the graced twin is the ineffective-Grace error (F10) — it
+        // never reaches the evaluator at all.
         static string MessageOf(string source)
             => KatLangError.FromEvalError(
                 Evaluator.Run(new Expr.AlgorithmExpr(SourceProvenance.ParseValid(source).Root)).Error).Message;
 
         var ordinary = MessageOf("K(a) = a.Missing\nK(1)");
-        var graced = MessageOf("K(a) = a~.Missing\nK(1)");
         Assert.Contains("Property 'Missing' was not found on", ordinary);
-        Assert.Equal(ordinary, graced);
+        AssertGraceIneffective("K(a) = a~.Missing\nK(1)", "a", "it already resolves to an explicit parameter");
     }
 }

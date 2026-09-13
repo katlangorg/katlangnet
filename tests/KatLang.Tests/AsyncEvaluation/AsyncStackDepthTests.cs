@@ -181,4 +181,61 @@ public class AsyncStackDepthTests
                 SemanticExplorerHarness.ErrorCategory(asyncOutcome.Value.Error));
         }
     }
+
+    /// <summary>
+    /// F8 — the PUBLIC contract, as documented on <see cref="EvaluationLimits.MaxDepth"/>,
+    /// the host-operation <c>Evaluator.RunAsync</c> overload, and
+    /// <c>KatLangEngine.RunAsync</c>: a configuration with an asynchronous host operation
+    /// takes the twin path, whose recursion capacity is an implementation characteristic —
+    /// it may stop at a SHALLOWER depth than the synchronous evaluator, but only ever with
+    /// a structured resource-limit error of the same family (the stack backstop or the
+    /// deterministic depth verdict), never a process crash. No exact depth or ratio is
+    /// pinned, deliberately: that number is platform- and runtime-dependent and is not a
+    /// language guarantee.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(HeaviestRecursionShapes))]
+    public void PublicAsyncHostOperationSurface_DeepRecursion_FailsStructurallyNeverCrashes(string shapeId, string source)
+    {
+        _ = shapeId;
+        var operations = HostOperations.Create(
+            HostOperation.CreateAsync("Ping", (_, _) => ValueTask.FromResult<Result>(new Result.Atom(1))));
+        var parsed = Parser.Parse(source, new RunOptions { HostOperations = operations });
+        Assert.False(parsed.HasErrors);
+        var ast = new Expr.AlgorithmExpr(parsed.Root);
+
+        EvalResult<Result>? asyncOutcome = null;
+        AstStructuralDepthProcessTests.RunOnThreadWithStack(1_048_576, () =>
+        {
+            // Nothing suspends (the operation is never invoked), so the twin path completes
+            // synchronously on this thread's 1 MiB stack — the minimum supported stack.
+            var pending = Evaluator.RunAsync(ast, operations, limits: null, CancellationToken.None);
+            Assert.True(pending.IsCompleted);
+            asyncOutcome = pending.GetAwaiter().GetResult();
+        });
+
+        Assert.True(asyncOutcome!.Value.IsError);
+        var asyncError = asyncOutcome.Value.Error;
+        Assert.True(asyncError.IsResourceLimit);
+        Assert.Contains(
+            asyncError.Code,
+            new[] { KatLangErrorCode.EvaluationStackExhausted, KatLangErrorCode.EvaluationDepthExceeded });
+
+        // The synchronous evaluator's verdict on the same configuration is a resource-limit
+        // verdict of the same family; the twin may only trade one member for the other.
+        EvalResult<Result>? syncOutcome = null;
+        AstStructuralDepthProcessTests.RunOnThreadWithStack(1_048_576, () =>
+        {
+            syncOutcome = Evaluator.Run(
+                ast,
+                HostOperations.Create(HostOperation.Create("Ping", (_, _) => new Result.Atom(1))),
+                limits: null,
+                CancellationToken.None);
+        });
+        Assert.True(syncOutcome!.Value.IsError);
+        Assert.True(syncOutcome.Value.Error.IsResourceLimit);
+        Assert.Contains(
+            syncOutcome.Value.Error.Code,
+            new[] { KatLangErrorCode.EvaluationStackExhausted, KatLangErrorCode.EvaluationDepthExceeded });
+    }
 }

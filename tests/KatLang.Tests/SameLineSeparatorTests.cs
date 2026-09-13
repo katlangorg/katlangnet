@@ -274,9 +274,11 @@ public class SameLineSeparatorTests
     [InlineData("A = { public B(x, y) = x + y }\nA.B (1, 2)", "3")]
     [InlineData("V = (1, 2, 3)\nV.map { n * 2 }", "[2, 4, 6]")]
     [InlineData("Pair = (1, 2)\nPair :0", "1")]
-    [InlineData("K(a, t) = a~.t\nK(7, {a+1})", "8")]
-    [InlineData("K(a, t) = a.~t\nK(7, {a+1})", "8")]
-    [InlineData("K(a, t) = a~ .t\nK(7, {a+1})", "8")]
+    // Grace on free names (the graced forms infer (t, a); under an explicit
+    // parameter list Grace is an error — see GraceEffectivenessTests).
+    [InlineData("K = a~.t\nK({a+1}, 7)", "8")]
+    [InlineData("K = a.~t\nK({a+1}, 7)", "8")]
+    [InlineData("K = a~ .t\nK({a+1}, 7)", "8")]
     [InlineData("F(x) = x\n(1, 2).F", "(1, 2)")]
     // Multiline operator continuation versus a new row.
     [InlineData("A = 5\nA -\n1", "4")]
@@ -573,7 +575,9 @@ public class SameLineSeparatorTests
     [InlineData("F(0) = 1\nF(x) = x\nF(0)", "1")]
     [InlineData("F(\r\n a, # first\r\n b # last\r\n) = a + b\r\nF(1, 2)", "3")]
     [InlineData("F((a, (*b, c))) = b\nF((1, (2, 3, 4)))", "[2, 3]")]
-    [InlineData("F(a, b) = a~ + b\nF(1, 2)", "3")]
+    // Grace on a free name beside an ordinary comma pattern list elsewhere in the
+    // program (a graced EXPLICIT parameter is an error — GraceEffectivenessTests).
+    [InlineData("G(a, b) = a + b\nF = a~ + b\nF(2, 1)", "3")]
     public void ParameterPatternLists_WithCommas_StayValid(string source, string expected)
         => AssertValid(source, expected);
 

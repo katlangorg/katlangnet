@@ -443,7 +443,7 @@ User input may contain Unicode math symbols. Generated KatLang must use only ASC
 - Indexing is zero-based: `expr:index`. It selects one top-level item and projects that selected item's content. Indexing is same-physical-line only — never start a line with `:`; a `:`-led line is a parse error, not a continuation of the previous expression. Do not add a leading `:0` to unwrap a `repeat` or `reduce` state tuple; select the needed state field directly.
 - Sequence values: parentheses materialize an expression list as one sequence value. Comma (and newline-row) expression lists are consumed as root output slots or call argument slots unless parentheses materialize them. Bare `1, 2, 3` is three root output slots or three call argument slots (`1 2 3` is a parse error: same-line slots need commas); `(1, 2, 3)` is one sequence value. Result-window row display is presentation only and does not imply semantic sequence-value construction. Semicolon is invalid expression syntax.
 - Spread: the postfix spread star `expr*` (star after a completed expression, on the same line) opens one item-producing boundary (sequence or list) of the evaluated value and contributes the items to the surrounding item supply; it returns no value. The right operand decides between spread and multiplication — not spacing, and not a line break: any following right operand makes the star infix multiplication (`A* B` and `A*` newline `B` both multiply), so write `A*, B` to spread `A` before another item and `A*,` newline `B` before another output row. The star is a spread only before `,`, `)`, `]`, `}`, the end of the program, or a definition head, and is then written directly attached (`A*`; a detached `A *` with nothing to multiply is a parse error); close a spread-ending definition body that an output row follows with capture parentheses (`y = (A*)`). A dot may chain after a spread: `x.Calculate*.Target` means `Target(x.Calculate*)` (lexical resolution). Repeated stars compose through capture (`value**` means `(value*)*`; a multi-item supply is a fixed point, and only a lone structured item opens one more boundary); `value**next` is an error. Prefix `*name` directly attached to a name is the collecting-binding marker, valid only in binding patterns.
-- Calls only on identifiers and dot-call expressions. A call delimiter continues the callable across same-line whitespace: `F (1, 2)` and `F(1, 2)` are the same call, and likewise for dot calls and brace callbacks. A physical newline never continues a closed expression into a call: newline-separated `F` + `(1, 2)` is the expression list `F, (1, 2)`, and a `(`- or `{`-led line after a definition body is a following output row. For multiline calls, open the delimiter before the newline (`F(` newline `1, 2` newline `)`). Indexing `:` is same-line only; a `:`-led line is a parse error. Postfix grace `~` is same-line only and only on a bare name: a `~`-led line is its own prefix-grace row whose name must be on that same line, and a line-final `~` after anything else (`F(1)~`) is an error, never prefix grace for the next line. Binary operators never continue across a newline (`A` newline `-1` is `A, -1`, not subtraction; write the trailing operator `A -` newline `1` to continue arithmetic), and comments never change line-boundary decisions. A `.`-led line is the supported exception and continues the dot-call chain. Prefer the compact `F(1, 2)` style. Non-callable targets never become calls (`2 (3)` and `2(3)` are missing-separator parse errors, never multiplication — write `2 * 3`).
+- Calls only on identifiers and dot-call expressions. A call delimiter continues the callable across same-line whitespace: `F (1, 2)` and `F(1, 2)` are the same call, and likewise for dot calls and brace callbacks. A physical newline never continues a closed expression into a call: newline-separated `F` + `(1, 2)` is the expression list `F, (1, 2)`, and a `(`- or `{`-led line after a definition body is a following output row. A simple definition or deconstruction head stays on one line; a clause head's name and `(` share a line and its closing `)` and `=` share a line, while its open pattern list may span lines — so newline-separated `Foo` + `(x) = x + 1` is the row `Foo` followed by a stray `=` (a parse error), never the clause `Foo(x) = x + 1`, and `A` + `= 1` is rejected the same way; the body may begin on the line after the `=` (`A =` newline `1`). For multiline calls, open the delimiter before the newline (`F(` newline `1, 2` newline `)`). Indexing `:` is same-line only; a `:`-led line is a parse error. Postfix grace `~` is same-line only and only on a bare name: a `~`-led line is its own prefix-grace row whose name must be on that same line, and a line-final `~` after anything else (`F(1)~`) is an error, never prefix grace for the next line. Binary operators never continue across a newline (`A` newline `-1` is `A, -1`, not subtraction; write the trailing operator `A -` newline `1` to continue arithmetic), and comments never change line-boundary decisions. A `.`-led line is the supported exception and continues the dot-call chain. Prefer the compact `F(1, 2)` style. Non-callable targets never become calls (`2 (3)` and `2(3)` are missing-separator parse errors, never multiplication — write `2 * 3`).
 
 ## Arithmetic, Operators, and Precedence
 
@@ -782,6 +782,15 @@ shapes — and the marker is written DIRECTLY attached to the name: `~ x` and
 detached collect marker `* items` and the detached spread marker `value *`.
 Never attach it to an expression: `(x + y)~`, `f(x)~`, `x.y~`, `[x]~`,
 and `5~` are parse errors.
+
+Grace is meaningful ONLY on a free name that becomes an implicit parameter of
+the enclosing algorithm. A marker on a name whose binding is already fixed is
+a front-end ERROR, never a silent no-op: an explicit parameter (`K(b, a) = b,
+~a` — the list already fixes the order; write `K(a, b) = b, a` or drop the
+list), a parameter of an enclosing algorithm, a visible property, a builtin
+(`~count(...)`), an opened name, a dot member the receiver is known to declare
+(`Obj.~V`), or ANY occurrence under an explicit parameter list. Never write
+`~` on a declared parameter or on a property/builtin name.
 
 - Prefix `~x`: shift `x` one position earlier. `~~x`: two positions earlier.
 - Postfix `x~`: shift `x` one position later. `x~~`: two positions later.
@@ -1270,7 +1279,7 @@ BETTER — specific branch first:
 - `a.f(args)` where `f` is not structural — lexical fallback injects `a` as first argument.
 - CHAINED ACCESS is property-first at EVERY level: a receiver that is itself an argumentless dot access (`Lib.Sub` in `Lib.Sub.Q`) is navigated to that member's algorithm first, so `Lib.Sub.Q` reads `Sub`'s own `Q` whenever `Sub` exposes an accessible `Q` — even when a same-named `Q(x)` is visible — and `A.B.C.D` traverses nested public members at any depth without evaluating the containers. Only a receiver WITHOUT the member falls back, and the fallbacks compose along the chain (`3.A.B` is `B(A(3))`). A written call such as `Lib.Sub()` is a value, so a member after it is an extension call on that value; a declared local-only or conditional-branch intermediate member is an error at that edge, never a fallback.
 - The fallback resolves `f` exactly like the plain callee in `f(a, args)`, including parameters: with `K(a, t) = a.t`, the member `t` calls the algorithm bound to the parameter `t`, exactly like `t(a)`. The nearest lexical owner declaring the name supplies its parameter or property. An ancestor-owned parameter beats properties of farther owners and all opened providers; a property conflicting with a parameter in the same or an enclosing algorithm is a declaration error. Structural members of the receiver always win before either.
-- GRACE WITH DOTCALL: `a~.f(args)` is ordinary postfix Grace on the bare receiver name followed by an ORDINARY DOT EDGE; `a.~f(args)` is ordinary dot with prefix Grace on the participating member/fallback occurrence. Base semantic occurrence order is receiver, participating fallback, then written arguments: `K = a.f` infers `(a, f)`, while both graced two-name forms infer `(f, a)` through the ONE general Grace pass. Runtime fallback still invokes `f(a, args)`, but that assembly does not order the enclosing signature. Postfix Grace requires its receiver operand to be one bare name, so `(x + y)~.t`, `f(x)~.t`, `[x, y]~.t`, `5~.t`, and a second `~.` in `a~.t~.u` reject; prefix member Grace remains valid with a compound receiver because it decorates the bare member name. Call arguments are unrestricted (`a~.t(b, c)` and `a.~t(b, c)` infer `(t, a, b, c)`). Grace NEVER changes member selection or any other executable semantics: `Obj~.V` and `Obj.~V` read Obj's structural `V` exactly like `Obj.V` (write `V(Obj)` to reach a lexical `V`), `x~.string` / `x.~string` keep the dot-only intrinsic, `S~.count` / `S.~count` keep the dotted builtin view, and receiver-segment supply is unchanged. A member participates in inference when fallback MAY be selected, but not when structural resolution is certain and not in a CLOSED explicit list. Grace must attach directly to its bare name: `a ~ .t` and `a.~ t` are attachment errors; use `a~.t` and `a.~t`. A grace-marked `open` target is rejected (`open M~.C`).
+- GRACE WITH DOTCALL: `a~.f(args)` is ordinary postfix Grace on the bare receiver name followed by an ORDINARY DOT EDGE; `a.~f(args)` is ordinary dot with prefix Grace on the participating member/fallback occurrence. Base semantic occurrence order is receiver, participating fallback, then written arguments: `K = a.f` infers `(a, f)`, while both graced two-name forms infer `(f, a)` through the ONE general Grace pass. Runtime fallback still invokes `f(a, args)`, but that assembly does not order the enclosing signature. Postfix Grace requires its receiver operand to be one bare name, so `(x + y)~.t`, `f(x)~.t`, `[x, y]~.t`, `5~.t`, and a second `~.` in `a~.t~.u` reject; prefix member Grace remains valid with a compound receiver because it decorates the bare member name. Call arguments are unrestricted (`a~.t(b, c)` and `a.~t(b, c)` infer `(t, a, b, c)`). Grace NEVER changes member selection or any other executable semantics: with a free receiver `o`, `Read = o~.V` then `Read(Obj)` reads Obj's structural `V` exactly like `Obj.V` (write `V(Obj)` to reach a lexical `V`), `x~.string` keeps the dot-only intrinsic, `S~.count` (free `S`) keeps the dotted builtin view, and receiver-segment supply is unchanged. A member participates in inference when fallback MAY be selected, but not when structural resolution is certain and not in a CLOSED explicit list. A marker that could reorder nothing is an ERROR, never a no-op: `Obj~.V` on a bound property, `Obj.~V` on a member Obj is known to declare, `x.~string` on the intrinsic, `S.~count` on a builtin, and any marker under an explicit parameter list. Grace must attach directly to its bare name: `a ~ .t` and `a.~ t` are attachment errors; use `a~.t` and `a.~t`. A grace-marked `open` target is rejected (`open M~.C`).
 - Ordinary lexical dot-call preserves that injected receiver as one argument boundary. `A.B(C, D)` means `B(A, C, D)`, not a call where `A`'s top-level values are spread before `C` and `D`. Generate `F(3, 7)` or `(3).F(7)`, not `(3, 7).F`, when a user-defined `F` expects two fixed parameters.
 - A SPREAD receiver is the exception: a fluent chain after a spread passes the spread items as the leading call arguments, resolved lexically. `x.Calculate*.Target` means `Target(x.Calculate*)`, and `Arg*.Scale(10)` means `Scale(Arg*, 10)`.
 - A user-defined property with an explicit collecting parameter (`*values`) collects its assigned argument slots as one exact immutable list; the dot-call receiver is one leading segment whose supply only that collector consumes. For `Scale(*values, factor) = values.map{n * factor}` with `Arg = 1, 2, 3`, use `Scale(Arg*, 10)`, `Arg*.Scale(10)`, `(1, 2, 3).Scale(10)`, or `Scale(1, 2, 3, 10)` to scale each item. `Scale(Arg, 10)` and `Arg.Scale(10)` supply `Arg` as one sequence-valued argument (a named receiver supplies its one stored value). Multiple sibling grouped values are preserved unless explicitly spread with a postfix star.
@@ -1534,7 +1543,7 @@ Without trailing output, `Order` has no direct result — use `Order.Total(25, 4
 
 === BEGIN GENERATED: katlang-spec-examples (DO NOT EDIT BY HAND) ===
 
-Verified reference examples (78 of the 245-case canonical language specification,
+Verified reference examples (81 of the 248-case canonical language specification,
 tests/KatLang.Tests/LanguageSpec/LanguageSpecCorpus.cs). Every program and expected
 output below is executed against the KatLang engine and (where representable)
 guarded against the Lean model on every build. Treat these as ground truth for the
@@ -1837,7 +1846,7 @@ Regenerate this block from the repo root with:
   Displays:
     8
 
-[grace-dot-higher-order-implicit] Grace composes with ordinary DotCall. Base occurrence order for `a.t` is receiver then participating fallback: `(a, t)`. In `a~.t`, ordinary postfix Grace moves `a` one place later; in `a.~t`, ordinary prefix Grace moves `t` one place earlier. Both infer `(t, a)`, while all three sources elaborate to the same ordinary `a.t` body.
+[grace-dot-higher-order-implicit] Grace composes with ordinary DotCall. Base occurrence order for `a.t` is receiver then participating fallback: `(a, t)`. In `a~.t`, ordinary postfix Grace moves `a` one place later; in `a.~t`, ordinary prefix Grace moves `t` one place earlier. Both infer `(t, a)` — the order the explicit spelling `K(t, a) = a.t` declares — and all three sources elaborate to the same ordinary `a.t` body. Grace is meaningful only on such FREE names: under an explicit parameter list (`K(t, a) = a~.t`) the marker could reorder nothing and is a front-end error.
 
     K = a~.t
     K({a+1}, 7)
@@ -1845,16 +1854,17 @@ Regenerate this block from the repo root with:
   Displays:
     8
 
-[grace-dot-keeps-structural-precedence] `~` changes inferred parameter ORDER only — never member selection. `Obj.V`, `Obj~.V`, and `Obj.~V` all perform ordinary structural-first DotCall lookup, so each reads Obj's own property even though a lexical `V` exists. To call the lexical `V` with Obj's value, write the call `V(Obj)`.
+[grace-dot-keeps-structural-precedence] `~` changes inferred parameter ORDER only — never member selection. `Read = o~.V` graces the FREE receiver name `o` (the marker is effective: `o` becomes Read's implicit parameter), and `Read(Obj)` performs ordinary structural-first DotCall lookup, reading Obj's own `V` even though a lexical `V` exists — exactly like the direct `Obj.V`. With no lexical `V` declaration, prefix member Grace behaves the same way on an opaque receiver: `Read = o.~V` infers `(V, o)`, and `Read({x}, Obj)` still reads Obj's structural `V`. To call the lexical `V` with Obj's value, write the call `V(Obj)`. A marker on the bound `Obj` itself (`Obj~.V`) could reorder nothing and is rejected instead of being ignored.
 
     V(x) = 99
     Obj = {
         public V = 42
         0
     }
+    Read = o~.V
 
     Obj.V
-    Obj~.V
+    Read(Obj)
 
   Displays:
     42
@@ -2027,6 +2037,29 @@ Regenerate this block from the repo root with:
     A *
 
   Rejected by the parser: "The spread marker `*` must be directly attached to the expression it spreads ..."
+
+[grace-on-bound-name-rejected] Grace is meaningful only on a FREE name that becomes an implicit parameter of the enclosing algorithm — that is the one place its weight is consumed. `X` is a visible property, so `~X` could reorder nothing; instead of being silently ignored the marker is a front-end error naming what fixed the binding. Cancelling markers (`~X~`) still validate this binding. The same rule covers a builtin (`~count`), an opened name, a parameter of an enclosing algorithm, and a dot member the receiver is known to declare (`Obj.~V`).
+
+    X = 1
+    K = ~X + 2
+    K
+
+  Rejected by the parser: "Grace has no effect on 'X' because it already resolves to a property ..."
+
+[grace-under-explicit-list-rejected] An explicit parameter list fixes the parameter order, so nothing is inferred under it and a Grace marker there can reorder nothing: `K(b, a) = b, ~a` is rejected rather than silently keeping `(b, a)`. Write the order in the list (`K(a, b) = b, a`) or drop the list and let `~a` reorder the inferred parameters (`K = b, ~a` infers `(a, b)`).
+
+    K(b, a) = b, ~a
+    K(1, 2)
+
+  Rejected by the parser: "Grace has no effect on 'a' because it already resolves to an explicit parameter ..."
+
+[declaration-head-never-spans-lines] A simple definition or deconstruction head stays on one physical line. A clause head's name and `(` share a line, its closing `)` and `=` share a line, and the pattern list inside those parentheses may span lines. A newline never assembles a head: `Foo` on its own line is a closed output row, `(x)` the next row, and the `=` is a stray token reported with the repair. `A` newline `= 1` and `Foo(x)` newline `= x + 1` are rejected the same way (before this rule they silently became `Foo(x) = x + 1`, and `Foo(1)` newline `= 3` even added a clause to an existing family). The body of a recognized head may still begin on the next line: `A =` newline `1` defines `A = 1`, and `F(a,` newline `b) = a + b` keeps its pattern list open across the line.
+
+    Foo
+    (x) = x + 1
+    Foo(1)
+
+  Rejected by the parser: "A declaration head cannot be assembled across a physical newline ..."
 
 [missing-output-not-a-value] A no-output body is not a value: accessing it, comparing it with `()`, or spreading it are errors — `()` is a value, `{}` is not.
 

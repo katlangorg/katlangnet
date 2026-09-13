@@ -287,7 +287,9 @@ internal static class FrontEndPipeline
         // configuration's extended semantic prelude), so referencing one never turns
         // it into an implicit parameter — the front-end half of the same name-level
         // agreement the built-in Math module relies on.
-        var (parameterizedRoot, parameterDiagnostics) = ParameterDetector.DetectPrevalidated(loadElaboratedRoot, hostOperations);
+        var origins = new ImplicitArgumentResolver.ResolutionOrigins();
+        var (parameterizedRoot, parameterDiagnostics) = ParameterDetector.DetectPrevalidated(
+            loadElaboratedRoot, hostOperations, graceOrigins: origins.Grace);
 
         cancellationToken.ThrowIfCancellationRequested();
 
@@ -298,7 +300,6 @@ internal static class FrontEndPipeline
         // closed interface — the same rule parameter detection applies to a directly written
         // undeclared identifier, one indirection further out.
         var implicitDiagnostics = new List<Diagnostic>();
-        var origins = new ImplicitArgumentResolver.ResolutionOrigins();
         var implicitResolvedRoot = ImplicitArgumentResolver.ResolvePrevalidated(
             parameterizedRoot, observations: null, implicitDiagnostics, origins);
         if (origins.HasLiftedParameters)

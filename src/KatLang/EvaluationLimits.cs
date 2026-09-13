@@ -75,6 +75,26 @@ public sealed record EvaluationLimits
     /// <see cref="MaxSupportedAstDepth"/>: a recursive program with a tiny AST is
     /// bounded here, while a host-built thousand-level expression spine is rejected by
     /// the structural preflight before evaluation begins.</para>
+    ///
+    /// <para><b>Asynchronous evaluation may reach the stack backstop earlier.</b> The
+    /// ceiling is calibrated for the synchronous evaluator. A run that actually takes
+    /// the asynchronous twin path — one configured with an asynchronous
+    /// <see cref="HostOperation"/> through
+    /// <see cref="Evaluator.RunAsync(Expr, HostOperations, EvaluationLimits?, CancellationToken)"/>
+    /// or <see cref="RunOptions.HostOperations"/> on <see cref="KatLangEngine.RunAsync(string, RunOptions?)"/>
+    /// — executes larger per-level frames, so its host-stack backstop can stop a
+    /// recursive program with the structured <see cref="EvalError.EvaluationStackExhausted"/>
+    /// BEFORE this deterministic limit is reached, where the synchronous evaluator
+    /// would report <see cref="EvalError.EvaluationDepthExceeded"/> (or complete).
+    /// Both are resource-limit verdicts of the same safety envelope, never a process
+    /// crash. The depth at which the asynchronous path stops is an implementation and
+    /// platform characteristic (thread stack size, runtime version, JIT frame layout),
+    /// not a language guarantee: hosts must not assume any particular ratio to the
+    /// synchronous depth, and a program that must recurse deeply on the asynchronous
+    /// path should be restructured (<c>repeat</c>, <c>while</c>, or shallower recursion)
+    /// rather than rely on a measured depth. A sufficiently low <see cref="MaxDepth"/>
+    /// can make the deterministic verdict occur first, but it does not replace the
+    /// independent host-stack checks, including those for structural nesting.</para>
     /// </summary>
     /// <exception cref="ArgumentOutOfRangeException">The value is zero or negative.</exception>
     public int? MaxDepth

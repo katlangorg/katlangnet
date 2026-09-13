@@ -1766,86 +1766,118 @@ public class ParserTests
     [Theory]
     [InlineData("P\n= 1\nP")]
     [InlineData("P # comment\n= 1\nP")]
-    public void Parse_CommentBeforeEqualsLine_StillParsesPropertyDefinition(string source)
+    public void Parse_EqualsLedLineAfterAName_IsNotAPropertyHead_WithOrWithoutAComment(string source)
     {
-        // Declaration lookahead skips comments: a trailing comment before
-        // the '='-led line must not turn the definition into an output row.
+        // The declaration-head line rule (F7): the name and its `=` share one
+        // physical line, and a trailing comment never relaxes that boundary. Both
+        // forms are the output row `P` followed by a stray `=` — never `P = 1`.
+        var result = Parser.ParseSyntax(source);
+
+        var diagnostic = Assert.Single(result.Diagnostics);
+        Assert.Equal(DiagnosticCode.UnexpectedToken, diagnostic.Code);
+        Assert.Equal(2, diagnostic.Span.StartLineNumber);
+        Assert.Empty(result.Root.Properties);
+        Assert.Equal("P", Assert.IsType<Expr.Resolve>(result.Root.Output[0]).Name);
+    }
+
+    [Theory]
+    [InlineData("P = 1 # comment\nP", false)]
+    [InlineData("public P = 1 # comment\nP", true)]
+    public void Parse_TrailingCommentAfterAOneLineHeader_IsInvisible(string source, bool isPublic)
+    {
         var result = Parser.ParseSyntax(source);
 
         Assert.False(result.HasErrors);
         var property = Assert.Single(result.Root.Properties);
         Assert.Equal("P", property.Name);
+        Assert.Equal(isPublic, property.IsPublic);
         Assert.Equal("P", Assert.IsType<Expr.Resolve>(Assert.Single(result.Root.Output)).Name);
     }
 
     [Theory]
     [InlineData("public P\n= 1\nP")]
     [InlineData("public P # comment\n= 1\nP")]
-    public void Parse_CommentInPublicPropertyHeader_StillParsesPublicDefinition(string source)
+    public void Parse_EqualsLedLineAfterAPublicName_IsNotAPublicHead(string source)
     {
+        // `public P` with its `=` on the next line is no head: the modifier is
+        // reported where it stands, `P` stays a row, and the `=` is stray.
         var result = Parser.ParseSyntax(source);
 
-        Assert.False(result.HasErrors);
-        var property = Assert.Single(result.Root.Properties);
-        Assert.Equal("P", property.Name);
-        Assert.True(property.IsPublic);
+        Assert.Equal(2, result.Diagnostics.Count);
+        Assert.All(result.Diagnostics, d => Assert.Equal(DiagnosticCode.UnexpectedToken, d.Code));
+        Assert.Empty(result.Root.Properties);
     }
 
     [Theory]
     [InlineData("Output\n= 1")]
     [InlineData("Output # comment\n= 1")]
-    public void Parse_CommentInOutputNamedPropertyHeader_StillParsesPropertyDefinition(string source)
+    public void Parse_EqualsLedLineAfterAnOutputNamedRow_IsNotAPropertyHead(string source)
     {
-        // `Output` is an ordinary identifier, so the cross-line definition
-        // header parses exactly like any other property named `Output`.
+        // `Output` is an ordinary identifier, so the line rule treats it exactly
+        // like any other name: a row, then a stray `=`.
         var result = Parser.ParseSyntax(source);
 
-        Assert.False(result.HasErrors);
-        var property = Assert.Single(result.Root.Properties);
-        Assert.Equal("Output", property.Name);
-        Assert.Empty(result.Root.Output);
+        var diagnostic = Assert.Single(result.Diagnostics);
+        Assert.Equal(DiagnosticCode.UnexpectedToken, diagnostic.Code);
+        Assert.Empty(result.Root.Properties);
+        Assert.Equal("Output", Assert.IsType<Expr.Resolve>(result.Root.Output[0]).Name);
+
+        var oneLine = Parser.ParseSyntax("Output = 1");
+        Assert.False(oneLine.HasErrors);
+        Assert.Equal("Output", Assert.Single(oneLine.Root.Properties).Name);
     }
 
-    [Theory]
-    [InlineData("F(x) = x\nF(4)")]
-    [InlineData("F # comment\n(x) # comment\n= x\nF(4)")]
-    public void Parse_CommentedClauseHeader_ParsesIdentically(string source)
+    [Fact]
+    public void Parse_ClauseHeader_MustBeOnOneLine()
     {
-        // Clause-header lookahead scans through the shared significant-token
-        // API, so comments between the header tokens never change what
-        // parses as a clause definition.
-        var result = Parser.ParseSyntax(source);
-
-        Assert.False(result.HasErrors);
-        var property = Assert.Single(result.Root.Properties);
-        Assert.Equal("F", property.Name);
-        var call = Assert.IsType<Expr.Call>(Assert.Single(result.Root.Output));
+        var oneLine = Parser.ParseSyntax("F(x) = x\nF(4)");
+        Assert.False(oneLine.HasErrors);
+        Assert.Equal("F", Assert.Single(oneLine.Root.Properties).Name);
+        var call = Assert.IsType<Expr.Call>(Assert.Single(oneLine.Root.Output));
         Assert.Equal("F", Assert.IsType<Expr.Resolve>(call.Function).Name);
+
+        // Split across lines — with trailing comments at every boundary — the
+        // pieces stay rows (`F`, `(x)`) and the `=` is stray (the line rule, F7).
+        var split = Parser.ParseSyntax("F # comment\n(x) # comment\n= x\nF(4)");
+        var diagnostic = Assert.Single(split.Diagnostics);
+        Assert.Equal(DiagnosticCode.UnexpectedToken, diagnostic.Code);
+        Assert.Equal(3, diagnostic.Span.StartLineNumber);
+        Assert.Empty(split.Root.Properties);
+        Assert.Equal("F", Assert.IsType<Expr.Resolve>(split.Root.Output[0]).Name);
+        Assert.IsType<Expr.Capture>(split.Root.Output[1]);
     }
 
-    [Theory]
-    [InlineData("public F(x) = x\nF(4)")]
-    [InlineData("public F # comment\n(x) # comment\n= x\nF(4)")]
-    public void Parse_CommentedPublicClauseHeader_ParsesIdentically(string source)
+    [Fact]
+    public void Parse_PublicClauseHeader_MustBeOnOneLine()
     {
-        var result = Parser.ParseSyntax(source);
-
-        Assert.False(result.HasErrors);
-        var property = Assert.Single(result.Root.Properties);
+        var oneLine = Parser.ParseSyntax("public F(x) = x\nF(4)");
+        Assert.False(oneLine.HasErrors);
+        var property = Assert.Single(oneLine.Root.Properties);
         Assert.Equal("F", property.Name);
         Assert.True(property.IsPublic);
+
+        var split = Parser.ParseSyntax("public F # comment\n(x) # comment\n= x\nF(4)");
+        Assert.Equal(2, split.Diagnostics.Count);
+        Assert.All(split.Diagnostics, d => Assert.Equal(DiagnosticCode.UnexpectedToken, d.Code));
+        Assert.Empty(split.Root.Properties);
     }
 
-    [Theory]
-    [InlineData("A = { public X = 1 }\npublic open A")]
-    [InlineData("A = { public X = 1 }\npublic # comment\nopen A")]
-    public void Parse_CommentedPublicOpen_ReportsSameDiagnostic(string source)
+    [Fact]
+    public void Parse_PublicOpen_IsRejectedOnOneLine_AndNeverAssembledAcrossLines()
     {
-        var result = Parser.ParseSyntax(source);
-
-        Assert.True(result.HasErrors);
+        var oneLine = Parser.ParseSyntax("A = { public X = 1 }\npublic open A");
+        Assert.True(oneLine.HasErrors);
         Assert.Contains(
-            result.Diagnostics,
+            oneLine.Diagnostics,
+            d => d.Message.Contains("'public' cannot be applied to open declarations"));
+
+        // With `open` on the next line the modifier is a stray token of its own
+        // line (the line rule, F7); the public-open form is never assembled.
+        var split = Parser.ParseSyntax("A = { public X = 1 }\npublic # comment\nopen A");
+        Assert.True(split.HasErrors);
+        Assert.Contains(split.Diagnostics, d => d.Message == "Unexpected 'public'.");
+        Assert.DoesNotContain(
+            split.Diagnostics,
             d => d.Message.Contains("'public' cannot be applied to open declarations"));
     }
 
@@ -1932,18 +1964,26 @@ public class ParserTests
     [Theory]
     [InlineData("~P\n= 1\nP")]
     [InlineData("~P # comment\n= 1\nP")]
-    public void Parse_CommentInGracePrefixedDefinition_ReportsSameGraceDiagnostic(string source)
+    public void Parse_GracedNameThenEqualsOnTheNextLine_IsAGraceRowNotAPropertyHead(string source)
     {
-        // The invalid-grace property diagnostic fires identically with or
-        // without a comment in the declaration header.
+        // The declaration-head line rule (F7): `~P` on its own line is a
+        // prefix-grace output row — never the invalid-grace property head
+        // `~P = 1` — and the `=` on the next line is stray, comment or not.
         var result = Parser.ParseSyntax(source);
 
-        Assert.True(result.HasErrors);
+        var diagnostic = Assert.Single(result.Diagnostics);
+        Assert.Equal(DiagnosticCode.UnexpectedToken, diagnostic.Code);
+        Assert.Equal(2, diagnostic.Span.StartLineNumber);
+        Assert.Empty(result.Root.Properties);
+        var grace = Assert.IsType<Expr.Grace>(result.Root.Output[0]);
+        Assert.Equal("P", Assert.IsType<Expr.Resolve>(grace.Inner).Name);
+
+        // The one-line head keeps the invalid-grace property diagnostic.
+        var oneLine = Parser.ParseSyntax("~P = 1 # comment\nP");
         Assert.Contains(
-            result.Diagnostics,
+            oneLine.Diagnostics,
             d => d.Message.Contains("Grace operator cannot be applied to property names"));
-        var property = Assert.Single(result.Root.Properties);
-        Assert.Equal("P", property.Name);
+        Assert.Equal("P", Assert.Single(oneLine.Root.Properties).Name);
     }
 
     [Theory]
@@ -3095,14 +3135,17 @@ public class ParserTests
     }
 
     [Fact]
-    public void Parse_PrefixAndPostfixCancel_NoGraceNode()
+    public void Parse_PrefixAndPostfixCancel_KeepZeroWeightUntilValidation()
     {
-        // ~x~ has weight -1 + 1 = 0, so no Grace wrapper
+        // ~x~ has weight zero but still needs the binding-effectiveness check.
         var result = Parser.ParseSyntax("~x~");
 
         Assert.False(result.HasErrors);
-        var resolve = Assert.IsType<Expr.Resolve>(result.Root.Output[0]);
+        var grace = Assert.IsType<Expr.Grace>(result.Root.Output[0]);
+        Assert.Equal(0, grace.Weight);
+        var resolve = Assert.IsType<Expr.Resolve>(grace.Inner);
         Assert.Equal("x", resolve.Name);
+        Assert.IsType<Expr.Param>(SourceProvenance.ParseValid("~x~").Root.Output[0]);
     }
 
     [Fact]

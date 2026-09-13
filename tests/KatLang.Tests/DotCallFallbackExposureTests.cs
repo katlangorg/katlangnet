@@ -156,6 +156,29 @@ public class DotCallFallbackExposureTests
         Assert.Equal(expectedDisplay, success.ToDisplayString());
     }
 
+    /// <summary>
+    /// A graced CONTROL whose marker decorates an already-bound name — a captured
+    /// parameter, a sibling property, a builtin — is the ineffective-Grace error
+    /// (F10), so the program is rejected before evaluation. The recovery tree is the
+    /// ungraced twin (the marker is stripped), and its exposure classification must
+    /// still equal the twin's: Grace never changed classification, and rejecting it
+    /// does not either.
+    /// </summary>
+    private static Algorithm AssertGracedControlRejected(
+        string source,
+        string gracedName,
+        PropertyExposure expectedExposure,
+        params string[] propertyPath)
+    {
+        var parse = Parser.Parse(source);
+        var diagnostic = Assert.Single(parse.Diagnostics);
+        Assert.Equal(DiagnosticCode.InvalidGraceMarker, diagnostic.Code);
+        Assert.StartsWith($"Grace has no effect on '{gracedName}' because", diagnostic.Message, StringComparison.Ordinal);
+        Assert.Equal(expectedExposure, FindProperty(parse.Root, propertyPath).Exposure);
+        Assert.IsType<RunResult.ParseFailure>(KatLangEngine.Run(source));
+        return parse.Root;
+    }
+
     // ── 1-4: the captured-parameter equivalence family ──────────────────────
 
     [Fact]
@@ -173,8 +196,10 @@ public class DotCallFallbackExposureTests
             "Outer", "P");
 
     [Fact]
-    public void PostfixGraceDot_CapturedParameters_LocalOnly()
-        => AssertExposureAndResult(
+    public void PostfixGraceDot_CapturedParameters_RejectedAndStillLocalOnly()
+        // `a` is a captured parameter of Outer, so the marker is ineffective (F10);
+        // the recovery tree classifies exactly like the ungraced twin above.
+        => AssertGracedControlRejected(
             """
             Outer(a, t) = {
                 P = a~.t
@@ -182,13 +207,13 @@ public class DotCallFallbackExposureTests
             }
             Outer(1, {x+1})
             """,
+            "a",
             PropertyExposure.LocalOnlyCapturedAncestorParameters,
-            "2",
             "Outer", "P");
 
     [Fact]
-    public void PrefixMemberGraceDot_CapturedParameters_LocalOnly()
-        => AssertExposureAndResult(
+    public void PrefixMemberGraceDot_CapturedParameters_RejectedAndStillLocalOnly()
+        => AssertGracedControlRejected(
             """
             Outer(a, t) = {
                 P = a.~t
@@ -196,8 +221,8 @@ public class DotCallFallbackExposureTests
             }
             Outer(1, {x+1})
             """,
+            "t",
             PropertyExposure.LocalOnlyCapturedAncestorParameters,
-            "2",
             "Outer", "P");
 
     [Fact]
@@ -240,7 +265,9 @@ public class DotCallFallbackExposureTests
             "6",
             "Outer", "P");
 
-        AssertExposureAndResult(
+        // The graced twin decorates the sibling property `Five`: ineffective (F10),
+        // rejected, and still classified exactly like the ungraced edge above.
+        AssertGracedControlRejected(
             """
             Outer(t) = {
                 Five = 5
@@ -249,8 +276,8 @@ public class DotCallFallbackExposureTests
             }
             Outer({x+1})
             """,
+            "Five",
             PropertyExposure.LocalOnlyCapturedAncestorParameters,
-            "6",
             "Outer", "P");
 
         // The classification is what keeps two activations apart: each call of
@@ -312,9 +339,11 @@ public class DotCallFallbackExposureTests
 
     [Fact]
     public void GracedDot_SameShape_ClassifiesExactlyLikeTheOrdinaryEdge()
-        // The marker does not bypass structural lookup, so this is the same
-        // structural winner as the ungraced twin above: Exported, and 42.
-        => AssertExposureAndResult(
+        // The marker does not bypass structural lookup — and on the bound receiver
+        // `Obj` it could reorder nothing either, so it is the ineffective-Grace error
+        // (F10). The recovery tree is the same structural winner as the ungraced
+        // twin above: Exported.
+        => AssertGracedControlRejected(
             """
             Obj = {
                 public t = 42
@@ -326,8 +355,8 @@ public class DotCallFallbackExposureTests
             }
             Outer({x+1})
             """,
+            "Obj",
             PropertyExposure.Exported,
-            "42",
             "Outer", "P");
 
     [Fact]
@@ -419,7 +448,7 @@ public class DotCallFallbackExposureTests
                 0
             }
             Outer(t) = {
-                P = Obj~.t
+                P = Obj.t
                 P
             }
             Outer({x+1})
@@ -427,13 +456,52 @@ public class DotCallFallbackExposureTests
             PropertyExposure.Exported,
             "42",
             "Outer", "P");
+
+        // The graced spelling on the bound receiver is rejected (F10) and its recovery
+        // tree stays the same structural winner.
+        AssertGracedControlRejected(
+            """
+            t(x) = 99
+            Obj = {
+                public t = 42
+                0
+            }
+            Outer(t) = {
+                P = Obj~.t
+                P
+            }
+            Outer({x+1})
+            """,
+            "Obj",
+            PropertyExposure.Exported,
+            "Outer", "P");
     }
 
     // ── 9-11: opened, ambiguous, and builtin fallback callees ───────────────
 
     [Fact]
     public void GracedEdgeFallback_ResolvesThroughOpen_Exported()
-        => AssertExposureAndResult(
+    {
+        AssertExposureAndResult(
+            """
+            Lib = {
+                public Inc(x) = x + 1
+            }
+            Outer = {
+                open Lib
+                v = 5
+                P = v.Inc
+                P
+            }
+            Outer
+            """,
+            PropertyExposure.Exported,
+            "6",
+            "Outer", "P");
+
+        // The graced spelling decorates the sibling property `v`: rejected (F10),
+        // and the recovery tree classifies like the ungraced edge.
+        AssertGracedControlRejected(
             """
             Lib = {
                 public Inc(x) = x + 1
@@ -446,9 +514,10 @@ public class DotCallFallbackExposureTests
             }
             Outer
             """,
+            "v",
             PropertyExposure.Exported,
-            "6",
             "Outer", "P");
+    }
 
     [Fact]
     public void GracedEdgeFallback_AmbiguousOpenStaysExported_RuntimeReportsAmbiguity()
@@ -466,7 +535,7 @@ public class DotCallFallbackExposureTests
             Outer = {
                 open A, B
                 v = 5
-                P = v~.Pick
+                P = v.Pick
                 P
             }
             Outer
@@ -476,15 +545,24 @@ public class DotCallFallbackExposureTests
 
         var failure = Assert.IsType<RunResult.EvalFailure>(KatLangEngine.Run(source));
         Assert.Contains(failure.Errors, error => error.Message.Contains("ambiguous", StringComparison.OrdinalIgnoreCase));
+
+        // The graced spelling on the sibling property `v` is rejected before
+        // evaluation (F10); its recovery tree classifies identically.
+        AssertGracedControlRejected(
+            source.Replace("P = v.Pick", "P = v~.Pick", StringComparison.Ordinal),
+            "v",
+            PropertyExposure.Exported,
+            "Outer", "P");
     }
 
     [Fact]
     public void GracedEdgeBuiltinFallback_ContributesNothing_Exported()
-        => AssertExposureAndResult(
+    {
+        AssertExposureAndResult(
             """
             Outer = {
                 S = 1, 2, 3
-                P = S~.count
+                P = S.count
                 P
             }
             Outer
@@ -493,14 +571,31 @@ public class DotCallFallbackExposureTests
             "3",
             "Outer", "P");
 
+        // The graced spelling decorates the sibling property `S`: rejected (F10),
+        // and the recovery tree's classification is unchanged.
+        AssertGracedControlRejected(
+            """
+            Outer = {
+                S = 1, 2, 3
+                P = S~.count
+                P
+            }
+            Outer
+            """,
+            "S",
+            PropertyExposure.Exported,
+            "Outer", "P");
+    }
+
     // ── 12-15: chains, nested bodies, argument slots, capture receivers ─────
 
     [Fact]
     public void Chained_GracedThenOrdinaryString_MarksInnerCapture()
-        => AssertExposureAndResult(
+    {
+        AssertExposureAndResult(
             """
             Outer(a, t) = {
-                P = a~.t.string
+                P = a.t.string
                 P
             }
             Outer(1, {x+1})
@@ -508,6 +603,21 @@ public class DotCallFallbackExposureTests
             PropertyExposure.LocalOnlyCapturedAncestorParameters,
             "2",
             "Outer", "P");
+
+        // The graced inner receiver `a` is a captured parameter: rejected (F10),
+        // and the chain's classification is unchanged in the recovery tree.
+        AssertGracedControlRejected(
+            """
+            Outer(a, t) = {
+                P = a~.t.string
+                P
+            }
+            Outer(1, {x+1})
+            """,
+            "a",
+            PropertyExposure.LocalOnlyCapturedAncestorParameters,
+            "Outer", "P");
+    }
 
     [Fact]
     public void GracedEdgeInsideCallSlot_ClassifiesLikeTheOrdinaryEdge()
@@ -531,7 +641,9 @@ public class DotCallFallbackExposureTests
             "16",
             "Outer", "P");
 
-        AssertExposureAndResult(
+        // The graced spelling decorates the sibling property `v`: rejected (F10),
+        // and the recovery tree marks the capture exactly like the ordinary edge.
+        AssertGracedControlRejected(
             """
             Inc(x) = x + 1
             Outer(t) = {
@@ -541,18 +653,19 @@ public class DotCallFallbackExposureTests
             }
             Outer({x*3})
             """,
+            "v",
             PropertyExposure.LocalOnlyCapturedAncestorParameters,
-            "16",
             "Outer", "P");
     }
 
     [Fact]
     public void GracedEdgeInsideNestedPropertyScope_MarksBothLevels()
-        => AssertExposureAndResult(
+    {
+        AssertExposureAndResult(
             """
             Outer(a, t) = {
                 P = {
-                    Q = a~.t
+                    Q = a.t
                     Q
                 }
                 P
@@ -563,13 +676,31 @@ public class DotCallFallbackExposureTests
             "2",
             "Outer", "P");
 
+        // Two owners deep, `a` is still a captured parameter: the marker is
+        // rejected (F10) and both levels classify like the ungraced edge.
+        AssertGracedControlRejected(
+            """
+            Outer(a, t) = {
+                P = {
+                    Q = a~.t
+                    Q
+                }
+                P
+            }
+            Outer(1, {x+1})
+            """,
+            "a",
+            PropertyExposure.LocalOnlyCapturedAncestorParameters,
+            "Outer", "P");
+    }
+
     [Fact]
     public void GracedEdgeInsideCallArguments_MarksCapture()
     {
         var source =
             """
             Outer(a, t) = {
-                P = count((a~.t, 9))
+                P = count((a.t, 9))
                 P
             }
             Outer(1, {x+1})
@@ -581,6 +712,14 @@ public class DotCallFallbackExposureTests
 
         var success = Assert.IsType<RunResult.Success>(KatLangEngine.Run(source));
         Assert.Equal("2", success.ToDisplayString());
+
+        // The graced spelling inside the transparent argument slot decorates the
+        // captured `a`: rejected (F10), classification unchanged.
+        AssertGracedControlRejected(
+            source.Replace("count((a.t, 9))", "count((a~.t, 9))", StringComparison.Ordinal),
+            "a",
+            PropertyExposure.LocalOnlyCapturedAncestorParameters,
+            "Outer", "P");
     }
 
     [Fact]
@@ -616,14 +755,20 @@ public class DotCallFallbackExposureTests
             }
             Outer(1, {x+1})
             """);
-        var graced = ParseValidRoot(
+        // The graced dot spelling decorates the captured `a`, so it is rejected
+        // (F10); its recovery tree is the ordinary dot edge and classifies like
+        // the direct call.
+        var graced = AssertGracedControlRejected(
             """
             Outer(a, t) = {
                 P = a~.t
                 P
             }
             Outer(1, {x+1})
-            """);
+            """,
+            "a",
+            FindProperty(direct, "Outer", "P").Exposure,
+            "Outer", "P");
         Assert.Equal(
             FindProperty(direct, "Outer", "P").Exposure,
             FindProperty(graced, "Outer", "P").Exposure);
@@ -667,12 +812,24 @@ public class DotCallFallbackExposureTests
     [Fact]
     public void Graph_GracedEdge_SeedsRequiredAncestorNames_LikeTheOrdinaryEdge()
     {
-        static IReadOnlyList<string> RequiredNames(string source)
+        static IReadOnlyList<string> RequiredNamesOf(Algorithm root)
         {
             var outer = Assert.IsType<Algorithm.User>(
-                Assert.Single(ParseValidRoot(source).Properties, property => property.Name == "Outer").Value);
+                Assert.Single(root.Properties, property => property.Name == "Outer").Value);
             var graph = PropertyDependencyGraphBuilder.BuildSummaries(outer);
             return graph[0].RequiredAncestorOwnedParameterNames;
+        }
+
+        static IReadOnlyList<string> RequiredNames(string source) => RequiredNamesOf(ParseValidRoot(source));
+
+        // The graced spelling decorates the captured `a` and is rejected (F10); its
+        // dependency facts come from the recovery tree — the ordinary edge.
+        static IReadOnlyList<string> RequiredNamesOfRejectedGracedControl(string source)
+        {
+            var parse = Parser.Parse(source);
+            var diagnostic = Assert.Single(parse.Diagnostics);
+            Assert.Equal(DiagnosticCode.InvalidGraceMarker, diagnostic.Code);
+            return RequiredNamesOf(parse.Root);
         }
 
         // A direct call requires BOTH names, and so does the dot edge: its
@@ -697,7 +854,7 @@ public class DotCallFallbackExposureTests
             }
             Outer(1, {x+1})
             """);
-        var graced = RequiredNames(
+        var graced = RequiredNamesOfRejectedGracedControl(
             """
             Outer(a, t) = {
                 P = a~.t

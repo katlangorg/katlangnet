@@ -91,6 +91,7 @@ internal static class ImplicitArgumentResolver
     /// </summary>
     internal sealed class ResolutionOrigins
     {
+        public ParameterDetector.GraceOrigins Grace { get; } = new();
         public bool HasLiftedParameters;
         public Dictionary<Expr, Expr> ImplicitCalls { get; } = new(ReferenceEqualityComparer.Instance);
     }

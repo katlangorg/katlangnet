@@ -672,9 +672,10 @@ internal static partial class LoopOptimizer
     {
         // MIRROR of Evaluator.ApplyUnaryOperator's numeric arm: a numeric operand
         // stays in the unboxed planned representation. Every other operand kind —
-        // the span-stamped string rejection and the UNSPANNED
-        // numeric-conversion failure — delegates to the shared operator application
-        // so the planned strategy cannot drift from the generic error/span policy.
+        // the string rejection and the numeric-conversion failure, both stamped
+        // with the unary expression's span — delegates to the shared operator
+        // application so the planned strategy cannot drift from the generic
+        // error/span policy.
         if (operand.AsNum() is { } value)
         {
             var unaryResult = op switch

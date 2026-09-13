@@ -391,6 +391,16 @@ public static class KatLangEngine
     /// method never schedules work onto another thread and never yields artificially —
     /// thread placement and scheduling remain the host's (and the downloader's
     /// awaitable's) responsibility.</para>
+    ///
+    /// <para>A configuration with an asynchronous <see cref="RunOptions.HostOperations"/>
+    /// operation evaluates through the async twin path, whose larger per-level frames can
+    /// reach the host-stack backstop at a shallower recursion depth than
+    /// <see cref="Run(string, RunOptions?)"/>: a deeply recursive program may then fail
+    /// with the structured <see cref="KatLangErrorCode.EvaluationStackExhausted"/> error
+    /// where the synchronous run reports <see cref="KatLangErrorCode.EvaluationDepthExceeded"/>
+    /// or completes. The exact depth is implementation- and platform-dependent (see
+    /// <see cref="EvaluationLimits.MaxDepth"/>); both outcomes are ordinary
+    /// resource-limit failures, never a process crash.</para>
     /// </summary>
     /// <exception cref="OperationCanceledException">
     /// Same cancellation contract as <see cref="Run(string, RunOptions?)"/>; as with any

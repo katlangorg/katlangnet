@@ -89,7 +89,8 @@ internal static class ParameterDetector
     internal static (Algorithm Root, IReadOnlyList<Diagnostic> Diagnostics) DetectPrevalidated(
         Algorithm root,
         HostOperations? hostOperations = null,
-        FrontEndTraversalObservations? observations = null)
+        FrontEndTraversalObservations? observations = null,
+        GraceOrigins? graceOrigins = null)
     {
         var diagnostics = new List<Diagnostic>();
         var preludeAlgorithm = hostOperations?.SemanticPreludeAlgorithm
@@ -102,7 +103,7 @@ internal static class ParameterDetector
             capturedParameters: ParameterOwnership.Empty,
             diagnostics,
             observations,
-            new DetectionRun { ProgramRoot = root });
+            new DetectionRun { ProgramRoot = root, GraceOrigins = graceOrigins });
         return (processed, diagnostics);
     }
 
@@ -125,6 +126,7 @@ internal static class ParameterDetector
         var run = new DetectionRun
         {
             ImplicitCallOrigins = origins.ImplicitCalls,
+            GraceOrigins = origins.Grace,
             // A whole-program completion re-enters at the program root; a deferred branch
             // completion re-enters at that branch body, which is a nested (called) owner.
             ProgramRoot = branchContext is null ? root : null,
@@ -315,8 +317,18 @@ internal static class ParameterDetector
 
         // Rewrite Resolve → Param for detected parameters. ONE reference memo spans all
         // output rows: they share this exact rewrite context, so a node shared between
-        // rows (or reached twice within one row) rewrites once.
-        var rewriteMemo = new RewriteWalkMemo(run, observations, diagnostics);
+        // rows (or reached twice within one row) rewrites once. The memo also carries
+        // this level's Grace-effect policy (F10): under a closed explicit list nothing
+        // is inferred, so no marker can reorder anything; otherwise a marker is
+        // effective exactly on the names this level binds as its own parameters
+        // (paramNames — the inferred signature, retained on a completion run).
+        var rewriteMemo = new RewriteWalkMemo(
+            run,
+            observations,
+            diagnostics,
+            hasExplicitParameterList ? GraceEffectPolicy.ClosedExplicitList : GraceEffectPolicy.ImplicitSignature,
+            paramNames,
+            scope);
         var rewrittenOutput = new List<Expr>(alg.Output.Count);
         foreach (var expr in alg.Output)
             rewrittenOutput.Add(RewriteParams(expr, scope, bodyParameters, rewriteMemo));
@@ -458,7 +470,8 @@ internal static class ParameterDetector
         Algorithm loadedBody,
         DeferredBranchContext context,
         List<Diagnostic> diagnostics,
-        FrontEndTraversalObservations? observations = null)
+        FrontEndTraversalObservations? observations = null,
+        GraceOrigins? graceOrigins = null)
         => ProcessConditionalBranchBody(
             loadedBody,
             context.ParentScope,
@@ -467,7 +480,7 @@ internal static class ParameterDetector
             context.CapturedParameters,
             diagnostics,
             observations,
-            new DetectionRun());
+            new DetectionRun { GraceOrigins = graceOrigins });
 
     /// <summary>
     /// Records the diagnostic-only origin of each implicit parameter at the
@@ -534,6 +547,16 @@ internal static class ParameterDetector
     }
 
     /// <summary>
+    /// Diagnostic source survives only between the two detection passes, never on the
+    /// executable AST. Resolve/Param leaves retain identity through implicit resolution;
+    /// a lifted call is restored to that leaf through ResolutionOrigins.ImplicitCalls.
+    /// </summary>
+    internal sealed class GraceOrigins
+    {
+        public readonly Dictionary<Expr, Expr.Grace> Occurrences = new(ReferenceEqualityComparer.Instance);
+    }
+
+    /// <summary>
     /// Run-scoped state of ONE detection (a <see cref="DetectPrevalidated"/> or
     /// <see cref="ElaborateDeferredBranch"/> call), threaded through every algorithm-processing
     /// path so a node reached through several paths of a shared (acyclic) host tree is
@@ -546,6 +569,7 @@ internal static class ParameterDetector
         // still local to its ownership region, so shared nodes cannot reuse another owner's
         // selection. Existing Param nodes retain their classification.
         public IReadOnlyDictionary<Expr, Expr>? ImplicitCallOrigins;
+        public GraceOrigins? GraceOrigins;
         public bool OwnershipChanged;
         /// <summary>
         /// The PROGRAM ROOT this run entered at (by reference), or null for a run that enters
@@ -686,9 +710,16 @@ internal static class ParameterDetector
     /// families report undeclared identifiers exactly as they would at the root. The memo
     /// keeps that per NODE within the region — a shared block reports once.
     /// </summary>
-    private sealed class RewriteWalkMemo(DetectionRun run, FrontEndTraversalObservations? observations, List<Diagnostic>? diagnostics)
+    private sealed class RewriteWalkMemo(
+        DetectionRun run,
+        FrontEndTraversalObservations? observations,
+        List<Diagnostic>? diagnostics,
+        GraceEffectPolicy gracePolicy = GraceEffectPolicy.NotReported,
+        IReadOnlySet<string>? ownParameterNames = null,
+        ElaboratedPropertyScope? level = null)
     {
         public readonly Dictionary<Expr, Expr> Rewrites = new(ReferenceEqualityComparer.Instance);
+        public readonly HashSet<Expr> ReportedGrace = new(ReferenceEqualityComparer.Instance);
 
         public Dictionary<Algorithm, Algorithm>? Algorithms;
 
@@ -697,6 +728,46 @@ internal static class ParameterDetector
         public readonly FrontEndTraversalObservations? Observations = observations;
 
         public readonly List<Diagnostic>? Diagnostics = diagnostics;
+
+        /// <summary>How this region reports Grace markers that cannot reorder anything.</summary>
+        public readonly GraceEffectPolicy GracePolicy = gracePolicy;
+
+        /// <summary>
+        /// The names the region's algorithm binds as ITS OWN parameters — for an
+        /// implicit-signature body exactly the names its collection inferred (on a
+        /// completion run, the retained signature). Grace is effective on precisely
+        /// these occurrences, because they are the ones the collection reordered.
+        /// </summary>
+        public readonly IReadOnlySet<string>? OwnParameterNames = ownParameterNames;
+
+        /// <summary>The region's own scope level, so an owned parameter can be told apart from a captured one.</summary>
+        public readonly ElaboratedPropertyScope? Level = level;
+    }
+
+    /// <summary>
+    /// Whether a rewrite region reports a Grace marker that cannot reorder anything
+    /// (F10): Grace is meaningful ONLY on a bare-name occurrence that implicit-signature
+    /// collection promoted to a parameter of the enclosing algorithm — that is the one
+    /// place its weight is consumed (<see cref="CollectFreeParams"/>, then
+    /// <see cref="ApplyGraceReordering"/>). Every other occurrence is silently inert
+    /// without this report: a name already bound before collection (an explicit or
+    /// captured parameter, a visible property, a builtin, an opened name), a dot member
+    /// that always resolves structurally, and every occurrence under a closed explicit
+    /// parameter list, which infers nothing.
+    /// </summary>
+    private enum GraceEffectPolicy
+    {
+        /// <summary>
+        /// A conditional branch body: the parser already rejects every written Grace in
+        /// it, so the detector strips the marker for recovery without a second report.
+        /// </summary>
+        NotReported,
+
+        /// <summary>A body inferring its implicit signature: effective exactly on the names it inferred.</summary>
+        ImplicitSignature,
+
+        /// <summary>A body under a closed explicit parameter list: nothing is inferred, so no Grace is effective.</summary>
+        ClosedExplicitList,
     }
 
     /// <summary>
@@ -1787,6 +1858,103 @@ internal static class ParameterDetector
         }
     }
 
+    // ── F10: a Grace marker that cannot reorder anything ────────────────────
+
+    /// <summary>
+    /// Reports a written Grace marker that has no effect (see
+    /// <see cref="GraceEffectPolicy"/>): its bare-name occurrence never contributed a
+    /// weight to this level's implicit-signature collection, so the marker looks
+    /// meaningful and silently does nothing. Consulted from the rewrite pass — once per
+    /// occurrence per region through the rewrite memo, on every detection run — for a
+    /// standalone occurrence (<paramref name="memberEdge"/> null) and for a dot member's
+    /// prefix Grace, whose edge verdict decides whether the fallback occurrence could
+    /// participate at all. The reason names what fixed the binding, derived from the
+    /// SAME owner walk that classifies the occurrence
+    /// (<see cref="ElaboratedScopeLookup.SelectOwnedDeclaration"/>), so the report and
+    /// the editor's resolution cannot disagree. A host-built compound operand is not a
+    /// name occurrence and is left to the collection's defensive handling.
+    /// </summary>
+    private static void ReportIneffectiveGrace(
+        Expr graceNode,
+        Expr gracedCore,
+        (Expr.DotCall Edge, LexicalFallbackSelection Selection)? memberEdge,
+        ElaboratedPropertyScope scope,
+        ParameterOwnership parameters,
+        RewriteWalkMemo memo)
+    {
+        if (memo.Diagnostics is null
+            || memo.GracePolicy == GraceEffectPolicy.NotReported
+            || gracedCore is not Expr.Resolve(var name))
+            return;
+
+        string reason;
+        if (memberEdge is { Selection: LexicalFallbackSelection.Never } edge)
+        {
+            reason = string.Equals(edge.Edge.Name, "string", StringComparison.Ordinal)
+                ? "'.string' is the dot-only intrinsic, so this occurrence never joins the implicit parameters"
+                : $"the member '{name}' always resolves structurally on its receiver, so this occurrence never joins the implicit parameters";
+        }
+        else if (memo.GracePolicy == GraceEffectPolicy.ImplicitSignature
+            && memo.OwnParameterNames?.Contains(name) == true)
+        {
+            // Effective: the occurrence was inferred into this level's own signature and
+            // reordered there. Nothing to report.
+            return;
+        }
+        else
+        {
+            reason = DescribeFixedGraceBinding(name, scope, parameters, memo);
+        }
+
+        // A shared marker can be reached as a bare occurrence and through several
+        // dot edges. Observe each edge's selection even after a rewrite memo hit,
+        // but report the same source node at most once in this region.
+        if (!memo.ReportedGrace.Add(graceNode))
+            return;
+
+        memo.Diagnostics.Add(new Diagnostic(
+            FormatIneffectiveGrace(name, reason),
+            DiagnosticSeverity.Error,
+            graceNode.Span ?? gracedCore.Span ?? new SourceSpan(0, 0, 0, 0))
+        {
+            Code = DiagnosticCode.InvalidGraceMarker,
+        });
+    }
+
+    /// <summary>
+    /// Why an occurrence's binding was already fixed before this level's collection ran,
+    /// in KatLang terms, from the owner walk and the open providers.
+    /// </summary>
+    private static string DescribeFixedGraceBinding(
+        string name,
+        ElaboratedPropertyScope scope,
+        ParameterOwnership parameters,
+        RewriteWalkMemo memo)
+    {
+        var owned = ElaboratedScopeLookup.SelectOwnedDeclaration(scope, name, parameters);
+        switch (owned.Kind)
+        {
+            case OwnedDeclarationKind.Parameter:
+                return ReferenceEquals(owned.OwnerScope, memo.Level)
+                    ? "it already resolves to an explicit parameter"
+                    : "it already resolves to a parameter of an enclosing algorithm";
+
+            case OwnedDeclarationKind.Property:
+                // The prelude is the outermost property level of the owner walk.
+                return owned.OwnerScope!.Parent is null
+                    ? $"it already resolves to the builtin '{name}'"
+                    : "it already resolves to a property";
+        }
+
+        if (ElaboratedScopeLookup.LookupOpenPropertyMatches(scope, name).Count > 0)
+            return "it already resolves to an opened property";
+
+        return "the enclosing explicit parameter list fixes the parameter order, so nothing is inferred";
+    }
+
+    internal static string FormatIneffectiveGrace(string name, string reason)
+        => $"Grace has no effect on '{name}' because {reason}. Grace `~` only reorders the implicit parameters an algorithm infers from its free names; remove the marker.";
+
     /// <summary>
     /// THE parameter-classification decision: whether this bare-name occurrence
     /// elaborates to <see cref="Expr.Param"/> (a runtime parameter read) rather
@@ -1850,12 +2018,37 @@ internal static class ParameterDetector
     {
         if (memo.Run.ImplicitCallOrigins?.TryGetValue(expr, out var original) == true)
             expr = original;
+        if (memo.Run.ImplicitCallOrigins is not null
+            && memo.Run.GraceOrigins?.Occurrences.TryGetValue(expr, out var sourceGrace) == true)
+            ReportIneffectiveGrace(sourceGrace, sourceGrace.UnwrapGraceOperand(), null, scope, parameters, memo);
         switch (expr)
         {
-            case Expr.Grace(var inner, _):
-                // Ordinary collection consumed the weight. In a conditional body, the
-                // parser already diagnosed Grace; strip it there for recovery as well.
-                return RewriteParams(inner, scope, parameters, memo);
+            case Expr.Grace:
+            {
+                // Ordinary collection consumed the weight of an EFFECTIVE marker — one on
+                // a bare name this level inferred as its own parameter. A marker that could
+                // not reorder anything is reported here (F10, ReportIneffectiveGrace): this
+                // pass runs on every detection run, so the report survives ownership
+                // completion, which replays rewriting but never inference. The wrapper is
+                // stripped either way; stacked wrappers on the one occurrence are unwrapped
+                // together so the occurrence is examined — and reported — exactly once. (In
+                // a conditional body the parser already diagnosed Grace; that region's
+                // policy strips it for recovery without a second report.)
+                var gracedCore = expr.UnwrapGraceOperand();
+                ReportIneffectiveGrace(expr, gracedCore, memberEdge: null, scope, parameters, memo);
+                var rewrittenGrace = RewriteParams(gracedCore, scope, parameters, memo);
+                if (memo.Run.ImplicitCallOrigins is null
+                    && memo.Run.GraceOrigins is { } origins
+                    && gracedCore is Expr.Resolve)
+                {
+                    // Keep this written occurrence distinct from an ungraced reference
+                    // sharing its operand in a host DAG. Repeated reaches of the Grace
+                    // node still reuse this copy through the ordinary rewrite memo.
+                    rewrittenGrace = rewrittenGrace with { };
+                    origins.Occurrences.Add(rewrittenGrace, (Expr.Grace)expr);
+                }
+                return rewrittenGrace;
+            }
 
             case Expr.Resolve(var name) when ShouldRewriteAsParam(name, scope, parameters):
                 memo.Run.OwnershipChanged = true;
@@ -1909,18 +2102,37 @@ internal static class ParameterDetector
                     rewrittenArgs = new OutputBundle(rewrittenSlots);
                 }
 
+                // The scope-aware selection verdict this walk already derives for
+                // implicit-signature collection (CollectFreeParams), stamped on the
+                // edge so the scope-free exposure walk charges a parameter-naming
+                // fallback exactly when the runtime may take it
+                // (AstHelpers.LexicalFallbackMayBeSelected).
+                var selection = dotCall.GetLexicalFallbackSelection(
+                    ResolveDotCallReceiverProvider(dotCall, scope, parameters));
+
+                // Prefix member Grace (`recv.~t`) decorates the fallback occurrence. It
+                // is effective only when that occurrence joined this level's inferred
+                // signature — which a member that always resolves structurally (or the
+                // dot-only `.string` intrinsic) never does — so it is examined here with
+                // the edge's own verdict (F10) and stripped like every other marker. A
+                // graced receiver (`a~.t`) is an ordinary bare-name occurrence and takes
+                // the Grace arm through the Target rewrite below.
+                var fallback = dotCall.EffectiveLexicalFallback;
+                var memberGrace = fallback as Expr.Grace;
+                if (memberGrace is null && memo.Run.GraceOrigins is { } graceOrigins)
+                    graceOrigins.Occurrences.TryGetValue(fallback, out memberGrace);
+                if (memberGrace is not null)
+                {
+                    var memberCore = memberGrace.UnwrapGraceOperand();
+                    ReportIneffectiveGrace(memberGrace, memberCore, (dotCall, selection), scope, parameters, memo);
+                }
+
                 return dotCall with
                 {
                     Target = RewriteParams(dotCall.Target, scope, parameters, memo),
                     Args = rewrittenArgs,
-                    LexicalFallback = RewriteParams(dotCall.EffectiveLexicalFallback, scope, parameters, memo),
-                    // The scope-aware selection verdict this walk already derives
-                    // for implicit-signature collection (CollectFreeParams),
-                    // stamped on the edge so the scope-free exposure walk charges
-                    // a parameter-naming fallback exactly when the runtime may
-                    // take it (AstHelpers.LexicalFallbackMayBeSelected).
-                    ElaboratedFallbackSelection = dotCall.GetLexicalFallbackSelection(
-                        ResolveDotCallReceiverProvider(dotCall, scope, parameters)),
+                    LexicalFallback = RewriteParams(fallback, scope, parameters, memo),
+                    ElaboratedFallbackSelection = selection,
                 };
             }
 

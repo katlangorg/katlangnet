@@ -597,9 +597,13 @@ public sealed class Parser
     // Offset 0 is the current significant token, offset 1 the next, and so
     // on; comment tokens are skipped at every step and the walk saturates at
     // end of input. Declaration headers may have comments between their
-    // tokens (`P # note` newline `= 1`), and comments must never change
-    // what parses as a declaration — all declaration lookaheads go through
-    // this API instead of raw adjacent-token indexing. It restarts at _pos on
+    // tokens. A trailing comment after `P =` leaves the body incomplete, while
+    // a trailing comment after `P` leaves a completed name. All declaration lookaheads
+    // go through this API instead of raw adjacent-token indexing, and they
+    // all apply the declaration-head line rule (IsHeadToken), so a comment
+    // never relaxes a newline boundary either: `P # note` newline `= 1` is
+    // the row `P` followed by a stray `=`, exactly like `P` newline `= 1`.
+    // It restarts at _pos on
     // every call, so it is O(offset): use it for the fixed small offsets of a
     // declaration head only, NEVER in a loop over a token run — a run scan walks
     // indices from one cursor with NextSignificantIndex instead (see
@@ -1473,10 +1477,35 @@ public sealed class Parser
 
     /// <summary>
     /// Index form of <see cref="LookaheadIsEquals"/>: true when the significant
-    /// token after the significant token at <paramref name="index"/> is '='.
+    /// token after the significant token at <paramref name="index"/> is '='
+    /// AND lies on the same physical line (the declaration-head line rule).
     /// </summary>
     private bool LookaheadIsEqualsFrom(int index)
-        => _tokens[NextSignificantIndex(index + 1)].Kind == TokenKind.Equals;
+    {
+        var equals = NextSignificantIndex(index + 1);
+        return _tokens[equals].Kind == TokenKind.Equals
+            && IsHeadToken(equals, _tokens[index].Line);
+    }
+
+    // ── The declaration-head line rule ──────────────────────────────────────
+    // A declaration head — `Name =`, `Name(pattern) =`, `x, *y, z =`, `~Name =`,
+    // `public Name =`, `public Name(pattern) =` — is written on ONE physical
+    // line: every token of the head shares the line of its first token, the
+    // one exception being the inside of a clause head's already-open `( … )`,
+    // which spans lines like every open delimiter (the `)` and the `=` still
+    // share a line). A physical newline therefore never assembles a head
+    // implicitly: `Foo` newline `(x) = x + 1`, `A` newline `= 1`, `Foo(x)`
+    // newline `= x + 1`, and `x, y` newline `= 1, 2` keep the first line as
+    // the closed output row it is (a name, a call, a group, an expression
+    // list) and reach the ordinary stray-`=` diagnostic on the next line —
+    // they never retroactively become a clause, property, or deconstruction
+    // head. Comments are invisible here as everywhere: `P # note` newline
+    // `= 1` is the same two rows. Explicit continuation AFTER a recognized
+    // head is unaffected and deliberate: the body of `A =` or `Foo(x) =` may
+    // begin on the next line exactly like the operand of a trailing binary
+    // operator, and a trailing `.` continues its dot chain the same way.
+    // Every declaration lookahead consults this ONE predicate.
+    private bool IsHeadToken(int index, int headLine) => _tokens[index].Line == headLine;
 
     // ── Star-marker diagnostics ─────────────────────────────────────────────
     // Prefix `*name` (directly attached) is the ONLY collecting-binding
@@ -1613,6 +1642,12 @@ public sealed class Parser
         if (start >= _bindingPatternScanFailStart && start < _bindingPatternScanFailBreak)
             return false;
 
+        // The declaration-head line rule (IsHeadToken): the whole binding-pattern
+        // head — stars, names, commas, and the '=' — shares the first token's
+        // physical line. The scan fails at the first token on a later line, so
+        // the failed-region memo below stays sound: every start inside the
+        // region lies on that same line and would fail at the same token.
+        var headLine = _tokens[start].Line;
         var index = start;
         var sawComma = false;
         var sawCollectMarker = false;
@@ -1620,15 +1655,18 @@ public sealed class Parser
         while (true)
         {
             // Optional prefix collect-marker star run before the binding name.
-            while (_tokens[index].Kind == TokenKind.Star)
+            while (_tokens[index].Kind == TokenKind.Star && IsHeadToken(index, headLine))
             {
                 sawCollectMarker = true;
                 index = NextSignificantIndex(index + 1);
             }
 
-            if (_tokens[index].Kind != TokenKind.Identifier)
+            if (_tokens[index].Kind != TokenKind.Identifier || !IsHeadToken(index, headLine))
                 return FailBindingPatternScan(start, index);
             index = NextSignificantIndex(index + 1);
+
+            if (!IsHeadToken(index, headLine))
+                return FailBindingPatternScan(start, index);
 
             switch (_tokens[index].Kind)
             {
@@ -1928,7 +1966,7 @@ public sealed class Parser
     }
 
     /// <summary>
-    /// Builds the graced (or, at net weight zero, plain) occurrence of a bare
+    /// Builds the graced occurrence of a bare
     /// name, or reports the attachment law and recovers to the plain name when
     /// any marker of the occurrence was detached. Kept out of
     /// <see cref="ParsePrimary"/> so its locals never enlarge that hot
@@ -1947,7 +1985,11 @@ public sealed class Parser
             return resolve;
         }
 
-        return weight == 0 ? resolve : new Expr.Grace(resolve, weight) { Span = MakeSpan(firstToken) };
+        // Cancelling written markers still need the binding-effectiveness check.
+        // A genuinely unmarked name stays plain; elaboration strips every marker.
+        return firstToken == nameToken && lastToken == nameToken
+            ? resolve
+            : new Expr.Grace(resolve, weight) { Span = MakeSpan(firstToken) };
     }
 
     /// <summary>
@@ -2002,7 +2044,7 @@ public sealed class Parser
     /// Parses a `~`-led primary: prefix Grace on the ONE bare name that
     /// follows the marker run on the run's own physical line, then any
     /// same-line postfix markers after that name (`~x~` nets to weight 0 and
-    /// yields the plain name). The whole run is physical-line-local — a
+    /// retains its marker until effectiveness validation). The whole run is physical-line-local — a
     /// marker on a later line is never consumed as part of this run, and a
     /// name on a later line never becomes its operand — so `~` newline `~a`
     /// reports the first line's lone marker and leaves `~a` intact as the next
@@ -2087,6 +2129,8 @@ public sealed class Parser
         while (_tokens[index].Kind == TokenKind.Tilde && _tokens[index].Line == line)
             index = NextSignificantIndex(index + 1);
 
+        // The declaration-head line rule (IsHeadToken): the markers, the name,
+        // and the '=' all share the first marker's physical line.
         var verdict = false;
         if (_tokens[index].Line == line)
         {
@@ -2094,14 +2138,15 @@ public sealed class Parser
             if (_tokens[index].Kind == TokenKind.Identifier)
             {
                 // ~Name = ...
-                verdict = _tokens[next].Kind == TokenKind.Equals;
+                verdict = _tokens[next].Kind == TokenKind.Equals && IsHeadToken(next, line);
             }
             else if (_tokens[index].Kind == TokenKind.KeywordPublic
                 && _tokens[next].Kind == TokenKind.Identifier
                 && _tokens[next].Line == line)
             {
                 // ~public Name = ...
-                verdict = _tokens[NextSignificantIndex(next + 1)].Kind == TokenKind.Equals;
+                var equals = NextSignificantIndex(next + 1);
+                verdict = _tokens[equals].Kind == TokenKind.Equals && IsHeadToken(equals, line);
             }
         }
 
@@ -2111,53 +2156,67 @@ public sealed class Parser
     }
 
     /// <summary>
-    /// Checks if 'public' keyword is followed by 'open' keyword.
+    /// Checks if 'public' keyword is followed by 'open' keyword on the same
+    /// physical line (the declaration-head line rule, see <see cref="IsHeadToken"/>).
     /// Used to detect and reject public open declarations.
     /// </summary>
     private bool LookaheadIsPublicOpen()
-        => PeekSignificant(1).Kind == TokenKind.KeywordOpen;
+    {
+        var next = NextSignificantIndex(_pos + 1); // skip 'public'
+        return _tokens[next].Kind == TokenKind.KeywordOpen && IsHeadToken(next, Current.Line);
+    }
 
     /// <summary>
-    /// Checks if 'public' keyword is followed by Identifier '='.
+    /// Checks if 'public' keyword is followed by Identifier '=' on the same
+    /// physical line (the declaration-head line rule, see <see cref="IsHeadToken"/>).
     /// Used to detect public property definitions.
     /// </summary>
     private bool LookaheadIsPublicPropertyDef()
-        => PeekSignificant(1).Kind == TokenKind.Identifier
-            && PeekSignificant(2).Kind == TokenKind.Equals;
+    {
+        var next = NextSignificantIndex(_pos + 1); // skip 'public'
+        return _tokens[next].Kind == TokenKind.Identifier
+            && IsHeadToken(next, Current.Line)
+            && LookaheadIsEqualsFrom(next);
+    }
 
     /// <summary>
     /// Checks if the current identifier is followed by '(' ... ')' '='.
     /// Used to detect clause definitions: <c>Name(pattern) = body</c>.
-    /// Skips comment tokens during lookahead. Handles nested parentheses.
+    /// Skips comment tokens during lookahead. Handles nested parentheses and
+    /// applies the declaration-head line rule.
     /// </summary>
     private bool LookaheadIsClauseDefinition()
-    {
-        return LookaheadIsParenEqualsFrom(_pos + 1);
-    }
+        => LookaheadIsParenEqualsAfterName(_pos);
 
     /// <summary>
-    /// Checks if 'public' is followed by Identifier '(' ... ')' '='.
+    /// Checks if 'public' is followed by Identifier '(' ... ')' '=' (the name
+    /// on the modifier's physical line, then the ordinary clause-head rule).
     /// Used to detect public clause definitions.
     /// </summary>
     private bool LookaheadIsPublicClauseDefinition()
     {
         var next = NextSignificantIndex(_pos + 1); // skip 'public'
-        if (_tokens[next].Kind != TokenKind.Identifier)
+        if (_tokens[next].Kind != TokenKind.Identifier || !IsHeadToken(next, Current.Line))
             return false;
-        return LookaheadIsParenEqualsFrom(next + 1);
+        return LookaheadIsParenEqualsAfterName(next);
     }
 
     /// <summary>
-    /// From position <paramref name="start"/>, checks for '(' ... ')' '=' with balanced parens.
-    /// Skips comment tokens during lookahead.
+    /// Checks for a clause head after the name at <paramref name="nameIndex"/>:
+    /// '(' ... ')' '=' with balanced parens, skipping comment tokens. The
+    /// declaration-head line rule applies (see <see cref="IsHeadToken"/>): the
+    /// '(' shares the name's physical line and the '=' shares the ')'s line,
+    /// while the pattern list inside the open parentheses may span lines like
+    /// every already-open delimiter (`F(a,` newline `b) = a + b`).
     /// </summary>
-    private bool LookaheadIsParenEqualsFrom(int start)
+    private bool LookaheadIsParenEqualsAfterName(int nameIndex)
     {
-        var next = NextSignificantIndex(start);
-        if (_tokens[next].Kind != TokenKind.LParen)
+        var next = NextSignificantIndex(nameIndex + 1);
+        if (_tokens[next].Kind != TokenKind.LParen || !IsHeadToken(next, _tokens[nameIndex].Line))
             return false;
         next++; // skip '('
         var depth = 1;
+        var closeLine = 0;
         while (depth > 0)
         {
             next = NextSignificantIndex(next);
@@ -2165,11 +2224,15 @@ public sealed class Parser
             if (kind == TokenKind.EndOfFile)
                 return false;
             if (kind == TokenKind.LParen) depth++;
-            else if (kind == TokenKind.RParen) depth--;
+            else if (kind == TokenKind.RParen)
+            {
+                depth--;
+                closeLine = _tokens[next].Line;
+            }
             next++;
         }
         next = NextSignificantIndex(next);
-        return _tokens[next].Kind == TokenKind.Equals;
+        return _tokens[next].Kind == TokenKind.Equals && IsHeadToken(next, closeLine);
     }
 
     // ── Pattern parsing (for clause definitions) ────────────────────────────
@@ -3021,7 +3084,7 @@ public sealed class Parser
             || (kind == TokenKind.Identifier
                 && (LookaheadIsEqualsFrom(index)
                     || (includeCommaSpanningBindingPatterns && LookaheadIsBindingPatternAssignmentFrom(index))
-                    || LookaheadIsParenEqualsFrom(index + 1)))
+                    || LookaheadIsParenEqualsAfterName(index)))
             || (kind == TokenKind.Star
                 && includeCommaSpanningBindingPatterns
                 && LookaheadIsBindingPatternAssignmentFrom(index))
@@ -3737,6 +3800,9 @@ public sealed class Parser
             // A parenthesized reference keeps its capture layer so sequence dot-call
             // receiver normalization can observe `(items).builtin` vs the bare name.
             Expr.Resolve => false,
+            // Net-zero markers used to be erased at parse time. Retaining them for
+            // F10 validation must keep the same capture boundary as the plain name.
+            Expr.Grace { Weight: 0 } => false,
             // Redundant parentheses around a scope-owning algorithm expression
             // normalize away (`({...})` is `{...}`); a nested capture keeps its
             // written boundary (`((1, 2))` stays two layers).
@@ -3744,6 +3810,25 @@ public sealed class Parser
             Expr.Capture => false,
             _ => true,
         };
+    }
+
+    /// <summary>
+    /// Gives an expression unwrapped from redundant grouping parentheses the group's full
+    /// written extent as its source span. Grouping changes neither the AST shape nor the
+    /// meaning of the inner expression, but the parentheses ARE the syntactic expression
+    /// the surrounding construct consumes, so diagnostics and navigation anchored on that
+    /// expression must be able to point at `(1)`, not merely at `1`. Nested redundant groups
+    /// accumulate naturally: each level re-spans the same node to its own extent, so
+    /// `((1))` spans all five characters. The span is the ONLY thing that changes: the copy
+    /// keeps every other init-only fact of the node, and a registered operator/postfix chain
+    /// depth is transferred to it so the chain guard keeps counting through the group.
+    /// </summary>
+    private Expr WithGroupExtent(Expr inner, SourceSpan groupSpan)
+    {
+        var widened = inner with { Span = groupSpan };
+        if (_expressionChainDepths.TryGetValue(inner, out var chainDepth))
+            _expressionChainDepths[widened] = chainDepth;
+        return widened;
     }
 
     private Expr ParsePrimary()
@@ -3813,9 +3898,11 @@ public sealed class Parser
                     // Ordinary parenthesized expressions usually unwrap to the inner
                     // expression. Preserve an extra capture layer so sequence
                     // dot-call receiver normalization can observe
-                    // `(items).builtin` vs `((items)).builtin`.
+                    // `(items).builtin` vs `((items)).builtin`. The unwrapped
+                    // expression keeps its meaning but takes the group's full
+                    // written extent as its source span (see WithGroupExtent).
                     if (ShouldUnwrapParenthesizedPrimary(body))
-                        return body.Output[0];
+                        return WithGroupExtent(body.Output[0], MakeSpan(start));
 
                     // Declarations inside parentheses are a parse error (reported
                     // at the declaration by the parenthesized body parser), so
@@ -3937,6 +4024,21 @@ public sealed class Parser
                     return new Expr.Num(0) { Span = TokenSpan(token) }; // error placeholder
                 }
 
+            case TokenKind.Equals:
+                {
+                    // A '=' reaching primary position has no declaration head before
+                    // it on ITS physical line. The usual cause is the declaration-head
+                    // line rule (see IsHeadToken): `Foo` newline `(x) = x + 1`, `A`
+                    // newline `= 1`, `Foo(x)` newline `= x + 1`, and `x, y` newline
+                    // `= 1, 2` keep the previous line as the closed output row it is
+                    // and reach this arm with the '='. Report the repair once; the
+                    // token after the '=' is a recovery-owned boundary.
+                    var token = Current;
+                    ReportError(DiagnosticCode.UnexpectedToken, StrayEqualsDiagnostic);
+                    SkipForRecovery();
+                    return new Expr.Num(0) { Span = TokenSpan(token) }; // error placeholder
+                }
+
             default:
                 {
                     var token = Current;
@@ -3946,5 +4048,13 @@ public sealed class Parser
                 }
         }
     }
+
+    /// <summary>
+    /// The stray-'=' diagnostic: the one report for a '=' that no declaration head on
+    /// its own physical line precedes (the declaration-head line rule, see
+    /// <see cref="IsHeadToken"/>).
+    /// </summary>
+    private const string StrayEqualsDiagnostic =
+        "Unexpected '='. A declaration head cannot be assembled across a physical newline. Keep `Name =` together, or keep a clause head's name and '(' together and its closing ')' and '=' together. A pattern list inside already-open parentheses and the body after '=' may span lines; deconstruction targets and '=' must share a line.";
 
 }
