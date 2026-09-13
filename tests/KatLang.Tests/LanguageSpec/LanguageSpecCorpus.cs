@@ -423,6 +423,21 @@ public static class LanguageSpecCorpus
             ExpectedDisplay = "[5, 9]\n5\n9",
             ExpectedRaw = "S[L[5, 9], 5, 9]",
             ExpectedEmittedCount = 3,
+            Probes =
+            [
+                // A multi-row body is observed as ONE value at any call boundary.
+                new SpecProbe("F = 1, 2\nG(x) = x.count\nG(F())", "ok raw=2 n=1"),
+                // `()` is a value, so a body whose output is `()` returns exactly that ...
+                new SpecProbe("Empty = ()\nEmpty()", "ok raw=S[] n=1"),
+                // ... while a body with no output rows has nothing to return: an error, never a silent `()`.
+                new SpecProbe("Nothing = {}\nNothing()", "err missingOutput"),
+                // Higher-order consumers add their own contract: a map callback must return exactly one element.
+                new SpecProbe("D(x) = x, x\n[1].map(D)", "err arity"),
+                // Loop state is NOT a value boundary: the finished loop hands its slots to the root as rows ...
+                new SpecProbe("Step = a + 1, b + 1\nStep.repeat(1, 0, 0)", "ok raw=S[1, 1] n=2"),
+                // ... and only an ordinary property/argument boundary captures them as one value.
+                new SpecProbe("Step = a + 1, b + 1\nR = Step.repeat(1, 0, 0)\nR", "ok raw=S[1, 1] n=1"),
+            ],
             IncludeInGeneratorPrompt = true,
             Explanation = "A call returns exactly one value — here the collected list `[5, 9]` — and only the explicit caller-site spread `value*` opens it back into the surrounding item supply.",
         },
@@ -1053,6 +1068,30 @@ public static class LanguageSpecCorpus
         },
         new()
         {
+            Id = "ordinary-sequence-pattern-opens-sequence-or-list",
+            Category = "variadic-calls",
+            Source = "PairSum((x, y)) = x + y\nPairSum((2, 3))\nPairSum([2, 3])",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "5\n5",
+            ExpectedRaw = "S[5, 5]",
+            ExpectedEmittedCount = 2,
+            Probes =
+            [
+                // The pattern opens ONE lone structure of either kind and binds its immediate items; a
+                // wrong item count or a non-structure argument is an arity error against the pattern.
+                new SpecProbe("PairSum((x, y)) = x + y\nPairSum([1, 2, 3])", "err arity"),
+                new SpecProbe("PairSum((x, y)) = x + y\nPairSum(7)", "err arity"),
+                // A collecting sequence-value pattern collects a lone list's items the same way.
+                new SpecProbe("Count((*v)) = v.count\nCount([1, 2, 3])", "ok raw=3 n=1"),
+                // Callback position uses the same binder, so a nested pattern opens list AND sequence rows.
+                new SpecProbe("PairSum((x, y)) = x + y\n[[1, 2], (3, 4)].map(PairSum)", "ok raw=L[3, 7] n=1"),
+                // Contrast: in a multi-clause family the same written pattern matches sequence values only.
+                new SpecProbe("F((x, y)) = x + y\nF(z) = 0\nF([2, 3])", "ok raw=0 n=1"),
+            ],
+            Explanation = "An ordinary (single-clause) sequence-value parameter pattern consumes exactly one argument slot and opens that slot's value — a lone sequence value or a lone exact list, the same two kinds assignment deconstruction opens — binding only its immediate items. Any other value, or the wrong number of items, is an arity error against the pattern. A multi-clause family is narrower: there the same pattern matches sequence values only.",
+        },
+        new()
+        {
             Id = "redundant-call-parens-canonical",
             Category = "variadic-calls",
             Source = "Inner = (1, 2, 3)\nCountSequenceValue((*values)) = values.count\nNestedCount(((*values))) = values.count\n\nCountSequenceValue(Inner)\nCountSequenceValue((Inner))\nCountSequenceValue(((1, 2, 3)))\nNestedCount(((1, 2, 3)))\nNestedCount((((1, 2, 3))))",
@@ -1120,6 +1159,53 @@ public static class LanguageSpecCorpus
                 new SpecProbe("F((x)) = x\nF(n) = 0\nF(7)", "ok raw=7 n=1"),
             ],
             Explanation = "A singleton sequence-value clause head `(x)` matches ANY one argument whole via the scalar one-item rule: singleton sequence structure canonicalizes away during construction, so the pattern must also accept a non-sequence result as if it were a one-element sequence. It never opens the argument — an exact list binds entire, including a singleton list. Only a sequence value of a different arity fails the head.",
+        },
+        new()
+        {
+            Id = "conditional-sequence-pattern-matches-sequence-values-only",
+            Category = "conditionals",
+            Source = "F((x, y)) = x + y\nF(z) = 0\n\nF((2, 3))\nF([2, 3])",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "5\n0",
+            ExpectedRaw = "S[5, 0]",
+            ExpectedEmittedCount = 2,
+            Probes =
+            [
+                // With no clause that accepts a list, the list argument matches nothing.
+                new SpecProbe("F((x, y)) = x + y\nF((x, y, z)) = 0\n\nF([2, 3])", "err branch"),
+                // The singleton pattern is the one exception: it matches any single argument whole.
+                new SpecProbe("F((x)) = x\nF(z) = 0\n\nF([2, 3])", "ok raw=L[2, 3] n=1"),
+                // Contrast: the ordinary single-clause definition opens the same list.
+                new SpecProbe("PairSum((x, y)) = x + y\nPairSum([2, 3])", "ok raw=5 n=1"),
+            ],
+            Explanation = "In a clause family a sequence-value pattern matches sequence values only: an exact list argument does not match `(x, y)` even when its element count fits, so it falls through to a later clause, or fails with no matching branch when none accepts it. A singleton pattern `(x)` is the one exception and matches any single argument whole. An ordinary single-clause definition is wider and also opens a lone list.",
+        },
+        new()
+        {
+            Id = "conditional-clauses-share-top-level-arity",
+            Category = "conditionals",
+            Source = "F(0) = 1\nF(x, y) = 2\n\nF(0)",
+            Outcome = SpecOutcome.ParseError,
+            ExpectedParseDiagnosticFragment = "must have the same top-level pattern arity",
+            ExpectedDiagnosticCode = DiagnosticCode.BranchArityMismatch,
+            Probes =
+            [
+                // Literal-vs-variable is what distinguishes branches of one arity.
+                new SpecProbe("F(0) = 1\nF(x) = x + 1\n\nF(0)\nF(5)", "ok raw=S[1, 6] n=2"),
+                // A captured pair is ONE written output slot, so it is a legal branch result beside a scalar one.
+                new SpecProbe("F(0) = 1\nF(x) = (1, 2)\n\nF(5)", "ok raw=S[1, 2] n=1"),
+            ],
+            Explanation = "Arity never distinguishes branches: all clauses of one family share one top-level pattern arity, and the front end rejects a family whose clauses disagree before anything runs — even though `F(0)` would have matched the first clause. Branches are told apart by their pattern shape alone — literals, string patterns, sequence-value structure, repeated-name constraints, or a catch-all — tried top to bottom.",
+        },
+        new()
+        {
+            Id = "conditional-clauses-share-top-level-output-arity",
+            Category = "conditionals",
+            Source = "F(0) = 1\nF(x) = 1, 2\n\nF(5)",
+            Outcome = SpecOutcome.ParseError,
+            ExpectedParseDiagnosticFragment = "must have the same top-level output arity",
+            ExpectedDiagnosticCode = DiagnosticCode.BranchOutputArityMismatch,
+            Explanation = "The clauses of one family also share one top-level output arity — the same number of written output slots. `F(x) = 1, 2` writes two slots beside the one-slot `F(0) = 1`, so the family is rejected by the front end; when one branch's result is a pair, write it as the one captured slot `(1, 2)`.",
         },
         new()
         {
@@ -1581,6 +1667,50 @@ public static class LanguageSpecCorpus
             ExpectedRaw = "9",
             ExpectedEmittedCount = 1,
             Explanation = "A property named `Output` follows ordinary dotted property access rules — there is no reserved output member.",
+        },
+        new()
+        {
+            Id = "dot-call-structural-member-is-not-a-lexical-rewrite",
+            Category = "access-boundaries",
+            Source = "B(a, c) = a * 100 + c\nObj = {\n    public B(c) = c + 1\n}\n\nObj.B(5)\n3.B(5)",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "6\n305",
+            ExpectedRaw = "S[6, 305]",
+            ExpectedEmittedCount = 2,
+            Probes =
+            [
+                // Structural selection ignores `public`: a private member is still the receiver's own.
+                new SpecProbe("B(a, c) = a * 100 + c\nObj = {\n    B(c) = c + 1\n}\nObj.B(5)", "ok raw=6 n=1"),
+                // A receiver without the member takes the fallback, injecting its VALUE as the leading argument.
+                new SpecProbe("B(a, c) = a * 100 + c\nObj = {\n    public Q = 1\n    3\n}\nObj.B(5)", "ok raw=305 n=1"),
+                // The fallback allocates like B(A, C): the receiver is one segment, never spread across fixed parameters.
+                new SpecProbe("B(a, c) = a * 100 + c\n(3, 4).B(5)", "err type"),
+            ],
+            IncludeInGeneratorPrompt = true,
+            Explanation = "Dot syntax is property-first. `Obj` declares its own `B`, so `Obj.B(5)` calls that member with the one argument `5` and injects no receiver; the visible two-parameter `B(a, c)` is never considered, although `B(Obj, 5)` is a well-formed two-argument call. Only a receiver WITHOUT the member takes the lexical fallback, where `A.B(C)` allocates arguments like `B(A, C)` with the receiver as one leading segment — `3.B(5)` is `B(3, 5)`.",
+        },
+        new()
+        {
+            Id = "visibility-private-member-is-structural-not-exported",
+            Category = "access-boundaries",
+            Source = "Lib = {\n    public Area = 4\n    Helper = Area / 2\n}\n\nLib.Area\nLib.Helper",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "4\n2",
+            ExpectedRaw = "S[4, 2]",
+            ExpectedEmittedCount = 2,
+            Probes =
+            [
+                // `open` exports only public members: Area arrives, Helper does not (it would be a root parameter).
+                new SpecProbe("open Lib\nLib = {\n    public Area = 4\n    Helper = Area / 2\n}\n\nArea", "ok raw=4 n=1"),
+                new SpecProbe("open Lib\nLib = {\n    public Area = 4\n    Helper = Area / 2\n}\n\nHelper", "err unresolvedImplicitParams"),
+                // Opening the library does not take structural access away.
+                new SpecProbe("open Lib\nLib = {\n    public Area = 4\n    Helper = Area / 2\n}\n\nLib.Helper", "ok raw=2 n=1"),
+                // A public member that reads an enclosing parameter is local-only: exported through neither channel.
+                new SpecProbe("open Lib\nLib(r) = {\n    public Area = r * r\n    Area\n}\n\nArea", "err unknownName"),
+                new SpecProbe("Lib(r) = {\n    public Area = r * r\n    Area\n}\n\nLib.Area", "err localOnlyProperty"),
+            ],
+            IncludeInGeneratorPrompt = true,
+            Explanation = "Private means not exported, not unreachable: `open` and `load` bring only `public` members into scope, while structural dot access ignores `public` and checks only exposure, so `Lib.Helper` reaches the private, self-contained `Helper`. A `public` member that depends on an enclosing parameter is local-only and is reached through neither `open` nor dot access.",
         },
         new()
         {
@@ -2455,6 +2585,33 @@ public static class LanguageSpecCorpus
             ExpectedParseDiagnosticFragment = "Grace `~` can only be applied to a parameter or name occurrence",
             ExpectedDiagnosticCode = DiagnosticCode.InvalidGraceMarker,
             Explanation = "A grace marker never binds across a physical newline in either direction: `F(1)~` at the end of a row is the rejected `f(x)~` spelling (Grace decorates exactly one bare name), never prefix Grace on the next row's `a`. Write the marker on the name it decorates, on that name's line: `~a`.",
+        },
+        new()
+        {
+            Id = "grace-weights-accumulate",
+            Category = "parser-layout",
+            Source = "Weighted = a + 10 * b + 100 * ~~c\n\nWeighted(1, 2, 3)",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "132",
+            ExpectedRaw = "132",
+            ExpectedEmittedCount = 1,
+            Probes =
+            [
+                // One unit moves one position: (a, c, b).
+                new SpecProbe("Weighted = a + 10 * b + 100 * ~c\n\nWeighted(1, 2, 3)", "ok raw=231 n=1"),
+                // Opposite markers on one occurrence cancel: the order stays (a, b, c).
+                new SpecProbe("Weighted = a + 10 * b + 100 * ~c~\n\nWeighted(1, 2, 3)", "ok raw=321 n=1"),
+                // Markers on separate occurrences of one name add up: two units again give (c, a, b).
+                new SpecProbe("Weighted = a + 10 * b + 100 * ~c + ~c\n\nWeighted(1, 2, 3)", "ok raw=133 n=1"),
+                // Weight beyond the start of the list is clamped, never wrapped.
+                new SpecProbe("Weighted = a + 10 * b + 100 * ~~~~~c\n\nWeighted(1, 2, 3)", "ok raw=132 n=1"),
+                // Postfix weight pushes later: (b, c, a).
+                new SpecProbe("Weighted = a~~ + 10 * b + 100 * c\n\nWeighted(1, 2, 3)", "ok raw=213 n=1"),
+                // The inferred signature is observable: an arity error names it.
+                new SpecProbe("Weighted = a + 10 * b + 100 * ~~c\n\nWeighted(1)", "err arity"),
+            ],
+            IncludeInGeneratorPrompt = true,
+            Explanation = "Every Grace marker is one unit of weight on its name — prefix `~` one position earlier, postfix `~` one position later — and the weights of all markers on all occurrences of one name in the same body add up. First appearance gives `(a, b, c)`; `~~c` carries two units, so the signature is `Weighted(c, a, b)` and the call binds `c = 1`, `a = 2`, `b = 3`. A name never moves past the ends of the list, and `~c~` cancels to zero.",
         },
         new()
         {
@@ -3434,6 +3591,13 @@ public static class LanguageSpecCorpus
                 new SpecProbe("v = 99\nOuter(v) = {\n    Add(n) = n + v\n    [1, 2].map(Add)\n}\nOuter(7)", "ok raw=L[8, 9] n=1"),
                 new SpecProbe("v = 99\nOuter(v) = {\n    Step(s) = s + v\n    repeat(Step, 2, 0)\n}\nOuter(7)", "ok raw=14 n=1"),
                 new SpecProbe("v = 99\nOuter(v) = repeat({x + v}, 2, 0)\nOuter(7)", "ok raw=14 n=1"),
+                // `Inner` is owned by `Outer` because it is written inside Outer's braces: it is not a root
+                // property, and it is local-only because it reads Outer's parameter.
+                new SpecProbe("Outer(v) = {\n    Inner = v + 1\n    Inner\n}\nOuter(7)\nInner(7)", "err unresolvedImplicitParams"),
+                new SpecProbe("Outer(v) = {\n    Inner = v + 1\n    Inner\n}\nOuter.Inner", "err localOnlyProperty"),
+                // Indentation is not nesting: written without braces, `Inner` is a ROOT property with its own
+                // implicit `v`, callable from the root, and `Outer(v) = Inner` merely forwards its `v` to it.
+                new SpecProbe("Outer(v) = Inner\n  Inner = v + 1\nOuter(7)\nInner(7)", "ok raw=S[8, 8] n=2"),
             ],
             IncludeInGeneratorPrompt = true,
             Explanation = "Name resolution searches outward by owning scope. `Inner` is nested inside `Outer`, which binds the parameter `v`, so the walk stops there; the root property `v = 99` belongs to a farther owner and is never reached. A parameter therefore means the same thing written directly in its algorithm's body and written inside a body nested in it.",

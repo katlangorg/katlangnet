@@ -297,7 +297,7 @@ A == C
 0
 ```
 
-The ordering operators (`<`, `>`, `<=`, `>=`) and the arithmetic operators, by contrast, require numeric scalar operands; applying them to a sequence value is an error.
+The ordering operators (`<`, `>`, `<=`, `>=`), the arithmetic operators, and the logical operators, by contrast, require numeric scalar operands; applying them to a sequence value — the empty sequence `()` included — is an error, so a comparison always produces `1` or `0` (see [The Empty Sequence Value](#the-empty-sequence-value)).
 
 ### Logical Operators
 
@@ -762,6 +762,22 @@ F(5, 9)*
 
 The body's internal shape is preserved inside the returned value — only the boundary count changes. Here the collecting parameter collected the two supplied arguments as the exact list `[5, 9]`, and that list is the call's one returned value. `F(*a) = a, 0` returns `([5, 9], 0)` (the collected list stays one nested value), while `F(*a) = a*, 0` returns `(5, 9, 0)` (the body spread supplies the list items first). Either way the call returns **one** value; spread at the call site is the only way to re-spread it.
 
+Two boundary cases follow from the same rule. The empty sequence value is a real value, so a body whose output is `()` returns exactly that. A body with no output rows has nothing to return: calling it, or reading it as a value, is an error — never a silent `()`:
+
+```
+Empty = ()
+Empty()
+```
+
+**Result:** `()`
+
+```
+Nothing = {}
+Nothing()
+```
+
+**Result:** error — `Nothing` has no defined output, so there is no value for the call to return (see [The Empty Sequence Value](#the-empty-sequence-value)).
+
 The same rule governs collection-producing builtins, with one refinement: `order`, `orderDesc`, `distinct`, `take`, `skip`, `filter`, `map`, `range`, and `atoms` each materialize their result as one exact immutable [list value](#lists); an explicit spread opens it.
 
 ```
@@ -779,7 +795,7 @@ X.order*
 3
 ```
 
-Three things are intentionally **not** value boundaries and keep emitting multiple top-level items: root program output (`1, 2, 3` still shows three rows), explicit caller-site spread (`value*`), and the multi-slot loop state of `while`/`repeat`. Scalar/reduction builtins (`count`, `sum`, `avg`, `min`, `max`, `contains`, `first`, `last`, `reduce`) already return one value and are unchanged. A `map`/`reduce` callback must still return exactly one element; a multi-output callback body is an error, not a silently-grouped value.
+Three things are intentionally **not** value boundaries and keep emitting multiple top-level items: root program output (`1, 2, 3` still shows three rows), explicit caller-site spread (`value*`), and the multi-slot loop state of `while`/`repeat` — a step's several output slots become the next iteration's separate state slots, and the finished loop hands its final slots to the surrounding context the same way (`Step.repeat(1, 0, 0)` with `Step = a + 1, b + 1` shows two root rows, while `R = Step.repeat(1, 0, 0)` captures them as the one value `(1, 1)`). Scalar/reduction builtins (`count`, `sum`, `avg`, `min`, `max`, `contains`, `first`, `last`, `reduce`) already return one value and are unchanged. A `map`/`reduce` callback must still return exactly one element; a multi-output callback body is an error, not a silently-grouped value.
 
 ### Zero-Parameter Property Caching
 
@@ -1247,7 +1263,26 @@ Add(3, 7)      # 10
 
 Use direct multi-argument syntax, or put one scalar receiver before the dot and the remaining arguments after the property name, when a user-defined algorithm expects several fixed parameters.
 
-As an invariant, `A.B(C, D)` means `B(A, C, D)` for ordinary properties, not a call where `A`'s top-level values are spread before `C` and `D`.
+For that lexical fallback, `A.B(C, D)` allocates its arguments exactly like `B(A, C, D)`: the receiver is one leading argument segment, never a supply of `A`'s top-level values spread before `C` and `D`. This is a rule about the fallback, not an unconditional rewrite of dot syntax. Dot syntax is **property-first**: when `B` is a structural member of the receiver's algorithm, `A.B(C, D)` calls that member with `C` and `D` alone and no receiver is injected — even if a lexical `B` that could accept `(A, C, D)` is visible — and a written group receiver feeds a collecting parameter item by item (see [Dotted Receivers and Collecting Parameters](#dotted-receivers-and-collecting-parameters)):
+
+<!-- spec:dot-call-structural-member-is-not-a-lexical-rewrite -->
+```
+B(a, c) = a * 100 + c
+Obj = {
+    public B(c) = c + 1
+}
+
+Obj.B(5)
+3.B(5)
+```
+
+**Results:**
+```
+6
+305
+```
+
+`Obj` declares its own `B`, so `Obj.B(5)` calls that member with the one argument `5`; the visible two-parameter `B(a, c)` is never considered, although `B(Obj, 5)` is a well-formed two-argument call. The number `3` has no members, so `3.B(5)` is the lexical fallback `B(3, 5)`.
 
 A parameter list with two or more parameters that contains a collecting parameter (`*name`) is a **mixed fixed/collecting parameter list**. The fixed parameters bind from the front and the back, and the collecting parameter collects the matched middle argument slots as one exact immutable [list](#lists):
 
@@ -1561,7 +1596,7 @@ Outer(20)
 
 **Compatibility note:** SYN-03 initially allowed parameter/property collisions. The front end now rejects any property matching a completed parameter of its own or an enclosing lexical algorithm, including parameters discovered by later implicit forwarding. Moving the property into a nested body does not make it legal; rename one declaration. Captured parameters still beat farther properties and inner opens, and the nearest enclosing parameter still wins. A root property outside the parameter's owner remains legal, as in the first example above. Inline open targets keep their separate owner region; importing a name does not declare a property in the importing algorithm.
 
-The root program is the one owner that is never called, so its implicit parameters are names it could not resolve rather than inputs a nested body could hide. A nested property that happens to share such a name is therefore not reported as a collision; the program fails with the unresolved-name error at the root reference instead, which is where the fix belongs:
+The root program is the one owner that is never called, so its implicit parameters are names it could not resolve rather than inputs a nested body could hide. A nested property that happens to share such a name is therefore not reported as a collision; the program fails with the root's unresolved-name error instead (reported at the root's first output row and naming the unresolved name), and the root reference is where the fix belongs:
 
 ```
 Lib = {
@@ -1759,14 +1794,20 @@ Add(x) = x + y
 
 ### Collecting Explicit Parameters
 
-KatLang supports recursive parameter patterns in ordinary algorithm definitions and conditional branch heads. A sequence-value pattern consumes one parent-level argument slot and matches that slot's immediate contents.
+KatLang supports recursive parameter patterns in ordinary algorithm definitions and conditional branch heads. A sequence-value pattern consumes one parent-level argument slot and matches that slot's immediate contents. In an ordinary definition it opens a lone sequence value or a lone exact [list](#lists) alike:
 
+<!-- spec:ordinary-sequence-pattern-opens-sequence-or-list -->
 ```
 PairSum((x, y)) = x + y
 PairSum((2, 3))
+PairSum([2, 3])
 ```
 
-**Result:** `5`
+**Results:**
+```
+5
+5
+```
 
 Call arguments are evaluated exactly once, from left to right, before arity checking or
 pattern binding. A parenthesized argument sent to a sequence-value pattern has two views—the
@@ -1994,7 +2035,7 @@ Flattened
 4
 ```
 
-Use sequence-value parameter patterns when one fixed argument slot should be opened during binding. This is different from a top-level `*name`: the sequence-value pattern consumes exactly one argument slot, requires that slot to be a sequence value, and binds only that sequence value's immediate contents.
+Use sequence-value parameter patterns when one fixed argument slot should be opened during binding. This is different from a top-level `*name`: the sequence-value pattern consumes exactly one argument slot, opens that slot's value — a lone sequence value or a lone exact [list](#lists), the same two kinds [deconstruction](#deconstruction-assignment) opens — and binds only its immediate contents. Any other value, or a value with the wrong number of items, is an arity error against the pattern. (In a multi-clause [conditional family](#nested-sequence-value-patterns) the same written pattern is narrower: there it matches sequence values only.)
 
 ```
 SequenceValueCount((*values)) = values.count
@@ -2126,6 +2167,21 @@ Divide(2, 10)
 ```
 
 **Result:** `5`
+
+#### Grace weights
+
+Every marker is one unit of **weight** on its name: a prefix `~` pulls the name one position earlier, a postfix `~` pushes it one position later, and the weights of all markers on all occurrences of one name in the same body add up. `~~c` is two units earlier; `~c~` is zero, so the markers cancel and the name stays where first appearance put it; `~c` written on two occurrences of `c` is two units as well. The inferred list is then reordered: a name moves one position per unit, stops at either end of the list, and never passes a neighbour that is pulling at least as hard in the same direction.
+
+<!-- spec:grace-weights-accumulate -->
+```
+Weighted = a + 10 * b + 100 * ~~c
+
+Weighted(1, 2, 3)
+```
+
+**Result:** `132`
+
+First appearance gives `(a, b, c)`; the two units on `c` move it two positions earlier, so the signature is `Weighted(c, a, b)` and the call binds `c = 1`, `a = 2`, `b = 3`. With a single `~c` the signature is `Weighted(a, c, b)` and the same call returns `231`; with `~c~` it stays `Weighted(a, b, c)` and returns `321`. The inferred signature is what an arity error reports, which is a convenient way to check an order: `Weighted(1)` fails with ``Callable `Weighted(c, a, b)` expects 3 arguments, but was called with 1 argument.``
 
 ---
 
@@ -3231,16 +3287,20 @@ F(7)
 
 The name `x` here happens to be a parameter of the *caller* `F` as well, and that changes nothing: a parameter always means the argument bound at this call, never a same-named binding from the surrounding algorithm. Renaming `F`'s parameter to `zz` produces exactly the same error. Either call the parameter — `Apply(x) = x(10)` with `Apply(A)` gives `11` — or pass a value instead of a callable.
 
-Names the callee does *not* declare as parameters still resolve outward as usual, so a nested property keeps reading its ancestor's parameter:
+Names the callee does *not* declare as parameters still resolve outward as usual, so a property nested in a brace body keeps reading its ancestor's parameter:
 
 ```
-Outer(v) = Inner
-  Inner = v + 1
+Outer(v) = {
+    Inner = v + 1
+    Inner
+}
 
 Outer(7)
 ```
 
 **Result:** `8`
+
+`Inner` belongs to `Outer` because it is written inside `Outer`'s braces, and that ownership is the only reason its `v` is `Outer`'s parameter: `Inner` is local to that scope, so a root-level `Inner(7)` does not resolve and `Outer.Inner` is refused as local-only. Indentation is not nesting. Written without the braces — `Outer(v) = Inner` on one line and `Inner = v + 1` indented beneath it — `Inner` would be a root property with its own implicit parameter `v`, callable from the root, and `Outer` would merely forward its `v` to it as an ordinary call; the same `8` would then come from implicit argument forwarding, not from lexical ownership. See [Parameters take part in the walk](#parameters-take-part-in-the-walk) for the ownership rule.
 
 The rule holds in the other direction too. A parameter bound to a *value* is not callable, even when the surrounding algorithm received a callable under the same name:
 
@@ -4129,6 +4189,18 @@ Sign(42)
 
 A variable name in a pattern (like `x`) matches any value — it acts as a catch-all. Number literals match only that exact number. Place the catch-all branch last, since branches are tried in order.
 
+A branch is selected by the shape of its patterns alone — a number literal, a string literal, a sequence-value pattern of a given arity, a repeated binder (an equality constraint), or a catch-all variable — tried top to bottom. Arity never distinguishes branches: all clauses of one family share one top-level arity (the same number of top-level patterns) and one top-level output arity (the same number of written output slots). The front end rejects a family whose clauses disagree before anything runs, even though `F(0)` below would have matched the first clause:
+
+<!-- spec:conditional-clauses-share-top-level-arity -->
+```
+F(0) = 1
+F(x, y) = 2
+
+F(0)
+```
+
+The diagnostic names the clause that disagrees: every clause of `F` must take the same number of top-level patterns, and the second clause takes two. `F(0) = 1` beside `F(x) = 1, 2` is rejected the same way, for output arity; when one branch's result is a pair, write it as the one captured slot `(1, 2)`.
+
 Repeating a binder name within one pattern adds an equality constraint. The first occurrence binds the value; later occurrences must be structurally equal and do not overwrite it:
 
 ```
@@ -4157,6 +4229,23 @@ Else(0, (20, 30))
 ```
 20
 30
+```
+
+In a clause family a sequence-value pattern matches **sequence values only**: an exact [list](#lists) argument does not match `(a, b)` even when its element count fits, so it falls through to a later clause — or fails with no matching branch when none accepts it. A singleton pattern `(x)` is the one exception: it matches any single argument whole (a number, a string, or an entire list) and never opens it. An ordinary single-clause definition is wider — its sequence-value pattern also opens a lone list (see [Collecting Explicit Parameters](#collecting-explicit-parameters)):
+
+<!-- spec:conditional-sequence-pattern-matches-sequence-values-only -->
+```
+F((x, y)) = x + y
+F(z) = 0
+
+F((2, 3))
+F([2, 3])
+```
+
+**Results:**
+```
+5
+0
 ```
 
 A bare variable without parentheses matches anything, including a sequence value:
@@ -4411,14 +4500,33 @@ Use the parameter directly instead (`F(Lib) = Lib.X`), or open a declared algori
 
 ### Visibility
 
-By default, properties are private — accessible within their own algorithm and its children, but not visible to outside callers who load or open the algorithm. Marking a property `public` makes it eligible for external exposure, but a property is exported only if it is self-contained. A nested property is not exported if it depends on parameters owned by an enclosing algorithm, including the pattern binders of a conditional branch. Properties defined inside a conditional branch are additionally unreachable by name from outside that branch — a conditional exposes no members of its branches — but inside the branch they follow the ordinary rules: a self-contained branch-local library, whether declared there, opened inline, or backed by `open 'url'`, exposes its public members to the branch body and to any body nested in it, and nowhere else.
+By default, properties are **private**, and private means *not exported*: `open` and `load` bring only `public` members into scope. Private does not hide a member from structural dot access — `Lib.Helper` reaches a private, self-contained `Helper` of `Lib`, because dot access ignores `public` and checks only exposure. Marking a property `public` makes it eligible for export, but a property is exported only if it is self-contained: a nested property that depends on parameters owned by an enclosing algorithm, including the pattern binders of a conditional branch, is **local-only** and is reached neither through `open` nor through dot access. Properties defined inside a conditional branch are additionally unreachable by name from outside that branch — a conditional exposes no members of its branches — but inside the branch they follow the ordinary rules: a self-contained branch-local library, whether declared there, opened inline, or backed by `open 'url'`, exposes its public members to the branch body and to any body nested in it, and nowhere else.
+
+<!-- spec:visibility-private-member-is-structural-not-exported -->
+```
+Lib = {
+    public Area = 4
+    Helper = Area / 2
+}
+
+Lib.Area
+Lib.Helper
+```
+
+**Results:**
+```
+4
+2
+```
+
+`open Lib` provides `Area` alone: after it, a bare `Helper` is still unresolved (it would become an implicit parameter of the root), while `Lib.Helper` keeps working. A `public` member that reads an enclosing parameter is not exported either — with `Lib(r) = { public Area = r * r ... }`, `open Lib` provides nothing and `Lib.Area` is refused as local-only.
 
 ```
 # In a library algorithm:
 public Area = r * r * Math.Pi
 public Kind(0) = 'zero'
 public Kind(x) = 'nonzero'   # visibility is family-level: every clause is public or none
-Helper = Area / 2   # private — not visible to callers
+Helper = Area / 2   # private: never exported through open or load, still reachable by dot access
 ```
 
 Only `public` exported properties are exposed through `load` and `open`.
@@ -4460,7 +4568,7 @@ Only `public` exported properties are exposed through `load` and `open`.
 
   `F(x, x)` and `F(a, a)` are also equivalent, while `F(x, x)` and `F(a, b)` are distinct because only the first pattern requires equal arguments.
 
-  Use different literal values or different arities to distinguish branches:
+  Use different literal values, string patterns, sequence-value structure, or repeated-name constraints to distinguish branches — never different arities: every clause of one family must have the same top-level pattern arity (see [Basic Pattern Matching](#basic-pattern-matching)):
 
   ```
   F(0) = 1
@@ -4521,8 +4629,8 @@ Only `public` exported properties are exposed through `load` and `open`.
 | `.` | Dot-call / property access | Postfix |
 | `*` (prefix, directly attached) | Collect marker (binding positions only: `*name` collects the matched segment as one exact list) | — |
 | `*` (postfix, directly attached) | Spread marker (`value*` contributes the operand's items to the surrounding supply; a `*` followed by a valid right operand, on the same line or the next, is multiplication instead — spacing never decides that, but a spread marker must be attached: `value *` with no operand is an error) | — |
-| `~` (prefix, directly attached) | Grace: move parameter one position earlier (`~x`; `~ x` is an error) | — |
-| `~` (postfix, directly attached) | Grace: move parameter one position later (`x~`; `x ~` is an error) | — |
+| `~` (prefix, directly attached) | Grace: one unit of weight moving the inferred parameter one position earlier (`~x`; `~~x` two, weights on one name add up, `~ x` is an error) | — |
+| `~` (postfix, directly attached) | Grace: one unit of weight moving the inferred parameter one position later (`x~`; `x~~` two, `~x~` cancels, `x ~` is an error) | — |
 | `[` `]` | Exact immutable list literal (`[1, 2, 3]`; never a call or indexing delimiter — `A[1]` is a missing-separator parse error, `A, [1]` is two slots, and `A:1` indexes) | — |
 
 ### Builtin Algorithms, Intrinsics, and Keywords
@@ -4559,5 +4667,5 @@ A collecting step parameter follows the same collection rule as every other coll
 | `string` | `value.string` — value intrinsic that converts an atomic numeric result to a first-class string value; non-numeric receivers (strings, sequence values) are errors |
 | `load` | `Name = load('url')` — load external algorithm |
 | `open` | `open target` — import public properties into scope |
-| `public` | `public Prop = ...` or `public Prop(pattern) = ...` — expose property to callers |
+| `public` | `public Prop = ...` or `public Prop(pattern) = ...` — make a self-contained property eligible for export through `open`/`load` (structural dot access ignores `public`) |
 | `Math` | Built-in namespace for constants and functions |

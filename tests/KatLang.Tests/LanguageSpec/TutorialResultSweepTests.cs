@@ -34,6 +34,10 @@ public class TutorialResultSweepTests
         Array.AsReadOnly<ReviewedDetailedError>(
             [
                 new(
+                    "Nothing = {}\nNothing()",
+                    "**Result:** error — `Nothing` has no defined output, so there is no value for the call to return (see [The Empty Sequence Value](#the-empty-sequence-value)).",
+                    KatLangErrorCode.MissingOutput),
+                new(
                     "A = {\n}\nA",
                     "**Result:** error — `A` has no defined output.",
                     KatLangErrorCode.MissingOutput),

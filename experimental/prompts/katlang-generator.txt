@@ -419,7 +419,10 @@ Implicit parameter order is first appearance, left-to-right, depth-first:
 Use grace `~` to adjust parameter order without dummy arithmetic:
 - Prefix `~x` moves `x` one position earlier.
 - Postfix `x~` moves `x` one position later.
-- Repeat tildes for more movement.
+- Repeat tildes for more movement. Weights add up per name across the body:
+  `~x` on two occurrences is two positions earlier, `~x~` cancels to zero, and
+  a name never moves past the ends of the list. An arity error reports the
+  inferred signature (`Callable `F(c, a, b)` expects 3 arguments ...`).
 - Grace applies ONLY to one bare parameter/name occurrence; attaching it to an
   expression (`(x + y)~`, `f(x)~`, `x.y~`, `[x]~`, `5~`) is a parse error.
 - Write the marker directly attached to its name: `~x` / `x~`. A detached
@@ -562,13 +565,13 @@ Prefer `if(...)` for simple numeric/value branching. Prefer conditional algorith
 
 Ordinary dot-call is receiver-first call syntax.
 
-For ordinary/user-defined properties:
+For ordinary/user-defined properties, when `B` is NOT a structural member of `A` (the lexical fallback):
     A.B(C, D)
 
-means:
+allocates its arguments like:
     B(A, C, D)
 
-It preserves `A` as one leading argument segment rather than spreading `A`'s outputs into fixed parameters: the receiver never satisfies extra fixed-parameter arity, and a fixed parameter binds the receiver as one value. The one supply rule: a flat top-level COLLECTING parameter allocated the receiver segment consumes the receiver's evaluated top-level supply, so a written group receiver feeds it item by item — `Mean(*Vector) = Vector.sum / Vector.count` supports both `Mean(1, 2, 3)` and `(1, 2, 3).Mean` — while a named property receiver supplies its one stored value (`Arg.Mean` passes `Arg` whole; use `Arg*.Mean` to supply its items).
+This is not an unconditional rewrite: when `B` IS a structural member of `A`, `A.B(C, D)` calls that member with `C` and `D` alone (`Obj = { public B(c) = c + 1 }` makes `Obj.B(5)` return `6` even beside a visible `B(a, c)`). The fallback preserves `A` as one leading argument segment rather than spreading `A`'s outputs into fixed parameters: the receiver never satisfies extra fixed-parameter arity, and a fixed parameter binds the receiver as one value. The one supply rule: a flat top-level COLLECTING parameter allocated the receiver segment consumes the receiver's evaluated top-level supply, so a written group receiver feeds it item by item — `Mean(*Vector) = Vector.sum / Vector.count` supports both `Mean(1, 2, 3)` and `(1, 2, 3).Mean` — while a named property receiver supplies its one stored value (`Arg.Mean` passes `Arg` whole; use `Arg*.Mean` to supply its items).
 
 Examples:
     Add = a + b
@@ -1067,7 +1070,7 @@ Idiomatic structure:
 
 === BEGIN GENERATED: katlang-spec-examples (DO NOT EDIT BY HAND) ===
 
-Verified reference examples (81 of the 248-case canonical language specification,
+Verified reference examples (84 of the 255-case canonical language specification,
 tests/KatLang.Tests/LanguageSpec/LanguageSpecCorpus.cs). Every program and expected
 output below is executed against the KatLang engine and (where representable)
 guarded against the Lean model on every build. Treat these as ground truth for the
@@ -1462,6 +1465,34 @@ Regenerate this block from the repo root with:
 
   Rejected by the parser: "a parenthesized group is a captured value, not an algorithm ..."
 
+[dot-call-structural-member-is-not-a-lexical-rewrite] Dot syntax is property-first. `Obj` declares its own `B`, so `Obj.B(5)` calls that member with the one argument `5` and injects no receiver; the visible two-parameter `B(a, c)` is never considered, although `B(Obj, 5)` is a well-formed two-argument call. Only a receiver WITHOUT the member takes the lexical fallback, where `A.B(C)` allocates arguments like `B(A, C)` with the receiver as one leading segment — `3.B(5)` is `B(3, 5)`.
+
+    B(a, c) = a * 100 + c
+    Obj = {
+        public B(c) = c + 1
+    }
+
+    Obj.B(5)
+    3.B(5)
+
+  Displays:
+    6
+    305
+
+[visibility-private-member-is-structural-not-exported] Private means not exported, not unreachable: `open` and `load` bring only `public` members into scope, while structural dot access ignores `public` and checks only exposure, so `Lib.Helper` reaches the private, self-contained `Helper`. A `public` member that depends on an enclosing parameter is local-only and is reached through neither `open` nor dot access.
+
+    Lib = {
+        public Area = 4
+        Helper = Area / 2
+    }
+
+    Lib.Area
+    Lib.Helper
+
+  Displays:
+    4
+    2
+
 [take-single-survivor] Collection builtins materialize exact lists: one kept item forms the one-element list `[(1, 2)]` (never erased to the item), so its count is 1 and an explicit `value*` re-spreads the list to the kept pair.
 
     take(((1, 2), (3, 4)), 1)
@@ -1584,6 +1615,15 @@ Regenerate this block from the repo root with:
     Foo(1)
 
   Rejected by the parser: "A declaration head cannot be assembled across a physical newline ..."
+
+[grace-weights-accumulate] Every Grace marker is one unit of weight on its name — prefix `~` one position earlier, postfix `~` one position later — and the weights of all markers on all occurrences of one name in the same body add up. First appearance gives `(a, b, c)`; `~~c` carries two units, so the signature is `Weighted(c, a, b)` and the call binds `c = 1`, `a = 2`, `b = 3`. A name never moves past the ends of the list, and `~c~` cancels to zero.
+
+    Weighted = a + 10 * b + 100 * ~~c
+
+    Weighted(1, 2, 3)
+
+  Displays:
+    132
 
 [missing-output-not-a-value] A no-output body is not a value: accessing it, comparing it with `()`, or spreading it are errors — `()` is a value, `{}` is not.
 

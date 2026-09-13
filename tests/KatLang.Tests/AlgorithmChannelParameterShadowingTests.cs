@@ -185,15 +185,20 @@ public class AlgorithmChannelParameterShadowingTests
 
     /// <summary>
     /// The inherited value environment is what lets a nested property read an
-    /// ancestor-owned parameter; shadowing must not break that.
+    /// ancestor-owned parameter; shadowing must not break that. The property must
+    /// be brace-owned: indentation is not nesting, and an indented root-level
+    /// `Inner = v + 1` would print the same 8 through closed-list forwarding of
+    /// `v` instead (SYN-12; pinned in <c>TutorialSemanticContractTests</c>).
     /// </summary>
     [Fact]
     public void NestedProperty_StillReadsAncestorOwnedParameter()
     {
         AssertEval(
             """
-            Outer(v) = Inner
-              Inner = v + 1
+            Outer(v) = {
+                Inner = v + 1
+                Inner
+            }
             Outer(7)
             """,
             8);

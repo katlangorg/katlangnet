@@ -268,6 +268,10 @@ public class LanguageSpecRunnerTests
             "declaration-head-never-spans-lines",
             "grace-on-bound-name-rejected",
             "grace-under-explicit-list-rejected",
+            // Clause-family arity agreement (pattern and output arity): front-end
+            // rejections, parse-level by construction.
+            "conditional-clauses-share-top-level-arity",
+            "conditional-clauses-share-top-level-output-arity",
         ];
         string[] expectedModelDivergences =
         [

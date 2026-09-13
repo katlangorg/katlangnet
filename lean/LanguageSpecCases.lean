@@ -14,11 +14,11 @@ This is bounded differential validation over the Lean-guarded partition,
 not a formal verification of the evaluators.
 
 Partition (machine-checked by the `specCaseIds.length` guard below):
-- specification surface cases: 248
-- excluded parse-level cases (Lean has no surface parser): 32
+- specification surface cases: 255
+- excluded parse-level cases (Lean has no surface parser): 34
 - excluded C#-only cases (each carries an explicit reason in the corpus): 10
-- Lean-guarded cases: 206
-- probe observations (C#-only by design): 505
+- Lean-guarded cases: 211
+- probe observations (C#-only by design): 538
 - internal-node cases live in the semantic-explorer corpus, not here: see
   lean/SemanticExplorerCases.lean
 
@@ -398,6 +398,11 @@ def case_supply_vs_value_patterns : Expr :=
   .algorithmExpr (alg [] [] [privateProp "CountValues" (algWithParameters [{ name := "values", kind := .collecting }] [] [] [(.dotCall (.param "values") "count" none)]), privateProp "CountSequenceValue" (algWithParameterPatterns [.sequenceValue [.capture { name := "values", kind := .collecting }]] [] [] [(.dotCall (.param "values") "count" none)])] [(.call (.resolve "CountValues") []), (.call (.resolve "CountValues") [.num 1, .num 2, .num 3]), (.call (.resolve "CountValues") [(.capture [.num 1, .num 2, .num 3])]), (.call (.resolve "CountSequenceValue") [(.capture [.num 1, .num 2, .num 3])])])
 #guard obs case_supply_vs_value_patterns == "ok raw=S[0, 3, 1, 3] n=4"
 
+-- ordinary-sequence-pattern-opens-sequence-or-list [variadic-calls]: PairSum((x, y)) = x + y \n PairSum((2, 3)) \n PairSum([2, 3])
+def case_ordinary_sequence_pattern_opens_sequence_or_list : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "PairSum" (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [(.binary .add (.param "x") (.param "y"))])] [(.call (.resolve "PairSum") [(.capture [.num 2, .num 3])]), (.call (.resolve "PairSum") [(.listLiteral [.num 2, .num 3])])])
+#guard obs case_ordinary_sequence_pattern_opens_sequence_or_list == "ok raw=S[5, 5] n=2"
+
 -- redundant-call-parens-canonical [variadic-calls]: Inner = (1, 2, 3) \n CountSequenceValue((*values)) = values.count \n NestedCount(((*values))) = values.count \n  \n CountSequenceValue(Inner) \n CountSequenceValue((Inner)) \n CountSequenceValue(((1, 2, 3))) \n NestedCount(((1, 2, 3))) \n NestedCount((((1, 2, 3))))
 def case_redundant_call_parens_canonical : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Inner" (alg [] [] [] [(.capture [.num 1, .num 2, .num 3])]), privateProp "CountSequenceValue" (algWithParameterPatterns [.sequenceValue [.capture { name := "values", kind := .collecting }]] [] [] [(.dotCall (.param "values") "count" none)]), privateProp "NestedCount" (algWithParameterPatterns [.sequenceValue [.sequenceValue [.capture { name := "values", kind := .collecting }]]] [] [] [(.dotCall (.param "values") "count" none)])] [(.call (.resolve "CountSequenceValue") [.resolve "Inner"]), (.call (.resolve "CountSequenceValue") [(.capture [.resolve "Inner"])]), (.call (.resolve "CountSequenceValue") [(.capture [(.capture [.num 1, .num 2, .num 3])])]), (.call (.resolve "NestedCount") [(.capture [(.capture [.num 1, .num 2, .num 3])])]), (.call (.resolve "NestedCount") [(.capture [(.capture [(.capture [.num 1, .num 2, .num 3])])])])])
@@ -417,6 +422,11 @@ def case_patterned_user_call_is_one_value_boundary : Expr :=
 def case_conditional_singleton_head_binds_its_argument_whole : Expr :=
   .algorithmExpr (alg [] [] [privateProp "F" (.conditional none [] [⟨.sequenceValue [.sequenceValue [.bind "x"]], (alg [] [] [] [.param "x"])⟩, ⟨.bind "n", (alg [] [] [] [.num 0])⟩])] [(.call (.resolve "F") [(.listLiteral [.num 1, .num 2])])])
 #guard obs case_conditional_singleton_head_binds_its_argument_whole == "ok raw=L[1, 2] n=1"
+
+-- conditional-sequence-pattern-matches-sequence-values-only [conditionals]: F((x, y)) = x + y \n F(z) = 0 \n  \n F((2, 3)) \n F([2, 3])
+def case_conditional_sequence_pattern_matches_sequence_values_only : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (.conditional none [] [⟨.sequenceValue [.sequenceValue [.bind "x", .bind "y"]], (alg [] [] [] [(.binary .add (.param "x") (.param "y"))])⟩, ⟨.bind "z", (alg [] [] [] [.num 0])⟩])] [(.call (.resolve "F") [(.capture [.num 2, .num 3])]), (.call (.resolve "F") [(.listLiteral [.num 2, .num 3])])])
+#guard obs case_conditional_sequence_pattern_matches_sequence_values_only == "ok raw=S[5, 0] n=2"
 
 -- conditional-clause-head-rejects-extra-arguments [conditionals]: F(0) = 1 \n F(n) = 2 \n F(1, 2)
 def case_conditional_clause_head_rejects_extra_arguments : Expr :=
@@ -562,6 +572,16 @@ def case_capture_suppresses_structural_members : Expr :=
 def case_output_dotted_access_ordinary : Expr :=
   .algorithmExpr (alg [] [] [privateProp "A" (alg [] [] [privateProp "Output" (alg [] [] [] [.num 9])] [])] [(.dotCall (.resolve "A") "Output" none)])
 #guard obs case_output_dotted_access_ordinary == "ok raw=9 n=1"
+
+-- dot-call-structural-member-is-not-a-lexical-rewrite [access-boundaries]: B(a, c) = a * 100 + c \n Obj = { \n     public B(c) = c + 1 \n } \n  \n Obj.B(5) \n 3.B(5)
+def case_dot_call_structural_member_is_not_a_lexical_rewrite : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Obj" (alg [] [] [publicProp "B" (alg ["c"] [] [] [(.binary .add (.param "c") (.num 1))])] []), privateProp "B" (alg ["a", "c"] [] [] [(.binary .add (.binary .mul (.param "a") (.num 100)) (.param "c"))])] [(.dotCall (.resolve "Obj") "B" (some [.num 5])), (.dotCall (.num 3) "B" (some [.num 5]))])
+#guard obs case_dot_call_structural_member_is_not_a_lexical_rewrite == "ok raw=S[6, 305] n=2"
+
+-- visibility-private-member-is-structural-not-exported [access-boundaries]: Lib = { \n     public Area = 4 \n     Helper = Area / 2 \n } \n  \n Lib.Area \n Lib.Helper
+def case_visibility_private_member_is_structural_not_exported : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Lib" (alg [] [] [publicProp "Area" (alg [] [] [] [.num 4]), privateProp "Helper" (alg [] [] [] [(.binary .div (.resolve "Area") (.num 2))])] [])] [(.dotCall (.resolve "Lib") "Area" none), (.dotCall (.resolve "Lib") "Helper" none)])
+#guard obs case_visibility_private_member_is_structural_not_exported == "ok raw=S[4, 2] n=2"
 
 -- property-call-boundary [access-boundaries]: P = 1, 2, 3 \n P()
 def case_property_call_boundary : Expr :=
@@ -812,6 +832,11 @@ def case_star_before_operand_row_is_multiplication : Expr :=
 def case_star_before_declaration_or_boundary_is_spread : Expr :=
   .algorithmExpr (alg [] [] [privateProp "A" (alg [] [] [] [(.capture [.num 1, .num 2])]), privateProp "B" (alg [] [] [] [.num 5])] [(.sequenceSpread (.resolve "A")), .resolve "B"])
 #guard obs case_star_before_declaration_or_boundary_is_spread == "ok raw=S[1, 2, 5] n=3"
+
+-- grace-weights-accumulate [parser-layout]: Weighted = a + 10 * b + 100 * ~~c \n  \n Weighted(1, 2, 3)
+def case_grace_weights_accumulate : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Weighted" (alg ["c", "a", "b"] [] [] [(.binary .add (.binary .add (.param "a") (.binary .mul (.num 10) (.param "b"))) (.binary .mul (.num 100) (.param "c")))])] [(.call (.resolve "Weighted") [.num 1, .num 2, .num 3])])
+#guard obs case_grace_weights_accumulate == "ok raw=132 n=1"
 
 -- grace-prefix-marker-led-row [parser-layout]: K = { \n   a \n   ~b \n } \n K(10, 20)
 def case_grace_prefix_marker_led_row : Expr :=
@@ -1128,7 +1153,7 @@ def case_if_spread_builds_values_before_branch_selection : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Risky" (alg [] [] [] [(.capture [.num 10, (.binary .div (.num 1) (.num 0))])])] [(.call (.resolve "if") [.num 1, (.sequenceSpread (.resolve "Risky"))])])
 #guard obs case_if_spread_builds_values_before_branch_selection == "err div0"
 
--- 206 canonical Lean-guarded specification cases.
+-- 211 canonical Lean-guarded specification cases.
 
 /--
 Machine-checked Lean-guarded partition count: the id list is built by the
@@ -1196,10 +1221,12 @@ def specCaseIds : List String := [
   "variadic-grouped-vs-spread",
   "variadic-nested-not-flattened",
   "supply-vs-value-patterns",
+  "ordinary-sequence-pattern-opens-sequence-or-list",
   "redundant-call-parens-canonical",
   "call-spread-into-conditional-clauses",
   "patterned-user-call-is-one-value-boundary",
   "conditional-singleton-head-binds-its-argument-whole",
+  "conditional-sequence-pattern-matches-sequence-values-only",
   "conditional-clause-head-rejects-extra-arguments",
   "call-spread-dispatches-before-clause-selection",
   "call-spread-into-patterned-callee",
@@ -1229,6 +1256,8 @@ def specCaseIds : List String := [
   "capture-suppresses-higher-order-identity",
   "capture-suppresses-structural-members",
   "output-dotted-access-ordinary",
+  "dot-call-structural-member-is-not-a-lexical-rewrite",
+  "visibility-private-member-is-structural-not-exported",
   "property-call-boundary",
   "builtin-result-reentry",
   "zero-arg-access-of-parametrized",
@@ -1279,6 +1308,7 @@ def specCaseIds : List String := [
   "trailing-comma-continues-line",
   "star-before-operand-row-is-multiplication",
   "star-before-declaration-or-boundary-is-spread",
+  "grace-weights-accumulate",
   "grace-prefix-marker-led-row",
   "adjacency-call-across-space",
   "multiline-call-open-delimiter",
@@ -1343,6 +1373,6 @@ def specCaseIds : List String := [
   "parameter-named-if-carries-the-supplied-callable",
   "if-spread-builds-values-before-branch-selection"
 ]
-#guard specCaseIds.length == 206
+#guard specCaseIds.length == 211
 
 end LanguageSpecCases

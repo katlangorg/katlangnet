@@ -794,6 +794,7 @@ list), a parameter of an enclosing algorithm, a visible property, a builtin
 
 - Prefix `~x`: shift `x` one position earlier. `~~x`: two positions earlier.
 - Postfix `x~`: shift `x` one position later. `x~~`: two positions later.
+- Weights add up per name across the whole body: `~x` on two occurrences of `x` is two positions earlier, `~x~` is zero (the markers cancel), and a name never moves past the ends of the list. An arity error reports the inferred signature (``Callable `F(c, a, b)` expects 3 arguments ...``), which is the way to check an order.
 
 Use grace whenever natural first-appearance order differs from desired parameter order. Never use dummy arithmetic to force ordering.
 
@@ -1280,7 +1281,7 @@ BETTER — specific branch first:
 - CHAINED ACCESS is property-first at EVERY level: a receiver that is itself an argumentless dot access (`Lib.Sub` in `Lib.Sub.Q`) is navigated to that member's algorithm first, so `Lib.Sub.Q` reads `Sub`'s own `Q` whenever `Sub` exposes an accessible `Q` — even when a same-named `Q(x)` is visible — and `A.B.C.D` traverses nested public members at any depth without evaluating the containers. Only a receiver WITHOUT the member falls back, and the fallbacks compose along the chain (`3.A.B` is `B(A(3))`). A written call such as `Lib.Sub()` is a value, so a member after it is an extension call on that value; a declared local-only or conditional-branch intermediate member is an error at that edge, never a fallback.
 - The fallback resolves `f` exactly like the plain callee in `f(a, args)`, including parameters: with `K(a, t) = a.t`, the member `t` calls the algorithm bound to the parameter `t`, exactly like `t(a)`. The nearest lexical owner declaring the name supplies its parameter or property. An ancestor-owned parameter beats properties of farther owners and all opened providers; a property conflicting with a parameter in the same or an enclosing algorithm is a declaration error. Structural members of the receiver always win before either.
 - GRACE WITH DOTCALL: `a~.f(args)` is ordinary postfix Grace on the bare receiver name followed by an ORDINARY DOT EDGE; `a.~f(args)` is ordinary dot with prefix Grace on the participating member/fallback occurrence. Base semantic occurrence order is receiver, participating fallback, then written arguments: `K = a.f` infers `(a, f)`, while both graced two-name forms infer `(f, a)` through the ONE general Grace pass. Runtime fallback still invokes `f(a, args)`, but that assembly does not order the enclosing signature. Postfix Grace requires its receiver operand to be one bare name, so `(x + y)~.t`, `f(x)~.t`, `[x, y]~.t`, `5~.t`, and a second `~.` in `a~.t~.u` reject; prefix member Grace remains valid with a compound receiver because it decorates the bare member name. Call arguments are unrestricted (`a~.t(b, c)` and `a.~t(b, c)` infer `(t, a, b, c)`). Grace NEVER changes member selection or any other executable semantics: with a free receiver `o`, `Read = o~.V` then `Read(Obj)` reads Obj's structural `V` exactly like `Obj.V` (write `V(Obj)` to reach a lexical `V`), `x~.string` keeps the dot-only intrinsic, `S~.count` (free `S`) keeps the dotted builtin view, and receiver-segment supply is unchanged. A member participates in inference when fallback MAY be selected, but not when structural resolution is certain and not in a CLOSED explicit list. A marker that could reorder nothing is an ERROR, never a no-op: `Obj~.V` on a bound property, `Obj.~V` on a member Obj is known to declare, `x.~string` on the intrinsic, `S.~count` on a builtin, and any marker under an explicit parameter list. Grace must attach directly to its bare name: `a ~ .t` and `a.~ t` are attachment errors; use `a~.t` and `a.~t`. A grace-marked `open` target is rejected (`open M~.C`).
-- Ordinary lexical dot-call preserves that injected receiver as one argument boundary. `A.B(C, D)` means `B(A, C, D)`, not a call where `A`'s top-level values are spread before `C` and `D`. Generate `F(3, 7)` or `(3).F(7)`, not `(3, 7).F`, when a user-defined `F` expects two fixed parameters.
+- Ordinary lexical dot-call preserves that injected receiver as one argument boundary: for the FALLBACK, `A.B(C, D)` allocates arguments like `B(A, C, D)`, not a call where `A`'s top-level values are spread before `C` and `D`. This is not an unconditional rewrite — when `B` is a structural member of `A`, `A.B(C, D)` calls that member with `C` and `D` alone (`Obj = { public B(c) = c + 1 }` makes `Obj.B(5)` return `6` even beside a visible `B(a, c)`). Generate `F(3, 7)` or `(3).F(7)`, not `(3, 7).F`, when a user-defined `F` expects two fixed parameters.
 - A SPREAD receiver is the exception: a fluent chain after a spread passes the spread items as the leading call arguments, resolved lexically. `x.Calculate*.Target` means `Target(x.Calculate*)`, and `Arg*.Scale(10)` means `Scale(Arg*, 10)`.
 - A user-defined property with an explicit collecting parameter (`*values`) collects its assigned argument slots as one exact immutable list; the dot-call receiver is one leading segment whose supply only that collector consumes. For `Scale(*values, factor) = values.map{n * factor}` with `Arg = 1, 2, 3`, use `Scale(Arg*, 10)`, `Arg*.Scale(10)`, `(1, 2, 3).Scale(10)`, or `Scale(1, 2, 3, 10)` to scale each item. `Scale(Arg, 10)` and `Arg.Scale(10)` supply `Arg` as one sequence-valued argument (a named receiver supplies its one stored value). Multiple sibling grouped values are preserved unless explicitly spread with a postfix star.
 
@@ -1543,7 +1544,7 @@ Without trailing output, `Order` has no direct result — use `Order.Total(25, 4
 
 === BEGIN GENERATED: katlang-spec-examples (DO NOT EDIT BY HAND) ===
 
-Verified reference examples (81 of the 248-case canonical language specification,
+Verified reference examples (84 of the 255-case canonical language specification,
 tests/KatLang.Tests/LanguageSpec/LanguageSpecCorpus.cs). Every program and expected
 output below is executed against the KatLang engine and (where representable)
 guarded against the Lean model on every build. Treat these as ground truth for the
@@ -1938,6 +1939,34 @@ Regenerate this block from the repo root with:
 
   Rejected by the parser: "a parenthesized group is a captured value, not an algorithm ..."
 
+[dot-call-structural-member-is-not-a-lexical-rewrite] Dot syntax is property-first. `Obj` declares its own `B`, so `Obj.B(5)` calls that member with the one argument `5` and injects no receiver; the visible two-parameter `B(a, c)` is never considered, although `B(Obj, 5)` is a well-formed two-argument call. Only a receiver WITHOUT the member takes the lexical fallback, where `A.B(C)` allocates arguments like `B(A, C)` with the receiver as one leading segment — `3.B(5)` is `B(3, 5)`.
+
+    B(a, c) = a * 100 + c
+    Obj = {
+        public B(c) = c + 1
+    }
+
+    Obj.B(5)
+    3.B(5)
+
+  Displays:
+    6
+    305
+
+[visibility-private-member-is-structural-not-exported] Private means not exported, not unreachable: `open` and `load` bring only `public` members into scope, while structural dot access ignores `public` and checks only exposure, so `Lib.Helper` reaches the private, self-contained `Helper`. A `public` member that depends on an enclosing parameter is local-only and is reached through neither `open` nor dot access.
+
+    Lib = {
+        public Area = 4
+        Helper = Area / 2
+    }
+
+    Lib.Area
+    Lib.Helper
+
+  Displays:
+    4
+    2
+
 [take-single-survivor] Collection builtins materialize exact lists: one kept item forms the one-element list `[(1, 2)]` (never erased to the item), so its count is 1 and an explicit `value*` re-spreads the list to the kept pair.
 
     take(((1, 2), (3, 4)), 1)
@@ -2060,6 +2089,15 @@ Regenerate this block from the repo root with:
     Foo(1)
 
   Rejected by the parser: "A declaration head cannot be assembled across a physical newline ..."
+
+[grace-weights-accumulate] Every Grace marker is one unit of weight on its name — prefix `~` one position earlier, postfix `~` one position later — and the weights of all markers on all occurrences of one name in the same body add up. First appearance gives `(a, b, c)`; `~~c` carries two units, so the signature is `Weighted(c, a, b)` and the call binds `c = 1`, `a = 2`, `b = 3`. A name never moves past the ends of the list, and `~c~` cancels to zero.
+
+    Weighted = a + 10 * b + 100 * ~~c
+
+    Weighted(1, 2, 3)
+
+  Displays:
+    132
 
 [missing-output-not-a-value] A no-output body is not a value: accessing it, comparing it with `()`, or spreading it are errors — `()` is a value, `{}` is not.
 
