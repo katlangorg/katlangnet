@@ -18,7 +18,7 @@ Partition (machine-checked by the `specCaseIds.length` guard below):
 - excluded parse-level cases (Lean has no surface parser): 34
 - excluded C#-only cases (each carries an explicit reason in the corpus): 11
 - Lean-guarded cases: 211
-- probe observations (C#-only by design): 547
+- probe observations (C#-only by design): 555
 - internal-node cases live in the semantic-explorer corpus, not here: see
   lean/SemanticExplorerCases.lean
 

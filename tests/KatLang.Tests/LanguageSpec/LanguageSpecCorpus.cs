@@ -804,9 +804,17 @@ public static class LanguageSpecCorpus
             Probes =
             [
                 new SpecProbe("A = 1, 2, 3\nx, y, z = (A*)\ny", "ok raw=2 n=1"),
+                // Observe A itself as well as its bindings: no singleton sequence wrapper survives storage.
+                new SpecProbe("A = ((1, 2))\nx, y = A\nA, x, y", "ok raw=S[S[1, 2], 1, 2] n=3"),
+                new SpecProbe("x, y = [(1, 2)]\nx", "err arity"),
+                new SpecProbe("x, y = ([(1, 2)]*)\nx, y", "ok raw=S[1, 2] n=2"),
+                new SpecProbe("A = [(1, 2)]\nx, y = A\nx", "err arity"),
+                new SpecProbe("A = [(1, 2)]\nx, y = (A*)\nx, y", "ok raw=S[1, 2] n=2"),
+                // Different captured values can still present the same deconstruction items.
+                new SpecProbe("A = [7]\nx, *xs = A\ny, *ys = (A*)\nA, (A*), x, xs, y, ys", "ok raw=S[L[7], 7, 7, L[], 7, L[]] n=6"),
             ],
             IncludeInGeneratorPrompt = true,
-            Explanation = "Assignment deconstruction is an unpacking receiver: a single stored sequence value is opened and matched element-by-element, so `= A` and `= A*` bind identically. Function calls do NOT unpack this way — `F(A)` still passes one argument.",
+            Explanation = "Assignment deconstruction is an unpacking receiver: the whole right-hand side is captured into one shared value, then a sequence or list is opened one level and matched element-by-element; an atom or string supplies itself as one item. For deconstruction targets, `= A` and `= (A*)` present the same items unless `A` is a singleton list whose lone element is itself a sequence or list. In that case, spread supplies the lone element, singleton capture returns it, and deconstruction opens it one level further: `x, y = [(1, 2)]` fails against two targets, while `x, y = ([(1, 2)]*)` binds `x = 1`, `y = 2`. Equal binding items do NOT require equal captured values: for `A = [7]`, both `x, *rest = A` and `x, *rest = (A*)` bind `x = 7`, `rest = []`, although capture sees `[7]` versus `7`. Stored sequences have no equivalent singleton wrapper because sequence normalization erases it. An ordinary single-name definition `x = A` retains the captured value without deconstruction; function calls also do NOT unpack this way — `F(A)` still passes one argument.",
         },
         new()
         {
@@ -3146,9 +3154,11 @@ public static class LanguageSpecCorpus
             [
                 new SpecProbe("x, y, z = ([1, 2, 3]*)\nx, y, z", "ok raw=S[1, 2, 3] n=3"),
                 new SpecProbe("A = [1, 2, 3]\nx, y, z = A\nx, y, z", "ok raw=S[1, 2, 3] n=3"),
+                new SpecProbe("A = [[1, 2]]\nx, *xs = A\ny, *ys = (A*)\nx, xs, y, ys", "ok raw=S[L[1, 2], L[], 1, L[2]] n=4"),
+                new SpecProbe("A = []\n*xs = A\n*ys = (A*)\nxs, ys", "ok raw=S[L[], L[]] n=2"),
             ],
             IncludeInGeneratorPrompt = true,
-            Explanation = "A multi-target deconstruction whose right-hand side is exactly one list value opens the list, binding identically to the explicit spread.",
+            Explanation = "A deconstruction whose captured right-hand side is one list value opens the list one level. Here, `= [1, 2, 3]` and `= ([1, 2, 3]*)` present the same three binding items. Empty lists and singleton lists containing an atom or string also present the same items with or without spread-before-capture. A singleton list containing a sequence or list can produce different bindings or an arity outcome: singleton capture after spread removes the outer list, so deconstruction opens its element instead. For `A = [[1, 2]]`, `x, *rest = A` binds `x = [1, 2]`, `rest = []`, while `x, *rest = (A*)` binds `x = 1`, `rest = [2]`.",
         },
         new()
         {
