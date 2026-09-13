@@ -140,6 +140,20 @@ public class EvaluatorOperatorTests
     public void Eval_IntegerDivision_NegativeDivisor_Truncates()
         => AssertEval("7 div -2", -3);
 
+    // G-3: `div` truncates the EXACT quotient, not the quotient after IEEE rounded
+    // it to 34 digits — the shared Decimal128Numerics.IntegerDivide, reached by the
+    // generic spine, the async twin, and the planned loop arm alike.
+    [Fact]
+    public void Eval_IntegerDivision_ExactAt34Digits_DoesNotRoundUpBeforeTruncating()
+        => AssertEvalLoopModes(
+            "8999999999999999999999999999999999 div 3\n8999999999999999999999999999999999 mod 3",
+            Decimal128.Parse("2999999999999999999999999999999999", System.Globalization.CultureInfo.InvariantCulture),
+            2);
+
+    [Fact]
+    public void Eval_IntegerDivision_SmallQuotientNearAnIntegerBoundary_TruncatesExactly()
+        => AssertEvalLoopModes("Y = 3e32\n(13 * Y - 1) div Y\n(12 * Y + 1) div Y\n(13 * Y - 1) mod Y == Y - 1", 12, 12, 1);
+
     [Fact]
     public void Eval_DivisionByZero_Fails()
         => AssertEvalFails("5 / 0");

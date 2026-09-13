@@ -450,7 +450,8 @@ User input may contain Unicode math symbols. Generated KatLang must use only ASC
 - Arithmetic operators: `+`, `-`, `*`, `/`, `div`, `mod`, `^`.
 - `/` is true decimal division: `7 / 2` is `3.5`.
 - `div` is integer division that truncates toward zero: `7 div 2` is `3`, `-7 div 2` is `-3`.
-- `mod` is the remainder; its sign follows the dividend: `-7 mod 2` is `-1`, `7 mod -2` is `1`.
+- `div` truncates the exact quotient toward zero. It returns every representable truncated integer exactly: all `|q| <= 10^34` (the consecutive-integer boundary), plus sparse larger integers such as `1e35`. Otherwise, when IEEE division remains finite, it keeps the leading 34 digits toward zero, so the result's magnitude never exceeds the exact quotient's magnitude for either sign (`1e40 div 7` is `…428000000`, while `/` rounds to `…429000000`). IEEE overflow still produces signed infinity. The mathematical `div`/`mod` identity requires a representable truncated quotient; evaluating `x == y * (x div y) + (x mod y)` also requires exact intermediate arithmetic.
+- `mod` is the remainder; its sign follows the dividend: `-7 mod 2` is `-1`, `7 mod -2` is `1`. It is exact for finite operands and a nonzero divisor.
 - Choose `/` vs `div` deliberately: `/` keeps fractional results, `div` truncates.
 - Comparisons (`==`, `!=`, `<`, `>`, `<=`, `>=`) return `1` or `0`. Logical operators are `and`, `or`, `xor`, `not`.
 - `==` and `!=` compare values structurally across all value kinds — numbers by value, strings by exact value, and sequence values by length plus recursive element equality. Different value kinds (e.g. a number and a sequence value) compare unequal rather than erroring. The ordering operators (`<`, `>`, `<=`, `>=`) and the arithmetic operators require numeric scalar operands.
@@ -1545,7 +1546,7 @@ Without trailing output, `Order` has no direct result — use `Order.Total(25, 4
 
 === BEGIN GENERATED: katlang-spec-examples (DO NOT EDIT BY HAND) ===
 
-Verified reference examples (85 of the 257-case canonical language specification,
+Verified reference examples (85 of the 259-case canonical language specification,
 tests/KatLang.Tests/LanguageSpec/LanguageSpecCorpus.cs). Every program and expected
 output below is executed against the KatLang engine and (where representable)
 guarded against the Lean model on every build. Treat these as ground truth for the

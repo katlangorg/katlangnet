@@ -287,6 +287,9 @@ public class LanguageSpecRunnerTests
             "pow-integer-exponent-inexact-accuracy",
             "pow-zero-base-negative-exponent",
             "range-integral-bound-quantum",
+            // G-3: a truncated `div` quotient beyond 34 significant digits is rounded
+            // toward zero in Decimal128; the Int core keeps the exact integer.
+            "integer-division-beyond-consecutive-integers",
             // The unmodeled Math-native surface.
             "native-argument-value-demand",
             "native-flat-callback-binding",
@@ -315,9 +318,9 @@ public class LanguageSpecRunnerTests
     [Fact]
     public void FidelityRatchet_LeanGuardedCoverageCannotSilentlyShrink()
     {
-        const int MinimumEncoderDerivedCases = 169;
+        const int MinimumEncoderDerivedCases = 170;
         const int MaximumHandAuthoredOverrides = 0;
-        const int MaximumCSharpOnlyCases = 11;
+        const int MaximumCSharpOnlyCases = 12;
 
         var derived = Cases.Count(c => c.DerivedLeanProgram is not null);
         var overrides = Cases.Count(c => c.LeanProgramOverride is not null);

@@ -279,6 +279,16 @@ public class OptimizerEquivalenceSweepTests
             ("native-call-in-step", "S(x) = x + Math.Abs(-1)\nrepeat(S, 3, 0)"),
             ("div-zero-late", "S(x) = 10 div (x - 2)\nrepeat(S, 4, 0)"),
             ("div-zero-in-continuation", "S(x) = x + 1, 10 div (x - 2)\nwhile(S, 0)"),
+            // G-3: the planned numeric arm and the generic spine share ONE exact
+            // integer division — a 34-digit quotient that IEEE rounds up, a small
+            // quotient landing on an integer from either side, a quotient beyond the
+            // consecutive-integer domain, and the digit-extraction idiom.
+            ("div-exact-34-digit-quotient", "S(x) = x div 3\nrepeat(S, 1, 8999999999999999999999999999999999)"),
+            ("div-landing-from-below", "S(x) = x div 3e32\nrepeat(S, 1, 3899999999999999999999999999999999)"),
+            ("div-landing-from-above", "S(x) = x div 3e32\nrepeat(S, 1, 3600000000000000000000000000000001)"),
+            ("div-beyond-consecutive-integers", "S(x) = x div 7\nrepeat(S, 1, 1e35)"),
+            ("div-negative-exact-quotient", "S(x, r) = x div -3, x mod -3, 0\nwhile(S, -8999999999999999999999999999999999, 0)"),
+            ("div-mod-digit-extraction", "S(n, s) = n div 10, s + n mod 10, n > 0\nwhile(S, 9999999999999999999999999999999999, 0)"),
             ("string-state-planned", "S(x) = x\nrepeat(S, 3, 'ab')"),
             ("error-in-planned-branch", "S(x) = if(x > 1, x - 1, min(()))\nrepeat(S, 4, 3)"),
             ("spread-step-output", "S(x) = { (x, 1)* }\nrepeat(S, 2, 0)"),

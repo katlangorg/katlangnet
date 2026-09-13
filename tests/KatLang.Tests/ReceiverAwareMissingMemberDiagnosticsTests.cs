@@ -621,7 +621,7 @@ public class ReceiverAwareMissingMemberDiagnosticsTests
     [InlineData(true)]
     public void SharedFallbackLeaf_UsesItsFirstSemanticOccurrence(bool dotFirst)
     {
-        var syntax = Parser.ParseSyntax(MathCeilingTypo).SyntaxRoot;
+        var syntax = SourceProvenance.ParseSyntaxValidRoot(MathCeilingTypo);
         var dot = Assert.IsType<Expr.DotCall>(Assert.Single(syntax.Output));
         var sharedName = dot.EffectiveLexicalFallback;
         dot = dot with { LexicalFallback = sharedName };

@@ -724,7 +724,10 @@ internal static partial class LoopOptimizer
         // zero-valued divisor (the evaluated value, signed zeros included) stays the
         // specified DivByZero error; everything else follows Decimal128's IEEE
         // semantics (overflow saturates to an infinity, NaN propagates, comparisons
-        // with NaN are false).
+        // with NaN are false). `div` and `^` are the two arms with non-trivial
+        // numeric semantics, and both delegate to the ONE shared implementation
+        // (Decimal128Numerics.IntegerDivide, Evaluator.EvalPow) so the planned and
+        // generic strategies cannot drift.
         if ((op is BinaryOp.Div or BinaryOp.IDiv or BinaryOp.Mod) && y == 0)
             return new EvalError.DivByZero() { Span = span };
 
@@ -741,7 +744,7 @@ internal static partial class LoopOptimizer
             BinaryOp.Sub => x - y,
             BinaryOp.Mul => x * y,
             BinaryOp.Div => x / y,
-            BinaryOp.IDiv => Decimal128.Truncate(x / y),
+            BinaryOp.IDiv => Decimal128Numerics.IntegerDivide(x, y),
             BinaryOp.Mod => x % y,
             BinaryOp.Lt => x < y ? 1 : 0,
             BinaryOp.Gt => x > y ? 1 : 0,

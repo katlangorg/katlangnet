@@ -14,11 +14,11 @@ This is bounded differential validation over the Lean-guarded partition,
 not a formal verification of the evaluators.
 
 Partition (machine-checked by the `specCaseIds.length` guard below):
-- specification surface cases: 257
+- specification surface cases: 259
 - excluded parse-level cases (Lean has no surface parser): 34
-- excluded C#-only cases (each carries an explicit reason in the corpus): 11
-- Lean-guarded cases: 212
-- probe observations (C#-only by design): 559
+- excluded C#-only cases (each carries an explicit reason in the corpus): 12
+- Lean-guarded cases: 213
+- probe observations (C#-only by design): 575
 - internal-node cases live in the semantic-explorer corpus, not here: see
   lean/SemanticExplorerCases.lean
 
@@ -112,6 +112,11 @@ def case_power_unary_precedence : Expr :=
 def case_integer_division_truncates : Expr :=
   .algorithmExpr (alg [] [] [] [(.binary .idiv (.unary .minus (.num 7)) (.num 2)), (.binary .mod (.unary .minus (.num 7)) (.num 2)), (.binary .idiv (.num 7) (.num 2))])
 #guard obs case_integer_division_truncates == "ok raw=S[-3, -1, 3] n=3"
+
+-- integer-division-exact-quotient [arithmetic]: X = 8999999999999999999999999999999999 \n X div 3 \n X mod 3 \n X == 3 * (X div 3) + (X mod 3) \n Y = 3e32 \n (13 * Y - 1) div Y \n (12 * Y + 1) div Y \n -X div 3 \n X div -3 \n -X div -3 \n 1e34 div 7 \n 1e34 mod 7 \n 1e40 div 1e5
+def case_integer_division_exact_quotient : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "X" (alg [] [] [] [.num 8999999999999999999999999999999999]), privateProp "Y" (alg [] [] [] [.num 300000000000000000000000000000000])] [(.binary .idiv (.resolve "X") (.num 3)), (.binary .mod (.resolve "X") (.num 3)), (.binary .eq (.resolve "X") (.binary .add (.binary .mul (.num 3) (.binary .idiv (.resolve "X") (.num 3))) (.binary .mod (.resolve "X") (.num 3)))), (.binary .idiv (.binary .sub (.binary .mul (.num 13) (.resolve "Y")) (.num 1)) (.resolve "Y")), (.binary .idiv (.binary .add (.binary .mul (.num 12) (.resolve "Y")) (.num 1)) (.resolve "Y")), (.binary .idiv (.unary .minus (.resolve "X")) (.num 3)), (.binary .idiv (.resolve "X") (.unary .minus (.num 3))), (.binary .idiv (.unary .minus (.resolve "X")) (.unary .minus (.num 3))), (.binary .idiv (.num 10000000000000000000000000000000000) (.num 7)), (.binary .mod (.num 10000000000000000000000000000000000) (.num 7)), (.binary .idiv (.num 10000000000000000000000000000000000000000) (.num 100000))])
+#guard obs case_integer_division_exact_quotient == "ok raw=S[2999999999999999999999999999999999, 2, 1, 12, 12, -2999999999999999999999999999999999, -2999999999999999999999999999999999, 2999999999999999999999999999999999, 1428571428571428571428571428571428, 4, 100000000000000000000000000000000000] n=11"
 
 -- property-access-and-call [arithmetic]: # Define a property: \n Answer = 42 \n  \n # Property-style access: \n Answer \n  \n # Explicit zero-parameter call: \n Answer()
 def case_property_access_and_call : Expr :=
@@ -1158,7 +1163,7 @@ def case_if_spread_builds_values_before_branch_selection : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Risky" (alg [] [] [] [(.capture [.num 10, (.binary .div (.num 1) (.num 0))])])] [(.call (.resolve "if") [.num 1, (.sequenceSpread (.resolve "Risky"))])])
 #guard obs case_if_spread_builds_values_before_branch_selection == "err div0"
 
--- 212 canonical Lean-guarded specification cases.
+-- 213 canonical Lean-guarded specification cases.
 
 /--
 Machine-checked Lean-guarded partition count: the id list is built by the
@@ -1169,6 +1174,7 @@ def specCaseIds : List String := [
   "first-program",
   "power-unary-precedence",
   "integer-division-truncates",
+  "integer-division-exact-quotient",
   "property-access-and-call",
   "output-is-ordinary-property",
   "empty-literal",
@@ -1379,6 +1385,6 @@ def specCaseIds : List String := [
   "parameter-named-if-carries-the-supplied-callable",
   "if-spread-builds-values-before-branch-selection"
 ]
-#guard specCaseIds.length == 212
+#guard specCaseIds.length == 213
 
 end LanguageSpecCases

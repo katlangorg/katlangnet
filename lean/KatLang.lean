@@ -12,8 +12,14 @@
 --   Int.tmod). On the common exact integer subdomain this agrees with the C#
 --   reference, including negative operands (`-7 div 2 = -3`,
 --   `-7 mod 2 = -1`). This is not a blanket "integer source = shared model"
---   rule: the runtime first performs `div`'s quotient in finite-precision
---   Decimal128, and large integral arithmetic can round or overflow. Fractional
+--   rule: large integral arithmetic can round or overflow in the
+--   finite-precision runtime. `div` itself truncates the EXACT quotient there
+--   too (G-3, September 2026 — never a quotient first rounded to 34 digits)
+--   and is exact wherever the truncated quotient is representable: every
+--   |q| <= 10^34 (the exact consecutive-integer domain) and every representable
+--   sparse integer beyond it; a truncated quotient with more than 34
+--   significant digits is rounded toward zero to 34 digits in the runtime
+--   while this core keeps the exact integer. Fractional
 --   results the decimal runtime can represent are another documented Int-core
 --   limitation: `/`-style quotients and the `avg` builtin truncate here
 --   (`7 / 2 = 3` and `avg(1, 2) = 1`) but yield decimals in the runtime

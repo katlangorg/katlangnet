@@ -341,20 +341,40 @@ public class Decimal128NumericsTests
     }
 
     [Fact]
-    public void IntegerDivision_TruncatesTheRoundedDecimal128Quotient()
+    public void IntegerDivision_IsTheExactTruncatedQuotient_WhereItIsRepresentable()
     {
-        // Both operands are exactly representable integers, but their mathematical
-        // quotient is 2.999… and needs more than 34 significant digits. KatLang's
-        // Decimal128 `div` rule is Truncate(x / y), so the quotient first rounds to
-        // 3 and then truncates to 3. Lean's unbounded Int.tdiv returns 2 instead:
-        // integer-looking source alone is therefore not the numeric model boundary.
+        // G-3: both operands are exactly representable integers and their
+        // mathematical quotient is 2.999…9994; the truncated quotient 2 is trivially
+        // representable, so `div` must return it — as Lean's Int.tdiv does — even
+        // though the IEEE quotient `/` correctly rounds 2.999…9994 to 3. The former
+        // rule Truncate(x / y) truncated that ALREADY ROUNDED quotient and answered
+        // 3, disagreeing with the exact remainder about which quotient was taken.
         const string dividend = "9999999999999999999999999999999998";
         const string divisor = "3333333333333333333333333333333333";
 
-        Assert.Equal(N("3"), EvalSingle($"{dividend} div {divisor}"));
+        Assert.Equal(N("2"), EvalSingle($"{dividend} div {divisor}"));
+        Assert.Equal(N("3"), EvalSingle($"{dividend} / {divisor}"));
         Assert.Equal(
             N("3333333333333333333333333333333332"),
             EvalSingle($"{dividend} mod {divisor}"));
+        // x == y * (x div y) + (x mod y), exactly (every intermediate has 34 digits).
+        Assert.Equal(N("1"), EvalSingle($"X = {dividend}\nY = {divisor}\nX == Y * (X div Y) + (X mod Y)"));
+    }
+
+    [Fact]
+    public void IntegerDivision_BeyondTheConsecutiveIntegerDomain_RoundsTowardZero()
+    {
+        // |n| <= 10^34 is the exact consecutive-integer domain; sparse larger integers
+        // stay representable (1e40 div 1e5 is exactly 1e35). A truncated quotient that
+        // needs more than 34 significant digits keeps its leading 34 digits — rounded
+        // TOWARD ZERO, so `div` stays a truncation — while `/` rounds to nearest.
+        Assert.Equal(N("1e34"), EvalSingle("1e40 div 1e6"));
+        Assert.Equal(N("1e35"), EvalSingle("1e40 div 1e5"));
+        Assert.Equal(N("1428571428571428571428571428571428e6"), EvalSingle("1e40 div 7"));
+        Assert.Equal(N("1428571428571428571428571428571429e6"), EvalSingle("1e40 / 7"));
+        Assert.Equal(N("-1428571428571428571428571428571428e6"), EvalSingle("-1e40 div 7"));
+        Assert.Equal(N("1666666666666666666666666666666666e1"), EvalSingle("99999999999999999999999999999999990 div 6"));
+        Assert.Equal(Decimal128.PositiveInfinity, EvalSingle("5 div 1e-6176"));
     }
 
     // ── Numeric literals parse directly into Decimal128 ──────────────────────

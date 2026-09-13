@@ -4,8 +4,10 @@ namespace KatLang;
 
 /// <summary>
 /// Exact scaled-integer arithmetic over Decimal128 representations, shared by the
-/// correctly rounded numeric paths that a chain of Decimal128 operations cannot
-/// deliver: the overflow-recovering <c>avg</c> mean and the integer-exponent power.
+/// numeric paths that a chain of Decimal128 operations cannot deliver: the
+/// overflow-recovering <c>avg</c> mean and the integer-exponent power (both correctly
+/// rounded) and the truncating integer division <c>div</c>
+/// (<see cref="IntegerDivide"/>, exact wherever the truncated quotient is representable).
 /// It also hosts the inverse-trigonometric endpoint reformulation
 /// (<see cref="Acos"/>/<see cref="Asin"/>), an approximate composition of Decimal128
 /// primitives rather than a certified rounding.
@@ -467,6 +469,169 @@ internal static class Decimal128Numerics
         }
 
         return RoundRational(BigInteger.One, coefficient, -exponent).ToDecimal128(negative);
+    }
+
+    // ── Truncating integer division (`div`) ───────────────────────────────────
+
+    /// <summary>
+    /// <c>10^34</c>: the inclusive boundary of KatLang's exact consecutive-integer domain.
+    /// Every integer with <c>|n| &lt;= 10^34</c> is a Decimal128 (at most 34 significant
+    /// digits, or <c>1e34</c> itself); <c>10^34 + 1</c> is the first that is not. Sparse
+    /// larger integers such as <c>1e40</c> stay representable, so this is the
+    /// consecutive-integer boundary, not the largest representable integer.
+    /// </summary>
+    internal static readonly Decimal128 ConsecutiveIntegerBound = Decimal128.ScaleB(Decimal128.One, Precision);
+
+    /// <summary>
+    /// KatLang <c>div</c>: the EXACT quotient <c>dividend / divisor</c> rounded TOWARD ZERO to
+    /// a Decimal128 integer (Lean: <c>Int.tdiv</c>). The result is the truncated
+    /// mathematical quotient <c>t</c> whenever that integer is representable — throughout
+    /// the consecutive-integer domain <c>|t| &lt;= 10^34</c> and for every representable
+    /// sparse integer beyond it (<c>1e40 div 1e5</c> is exactly <c>1e35</c>) — and otherwise,
+    /// when IEEE division remains finite,
+    /// the largest-magnitude Decimal128 integer that does not exceed <c>|t|</c>: the
+    /// truncated quotient's leading 34 significant digits (<c>1e40 div 7</c> is
+    /// <c>1428571428571428571428571428571428e6</c>, never the rounded-up <c>…429e6</c> that
+    /// <c>1e40 / 7</c> correctly rounds to). <c>div</c> is therefore a truncation at every
+    /// finite magnitude, and <c>|(x div y) * y| &lt;= |x|</c> survives the product's own rounding
+    /// for finite operands and nonzero divisor because rounding is monotone. The exact
+    /// div/mod identity requires a representable truncated quotient; evaluating its
+    /// recomposition in Decimal128 additionally requires exact multiplication and addition.
+    /// Special values keep the operator's IEEE contract:
+    /// NaN propagates, an IEEE quotient that overflows is a signed infinity like every
+    /// other arithmetic overflow (never saturated to <see cref="Decimal128.MaxValue"/>), a
+    /// finite dividend over an infinite divisor is a signed zero, and a zero result carries
+    /// the quotient's sign (<c>-7 div 8</c> is <c>-0</c>). The evaluator has already rejected
+    /// a zero-valued divisor as <c>divByZero</c>; the helper itself is total.
+    ///
+    /// <para><b>Why not <c>Truncate(x / y)</c>.</b> The IEEE quotient <c>r = RN(q)</c> is
+    /// rounded to 34 significant digits BEFORE the truncation, and that rounding can land
+    /// on an integer from below: <c>8999999999999999999999999999999999 / 3</c> is
+    /// <c>2999…999.6…</c>, which rounds to <c>3e33</c>, so the old rule returned
+    /// <c>3000000000000000000000000000000000</c> although the truncated quotient
+    /// <c>2999999999999999999999999999999999</c> is representable and
+    /// <c>8999… mod 3</c> is <c>2</c> — the truncated-division identity
+    /// <c>x == y * (x div y) + (x mod y)</c> failed on exact operands. The defect is not
+    /// confined to enormous quotients: <c>(13 * 3e32 - 1) div 3e32</c> rounded to
+    /// <c>13.00000000000000000000000000000000</c> and returned <c>13</c> instead of <c>12</c>.
+    /// The <c>%</c> remainder, by contrast, is exact for every pair of finite operands, so
+    /// <c>div</c> and <c>mod</c> disagreed about the quotient.</para>
+    ///
+    /// <para><b>Lemma 1 — the fast path.</b> If <c>r</c> is finite and NOT an integer, then
+    /// <c>Truncate(r) = t</c>. Every Decimal128 with <c>|v| &gt;= 10^34</c> is an integer (a
+    /// 34-digit coefficient at exponent &gt;= 1), so <c>|r| &lt; 10^34</c>; rounding is monotone
+    /// and <c>10^34</c> is representable, so <c>|q| &lt; 10^34</c> as well, and the integers
+    /// <c>t</c> and <c>t ± 1</c> (toward and away from zero) are all representable. A
+    /// nearest representable value to <c>q</c> can lie neither below <c>t</c> nor beyond
+    /// <c>t ± 1</c> in magnitude — either would be farther from <c>q</c> than a representable
+    /// integer is — so a non-integral <c>r</c> lies strictly between them and truncates to
+    /// <c>t</c>, with the quotient's sign. This everyday case costs the division plus one
+    /// <see cref="Decimal128.IsInteger"/>.</para>
+    ///
+    /// <para><b>Lemma 2 — the exact-division shortcut.</b> If <c>r</c> is an integer with
+    /// <c>|r| &lt; 10^34</c> and <c>dividend % divisor</c> is zero, then <c>q</c> is an
+    /// integer (the remainder is exact) below <c>10^34</c> (monotone rounding again), hence
+    /// representable, hence <c>r = q = t</c>; <c>Truncate(r)</c> keeps that exact quotient at
+    /// its established quantum. The bound is strict on purpose: at or above <c>10^34</c> a
+    /// divisible <c>q</c> need not be representable, and <c>r</c> may have rounded up.</para>
+    ///
+    /// <para><b>Lemma 3 — the exact decision.</b> Any other integral <c>r</c> is an exact
+    /// quotient that genuinely has 34 significant digits, a rounding that LANDED on an
+    /// integer (from below — a crossing, <c>|r| = |t| + 1</c> — or from above, <c>r = t</c>),
+    /// or a quotient at or beyond <c>10^34</c>. <see cref="TruncateQuotientTowardZero"/>
+    /// decides every one of them from the operands' exact coefficients and quanta on
+    /// <see cref="BigInteger"/>s of bounded size, never forming a power of ten
+    /// proportional to the operands' exponent gap. Measured on the tested runtime the
+    /// fast path is one division plus one predicate, and the exact decision costs about
+    /// three divisions; the decision runs only for integral rounded quotients that the
+    /// remainder shortcut cannot certify.</para>
+    /// </summary>
+    internal static Decimal128 IntegerDivide(Decimal128 dividend, Decimal128 divisor)
+    {
+        var quotient = dividend / divisor;
+
+        // Keep the pre-G-3 Truncate operation on special outcomes, including its
+        // re-quantization of a signed zero from a finite/infinite division.
+        // (A zero divisor reaches here only when the caller skipped
+        // its divByZero check, and then takes the same IEEE outcome.)
+        if (!Decimal128.IsFinite(quotient) || !Decimal128.IsFinite(dividend) || !Decimal128.IsFinite(divisor))
+            return Decimal128.Truncate(quotient);
+
+        // |q| < 1 — a zero dividend, or a quotient that underflowed: the truncated
+        // quotient is the signed zero IEEE already produced. Truncate re-quantizes
+        // it to exponent 0 (an underflowed zero carries the subnormal quantum and
+        // would otherwise display as 0.000…0 with 6176 places), as before G-3.
+        if (quotient == Decimal128.Zero)
+            return Decimal128.Truncate(quotient);
+
+        // Lemma 1.
+        if (!Decimal128.IsInteger(quotient))
+            return Decimal128.Truncate(quotient);
+
+        // Lemma 2.
+        if (Decimal128.Abs(quotient) < ConsecutiveIntegerBound && dividend % divisor == Decimal128.Zero)
+            return Decimal128.Truncate(quotient);
+
+        // Lemma 3.
+        var dividendCoefficient = CoefficientOf(Decimal128.Abs(dividend), out var dividendExponent);
+        var divisorCoefficient = CoefficientOf(Decimal128.Abs(divisor), out var divisorExponent);
+        return TruncateQuotientTowardZero(
+            dividendCoefficient,
+            divisorCoefficient,
+            dividendExponent - divisorExponent,
+            Decimal128.IsNegative(quotient),
+            quotient);
+    }
+
+    /// <summary>
+    /// The positive rational <c>numerator / denominator × 10^scale</c> rounded toward zero
+    /// to a Decimal128 integer, for a quotient whose IEEE rounding
+    /// <paramref name="roundedQuotient"/> is a finite nonzero integer. The scientific
+    /// exponent <c>E</c> of the quotient comes from digit counts (as in
+    /// <see cref="RoundRational"/>), and the truncation quantum is <c>10^k</c> with
+    /// <c>k = max(E - 33, 0)</c>: <c>k = 0</c> keeps the whole integer part (below
+    /// <c>10^34</c>, at most 34 digits, always representable) and <c>k &gt;= 1</c> keeps the
+    /// leading 34 digits. The numerator shift <c>scale - k</c> then lies within
+    /// <c>[-33, 67]</c> whatever the operands' quanta, so the work is bounded.
+    /// </summary>
+    private static Decimal128 TruncateQuotientTowardZero(
+        BigInteger numerator,
+        BigInteger denominator,
+        int scale,
+        bool negative,
+        Decimal128 roundedQuotient)
+    {
+        var ratioExponent = DigitCount(numerator) - DigitCount(denominator);
+        if (!RatioIsAtLeastPowerOfTen(numerator, denominator, ratioExponent))
+            ratioExponent--;
+        var scientificExponent = ratioExponent + scale;
+
+        // |q| < 1 truncates to a signed zero. Unreachable for a nonzero integral
+        // rounded quotient; kept so the function is total over its inputs.
+        if (scientificExponent < 0)
+            return negative ? Decimal128.NegativeZero : Decimal128.Zero;
+
+        var truncationExponent = Math.Max(scientificExponent - (Precision - 1), 0);
+        var shift = scale - truncationExponent;
+        BigInteger remainder;
+        var coefficient = shift >= 0
+            ? BigInteger.DivRem(numerator * BigInteger.Pow(10, shift), denominator, out remainder)
+            : BigInteger.DivRem(numerator, denominator * BigInteger.Pow(10, -shift), out remainder);
+
+        // A zero remainder means the exact quotient is coefficient × 10^k — an integer
+        // with at most 34 significant digits, which IEEE division already returned
+        // exactly. Keep that result, and its established quantum, bit-for-bit.
+        if (remainder.IsZero)
+            return Decimal128.Truncate(roundedQuotient);
+
+        // Inexact: materialize the truncated coefficient exactly. Below 10^34 it is
+        // the whole truncated quotient at quantum 0; at or above, its leading 34
+        // digits (10^33 <= coefficient < 10^34) at the exact quotient's truncation
+        // exponent. The conversion and the scaling are both exact.
+        var magnitude = (Decimal128)(Int128)coefficient;
+        if (truncationExponent > 0)
+            magnitude = Decimal128.ScaleB(magnitude, truncationExponent);
+        return negative ? -magnitude : magnitude;
     }
 
     private static bool TryFactorTwosAndFives(BigInteger positive, out int twos, out int fives)

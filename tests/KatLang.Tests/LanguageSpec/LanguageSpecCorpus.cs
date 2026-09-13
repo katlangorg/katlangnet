@@ -160,8 +160,71 @@ public static class LanguageSpecCorpus
                 // `pow-zero-base-negative-exponent` case for the fractional side.
                 new SpecProbe("0 ^ -1", "err illegalInEval"),
             ],
-            Notes = "Shared Lean-modeled law on these common exact integer operands: `div`/`mod` truncate toward zero (Lean `Int.tdiv`/`Int.tmod`; C# `Decimal128.Truncate(x / y)`/`%`). This is not a blanket claim about every integral Decimal128 input: a sufficiently large C# `div` quotient can round before truncation. Contrast the C#-only `division-decimal-quotient` case, where a non-exact `/` result diverges from the Int core by design.",
-            Explanation = "Integer division `div` and remainder `mod` truncate toward zero: `-7 div 2` is `-3` and `-7 mod 2` is `-1`. These representative exact integer operations are cross-engine semantics shared with the Lean core model; Decimal128 precision/range remains a separate boundary for large operands.",
+            Notes = "Shared Lean-modeled law on these common exact integer operands: `div`/`mod` truncate toward zero (Lean `Int.tdiv`/`Int.tmod`; C# `Decimal128Numerics.IntegerDivide`/`%`). Since G-3 the C# `div` truncates the EXACT quotient and is exact wherever the truncated quotient is representable — see `integer-division-exact-quotient`; only a truncated quotient that needs more than 34 significant digits is a Decimal128 precision boundary (the C#-only `integer-division-beyond-consecutive-integers`). Contrast the C#-only `division-decimal-quotient` case, where a non-exact `/` result diverges from the Int core by design.",
+            Explanation = "Integer division `div` and remainder `mod` truncate toward zero: `-7 div 2` is `-3` and `-7 mod 2` is `-1`. These representative exact integer operations are cross-engine semantics shared with the Lean core model; Decimal128 precision remains a boundary only when the truncated quotient itself needs more than 34 significant digits.",
+        },
+        new()
+        {
+            Id = "integer-division-exact-quotient",
+            Category = "arithmetic",
+            Source = "X = 8999999999999999999999999999999999\nX div 3\nX mod 3\nX == 3 * (X div 3) + (X mod 3)\nY = 3e32\n(13 * Y - 1) div Y\n(12 * Y + 1) div Y\n-X div 3\nX div -3\n-X div -3\n1e34 div 7\n1e34 mod 7\n1e40 div 1e5",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "2999999999999999999999999999999999\n2\n1\n12\n12\n-2999999999999999999999999999999999\n-2999999999999999999999999999999999\n2999999999999999999999999999999999\n1428571428571428571428571428571428\n4\n100000000000000000000000000000000000",
+            ExpectedRaw = "S[2999999999999999999999999999999999, 2, 1, 12, 12, -2999999999999999999999999999999999, -2999999999999999999999999999999999, 2999999999999999999999999999999999, 1428571428571428571428571428571428, 4, 100000000000000000000000000000000000]",
+            ExpectedEmittedCount = 11,
+            Probes =
+            [
+                // The small-quotient landing: the IEEE quotient of (13·3e32 − 1) / 3e32
+                // is visibly 13.000…0 while the truncated quotient is 12; the mirror
+                // image ABOVE the integer lands down on 12 and must not be adjusted.
+                new SpecProbe("Y = 3e32\nX = 13 * Y - 1\nX div Y", "ok raw=12 n=1"),
+                new SpecProbe("Y = 3e32\nX = 12 * Y + 1\nX div Y", "ok raw=12 n=1"),
+                // The rounded quotient …429 times 7 rounds back to exactly 1e34: a
+                // rounded-product exactness test would be fooled.
+                new SpecProbe("10000000000000000000000000000000000 div 7", "ok raw=1428571428571428571428571428571428 n=1"),
+                new SpecProbe("10000000000000000000000000000000000 mod 7", "ok raw=4 n=1"),
+                // Every sign combination truncates toward zero; the remainder keeps
+                // the dividend's sign.
+                new SpecProbe("-8999999999999999999999999999999999 div 3", "ok raw=-2999999999999999999999999999999999 n=1"),
+                new SpecProbe("8999999999999999999999999999999999 div -3", "ok raw=-2999999999999999999999999999999999 n=1"),
+                new SpecProbe("-8999999999999999999999999999999999 div -3", "ok raw=2999999999999999999999999999999999 n=1"),
+                new SpecProbe("-8999999999999999999999999999999999 mod 3", "ok raw=-2 n=1"),
+                // Digit extraction at the consecutive-integer boundary stays exact.
+                new SpecProbe("9999999999999999999999999999999999 div 10\n9999999999999999999999999999999999 mod 10", "ok raw=S[999999999999999999999999999999999, 9] n=2"),
+                // A sparse representable quotient beyond the boundary is exact too.
+                new SpecProbe("1e40 div 1e5", "ok raw=100000000000000000000000000000000000 n=1"),
+            ],
+            Notes = "Shared Lean-modeled law (G-3, September 2026): `div` is the EXACT quotient truncated toward zero (Lean `Int.tdiv`; C# `Decimal128Numerics.IntegerDivide`), returned exactly whenever the truncated quotient is representable — throughout the exact consecutive-integer domain |q| <= 10^34 (every such integer is a Decimal128) — and `mod` is the exact remainder for finite operands and a nonzero divisor (`Int.tmod`; Decimal128 `%`). The mathematical identity holds for representable truncated quotients; its KatLang recomposition also requires exact intermediate arithmetic. The former C# rule `Decimal128.Truncate(x / y)` truncated a quotient ALREADY rounded to 34 significant digits and answered `3000000000000000000000000000000000` here (and `13` for the first probe), silently one integer away while Lean was right all along. Beyond the domain see the C#-only `integer-division-beyond-consecutive-integers` case.",
+            Explanation = "`div` truncates the exact quotient, not a quotient that was first rounded to 34 digits: `8999999999999999999999999999999999 div 3` is `2999999999999999999999999999999999` (while `/` rounds that quotient to `3000000000000000000000000000000000`), `mod` is the exact remainder `2`, and `x == y * (x div y) + (x mod y)` holds when the truncated quotient is representable and the intermediate arithmetic is exact. Every integer with magnitude at most 10^34 is representable, as are sparse larger integers.",
+        },
+        new()
+        {
+            Id = "integer-division-beyond-consecutive-integers",
+            Category = "arithmetic",
+            Source = "1e40 div 7\n1e40 / 7",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "1428571428571428571428571428571428000000\n1428571428571428571428571428571429000000",
+            ExpectedRaw = "S[1428571428571428571428571428571428000000, 1428571428571428571428571428571429000000]",
+            ExpectedEmittedCount = 2,
+            LeanExclusionReason = "The truncated quotient 1428571428571428571428571428571428571428 has 40 significant digits, so it is not a Decimal128: the runtime rounds it TOWARD ZERO to its leading 34 digits (`div` stays a truncation), while the Lean Int core returns the exact 40-digit integer — Decimal128 precision is the documented model divergence (and `1e40 / 7`, correctly rounded to nearest, diverges from the Int core's truncating `/` as well).",
+            Probes =
+            [
+                // Toward zero, never to nearest: an exact 35-digit quotient ending in
+                // 5 is a round-to-nearest TIE, and 2e40 / 3 would round up to …667.
+                new SpecProbe("99999999999999999999999999999999990 div 6", "ok raw=16666666666666666666666666666666660 n=1"),
+                new SpecProbe("2e40 div 3", "ok raw=6666666666666666666666666666666666000000 n=1"),
+                new SpecProbe("-2e40 div 3", "ok raw=-6666666666666666666666666666666666000000 n=1"),
+                // The quotient rounds toward zero and the product rounds monotonically,
+                // so (x div y) * y never exceeds x.
+                new SpecProbe("X = 1e40\n(X div 7) * 7 <= X", "ok raw=1 n=1"),
+                // A representable sparse quotient beyond the boundary stays exact.
+                new SpecProbe("9999999999999999999999999999999999e10 div 3", "ok raw=33333333333333333333333333333333330000000000 n=1"),
+                // Beyond the finite range the quotient overflows to a signed infinity
+                // like every other arithmetic overflow (never saturates to the maximum).
+                new SpecProbe("5 div 1e-6176", "ok raw=Infinity n=1"),
+            ],
+            Notes = "Decimal128 has 34 significant decimal digits. |n| <= 10^34 is KatLang's exact CONSECUTIVE-integer domain (10^34 + 1 is the first integer that is not a Decimal128); larger sparse integers such as 1e40 or 3333…3e10 are still exactly representable, so this boundary is not the largest representable integer. A truncated `div` quotient that needs more than 34 significant digits is rounded toward zero to 34 digits — the largest-magnitude Decimal128 integer not exceeding it — never to nearest. When IEEE division remains finite, `div` stays a truncation and, for finite operands and a nonzero divisor, `(x div y) * y` never exceeds `x` in magnitude even after the product rounds; `/` stays correctly rounded to nearest. The mathematical identity requires a representable truncated quotient; its KatLang recomposition also requires exact intermediate arithmetic. `mod` is exact for finite operands and a nonzero divisor. IEEE division overflow still produces signed infinity.",
+            Explanation = "Beyond 34 significant digits `div` keeps the leading 34 digits of the exact truncated quotient, rounding toward zero rather than to nearest: `1e40 div 7` is `1428571428571428571428571428571428000000`, while `1e40 / 7` correctly rounds to `…429000000`. For finite quotients, `div` therefore never exceeds the true quotient in magnitude, for either sign; an exactly representable quotient such as `1e40 div 1e5` stays exact. IEEE overflow still produces signed infinity.",
         },
         new()
         {

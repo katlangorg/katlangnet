@@ -37,6 +37,48 @@ def truncatingModuloMatchesRuntime : Bool :=
 
 #guard truncatingModuloMatchesRuntime
 
+-- G-3 (C# reference parity, September 2026): `div` truncates the EXACT
+-- quotient. The C# runtime used to truncate a quotient ALREADY rounded to 34
+-- significant digits, answering 3000000000000000000000000000000000 here and
+-- 13 for the small landing (13 * 3e32 - 1) div 3e32; the exact truncated
+-- quotients are representable Decimal128 integers and the Int core has always
+-- returned them. `mod` is exact in both engines, so the truncated-division
+-- identity x = y * (x div y) + (x mod y) holds on every pair below.
+def exactTruncatedQuotientAt34Digits : Bool :=
+  binaryAtomResult? .idiv 8999999999999999999999999999999999 3 == some 2999999999999999999999999999999999 &&
+  binaryAtomResult? .mod 8999999999999999999999999999999999 3 == some 2 &&
+  binaryAtomResult? .idiv (-8999999999999999999999999999999999) 3 == some (-2999999999999999999999999999999999) &&
+  binaryAtomResult? .idiv 8999999999999999999999999999999999 (-3) == some (-2999999999999999999999999999999999) &&
+  binaryAtomResult? .idiv (-8999999999999999999999999999999999) (-3) == some 2999999999999999999999999999999999 &&
+  binaryAtomResult? .mod (-8999999999999999999999999999999999) 3 == some (-2) &&
+  -- the small quotient that the runtime rounded UP to 13 (a landing from below) …
+  binaryAtomResult? .idiv 3899999999999999999999999999999999 300000000000000000000000000000000 == some 12 &&
+  -- … and its mirror image, where the runtime's rounding lands DOWN on 12
+  binaryAtomResult? .idiv 3600000000000000000000000000000001 300000000000000000000000000000000 == some 12 &&
+  -- the rounded quotient …429 times 7 rounds back to exactly 1e34 in Decimal128
+  binaryAtomResult? .idiv 10000000000000000000000000000000000 7 == some 1428571428571428571428571428571428 &&
+  binaryAtomResult? .mod 10000000000000000000000000000000000 7 == some 4
+
+#guard exactTruncatedQuotientAt34Digits
+
+def truncatedDivisionIdentityPairs : List (Int × Int) :=
+  [(8999999999999999999999999999999999, 3),
+   (-8999999999999999999999999999999999, 3),
+   (8999999999999999999999999999999999, -3),
+   (-8999999999999999999999999999999999, -3),
+   (3899999999999999999999999999999999, 300000000000000000000000000000000),
+   (3600000000000000000000000000000001, 300000000000000000000000000000000),
+   (10000000000000000000000000000000000, 7),
+   (9999999999999999999999999999999998, 3333333333333333333333333333333333)]
+
+def truncatedDivisionIdentityHolds : Bool :=
+  truncatedDivisionIdentityPairs.all fun (x, y) =>
+    match binaryAtomResult? .idiv x y, binaryAtomResult? .mod x y with
+    | some q, some r => x == y * q + r
+    | _, _ => false
+
+#guard truncatedDivisionIdentityHolds
+
 --------------------------------------------------------------------------------
 -- Numeric semantics: negative exponents are never a silent 0
 --------------------------------------------------------------------------------

@@ -217,6 +217,26 @@ KatLang provides two kinds of division. Regular division (`/`) keeps the fractio
 
 Inexact quotients are correctly rounded to KatLang's 34 significant decimal digits.
 
+`div` truncates the *exact* quotient, never a quotient that was first rounded to 34 digits. It returns the mathematical truncated integer exactly whenever that integer is representable. This includes every integer with magnitude at most 10^34, the **consecutive-integer boundary**, and sparse larger integers such as `1e35` (`1e40 div 1e5`). For finite operands and a nonzero divisor, `mod` is the exact remainder. The mathematical identity `x = y*q + r` holds when `q = x div y` is representable; evaluating `x == y * (x div y) + (x mod y)` in KatLang also requires exact multiplication and addition, as in this example:
+
+```
+X = 8999999999999999999999999999999999
+X / 3
+X div 3
+X mod 3
+X == 3 * (X div 3) + (X mod 3)
+```
+
+**Results:**
+```
+3000000000000000000000000000000000
+2999999999999999999999999999999999
+2
+1
+```
+
+If the mathematical truncated integer is not representable and IEEE division remains finite, `div` drops its lower decimal digits, keeping the leading 34 digits toward zero. Its magnitude therefore never exceeds the true quotient's magnitude, for either sign: `1e40 div 7` is `1428571428571428571428571428571428000000`, while `1e40 / 7` rounds to `1428571428571428571428571428571429000000`. The exact `div`/`mod` identity is not promised for such a shortened quotient. IEEE overflow still produces signed infinity; NaN, infinity operands, signed zero, and division-by-zero errors keep their ordinary rules.
+
 The `^` operator raises the left side to the power of the right side.
 
 ```

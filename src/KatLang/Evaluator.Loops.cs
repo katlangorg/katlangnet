@@ -440,7 +440,12 @@ public static partial class Evaluator
         // Decimal128's IEEE semantics: overflow saturates to an infinity, and
         // non-finite operands propagate (so Infinity/Infinity is NaN, not an
         // error). The ordering comparisons are IEEE too: every comparison with a
-        // NaN operand is false, and -0 equals 0.
+        // NaN operand is false, and -0 equals 0. `div` is the ONE shared
+        // Decimal128Numerics.IntegerDivide (G-3): the exact quotient rounded toward
+        // zero to a Decimal128 integer — never `Truncate(x / y)`, whose quotient is
+        // rounded to 34 digits BEFORE truncation and can land on the wrong neighbor
+        // — so the planned loop arm (LoopExprPlan.ApplyPlannedNumericBinary), the
+        // async twin (which reaches this method), and this arm cannot drift.
         if ((op is BinaryOp.Div or BinaryOp.IDiv or BinaryOp.Mod) && y == 0)
             return new EvalError.DivByZero() { Span = span };
 
@@ -453,7 +458,7 @@ public static partial class Evaluator
             BinaryOp.Sub => x - y,
             BinaryOp.Mul => x * y,
             BinaryOp.Div => x / y,
-            BinaryOp.IDiv => Decimal128.Truncate(x / y),
+            BinaryOp.IDiv => Decimal128Numerics.IntegerDivide(x, y),
             BinaryOp.Mod => x % y,
             BinaryOp.Lt => x < y ? 1 : 0,
             BinaryOp.Gt => x > y ? 1 : 0,
