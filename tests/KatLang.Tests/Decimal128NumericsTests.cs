@@ -20,7 +20,7 @@ namespace KatLang.Tests;
 /// <para><b>IEEE semantics coverage.</b> Where KatLang specifies behavior it is
 /// preserved (division/modulo by a zero-valued divisor — the EVALUATED value,
 /// signed zeros and computed zeros included — stays <see cref="EvalError.DivByZero"/>,
-/// zero to a negative integer power stays an error); everywhere else the natural
+/// zero to ANY negative exponent — integral or fractional — stays an error); everywhere else the natural
 /// Decimal128 behavior holds: overflow saturates to an infinity, domain violations
 /// produce NaN, comparisons with NaN are false, and structural value equality
 /// (<c>==</c>, <c>distinct</c>, <c>contains</c>) treats NaN as one value.</para>
@@ -429,12 +429,48 @@ public class Decimal128NumericsTests
     public void DivisionByZeroValuedDivisor_StaysTheSpecifiedError(string source)
         => Assert.IsType<EvalError.DivByZero>(EvalError(source));
 
-    [Fact]
-    public void ZeroToNegativeIntegerPower_StaysTheSpecifiedError()
+    // ── Specified behavior preserved: a zero base rejects EVERY negative exponent ──
+    // Whether the exponent is integral is irrelevant — a negative power of zero is
+    // reciprocal-like, and KatLang never adopts IEEE's `Infinity` for a zero
+    // divisor — and `^`, `Math.Pow`, and `pow` share the one implementation, so
+    // every spelling reports the identical error family and message.
+
+    [Theory]
+    [InlineData("0 ^ -1")]
+    [InlineData("0 ^ -0.5")]
+    [InlineData("0 ^ -2.5")]
+    [InlineData("Math.Pow(0, -0.5)")]
+    [InlineData("pow(0, -2.5)")]
+    [InlineData("(-0) ^ -0.5")]        // a signed zero is a zero-valued base
+    [InlineData("-0 ^ -0.5")]          // unary minus outside the rejected power
+    [InlineData("Math.Pow(-0, -0.5)")]
+    [InlineData("pow(-0.0, -2.5)")]
+    [InlineData("0 ^ -1e-6176")]        // the smallest negative subnormal is below zero
+    [InlineData("(1e-6176 / 10) ^ -0.5")] // the evaluated base underflows to zero
+    [InlineData("z = 0\nz ^ -0.5")]    // the check is on the evaluated base value
+    [InlineData("0 ^ Math.Ln(0)")]     // -Infinity is below zero: reciprocal-like, rejected
+    public void ZeroToAnyNegativeExponent_StaysTheSpecifiedError(string source)
     {
-        var error = Assert.IsType<EvalError.IllegalInEval>(EvalError("0 ^ -1"));
-        Assert.Contains("negative integer exponent", error.Reason);
+        var error = Assert.IsType<EvalError.IllegalInEval>(EvalError(source));
+        Assert.Equal("zero cannot be raised to a negative exponent", error.Reason);
     }
+
+    // The rule's boundary: a zero base with a non-negative exponent keeps its
+    // existing IEEE result, and a NaN exponent is not "below zero".
+    [Theory]
+    [InlineData("0 ^ 0", "1")]
+    [InlineData("0 ^ -0", "1")]
+    [InlineData("Math.Pow(-0.0, -0.0)", "1")]
+    [InlineData("0 ^ -1e-6177", "1")] // exponent rounds to signed zero, not a negative value
+    [InlineData("0 ^ 1e-6176", "0")]
+    [InlineData("0 ^ 1", "0")]
+    [InlineData("0 ^ 0.5", "0")]
+    [InlineData("0 ^ 2.5", "0")]
+    [InlineData("Math.Pow(0, 0.5)", "0")]
+    [InlineData("Infinity = 0 - Math.Ln(0)\n0 ^ Infinity", "0")]
+    [InlineData("NaN = Math.Sqrt(-1)\n0 ^ NaN", "NaN")]
+    public void ZeroToNonNegativeExponent_KeepsItsIeeeResult(string source, string expectedDisplay)
+        => Assert.Equal(expectedDisplay, Assert.IsType<RunResult.Success>(KatLangEngine.Run(source)).ToDisplayString());
 
     // ── IEEE special values ──────────────────────────────────────────────────
 
@@ -1005,7 +1041,7 @@ public class Decimal128NumericsTests
     public void ZeroToHugeNegativeIntegralExponent_StaysTheSpecifiedError_OnBothSpellings()
     {
         var viaOperator = Assert.IsType<EvalError.IllegalInEval>(EvalError("0 ^ (0 - 9223372036854775809)"));
-        Assert.Contains("negative integer exponent", viaOperator.Reason);
+        Assert.Equal("zero cannot be raised to a negative exponent", viaOperator.Reason);
 
         var viaMathPow = Assert.IsType<EvalError.IllegalInEval>(EvalError("Math.Pow(0, 0 - 9223372036854775809)"));
         Assert.Equal(viaOperator.Reason, viaMathPow.Reason);

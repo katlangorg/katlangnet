@@ -240,10 +240,17 @@ public class MathAliasEvaluationTests
         Assert.Equal(viaOperator, EvalSingle("Math.Pow(2, 0.5)"));
         Assert.Equal(viaOperator, EvalSingle("pow(2, 0.5)"));
 
-        // The shared implementation includes the zero-base error rule.
-        var aliasError = SourceProvenance.ParseValid("pow(0, -2)").ExpectEvaluationError<EvalError.IllegalInEval>();
-        var canonicalError = SourceProvenance.ParseValid("Math.Pow(0, -2)").ExpectEvaluationError<EvalError.IllegalInEval>();
-        Assert.Equal(canonicalError.Reason, aliasError.Reason);
+        // The shared implementation includes the zero-base error rule, for
+        // integral and fractional negative exponents alike.
+        foreach (var exponent in new[] { "-2", "-0.5" })
+        {
+            var aliasError = SourceProvenance.ParseValid($"pow(0, {exponent})").ExpectEvaluationError<EvalError.IllegalInEval>();
+            var canonicalError = SourceProvenance.ParseValid($"Math.Pow(0, {exponent})").ExpectEvaluationError<EvalError.IllegalInEval>();
+            var operatorError = SourceProvenance.ParseValid($"0 ^ {exponent}").ExpectEvaluationError<EvalError.IllegalInEval>();
+            Assert.Equal("zero cannot be raised to a negative exponent", canonicalError.Reason);
+            Assert.Equal(canonicalError.Reason, aliasError.Reason);
+            Assert.Equal(canonicalError.Reason, operatorError.Reason);
+        }
     }
 
     [Theory]

@@ -51,11 +51,13 @@ def negativeExponentExactCases : Bool :=
 
 #guard negativeExponentExactCases
 
--- 0 ^ negative is a domain error (same message as the C# runtime).
+-- 0 ^ negative is a domain error (same message as the C# runtime, whose rule
+-- rejects EVERY exponent below zero -- `0 ^ -0.5` too; the Int core states the
+-- integer instance).
 def zeroToNegativeExponentIsDomainError : Bool :=
   match runResult (.binary .pow (.num 0) (.num (-1))) with
   | Except.error err =>
-      innermostIsIllegalInEval "zero cannot be raised to a negative integer exponent" err
+      innermostIsIllegalInEval "zero cannot be raised to a negative exponent" err
   | _ => false
 
 #guard zeroToNegativeExponentIsDomainError

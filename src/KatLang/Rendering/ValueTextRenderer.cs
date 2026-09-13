@@ -108,11 +108,22 @@ internal static class ValueTextRenderer
     /// <c>Infinity</c>, <c>-Infinity</c>, and <c>-0</c> render literally).
     /// <c>DisplayDecimals</c> opts into fixed-point presentation; whole numbers
     /// carrying an integral quantum stay plain there, mirroring the previous
-    /// scale-zero rule.
+    /// scale-zero rule, and a non-finite value keeps its canonical spelling on
+    /// this path too — KatLang owns <c>NaN</c> / <c>Infinity</c> /
+    /// <c>-Infinity</c> everywhere a number is shown, so a special value never
+    /// reaches the runtime's fixed-point formatter. A finite signed zero is an
+    /// ordinary fixed-point value here: <c>-0</c> (integral quantum) stays
+    /// <c>-0</c>, while <c>-0.0</c> takes the requested precision (<c>-0.00</c>
+    /// at two decimals), exactly like every other finite value with a fraction.
     /// </summary>
     internal static string FormatAtom(Decimal128 value, DisplayOptions displayOptions)
     {
         if (displayOptions.Decimals is not { } decimals)
+            return FormatNumberInvariant(value);
+
+        // Non-finite values have no fixed-point layout; their spelling belongs to
+        // the one canonical owner, never to the "F" formatter below.
+        if (!Decimal128.IsFinite(value))
             return FormatNumberInvariant(value);
 
         if (Decimal128.IsInteger(value) && Decimal128.GetQuantum(value) >= Decimal128.One)

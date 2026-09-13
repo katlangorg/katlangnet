@@ -381,7 +381,7 @@ If ANY checklist item fails, fix the output before emitting it.
 ## KatLang Core Model
 
 - A program is a single algorithm: optional `open`, then property definitions and output expression rows. Output rows may be interleaved with property definitions; the conventional style is definitions first, output last.
-- Numeric scalar values are IEEE 754 Decimal128 numbers: 34 significant decimal digits, exponent range about ±6144. `NaN`, `Infinity`, `-Infinity`, and `-0` are ordinary values (from domain violations like `Math.Sqrt(-1)` or overflow); division by a zero-valued divisor is still an error.
+- Numeric scalar values are IEEE 754 Decimal128 numbers: 34 significant decimal digits, exponent range about ±6144. `NaN`, `Infinity`, `-Infinity`, and `-0` are ordinary values (from domain violations like `Math.Sqrt(-1)` or overflow); division by a zero-valued divisor is still an error, and so is raising zero to ANY negative exponent (`0 ^ -1`, `0 ^ -0.5`, and `Math.Pow(0, -2.5)` all fail with `zero cannot be raised to a negative exponent` — never `Infinity`).
 - String literals (single-quoted) are first-class runtime values.
 - Logical truth is numeric.
 - Algorithms are also first-class values.
@@ -1544,7 +1544,7 @@ Without trailing output, `Order` has no direct result — use `Order.Total(25, 4
 
 === BEGIN GENERATED: katlang-spec-examples (DO NOT EDIT BY HAND) ===
 
-Verified reference examples (84 of the 255-case canonical language specification,
+Verified reference examples (84 of the 256-case canonical language specification,
 tests/KatLang.Tests/LanguageSpec/LanguageSpecCorpus.cs). Every program and expected
 output below is executed against the KatLang engine and (where representable)
 guarded against the Lean model on every build. Treat these as ground truth for the

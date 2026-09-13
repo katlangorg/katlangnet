@@ -1097,6 +1097,40 @@ public class KatLangEngineTests
         Assert.Equal("0.000000", result.ToDisplayString());
     }
 
+    [Theory]
+    [InlineData("9e6144 * 10", "Infinity")]          // overflow saturates to +Infinity
+    [InlineData("(0 - 9e6144) * 10", "-Infinity")]   // ... and to -Infinity
+    [InlineData("Math.Sqrt(-1)", "NaN")]             // domain violation
+    [InlineData("Math.Ln(0)", "-Infinity")]
+    public void RunResult_ToDisplayString_DisplayDecimals_KeepsKatLangSpellingForNonFiniteResults(
+        string expression, string expectedDisplay)
+    {
+        // The public language surface, not only the renderer: a non-finite result
+        // produced by ordinary evaluation keeps KatLang's canonical spelling when
+        // DisplayDecimals is in effect, instead of falling through to the runtime's
+        // fixed-point formatting of special values.
+        var source = $"DisplayDecimals = 2\n\n{expression}";
+        Assert.Equal(expectedDisplay, Assert.IsType<RunResult.Success>(KatLangEngine.Run(source)).ToDisplayString());
+        Assert.Equal(expectedDisplay, KatLangEngine.EvaluateToString(source));
+
+        // Nested inside a sequence value and a list, the same owner applies.
+        Assert.Equal(
+            $"(1.50, {expectedDisplay}, [{expectedDisplay}])",
+            Assert.IsType<RunResult.Success>(KatLangEngine.Run(
+                $"DisplayDecimals = 2\n\n(1.5, {expression}, [{expression}])")).ToDisplayString());
+    }
+
+    [Fact]
+    public void RunResult_ToDisplayString_DisplayDecimals_KeepsTheSignedZeroFixedPointDistinction()
+    {
+        // `-0` carries an integral quantum and stays plain; `-0.0` carries a
+        // fractional quantum and takes the requested precision. Neither is
+        // normalized into the other.
+        Assert.Equal("-0", KatLangEngine.Run("DisplayDecimals = 2\n\n-0").ToDisplayString());
+        Assert.Equal("-0.00", KatLangEngine.Run("DisplayDecimals = 2\n\n-0.0").ToDisplayString());
+        Assert.Equal("0.00", KatLangEngine.Run("DisplayDecimals = 2\n\n0.0").ToDisplayString());
+    }
+
     [Fact]
     public void RunResult_ToDisplayString_DisplayDecimals_PreservesPrecisionForCalculations()
     {

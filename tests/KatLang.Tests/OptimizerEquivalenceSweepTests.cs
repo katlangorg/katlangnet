@@ -176,7 +176,7 @@ public class OptimizerEquivalenceSweepTests
             "count(x)", "x.count", "Dbl(x)", "x:0", "(x)", "(x, 9):0", "[x]:0", "x*",
             "Tmp", "Tmp + x", "x + count('ab')",
             "range(1, x).count", "filter(range(1, 3), Pred).count",
-            "x / 0", "x mod 0", "1 / x", "x ^ -1",
+            "x / 0", "x mod 0", "1 / x", "x ^ -1", "x ^ -0.5",
             "Lst:0 + x", "Seq:1 + x", "Emp + x", "Str == 'ab'",
             "sum((x, 1))", "reduce((1, 2), Add, x)",
         };

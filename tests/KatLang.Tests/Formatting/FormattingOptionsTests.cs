@@ -150,6 +150,21 @@ public class FormattingOptionsTests
     }
 
     [Fact]
+    public void DisplayDecimals_NonFiniteValues_KeepKatLangSpellingInEveryFormatter()
+    {
+        // Every formatter renders atoms through the one canonical owner, so a
+        // non-finite value under DisplayDecimals is spelled NaN / Infinity /
+        // -Infinity on each of them — never a runtime fixed-point rendering.
+        const string source = "DisplayDecimals = 2\n\n(Math.Sqrt(-1), 9e6144 * 10, Math.Ln(0), 1.5)";
+        var run = KatLangEngine.Run(source);
+        var options = new OutputFormattingOptions { NewLine = "\n" };
+
+        Assert.Equal("(NaN, Infinity, -Infinity, 1.50)", OutputFormatters.Exact.Format(run));
+        Assert.Equal("(NaN, Infinity, -Infinity, 1.50)", OutputFormatters.Readable.Format(run, options));
+        Assert.Equal("NaN Infinity -Infinity 1.50", OutputFormatters.Concise.Format(run, options));
+    }
+
+    [Fact]
     public void OptionsInstances_AreImmutableAndShareable()
     {
         var options = new OutputFormattingOptions { NewLine = "\n", PreferredLineWidth = 8 };

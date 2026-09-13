@@ -19,7 +19,14 @@
 --   (`7 / 2 = 3` and `avg(1, 2) = 1`) but yield decimals in the runtime
 --   (`3.5` and `1.5`), and negative exponents with
 --   |base| >= 2 raise an explicit error instead of silently truncating the
---   reciprocal to 0 (see `negativeIntPow`).
+--   reciprocal to 0 (see `negativeIntPow`). Zero raised to a negative
+--   exponent is a language error in BOTH models: the runtime rejects EVERY
+--   exponent below zero (`0 ^ -1`, `0 ^ -0.5`, `Math.Pow(0, -2.5)` alike —
+--   a negative power of zero is reciprocal-like, and a zero divisor is an
+--   error, never IEEE `Infinity`), and the Int core states that same rule at
+--   its only reachable instance, integer exponents. Fractional exponents
+--   have no Int counterpart, so this is a documented model boundary, not a
+--   narrower runtime rule.
 --   IEEE special values and range behavior exist only in the runtime: NaN,
 --   ±Infinity, signed zero, overflow to infinity, and gradual underflow
 --   (subnormals and eventual zero) have no Int
@@ -2648,7 +2655,10 @@ def intPow (b : Int) : Nat -> Int
   | n + 1 => b * intPow b n
 
 /-- Negative integer exponents follow the C# reference semantics:
-    - `0 ^ negative` is a domain error,
+    - `0 ^ negative` is a domain error — the runtime's rule is "a zero base
+      rejects ANY exponent below zero, integral or not" (`0 ^ -0.5` and
+      `Math.Pow(0, -2.5)` fail exactly like `0 ^ -1`); the Int core can only
+      reach the integer instance of that rule and shares its message,
     - bases `1` and `-1` have exact integer reciprocals,
     - any other base yields a fractional reciprocal (for example `2 ^ -1 = 0.5`
       in the decimal runtime), which the Int-valued Lean core cannot represent.
@@ -2658,7 +2668,7 @@ def intPow (b : Int) : Nat -> Int
     numeric model, not a behavior the runtime should copy. -/
 def negativeIntPow (base exponent : Int) : EvalM Result :=
   if base == 0 then
-    .error (Error.illegalInEval "zero cannot be raised to a negative integer exponent")
+    .error (Error.illegalInEval "zero cannot be raised to a negative exponent")
   else if base == 1 then
     pure (Result.atom 1)
   else if base == -1 then

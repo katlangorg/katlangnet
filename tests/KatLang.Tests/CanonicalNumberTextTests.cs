@@ -492,4 +492,46 @@ public class CanonicalNumberTextTests
         // A fractional value still takes the requested fixed-point presentation.
         Assert.Equal("1.50", ValueTextRenderer.FormatAtom(N("1.5"), options));
     }
+
+    [Fact]
+    public void DisplayDecimals_NonFiniteValues_KeepTheKatLangOwnedSpelling()
+    {
+        // A non-finite value has no fixed-point layout. With `DisplayDecimals` set it
+        // must still be spelled by the ONE canonical owner — never by handing NaN or an
+        // infinity to the runtime's "F" formatter — so the spelling cannot drift with a
+        // runtime's fixed-point conventions for special values.
+        var options = new DisplayOptions(2, int.MaxValue);
+        Assert.Equal("NaN", ValueTextRenderer.FormatAtom(Decimal128.NaN, options));
+        Assert.Equal("NaN", ValueTextRenderer.FormatAtom(-Decimal128.NaN, options));
+        Assert.Equal("Infinity", ValueTextRenderer.FormatAtom(Decimal128.PositiveInfinity, options));
+        Assert.Equal("-Infinity", ValueTextRenderer.FormatAtom(Decimal128.NegativeInfinity, options));
+
+        // Identical to the canonical (no DisplayDecimals) spelling.
+        Assert.Equal(
+            ValueTextRenderer.FormatNumberInvariant(Decimal128.NaN),
+            ValueTextRenderer.FormatAtom(Decimal128.NaN, options));
+        Assert.Equal(
+            ValueTextRenderer.FormatNumberInvariant(Decimal128.NegativeInfinity),
+            ValueTextRenderer.FormatAtom(Decimal128.NegativeInfinity, options));
+    }
+
+    [Theory]
+    [InlineData("-0", "-0", "-0")]
+    [InlineData("-0.0", "-0.0", "-0.00")]
+    [InlineData("0", "0", "0")]
+    [InlineData("0.0", "0.0", "0.00")]
+    [InlineData("-0e3", "-0", "-0")]
+    [InlineData("-0.00", "-0.00", "-0.00")]
+    public void DisplayDecimals_SignedZero_KeepsTheFixedPointDistinction(
+        string literal, string canonical, string fixedPoint)
+    {
+        // A finite signed zero is an ordinary fixed-point value, deliberately: `-0`
+        // carries an integral quantum and stays on the whole-number arm, while `-0.0`
+        // carries a fractional quantum and respects the selected display precision.
+        // `-0.0` is NOT normalized to `-0`.
+        var options = new DisplayOptions(2, int.MaxValue);
+        var value = N(literal);
+        Assert.Equal(canonical, ValueTextRenderer.FormatNumberInvariant(value));
+        Assert.Equal(fixedPoint, ValueTextRenderer.FormatAtom(value, options));
+    }
 }

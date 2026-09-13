@@ -558,10 +558,25 @@ public class EvaluatorOperatorTests
         AssertEval("0.0000000000000001 ^ 1.5 == Math.Pow(0.0000000000000001, 1.5)", 1);
     }
 
-    [Fact]
-    public void Eval_Pow_ZeroToNegativeInteger_FailsClearly()
+    [Theory]
+    [InlineData("0 ^ -1")]
+    [InlineData("0 ^ -0.5")]
+    [InlineData("0 ^ -2.5")]
+    [InlineData("Math.Pow(0, -0.5)")]
+    public void Eval_Pow_ZeroToNegativeExponent_FailsClearly(string source)
     {
-        AssertEvalFailsWithIllegalInEval("0 ^ -1", "zero cannot be raised to a negative integer exponent");
+        // Integral or not, a negative exponent on a zero base is the one
+        // reciprocal-like domain error — never IEEE's Infinity — through `^` and
+        // the shared Math.Pow implementation alike.
+        AssertEvalFailsWithIllegalInEval(source, "zero cannot be raised to a negative exponent");
+    }
+
+    [Fact]
+    public void Eval_Pow_ZeroToNonNegativeExponent_IsUnchanged()
+    {
+        AssertEval("0 ^ 0", 1);
+        AssertEval("0 ^ 1", 0);
+        AssertEval("0 ^ 0.5", 0);
     }
 
     [Fact]

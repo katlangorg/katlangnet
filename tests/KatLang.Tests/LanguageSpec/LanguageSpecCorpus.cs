@@ -155,7 +155,9 @@ public static class LanguageSpecCorpus
                 // An exact `/` quotient is the same value in both engines.
                 new SpecProbe("8 / 2", "ok raw=4 n=1"),
                 // Zero to a negative integer power is the specified error in
-                // BOTH numeric models (Lean `negativeIntPow`, C# `EvalPow`).
+                // BOTH numeric models (Lean `negativeIntPow`, C# `EvalPow`). The
+                // runtime rule covers EVERY negative exponent — see the C#-only
+                // `pow-zero-base-negative-exponent` case for the fractional side.
                 new SpecProbe("0 ^ -1", "err illegalInEval"),
             ],
             Notes = "Shared Lean-modeled law on these common exact integer operands: `div`/`mod` truncate toward zero (Lean `Int.tdiv`/`Int.tmod`; C# `Decimal128.Truncate(x / y)`/`%`). This is not a blanket claim about every integral Decimal128 input: a sufficiently large C# `div` quotient can round before truncation. Contrast the C#-only `division-decimal-quotient` case, where a non-exact `/` result diverges from the Int core by design.",
@@ -3389,6 +3391,33 @@ public static class LanguageSpecCorpus
             ],
             Notes = "The dense accuracy matrix (independent 90/140-digit references, exact-midpoint and near-midpoint cases, the exactness boundary `2 ^ 112` / `2 ^ 113`, the certification loop) lives in Decimal128NumericsTests.",
             Explanation = "An integer power that does not fit 34 significant digits is the exact mathematical power rounded ONCE to the nearest Decimal128 (ties to even): `0.9999999 ^ 10000000` is correct in every digit, `5 ^ 49` resolves its exact midpoint to even, and a negative exponent rounds once at the reciprocal. `^`, `Math.Pow`, and `pow` share the implementation.",
+        },
+        new()
+        {
+            Id = "pow-zero-base-negative-exponent",
+            Category = "arithmetic",
+            Source = "0 ^ -0.5",
+            Outcome = SpecOutcome.EvalError,
+            ExpectedErrorCategory = "illegalInEval",
+            LeanExclusionReason = "A fractional exponent is outside the Lean Int numeric model. The rule itself — a zero base rejects EVERY negative exponent — is shared: Lean's `negativeIntPow` states it at its only reachable instance (integer exponents, Lean-guarded by `CoreTests/Numerics.lean`; the `integer-division-truncates` probe `0 ^ -1` runs only in C#), while the fractional side is Decimal128-only.",
+            Probes =
+            [
+                // The integer instance is the same error family (shared with Lean).
+                new SpecProbe("0 ^ -1", "err illegalInEval"),
+                new SpecProbe("0 ^ -2.5", "err illegalInEval"),
+                // One implementation behind the three spellings.
+                new SpecProbe("Math.Pow(0, -0.5)", "err illegalInEval"),
+                new SpecProbe("pow(0, -2.5)", "err illegalInEval"),
+                // A signed zero and a computed zero are zero-valued bases too.
+                new SpecProbe("(-0) ^ -0.5", "err illegalInEval"),
+                new SpecProbe("z = 1 - 1\nz ^ -0.5", "err illegalInEval"),
+                // The boundary: non-negative exponents keep their IEEE results.
+                new SpecProbe("0 ^ 0", "ok raw=1 n=1"),
+                new SpecProbe("0 ^ 1", "ok raw=0 n=1"),
+                new SpecProbe("0 ^ 0.5", "ok raw=0 n=1"),
+            ],
+            Notes = "The rule is the power-side counterpart of the zero-divisor rule (`1 / 0` is an error, never `Infinity`): a negative power of zero is reciprocal-like, so integrality of the exponent is irrelevant. The integer instance has a Lean guard in `CoreTests/Numerics.lean` and a C#-only probe in `integer-division-truncates`; the denser boundary matrix (signed zero, -Infinity exponent, NaN exponent) lives in Decimal128NumericsTests.",
+            Explanation = "Raising zero to ANY negative exponent is an evaluation error, whether or not the exponent is an integer: `0 ^ -1`, `0 ^ -0.5`, and `Math.Pow(0, -2.5)` all report `zero cannot be raised to a negative exponent` instead of producing `Infinity`. Zero and positive exponents are unchanged (`0 ^ 0` is `1`, `0 ^ 0.5` is `0`).",
         },
         new()
         {

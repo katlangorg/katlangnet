@@ -2620,14 +2620,24 @@ public static partial class Evaluator
     /// whose legacy positive-power chain overflows (10^-6146 remains a nonzero
     /// subnormal). These dependency results are quantum-canonicalized and are
     /// not covered by the certification guarantee. Special bases retain IEEE
-    /// sign/parity, x^0 is 1, and zero to a negative integer is a KatLang error.</para>
+    /// sign/parity and x^0 is 1.</para>
+    /// <para>ZERO BASE, NEGATIVE EXPONENT: a zero-valued base (signed zeros included)
+    /// raised to ANY exponent below zero is the KatLang error decided here, before
+    /// any delegation — whether the exponent is integral is irrelevant, so
+    /// <c>0 ^ -1</c>, <c>0 ^ -0.5</c>, and <c>Math.Pow(0, -2.5)</c> reject alike
+    /// (a negative power of zero is reciprocal-like, and KatLang treats a zero
+    /// divisor as an error rather than adopting IEEE's <c>Infinity</c>). The
+    /// comparison is IEEE, so a NaN exponent is not "below zero" and keeps its
+    /// propagating NaN result, while <c>-Infinity</c> is and rejects. The Lean
+    /// model states the same rule at its integer instance (<c>negativeIntPow</c>);
+    /// fractional exponents are Decimal128-only.</para>
     /// </summary>
     internal static EvalResult<Result> EvalPow(
         SourceSpan? span, Decimal128 b, Decimal128 exp,
         int? initialWorkingDigits = null, int maxWorkingDigits = Decimal128Numerics.MaxWorkingDigits)
     {
-        if (b == 0 && exp < 0 && Decimal128.IsInteger(exp))
-            return new EvalError.IllegalInEval("zero cannot be raised to a negative integer exponent") { Span = span };
+        if (b == 0 && exp < 0)
+            return new EvalError.IllegalInEval("zero cannot be raised to a negative exponent") { Span = span };
 
         if (TryDecimal128Pow(b, exp, initialWorkingDigits, maxWorkingDigits, out var result))
             return EvalResult<Result>.Ok(new Result.Atom(result));

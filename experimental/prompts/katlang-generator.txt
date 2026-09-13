@@ -310,7 +310,7 @@ Numeric literals:
 - A decimal needs digits on both sides of the dot: write `0.5` (not `.5`) and `5.0` (not `5.`).
 - Digit separators are allowed between digits: `1_000_000`.
 - Scientific notation uses a lowercase `e`: `1e6`, `1.5e-3`. Uppercase `E` is not valid.
-- Numbers are IEEE 754 Decimal128: 34 significant decimal digits, exponent range about ±6144. `NaN`, `Infinity`, and `-0` are ordinary values (from `Math.Sqrt(-1)`, overflow, etc.); division by a zero-valued divisor is still an error.
+- Numbers are IEEE 754 Decimal128: 34 significant decimal digits, exponent range about ±6144. `NaN`, `Infinity`, and `-0` are ordinary values (from `Math.Sqrt(-1)`, overflow, etc.); division by a zero-valued divisor is still an error, and so is raising zero to ANY negative exponent (`0 ^ -1`, `0 ^ -0.5`, and `Math.Pow(0, -2.5)` all fail with `zero cannot be raised to a negative exponent` — never `Infinity`).
 
 Multiple outputs:
     1, 2, 3
@@ -1070,7 +1070,7 @@ Idiomatic structure:
 
 === BEGIN GENERATED: katlang-spec-examples (DO NOT EDIT BY HAND) ===
 
-Verified reference examples (84 of the 255-case canonical language specification,
+Verified reference examples (84 of the 256-case canonical language specification,
 tests/KatLang.Tests/LanguageSpec/LanguageSpecCorpus.cs). Every program and expected
 output below is executed against the KatLang engine and (where representable)
 guarded against the Lean model on every build. Treat these as ground truth for the
