@@ -24,7 +24,6 @@ internal enum SequenceBuiltinEmptyPolicy
 {
     AllowEmpty,
     RequireAnyItem,
-    RequireEachInputNonEmpty,
 }
 
 internal enum SequenceBuiltinItemShapeConstraint

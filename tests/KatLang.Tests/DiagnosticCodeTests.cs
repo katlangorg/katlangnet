@@ -118,6 +118,7 @@ public class DiagnosticCodeTests
         { "unexpected-character-bang", "!x", DiagnosticCode.UnexpectedCharacter },
         { "unterminated-string", "'abc", DiagnosticCode.UnterminatedStringLiteral },
         { "number-too-large", "1e999999", DiagnosticCode.NumberLiteralTooLarge },
+        { "invalid-number-literal", "٣ + 1", DiagnosticCode.InvalidNumberLiteral },
         { "unexpected-token-missing-close", "(1", DiagnosticCode.UnexpectedToken },
         { "unexpected-token-trailing-comma", "(3,)", DiagnosticCode.UnexpectedToken },
         { "unexpected-token-stray-root-paren", "Before = 1\n)\nAfter = 2\nAfter", DiagnosticCode.UnexpectedToken },

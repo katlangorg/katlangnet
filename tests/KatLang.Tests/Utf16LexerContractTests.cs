@@ -224,32 +224,38 @@ public class Utf16LexerContractTests
     [InlineData("\uFF10")]      // FULLWIDTH DIGIT ZERO
     [InlineData("\u0660")]      // ARABIC-INDIC DIGIT ZERO
     [InlineData("1\u0662")]     // ASCII digit followed by a non-ASCII one
-    public void NonAsciiDecimalDigitsStartANumberTokenThatCannotBeParsed(string text)
+    public void NonAsciiDecimalDigitsStartANumberTokenThatIsReportedAsAnInvalidLiteral(string text)
     {
         // char.IsDigit is true for every Unicode decimal digit, so the lexer takes the number path;
         // Decimal128.TryParse under the invariant culture only accepts ASCII digits, so it then fails.
-        // The result is a deterministic, positioned diagnostic — but one whose WORDING names the
-        // wrong cause. Recorded here rather than changed: the acceptance behaviour is the contract,
-        // and rewording a public diagnostic is a separate, reviewed decision.
+        // The acceptance behaviour (one number token covering the run, a placeholder value, one
+        // positioned diagnostic) is the contract; the diagnostic names the actual cause and carries
+        // its own family, never the too-large family reserved for out-of-range magnitudes.
         Assert.True(char.IsDigit(text[^1]));
 
         var (tokens, diagnostics) = Lexer.Tokenize(text);
         Assert.Equal(TokenKind.Number, tokens[0].Kind);
         Assert.Equal(text.Length, tokens[0].Length);
+        Assert.Equal(0, tokens[0].NumValue);
 
         var diagnostic = Assert.Single(diagnostics);
-        Assert.Equal("Number literal is too large.", diagnostic.Message);
+        Assert.Equal(DiagnosticCode.InvalidNumberLiteral, diagnostic.Code);
+        Assert.Contains("not a valid KatLang number", diagnostic.Message);
+        Assert.DoesNotContain("too large", diagnostic.Message);
         Assert.Equal(1, diagnostic.Span.StartColumn);
+        Assert.Equal(text.Length, diagnostic.Span.EndColumn);
     }
 
     [Fact]
-    public void AGenuinelyTooLargeLiteralGivesTheSameDiagnostic()
+    public void AGenuinelyTooLargeLiteralKeepsTheTooLargeFamily()
     {
-        // The same message for a genuinely out-of-range literal (past Decimal128's
-        // finite range, so it parses to an infinity), which is why the wording above
-        // is indistinguishable from this case rather than merely imprecise.
+        // A well-formed literal past Decimal128's finite range (it parses to an
+        // infinity) stays in the too-large family, so the two causes are
+        // distinguishable by code and by wording.
         var (_, diagnostics) = Lexer.Tokenize(new string('9', 40) + "e6144");
-        Assert.Equal("Number literal is too large.", Assert.Single(diagnostics).Message);
+        var diagnostic = Assert.Single(diagnostics);
+        Assert.Equal(DiagnosticCode.NumberLiteralTooLarge, diagnostic.Code);
+        Assert.Equal("Number literal is too large.", diagnostic.Message);
     }
 
     // ── String literals ──────────────────────────────────────────────────────

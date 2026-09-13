@@ -296,4 +296,16 @@ public enum DiagnosticCode
     /// root's phantom signature is not a callable binding and never produces it.
     /// </summary>
     OpenTargetIsParameter = 42,
+
+    /// <summary>
+    /// A number literal the lexer scanned that is not a valid KatLang number.
+    /// The number scan admits any Unicode decimal digit (category Nd, per UTF-16
+    /// code unit) so that a digit never starts an identifier, but only the ASCII
+    /// digits 0-9 form a value, so text such as U+0663 (ARABIC-INDIC DIGIT THREE)
+    /// reaches Decimal128 parsing and is rejected there. Distinct from
+    /// <see cref="NumberLiteralTooLarge"/>, which is reserved for a well-formed
+    /// literal whose magnitude exceeds the Decimal128 finite range. A placeholder
+    /// zero token covering the literal keeps the parser going.
+    /// </summary>
+    InvalidNumberLiteral = 43,
 }

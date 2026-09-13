@@ -2495,7 +2495,7 @@ public static partial class Evaluator
 
         var collectionValues = BuiltinCollectionItems(collectionItem.Value);
 
-        var collected = new CollectedSequenceBuiltinInput([collectionValues], collectionValues);
+        var collected = new CollectedSequenceBuiltinInput(collectionValues);
         var preparedInputR = PrepareSequenceBuiltinInput(builtin, metadata, collected);
         if (preparedInputR.IsError) return preparedInputR.Error;
 

@@ -306,16 +306,12 @@ public static partial class Evaluator
 
     /// <summary>
     /// Collected collection input records the bound collection argument's
-    /// viewed items plus the prepared outer-item supply used by the current
-    /// builtin.
+    /// viewed items (the one-level post-binding collection view) used by the
+    /// current builtin.
     /// </summary>
-    private readonly record struct CollectedSequenceBuiltinInput(
-        IReadOnlyList<IReadOnlyList<Result>> PerInputItems,
-        IReadOnlyList<Result> FlattenedItems)
+    private readonly record struct CollectedSequenceBuiltinInput(IReadOnlyList<Result> FlattenedItems)
     {
         public int TotalItemCount => FlattenedItems.Count;
-
-        public bool AnyInputEmpty => PerInputItems.Any(static items => items.Count == 0);
     }
 
     /// <summary>

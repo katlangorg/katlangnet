@@ -774,9 +774,6 @@ public static partial class Evaluator
             SequenceBuiltinEmptyPolicy.RequireAnyItem when collected.TotalItemCount == 0 => new EvalError.WithContext(
                 $"{BuiltinDisplayName(builtin)} requires a non-empty collection",
                 new EvalError.BadArity()),
-            SequenceBuiltinEmptyPolicy.RequireEachInputNonEmpty when collected.AnyInputEmpty => new EvalError.WithContext(
-                $"{BuiltinDisplayName(builtin)} requires each input collection to be non-empty",
-                new EvalError.BadArity()),
             _ => EvalResult<CollectedSequenceBuiltinInput>.Ok(collected),
         };
     }
@@ -1085,7 +1082,7 @@ public static partial class Evaluator
         // sequence/list elements stay intact as single items.
         var collectionValues = BuiltinCollectionItems(collectionItem.Value);
 
-        var collected = new CollectedSequenceBuiltinInput([collectionValues], collectionValues);
+        var collected = new CollectedSequenceBuiltinInput(collectionValues);
         var preparedInputR = PrepareSequenceBuiltinInput(builtin, metadata, collected);
         if (preparedInputR.IsError) return preparedInputR.Error;
 

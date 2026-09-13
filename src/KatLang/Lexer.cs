@@ -179,12 +179,15 @@ public static class Lexer
                 // Strip digit separators before parsing. Source text parses DIRECTLY
                 // into Decimal128 — no narrower intermediate representation. A finite
                 // literal with more than 34 significant digits rounds to the nearest
-                // representable value (IEEE round-half-even); only a literal whose
-                // magnitude exceeds the Decimal128 range (parses to an infinity) is a
-                // too-large diagnostic.
+                // representable value (IEEE round-half-even). Two failure modes stay
+                // distinct: text Decimal128 cannot parse at all (the scan admits any
+                // Unicode decimal digit so a digit never starts an identifier, but
+                // only the ASCII digits 0-9 form a value) is the invalid-literal
+                // diagnostic, while a well-formed literal whose magnitude exceeds the
+                // Decimal128 range (parses to an infinity) is the too-large diagnostic.
                 var text = source[start..i].Replace("_", "");
-                if (Decimal128.TryParse(text, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var value)
-                    && Decimal128.IsFinite(value))
+                var parsed = Decimal128.TryParse(text, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var value);
+                if (parsed && Decimal128.IsFinite(value))
                 {
                     tokens.Add(Token.CreateNumber(value, start, i - start, startLine, startCol));
                 }
@@ -192,12 +195,15 @@ public static class Lexer
                 {
                     // EndColumn is inclusive: `col` sits one past the last
                     // consumed digit (at least one digit was consumed).
+                    var (message, code) = parsed
+                        ? ("Number literal is too large.", DiagnosticCode.NumberLiteralTooLarge)
+                        : ("Number literal is not a valid KatLang number: only the ASCII digits 0-9 are recognized (with an optional fraction and a lowercase 'e' exponent).", DiagnosticCode.InvalidNumberLiteral);
                     diagnostics.Add(new Diagnostic(
-                        "Number literal is too large.",
+                        message,
                         DiagnosticSeverity.Error,
                         new SourceSpan(startLine, startCol, line, col - 1))
                     {
-                        Code = DiagnosticCode.NumberLiteralTooLarge,
+                        Code = code,
                     });
                     tokens.Add(Token.CreateNumber(0, start, i - start, startLine, startCol));
                 }

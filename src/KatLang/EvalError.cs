@@ -8,7 +8,7 @@ namespace KatLang;
 ///   | unknownName      : Ident → Error
 ///   | unknownProperty  : String → Ident → Error
 ///   | notPublicProperty : String → Ident → Error
-///   | localOnlyProperty : String → Ident → PropertyExposure → Error
+///   | localOnlyProperty : String → Ident → PropExposure → Error
 ///   | notAnAlgorithm   : String → Error
 ///   | illegalInOpen     : String → Error
 ///   | badOpenForm       : String → Error
@@ -26,6 +26,7 @@ namespace KatLang;
 ///   | duplicateBranchPattern : Error
 ///   | explicitParamsRequireOutput : Error
 ///   | missingOutput      : Error
+///   | spreadMissingOutput : Error
 ///   | unresolvedImplicitParams : List Ident → Error
 ///   | withContext        : String → Error → Error
 /// </code>

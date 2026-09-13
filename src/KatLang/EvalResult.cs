@@ -2,7 +2,10 @@ namespace KatLang;
 
 /// <summary>
 /// Result monad for evaluation: either a value or a structured error.
-/// Corresponds to <c>EvalM := Except Error</c> in the Lean specification (line 27).
+/// Corresponds to the <c>Except Error</c> failure channel of <c>EvalM</c> in the Lean
+/// specification (<c>structure EvalM (α : Type) where runState : ExceptT Error (StateM EvalState) α</c>);
+/// the <c>StateM EvalState</c> layer (the per-run zero-parameter property cache, which
+/// Lean retains across failures) is threaded separately by the C# evaluator, not by this type.
 /// </summary>
 public readonly struct EvalResult<T>
 {

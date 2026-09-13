@@ -443,6 +443,7 @@ public enum KatLang.DiagnosticCode : int
   InvalidSpreadMarker = 40
   UnseparatedSameLineItem = 41
   OpenTargetIsParameter = 42
+  InvalidNumberLiteral = 43
 
 public enum KatLang.DiagnosticSeverity : int
   Hint = 1
@@ -1520,6 +1521,7 @@ public enum KatLang.KatLangErrorCode : int
   InvalidSpreadMarker = 63
   UnseparatedSameLineItem = 64
   OpenTargetIsParameter = 65
+  InvalidNumberLiteral = 66
 
 public sealed class KatLang.KatLangException : System.Exception
   ctor     public KatLangException(System.Collections.Generic.IReadOnlyList<KatLang.KatLangError> errors)

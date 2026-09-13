@@ -631,9 +631,12 @@ Number          = /[0-9](_*[0-9])*(\.[0-9](_*[0-9])*)?(e[+-]?[0-9](_*[0-9])*)?/ 
                      recovery from invalid input, the lexer also enters its
                      number-scanning path for any Unicode decimal digit (Nd, per
                      UTF-16 code unit); text such as U+0663 is then rejected by
-                     Decimal128 parsing with the number-too-large diagnostic.
-                     That recovery behavior is not admitted by this production
-                     and is pinned separately by Utf16LexerContractTests. *)
+                     Decimal128 parsing with the invalid-number-literal
+                     diagnostic (DiagnosticCode.InvalidNumberLiteral), which is
+                     distinct from the number-too-large diagnostic reserved for
+                     out-of-range magnitudes. That recovery behavior is not
+                     admitted by this production and is pinned separately by
+                     Utf16LexerContractTests. *)
 BindingIdentifier = Identifier ;
 Identifier      = IdentifierStart { IdentifierPart } ;
                   (* An Identifier is a maximal identifier-shaped word that is
