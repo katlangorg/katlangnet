@@ -169,8 +169,8 @@ timeouts (ParameterDetector 274, 948) have no obvious mechanism and are recorded
 
 | Test | File | Kills |
 |---|---|---|
-| `CandidateBudgetExceeded_SuppressesEvenAnAvailableStructuralSuggestion` | ImplicitParameterDiagnosticsTests | Stryker 991 (verified) |
-| `CandidateBudgetExceededThroughOpen_SuppressesEvenAnAvailableStructuralSuggestion` | ImplicitParameterDiagnosticsTests | Stryker 1009 (verified) |
+| `CandidateBudgetExceeded_SuppressesEvenAnAvailableStructuralSuggestion` | ImplicitParameterDiagnosticsTests | Stryker 991 (verified). Restructured 2026-09-13 (G-24): a member-bearing receiver no longer runs the lexical sweep, so the collector's failure contract is now pinned directly by `VisibleLexicalNameCollection_ReportsBudgetExhaustionAsFailure`, the source-level budget pin uses a memberless receiver (`MemberlessReceiver_LexicalCandidateBudgetExceeded_ConservativelyEmitsNoSuggestion`), and `MemberBearingReceiver_SuggestsItsMemberRegardlessOfLexicalCandidateCount` pins the new precedence |
+| `CandidateBudgetExceededThroughOpen_SuppressesEvenAnAvailableStructuralSuggestion` | ImplicitParameterDiagnosticsTests | Stryker 1009 (verified). Restructured 2026-09-13 (G-24) into `MemberBearingReceiver_SuggestsItsMemberRegardlessOfOpenedCandidateCount`; the member surface's own bound is pinned by `MemberSurfaceBudgetExceeded_ConservativelyEmitsNoSuggestion` |
 | `NameVisibleAtTwoScopeLevels_StillYieldsSuggestion` | ImplicitParameterDiagnosticsTests | Stryker 978 (verified) |
 | `ImplicitParameterProvenance_TakesFirstOccurrenceAcrossBinaryOperands` | ImplicitParameterDiagnosticsTests | regression only (see G10) |
 | `ImplicitParameterProvenance_TakesCalleeOccurrenceBeforeArgument` | ImplicitParameterDiagnosticsTests | regression only (see G10) |

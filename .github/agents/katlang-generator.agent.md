@@ -1282,6 +1282,7 @@ BETTER — specific branch first:
 - The fallback resolves `f` exactly like the plain callee in `f(a, args)`, including parameters: with `K(a, t) = a.t`, the member `t` calls the algorithm bound to the parameter `t`, exactly like `t(a)`. The nearest lexical owner declaring the name supplies its parameter or property. An ancestor-owned parameter beats properties of farther owners and all opened providers; a property conflicting with a parameter in the same or an enclosing algorithm is a declaration error. Structural members of the receiver always win before either.
 - GRACE WITH DOTCALL: `a~.f(args)` is ordinary postfix Grace on the bare receiver name followed by an ORDINARY DOT EDGE; `a.~f(args)` is ordinary dot with prefix Grace on the participating member/fallback occurrence. Base semantic occurrence order is receiver, participating fallback, then written arguments: `K = a.f` infers `(a, f)`, while both graced two-name forms infer `(f, a)` through the ONE general Grace pass. Runtime fallback still invokes `f(a, args)`, but that assembly does not order the enclosing signature. Postfix Grace requires its receiver operand to be one bare name, so `(x + y)~.t`, `f(x)~.t`, `[x, y]~.t`, `5~.t`, and a second `~.` in `a~.t~.u` reject; prefix member Grace remains valid with a compound receiver because it decorates the bare member name. Call arguments are unrestricted (`a~.t(b, c)` and `a.~t(b, c)` infer `(t, a, b, c)`). Grace NEVER changes member selection or any other executable semantics: with a free receiver `o`, `Read = o~.V` then `Read(Obj)` reads Obj's structural `V` exactly like `Obj.V` (write `V(Obj)` to reach a lexical `V`), `x~.string` keeps the dot-only intrinsic, `S~.count` (free `S`) keeps the dotted builtin view, and receiver-segment supply is unchanged. A member participates in inference when fallback MAY be selected, but not when structural resolution is certain and not in a CLOSED explicit list. A marker that could reorder nothing is an ERROR, never a no-op: `Obj~.V` on a bound property, `Obj.~V` on a member Obj is known to declare, `x.~string` on the intrinsic, `S.~count` on a builtin, and any marker under an explicit parameter list. Grace must attach directly to its bare name: `a ~ .t` and `a.~ t` are attachment errors; use `a~.t` and `a.~t`. A grace-marked `open` target is rejected (`open M~.C`).
 - Ordinary lexical dot-call preserves that injected receiver as one argument boundary: for the FALLBACK, `A.B(C, D)` allocates arguments like `B(A, C, D)`, not a call where `A`'s top-level values are spread before `C` and `D`. This is not an unconditional rewrite — when `B` is a structural member of `A`, `A.B(C, D)` calls that member with `C` and `D` alone (`Obj = { public B(c) = c + 1 }` makes `Obj.B(5)` return `6` even beside a visible `B(a, c)`). Generate `F(3, 7)` or `(3).F(7)`, not `(3, 7).F`, when a user-defined `F` expects two fixed parameters.
+- A member name the receiver does not declare is NOT an error by itself, and a statically known receiver (`Math`, a block, a module) gets no special treatment: `Math.Ceiling(x)` has no structural `Ceiling`, so it is the lexical fallback `Ceiling(Math, x)` — valid when a `Ceiling(a, b)` is visible, and otherwise an enclosing algorithm with inferred inputs infers `Ceiling` as an implicit parameter (the program then needs an argument for it; the report names the receiver, explains the fallback, and suggests `Math.Ceil`). Spell members exactly as the receiver declares them (`Math.Ceil`, `Math.Floor`, `Math.Sqrt`) and never rely on a misspelling being rejected as a missing member.
 - A SPREAD receiver is the exception: a fluent chain after a spread passes the spread items as the leading call arguments, resolved lexically. `x.Calculate*.Target` means `Target(x.Calculate*)`, and `Arg*.Scale(10)` means `Scale(Arg*, 10)`.
 - A user-defined property with an explicit collecting parameter (`*values`) collects its assigned argument slots as one exact immutable list; the dot-call receiver is one leading segment whose supply only that collector consumes. For `Scale(*values, factor) = values.map{n * factor}` with `Arg = 1, 2, 3`, use `Scale(Arg*, 10)`, `Arg*.Scale(10)`, `(1, 2, 3).Scale(10)`, or `Scale(1, 2, 3, 10)` to scale each item. `Scale(Arg, 10)` and `Arg.Scale(10)` supply `Arg` as one sequence-valued argument (a named receiver supplies its one stored value). Multiple sibling grouped values are preserved unless explicitly spread with a postfix star.
 
@@ -1544,7 +1545,7 @@ Without trailing output, `Order` has no direct result — use `Order.Total(25, 4
 
 === BEGIN GENERATED: katlang-spec-examples (DO NOT EDIT BY HAND) ===
 
-Verified reference examples (84 of the 256-case canonical language specification,
+Verified reference examples (85 of the 257-case canonical language specification,
 tests/KatLang.Tests/LanguageSpec/LanguageSpecCorpus.cs). Every program and expected
 output below is executed against the KatLang engine and (where representable)
 guarded against the Lean model on every build. Treat these as ground truth for the
@@ -1880,6 +1881,18 @@ Regenerate this block from the repo root with:
 
   Displays:
     42
+
+[dot-fallback-on-known-receiver-stays-valid] A member name the receiver does not declare is not an error by itself, and a statically known receiver (`Math`, a block, a module) gets no special status: `Lib.Dubel(4)` has no structural `Dubel`, so it is the ordinary lexical fallback `Dubel(Lib, 4)` — `a` receives the `Lib` algorithm and `b` receives `4`. Static receiver knowledge improves the DIAGNOSTIC when no such callable is visible (the report names the receiver, explains the fallback, and suggests a real member), but never the resolution or the validity of the program.
+
+    Lib = {
+        public Double(x) = 2 * x
+    }
+    Dubel(a, b) = b * 3
+
+    Lib.Dubel(4)
+
+  Displays:
+    12
 
 [dot-chain-structural-member-beats-extension] Dot syntax is property-first at EVERY level of a chain: the receiver `Lib.Sub` is navigated to `Sub`'s algorithm, and because `Sub` exposes an accessible `Q`, that member is read before the visible extension `Q(x)` is ever considered — exactly as `Lib.Q` reads `Lib`'s own `Q`. Only a receiver without the member falls back to the extension call `Q(receiver)`; a same-named extension, whether declared at the root, in the enclosing algorithm, or as a parameter of it, never pre-empts a structural member.
 

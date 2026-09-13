@@ -82,12 +82,13 @@ public class ImplicitParameterDiagnosticsTests
 
         var note = SingleNote(error);
         Assert.Equal("Valeu", note.Name);
-        Assert.Equal("Value", note.SuggestedName);
+        // A receiver-member suggestion is spelled with its receiver.
+        Assert.Equal("M.Value", note.SuggestedName);
         Assert.NotNull(note.Span);
         Assert.Equal(2, note.Span!.StartLineNumber);
 
         Assert.Contains("'Valeu'", message, StringComparison.Ordinal);
-        Assert.Contains("Did you mean 'Value'?", message, StringComparison.Ordinal);
+        Assert.Contains("Did you mean 'M.Value'?", message, StringComparison.Ordinal);
     }
 
     // ── 2. Math member typo ────────────────────────────────────────────────
@@ -99,13 +100,13 @@ public class ImplicitParameterDiagnosticsTests
 
         var note = SingleNote(error);
         Assert.Equal("Pie", note.Name);
-        Assert.Equal("Pi", note.SuggestedName);
+        Assert.Equal("Math.Pi", note.SuggestedName);
         // The occurrence is the member identifier to the right of the dot.
         Assert.NotNull(note.Span);
         Assert.Equal(1, note.Span!.StartLineNumber);
         Assert.Equal(6, note.Span.StartColumn);
 
-        Assert.Contains("Did you mean 'Pi'?", message, StringComparison.Ordinal);
+        Assert.Contains("Did you mean 'Math.Pi'?", message, StringComparison.Ordinal);
     }
 
     // ── 3. Lexical dot-call fallback typo ──────────────────────────────────
@@ -234,9 +235,9 @@ public class ImplicitParameterDiagnosticsTests
 
         var result = Evaluator.Run(new Expr.AlgorithmExpr(detected.Root));
         Assert.True(result.IsError);
-        Assert.Equal("Value", SingleNote(result.Error).SuggestedName);
+        Assert.Equal("M.Value", SingleNote(result.Error).SuggestedName);
         Assert.Contains(
-            "Did you mean 'Value'?",
+            "Did you mean 'M.Value'?",
             KatLangError.FromEvalError(result.Error).Message,
             StringComparison.Ordinal);
     }
@@ -342,8 +343,8 @@ public class ImplicitParameterDiagnosticsTests
             M.Valeu
             """);
 
-        Assert.Equal("Value", SingleNote(error).SuggestedName);
-        Assert.Contains("Did you mean 'Value'?", message, StringComparison.Ordinal);
+        Assert.Equal("M.Value", SingleNote(error).SuggestedName);
+        Assert.Contains("Did you mean 'M.Value'?", message, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -385,17 +386,69 @@ public class ImplicitParameterDiagnosticsTests
     // These pin TryCollectVisibleLexicalNames' CONSERVATIVE contract, which the
     // pre-campaign suite left unobserved: three surviving mutants (Stryker
     // 978/991/1009) changed candidate-collection outcomes without failing a test.
+    // (Since the receiver-aware member policy, a receiver that declares members
+    // never runs the lexical sweep, so the direct contract is pinned on the
+    // collector itself and the source-level budget pins use a MEMBERLESS receiver.)
 
     /// <summary>
-    /// Budget exhaustion must suppress the suggestion ENTIRELY, including an
-    /// otherwise-available structural member candidate. Structural candidates are
-    /// collected BEFORE the lexical sweep, so a mutant that reports budget failure
-    /// as success (returning true with an empty name list instead of false) still
-    /// has 'Value' in hand and would suggest it. The pre-existing budget test uses
-    /// a BARE name, where candidates is empty either way and the two agree.
+    /// Budget exhaustion is a hard collection FAILURE, never an empty success: a
+    /// mutant that reports the overflow as success with an empty name list would
+    /// let a caller holding earlier candidates (bound parameter names) keep
+    /// suggesting from them past the work bound.
     /// </summary>
     [Fact]
-    public void CandidateBudgetExceeded_SuppressesEvenAnAvailableStructuralSuggestion()
+    public void VisibleLexicalNameCollection_ReportsBudgetExhaustionAsFailure()
+    {
+        var definitions = string.Join(
+            '\n',
+            Enumerable.Range(0, 513).Select(static index => $"Candidate{index} = {index}"));
+        var scope = ElaboratedScopeLookup.CreateScope(SourceProvenance.ParseValid($"{definitions}\n1").Root);
+
+        Assert.False(ElaboratedScopeLookup.TryCollectVisibleLexicalNames(
+            scope,
+            new HashSet<string>(StringComparer.Ordinal),
+            maxCount: 512,
+            maxNameLength: 64,
+            out var visibleNames));
+        Assert.Empty(visibleNames);
+
+        var smallScope = ElaboratedScopeLookup.CreateScope(SourceProvenance.ParseValid("Alpha = 1\nBeta = 2\n1").Root);
+        Assert.True(ElaboratedScopeLookup.TryCollectVisibleLexicalNames(
+            smallScope,
+            new HashSet<string>(StringComparer.Ordinal),
+            maxCount: 512,
+            maxNameLength: 64,
+            out var smallNames));
+        Assert.Contains(smallNames, static name => name.Name == "Alpha");
+        Assert.Contains(smallNames, static name => name.Name == "Beta");
+    }
+
+    /// <summary>
+    /// A memberless receiver's dotted name is necessarily an extension call, so
+    /// it is answered lexically and the lexical budget applies to it exactly as
+    /// to a bare name: exhaustion suppresses the suggestion entirely.
+    /// </summary>
+    [Fact]
+    public void MemberlessReceiver_LexicalCandidateBudgetExceeded_ConservativelyEmitsNoSuggestion()
+    {
+        var definitions = string.Join(
+            '\n',
+            Enumerable.Range(0, 513).Select(static index => $"Candidate{index} = {index}"));
+        var (message, error) = FailWithParity($"{definitions}\nN = 5\nN.Canddate0");
+
+        var note = SingleNote(error);
+        Assert.NotNull(note.DotMemberOrigin);
+        Assert.Null(note.SuggestedName);
+        Assert.DoesNotContain("Did you mean", message, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// A receiver that declares members answers an apparent member access from
+    /// its OWN surface, so the lexical candidate count — 513 root properties
+    /// here — is irrelevant to the member suggestion.
+    /// </summary>
+    [Fact]
+    public void MemberBearingReceiver_SuggestsItsMemberRegardlessOfLexicalCandidateCount()
     {
         var definitions = string.Join(
             '\n',
@@ -403,16 +456,16 @@ public class ImplicitParameterDiagnosticsTests
         var (message, error) = FailWithParity(
             $"{definitions}\nM = {{ public Value = 42 }}\nM.Valeu");
 
-        Assert.Null(SingleNote(error).SuggestedName);
-        Assert.DoesNotContain("Did you mean", message, StringComparison.Ordinal);
+        Assert.Equal("M.Value", SingleNote(error).SuggestedName);
+        Assert.Contains("Did you mean 'M.Value'?", message, StringComparison.Ordinal);
     }
 
     /// <summary>
-    /// Same conservative rule when the budget is exhausted while sweeping an
-    /// OPENED target's exported properties rather than direct lexical ones.
+    /// The same when the lexical sweep would have overflowed on an OPENED
+    /// target's exported properties rather than direct lexical ones.
     /// </summary>
     [Fact]
-    public void CandidateBudgetExceededThroughOpen_SuppressesEvenAnAvailableStructuralSuggestion()
+    public void MemberBearingReceiver_SuggestsItsMemberRegardlessOfOpenedCandidateCount()
     {
         var members = string.Join(
             '\n',
@@ -420,7 +473,27 @@ public class ImplicitParameterDiagnosticsTests
         var (message, error) = FailWithParity(
             $"open Lib\nLib = {{\n{members}\n}}\nM = {{ public Value = 42 }}\nM.Valeu");
 
-        Assert.Null(SingleNote(error).SuggestedName);
+        Assert.Equal("M.Value", SingleNote(error).SuggestedName);
+        Assert.Contains("Did you mean 'M.Value'?", message, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// The member surface has its own work bound: past 512 exported members no
+    /// member suggestion is attempted — and no lexical name (the one-edit-away
+    /// root property here) is offered in its place.
+    /// </summary>
+    [Fact]
+    public void MemberSurfaceBudgetExceeded_ConservativelyEmitsNoSuggestion()
+    {
+        var members = string.Join(
+            '\n',
+            Enumerable.Range(0, 513).Select(static index => $"  public Member{index} = {index}"));
+        var (message, error) = FailWithParity(
+            $"Big = {{\n{members}\n}}\nMembre0 = 1\nBig.Membr0");
+
+        var note = SingleNote(error);
+        Assert.NotNull(note.DotMemberOrigin);
+        Assert.Null(note.SuggestedName);
         Assert.DoesNotContain("Did you mean", message, StringComparison.Ordinal);
     }
 
@@ -595,8 +668,10 @@ public class ImplicitParameterDiagnosticsTests
     [Fact]
     public void DotMemberSuggestion_StructuralMemberOutranksEquallyCloseLexicalName()
     {
-        // Both candidates are one edit away; structural-first dot resolution
-        // makes the receiver's member the better-ranked suggestion.
+        // Both candidates are one edit away; an apparent member access on a
+        // receiver that declares members is answered from the receiver's own
+        // surface, so its member is the suggestion and the lexical near-miss
+        // is not offered (see ReceiverAwareMissingMemberDiagnosticsTests).
         var (message, error) = FailWithParity(
             """
             M = { public Valxe = 1 }
@@ -604,8 +679,8 @@ public class ImplicitParameterDiagnosticsTests
             M.Value
             """);
 
-        Assert.Equal("Valxe", SingleNote(error).SuggestedName);
-        Assert.Contains("Did you mean 'Valxe'?", message, StringComparison.Ordinal);
+        Assert.Equal("M.Valxe", SingleNote(error).SuggestedName);
+        Assert.Contains("Did you mean 'M.Valxe'?", message, StringComparison.Ordinal);
     }
 
     // ── 10. Diagnostics-only: inference and evaluation are unchanged ───────
@@ -745,8 +820,8 @@ public class ImplicitParameterDiagnosticsTests
         var (message, error) = FailWithParity(source);
         var callbackArity = Assert.IsType<EvalError.ArityMismatch>(Innermost(error));
         var callbackTypo = Assert.Single(callbackArity.InferredImplicitParameters!, note => note.Name == "Valeu");
-        Assert.Equal("Value", callbackTypo.SuggestedName);
-        Assert.Contains("Did you mean 'Value'?", message, StringComparison.Ordinal);
+        Assert.Equal("M.Value", callbackTypo.SuggestedName);
+        Assert.Contains("Did you mean 'M.Value'?", message, StringComparison.Ordinal);
 
         var asyncResult = await KatLang.Tests.AsyncEvaluation.AsyncEvaluationHarness.Complete(
             Evaluator.RunCountedAsync(
@@ -768,8 +843,8 @@ public class ImplicitParameterDiagnosticsTests
 
         var loopArity = Assert.IsType<EvalError.ArityMismatch>(Innermost(error));
         var loopTypo = Assert.Single(loopArity.InferredImplicitParameters!, note => note.Name == "Valeu");
-        Assert.Equal("Value", loopTypo.SuggestedName);
-        Assert.Contains("Did you mean 'Value'?", message, StringComparison.Ordinal);
+        Assert.Equal("M.Value", loopTypo.SuggestedName);
+        Assert.Contains("Did you mean 'M.Value'?", message, StringComparison.Ordinal);
     }
 
     // ── Multiple typos are attributed individually ─────────────────────────
@@ -783,8 +858,8 @@ public class ImplicitParameterDiagnosticsTests
             M.Valeu + Math.Pie
             """);
 
-        Assert.Contains("Did you mean 'Value' instead of 'Valeu'?", message, StringComparison.Ordinal);
-        Assert.Contains("Did you mean 'Pi' instead of 'Pie'?", message, StringComparison.Ordinal);
+        Assert.Contains("Did you mean 'M.Value' instead of 'Valeu'?", message, StringComparison.Ordinal);
+        Assert.Contains("Did you mean 'Math.Pi' instead of 'Pie'?", message, StringComparison.Ordinal);
     }
 
     // ── Provenance survives transitive parameter lifting ───────────────────

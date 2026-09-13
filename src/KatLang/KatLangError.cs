@@ -157,11 +157,15 @@ public sealed class KatLangError
     /// generic count mismatch.
     /// <list type="bullet">
     /// <item>Unresolved-implicit-parameter failures already enumerate the
-    /// inferred names, so only suggestions are appended.</item>
+    /// inferred names, so only suggestions are appended — plus, for a name
+    /// that was the misspelled member of a dot edge on a statically known
+    /// receiver, the receiver-aware explanation (a single such name already
+    /// carries it in the main message; see <see cref="FormatUnresolvedImplicitParams"/>).</item>
     /// <item>An arity mismatch with a rendered signature already displays the
-    /// parameter names, so only suggestion-bearing notes are appended; the
-    /// signatureless property/value-access phrasing hides the names entirely,
-    /// so every note is rendered with its origin location.</item>
+    /// parameter names, so only informative notes — a suggestion, or a
+    /// receiver-aware origin — are appended; the signatureless
+    /// property/value-access phrasing hides the names entirely, so every note
+    /// is rendered with its origin location.</item>
     /// </list>
     /// </summary>
     private static string AppendInferredImplicitParameterNotes(string message, EvalError error)
@@ -174,14 +178,21 @@ public sealed class KatLangError
         {
             case EvalError.UnresolvedImplicitParams { InferredImplicitParameters: { Count: > 0 } notes } unresolved:
                 {
+                    var single = unresolved.ParamNames.Count == 1;
                     var builder = new System.Text.StringBuilder(message);
                     foreach (var note in notes)
                     {
+                        if (!single && note.DotMemberOrigin is { } origin)
+                        {
+                            builder.Append('\n');
+                            builder.Append(FormatDotMemberFallbackInference(note.Name, origin.ReceiverDescription, note.Span));
+                        }
+
                         if (note.SuggestedName is not { } suggestion)
                             continue;
 
                         builder.Append('\n');
-                        builder.Append(unresolved.ParamNames.Count == 1
+                        builder.Append(single
                             ? $"Did you mean '{suggestion}'?"
                             : $"Did you mean '{suggestion}' instead of '{note.Name}'?");
                     }
@@ -195,13 +206,19 @@ public sealed class KatLangError
                     var builder = new System.Text.StringBuilder(message);
                     foreach (var note in notes)
                     {
-                        if (signatureShown && note.SuggestedName is null)
+                        if (signatureShown && note.SuggestedName is null && note.DotMemberOrigin is null)
                             continue;
 
                         builder.Append('\n');
                         builder.Append(note.Span is { } noteSpan
                             ? $"An implicit parameter '{note.Name}' was inferred at [{noteSpan.StartLineNumber}:{noteSpan.StartColumn}]."
                             : $"An implicit parameter '{note.Name}' was inferred from an unresolved name.");
+                        if (note.DotMemberOrigin is { } origin)
+                        {
+                            builder.Append('\n');
+                            builder.Append(FormatDotMemberFallbackInference(note.Name, origin.ReceiverDescription, at: null));
+                        }
+
                         if (note.SuggestedName is { } suggestion)
                             builder.Append($"\nDid you mean '{suggestion}'?");
                     }
@@ -647,8 +664,34 @@ public sealed class KatLangError
     // legacy prose context yields the shape's PAYLOAD (names, descriptions) and
     // nothing else: a builder never re-parses a message.
 
+    /// <summary>
+    /// The ONE spelling of "this receiver has no such member", shared by the
+    /// closed-list runtime failure (<see cref="FormatDotCallUnknownName"/>, where
+    /// the fallback found no callable either) and the receiver-aware provenance
+    /// of an inferred implicit parameter
+    /// (<see cref="FormatDotMemberFallbackInference"/>, where the fallback name was
+    /// promoted instead). Both describe the same dot-edge fact; they differ only
+    /// in what the lexical fallback then did.
+    /// </summary>
+    private static string FormatDotMemberNotFound(string propertyName, string receiverDesc)
+        => $"Property '{propertyName}' was not found on `{receiverDesc}`";
+
     private static string FormatDotCallUnknownName(string propertyName, string receiverDesc)
-        => $"Property '{propertyName}' was not found on `{receiverDesc}`, and no visible algorithm or property named '{propertyName}' can be used with `{receiverDesc}` as the first argument.";
+        => $"{FormatDotMemberNotFound(propertyName, receiverDesc)}, and no visible algorithm or property named '{propertyName}' can be used with `{receiverDesc}` as the first argument.";
+
+    /// <summary>
+    /// The receiver-aware explanation of an implicit parameter that came from a
+    /// missing member on a statically known receiver: the member is absent, so
+    /// the dot edge's lexical fallback was the selected resolution, and its
+    /// callable name is what the front end promoted (the promotion itself is
+    /// stated by the surrounding message). <paramref name="at"/> names the member
+    /// token when the error's own position does not already point there.
+    /// </summary>
+    private static string FormatDotMemberFallbackInference(string memberName, string receiverDesc, SourceSpan? at)
+    {
+        var location = at is { } span ? $" at [{span.StartLineNumber}:{span.StartColumn}]" : string.Empty;
+        return $"{FormatDotMemberNotFound(memberName, receiverDesc)}{location}, so the dotted call fell back to a lexical callable named '{memberName}'.";
+    }
 
     /// <summary>
     /// The <c>string</c> intrinsic renders receiver-only because it is a dot-only
@@ -791,10 +834,19 @@ public sealed class KatLangError
     private static bool IsSimpleIdentifier(string value)
         => !string.IsNullOrEmpty(value) && Lexer.IsIdentifierShaped(value);
 
+    /// <summary>
+    /// When the ONE unresolved parameter was the misspelled member of a dot edge
+    /// on a statically known receiver, the message leads with that receiver-aware
+    /// fact (the member is absent, the dotted call fell back to a lexical
+    /// callable of that name) before the ordinary promotion/arity sentences, in
+    /// the order the reader needs them. Several unresolved names keep the
+    /// enumerating message and get their receiver-aware notes appended per name
+    /// (<see cref="AppendInferredImplicitParameterNotes"/>).
+    /// </summary>
     private static string FormatUnresolvedImplicitParams(EvalError.UnresolvedImplicitParams e, int providedArgumentCount = 0)
     {
         var count = e.ParamNames.Count;
-        var subject = count == 1 ? "Identifier" : "Identifiers";
+        var dotMemberNote = count == 1 ? SingleDotMemberOriginNote(e) : null;
         var nameVerb = count == 1 ? "does" : "do";
         var resolutionTarget = count == 1
             ? "a property or other visible name"
@@ -802,13 +854,35 @@ public sealed class KatLangError
         var interpretation = count == 1 ? "an implicit parameter" : "implicit parameters";
         var callerSentence = count == 1 ? "Its value is provided by the caller." : "Their values are provided by the caller.";
         var argWord = count == 1 ? "argument" : "arguments";
-        var names = count == 1
-            ? $"'{e.ParamNames[0]}'"
-            : string.Join(", ", e.ParamNames.Take(count - 1).Select(n => $"'{n}'")) + $" and '{e.ParamNames[^1]}'";
+        var subject = count == 1
+            ? dotMemberNote is null ? $"Identifier '{e.ParamNames[0]}'" : "That name"
+            : "Identifiers " + string.Join(", ", e.ParamNames.Take(count - 1).Select(n => $"'{n}'")) + $" and '{e.ParamNames[^1]}'";
+        var preface = dotMemberNote is null
+            ? string.Empty
+            : FormatDotMemberFallbackInference(dotMemberNote.Name, dotMemberNote.DotMemberOrigin!.ReceiverDescription, at: null) + " ";
         var missingArgumentSentence = providedArgumentCount == 0
             ? $"No {(count == 1 ? "argument was" : "arguments were")} provided"
             : $"Only {providedArgumentCount} {(providedArgumentCount == 1 ? "argument was" : "arguments were")} provided";
-        return $"{subject} {names} {nameVerb} not resolve to {resolutionTarget} here, so KatLang interprets {(count == 1 ? "it" : "them")} as {interpretation}. {callerSentence} {missingArgumentSentence}, so the program cannot be executed (expected {count} {argWord}, got {providedArgumentCount}).";
+        return $"{preface}{subject} {nameVerb} not resolve to {resolutionTarget} here, so KatLang interprets {(count == 1 ? "it" : "them")} as {interpretation}. {callerSentence} {missingArgumentSentence}, so the program cannot be executed (expected {count} {argWord}, got {providedArgumentCount}).";
+    }
+
+    /// <summary>
+    /// The provenance note of a single-parameter unresolved-implicit-parameter
+    /// error whose parameter came from a missing member on a statically known
+    /// receiver; <c>null</c> when the parameter has no such origin.
+    /// </summary>
+    private static ImplicitParameterProvenance? SingleDotMemberOriginNote(EvalError.UnresolvedImplicitParams e)
+    {
+        if (e.ParamNames.Count != 1 || e.InferredImplicitParameters is not { } notes)
+            return null;
+
+        foreach (var note in notes)
+        {
+            if (note.DotMemberOrigin is not null && string.Equals(note.Name, e.ParamNames[0], StringComparison.Ordinal))
+                return note;
+        }
+
+        return null;
     }
 
     public override string ToString()

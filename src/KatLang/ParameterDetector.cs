@@ -328,7 +328,8 @@ internal static class ParameterDetector
             diagnostics,
             hasExplicitParameterList ? GraceEffectPolicy.ClosedExplicitList : GraceEffectPolicy.ImplicitSignature,
             paramNames,
-            scope);
+            scope,
+            provenanceRecorder?.DotMembers);
         var rewrittenOutput = new List<Expr>(alg.Output.Count);
         foreach (var expr in alg.Output)
             rewrittenOutput.Add(RewriteParams(expr, scope, bodyParameters, rewriteMemo));
@@ -504,13 +505,15 @@ internal static class ParameterDetector
         private int _suggestionAttempts;
 
         /// <summary>
-        /// The statically known receiver algorithm while collecting inside a
-        /// dot edge's member/fallback occurrence; null for bare-name
-        /// occurrences and for receivers with no statically known algorithm.
-        /// Save/restore via <see cref="EnterDotMemberContext"/> so nested
-        /// (host-built) fallback shapes cannot leak the context.
+        /// The dot edge whose member/fallback occurrence is being collected,
+        /// when its receiver is a statically known algorithm that provably
+        /// lacks the member (the edge's fallback is then the selected
+        /// resolution); null for bare-name occurrences and for receivers with
+        /// no statically known algorithm. Save/restore via
+        /// <see cref="EnterDotMemberContext"/> so nested (host-built) fallback
+        /// shapes cannot leak the context.
         /// </summary>
-        private Algorithm? _dotMemberReceiver;
+        private KnownReceiverMember? _dotMember;
 
         public ImplicitParameterOccurrenceRecorder(ElaboratedPropertyScope scope, ParameterOwnership parameters)
         {
@@ -520,14 +523,16 @@ internal static class ParameterDetector
 
         public IReadOnlyDictionary<string, ImplicitParameterProvenance>? Provenance => _provenance;
 
-        public Algorithm? EnterDotMemberContext(Algorithm? knownReceiver)
+        public Dictionary<Expr.DotCall, ImplicitParameterProvenance>? DotMembers { get; private set; }
+
+        public KnownReceiverMember? EnterDotMemberContext(KnownReceiverMember? dotMember)
         {
-            var previous = _dotMemberReceiver;
-            _dotMemberReceiver = knownReceiver;
+            var previous = _dotMember;
+            _dotMember = dotMember;
             return previous;
         }
 
-        public void ExitDotMemberContext(Algorithm? previous) => _dotMemberReceiver = previous;
+        public void ExitDotMemberContext(KnownReceiverMember? previous) => _dotMember = previous;
 
         public void RecordFirstOccurrence(string name, Expr occurrence)
         {
@@ -535,16 +540,70 @@ internal static class ParameterDetector
             if (_provenance.ContainsKey(name))
                 return;
 
+            // The occurrence is the member of a dot edge on a known receiver
+            // only when it IS that edge's member name (the elaborated fallback
+            // identity carries the member's own spelling; a host-built fallback
+            // naming something else is an ordinary bare occurrence). The receiver
+            // is described exactly as the evaluator's dot-call context describes
+            // it, rendered lazily here — once per promoted name, never per edge.
+            DotMemberReceiver? receiver = null;
+            DotMemberFallbackOrigin? origin = null;
+            if (_dotMember is { } dotMember && string.Equals(dotMember.MemberName, name, StringComparison.Ordinal))
+            {
+                var description = ExprNameRenderer.Render(dotMember.ReceiverExpr, ExprNameMode.Open);
+                receiver = new DotMemberReceiver(
+                    dotMember.Algorithm,
+                    IsDottedNamePath(dotMember.ReceiverExpr)
+                        && !description.EndsWith(ExprNameRenderer.TruncationMarker, StringComparison.Ordinal)
+                            ? description : null);
+                origin = new DotMemberFallbackOrigin(description);
+            }
+
             var suggestion = _suggestionAttempts++ < MaxSuggestionAttempts
                 ? NameSuggestions.SuggestVisibleName(
                     name,
                     _scope,
                     _parameters,
-                    _dotMemberReceiver)
+                    receiver)
                 : null;
-            _provenance[name] = new ImplicitParameterProvenance(name, occurrence.Span, suggestion);
+            var provenance = new ImplicitParameterProvenance(name, occurrence.Span, suggestion, origin);
+            _provenance[name] = provenance;
+            if (origin is not null && _dotMember is { } member)
+                (DotMembers ??= new(ReferenceEqualityComparer.Instance))[member.Edge] = provenance;
+        }
+
+        /// <summary>
+        /// True when the receiver is spelled as a dotted name path the user can
+        /// write a member after (<c>Math</c>, <c>Lib.Sub</c>), so a member
+        /// suggestion can be offered as <c>Math.Ceil</c>; an inline block or
+        /// any other receiver shape keeps the bare member suggestion.
+        /// </summary>
+        private static bool IsDottedNamePath(Expr receiver)
+        {
+            while (true)
+            {
+                switch (receiver)
+                {
+                    case Expr.Resolve:
+                        return true;
+                    case Expr.DotCall { Args: null } edge:
+                        receiver = edge.Target;
+                        continue;
+                    default:
+                        return false;
+                }
+            }
         }
     }
+
+    /// <summary>
+    /// A dot edge whose receiver is a statically known algorithm that lacks the
+    /// member: the receiver's algorithm (its structural members are the member
+    /// suggestion surface), the written receiver expression (rendered for the
+    /// diagnostic only when a provenance note is actually recorded), and the
+    /// member name the fallback occurrence must carry to count as this edge's.
+    /// </summary>
+    private readonly record struct KnownReceiverMember(Algorithm Algorithm, Expr ReceiverExpr, string MemberName, Expr.DotCall Edge);
 
     /// <summary>
     /// Diagnostic source survives only between the two detection passes, never on the
@@ -716,10 +775,13 @@ internal static class ParameterDetector
         List<Diagnostic>? diagnostics,
         GraceEffectPolicy gracePolicy = GraceEffectPolicy.NotReported,
         IReadOnlySet<string>? ownParameterNames = null,
-        ElaboratedPropertyScope? level = null)
+        ElaboratedPropertyScope? level = null,
+        IReadOnlyDictionary<Expr.DotCall, ImplicitParameterProvenance>? dotMembers = null)
     {
         public readonly Dictionary<Expr, Expr> Rewrites = new(ReferenceEqualityComparer.Instance);
         public readonly HashSet<Expr> ReportedGrace = new(ReferenceEqualityComparer.Instance);
+
+        public readonly IReadOnlyDictionary<Expr.DotCall, ImplicitParameterProvenance>? DotMembers = dotMembers;
 
         public Dictionary<Algorithm, Algorithm>? Algorithms;
 
@@ -1692,13 +1754,20 @@ internal static class ParameterDetector
                     {
                         // While collecting the member/fallback occurrence, the
                         // recorder knows the receiver's statically known
-                        // algorithm (when there is one) so a provenance note
-                        // recorded here can rank the receiver's structural
-                        // members as suggestion candidates. Diagnostic-only:
-                        // the collection itself is unchanged.
+                        // algorithm (when there is one — a KnownAlgorithm
+                        // receiver reaching this branch provably LACKS the
+                        // member, so the fallback is its selected resolution)
+                        // so a provenance note recorded here can name the
+                        // receiver and rank its structural members as
+                        // suggestion candidates. Diagnostic-only: the
+                        // collection itself is unchanged.
                         var previousReceiver = recorder?.EnterDotMemberContext(
                             receiverProvider.Kind == StaticStructuralMemberProviderKind.KnownAlgorithm
-                                ? receiverProvider.Algorithm
+                                ? new KnownReceiverMember(
+                                    receiverProvider.Algorithm!,
+                                    dotCall.Target.UnwrapGraceOperand(),
+                                    dotCall.Name,
+                                    dotCall)
                                 : null);
                         CollectFreeParams(dotCall.EffectiveLexicalFallback, scope, boundParameters, paramNames, paramOrder, graceWeights, mode, recorder, memo);
                         recorder?.ExitDotMemberContext(previousReceiver);
@@ -2127,13 +2196,16 @@ internal static class ParameterDetector
                     ReportIneffectiveGrace(memberGrace, memberCore, (dotCall, selection), scope, parameters, memo);
                 }
 
-                return dotCall with
+                var rewrittenDot = dotCall with
                 {
                     Target = RewriteParams(dotCall.Target, scope, parameters, memo),
                     Args = rewrittenArgs,
                     LexicalFallback = RewriteParams(fallback, scope, parameters, memo),
                     ElaboratedFallbackSelection = selection,
                 };
+                if (memo.DotMembers?.TryGetValue(dotCall, out var provenance) == true)
+                    DiagnosticRecordMetadata<ImplicitParameterProvenance>.Set(rewrittenDot, provenance);
+                return rewrittenDot;
             }
 
             case Expr.AlgorithmExpr(var alg):

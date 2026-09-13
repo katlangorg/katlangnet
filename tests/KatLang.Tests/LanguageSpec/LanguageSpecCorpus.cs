@@ -1521,6 +1521,32 @@ public static class LanguageSpecCorpus
         },
         new()
         {
+            Id = "dot-fallback-on-known-receiver-stays-valid",
+            Category = "access-boundaries",
+            Source = "Lib = {\n    public Double(x) = 2 * x\n}\nDubel(a, b) = b * 3\n\nLib.Dubel(4)",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "12",
+            ExpectedRaw = "12",
+            ExpectedEmittedCount = 1,
+            Probes =
+            [
+                // The prelude's Math receiver is no different: a visible lexical
+                // `Ceiling` makes `Math.Ceiling(2.1)` the call `Ceiling(Math, 2.1)`.
+                new SpecProbe("Ceiling(a, b) = b * 2\nMath.Ceiling(2.1)", "ok raw=4.2 n=1"),
+                // Without the lexical callable, the fallback name is an ordinary
+                // unresolved name and is inferred as an implicit parameter — never a
+                // missing-member rejection. The diagnostic is receiver-aware (it names
+                // the receiver and suggests `Lib.Double` / `Math.Ceil`); the outcome is not.
+                new SpecProbe("Lib = {\n    public Double(x) = 2 * x\n}\nLib.Dubel(4)", "err unresolvedImplicitParams"),
+                new SpecProbe("Math.Ceiling(2.1)", "err unresolvedImplicitParams"),
+                // Supplying the parameter runs the ordinary fallback call with that callable.
+                new SpecProbe("P = Math.Ceiling(2.1)\nTwice(a, b) = b * 2\nP(Twice)", "ok raw=4.2 n=1"),
+            ],
+            IncludeInGeneratorPrompt = true,
+            Explanation = "A member name the receiver does not declare is not an error by itself, and a statically known receiver (`Math`, a block, a module) gets no special status: `Lib.Dubel(4)` has no structural `Dubel`, so it is the ordinary lexical fallback `Dubel(Lib, 4)` — `a` receives the `Lib` algorithm and `b` receives `4`. Static receiver knowledge improves the DIAGNOSTIC when no such callable is visible (the report names the receiver, explains the fallback, and suggests a real member), but never the resolution or the validity of the program.",
+        },
+        new()
+        {
             Id = "dot-fallback-after-open-provider-exposure",
             Category = "name-resolution",
             Source = """

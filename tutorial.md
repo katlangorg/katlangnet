@@ -25,6 +25,7 @@ Learn KatLang from a first calculation through collections, higher-order algorit
    - [Output Selection](#output-selection)
    - [Dot-Call Syntax](#dot-call-syntax)
    - [Dot Members and Implicit Parameters](#dot-members-and-implicit-parameters)
+   - [Misspelled Members on Known Receivers](#misspelled-members-on-known-receivers)
    - [Grace with Dot Calls](#grace-with-dot-calls)
    - [Name Resolution](#name-resolution)
 7. [String Literals](#string-literals)
@@ -1410,6 +1411,27 @@ K(Obj)
 **Result:** `42`
 
 `K` keeps arity 1: `V` resolves structurally on whatever `x` turns out to be, and reaches the lexical fallback only when the receiver has no such member.
+
+### Misspelled Members on Known Receivers
+
+Dot syntax is receiver injection, not a member lookup that fails when the member is absent: `a.F(x)` is `F(a, x)` whenever `a` has no structural `F`. That rule does not change when the receiver is statically known — `Math`, a block, or a loaded module has no special status. So a misspelled member on such a receiver is not an error by itself: the structural lookup finds nothing, the edge falls back to a lexical callable of that name, and when no such callable is visible an algorithm with inferred inputs treats the name as an implicit parameter exactly like any other unresolved name. An explicit parameter list stays closed; an unresolved dotted fallback there retains its existing runtime missing-name report. The program then fails only because nobody supplies that parameter:
+
+```
+Math.Ceiling(2.1)
+```
+
+**Result:** error — `Math` has no member `Ceiling`, so the call fell back to a lexical `Ceiling(Math, 2.1)`; no such callable is visible, so `Ceiling` became an implicit parameter of the program, and the report names the receiver, explains the fallback, and suggests `Math.Ceil`.
+
+The report is receiver-aware — it points at the member token, names the receiver, and suggests a real member (`Math.Ceil`, `Lib.Double`) when one is a plausible respelling — but the underlying rule is the ordinary one, and it stays valid whenever a matching lexical callable does exist:
+
+```
+Ceiling(a, b) = b * 2
+Math.Ceiling(2.1)
+```
+
+**Result:** `4.2`
+
+Here `Ceiling` is visible, so `Math.Ceiling(2.1)` is the ordinary fallback call `Ceiling(Math, 2.1)`: `a` receives the `Math` algorithm and `b` receives `2.1`. This is a legitimate use of the language rule, not an accident — an extension defined for any receiver applies to `Math` too. A block receiver behaves the same way: with `Lib = { public Double(x) = 2 * x }` and `Dubel(a, b) = b * 3`, `Lib.Dubel(4)` is `Dubel(Lib, 4)`, which is `12`; without the lexical `Dubel` it is the implicit-parameter report with the suggestion `Lib.Double`. When you meant a member, check its spelling against the receiver's real members; when you meant an extension, make sure a callable of that name is visible.
 
 <a id="grace-with-dotcall"></a>
 
@@ -4540,6 +4562,7 @@ Only `public` exported properties are exposed through `load` and `open`.
 - **IEEE special values:** `NaN`, `Infinity`, `-Infinity`, and `-0` are ordinary numeric values (from domain violations like `Math.Sqrt(-1)`, overflow, or writing `-0`). Ordering comparisons involving `NaN` are always false, while `==`/`!=` use structural value identity (so `NaN == NaN` is `1`). Dividing by any zero-valued divisor (including `-0` and computed zeros) is still an error, not `Infinity`, and so is raising a zero-valued base to any negative exponent (`0 ^ -1` and `0 ^ -0.5` alike). With `DisplayDecimals` set, the special values keep these same spellings (`NaN`, `Infinity`, `-Infinity`), while a finite signed zero follows the fixed-point rule like any other finite value (`-0` stays `-0`; `-0.0` shows as `-0.00` at two decimals).
 - **Parameter order surprises:** parameter order is determined by first appearance reading left to right. If your expression reads `b - a`, the first parameter is `b`, not `a`. Use Grace (`~`) to override when needed.
 - **`if` arity:** builtin `if` requires three arguments after spread expansion: `if(cond, a, b)`. There is no two-argument form. A grouped value is one argument, so `if(X)` is invalid when `X = 1, 2, 3`; spread it with `if(X*)` to supply the three slots. The check happens when the call runs, against the callable that [name resolution](#name-resolution) selected — declaring your own `if` shadows the builtin, and a wrong-arity call then reports *your* signature.
+- **Misspelled members on known receivers:** dot syntax is receiver injection — `a.F(x)` is `F(a, x)` when `a` has no structural `F` — and a statically known receiver such as `Math`, a block, or a module gets no special treatment. So `Math.Ceiling(2.1)` is not a "missing member" error: the edge falls back to a lexical `Ceiling`, and since none is visible, `Ceiling` becomes an implicit parameter of the program. The report names the receiver, explains the fallback, and suggests `Math.Ceil`; if a lexical `Ceiling(a, b)` IS visible, the call is the valid fallback `Ceiling(Math, 2.1)` and simply runs (see [Misspelled Members on Known Receivers](#misspelled-members-on-known-receivers)).
 - **`()` vs `{}` confusion:** `(expr)` groups an expression in the current scope. `{expr}` creates a new algorithm with its own parameters. Passing `(a + 1)` as an argument doesn't create a callable — it evaluates `a + 1` immediately in the enclosing scope. Bare `()` is the empty sequence value (a real value); bare `{}` is a no-output body and is not a value. Declarations follow the same split: `open` and property definitions belong to `{ ... }` blocks (or the root) and are parse errors inside `( ... )`.
 - **Ignoring a parameter:** there is no special "ignore" syntax for implicit parameters — every undeclared name becomes a required argument. If you want to accept and discard an argument, use an explicit parameter pattern. Bind the unwanted argument to a variable in the pattern, then simply don't reference it in the body:
 

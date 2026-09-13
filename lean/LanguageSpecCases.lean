@@ -14,11 +14,11 @@ This is bounded differential validation over the Lean-guarded partition,
 not a formal verification of the evaluators.
 
 Partition (machine-checked by the `specCaseIds.length` guard below):
-- specification surface cases: 256
+- specification surface cases: 257
 - excluded parse-level cases (Lean has no surface parser): 34
 - excluded C#-only cases (each carries an explicit reason in the corpus): 11
-- Lean-guarded cases: 211
-- probe observations (C#-only by design): 555
+- Lean-guarded cases: 212
+- probe observations (C#-only by design): 559
 - internal-node cases live in the semantic-explorer corpus, not here: see
   lean/SemanticExplorerCases.lean
 
@@ -532,6 +532,11 @@ def case_grace_dot_keeps_structural_precedence : Expr :=
 def case_dot_member_fallback_in_closed_parameter_list : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Obj" (alg [] [] [publicProp "V" (alg [] [] [] [.num 42])] []), privateProp "K" (alg ["x"] [] [] [(.dotCall (.param "x") "V" none)])] [(.call (.resolve "K") [.resolve "Obj"])])
 #guard obs case_dot_member_fallback_in_closed_parameter_list == "ok raw=42 n=1"
+
+-- dot-fallback-on-known-receiver-stays-valid [access-boundaries]: Lib = { \n     public Double(x) = 2 * x \n } \n Dubel(a, b) = b * 3 \n  \n Lib.Dubel(4)
+def case_dot_fallback_on_known_receiver_stays_valid : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Lib" (alg [] [] [publicProp "Double" (alg ["x"] [] [] [(.binary .mul (.num 2) (.param "x"))])] []), privateProp "Dubel" (alg ["a", "b"] [] [] [(.binary .mul (.param "b") (.num 3))])] [(.dotCall (.resolve "Lib") "Dubel" (some [.num 4]))])
+#guard obs case_dot_fallback_on_known_receiver_stays_valid == "ok raw=12 n=1"
 
 -- dot-fallback-after-open-provider-exposure [name-resolution]: open Fallback \n Make(x) = { \n     public Box = { g = 42 \n         x } \n     0 \n } \n Middle(g) = { \n     open Make \n     public Box2 = { h = 42 \n         Box.g } \n     0 \n } \n Fallback = { public Box = 5 \n     public Box2 = 7 } \n Outer(h) = { \n     open Middle \n     P = Box2.h \n     P \n } \n Outer({x+1}), Outer({x*10})
 def case_dot_fallback_after_open_provider_exposure : Expr :=
@@ -1153,7 +1158,7 @@ def case_if_spread_builds_values_before_branch_selection : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Risky" (alg [] [] [] [(.capture [.num 10, (.binary .div (.num 1) (.num 0))])])] [(.call (.resolve "if") [.num 1, (.sequenceSpread (.resolve "Risky"))])])
 #guard obs case_if_spread_builds_values_before_branch_selection == "err div0"
 
--- 211 canonical Lean-guarded specification cases.
+-- 212 canonical Lean-guarded specification cases.
 
 /--
 Machine-checked Lean-guarded partition count: the id list is built by the
@@ -1248,6 +1253,7 @@ def specCaseIds : List String := [
   "grace-dot-higher-order-implicit",
   "grace-dot-keeps-structural-precedence",
   "dot-member-fallback-in-closed-parameter-list",
+  "dot-fallback-on-known-receiver-stays-valid",
   "dot-fallback-after-open-provider-exposure",
   "dot-chain-structural-member-beats-extension",
   "dot-chain-extension-fallback-composes",
@@ -1373,6 +1379,6 @@ def specCaseIds : List String := [
   "parameter-named-if-carries-the-supplied-callable",
   "if-spread-builds-values-before-branch-selection"
 ]
-#guard specCaseIds.length == 211
+#guard specCaseIds.length == 212
 
 end LanguageSpecCases

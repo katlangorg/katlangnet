@@ -531,6 +531,17 @@ public abstract record Expr
     /// </summary>
     public sealed record DotCall(Expr Target, string Name, OutputBundle? Args = null) : Expr
     {
+        private DotCall(DotCall original) : base(original)
+        {
+            Target = original.Target;
+            Name = original.Name;
+            Args = original.Args;
+            MemberSpan = original.MemberSpan;
+            LexicalFallback = original.LexicalFallback;
+            ElaboratedFallbackSelection = original.ElaboratedFallbackSelection;
+            DiagnosticRecordMetadata<ImplicitParameterProvenance>.Copy(original, this);
+        }
+
         /// <summary>
         /// Exact span of the member identifier to the right of the dot when the
         /// parser has source information for it.

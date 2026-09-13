@@ -599,6 +599,8 @@ If `f` is a structural property of receiver `a`, `a.f(args)` calls it directly w
 
 Chained access is property-first at EVERY level: a receiver that is itself an argumentless dot access (`Lib.Sub` in `Lib.Sub.Q`) is navigated to that member's algorithm first, so `Lib.Sub.Q` reads `Sub`'s own `Q` whenever `Sub` exposes an accessible `Q` — even when a same-named `Q(x)` is visible — and `A.B.C.D` traverses nested public members at any depth without evaluating the containers. Only a receiver WITHOUT the member falls back, and the fallbacks compose along the chain (`3.A.B` is `B(A(3))`). A written call such as `Lib.Sub()` is a value, so a member after it is an extension call on that value; a declared local-only or conditional-branch intermediate member is an error at that edge, never a fallback.
 
+A member name the receiver does not declare is NOT an error by itself, and a statically known receiver (`Math`, a block, a module) gets no special treatment: `Math.Ceiling(x)` has no structural `Ceiling`, so it is the lexical fallback `Ceiling(Math, x)` — valid when a `Ceiling(a, b)` is visible, and otherwise an enclosing algorithm with inferred inputs infers `Ceiling` as an implicit parameter (the program then needs an argument for it; the report names the receiver, explains the fallback, and suggests `Math.Ceil`). Spell members exactly as the receiver declares them (`Math.Ceil`, `Math.Floor`, `Math.Sqrt`) and never rely on a misspelling being rejected as a missing member.
+
 GRACE WITH DOTCALL: `a~.f(args)` is ordinary postfix Grace on the bare receiver name followed by an ORDINARY DOT EDGE; `a.~f(args)` is ordinary dot with prefix Grace on the participating member/fallback occurrence. Base semantic occurrence order is receiver, participating fallback, then written arguments: `K = a.f` infers `(a, f)`, while both graced two-name forms infer `(f, a)` through the ONE general Grace pass. Runtime fallback still invokes `f(a, args)`, but that assembly does not order the enclosing signature. Postfix Grace requires its receiver operand to be one bare name, so `(x + y)~.t`, `f(x)~.t`, `[x, y]~.t`, `5~.t`, and a second `~.` in `a~.t~.u` reject; prefix member Grace remains valid with a compound receiver because it decorates the bare member name. Call arguments are unrestricted (`a~.t(b, c)` and `a.~t(b, c)` infer `(t, a, b, c)`). Grace NEVER changes member selection or any other executable semantics: with a free receiver `o`, `Read = o~.V` then `Read(Obj)` reads Obj's structural `V` exactly like `Obj.V` (write `V(Obj)` to reach a lexical `V`), `x~.string` keeps the dot-only intrinsic, `S~.count` (free `S`) keeps the dotted builtin view, and receiver-segment supply is unchanged. A member participates in inference when fallback MAY be selected, but not when structural resolution is certain and not in a CLOSED explicit list. A marker that could reorder nothing is an ERROR, never a no-op: `Obj~.V` on a bound property, `Obj.~V` on a member Obj is known to declare, `x.~string` on the intrinsic, `S.~count` on a builtin, and any marker under an explicit parameter list. Grace must attach directly to its bare name: `a ~ .t` and `a.~ t` are attachment errors; use `a~.t` and `a.~t`. A grace-marked `open` target is rejected (`open M~.C`).
 
 Collection builtins are ordinary fixed-arity callables such as `count(collection)`, `map(collection, mapper)`, and `take(collection, count)`. Each receives ONE collection object plus its fixed controls; after binding, a single grouped sequence value OR exact list value is opened one outer boundary as the collection (a builtin-collection rule; user function variadics do NOT open a single sequence or list argument). A dot-call receiver fills the collection parameter:
@@ -1070,7 +1072,7 @@ Idiomatic structure:
 
 === BEGIN GENERATED: katlang-spec-examples (DO NOT EDIT BY HAND) ===
 
-Verified reference examples (84 of the 256-case canonical language specification,
+Verified reference examples (85 of the 257-case canonical language specification,
 tests/KatLang.Tests/LanguageSpec/LanguageSpecCorpus.cs). Every program and expected
 output below is executed against the KatLang engine and (where representable)
 guarded against the Lean model on every build. Treat these as ground truth for the
@@ -1406,6 +1408,18 @@ Regenerate this block from the repo root with:
 
   Displays:
     42
+
+[dot-fallback-on-known-receiver-stays-valid] A member name the receiver does not declare is not an error by itself, and a statically known receiver (`Math`, a block, a module) gets no special status: `Lib.Dubel(4)` has no structural `Dubel`, so it is the ordinary lexical fallback `Dubel(Lib, 4)` — `a` receives the `Lib` algorithm and `b` receives `4`. Static receiver knowledge improves the DIAGNOSTIC when no such callable is visible (the report names the receiver, explains the fallback, and suggests a real member), but never the resolution or the validity of the program.
+
+    Lib = {
+        public Double(x) = 2 * x
+    }
+    Dubel(a, b) = b * 3
+
+    Lib.Dubel(4)
+
+  Displays:
+    12
 
 [dot-chain-structural-member-beats-extension] Dot syntax is property-first at EVERY level of a chain: the receiver `Lib.Sub` is navigated to `Sub`'s algorithm, and because `Sub` exposes an accessible `Q`, that member is read before the visible extension `Q(x)` is ever considered — exactly as `Lib.Q` reads `Lib`'s own `Q`. Only a receiver without the member falls back to the extension call `Q(receiver)`; a same-named extension, whether declared at the root, in the enclosing algorithm, or as a parameter of it, never pre-empts a structural member.
 

@@ -53,7 +53,11 @@ internal static class PropertyExposureResolver
             // them. Only widen proofs, never infer parameters or rewrite forwarding here:
             // each non-final round removes a Never proof or demotes an exported property.
             if (!run.FallbackWidened && !(run.ExposureChanged && run.HasOpens && run.HasNeverFallback))
+            {
+                if (run.HasDotMemberOrigins)
+                    new DotMemberProvenanceFinalizer(parentScope).VisitAlgorithm(root);
                 return root;
+            }
         }
     }
 
@@ -63,6 +67,7 @@ internal static class PropertyExposureResolver
         public bool FallbackWidened;
         public bool HasOpens;
         public bool HasNeverFallback;
+        public bool HasDotMemberOrigins;
         public readonly FallbackProofScan DeferredProofs = new();
     }
 
@@ -626,6 +631,10 @@ internal static class PropertyExposureResolver
 
             case Expr.DotCall(var target, _, var argsOpt):
             {
+                // Finalize diagnostic claims only AFTER exposure reaches its fixed
+                // point; the lookup scopes used during this round are provisional.
+                memos.Run.HasDotMemberOrigins |= DiagnosticRecordMetadata<ImplicitParameterProvenance>.Get(expr) is not null;
+
                 var rewrittenTarget = RewriteExpr(
                     target,
                     visiblePropertySummaries,

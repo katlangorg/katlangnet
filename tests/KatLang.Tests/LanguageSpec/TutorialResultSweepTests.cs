@@ -46,6 +46,10 @@ public class TutorialResultSweepTests
                     "**Result:** error — `A` has no defined output.",
                     KatLangErrorCode.MissingOutput),
                 new(
+                    "Math.Ceiling(2.1)",
+                    "**Result:** error — `Math` has no member `Ceiling`, so the call fell back to a lexical `Ceiling(Math, 2.1)`; no such callable is visible, so `Ceiling` became an implicit parameter of the program, and the report names the receiver, explains the fallback, and suggests `Math.Ceil`.",
+                    KatLangErrorCode.UnresolvedImplicitParams),
+                new(
                     "Lib = {\n    public Total = 1\n}\nTotal + 1",
                     "**Result:** error — `Total` does not resolve at the root (write `open Lib` or `Lib.Total`); `Lib`'s own `Total` is not the problem and is not blamed.",
                     KatLangErrorCode.UnresolvedImplicitParams),
