@@ -125,7 +125,7 @@ public class EmptySequenceOperandTests
     [MemberData(nameof(NonEqualityOperators))]
     public void RedundantEmptyParentheses_AreRejectedTheSameWay(string op)
     {
-        // `(())` and `((()))` canonicalize to `()`; canonicalization must not
+        // `(())` and `((()))` normalize to `()`; normalization must not
         // reintroduce a passthrough at a different arity depth.
         AssertEmptyOperandRejected($"(()) {op} 1", "left");
         AssertEmptyOperandRejected($"1 {op} ((()))", "right");

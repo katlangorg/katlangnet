@@ -422,7 +422,7 @@ public class SemanticExplorerTests
         IReadOnlyList<Result> builtinSupply,
         List<Finding> findings)
     {
-        // Collection-producing builtins materialize ONE exact immutable list
+        // Collection-producing builtins materialize ONE list
         // of the kept/projected supply items: zero items form [], a single
         // kept item is never erased, and nested sequence/list values stay
         // exact elements. The supply itself is the builtin collection view of
@@ -467,7 +467,7 @@ public class SemanticExplorerTests
 
         // `atoms` recursively collects numeric atoms through BOTH sequence
         // and exact list boundaries (depth-first, left-to-right) and
-        // materializes them as ONE exact immutable list. Truth testing stays
+        // materializes them as ONE list. Truth testing stays
         // list-opaque and is pinned separately. The expectation uses an
         // independent local traversal so the sweep checks the runtime
         // collector rather than restating it.

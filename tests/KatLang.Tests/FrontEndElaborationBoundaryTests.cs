@@ -296,7 +296,7 @@ public class FrontEndElaborationBoundaryTests
     /// removed in v0.8.187. Here the missing DETECTION pass is the crispest
     /// observable: the spliced module's declared parameter reference is still a
     /// raw <see cref="Expr.Resolve"/> (never rewritten to
-    /// <see cref="Expr.Param"/>), so the simplest parametrized module function
+    /// <see cref="Expr.Param"/>), so the simplest parametrized module algorithm
     /// FAILS on the partially elaborated tree where the authoritative engine
     /// computes it — and its exposure metadata equally stays at the constructor
     /// default, the v0.8.187 hole, one stage earlier.

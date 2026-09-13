@@ -248,7 +248,7 @@ public static class CountedMatrixCorpus
         Shape("cap/unary-empty-canonical", CaptureBoundary, Zero, WrittenRows,
             "(())",
             "S[]", 1,
-            "redundant unary sequence structure canonicalizes: (()) is ()"),
+            "redundant unary sequence structure normalizes: (()) is ()"),
         Raw("cap/length-probe", CaptureBoundary, Two, CaptureWrapped,
             P + "count((P2, P2))",
             "2", 1,

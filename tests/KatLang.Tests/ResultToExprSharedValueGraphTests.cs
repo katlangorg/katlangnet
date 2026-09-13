@@ -647,7 +647,7 @@ public class ResultToExprSharedValueGraphTests
     public void ResultToExpr_RoundTripsNormalizedValues()
     {
         // For a normalized value the reified expression evaluates back to that value: reification
-        // and evaluation are inverse at the value boundary. (Unnormalized chains canonicalize,
+        // and evaluation are inverse at the value boundary. (Unnormalized chains normalize,
         // which the corpus differential above covers.)
         foreach (var value in Corpus())
         {

@@ -780,7 +780,7 @@ mutual
     --   (C#) and the internal-node cases in SemanticExplorerCases.lean.
     | sequenceConstruct : Expr -> Expr -> Expr
     -- * emptySequence: the empty sequence value `()`. Repeated ordinary
-    --   parentheses around the empty sequence are useful-structure canonicalized
+    --   parentheses around the empty sequence are useful-structure normalized
     --   back to `()` rather than exposing higher-order empty sequence values.
     | emptySequence : Nat -> Expr
     -- * spread: UNARY representation over its single operand. The surface
@@ -803,11 +803,11 @@ mutual
     --   and then stays fixed).
     | sequenceSpread : Expr -> Expr
     -- * listLiteral: surface list literal `[e1, ..., en]`. Evaluates to exactly
-    --   ONE exact immutable list value (`Result.listValue`). Element slots follow
+    --   ONE list value (`Result.listValue`). Element slots follow
     --   the same expression-list rules as written parentheses (an explicit spread
     --   slot opens its operand's immediate items, a non-spread `()` slot stays one
     --   visible element), but the collected elements are stored EXACTLY: no
-    --   singleton erasure and no empty canonicalization, so `[7]`, `[[7]]`, and
+    --   singleton erasure and no empty-nesting collapse, so `[7]`, `[[7]]`, and
     --   `[]` are all distinct values. C#: `Expr.ListLiteral`.
     | listLiteral : List Expr -> Expr
     | resolve : Ident -> Expr
@@ -1021,7 +1021,7 @@ inductive Result where
   | atom  : Int -> Result
   | str   : String -> Result     -- first-class string value (exact equality, no ordering/coercion)
   | sequenceValue : List Result -> Result
-  -- Exact immutable list value `[a, b, c]`. Unlike sequence values, list
+  -- List value `[a, b, c]`. Unlike sequence values, list
   -- structure is never singleton-normalized: `listValue [r]` and `r` are
   -- distinct values, `listValue []` is distinct from the empty sequence
   -- value, and nesting is preserved exactly. C#: `Result.ListValue`.
@@ -1038,7 +1038,7 @@ namespace Result
         | [r] => r
         | _   => sequenceValue rs'
     -- Lists are exact: normalize their elements (redundant SEQUENCE structure
-    -- inside a list still canonicalizes) but never collapse the list boundary
+    -- inside a list still normalizes) but never collapse the list boundary
     -- itself — `[7]` stays `[7]`, never `7`.
     | listValue rs => listValue (rs.map normalize)
 
@@ -1058,7 +1058,7 @@ namespace Result
       collect numeric atoms depth-first, left-to-right, through BOTH sequence
       and exact list boundaries. Strings and other non-numeric leaves
       contribute no atoms. The builtin materializes this collection as ONE
-      exact immutable list value (`makeCollectionListResult`).
+      list value (`makeCollectionListResult`).
       Deliberately separate from `Result.atoms` (truth testing stays
       list-opaque) and `Result.hostAtoms` (host projection), so none of the
       three contracts can drift through shared code.
@@ -1154,7 +1154,7 @@ namespace Result
   /-- Deconstruction-openable structure view shared by the sequence-value
       parameter pattern binders: a received sequence value or exact list value
       opens to its immediate items; atoms and strings are not openable (the
-      binders apply their own scalar one-item fallback). Function-call argument
+      binders apply their own scalar one-item fallback). Call-argument
       binding never uses this view — a list argument stays one argument.
       C#: `GetSequenceValuePatternItems` / `BindCountedParameterPattern`. -/
   def structureItems? : Result -> Option (List Result)
@@ -1631,7 +1631,7 @@ namespace Algorithm
       go 0 (parameters a)
 
   /-- A callable whose top-level parameter list consumes the supplied call
-      argument stream: any top-level collecting capture, whether a lone collecting binding
+      argument supply: any top-level collecting capture, whether a lone collecting binding
       `*name` or a comma shape such as `x, *y, z`. A plain sequence-valued
       argument stays one supplied argument; only explicit spread opens it first. -/
   def usesItemSupplyBinding (a : Algorithm) : Bool :=
@@ -2190,7 +2190,7 @@ structure ParameterPatternBindings where
   values stay intact as single items.
   Applied strictly AFTER ordinary fixed parameter binding, to the already
   bound `collection` parameter only — argument boundaries are never altered
-  before binding. Function-call parameter binding never uses this view, and
+  before binding. Call parameter binding never uses this view, and
   assignment deconstruction opens its received value through the
   sequence-value parameter pattern instead. C#: `BuiltinCollectionItems`. -/
 def builtinCollectionItems : Result -> List Result
@@ -2338,7 +2338,7 @@ def combineOutputSlots : List Result -> Result
   | rs => Result.sequenceValue rs
 
 /-- Materialize a collection-producing builtin's kept/projected items as ONE
-    exact immutable list value. Unlike canonical arity capture (ordinary
+    list value. Unlike canonical arity capture (ordinary
     construction via `Result.normalize`, `combineOutputSlots`), the list
     boundary is exact: zero items form `[]`, a
     single kept item forms `[item]` (the one-item collection boundary is NEVER
@@ -2352,27 +2352,27 @@ def makeCollectionListResult (items : List Result) : CountedResult :=
   (Result.listValue items, 1)
 
 /-- True when an argument's resolved algorithm meaning is genuinely
-    FUNCTION-shaped — a builtin, a conditional clause family, or an algorithm
+    callable-shaped — a builtin, a conditional clause family, or an algorithm
     declaring parameters/patterns — as opposed to a zero-parameter VALUE
     property that merely resolved through the dual algorithm channel. Used to
     decide whether a valueless argument bound by a collecting parameter gets the targeted
-    "collects values, but ... is a function" diagnostic or surfaces its
+    "collects values, but ... is a callable" diagnostic or surfaces its
     genuine value-evaluation error. C#: `IsFunctionShapedAlgorithm`. -/
 def Algorithm.isFunctionShaped : Algorithm -> Bool
   | .builtin _ => true
   | .conditional _ _ _ => true
   | a => !(Algorithm.params a).isEmpty || !(Algorithm.parameterPatterns a).isEmpty
 
-/-- Collect the item segment assigned to a collecting binding as ONE exact immutable list value.
+/-- Collect the item segment assigned to a collecting binding as ONE list value.
 
     KatLang distinguishes three item-supply operations by receiver purpose:
 
     - `capture : Supply -> Value` — ordinary value/output capture, the
-      canonicalizing boundary `Result.normalize (Result.sequenceValue xs)`
+      normalizing boundary `Result.normalize (Result.sequenceValue xs)`
       (singleton erasure applies: `x = 1, 2, 3` is `(1, 2, 3)`, one supplied
       item is itself);
     - `collect : Supply -> ListValue` — THIS operation: a collecting binding (collecting parameter)
-      materializes exactly the assigned items as one exact immutable list
+      materializes exactly the assigned items as one list
       (`collectSegment [] = []`, `collectSegment [v] = [v]`, never erased);
     - `spread : Value -> Supply` — the spread marker (`Result.spreadItems`), which
       opens one sequence OR list boundary.
@@ -2400,7 +2400,7 @@ def collectSegment (items : List Result) : Result :=
     re-spreads it (via `Result.spreadItems`, which reads the value, not this count).
 
     This re-counts without normalizing or rebuilding the value; ordinary value
-    construction has already canonicalized redundant unary empty structure. It is
+    construction has already normalized redundant unary empty structure. It is
     applied only to public result boundaries, never to internal
     body/root output accumulation (`evalAlgOutputCountedCore`), which must keep
     its multi-item counts. (Collecting parameter storage needs no re-count:
@@ -2526,7 +2526,7 @@ partial def bindCountedParameterPattern (pattern : ParameterPattern) (input : Co
         -- remains strict to preserve existing callback semantics and Lean/C#
         -- parity, so its scalar fallback stays singleton-only to match the C#
         -- `BindCountedParameterPattern`. The scalar one-item normalization for
-        -- assignment and function-parameter deconstruction lives in the
+        -- assignment and call-parameter deconstruction lives in the
         -- non-counted `bindParameterPattern` instead.
         | none => if items.length == 1 then some [input.fst] else none
       match sequenceValueItems? with
@@ -2592,7 +2592,7 @@ partial def bindCountedParameterPatternList (patterns : List ParameterPattern)
     (matching `callee(S:i)`; exact lists stay opaque), exactly as
     `bindCountedCallbackParams` does for fixed-only flat callees. The resulting
     slots then bind through the shared prefix/collecting/suffix binder, so the collecting
-    parameter COLLECTS its allocated slots as one exact immutable list.
+    parameter COLLECTS its allocated slots as one list.
     C#: `BindCountedCallbackParameterPatternList`. -/
 def bindCountedCallbackParameterPatternList (patterns : List ParameterPattern)
     (args : List CountedResult) : EvalM CountedParameterPatternBindings :=
@@ -2750,7 +2750,7 @@ def Expr.kind : Expr -> String
   | .dotMember _ _ _ _ => "dotCall"
 
 /-- Render an empty-sequence core node by depth for diagnostics. Evaluation
-  canonicalizes repeated ordinary parentheses back to `()`. -/
+  normalizes repeated ordinary parentheses back to `()`. -/
 def emptySequenceText (depth : Nat) : String :=
   String.ofList (List.replicate (depth + 1) '(' ++ List.replicate (depth + 1) ')')
 
@@ -3433,7 +3433,7 @@ def reduceInitialAccumulatorRequiresValueError : Error :=
 /-- Evaluate `order(collection)`.
     `order` eagerly evaluates the full top-level collection, sorts its numeric
     items ascending, preserves duplicates, and materializes the sorted items
-    as one exact immutable list value.
+    as one list value.
 
     Each top-level collection element must be exactly one atomic numeric
     value. Sequence values are not flattened or recursively inspected, and
@@ -3445,7 +3445,7 @@ def evalOrderCounted (numbers : List Int) : EvalM CountedResult := do
 /-- Evaluate `orderDesc(collection)`.
     `orderDesc` eagerly evaluates the full top-level collection, sorts its
     numeric items descending, preserves duplicates, and materializes the
-    sorted items as one exact immutable list value.
+    sorted items as one list value.
 
     Each top-level collection element must be exactly one atomic numeric
     value. Sequence values are not flattened or recursively inspected, and
@@ -3482,7 +3482,7 @@ def evalContainsCounted (items : List Result) (searched : Result) : EvalM Counte
     items: atoms compare by numeric value, strings by exact string value, and
     sequence/list values structurally by their elements. Sequence and list
     values stay intact and are not flattened. The kept items are materialized
-    as one exact immutable list value: empty collections yield `[]`, and a
+    as one list value: empty collections yield `[]`, and a
     single kept item forms `[item]` (so `distinct(((), ()))` yields `[()]`). -/
 def evalDistinctCounted (items : List Result) : EvalM CountedResult := do
   let distinctItems := dedupList items
@@ -3514,7 +3514,7 @@ def evalLastCounted (items : List Result) : EvalM CountedResult := do
 
 /-- Evaluate `take(collection, count)`.
     `take` returns the first `count` extracted top-level items unchanged,
-    materialized as one exact immutable list value.
+    materialized as one list value.
     `count` is a fixed control argument after the `collection` argument.
 
     Non-positive counts return the empty list `[]`. Counts larger than the
@@ -3532,7 +3532,7 @@ def evalTakeCounted (items : List Result) (count : Int) : EvalM CountedResult :=
 /-- Evaluate `skip(collection, count)`.
     `skip` returns the extracted top-level items after the first `count`
     items, preserving item identity and original order, materialized as one
-    exact immutable list value.
+    list value.
     `count` is a fixed control argument after the `collection` argument.
 
     Non-positive counts keep all items. Counts larger than the item count
@@ -4107,7 +4107,7 @@ mutual
             -- receiver opens ONE lone structure boundary of either kind, so
             -- `x, y, z = [1, 2, 3]` binds like `x, y, z = [1, 2, 3]*`.
             -- A non-grouped scalar is a one-item supply for the
-            -- prefix/collecting/suffix matcher (the same normalization the function
+            -- prefix/collecting/suffix matcher (the same normalization the call-parameter
             -- deconstruction path applies).
             | some value => some ((Result.structureItems? value).getD [value])
             | none => none
@@ -4192,13 +4192,13 @@ mutual
                         pure (countedTopLevelValues (value, segmentCount) ++ values)
                     | none => pure (value :: values)
                 | none =>
-                    -- A collecting binding collects VALUES. A FUNCTION-shaped
+                    -- A collecting binding collects VALUES. A callable-shaped
                     -- argument (builtin, clause family, or parameterized
                     -- algorithm) has no value to collect — only fixed
                     -- parameters keep the dual algorithm channel — so name
                     -- the actual conflict instead of surfacing the argument's
                     -- incidental value-evaluation error. A zero-parameter
-                    -- VALUE property whose body failed is NOT a function: its
+                    -- VALUE property whose body failed is NOT callable-shaped: its
                     -- genuine evaluation error surfaces.
                     -- C#: `BindParameterPatternList` (whose message also
                     -- names the collecting parameter).
@@ -4206,7 +4206,7 @@ mutual
                     | some alg =>
                         if alg.isFunctionShaped then
                           .error (Error.typeMismatch
-                            "A collecting parameter collects values, but a supplied argument is a function. Pass a value, or call the function so its result is collected.")
+                            "A collecting parameter collects values, but a supplied argument is a callable. Pass a value, or call the callable so its result is collected.")
                         else
                           .error (input.error?.getD Error.badArity)
                     | none => .error (input.error?.getD Error.badArity)
@@ -4256,7 +4256,7 @@ def bindLoopStepState (step : Algorithm) (stateValues : List Result)
         | none => .error Error.badArity
         | some collectingName =>
             -- Collecting binding COLLECTS (same rule as the pattern binders): the
-            -- assigned state slots become one exact immutable list value.
+            -- assigned state slots become one list value.
             let captured := collectSegment bindings.collectingItems
             let argEnv <- bindLoopStepValueEnv signature.parameters bindings.normalBindings collectingName captured
             let collectingBinding := (collectingName, (captured, 1))
@@ -4606,7 +4606,7 @@ mutual
           -- A flat callee with a top-level collecting parameter (`Rows.map(F)` with
           -- `F(x, *y, z)` or a single-collecting `Collect(*items)`) binds through
           -- the shared prefix/collecting/suffix binder so the collecting parameter
-          -- COLLECTS an exact immutable list, after the same final-argument
+          -- COLLECTS one list, after the same final-argument
           -- row expansion the fixed-only flat path uses below. Single-variadic
           -- callees keep the whole iterated element as one collected slot.
           else if ParameterPattern.hasCollectingCaptureAtCurrentLevel
@@ -4682,7 +4682,7 @@ mutual
       | arg :: rest => do
           let alg := arg.algorithm
           let tail <- loop rest
-          -- A callback/function argument (one that declares parameters) is applied
+          -- A callback argument (a callable that declares parameters) is applied
           -- per element by the consuming sequence builtin, never used as a value here.
           -- Its parameters are unbound at this collection point, so evaluating its body
           -- standalone would resolve those parameter names against the surrounding scope;
@@ -4811,7 +4811,7 @@ mutual
       argument. Each iterated item is passed to the predicate exactly as
       collected; nested sequence values and nested
       list values stay intact. The kept items remain the original collection
-      items and are materialized as one exact immutable list value, so keeping
+      items and are materialized as one list value, so keeping
       exactly `(1, 2)` yields `[(1, 2)]`. -/
   partial def evalFilterCounted (items : List CountedResult) (predicateAlg : Algorithm)
       (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult := do
@@ -4846,7 +4846,7 @@ mutual
 
       Sequence-value and list-value mapped elements are accepted as single
       output elements. Each captured callback result becomes one element of
-      the exact immutable list result (mapped elements are never flattened
+      the list result (mapped elements are never flattened
       into the outer list), empty collections yield `[]`, and the output
       preserves the original element order and element count. -/
   partial def evalMapCounted (collection : List CountedResult) (transformAlg : Algorithm)
@@ -5015,7 +5015,7 @@ mutual
 
         | .atomsBuiltin, [a] => do
             let r <- evalArgumentValue a ctx env
-            -- `atoms` materializes a collection: one exact immutable list of
+            -- `atoms` materializes a collection: one list of
             -- the recursively collected numeric atoms (sequence AND list
             -- boundaries open; truth testing stays list-opaque).
             pure (makeCollectionListResult ((Result.languageAtoms r).map Result.atom))
@@ -5024,7 +5024,7 @@ mutual
             let start <- expectInt (<- evalArgumentValue startAlg ctx env)
             let stop <- expectInt (<- evalArgumentValue stopAlg ctx env)
             let xs := inclusiveRange start stop
-            -- `range` materializes a collection: one exact immutable list value.
+            -- `range` materializes a collection: one list value.
             pure (makeCollectionListResult (xs.map Result.atom))
 
         | _, _ =>
@@ -5207,7 +5207,7 @@ mutual
     loop args maybeAlgs assembly.isInjectedDotReceiverLeading []
 
   /-- Bind a call to an item-supply parameter list (any top-level variadic).
-      The call argument stream is already the receiver for parameter binding: a
+      The call argument supply is already the receiver for parameter binding: a
       plain sequence-valued argument contributes one item, while explicit spread
       contributes the operand's items. -/
   partial def bindDeconstructionUserCall (callee : Algorithm) (args : OutputBundle)
@@ -5376,7 +5376,7 @@ mutual
           reCountValueBoundary <$> evalAlgOutputCounted callee newCtx (argEnv ++ shadowedEnv)
     else match Algorithm.collectingParam? callee with
       | some _ =>
-          -- Any top-level variadic binds the supplied call argument stream.
+          -- Any top-level variadic binds the supplied call argument supply.
           let (argEnv, countedParamEnv, algBindings) <-
             bindDeconstructionUserCall callee args ctx env assembly
           let shadowedEnv := ValEnv.shadow env (Algorithm.params callee)
@@ -5721,7 +5721,7 @@ mutual
       slot is one element even when it evaluates to the empty sequence value
       `()`, and a nested capture or zero-parameter `algorithmExpr` is one written grouping level.
       Unlike sequence construction the collected elements are stored EXACTLY:
-      no singleton erasure and no empty canonicalization, so `[7]`, `[[7]]`,
+      no singleton erasure and no empty-nesting collapse, so `[7]`, `[[7]]`,
       `[]`, and `[()]` are all distinct list values. A list literal always
       emits one value. C#: `EvalListLiteralCounted`; plain `eval` is this
       function's value projection on both sides. -/

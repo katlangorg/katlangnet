@@ -1696,7 +1696,7 @@ public sealed class Parser
     /// lone-collecting-binding form <c>*items = RHS</c> is also supported. The right-hand side
     /// is evaluated once and its items are bound to the targets by the shared
     /// deconstruction matcher, with one optional movable collecting binding that COLLECTS
-    /// its assigned items as one exact immutable list (<c>CollectSegment</c>).
+    /// its assigned items as one list (<c>CollectSegment</c>).
     /// A malformed marker shape (a gap between the star and its name, or a
     /// repeated star) reports a targeted diagnostic and binds the name as an
     /// ordinary fixed target — malformed recovery never creates a collecting
@@ -1821,7 +1821,7 @@ public sealed class Parser
     /// unpacking receiver, so a single sequence-valued right-hand side is opened and
     /// matched element-by-element (Python-style: <c>x, y, z = A</c> splits a stored
     /// sequence value <c>A</c>). Explicit <c>x, y, z = A*</c> supplies the same
-    /// items. This unpacking is deconstruction-specific and does not change function
+    /// items. This unpacking is deconstruction-specific and does not change ordinary
     /// calls, which still pass <c>A</c> as one argument unless <c>A*</c> is written.
     /// Synthetic constructs carry no source spans; only the target property names are
     /// source-backed declarations. The collect-marker metadata is the one additional
@@ -3886,7 +3886,7 @@ public sealed class Parser
 
                     // Empty parentheses `()` construct the empty sequence value.
                     // Repeated ordinary parentheses around it are redundant grouping
-                    // and canonicalize to the same empty sequence value.
+                    // and normalize to the same empty sequence value.
                     if (!body.HasDeclarations)
                     {
                         if (body.Output.Count == 0)
@@ -3941,11 +3941,11 @@ public sealed class Parser
 
             case TokenKind.LBracket:
                 {
-                    // Exact immutable list literal `[e1, ..., en]`. The bracket
+                    // List literal `[e1, ..., en]`. The bracket
                     // content is a pure expression list (spread slots included) —
                     // never an algorithm context, so declarations are not legal
                     // inside brackets and `[]`/`[x]`/`[[x]]` all stay distinct
-                    // (no `()`-style canonicalization or singleton unwrap).
+                    // (no `()`-style normalization or singleton unwrap).
                     // An already-open '[' spans physical lines like '(' and '{'.
                     var start = Current;
                     Advance(); // consume '['

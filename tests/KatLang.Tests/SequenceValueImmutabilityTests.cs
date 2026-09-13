@@ -248,7 +248,7 @@ public class SequenceValueImmutabilityTests
         AssertSemanticallyEqual(Seq(Atom(1), Atom(2)), value);
     }
 
-    // ── 8. Collecting bindings (exact immutable list values) ───────────
+    // ── 8. Collecting bindings (list values) ───────────
 
     [Fact]
     public void CollectedList_IsExactList_AndImmutable()
@@ -291,7 +291,7 @@ public class SequenceValueImmutabilityTests
     [InlineData("atoms('text')", "[]")]
     public void BuiltinProducedList_ResistsHostMutation(string source, string expectedDisplay)
     {
-        // Collection-producing builtins return one exact immutable list value.
+        // Collection-producing builtins return one list value.
         var run = Run(source);
         var value = Assert.IsType<Result.ListValue>(run.Value);
 
@@ -307,7 +307,7 @@ public class SequenceValueImmutabilityTests
     {
         // `first` returns the stored item unchanged, so a sequence-valued
         // item surfaces as a builtin-produced sequence value. (`atoms` now
-        // materializes one exact immutable list like the other
+        // materializes one list like the other
         // collection-producing builtins; see ListValueImmutabilityTests.)
         var run = Run("first(((1, 2, 3), 4))");
         var value = Assert.IsType<Result.SequenceValue>(run.Value);

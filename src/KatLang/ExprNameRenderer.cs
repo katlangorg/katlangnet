@@ -515,7 +515,7 @@ internal static class ExprNameRenderer
             }
 
             // Empty sequence core nodes render by depth for diagnostics; evaluation
-            // canonicalizes repeated ordinary parentheses back to `()`.
+            // normalizes repeated ordinary parentheses back to `()`.
             case Expr.EmptySequence(var depth):
                 return AppendRepeated(builder, '(', (long)depth + 1)
                     && AppendRepeated(builder, ')', (long)depth + 1);

@@ -10,8 +10,8 @@ arity algebra used in the paper. It distinguishes:
 - the total item view `items`, the formal meaning of KatLang's surface
   spread marker (the one spelling `expr*`,
   with semantic direction `spread : Value -> Supply`);
-- persistent-value canonicalization `normalize`, with `capture` as the
-  canonicalizing ordinary value-capture boundary
+- persistent-value normalization `normalize`, with `capture` as the
+  normalizing ordinary value-capture boundary
   (`capture : Supply -> Value`), and `canonicalSupply` as the invariant that
   an observable item supply already holds canonical values;
 - exact segment collection `collect`, the collecting-binding operation
@@ -47,7 +47,7 @@ capture                         Result.normalize after Result.sequenceValue
 canonicalSupply                 invariant of observable supplies (the full
                                 model normalizes at every construction
                                 boundary rather than naming the invariant)
-collect                         collectSegment (exact immutable list collection)
+collect                         collectSegment (exact list collection)
 openLoneStructure               deconstruction receiver opening of a lone
                                 sequence or lone list
                                 ((Result.structureItems? value).getD [value]
@@ -94,7 +94,7 @@ def sequenceItems? : Val -> Option Supply
 Returns the stored elements when the value is an exact list value.
 
 The list twin of `sequenceItems?`. Unlike the sequence case, `Val.list` is
-never canonicalized away, so this projection is a section of the constructor
+never normalized away, so this projection is a section of the constructor
 on every payload, including singletons (`listItems? (collect [v]) = some [v]`).
 -/
 def listItems? : Val -> Option Supply
@@ -141,10 +141,10 @@ def items : Val -> Supply
 
 mutual
   /--
-  Canonicalizes a persistent value by recursively removing redundant
-  singleton sequence boundaries. This is value-level canonicalization: it
+  Normalizes a persistent value by recursively removing redundant
+  singleton sequence boundaries. This is value-level sequence normalization: it
   defines the canonical form of one stored value. List values are exact:
-  their elements canonicalize, but the list boundary itself never collapses
+  their elements normalize, but the list boundary itself never collapses
   (`[7]` stays `[7]`). It does not prepare item supplies for binding —
   deconstruction-specific supply preparation is the separate
   `openLoneStructure`.
@@ -176,7 +176,7 @@ coincides with `normalize` on canonical items). The invariant is only that
 observable capture/construction boundaries must not mint literal-unwritable
 singleton "orphan" values such as a stored `(5)` that compares unequal to `5`.
 
-Equality remains ordinary structural equality; missed canonicalization should
+Equality remains ordinary structural equality; missed normalization should
 be fixed at the construction/capture boundary, not inside equality. -/
 def capture (xs : Supply) : Val := normalize (Val.seq xs)
 
@@ -203,7 +203,7 @@ Exact segment collection: `collect : Supply -> ListValue`.
 
 Every collecting binding — deconstruction collecting bindings, single collecting parameters, and
 mixed prefix/collecting/suffix parameter lists — materializes its assigned item
-supply as one EXACT immutable list value: `collect [] = []`,
+supply as one EXACT list value: `collect [] = []`,
 `collect [v] = [v]` (never erased to the item), `collect [v, w] = [v, w]`.
 The implementation type is `Supply -> Val`; the proofs establish that the
 result is always `Val.list` with exactly the assigned items
@@ -212,7 +212,7 @@ result is always `Val.list` with exactly the assigned items
 list spread.
 
 This supersedes the pre-list `captureVariadic := capture` model, under which
-collecting binding canonicalized to a sequence value and a singleton collected segment collapsed
+collecting binding normalized to a sequence value and a singleton collected segment collapsed
 to its item. That coincidence-based model (grouped call `F(A)` agreeing with
 spread call `F(A*)` for a single collecting parameter) is intentionally obsolete:
 `collect` preserves the boundary around every assigned item, so the two calls
@@ -234,7 +234,7 @@ It prepares the supply for assignment-deconstruction binding
 underlies the collection builtins' post-binding collection view. Those are
 two runtime code paths with the same one-boundary behaviour, unified here as
 one operation — not a claim that assignment deconstruction and collection
-builtins share one runtime call path. It is NOT applied by function-call
+builtins share one runtime call path. It is NOT applied by call-argument
 binding (`bindArgs`): a stored sequence or list value is re-spread for a call
 only by an explicit spread.
 
@@ -295,7 +295,7 @@ def bindPats (ps : List Pat) (xs : Supply) : Option Env :=
                      :: bindFixed back backVals)
   | _ => none
 
-/-- Function-call binding consumes the call's item supply exactly as supplied.
+/-- Call-argument binding consumes the call's item supply exactly as supplied.
 
 A lone collecting pattern is valid here: it models the single collecting
 parameter, `bindArgs [Pat.collecting x] xs`. The lone-collecting surface

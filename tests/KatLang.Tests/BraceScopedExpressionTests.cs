@@ -3,7 +3,7 @@ namespace KatLang.Tests;
 /// <summary>
 /// Delimiter-model contract for braces: <c>{ ... }</c> is the scoped
 /// algorithm/block form and works wherever an expression-valued block is
-/// allowed — property values, function arguments, nested blocks. A brace
+/// allowed — property values, call arguments, nested blocks. A brace
 /// block owns its declarations: its <c>open</c> targets and local properties
 /// resolve inside the block and never become phantom implicit parameters of
 /// the surrounding algorithm, and nothing declared or opened inside leaks out.
@@ -39,7 +39,7 @@ public class BraceScopedExpressionTests
         Assert.Empty(result.Root.Params);
     }
 
-    // ── B: open in function-argument position ───────────────────────────────
+    // ── B: open in call-argument position ───────────────────────────────
 
     private const string OpenArgumentSource =
         "M = {\n    public P = 5\n}\n\nIdentity(x) = x\n\nIdentity({\n    open M\n    P + 1\n})";
@@ -75,7 +75,7 @@ public class BraceScopedExpressionTests
         Assert.Empty(block.Algorithm.Params);
     }
 
-    // ── C: local property in function-argument position ─────────────────────
+    // ── C: local property in call-argument position ─────────────────────
 
     [Fact]
     public void LocalPropertyInBraceArgument_Evaluates()

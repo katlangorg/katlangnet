@@ -7,7 +7,7 @@ namespace KatLang;
 /// Eager regions load before parameter detection; conditional alternatives load on selection.
 ///
 /// <para>
-/// <c>load</c> is a source-elaboration directive, NOT a runtime function.
+/// <c>load</c> is a source-elaboration directive, NOT a runtime callable.
 /// Outside registered deferred branch regions, load calls are replaced with
 /// <see cref="Expr.AlgorithmExpr"/> nodes containing the parsed remote algorithm.
 /// A selected deferred region completes loading and front-end elaboration before its body runs.
@@ -47,7 +47,7 @@ namespace KatLang;
 /// <see cref="ImplicitArgumentResolver"/> in v0.8.187, and this stage is even more
 /// incomplete: an <see cref="ElaborateAsync"/>-only tree has had NO parameter
 /// detection (a spliced module's declared parameter references are still raw
-/// <see cref="Expr.Resolve"/> nodes, so its functions cannot bind their arguments),
+/// <see cref="Expr.Resolve"/> nodes, so its algorithms cannot bind their arguments),
 /// no implicit-argument resolution, and no property-exposure finalization (see
 /// <c>FrontEndElaborationBoundaryTests</c>). Hosts get module loading through
 /// <see cref="Parser.ParseAsync"/> / <see cref="KatLangEngine.RunAsync"/> with

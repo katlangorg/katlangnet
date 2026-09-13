@@ -121,7 +121,7 @@ public class ReentrancyTests
 
     /// <summary>
     /// Reentrancy at sensitive outer phases: the nested run launches while the
-    /// outer run is inside a user-function call, a loop step, or a
+    /// outer run is inside a user-defined call, a loop step, or a
     /// map-callback invocation (chosen by where the outer program's first
     /// property access sits). Catches any hidden "one active evaluator/current
     /// algorithm" process state — none exists, and this keeps it that way.

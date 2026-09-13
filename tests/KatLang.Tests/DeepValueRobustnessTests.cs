@@ -180,7 +180,7 @@ public class DeepValueRobustnessTests
     [Fact]
     public void NormalizeHandlesDeepValues()
     {
-        // A redundant singleton sequence chain canonicalizes all the way to
+        // A redundant singleton sequence chain normalizes all the way to
         // its leaf; exact list structure is preserved at full depth.
         Assert.Equal(new Result.Atom(4), DeepSingletonSequenceChain(DirectDepth, 4).Normalize());
 

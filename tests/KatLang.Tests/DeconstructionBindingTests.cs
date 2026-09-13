@@ -7,9 +7,9 @@ namespace KatLang.Tests;
 /// receiver (Python-style): a single sequence-valued right-hand side <c>A</c> is
 /// unpacked element-by-element, so <c>x, y, z = A</c> splits <c>A</c> and explicit
 /// <c>x, y, z = A*</c> supplies the same items. This unpacking is
-/// deconstruction-specific: a function call <c>F(A)</c> still passes <c>A</c> as one
+/// deconstruction-specific: an ordinary call <c>F(A)</c> still passes <c>A</c> as one
 /// argument and needs <c>F(A*)</c> to spread it. The collecting binding collects its items
-/// as one exact immutable list value and may appear at the start, middle, or end.
+/// as one list value and may appear at the start, middle, or end.
 /// </summary>
 public class DeconstructionBindingTests
 {
@@ -605,7 +605,7 @@ public class DeconstructionBindingTests
         Assert.DoesNotContain("Assignment pattern", bindingFailure.ToDisplayString(), StringComparison.Ordinal);
     }
 
-    // ───────────────────── Function-parameter deconstruction ──────────────────
+    // ───────────────────── Call-parameter deconstruction ──────────────────
 
     [Fact]
     public void Parameter_SingleGroupedArgument_IsNotImplicitlyDeconstructed()
@@ -738,7 +738,7 @@ public class DeconstructionBindingTests
     [Fact]
     public void RepeatedSingletonBoundary_DoesNotImplicitlyOpenCallArgument()
     {
-        // Redundant unary grouping canonicalizes the value, but function calls still
+        // Redundant unary grouping normalizes the value, but calls still
         // receive one argument unless explicit spread is written — the single-variadic
         // shape collects one non-numeric element and fails like the mixed shapes.
         AssertEvalError<EvalError.BadArity>("G(*x) = x.sum\nG(((1, 2, 3, 4, 5)))");

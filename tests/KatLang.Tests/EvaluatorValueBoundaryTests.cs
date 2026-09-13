@@ -19,7 +19,7 @@ public class EvaluatorValueBoundaryTests
     // Lean: reCountValueBoundary.
 
     // User-defined variadic call: the collecting binding collects the supplied argument
-    // slots as one exact immutable list value.
+    // slots as one list value.
     [Fact]
     public void Eval_UserCall_VariadicReturn_IsOneListValue()
         => AssertEvalCounted("F(*a) = a\nF(5, 9)", 1, ListValue(Atom(5), Atom(9)));
@@ -74,7 +74,7 @@ public class EvaluatorValueBoundaryTests
     public void Eval_VariadicForwarding_UsesCollectedListViews(string source, int expected)
         => AssertEval(source, expected);
 
-    // Collection-producing builtins return one exact immutable list value;
+    // Collection-producing builtins return one list value;
     // spread opens it.
     [Theory]
     [InlineData("X = 3, 1, 2\nX.order", 1)]
@@ -190,7 +190,7 @@ public class EvaluatorValueBoundaryTests
     public void Eval_Repeat_MultiSlotLoopState_StaysMultiSlot()
         => AssertEvalCounted("repeat({a + 1, b + a}, 3, 0, 0)", 2, ResultFromAtoms(3, 3));
 
-    // Regression: redundant empty-sequence nesting is canonicalized before the
+    // Regression: redundant empty-sequence nesting is normalized before the
     // public boundary is observed.
     [Fact]
     public void Eval_Boundary_CanonicalizesNestedEmptySequence()

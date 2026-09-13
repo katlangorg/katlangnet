@@ -782,7 +782,7 @@ internal static class SequencePipelineOptimizer
         }
 
         // Match the generic composition: filter materializes its kept items as
-        // ONE exact immutable list value, and `count` opens exactly that one
+        // ONE list value, and `count` opens exactly that one
         // list boundary through the shared builtin collection-item view, so the
         // fused count is always the kept-item count — a lone kept sequence
         // value (or list value) stays one exact element and counts as one.

@@ -244,7 +244,7 @@ def variadicInlineTupleSpreadReceiverDiffersFromNamedReceiver : Bool :=
 
 #guard variadicInlineTupleSpreadReceiverDiffersFromNamedReceiver
 
--- A nested inline tuple receiver `((10, 20, 30))` is likewise one grouped
+-- A nested inline sequence receiver `((10, 20, 30))` is likewise one grouped
 -- argument slot: the collected list holds the sequence value, so `values.sum`
 -- hits the numeric element constraint.
 def variadicNestedInlineTupleDotCallIsGroupedArgument : Bool :=
@@ -694,7 +694,7 @@ def sequenceValuePatternLiteralWrappedPairReportsWrittenSlotArity : Bool :=
 
 #guard sequenceValuePatternLiteralWrappedPairReportsWrittenSlotArity
 
-/-- Regression: redundant grouping depth canonicalizes away shallowly at each
+/-- Regression: redundant grouping depth normalizes away shallowly at each
     level, so `F((((1, 2))))` still writes exactly one slot -- the canonical
     `(1, 2)` -- and reports the same `arityMismatch 2 1`. -/
 def sequenceValuePatternDeeplyWrappedPairReportsWrittenSlotArity : Bool :=
@@ -712,7 +712,7 @@ def sequenceValuePatternDeeplyWrappedPairReportsWrittenSlotArity : Bool :=
 
 #guard sequenceValuePatternDeeplyWrappedPairReportsWrittenSlotArity
 
-/-- Regression: `A = ((1, 2))` canonicalizes at property construction to
+/-- Regression: `A = ((1, 2))` normalizes at property construction to
     `(1, 2)`; `F(A)` then opens the stored canonical sequence value for the
     pattern, so `F((x, y)) = x` binds `x = 1`. No hidden orphan `((1, 2))`
     distinguishes the stored value from the writable literal `(1, 2)`. -/
@@ -993,7 +993,7 @@ def sequenceBuiltinDotCallVariadicRepeatReceiverTakeUsesFinalStateSlots : Bool :
 -- Aspect 2 loop-state variadic binding (mirrors C# EvaluatorTests.Eval_VariadicLoopStep_*).
 -- A top-level variadic loop interface binds state as an item supply: the fixed prefix
 -- and suffix bind from the ends, and the collecting parameter collects the matched middle state slots
--- as one exact immutable list. The minimum is the FIXED (non-variadic) parameter count —
+-- as one list. The minimum is the FIXED (non-variadic) parameter count —
 -- the collecting parameter may collect ZERO slots (empty collected list = `[]`), the same rule as every other collecting-binding
 -- receiver — and the max is unbounded (extra middle slots are accepted).
 def loopVariadicPrefixMiddleSuffixAlg : Algorithm :=
@@ -1348,7 +1348,7 @@ def loopInitialExplicitSelectionsSplitMultiOutputProperty : Bool :=
 --------------------------------------------------------------------------------
 -- F(x, *y, z) is a mixed fixed/collecting parameter list. The supplied call slots
 -- are matched prefix/collecting/suffix without implicitly opening a grouped argument;
--- the collecting parameter collects its assigned middle slots as one exact immutable list.
+-- the collecting parameter collects its assigned middle slots as one list.
 
 def deconstructSumAlg : Algorithm :=
   algWithParameters [
@@ -1371,7 +1371,7 @@ def deconstructionDirectItemSupply : Bool :=
 #guard deconstructionDirectItemSupply
 
 -- F(A) where A = 1, 2, 3, 4, 5: one sequence-valued argument is supplied.
--- Function-call binding does not implicitly open it, so the mixed fixed/variadic
+-- Call binding does not implicitly open it, so the mixed fixed/variadic
 -- shape is under-supplied.
 def deconstructionSingleGroupedArgumentRequiresSpread : Bool :=
   match runFlat (.algorithmExpr (algPrivate [] [] [("A", deconstructFiveArg), ("F", deconstructSumAlg)] [
@@ -1522,7 +1522,7 @@ def restOnlyConsumesItemSupply : Bool :=
 
 #guard restOnlyConsumesItemSupply
 
--- A FUNCTION-shaped argument (a builtin here) reaching a collecting binding reports
+-- A callable-shaped argument (a builtin here) reaching a collecting binding reports
 -- the targeted typeMismatch: a collecting binding collects VALUES and has no dual
 -- algorithm channel. C#: `BindParameterPatternList` (same kind; the C#
 -- message additionally names the collecting parameter).
@@ -1534,15 +1534,15 @@ def restFunctionShapedArgumentReportsTypeMismatch : Bool :=
   ])) with
   | Except.error err =>
       innermostIsTypeMismatch
-        "A collecting parameter collects values, but a supplied argument is a function. Pass a value, or call the function so its result is collected."
+        "A collecting parameter collects values, but a supplied argument is a callable. Pass a value, or call the callable so its result is collected."
         err
   | _ => false
 
 #guard restFunctionShapedArgumentReportsTypeMismatch
 
--- A zero-parameter VALUE property whose body fails is NOT function-shaped
+-- A zero-parameter VALUE property whose body fails is NOT callable-shaped
 -- (`Algorithm.isFunctionShaped`): the genuine evaluation error surfaces
--- through the collecting binding instead of the function diagnostic.
+-- through the collecting binding instead of the callable diagnostic.
 def restErroredValuePropertyArgumentSurfacesRealError : Bool :=
   match runResult (.algorithmExpr (algPrivate [] [] [
     ("Bad", alg [] [] [] [.binary .div (.num 1) (.num 0)]),
@@ -1585,7 +1585,7 @@ def itemSupplySumAlg : Algorithm :=
   ]
 
 -- Single-collecting `G(*x)` distinguishes grouped from spread supplies: `G(A)` and
--- the written-tuple call bind ONE collected sequence element (numeric `sum`
+-- the written-group call bind ONE collected sequence element (numeric `sum`
 -- constraint error), while `G(A*)` and separate slots supply the items and
 -- sum to 15.
 def restOnlyItemSupplyDistinguishesGroupedFromSpread : Bool :=
@@ -1655,8 +1655,8 @@ def restPrefixSumAlg : Algorithm :=
 def nestedSingletonFive : KatLang.Expr :=
   .capture [.capture [.num 1, .num 2, .num 3, .num 4, .num 5]]
 
--- Repeated singleton grouping is useful-structure canonicalized as a value, but
--- a function call still receives one argument unless `value*` /
+-- Repeated singleton grouping is useful-structure normalized as a value, but
+-- a call still receives one argument unless `value*` /
 -- `value*` is written.
 def repeatedSingletonBoundaryDoesNotImplicitlyOpenCallArgument : Bool :=
   let plainMixed :=

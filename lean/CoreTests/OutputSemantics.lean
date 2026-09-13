@@ -492,7 +492,7 @@ def internalSequenceConstructLoneBuiltinArgBindsLikeGroupedForm : Bool :=
 
 #guard internalSequenceConstructLoneBuiltinArgBindsLikeGroupedForm
 
--- Repeated ordinary parentheses around the empty sequence canonicalize to `()`.
+-- Repeated ordinary parentheses around the empty sequence normalize to `()`.
 def emptyVsNestedEmptyEquality : Bool :=
   match runFlat (.algorithmExpr (alg [] [] [] [
     .binary .eq (.emptySequence 0) (.emptySequence 0),
@@ -534,7 +534,7 @@ def emptyIsOrdinaryIdentifier : Bool :=
 #guard emptyIsOrdinaryIdentifier
 
 -- Block/root output preserves visible empty sequence slots, but redundant empty
--- nesting has already canonicalized to `()`.
+-- nesting has already normalized to `()`.
 def blockOutputCanonicalizesNestedEmptyDepth : Bool :=
   match
     runResult (.emptySequence 0),

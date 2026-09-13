@@ -141,7 +141,7 @@ public class ListValueImmutabilityTests
     [InlineData("atoms('text')", "[]")]
     public void BuiltinProducedList_ResistsHostMutation(string source, string expectedDisplay)
     {
-        // Collection-producing builtins return one exact immutable list value;
+        // Collection-producing builtins return one list value;
         // the Items view (including mutable-interface downcasts probed by
         // ProbeViewForMutation) must not expose writable storage.
         var run = Assert.IsType<RunResult.Success>(KatLangEngine.Run(source));

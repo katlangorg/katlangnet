@@ -6,12 +6,12 @@ namespace KatLang.Tests;
 /// Focused coverage for the collecting-binding model: every collecting binding —
 /// deconstruction collecting bindings, single collecting parameters, and mixed
 /// prefix/collecting/suffix parameter lists — COLLECTS the item slots assigned to it
-/// into ONE exact immutable list (<c>CollectSegment</c>; Lean <c>collectSegment</c>).
+/// into ONE list (<c>CollectSegment</c>; Lean <c>collectSegment</c>).
 /// The three item-supply operations stay distinct: <c>capture</c> (ordinary
-/// canonicalizing value capture), <c>collect</c> (collecting binding), and
+/// normalizing value capture), <c>collect</c> (collecting binding), and
 /// <c>spread</c> (the postfix spread marker <c>*</c>), with the round trip
 /// <c>spread(collect(xs)) = xs</c> making variadic forwarding ordinary spread.
-/// Lean twins: the "Collecting bindings collect exact immutable lists" section of
+/// Lean twins: the "Collecting bindings collect lists" section of
 /// <c>lean/CoreTests.lean</c> and the collect laws in
 /// <c>lean/KatLangArityLaws.lean</c>.
 /// </summary>

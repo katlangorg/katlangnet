@@ -146,7 +146,7 @@ public static class ConcurrencyCorpus
     // ── Outer programs whose instrumented property access sits INSIDE a
     // sensitive evaluation phase (reentrancy at sensitive semantic points) ──
 
-    /// <summary>First property access happens inside a user-function call.</summary>
+    /// <summary>First property access happens inside a user-defined call.</summary>
     public const string SensitiveUserCall = "P = 5\nF(x) = x + P\nF(1), F(2)";
 
     /// <summary>First property access happens inside a loop step.</summary>
@@ -343,7 +343,7 @@ public static class ConcurrencyCorpus
         {
             Id = "scope/same-names-different-arity",
             Scenario = ConcurrencyScenario.ScopeOwnership,
-            Invariant = "Same property/function/parameter names with different arities and values across concurrent runs: name-keyed contamination anywhere would flip one lane's result.",
+            Invariant = "Same property/callable/parameter names with different arities and values across concurrent runs: name-keyed contamination anywhere would flip one lane's result.",
             ProgramA = SameNameArityA, EntryA = EvalEntryPoint.RunCounted,
             ProgramB = SameNameArityB, EntryB = EvalEntryPoint.RunCounted,
         },

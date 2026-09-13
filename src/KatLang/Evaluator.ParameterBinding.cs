@@ -537,13 +537,13 @@ public static partial class Evaluator
         => BindCallableArguments(layout.Signature, items, arityMismatch);
 
     /// <summary>
-    /// Collect the item segment assigned to a collecting binding as ONE exact immutable list value.
+    /// Collect the item segment assigned to a collecting binding as ONE list value.
     ///
     /// KatLang distinguishes three item-supply operations by receiver purpose:
-    /// <c>capture</c> — ordinary value/output capture, the canonicalizing
+    /// <c>capture</c> — ordinary value/output capture, the normalizing
     /// boundary (<see cref="Result.FromItems"/>, singleton erasure applies);
     /// <c>collect</c> — THIS operation: a collecting binding (collecting parameter) materializes
-    /// exactly the assigned items as one exact immutable list
+    /// exactly the assigned items as one list
     /// (<c>CollectSegment([]) == []</c>, <c>CollectSegment([v]) == [v]</c>, never
     /// erased); and <c>spread</c> — the postfix spread marker
     /// (<see cref="Result.SpreadItems"/>), which opens one sequence OR list
@@ -568,11 +568,11 @@ public static partial class Evaluator
 
     /// <summary>
     /// True when an argument's resolved algorithm meaning is genuinely
-    /// FUNCTION-shaped — a builtin, a conditional clause family, or an
+    /// callable-shaped — a builtin, a conditional clause family, or an
     /// algorithm declaring parameters/patterns — as opposed to a
     /// zero-parameter VALUE property that merely resolved through the dual
     /// algorithm channel. Used to decide whether a valueless argument
-    /// bound by a collecting parameter gets the targeted "collects values, but ... is a function"
+    /// bound by a collecting parameter gets the targeted "collects values, but ... is a callable"
     /// diagnostic or surfaces its genuine value-evaluation error.
     /// Lean: <c>Algorithm.isFunctionShaped</c>.
     /// </summary>
@@ -774,7 +774,7 @@ public static partial class Evaluator
                 {
                     var itemsR = GetSequenceValuePatternItems(input);
                     // A non-grouped scalar value is a one-item supply for the
-                    // prefix/collecting/suffix matcher (the same normalization the function
+                    // prefix/collecting/suffix matcher (the same normalization the call-parameter
                     // deconstruction path applies via rule 4). This lets a scalar
                     // right-hand side bind a collecting pattern that captures zero items,
                     // e.g. `first, *tail = 1` (first = 1, tail = []), instead of being
@@ -941,18 +941,18 @@ public static partial class Evaluator
             var input = inputs[inputIndex];
             if (input.Value is null)
             {
-                // A collecting binding collects VALUES. A FUNCTION-shaped argument
+                // A collecting binding collects VALUES. A callable-shaped argument
                 // (a builtin, a clause family, or a parameterized algorithm)
                 // has no value to collect — only fixed parameters keep the
                 // dual algorithm channel — so name the actual conflict instead
                 // of surfacing the argument's incidental value-evaluation
                 // error. A zero-parameter VALUE property whose body failed is
-                // NOT a function: its genuine evaluation error surfaces.
+                // NOT callable-shaped: its genuine evaluation error surfaces.
                 if (input.Algorithm is { } algorithm && IsFunctionShapedAlgorithm(algorithm))
                 {
                     return new EvalError.TypeMismatch(
-                        $"Collecting parameter `*{collectingCapture.Name}` collects values, but a supplied argument is a function. " +
-                        "Pass a value, or call the function so its result is collected.");
+                        $"Collecting parameter `*{collectingCapture.Name}` collects values, but a supplied argument is a callable. " +
+                        "Pass a value, or call the callable so its result is collected.");
                 }
 
                 return input.ValueError ?? new EvalError.BadArity();
@@ -1330,7 +1330,7 @@ public static partial class Evaluator
 
     /// <summary>
     /// True when a callable's top-level parameter list captures the supplied call
-    /// argument stream: any top-level collecting capture, including a lone
+    /// argument supply: any top-level collecting capture, including a lone
     /// collecting binding <c>*name</c> and mixed fixed/collecting shapes such
     /// as <c>x, *y, z</c>.
     /// Checked only after patterned (sequence-value / repeated-name) binding has
@@ -1358,7 +1358,7 @@ public static partial class Evaluator
 
     /// <summary>
     /// Binds a call to an item-supply parameter list (any top-level collecting parameter).
-    /// The call argument stream is already the receiver for parameter binding:
+    /// The call argument supply is already the receiver for parameter binding:
     /// a plain sequence-valued argument contributes one item, while explicit
     /// spread contributes the operand's items.
     /// Lean: <c>bindDeconstructionUserCall</c>.

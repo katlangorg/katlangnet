@@ -131,7 +131,7 @@ public static class AlgebraOracle
     /// <summary>
     /// Lean: <c>CoreArityAlgebra.capture</c> = <c>normalize (Val.seq xs)</c>
     /// (full model: <c>Result.normalize (Result.sequenceValue xs)</c>,
-    /// KatLangArityLaws <c>captureForArityLaw</c>). The canonicalizing
+    /// KatLangArityLaws <c>captureForArityLaw</c>). The normalizing
     /// ORDINARY value-capture boundary: zero items capture as <c>()</c>, one
     /// item captures as itself (singleton erasure), many as one sequence value.
     /// (Theorems: capture_empty, capture_singleton, capture_pair.)
@@ -143,7 +143,7 @@ public static class AlgebraOracle
     /// Lean: <c>CoreArityAlgebra.collect</c> = <c>Val.list xs</c> (full model:
     /// <c>collectSegment</c> / <c>Result.listValue</c>). Exact segment
     /// collection — the collecting-binding operation. Never erases a
-    /// singleton, never canonicalizes the boundary.
+    /// singleton, never normalizes the boundary.
     /// (Theorems: collect_is_list, collect_singleton_ne_item, items_collect.)
     /// </summary>
     public static OracleVal Collect(IReadOnlyList<OracleVal> supply) => OracleVal.List(supply);
@@ -213,7 +213,7 @@ public static class AlgebraOracle
             .ToArray();
     }
 
-    /// <summary>Lean: <c>CoreArityAlgebra.bindArgs</c> — function-call binding consumes the supply exactly as supplied.</summary>
+    /// <summary>Lean: <c>CoreArityAlgebra.bindArgs</c> — call-argument binding consumes the supply exactly as supplied.</summary>
     public static IReadOnlyList<(string Name, OracleVal Value)>? BindArgs(
         IReadOnlyList<OraclePat> patterns, IReadOnlyList<OracleVal> supply) => BindPats(patterns, supply);
 

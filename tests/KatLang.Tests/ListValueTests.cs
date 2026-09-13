@@ -2,7 +2,7 @@ using System.Numerics;
 namespace KatLang.Tests;
 
 /// <summary>
-/// Exact immutable list values (<c>[]</c> syntax): construction, display,
+/// List values (<c>[]</c> syntax): construction, display,
 /// equality, spread, calls, capture, deconstruction, collecting binding, and the
 /// builtin collection view (lone lists open one boundary; collection-producing
 /// builtins return exact lists). Lean parity: the list cases in CoreTests.lean
@@ -419,7 +419,7 @@ public class ListValueTests
     public void Deconstruction_WrongElementCount_Fails()
         => Assert.True(Fails("x, y = [1, 2, 3]\nx"));
 
-    // ── Collecting binding collects an exact immutable list ────────────────────────
+    // ── Collecting binding collects one list ────────────────────────
 
     [Fact]
     public void CollectingBinding_CollectsExactList()

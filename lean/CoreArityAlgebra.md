@@ -21,11 +21,11 @@ implicit parameters, loops, builtins, strings, and unrelated error modes).
 
 KatLang arity uses **one temporary item-supply discipline and two
 receiver-purpose materializations**. `capture` reifies a supply as a canonical
-stored value, `collect` preserves it as an exact immutable list for collecting
+stored value, `collect` preserves it as an exact list for collecting
 bindings, and `spread` exposes one stored boundary as a supply:
 
 ```text
-capture : Supply → Value      -- ordinary value/output capture (canonicalizing)
+capture : Supply → Value      -- ordinary value/output capture (normalizing)
 collect : Supply → ListValue  -- collecting binding (exact)
 spread  : Value → Supply      -- the spread marker `e*` (one boundary)
 ```
@@ -33,7 +33,7 @@ spread  : Value → Supply      -- the spread marker `e*` (one boundary)
 The responsibilities never mix: ordinary value/output boundaries go through
 `capture`, collecting bindings go through `collect`, and the spread marker is `spread`.
 Grouping preserves one value boundary, spread opens one boundary, and a collecting binding
-collects the resulting slots into an exact immutable list.
+collects the resulting slots into an exact list.
 
 `collect : Supply → ListValue` is the *conceptual* typed signature; executable
 Lean gives `collect` the codomain `Val` and always constructs the result with
@@ -47,13 +47,13 @@ The value model carries two stored collection kinds over one supply type:
 inductive Val
   | atom : Int → Val
   | seq  : List Val → Val      -- the sequence value: one value, grouped arity
-  | list : List Val → Val      -- the exact immutable list value: no canonicalization
+  | list : List Val → Val      -- the exact list value: no normalization
 abbrev Supply := List Val      -- many slots (the ungrouped, multi-output context)
 ```
 
 * `Supply` is *many slots* (output slots / supplied argument slots).
 * `Val.seq` is the raw *one value* constructor that groups arity structure;
-  `capture` / `normalize` perform canonicalization at ordinary value boundaries.
+  `capture` / `normalize` perform sequence normalization at ordinary value boundaries.
 * `Val.list` is *one value* that stores its elements exactly.
 
 | role                                    | operator                         |
@@ -70,7 +70,7 @@ abbrev Supply := List Val      -- many slots (the ungrouped, multi-output contex
 | deconstruction-specific lone-structure opening of a supply | `openLoneStructure : Supply → Supply` |
 | the one supply shape that opening rewrites | `loneStructure : Supply → Bool` |
 | front / collecting / back binding kernel      | `bindPats : List Pat → Supply → Option Env` |
-| function-call parameter binding         | `bindArgs : List Pat → Supply → Option Env` |
+| call parameter binding                  | `bindArgs : List Pat → Supply → Option Env` |
 | assignment deconstruction binding (opens a lone structure) | `bindDeconstruct : List Pat → Supply → Option Env` |
 
 Several of these operations look superficially similar but are semantically
@@ -80,7 +80,7 @@ distinct, and the paper's terminology keeps them apart:
 | ------------------- | --------------- | ------------------------------------------ |
 | `structureItems?`   | value → supply? | openable-structure view (sequence OR list opens; atoms do not) |
 | `items`             | value → supply  | total item view underlying surface spread (`structureItems?` with a one-item scalar fallback — `structureItems?_getD_eq_items`) |
-| `normalize`         | value → value   | persistent-value canonicalization (sequence singletons erase; list boundaries never do) |
+| `normalize`         | value → value   | persistent-value normalization (sequence singletons erase; list boundaries never do) |
 | `capture`           | supply → value  | ordinary value capture, `normalize ∘ Val.seq` |
 | `collect`           | supply → value  | exact segment collection, always a `Val.list` |
 | `openLoneStructure` | supply → supply | deconstruction-specific supply preparation |
@@ -389,7 +389,7 @@ in `KatLang.lean`, including the subtle points:
   passes through the ordinary shared-value capture boundary, so the surface
   bare/spread forms can differ on a singleton structured element as described
   above; the extraction does not hide that lower capture-boundary detail.
-  This opening is deconstruction-specific — `bindArgs` (function calls) does
+  This opening is deconstruction-specific — `bindArgs` (calls) does
   not open — so it does **not** leak into calls (`G(A)` keeps `A` as one
   argument).
 * After the receiver-specific supply preparation, call and deconstruction collecting

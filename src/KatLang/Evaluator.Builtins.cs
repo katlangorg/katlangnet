@@ -117,7 +117,7 @@ public static partial class Evaluator
     // `spread` re-spreads it (via ToItems, which reads the value, not this count).
     //
     // This re-counts without normalizing or rebuilding the value; ordinary value
-    // construction has already canonicalized redundant unary empty structure.
+    // construction has already normalized redundant unary empty structure.
     // It is applied only to public result boundaries, never to internal
     // body/root output accumulation (EvalAlgOutputCountedCore) or to multi-slot
     // while/repeat loop state, both of which must keep their multi-item counts.
@@ -611,7 +611,7 @@ public static partial class Evaluator
         {
             var arg = resolvedArg.Algorithm;
 
-            // A callback/function argument (one that declares parameters) is applied
+            // A callback argument (a callable that declares parameters) is applied
             // per element by the consuming sequence builtin, never used as a value
             // here. Its parameters are unbound at this collection point, so evaluating
             // its body standalone would resolve those parameter names against the
@@ -865,7 +865,7 @@ public static partial class Evaluator
     /// Each iterated item is passed to the predicate exactly as collected;
     /// nested sequence values and nested list values stay intact.
     /// The kept items remain the original collection items and are
-    /// materialized as one exact immutable list value.
+    /// materialized as one list value.
     /// </summary>
     private static EvalResult<CountedResult> EvalFilterCounted(
         IReadOnlyList<CountedResult> items,
@@ -925,7 +925,7 @@ public static partial class Evaluator
     /// Each callback item is passed to the mapper exactly as collected from
     /// the post-binding collection view; nested sequence values and
     /// nested list values stay intact. Each captured callback result becomes
-    /// one element of the exact immutable list result (mapped elements are
+    /// one element of the list result (mapped elements are
     /// never flattened into the outer list).
     /// Lean: <c>evalMapCounted</c>.
     /// </summary>
@@ -1237,7 +1237,7 @@ public static partial class Evaluator
     /// <summary>
     /// Evaluate <c>orderDesc(collection)</c> by eagerly sorting the top-level
     /// numeric collection items in descending order and materializing them as
-    /// one exact immutable list value.
+    /// one list value.
     /// Duplicates are preserved, sequence values are not flattened, strings are
     /// rejected, and empty collections yield the empty list <c>[]</c>.
     /// </summary>
@@ -1279,7 +1279,7 @@ public static partial class Evaluator
     /// <summary>
     /// Evaluate <c>distinct(collection)</c> by removing later duplicate top-level
     /// items while preserving the original order of first occurrence, then
-    /// materializing the kept items as one exact immutable list value.
+    /// materializing the kept items as one list value.
     /// Duplicate detection follows KatLang value
     /// semantics, so atoms compare by numeric value, strings by exact string
     /// value, and sequence/list values structurally by their elements.
@@ -1355,7 +1355,7 @@ public static partial class Evaluator
     /// <summary>
     /// Evaluate <c>skip(collection, count)</c> by returning the extracted
     /// top-level items after the first <paramref name="count"/> items as one
-    /// exact immutable list value.
+    /// list value.
     /// <paramref name="count"/> is a suffix parameter. Non-positive counts keep
     /// all items, oversized counts return the empty list <c>[]</c>, nested
     /// sequence/list values stay intact as exact elements, and original order
@@ -1938,7 +1938,7 @@ public static partial class Evaluator
                 {
                     var atomsR = EvalResolvedArgument(args[0], ctx, valEnv);
                     if (atomsR.IsError) return atomsR.Error;
-                    // `atoms` materializes a collection: one exact immutable list
+                    // `atoms` materializes a collection: one list
                     // of the recursively collected numeric atoms (sequence AND
                     // list boundaries open; truth testing stays list-opaque).
                     return MakeLanguageAtomsResult(ctx, atomsR.Value);

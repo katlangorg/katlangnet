@@ -149,7 +149,7 @@ public class WideDeconstructionScalabilityTests(ITestOutputHelper output)
     public void Diagnostics_TargetsCollideWithOrdinaryPropertyFunctionAndPriorTarget()
     {
         // A deconstruction target collides with an earlier ordinary property (P), a clause-defined
-        // function (F), and a prior deconstruction's target (a) — the same collision mechanism,
+        // property (F), and a prior deconstruction's target (a) — the same collision mechanism,
         // reported in declaration order with the offending declaration's span.
         var result = Parser.ParseSyntax(
             """

@@ -9,7 +9,7 @@ open KatLang (Pattern CondBranch)
 --------------------------------------------------------------------------------
 -- atoms builtin: recursive list traversal and exact-list results (issue #136)
 --------------------------------------------------------------------------------
--- `atoms` materializes ONE exact immutable list of the recursively collected
+-- `atoms` materializes ONE list of the recursively collected
 -- numeric atoms: sequence AND list boundaries open depth-first, left to right;
 -- strings contribute no atoms; the result kind never depends on the input
 -- kind, and the emitted count is always 1 (including the empty result `[]`).
@@ -170,7 +170,7 @@ def ifAtomsResultConditionInvalid : Bool :=
 #guard ifAtomsResultConditionInvalid
 
 --------------------------------------------------------------------------------
--- Exact immutable list values (`[]` syntax)
+-- List values (`[]` syntax)
 --------------------------------------------------------------------------------
 -- C# parity: tests/KatLang.Tests/ListValueTests.cs. Binder laws:
 -- KatLangArityLaws.lean list bridge laws (exact list values are
@@ -185,7 +185,7 @@ def listLiteralConstructsExactValue : Bool :=
 #guard listLiteralConstructsExactValue
 
 -- `[]`, `[7]`, and `[[7]]` keep exact cardinality and nesting: no singleton
--- erasure and no empty canonicalization applies to list structure.
+-- erasure and no empty-nesting collapse applies to list structure.
 def listExactnessPreserved : Bool :=
   (match runResult (.algorithmExpr (alg [] [] [] [.listLiteral []])) with
    | Except.ok (Result.listValue []) => true | _ => false) &&
@@ -209,7 +209,7 @@ def listEqualityIsKindExact : Bool :=
 #guard listEqualityIsKindExact
 
 -- Ordinary parentheses stay a redundant SEQUENCE grouping around lists:
--- `([1, 2])` canonicalizes to the exact list itself.
+-- `([1, 2])` normalizes to the exact list itself.
 def redundantParensAroundListCanonicalize : Bool :=
   match runResult (.algorithmExpr (alg [] [] [] [.listLiteral [.num 1, .num 2]])) with
   | Except.ok (Result.listValue [Result.atom 1, Result.atom 2]) => true

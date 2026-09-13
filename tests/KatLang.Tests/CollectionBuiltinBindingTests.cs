@@ -75,7 +75,7 @@ public class CollectionBuiltinBindingTests
         AssertAtoms("sum(())", 0);
         AssertArityError("sum(3, 4, 2, 1, 3, 3)", "sum(collection)");
         AssertAtoms("sum((3, 4, 2, 1, 3, 3))", 16);
-        // Redundant sequence grouping canonicalizes, so extra parentheses
+        // Redundant sequence grouping normalizes, so extra parentheses
         // still supply the same one collection argument.
         AssertAtoms("sum(((3, 4, 2, 1, 3, 3)))", 16);
     }

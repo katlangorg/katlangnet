@@ -92,7 +92,7 @@ public class EvaluatorInvariantTests
             switch (r)
             {
                 case Result.SequenceValue sv:
-                    // Singleton sequence structure is canonicalized away ([x] => x).
+                    // Singleton sequence structure is normalized away ([x] => x).
                     Assert.NotEqual(1, sv.Items.Count);
                     foreach (var it in sv.Items) { Assert.NotNull(it); Walk(it); }
                     break;

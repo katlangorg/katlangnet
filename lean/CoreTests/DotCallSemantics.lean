@@ -594,7 +594,7 @@ def flatCollectingSlotSumSingleNormalRoot : Algorithm :=
     .call (.resolve "Sum") [.resolve "Values"]
   ]
 
--- Sum(*values, last) receives one sequence-valued argument. Function-call
+-- Sum(*values, last) receives one sequence-valued argument. Call-argument
 -- binding does not implicitly open it, so `last` receives the sequence value and
 -- the old numeric body no longer succeeds.
 def flatCollectingSlotNormalSegmentDoesNotSatisfySuffixBySpreading : Bool :=

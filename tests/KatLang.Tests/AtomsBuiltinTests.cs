@@ -4,7 +4,7 @@ namespace KatLang.Tests;
 /// <summary>
 /// The `atoms` builtin (issue #136): recursively collects numeric atoms
 /// depth-first, left-to-right, through BOTH sequence and exact list
-/// boundaries, and always materializes them as ONE exact immutable list.
+/// boundaries, and always materializes them as ONE list.
 /// Strings and other non-numeric leaves contribute no atoms. The result kind
 /// never depends on the input kind or the number of atoms found, and `atoms`
 /// does not define truthiness (lists still have no truth value).

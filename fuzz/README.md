@@ -329,7 +329,7 @@ first parameter is a scalar range *bound* rather than a collection, so a `receiv
 would not be an instance of the Group A receiver contract. It is a different shape, not an
 unparsable one.
 
-**Group B — user-defined extension calls.** Eighteen reviewed function bodies (return the
+**Group B — user-defined extension calls.** Eighteen reviewed algorithm bodies (return the
 receiver, inspect its count, index into it, wrap it in a list, spread it, call a collection
 builtin, emit multiple outputs, return an exact list, return a sequence, chain dotted calls, …)
 with zero, one, or two suffix parameters. The receiver is a property bound to a compact
@@ -532,7 +532,7 @@ receiver evaluates to a value, and no generated source contains `public `.
 
 ### Callback-wrapper preconditions, and why similar-looking pairs are rejected
 
-KatLang's flat-callback binding is receiver-specific and is **not** ordinary function-call
+KatLang's flat-callback binding is receiver-specific and is **not** ordinary call
 argument binding. A consumer supplies a fixed number of values per invocation, and only a wrapper
 that binds exactly those values positionally sees what the direct builtin sees. Two projections
 are therefore **rejected**, not compared:

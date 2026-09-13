@@ -54,10 +54,10 @@ public enum ReceiverLaw
     /// <summary>Each extra written star crosses one ordinary capture boundary: value** ≡ (value*)* ≡ items(capture(items v)).</summary>
     REPEATED_SPREAD_CAPTURE_COMPOSITION,
 
-    /// <summary>Ordinary value capture canonicalizes the supply: () for zero items, singleton erasure, one sequence value otherwise.</summary>
+    /// <summary>Ordinary value capture normalizes the supply: () for zero items, singleton erasure, one sequence value otherwise.</summary>
     CAPTURE_CANONICALIZES_SUPPLY,
 
-    /// <summary>A collecting binding collects exactly the assigned supply as one exact immutable list — no erasure, no canonicalization.</summary>
+    /// <summary>A collecting binding collects exactly the assigned supply as one list — no erasure, no normalization.</summary>
     COLLECT_PRESERVES_EXACT_SUPPLY,
 
     /// <summary>Mixed fixed/collecting parameter lists bind front and back fixed captures and collect exactly the middle segment.</summary>

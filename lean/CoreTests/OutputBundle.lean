@@ -58,7 +58,7 @@ def captureSuppressesCallableIdentity : Bool :=
 #guard captureSuppressesCallableIdentity
 
 /-- The algorithm channel sees only a zero-parameter value thunk for a capture:
-    calling a captured expression as a function is an arity error against the
+    calling a captured expression as a callable is an arity error against the
     thunk, never a call of the inner algorithm. -/
 def captureCalleeIsAValueThunk : Bool :=
   let f := alg ["x"] [] [] [.param "x"]

@@ -2415,7 +2415,7 @@ public static partial class Evaluator
         {
             var arg = resolvedArg.Algorithm;
 
-            // Callback/function arguments stay unevaluated — see the synchronous twin
+            // Callable callback arguments stay unevaluated — see the synchronous twin
             // (the shared IsValueShapedArgument classification).
             if (arg is not null && !IsValueShapedArgument(arg))
             {

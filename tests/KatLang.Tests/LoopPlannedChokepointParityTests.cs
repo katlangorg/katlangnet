@@ -313,7 +313,7 @@ public class LoopPlannedChokepointParityTests
     [Fact]
     public void BareTempRead_OfALocalOnlyTemp_IsMemoizedPerIterationLikeThePropertyCache()
     {
-        // `W` reads the enclosing function's parameter `k`, so it is LOCAL-ONLY and keyed
+        // `W` reads the enclosing algorithm's parameter `k`, so it is LOCAL-ONLY and keyed
         // by the iteration's environments: two bare reads per iteration, the second served
         // from the first (same iteration environment), so the four-unit string is
         // materialized once per iteration; the planned per-iteration memo does the same.
@@ -697,7 +697,7 @@ public class LoopPlannedChokepointParityTests
     [Fact]
     public void TempCall_LocalOnlyTempReadInsideTheCall_MissesLikeAFreshCallEnvironment()
     {
-        // `T` reads the enclosing function's parameter `k` (a captured slot), so it is
+        // `T` reads the enclosing algorithm's parameter `k` (a captured slot), so it is
         // LOCAL-ONLY and keyed by the environments at the access: a bare `T` read inside
         // `A(x)` misses on every call even though the caller already cached `T` for this
         // iteration, and the caller's entry is still served after the call returns. Per

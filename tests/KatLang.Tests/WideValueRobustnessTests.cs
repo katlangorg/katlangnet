@@ -159,7 +159,7 @@ public class WideValueRobustnessTests
     [Fact]
     public void NormalizeHandlesWideValues()
     {
-        // Scattered redundant singleton sequences canonicalize away while the
+        // Scattered redundant singleton sequences normalize away while the
         // wide flat remainder is preserved element for element.
         var items = new Result[Wide];
         for (var i = 0; i < Wide; i++)

@@ -4,9 +4,9 @@ using KatLang.Evaluation.Caching;
 namespace KatLang.Tests.Hosting;
 
 /// <summary>
-/// Canonicalization of SUCCESSFUL host-operation return values at the host boundary
+/// Normalization of SUCCESSFUL host-operation return values at the host boundary
 /// (<c>Evaluator.NormalizeHostOperationValue</c>): host code may construct
-/// representations ordinary KatLang evaluation would have canonicalized during value
+/// representations ordinary KatLang evaluation would have normalized during value
 /// construction (a singleton transparent sequence around an atom, redundant nested
 /// empty-sequence structure), and every such value must enter evaluation — and the
 /// zero-argument property cache — in the same canonical <see cref="Result"/>
@@ -69,7 +69,7 @@ public class HostOperationNormalizationTests
     /// Deterministic suspension gate (the AsyncHostOperationTests pattern): evaluation
     /// genuinely suspends awaiting the gate, so releasing a noncanonical value proves
     /// the REAL asynchronous dispatch path — never a synchronously completed fallback —
-    /// performed the canonicalization.
+    /// performed the normalization.
     /// </summary>
     private sealed class HeldOperation
     {
@@ -233,7 +233,7 @@ public class HostOperationNormalizationTests
         // An asynchronous operation in the CONFIGURATION routes the whole run through
         // the async twin family even though the program only uses the synchronous
         // operation; the sync NativeCall is a sync-delegable twin leaf, so this pins
-        // that the shared synchronous dispatch canonicalizes on that path too.
+        // that the shared synchronous dispatch normalizes on that path too.
         var options = new RunOptions
         {
             HostOperations = HostOperations.Create(
@@ -448,7 +448,7 @@ public class HostOperationNormalizationTests
     [Fact]
     public void ExplicitZeroArgCall_BypassingTheCache_StillCanonicalizes()
     {
-        // Data() bypasses the property cache entirely, so canonicalization must live
+        // Data() bypasses the property cache entirely, so normalization must live
         // at the dispatch, not on the cache path.
         var options = new RunOptions
         {
@@ -577,7 +577,7 @@ public class HostOperationNormalizationTests
     {
         // List structure is exact and never singleton-collapsed: [7] stays a one-item
         // list, [] stays the empty list (distinct from ()), and a sequence INSIDE a
-        // list still canonicalizes under the ordinary Normalize rules.
+        // list still normalizes under the ordinary Normalize rules.
         var options = new RunOptions
         {
             HostOperations = HostOperations.Create(

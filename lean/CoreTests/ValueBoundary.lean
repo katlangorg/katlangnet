@@ -145,7 +145,7 @@ def boundaryRootOutputStaysMultiOutput : Bool :=
 
 #guard boundaryRootOutputStaysMultiOutput
 
-/-- Regression: redundant empty sequence nesting canonicalizes before the
+/-- Regression: redundant empty sequence nesting normalizes before the
     boundary re-count observes it. -/
 def boundaryCanonicalizesNestedEmptySequence : Bool :=
   match runCountedProgram (.algorithmExpr (algPrivate [] [] [("F", alg [] [] [] [.emptySequence 1])] [.resolve "F"])) with

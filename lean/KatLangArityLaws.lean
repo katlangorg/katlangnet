@@ -15,12 +15,12 @@ real binding helpers.
 -/
 
 /--
-Paper-facing alias for the real `Result` expression used to canonicalize
+Paper-facing alias for the real `Result` expression used to normalize
 ORDINARY captured item supplies: `Result.normalize (Result.sequenceValue xs)`.
 
-This is `capture : Supply -> Value` — the canonicalizing value/output capture
+This is `capture : Supply -> Value` — the normalizing value/output capture
 boundary (`x = 1, 2, 3`). It is NOT the collecting-binding operation: collecting binding
-uses `collect : Supply -> ListValue` (`collectSegment`, exact immutable list),
+uses `collect : Supply -> ListValue` (`collectSegment`, exact list),
 and the spread marker is `spread : Value -> Supply` (`Result.spreadItems`). The
 binder-path theorems below pin which operation each receiver applies.
 -/
@@ -93,7 +93,7 @@ through the POST-BINDING one-level view `builtinCollectionItems` (`count(A)`,
 argument boundaries BEFORE binding — collection builtins are ordinary
 fixed-arity callables (`count(collection)`, `take(collection, count)`), so an
 unspread sequence or list is one argument like at every other call boundary.
-Function-call parameter binding never uses this view. Assignment
+Call parameter binding never uses this view. Assignment
 deconstruction opens its single right-hand side value through a different
 mechanism: the sequence-value parameter pattern (`.sequenceValue`), not the
 builtin collection view (see the deconstruction bridge laws at the end of
@@ -263,7 +263,7 @@ theorem collectSegment_canonical_of_canonical_elements {xs : List Result}
 /--
 The real parameter-pattern binder uses `collectSegment` directly for a single
 top-level variadic capture. This is the binder-path bridge theorem: the
-successful binding records `x` as the exact immutable list of the supplied
+successful binding records `x` as the exact list of the supplied
 items, with emitted count 1.
 -/
 theorem bindParameterPatternList_single_collecting_binds_collect
@@ -558,8 +558,8 @@ applied to the right-hand side value as one argument. Binding through the real
 and matches them element-by-element — so `x, y, z = A` unpacks a stored sequence
 value `A`. This opening is deconstruction-specific.
 
-Function-call parameter binding, by contrast, is a flat capture list
-(`[.capture x, .capture y]`) bound over the SUPPLIED argument stream, which does NOT
+Call parameter binding, by contrast, is a flat capture list
+(`[.capture x, .capture y]`) bound over the SUPPLIED argument supply, which does NOT
 open a single sequence argument. The two groups of laws below pin that contrast over
 the real binder: deconstruction (the `.sequenceValue` pattern) opens, while a call
 (the flat capture list) preserves the single argument.
@@ -567,7 +567,7 @@ the real binder: deconstruction (the `.sequenceValue` pattern) opens, while a ca
 The single supplied item is the value `A` (a stored sequence value).
 -/
 
--- Function calls: a flat capture list does NOT open a single sequence argument.
+-- Calls: a flat capture list does NOT open a single sequence argument.
 
 /-- `Add(A)`: one supplied item (the stored sequence value) against two fixed
 parameters is an arity mismatch. The call binder does not open `A`. -/
@@ -780,7 +780,7 @@ theorem makeCollectionListResult_exact (x : Result) :
 theorem makeCollectionListResult_empty :
     makeCollectionListResult [] = (Result.listValue [], 1) := rfl
 
-/-- Normalization preserves list structure exactly: elements canonicalize but
+/-- Normalization preserves list structure exactly: elements normalize but
 the list boundary never collapses (`[7]` stays `[7]`). -/
 theorem normalize_listValue (xs : List Result) :
     Result.normalize (Result.listValue xs) = Result.listValue (xs.map Result.normalize) := by
@@ -794,7 +794,7 @@ theorem normalize_singleton_sequence_of_list (xs : List Result) :
   simp [Result.normalize]
 
 /-- Ordinary capture and segment collection stay distinct operations on the same
-supply: `capture` canonicalizes to a sequence value while `collect` preserves
+supply: `capture` normalizes to a sequence value while `collect` preserves
 the exact list — `x = A*` re-groups list items as `(…)`, while
 `x, *rest = A` collects them as `[…]`. -/
 theorem capture_and_collect_differ_on_pairs (a b : Result) :
@@ -803,7 +803,7 @@ theorem capture_and_collect_differ_on_pairs (a b : Result) :
       ∧ collectSegment [a, b] = Result.listValue [a, b] :=
   ⟨capture_pair a b, rfl⟩
 
--- Function calls: a lone list argument is ONE argument; calls never open lists.
+-- Calls: a lone list argument is ONE argument; calls never open lists.
 
 /-- `Add(A)` with a stored LIST `A`: one supplied item against two fixed
 parameters is an arity mismatch — the call binder does not open the list. -/
@@ -1277,7 +1277,7 @@ theorem reCountValueBoundary_count_le_one (p : CountedResult) :
 `Result.languageAtoms` is the atoms builtin's collector: numeric atoms
 gathered depth-first, left to right, through BOTH sequence and exact list
 boundaries; strings contribute no atoms. The builtin materializes the
-collection as ONE exact immutable list via `makeCollectionListResult`, so the
+collection as ONE list via `makeCollectionListResult`, so the
 result kind never depends on the input kind or on the collected count. Truth
 testing (`truthValue?`) reads the separate sequence-only `Result.atoms` view,
 so lists still have no truth value — the traversal laws here can never leak

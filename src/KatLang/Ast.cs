@@ -21,11 +21,11 @@ public enum UnaryOp { Minus, Not }
 /// one-element collection); nested grouped values stay intact. Dot-call
 /// receivers fill the <c>collection</c> argument.
 /// <c>range(start, stop)</c> materializes the inclusive integer span as one
-/// exact immutable list value.
+/// list value.
 /// <c>atoms(value)</c> recursively collects numeric atoms depth-first, left to
 /// right, through both sequence and exact-list boundaries (strings and other
-/// non-numeric leaves contribute no atoms) and materializes them as one exact
-/// immutable list value; it does not use the post-binding collection view and
+/// non-numeric leaves contribute no atoms) and materializes them as one
+/// list value; it does not use the post-binding collection view and
 /// it does not define truthiness — truth testing stays list-opaque.
 /// <c>filter(collection, predicate)</c> keeps the original top-level sequence
 /// items whose predicate returns exactly one atomic numeric truth value after
@@ -451,7 +451,7 @@ public abstract record Expr
 
     /// <summary>
     /// Empty sequence value <c>()</c>. Repeated ordinary parentheses around the
-    /// empty sequence are useful-structure canonicalized back to <c>()</c>.
+    /// empty sequence are useful-structure normalized back to <c>()</c>.
     /// Lean: <c>emptySequence : Nat -> Expr</c>.
     /// </summary>
     public sealed record EmptySequence(int Depth) : Expr;
@@ -483,13 +483,13 @@ public abstract record Expr
 
     /// <summary>
     /// Surface list literal <c>[e1, ..., en]</c>. Evaluates to exactly ONE
-    /// exact immutable list value (<see cref="Result.ListValue"/>). The
+    /// list value (<see cref="Result.ListValue"/>). The
     /// element slots form a transparent <see cref="OutputBundle"/> — the same
     /// expression-list body language as written parentheses (an explicit
     /// spread slot opens its operand's immediate items, a non-spread <c>()</c>
     /// slot stays one visible element; free identifiers belong to the
     /// enclosing algorithm) — but the LIST RECEIVER collects the elements
-    /// EXACTLY: no singleton erasure and no empty canonicalization, so
+    /// EXACTLY: no singleton erasure and no empty-nesting collapse, so
     /// <c>[7]</c>, <c>[[7]]</c>, and <c>[]</c> are all distinct values.
     /// Lean: <c>listLiteral : OutputBundle → Expr</c>.
     /// </summary>

@@ -549,7 +549,7 @@ public class BudgetCrossTalkMatrixTests
             "Probe = 1\nStep = {\n    T = 7\n    n + if(n < 30, if(n < 10, 1, 2), 3), (T() > 5) * (n < 40)\n}\nf(0) = Step.while(0)\nf(k) = f(k - 1)\nf(12)",
             MaxDepthDim, MaxStepsDim),
 
-        // A CAPTURED slot (the enclosing user function's parameter, read from the
+        // A CAPTURED slot (the enclosing algorithm's parameter, read from the
         // inherited value environment) as a direct `if` condition, inside a temp body,
         // and through a temp call.
         Source("PlannedCapturedSlotLoop",

@@ -312,7 +312,7 @@ internal static class MetamorphicFamilyRegistry
             // source spans: parse eligibility, values, structured errors, limit
             // classifications, AND charged evaluation work must all agree exactly. The
             // headline relation is refined per context below: the redundant-grouping pair
-            // `(X*)` vs `((X*))` is semantically equal by canonicalization but carries a
+            // `(X*)` vs `((X*))` is semantically equal by sequence normalization but carries a
             // real extra block layer, so it makes no operational claim.
             OperationalRelation: MetamorphicOperationalRelation.ExactObservedWorkEqual,
             LeanRepresentable: true,

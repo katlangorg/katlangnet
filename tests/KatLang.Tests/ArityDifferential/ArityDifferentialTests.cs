@@ -112,7 +112,7 @@ public class ArityDifferentialTests
         if (expectedRaw != actualRaw && expectedN != actualN)
             return "both the value structure and the emitted count differ";
         if (expectedRaw != actualRaw)
-            return "the value structure differs (kind, items, order, or canonicalization) at equal emitted count";
+            return "the value structure differs (kind, items, order, or normalization) at equal emitted count";
         return "the structural value agrees but the emitted count differs (a value-boundary / supply-count divergence)";
     }
 

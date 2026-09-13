@@ -7,7 +7,7 @@ open KatLang (resolve param num)
 open KatLang (Pattern CondBranch)
 
 --------------------------------------------------------------------------------
--- Collecting bindings collect exact immutable lists (collectSegment)
+-- Collecting bindings collect lists (collectSegment)
 --------------------------------------------------------------------------------
 -- Required matrix for the collect model: capture / collect / open are distinct
 -- operations. C# parity: tests/KatLang.Tests/DeconstructionBindingTests.cs and
@@ -361,7 +361,7 @@ def ordinaryCaptureStaysCanonicalSequence : Bool :=
 -- bindCountedCallbackParameterPatternList: the callback supply keeps the
 -- flat-callback row convention (a lone under-supplied final argument opens
 -- into its items), then the shared prefix/collecting/suffix binder COLLECTS the
--- matched segment as one exact immutable list. A single-collecting callee keeps the whole
+-- matched segment as one list. A single-collecting callee keeps the whole
 -- iterated element as one collected slot.
 -- C# parity: EvaluatorTests callback sections and CollectingBindingTests.
 

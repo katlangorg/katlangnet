@@ -225,7 +225,7 @@ public class CallArgumentAssemblyTests
         Assert.IsType<EvalError.NoMatchingBranch>(Innermost(listError));
     }
 
-    // ── Function-valued argument in a collecting binding (targeted diagnostic) ─────
+    // ── Callable-valued argument in a collecting binding (targeted diagnostic) ─────
 
     [Fact]
     public void FunctionValuedArgument_InCollectingParameter_ReportsTargetedDiagnostic()
@@ -233,9 +233,9 @@ public class CallArgumentAssemblyTests
         var error = AssertFails("F(*fs) = fs\nF(sum)");
         var mismatch = Assert.IsType<EvalError.TypeMismatch>(Innermost(error));
         Assert.Contains("Collecting parameter `*fs` collects values", mismatch.Message, StringComparison.Ordinal);
-        Assert.Contains("a supplied argument is a function", mismatch.Message, StringComparison.Ordinal);
+        Assert.Contains("a supplied argument is a callable", mismatch.Message, StringComparison.Ordinal);
 
-        // A parameterized user function is function-shaped too.
+        // A parameterized user-defined algorithm is callable-shaped too.
         var userError = AssertFails("H(x) = x\nF(*fs) = fs\nF(H)");
         Assert.IsType<EvalError.TypeMismatch>(Innermost(userError));
 
@@ -247,9 +247,9 @@ public class CallArgumentAssemblyTests
     [Fact]
     public void ErroredValuePropertyArgument_InCollectingParameter_SurfacesTheRealError()
     {
-        // A zero-parameter VALUE property is NOT function-shaped: when its
+        // A zero-parameter VALUE property is NOT callable-shaped: when its
         // body fails, the collecting binding surfaces the genuine evaluation error
-        // instead of misdescribing the argument as "a function".
+        // instead of misdescribing the argument as "a callable".
         var divisionError = AssertFails("Bad = 1 / 0\nG(*items) = items.count\nG(Bad)");
         Assert.IsType<EvalError.DivByZero>(Innermost(divisionError));
 

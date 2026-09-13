@@ -268,7 +268,7 @@ public class EvaluatorCollectionBuiltinTests
         AssertEval("A = (())\nA.count", 0);
     }
 
-    // ── Collection builtins return exact immutable list values: kept items stay
+    // ── Collection builtins return list values: kept items stay
     //    exact list elements (a one-element list [item] is NEVER erased to the
     //    item), and zero kept items form the empty list [] ──
 

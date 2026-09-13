@@ -284,7 +284,7 @@ public static class LanguageSpecCorpus
                 new SpecProbe("count((()))", "ok raw=0 n=1"),
                 new SpecProbe("() == (())", "ok raw=1 n=1"),
             ],
-            Explanation = "Redundant parentheses around `()` are one written grouping level that canonicalizes away: `(())` is the same value as `()`.",
+            Explanation = "Redundant parentheses around `()` are one written grouping level that normalizes away: `(())` is the same value as `()`.",
         },
         new()
         {
@@ -295,7 +295,7 @@ public static class LanguageSpecCorpus
             ExpectedDisplay = "()",
             ExpectedRaw = "S[]",
             ExpectedEmittedCount = 1,
-            Explanation = "Canonicalization is not depth-limited: `((()))` is still `()`.",
+            Explanation = "Sequence normalization is not depth-limited: `((()))` is still `()`.",
         },
         new()
         {
@@ -795,7 +795,7 @@ public static class LanguageSpecCorpus
             ExpectedDisplay = "[2, 3]",
             ExpectedRaw = "L[2, 3]",
             ExpectedEmittedCount = 1,
-            Explanation = "The collecting target collects the remaining items as one exact immutable list.",
+            Explanation = "The collecting target collects the remaining items as one list.",
         },
         new()
         {
@@ -818,7 +818,7 @@ public static class LanguageSpecCorpus
             ExpectedRaw = "L[2, 3]",
             ExpectedEmittedCount = 1,
             IncludeInGeneratorPrompt = true,
-            Explanation = "Front and back fixed targets bind first; the middle collecting binding collects its matched segment as one exact immutable list.",
+            Explanation = "Front and back fixed targets bind first; the middle collecting binding collects its matched segment as one list.",
         },
         new()
         {
@@ -877,7 +877,7 @@ public static class LanguageSpecCorpus
                 new SpecProbe("A = [7]\nx, *xs = A\ny, *ys = (A*)\nA, (A*), x, xs, y, ys", "ok raw=S[L[7], 7, 7, L[], 7, L[]] n=6"),
             ],
             IncludeInGeneratorPrompt = true,
-            Explanation = "Assignment deconstruction is an unpacking receiver: the whole right-hand side is captured into one shared value, then a sequence or list is opened one level and matched element-by-element; an atom or string supplies itself as one item. For deconstruction targets, `= A` and `= (A*)` present the same items unless `A` is a singleton list whose lone element is itself a sequence or list. In that case, spread supplies the lone element, singleton capture returns it, and deconstruction opens it one level further: `x, y = [(1, 2)]` fails against two targets, while `x, y = ([(1, 2)]*)` binds `x = 1`, `y = 2`. Equal binding items do NOT require equal captured values: for `A = [7]`, both `x, *rest = A` and `x, *rest = (A*)` bind `x = 7`, `rest = []`, although capture sees `[7]` versus `7`. Stored sequences have no equivalent singleton wrapper because sequence normalization erases it. An ordinary single-name definition `x = A` retains the captured value without deconstruction; function calls also do NOT unpack this way — `F(A)` still passes one argument.",
+            Explanation = "Assignment deconstruction is an unpacking receiver: the whole right-hand side is captured into one shared value, then a sequence or list is opened one level and matched element-by-element; an atom or string supplies itself as one item. For deconstruction targets, `= A` and `= (A*)` present the same items unless `A` is a singleton list whose lone element is itself a sequence or list. In that case, spread supplies the lone element, singleton capture returns it, and deconstruction opens it one level further: `x, y = [(1, 2)]` fails against two targets, while `x, y = ([(1, 2)]*)` binds `x = 1`, `y = 2`. Equal binding items do NOT require equal captured values: for `A = [7]`, both `x, *rest = A` and `x, *rest = (A*)` bind `x = 7`, `rest = []`, although capture sees `[7]` versus `7`. Stored sequences have no equivalent singleton wrapper because sequence normalization erases it. An ordinary single-name definition `x = A` retains the captured value without deconstruction; ordinary calls also do NOT unpack this way — `F(A)` still passes one argument.",
         },
         new()
         {
@@ -888,7 +888,7 @@ public static class LanguageSpecCorpus
             ExpectedDisplay = "1\n[2, 3, 4]\n5",
             ExpectedRaw = "S[1, L[2, 3, 4], 5]",
             ExpectedEmittedCount = 3,
-            Explanation = "Deconstruction with a middle collecting binding over a stored sequence value: fixed targets take the ends, the collecting binding collects the middle as one exact immutable list.",
+            Explanation = "Deconstruction with a middle collecting binding over a stored sequence value: fixed targets take the ends, the collecting binding collects the middle as one list.",
         },
         new()
         {
@@ -914,7 +914,7 @@ public static class LanguageSpecCorpus
                 new SpecProbe("*all = ()\nall", "ok raw=L[] n=1"),
                 new SpecProbe("*all = 7\nall", "ok raw=L[7] n=1"),
             ],
-            Explanation = "A lone collecting binding is valid and collects the complete supplied item stream as one exact list, including exact empty and singleton lists.",
+            Explanation = "A lone collecting binding is valid and collects the complete item supply as one exact list, including exact empty and singleton lists.",
         },
 
         // ==================== variadic-calls ====================
@@ -966,7 +966,7 @@ public static class LanguageSpecCorpus
                 new SpecProbe("F(*x) = x\nF(7)", "ok raw=L[7] n=1"),
                 new SpecProbe("F(*x) = x\nF(F(1, 2))", "ok raw=L[L[1, 2]] n=1"),
             ],
-            Explanation = "Collecting binding COLLECTS the supplied argument slots into one exact immutable list: zero slots form `[]`, one slot forms `[item]` (never erased), many form `[a, b, ...]`. The collected list never equals the sequence value with the same items.",
+            Explanation = "Collecting binding COLLECTS the supplied argument slots into one list: zero slots form `[]`, one slot forms `[item]` (never erased), many form `[a, b, ...]`. The collected list never equals the sequence value with the same items.",
         },
         new()
         {
@@ -1070,7 +1070,7 @@ public static class LanguageSpecCorpus
                 new SpecProbe("F(x, *y, z) = y\nF(1, 2)", "ok raw=L[] n=1"),
             ],
             IncludeInGeneratorPrompt = true,
-            Explanation = "Mixed fixed/collecting parameter lists bind the call's argument stream: fixed captures take the front and back, and the collecting parameter collects the middle as one exact immutable list (possibly `[]`). A plain call does not implicitly open a single sequence argument, so `F(A)` fails.",
+            Explanation = "Mixed fixed/collecting parameter lists bind the call's argument supply: fixed captures take the front and back, and the collecting parameter collects the middle as one list (possibly `[]`). A plain call does not implicitly open a single sequence argument, so `F(A)` fails.",
         },
         new()
         {
@@ -1177,7 +1177,7 @@ public static class LanguageSpecCorpus
                 new SpecProbe("NestedCount(((*values))) = values.count\nNestedCount((1, 2, 3))", "err arity"),
                 new SpecProbe("CountSequenceValue((*values)) = values.count\nCountSequenceValue(((1, 2), 3))", "ok raw=2 n=1"),
             ],
-            Explanation = "A pattern-shaped callee consumes written grouping levels: a bare reference opens to its three items, while ONE extra written level around the argument leaves a single grouped item, which the collecting parameter collects exactly (`[Inner]`, count 1). Levels beyond the first stay redundant (unary sequence structure canonicalizes during value construction), and the declared nested pattern depth consumes matching written depth.",
+            Explanation = "A pattern-shaped callee consumes written grouping levels: a bare reference opens to its three items, while ONE extra written level around the argument leaves a single grouped item, which the collecting parameter collects exactly (`[Inner]`, count 1). Levels beyond the first stay redundant (unary sequence structure normalizes during value construction), and the declared nested pattern depth consumes matching written depth.",
         },
         new()
         {
@@ -1231,7 +1231,7 @@ public static class LanguageSpecCorpus
                 new SpecProbe("F((x)) = x\nF(n) = 0\nF((1, 2))", "ok raw=0 n=1"),
                 new SpecProbe("F((x)) = x\nF(n) = 0\nF(7)", "ok raw=7 n=1"),
             ],
-            Explanation = "A singleton sequence-value clause head `(x)` matches ANY one argument whole via the scalar one-item rule: singleton sequence structure canonicalizes away during construction, so the pattern must also accept a non-sequence result as if it were a one-element sequence. It never opens the argument — an exact list binds entire, including a singleton list. Only a sequence value of a different arity fails the head.",
+            Explanation = "A singleton sequence-value clause head `(x)` matches ANY one argument whole via the scalar one-item rule: singleton sequence structure normalizes away during construction, so the pattern must also accept a non-sequence result as if it were a one-element sequence. It never opens the argument — an exact list binds entire, including a singleton list. Only a sequence value of a different arity fails the head.",
         },
         new()
         {
@@ -1339,7 +1339,7 @@ public static class LanguageSpecCorpus
                 new SpecProbe("((1, 2)) == (1, 2)", "ok raw=1 n=1"),
                 new SpecProbe("count(((1, 2)))", "ok raw=2 n=1"),
             ],
-            Explanation = "`((1, 2))` is not a one-item wrapper around a pair — redundant unary sequence structure canonicalizes to the pair itself. Orphan wrappers are not writable KatLang values.",
+            Explanation = "`((1, 2))` is not a one-item wrapper around a pair — redundant unary sequence structure normalizes to the pair itself. Orphan wrappers are not writable KatLang values.",
         },
         new()
         {
@@ -1866,7 +1866,7 @@ public static class LanguageSpecCorpus
             ExpectedDisplay = "[1, 2, 3]",
             ExpectedRaw = "L[1, 2, 3]",
             ExpectedEmittedCount = 1,
-            Explanation = "`take` keeps the first `count` items and materializes them as one exact immutable list value.",
+            Explanation = "`take` keeps the first `count` items and materializes them as one list value.",
         },
         new()
         {
@@ -2193,7 +2193,7 @@ public static class LanguageSpecCorpus
             ExpectedDisplay = "[1, 2, 3, 4]",
             ExpectedRaw = "L[1, 2, 3, 4]",
             ExpectedEmittedCount = 1,
-            Explanation = "`atoms` recursively erases all sequence-value structure and materializes the collected atoms as one exact immutable list — the explicit contrast to one-level spread.",
+            Explanation = "`atoms` recursively erases all sequence-value structure and materializes the collected atoms as one list — the explicit contrast to one-level spread.",
         },
         new()
         {
@@ -2215,7 +2215,7 @@ public static class LanguageSpecCorpus
                 new SpecProbe("atoms(()) == ()", "ok raw=0 n=1"),
                 new SpecProbe("atoms('text')", "ok raw=L[] n=1"),
             ],
-            Explanation = "`atoms` always returns one exact immutable list, whatever the input kind or atom count: a lone number yields the singleton list `[7]` (never the bare `7`), a no-atom input yields `[]`, and the result is list-exact, never a sequence.",
+            Explanation = "`atoms` always returns one list, whatever the input kind or atom count: a lone number yields the singleton list `[7]` (never the bare `7`), a no-atom input yields `[]`, and the result is list-exact, never a sequence.",
         },
         new()
         {
@@ -2378,7 +2378,7 @@ public static class LanguageSpecCorpus
                 new SpecProbe("Inspect(*items) = items\nInspect(1, 2, 3)", "ok raw=L[1, 2, 3] n=1"),
             ],
             IncludeInGeneratorPrompt = true,
-            Explanation = "A collection builtin receives exactly ONE fixed collection argument plus its fixed control arguments: `count(collection)` and `take(collection, count)` are ordinary fixed-arity callables, so inline items (`count(1, 2, 3)`), a missing control (`take((1, 2, 3))`), a missing collection (`count()`), and spread items (`take([1, 2, 3]*, 2)`) are ordinary arity errors. A scalar is a one-element collection. USER-DEFINED variadic functions remain a separate general arity mechanism: `Inspect(1, 2, 3)` collects the three argument slots as the exact list `[1, 2, 3]`.",
+            Explanation = "A collection builtin receives exactly ONE fixed collection argument plus its fixed control arguments: `count(collection)` and `take(collection, count)` are ordinary fixed-arity callables, so inline items (`count(1, 2, 3)`), a missing control (`take((1, 2, 3))`), a missing collection (`count()`), and spread items (`take([1, 2, 3]*, 2)`) are ordinary arity errors. A scalar is a one-element collection. USER-DEFINED variadic callables remain a separate general arity mechanism: `Inspect(1, 2, 3)` collects the three argument slots as the exact list `[1, 2, 3]`.",
         },
         new()
         {
@@ -2885,7 +2885,7 @@ public static class LanguageSpecCorpus
                 new SpecProbe("0 or ()", "err type"),
                 new SpecProbe("() xor 1", "err type"),
                 new SpecProbe("() + ()", "err type"),
-                // Redundant parentheses canonicalize to `()` and change nothing.
+                // Redundant parentheses normalize to `()` and change nothing.
                 new SpecProbe("(()) + 1", "err type"),
                 // A NAMED empty operand takes the same path as the literal.
                 new SpecProbe("A = ()\nA / 2", "err type"),
@@ -3014,7 +3014,7 @@ public static class LanguageSpecCorpus
                 new SpecProbe("[(1, 2)]", "ok raw=L[S[1, 2]] n=1"),
             ],
             IncludeInGeneratorPrompt = true,
-            Explanation = "`[1, 2, 3]` is an exact immutable list value: one value whose elements are stored exactly, displayed with brackets.",
+            Explanation = "`[1, 2, 3]` is a list value: one value whose elements are stored exactly, displayed with brackets.",
         },
         new()
         {
@@ -3128,7 +3128,7 @@ public static class LanguageSpecCorpus
             [
                 new SpecProbe("(([1]))", "ok raw=L[1] n=1"),
             ],
-            Explanation = "Ordinary parentheses stay a redundant sequence grouping even around lists: `([1, 2])` canonicalizes to the exact list itself.",
+            Explanation = "Ordinary parentheses stay a redundant sequence grouping even around lists: `([1, 2])` normalizes to the exact list itself.",
         },
         new()
         {
@@ -3287,7 +3287,7 @@ public static class LanguageSpecCorpus
                 new SpecProbe("x, *rest = [1, 2, 3]\nrest == skip([1, 2, 3], 1)", "ok raw=1 n=1"),
             ],
             IncludeInGeneratorPrompt = true,
-            Explanation = "A collecting binding COLLECTS the item slots assigned to it into one exact immutable list: `rest` from `x, *rest = [1, 2, 3]` is `[2, 3]`, the empty segment is `[]`, a singleton segment is `[item]` (a one-row segment of `[[1, 2], [3, 4]]` stays `[[3, 4]]`, count 1), and the result agrees with collection builtins — `rest == skip([1, 2, 3], 1)`.",
+            Explanation = "A collecting binding COLLECTS the item slots assigned to it into one list: `rest` from `x, *rest = [1, 2, 3]` is `[2, 3]`, the empty segment is `[]`, a singleton segment is `[item]` (a one-row segment of `[[1, 2], [3, 4]]` stays `[[3, 4]]`, count 1), and the result agrees with collection builtins — `rest == skip([1, 2, 3], 1)`.",
         },
         new()
         {
@@ -3303,7 +3303,7 @@ public static class LanguageSpecCorpus
                 new SpecProbe("*items = []\nitems", "ok raw=L[] n=1"),
                 new SpecProbe("*items = [7]\nitems", "ok raw=L[7] n=1"),
             ],
-            Explanation = "A lone collecting binding opens one right-hand-side structure boundary and collects its items as one exact immutable list; empty and singleton lists remain exact.",
+            Explanation = "A lone collecting binding opens one right-hand-side structure boundary and collects its items as one list; empty and singleton lists remain exact.",
         },
         new()
         {

@@ -42,7 +42,7 @@ internal sealed record MetamorphicSpreadContext(
 /// real lowering bug, never template noise.</para>
 ///
 /// <para>The one non-lowering context pairs the grouped spread <c>(X*)</c> with its
-/// redundantly grouped form <c>((X*))</c>: redundant unary sequence grouping canonicalizes
+/// redundantly grouped form <c>((X*))</c>: redundant unary sequence grouping normalizes
 /// during value construction, so the two sides are semantically equal, but the extra block
 /// layer is real work, so that context declares no operational relation and is confined to
 /// execution policies whose limits are not derived from one member's measurement.</para>

@@ -24,7 +24,7 @@ public abstract record ExplorerValue
     /// <summary>Redundant parentheses around one written value: <c>(x)</c>.</summary>
     public sealed record Wrap(ExplorerValue Inner) : ExplorerValue;
 
-    /// <summary>An exact immutable list literal <c>[a, b]</c> (any element count).</summary>
+    /// <summary>A list literal <c>[a, b]</c> (any element count).</summary>
     public sealed record ListOf(IReadOnlyList<ExplorerValue> Items) : ExplorerValue;
 
     public string Source => this switch
@@ -123,9 +123,9 @@ public static class SemanticExplorerCorpus
         ("ppe", W(E)),                         // (())
         ("pp1", W(W(N(1)))),                   // ((1))
         ("ppp12", W(W(S(N(1), N(2))))),        // (((1, 2)))
-        // Exact immutable list values: empty, singleton, multi, list-in-list,
+        // List values: empty, singleton, multi, list-in-list,
         // sequence-in-list, list-in-sequence, and wrapped list (redundant
-        // parens around a list still canonicalize away).
+        // parens around a list still normalize away).
         ("le", L()),                           // []
         ("l7", L(N(7))),                       // [7]
         ("l12", L(N(1), N(2))),                // [1, 2]

@@ -46,7 +46,7 @@ public static class CallableSignatureDiagnostics
     // A top-level collecting signature consumes an item supply (a user-defined
     // shape such as `Inspect(*items)` or `Scale(*values, factor)`): the
     // fixed captures bind and the collecting parameter accepts any number of
-    // argument slots (collected as one exact immutable list at binding time),
+    // argument slots (collected as one list at binding time),
     // so min = fixed count and max is unbounded. Collection builtins are NOT
     // item-supply signatures — they use one fixed `collection` parameter.
     private static bool IsItemSupplySignature(CallableSignature signature, int topLevelCollectingCount)

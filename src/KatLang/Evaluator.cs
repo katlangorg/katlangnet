@@ -1488,7 +1488,7 @@ public static partial class Evaluator
 
     /// <summary>
     /// Build the inclusive integer result for <c>range(start, stop)</c> as one
-    /// exact immutable list value. Counts upward when <c>start &lt;= stop</c>
+    /// list value. Counts upward when <c>start &lt;= stop</c>
     /// and downward otherwise (inclusive bounds always yield at least one
     /// element). The array is freshly materialized, so ownership transfer is
     /// safe.

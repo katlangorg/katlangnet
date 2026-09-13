@@ -366,7 +366,7 @@ public static partial class Evaluator
     /// as <see cref="BindCountedCallbackParams"/> does for fixed-only flat
     /// callees. The resulting slots then bind through the shared
     /// prefix/collecting/suffix binder, so the collecting parameter COLLECTS its allocated
-    /// slots as one exact immutable list. Lean:
+    /// slots as one list. Lean:
     /// <c>bindCountedCallbackParameterPatternList</c>.
     /// </summary>
     private static EvalResult<CountedParameterPatternBindings> BindCountedCallbackParameterPatternList(
@@ -635,7 +635,7 @@ public static partial class Evaluator
                     // A flat callee with a top-level collecting parameter (`Rows.map(F)`
                     // with `F(x, *y, z)` or a single-collecting `Collect(*items)`)
                     // binds through the shared prefix/collecting/suffix binder so the
-                    // collecting parameter COLLECTS an exact immutable list, after the
+                    // collecting parameter COLLECTS one list, after the
                     // same final-argument row expansion the fixed-only flat path
                     // uses below. Single-collecting callees keep the whole iterated
                     // element as one collected slot.
@@ -891,7 +891,7 @@ public static partial class Evaluator
         => slots.Count == 1 ? slots[0] : new Result.SequenceValue(slots);
 
     // Materialize a collection-producing builtin's kept/projected items as ONE
-    // exact immutable list value. Unlike canonical arity capture (ordinary
+    // list value. Unlike canonical arity capture (ordinary
     // construction via <see cref="Result.Normalize"/>,
     // <see cref="CombineOutputSlots"/>), the list boundary is exact:
     // zero items form `[]`, a single kept item forms `[item]` (the one-item

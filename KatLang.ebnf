@@ -90,13 +90,13 @@ BindingTarget            = BindingIdentifier | CollectingBinding ;
 CollectingBinding        = "*" BindingIdentifier ;
                      (* Prefix "*" is the COLLECT MARKER. A collecting binding
                         `*name` collects its matched supply segment into one
-                        exact immutable list value (possibly zero items). The
+                        list value (possibly zero items). The
                         marker must be DIRECTLY attached to its binding name:
                         no whitespace, comment, or newline may sit between the
                         star and the name (`* name` is a targeted attachment
                         error and never a collecting binding; `**name` is a
                         repeated-marker error). Comma binding pattern shared
-                        by assignment binding and function parameter binding:
+                        by assignment binding and call parameter binding:
                         the right-hand side is matched against the targets
                         prefix/collecting/suffix — fixed targets bind from the
                         start and end, and at most one collecting target
@@ -112,10 +112,10 @@ CollectingBinding        = "*" BindingIdentifier ;
                         stored sequence value or exact list) unpacks A, and
                         `x, *y, z = A*` and `x, *y, z = 1, 2, 3, 4, 5` supply
                         the same items. This unpacking is assignment-specific
-                        and does NOT change function calls, which still pass A
+                        and does NOT change calls, which still pass A
                         as one argument unless an explicit spread `A*` is
                         written. More than one collecting target is a parse
-                        error. A function parameter list with a top-level
+                        error. A parameter list with a top-level
                         collecting parameter, e.g. F(x, *y, z), uses the
                         item-supply matcher over the supplied arguments (no
                         implicit opening); a single collecting parameter
@@ -138,7 +138,7 @@ ClauseDefinition = [ "public" ] Identifier "(" Pattern ")" "=" OutputBundle ;
                         *tail), suffix) takes one sequence-value first argument and
                         binds its immediate contents. Collecting bindings consume
                         sibling values at their own pattern-list level and collect
-                        the assigned slots as one exact immutable list.
+                        the assigned slots as one list.
                         Multi-clause families and literal/mixed heads elaborate as
                         conditional algorithms. *)
 
@@ -591,7 +591,7 @@ GraceIdentifier = { "~" } Identifier { "~" } ;
 ParenBundleExpr = "(" ExpressionAlgorithm ")" ;
                   (* Empty parentheses "()" construct the empty sequence value,
                      displayed as (). Ordinary repeated parentheses around the empty
-                     sequence are redundant grouping and canonicalize to "()". Thus
+                     sequence are redundant grouping and normalize to "()". Thus
                      "()", "(())", and "((()))" denote the same empty sequence value
                      in surface KatLang. Parentheses still create useful sequence
                      structure for multi-item expressions such as "(1, 2)" and
@@ -600,11 +600,11 @@ ParenBundleExpr = "(" ExpressionAlgorithm ")" ;
                      (BraceAlgorithmExpr), not a value. *)
 BraceAlgorithmExpr = "{" Algorithm "}" ;
 ListLiteral     = "[" [ ExpressionList ] "]" ;
-                  (* Exact immutable list value, displayed as [1, 2, 3]. The
+                  (* List value, displayed as [1, 2, 3]. The
                      bracket content is a pure expression list — declarations
                      are not legal inside brackets — and spread elements insert
                      their item supply into the list being constructed
-                     ([0, A*, 4]). UNLIKE ParenBundleExpr, no canonicalization
+                     ([0, A*, 4]). UNLIKE ParenBundleExpr, no sequence normalization
                      applies to list structure: "[]", "[7]", and "[[7]]" are
                      three distinct exact values ("[7]" never collapses to "7"
                      and "[]" is a different value from "()"). Ordinary

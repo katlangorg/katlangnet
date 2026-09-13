@@ -74,7 +74,7 @@ public static partial class Evaluator
     ///   <c>evalIndexSelectionCounted</c>.</item>
     ///   <item><b>ListLiteral</b>: element slots follow the written-parentheses
     ///   expression-list slot rules (<see cref="EvalExplicitSequenceValueExprSlots"/>);
-    ///   elements are stored EXACTLY (no singleton erasure, no empty canonicalization),
+    ///   elements are stored EXACTLY (no singleton erasure, no empty-nesting collapse),
     ///   the collection reservation happens before the persistent list is built, and a
     ///   list literal always emits one value. Lean: <c>evalListLiteralCounted</c>;
     ///   plain <c>Eval</c> is this function's value projection on both sides.</item>
@@ -860,12 +860,12 @@ public static partial class Evaluator
     /// the synchronous dispatch (<see cref="InvokeSynchronousHostOperation"/>) and the
     /// async twin's await site (<c>EvalAsynchronousHostOperationCountedAsync</c>) so the
     /// two paths cannot drift. Host code builds values with the public constructors and
-    /// may hand back representations ordinary KatLang evaluation would have canonicalized
+    /// may hand back representations ordinary KatLang evaluation would have normalized
     /// during construction — a singleton transparent sequence around an atom, redundant
     /// nested unary sequence structure around the empty sequence — and such raw shapes
     /// diverge from equal program-produced values at representation-sensitive rules
     /// (structural equality, visible-empty counting). <see cref="Result.Normalize"/> is
-    /// the ONE existing canonicalization algorithm and is applied here, at the host
+    /// the ONE existing normalization algorithm and is applied here, at the host
     /// boundary, before the value reaches ANY consumer: the wrapper body's evaluation
     /// result is derived from this normalized value, so the zero-argument property cache
     /// (which stores that evaluation outcome) can only ever store the canonical value —

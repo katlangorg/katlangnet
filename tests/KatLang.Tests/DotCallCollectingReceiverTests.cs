@@ -315,7 +315,7 @@ public class DotCallCollectingReceiverTests
             """).ExpectEvaluationError<EvalError.TypeMismatch>();
 
         Assert.Contains("Collecting parameter `*items` collects values", mismatch.Message, StringComparison.Ordinal);
-        Assert.Contains("a supplied argument is a function", mismatch.Message, StringComparison.Ordinal);
+        Assert.Contains("a supplied argument is a callable", mismatch.Message, StringComparison.Ordinal);
     }
 
     // ── F. Scalar, string, and brace-block receivers ────────────────────────

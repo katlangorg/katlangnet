@@ -161,10 +161,10 @@ internal static class EvaluatorInvariants
             switch (r)
             {
                 case Result.SequenceValue sv:
-                    // Singleton sequence structure is canonicalized away during ordinary
+                    // Singleton sequence structure is normalized away during ordinary
                     // value construction ([x] => x), so it must never be observable.
                     if (sv.Items.Count == 1)
-                        throw new EvaluatorInvariantException("Sequence value with exactly one child (singleton sequences are canonicalized away).");
+                        throw new EvaluatorInvariantException("Sequence value with exactly one child (singleton sequences are normalized away).");
                     foreach (var it in sv.Items)
                     {
                         if (it is null) throw new EvaluatorInvariantException("Null child inside a sequence value.");

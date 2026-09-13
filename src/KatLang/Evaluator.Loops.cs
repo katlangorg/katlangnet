@@ -24,7 +24,7 @@ public static partial class Evaluator
     /// are combined with the structure-preserving <see cref="CombineOutputSlots"/>, not a
     /// general normalize: each non-spread output is one visible slot even when it is the
     /// empty sequence value <c>()</c>, and only an explicit spread contributes its expanded
-    /// items. Redundant empty-sequence nesting has already canonicalized to <c>()</c>.
+    /// items. Redundant empty-sequence nesting has already normalized to <c>()</c>.
     /// User-defined algorithms may exist structurally without output, but forcing
     /// them in value position raises <see cref="EvalError.MissingOutput"/>.
     /// Lean: evalAlgOutput → EvalM Result.

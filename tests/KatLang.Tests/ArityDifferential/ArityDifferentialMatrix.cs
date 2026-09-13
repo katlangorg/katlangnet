@@ -25,7 +25,7 @@ public static class ArityDifferentialMatrix
         new("atom", "7", OracleVal.Atom(7),
             "scalar atom; spread is total (supplies itself), repeated spread neutral"),
         new("written-singleton-seq", "(7)", OracleVal.Atom(7),
-            "written singleton sequence; canonicalizes to the atom at the defining capture boundary"),
+            "written singleton sequence; normalizes to the atom at the defining capture boundary"),
         new("empty-seq", "()", OracleVal.Seq(),
             "empty sequence value; visible unspread, zero-item spread"),
         new("multi-seq", "(1, 2)", OracleVal.Seq(OracleVal.Atom(1), OracleVal.Atom(2)),
@@ -35,7 +35,7 @@ public static class ArityDifferentialMatrix
         new("empty-list", "[]", OracleVal.List(),
             "empty exact list; visible unspread value, zero-item spread"),
         new("singleton-list", "[7]", OracleVal.List(OracleVal.Atom(7)),
-            "singleton exact list; never canonicalized away; lone-ATOM spread is repeated-spread neutral"),
+            "singleton exact list; never normalized away; lone-ATOM spread is repeated-spread neutral"),
         new("multi-list", "[1, 2]", OracleVal.List(OracleVal.Atom(1), OracleVal.Atom(2)),
             "two-item exact list; spread-then-capture converts to the sequence world"),
         new("lone-seq-row", "[(1, 2)]", OracleVal.List(OracleVal.Seq(OracleVal.Atom(1), OracleVal.Atom(2))),
@@ -916,7 +916,7 @@ public static class ArityDifferentialMatrix
     private static IReadOnlyList<ExclusionRule> ExclusionRules =>
     [
         new(c => c.ShapeId == "written-singleton-seq",
-            "The written singleton sequence (7) canonicalizes to the atom at its defining capture boundary "
+            "The written singleton sequence (7) normalizes to the atom at its defining capture boundary "
             + "(CAPTURE_CANONICALIZES_SUPPLY); no distinct stored value exists to feed other receivers, so every "
             + "runtime-reachable cell coincides with the atom shape. Pinned by the two dedicated capture cases."),
         new(c => c.Form == BindingForm.Spread && c.Multiplicity == SpreadMultiplicity.Zero,

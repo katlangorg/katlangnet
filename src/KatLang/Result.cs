@@ -141,7 +141,7 @@ public abstract record Result
     }
 
     /// <summary>
-    /// An exact immutable list value <c>[a, b, c]</c>. Unlike sequence values,
+    /// A list value <c>[a, b, c]</c>. Unlike sequence values,
     /// list structure is never singleton-normalized: <c>[7]</c> and <c>7</c>
     /// are distinct values, <c>[]</c> is distinct from the empty sequence
     /// value <c>()</c>, and nesting is preserved exactly.
@@ -199,7 +199,7 @@ public abstract record Result
     /// <summary>
     /// Normalize: unwrap single-element sequence values recursively. Lists are
     /// exact: their elements normalize (redundant SEQUENCE structure inside a
-    /// list still canonicalizes) but the list boundary itself never collapses.
+    /// list still normalizes) but the list boundary itself never collapses.
     /// Lean: Result.normalize
     /// </summary>
     public Result Normalize() => NormalizeCore(observations: null);
@@ -415,7 +415,7 @@ public abstract record Result
     /// recursively collect numeric atoms depth-first, left-to-right, through
     /// BOTH sequence and exact list boundaries. Strings and any other
     /// non-numeric leaves contribute no atoms. The builtin materializes this
-    /// collection as ONE exact immutable list value.
+    /// collection as ONE list value.
     /// Deliberately separate from <see cref="ToAtoms"/> (truth testing stays
     /// list-opaque) and <see cref="ToHostAtoms"/> (host projection returns
     /// host numbers), so none of the three contracts can drift through
@@ -889,7 +889,7 @@ public abstract record Result
     /// Deconstruction-openable structure view shared by the sequence-value
     /// parameter pattern binders: a received sequence value or exact list
     /// value opens to its immediate items; atoms and strings are not openable
-    /// (the binders apply their own scalar one-item fallback). Function-call
+    /// (the binders apply their own scalar one-item fallback). Call-argument
     /// argument binding never uses this view — a list argument stays one
     /// argument.
     /// Lean: <c>Result.structureItems?</c>.

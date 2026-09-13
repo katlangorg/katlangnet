@@ -508,7 +508,7 @@ public class EvaluatorCollectingParameterTests
     [Fact]
     public void Eval_SequenceValueParameterBinding_GroupedEmptySequenceItemCanonicalizesLikeEmptySequence()
     {
-        // `(())` canonicalizes to `()`, so as a written item it behaves exactly
+        // `(())` normalizes to `()`, so as a written item it behaves exactly
         // like a bare `()` item.
         AssertEval(
             """
@@ -547,7 +547,7 @@ public class EvaluatorCollectingParameterTests
             expected: 2,
             actual: 1);
 
-        // Redundant deeper grouping canonicalizes away shallowly at each level
+        // Redundant deeper grouping normalizes away shallowly at each level
         // and still writes exactly one slot.
         AssertEvalFailsWithArityMismatch(
             """
@@ -571,7 +571,7 @@ public class EvaluatorCollectingParameterTests
     [Fact]
     public void Eval_SequenceValueParameterBinding_PropertyStoredWrappedPairOpensCanonically()
     {
-        // A = ((1, 2)) canonicalizes at construction to (1, 2); Wrap(A) opens
+        // A = ((1, 2)) normalizes at construction to (1, 2); Wrap(A) opens
         // the stored canonical value, binds x = 1, and every observation —
         // display, count, .count, equality against both writable spellings,
         // and navigation — agrees on the scalar 1.

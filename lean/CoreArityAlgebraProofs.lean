@@ -239,7 +239,7 @@ contributes zero items, so the boundary captures the one-item supply
 `[Val.atom n]`, and singleton normalization returns the number itself
 (`capture_singleton_atom`). The claim would not hold for the raw constructor:
 `Val.seq [Val.atom n]` is deliberately distinct from `Val.atom n` before
-canonicalization (`capture_singleton_atom_ne_seq`). -/
+normalization (`capture_singleton_atom_ne_seq`). -/
 theorem capture_atom_empty_spread (n : Int) :
     capture ([Val.atom n] ++ items (Val.seq [])) = Val.atom n := by
   calc
@@ -555,10 +555,10 @@ theorem call_bind_collecting_does_not_open_lone_sequence :
   decide
 
 -- Assignment deconstruction is an unpacking receiver: a single stored sequence
--- or list value is opened and matched element-by-element. Function calls
+-- or list value is opened and matched element-by-element. Calls
 -- (`bindArgs`) do NOT open. These checks pin that contrast.
 
-/-- `Add(A)` / function parameter binding: a single sequence-valued argument against
+/-- `Add(A)` / call parameter binding: a single sequence-valued argument against
 two fixed parameters is an arity error — the call binder does not open `A`. -/
 theorem args_fixed_single_sequence_rejected :
     bindArgs [Pat.name "x", Pat.name "y"]
@@ -1360,7 +1360,7 @@ result comes from the input invariant, not from work performed inside
 unchanged).
 -/
 
-/-- Element-wise normalization preserves length, so canonicalization never
+/-- Element-wise normalization preserves length, so normalization never
 changes how many items a supply carries. -/
 theorem normalizeList_length : ∀ xs : Supply,
     (normalizeList xs).length = xs.length
@@ -1545,7 +1545,7 @@ never opened. It is NEVER recursive flattening.
 groups the supply and normalizes (`capture = normalize ∘ Val.seq`), so
 re-spreading yields: nothing for the empty supply; the item view of the
 NORMALIZED lone item for a singleton (a raw noncanonical singleton is
-canonicalized before the second spread reads it); and the element-wise
+normalized before the second spread reads it); and the element-wise
 normalized supply for two or more items. Multi-item members are normalized
 in place rather than passed through `items`: canonical structure boundaries
 stay intact, while raw redundant singleton-sequence boundaries may collapse

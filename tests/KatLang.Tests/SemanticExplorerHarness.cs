@@ -171,7 +171,7 @@ public static class SemanticExplorerHarness
 
     /// <summary>
     /// Count sequence nodes with exactly one item anywhere in the tree.
-    /// Such nodes are unwritable as literals under current canonicalization,
+    /// Such nodes are unwritable as literals under sequence normalization,
     /// so any occurrence is an orphan-wrapper invariant violation. Exact
     /// list values carry no singleton rule (`[x]` IS literal-writable), but
     /// their elements are still traversed for nested sequence orphans.
@@ -245,7 +245,7 @@ public static class SemanticExplorerHarness
         => items.Count == 1 ? items[0] : new Result.SequenceValue(items);
 
     /// <summary>
-    /// Expected collection-producing builtin result: ONE exact immutable list
+    /// Expected collection-producing builtin result: ONE list
     /// of the kept/projected items (mirror of the evaluator's
     /// MakeCollectionListResult — zero items form [], a single kept item is
     /// never erased, and nested values stay exact elements).
