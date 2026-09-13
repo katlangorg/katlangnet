@@ -107,7 +107,8 @@
 - Add or update focused tests near the changed layer.
 - Include negative coverage when failure modes are meaningful.
 - When changing language behavior, update Lean tests and C# tests together.
-- Run Lean tests/builds only when the task changes `.lean` files (including generated Lean artifacts). If Lean files are unchanged, skip Lean validation; semantic alignment still requires reviewing and updating Lean when the behavior change calls for it.
+- Keep two questions apart: whether Lean SOURCE must change is decided by `src/KatLang/SEMANTIC-ALIGNMENT.md` and the language rules above; whether Lean VALIDATION must run is decided by the risk level in `Validation` below. An unchanged `.lean` file is no evidence that C# is still aligned, and no token Lean edit is ever needed to justify running the Lean targets.
+- Test design, adversarial coverage, and failure analysis are research work owned by the primary agent at the user's model and effort; only routine build/test/Lean execution is delegated (see `Validation`).
 - If a change crosses parser, evaluator, semantics, or docs boundaries, cover the affected layers in the same task when feasible.
 - **A source-based evaluator test must PARSE CLEANLY, and must assert the error TYPE, not merely that something failed.** `Parser.Parse(source).Root` silently discards diagnostics, so a test whose source the parser rejects still evaluates the recovery tree and can pass for an unrelated reason — that is how a `NotPublicProperty` regression passed without ever reaching the branch, and how 41 `EvaluatorTests` came to run on illegal source. Use `SourceProvenance.ParseValid(...)` (or `EvaluatorTestSupport.ParseValidRoot`) for ordinary source semantics; `SourceProvenance.ExpectFrontEndError(...)` when the parser/elaborator is the subject; `SourceProvenance.ParseAllowingDiagnostics(...)` only where malformed source is the point (recovery, fuzz, editor tooling). Never assert an evaluator outcome on a source you have not shown to be legal.
 - **Before writing a source test for an evaluator branch, check the branch is surface-reachable at all.** Front-end elaboration can make it dead: clause-family elaboration turns every single-clause binder form into an `Algorithm.User`, so the flat-binder arm of `ConditionalValueAccessError` cannot be reached from any written program, and implicit-parameter promotion hides the dotted-`open` visibility checks. A source test for such a branch passes while the branch stays dead — pin these from a prebuilt AST instead (`EvaluatorDefensiveBranchTests`).
@@ -130,36 +131,39 @@
 
 ## Validation
 
-Select validation from the task's changed files, including committed, staged,
-unstaged, and untracked changes. Adding, modifying, deleting, or renaming a
-`.lean` file requires Lean validation; regenerating a Lean artifact without a
-content change does not. If no `.lean` files changed, do not run Lean tests,
-`lake build`, or the script's `All` / `Lean` phases.
+Validation scope follows REGRESSION RISK, never line count, file count, or file extension alone. The alignment manifest and the language rules decide which semantic EDITS a change needs (Lean, C#, corpus, docs); this section decides how much local validation the candidate gets and who executes it. `.github/workflows/validate.yml` stays the full .NET + Lean backstop for pull requests and pushes to `main`: a local V0–V2 omission is a deliberate risk decision, and CI is never a reason to skip V3 locally.
 
-For changes without Lean file edits, run the .NET phase from repo root:
+### Candidate and level
 
-```powershell
-pwsh -NoProfile -File ./scripts/validate-all.ps1 -Phase DotNet
-```
+- Assess the COMPLETE candidate: the relevant commits plus staged, unstaged, untracked, deleted, and renamed files. A clean working tree is not evidence that a committed candidate needs no tests. Preserve unrelated work and account for it when it affects the candidate or the test results.
+- Classify by semantic impact, dependency reach, and changed contracts. Start at V1 unless the change is clearly V0, then apply the V2/V3 triggers; when the impact cannot be confidently bounded, choose V3. The primary agent records the level and a one-line reason before validation starts; the worker maps it to concrete coverage and may raise it, never lower it.
 
-When Lean files changed, run both phases:
+| Level | Appropriate scope | Required local validation |
+| --- | --- | --- |
+| V0 — trivial | Instruction/prose edits, comments, or formatting proven not to affect execution or mechanically checked content | Review the diff, whitespace (`git diff --check`), and the references/consistency of the text. No build or runtime suite for a genuinely documentation-only change. |
+| V1 — focused | Small, isolated, behavior-preserving refactor or test change with a well-understood dependency boundary | Build the affected project/test dependency closure; run the directly related tests with verified filters. |
+| V2 — affected | Bounded subsystem behavior change; a limited shared helper, API, or diagnostic contract change; neighboring consumers affected | Focused tests plus the neighboring/affected suites, the affected project builds, and the applicable parity/artifact/Lean checks. |
+| V3 — full | Fundamental behavior, broadly shared infrastructure, cross-cutting changes, or uncertain impact | Complete local .NET validation and all seven canonical Lean targets, plus any specifically required regression/parity checks. |
+
+V3 is MANDATORY for changes to parser/grammar behavior or AST structure; elaboration; lexical ownership/name resolution; parameter binding or implicit lifting; Grace; sequence/list/spread/collect/arity semantics; the evaluator core; the optimizer/planned execution; sync/async/cancellation behavior; core loading/module semantics; caching/exposure; Decimal128/numeric semantics; Lean/C# correspondence; and widely reused infrastructure or build/toolchain changes with broad impact. The triggers concern the behavior or machinery changed: a comment fix inside `Parser.cs` is not V3, a one-line ownership fix is; a formatting-only string-construction refactor may be V1 when the output contract is demonstrably unchanged; updating expected semantic results never makes a semantic change test-only. V2 covers bounded production-behavior changes, shared consumers, and API/diagnostic contracts without a V3 trigger — an isolated CLI presentation change needs no evaluator-wide validation, a change to shared loading or cancellation does. Executable documentation is not prose: tutorial result claims, spec-linked examples, generated prompt blocks, and the EBNF keep their verification tests (coverage map below) even when only text files changed, so such a change is neither automatically V0 nor V3; changed language MEANING is still V3 plus the semantic-update process.
+
+### Lean validation
+
+- Whether Lean source/model must change: the alignment manifest and the language rules decide, and the documented C#-only distinctions stay C#-only.
+- Whether Lean validation must run: this policy decides. V3 always runs all seven Lean targets, even when no `.lean` file changed — a C#-only optimizer, async, or ownership change is V3, and `SemanticExplorerCases`/`LanguageSpecCases` are how Lean/C# correspondence is checked.
+- V1/V2: build the affected Lean targets and the dependent artifact/parity checks whenever Lean code, proofs, guards, imports, or generated Lean content changes or is affected; a meaningful Lean-only change never gets zero Lean validation, and unclear dependency reach means V3. Pure Lean comments may be V0; regenerating an artifact without a content change is not itself a semantic change.
+
+### Commands
+
+The normal V3 command, from the repo root:
 
 ```powershell
 pwsh -NoProfile -File ./scripts/validate-all.ps1 -Phase All
 ```
 
-Use `-Phase Lean` only when Lean files changed and the .NET phase has already
-passed for the current changes. Omitting `-Phase` means `All`; the script does
-not select phases from changed files, so always pass the appropriate phase.
-The .NET phase owns the full solution build,
-C# suite, and diff whitespace check. The Lean phase owns the one canonical
-seven-target list. Each phase fingerprints the existing staged, unstaged, and
-untracked state and fails if validation changes it; a developer checkout may
-already be dirty, but validation must leave it exactly as it started.
+Its .NET phase runs the FULL solution build (every project — `dotnet test` alone builds only test projects and their dependencies, so benchmark/demo compile breaks escape it), then the C# suite with `--no-build`, then `git diff --check`; its Lean phase owns the one canonical seven-target list. The script accepts only `All` (the default), `DotNet`, and `Lean`: it has no focused or level switch and does not detect risk. Completing `-Phase DotNet` and `-Phase Lean` against the same unchanged candidate satisfies V3 — do not rerun `All` merely to repeat completed work — while a partial phase alone is never full validation. Each phase fingerprints the staged, unstaged, and untracked state and fails if validation changes it; a checkout may start dirty, but validation must leave it exactly as it started.
 
-The .NET phase runs the FULL solution build (every project — `dotnet test` alone builds only test projects and their dependencies, so benchmark/demo compile breaks escape it), the C# test suite, and `git diff --check`.
-
-Manual .NET fallback:
+Manual .NET fallback (equivalent, including the independent full-solution build):
 
 ```powershell
 dotnet build .\KatLang.slnx -p:UseSharedCompilation=false
@@ -167,7 +171,7 @@ dotnet test .\KatLang.slnx -p:UseSharedCompilation=false --no-build
 git diff --check
 ```
 
-Manual Lean fallback, only when `.lean` files changed (all seven targets):
+Manual Lean fallback (all seven targets — V3, or a V1/V2 change that affects Lean):
 
 ```powershell
 Push-Location .\lean
@@ -181,16 +185,81 @@ lake build LanguageSpecCases
 Pop-Location
 ```
 
-Lean CoreTests now use `#guard` for semantic assertions, so a failing assertion fails `lake build CoreTests`. Remaining `#eval` lines are demo/inspection output only.
+Lean CoreTests use `#guard` for semantic assertions, so a failing assertion fails `lake build CoreTests`. Remaining `#eval` lines are demo/inspection output only.
 
-`validate-all.ps1` is a VERIFICATION command and is observational: before it builds or tests anything it removes every `KATLANG_REGENERATE_*` environment variable from its own process (the whole prefix, case-insensitively; the original values are restored on exit), so a regeneration flag inherited from the calling shell can never make a green validation run rewrite a tracked generated artifact. Regenerating a generated artifact (`lean/LanguageSpecCases.lean`, `lean/SemanticExplorerCases.lean`, the generator prompt blocks, `tests/KatLang.Formatting.PublicApi.Tests/PublicApiBaseline.txt`) is always a separate, targeted `dotnet test` run with that artifact's flag set to `1`; the run WRITES the artifact and then FAILS BY DESIGN (also when the content did not change), so it can never be mistaken for a verification — review the diff, clear the flag, and rerun the normal verification. The flag registry and the write-then-fail contract are `RegenerationFlags` / `ArtifactRegeneration` in `tests/KatLang.Tests/Infrastructure/ArtifactRegeneration.cs` (shared as source with the public-API test project); a new `KATLANG_REGENERATE_*` variable must be registered there — `ArtifactRegenerationPolicyTests` scans the repository for unregistered names and for tests that read a flag outside the helper.
+Focused V1/V2 runs build the affected projects, then filter, for example:
+
+```powershell
+dotnet build ./tests/KatLang.Tests/KatLang.Tests.csproj -p:UseSharedCompilation=false
+dotnet test ./tests/KatLang.Tests/KatLang.Tests.csproj -p:UseSharedCompilation=false --no-build --filter "FullyQualifiedName~SameLineSeparatorTests"
+```
+
+Filters must name real test classes/namespaces (check the inventory: the class in `LanguageSpec/GeneratorSpecTests.cs` is `LanguageSpecArtifactsGeneratorPromptTests`), and the summary must show the intended tests discovered AND executed — zero matching tests is not a pass whatever the exit code. Use `--no-build` only after a successful, current build of the same projects/configuration/framework and inputs. Verification outside the script keeps its guarantees: neutralize inherited `KATLANG_REGENERATE_*` flags for the verification process only (a child `pwsh -NoProfile` whose environment is discarded, never the caller's lasting environment), snapshot `git status --porcelain=v1 --untracked-files=all` plus the index and worktree diffs before and after, and report an unexpected mutation with its evidence instead of undoing it. Keep terminal output minimal; save complete stdout/stderr under the ignored `artifacts/validation/` directory or a temporary directory, preserving the command's real exit code when redirecting or piping (`$LASTEXITCODE` after the native command in pwsh, `pipefail`/`PIPESTATUS` in bash). Missing required tooling (SDK, `lake`, a runner) is BLOCKED/incomplete validation, never a pass and never a silently lower level.
+
+`validate-all.ps1` is a VERIFICATION command and is observational: before it builds or tests anything it removes every `KATLANG_REGENERATE_*` environment variable from its own process (the whole prefix, case-insensitively; the original values are restored on exit), so a regeneration flag inherited from the calling shell can never make a green validation run rewrite a tracked generated artifact. Regenerating a generated artifact (`lean/LanguageSpecCases.lean`, `lean/SemanticExplorerCases.lean`, the generator prompt blocks, `tests/KatLang.Formatting.PublicApi.Tests/PublicApiBaseline.txt`) is always a separate, targeted `dotnet test` run with that artifact's flag set to `1`; the run WRITES the artifact and then FAILS BY DESIGN (also when the content did not change), so it can never be mistaken for a verification — review the diff, clear the flag, and rerun the normal verification. The flag registry and the write-then-fail contract are `RegenerationFlags` / `ArtifactRegeneration` in `tests/KatLang.Tests/Infrastructure/ArtifactRegeneration.cs` (shared as source with the public-API test project); a new `KATLANG_REGENERATE_*` variable must be registered there — `ArtifactRegenerationPolicyTests` scans the repository for unregistered names and for tests that read a flag outside the helper. Regeneration is a separate intentional editing operation owned by the primary agent; a validation worker never invokes it as a repair, and a write-then-fail run is never a passing verification.
+
+### Delegating routine execution
+
+The primary agent keeps the user's research model and effort and owns semantic classification, the minimum level, test design and adversarial coverage, interpreting regressions, fixes, and the final conclusion. Substantive test/build/Lean execution goes to ONE validation worker, chosen in this order:
+
+| Preference | Model | Requested effort |
+| --- | --- | --- |
+| 1 | Luna | High |
+| 2 | Opus 5 | Medium |
+| 3 | The model selected for the original parent task | Medium |
+
+Use the model identifiers the current harness actually exposes; never invent availability or claim an effort was applied when the harness cannot set it. When a routing or effort control is unavailable, take the supported fallback, disclose the limitation in one line, and continue; without subagents the primary agent runs the same bounded plan itself. Never block waiting for a preferred model, and never alter the primary research configuration. A V0 task needing only document/diff checks needs no worker, and a worker never delegates its own validation task.
+
+- Handoff, compactly: repository/worktree, candidate scope, semantic-impact summary, minimum level, relevant files and test families, required commands or constraints, and the log destination. No research transcript and no repository-wide audit; every rule in this file still binds the worker.
+- The worker MAY inspect the bounded diff and test inventory, select concrete tests at or above the minimum level, build, execute tests and Lean targets, capture evidence, classify observed test/build/environment failures, and broaden coverage under the escalation rule below.
+- The worker MUST NOT edit production code or tests, change expectations or skip tests to get green, regenerate tracked artifacts, redesign semantics, accept a regression, or stage, commit, reset, or discard files (ordinary ignored build/test outputs and logs are fine). Failures return to the primary agent for interpretation and repair; research-level test design and failure analysis never inherit the cheaper role.
+
+### Progressive execution and evidence
+
+1. Record the selected level and reason. Run the most informative focused checks first, then complete the selected scope; passing focused tests never cancel required V2/V3 coverage.
+2. On a clear failure, return the command, the failure identity, and the evidence promptly; the primary agent decides what it means and makes any repair.
+3. When a failure suggests wider regression, run a bounded neighboring set and raise the scope one level at a time. Do not rerun an unchanged failure repeatedly, launch every suite to diagnose a missing SDK, or lower the selected level silently.
+4. After a fix, rebuild the affected outputs, rerun the failing check, and complete the required coverage for the FINAL candidate. Reuse earlier results only while their inputs, dependencies, configuration, and environment still apply; later prose-only edits do not by themselves invalidate runtime results.
+5. Validate a stable snapshot: no edits to the checkout and no competing builds/tests against the same outputs while the worker runs. A run against moving inputs is not evidence for the final candidate.
+
+The worker's report is normally 100–300 words, expanding only for material failures:
+
+```text
+Validation: PASS / FAIL / BLOCKED
+Level: Vn — reason
+Worker: actual model/effort, or limitation
+Candidate: commit plus working-tree scope/snapshot
+Executed: exact commands or precise filters/targets; outcomes and counts
+Failures: identity, expected/actual or key error, first useful location
+Omitted/incomplete: suites or phases not run and why
+Repository changes caused by validation: none / details
+Logs: paths
+```
+
+Never claim full validation from a partial run, a stale build, an unexecuted command, or an assumption that CI will pass. Do not label a failure pre-existing or flaky without evidence.
+
+### Subsystem coverage map
+
+Guides focused V1/V2 execution and supplements the level table; it never weakens a V3 requirement.
+
+- Parser/syntax: `LexerTests`, `ParserTests`, `ParserDiagnosticSpanTests`, `ParserDiagnosticWordingTests`, `SameLineSeparatorTests`, `StarSyntaxTests`, `MarkerAttachmentTests`, `DeclarationHeadLineRuleTests`, `RootStrayCloserRecoveryTests`, `GroupedExpressionSpanTests`, the relevant editor span tests, `LanguageSpecRunnerTests`, `LeanAstEncoderTests`, and the Lean `AstDemo`/`CoreTests`/`LanguageSpecCases` guards.
+- Ownership/binding/evaluator: the `Evaluator*Tests` families, `ParameterOwnershipTests`, `StaticOpenOwnershipTests`, `OwnershipConformanceTests`, `LookupCoherenceTests`, `LookupTwinEquivalenceTests`, `CompletionIdentityDifferentialTests`, `ParameterDetectorTests`, `ImplicitArgumentResolverTests`, `CountedMatrixTests` (plain/counted results), `CorpusExecutionEquivalenceTests` (generic/planned), `AsyncTwinDifferentialTests` (forced async) where applicable, `LanguageSpecRunnerTests`, `SemanticExplorerTests`, and the Lean `CoreTests`/`SemanticExplorerCases`/`LanguageSpecCases` correspondence.
+- Optimizer: `LoopStrategyPreparationTests`, `EvaluatorLoopTests`, the `LoopPlanned*ParityTests`, `EvaluatorSequencePipelineTests`, `SequencePipelineDispatchTests`, `SequencePreparationParityTests`, `FilterCountFusionSpanParityTests`, `OptimizerEquivalenceSweepTests`, `CountedDispatchChargingTests`, `OperationalMetamorphicTests` (operational counters/diagnostics), `AsyncTwinDifferentialTests`, and — when the change warrants it — `StructuralFuzzTests`/`MetamorphicFuzzHarnessTests`. The primary agent establishes that the selected tests exercise the intended execution path (planned versus generic).
+- Editor-only tooling: `SemanticModelTests`, `SemanticModelDeclarationRegistrationTests`, `CompletionIdentityDifferentialTests`, `MathAliasSemanticModelTests`, `EditorReadinessTests`, `EditorFuzzHarnessTests`; escalate when shared elaboration or ownership is involved.
+- CLI/API/rendering: `tests/KatLang.CLI.Tests`, `tests/KatLang.Formatting.PublicApi.Tests` (`PublicApiBaselineTests`, `PublicElaborationSurfaceTests`, `PublicFormatterExtensionTests`), the `Formatting/*` tests, `KatLangEngineTests`, `Hosting/*`, `AsyncEvaluationApiTests`, and direct consumers; widen when shared runtime behavior changes.
+- Executable documentation/artifacts: `TutorialSpecTests`, `TutorialResultSweepTests`, `TutorialCorpusParserTests`, `LanguageSpecArtifactsTests` and `LanguageSpecArtifactsGeneratorPromptTests` (both match `--filter LanguageSpecArtifacts`), `SemanticExplorerLeanArtifactTests`, `EbnfLexicalSyncTests`, `PublicApiBaselineTests`, `ArtifactRegenerationPolicyTests`, `ReleaseVersionSourceTests`, and `ContinuousIntegrationPolicyTests` — verification only; regeneration stays a separate step.
+
+A V3 run is not release publishing, a benchmark campaign, or unbounded fuzzing; additional expensive workloads need a concrete risk or an explicit task requirement.
 
 ## Continuous Integration And Releases
 
 - `.github/workflows/validate.yml` is automatic for pull requests and pushes to
   `main`, and can also be dispatched manually. Its stable required-check names
   are `.NET validation` and `Lean validation`; both invoke the phase boundary
-  above rather than duplicating commands in YAML.
+  above rather than duplicating commands in YAML. It runs BOTH phases on every
+  such event regardless of which files changed — the full .NET + Lean backstop
+  behind the risk-based local levels in `Validation` — and it never substitutes
+  for a locally required V3.
 - `.github/workflows/release.yml` is manual-only. Dispatch it from `main` with
   the version already present in `KatLangVersion.props`. A push, merge, or tag
   never publishes a release automatically.
@@ -213,7 +282,7 @@ Lean CoreTests now use `#guard` for semantic assertions, so a failing assertion 
   are pinned to immutable commit SHAs and `.github/dependabot.yml` proposes
   reviewable GitHub Actions pin updates.
 
-`lean/SemanticExplorerCases.lean` is a GENERATED Lean/C# differential corpus — do not edit it by hand. A failing `#guard` there is a Lean/C# divergence (or a Lean-internal plain/counted evaluator mismatch) on that case. After an intentional semantics change, regenerate it with `$env:KATLANG_REGENERATE_SEMANTIC_EXPLORER = "1"; dotnet test .\KatLang.slnx --filter SemanticExplorerLeanArtifact` (writes, then fails by design), review the diff, and run Lean validation only if `.lean` files changed. See `docs/design/sequence-boundary-audit-2026-07.md`.
+`lean/SemanticExplorerCases.lean` is a GENERATED Lean/C# differential corpus — do not edit it by hand. A failing `#guard` there is a Lean/C# divergence (or a Lean-internal plain/counted evaluator mismatch) on that case. After an intentional semantics change, regenerate it with `$env:KATLANG_REGENERATE_SEMANTIC_EXPLORER = "1"; dotnet test .\KatLang.slnx --filter SemanticExplorerLeanArtifact` (writes, then fails by design), review the diff, and validate at the level the underlying change requires (an intentional semantics change is V3, so all seven Lean targets — `SemanticExplorerCases` included — run regardless of which files changed). See `docs/design/sequence-boundary-audit-2026-07.md`.
 
 ## Public API Baseline And Release Version
 
@@ -224,7 +293,7 @@ Lean CoreTests now use `#guard` for semantic assertions, so a failing assertion 
 
 - `tests/KatLang.Tests/LanguageSpec/LanguageSpecCorpus.cs` is the canonical executable specification: named cases with stable IDs and HAND-WRITTEN canonical expectations. Never regenerate its expectations from observed behavior — a failing `LanguageSpec*` test means either fix the implementation or edit the canonical case in a reviewed diff.
 - Same-program fidelity (M11): the Lean program of every Lean-comparable case in BOTH differential corpora (`LanguageSpecCorpus` and `SemanticExplorerCorpus`, internal-node cases included) is DERIVED from the source's real elaborated AST through `tests/KatLang.Tests/LeanAstEncoder.cs` — never authored by hand and never rebuilt by test-side parser-rule templates. C#-only cases carry an explicit non-blank `LeanExclusionReason`, a hand-authored LanguageSpec Lean program requires the exceptional `LeanProgramOverride` + `LeanOverrideReason` (currently unused), and per-corpus exact-ID exclusions plus `FidelityRatchet_*` tests pin the derived-case partitions. The encoder is FAIL-LOUD: extend it deliberately (with reviewed goldens in `LeanAstEncoderTests`) rather than approximating, and expected strings in encoder tests are manually reviewed constants. See `docs/design/executable-language-spec.md` §5.
-- GENERATED from it (do not edit by hand): `lean/LanguageSpecCases.lean` and the `=== BEGIN GENERATED: katlang-spec-examples ===` block in `.github/agents/katlang-generator.agent.md` and `experimental/prompts/katlang-generator.txt`. Regenerate all three with `$env:KATLANG_REGENERATE_LANGUAGE_SPEC = "1"; dotnet test .\KatLang.slnx --filter LanguageSpecArtifacts` (writes, then fails by design), review the diff, and run Lean validation only if `.lean` files changed.
+- GENERATED from it (do not edit by hand): `lean/LanguageSpecCases.lean` and the `=== BEGIN GENERATED: katlang-spec-examples ===` block in `.github/agents/katlang-generator.agent.md` and `experimental/prompts/katlang-generator.txt`. Regenerate all three with `$env:KATLANG_REGENERATE_LANGUAGE_SPEC = "1"; dotnet test .\KatLang.slnx --filter LanguageSpecArtifacts` (writes, then fails by design), review the diff, and validate at the level the underlying change requires (a language-behavior change is V3, which includes `lake build LanguageSpecCases`; see `Validation`).
 - Tutorial examples marked `<!-- spec:case-id -->` are verified against the corpus (source and expected output) by `TutorialSpecTests`; when changing a linked example, update the canonical case and the tutorial together.
 - EVERY tutorial fence followed by a `**Result(s):**` claim is executable documentation (M13): `TutorialResultSweepTests` runs it through `KatLangEngine.Run` and display-matches the claim — no marker needed, so an ordinary new example enters the sweep automatically. A genuinely non-standalone example (e.g. one needing a network downloader) carries `<!-- spec:skip nonblank reason -->` before the fence; the skip inventory is exact-pinned, and result-bearing coverage is monotonic (pinned minimum baseline — removing an existing claim requires a reviewed ratchet reduction, while additions need no pin edit). The shared grammar lives in `TutorialCorpus` and fails loudly on malformed/detached claims, so a result claim can never silently drop out of verification.
 - When language behavior intentionally changes, update the affected canonical cases in the same task as the Lean/C#/tutorial/generator changes.
@@ -243,6 +312,8 @@ Before editing, classify the change using `src/KatLang/SEMANTIC-ALIGNMENT.md`.
 
 If in doubt, the manifest's "Lean update required?" column is authoritative. If Lean is silent or ambiguous, stop and ask.
 
+This classification decides the required semantic EDITS only. Validation SCOPE is decided separately by the risk level in `Validation`: an optimization-only, async-only, or other C#-only change that needs no Lean edit is still V3 when it touches a V3 trigger, so all seven Lean targets run without any `.lean` change.
+
 ## Do Not
 
 - Do not silently change language semantics.
@@ -250,3 +321,5 @@ If in doubt, the manifest's "Lean update required?" column is authoritative. If 
 - Do not treat `AGENTS.md` as a long design essay.
 - Do not let multiple agent-instruction files drift into conflicting guidance.
 - Do not add convenience syntax, hidden fallbacks, or duplicated semantic logic just to make a local change easier.
+- Do not report a partial, stale, zero-test, or tool-blocked run as validation, and do not lower a selected validation level silently.
+- Do not let a validation worker edit code, tests, expectations, or tracked artifacts, or stage, commit, reset, or discard files.
