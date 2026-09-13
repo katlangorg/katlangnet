@@ -328,6 +328,130 @@ public class EmptySequenceOperandTests
         AssertAtom(Decimal128.Zero, "F(*items) = items\nF() == ()");
     }
 
+    // ── The canonical SYN-01 programs verbatim, with their public diagnostic ──
+
+    private static EvalError ErrorOf(string source)
+    {
+        var result = Evaluator.Run(new Expr.AlgorithmExpr(SourceProvenance.ParseValid(source).Root));
+        if (result.IsOk)
+            Assert.Fail($"`{source}` unexpectedly succeeded with {result.Value}");
+        return result.Error;
+    }
+
+    public static TheoryData<string, string> CanonicalNumericPrograms()
+        => new()
+        {
+            { "10 / ()", "right" },
+            { "() / 10", "left" },
+            { "() > 10", "left" },
+            { "10 > ()", "right" },
+            { "() and 7", "left" },
+            { "7 and ()", "right" },
+            { "() or 7", "left" },
+            { "7 or ()", "right" },
+        };
+
+    [Theory]
+    [MemberData(nameof(CanonicalNumericPrograms))]
+    public void CanonicalProgram_ReportsTheStructuredTypeMismatchAtTheWholeExpression(string source, string side)
+    {
+        // The public diagnostic: the TypeMismatch family (never a value, never an
+        // arity error), blaming the empty side by name, carrying the ordinary
+        // `while evaluating` context, and located at the whole binary expression.
+        var rendered = KatLangError.FromEvalError(ErrorOf(source));
+
+        Assert.Equal(KatLangErrorCode.TypeMismatch, rendered.Code);
+        Assert.Contains($"while evaluating `{source}`", rendered.Message);
+        Assert.Contains($"the {side} operand was a sequence value with 0 sequence elements: ()", rendered.Message);
+        Assert.Equal(
+            ((int?)1, (int?)1, (int?)1, (int?)source.Length),
+            (rendered.StartLine, rendered.StartColumn, rendered.EndLine, rendered.EndColumn));
+    }
+
+    [Theory]
+    [InlineData("() + 'text'")]
+    [InlineData("'text' + ()")]
+    public void CanonicalStringProgram_ReportsTheStringContractAtTheWholeExpression(string source)
+    {
+        var rendered = KatLangError.FromEvalError(ErrorOf(source));
+
+        Assert.Equal(KatLangErrorCode.TypeMismatch, rendered.Code);
+        Assert.Contains("Cannot apply operator to string and non-string operands", rendered.Message);
+        Assert.Equal(
+            ((int?)1, (int?)1, (int?)1, (int?)source.Length),
+            (rendered.StartLine, rendered.StartColumn, rendered.EndLine, rendered.EndColumn));
+    }
+
+    // ── `()` is one case of the ONE non-scalar operand rule ─────────────────
+
+    [Theory]
+    [InlineData("(1, 2) + 3", "left", "a sequence value with 2 sequence elements: (1, 2)")]
+    [InlineData("3 + (1, 2)", "right", "a sequence value with 2 sequence elements: (1, 2)")]
+    [InlineData("[1, 2] + 3", "left", "a list value with 2 elements: [1, 2]")]
+    [InlineData("3 + [1, 2]", "right", "a list value with 2 elements: [1, 2]")]
+    [InlineData("[] + 3", "left", "a list value with 0 elements: []")]
+    [InlineData("() + 3", "left", "a sequence value with 0 sequence elements: ()")]
+    public void NonScalarOperands_AreRejectedByTheSameOperandRule(string source, string side, string description)
+    {
+        // A multi-item sequence value, an exact list (empty or not), and the empty
+        // sequence value all fail the same numeric-scalar validation with the same
+        // structured error; the message differs only in how it describes the value.
+        var rendered = KatLangError.FromEvalError(ErrorOf(source));
+
+        Assert.Equal(KatLangErrorCode.TypeMismatch, rendered.Code);
+        Assert.Contains($"the {side} operand was {description}", rendered.Message);
+        Assert.Equal(
+            ((int?)1, (int?)1, (int?)1, (int?)source.Length),
+            (rendered.StartLine, rendered.StartColumn, rendered.EndLine, rendered.EndColumn));
+    }
+
+    // ── `()` is a value; a no-output body is not ────────────────────────────
+
+    [Theory]
+    [InlineData("A = {\n}\nA + 1")]
+    [InlineData("A = {\n}\n1 + A")]
+    [InlineData("{} + 1")]
+    public void NoOutputBody_IsNotTheEmptySequenceValue(string source)
+    {
+        // `{}` has no value at all, so demanding it as an operand is the
+        // missing-output family and never reaches operand validation; `()` IS a
+        // value and reaches operand validation, where it is rejected. The two must
+        // never be conflated, and neither is a passthrough.
+        Assert.Equal(KatLangErrorCode.MissingOutput, KatLangError.FromEvalError(ErrorOf(source)).Code);
+        Assert.Equal(KatLangErrorCode.TypeMismatch, KatLangError.FromEvalError(ErrorOf("() + 1")).Code);
+    }
+
+    // ── Nested and contextual forms keep the same rule and their blame ──────
+
+    [Theory]
+    [InlineData("F(a) = a / 2\nF(())", "while evaluating call to F", "a / 2", "left")]
+    [InlineData("F(a) = 2 / a\nF(())", "while evaluating call to F", "2 / a", "right")]
+    [InlineData("if(1, () + 1, 0)", "while evaluating call to if", "() + 1", "left")]
+    [InlineData("M(a) = a + 1\nmap(((), 2), M)", "while evaluating call to map", "a + 1", "left")]
+    [InlineData("S(x) = x - 1\nrepeat(S, 2, ())", "while evaluating call to repeat", "x - 1", "left")]
+    [InlineData("A = ()\nB = A > 0\nB", "while evaluating `A > 0`", "A > 0", "left")]
+    public void EmptyOperand_InNestedContexts_IsRejectedWithContextualBlame(
+        string source, string outermostContext, string binaryText, string side)
+    {
+        // The rejection is the same wherever the operator runs — a user call, a
+        // selected `if` branch, a callback, a loop step, a property body — and the
+        // ordinary contextual diagnostics wrap it rather than being lost.
+        var error = ErrorOf(source);
+        var chain = LoopDiagnosticParityAssertions.ContextChain(error);
+
+        Assert.Equal(outermostContext, chain[0]);
+        Assert.Equal($"while evaluating `{binaryText}`", chain[^1]);
+        var innermost = Assert.IsType<EvalError.TypeMismatch>(LoopDiagnosticParityAssertions.Innermost(error));
+        Assert.Contains($"the {side} operand was a sequence value with 0 sequence elements: ()", innermost.Message);
+
+        // Plain and counted evaluation report the identical structured tree.
+        var counted = Evaluator.RunCountedObserved(new Expr.AlgorithmExpr(SourceProvenance.ParseValid(source).Root)).Result;
+        Assert.True(counted.IsError);
+        Assert.Equal(
+            LoopDiagnosticParityAssertions.DescribeErrorTree(error),
+            LoopDiagnosticParityAssertions.DescribeErrorTree(counted.Error));
+    }
+
     // `Result`'s record equality is not KatLang value equality (two distinct
     // empty backing collections are not reference-equal), so empty collection
     // values are asserted structurally by kind and emptiness.
