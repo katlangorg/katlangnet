@@ -89,6 +89,40 @@ public class TutorialSemanticContractTests
         Assert.Equal("8\n8", Display(indented + "\nInner(7)"));
     }
 
+    // ── "Functions: Algorithms Without Properties": the label is property ownership, and owning properties never limits callability ──
+
+    private const string FunctionAndAlgorithm =
+        "F(x) = (x + 1)^2\n\nG(x) = {\n    Y = x + 1\n    Y^2\n}\n\nF(3)\nG(3)";
+
+    private const string PropertyOwningCallback =
+        "G(x) = {\n    Y = x + 1\n    Y^2\n}\nApply(f) = f(3)\n\nApply(G)\n[1, 2].map(G)";
+
+    [Fact]
+    public void FunctionLabel_IsPropertyOwnership_AndOwningPropertiesKeepsAnAlgorithmCallable()
+    {
+        var root = SourceProvenance.ParseValid(FunctionAndAlgorithm).Root;
+
+        // F and G are root properties with the same parameter list; F owns no properties (a function), G owns Y.
+        var f = PropertyOf(root, "F").Value;
+        var g = PropertyOf(root, "G").Value;
+        Assert.Equal(["x"], f.Params);
+        Assert.Empty(f.Properties);
+        Assert.Equal(["x"], g.Params);
+        var y = PropertyOf(g, "Y");
+        Assert.DoesNotContain(root.Properties, p => p.Name == "Y");
+
+        // Y is G's property and itself a function: it owns nothing, infers no parameter, and reads G's x — hence local-only.
+        Assert.Empty(y.Value.Properties);
+        Assert.Empty(y.Value.Params);
+        Assert.Equal(PropertyExposure.LocalOnlyCapturedAncestorParameters, y.Exposure);
+
+        Assert.Equal("16\n16", Display(FunctionAndAlgorithm));
+        RunFailure(FunctionAndAlgorithm + "\nG.Y", KatLangErrorCode.LocalOnlyProperty);
+
+        // Owning a property does not restrict higher-order use: G is passable and usable as a callback like any function.
+        Assert.Equal("16\n[4, 9]", Display(PropertyOwningCallback));
+    }
+
     // ── Visibility: private = not exported; structural access checks exposure only ──
 
     private const string Library = "Lib = {\n    public Area = 4\n    Helper = Area / 2\n}";

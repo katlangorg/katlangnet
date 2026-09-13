@@ -15,8 +15,10 @@ Learn KatLang from a first calculation through collections, higher-order algorit
    - [Math Constants and Functions](#math-constants-and-functions)
    - [Lowercase Math Aliases](#lowercase-math-aliases)
    - [Display Decimal Places](#display-decimal-places)
-5. [Multiple Outputs](#multiple-outputs)
+5. [Output Rows and Sequences](#output-rows-and-sequences)
+   - [Sequence Normalization](#sequence-normalization)
 6. [Properties](#properties)
+   - [Functions: Algorithms Without Properties](#functions-algorithms-without-properties)
    - [Calls Return One Value](#calls-return-one-value)
    - [Zero-Parameter Property Caching](#zero-parameter-property-caching)
    - [Algorithm Output](#algorithm-output)
@@ -57,7 +59,7 @@ Learn KatLang from a first calculation through collections, higher-order algorit
     - [Conditional Loop: `while`](#conditional-loop-while)
 11. [Practical Examples](#practical-examples)
     - [Reusable Calculation with Parameters](#reusable-calculation-with-parameters)
-    - [Multi-Output Example](#multi-output-example)
+    - [Returning a Sequence](#returning-a-sequence)
     - [Loop-Based Example: Sum of a List](#loop-based-example-sum-of-a-list)
     - [Fibonacci Sequence](#fibonacci-sequence)
 12. [Higher-Order Algorithms](#higher-order-algorithms)
@@ -106,11 +108,31 @@ Examples labelled **Result** produce one top-level output. **Results** shows sev
 
 ## What KatLang Is
 
-KatLang is a language designed for calculations. A program is a root algorithm: it can define named calculations and produce values. You write expressions, give calculations names, and combine them.
+KatLang is a language designed for calculations. Its basic computational structure is the **algorithm**: a unit of computation that can have parameters (its inputs), properties (named algorithms it owns), and output (the values its expression rows produce), and that may also declare `open` to import names. A program is itself an algorithm — the **root algorithm** — and everything you write belongs to it: the names you define with `=` are its properties, and its expression rows are its output.
 
-All computation is expressed through algorithms, but algorithms and values are not interchangeable. An expression such as `42` produces a number value. A body such as `1, 2, 3` emits three output slots. Parentheses capture output slots into one sequence value, while braces create a nested algorithm and a new lexical scope. Named algorithms are called **properties** because they belong to a parent algorithm.
+You write expressions, give calculations names, and combine them:
 
-Most simple formulas do not need declared parameters — KatLang figures them out. Any name you use that isn't defined as a property automatically becomes a parameter unless the algorithm has an explicit parameter list.
+- `2 + 3 * 4` is an expression row. It produces output.
+- `Answer = 42` defines a property: a named algorithm owned by the root. It produces no output until an expression row reads it.
+- `Tax = price * 0.2` defines a property with a parameter: `price` resolves to nothing, so it becomes an input that the caller supplies, as in `Tax(50)`.
+
+**KatLang values and bindings are immutable.** Evaluating an expression produces a value that never changes afterwards, and a property binds one algorithm for good: within one scope, `A = 5` followed by `A = 6` is an error reporting that `A` is already defined, never a reassignment. Two things that may look like exceptions are not. Same-name clauses such as `Sign(1) = 100` beside `Sign(x) = 0` are valid together because they form one [conditional algorithm](#conditional-algorithms), and a nested `{ ... }` scope may declare a property that hides an outer property of the same name where the ownership rules allow it (see [Name Resolution](#name-resolution)) — that is shadowing, not reassignment. Immutability is a statement about values and bindings, not a promise that every evaluation yields the same value: separate evaluations of `Math.Random` or of a host operation may produce different values (see [Zero-Parameter Property Caching](#zero-parameter-property-caching)).
+
+The vocabulary used throughout this tutorial:
+
+| Term | Meaning |
+|---|---|
+| **Algorithm** | The basic computational structure. It can have parameters, properties, and output, and may declare `open`. The program is the root algorithm; `{ ... }` writes a nested one. |
+| **Property** | A named algorithm belonging to another algorithm: `Answer = 42` makes `Answer` a property of the root. Parameters are named bindings, not properties. |
+| **Function** | An algorithm with no properties of its own (see [Functions: Algorithms Without Properties](#functions-algorithms-without-properties)). |
+| **Parameter** | A named input bound by a call — written in an explicit parameter list, or inferred from a name that resolves to nothing. |
+| **Sequence** | An ordered value structure written with parentheses, `(1, 2, 3)`, governed by [sequence normalization](#sequence-normalization): a redundant single-item boundary disappears, so `(7)` is `7`. |
+| **List** | An ordered collection written with square brackets, `[1, 2, 3]`, that keeps its boundary even when it is empty or holds one item. |
+| **Item supply** | The items presented, in order, to an operation or parameter binding — output rows, call arguments, spread items. It is not a value kind of its own and has no literal. |
+
+Algorithms and values are not interchangeable. An expression such as `42` produces a number value. A body such as `1, 2, 3` emits three output slots. Parentheses capture output slots into one sequence value, while braces create a nested algorithm with its own lexical scope.
+
+Most simple formulas need no declared parameters — KatLang infers them. In an algorithm without an explicit parameter list, a name that resolves to nothing — no property or parameter of the algorithm or of an enclosing one, no opened name, no builtin — becomes a parameter.
 
 The core forms are:
 
@@ -119,13 +141,13 @@ The core forms are:
 | `42` | One number value |
 | `1, 2, 3` | Three output slots |
 | `(1, 2, 3)` | One sequence value containing three items |
-| `[1, 2, 3]` | One exact list value containing three items |
+| `[1, 2, 3]` | One list value containing three items |
 | `Total = price * quantity` | A property whose unresolved names become parameters |
 | `Total(12, 4)` | An explicit call |
 | `{ expression }` | A nested algorithm with its own scope |
 | `value*` | Spread one sequence or list boundary into the surrounding slots |
 
-The opening chapters focus on numbers, output slots, sequence values, properties, and calls. Lists, braces, spread, and their exact boundary rules are developed later.
+The opening chapters focus on numbers, output slots, sequences, properties, and calls. Lists, braces, spread, and the boundary rules that connect values to item supplies are developed later.
 
 ---
 
@@ -149,7 +171,7 @@ Answer
 
 **Result:** `42`
 
-Names defined with `=` are called **properties**. In an algorithm without an explicit parameter list, if a name isn't defined, KatLang treats it as a **parameter** — an input the caller must supply:
+Names defined with `=` are called **properties**: each is a named algorithm owned by the program, and the expression row `Answer` reads it. In an algorithm without an explicit parameter list, a name that resolves to nothing is treated as a **parameter** — an input the caller must supply:
 
 ```
 Tax = price * 0.2
@@ -563,11 +585,13 @@ Per-value formatting such as `value.displayDecimals(n)` and `displayDecimals(val
 
 ---
 
-## Multiple Outputs
+<a id="multiple-outputs"></a>
 
-> **Core idea:** commas and output rows create separate slots; whitespace alone never does. Parentheses capture slots into one sequence value; square brackets capture them into one exact list value.
+## Output Rows and Sequences
 
-A KatLang algorithm can produce more than one value. Use commas to list multiple outputs:
+> **Core idea:** commas and output rows create separate slots; whitespace alone never does. Parentheses capture slots into one sequence value; square brackets capture them into one list value.
+
+An algorithm's output is written as expression rows, and one row may hold several comma-separated slots. Each top-level slot is one output of the program:
 
 <!-- spec:supply-three-rows -->
 ```
@@ -706,7 +730,7 @@ Use parentheses when sequence-valued output intent is clearer:
 | `X * 2` (any spacing, even across a line break) | Multiplication: a `*` followed by a valid right operand always multiplies — `X*2`, `X* 2`, `X *2`, `X * 2`, and `X*` followed by a line `2` are the same product |
 | `*name` in a binding pattern | Collecting binding: collect the matched supply into one exact list |
 
-Commas and permitted newline boundaries create expression lists. Root output consumes a bare expression list as output slots, call syntax consumes it as argument slots, parentheses materialize it as one sequence value, and square brackets materialize it as one exact [list value](#lists). Semicolon is not an expression separator; use commas (or separate lines) for separate slots or parentheses for one sequence value. A spread expression is one whole slot: `A, B*, C` is an expression list of three slots — the comma before `B*` is required like every same-line comma (`A B*` is the missing-separator error), and the comma after the spread is required for a second reason too, because `B* C` would be the multiplication `B * C`. Written slots stay structural (`F(a*, b)` has two written slots; its supplied argument count depends on a's spread items). Physical line breaks do not create sequence-value boundaries. Explicit parentheses do:
+Commas and permitted newline boundaries create expression lists. Root output consumes a bare expression list as output slots, call syntax consumes it as argument slots, parentheses materialize it as one sequence value, and square brackets materialize it as one [list value](#lists). Semicolon is not an expression separator; use commas (or separate lines) for separate slots or parentheses for one sequence value. A spread expression is one whole slot: `A, B*, C` is an expression list of three slots — the comma before `B*` is required like every same-line comma (`A B*` is the missing-separator error), and the comma after the spread is required for a second reason too, because `B* C` would be the multiplication `B * C`. Written slots stay structural (`F(a*, b)` has two written slots; its supplied argument count depends on a's spread items). Physical line breaks do not create sequence-value boundaries. Explicit parentheses do:
 
 ```
 1, (2, 3)    # two slots: 1 and (2, 3)
@@ -736,13 +760,48 @@ Use(1, Tail*) # 6: Tail* spreads its items into the b and c slots
 Use(1*, Tail)  # bad arity: spreading the scalar 1 yields one item, so only two argument slots
 ```
 
+### Sequence Normalization
+
+A **sequence** is an ordered value structure, and parentheses are how you write one: `(1, 2, 3)` is one sequence value holding three items, and `()` is the empty sequence. KatLang builds sequences directly from expression lists; there is no tuple type to declare. What distinguishes sequences from [lists](#lists) is **sequence normalization**, the rule that produces the canonical form of a sequence whenever a value is constructed or captured. Normalization removes every redundant unary sequence boundary — a sequence boundary around exactly one item — at every nesting depth, including around sequence elements stored inside a list. It never removes a list boundary, and it never merges a boundary that holds two or more items. Because `(7)` and `7` are the same value, a sequence of exactly one item does not exist; a visibly wrapped single item is what lists are for.
+
+```
+(7)
+((1, 2))
+(1, (2, 3))
+(1, ((2, 3)))
+[7]
+[[7]]
+[(7)]
+[((1, 2))]
+(1, (), 2)
+((), ())
+```
+
+**Results:**
+```
+7
+(1, 2)
+(1, (2, 3))
+(1, (2, 3))
+[7]
+[[7]]
+[7]
+[(1, 2)]
+(1, (), 2)
+((), ())
+```
+
+Read the rows in pairs. `(7)` is the number `7`, and the redundant outer boundary of `((1, 2))` disappears, leaving the two-item sequence `(1, 2)`. Meaningful nesting stays: `(1, (2, 3))` keeps its inner pair, and `(1, ((2, 3)))` loses only the redundant boundary around that pair. List boundaries always survive — `[7]` and `[[7]]` stay as written — while normalization still reaches the sequence elements a list stores: `[(7)]` is `[7]` and `[((1, 2))]` is `[(1, 2)]`. Finally, the empty sequence is an item like any other, so `(1, (), 2)` and `((), ())` keep their visible empty items: normalization removes boundaries, never items.
+
+Sequence normalization is not recursive flattening, sorting, deduplication, or list-boundary removal. It is the reason grouping parentheses are harmless around a single value — `(2 + 3) * 4` groups without creating a sequence — and the reason a call or property read that produces exactly one item hands back that item rather than a one-item wrapper (see [Calls Return One Value](#calls-return-one-value)). When a single item or an empty collection must stay visibly wrapped, use a [list](#lists).
+
 ---
 
 ## Properties
 
 > **Core idea:** a property definition gives an algorithm a name but does not itself produce output. Expression rows produce output; reading or calling a property crosses a one-value boundary.
 
-An algorithm can be given a name using `=`. Named algorithms are called **properties**, because a named algorithm always belongs to its parent algorithm. By convention, property names use PascalCase.
+A **property** is a named algorithm belonging to another algorithm, its owner. You define one with `=`: the root owns the properties written at the top level, and a `{ ... }` body owns the properties written inside it. A property need not be parameterless, public, or reachable from outside its owner — `Tax = price * 0.2` and `Area(r) = r * r` are properties just as `Answer = 42` is. Keep the property apart from the value obtained by evaluating it: `Answer` names an algorithm, and an expression row that reads `Answer` evaluates it to the value `42`. By convention, property names use PascalCase.
 
 <!-- spec:property-access-and-call -->
 ```
@@ -762,9 +821,56 @@ Answer()
 42
 ```
 
+### Functions: Algorithms Without Properties
+
+KatLang uses **function** for one structural special case: an algorithm that owns no properties. The criterion is ownership alone. How many parameters an algorithm has, whether it returns a number or a sequence, how many output items it emits, whether it is written with braces, and whether its parameters are explicit or inferred play no part in the classification. Reading a property of an enclosing algorithm, or calling another algorithm, does not make that property belong to the caller, so a body full of calls is still a function as long as it declares no properties of its own.
+
+```
+F(x) = (x + 1)^2
+
+G(x) = {
+    Y = x + 1
+    Y^2
+}
+
+F(3)
+G(3)
+```
+
+**Results:**
+```
+16
+16
+```
+
+`F` and `G` are both properties of the root algorithm, and both calls produce the same result. `F` is a function: it owns no properties. `G` owns the property `Y`, so `G` is an algorithm outside the special case. `Y` is a property of `G` and is itself a function — it owns nothing and reads `G`'s parameter `x`. Because `Y` depends on that parameter it is local-only, so `G.Y` is refused, exactly like `Outer.Inner` in [A Parameter Always Means This Call's Argument](#a-parameter-always-means-this-calls-argument) (the rule is stated under [Visibility](#visibility)). "Property" and "function" describe different aspects of one algorithm: `F` is both a property of the root and a function, and a brace algorithm such as `{ a + 1 }` is a function too, because it declares no properties.
+
+Owning properties changes nothing about what an algorithm can do. `G` is called exactly like `F`, and it can be passed to a higher-order algorithm or used as a callback just as `F` can:
+
+```
+G(x) = {
+    Y = x + 1
+    Y^2
+}
+Apply(f) = f(3)
+
+Apply(G)
+[1, 2].map(G)
+```
+
+**Results:**
+```
+16
+[4, 9]
+```
+
+A few ownership checks keep the labels consistent. A deconstruction such as `a, b = 1, 2` declares the properties `a` and `b`, so the algorithm containing it is outside the special case. A clause family such as `Sign(1) = 100` beside `Sign(x) = 0` is a **conditional algorithm** whatever its branches contain; do not call it a function when any branch body declares a property. An `open` declaration makes imported names visible without making those properties belong to the opener. The ordinary builtin callables and the `Math` members own no properties and are functions, while `Math` itself is an algorithm with properties. Apply the criterion to the algorithm you are describing, never to declarations inside another algorithm it calls or contains.
+
+This is KatLang's structural use of the word. Mathematically, `F` and `G` describe the same function from `x` to `(x + 1)^2`, and nothing here forbids local helper calculations; the label only records whether an algorithm owns named algorithms of its own.
+
 ### Calls Return One Value
 
-A property/call boundary is a **value boundary**: it always returns exactly one value. A body may internally produce an item supply — comma slots, newline rows, or a body spread — but when you *call* it (or access a property, or invoke a builtin), the caller receives a single value. If the body produced several items, that value is a sequence containing them. To contribute its items back into the surrounding item supply, append the spread marker at the call site: `value*`. This is analogous to Python, where `return 1, 2, 3` returns one tuple, not three independent results.
+A property/call boundary is a **value boundary**: it always returns exactly one value. A body may internally produce an item supply — comma slots, newline rows, or a body spread — but when you *call* it (or access a property, or invoke a builtin), the caller receives a single value. If the body produced several items, that value is a sequence containing them. To contribute its items back into the surrounding item supply, append the spread marker at the call site: `value*`. Python is similar in one respect: `return 1, 2, 3` hands back one tuple rather than three separate results. The KatLang value is a sequence, though, shaped by [sequence normalization](#sequence-normalization) rather than by tuple rules, so the comparison ends there.
 
 <!-- spec:call-value-boundary -->
 ```
@@ -792,6 +898,20 @@ Empty()
 
 **Result:** `()`
 
+A returned `()` stays visible wherever an ordinary, non-spread slot receives it — an output row or a call argument keeps it as one item, and only a spread (`E()*`) would contribute nothing:
+
+```
+E = ()
+(1, E(), 2)
+(1, E(), 2).count
+```
+
+**Results:**
+```
+(1, (), 2)
+3
+```
+
 ```
 Nothing = {}
 Nothing()
@@ -799,7 +919,7 @@ Nothing()
 
 **Result:** error — `Nothing` has no defined output, so there is no value for the call to return (see [The Empty Sequence Value](#the-empty-sequence-value)).
 
-The same rule governs collection-producing builtins, with one refinement: `order`, `orderDesc`, `distinct`, `take`, `skip`, `filter`, `map`, `range`, and `atoms` each materialize their result as one exact immutable [list value](#lists); an explicit spread opens it.
+The same rule governs collection-producing builtins, with one refinement: `order`, `orderDesc`, `distinct`, `take`, `skip`, `filter`, `map`, `range`, and `atoms` each materialize their result as one [list value](#lists); an explicit spread opens it.
 
 ```
 X = 1, 2, 3
@@ -818,16 +938,18 @@ X.order*
 
 Three things are intentionally **not** value boundaries and keep emitting multiple top-level items: root program output (`1, 2, 3` still shows three rows), explicit caller-site spread (`value*`), and the multi-slot loop state of `while`/`repeat` — a step's several output slots become the next iteration's separate state slots, and the finished loop hands its final slots to the surrounding context the same way (`Step.repeat(1, 0, 0)` with `Step = a + 1, b + 1` shows two root rows, while `R = Step.repeat(1, 0, 0)` captures them as the one value `(1, 1)`). Scalar/reduction builtins (`count`, `sum`, `avg`, `min`, `max`, `contains`, `first`, `last`, `reduce`) already return one value and are unchanged. A `map`/`reduce` callback must still return exactly one element; a multi-output callback body is an error, not a silently-grouped value.
 
+What a call returns is a separate question from how a dot-call receiver is handed to the callee's parameters. In an ordinary lexical dot call the receiver is one leading argument segment: a fixed parameter allocated that segment binds the receiver's one value, while a flat top-level collecting parameter allocated it consumes the receiver's evaluated supply instead (see [Dotted Receivers and Collecting Parameters](#dotted-receivers-and-collecting-parameters)). The value boundary described here is about what the call itself produces.
+
 ### Zero-Parameter Property Caching
 
-For pure calculations these forms produce the same visible value, but the call shape controls reuse. During one evaluation run, repeated property-style reads of the same self-contained zero-parameter property reuse its first successful result:
+When a body always produces the same value, both forms show that value, but the call shape controls reuse. During one evaluation run, repeated property-style reads of the same self-contained zero-parameter property reuse its first successful result:
 
 ```
 Fun = 1 + 2
 Fun, Fun
 ```
 
-When the property produces values that can change, property-style access and explicit calls are different:
+When each fresh evaluation of the body may produce a different value — a random draw, or a host operation — property-style access and explicit calls are different:
 
 ```
 Fun = Math.Random(0, 1), Math.Random(0, 1)
@@ -883,7 +1005,7 @@ range(1, 2000).map(F).count, Scaled(2), Scaled(10)
 200
 ```
 
-The same rule applies to values that can change: `A = Math.RandomInt(0, 10)` read property-style from several calls of one function yields the same draw in all of them during one evaluation, and `A()` draws afresh each time.
+The same rule applies when fresh evaluations may differ: `A = Math.RandomInt(0, 10)` read property-style from several calls of one algorithm yields the same draw in all of them during one evaluation, while every explicit `A()` is a fresh evaluation that may produce a different draw. A value that has been produced never changes; a new evaluation produces a new value.
 
 Host-backed properties follow the same rule. Every independent evaluation starts with an empty cache. Errors and interrupted property evaluations are not cached; a successful nested property's entry remains available if an enclosing evaluation fails and the program continues. An explicit call neither reads nor replaces that property's cached entry.
 
@@ -1012,12 +1134,12 @@ A.count
 
 #### `()` and repeated empty parentheses
 
-Parentheses around an empty-sequence literal are redundant grouping. They canonicalize to the same empty sequence value:
+Parentheses around an empty-sequence literal are redundant grouping. [Sequence normalization](#sequence-normalization) reduces them to the same empty sequence value:
 
 ```
 ()       # the empty sequence
-(())     # canonicalizes to ()
-((()))   # canonicalizes to ()
+(())     # normalizes to ()
+((()))   # normalizes to ()
 ```
 
 They stay equal after parsing, assignment, display, and equality:
@@ -1116,7 +1238,7 @@ Empty*,
 
 **Result:** `1`
 
-A collecting binding that collects zero items binds the empty exact [list](#lists) `[]`, not `()` — it is likewise one visible slot, and spreading it contributes zero items:
+A collecting binding that collects zero items binds the empty [list](#lists) `[]`, not `()` — it is likewise one visible slot, and spreading it contributes zero items:
 
 ```
 x, *rest = 1
@@ -1138,7 +1260,7 @@ x
 
 **Result:** `1`
 
-Collection builtins never produce `()` either: a builtin such as `filter` that keeps zero items returns the same empty exact list `[]`, which is a different value from `()`. Test an empty builtin or collecting-binding result against `[]` or with `count`:
+Collection builtins never produce `()` either: a builtin such as `filter` that keeps zero items returns the same empty list `[]`, which is a different value from `()`. Test an empty builtin or collecting-binding result against `[]` or with `count`:
 
 ```
 IsEven = x mod 2 == 0
@@ -1156,7 +1278,7 @@ count(filter((1, 3, 5), IsEven))
 
 ### Sequence Values and Count
 
-Use `.count` (or `count(collection)`) to ask how many items a stored value contains. `count` receives one collection argument and views it one level deep: a lone sequence value or exact [list value](#lists) contributes its immediate items, while an atom or string is a one-element collection.
+Use `.count` (or `count(collection)`) to ask how many items a stored value contains. `count` receives one collection argument and views it one level deep: a lone sequence value or [list value](#lists) contributes its immediate items, while an atom or string is a one-element collection.
 
 ```
 T = (1, 2, 3)
@@ -1177,17 +1299,17 @@ count(A)
 3
 ```
 
-Collection builtins receive one collection object. Named helpers such as `A = 1, 2, 3` followed by `count(A)` and `A.count` both return `3` — the one bound collection value is opened one level, so its three items are counted. A sequence-valued helper such as `T = (1, 2, 3)` behaves the same way (`count(T)` and `T.count` return `3`), and a lone exact list value opens the same way too, so `count([1, 2, 3])` is also `3`. Multi-argument forms are not accepted: `count(1, 2, 3)` is an arity error because `count(collection)` expects exactly one argument, and `count(A*)` is an arity error too, because spread supplies ordinary call arguments — three of them here — rather than feeding the collection parameter. When extra items must join a collection, group them into one value: `count((A*, 7))` is `4`. See `count` below for the full collection-input rules.
+Collection builtins receive one collection object. Named helpers such as `A = 1, 2, 3` followed by `count(A)` and `A.count` both return `3` — the one bound collection value is opened one level, so its three items are counted. A sequence-valued helper such as `T = (1, 2, 3)` behaves the same way (`count(T)` and `T.count` return `3`), and a lone list value opens the same way too, so `count([1, 2, 3])` is also `3`. Multi-argument forms are not accepted: `count(1, 2, 3)` is an arity error because `count(collection)` expects exactly one argument, and `count(A*)` is an arity error too, because spread supplies ordinary call arguments — three of them here — rather than feeding the collection parameter. When extra items must join a collection, group them into one value: `count((A*, 7))` is `4`. See `count` below for the full collection-input rules.
 
 ### Output Selection
 
-When an algorithm produces multiple outputs, the `:` operator selects one top-level item by its zero-based index and projects that selected item's content one level. Exact list values are indexable the same way: `value:index` selects one immediate element from a sequence or list target under identical index rules.
+When an algorithm produces multiple outputs, the `:` operator selects one top-level item by its zero-based index and projects that selected item's content one level. List values are indexable the same way: `value:index` selects one immediate element from a sequence or list target under identical index rules.
 
 Construction preserves structure; selection projects content.
 
 - If the selected item is atomic, the result is that atomic value.
 - If the selected item is a sequence value, the result is its immediate top-level members.
-- If the selected item is an exact list value, the result is that list, exactly as stored.
+- If the selected item is a list value, the result is that list, exactly as stored.
 - Nested sequence and list values stay intact; `:` does not recursively flatten them.
 - Chained selection repeats the same one-level projection step at each `:`.
 
@@ -1229,7 +1351,7 @@ Bags:0:1
 
 Here each selection sits beside another output row, so each displays as one value row (`Bags:0` is the intact inner pair-of-pairs). Only a lone root row spreads a projection across rows, as in the `Pairs:0` example above.
 
-Exact list values use the same zero-based selection:
+List values use the same zero-based selection:
 
 <!-- spec:list-index-selects-element -->
 ```
@@ -1305,7 +1427,7 @@ Obj.B(5)
 
 `Obj` declares its own `B`, so `Obj.B(5)` calls that member with the one argument `5`; the visible two-parameter `B(a, c)` is never considered, although `B(Obj, 5)` is a well-formed two-argument call. The number `3` has no members, so `3.B(5)` is the lexical fallback `B(3, 5)`.
 
-A parameter list with two or more parameters that contains a collecting parameter (`*name`) is a **mixed fixed/collecting parameter list**. The fixed parameters bind from the front and the back, and the collecting parameter collects the matched middle argument slots as one exact immutable [list](#lists):
+A parameter list with two or more parameters that contains a collecting parameter (`*name`) is a **mixed fixed/collecting parameter list**. The fixed parameters bind from the front and the back, and the collecting parameter collects the matched middle argument slots as one [list](#lists):
 
 ```
 Arg = 1, 2, 3
@@ -1321,7 +1443,7 @@ Scale(1, 2, 3, 10)
 [10, 20, 30]
 ```
 
-Both item-supplying call forms agree: `factor` binds `10` from the back, `*values` collects the three front slots as `values = [1, 2, 3]`, the body's `map` call materializes the mapped items as the one exact list value `[10, 20, 30]`, and the call boundary returns that single value unchanged (see [Calls Return One Value](#calls-return-one-value)). Caller-site spread such as `Scale(Arg*, 10)*` opens the result into the flat items `10`, `20`, `30`.
+Both item-supplying call forms agree: `factor` binds `10` from the back, `*values` collects the three front slots as `values = [1, 2, 3]`, the body's `map` call materializes the mapped items as the one list value `[10, 20, 30]`, and the call boundary returns that single value unchanged (see [Calls Return One Value](#calls-return-one-value)). Caller-site spread such as `Scale(Arg*, 10)*` opens the result into the flat items `10`, `20`, `30`.
 
 An UNSPREAD structured argument is one collected slot, not an item supply: `Scale(Arg, 10)` (and the dotted `Arg.Scale(10)`, whose named receiver supplies its one stored value) binds `values = [Arg]` — a one-element list holding the whole sequence — so the numeric `map` callback fails on the sequence element. To supply a stored property's items, spread them (`Scale(Arg*, 10)`); a WRITTEN group receiver supplies its rows directly (`(1, 2, 3).Scale(10)` binds `values = [1, 2, 3]` — see [Dotted Receivers and Collecting Parameters](#dotted-receivers-and-collecting-parameters)). A lone collecting parameter such as `Helper(*values)` is the degenerate lone-collecting-binding case of the same item-supply binding (see [Collecting Explicit Parameters](#collecting-explicit-parameters)).
 
@@ -1561,7 +1683,7 @@ Inner
 
 **Result:** `99`
 
-Here `Inner.X` hides the outer `X`, so the result is `99`.
+Here `Inner`'s own `X` hides the outer `X`, so the result is `99`. This is shadowing, not reassignment: the root's `X` is still `10` wherever the root reads it, and each `X` is an immutable binding of its own scope. A nested property may hide an outer *property* this way; it may not reuse the name of a parameter bound by its own or an enclosing algorithm (see the next section).
 
 #### Parameters take part in the walk
 
@@ -1776,7 +1898,7 @@ Only numeric values are supported. Applying `.string` to a non-numeric value (su
 
 > **Core idea:** in an algorithm without an explicit parameter list, unresolved names become parameters in first-occurrence order. An explicit parameter list fixes the accepted names and their order.
 
-**Rule:** in an algorithm without an explicit parameter list, any identifier that is not defined as a property in the current algorithm becomes an implicit parameter.
+**Rule:** in an algorithm without an explicit parameter list, a name that resolves to nothing — not a property or parameter of the algorithm or of any enclosing algorithm, not an opened name, not a builtin (see [Name Resolution](#name-resolution)) — becomes an implicit parameter.
 
 Parameters are named in camelCase by convention to distinguish them from PascalCase property names.
 
@@ -1836,7 +1958,7 @@ Add(x) = x + y
 
 ### Collecting Explicit Parameters
 
-KatLang supports recursive parameter patterns in ordinary algorithm definitions and conditional branch heads. A sequence-value pattern consumes one parent-level argument slot and matches that slot's immediate contents. In an ordinary definition it opens a lone sequence value or a lone exact [list](#lists) alike:
+KatLang supports recursive parameter patterns in ordinary algorithm definitions and conditional branch heads. A sequence-value pattern consumes one parent-level argument slot and matches that slot's immediate contents. In an ordinary definition it opens a lone sequence value or a lone [list](#lists) alike:
 
 <!-- spec:ordinary-sequence-pattern-opens-sequence-or-list -->
 ```
@@ -1859,7 +1981,7 @@ source context, and for host evaluation budgets; parentheses never cause an argu
 Nested parentheses still contribute one grouped written item, and only an explicit postfix spread
 contributes the evaluated value's immediate items.
 
-A top-level collecting parameter (`*name`) instead consumes an **item supply**: it COLLECTS the supplied argument slots as one exact immutable [list](#lists). Zero slots collect `[]`, one slot collects `[item]` (never erased to the item), and many slots collect `[item1, item2, ...]`. A callable with a collecting parameter can therefore accept a variable number of argument items — it is variadic in that sense. A lone collecting parameter is the degenerate case — it collects the whole supply:
+A top-level collecting parameter (`*name`) instead consumes an **item supply**: it COLLECTS the supplied argument slots as one [list](#lists). Zero slots collect `[]`, one slot collects `[item]` (never erased to the item), and many slots collect `[item1, item2, ...]`. A callable with a collecting parameter can therefore accept a variable number of argument items — it is variadic in that sense. A lone collecting parameter is the degenerate case — it collects the whole supply:
 
 <!-- spec:variadic-grouped-and-spread -->
 ```
@@ -1879,7 +2001,7 @@ G(1, 2, 3, 4, 5)
 
 Both forms supply five numeric argument slots, collected as `x = [1, 2, 3, 4, 5]`; `x.sum` opens the bound list and adds its elements. An UNSPREAD structure is one argument slot: `G(A)` and `G((1, 2, 3, 4, 5))` each supply one sequence-valued slot, so `x = [A]` — a one-element list holding the whole sequence — and the numeric `sum` element constraint rejects it. Supplying a value's items is always the explicit spread `A*`; there is no implicit opening at calls. An empty call `G()` collects `x = []`, and `G(*x) = x.count` reports `1` for `G(A)` and `5` for `G(A*)`.
 
-The collect marker and the spread marker have opposite meanings and are never interchangeable — they match the semantic directions `collect : Supply → ListValue` and `spread : Value → Supply`. Prefix `*name` in a binding position is a **collecting binding**: it collects its matched items into an exact list, and when it appears in a function signature it is called a **collecting parameter**. Postfix `value*` is instead a **spread expression** that contributes the operand's items to the surrounding item supply. Both markers must be directly attached to what they modify: `*items` is a collecting binding while `* items` is an error, and `value*` is a spread while `value *` is an error. Which of the three meanings a star has is decided by position, never by spacing: a `*` followed by a valid right operand — on the same line or on the next — is always the multiplication operator, however it is spaced, and a `*` that nothing can follow (a comma, a closing delimiter, the end of the program, or a definition comes next) is the spread marker — which must then be attached. Whitespace therefore never turns one valid operation into another; it only separates the valid `value*` from the rejected `value *`.
+The collect marker and the spread marker have opposite meanings and are never interchangeable — they match the semantic directions `collect : Supply → ListValue` and `spread : Value → Supply`. Prefix `*name` in a binding position is a **collecting binding**: it collects its matched items into an exact list, and when it appears in a parameter list it is called a **collecting parameter**. Postfix `value*` is instead a **spread expression** that contributes the operand's items to the surrounding item supply. Both markers must be directly attached to what they modify: `*items` is a collecting binding while `* items` is an error, and `value*` is a spread while `value *` is an error. Which of the three meanings a star has is decided by position, never by spacing: a `*` followed by a valid right operand — on the same line or on the next — is always the multiplication operator, however it is spaced, and a `*` that nothing can follow (a comma, a closing delimiter, the end of the program, or a definition comes next) is the spread marker — which must then be attached. Whitespace therefore never turns one valid operation into another; it only separates the valid `value*` from the rejected `value *`.
 
 Multiple sibling sequence values are **not** auto-flattened — they are preserved unless you open them explicitly with a spread marker. With `A = 1, 2` and `B = 3, 4`, `G(A, B)` collects `x = [(1, 2), (3, 4)]` (count 2), while `G(A*, B*)` collects `x = [1, 2, 3, 4]` (count 4):
 
@@ -1958,7 +2080,25 @@ Mean(1, 2, 3)
 
 `(1, 2, 3).Mean` supplies the written rows `1`, `2`, `3` to the collector (`Vector = [1, 2, 3]`), exactly like the flat call `Mean(1, 2, 3)`. The receiver is still ONE segment for arity and for fixed parameters: with `F(first, *middle, last)`, `(1, 2).F(9)` binds `first = (1, 2)` whole (fixed parameters bind the receiver's one captured value), and `(1, 2).F` is an arity error — the receiver's item count never satisfies fixed-parameter arity. An extra written boundary survives as one item (`((1, 2)).CollectMany` collects `[(1, 2)]`), the empty receiver supplies nothing (`().CollectMany` collects `[]`), and exact lists stay opaque (`[1, 2].CollectMany` collects `[[1, 2]]`). Direct calls are unchanged: a written argument slot always reifies to one value, so `CollectMany((1, 2, 3))` still collects `[(1, 2, 3)]`. The [graced source](#grace-with-dot-calls) `S~.Mean` is the same ordinary dot edge with frontend-only Grace on `S`, so it keeps the same one-segment receiver behavior and raw-supply rule (a written group is not a valid postfix-Grace operand).
 
-A function signature may contain fixed and collecting parameters. When a parameter list has two or more parameters and one of them is a collecting parameter, the collecting parameter may appear at the front, middle, or end. Fixed parameters before it bind from the front, fixed parameters after it bind from the back, and the collecting parameter collects the remaining middle slots (possibly zero) as one exact immutable list. The supplied items are the call argument slots: a bare argument supplies one slot (a stored sequence value is one slot, not opened), and only an explicit spread opens a sequence value into separate slots:
+A named receiver follows the same segment rule, and that rule is what decides the named empty case:
+
+```
+E = ()
+CollectMany(*items) = items
+
+E.CollectMany
+CollectMany(E)
+```
+
+**Results:**
+```
+[]
+[()]
+```
+
+`E` returns the value `()` at every ordinary boundary — `E.count` is `0`, and `(1, E(), 2)` keeps it as a visible item. In `E.CollectMany` the receiver segment carries that evaluated value together with its supply, which for `()` is zero items, and the collecting parameter allocated the segment consumes the supply: `items = []`. In the direct call `CollectMany(E)` the written argument slot reifies to the one value `()`, so `items = [()]`. A fixed parameter allocated the receiver segment binds the value instead — `Collect(list) = list` gives `E.Collect` the value `()` — and a collection builtin's fixed `collection` parameter binds it too (`E.count` is `count(E)`, which is `0`). The consumption is specific to a collecting parameter allocated the receiver segment: it is not a rule about names, and it is not the property returning nothing.
+
+A parameter list may contain fixed and collecting parameters. When a parameter list has two or more parameters and one of them is a collecting parameter, the collecting parameter may appear at the front, middle, or end. Fixed parameters before it bind from the front, fixed parameters after it bind from the back, and the collecting parameter collects the remaining middle slots (possibly zero) as one list. The supplied items are the call argument slots: a bare argument supplies one slot (a stored sequence value is one slot, not opened), and only an explicit spread opens a sequence value into separate slots:
 
 <!-- spec:mixed-front-back-family -->
 ```
@@ -2026,7 +2166,7 @@ z
 5
 ```
 
-The pattern unpacks the single stored sequence value `A`, so `x, *y, z = A` splits `A` into its items: `x = 1`, `y = [2, 3, 4]`, `z = 5`. Explicit `x, *y, z = A*` supplies the same items, and a direct item supply `x, *y, z = 1, 2, 3, 4, 5` binds the same way. Fixed targets bind from the start and end; the collecting target collects the middle as one exact immutable [list](#lists). `*head, last = 1, 2, 3` binds `head = [1, 2]` and `last = 3`; `first, *tail = 1, 2, 3` binds `first = 1` and `tail = [2, 3]`; a singleton collected segment stays a one-element list (`x, *tail = 1, 2` binds `tail = [2]`), and `x, *y, z = 1, 2` binds `y = []`. With a single fixed target plus a collecting binding, `first, *rest = A` unpacks `A` into `first = 1` and `rest = [2, 3, 4, 5]` — the same as `first, *rest = A*`. A lone collecting target is also valid: `*all = 1, 2, 3` binds `all = [1, 2, 3]`, while `*all = ()` binds `all = []`. Without a collecting binding the item count must match exactly, so `x, y = 1, 2` binds `x = 1` and `y = 2`, while `x, y = 1` (one item) and `x, y = 1, 2, 3` (three items) are arity errors against the two targets. This unpacking is deconstruction-specific: a function call `F(A)` still passes `A` as one argument, so calls need `F(A*)` to open it. More than one collecting binding (`*a, *b = 1, 2, 3`) is rejected. The right-hand side is an ordinary expression of the surrounding algorithm: it is evaluated once for all of its targets, and a name it does not resolve becomes an implicit parameter of that algorithm (never of the deconstruction itself):
+The pattern unpacks the single stored sequence value `A`, so `x, *y, z = A` splits `A` into its items: `x = 1`, `y = [2, 3, 4]`, `z = 5`. Explicit `x, *y, z = A*` supplies the same items, and a direct item supply `x, *y, z = 1, 2, 3, 4, 5` binds the same way. Fixed targets bind from the start and end; the collecting target collects the middle as one [list](#lists). `*head, last = 1, 2, 3` binds `head = [1, 2]` and `last = 3`; `first, *tail = 1, 2, 3` binds `first = 1` and `tail = [2, 3]`; a singleton collected segment stays a one-element list (`x, *tail = 1, 2` binds `tail = [2]`), and `x, *y, z = 1, 2` binds `y = []`. With a single fixed target plus a collecting binding, `first, *rest = A` unpacks `A` into `first = 1` and `rest = [2, 3, 4, 5]` — the same as `first, *rest = A*`. A lone collecting target is also valid: `*all = 1, 2, 3` binds `all = [1, 2, 3]`, while `*all = ()` binds `all = []`. Without a collecting binding the item count must match exactly, so `x, y = 1, 2` binds `x = 1` and `y = 2`, while `x, y = 1` (one item) and `x, y = 1, 2, 3` (three items) are arity errors against the two targets. This unpacking is deconstruction-specific: an ordinary call `F(A)` still passes `A` as one argument, so calls need `F(A*)` to open it. More than one collecting binding (`*a, *b = 1, 2, 3`) is rejected. The right-hand side is an ordinary expression of the surrounding algorithm: it is evaluated once for all of its targets, and a name it does not resolve becomes an implicit parameter of that algorithm (never of the deconstruction itself):
 
 ```
 F = {
@@ -2108,7 +2248,7 @@ CountSequenceValue((1, 2, 3))
 
 In `CountValues`, top-level `*values` collects the call's argument slots: `CountValues()` collects the empty supply `[]` (count `0`), `CountValues(1, 2, 3)` collects the three slots as `values = [1, 2, 3]` (count `3`), and `CountValues((1, 2, 3))` supplies ONE sequence-valued argument, collected as `values = [(1, 2, 3)]` (count `1`). In `CountSequenceValue`, the outer sequence-value pattern consumes one parent-level argument slot, opens it, and `*values` collects that sequence value's immediate contents (count `3`). The builtin `count(collection)` has no collecting parameter: it is an ordinary fixed-arity callable that takes exactly one collection argument, so with `Values = 1, 2, 3`, `count(Values)` is `3` while `count(1, 2, 3)` and `count(Values*)` are arity errors (see [Counting: `count`](#counting-count)); fixed-only user calls likewise preserve their exact call shape.
 
-A pattern-shaped callee consumes written grouping levels at the call site. A bare reference supplies the stored value for the pattern to open, while ONE extra written level of parentheses leaves a single grouped item — which the collecting parameter collects exactly. Levels beyond that stay redundant (unary sequence structure canonicalizes during value construction), and a nested pattern consumes matching written depth:
+A pattern-shaped callee consumes written grouping levels at the call site. A bare reference supplies the stored value for the pattern to open, while ONE extra written level of parentheses leaves a single grouped item — which the collecting parameter collects exactly. Levels beyond that stay redundant ([sequence normalization](#sequence-normalization) removes unary sequence structure during value construction), and a nested pattern consumes matching written depth:
 
 ```
 Inner = (1, 2, 3)
@@ -2413,7 +2553,7 @@ range(1.0, 3)
 
 **Result:** `[1, 2, 3]`
 
-A `range` call is a value boundary: each bare call materializes one exact immutable [list value](#lists) (`range(3, 3)` is the one-element list `[3]`, never erased to the bare atom `3`). The list result is itself one collection argument for the next builtin:
+A `range` call is a value boundary: each bare call materializes one [list value](#lists) (`range(3, 3)` is the one-element list `[3]`, never erased to the bare atom `3`). The list result is itself one collection argument for the next builtin:
 
 ```
 range(1, 3)
@@ -2468,7 +2608,7 @@ filter(((1, 10), (2, 20), (3, 30), (4, 40)), KeepPair)
 [(2, 20), (4, 40)]
 ```
 
-`filter` is a value boundary: the bare call returns one exact immutable list value. Open the kept items with caller-site spread:
+`filter` is a value boundary: the bare call returns one list value. Open the kept items with caller-site spread:
 
 ```
 IsBig = x > 1
@@ -2487,7 +2627,7 @@ X.filter(IsBig)*
 
 If every predicate result is `0`, `filter` returns the empty list `[]` (never `()`).
 Predicate results such as `0, 999`, `(1, 0)`, or `x.string` are invalid because `filter` does not derive truth from sequence-valued, list-valued, or multi-output results.
-The same callback rule applies everywhere, and parentheses shape the collection argument. `filter((1, 2), predicate)` and a helper `Values = (1, 2)` followed by `filter(Values, predicate)` each call `predicate` once for each item in that sequence value, and a lone exact list value is opened the same way, so `filter([1, 2], predicate)` also calls `predicate` once per element. Calls such as `filter(range(1, 5), predicate)` (the range result is a list, opened as the bound collection), `P = range(1, 5)` followed by `filter(P, predicate)`, and `filter((range(1, 5)*, 8), predicate)` call `predicate` once per immediate item. The collection must stay one argument: `filter(1, 3, 5, IsEven)` and `filter(range(1, 5)*, 8, predicate)` are arity errors because `filter(collection, predicate)` expects exactly 2 arguments.
+The same callback rule applies everywhere, and parentheses shape the collection argument. `filter((1, 2), predicate)` and a helper `Values = (1, 2)` followed by `filter(Values, predicate)` each call `predicate` once for each item in that sequence value, and a lone list value is opened the same way, so `filter([1, 2], predicate)` also calls `predicate` once per element. Calls such as `filter(range(1, 5), predicate)` (the range result is a list, opened as the bound collection), `P = range(1, 5)` followed by `filter(P, predicate)`, and `filter((range(1, 5)*, 8), predicate)` call `predicate` once per immediate item. The collection must stay one argument: `filter(1, 3, 5, IsEven)` and `filter(range(1, 5)*, 8, predicate)` are arity errors because `filter(collection, predicate)` expects exactly 2 arguments.
 
 ### Mapping: `map`
 
@@ -2523,7 +2663,7 @@ map((1, 2, 3), PairWithSquare)
 [(1, 1), (2, 4), (3, 9)]
 ```
 
-`map` is a value boundary: the bare call returns one exact immutable list value. Open the mapped items with caller-site spread:
+`map` is a value boundary: the bare call returns one list value. Open the mapped items with caller-site spread:
 
 ```
 Double = x * 2
@@ -2542,7 +2682,7 @@ X.map(Double)*
 ```
 
 Because sequence-value callback items are projected one level, write `Swap(a, b) = (b, a)` when mapping over sequence-value pairs.
-With that rule, `map(((1, 2), (3, 4)), Swap)` calls `Swap` once per pair and produces the exact list value `[(2, 1), (4, 3)]` (append `*` to open the mapped pairs into an item supply). A single sequence-value argument such as `Values = (1, 2)` followed by `map(Values, Swap)` is opened one level into the two atom items `1` and `2`, so the mapper runs once per atom — a two-parameter callback like `Swap` then fails with an arity error. Use a one-parameter callback for atom items, and reserve `Swap(a, b)` for collections whose items are pairs, as in `map(((1, 2), (3, 4)), Swap)`. The one bound collection may be a grouped sequence value or a lone exact list value — both open one level: `map(range(1, 5), Double)` (the range result is a list), `Values = 1, 2, 3` followed by `map(Values, Double)`, and `map((1, range(2, 4)*), Double)` run once per immediate item.
+With that rule, `map(((1, 2), (3, 4)), Swap)` calls `Swap` once per pair and produces the list value `[(2, 1), (4, 3)]` (append `*` to open the mapped pairs into an item supply). A single sequence-value argument such as `Values = (1, 2)` followed by `map(Values, Swap)` is opened one level into the two atom items `1` and `2`, so the mapper runs once per atom — a two-parameter callback like `Swap` then fails with an arity error. Use a one-parameter callback for atom items, and reserve `Swap(a, b)` for collections whose items are pairs, as in `map(((1, 2), (3, 4)), Swap)`. The one bound collection may be a grouped sequence value or a lone list value — both open one level: `map(range(1, 5), Double)` (the range result is a list), `Values = 1, 2, 3` followed by `map(Values, Double)`, and `map((1, range(2, 4)*), Double)` run once per immediate item.
 
 Math functions and their lowercase aliases are ordinary callables, so they work directly as callbacks: `[1, -2].map(abs)` and `[1, -2].map(Math.Abs)` are both `[1, 2]`, and `[0, 1].map(sin)` maps each element through `sin`. The callback always binds its own per-element argument — a same-named value in the surrounding algorithm is never captured:
 
@@ -2582,15 +2722,15 @@ Multi-clause conditional algorithms used as callbacks match the projected elemen
 
 `count(collection)`, `sum(collection)`, `first(collection)`, `last(collection)`, `min(collection)`, `max(collection)`, `avg(collection)`, `order(collection)`, `orderDesc(collection)`, `distinct(collection)`, `take(collection, count)`, `skip(collection, count)`, `contains(collection, item)`, `map(collection, mapper)`, `filter(collection, predicate)`, and `reduce(collection, reducer, initial)`.
 
-Use `()` for a canonical sequence, `[]` for an exact [list](#lists), or receiver-style dot syntax (`collection.take(2)`) for concise expressions.
+Use `()` for a sequence value, `[]` for a [list](#lists), or receiver-style dot syntax (`collection.take(2)`) for concise expressions.
 
-- After binding, the one collection argument is viewed one level deep: a lone sequence value or exact list value opens into its immediate items, an atom or string is a one-element collection, and nested sequence or list elements stay opaque items. So `count((1, 2, 3))`, `count([1, 2, 3])`, and `count(range(1, 5))` count their items (`3`, `3`, and `5`), `count(7)` is `1`, `count(((1, 2), (3, 4)))` is `2` (each pair is one item), and `count((1, [2], 3))` is `3` (the nested list is one opaque item).
+- After binding, the one collection argument is viewed one level deep: a lone sequence value or list value opens into its immediate items, an atom or string is a one-element collection, and nested sequence or list elements stay opaque items. So `count((1, 2, 3))`, `count([1, 2, 3])`, and `count(range(1, 5))` count their items (`3`, `3`, and `5`), `count(7)` is `1`, `count(((1, 2), (3, 4)))` is `2` (each pair is one item), and `count((1, [2], 3))` is `3` (the nested list is one opaque item).
 - The remaining parameters are ordinary fixed arguments: `take((1, 2, 3), 2)` binds `collection = (1, 2, 3)` and `count = 2`; `map`, `filter`, and `reduce` bind their callback and accumulator arguments the same fixed way.
 - The argument count is checked like any callable. `count(1, 2, 3)` is an arity error — `count(collection)` expects 1 argument, but was called with 3 — and `take([1, 2, 3])` is an arity error too: the list is the one collection argument, and `count` is missing.
 - A call with no argument is never an empty collection: `count()` is an arity error, distinct from `count(())` which returns `0` (and `count([])`, also `0`). Absence of an argument and an empty collection value are different things.
 - Spread supplies ordinary call arguments; it does not feed a builtin's collection parameter. With `Values = 1, 2, 3`, `count(Values*)` passes three arguments and is an arity error, as is `take([1, 2, 3]*, 2)`. Re-group with parentheses when a spread must become one collection: `count((Values*, 8))` is `4`, and with `A = 1, 2` and `B = 3, 4`, the grouped `sum((A*, B*))` is `10` — the concatenation form — while `sum(A*, B*)` and `sum(A, B)` are arity errors. A spread that lands on exactly the right argument count is an ordinary call: `take([7]*, 1)` passes `7` and `1` and returns `[7]`.
 - Dot-call supplies the receiver as the collection argument. With `Values = 1, 2, 3`, `Values.count` is `3`; `range(1, 5).take(2)` is `[1, 2]`; `X.filter(P).count` counts the kept items. A user-defined collecting helper is different from a builtin here: `Helper(*values) = values.count` accepts `Helper(1, 2, 3)` and `Helper(Values*)` because a collecting parameter collects the call's argument slots as one exact list, while the builtin `count` accepts only the single-collection forms. (See [Collecting Explicit Parameters](#collecting-explicit-parameters).)
-- `:` selection projects one level of content before the builtin binds the selected value. `Pairs = (1, 2), (3, 4)` gives `(Pairs:0).count = 2`. `Data = (7, 6, 4, 2, 1), (1, 2, 3, 4, 5)` gives `(Data:0).order` as the exact list value `[1, 2, 4, 6, 7]`.
+- `:` selection projects one level of content before the builtin binds the selected value. `Pairs = (1, 2), (3, 4)` gives `(Pairs:0).count = 2`. `Data = (7, 6, 4, 2, 1), (1, 2, 3, 4, 5)` gives `(Data:0).order` as the list value `[1, 2, 4, 6, 7]`.
 - Higher-order callbacks still receive the one-level projected current item, so sequence elements are available through ordinary parameters or `item:i`. Any collection builtin applied to that callback variable consumes the projected item's emitted top-level items
 - Nested sequence values are never recursively flattened unless a builtin explicitly says so, such as `atoms`; use a spread expression (`value*`) to open only one outer boundary
 - `contains` compares its searched item against the collection's top-level items using ordinary KatLang value equality; it does not recurse into nested sequence elements
@@ -2604,7 +2744,7 @@ Use `()` for a canonical sequence, `[]` for an exact [list](#lists), or receiver
 
 - Both builtins evaluate the full collection eagerly before sorting
 - Duplicates are preserved; there is no implicit distinct or unique step, so use `distinct` separately when deduplication is required
-- The result is one exact immutable list value (the call is a value boundary); use a caller-site spread (`value*`) when the surrounding context needs the sorted items as an item supply
+- The result is one list value (the call is a value boundary); use a caller-site spread (`value*`) when the surrounding context needs the sorted items as an item supply
 - Each top-level element must be exactly one atomic numeric value
 - Sequence values and list values are not flattened or inspected recursively
 - Strings and mixed-type collections are invalid
@@ -2629,7 +2769,7 @@ Data = (7, 6, 4, 2, 1), (1, 2, 3, 4, 5)
 [1, 2, 4, 6, 7]
 ```
 
-`order`/`orderDesc` are value boundaries: each bare call returns one exact immutable list value. Open the sorted items with caller-site spread:
+`order`/`orderDesc` are value boundaries: each bare call returns one list value. Open the sorted items with caller-site spread:
 
 ```
 X = 3, 1, 2
@@ -2652,7 +2792,7 @@ X.orderDesc*
 ```
 
 Applying `order` or `orderDesc` to a collection like `(1, 'hello')` is invalid because KatLang does not define a loose mixed-type ordering rule. `order(((1, 2), (3, 4)))` is also invalid, because each item must be a sortable atom and sequence-value items are not flattened.
-Named sequence helpers and call receivers such as `Values = 1, 2, 3` followed by `order(Values)` and `Values.order` return the exact list value `[1, 2, 3]`; `P = range(5, 1)` followed by `order(P)` and `range(5, 1).order` return `[1, 2, 3, 4, 5]` (the range result is itself a list, opened as the bound collection), and `order([3, 4, 2, 1])` sorts a literal list the same way. Inline and spread forms are arity errors — `order(3, 4, 2, 1)`, `order(Values*)`, and `order(Values*, 8)` all supply more than the one argument `order(collection)` expects. To add an extra item, group it into the collection: `order((Values*, 8))` returns `[1, 2, 3, 8]`. Selection already projects one level of content, so `(Data:0).order` sorts `7, 6, 4, 2, 1` to `[1, 2, 4, 6, 7]`. Each is one value at the call boundary; append the spread marker (for example `Values.order*`) when the surrounding context needs the sorted items as an item supply.
+Named sequence helpers and call receivers such as `Values = 1, 2, 3` followed by `order(Values)` and `Values.order` return the list value `[1, 2, 3]`; `P = range(5, 1)` followed by `order(P)` and `range(5, 1).order` return `[1, 2, 3, 4, 5]` (the range result is itself a list, opened as the bound collection), and `order([3, 4, 2, 1])` sorts a literal list the same way. Inline and spread forms are arity errors — `order(3, 4, 2, 1)`, `order(Values*)`, and `order(Values*, 8)` all supply more than the one argument `order(collection)` expects. To add an extra item, group it into the collection: `order((Values*, 8))` returns `[1, 2, 3, 8]`. Selection already projects one level of content, so `(Data:0).order` sorts `7, 6, 4, 2, 1` to `[1, 2, 4, 6, 7]`. Each is one value at the call boundary; append the spread marker (for example `Values.order*`) when the surrounding context needs the sorted items as an item supply.
 
 ### Counting: `count`
 
@@ -2702,7 +2842,7 @@ Data = (7, 6, 4, 2, 1), (1, 2, 3, 4, 5)
 ```
 
 `count(5)` and `count('hello')` both return `1`, because an atomic value is treated as a one-element collection.
-`count(())` and `count((()))` both return `0` because repeated ordinary parentheses around the empty sequence canonicalize to `()`. `count()` with no argument at all is an arity error, not `0` — absence of an argument is never an empty collection. `count({})` is an error because a no-output body has no defined output. `count((1, 2, 3))`, `Values = (1, 2, 3)` followed by `count(Values)`, `Values.count`, and `((1, 2, 3)).count` all return `3`, because the one bound collection value is opened one level; a lone exact list value is opened the same way, so `count([1, 2, 3])` is also `3`, and `count(range(1, 5))` counts the five elements of the range list. `Values = 1, 2, 3` followed by `count(Values)` and `Values.count` also return `3`, but `count(1, 2, 3)` and `count(Values*)` are arity errors — `count(collection)` expects exactly one argument, and spread supplies ordinary call arguments (three here) rather than feeding the collection parameter. In `count((3, 4, range(1, 5)*, 7))`, the spread opens the range list's elements inside one sequence value, so the count is `8`. Selection still projects one level first, so `Pairs = (1, 2), (3, 4)` followed by `(Pairs:0).count` returns `2`.
+`count(())` and `count((()))` both return `0` because sequence normalization reduces repeated ordinary parentheses around the empty sequence to `()`. `count()` with no argument at all is an arity error, not `0` — absence of an argument is never an empty collection. `count({})` is an error because a no-output body has no defined output. `count((1, 2, 3))`, `Values = (1, 2, 3)` followed by `count(Values)`, `Values.count`, and `((1, 2, 3)).count` all return `3`, because the one bound collection value is opened one level; a lone list value is opened the same way, so `count([1, 2, 3])` is also `3`, and `count(range(1, 5))` counts the five elements of the range list. `Values = 1, 2, 3` followed by `count(Values)` and `Values.count` also return `3`, but `count(1, 2, 3)` and `count(Values*)` are arity errors — `count(collection)` expects exactly one argument, and spread supplies ordinary call arguments (three here) rather than feeding the collection parameter. In `count((3, 4, range(1, 5)*, 7))`, the spread opens the range list's elements inside one sequence value, so the count is `8`. Selection still projects one level first, so `Pairs = (1, 2), (3, 4)` followed by `(Pairs:0).count` returns `2`.
 
 ### Membership: `contains`
 
@@ -2734,7 +2874,7 @@ Pairs.contains((1, 2))
 ```
 
 `contains(range(1, 5), 9)` returns `0` because no top-level item equals `9`.
-`contains(((1, 2), (3, 4)), (1, 2))` returns `1` after the outer collection value is opened one level — a lone exact list value opens the same way, so `contains([1, 2, 3], 2)` returns `1` (and the `range` examples above already search a list collection). KatLang still does not recurse beyond the immediate top-level items. Selection projects one level first, so with `Data = (7, 6, 4, 2, 1), (1, 2, 3, 4, 5)`, `(Data:0).contains(4)` and `contains(Data:0, 4)` both return `1`. Spreading the collection is an arity error instead: `contains((Data:0)*, 4)` supplies the five projected items plus `4` as six ordinary arguments, but `contains(collection, item)` expects 2.
+`contains(((1, 2), (3, 4)), (1, 2))` returns `1` after the outer collection value is opened one level — a lone list value opens the same way, so `contains([1, 2, 3], 2)` returns `1` (and the `range` examples above already search a list collection). KatLang still does not recurse beyond the immediate top-level items. Selection projects one level first, so with `Data = (7, 6, 4, 2, 1), (1, 2, 3, 4, 5)`, `(Data:0).contains(4)` and `contains(Data:0, 4)` both return `1`. Spreading the collection is an arity error instead: `contains((Data:0)*, 4)` supplies the five projected items plus `4` as six ordinary arguments, but `contains(collection, item)` expects 2.
 
 ### First Element: `first`
 
@@ -2798,7 +2938,7 @@ Applying `last` to an empty collection is invalid because `last` requires at lea
 
 ### Distinct: `distinct`
 
-`distinct(collection)` returns the bound collection's top-level items with later duplicates removed, as one exact immutable list value.
+`distinct(collection)` returns the bound collection's top-level items with later duplicates removed, as one list value.
 
 - The original left-to-right order of first occurrence is preserved
 - Atoms compare by numeric value, strings by exact string value, and sequence values structurally by sequence elements
@@ -2827,7 +2967,7 @@ Values.distinct
 [3, 1, 2]
 ```
 
-`distinct` is a value boundary: the bare call returns one exact immutable list value. Open the deduplicated items with caller-site spread:
+`distinct` is a value boundary: the bare call returns one list value. Open the deduplicated items with caller-site spread:
 
 ```
 Values = 1, 1, 2, 3
@@ -2844,11 +2984,11 @@ Values.distinct*
 3
 ```
 
-`Values = ((1, 2), (1, 2), (3, 4))` followed by `distinct(Values)` removes the duplicate sequence value after the one bound collection value is opened one level (a lone exact list value is opened the same way); `Values.distinct` agrees — both return `[(1, 2), (3, 4)]`. `distinct(Values*)` is an arity error instead: the spread supplies the three pairs as three ordinary arguments, but `distinct(collection)` expects one. The same rule makes `distinct(1, 1)` an arity error — write `distinct((1, 1))`, which returns `[1]`.
+`Values = ((1, 2), (1, 2), (3, 4))` followed by `distinct(Values)` removes the duplicate sequence value after the one bound collection value is opened one level (a lone list value is opened the same way); `Values.distinct` agrees — both return `[(1, 2), (3, 4)]`. `distinct(Values*)` is an arity error instead: the spread supplies the three pairs as three ordinary arguments, but `distinct(collection)` expects one. The same rule makes `distinct(1, 1)` an arity error — write `distinct((1, 1))`, which returns `[1]`.
 
 ### Take Prefix: `take`
 
-`take(collection, count)` returns the first `count` top-level values of the bound collection, unchanged, as one exact immutable list value.
+`take(collection, count)` returns the first `count` top-level values of the bound collection, unchanged, as one list value.
 
 - The count must evaluate to exactly one whole-number value
 - `count <= 0` returns the empty list `[]`
@@ -2878,7 +3018,7 @@ range(1, 5).take(2)
 
 `take(((1, 2), (3, 4)), 1)` keeps exactly one item, the sequence value `(1, 2)`, and returns it as the exact one-element list `[(1, 2)]` — the element stays exact inside the list. (The sequence shape `((1, 2))` is still not a writable KatLang value, but the list shape `[(1, 2)]` is.) `first(((1, 2), (3, 4)))` returns the bare item `(1, 2)` instead.
 
-`take` is a value boundary: the bare call returns one exact immutable list value. Open the taken items with caller-site spread:
+`take` is a value boundary: the bare call returns one list value. Open the taken items with caller-site spread:
 
 ```
 range(1, 5).take(2)
@@ -2893,11 +3033,11 @@ range(1, 5).take(2)*
 2
 ```
 
-`take((1, 2, 3), 0)` and `take((1, 2, 3), -2)` both return the empty list `[]`. `take((3, 4), (1, 2, 3))` is invalid because the count must be exactly one whole-number value, not a sequence value. The collection must arrive as one argument: `take([1, 2, 3])` is an arity error — `take(collection, count)` expects 2 arguments, the list is the one collection argument, and `count` is missing — while `take([1, 2, 3], 2)` returns `[1, 2]`. Spread supplies ordinary call arguments, so `take(Values*, 1)` with `Values = (1, 2, 3)` and `take([1, 2, 3]*, 2)` are arity errors too; `take(Values, 1)` returns `[1]`, and `Values.take(2)` returns the exact list value `[1, 2]` (use `Values.take(2)*` to spread it). A spread that lands on exactly the right argument count is still an ordinary call: `take([7]*, 1)` passes `7` and `1` and returns `[7]`.
+`take((1, 2, 3), 0)` and `take((1, 2, 3), -2)` both return the empty list `[]`. `take((3, 4), (1, 2, 3))` is invalid because the count must be exactly one whole-number value, not a sequence value. The collection must arrive as one argument: `take([1, 2, 3])` is an arity error — `take(collection, count)` expects 2 arguments, the list is the one collection argument, and `count` is missing — while `take([1, 2, 3], 2)` returns `[1, 2]`. Spread supplies ordinary call arguments, so `take(Values*, 1)` with `Values = (1, 2, 3)` and `take([1, 2, 3]*, 2)` are arity errors too; `take(Values, 1)` returns `[1]`, and `Values.take(2)` returns the list value `[1, 2]` (use `Values.take(2)*` to spread it). A spread that lands on exactly the right argument count is still an ordinary call: `take([7]*, 1)` passes `7` and `1` and returns `[7]`.
 
 ### Skip Prefix: `skip`
 
-`skip(collection, count)` returns the bound collection's items after skipping the first `count` top-level values, as one exact immutable list value.
+`skip(collection, count)` returns the bound collection's items after skipping the first `count` top-level values, as one list value.
 
 - The count must evaluate to exactly one whole-number value
 - `count <= 0` returns a list of all the original items
@@ -2926,7 +3066,7 @@ range(1, 5).skip(2)
 
 `skip(((1, 2), (3, 4)), 1)` leaves exactly one item, the sequence value `(3, 4)`, and returns it as the exact one-element list `[(3, 4)]`; `last(((1, 2), (3, 4)))` returns the bare item `(3, 4)` instead.
 
-`skip` is a value boundary: the bare call returns one exact immutable list value. Supply the remaining items with caller-site spread:
+`skip` is a value boundary: the bare call returns one list value. Supply the remaining items with caller-site spread:
 
 ```
 range(1, 5).skip(2)
@@ -2942,7 +3082,7 @@ range(1, 5).skip(2)*
 5
 ```
 
-`skip((1, 2, 3), 0)` and `skip((1, 2, 3), -2)` both return `[1, 2, 3]`. `skip((1, 2), 'hello')` is invalid because the count must be exactly one whole-number value. `Values = (1, 2, 3)` followed by `skip(Values, 1)` and the list form `skip([1, 2, 3], 1)` both return the exact list value `[2, 3]`, and `Values.skip(1)` does the same (use `Values.skip(1)*` to spread it) — the one bound collection opens one level, whether grouped, list, or receiver. `skip(Values*, 1)` is an arity error: the spread supplies three ordinary arguments plus the count, but `skip(collection, count)` expects 2.
+`skip((1, 2, 3), 0)` and `skip((1, 2, 3), -2)` both return `[1, 2, 3]`. `skip((1, 2), 'hello')` is invalid because the count must be exactly one whole-number value. `Values = (1, 2, 3)` followed by `skip(Values, 1)` and the list form `skip([1, 2, 3], 1)` both return the list value `[2, 3]`, and `Values.skip(1)` does the same (use `Values.skip(1)*` to spread it) — the one bound collection opens one level, whether grouped, list, or receiver. `skip(Values*, 1)` is an arity error: the spread supplies three ordinary arguments plus the count, but `skip(collection, count)` expects 2.
 
 ### Minimum: `min`
 
@@ -2969,7 +3109,7 @@ Data = (7, 6, 4, 2, 1), (1, 2, 3, 4, 5)
 1
 ```
 
-Applying `min` to an empty collection is invalid because `min` requires at least one top-level numeric element. `min(((1, 2), (3, 4)))` is invalid because sequence-value items are preserved (not flattened), and each top-level item must be one atomic numeric value. `min(range(1, 5))`, `P = range(1, 5)` followed by `min(P)`, `Values = 1, 2, 3` followed by `min(Values)`, `Values.min`, `min((1, 2, 3))`, and `(1, 2, 3).min` all succeed — the one bound collection opens one level, whether it is a sequence value, an exact list value (such as the `range(1, 5)` result), or a dot-call receiver, so the grouped, list, and dot-call forms agree. `min(1, 2, 3)` is an arity error: `min(collection)` expects one argument. Selection such as `(Data:0).min` projects one level of content first.
+Applying `min` to an empty collection is invalid because `min` requires at least one top-level numeric element. `min(((1, 2), (3, 4)))` is invalid because sequence-value items are preserved (not flattened), and each top-level item must be one atomic numeric value. `min(range(1, 5))`, `P = range(1, 5)` followed by `min(P)`, `Values = 1, 2, 3` followed by `min(Values)`, `Values.min`, `min((1, 2, 3))`, and `(1, 2, 3).min` all succeed — the one bound collection opens one level, whether it is a sequence value, a list value (such as the `range(1, 5)` result), or a dot-call receiver, so the grouped, list, and dot-call forms agree. `min(1, 2, 3)` is an arity error: `min(collection)` expects one argument. Selection such as `(Data:0).min` projects one level of content first.
 
 ### Maximum: `max`
 
@@ -2996,7 +3136,7 @@ Data = (7, 6, 4, 2, 1), (1, 2, 3, 4, 5)
 7
 ```
 
-Applying `max` to an empty collection is invalid because `max` requires at least one top-level numeric element. `max(((1, 2), (3, 4)))` is invalid because sequence-value items are preserved (not flattened), and each top-level item must be one atomic numeric value. `max(range(1, 5))`, `P = range(1, 5)` followed by `max(P)`, `Values = 1, 2, 3` followed by `max(Values)`, `Values.max`, `max((1, 2, 3))`, and `(1, 2, 3).max` all succeed — the one bound collection opens one level, whether it is a sequence value, an exact list value (such as the `range(1, 5)` result), or a dot-call receiver, so the grouped, list, and dot-call forms agree. `max(1, 2, 3)` is an arity error: `max(collection)` expects one argument. Selection such as `(Data:0).max` projects one level of content first.
+Applying `max` to an empty collection is invalid because `max` requires at least one top-level numeric element. `max(((1, 2), (3, 4)))` is invalid because sequence-value items are preserved (not flattened), and each top-level item must be one atomic numeric value. `max(range(1, 5))`, `P = range(1, 5)` followed by `max(P)`, `Values = 1, 2, 3` followed by `max(Values)`, `Values.max`, `max((1, 2, 3))`, and `(1, 2, 3).max` all succeed — the one bound collection opens one level, whether it is a sequence value, a list value (such as the `range(1, 5)` result), or a dot-call receiver, so the grouped, list, and dot-call forms agree. `max(1, 2, 3)` is an arity error: `max(collection)` expects one argument. Selection such as `(Data:0).max` projects one level of content first.
 
 ### Summation: `sum`
 
@@ -3057,7 +3197,7 @@ avg((1, 2))
 1.5
 ```
 
-Applying `avg` to an empty collection is invalid because `avg` requires at least one top-level numeric element. `avg(((1, 2), (3, 4)))` is invalid because `avg` preserves sequence-value items (it does not flatten them), and each top-level item must be one atomic numeric value. `avg(range(1, 5))`, `P = range(1, 5)` followed by `avg(P)`, `Values = 1, 2, 3` followed by `avg(Values)`, `Values.avg`, `avg((1, 2, 3))`, and `(1, 2, 3).avg` all succeed — the one bound collection opens one level, whether it is a sequence value, an exact list value (such as the `range(1, 5)` result), or a dot-call receiver, so the grouped, list, and dot-call forms agree. `avg(1, 2, 3)` is an arity error: `avg(collection)` expects one argument. Selection such as `(Data:0).avg` projects one level of content first.
+Applying `avg` to an empty collection is invalid because `avg` requires at least one top-level numeric element. `avg(((1, 2), (3, 4)))` is invalid because `avg` preserves sequence-value items (it does not flatten them), and each top-level item must be one atomic numeric value. `avg(range(1, 5))`, `P = range(1, 5)` followed by `avg(P)`, `Values = 1, 2, 3` followed by `avg(Values)`, `Values.avg`, `avg((1, 2, 3))`, and `(1, 2, 3).avg` all succeed — the one bound collection opens one level, whether it is a sequence value, a list value (such as the `range(1, 5)` result), or a dot-call receiver, so the grouped, list, and dot-call forms agree. `avg(1, 2, 3)` is an arity error: `avg(collection)` expects one argument. Selection such as `(Data:0).avg` projects one level of content first.
 
 ### Reduction: `reduce`
 
@@ -3201,9 +3341,11 @@ FtoC(98.6)
 37.0
 ```
 
-### Multi-Output Example
+<a id="multi-output-example"></a>
 
-Computing both area and circumference of a circle:
+### Returning a Sequence
+
+Computing both area and circumference of a circle. The property's two output slots come back from the call as one sequence value, and `:` selects one item of it:
 
 ```
 Circle = r * r * Math.Pi, 2 * r * Math.Pi
@@ -3310,7 +3452,7 @@ Call0({42})
 
 **Result:** `42`
 
-Grouping is different: parentheses capture a *value*, and a captured value never carries the algorithm identity of what it encloses, so `Apply((Increment))` and `Call0((Const))` fail even though the bare names work. (Parentheses directly around a brace block simply normalize away, so `Call0(({42}))` behaves exactly like `Call0({42})`.)
+Grouping is different: parentheses capture a *value*, and a captured value never carries the algorithm identity of what it encloses, so `Apply((Increment))` and `Call0((Const))` fail even though the bare names work. (Parentheses directly around a brace block are redundant grouping, so `Call0(({42}))` behaves exactly like `Call0({42})`.)
 
 ### A Parameter Always Means This Call's Argument
 
@@ -3385,13 +3527,13 @@ The distinction between braces, parentheses, and square brackets is critical. Th
 | Syntax | Meaning |
 |---|---|
 | `( ... )` | Expression grouping/capture, or call-argument syntax after a callable — no new parameter scope and no declarations |
-| `[ ... ]` | Exact immutable list construction — element expressions only, no declarations |
+| `[ ... ]` | List construction — element expressions only, no declarations |
 | `{ ... }` | Algorithm value — a new lexical scope that owns its inferred parameters, local declarations, and `open` |
 | `{a + 1}` | Algorithm with parameter `a`, passable as an argument |
 
 `{}` braces create an **algorithm** — a computation with its own identity and scope, which owns whatever parameters its body needs (`a` in the example above; an algorithm with zero parameters is still an algorithm). A `()` expression is **grouping**, not an algorithm — it has no scope of its own, so any free names inside it belong to the enclosing algorithm instead.
 
-Only `{ ... }` creates an algorithm-level lexical scope, so only brace blocks (and the root) own declarations. Parentheses may group and compose output expressions, but an `open` declaration or a property/function definition inside `( ... )` is a parse error pointing you at braces:
+Only `{ ... }` creates an algorithm-level lexical scope, so only brace blocks (and the root) own declarations. Parentheses may group and compose output expressions, but an `open` declaration or a property definition inside `( ... )` is a parse error pointing you at braces:
 
 ```
 M = {
@@ -3410,7 +3552,7 @@ Y
 
 Writing `Y = (open M ...)` or `(A = 5 ...)` instead is rejected — for example: "An 'open' declaration is not allowed inside parentheses. Use a `{ ... }` block for a scoped algorithm."
 
-A brace block works anywhere an expression-valued algorithm is allowed, including directly as a function argument. The block's own opens and local properties resolve inside the block; they never leak outward or become implicit parameters of the surrounding algorithm:
+A brace block works anywhere an expression-valued algorithm is allowed, including directly as a call argument. The block's own opens and local properties resolve inside the block; they never leak outward or become implicit parameters of the surrounding algorithm:
 
 ```
 M = {
@@ -3646,7 +3788,7 @@ Spread projects only one immediate level. Each spread contributes its spread ite
 | `(1*, 2), 3` | The parenthesized expression list `(1*, 2)` is one sequence-valued output, followed by the separate output `3` |
 | `(1, 2)*, 3` | The spread applies to `(1, 2)` (spreading its items `1, 2`); after the required comma, `3` is a separate expression-list slot. Produces `1, 2, 3` |
 | `(1, (2, 3))*, 4` | Spread opens one level: `1` and the intact inner sequence value `(2, 3)` become items, and `4` is a separate slot, producing `1, (2, 3), 4` |
-| `((1, 2))*, 3` | Redundant unary parentheses canonicalize during value construction, so `((1, 2))` is the value `(1, 2)`; the spread opens its items and `3` is a separate slot, producing `1, 2, 3` — same as `(1, 2)*, 3` |
+| `((1, 2))*, 3` | Sequence normalization removes the redundant unary parentheses during value construction, so `((1, 2))` is the value `(1, 2)`; the spread opens its items and `3` is a separate slot, producing `1, 2, 3` — same as `(1, 2)*, 3` |
 | `1, { 2, 3 }` | Preserves the nested block boundary, producing `1, (2, 3)` |
 | `1*, { 2, 3 }` | `1*` spreads `1`, then after the required comma the block `{ 2, 3 }` is a separate expression-list slot. Produces `1, (2, 3)` |
 
@@ -3654,7 +3796,7 @@ Spread projects only one immediate level. Each spread contributes its spread ite
 
 > **Parentheses around a supply-producing expression perform capture — they are not always redundant grouping.**
 
-Around an ordinary single value, parentheses are redundant grouping: `(7)` is `7` and `([1, 2])` is `[1, 2]`. Around a spread, they are the capture receiver (`capture : Supply → Value`): the supplied items materialize as ONE canonical sequence value. The pair below is the clearest picture of the Value/Supply distinction:
+Around an ordinary single value, parentheses are redundant grouping: `(7)` is `7` and `([1, 2])` is `[1, 2]`. Around a spread, they are the capture receiver (`capture : Supply → Value`): the supplied items materialize as ONE canonical sequence value through [sequence normalization](#sequence-normalization) — two or more items become a sequence holding them, exactly one item becomes that item's normalized value, and an empty supply becomes `()`. Capture is an operation on a supply that was actually produced; it does not turn a body with no output rows into `()`, which stays the error described in [Calls Return One Value](#calls-return-one-value). The pair below is the clearest picture of the Value/Supply distinction:
 
 <!-- spec:spread-capture-count -->
 ```
@@ -3692,7 +3834,7 @@ Value ──spread──▶ Supply ──capture──▶ Value ──spread─�
 
 conceptually `value** = spread(capture(spread(value)))`. The intermediate capture is not an implementation accident; it follows from ordinary KatLang expression composition. Avoid reading `value**` as "spread the value, then spread the result again" — the first spread has no value result to re-spread; it is the capture step that turns the supply back into a value for the second star.
 
-Because capture canonicalizes, what a second star changes depends only on how many items the FIRST spread supplies:
+Because capture applies sequence normalization, what a second star changes depends only on how many items the FIRST spread supplies:
 
 - **Zero items** — the capture is `()`, whose item view is also empty: `[]*` and `[]**` both contribute nothing.
 - **Exactly one item** — singleton capture collapses to that item. If it is a structured value, the second star opens one more boundary: `[[7]]*` contributes `[7]`, while `[[7]]**` contributes `7`. A scalar stays neutral: `[7]*` and `[7]**` both contribute `7`.
@@ -3777,9 +3919,9 @@ A = [[1, 2], [3, 4]]
 
 ## Lists
 
-> **Core idea:** `[items]` creates one exact immutable list. Unlike a sequence value, a list keeps its boundary even when it is empty or contains only one item.
+> **Core idea:** `[items]` creates one list value. Unlike a sequence, a list keeps its boundary whether it holds zero, one, or many items, and nested list boundaries stay significant.
 
-Square brackets construct an **exact immutable list value** — KatLang's second collection kind, complementing sequence values:
+Square brackets construct a **list value** — KatLang's second collection kind, complementing sequences:
 
 <!-- spec:list-literal -->
 ```
@@ -3788,7 +3930,7 @@ Square brackets construct an **exact immutable list value** — KatLang's second
 
 **Result:** `[1, 2, 3]`
 
-A list literal always evaluates to exactly ONE list value. Its elements use the ordinary expression-list rules (commas separate elements on one line, a newline separates elements while the `[` is open, and an already-open `[` spans lines just like `(` and `{`), but unlike parenthesized sequence values, **no canonicalization ever applies to list structure**: lists preserve exact cardinality and nesting.
+A list literal always evaluates to exactly ONE list value. Its elements use the ordinary expression-list rules (commas separate elements on one line, a newline separates elements while the `[` is open, and an already-open `[` spans lines just like `(` and `{`), but unlike parenthesized sequences, **[sequence normalization](#sequence-normalization) never removes a list boundary**: a list preserves its exact element count and nesting, while each element expression still follows the ordinary evaluation rules (so `[(7)]` is `[7]`).
 
 <!-- spec:list-exactness -->
 ```
@@ -3828,9 +3970,9 @@ The conceptual split:
 
 | Kind | Written | Role |
 |---|---|---|
-| sequence value `()` | parentheses | canonical captured arity value — singleton and redundant boundaries canonicalize away |
-| list `[]` | brackets | exact immutable collection value — structure is preserved exactly |
-| item supply | (no literal) | temporary non-value structure consumed by binding and spread |
+| sequence `()` | parentheses | the canonical captured value — sequence normalization removes singleton and redundant sequence boundaries |
+| list `[]` | brackets | a collection value whose structure is preserved exactly |
+| item supply | (no literal) | the ordered items presented to an operation or binding — not a value kind; consumed by capture, collect, and binding |
 
 Ordinary parentheses stay a redundant SEQUENCE grouping even around lists:
 
@@ -3845,7 +3987,7 @@ Neither empty collection is an operator identity: `[] > 1` and `() > 1` are both
 
 ### Indexing Lists
 
-Selection `:` indexes into exact list values: `value:index` selects ONE immediate element by zero-based position, using exactly the same index rules as sequence selection. The selected element is returned exactly as stored — a nested list element stays an exact list, a sequence-valued element stays a sequence value, and nothing is flattened, spread, or converted between kinds.
+Selection `:` indexes into list values: `value:index` selects ONE immediate element by zero-based position, using exactly the same index rules as sequence selection. The selected element is returned exactly as stored — a nested list element stays an exact list, a sequence-valued element stays a sequence value, and nothing is flattened, spread, or converted between kinds.
 
 <!-- spec:list-index-nested-element-stays-exact -->
 ```
@@ -4027,7 +4169,7 @@ y
 3
 ```
 
-A collecting binding COLLECTS the unmatched items as one exact immutable list — the same value kind the collection builtins produce:
+A collecting binding COLLECTS the unmatched items as one list — the same value kind the collection builtins produce:
 
 <!-- spec:collecting-binding-exact-list -->
 ```
@@ -4047,7 +4189,7 @@ With `x, *rest = [1]` the collected list is the empty list `[]`, and with `x, *r
 
 ### Lists and Collection Builtins
 
-Sequence builtins accept lists directly: the builtin's post-binding collection view opens ONE outer boundary of a lone collection value — a lone grouped sequence value or a lone exact list value — so a stored list feeds a builtin without any spread:
+Sequence builtins accept lists directly: the builtin's post-binding collection view opens ONE outer boundary of a lone collection value — a lone grouped sequence value or a lone list value — so a stored list feeds a builtin without any spread:
 
 ```
 count([1, 2, 3])
@@ -4055,7 +4197,7 @@ count([1, 2, 3])
 
 **Result:** `3`
 
-And the collection-producing builtins (`filter`, `map`, `order`, `orderDesc`, `distinct`, `take`, `skip`, `range`, `atoms`) materialize their results as exact immutable lists: zero kept items produce `[]`, one kept item produces the one-element list `[item]`, and nested elements stay exact.
+And the collection-producing builtins (`filter`, `map`, `order`, `orderDesc`, `distinct`, `take`, `skip`, `range`, `atoms`) materialize their results as lists: zero kept items produce `[]`, one kept item produces the one-element list `[item]`, and nested elements stay exact.
 
 ```
 A = [1, 2, 3]
@@ -4071,7 +4213,7 @@ tail
 [2, 3]
 ```
 
-Collecting bindings and collection builtins now agree on the result kind — both produce exact immutable lists — while ordinary single-name capture stays canonical. Compare:
+Collecting bindings and collection builtins agree on the result kind — both produce lists — while ordinary single-name capture applies sequence normalization. Compare:
 
 ```
 A = [1, 2, 3]
@@ -4091,7 +4233,7 @@ rest == A.skip(1)
 1
 ```
 
-`x = (A.take(1)*)` spreads the one-element list `[1]` and CAPTURES the single item canonically (`x = 1`), while the collecting binding COLLECTS the remaining items as the exact list `[2, 3]` — equal to `A.skip(1)`. The rule of thumb is the operation triple: **ordinary value capture canonicalizes (`capture`), collecting binding collects an exact list (`collect`), and the spread marker spreads one boundary (`spread`).**
+`x = (A.take(1)*)` spreads the one-element list `[1]` and CAPTURES the single item through sequence normalization (`x = 1`), while the collecting binding COLLECTS the remaining items as the exact list `[2, 3]` — equal to `A.skip(1)`. The rule of thumb is the operation triple: **ordinary value capture applies sequence normalization (`capture`), collecting binding collects an exact list (`collect`), and the spread marker spreads one boundary (`spread`).**
 
 `range` and `order` produce lists too:
 
@@ -4114,7 +4256,7 @@ Only a LONE list opens during collection binding: a nested list stays one opaque
 
 ## Atoms
 
-Algorithms in KatLang can produce structured, nested outputs — sequence values inside sequence values, exact lists inside lists, or any mix of the two. The `atoms` builtin recursively collects every numeric atom from that structure — opening **both** sequence and list boundaries, depth-first and left to right — and returns them as one exact immutable [list value](#lists).
+Algorithms in KatLang can produce structured, nested outputs — sequence values inside sequence values, exact lists inside lists, or any mix of the two. The `atoms` builtin recursively collects every numeric atom from that structure — opening **both** sequence and list boundaries, depth-first and left to right — and returns them as one [list value](#lists).
 
 <!-- spec:atoms-recursive-flatten -->
 ```
@@ -4140,7 +4282,7 @@ atoms(7)
 
 `atoms(7)` is the singleton list `[7]`, never the bare `7` (`atoms(7) == [7]` is `1`; `atoms(7) == 7` is `0`), and `atoms((1, 2))` is the exact list `[1, 2]`, never the sequence `(1, 2)`. A no-atom input — `atoms('text')`, `atoms(())`, `atoms([])` — is the visible empty list `[]`. Strings and other non-numeric leaves contribute no atoms: `atoms((1, ['a', 2]))` is `[1, 2]`.
 
-Exact list values are traversed exactly like sequence values:
+List values are traversed exactly like sequence values:
 
 <!-- spec:atoms-list-traversal -->
 ```
@@ -4491,7 +4633,7 @@ Double(5)
 open LibA, LibB
 ```
 
-String targets use single quotes and mix freely with names: `open 'https://example.org/lib.kat', LibA`. Comma is the only separator — `open A ; B` and `open A B` are parse errors asking for a comma, never two targets. An open target must provide algorithm identity: a parenthesized target such as `open (LibA)` is a parse error, because parentheses capture a value and a captured value never exposes the algorithm inside it — open the algorithm directly, or use a brace block (`open ({ ... })` works because parentheses around braces normalize away). The first target must begin on the same line as `open`. Comma keeps its normal explicit line-continuation behavior, so a long list may span lines with a trailing or leading comma:
+String targets use single quotes and mix freely with names: `open 'https://example.org/lib.kat', LibA`. Comma is the only separator — `open A ; B` and `open A B` are parse errors asking for a comma, never two targets. An open target must provide algorithm identity: a parenthesized target such as `open (LibA)` is a parse error, because parentheses capture a value and a captured value never exposes the algorithm inside it — open the algorithm directly, or use a brace block (`open ({ ... })` works because parentheses directly around braces are redundant grouping). The first target must begin on the same line as `open`. Comma keeps its normal explicit line-continuation behavior, so a long list may span lines with a trailing or leading comma:
 
 ```
 open LibA,
@@ -4521,6 +4663,8 @@ Sqrt(16)
 `open` must appear before all property definitions and output expressions in the current algorithm. This rule keeps KatLang code uniform and easy to read: first declare opened sources, then define properties, then produce output.
 
 **Isolation:** opened libraries do not inherit the opener's scope. A library only sees the properties it defined itself.
+
+**Imported names stay owned by their library:** `open` makes a library's public properties visible; it does not make them properties of the opener. Opening a library therefore never changes what the opening algorithm owns (see [Functions: Algorithms Without Properties](#functions-algorithms-without-properties)).
 
 **Ambiguity:** if two open sources both provide a property with the same name, KatLang raises an error. Define a local property with that name to shadow the ambiguity.
 
@@ -4584,7 +4728,7 @@ Only `public` exported properties are exposed through `load` and `open`.
 - **`if` arity:** builtin `if` requires three arguments after spread expansion: `if(cond, a, b)`. There is no two-argument form. A grouped value is one argument, so `if(X)` is invalid when `X = 1, 2, 3`; spread it with `if(X*)` to supply the three slots. The check happens when the call runs, against the callable that [name resolution](#name-resolution) selected — declaring your own `if` shadows the builtin, and a wrong-arity call then reports *your* signature.
 - **Misspelled members on known receivers:** dot syntax is receiver injection — `a.F(x)` is `F(a, x)` when `a` has no structural `F` — and a statically known receiver such as `Math`, a block, or a module gets no special treatment. So `Math.Ceiling(2.1)` is not a "missing member" error: the edge falls back to a lexical `Ceiling`, and since none is visible, `Ceiling` becomes an implicit parameter of the program. The report names the receiver, explains the fallback, and suggests `Math.Ceil`; if a lexical `Ceiling(a, b)` IS visible, the call is the valid fallback `Ceiling(Math, 2.1)` and simply runs (see [Misspelled Members on Known Receivers](#misspelled-members-on-known-receivers)).
 - **`()` vs `{}` confusion:** `(expr)` groups an expression in the current scope. `{expr}` creates a new algorithm with its own parameters. Passing `(a + 1)` as an argument doesn't create a callable — it evaluates `a + 1` immediately in the enclosing scope. Bare `()` is the empty sequence value (a real value); bare `{}` is a no-output body and is not a value. Declarations follow the same split: `open` and property definitions belong to `{ ... }` blocks (or the root) and are parse errors inside `( ... )`.
-- **Ignoring a parameter:** there is no special "ignore" syntax for implicit parameters — every undeclared name becomes a required argument. If you want to accept and discard an argument, use an explicit parameter pattern. Bind the unwanted argument to a variable in the pattern, then simply don't reference it in the body:
+- **Ignoring a parameter:** there is no special "ignore" syntax for implicit parameters — every name that resolves to nothing becomes a required argument. If you want to accept and discard an argument, use an explicit parameter pattern. Bind the unwanted argument to a variable in the pattern, then simply don't reference it in the body:
 
   ```
   # Wrong — no way to declare 'b' to discard; calling with two args fails:
@@ -4595,7 +4739,7 @@ Only `public` exported properties are exposed through `load` and `open`.
   KeepFirst(a, b) = a
   KeepFirst(42, 999) # Result: 42
   ```
-- **Property redefinition:** defining the same property name twice is an error — properties are immutable bindings, not reassignable variables:
+- **Property redefinition:** defining the same property name twice in one scope is an error — KatLang values and bindings are immutable, so a property is bound once and never reassigned (a same-named property in a nested `{ ... }` scope is a separate, shadowing binding — see [Name Resolution](#name-resolution)):
 
   ```
   A = 5
@@ -4668,17 +4812,17 @@ Only `public` exported properties are exposed through `load` and `open`.
 | `and` | Logical and | |
 | `xor` | Logical exclusive or | |
 | `or` | Logical or | Lowest |
-| `:` | Output selection (zero-based index over a sequence or exact list target, one-level content projection) | Postfix |
+| `:` | Output selection (zero-based index over a sequence or list target, one-level content projection) | Postfix |
 | `.` | Dot-call / property access | Postfix |
 | `*` (prefix, directly attached) | Collect marker (binding positions only: `*name` collects the matched segment as one exact list) | — |
 | `*` (postfix, directly attached) | Spread marker (`value*` contributes the operand's items to the surrounding supply; a `*` followed by a valid right operand, on the same line or the next, is multiplication instead — spacing never decides that, but a spread marker must be attached: `value *` with no operand is an error) | — |
 | `~` (prefix, directly attached) | Grace: one unit of weight moving the inferred parameter one position earlier (`~x`; `~~x` two, weights on one name add up, `~ x` is an error) | — |
 | `~` (postfix, directly attached) | Grace: one unit of weight moving the inferred parameter one position later (`x~`; `x~~` two, `~x~` cancels, `x ~` is an error) | — |
-| `[` `]` | Exact immutable list literal (`[1, 2, 3]`; never a call or indexing delimiter — `A[1]` is a missing-separator parse error, `A, [1]` is two slots, and `A:1` indexes) | — |
+| `[` `]` | List literal (`[1, 2, 3]`; never a call or indexing delimiter — `A[1]` is a missing-separator parse error, `A, [1]` is two slots, and `A:1` indexes) | — |
 
 ### Builtin Algorithms, Intrinsics, and Keywords
 
-The collection builtins below receive ONE collection argument plus fixed control arguments. The bound collection is viewed one level deep: a lone sequence value or exact list value opens into its immediate items, so `count(Values)`, `count((1, 2, 3))`, and `count([1, 2, 3])` all count three items; an atom or string is a one-element collection (`count(7)` is `1`); and nested sequence or list elements stay opaque items. Multi-item inline forms are arity errors (`count(1, 2, 3)` fails — `count(collection)` expects one argument), and spread supplies ordinary call arguments rather than feeding the collection parameter (`count(Values*)` fails; re-group as `count((Values*, 8))` or `sum((A*, B*))` when combining items into one collection). The collection-producing builtins (`range`, `filter`, `map`, `order`, `orderDesc`, `distinct`, `take`, `skip`, `atoms`) materialize their results as one exact immutable list value (`[]` for zero items, `[item]` for one). Dot-call supplies the receiver as the collection argument, for example `collection.take(2)`. Selection already projects one level of selected content, so `(A:0).count` follows the ordinary collection rules for the selected content without any extra builtin-specific expansion. Higher-order builtins such as `filter`, `map`, and `reduce` do not recursively flatten sequence-value elements beyond that.
+The collection builtins below receive ONE collection argument plus fixed control arguments. The bound collection is viewed one level deep: a lone sequence value or list value opens into its immediate items, so `count(Values)`, `count((1, 2, 3))`, and `count([1, 2, 3])` all count three items; an atom or string is a one-element collection (`count(7)` is `1`); and nested sequence or list elements stay opaque items. Multi-item inline forms are arity errors (`count(1, 2, 3)` fails — `count(collection)` expects one argument), and spread supplies ordinary call arguments rather than feeding the collection parameter (`count(Values*)` fails; re-group as `count((Values*, 8))` or `sum((A*, B*))` when combining items into one collection). The collection-producing builtins (`range`, `filter`, `map`, `order`, `orderDesc`, `distinct`, `take`, `skip`, `atoms`) materialize their results as one list value (`[]` for zero items, `[item]` for one). Dot-call supplies the receiver as the collection argument, for example `collection.take(2)`. Selection already projects one level of selected content, so `(A:0).count` follows the ordinary collection rules for the selected content without any extra builtin-specific expansion. Higher-order builtins such as `filter`, `map`, and `reduce` do not recursively flatten sequence-value elements beyond that.
 
 For `repeat` and `while`, each explicit init argument becomes one initial state slot. `Step.repeat(3, a, b)` starts with two slots, while `Step.repeat(3, Pair)` starts with one slot even if `Pair` evaluates to multiple values. Use selections such as `Pair:0, Pair:1` or spread such as `Pair*` when you want a multi-output value to provide multiple initial slots; capture the step result as a sequence value when one structured slot should be preserved across iterations. A spread followed by a comma keeps its neighbor a separate slot, so `Step = history*, next` emits history's items followed by `next` as multiple next-state slots, while `Step = (history*, next)` captures them into one next-state slot. (The comma is required — `history* next` would be the multiplication `history * next`.)
 
@@ -4689,24 +4833,24 @@ A collecting step parameter follows the same collection rule as every other coll
 | `if` | `if(cond, a, b)` |
 | `while` | `step.while(init1, init2, …)` or `while(step, init1, init2, …)` |
 | `repeat` | `step.repeat(n, init1, init2, …)` or `repeat(step, n, init1, init2, …)` |
-| `range` | `range(start, stop)` — inclusive integers ascending or descending, materialized as one exact list value |
-| `filter` | `filter(collection, predicate)` or `collection.filter(predicate)` — keep top-level elements whose predicate result is truthy (non-zero); the predicate must return exactly one atomic numeric value, the callback item behaves like `S:i`, and the kept elements are returned unchanged as one exact list value (`[]` when nothing is kept) |
-| `map` | `map(collection, mapper)` or `collection.map(mapper)` — transform top-level elements left to right; the callback item behaves like `S:i`, the mapper must return exactly one mapped element, and the mapped elements are returned as one exact list value |
-| `order` | `order(collection)` or `collection.order` — eagerly sort top-level numeric elements ascending into one exact list value; duplicates are preserved and sequence-valued/string/list elements are invalid |
-| `orderDesc` | `orderDesc(collection)` or `collection.orderDesc` — eagerly sort top-level numeric elements descending into one exact list value; duplicates are preserved and sequence-valued/string/list elements are invalid |
+| `range` | `range(start, stop)` — inclusive integers ascending or descending, materialized as one list value |
+| `filter` | `filter(collection, predicate)` or `collection.filter(predicate)` — keep top-level elements whose predicate result is truthy (non-zero); the predicate must return exactly one atomic numeric value, the callback item behaves like `S:i`, and the kept elements are returned unchanged as one list value (`[]` when nothing is kept) |
+| `map` | `map(collection, mapper)` or `collection.map(mapper)` — transform top-level elements left to right; the callback item behaves like `S:i`, the mapper must return exactly one mapped element, and the mapped elements are returned as one list value |
+| `order` | `order(collection)` or `collection.order` — eagerly sort top-level numeric elements ascending into one list value; duplicates are preserved and sequence-valued/string/list elements are invalid |
+| `orderDesc` | `orderDesc(collection)` or `collection.orderDesc` — eagerly sort top-level numeric elements descending into one list value; duplicates are preserved and sequence-valued/string/list elements are invalid |
 | `count` | `count(collection)` or `collection.count` — denotational top-level value count after evaluation, without flattening sequence values or lists |
 | `contains` | `contains(collection, item)` or `collection.contains(item)` — return `1` when any extracted top-level element equals `item` under ordinary KatLang value semantics, otherwise `0`; sequence values stay intact and search is top-level only |
 | `first` | `first(collection)` or `collection.first` — return the first top-level element unchanged; sequence values stay intact and the sequence must be non-empty |
 | `last` | `last(collection)` or `collection.last` — return the last top-level element unchanged; sequence values stay intact and the sequence must be non-empty |
-| `distinct` | `distinct(collection)` or `collection.distinct` — remove later duplicate top-level elements while preserving first-occurrence order; sequence values stay intact, duplicate detection follows KatLang value semantics, and the kept elements are returned as one exact list value (a single survivor is the one-element list `[item]`) |
-| `take` | `take(collection, count)` or `collection.take(count)` — keep the first `count` top-level elements unchanged as one exact list value; non-positive counts return the empty list `[]`, sequence values stay intact as elements, and a single kept element is the one-element list `[item]` |
-| `skip` | `skip(collection, count)` or `collection.skip(count)` — drop the first `count` top-level elements and return the rest as one exact list value; non-positive counts return all original items, sequence values stay intact as elements, and a single remaining element is the one-element list `[item]` |
+| `distinct` | `distinct(collection)` or `collection.distinct` — remove later duplicate top-level elements while preserving first-occurrence order; sequence values stay intact, duplicate detection follows KatLang value semantics, and the kept elements are returned as one list value (a single survivor is the one-element list `[item]`) |
+| `take` | `take(collection, count)` or `collection.take(count)` — keep the first `count` top-level elements unchanged as one list value; non-positive counts return the empty list `[]`, sequence values stay intact as elements, and a single kept element is the one-element list `[item]` |
+| `skip` | `skip(collection, count)` or `collection.skip(count)` — drop the first `count` top-level elements and return the rest as one list value; non-positive counts return all original items, sequence values stay intact as elements, and a single remaining element is the one-element list `[item]` |
 | `min` | `min(collection)` or `collection.min` — find the smallest top-level numeric element; the sequence must be non-empty and sequence values are not flattened |
 | `max` | `max(collection)` or `collection.max` — find the largest top-level numeric element; the sequence must be non-empty and sequence values are not flattened |
 | `sum` | `sum(collection)` or `collection.sum` — add top-level numeric elements; each element must be a single atomic numeric value and sequence values are not flattened |
 | `avg` | `avg(collection)` or `collection.avg` — average top-level numeric elements and return the decimal arithmetic mean (total divided by count); the sequence must be non-empty, each element must be a single atomic numeric value, and sequence values are not flattened |
 | `reduce` | `reduce(collection, reducer, initial)` or `collection.reduce(reducer, initial)` — fold left over top-level elements; the current item behaves like `S:i`, normal accumulator parameters receive one structural state value, top-level collecting accumulator parameters receive state slots, and the reducer must return exactly one accumulator value |
-| `atoms` | `atoms(value)` or `value.atoms` — recursively collect numeric atoms through both sequence and exact-list boundaries (left to right; strings contribute none) and return them as one exact immutable list |
+| `atoms` | `atoms(value)` or `value.atoms` — recursively collect numeric atoms through both sequence and exact-list boundaries (left to right; strings contribute none) and return them as one list |
 | `string` | `value.string` — value intrinsic that converts an atomic numeric result to a first-class string value; non-numeric receivers (strings, sequence values) are errors |
 | `load` | `Name = load('url')` — load external algorithm |
 | `open` | `open target` — import public properties into scope |
