@@ -1,0 +1,15 @@
+# Language rules — the detail behind `AGENTS.md`
+
+`AGENTS.md` states every rule in compact form so that it stays short enough to load on every request. The files in this directory hold the full statement of each rule — consequences, examples, the implementation map, and the pinning tests — moved here verbatim from `AGENTS.md` in September 2026. They are as binding as `AGENTS.md`; a compact bullet there ends with a pointer such as ``[`syntax.md` § The spread marker]`` naming the section here.
+
+Read the file for the subsystem you are about to change BEFORE changing it, and keep both in step: a rule change edits the compact bullet and the full section together.
+
+| Touching | Read | Pinned by (among others) |
+| --- | --- | --- |
+| Lexer, parser, grammar, diagnostics spans (`src/KatLang/Lexer.cs`, `Parser*.cs`, `KatLang.ebnf`) | `syntax.md` | `LexerTests`, `ParserTests`, `SameLineSeparatorTests`, `StarSyntaxTests`, `MarkerAttachmentTests`, `DeclarationHeadLineRuleTests`, `GroupedExpressionSpanTests`, `EbnfLexicalSyncTests` |
+| Name resolution, ownership, `open`, dot-call, builtin identity, Grace, parameter binding (`ParameterDetector`, `ImplicitArgumentResolver`, `ElaboratedScopeLookup`, `PropertyExposureResolver`, evaluator lookup) | `ownership-and-lookup.md` | `ParameterOwnershipTests`, `LookupCoherenceTests`, `LookupTwinEquivalenceTests`, `StaticOpenOwnershipTests`, `LocalMemberAccessTests`, `ChainedDotStructuralPrecedenceTests`, `BuiltinCallableIdentityTests`, `GraceEffectivenessTests`, `CoreTests/NameOwnership.lean` |
+| Sequences, lists, spread, capture, call argument assembly, collecting parameters, deconstruction, collection builtins | `sequences-lists-and-calls.md` | `SequenceConstructContainmentTests`, `CallArgumentAssemblyTests`, `DotCallCollectingReceiverTests`, `CountedMatrixTests`, the arity differential campaign, `lean/KatLangArityLaws.lean` |
+| Evaluator core, plain/counted ownership, zero-arg cache, numerics, budgets, cancellation, async twins, host operations, source loading, AST preflight, DAG safety, traversal exhaustiveness | `evaluator-and-hosting.md` | `ZeroArgPropertyCacheScopeTests`, `BudgetConservationTests`, `EvaluationCancellationTests`, `AsyncEvaluation/AsyncTwinDifferentialTests`, `ModuleLoaderAsyncTests`, `FrontEndDagComplexityTests`, `AstWalkerExhaustivenessTests`, `FrontEndTraversalExhaustivenessTests` |
+| Editor tooling (`src/KatLang/Semantics/`) | `editor-semantics.md` | `SemanticModelTests`, `CompletionIdentityDifferentialTests`, `EditorReadinessTests` |
+
+Related design documents: `docs/design/sequence-boundary-audit-2026-07.md` (sequence boundaries and the internal join node), `docs/design/call-spread-and-written-slot-repair-2026-07.md`, `docs/design/comma-output-join-spread-principles.md`, `docs/design/async-evaluation-2026-08.md` (async twins, host operations, deferred module loading), `docs/design/structured-error-codes-2026-08.md`, `docs/design/executable-language-spec.md`, and the alignment manifest `src/KatLang/SEMANTIC-ALIGNMENT.md`.
