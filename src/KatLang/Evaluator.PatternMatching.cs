@@ -744,7 +744,7 @@ public static partial class Evaluator
         if (alg is Algorithm.User { Output: { Count: 0 } })
             return new EvalError.MissingOutput();
 
-        return EvalOutputRowsPreparedCore(alg.Output, ctx.Push(alg), ctx, valEnv);
+        return EvalOutputRowsPreparedCore(alg.Output, EnterAlgorithmBody(alg, ctx, valEnv), ctx, valEnv);
     }
 
     /// <summary>

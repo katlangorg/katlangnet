@@ -405,6 +405,7 @@ public class KatLangErrorCodeTests
             ["UnseparatedSameLineItem"] = 41,
             ["OpenTargetIsParameter"] = 42,
             ["InvalidNumberLiteral"] = 43,
+            ["IllegalInOpen"] = 44,
         };
 
         var actual = Enum.GetValues<DiagnosticCode>().ToDictionary(v => v.ToString(), v => (int)v);

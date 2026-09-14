@@ -524,13 +524,18 @@ public class ReceiverAwareMissingMemberDiagnosticsTests
     }
 
     [Fact]
-    public void ExposureCompletion_DoesNotSuggestAMemberOfTheFormerOpenedReceiver()
+    public void LocalOnlyOpenedReceiver_InsideItsOwner_SuggestsItsOwnMember()
     {
+        // Bad.Lib captures Outer's seed (its output reads it) and is local-only, but `Inner`
+        // sits inside `Outer`: `open Bad` provides Lib there, so the receiver of `Lib.Dubel`
+        // is Bad.Lib — not the root-opened Good.Lib — and the member typo is corrected from
+        // that receiver's own surface. (K1-08, September 2026: the earlier pin expected no
+        // suggestion because exposure used to remove the nearer provider.)
         const string source = "open Good\nGood = { public Lib = { public Other = 1 } }\n"
             + "Outer(seed) = { Bad = { public Lib = { public Double(x) = x * 2\nseed } }\n"
             + "Inner = { open Bad\nLib.Dubel(4) }\nInner }\nOuter(1)";
         var (_, error) = FailWithParity(source);
-        Assert.Null(SingleNote(error).SuggestedName);
+        Assert.Equal("Lib.Double", SingleNote(error).SuggestedName);
     }
 
     [Fact]

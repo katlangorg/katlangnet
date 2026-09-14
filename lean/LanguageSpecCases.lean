@@ -14,11 +14,11 @@ This is bounded differential validation over the Lean-guarded partition,
 not a formal verification of the evaluators.
 
 Partition (machine-checked by the `specCaseIds.length` guard below):
-- specification surface cases: 259
-- excluded parse-level cases (Lean has no surface parser): 34
+- specification surface cases: 262
+- excluded parse-level cases (Lean has no surface parser): 35
 - excluded C#-only cases (each carries an explicit reason in the corpus): 12
-- Lean-guarded cases: 213
-- probe observations (C#-only by design): 575
+- Lean-guarded cases: 215
+- probe observations (C#-only by design): 605
 - internal-node cases live in the semantic-explorer corpus, not here: see
   lean/SemanticExplorerCases.lean
 
@@ -280,7 +280,7 @@ def case_decon_pair : Expr :=
 
 -- decon-rhs-implicit-parameter [deconstruction]: F = { \n     a, b = x, 10 \n     a + b \n } \n F(1)
 def case_decon_rhs_implicit_parameter : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "F" (alg ["x"] [] [privateLocalProp "$deconstruct$0" .localCapturedAncestorParams (alg [] [] [] [.param "x", .num 10]), privateLocalProp "a" .localCapturedAncestorParams (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "a" }, .capture { name := "b" }]] [] [] [.param "a"])) [.resolve "$deconstruct$0"])]), privateLocalProp "b" .localCapturedAncestorParams (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "a" }, .capture { name := "b" }]] [] [] [.param "b"])) [.resolve "$deconstruct$0"])])] [(.binary .add (.resolve "a") (.resolve "b"))])] [(.call (.resolve "F") [.num 1])])
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["x"] [] [{ (privateLocalProp "$deconstruct$0" (.localCapturedAncestorParams ["x"]) (alg [] [] [] [.param "x", .num 10])) with requiredOwnerDepths := some [("x", some 0)] }, { (privateLocalProp "a" (.localCapturedAncestorParams ["x"]) (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "a" }, .capture { name := "b" }]] [] [] [.param "a"])) [.resolve "$deconstruct$0"])])) with requiredOwnerDepths := some [("x", some 0)] }, { (privateLocalProp "b" (.localCapturedAncestorParams ["x"]) (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "a" }, .capture { name := "b" }]] [] [] [.param "b"])) [.resolve "$deconstruct$0"])])) with requiredOwnerDepths := some [("x", some 0)] }] [(.binary .add (.resolve "a") (.resolve "b"))])] [(.call (.resolve "F") [.num 1])])
 #guard obs case_decon_rhs_implicit_parameter == "ok raw=11 n=1"
 
 -- decon-rhs-brace-scope [deconstruction]: F = { \n     Q = 100 \n     a, b = { Q = 7 \n         Q, 10 } \n     a + b \n } \n F
@@ -290,7 +290,7 @@ def case_decon_rhs_brace_scope : Expr :=
 
 -- decon-rhs-lifted-parameter-order [deconstruction]: P = x * 2 \n R = y * 3 \n F = { \n     a, b = P, 10 \n     R + a + b \n } \n F(1, 2)
 def case_decon_rhs_lifted_parameter_order : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "P" (alg ["x"] [] [] [(.binary .mul (.param "x") (.num 2))]), privateProp "R" (alg ["y"] [] [] [(.binary .mul (.param "y") (.num 3))]), privateProp "F" (alg ["x", "y"] [] [privateLocalProp "$deconstruct$0" .localCapturedAncestorParams (alg [] [] [] [(.call (.resolve "P") [.param "x"]), .num 10]), privateLocalProp "a" .localCapturedAncestorParams (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "a" }, .capture { name := "b" }]] [] [] [.param "a"])) [.resolve "$deconstruct$0"])]), privateLocalProp "b" .localCapturedAncestorParams (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "a" }, .capture { name := "b" }]] [] [] [.param "b"])) [.resolve "$deconstruct$0"])])] [(.binary .add (.binary .add (.call (.resolve "R") [.param "y"]) (.resolve "a")) (.resolve "b"))])] [(.call (.resolve "F") [.num 1, .num 2])])
+  .algorithmExpr (alg [] [] [privateProp "P" (alg ["x"] [] [] [(.binary .mul (.param "x") (.num 2))]), privateProp "R" (alg ["y"] [] [] [(.binary .mul (.param "y") (.num 3))]), privateProp "F" (alg ["x", "y"] [] [{ (privateLocalProp "$deconstruct$0" (.localCapturedAncestorParams ["x"]) (alg [] [] [] [(.call (.resolve "P") [.param "x"]), .num 10])) with requiredOwnerDepths := some [("x", some 0)] }, { (privateLocalProp "a" (.localCapturedAncestorParams ["x"]) (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "a" }, .capture { name := "b" }]] [] [] [.param "a"])) [.resolve "$deconstruct$0"])])) with requiredOwnerDepths := some [("x", some 0)] }, { (privateLocalProp "b" (.localCapturedAncestorParams ["x"]) (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "a" }, .capture { name := "b" }]] [] [] [.param "b"])) [.resolve "$deconstruct$0"])])) with requiredOwnerDepths := some [("x", some 0)] }] [(.binary .add (.binary .add (.call (.resolve "R") [.param "y"]) (.resolve "a")) (.resolve "b"))])] [(.call (.resolve "F") [.num 1, .num 2])])
 #guard obs case_decon_rhs_lifted_parameter_order == "ok raw=18 n=1"
 
 -- decon-collecting-tail [deconstruction]: x, *rest = 1, 2, 3 \n rest
@@ -500,12 +500,12 @@ def case_dot_access_value_boundary : Expr :=
 
 -- open-local-only-through-capture-row [access-boundaries]: Outer(p) = { \n     open Lib \n     Lib = { public G = { Q = p + 1 \n     (Q) } } \n     G \n } \n Outer(1)
 def case_open_local_only_through_capture_row : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "Outer" (alg ["p"] [.resolve "Lib"] [privateProp "Lib" (alg [] [] [publicLocalProp "G" .localCapturedAncestorParams (alg [] [] [privateLocalProp "Q" .localCapturedAncestorParams (alg [] [] [] [(.binary .add (.param "p") (.num 1))])] [(.capture [.resolve "Q"])])] [])] [.resolve "G"])] [(.call (.resolve "Outer") [.num 1])])
-#guard obs case_open_local_only_through_capture_row == "err unknownName"
+  .algorithmExpr (alg [] [] [privateProp "Outer" (alg ["p"] [.resolve "Lib"] [privateProp "Lib" (alg [] [] [{ (publicLocalProp "G" (.localCapturedAncestorParams ["p"]) (alg [] [] [{ (privateLocalProp "Q" (.localCapturedAncestorParams ["p"]) (alg [] [] [] [(.binary .add (.param "p") (.num 1))])) with requiredOwnerDepths := some [("p", some 2)] }] [(.capture [.resolve "Q"])])) with requiredOwnerDepths := some [("p", some 1)] }] [])] [.resolve "G"])] [(.call (.resolve "Outer") [.num 1])])
+#guard obs case_open_local_only_through_capture_row == "ok raw=2 n=1"
 
 -- open-self-contained-beside-same-named-sibling [access-boundaries]: Outer(p) = { \n     open Lib \n     Lib = { \n         public G = { Q = 7 \n         (Q) } \n         Q = p + 1 \n     } \n     G \n } \n Outer(1)
 def case_open_self_contained_beside_same_named_sibling : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "Outer" (alg ["p"] [.resolve "Lib"] [privateProp "Lib" (alg [] [] [publicProp "G" (alg [] [] [privateProp "Q" (alg [] [] [] [.num 7])] [(.capture [.resolve "Q"])]), privateLocalProp "Q" .localCapturedAncestorParams (alg [] [] [] [(.binary .add (.param "p") (.num 1))])] [])] [.resolve "G"])] [(.call (.resolve "Outer") [.num 1])])
+  .algorithmExpr (alg [] [] [privateProp "Outer" (alg ["p"] [.resolve "Lib"] [privateProp "Lib" (alg [] [] [publicProp "G" (alg [] [] [privateProp "Q" (alg [] [] [] [.num 7])] [(.capture [.resolve "Q"])]), { (privateLocalProp "Q" (.localCapturedAncestorParams ["p"]) (alg [] [] [] [(.binary .add (.param "p") (.num 1))])) with requiredOwnerDepths := some [("p", some 1)] }] [])] [.resolve "G"])] [(.call (.resolve "Outer") [.num 1])])
 #guard obs case_open_self_contained_beside_same_named_sibling == "ok raw=7 n=1"
 
 -- zero-param-block-higher-order [access-boundaries]: Call0 = f() \n Call0({42})
@@ -543,10 +543,20 @@ def case_dot_fallback_on_known_receiver_stays_valid : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Lib" (alg [] [] [publicProp "Double" (alg ["x"] [] [] [(.binary .mul (.num 2) (.param "x"))])] []), privateProp "Dubel" (alg ["a", "b"] [] [] [(.binary .mul (.param "b") (.num 3))])] [(.dotCall (.resolve "Lib") "Dubel" (some [.num 4]))])
 #guard obs case_dot_fallback_on_known_receiver_stays_valid == "ok raw=12 n=1"
 
--- dot-fallback-after-open-provider-exposure [name-resolution]: open Fallback \n Make(x) = { \n     public Box = { g = 42 \n         x } \n     0 \n } \n Middle(g) = { \n     open Make \n     public Box2 = { h = 42 \n         Box.g } \n     0 \n } \n Fallback = { public Box = 5 \n     public Box2 = 7 } \n Outer(h) = { \n     open Middle \n     P = Box2.h \n     P \n } \n Outer({x+1}), Outer({x*10})
-def case_dot_fallback_after_open_provider_exposure : Expr :=
-  .algorithmExpr (alg [] [.resolve "Fallback"] [privateProp "Fallback" (alg [] [] [publicProp "Box" (alg [] [] [] [.num 5]), publicProp "Box2" (alg [] [] [] [.num 7])] []), privateProp "Make" (alg ["x"] [] [publicLocalProp "Box" .localCapturedAncestorParams (alg [] [] [privateProp "g" (alg [] [] [] [.num 42])] [.param "x"])] [.num 0]), privateProp "Middle" (alg ["g"] [.resolve "Make"] [publicLocalProp "Box2" .localCapturedAncestorParams (alg [] [] [privateProp "h" (alg [] [] [] [.num 42])] [(.dotMember (.resolve "Box") "g" (.param "g") none)])] [.num 0]), privateProp "Outer" (alg ["h"] [.resolve "Middle"] [privateLocalProp "P" .localCapturedAncestorParams (alg [] [] [] [(.dotMember (.resolve "Box2") "h" (.param "h") none)])] [.resolve "P"])] [(.call (.resolve "Outer") [(.algorithmExpr (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))]))]), (.call (.resolve "Outer") [(.algorithmExpr (alg ["x"] [] [] [(.binary .mul (.param "x") (.num 10))]))])])
-#guard obs case_dot_fallback_after_open_provider_exposure == "ok raw=S[8, 70] n=2"
+-- open-local-only-member-inside-owner [access-boundaries]: Outer(n) = { \n     open Inner \n     Inner = { \n         public X = n \n     } \n     X + 0 \n } \n Outer(5)
+def case_open_local_only_member_inside_owner : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Outer" (alg ["n"] [.resolve "Inner"] [privateProp "Inner" (alg [] [] [{ (publicLocalProp "X" (.localCapturedAncestorParams ["n"]) (alg [] [] [] [.param "n"])) with requiredOwnerDepths := some [("n", some 1)] }] [])] [(.binary .add (.resolve "X") (.num 0))])] [(.call (.resolve "Outer") [.num 5])])
+#guard obs case_open_local_only_member_inside_owner == "ok raw=5 n=1"
+
+-- dot-local-only-member-outside-owner [access-boundaries]: Outer(n) = { \n     Inner = { \n         public X = n \n     } \n     Inner.X \n } \n Outer.Inner.X
+def case_dot_local_only_member_outside_owner : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Outer" (alg ["n"] [] [privateProp "Inner" (alg [] [] [{ (publicLocalProp "X" (.localCapturedAncestorParams ["n"]) (alg [] [] [] [.param "n"])) with requiredOwnerDepths := some [("n", some 1)] }] [])] [(.dotCall (.resolve "Inner") "X" none)])] [(.dotCall (.dotCall (.resolve "Outer") "Inner" none) "X" none)])
+#guard obs case_dot_local_only_member_outside_owner == "err localOnlyProperty"
+
+-- open-local-only-member-is-a-second-provider [name-resolution]: Pub = { \n     public X = 101 \n } \n Outer(p) = { \n     public Lib = { \n         public X = p + 202 \n     } \n     0 \n } \n A = { \n     open Pub, Outer.Lib \n     X \n } \n A
+def case_open_local_only_member_is_a_second_provider : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Pub" (alg [] [] [publicProp "X" (alg [] [] [] [.num 101])] []), privateProp "A" (alg [] [.resolve "Pub", (.dotCall (.resolve "Outer") "Lib" none)] [] [.resolve "X"]), privateProp "Outer" (alg ["p"] [] [publicProp "Lib" (alg [] [] [{ (publicLocalProp "X" (.localCapturedAncestorParams ["p"]) (alg [] [] [] [(.binary .add (.param "p") (.num 202))])) with requiredOwnerDepths := some [("p", some 1)] }] [])] [.num 0])] [.resolve "A"])
+#guard obs case_open_local_only_member_is_a_second_provider == "err ambiguousOpen"
 
 -- dot-chain-structural-member-beats-extension [access-boundaries]: Lib = { \n     public Sub = { \n         public Q = 1 \n     } \n } \n  \n Q(x) = 99 \n  \n Lib.Sub.Q
 def case_dot_chain_structural_member_beats_extension : Expr :=
@@ -565,7 +575,7 @@ def case_dot_chain_nested_structural_members : Expr :=
 
 -- dot-chain-local-only-member-is-not-a-fallback [access-boundaries]: G(x) = { \n     public Sub = { \n         public Q = 1 \n         x \n     } \n     0 \n } \n Q(v) = 99 \n  \n G.Sub.Q
 def case_dot_chain_local_only_member_is_not_a_fallback : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "G" (alg ["x"] [] [publicLocalProp "Sub" .localCapturedAncestorParams (alg [] [] [publicProp "Q" (alg [] [] [] [.num 1])] [.param "x"])] [.num 0]), privateProp "Q" (alg ["v"] [] [] [.num 99])] [(.dotCall (.dotCall (.resolve "G") "Sub" none) "Q" none)])
+  .algorithmExpr (alg [] [] [privateProp "G" (alg ["x"] [] [{ (publicLocalProp "Sub" (.localCapturedAncestorParams ["x"]) (alg [] [] [publicProp "Q" (alg [] [] [] [.num 1])] [.param "x"])) with requiredOwnerDepths := some [("x", some 0)] }] [.num 0]), privateProp "Q" (alg ["v"] [] [] [.num 99])] [(.dotCall (.dotCall (.resolve "G") "Sub" none) "Q" none)])
 #guard obs case_dot_chain_local_only_member_is_not_a_fallback == "err localOnlyProperty"
 
 -- capture-suppresses-higher-order-identity [access-boundaries]: Apply = f(9) \n Increment(x) = x + 1 \n Apply((Increment))
@@ -1050,7 +1060,7 @@ def case_value_argument_parameter_shadowing : Expr :=
 
 -- value-parameter-shadowing-through-nested-scope [access-boundaries]: Inc(x) = x + 1 \n  \n Apply(f) = { \n     Inner(f) = { \n         Local(y) = f(y) \n         Local(2) \n     } \n     Inner(5) \n } \n  \n Apply(Inc)
 def case_value_parameter_shadowing_through_nested_scope : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))]), privateProp "Apply" (alg ["f"] [] [privateProp "Inner" (alg ["f"] [] [privateLocalProp "Local" .localCapturedAncestorParams (alg ["y"] [] [] [(.call (.param "f") [.param "y"])])] [(.call (.resolve "Local") [.num 2])])] [(.call (.resolve "Inner") [.num 5])])] [(.call (.resolve "Apply") [.resolve "Inc"])])
+  .algorithmExpr (alg [] [] [privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))]), privateProp "Apply" (alg ["f"] [] [privateProp "Inner" (alg ["f"] [] [{ (privateLocalProp "Local" (.localCapturedAncestorParams ["f"]) (alg ["y"] [] [] [(.call (.param "f") [.param "y"])])) with requiredOwnerDepths := some [("f", some 0)] }] [(.call (.resolve "Local") [.num 2])])] [(.call (.resolve "Inner") [.num 5])])] [(.call (.resolve "Apply") [.resolve "Inc"])])
 #guard obs case_value_parameter_shadowing_through_nested_scope == "err notAnAlgorithm"
 
 -- value-binder-parameter-shadowing [conditionals]: Inc(x) = x + 1 \n  \n Apply(f) = { \n     Inner(0) = 0 \n     Inner(f) = f(2) \n     Inner(5) \n } \n  \n Apply(Inc)
@@ -1060,32 +1070,32 @@ def case_value_binder_parameter_shadowing : Expr :=
 
 -- ancestor-callable-visible-without-same-named-parameter [access-boundaries]: Inc(x) = x + 1 \n  \n Apply(f) = { \n     Inner(x) = f(x) \n     Inner(5) \n } \n  \n Apply(Inc)
 def case_ancestor_callable_visible_without_same_named_parameter : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))]), privateProp "Apply" (alg ["f"] [] [privateLocalProp "Inner" .localCapturedAncestorParams (alg ["x"] [] [] [(.call (.param "f") [.param "x"])])] [(.call (.resolve "Inner") [.num 5])])] [(.call (.resolve "Apply") [.resolve "Inc"])])
+  .algorithmExpr (alg [] [] [privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))]), privateProp "Apply" (alg ["f"] [] [{ (privateLocalProp "Inner" (.localCapturedAncestorParams ["f"]) (alg ["x"] [] [] [(.call (.param "f") [.param "x"])])) with requiredOwnerDepths := some [("f", some 0)] }] [(.call (.resolve "Inner") [.num 5])])] [(.call (.resolve "Apply") [.resolve "Inc"])])
 #guard obs case_ancestor_callable_visible_without_same_named_parameter == "ok raw=6 n=1"
 
 -- ownership-later-lifted-parameter-beats-inner-open [name-resolution]: Lib = { public v = 99 } \n Outer = { \n     Inner = { open Lib \n         v \n     } \n     Need = v \n     Inner + Need \n } \n Outer(7)
 def case_ownership_later_lifted_parameter_beats_inner_open : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "Lib" (alg [] [] [publicProp "v" (alg [] [] [] [.num 99])] []), privateProp "Outer" (alg ["v"] [] [privateLocalProp "Inner" .localCapturedAncestorParams (alg [] [.resolve "Lib"] [] [.param "v"]), privateProp "Need" (alg ["v"] [] [] [.param "v"])] [(.binary .add (.resolve "Inner") (.call (.resolve "Need") [.param "v"]))])] [(.call (.resolve "Outer") [.num 7])])
+  .algorithmExpr (alg [] [] [privateProp "Lib" (alg [] [] [publicProp "v" (alg [] [] [] [.num 99])] []), privateProp "Outer" (alg ["v"] [] [{ (privateLocalProp "Inner" (.localCapturedAncestorParams ["v"]) (alg [] [.resolve "Lib"] [] [.param "v"])) with requiredOwnerDepths := some [("v", some 0)] }, privateProp "Need" (alg ["v"] [] [] [.param "v"])] [(.binary .add (.resolve "Inner") (.call (.resolve "Need") [.param "v"]))])] [(.call (.resolve "Outer") [.num 7])])
 #guard obs case_ownership_later_lifted_parameter_beats_inner_open == "ok raw=14 n=1"
 
 -- ownership-captured-parameter-beats-outer-property [name-resolution]: v = 99 \n Outer(v) = { \n     Inner = v + 1 \n     Inner \n } \n Outer(7)
 def case_ownership_captured_parameter_beats_outer_property : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "v" (alg [] [] [] [.num 99]), privateProp "Outer" (alg ["v"] [] [privateLocalProp "Inner" .localCapturedAncestorParams (alg [] [] [] [(.binary .add (.param "v") (.num 1))])] [.resolve "Inner"])] [(.call (.resolve "Outer") [.num 7])])
+  .algorithmExpr (alg [] [] [privateProp "v" (alg [] [] [] [.num 99]), privateProp "Outer" (alg ["v"] [] [{ (privateLocalProp "Inner" (.localCapturedAncestorParams ["v"]) (alg [] [] [] [(.binary .add (.param "v") (.num 1))])) with requiredOwnerDepths := some [("v", some 0)] }] [.resolve "Inner"])] [(.call (.resolve "Outer") [.num 7])])
 #guard obs case_ownership_captured_parameter_beats_outer_property == "ok raw=8 n=1"
 
 -- ownership-nearest-enclosing-parameter-wins [name-resolution]: v = 99 \n Outer(v) = { \n     Mid(v) = { \n         Inner = v + 1 \n         Inner \n     } \n     Mid(7) \n } \n Outer(20)
 def case_ownership_nearest_enclosing_parameter_wins : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "v" (alg [] [] [] [.num 99]), privateProp "Outer" (alg ["v"] [] [privateProp "Mid" (alg ["v"] [] [privateLocalProp "Inner" .localCapturedAncestorParams (alg [] [] [] [(.binary .add (.param "v") (.num 1))])] [.resolve "Inner"])] [(.call (.resolve "Mid") [.num 7])])] [(.call (.resolve "Outer") [.num 20])])
+  .algorithmExpr (alg [] [] [privateProp "v" (alg [] [] [] [.num 99]), privateProp "Outer" (alg ["v"] [] [privateProp "Mid" (alg ["v"] [] [{ (privateLocalProp "Inner" (.localCapturedAncestorParams ["v"]) (alg [] [] [] [(.binary .add (.param "v") (.num 1))])) with requiredOwnerDepths := some [("v", some 0)] }] [.resolve "Inner"])] [(.call (.resolve "Mid") [.num 7])])] [(.call (.resolve "Outer") [.num 20])])
 #guard obs case_ownership_nearest_enclosing_parameter_wins == "ok raw=8 n=1"
 
 -- ownership-parameter-beats-prelude-alias [name-resolution]: Outer(pi) = { \n     Inner = pi + 1 \n     Inner \n } \n Outer(7)
 def case_ownership_parameter_beats_prelude_alias : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "Outer" (alg ["pi"] [] [privateLocalProp "Inner" .localCapturedAncestorParams (alg [] [] [] [(.binary .add (.param "pi") (.num 1))])] [.resolve "Inner"])] [(.call (.resolve "Outer") [.num 7])])
+  .algorithmExpr (alg [] [] [privateProp "Outer" (alg ["pi"] [] [{ (privateLocalProp "Inner" (.localCapturedAncestorParams ["pi"]) (alg [] [] [] [(.binary .add (.param "pi") (.num 1))])) with requiredOwnerDepths := some [("pi", some 0)] }] [.resolve "Inner"])] [(.call (.resolve "Outer") [.num 7])])
 #guard obs case_ownership_parameter_beats_prelude_alias == "ok raw=8 n=1"
 
 -- ownership-parameter-beats-opened-name [name-resolution]: Lib = { \n     public v = 99 \n } \n Outer(v) = { \n     open Lib \n     Inner = v + 1 \n     Inner \n } \n Outer(7)
 def case_ownership_parameter_beats_opened_name : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "Lib" (alg [] [] [publicProp "v" (alg [] [] [] [.num 99])] []), privateProp "Outer" (alg ["v"] [.resolve "Lib"] [privateLocalProp "Inner" .localCapturedAncestorParams (alg [] [] [] [(.binary .add (.param "v") (.num 1))])] [.resolve "Inner"])] [(.call (.resolve "Outer") [.num 7])])
+  .algorithmExpr (alg [] [] [privateProp "Lib" (alg [] [] [publicProp "v" (alg [] [] [] [.num 99])] []), privateProp "Outer" (alg ["v"] [.resolve "Lib"] [{ (privateLocalProp "Inner" (.localCapturedAncestorParams ["v"]) (alg [] [] [] [(.binary .add (.param "v") (.num 1))])) with requiredOwnerDepths := some [("v", some 0)] }] [.resolve "Inner"])] [(.call (.resolve "Outer") [.num 7])])
 #guard obs case_ownership_parameter_beats_opened_name == "ok raw=8 n=1"
 
 -- clause-family-nested-in-branch-body-binds-its-own-binders [conditionals]: n = 99 \n F(0) = { \n   G(0) = 'zero' \n   G(n) = n \n   G(5) \n } \n F(k) = k \n  \n F(0)
@@ -1155,7 +1165,7 @@ def case_same_arity_user_if_keeps_user_identity : Expr :=
 
 -- parameter-named-if-carries-the-supplied-callable [name-resolution]: Apply(if, x) = { Inner = if(x) \n  Inner } \n Inc(x) = x + 1 \n Apply(Inc, 7)
 def case_parameter_named_if_carries_the_supplied_callable : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "Apply" (alg ["if", "x"] [] [privateLocalProp "Inner" .localCapturedAncestorParams (alg [] [] [] [(.call (.param "if") [.param "x"])])] [.resolve "Inner"]), privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))])] [(.call (.resolve "Apply") [.resolve "Inc", .num 7])])
+  .algorithmExpr (alg [] [] [privateProp "Apply" (alg ["if", "x"] [] [{ (privateLocalProp "Inner" (.localCapturedAncestorParams ["if", "x"]) (alg [] [] [] [(.call (.param "if") [.param "x"])])) with requiredOwnerDepths := some [("if", some 0), ("x", some 0)] }] [.resolve "Inner"]), privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))])] [(.call (.resolve "Apply") [.resolve "Inc", .num 7])])
 #guard obs case_parameter_named_if_carries_the_supplied_callable == "ok raw=8 n=1"
 
 -- if-spread-builds-values-before-branch-selection [conditionals]: Risky = (10, 1 / 0) \n if(1, Risky*)
@@ -1163,7 +1173,7 @@ def case_if_spread_builds_values_before_branch_selection : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Risky" (alg [] [] [] [(.capture [.num 10, (.binary .div (.num 1) (.num 0))])])] [(.call (.resolve "if") [.num 1, (.sequenceSpread (.resolve "Risky"))])])
 #guard obs case_if_spread_builds_values_before_branch_selection == "err div0"
 
--- 213 canonical Lean-guarded specification cases.
+-- 215 canonical Lean-guarded specification cases.
 
 /--
 Machine-checked Lean-guarded partition count: the id list is built by the
@@ -1260,7 +1270,9 @@ def specCaseIds : List String := [
   "grace-dot-keeps-structural-precedence",
   "dot-member-fallback-in-closed-parameter-list",
   "dot-fallback-on-known-receiver-stays-valid",
-  "dot-fallback-after-open-provider-exposure",
+  "open-local-only-member-inside-owner",
+  "dot-local-only-member-outside-owner",
+  "open-local-only-member-is-a-second-provider",
   "dot-chain-structural-member-beats-extension",
   "dot-chain-extension-fallback-composes",
   "dot-chain-nested-structural-members",
@@ -1385,6 +1397,6 @@ def specCaseIds : List String := [
   "parameter-named-if-carries-the-supplied-callable",
   "if-spread-builds-values-before-branch-selection"
 ]
-#guard specCaseIds.length == 213
+#guard specCaseIds.length == 215
 
 end LanguageSpecCases

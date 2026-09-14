@@ -398,8 +398,9 @@ public class CompletionIdentityDifferentialTests
     public void OpenCompletion_AttachesTheFirstQualifyingSameNameDeclaration()
     {
         // Host ASTs may contain same-name properties. Open lookup skips an earlier
-        // private member and an earlier local-only public member, then selects the
-        // first public+exported member. Completion must attach that exact declaration,
+        // private member and selects the first PUBLIC member whatever its exposure —
+        // selection is by visibility alone; a local-only member's accessibility is the
+        // evaluator's separate question. Completion must attach that exact declaration,
         // not merely offer the correct spelling.
         var privateX = PropertyAt("X", line: 1, isPublic: false, PropertyExposure.Exported);
         var localOnlyX = PropertyAt("X", line: 2, isPublic: true, PropertyExposure.LocalOnlyCapturedAncestorParameters);
@@ -419,13 +420,14 @@ public class CompletionIdentityDifferentialTests
         var model = SemanticModelBuilder.Build(root);
         var completion = model.FindScopeAt(6, 1);
         var x = Assert.Single(completion.Symbols, static symbol => symbol.Name == "X");
-        Assert.Equal(new SourceSpan(3, 1, 3, 1), x.Declaration?.Span);
+        Assert.Equal(new SourceSpan(2, 1, 2, 1), x.Declaration?.Span);
 
         var rootScope = ElaboratedScopeLookup.CreateScope(root, ElaboratedScopeLookup.CreateScope(SemanticPrelude));
         var useScope = ElaboratedScopeLookup.CreateScope(use, rootScope);
         var hit = Assert.Single(ElaboratedScopeLookup.LookupLexicalPropertyMatches(useScope, "X"));
-        Assert.Same(exportedX, hit.Property);
+        Assert.Same(localOnlyX, hit.Property);
         Assert.Equal(hit.Property.DeclarationSpans[0], x.Declaration?.Span);
+        _ = exportedX;
     }
 
     [Fact]

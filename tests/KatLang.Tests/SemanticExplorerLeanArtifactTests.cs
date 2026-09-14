@@ -154,6 +154,9 @@ public class SemanticExplorerLeanArtifactTests
                 "special__trailingComma",
                 "special__listUnterminated",
                 "special__listDefinitionInside",
+                // Front-end rejection of an `open` target that would need a call: Lean states
+                // the same rule at open resolution, but this case never reaches evaluation.
+                "special__providerRequiringArgumentsCannotBeOpened",
             ])
             .OrderBy(id => id, StringComparer.Ordinal)
             .ToList();

@@ -65,12 +65,8 @@ internal static class ParameterDetector
         var detected = DetectPrevalidated(root);
 
         // Unlike the full front-end pipeline, this standalone single-pass entry
-        // point does not subsequently run PropertyExposureResolver. Its
-        // returned tree's current exposure values are therefore the final
-        // values a direct evaluator call will observe; release any suggestion
-        // gates against that exact tree rather than leaving otherwise-valid
-        // structural/open suggestions permanently pending.
-        FinalPropertyExposure.MarkTreeFinal(detected.Root);
+        // point does not subsequently run PropertyExposureResolver: the returned
+        // tree keeps the exposure values it was given.
         return detected;
     }
 
@@ -95,7 +91,6 @@ internal static class ParameterDetector
         var diagnostics = new List<Diagnostic>();
         var preludeAlgorithm = hostOperations?.SemanticPreludeAlgorithm
             ?? BuiltinRegistry.CreateSemanticPreludeAlgorithm();
-        FinalPropertyExposure.MarkTreeFinal(preludeAlgorithm);
         var preludeScope = ElaboratedScopeLookup.CreateScope(preludeAlgorithm, observations: observations);
         var processed = ProcessAlgorithm(
             root,
@@ -141,7 +136,6 @@ internal static class ParameterDetector
         else
         {
             var prelude = hostOperations?.SemanticPreludeAlgorithm ?? BuiltinRegistry.CreateSemanticPreludeAlgorithm();
-            FinalPropertyExposure.MarkTreeFinal(prelude);
             processed = ProcessAlgorithm(root, ElaboratedScopeLookup.CreateScope(prelude, observations: observations),
                 ParameterOwnership.Empty, diagnostics, observations, run);
         }

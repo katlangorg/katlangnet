@@ -1692,8 +1692,13 @@ public class SemanticModelTests
     }
 
     [Fact]
-    public void Build_LocalOnlyCapturedNestedProperty_IsNotResolvedThroughParentDotAccess()
+    public void Build_LocalOnlyCapturedNestedProperty_IsResolvedThroughParentDotAccess()
     {
+        // Structural dot access SELECTS the declared member whatever its exposure — the
+        // evaluator selects it too and only then refuses this root-level site (an
+        // accessibility error, not a different resolution) — so the editor resolves the
+        // reference to Prop's declaration. (K1-08, September 2026: local-only members are
+        // context-dependent, never universally hidden.)
         var model = BuildModel(
             """
             Algo(x) = {
@@ -1711,9 +1716,9 @@ public class SemanticModelTests
         Assert.Same(property, declarationProperty);
 
         var dotResolution = ResolutionAt(model, 5, 6);
-        Assert.Equal(IdentifierClassification.Unresolved, dotResolution.Classification);
-        Assert.Null(dotResolution.ResolvedDeclaration);
-        Assert.Null(dotResolution.ResolvedProperty);
+        Assert.Equal(IdentifierClassification.PropertyReference, dotResolution.Classification);
+        Assert.Equal(new SourceSpan(2, 1, 2, 4), dotResolution.ResolvedDeclaration?.Span);
+        Assert.Same(property, dotResolution.ResolvedProperty);
     }
 
     [Fact]
@@ -2149,10 +2154,12 @@ public class SemanticModelTests
             F(3)
             """);
 
-        // Structural dot ignores public/private (W stays) but never exposes a
-        // local-only property (L captures the ancestor parameter `a`).
+        // Structural dot ignores public/private (W stays) and selects by declaration, so
+        // the local-only L (it captures the ancestor parameter `a`) is a member of the
+        // surface too: whether a site may use it is the accessibility question the
+        // evaluator decides after selection, not a different member set.
         var f = SingleSymbol(model.FindScopeAt(7, 1), "F");
-        Assert.Equal(["V", "W"], f.Members.Select(static member => member.Name).ToList());
+        Assert.Equal(["L", "V", "W"], f.Members.Select(static member => member.Name).ToList());
         Assert.All(f.Members, static member => Assert.Empty(member.Members));
     }
 

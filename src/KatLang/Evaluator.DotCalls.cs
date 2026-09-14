@@ -468,12 +468,11 @@ public static partial class Evaluator
         var member = LookupPropBinding(receiver, edge.Name);
         if (member is not null)
         {
-            if (!IsExported(member))
-                return new EvalError.LocalOnlyProperty(OpenExprName(edge.Target), edge.Name, member.Exposure)
-                { Span = edge.Span };
+            if (!IsAccessibleFrom(member, receiver, ctx))
+                return LocalOnlyPropertyError(OpenExprName(edge.Target), member) with { Span = edge.Span };
 
             isStructuralMember = true;
-            return EvalResult<Algorithm>.Ok(ChildOf(receiver, member.Value));
+            return EvalResult<Algorithm>.Ok(ChildOfInContext(receiver, member.Value, ctx));
         }
 
         if (receiver.DefinesConditionalBranchProperty(edge.Name))
@@ -555,10 +554,12 @@ public static partial class Evaluator
         var prop = LookupPropBinding(targetAlg, name);
         if (prop is not null)
         {
-            if (!IsExported(prop))
-                return new EvalError.LocalOnlyProperty(OpenExprName(target), name, prop.Exposure);
+            // Selection is by declaration (structural access ignores `public`); the
+            // member's accessibility from THIS site is decided afterwards.
+            if (!IsAccessibleFrom(prop, targetAlg, ctx))
+                return LocalOnlyPropertyError(OpenExprName(target), prop);
 
-            var wired = ChildOf(targetAlg, prop.Value);
+            var wired = ChildOfInContext(targetAlg, prop.Value, ctx);
             if (argsOpt is null)
             {
                 var simpleCallee = TryGetFlatBinderUserEquivalent(wired);

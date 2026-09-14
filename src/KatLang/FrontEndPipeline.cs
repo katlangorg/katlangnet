@@ -320,11 +320,17 @@ internal static class FrontEndPipeline
         diagnostics.AddRange(implicitDiagnostics);
 
         new ParameterPropertyCollisionValidator(diagnostics, programRoot: implicitResolvedRoot).VisitAlgorithm(implicitResolvedRoot);
+        // The open PROVIDER rule needs completed signatures (an inferred parameter list is
+        // final only now) and nothing from exposure, so it runs here.
+        OpenProviderValidator.Validate(implicitResolvedRoot, diagnostics, hostOperations);
         // Declaration/ownership rejections leave a recovery tree whose evaluation would only
         // restate them (a parameter-owned open head is an Expr.Param the evaluator rejects as a
-        // bad open form): never evaluate such a tree for additional errors.
+        // bad open form; a parameterized provider is refused at open resolution): never
+        // evaluate such a tree for additional errors.
         canEvaluateAfterLoadErrors &= !diagnostics.Any(d =>
-            d.Code is DiagnosticCode.ParameterPropertyCollision or DiagnosticCode.OpenTargetIsParameter);
+            d.Code is DiagnosticCode.ParameterPropertyCollision
+                or DiagnosticCode.OpenTargetIsParameter
+                or DiagnosticCode.IllegalInOpen);
 
         cancellationToken.ThrowIfCancellationRequested();
         var propertyExposedRoot = PropertyExposureResolver.Resolve(implicitResolvedRoot);

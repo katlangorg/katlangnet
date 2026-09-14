@@ -469,9 +469,15 @@ public class EvaluatorPropertyBindingTests
                         NetSalary.IncomeTax(1000, 2)
                         ";
 
+        // Only `grossSalary` is an ANCESTOR-owned requirement: it is written in NetSalary's own
+        // output row, so NetSalary owns it and every property that reads it captures it.
+        // `numberOfChildren` appears only inside ChildTaxCredit, so it is inferred as THAT
+        // property's own parameter and forwarded through TaxableIncome into IncomeTax's own
+        // signature — an argument the caller supplies, not an activation the access needs
+        // (`NetSalary.ChildTaxCredit(2)` is 324 from anywhere).
         AssertLocalOnlyPropertyMessage(
                         source,
-                        "Property 'IncomeTax' on `NetSalary` is local-only because it depends on parameter(s) owned by the enclosing algorithm.");
+                        "Property 'IncomeTax' on `NetSalary` is local-only because it depends on parameter 'grossSalary', and a required owner activation is unavailable in this lexical context.");
     }
 
     [Fact]

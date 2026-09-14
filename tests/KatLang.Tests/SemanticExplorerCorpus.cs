@@ -479,9 +479,22 @@ public static class SemanticExplorerCorpus
         // front end promotes it to an implicit parameter of `A`.
         Special("openPrivateMemberHidden", "Lib = {\n    X = 101\n}\nA = {\n    open Lib\n    X\n}\nA(707)"),
 
-        // Public but NOT exported: the member depends on its owner's parameter.
-        Special("openLocalOnlyCapturedParamsHidden",
-            "Lib(p) = {\n    public X = p + 101\n    X\n}\nA = {\n    open Lib\n    X\n}\nA"),
+        // Public but local-only: the member depends on the enclosing `Outer`'s parameter.
+        // Inside `Outer` — whose activation binds that parameter — `open Lib` provides it
+        // (K1-08, September 2026); outside `Outer` the same member is selected and refused
+        // at the access, never given an invented meaning.
+        Special("openLocalOnlyCapturedParamsInsideOwner",
+            "Outer(p) = {\n    open Lib\n    Lib = {\n        public X = p + 101\n    }\n    X\n}\nOuter(1)"),
+
+        Special("openLocalOnlyCapturedParamsOutsideOwner",
+            "Outer(p) = {\n    public Lib = {\n        public X = p + 101\n    }\n    0\n}\nA = {\n    open Outer.Lib\n    X\n}\nA"),
+
+        // A parameterized algorithm is not an open provider at all: `open` never creates the
+        // activation its members would read, so the target is refused by the front end
+        // (and by both evaluators at open resolution). Parse-level, hence C#-only.
+        Special("providerRequiringArgumentsCannotBeOpened",
+            "Lib(p) = {\n    public X = p + 101\n    X\n}\nA = {\n    open Lib\n    X\n}\nA",
+            "Front-end rejection (DiagnosticCode.IllegalInOpen): the elaborated tree is a recovery tree; the evaluators refuse the same open with illegalInOpen."),
 
         Special("openTwoProvidersAmbiguous",
             "L1 = {\n    public X = 101\n}\nL2 = {\n    public X = 202\n}\nA = {\n    open L1, L2\n    X\n}\nA"),
@@ -552,8 +565,11 @@ public static class SemanticExplorerCorpus
         Special("openPrivateMemberIsNotASecondProvider",
             "Pub = {\n    public X = 101\n}\nLib = {\n    X = 202\n}\nA = {\n    open Pub, Lib\n    X\n}\nA"),
 
-        Special("openLocalOnlyMemberIsNotASecondProvider",
-            "Pub = {\n    public X = 101\n}\nLib(p) = {\n    public X = p + 202\n    X\n}\nA = {\n    open Pub, Lib\n    X\n}\nA"),
+        // A public local-only member IS provided by its open — selection is by visibility,
+        // accessibility is checked on the selected member afterwards — so beside another
+        // provider of the same name it is a genuine second provider (K1-08, September 2026).
+        Special("openLocalOnlyMemberIsASecondProvider",
+            "Pub = {\n    public X = 101\n}\nOuter(p) = {\n    public Lib = {\n        public X = p + 202\n    }\n    0\n}\nA = {\n    open Pub, Outer.Lib\n    X\n}\nA"),
 
         // F9: a builtin VALUE slot and the `.string` receiver demand their algorithm
         // through the ONE zero-argument demand law. A selected parameterized

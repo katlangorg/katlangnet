@@ -325,7 +325,7 @@ Before emitting code, verify silently:
 - Callback item projection and reducer accumulator shape are intentional; reducers emit exactly one accumulator value (a sequence value is one; a bare multi-output is invalid), with sequence-value vs top-level-collecting accumulator binding chosen deliberately.
 - `load` appears only in valid compile-time positions (property definition or open list) with exactly one literal HTTPS URL.
 - Conditional branch patterns are not duplicate-equivalent (unique up to binder renaming).
-- Opened names are not ambiguous; local-only exported helpers are not assumed importable through `open`.
+- Opened names are not ambiguous; a local-only helper (one that captures an enclosing parameter) is imported through `open` only from a body inside the algorithm that owns that parameter, and an `open` target never requires arguments (no parameterized algorithm or clause family as a provider).
 - Unsupported core requests are represented honestly with a `# unsupported: ...` comment, not a misleading runnable approximation.
 - Whitespace reveals structure: blank lines separate initial constants, nested definitions, non-trivial output expressions, and final executable calls.
 - Any explanatory text present is written as a KatLang comment (`# ...`), not as prose.
@@ -402,7 +402,7 @@ If ANY checklist item fails, fix the output before emitting it.
       open A, B
       X                  # error: Ambiguous open 'X': provided by A, B
 
-- `open` imports only public/exported members; in an `open Lib.Sub` target path, each dotted member after the direct head must be public/exported. Ordinary structural dot-access is more permissive — `Lib.UseHelper` may reach a private self-contained structural member (e.g. `Lib = { UseHelper = x + 1 }` then `Lib.UseHelper(10)` is `11`). Capturing, conditional, or otherwise local-only members remain inaccessible externally even when marked `public`, so do not assume `public` on a nested helper makes it importable through `open`.
+- `open` imports only public members; in an `open Lib.Sub` target path, each dotted member after the direct head must be public. Ordinary structural dot-access is more permissive — `Lib.UseHelper` may reach a private self-contained structural member (e.g. `Lib = { UseHelper = x + 1 }` then `Lib.UseHelper(10)` is `11`). Capturing (local-only) members are usable through `open` and dot access only from bodies inside the exact activation that owns each captured parameter; outside it they are refused even when marked `public`, and conditional-branch declarations are unreachable by name from outside their branch. An `open` target must be an algorithm that needs no call: `open Lib` with `Lib(p) = { ... }` (or an implicitly parameterized `Lib`, or a clause family) is a front-end error — call it instead, or open a parameterless provider.
 - `open` is static, and the target name obeys the same lexical ownership as every other name: if the target's first name is owned by a PARAMETER of the opening algorithm or of an enclosing one (written, inferred, collecting, grouped, or a branch-pattern binder), that parameter owns the name and cannot be opened — the program is rejected (`Cannot open 'Lib': 'Lib' refers to a parameter`), and KatLang never looks farther outward for another declaration named `Lib`. Never generate `open Lib` inside `F(Lib) = { ... }` or in a body nested in it; use the parameter directly (`Lib.X`) or open a declared algorithm the body does not bind.
 - The `open` target itself only needs to be lexically visible — it may be a private property; `open` still imports only its public members:
 
@@ -583,8 +583,8 @@ Properties can contain nested property definitions using `{ ... }` syntax. This 
 ### Scoping Rules
 
 - Nested property bodies may capture parameters owned by an enclosing algorithm for local use.
-- Only self-contained nested properties should be treated as exported dot-call or `open` surfaces. If a nested property depends on parameters owned by an enclosing algorithm, it is local-only and must not be presented as a reusable external API.
-- Properties defined inside conditional algorithm branches are local-only and must not be exposed through parent dot-call or `open`.
+- Only self-contained nested properties should be treated as EXTERNAL dot-call or `open` surfaces. If a nested property depends on parameters owned by an enclosing algorithm, it is local-only: usable through `open` and dot access from bodies inside that algorithm (its own rows, sibling and nested scopes), refused from outside it — never present it as a reusable external API, and never `open` a parameterized algorithm (an `open` target must need no call).
+- Properties defined inside conditional algorithm branches are unreachable by name from outside the branch and must not be exposed through parent dot-call or `open`.
 - Nested properties CAN reference sibling properties within the same block (siblings are visible, not treated as parameters).
 - If a nested step algorithm needs a value from an enclosing scope as part of its `repeat`/`while` state, thread that value through the state slots with a distinct state-slot name. Do not reuse the enclosing parameter name inside the step body; that name is captured from the outer scope and will not count as a step parameter.
 
@@ -704,7 +704,7 @@ The step outputs `(new_a, new_b, new_sum, limit, continue_flag)`. The init provi
 ### Access Patterns
 
 - **Dot-call**: `Outer.Inner(args)` — access exported nested properties via dot notation.
-- **Open**: `open Lib` — import the target's public members into scope. The `open` target only needs to be lexically visible; it may be private. Members imported from the target must be public/exported:
+- **Open**: `open Lib` — import the target's public members into scope. The `open` target only needs to be lexically visible; it may be private. Members imported from the target must be public:
 
       open Lib
 
@@ -1546,7 +1546,7 @@ Without trailing output, `Order` has no direct result — use `Order.Total(25, 4
 
 === BEGIN GENERATED: katlang-spec-examples (DO NOT EDIT BY HAND) ===
 
-Verified reference examples (85 of the 259-case canonical language specification,
+Verified reference examples (88 of the 262-case canonical language specification,
 tests/KatLang.Tests/LanguageSpec/LanguageSpecCorpus.cs). Every program and expected
 output below is executed against the KatLang engine and (where representable)
 guarded against the Lean model on every build. Treat these as ground truth for the
@@ -1895,6 +1895,46 @@ Regenerate this block from the repo root with:
   Displays:
     12
 
+[open-parameterized-provider-rejected] An `open` provider must need no call: `open` imports a namespace and never creates an activation, so an algorithm with parameters — explicit or inferred — has no members its inputs could be read from, and `open Lib` is refused at the open target rather than given an invented meaning (`X` is neither read through a phantom `p` nor turned into an implicit parameter). A parameterized head of a dotted target is different: `open Lib.Sub` with `Lib(p)` opens a self-contained `Sub` by identity navigation.
+
+    Lib(p) = {
+        public X = p + 101
+        X
+    }
+    A = {
+        open Lib
+        X
+    }
+    A
+
+  Rejected by the parser: "'Lib' cannot be opened because it requires arguments ..."
+
+[open-local-only-member-inside-owner] A `public` member that captures an enclosing parameter is local-only, and local-only means local-context-dependent, not universally hidden: `Inner` is a zero-parameter provider whose `X` reads the active `Outer.n`, so inside `Outer` — the owner of that parameter — `open Inner` provides `X` and `Inner.X` reaches it, from Outer's own body and from any sibling or nested scope under the same activation. Both channels apply the ONE accessibility rule: a local-only member may be used from every lexical context inside the owner of each parameter it captures.
+
+    Outer(n) = {
+        open Inner
+        Inner = {
+            public X = n
+        }
+        X + 0
+    }
+    Outer(5)
+
+  Displays:
+    5
+
+[dot-local-only-member-outside-owner] Outside the owner of the captured parameter the same local-only member is selected and then refused: the root, an unrelated algorithm, and a callee written outside `Outer` are not inside `Outer`, so no activation of it is lexically available there — even when some same-named binding happens to be live (the rule is lexical ownership, never a dynamic lookup). Selection never depends on exposure, so the refusal is an accessibility error at the access, not a fallback or an invented meaning.
+
+    Outer(n) = {
+        Inner = {
+            public X = n
+        }
+        Inner.X
+    }
+    Outer.Inner.X
+
+  Fails with an evaluation error (localOnlyProperty).
+
 [dot-chain-structural-member-beats-extension] Dot syntax is property-first at EVERY level of a chain: the receiver `Lib.Sub` is navigated to `Sub`'s algorithm, and because `Sub` exposes an accessible `Q`, that member is read before the visible extension `Q(x)` is ever considered — exactly as `Lib.Q` reads `Lib`'s own `Q`. Only a receiver without the member falls back to the extension call `Q(receiver)`; a same-named extension, whether declared at the root, in the enclosing algorithm, or as a parameter of it, never pre-empts a structural member.
 
     Lib = {
@@ -1967,7 +2007,7 @@ Regenerate this block from the repo root with:
     6
     305
 
-[visibility-private-member-is-structural-not-exported] Private means not exported, not unreachable: `open` and `load` bring only `public` members into scope, while structural dot access ignores `public` and checks only exposure, so `Lib.Helper` reaches the private, self-contained `Helper`. A `public` member that depends on an enclosing parameter is local-only and is reached through neither `open` nor dot access.
+[visibility-private-member-is-structural-not-exported] Private means not exported, not unreachable: `open` and `load` bring only `public` members into scope, while structural dot access ignores `public`, so `Lib.Helper` reaches the private, self-contained `Helper`. Exposure never removes a member from selection: a `public` member that depends on an enclosing parameter is selected as usual and then refused at any access written outside the owner of that parameter. A parameterized algorithm is refused as an `open` target outright, because `open` imports a namespace and never creates the activation its members would read.
 
     Lib = {
         public Area = 4

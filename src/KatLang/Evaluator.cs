@@ -420,14 +420,32 @@ public static partial class Evaluator
     private static Algorithm WithParent(Algorithm alg, ScopeCtx? parent) => alg switch
     {
         Algorithm.Builtin => alg,
-        _ => alg with { Parent = parent },
+        _ => PreserveDeclarationIdentity(alg, alg with { Parent = parent }),
     };
 
     private static ScopeCtx AsScopeCtx(Algorithm alg)
     {
-        var scope = new ScopeCtx(alg.Parent, alg.Opens, alg.Properties);
+        var scope = new ScopeCtx(alg.Parent, alg.Opens, alg.Properties, alg.Params);
         ScopeOwnerAlgorithms.Add(scope, alg);
+        if (AlgorithmActivations.TryGetValue(alg, out var activation))
+            ScopeActivations.Add(scope, activation);
         return scope;
+    }
+
+    /// <summary>
+    /// Wires a selected branch body under its clause family for one call, publishing the
+    /// matched pattern binders as the family scope's <see cref="ScopeCtx.Parameters"/>: the
+    /// body itself declares no parameters (binders bind by pattern matching), so this is the
+    /// level at which the accessibility walk finds the owner of a binder-capturing member.
+    /// Lean: <c>evalConditionalCallCounted</c>'s <c>ScopeCtx.mk</c> with the binder names.
+    /// </summary>
+    private static Algorithm ChildOfConditionalCall(Algorithm callee, Algorithm body, IReadOnlyList<string> binderNames,
+        EvalCtx ctx, IReadOnlyList<(string, Result)> values)
+    {
+        var scope = new ScopeCtx(callee.Parent, callee.Opens, callee.Properties, binderNames);
+        ScopeOwnerAlgorithms.Add(scope, callee);
+        ScopeActivations.Add(scope, SnapshotParameters(binderNames, ctx, values));
+        return WithParent(body, scope);
     }
 
     private static Algorithm? TryGetScopeOwnerAlgorithm(ScopeCtx scope)
@@ -494,11 +512,160 @@ public static partial class Evaluator
     private static bool IsExported(Property property)
         => property.Exposure == PropertyExposure.Exported;
 
-    /// <summary>Lean: Algorithm.lookupPropDefPublic? (public only).</summary>
+    /// <summary>
+    /// The member-accessibility law after structural/open selection. Exported members need no
+    /// ancestor activation. Captured members retain owner-relative requirements so transitive
+    /// captures survive shadowing; diagnostic names alone use the host nearest-owner convention.
+    /// Each required declaration and activation, including captured parents of static providers,
+    /// must occur on the site's lexical chain. A live unrelated dynamic binding never qualifies.
+    /// Direct lexical hits already select on that chain. Lean: memberAccessible?.
+    /// </summary>
+    private static bool IsAccessibleFrom(Property member, Algorithm container, EvalCtx ctx)
+    {
+        if (IsExported(member))
+            return true;
+        if (member.Exposure != PropertyExposure.LocalOnlyCapturedAncestorParameters || ctx.Head is not { } site)
+            return false;
+
+        var declaringScope = ScopeInContext(container, ctx);
+        if (member.CaptureRequirements is { } requirements)
+        {
+            foreach (var requirement in requirements)
+            {
+                var owner = declaringScope;
+                for (var depth = 0; depth < requirement.OwnerDepth && owner is not null; depth++)
+                    owner = owner.Parent;
+                if (requirement.OwnerDepth < 0 || owner is null
+                    || !owner.Parameters.Contains(requirement.Name, StringComparer.Ordinal)
+                    || !LexicalChainContains(site, owner))
+                    return false;
+            }
+            return true;
+        }
+        foreach (var name in member.RequiredAncestorParameters)
+        {
+            if (RequiredParameterOwner(declaringScope, name) is not { } owner || !LexicalChainContains(site, owner))
+                return false;
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// The scope owning parameter <paramref name="name"/> as seen from <paramref name="scope"/>:
+    /// the nearest level, that scope itself first, whose parameters bind the name.
+    /// Lean: <c>requiredParameterOwner?</c>.
+    /// </summary>
+    private static ScopeCtx? RequiredParameterOwner(ScopeCtx scope, string name)
+    {
+        for (var level = scope; level is not null; level = level.Parent)
+        {
+            foreach (var parameter in level.Parameters)
+            {
+                if (string.Equals(parameter, name, StringComparison.Ordinal))
+                    return level;
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Whether the exact required owner activation is in the site's lexical chain. Static owners
+    /// may match an active declaration only when their already captured ancestor activations agree.
+    /// Runtime identity is separate from exported-property structural cache identity.
+    /// </summary>
+    private static bool LexicalChainContains(Algorithm site, ScopeCtx owner)
+    {
+        for (var level = AsScopeCtx(site); level is not null; level = level.Parent)
+        {
+            if (IsSameDeclaringScope(level, owner)
+                && ScopeActivations.TryGetValue(level, out var siteActivation)
+                && (!ScopeActivations.TryGetValue(owner, out var requiredActivation)
+                    || ReferenceEquals(siteActivation, requiredActivation))
+                && CompatibleActivations(owner, level))
+                return true;
+        }
+
+        return false;
+    }
+
+    private static bool IsSameDeclaringScope(ScopeCtx? left, ScopeCtx? right)
+    {
+        while (left is not null && right is not null)
+        {
+            if (!SameDeclarationBody(left, right)
+                || !IsSameScopeComponent(left.Opens, right.Opens)
+                || !IsSameScopeComponent(left.Properties, right.Properties)
+                || !SameParameterNames(left.Parameters, right.Parameters))
+            {
+                return false;
+            }
+
+            left = left.Parent;
+            right = right.Parent;
+        }
+
+        return left is null && right is null;
+    }
+
+    /// <summary>
+    /// Evaluator-created scopes retain the identity of their algorithm declaration across wiring.
+    /// Distinct declarations remain distinct even with shared output/property nodes or identical
+    /// clause binders. An opaque host scope can establish identity only by sharing that scope.
+    /// </summary>
+    private static bool SameDeclarationBody(ScopeCtx left, ScopeCtx right)
+    {
+        if (ReferenceEquals(left, right))
+            return true;
+
+        return ScopeOwnerAlgorithms.TryGetValue(left, out var leftOwner)
+            && ScopeOwnerAlgorithms.TryGetValue(right, out var rightOwner)
+            && ReferenceEquals(DeclarationIdentity(leftOwner), DeclarationIdentity(rightOwner));
+    }
+
+    private static bool IsSameScopeComponent<T>(IReadOnlyList<T> left, IReadOnlyList<T> right)
+        => ReferenceEquals(left, right) || (left.Count == 0 && right.Count == 0);
+
+    /// <summary>
+    /// Parameter names are compared by content because projection and conditional matching
+    /// create fresh lists. This checks the binder view of a declaration, not declaration identity.
+    /// </summary>
+    private static bool SameParameterNames(IReadOnlyList<string> left, IReadOnlyList<string> right)
+    {
+        if (ReferenceEquals(left, right)) return true;
+        if (left.Count != right.Count) return false;
+        for (var i = 0; i < left.Count; i++)
+        {
+            if (!string.Equals(left[i], right[i], StringComparison.Ordinal)) return false;
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// Whether an algorithm needs a call to have members: an explicitly or implicitly
+    /// parameterized algorithm, or a clause family (whose branches always take arguments).
+    /// Such an algorithm is not an <c>open</c> provider — <c>open</c> imports a namespace and
+    /// never creates an activation, so there is no value its members could read their inputs
+    /// from (Lean: <c>Algorithm.requiresArguments</c>).
+    /// </summary>
+    internal static bool RequiresArguments(Algorithm algorithm)
+        => algorithm is Algorithm.Conditional || algorithm.Params.Count > 0;
+
+    private static EvalError OpenTargetRequiresArguments(string targetDescription, Algorithm provider)
+        => new EvalError.IllegalInOpen(FormatOpenTargetRequiresArguments(targetDescription, provider));
+
+    internal static string FormatOpenTargetRequiresArguments(string targetDescription, Algorithm provider)
+        => provider is Algorithm.Conditional
+            ? $"'{targetDescription}' cannot be opened because it is a clause family that requires arguments; open imports only an algorithm that needs no call."
+            : $"'{targetDescription}' cannot be opened because it requires arguments ({string.Join(", ", provider.Params)}); open imports only an algorithm that needs no call.";
+
+    /// <summary>Lean: Algorithm.lookupPropDefPublic? (public only — exposure is checked after selection).</summary>
     private static Property? LookupPublicPropBinding(Algorithm alg, string name)
     {
         foreach (var prop in alg.Properties)
-            if (prop.Name == name && prop.IsPublic && IsExported(prop)) return prop;
+            if (prop.Name == name && prop.IsPublic) return prop;
         return null;
     }
 
@@ -977,11 +1144,26 @@ public static partial class Evaluator
     // ── Open resolution ─────────────────────────────────────────────────────
 
     /// <summary>
-    /// Resolves an open expression to a library algorithm.
+    /// Resolves an open expression to a library algorithm and applies the PROVIDER rule: the
+    /// resolved provider — the whole target, never an intermediate of a dotted path — must
+    /// need no call. A parameterized algorithm (explicit or inferred parameters) or a clause
+    /// family has no members outside an activation, and <c>open</c> never creates one (there
+    /// is no <c>open Lib(5)</c>), so it is refused with <see cref="EvalError.IllegalInOpen"/>;
+    /// a parameterized HEAD is navigated by identity like any structural receiver
+    /// (<c>open Lib.Sub</c> with <c>Lib(p)</c> opens a self-contained <c>Sub</c>), and a
+    /// member of it that captures <c>p</c> is refused at the access by the accessibility law.
     /// Lean: resolveOpen → EvalM Algorithm.
     /// </summary>
     private static EvalResult<Algorithm> ResolveOpen(Expr openExpr, EvalCtx ctx)
-        => ResolveAlgForOpen(openExpr, ctx);
+    {
+        var resolved = ResolveAlgForOpen(openExpr, ctx);
+        if (resolved.IsError)
+            return resolved;
+
+        return RequiresArguments(resolved.Value)
+            ? OpenTargetRequiresArguments(OpenExprName(openExpr), resolved.Value) with { Span = openExpr.Span }
+            : resolved;
+    }
 
     /// <summary>
     /// A resolved open: its canonical dedup key, original expression, and resolved algorithm.
@@ -1044,9 +1226,16 @@ public static partial class Evaluator
     /// <summary>
     /// Searches opened namespaces for a name using public-only property lookup.
     /// Returns Ok(null) if no open provides the name publicly.
-    /// Returns Ok(alg) if exactly one open provides it publicly.
+    /// Returns Ok(alg) if exactly one open provides it publicly and the site may use it.
     /// Returns Err(AmbiguousOpen) if multiple opens provide it publicly.
-    /// Lean: lookupOpens → EvalM (Option Algorithm).
+    /// Returns Err(LocalOnlyProperty) if the one provided member is local-only and the
+    /// site lies outside an owner of what it captures.
+    /// SELECTION IS BY VISIBILITY ONLY: a public member is provided by its open whatever its
+    /// exposure (it takes part in precedence and ambiguity like any provided name), and
+    /// accessibility is checked on the selected member afterwards (<see cref="IsAccessibleFrom"/>),
+    /// so which declaration a name selects never depends on exposure and the front end can
+    /// reproduce the selection before exposure is classified.
+    /// Lean: lookupOpenProperties → EvalM (Option ResolvedProperty).
     /// </summary>
     private static EvalResult<ResolvedLexicalProperty?> LookupOpens(
         Algorithm alg, string name, EvalCtx ctx)
@@ -1072,14 +1261,23 @@ public static partial class Evaluator
         if (hits.Count == 1)
         {
             var hit = hits[0];
+            // The site is the algorithm whose body reads the name (the original context's
+            // head), not the level whose opens are consulted.
+            if (!IsAccessibleFrom(hit.Binding, hit.Lib, ctx))
+                return LocalOnlyPropertyError(hit.Provider, hit.Binding);
+
             return EvalResult<ResolvedLexicalProperty?>.Ok(
                 new ResolvedLexicalProperty(
                     hit.Lib,
                     hit.Binding,
-                    ChildOf(hit.Lib, hit.Binding.Value)));
+                    ChildOfInContext(hit.Lib, hit.Binding.Value, ctx)));
         }
         return new EvalError.AmbiguousOpen(name, hits.Select(h => h.Provider).ToList());
     }
+
+    /// <summary>The ONE constructor of the captured-member refusal, carrying the required names for the report.</summary>
+    private static EvalError.LocalOnlyProperty LocalOnlyPropertyError(string objectDesc, Property member)
+        => new(objectDesc, member.Name, member.Exposure) { RequiredParameters = member.RequiredAncestorParameters };
 
     // Iterative over the parent chain for the same reason as LookupInParentsDirect:
     // no O(chain) recursion on top of the deepest evaluation stack.
@@ -1205,7 +1403,7 @@ public static partial class Evaluator
                 new ResolvedLexicalProperty(
                     alg,
                     local,
-                    ChildOf(alg, local.Value)));
+                    ChildOfInContext(alg, local.Value, ctx)));
 
         // 2. Parent chain structural only (any visibility, no opens)
         if (alg.Parent is { } sc)
@@ -1230,7 +1428,7 @@ public static partial class Evaluator
     private static Algorithm WireToCaller(EvalCtx ctx, Algorithm alg)
     {
         if (ctx.CallStack.Count > 0)
-            return ChildOf(ctx.CallStack[0], alg);
+            return ChildOfInContext(ctx.CallStack[0], alg, ctx);
         return alg;
     }
 
@@ -1623,9 +1821,11 @@ public static partial class Evaluator
                     {
                         var found = LookupLexicalDirect(ctx.CallStack[0], name);
                         if (found is not null)
-                            return found is Algorithm.Builtin
-                                ? new EvalError.IllegalInOpen($"builtin '{name}'") { Span = expr.Span }
-                                : EvalResult<Algorithm>.Ok(found);
+                        {
+                            if (found is Algorithm.Builtin)
+                                return new EvalError.IllegalInOpen($"builtin '{name}'") { Span = expr.Span };
+                            return EvalResult<Algorithm>.Ok(found);
+                        }
                     }
                     return new EvalError.UnknownName(name) { Span = expr.Span };
                 }
@@ -1659,15 +1859,16 @@ public static partial class Evaluator
                 return new EvalError.IllegalInOpen(
                     $"builtin not allowed in open: {OpenExprName(target)}.{propName}");
 
-            if (!IsExported(prop))
-                return new EvalError.LocalOnlyProperty(OpenExprName(target), propName, prop.Exposure);
+            // An open path selects public members. Visibility is decided before the
+            // selected member's contextual capture requirements.
+            if (!prop.IsPublic)
+                return new EvalError.NotPublicProperty(OpenExprName(target), propName);
 
-            // Property exists; check if it's public. Keep the property bound to
-            // the resolved target so open A.B preserves definition-site scope.
-            if (prop.IsPublic)
-                return EvalResult<Algorithm>.Ok(ChildOf(targetResult.Value, prop.Value));
+            if (!IsAccessibleFrom(prop, targetResult.Value, ctx))
+                return LocalOnlyPropertyError(OpenExprName(target), prop);
 
-            return new EvalError.NotPublicProperty(OpenExprName(target), propName);
+            // Keep the selected property bound to its definition-site scope.
+            return EvalResult<Algorithm>.Ok(ChildOfInContext(targetResult.Value, prop.Value, ctx));
         }
         if (targetResult.Value.DefinesConditionalBranchProperty(propName))
             return new EvalError.LocalOnlyProperty(OpenExprName(target), propName, PropertyExposure.LocalOnlyConditionalAlgorithm);
@@ -1787,7 +1988,7 @@ public static partial class Evaluator
             // not-callable instead of reaching a same-named caller callable.
             case Expr.Param(var x):
                 {
-                    var algBound = LookupAlg(ctx.AlgEnv, x);
+                    var algBound = LookupAlg(CapturedParameterActivation(x, ctx)?.Algorithms ?? ctx.AlgEnv, x);
                     if (algBound is not null)
                         return EvalResult<Algorithm>.Ok(algBound);
                     return new EvalError.NotAnAlgorithm($"param({x})") { Span = expr.Span };

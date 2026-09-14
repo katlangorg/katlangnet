@@ -143,12 +143,12 @@ internal static class AstHelpers
 
     internal static Property WithValue(this Property property, Algorithm value)
     {
-        var rewritten = new Property(property.Name, value, property.IsPublic, property.Exposure)
+        return new Property(property.Name, value, property.IsPublic, property.Exposure)
         {
             DeclarationSpans = property.DeclarationSpans,
+            RequiredAncestorParameters = property.RequiredAncestorParameters,
+            CaptureRequirements = property.CaptureRequirements,
         };
-        FinalPropertyExposure.Link(property, rewritten);
-        return rewritten;
     }
 
     /// <summary>
@@ -377,11 +377,7 @@ internal static class AstHelpers
             {
                 var algorithm = receiver.Algorithm!;
                 if (ElaboratedScopeLookup.TryLookupProperty(algorithm, edge.Name) is { } hit)
-                {
-                    return hit.Property.Exposure == PropertyExposure.Exported
-                        ? new(StaticStructuralMemberProviderKind.KnownAlgorithm, hit.Property.Value)
-                        : new(StaticStructuralMemberProviderKind.KnownFailure);
-                }
+                    return new(StaticStructuralMemberProviderKind.KnownAlgorithm, hit.Property.Value);
 
                 return algorithm.DefinesConditionalBranchProperty(edge.Name)
                     ? new(StaticStructuralMemberProviderKind.KnownFailure)

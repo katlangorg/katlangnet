@@ -28,9 +28,11 @@ public class LeanAstEncoderTests
         static Expr Pair(Algorithm first, Algorithm second) => new Expr.Capture(
             [new Expr.AlgorithmExpr(first), new Expr.AlgorithmExpr(second)]);
 
-        const string box0 = "(.algorithmExpr (alg [] [] [{ (privateProp \"A\" (alg [] [] [] [.num 4])) with identity := some (.shared 0) }] []))";
-        const string box1 = "(.algorithmExpr (alg [] [] [{ (privateProp \"A\" (alg [] [] [] [.num 4])) with identity := some (.shared 1) }] []))";
-        Assert.Equal($"(.capture [{box0}, {box0}])", LeanAstEncoder.EncodeExpr(Pair(box, box)));
+        const string value = "(Algorithm.withDeclarationId (some (.shared 0)) (alg [] [] [] [.num 4]))";
+        const string box0 = "(.algorithmExpr (alg [] [] [{ (privateProp \"A\" " + value + ") with identity := some (.shared 0) }] []))";
+        const string box1 = "(.algorithmExpr (alg [] [] [{ (privateProp \"A\" " + value + ") with identity := some (.shared 1) }] []))";
+        const string sharedBox = "(.algorithmExpr (Algorithm.withDeclarationId (some (.shared 1)) (alg [] [] [{ (privateProp \"A\" " + value + ") with identity := some (.shared 0) }] [])))";
+        Assert.Equal($"(.capture [{sharedBox}, {sharedBox}])", LeanAstEncoder.EncodeExpr(Pair(box, box)));
         Assert.Equal($"(.capture [{box0}, {box1}])", LeanAstEncoder.EncodeExpr(Pair(box, otherBox)));
     }
 
@@ -50,8 +52,9 @@ public class LeanAstEncoderTests
             [new Property("Lib", new Algorithm.User(null, [], [], [], []))],
             [new Expr.AlgorithmExpr(left), new Expr.AlgorithmExpr(right)]);
 
-        const string member0 = "{ (privateProp \"P\" (alg [] [] [] [.num 7])) with identity := some (.shared 0) }";
-        const string member1 = "{ (privateProp \"P\" (alg [] [] [] [.num 7])) with identity := some (.shared 1) }";
+        const string memberValue = "(Algorithm.withDeclarationId (some (.shared 0)) (alg [] [] [] [.num 7]))";
+        const string member0 = "{ (privateProp \"P\" " + memberValue + ") with identity := some (.shared 0) }";
+        const string member1 = "{ (privateProp \"P\" " + memberValue + ") with identity := some (.shared 1) }";
         var encoded = LeanAstEncoder.EncodeProgram(root);
         Assert.Contains(member0, encoded);
         if (sameOpens) Assert.DoesNotContain(member1, encoded);
@@ -251,8 +254,8 @@ public class LeanAstEncoderTests
 
         Assert.Equal(
             ".algorithmExpr (alg [] [] "
-            + "[privateProp \"Lib\" (alg [\"p\"] [] [publicLocalProp \"X\" .localCapturedAncestorParams "
-            + "(alg [] [] [] [(.binary .add (.param \"p\") (.num 1))])] [.resolve \"X\"])] "
+            + "[privateProp \"Lib\" (alg [\"p\"] [] [{ (publicLocalProp \"X\" (.localCapturedAncestorParams [\"p\"]) "
+            + "(alg [] [] [] [(.binary .add (.param \"p\") (.num 1))])) with requiredOwnerDepths := some [(\"p\", some 0)] }] [.resolve \"X\"])] "
             + "[(.call (.resolve \"Lib\") [.num 7])])",
             EncodeSource("Lib(p) = {\n    public X = p + 1\n    X\n}\nLib(7)"));
     }
@@ -748,7 +751,7 @@ public class LeanAstEncoderTests
         {
             [PropertyExposure.Exported] = "publicProp \"X\" (alg [] [] [] [.num 1])",
             [PropertyExposure.LocalOnlyCapturedAncestorParameters] =
-                "publicLocalProp \"X\" .localCapturedAncestorParams (alg [] [] [] [.num 1])",
+                "publicLocalProp \"X\" (.localCapturedAncestorParams []) (alg [] [] [] [.num 1])",
             [PropertyExposure.LocalOnlyConditionalAlgorithm] =
                 "publicLocalProp \"X\" .localConditional (alg [] [] [] [.num 1])",
         };

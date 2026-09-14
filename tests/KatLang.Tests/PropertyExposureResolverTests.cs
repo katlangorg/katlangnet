@@ -450,15 +450,16 @@ public class PropertyExposureResolverTests
         var root = SourceProvenance.ParseValid(source).Root;
 
         // `G` depends, through its own local `Q`, on `p` — owned by the enclosing `Outer` — so it
-        // is local-only however the reference is written, and `open Lib` must not expose it.
-        Assert.Equal(
-            PropertyExposure.LocalOnlyCapturedAncestorParameters,
-            NestedProperty(root, "Outer", "Lib", "G").Exposure);
+        // is local-only however the reference is written, and records that requirement. The
+        // access site (`G` read in Outer's own body) lies inside `Outer`, so `open Lib` provides
+        // the member there and the program evaluates; outside `Outer` the same member is refused
+        // (see LocalMemberAccessTests). K1-08 (September 2026): the earlier pin of `Unknown
+        // name: G` here recorded universal invisibility, which was never the intended rule.
+        var g = NestedProperty(root, "Outer", "Lib", "G");
+        Assert.Equal(PropertyExposure.LocalOnlyCapturedAncestorParameters, g.Exposure);
+        Assert.Equal(["p"], g.RequiredAncestorParameters);
 
-        var failure = Assert.IsType<RunResult.EvalFailure>(KatLangEngine.Run(source));
-        var error = Assert.Single(failure.Errors);
-        Assert.Equal(KatLangErrorCode.UnknownName, error.Code);
-        Assert.Contains("Unknown name: G", error.Message);
+        Assert.Equal("2", Assert.IsType<RunResult.Success>(KatLangEngine.Run(source)).ToDisplayString());
     }
 
     [Fact]
@@ -469,7 +470,7 @@ public class PropertyExposureResolverTests
         Assert.Equal(
             PropertyExposure.LocalOnlyCapturedAncestorParameters,
             NestedProperty(SourceProvenance.ParseValid(source).Root, "Outer", "Lib", "G").Exposure);
-        Assert.IsType<RunResult.EvalFailure>(KatLangEngine.Run(source));
+        Assert.Equal("2", Assert.IsType<RunResult.Success>(KatLangEngine.Run(source)).ToDisplayString());
     }
 
     [Fact]
@@ -517,19 +518,15 @@ public class PropertyExposureResolverTests
             Outer(1)
             """;
         var root = SourceProvenance.ParseValid(source).Root;
-        Assert.Equal(captures ? PropertyExposure.LocalOnlyCapturedAncestorParameters : PropertyExposure.Exported,
-            NestedProperty(root, "Outer", "Lib", "G").Exposure);
+        var g = NestedProperty(root, "Outer", "Lib", "G");
+        Assert.Equal(captures ? PropertyExposure.LocalOnlyCapturedAncestorParameters : PropertyExposure.Exported, g.Exposure);
+        Assert.Equal(captures ? ["p"] : [], g.RequiredAncestorParameters);
         var sync = KatLangEngine.Run(source);
         var asyncResult = await KatLangEngine.RunAsync(source);
         Assert.Equal(sync.ToDisplayString(), asyncResult.ToDisplayString());
-        if (captures)
-        {
-            var error = Assert.Single(Assert.IsType<RunResult.EvalFailure>(sync).Errors);
-            Assert.Equal(KatLangErrorCode.UnknownName, error.Code);
-            Assert.Contains("Unknown name: G", error.Message);
-        }
-        else
-            Assert.Equal("7", Assert.IsType<RunResult.Success>(sync).ToDisplayString());
+        // A capturing `G` is provided by `open Lib` inside `Outer` (whose activation binds `p`)
+        // exactly like the self-contained one; only its classification and cache scope differ.
+        Assert.Equal(captures ? "2" : "7", Assert.IsType<RunResult.Success>(sync).ToDisplayString());
     }
 
     private static Property NestedProperty(Algorithm algorithm, params string[] path)

@@ -445,7 +445,7 @@ def reduceMultiAlg82 : Algorithm :=
 -- exported declaration would cache the first step's `T` for every element.
 def sequenceBoundaryLawAocCountMatchStepAlg : Algorithm :=
   alg ["element", "tt"] [] [
-    privateLocalProp "T" .localCapturedAncestorParams (alg [] [] [] [
+    privateLocalProp "T" (.localCapturedAncestorParams ["tt"]) (alg [] [] [] [
       .call (resolve "atoms") [.param "tt"]
     ])
   ] [

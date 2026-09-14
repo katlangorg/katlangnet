@@ -46,8 +46,16 @@ namespace KatLang.Tests;
 /// </summary>
 public class DotCallFallbackExposureTests
 {
+    // K1-08 (September 2026). Exposure never removes an open provider: `open` selects public
+    // members by visibility alone and accessibility is checked on the selected member, so the
+    // detector's structural-winner verdict on a dot edge is final and no exposure round can
+    // reveal a "farther" provider. The two shapes the removed round used to pin are now
+    // different programs: a PARAMETERIZED provider is refused at the open itself, and a
+    // zero-parameter provider whose member captures the enclosing parameter is provided
+    // inside that parameter's owner and navigated structurally there.
+
     [Fact]
-    public void OpenedReceiver_ExposureRemovalPropagatesThroughSeveralProviders()
+    public void OpenedProvider_ThatRequiresArguments_IsRefusedBeforeEvaluation()
     {
         const string source = """
             open Fallback
@@ -56,74 +64,70 @@ public class DotCallFallbackExposureTests
                     x }
                 0
             }
-            Middle(g) = {
-                open Make
-                public Box2 = { h = 42
-                    Box.g }
-                0
-            }
-            Fallback = { public Box = 5
-                public Box2 = 7 }
+            Fallback = { public Box = 5 }
             Outer(h) = {
-                open Middle
-                P = Box2.h
+                open Make
+                P = Box.g
                 P
             }
-            Outer({x+1}), Outer({x*10})
+            Outer({x+1})
             """;
-        // Make.Box is removed first, then Middle.Box2 loses its structural proof,
-        // then Outer.P loses its own proof. One refresh would still export P.
-        AssertExposureAndResult(source, PropertyExposure.LocalOnlyCapturedAncestorParameters,
-            $"8{Environment.NewLine}70", "Outer", "P");
+        var parsed = SourceProvenance.ParseAllowingDiagnostics(source);
+        var diagnostic = Assert.Single(parsed.Diagnostics);
+        Assert.Equal(DiagnosticCode.IllegalInOpen, diagnostic.Code);
+        Assert.Contains("'Make' cannot be opened because it requires arguments (x)", diagnostic.Message, StringComparison.Ordinal);
+        // Reported at the open target, never at a later member.
+        Assert.Equal((9, 10), (diagnostic.Span.StartLineNumber, diagnostic.Span.StartColumn));
+        Assert.IsType<RunResult.ParseFailure>(KatLangEngine.Run(source));
     }
 
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public void OpenedReceiver_RemovedByExposure_UsesTheAncestorProvidersFallback(bool chained)
+    public void OpenedReceiver_LocalOnlyProvidedMember_NavigatesStructurallyInsideItsOwner(bool chained)
     {
         var source = $$"""
             open Fallback
-            Make(x) = {
-                public Data = {
-                    {{(chained ? "Sub = { f = 42 }" : "f = 42")}}
-                    x
-                }
-                0
-            }
             Fallback = { public Data = {{(chained ? "{ Sub = 5 }" : "5")}} }
-            Outer(f) = {
+            Outer(k) = {
                 open Make
+                Make = {
+                    public Data = {
+                        {{(chained ? "Sub = { f = 42 }" : "f = 42")}}
+                        k
+                    }
+                }
                 P = Data.{{(chained ? "Sub.f" : "f")}}
                 P
             }
             Outer({x+1}), Outer({x*10})
             """;
 
-        // Detection initially sees Make.Data's structural f. Exposure removes that
-        // opened provider, so runtime selects Fallback.Data and Outer.f instead.
+        // Make.Data captures Outer's k (its output reads it) and is local-only, but Outer's own
+        // body lies inside Outer: the nearer provider is selected over the root-opened
+        // Fallback, and the structural member wins the edge — so P reads 42 in every
+        // activation and the edge never selects a lexical fallback. P is local-only in turn:
+        // the summary channel charges every member whose accessibility the evaluator checks,
+        // and reaching `Data` through the open is such a check, exactly as a container reading
+        // a captured member directly is charged.
         AssertExposureAndResult(source, PropertyExposure.LocalOnlyCapturedAncestorParameters,
-            $"6{Environment.NewLine}50", "Outer", "P");
+            $"42{Environment.NewLine}42", "Outer", "P");
 
         var parsed = SourceProvenance.ParseValid(source);
         var edge = Assert.IsType<Expr.DotCall>(Assert.Single(FindProperty(parsed.Root, "Outer", "P").Value.Output));
-        Assert.Equal(LexicalFallbackSelection.Always, edge.ElaboratedFallbackSelection);
-        var span = edge.MemberSpan!;
-        var member = SemanticModelBuilder.Build(parsed.Parsed).FindResolutionAt(span.StartLineNumber, span.StartColumn);
-        Assert.Equal(IdentifierClassification.ExplicitParameterReference, member!.Classification);
-        Assert.Equal(OccurrenceKind.ExplicitParameterDefinition, member.ResolvedDeclaration!.Kind);
+        Assert.Equal(LexicalFallbackSelection.Never, edge.ElaboratedFallbackSelection);
+        Assert.Equal(
+            PropertyExposure.LocalOnlyCapturedAncestorParameters,
+            FindProperty(parsed.Root, "Outer", "Make", "Data").Exposure);
 
-        var structural = SourceProvenance.ParseValid(source.Replace("Outer({x+1}), Outer({x*10})", "Outer.P"));
+        // Outside Outer the same navigation is refused at the local-only Data.
+        var structural = SourceProvenance.ParseValid(
+            source.Replace("Outer({x+1}), Outer({x*10})", "Outer.Make.Data"));
         var result = Evaluator.Run(new Expr.AlgorithmExpr(structural.Root));
         Assert.True(result.IsError);
         var error = result.Error;
         while (error is EvalError.WithContext context) error = context.Inner;
-        Assert.Equal("P", Assert.IsType<EvalError.LocalOnlyProperty>(error).PropertyName);
-
-        // With no capture the nearer provider remains eligible: its structural f
-        // really wins, and a same-named caller parameter must not hide P.
-        AssertExposureAndResult(source.Replace("\n        x", "\n        0"),
-            PropertyExposure.Exported, $"42{Environment.NewLine}42", "Outer", "P");
+        Assert.Equal("Data", Assert.IsType<EvalError.LocalOnlyProperty>(error).PropertyName);
     }
 
     private static Algorithm ParseValidRoot(string source)

@@ -352,7 +352,7 @@ def zeroArgExportedPropertyIsEvaluatedOncePerRunAcrossCalls : Bool :=
 def zeroArgLocalOnlyPropertyPerActivationRoot : Algorithm :=
   algPrivate [] [] [
     ("Outer", alg ["x"] [] [
-      privateLocalProp "P" .localCapturedAncestorParams
+      privateLocalProp "P" (.localCapturedAncestorParams ["x"])
         (alg [] [] [] [.binary .mul (.param "x") (.num 10)])
     ] [.binary .add (.resolve "P") (.resolve "P")])
   ] [
@@ -389,8 +389,8 @@ def zeroArgLocalOnlyEqualActivations : Bool :=
 -- ancestor lookup inside Q must share P's entry with its direct owner read.
 def zeroArgLocalOnlyNestedPropertyRead : Bool :=
   let root := algPrivate [] [] [("Outer", alg ["x"] [] [
-    privateLocalProp "P" .localCapturedAncestorParams (alg [] [] [] [.param "x"]),
-    privateLocalProp "Q" .localCapturedAncestorParams (alg [] [] [] [.resolve "P", .resolve "P"])
+    privateLocalProp "P" (.localCapturedAncestorParams ["x"]) (alg [] [] [] [.param "x"]),
+    privateLocalProp "Q" (.localCapturedAncestorParams ["x"]) (alg [] [] [] [.resolve "P", .resolve "P"])
   ] [.resolve "P", .resolve "Q", .resolve "P"])] [.call (.resolve "Outer") [.num 1]]
   match KatLang.runResultWithState (.algorithmExpr root) with
   | .ok (_, state) =>
@@ -403,8 +403,8 @@ def zeroArgLocalOnlyNestedPropertyRead : Bool :=
 -- are still one declaring scope in the same Outer binding context.
 def zeroArgLocalOnlyAlgorithmArgumentReads : Bool :=
   let root := algPrivate [] [] [("Outer", alg ["x"] [] [
-    privateLocalProp "A" .localCapturedAncestorParams (alg [] [] [
-      privateLocalProp "P" .localCapturedAncestorParams (alg [] [] [] [.param "x"])
+    privateLocalProp "A" (.localCapturedAncestorParams ["x"]) (alg [] [] [
+      privateLocalProp "P" (.localCapturedAncestorParams ["x"]) (alg [] [] [] [.param "x"])
     ] [.resolve "P"])
   ] [.call (.resolve "if") [.num 1, .resolve "A", .num 0],
      .call (.resolve "if") [.num 1, .resolve "A", .num 0]])]
@@ -542,7 +542,7 @@ def helperDotCallStillWorks : Bool :=
 
 def capturedLocalHelperAlg : Algorithm :=
   alg ["x"] [] [
-    privateLocalProp "Prop" .localCapturedAncestorParams
+    privateLocalProp "Prop" (.localCapturedAncestorParams ["x"])
       (alg [] [] [] [.binary .add (.param "x") (.num 1)])
   ] [
     .binary .mul (.resolve "Prop") (.num 2)
@@ -562,7 +562,7 @@ def capturedLocalHelperStillWorks : Bool :=
 
 def capturedLocalOnlyAlg : Algorithm :=
   alg ["x"] [] [
-    privateLocalProp "Prop" .localCapturedAncestorParams
+    privateLocalProp "Prop" (.localCapturedAncestorParams ["x"])
       (alg [] [] [] [.binary .add (.param "x") (.num 1)])
   ] [
     .param "x"
@@ -575,7 +575,7 @@ def capturedLocalOnlyDotRoot : Algorithm :=
 
 def capturedLocalOnlyDotRejected : Bool :=
   match runResult (.algorithmExpr capturedLocalOnlyDotRoot) with
-  | Except.error err => innermostIsLocalOnlyProperty "Algo" "Prop" .localCapturedAncestorParams err
+  | Except.error err => innermostIsLocalOnlyProperty "Algo" "Prop" (.localCapturedAncestorParams ["x"]) err
   | Except.ok _ => false
 
 #guard capturedLocalOnlyDotRejected
@@ -587,7 +587,7 @@ def capturedLocalOnlyDotCallRoot : Algorithm :=
 
 def capturedLocalOnlyDotCallRejected : Bool :=
   match runResult (.algorithmExpr capturedLocalOnlyDotCallRoot) with
-  | Except.error err => innermostIsLocalOnlyProperty "Algo" "Prop" .localCapturedAncestorParams err
+  | Except.error err => innermostIsLocalOnlyProperty "Algo" "Prop" (.localCapturedAncestorParams ["x"]) err
   | Except.ok _ => false
 
 #guard capturedLocalOnlyDotCallRejected

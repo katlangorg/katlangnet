@@ -146,8 +146,41 @@ public abstract record EvalError
     /// <summary>Property exists but is not public (e.g. private property accessed via open path).</summary>
     public sealed record NotPublicProperty(string ObjectDesc, string PropertyName) : EvalError;
 
-    /// <summary>Property exists but is local-only and cannot be accessed structurally through its owner.</summary>
-    public sealed record LocalOnlyProperty(string ObjectDesc, string PropertyName, PropertyExposure Exposure) : EvalError;
+    /// <summary>
+    /// Property exists but is local-only and the access site lies outside an owner of what it
+    /// captures (structural dot access, an <c>open</c> path step, or an <c>open</c>-provided name),
+    /// or is declared only inside a conditional family's branches.
+    /// </summary>
+    public sealed record LocalOnlyProperty(string ObjectDesc, string PropertyName, PropertyExposure Exposure) : EvalError
+    {
+        /// <summary>
+        /// For <see cref="PropertyExposure.LocalOnlyCapturedAncestorParameters"/>: the required
+        /// ancestor-owned parameter names the refused member captures
+        /// (<see cref="Property.RequiredAncestorParameters"/>); null when not reported.
+        /// Compared by content, so equal refusals of equal declarations are equal errors.
+        /// </summary>
+        public IReadOnlyList<string>? RequiredParameters { get; init; }
+
+        public bool Equals(LocalOnlyProperty? other)
+            => other is not null
+                && EqualityContract == other.EqualityContract
+                && Span == other.Span
+                && ObjectDesc == other.ObjectDesc
+                && PropertyName == other.PropertyName
+                && Exposure == other.Exposure
+                && (RequiredParameters is null
+                    ? other.RequiredParameters is null
+                    : other.RequiredParameters is not null
+                        && RequiredParameters.SequenceEqual(other.RequiredParameters, StringComparer.Ordinal));
+
+        public override int GetHashCode()
+            => HashCode.Combine(
+                Span,
+                ObjectDesc,
+                PropertyName,
+                Exposure,
+                RequiredParameters is null ? 0 : RequiredParameters.Count);
+    }
 
     /// <summary>Expression does not resolve to an algorithm.</summary>
     public sealed record NotAnAlgorithm(string Description) : EvalError;

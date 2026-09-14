@@ -91,7 +91,7 @@ public static partial class Evaluator
             return new EvalError.MissingOutput();
 
         var slots = new List<Result>();
-        var pushedCtx = ctx.Push(alg);
+        var pushedCtx = EnterAlgorithmBody(alg, ctx, valEnv);
         foreach (var expr in alg.Output)
         {
             var countedR = EvalCounted(expr, pushedCtx, valEnv);

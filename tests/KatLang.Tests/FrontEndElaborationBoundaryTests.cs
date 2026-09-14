@@ -23,21 +23,22 @@ public class FrontEndElaborationBoundaryTests
     /// <summary>
     /// `Value` is written public but captures the ancestor-owned parameter `a`,
     /// so the authoritative pipeline classifies it
-    /// <see cref="PropertyExposure.LocalOnlyCapturedAncestorParameters"/> and
-    /// `open Lib` must not expose it: the engine fails the bare `Value` lookup.
+    /// <see cref="PropertyExposure.LocalOnlyCapturedAncestorParameters"/> and an `open`
+    /// OUTSIDE `F` must not let a site use it: `G` is not inside `F`, so the engine refuses
+    /// the provided `Value` at the access — and never reads G's own same-named `a`.
     /// </summary>
     private const string OpenExposureProgram = """
         F(a) = {
-            Lib = {
+            public Lib = {
                 public Value = a + 1
             }
-            Inner = {
-                open Lib
-                Value
-            }
-            Inner
+            0
         }
-        F(41)
+        G(a) = {
+            open F.Lib
+            Value
+        }
+        G(41)
         """;
 
     /// <summary>
@@ -82,17 +83,17 @@ public class FrontEndElaborationBoundaryTests
     // ── 1. The authoritative pipeline finalizes local-only exposure ──────────
 
     [Fact]
-    public void AuthoritativeParse_FinalizesCapturedExposure_AndOpenHidesTheProperty()
+    public void AuthoritativeParse_FinalizesCapturedExposure_AndOpenRefusesThePropertyOutsideItsOwner()
     {
         var parsed = SourceProvenance.ParseValid(OpenExposureProgram);
 
-        Assert.Equal(
-            PropertyExposure.LocalOnlyCapturedAncestorParameters,
-            NestedProperty(parsed.Root, "F", "Lib", "Value").Exposure);
+        var value = NestedProperty(parsed.Root, "F", "Lib", "Value");
+        Assert.Equal(PropertyExposure.LocalOnlyCapturedAncestorParameters, value.Exposure);
+        Assert.Equal(["a"], value.RequiredAncestorParameters);
 
         var failure = Assert.IsType<RunResult.EvalFailure>(KatLangEngine.Run(OpenExposureProgram));
         var error = Assert.Single(failure.Errors);
-        Assert.Equal(KatLangErrorCode.UnknownName, error.Code);
+        Assert.Equal(KatLangErrorCode.LocalOnlyProperty, error.Code);
     }
 
     [Fact]
@@ -122,8 +123,9 @@ public class FrontEndElaborationBoundaryTests
             NestedProperty(partialRoot, "F", "Lib", "Value").Exposure);
 
         // The evaluator trusts the stored flag, so the partially elaborated tree
-        // SUCCEEDS where the authoritative engine correctly fails: `open Lib`
-        // exposes the local-only `Value`, and F(41) returns 42.
+        // SUCCEEDS where the authoritative engine correctly fails: the falsely exported
+        // `Value` is admitted outside `F` and reads G's own dynamic `a`, so G(41)
+        // returns 42 — exactly the invented meaning the accessibility law forbids.
         var partialRun = Evaluator.Run(new Expr.AlgorithmExpr(partialRoot));
         Assert.False(partialRun.IsError);
         Assert.Equal(new Result.Atom(42), partialRun.Value);
@@ -204,7 +206,7 @@ public class FrontEndElaborationBoundaryTests
             NestedProperty(parsedAsync.Root, "F", "Lib", "Value").Exposure);
 
         var failure = Assert.IsType<RunResult.EvalFailure>(await KatLangEngine.RunAsync(OpenExposureProgram));
-        Assert.Equal(KatLangErrorCode.UnknownName, Assert.Single(failure.Errors).Code);
+        Assert.Equal(KatLangErrorCode.LocalOnlyProperty, Assert.Single(failure.Errors).Code);
     }
 
     // ── 4. Load elaboration alone is even more incomplete ────────────────────
@@ -218,19 +220,19 @@ public class FrontEndElaborationBoundaryTests
 
     /// <summary>
     /// The loaded module is the <see cref="OpenExposureProgram"/> witness wrapped
-    /// as a public member, so the same local-only classification must reach it
+    /// as public members, so the same local-only classification must reach it
     /// THROUGH the module boundary in the authoritative pipeline.
     /// </summary>
     private const string LoadedModuleSource = """
-        public Run(a) = {
-            Lib = {
+        public Holder(a) = {
+            public Lib = {
                 public Value = a + 1
             }
-            Inner = {
-                open Lib
-                Value
-            }
-            Inner
+            0
+        }
+        public Run(a) = {
+            open Holder.Lib
+            Value
         }
         """;
 
@@ -280,10 +282,10 @@ public class FrontEndElaborationBoundaryTests
 
         Assert.Equal(
             PropertyExposure.LocalOnlyCapturedAncestorParameters,
-            SplicedModuleProperty(parsed.Root, "Run", "Lib", "Value").Exposure);
+            SplicedModuleProperty(parsed.Root, "Holder", "Lib", "Value").Exposure);
 
         var failure = Assert.IsType<RunResult.EvalFailure>(await KatLangEngine.RunAsync(LoadingProgram, options));
-        Assert.Equal(KatLangErrorCode.UnknownName, Assert.Single(failure.Errors).Code);
+        Assert.Equal(KatLangErrorCode.LocalOnlyProperty, Assert.Single(failure.Errors).Code);
     }
 
     /// <summary>
@@ -387,6 +389,6 @@ public class FrontEndElaborationBoundaryTests
 
         Assert.Equal(
             PropertyExposure.Exported,
-            SplicedModuleProperty(loadedOnly, "Run", "Lib", "Value").Exposure);
+            SplicedModuleProperty(loadedOnly, "Holder", "Lib", "Value").Exposure);
     }
 }

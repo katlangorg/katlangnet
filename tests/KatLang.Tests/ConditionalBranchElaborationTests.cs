@@ -634,6 +634,12 @@ public class ConditionalBranchElaborationTests
     // is ownership-first lookup, which never consults exposure).
     [InlineData("F(0) = 0\nF(n) = {\n    Lib = { public X(k) = k }\n    G = {\n        open Lib\n        X(n)\n    }\n    G\n}\nF(5)", "5")]
     [InlineData("F(0) = 0\nF(n) = {\n    Helper = n + 1\n    G = { Helper }\n    G\n}\nF(4)", "5")]
+    // A binder-capturing member is local-only, and — exactly like a parameter-capturing
+    // member — it is provided by `open` and reachable by dot access from every body inside
+    // the branch that binds the binder (K1-08, September 2026: these were pinned as hidden
+    // when local-only meant universally inaccessible).
+    [InlineData("F(0) = 0\nF(n) = {\n    Lib = { public X = n }\n    G = {\n        open Lib\n        X\n    }\n    G\n}\nF(5)", "5")]
+    [InlineData("F(0) = 0\nF(n) = {\n    Lib = { public X = n }\n    Lib.X\n}\nF(5)", "5")]
     public void Source_BranchLocalLibrary_IsUsableWithinTheBranch(string source, string expected)
     {
         SourceProvenance.ParseValid(source);
@@ -698,10 +704,9 @@ public class ConditionalBranchElaborationTests
 
     [Theory]
     // A member capturing the branch binder is local-only exactly like a parameter-capturing
-    // member: hidden from `open` (Unknown name at runtime), refused by dot access and on the
-    // algorithm channel with the captured-parameter reason.
-    [InlineData("F(0) = 0\nF(n) = {\n    Lib = { public X = n }\n    G = {\n        open Lib\n        X\n    }\n    G\n}\nF(5)", typeof(EvalError.UnknownName))]
-    [InlineData("F(0) = 0\nF(n) = {\n    Lib = { public X = n }\n    Lib.X\n}\nF(5)", typeof(EvalError.LocalOnlyProperty))]
+    // member: handed out on the algorithm channel to a body OUTSIDE the branch (`Apply` is a
+    // root property, not inside `F`), it is refused at the access with the captured-parameter
+    // reason even though the binder is dynamically live in that call.
     [InlineData("Apply(f) = f.X\nF(0) = 0\nF(n) = {\n    Lib = { public X = n }\n    Apply(Lib)\n}\nF(5)", typeof(EvalError.LocalOnlyProperty))]
     // A private member is not provided by `open` merely because the library is branch-local:
     // the nested body's X is unresolved, so it becomes that body's implicit parameter and the

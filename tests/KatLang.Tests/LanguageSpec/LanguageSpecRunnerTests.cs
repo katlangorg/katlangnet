@@ -248,6 +248,7 @@ public class LanguageSpecRunnerTests
             "ownership-open-target-parameter-without-farther-declaration",
             "ownership-open-qualified-target-parameter-rejected",
             "ownership-open-target-enclosing-parameter-rejected",
+            "open-parameterized-provider-rejected",
             "semicolon-not-expression-syntax",
             "spread-not-binary-operand",
             "trailing-comma-in-parens-rejected",

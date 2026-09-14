@@ -52,6 +52,7 @@ internal sealed class LeanAstEncoding
 {
     private readonly SharedDeclarations _sharing = new();
     private readonly Dictionary<StructuralOwnerIdentity, Dictionary<Property, int>> _identities = new();
+    private readonly Dictionary<Algorithm, int> _algorithmIdentities = new(ReferenceEqualityComparer.Instance);
     private int _nextIdentity;
     private ScopeCtx? _scope;
 
@@ -77,6 +78,7 @@ internal sealed class LeanAstEncoding
         private readonly HashSet<Property> _properties = new(ReferenceEqualityComparer.Instance);
         private readonly SharedMarker _marker = new();
         public bool Contains(Property property) => _marker.Properties.Contains(property);
+        public bool Contains(Algorithm algorithm) => _marker.Algorithms.Contains(algorithm);
         protected override bool VisitsExplicitParameterDeclarations => false;
         public override void VisitAlgorithm(Algorithm algorithm)
         {
@@ -97,13 +99,13 @@ internal sealed class LeanAstEncoding
 
     private sealed class SharedMarker : AstWalker
     {
-        private readonly HashSet<Algorithm> _algorithms = new(ReferenceEqualityComparer.Instance);
+        public readonly HashSet<Algorithm> Algorithms = new(ReferenceEqualityComparer.Instance);
         private readonly HashSet<Expr> _expressions = new(ReferenceEqualityComparer.Instance);
         public readonly HashSet<Property> Properties = new(ReferenceEqualityComparer.Instance);
         protected override bool VisitsExplicitParameterDeclarations => false;
         public override void VisitAlgorithm(Algorithm algorithm)
         {
-            if (_algorithms.Add(algorithm)) base.VisitAlgorithm(algorithm);
+            if (Algorithms.Add(algorithm)) base.VisitAlgorithm(algorithm);
         }
         public override void VisitExpr(Expr expression)
         {
@@ -187,7 +189,14 @@ internal sealed class LeanAstEncoding
     {
         var parent = _scope;
         _scope = new ScopeCtx(parent, algorithm.Opens, algorithm.Properties);
-        try { return EncodeAlgorithmCore(algorithm); }
+        try
+        {
+            var encoded = EncodeAlgorithmCore(algorithm);
+            if (!_sharing.Contains(algorithm)) return encoded;
+            if (!_algorithmIdentities.TryGetValue(algorithm, out var identity))
+                _algorithmIdentities[algorithm] = identity = _algorithmIdentities.Count;
+            return $"(Algorithm.withDeclarationId (some (.shared {identity})) {encoded})";
+        }
         finally { _scope = parent; }
     }
 
@@ -303,9 +312,10 @@ internal sealed class LeanAstEncoding
     };
 
     /// <summary>
-    /// Encodes visibility AND exposure. Both matter: <c>open</c> exposes a member
-    /// only when it is public AND exported, while structural dot access ignores
-    /// visibility entirely.
+    /// Encodes visibility AND exposure. Both matter: <c>open</c> selects a member only
+    /// when it is public, structural dot access ignores visibility entirely, and a
+    /// local-only member's required ancestor parameter names decide from which sites
+    /// either channel may use it (Lean <c>memberAccessible?</c>).
     /// </summary>
     public string EncodeProperty(Property property, Algorithm? owner = null)
     {
@@ -314,9 +324,15 @@ internal sealed class LeanAstEncoding
         {
             (false, PropertyExposure.Exported) => $"privateProp {Quote(property.Name)} {value}",
             (true, PropertyExposure.Exported) => $"publicProp {Quote(property.Name)} {value}",
-            (false, var exposure) => $"privateLocalProp {Quote(property.Name)} .{EncodeExposure(exposure)} {value}",
-            (true, var exposure) => $"publicLocalProp {Quote(property.Name)} .{EncodeExposure(exposure)} {value}",
+            (false, var exposure) => $"privateLocalProp {Quote(property.Name)} {EncodeExposure(exposure, property.RequiredAncestorParameters)} {value}",
+            (true, var exposure) => $"publicLocalProp {Quote(property.Name)} {EncodeExposure(exposure, property.RequiredAncestorParameters)} {value}",
         };
+        if (property.CaptureRequirements is { Count: > 0 } requirements)
+        {
+            var owners = string.Join(", ", requirements.Select(r =>
+                $"({Quote(r.Name)}, {(r.OwnerDepth < 0 ? "none" : $"some {r.OwnerDepth}")})"));
+            encoded = $"{{ ({encoded}) with requiredOwnerDepths := some [{owners}] }}";
+        }
         return owner is not null && _sharing.Contains(property)
             ? $"{{ ({encoded}) with identity := some (.shared {DeclarationIdentity(property, owner)}) }}"
             : encoded;
@@ -338,10 +354,11 @@ internal sealed class LeanAstEncoding
             $"{nameof(LeanAstEncoder)} does not cover pattern {pattern.GetType().Name}."),
     };
 
-    private static string EncodeExposure(PropertyExposure exposure) => exposure switch
+    private static string EncodeExposure(PropertyExposure exposure, IReadOnlyList<string> requiredAncestorParameters) => exposure switch
     {
-        PropertyExposure.LocalOnlyCapturedAncestorParameters => "localCapturedAncestorParams",
-        PropertyExposure.LocalOnlyConditionalAlgorithm => "localConditional",
+        PropertyExposure.LocalOnlyCapturedAncestorParameters =>
+            $"(.localCapturedAncestorParams [{EncodeList(requiredAncestorParameters, Quote)}])",
+        PropertyExposure.LocalOnlyConditionalAlgorithm => ".localConditional",
         _ => throw new NotSupportedException($"Unhandled exposure '{exposure}'."),
     };
 

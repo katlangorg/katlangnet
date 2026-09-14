@@ -1524,7 +1524,7 @@ B(3.A)
 50
 ```
 
-The number `3` has no structural `A`, so `3.A` is `A(3)`; that result has no `B`, so `3.A.B` is `B(A(3))`. Structural access ignores `public` (a private intermediate member is still navigated) but never exposure: a declared member that is local-only — or defined only inside conditional branches — is the same structural error at that edge that accessing it directly reports, never a fallback to a visible extension. A written call such as `Lib.Sub()` is a value, so a member after it is resolved by extension fallback on that value, while parentheses around a single dot expression are ordinary grouping (`(Lib.Sub).Q` is `Lib.Sub.Q`).
+The number `3` has no structural `A`, so `3.A` is `A(3)`; that result has no `B`, so `3.A.B` is `B(A(3))`. Structural access ignores `public` (a private intermediate member is still navigated) and selects every declared member: a local-only member is navigated like any other from a context inside the owner of what it captures, and from outside that owner — or when the member is defined only inside conditional branches — the edge is the same structural error that accessing it directly reports, never a fallback to a visible extension. A written call such as `Lib.Sub()` is a value, so a member after it is resolved by extension fallback on that value, while parentheses around a single dot expression are ordinary grouping (`(Lib.Sub).Q` is `Lib.Sub.Q`).
 
 ### Dot Members and Implicit Parameters
 
@@ -4686,7 +4686,7 @@ Use the parameter directly instead (`F(Lib) = Lib.X`), or open a declared algori
 
 ### Visibility
 
-By default, properties are **private**, and private means *not exported*: `open` and `load` bring only `public` members into scope. Private does not hide a member from structural dot access — `Lib.Helper` reaches a private, self-contained `Helper` of `Lib`, because dot access ignores `public` and checks only exposure. Marking a property `public` makes it eligible for export, but a property is exported only if it is self-contained: a nested property that depends on parameters owned by an enclosing algorithm, including the pattern binders of a conditional branch, is **local-only** and is reached neither through `open` nor through dot access. Properties defined inside a conditional branch are additionally unreachable by name from outside that branch — a conditional exposes no members of its branches — but inside the branch they follow the ordinary rules: a self-contained branch-local library, whether declared there, opened inline, or backed by `open 'url'`, exposes its public members to the branch body and to any body nested in it, and nowhere else.
+By default, properties are **private**: `open` provides only `public` members. Structural dot access ignores `public`, so `Lib.Helper` may reach a private member. Visibility is separate from capture accessibility. A property whose value depends on an enclosing algorithm's parameter is **local-only**; it is usable when the reading body has that exact ancestor activation in its lexical chain. A `public` local-only member is therefore available through `open` inside the required activation. A same-named parameter of another owner, or a different call of the same owner, cannot supply that requirement. Transitive captures retain their original owners even across shadowing. Conditional branch binders follow the same rule. A family exposes no branch declarations structurally, but a self-contained provider declared or opened inside a branch works in that branch and its nested bodies.
 
 <!-- spec:visibility-private-member-is-structural-not-exported -->
 ```
@@ -4705,7 +4705,43 @@ Lib.Helper
 2
 ```
 
-`open Lib` provides `Area` alone: after it, a bare `Helper` is still unresolved (it would become an implicit parameter of the root), while `Lib.Helper` keeps working. A `public` member that reads an enclosing parameter is not exported either — with `Lib(r) = { public Area = r * r ... }`, `open Lib` provides nothing and `Lib.Area` is refused as local-only.
+`open Lib` provides `Area` alone: after it, a bare `Helper` is still unresolved (it would become an implicit parameter of the root), while `Lib.Helper` keeps working. A `public` member that reads an enclosing parameter is local-only — with `Lib(r) = { public Area = r * r ... }`, a root-level `Lib.Area` is refused, because the root is not inside `Lib` — and `open Lib` itself is rejected before the program runs: `Lib` requires an argument, and `open` never creates the activation its members would read. An `open` target must be an algorithm that needs no call (no explicit or inferred parameters, not a clause family); intermediate owners in a dotted target are navigated statically, without calling them. Thus `Lib.Sub.X` and `open Lib.Sub` can traverse explicit or inferred parameter lists on `Lib` or deeper intermediate owners. Each selected member must satisfy capture accessibility; dotted `open` steps must also be public. Only the final provider `Sub` must have zero effective call parameters. A bare `open Lib` never evaluates Lib's output: an unused captured output does not make a consumer of Lib's constant members local-only.
+
+Inside the owner of the captured parameter the same local-only member is fully usable, through both channels:
+
+<!-- spec:open-local-only-member-inside-owner -->
+```
+Outer(n) = {
+    open Inner
+    Inner = {
+        public X = n
+    }
+    X + 0
+}
+Outer(5)
+```
+
+**Result:**
+```
+5
+```
+
+`Inner` is a zero-parameter provider whose `X` reads the active `Outer.n`; Outer's own body — and any sibling or nested scope under the same activation — lies inside `Outer`, so `open Inner` provides `X` there and `Inner.X` reaches it. From outside `Outer` the member is refused:
+
+<!-- spec:dot-local-only-member-outside-owner -->
+```
+Outer(n) = {
+    Inner = {
+        public X = n
+    }
+    Inner.X
+}
+Outer.Inner.X
+```
+
+**Result:** error — `X` is local-only because it depends on the parameter `n` owned by `Outer`, and the root row is not inside `Outer`'s body; the member is still selected, and the report names it and the parameter it needs.
+
+The rule is lexical ownership, never a dynamic lookup: a callee written outside `Outer` that happens to run while an `Outer` call is active, or that has its own parameter named `n`, still cannot read `Inner.X`.
 
 ```
 # In a library algorithm:
@@ -4715,7 +4751,7 @@ public Kind(x) = 'nonzero'   # visibility is family-level: every clause is publi
 Helper = Area / 2   # private: never exported through open or load, still reachable by dot access
 ```
 
-Only `public` exported properties are exposed through `load` and `open`.
+`open` selects public members before checking capture accessibility. Two providers of the same public name are ambiguous even if one member would be inaccessible at that site; a private member does not create that collision.
 
 ---
 

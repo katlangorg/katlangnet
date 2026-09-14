@@ -63,11 +63,22 @@ public class OpenVisibilityCorpusFidelityTests
                 LibPrivateX + ", privateProp \"A\" (alg [\"X\"] [.resolve \"Lib\"] [] [.param \"X\"])",
                 CallA707),
 
-            // Public but NOT exported: the member depends on its owner's parameter.
-            ["openLocalOnlyCapturedParamsHidden"] = Golden(
-                "privateProp \"A\" (alg [] [.resolve \"Lib\"] [] [.resolve \"X\"]), "
-                    + "privateProp \"Lib\" (alg [\"p\"] [] [publicLocalProp \"X\" .localCapturedAncestorParams "
-                    + "(alg [] [] [] [(.binary .add (.param \"p\") (.num 101))])] [.resolve \"X\"])",
+            // Public but local-only (it reads Outer's `p`, recorded as its required name); the
+            // open inside Outer provides it, the one outside is refused at the access.
+            ["openLocalOnlyCapturedParamsInsideOwner"] = Golden(
+                "privateProp \"Outer\" (alg [\"p\"] [.resolve \"Lib\"] [privateProp \"Lib\" (alg [] [] "
+                    + "[{ (publicLocalProp \"X\" (.localCapturedAncestorParams [\"p\"]) "
+                    + "(alg [] [] [] [(.binary .add (.param \"p\") (.num 101))])) with requiredOwnerDepths := some [(\"p\", some 1)] }] [])] [.resolve \"X\"])",
+                "(.call (.resolve \"Outer\") [.num 1])"),
+
+            // `A` opens a provider whose member captures `p`, so A's own summary carries that
+            // requirement too: a container that reads a captured member is local-only in turn.
+            ["openLocalOnlyCapturedParamsOutsideOwner"] = Golden(
+                "{ (privateLocalProp \"A\" (.localCapturedAncestorParams [\"p\"]) "
+                    + "(alg [] [(.dotCall (.resolve \"Outer\") \"Lib\" none)] [] [.resolve \"X\"])) with requiredOwnerDepths := some [(\"p\", none)] }, "
+                    + "privateProp \"Outer\" (alg [\"p\"] [] [publicProp \"Lib\" (alg [] [] "
+                    + "[{ (publicLocalProp \"X\" (.localCapturedAncestorParams [\"p\"]) "
+                    + "(alg [] [] [] [(.binary .add (.param \"p\") (.num 101))])) with requiredOwnerDepths := some [(\"p\", some 1)] }] [])] [.num 0])",
                 ResolveA),
 
             ["openTwoProvidersAmbiguous"] = Golden(
@@ -140,8 +151,8 @@ public class OpenVisibilityCorpusFidelityTests
             // consulted, so `Inner`'s `X` reads it too (and `Inner` is therefore local-only).
             ["openNestedDoesNotLeakOutward"] = Golden(
                 LibPublicX
-                    + ", privateProp \"A\" (alg [\"X\"] [] [privateLocalProp \"Inner\" .localCapturedAncestorParams "
-                    + "(alg [] [.resolve \"Lib\"] [] [.param \"X\"])] "
+                    + ", privateProp \"A\" (alg [\"X\"] [] [{ (privateLocalProp \"Inner\" (.localCapturedAncestorParams [\"X\"]) "
+                    + "(alg [] [.resolve \"Lib\"] [] [.param \"X\"])) with requiredOwnerDepths := some [(\"X\", some 0)] }] "
                     + "[.param \"X\"])",
                 CallA707),
 
@@ -178,11 +189,12 @@ public class OpenVisibilityCorpusFidelityTests
                     + "privateProp \"A\" (alg [] [.resolve \"Pub\", .resolve \"Lib\"] [] [.resolve \"X\"])",
                 ResolveA),
 
-            ["openLocalOnlyMemberIsNotASecondProvider"] = Golden(
+            ["openLocalOnlyMemberIsASecondProvider"] = Golden(
                 "privateProp \"Pub\" (alg [] [] [publicProp \"X\" (alg [] [] [] [.num 101])] []), "
-                    + "privateProp \"A\" (alg [] [.resolve \"Pub\", .resolve \"Lib\"] [] [.resolve \"X\"]), "
-                    + "privateProp \"Lib\" (alg [\"p\"] [] [publicLocalProp \"X\" .localCapturedAncestorParams "
-                    + "(alg [] [] [] [(.binary .add (.param \"p\") (.num 202))])] [.resolve \"X\"])",
+                    + "privateProp \"A\" (alg [] [.resolve \"Pub\", (.dotCall (.resolve \"Outer\") \"Lib\" none)] [] [.resolve \"X\"]), "
+                    + "privateProp \"Outer\" (alg [\"p\"] [] [publicProp \"Lib\" (alg [] [] "
+                    + "[{ (publicLocalProp \"X\" (.localCapturedAncestorParams [\"p\"]) "
+                    + "(alg [] [] [] [(.binary .add (.param \"p\") (.num 202))])) with requiredOwnerDepths := some [(\"p\", some 1)] }] [])] [.num 0])",
                 ResolveA),
         };
 
@@ -240,7 +252,8 @@ public class OpenVisibilityCorpusFidelityTests
         [
             "openPublicMember",                     // public member exposed
             "openPrivateMemberHidden",              // private member not exposed
-            "openLocalOnlyCapturedParamsHidden",    // public but not exported
+            "openLocalOnlyCapturedParamsInsideOwner",   // local-only member provided inside its owner
+            "openLocalOnlyCapturedParamsOutsideOwner",  // ... and refused at the access outside it
             "openTwoProvidersAmbiguous",            // two-provider ambiguity
             "openDuplicateTargetDedup",             // duplicate named target is one provider
             "openDuplicateDottedTargetDedup",
@@ -258,7 +271,7 @@ public class OpenVisibilityCorpusFidelityTests
             "openBuiltinTargetIsIllegal",
             "structuralDotSeesPrivateMember",       // structural access is not exposure
             "openPrivateMemberIsNotASecondProvider",     // hidden members never add ambiguity
-            "openLocalOnlyMemberIsNotASecondProvider",
+            "openLocalOnlyMemberIsASecondProvider",      // selected members do, whatever their exposure
         ];
 
         foreach (var id in required)

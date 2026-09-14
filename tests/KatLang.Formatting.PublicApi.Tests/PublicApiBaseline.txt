@@ -444,6 +444,7 @@ public enum KatLang.DiagnosticCode : int
   UnseparatedSameLineItem = 41
   OpenTargetIsParameter = 42
   InvalidNumberLiteral = 43
+  IllegalInOpen = 44
 
 public enum KatLang.DiagnosticSeverity : int
   Hint = 1
@@ -801,6 +802,7 @@ public sealed record KatLang.EvalError.LocalOnlyProperty : KatLang.EvalError, Sy
   property public KatLang.PropertyExposure Exposure { get; init; }
   property public string ObjectDesc { get; init; }
   property public string PropertyName { get; init; }
+  property public System.Collections.Generic.IReadOnlyList<string>? RequiredParameters { get; init; }
   method   public virtual KatLang.EvalError.LocalOnlyProperty <Clone>$()
   method   public void Deconstruct(out string ObjectDesc, out string PropertyName, out KatLang.PropertyExposure Exposure)
   method   public bool Equals(KatLang.EvalError.LocalOnlyProperty? other)
@@ -1753,6 +1755,7 @@ public sealed record KatLang.Property : System.IEquatable<KatLang.Property>
   property public KatLang.PropertyExposure Exposure { get; init; }
   property public bool IsPublic { get; init; }
   property public string Name { get; init; }
+  property public System.Collections.Generic.IReadOnlyList<string> RequiredAncestorParameters { get; init; }
   property public KatLang.Algorithm Value { get; init; }
   method   public KatLang.Property <Clone>$()
   method   public void Deconstruct(out string Name, out KatLang.Algorithm Value, out bool IsPublic, out KatLang.PropertyExposure Exposure)
@@ -1984,11 +1987,14 @@ public sealed record KatLang.RunResult.Success : KatLang.RunResult, System.IEqua
 
 public sealed record KatLang.ScopeCtx : System.IEquatable<KatLang.ScopeCtx>
   ctor     public ScopeCtx(KatLang.ScopeCtx? Parent, System.Collections.Generic.IReadOnlyList<KatLang.Expr> Opens, System.Collections.Generic.IReadOnlyList<KatLang.Property> Properties)
+  ctor     public ScopeCtx(KatLang.ScopeCtx? Parent, System.Collections.Generic.IReadOnlyList<KatLang.Expr> Opens, System.Collections.Generic.IReadOnlyList<KatLang.Property> Properties, System.Collections.Generic.IReadOnlyList<string> Parameters)
   property public System.Collections.Generic.IReadOnlyList<KatLang.Expr> Opens { get; init; }
+  property public System.Collections.Generic.IReadOnlyList<string> Parameters { get; init; }
   property public KatLang.ScopeCtx? Parent { get; init; }
   property public System.Collections.Generic.IReadOnlyList<KatLang.Property> Properties { get; init; }
   method   public KatLang.ScopeCtx <Clone>$()
   method   public void Deconstruct(out KatLang.ScopeCtx? Parent, out System.Collections.Generic.IReadOnlyList<KatLang.Expr> Opens, out System.Collections.Generic.IReadOnlyList<KatLang.Property> Properties)
+  method   public void Deconstruct(out KatLang.ScopeCtx? Parent, out System.Collections.Generic.IReadOnlyList<KatLang.Expr> Opens, out System.Collections.Generic.IReadOnlyList<KatLang.Property> Properties, out System.Collections.Generic.IReadOnlyList<string> Parameters)
   method   public bool Equals(KatLang.ScopeCtx? other)
   method   public override bool Equals(object? obj)
   method   public override int GetHashCode()

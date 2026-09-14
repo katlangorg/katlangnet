@@ -272,12 +272,13 @@ public static partial class Evaluator
             return new EvalError.NoMatchingBranch(calleeName);
 
         var (branch, bindings) = match.Value;
-        var wiredBody = ChildOf(callee, SelectedBranchBody(branch));
+        var binderNames = bindings.Select(static binding => binding.Item1).ToArray();
         var newCtx = WithCountedParameterEnvironments(
             ctx.Push(callee),
             bindings,
-            bindings.Select(static binding => binding.Item1));
+            binderNames);
         var newEnv = Concat(bindings.Select(static binding => (binding.Item1, binding.Item2.Value)).ToList(), valEnv);
+        var wiredBody = ChildOfConditionalCall(callee, SelectedBranchBody(branch), binderNames, newCtx, newEnv);
         return EvalAlgOutputCounted(wiredBody, newCtx, newEnv);
     }
 

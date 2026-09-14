@@ -142,6 +142,7 @@ public sealed class KatLangError
             DiagnosticCode.UnseparatedSameLineItem => KatLangErrorCode.UnseparatedSameLineItem,
             DiagnosticCode.OpenTargetIsParameter => KatLangErrorCode.OpenTargetIsParameter,
             DiagnosticCode.InvalidNumberLiteral => KatLangErrorCode.InvalidNumberLiteral,
+            DiagnosticCode.IllegalInOpen => KatLangErrorCode.IllegalInOpen,
             _ when !Enum.IsDefined(code) => KatLangErrorCode.Unspecified,
             _ => throw new InvalidOperationException(
                 $"Unhandled declared {nameof(DiagnosticCode)} family in {nameof(KatLangError)}: {code}. "
@@ -257,7 +258,7 @@ public sealed class KatLangError
             EvalError.UnknownName e => $"Unknown name: {e.Name}",
             EvalError.UnknownProperty e => $"Unknown property '{e.PropertyName}' on {e.ObjectDesc}",
             EvalError.NotPublicProperty e => $"Property '{e.PropertyName}' on {e.ObjectDesc} is not public",
-            EvalError.LocalOnlyProperty e => FormatLocalOnlyProperty(e.ObjectDesc, e.PropertyName, e.Exposure),
+            EvalError.LocalOnlyProperty e => FormatLocalOnlyProperty(e.ObjectDesc, e.PropertyName, e.Exposure, e.RequiredParameters),
             EvalError.NotAnAlgorithm e => $"Not an algorithm: {e.Description}",
             EvalError.IllegalInOpen e => $"Illegal in open: {e.Reason}",
             EvalError.BadOpenForm e => $"Bad open form: {e.Reason}",
@@ -349,13 +350,13 @@ public sealed class KatLangError
 
         if (error is EvalError.LocalOnlyProperty direct)
         {
-            message = FormatLocalOnlyProperty(direct.ObjectDesc, direct.PropertyName, direct.Exposure);
+            message = FormatLocalOnlyProperty(direct.ObjectDesc, direct.PropertyName, direct.Exposure, direct.RequiredParameters);
             return true;
         }
 
         if (error is EvalError.WithContext { Inner: EvalError.LocalOnlyProperty contextual })
         {
-            message = FormatLocalOnlyProperty(contextual.ObjectDesc, contextual.PropertyName, contextual.Exposure);
+            message = FormatLocalOnlyProperty(contextual.ObjectDesc, contextual.PropertyName, contextual.Exposure, contextual.RequiredParameters);
             return true;
         }
 
@@ -744,9 +745,16 @@ public sealed class KatLangError
     private static string FormatPropertyMissingOutput(string propertyName)
         => $"Property '{propertyName}' has no defined output.\nAdd an output expression to '{propertyName}', or use `()` if the empty sequence value was intended. To use one of its properties, write `{propertyName}.X`.";
 
-    private static string FormatLocalOnlyProperty(string objectDesc, string propertyName, PropertyExposure exposure)
+    private static string FormatParameterList(IReadOnlyList<string> names)
+        => names.Count == 1
+            ? $"parameter '{names[0]}'"
+            : $"parameters {string.Join(", ", names.Select(static name => $"'{name}'"))}";
+
+    private static string FormatLocalOnlyProperty(string objectDesc, string propertyName, PropertyExposure exposure, IReadOnlyList<string>? requiredParameters)
         => exposure switch
         {
+            PropertyExposure.LocalOnlyCapturedAncestorParameters when requiredParameters is { Count: > 0 } =>
+                $"Property '{propertyName}' on `{objectDesc}` is local-only because it depends on {FormatParameterList(requiredParameters)}, and a required owner activation is unavailable in this lexical context.",
             PropertyExposure.LocalOnlyCapturedAncestorParameters =>
                 $"Property '{propertyName}' on `{objectDesc}` is local-only because it depends on parameter(s) owned by the enclosing algorithm.",
             PropertyExposure.LocalOnlyConditionalAlgorithm =>

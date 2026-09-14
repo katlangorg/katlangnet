@@ -380,30 +380,31 @@ public class ZeroArgPropertyCacheScopeTests
     [Theory]
     [InlineData(false, "105,105,250,250", 2)]
     [InlineData(true, "310,800", 4)]
-    public Task RemovedOpenProvider_FallbackHostValuesRemainActivationSensitive(bool loop, string expected, int calls)
+    public Task OpenedLocalOnlyMember_HostValuesRemainActivationSensitive(bool loop, string expected, int calls)
     {
+        // Box.g calls Outer's parameter `f`, so `g` and every property reading it through the
+        // opened `Box` are local-only: one host evaluation per activation (and per loop step),
+        // shared by the two property-style reads within one activation. (K1-08, September
+        // 2026: this replaces a removed-provider shape whose `Make(x)` is now refused at the
+        // open itself.)
+        // `open` heads its algorithm's body, so the non-loop shape opens Make in Outer itself
+        // while the loop shape opens it in the step body that reads it.
+        var outerOpen = loop ? "" : "    open Make\n";
         var body = loop
-            ? "Step(n) = {\n open Make\n P = Box.f\n n + P\n}\nStep.repeat(2, 0)"
-            : "open Make\nP = Box.f\nP, P";
-        return AssertHostCounterPaths($$"""
-            open Fallback
-            Make(x) = {
-                public Box = { f = 42
-                    x }
-                0
-            }
-            Fallback = { public Box = 5 }
-            Inc(x) = Data() + x
-            Times(x) = Data() + x * 10
-            Outer(f) = {
-                {{body}}
-            }
-            Outer(Inc), Outer(Times)
-            """, expected, calls);
+            ? "    Step(n) = {\n        open Make\n        P = Box.g\n        n + P\n    }\n    Step.repeat(2, 0)"
+            : "    P = Box.g\n    P, P";
+        return AssertHostCounterPaths(
+            "Inc(x) = Data() + x\n"
+            + "Times(x) = Data() + x * 10\n"
+            + "Outer(f) = {\n"
+            + outerOpen
+            + "    Make = {\n        public Box = { g = f(5) }\n    }\n"
+            + body + "\n}\n"
+            + "Outer(Inc), Outer(Times)", expected, calls);
     }
 
     [Fact]
-    public async Task DeferredBranch_RemovedOpenProvider_UpdatesTheEnclosingPropertyCaptureSummary()
+    public async Task DeferredBranch_OpenedLocalOnlyMember_UpdatesTheEnclosingPropertyCaptureSummary()
     {
         var counter = new Counter();
         var downloads = 0;
@@ -419,20 +420,16 @@ public class ZeroArgPropertyCacheScopeTests
             },
         };
         const string source = """
-            open Fallback
-            Make(x) = {
-                public Box = { f = 42
-                    x }
-                0
-            }
-            Fallback = { public Box = 5 }
             Inc(x) = Data() + x
             Times(x) = Data() + x * 10
             Outer(f) = {
+                Make = {
+                    public Box = { g = f(5) }
+                }
                 Read(0) = 0
                 Read(n) = {
                     open Make, 'https://cache.test/lib'
-                    P = Box.f
+                    P = Box.g
                     (P, P)
                 }
                 Cached = Read(1)
@@ -545,6 +542,10 @@ public class ZeroArgPropertyCacheScopeTests
 
     public static TheoryData<string> ParityPrograms => new()
     {
+        "Outer(n) = {\n Inner = { public X = n }\n Read(n) = Inner.X\n Read(7)\n}\nOuter(5), Outer(9)",
+        "Outer(n) = {\n Inner = { public X = n }\n Read(n) = { open Inner\n X }\n Read(7)\n}\nOuter(5), Outer(9)",
+        "Outer(n) = {\n Q = n\n Mid(n) = { public X = Q\n X }\n Mid.X\n}\nOuter(5), Outer(9)",
+        "Outer(n) = {\n Lib = { public X = n }\n Step(n) = Lib.X + n\n repeat(Step, 2, 0)\n}\nOuter(5), Outer(7)",
         "Big = range(1, 100).sum\nF(x) = Big + x\nF(1), F(2), F(3)",
         "Big = range(1, 100).sum\nF(x) = Big + x\nrange(1, 5).map(F)",
         "Outer(x) = {\n    P = x * 10\n    P + P\n}\nOuter(2), Outer(10)",

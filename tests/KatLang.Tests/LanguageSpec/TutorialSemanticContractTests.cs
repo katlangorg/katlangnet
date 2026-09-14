@@ -145,17 +145,25 @@ public class TutorialSemanticContractTests
     }
 
     [Fact]
-    public void PublicLocalOnlyMember_IsExportedThroughNeitherChannel()
+    public void PublicLocalOnlyMember_IsRefusedOutsideItsOwner_AndAParameterizedProviderCannotBeOpened()
     {
         const string library = "Lib(r) = {\n    public Area = r * r\n    Area\n}";
         var lib = PropertyOf(SourceProvenance.ParseValid(library + "\n\nLib(3)").Root, "Lib").Value;
         var area = PropertyOf(lib, "Area");
         Assert.True(area.IsPublic);
         Assert.Equal(PropertyExposure.LocalOnlyCapturedAncestorParameters, area.Exposure);
+        Assert.Equal(["r"], area.RequiredAncestorParameters);
 
         Assert.Equal("9", Display(library + "\n\nLib(3)"));
+        // Structural access from the root selects Area and refuses it: the root is not
+        // inside `Lib`, the owner of the `r` that Area captures.
         RunFailure(library + "\n\nLib.Area", KatLangErrorCode.LocalOnlyProperty);
-        RunFailure("open Lib\n" + library + "\n\nArea", KatLangErrorCode.UnknownName);
+        // `open Lib` is refused at the open itself: Lib requires arguments, and open never
+        // creates the activation its members would read (a front-end rejection).
+        FrontEndRejection("open Lib\n" + library + "\n\nArea", DiagnosticCode.IllegalInOpen, KatLangErrorCode.IllegalInOpen);
+        // Inside `Lib` the captured member is usable through both channels — one output row
+        // with two slots, so the two reads appear as one sequence value.
+        Assert.Equal("(9, 9)", Display("Lib(r) = {\n    open Helper\n    Helper = {\n        public Area = r * r\n    }\n    Area, Helper.Area\n}\n\nLib(3)"));
     }
 
     // ── Conditional families: branch-selection dimensions and the shared-arity rule ──

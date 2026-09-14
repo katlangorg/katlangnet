@@ -653,6 +653,7 @@ public static partial class Evaluator
         EvalCtx ctx,
         IReadOnlyList<(string, Result)> valEnv)
     {
+        ctx = ParameterContext(name, ctx, ref valEnv);
         var counted = LookupCountedParam(ctx.CountedParamEnv, name);
         if (counted is not null)
             return EvalResult<CountedResult>.Ok(counted.Value);
@@ -1211,7 +1212,7 @@ public static partial class Evaluator
         if (alg is Algorithm.User { Output: { Count: 0 } })
             return new EvalError.MissingOutput();
 
-        return await EvalOutputRowsPreparedCoreAsync(alg.Output, ctx.Push(alg), ctx, valEnv).ConfigureAwait(false);
+        return await EvalOutputRowsPreparedCoreAsync(alg.Output, EnterAlgorithmBody(alg, ctx, valEnv), ctx, valEnv).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -1348,7 +1349,7 @@ public static partial class Evaluator
             return new EvalError.MissingOutput();
 
         var slots = new List<Result>();
-        var pushedCtx = ctx.Push(alg);
+        var pushedCtx = EnterAlgorithmBody(alg, ctx, valEnv);
         foreach (var expr in alg.Output)
         {
             var countedR = await EvalCountedAsync(expr, pushedCtx, valEnv).ConfigureAwait(false);
@@ -1395,7 +1396,7 @@ public static partial class Evaluator
         if (alg is Algorithm.User { Output.Count: 0 })
             return new EvalError.MissingOutput();
 
-        return await EvalExplicitSequenceValueRowSlotsAsync(alg.Output, ctx.Push(alg), valEnv).ConfigureAwait(false);
+        return await EvalExplicitSequenceValueRowSlotsAsync(alg.Output, EnterAlgorithmBody(alg, ctx, valEnv), valEnv).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -1885,10 +1886,10 @@ public static partial class Evaluator
         var (branch, bindings) = match.Value;
         var selectedBodyR = await SelectedBranchBodyAsync(branch, ctx).ConfigureAwait(false);
         if (selectedBodyR.IsError) return selectedBodyR.Error;
-        var wiredBody = ChildOf(callee, selectedBodyR.Value);
         var shadowedNames = bindings.Select(static binding => binding.Item1).ToArray();
         var newCtx = ShadowInheritedParameterEnvironments(ctx.Push(callee), shadowedNames);
         var newEnv = Concat(bindings, valEnv);
+        var wiredBody = ChildOfConditionalCall(callee, selectedBodyR.Value, shadowedNames, newCtx, newEnv);
         return ReCountValueBoundary(await EvalAlgOutputCountedCoreAsync(wiredBody, newCtx, newEnv).ConfigureAwait(false));
     }
 
@@ -2802,12 +2803,13 @@ public static partial class Evaluator
         var (branch, bindings) = match.Value;
         var selectedBodyR = await SelectedBranchBodyAsync(branch, ctx).ConfigureAwait(false);
         if (selectedBodyR.IsError) return selectedBodyR.Error;
-        var wiredBody = ChildOf(callee, selectedBodyR.Value);
+        var binderNames = bindings.Select(static binding => binding.Item1).ToArray();
         var newCtx = WithCountedParameterEnvironments(
             ctx.Push(callee),
             bindings,
-            bindings.Select(static binding => binding.Item1));
+            binderNames);
         var newEnv = Concat(bindings.Select(static binding => (binding.Item1, binding.Item2.Value)).ToList(), valEnv);
+        var wiredBody = ChildOfConditionalCall(callee, selectedBodyR.Value, binderNames, newCtx, newEnv);
         return await EvalAlgOutputCountedCoreAsync(wiredBody, newCtx, newEnv).ConfigureAwait(false);
     }
 
@@ -3186,10 +3188,10 @@ public static partial class Evaluator
         var prop = LookupPropBinding(targetAlg, name);
         if (prop is not null)
         {
-            if (!IsExported(prop))
-                return new EvalError.LocalOnlyProperty(OpenExprName(target), name, prop.Exposure);
+            if (!IsAccessibleFrom(prop, targetAlg, ctx))
+                return LocalOnlyPropertyError(OpenExprName(target), prop);
 
-            var wired = ChildOf(targetAlg, prop.Value);
+            var wired = ChildOfInContext(targetAlg, prop.Value, ctx);
             if (argsOpt is null)
             {
                 var simpleCallee = TryGetFlatBinderUserEquivalent(wired);

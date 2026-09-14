@@ -376,7 +376,7 @@ public class EvaluatorHigherOrderTests
                         }
                         Algo.Prop
                         """,
-                "Property 'Prop' on `Algo` is local-only because it depends on parameter(s) owned by the enclosing algorithm.");
+                "Property 'Prop' on `Algo` is local-only because it depends on parameter 'x', and a required owner activation is unavailable in this lexical context.");
     }
 
     [Fact]
@@ -390,7 +390,7 @@ public class EvaluatorHigherOrderTests
                         }
                         Algo.Prop(6)
                         """,
-                "Property 'Prop' on `Algo` is local-only because it depends on parameter(s) owned by the enclosing algorithm.");
+                "Property 'Prop' on `Algo` is local-only because it depends on parameter 'x', and a required owner activation is unavailable in this lexical context.");
     }
 
     [Fact]
@@ -404,7 +404,7 @@ public class EvaluatorHigherOrderTests
                         }
                         Algo.Prop
                         """,
-                "Property 'Prop' on `Algo` is local-only because it depends on parameter(s) owned by the enclosing algorithm.");
+                "Property 'Prop' on `Algo` is local-only because it depends on parameter 'x', and a required owner activation is unavailable in this lexical context.");
     }
 
     [Fact]
@@ -422,7 +422,7 @@ public class EvaluatorHigherOrderTests
                         }
                         Algo.Prop
                         """,
-                "Property 'Prop' on `Algo` is local-only because it depends on parameter(s) owned by the enclosing algorithm.");
+                "Property 'Prop' on `Algo` is local-only because it depends on parameter 'x', and a required owner activation is unavailable in this lexical context.");
     }
 
     [Fact]

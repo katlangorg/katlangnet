@@ -10,11 +10,11 @@ the neutral observation recorded from the C# evaluator. A failing guard is a
 Lean/C# divergence on that case.
 
 Partition (machine-checked by the `*CaseIds.length` guards below):
-- surface corpus cases: 1582
-- excluded parse-level cases (Lean has no surface parser): 31
-- Lean-representable surface cases: 1551
+- surface corpus cases: 1584
+- excluded parse-level cases (Lean has no surface parser): 32
+- Lean-representable surface cases: 1552
 - internal-node cases: 14
-- total generated guards: 1565 case guards + 2 count guards
+- total generated guards: 1566 case guards + 2 count guards
 
 Regenerate from the repo root with:
   $env:KATLANG_REGENERATE_SEMANTIC_EXPLORER = "1"
@@ -7667,10 +7667,15 @@ def case_special__openPrivateMemberHidden : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Lib" (alg [] [] [privateProp "X" (alg [] [] [] [.num 101])] []), privateProp "A" (alg ["X"] [.resolve "Lib"] [] [.param "X"])] [(.call (.resolve "A") [.num 707])])
 #guard obs case_special__openPrivateMemberHidden == "ok raw=707 n=1"
 
--- special__openLocalOnlyCapturedParamsHidden: Lib(p) = { \n     public X = p + 101 \n     X \n } \n A = { \n     open Lib \n     X \n } \n A
-def case_special__openLocalOnlyCapturedParamsHidden : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "A" (alg [] [.resolve "Lib"] [] [.resolve "X"]), privateProp "Lib" (alg ["p"] [] [publicLocalProp "X" .localCapturedAncestorParams (alg [] [] [] [(.binary .add (.param "p") (.num 101))])] [.resolve "X"])] [.resolve "A"])
-#guard obs case_special__openLocalOnlyCapturedParamsHidden == "err unknownName"
+-- special__openLocalOnlyCapturedParamsInsideOwner: Outer(p) = { \n     open Lib \n     Lib = { \n         public X = p + 101 \n     } \n     X \n } \n Outer(1)
+def case_special__openLocalOnlyCapturedParamsInsideOwner : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Outer" (alg ["p"] [.resolve "Lib"] [privateProp "Lib" (alg [] [] [{ (publicLocalProp "X" (.localCapturedAncestorParams ["p"]) (alg [] [] [] [(.binary .add (.param "p") (.num 101))])) with requiredOwnerDepths := some [("p", some 1)] }] [])] [.resolve "X"])] [(.call (.resolve "Outer") [.num 1])])
+#guard obs case_special__openLocalOnlyCapturedParamsInsideOwner == "ok raw=102 n=1"
+
+-- special__openLocalOnlyCapturedParamsOutsideOwner: Outer(p) = { \n     public Lib = { \n         public X = p + 101 \n     } \n     0 \n } \n A = { \n     open Outer.Lib \n     X \n } \n A
+def case_special__openLocalOnlyCapturedParamsOutsideOwner : Expr :=
+  .algorithmExpr (alg [] [] [{ (privateLocalProp "A" (.localCapturedAncestorParams ["p"]) (alg [] [(.dotCall (.resolve "Outer") "Lib" none)] [] [.resolve "X"])) with requiredOwnerDepths := some [("p", none)] }, privateProp "Outer" (alg ["p"] [] [publicProp "Lib" (alg [] [] [{ (publicLocalProp "X" (.localCapturedAncestorParams ["p"]) (alg [] [] [] [(.binary .add (.param "p") (.num 101))])) with requiredOwnerDepths := some [("p", some 1)] }] [])] [.num 0])] [.resolve "A"])
+#guard obs case_special__openLocalOnlyCapturedParamsOutsideOwner == "err localOnlyProperty"
 
 -- special__openTwoProvidersAmbiguous: L1 = { \n     public X = 101 \n } \n L2 = { \n     public X = 202 \n } \n A = { \n     open L1, L2 \n     X \n } \n A
 def case_special__openTwoProvidersAmbiguous : Expr :=
@@ -7729,7 +7734,7 @@ def case_special__openParentScopeReachesChild : Expr :=
 
 -- special__openNestedDoesNotLeakOutward: Lib = { \n     public X = 101 \n } \n A = { \n     Inner = { \n         open Lib \n         X \n     } \n     X \n } \n A(707)
 def case_special__openNestedDoesNotLeakOutward : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "Lib" (alg [] [] [publicProp "X" (alg [] [] [] [.num 101])] []), privateProp "A" (alg ["X"] [] [privateLocalProp "Inner" .localCapturedAncestorParams (alg [] [.resolve "Lib"] [] [.param "X"])] [.param "X"])] [(.call (.resolve "A") [.num 707])])
+  .algorithmExpr (alg [] [] [privateProp "Lib" (alg [] [] [publicProp "X" (alg [] [] [] [.num 101])] []), privateProp "A" (alg ["X"] [] [{ (privateLocalProp "Inner" (.localCapturedAncestorParams ["X"]) (alg [] [.resolve "Lib"] [] [.param "X"])) with requiredOwnerDepths := some [("X", some 0)] }] [.param "X"])] [(.call (.resolve "A") [.num 707])])
 #guard obs case_special__openNestedDoesNotLeakOutward == "ok raw=707 n=1"
 
 -- special__openHeadDefinedLater: A = { \n     open Lib \n     X \n } \n Lib = { \n     public X = 101 \n } \n A
@@ -7757,10 +7762,10 @@ def case_special__openPrivateMemberIsNotASecondProvider : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Pub" (alg [] [] [publicProp "X" (alg [] [] [] [.num 101])] []), privateProp "Lib" (alg [] [] [privateProp "X" (alg [] [] [] [.num 202])] []), privateProp "A" (alg [] [.resolve "Pub", .resolve "Lib"] [] [.resolve "X"])] [.resolve "A"])
 #guard obs case_special__openPrivateMemberIsNotASecondProvider == "ok raw=101 n=1"
 
--- special__openLocalOnlyMemberIsNotASecondProvider: Pub = { \n     public X = 101 \n } \n Lib(p) = { \n     public X = p + 202 \n     X \n } \n A = { \n     open Pub, Lib \n     X \n } \n A
-def case_special__openLocalOnlyMemberIsNotASecondProvider : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "Pub" (alg [] [] [publicProp "X" (alg [] [] [] [.num 101])] []), privateProp "A" (alg [] [.resolve "Pub", .resolve "Lib"] [] [.resolve "X"]), privateProp "Lib" (alg ["p"] [] [publicLocalProp "X" .localCapturedAncestorParams (alg [] [] [] [(.binary .add (.param "p") (.num 202))])] [.resolve "X"])] [.resolve "A"])
-#guard obs case_special__openLocalOnlyMemberIsNotASecondProvider == "ok raw=101 n=1"
+-- special__openLocalOnlyMemberIsASecondProvider: Pub = { \n     public X = 101 \n } \n Outer(p) = { \n     public Lib = { \n         public X = p + 202 \n     } \n     0 \n } \n A = { \n     open Pub, Outer.Lib \n     X \n } \n A
+def case_special__openLocalOnlyMemberIsASecondProvider : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Pub" (alg [] [] [publicProp "X" (alg [] [] [] [.num 101])] []), privateProp "A" (alg [] [.resolve "Pub", (.dotCall (.resolve "Outer") "Lib" none)] [] [.resolve "X"]), privateProp "Outer" (alg ["p"] [] [publicProp "Lib" (alg [] [] [{ (publicLocalProp "X" (.localCapturedAncestorParams ["p"]) (alg [] [] [] [(.binary .add (.param "p") (.num 202))])) with requiredOwnerDepths := some [("p", some 1)] }] [])] [.num 0])] [.resolve "A"])
+#guard obs case_special__openLocalOnlyMemberIsASecondProvider == "err ambiguousOpen"
 
 -- special__ifSelectedParameterizedBranchIsArity: Inc(x) = x + 1 \n if(1, Inc, 0)
 def case_special__ifSelectedParameterizedBranchIsArity : Expr :=
@@ -7847,7 +7852,7 @@ def case_special__repeatParameterizedStepIsCallback : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))])] [(.call (.resolve "repeat") [.resolve "Inc", .num 2, .num 0])])
 #guard obs case_special__repeatParameterizedStepIsCallback == "ok raw=2 n=1"
 
--- 1551 differential cases.
+-- 1552 differential cases.
 
 /--
 Machine-checked surface partition count: the id list is built by the same
@@ -9370,7 +9375,8 @@ def surfaceCaseIds : List String := [
   "special__containsAcrossKinds",
   "special__openPublicMember",
   "special__openPrivateMemberHidden",
-  "special__openLocalOnlyCapturedParamsHidden",
+  "special__openLocalOnlyCapturedParamsInsideOwner",
+  "special__openLocalOnlyCapturedParamsOutsideOwner",
   "special__openTwoProvidersAmbiguous",
   "special__openDuplicateTargetDedup",
   "special__openDuplicateDottedTargetDedup",
@@ -9388,7 +9394,7 @@ def surfaceCaseIds : List String := [
   "special__openBuiltinTargetIsIllegal",
   "special__structuralDotSeesPrivateMember",
   "special__openPrivateMemberIsNotASecondProvider",
-  "special__openLocalOnlyMemberIsNotASecondProvider",
+  "special__openLocalOnlyMemberIsASecondProvider",
   "special__ifSelectedParameterizedBranchIsArity",
   "special__ifSelectedParameterizedFalseBranchIsArity",
   "special__ifParameterizedConditionIsArity",
@@ -9407,7 +9413,7 @@ def surfaceCaseIds : List String := [
   "special__reduceParameterIgnoringInitialStillRejected",
   "special__repeatParameterizedStepIsCallback"
 ]
-#guard surfaceCaseIds.length == 1551
+#guard surfaceCaseIds.length == 1552
 
 /-!
 Direct internal-node cases: `Expr.sequenceConstruct` is an INTERNAL node —
@@ -9509,5 +9515,5 @@ def internalNodeCaseIds : List String := [
 #guard internalNodeCaseIds.length == 14
 
 -- 14 internal-node cases.
--- Total: 1565 case guards (1551 surface + 14 internal-node).
+-- Total: 1566 case guards (1552 surface + 14 internal-node).
 end SemanticExplorerCases

@@ -545,17 +545,31 @@ public class ChainedDotStructuralPrecedenceTests
         Assert.Equal(LexicalFallbackSelection.Never, edge.ElaboratedFallbackSelection);
         Assert.False(edge.LexicalFallbackMayBeSelected());
 
-        // A local-only or conditional-branch intermediate member is a known
-        // failure: no outer edge is ever reached, so nothing is selected there.
+        // A local-only intermediate member is SELECTED by declaration exactly like the
+        // evaluator selects it (its accessibility from the site is checked afterwards, never
+        // a fallback), so the chain keeps navigating and the leaf edge's declared member
+        // never selects the fallback. A conditional-branch member stays a known failure: the
+        // family exposes no structural members at all.
         var localOnlyRoot = SourceProvenance.ParseValid(LocalOnlyIntermediate + "\nG.Sub.Q").Root;
         var g = Assert.Single(localOnlyRoot.Properties, p => p.Name == "G").Value;
         var localOnlyEdge = Assert.IsType<Expr.DotCall>(localOnlyRoot.Output[^1]);
-        var failing = localOnlyEdge.Target.ResolveStaticStructuralMemberProvider(
+        var navigated = localOnlyEdge.Target.ResolveStaticStructuralMemberProvider(
             name => name == "G"
                 ? new(StaticStructuralMemberProviderKind.KnownAlgorithm, g)
                 : new(StaticStructuralMemberProviderKind.LexicalReference));
+        Assert.Equal(StaticStructuralMemberProviderKind.KnownAlgorithm, navigated.Kind);
+        Assert.Same(Assert.Single(g.Properties, p => p.Name == "Sub").Value, navigated.Algorithm);
+        Assert.Equal(LexicalFallbackSelection.Never, localOnlyEdge.GetLexicalFallbackSelection(navigated));
+
+        var conditionalRoot = SourceProvenance.ParseValid(ConditionalIntermediate + "\nC.Q.R").Root;
+        var c = Assert.Single(conditionalRoot.Properties, p => p.Name == "C").Value;
+        var conditionalEdge = Assert.IsType<Expr.DotCall>(conditionalRoot.Output[^1]);
+        var failing = conditionalEdge.Target.ResolveStaticStructuralMemberProvider(
+            name => name == "C"
+                ? new(StaticStructuralMemberProviderKind.KnownAlgorithm, c)
+                : new(StaticStructuralMemberProviderKind.LexicalReference));
         Assert.Equal(StaticStructuralMemberProviderKind.KnownFailure, failing.Kind);
-        Assert.Equal(LexicalFallbackSelection.Never, localOnlyEdge.GetLexicalFallbackSelection(failing));
+        Assert.Equal(LexicalFallbackSelection.Never, conditionalEdge.GetLexicalFallbackSelection(failing));
     }
 
     [Fact]
@@ -626,15 +640,20 @@ public class ChainedDotStructuralPrecedenceTests
     }
 
     [Fact]
-    public void SemanticModel_LocalOnlyIntermediate_LeavesTheWholeTailUnresolved()
+    public void SemanticModel_LocalOnlyIntermediate_ResolvesTheChainToItsDeclarations()
     {
-        // Runtime errors at `Sub`; the editor must not claim `Q` resolves anywhere.
+        // Selection is by declaration in every view: the editor resolves `Sub` to G's member
+        // and `Q` to Sub's own member (never to the root extension `Q(v)`), exactly the
+        // declarations the runtime selects before it refuses the root-level access to the
+        // local-only `Sub` (an accessibility error at the site, not a different resolution).
         var model = Model(LocalOnlyIntermediate + "\nQ(v) = 99\n\nG.Sub.Q");
 
-        Assert.Equal(IdentifierClassification.Unresolved, ResolutionAt(model, 10, 3).Classification);
+        var sub = ResolutionAt(model, 10, 3);
+        Assert.Equal(IdentifierClassification.PropertyReference, sub.Classification);
+        AssertSpanStartsAt(sub.ResolvedDeclaration?.Span, 2, 12);
         var leaf = ResolutionAt(model, 10, 7);
-        Assert.Equal(IdentifierClassification.Unresolved, leaf.Classification);
-        Assert.Null(leaf.ResolvedDeclaration);
+        Assert.Equal(IdentifierClassification.PropertyReference, leaf.Classification);
+        AssertSpanStartsAt(leaf.ResolvedDeclaration?.Span, 3, 16);
     }
 
     [Fact]

@@ -72,8 +72,7 @@ public static partial class Evaluator
         => ShouldWrapArgExprAsValue(expr)
             || IsZeroDeclarationBlockValueSlot(expr)
             || expr is Expr.Param(var name)
-                && (LookupCountedParam(ctx.CountedParamEnv, name) is not null
-                    || LookupVal(valEnv, name) is not null);
+                && ParameterHasValue(name, ctx, valEnv);
 
     private static EvalResult<IReadOnlyList<Algorithm>> ResolveArgAlgs(
         OutputBundle args,
@@ -386,14 +385,15 @@ public static partial class Evaluator
             return new EvalError.NoMatchingBranch(calleeName.Render(ctx));
 
         var (branch, bindings) = match.Value;
-        var wiredBody = ChildOf(callee, SelectedBranchBody(branch));
         // A clause-family binder is bound on the value channel only, so the
         // inherited algorithm and counted tiers are shadowed by the binder names
         // exactly like a user call's parameter list (the value tier is shadowed
-        // by the prepended bindings themselves).
+        // by the prepended bindings themselves). The same names are published on
+        // the family scope the body is wired under, for member accessibility.
         var shadowedNames = bindings.Select(static binding => binding.Item1).ToArray();
         var newCtx = ShadowInheritedParameterEnvironments(ctx.Push(callee), shadowedNames);
         var newEnv = Concat(bindings, valEnv);
+        var wiredBody = ChildOfConditionalCall(callee, SelectedBranchBody(branch), shadowedNames, newCtx, newEnv);
         return ReCountValueBoundary(EvalAlgOutputCounted(wiredBody, newCtx, newEnv));
     }
 

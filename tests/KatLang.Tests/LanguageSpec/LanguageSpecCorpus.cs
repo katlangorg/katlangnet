@@ -1459,14 +1459,18 @@ public static class LanguageSpecCorpus
             Id = "open-local-only-through-capture-row",
             Category = "access-boundaries",
             Source = "Outer(p) = {\n    open Lib\n    Lib = { public G = { Q = p + 1\n    (Q) } }\n    G\n}\nOuter(1)",
-            Outcome = SpecOutcome.EvalError,
-            ExpectedErrorCategory = "unknownName",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "2",
+            ExpectedRaw = "2",
+            ExpectedEmittedCount = 1,
             Probes =
             [
-                new SpecProbe("Outer(p) = {\n    open Lib\n    Lib = { public G = { Q = p + 1\n    { Q } } }\n    G\n}\nOuter(1)", "err unknownName"),
-                new SpecProbe("Outer(p) = {\n    open Lib\n    Lib = { public G = { Q = p + 1\n    Id(Q) } }\n    Id(v) = v\n    G\n}\nOuter(1)", "err unknownName"),
+                new SpecProbe("Outer(p) = {\n    open Lib\n    Lib = { public G = { Q = p + 1\n    { Q } } }\n    G\n}\nOuter(1)", "ok raw=2 n=1"),
+                new SpecProbe("Outer(p) = {\n    open Lib\n    Lib = { public G = { Q = p + 1\n    Id(Q) } }\n    Id(v) = v\n    G\n}\nOuter(1)", "ok raw=2 n=1"),
+                // Outside `Outer` the same member is selected and refused at the access.
+                new SpecProbe("Outer(p) = {\n    public Lib = { public G = { Q = p + 1\n    (Q) } }\n    0\n}\nA = {\n    open Outer.Lib\n    G\n}\nA", "err localOnlyProperty"),
             ],
-            Explanation = "Exposure follows ownership through every layer: `G` depends on `p` (owned by `Outer`) through its own local `Q` whether the reference is written bare, in a capture row, in a nested block, or in a call argument, so it is local-only and `open Lib` does not expose it.",
+            Explanation = "Exposure follows ownership through every layer: `G` depends on `p` (owned by `Outer`) through its own local `Q` whether the reference is written bare, in a capture row, in a nested block, or in a call argument, so it is local-only. Local-only is context-dependent, not universal: `open Lib` provides `G` to Outer's own body, which lies inside the owner of the captured `p`, and refuses it to a body outside `Outer`.",
         },
         new()
         {
@@ -1608,37 +1612,95 @@ public static class LanguageSpecCorpus
             IncludeInGeneratorPrompt = true,
             Explanation = "A member name the receiver does not declare is not an error by itself, and a statically known receiver (`Math`, a block, a module) gets no special status: `Lib.Dubel(4)` has no structural `Dubel`, so it is the ordinary lexical fallback `Dubel(Lib, 4)` — `a` receives the `Lib` algorithm and `b` receives `4`. Static receiver knowledge improves the DIAGNOSTIC when no such callable is visible (the report names the receiver, explains the fallback, and suggests a real member), but never the resolution or the validity of the program.",
         },
+        // ==================== local-only members are local-context-dependent (K1-08) ====================
         new()
         {
-            Id = "dot-fallback-after-open-provider-exposure",
+            Id = "open-parameterized-provider-rejected",
             Category = "name-resolution",
-            Source = """
-                open Fallback
-                Make(x) = {
-                    public Box = { g = 42
-                        x }
-                    0
-                }
-                Middle(g) = {
-                    open Make
-                    public Box2 = { h = 42
-                        Box.g }
-                    0
-                }
-                Fallback = { public Box = 5
-                    public Box2 = 7 }
-                Outer(h) = {
-                    open Middle
-                    P = Box2.h
-                    P
-                }
-                Outer({x+1}), Outer({x*10})
-                """,
+            Source = "Lib(p) = {\n    public X = p + 101\n    X\n}\nA = {\n    open Lib\n    X\n}\nA",
+            Outcome = SpecOutcome.ParseError,
+            ExpectedParseDiagnosticFragment = "'Lib' cannot be opened because it requires arguments",
+            ExpectedDiagnosticCode = DiagnosticCode.IllegalInOpen,
+            IncludeInGeneratorPrompt = true,
+            Notes = "Front-end rejection decided after signature completion (K1-08, September 2026); no elaborated Lean program exists for a rejected parse. Both evaluators refuse the same target at open resolution with `illegalInOpen` (Lean `resolveOpen`, C# `Evaluator.ResolveOpen`), and a clause family or an implicitly parameterized provider (`Lib = { public X = 1  p + 1 }`) is refused identically.",
+            Explanation = "An `open` provider must need no call: `open` imports a namespace and never creates an activation, so an algorithm with parameters — explicit or inferred — has no members its inputs could be read from, and `open Lib` is refused at the open target rather than given an invented meaning (`X` is neither read through a phantom `p` nor turned into an implicit parameter). A parameterized head of a dotted target is different: `open Lib.Sub` with `Lib(p)` opens a self-contained `Sub` by identity navigation.",
+        },
+        new()
+        {
+            Id = "open-local-only-member-inside-owner",
+            Category = "access-boundaries",
+            Source = "Outer(n) = {\n    open Inner\n    Inner = {\n        public X = n\n    }\n    X + 0\n}\nOuter(5)",
             Outcome = SpecOutcome.Evaluates,
-            ExpectedDisplay = "8\n70",
-            ExpectedRaw = "S[8, 70]",
-            ExpectedEmittedCount = 2,
-            Explanation = "Local-only members do not participate in open lookup. Removing Make.Box reveals the ancestor provider and makes Middle.Box2 capture g; removing that provider in turn makes Outer.P capture h. A provisional structural winner cannot suppress a fallback dependency after exposure removes its provider. The local-only cache keeps the two calls separate.",
+            ExpectedDisplay = "5",
+            ExpectedRaw = "5",
+            ExpectedEmittedCount = 1,
+            Probes =
+            [
+                // The same member through structural access, and from a sibling scope.
+                new SpecProbe("Outer(n) = {\n    Inner = {\n        public X = n\n    }\n    Inner.X\n}\nOuter(5)", "ok raw=5 n=1"),
+                new SpecProbe("Outer(n) = {\n    Left = {\n        public X = n\n    }\n    Right = {\n        open Left\n        X\n    }\n    Right\n}\nOuter(5)", "ok raw=5 n=1"),
+                new SpecProbe("Outer(n) = {\n    Left = {\n        public X = n\n    }\n    Right = {\n        Left.X\n    }\n    Right\n}\nOuter(5)", "ok raw=5 n=1"),
+                // A transitive capture (X reads Helper, which reads n) is the same case.
+                new SpecProbe("Outer(n) = {\n    Helper = n + 1\n    Inner = {\n        public X = Helper\n    }\n    Inner.X\n}\nOuter(5)", "ok raw=6 n=1"),
+                // A binder-capturing member inside its branch, through both channels.
+                new SpecProbe("F(0) = 0\nF(n) = {\n    Lib = { public X = n }\n    G = {\n        open Lib\n        X\n    }\n    G + Lib.X\n}\nF(5)", "ok raw=10 n=1"),
+                // Every activation reads its own binding: no run-wide reuse of a captured value.
+                new SpecProbe("Outer(n) = {\n    Inner = {\n        public X = n\n    }\n    P = Inner.X\n    P\n}\nOuter(1), Outer(2)", "ok raw=S[1, 2] n=2"),
+                // Capture payloads preserve owners, values, and activation identity across shadowing.
+                new SpecProbe("Outer(n) = {\n Lib = { public X = 10\n n }\n P = { open Lib\n X }\n Q = Lib.X\n 0\n}\nOuter.P, Outer.Q", "ok raw=S[10, 10] n=2"),
+                new SpecProbe("Outer(n) = {\n Inner = { public X = n }\n Read(n) = Inner.X\n Read(7)\n}\nOuter(5), Outer(9)", "ok raw=S[5, 9] n=2"),
+                new SpecProbe("Outer(n) = {\n Inner = { public X = n }\n Read(n) = { open Inner\n X }\n Read(7)\n}\nOuter(5), Outer(9)", "ok raw=S[5, 9] n=2"),
+                new SpecProbe("Outer(n) = {\n Q = n\n Mid(n) = { public X = Q\n X }\n Mid.X\n}\nOuter(5)", "ok raw=5 n=1"),
+                new SpecProbe("Outer(n) = {\n Q = n\n Mid(n) = { public X = Q + n\n X }\n Mid(7)\n}\nOuter(5)", "ok raw=12 n=1"),
+                new SpecProbe("Outer(n) = {\n Lib = { public X = n }\n Step(n) = Lib.X + n\n repeat(Step, 2, 0)\n}\nOuter(5), Outer(7)", "ok raw=S[10, 14] n=2"),
+            ],
+            IncludeInGeneratorPrompt = true,
+            Explanation = "A `public` member that captures an enclosing parameter is local-only, and local-only means local-context-dependent, not universally hidden: `Inner` is a zero-parameter provider whose `X` reads the active `Outer.n`, so inside `Outer` — the owner of that parameter — `open Inner` provides `X` and `Inner.X` reaches it, from Outer's own body and from any sibling or nested scope under the same activation. Both channels apply the ONE accessibility rule: a local-only member may be used from every lexical context inside the owner of each parameter it captures.",
+        },
+        new()
+        {
+            Id = "dot-local-only-member-outside-owner",
+            Category = "access-boundaries",
+            Source = "Outer(n) = {\n    Inner = {\n        public X = n\n    }\n    Inner.X\n}\nOuter.Inner.X",
+            Outcome = SpecOutcome.EvalError,
+            ExpectedErrorCategory = "localOnlyProperty",
+            Probes =
+            [
+                // The open channel refuses the same member from outside its owner.
+                new SpecProbe("Outer(n) = {\n    public Inner = {\n        public X = n\n    }\n    Inner.X\n}\nopen Outer.Inner\nX", "err localOnlyProperty"),
+                // A live but unrelated binding of the same name never counts: the rule is lexical.
+                new SpecProbe("Outer(n) = {\n    Inner = {\n        public X = n\n    }\n    G(7)\n}\nG(n) = Outer.Inner.X\nOuter(5)", "err localOnlyProperty"),
+                new SpecProbe("Apply(f) = f.X\nOuter(n) = {\n    Inner = { public X = n }\n    Apply(Inner)\n}\nOuter(5)", "err localOnlyProperty"),
+                // The owner is the NEAREST binder of the captured name: a site inside Outer but
+                // outside Mid cannot read Mid's n through Outer's same-named parameter.
+                new SpecProbe("Outer(n) = {\n    Mid(n) = {\n        Inner = {\n            public X = n\n        }\n        Inner.X\n    }\n    Mid.Inner.X\n}\nOuter(5)", "err localOnlyProperty"),
+                // Inside the owner (the nested `Apply` is written inside Outer) the same access is valid.
+                new SpecProbe("Outer(n) = {\n    Inner = { public X = n }\n    Apply(f) = f.X\n    Apply(Inner)\n}\nOuter(5)", "ok raw=5 n=1"),
+                // Neither another activation nor another same-binder family supplies the owner.
+                new SpecProbe("Outer(n) = {\n Mid(n) = { public X = n\n 0 }\n P = if(0, Mid.X, 10)\n Read = Outer.P\n Read\n}\nOuter(5)", "err localOnlyProperty"),
+                new SpecProbe("Outer(m) = {\n Mid(n) = { public X = n\n 0 }\n P = if(0, Mid.X, 10)\n Read = Outer.P\n Read\n}\nOuter(5)", "err localOnlyProperty"),
+                new SpecProbe("Outer(n) = {\n Mid(n) = { public X = n\n Read = Outer.Mid.X\n Read }\n Mid(7)\n}\nOuter(5)", "ok raw=7 n=1"),
+                new SpecProbe("Outer(m) = {\n public Mid(n) = { public Lib = { public X = n }\n Read = { open Outer.Mid.Lib\n X }\n Read }\n Mid(7)\n}\nOuter(5)", "ok raw=7 n=1"),
+                new SpecProbe("H(f, n) = if(n, H({ public X = n }, 0), f.X)\nH({ public X = 0 }, 5)", "err localOnlyProperty"),
+                new SpecProbe("Outer(f, k) = {\n Lib(n) = { public X = n\n f.X }\n if(k, Outer(Lib, 0), Lib(7))\n}\nOuter({ public X = 0 }, 1)", "err localOnlyProperty"),
+                new SpecProbe("H(f, k) = {\n F(0) = 0\n F(n) = H({ public X = n }, 0)\n G(0) = 0\n G(n) = f.X\n if(k, F(k), G(7))\n}\nH({ public X = 0 }, 5)", "err localOnlyProperty"),
+                new SpecProbe("Outer(n) = {\n Q = n\n Mid(n) = { public X = Q + n\n X }\n Mid.X\n}\nOuter(5)", "err localOnlyProperty"),
+            ],
+            IncludeInGeneratorPrompt = true,
+            Explanation = "Outside the owner of the captured parameter the same local-only member is selected and then refused: the root, an unrelated algorithm, and a callee written outside `Outer` are not inside `Outer`, so no activation of it is lexically available there — even when some same-named binding happens to be live (the rule is lexical ownership, never a dynamic lookup). Selection never depends on exposure, so the refusal is an accessibility error at the access, not a fallback or an invented meaning.",
+        },
+        new()
+        {
+            Id = "open-local-only-member-is-a-second-provider",
+            Category = "name-resolution",
+            Source = "Pub = {\n    public X = 101\n}\nOuter(p) = {\n    public Lib = {\n        public X = p + 202\n    }\n    0\n}\nA = {\n    open Pub, Outer.Lib\n    X\n}\nA",
+            Outcome = SpecOutcome.EvalError,
+            ExpectedErrorCategory = "ambiguousOpen",
+            Probes =
+            [
+                new SpecProbe("Pub = {\n    public X = 101\n}\nLib = {\n    X = 202\n}\nA = {\n    open Pub, Lib\n    X\n}\nA", "ok raw=101 n=1"),
+            ],
+            Explanation = "`open` selects members by visibility alone: a public local-only member is provided by its open whatever its exposure and takes part in precedence and ambiguity like any provided name, so beside another provider of `X` it is a genuine second provider. Only a PRIVATE member is never provided. Whether the selected member may be used at the site is checked afterwards, which is what lets the front end select exactly what the evaluator selects before exposure is classified.",
         },
         new()
         {
@@ -1655,6 +1717,8 @@ public static class LanguageSpecCorpus
                 new SpecProbe("Lib = {\n    public Sub = {\n        public Q = 1\n    }\n}\nK(Q) = Lib.Sub.Q\nK({x + 1})", "ok raw=1 n=1"),
                 new SpecProbe("Lib = {\n    public Sub = {\n        public Q(y) = y + 1\n    }\n}\nQ(x) = 99\nLib.Sub.Q(5)", "ok raw=6 n=1"),
                 new SpecProbe("Lib = {\n    public Sub = {\n        public Q = 1\n    }\n}\nOuter = {\n    Q(x) = 99\n    Lib.Sub.Q\n}\nOuter", "ok raw=1 n=1"),
+                new SpecProbe("Lib(p) = {\n public Mid(q) = {\n public Sub = { public X = 10 }\n q\n }\n p\n}\nLib.Mid.Sub.X", "ok raw=10 n=1"),
+                new SpecProbe("Lib(p) = {\n public Mid = {\n public Sub = { public X = 10 }\n q\n }\n p\n}\nopen Lib.Mid.Sub\nX", "ok raw=10 n=1"),
             ],
             IncludeInGeneratorPrompt = true,
             Explanation = "Dot syntax is property-first at EVERY level of a chain: the receiver `Lib.Sub` is navigated to `Sub`'s algorithm, and because `Sub` exposes an accessible `Q`, that member is read before the visible extension `Q(x)` is ever considered — exactly as `Lib.Q` reads `Lib`'s own `Q`. Only a receiver without the member falls back to the extension call `Q(receiver)`; a same-named extension, whether declared at the root, in the enclosing algorithm, or as a parameter of it, never pre-empts a structural member.",
@@ -1804,12 +1868,16 @@ public static class LanguageSpecCorpus
                 new SpecProbe("open Lib\nLib = {\n    public Area = 4\n    Helper = Area / 2\n}\n\nHelper", "err unresolvedImplicitParams"),
                 // Opening the library does not take structural access away.
                 new SpecProbe("open Lib\nLib = {\n    public Area = 4\n    Helper = Area / 2\n}\n\nLib.Helper", "ok raw=2 n=1"),
-                // A public member that reads an enclosing parameter is local-only: exported through neither channel.
-                new SpecProbe("open Lib\nLib(r) = {\n    public Area = r * r\n    Area\n}\n\nArea", "err unknownName"),
+                // Structural access reaches a capturing member by declaration and then refuses it
+                // here: the root is not inside `Lib`, the owner of the `r` that `Area` captures.
+                // (A parameterized algorithm cannot be opened at all; that front-end rejection is
+                // the `open-parameterized-provider-rejected` case.)
                 new SpecProbe("Lib(r) = {\n    public Area = r * r\n    Area\n}\n\nLib.Area", "err localOnlyProperty"),
+                // Inside the owner the same capturing member is provided and reachable.
+                new SpecProbe("Outer(r) = {\n    open Lib\n    Lib = {\n        public Area = r * r\n    }\n    Area\n}\n\nOuter(3)", "ok raw=9 n=1"),
             ],
             IncludeInGeneratorPrompt = true,
-            Explanation = "Private means not exported, not unreachable: `open` and `load` bring only `public` members into scope, while structural dot access ignores `public` and checks only exposure, so `Lib.Helper` reaches the private, self-contained `Helper`. A `public` member that depends on an enclosing parameter is local-only and is reached through neither `open` nor dot access.",
+            Explanation = "Private means not exported, not unreachable: `open` and `load` bring only `public` members into scope, while structural dot access ignores `public`, so `Lib.Helper` reaches the private, self-contained `Helper`. Exposure never removes a member from selection: a `public` member that depends on an enclosing parameter is selected as usual and then refused at any access written outside the owner of that parameter. A parameterized algorithm is refused as an `open` target outright, because `open` imports a namespace and never creates the activation its members would read.",
         },
         new()
         {
@@ -4030,8 +4098,11 @@ public static class LanguageSpecCorpus
                 new SpecProbe("F(0) = {\n  Lib = { public X = 1 }\n  G = {\n    H = {\n      open Lib\n      X\n    }\n    H\n  }\n  G\n}\nF(n) = n\nF(0)", "ok raw=1 n=1"),
                 new SpecProbe("F(0) = {\n  Lib = { public X = 1 }\n  G(0) = {\n    open Lib\n    X\n  }\n  G(k) = k\n  G(0)\n}\nF(n) = n\nF(0)", "ok raw=1 n=1"),
                 // A member capturing the branch binder is local-only exactly like a
-                // parameter-capturing member, so `open Lib` hides it.
-                new SpecProbe("F(0) = 0\nF(n) = {\n  Lib = { public X = n }\n  G = {\n    open Lib\n    X\n  }\n  G\n}\nF(5)", "err unknownName"),
+                // parameter-capturing member — which means local-context-dependent, not hidden:
+                // `G` lies inside the branch that binds `n`, so `open Lib` provides it there.
+                new SpecProbe("F(0) = 0\nF(n) = {\n  Lib = { public X = n }\n  G = {\n    open Lib\n    X\n  }\n  G\n}\nF(5)", "ok raw=5 n=1"),
+                // Outside that branch the same member is refused at the access.
+                new SpecProbe("Apply(f) = f.X\nF(0) = 0\nF(n) = {\n  Lib = { public X = n }\n  Apply(Lib)\n}\nF(5)", "err localOnlyProperty"),
                 // By name, nothing declared in a branch is reachable from outside the family.
                 new SpecProbe("F(0) = {\n  Lib = { public X = 1 }\n  Lib.X\n}\nF(n) = n\nF.Lib", "err localOnlyProperty"),
                 new SpecProbe("Outer = {\n  F(0) = {\n    Lib = { public X = 1 }\n    G = {\n      open Lib\n      X\n    }\n    G\n  }\n  F(n) = n\n  F(0)\n}\nOuter", "ok raw=1 n=1"),

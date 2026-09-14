@@ -255,16 +255,20 @@ structure CallableArgumentBindings (α : Type) where
   deriving Repr
 
 /-- Exposure classification of a `PropDef`: an INPUT to lookup, computed by the C# front
-    end and never derived here. `open` exposes public `.exported` members and structural
-    dot access reaches `.exported` members. `.localCapturedAncestorParams`: the value
-    requires an input only an enclosing owner's call binds (a parameter, or a conditional
-    branch's pattern binder). `.localConditional` is the family-level reason a name access
+    end and never derived here. SELECTION never depends on it: `open` selects public
+    members and structural dot access selects declared members; whether the selected
+    member may be USED at an access site is `memberAccessible?`, decided after selection.
+    `.localCapturedAncestorParams required`: the value requires the inputs `required`,
+    which only an enclosing owner's call binds (a parameter, or a conditional branch's
+    pattern binder) — the member is LOCAL-CONTEXT-DEPENDENT, usable from every lexical
+    context inside the owner of each required name and refused everywhere else, never
+    universally hidden. `.localConditional` is the family-level reason a name access
     into a conditional's branch bodies is refused (`conditionalBranchesDefineProperty`);
     the front end never assigns it to a `PropDef` — a branch's own declarations classify
     exactly like declarations in any other body. -/
 inductive PropExposure where
   | exported
-  | localCapturedAncestorParams
+  | localCapturedAncestorParams (required : List Ident)
   | localConditional
   deriving Repr, DecidableEq
 
@@ -868,6 +872,7 @@ mutual
     isPublic : Bool
     exposure : PropExposure := .exported
     identity : Option PropertyIdentity := none
+    requiredOwnerDepths : Option (List (Ident × Option Nat)) := none
     deriving Repr
 
   /-- A branch of a conditional algorithm: a pattern and a body algorithm.
@@ -896,6 +901,7 @@ mutual
         (opens      : List Expr) ->
         (properties : List PropDef) ->
         (output     : List Expr) ->
+        (declarationId : Option PropertyIdentity := none) ->
         Algorithm
     | builtin : Builtin -> Algorithm
     /-- Conditional algorithm: ordered pattern branches tried at call time.
@@ -954,14 +960,29 @@ mutual
         (parent   : Option ScopeCtx) ->
         (opens    : List Expr) ->
         (branches : List CondBranch) ->
+        (declarationId : Option PropertyIdentity := none) ->
         Algorithm
     deriving Repr
 
+  /-- A lexical scope level as the evaluator wires it. `params` are the parameter names
+      the level's algorithm binds — its own parameters, or, on the family scope a
+      conditional call wires the selected branch body under, the matched pattern
+      binders. They take no part in property lookup; they let `memberAccessible?` find
+      the owner of a local-only member's required input by the same nearest-owner walk
+      the surface layer elaborated the reference with (C#: `ScopeCtx.Parameters`).
+      `output` and `branches` retain the owning body for scope reconstruction.
+      Declaration and activation IDs distinguish owners even when body components or
+      binder names are shared. These IDs are separate from property-cache identity. -/
   inductive ScopeCtx where
     | mk :
         (parent  : Option ScopeCtx) ->
+        (params  : List Ident) ->
         (opens   : List Expr) ->
         (props   : List PropDef) ->
+        (output  : List Expr) ->
+        (branches : List CondBranch) ->
+        (activation : Option Nat) ->
+        (declarationId : Option PropertyIdentity) ->
         ScopeCtx
     deriving Repr
 end
@@ -1344,6 +1365,13 @@ namespace ZeroArgPropertyCache
           (existingKey, existingValue) :: insert rest key value
 end ZeroArgPropertyCache
 
+/-- The three binding channels saved by one lexical owner activation. -/
+structure ParameterActivation where
+  values : ValEnv
+  algorithms : AlgEnv
+  counted : CountedParamEnv
+  deriving Repr
+
 /-- Per-run evaluator state. The zero-parameter property cache is part of the
     Lean semantics because property-style `A` and explicit `A()` now have
     distinct observable call shapes. The state is created fresh for each
@@ -1352,6 +1380,7 @@ end ZeroArgPropertyCache
 structure EvalState where
   zeroArgPropertyCache : ZeroArgPropertyCache := []
   nextBindingContext : Nat := 1
+  lexicalActivations : Array ParameterActivation := #[]
   deriving Repr
 
 namespace EvalState
@@ -1423,12 +1452,13 @@ structure EvalCtx where
   algEnv    : AlgEnv := []
   countedParamEnv : CountedParamEnv := []
   bindingContext : Nat := 0
+  headScope : Option ScopeCtx := none
   deriving Repr
 
 namespace EvalCtx
   def empty : EvalCtx := { callStack := [], algEnv := [], countedParamEnv := [] }
   def push (a : Algorithm) (ctx : EvalCtx) : EvalCtx :=
-    { ctx with callStack := a :: ctx.callStack }
+    { ctx with callStack := a :: ctx.callStack, headScope := none }
   def head? (ctx : EvalCtx) : Option Algorithm := ctx.callStack.head?
   def withAlgEnv (env : AlgEnv) (ctx : EvalCtx) : EvalCtx :=
     { ctx with algEnv := env }
@@ -1505,9 +1535,10 @@ def lookupPropDefAny? (ps : List PropDef) (k : Ident) : Option PropDef :=
 def lookupPropDefExportedAny? (ps : List PropDef) (k : Ident) : Option PropDef :=
   ps.find? (fun p => p.name = k && p.exposure.isExported)
 
-/-- Primary helper: Lookup PropDef by name (public only). -/
+/-- Primary helper: Lookup PropDef by name (public only — the member an `open` provides,
+    selected by visibility alone; accessibility is checked after selection). -/
 def lookupPropDefPublic? (ps : List PropDef) (k : Ident) : Option PropDef :=
-  ps.find? (fun p => p.name = k && p.isPublic && p.exposure.isExported)
+  ps.find? (fun p => p.name = k && p.isPublic)
 
 /-- Lookup Algorithm from PropDef list (any visibility). -/
 def lookupPropAny (ps : List PropDef) (k : Ident) : Option Algorithm :=
@@ -1529,13 +1560,13 @@ namespace Algorithm
     ParameterPattern.normalPatterns ps
 
   def parent : Algorithm -> Option ScopeCtx
-    | .mk p _ _ _ _ => p
+    | .mk p _ _ _ _ _ => p
     | .builtin _ => none
-    | .conditional p _ _ => p
+    | .conditional p _ _ _ => p
   def parameterPatterns : Algorithm -> List ParameterPattern
-    | .mk _ parameterPatterns _ _ _ => parameterPatterns
+    | .mk _ parameterPatterns _ _ _ _ => parameterPatterns
     | .builtin _ => []
-    | .conditional _ _ _ => []
+    | .conditional _ _ _ _ => []
 
   def parameters : Algorithm -> List CallableParameter
     | a => (parameterPatterns a).flatMap ParameterPattern.captures
@@ -1547,30 +1578,40 @@ namespace Algorithm
   def callableSignature (name : Ident) (a : Algorithm) : CallableSignature :=
     { name := name, parameters := parameters a }
   def opens : Algorithm -> List Expr
-    | .mk _ _ op _ _ => op
+    | .mk _ _ op _ _ _ => op
     | .builtin _ => []
-    | .conditional _ op _ => op
+    | .conditional _ op _ _ => op
   def props : Algorithm -> List PropDef
-    | .mk _ _ _ pr _ => pr
+    | .mk _ _ _ pr _ _ => pr
     | .builtin _ => []
-    | .conditional _ _ _ => []
+    | .conditional _ _ _ _ => []
   /-- The algorithm's output as an `OutputBundle` — ordered original written
       expression rows. The algorithm is the scope-owning DEFINITION of this
       bundle; the bundle itself owns no scope. -/
   def output : Algorithm -> OutputBundle
-    | .mk _ _ _ _ out => out
+    | .mk _ _ _ _ out _ => out
     | .builtin _ => []
-    | .conditional _ _ _ => []
+    | .conditional _ _ _ _ => []
 
   /-- Access branches for conditional algorithms. Returns [] for other forms. -/
   def branches : Algorithm -> List CondBranch
-    | .conditional _ _ bs => bs
+    | .conditional _ _ bs _ => bs
     | _ => []
 
-  def withParent (p : Option ScopeCtx) : Algorithm -> Algorithm
-    | .mk _ parameterPatterns op pr out => .mk p parameterPatterns op pr out
+  def declarationId : Algorithm -> Option PropertyIdentity
+    | .mk _ _ _ _ _ id => id
+    | .conditional _ _ _ id => id
+    | .builtin _ => none
+
+  def withDeclarationId (id : Option PropertyIdentity) : Algorithm -> Algorithm
+    | .mk p ps op pr out _ => .mk p ps op pr out id
+    | .conditional p op bs _ => .conditional p op bs id
     | .builtin b => .builtin b
-    | .conditional _ op bs => .conditional p op bs
+
+  def withParent (p : Option ScopeCtx) : Algorithm -> Algorithm
+    | .mk _ parameterPatterns op pr out id => .mk p parameterPatterns op pr out id
+    | .builtin b => .builtin b
+    | .conditional _ op bs id => .conditional p op bs id
 
   def parameterForName? (x : Ident) : List CallableParameter -> Option CallableParameter
     | [] => none
@@ -1594,14 +1635,14 @@ namespace Algorithm
       `K(a, b) = a`, where `b` must remain part of the ordinary call interface
       even though it is not referenced in the body. -/
   def withParams (ps : List Ident) : Algorithm -> Algorithm
-    | .mk p oldPatterns op pr out => .mk p (mergeParameterPatterns oldPatterns ps) op pr out
+    | .mk p oldPatterns op pr out id => .mk p (mergeParameterPatterns oldPatterns ps) op pr out id
     | .builtin b => .builtin b
-    | .conditional p op bs => .conditional p op bs
+    | .conditional p op bs id => .conditional p op bs id
 
   def withParameterPatterns (patterns : List ParameterPattern) : Algorithm -> Algorithm
-    | .mk p _ op pr out => .mk p patterns op pr out
+    | .mk p _ op pr out id => .mk p patterns op pr out id
     | .builtin b => .builtin b
-    | .conditional p op bs => .conditional p op bs
+    | .conditional p op bs id => .conditional p op bs id
 
   def hasStructuredParameterPattern (a : Algorithm) : Bool :=
     ParameterPattern.hasStructured (parameterPatterns a)
@@ -1700,7 +1741,7 @@ namespace Algorithm
     elaborateClauseGroup [{ pattern := pattern, body := body }]
 
   def asScopeCtx (a : Algorithm) : ScopeCtx :=
-    ScopeCtx.mk (parent a) (opens a) (props a)
+    ScopeCtx.mk (parent a) (params a) (opens a) (props a) (output a) (branches a) none (declarationId a)
 
   def isBuiltin : Algorithm -> Bool
     | .builtin _ => true
@@ -1712,9 +1753,9 @@ namespace Algorithm
       in explicitly parameterized bodies must resolve lexically or be reported as
       undeclared. -/
   def declaresExplicitParamsWithoutOutput : Algorithm -> Bool
-    | .mk _ parameterPatterns _ _ out => !parameterPatterns.isEmpty && out.isEmpty
+    | .mk _ parameterPatterns _ _ out _ => !parameterPatterns.isEmpty && out.isEmpty
     | .builtin _ => false
-    | .conditional _ _ _ => false
+    | .conditional _ _ _ _ => false
 
   /-- Unfiltered property lookup (sees private properties). -/
   def lookupProp (a : Algorithm) (k : Ident) : Option Algorithm :=
@@ -1738,7 +1779,7 @@ namespace Algorithm
 
   /-- True when a conditional algorithm has a branch body defining the given property. -/
   def conditionalBranchesDefineProperty : Algorithm -> Ident -> Bool
-    | .conditional _ _ bs, k => bs.any (fun br => hasPropAny (props br.body) k)
+    | .conditional _ _ bs _, k => bs.any (fun br => hasPropAny (props br.body) k)
     | _, _ => false
 
   /-- Wire a child algorithm to its parent's scope context. -/
@@ -1756,7 +1797,7 @@ namespace Algorithm
       `validateConditionalBranchArities`) rejects violating ASTs with
       `Error.branchArityMismatch` before any evaluation. -/
   def validateBranchArities : Algorithm -> Option (Nat × Nat)
-    | .conditional _ _ bs =>
+    | .conditional _ _ bs _ =>
         match bs with
         | [] => none
         | b :: rest =>
@@ -1787,7 +1828,7 @@ namespace Algorithm
       `validateConditionalBranchArities`) rejects violating ASTs with
       `Error.branchOutputArityMismatch` before any evaluation. -/
   def validateBranchOutputArities : Algorithm -> Option (Nat × Nat)
-    | .conditional _ _ bs =>
+    | .conditional _ _ bs _ =>
         match bs with
         | [] => none
         | b :: rest =>
@@ -1804,7 +1845,7 @@ namespace Algorithm
       property names.  Returns the first duplicate name found, or `none`
       if all names are unique.  This enforces the unique property name invariant. -/
   def findDuplicatePropName : Algorithm -> Option Ident
-    | .mk _ _ _ ps _ =>
+    | .mk _ _ _ ps _ _ =>
         let names := ps.map (·.name)
         let rec go : List Ident -> List Ident -> Option Ident
           | [],        _    => none
@@ -1818,7 +1859,7 @@ namespace Algorithm
       match-equivalent patterns.  Returns `true` if a duplicate is found.
       This enforces the unique branch pattern invariant. -/
   def hasDuplicateBranchPatterns : Algorithm -> Bool
-    | .conditional _ _ bs =>
+    | .conditional _ _ bs _ =>
         let rec go : List CondBranch -> Bool
           | [] => false
           | b :: rest =>
@@ -1855,7 +1896,7 @@ mutual
   partial def validateExplicitParamOutputInvariant (a : Algorithm)
       (name : Ident := "conditional") : EvalM Unit := do
     match a with
-    | .mk _ parameters op pr out =>
+    | .mk _ parameters op pr out _ =>
         if !parameters.isEmpty && out.isEmpty then
           .error Error.explicitParamsRequireOutput
         for openExpr in op do
@@ -1865,7 +1906,7 @@ mutual
         for expr in out do
           validateExplicitParamOutputInvariantExpr expr
     | .builtin _ => pure ()
-    | .conditional _ op branches =>
+    | .conditional _ op branches _ =>
         validateConditionalBranchArities name a
         for openExpr in op do
           validateExplicitParamOutputInvariantExpr openExpr
@@ -1915,17 +1956,44 @@ end
 
 namespace ScopeCtx
   def parent : ScopeCtx -> Option ScopeCtx
-    | .mk p _ _ => p
+    | .mk p _ _ _ _ _ _ _ => p
+  def params : ScopeCtx -> List Ident
+    | .mk _ ps _ _ _ _ _ _ => ps
   def opens : ScopeCtx -> List Expr
-    | .mk _ op _ => op
+    | .mk _ _ op _ _ _ _ _ => op
   def props : ScopeCtx -> List PropDef
-    | .mk _ _ ps => ps
+    | .mk _ _ _ ps _ _ _ _ => ps
+  /-- The owning output rows, retained for scope reconstruction. Runtime declaration IDs
+      distinguish owners even when these rows (or clause binders) have the same shape. -/
+  def output : ScopeCtx -> List Expr
+    | .mk _ _ _ _ out _ _ _ => out
+  def activation : ScopeCtx -> Option Nat
+    | .mk _ _ _ _ _ _ value _ => value
+  def withActivation (value : Nat) : ScopeCtx -> ScopeCtx
+    | .mk p ps op props out branches _ id => .mk p ps op props out branches (some value) id
+  partial def declaration : ScopeCtx -> ScopeCtx
+    | .mk p ps op props out branches _ id =>
+        .mk (p.map declaration) ps op props out branches none id
+  def ancestor? (scope : ScopeCtx) : Nat -> Option ScopeCtx
+    | 0 => some scope
+    | n + 1 => scope.parent >>= fun p => ancestor? p n
+  def declarationId : ScopeCtx -> Option PropertyIdentity
+    | .mk _ _ _ _ _ _ _ id => id
 end ScopeCtx
 
 namespace Algorithm
   /-- Create a temporary algorithm from a ScopeCtx for open resolution. -/
   def forOpens (sc : ScopeCtx) : Algorithm :=
     .mk (some sc) [] (ScopeCtx.opens sc) [] []
+
+  /-- Whether an algorithm needs a call to have members: a parameterized algorithm
+      (explicit or inferred parameters) or a clause family (whose branches always take
+      arguments). Such an algorithm is not an `open` provider — `open` imports a namespace
+      and never creates an activation, so there is no value its members could read their
+      inputs from (C#: `Evaluator.RequiresArguments`). -/
+  def requiresArguments : Algorithm -> Bool
+    | .conditional _ _ _ _ => true
+    | a => !(params a).isEmpty
 
   /-- Lift a single expression into an algorithm whose output is that expression. -/
   def ofExpr (e : Expr) : Algorithm :=
@@ -1954,10 +2022,190 @@ partial def lookupLexicalDirect (a : Algorithm) (name : Ident) : Option Algorith
     | some sc => lookupInParentsDirect sc name
     | none    => none
 
+--------------------------------------------------------------------------------
+-- Member accessibility (the local-only law)
+--------------------------------------------------------------------------------
+
+/-- The scope owning parameter `name` as seen from `scope`: the nearest level, that scope
+    itself first, whose parameters bind the name — the same nearest-owner walk that
+    elaborated the captured reference (C#: `Evaluator.RequiredParameterOwner`). -/
+partial def requiredParameterOwner? (scope : ScopeCtx) (name : Ident) : Option ScopeCtx :=
+  if (ScopeCtx.params scope).contains name then some scope
+  else
+    match ScopeCtx.parent scope with
+    | some parent => requiredParameterOwner? parent name
+    | none => none
+
+/- Runtime declaration/activation identity is not an exported-property cache determinant.
+    Preserve the established structural cache law (C#: StructuralOwnerIdentity). -/
+mutual
+  partial def cacheExprShape : Expr -> Expr
+    | .param n => .param n
+    | .resolve n => .resolve n
+    | .num n => .num n
+    | .stringLiteral text => .stringLiteral text
+    | .emptySequence depth => .emptySequence depth
+    | .unary op e => .unary op (cacheExprShape e)
+    | .binary op a b => .binary op (cacheExprShape a) (cacheExprShape b)
+    | .index a b => .index (cacheExprShape a) (cacheExprShape b)
+    | .sequenceConstruct a b => .sequenceConstruct (cacheExprShape a) (cacheExprShape b)
+    | .sequenceSpread e => .sequenceSpread (cacheExprShape e)
+    | .listLiteral es => .listLiteral (es.map cacheExprShape)
+    | .capture es => .capture (es.map cacheExprShape)
+    | .algorithmExpr a => .algorithmExpr (cacheAlgorithmShape a)
+    | .call f args => .call (cacheExprShape f) (args.map cacheExprShape)
+    | .dotMember target name fallback args => .dotMember (cacheExprShape target) name
+        (cacheExprShape fallback) (args.map (List.map cacheExprShape))
+
+  partial def cacheAlgorithmShape : Algorithm -> Algorithm
+    | .builtin b => .builtin b
+    | .mk parent parameters opens props output _ =>
+        .mk (parent.map cacheScopeShape) parameters (opens.map cacheExprShape)
+          (props.map cachePropertyShape) (output.map cacheExprShape)
+    | .conditional parent opens branches _ =>
+        .conditional (parent.map cacheScopeShape) (opens.map cacheExprShape)
+          (branches.map fun b => { b with body := cacheAlgorithmShape b.body })
+
+  partial def cacheScopeShape : ScopeCtx -> ScopeCtx
+    | .mk parent _ opens props _ _ _ _ =>
+        .mk (parent.map cacheScopeShape) [] (opens.map cacheExprShape)
+          (props.map cachePropertyShape) [] [] none none
+
+  partial def cachePropertyShape (p : PropDef) : PropDef :=
+    { p with alg := cacheAlgorithmShape p.alg }
+end
+
+/-- Known declaration identities compare only the binder view and parent chain. Walking
+    or printing their complete property/output graphs at every lookup is unnecessary. -/
+partial def sameDeclaringScope (left right : ScopeCtx) : Bool :=
+  match left.declarationId, right.declarationId with
+  | some a, some b => a == b && left.params == right.params &&
+      match left.parent, right.parent with
+      | none, none => true
+      | some p, some q => sameDeclaringScope p q
+      | _, _ => false
+  | _, _ => reprStr left.declaration == reprStr right.declaration
+
+partial def compatibleActivations (required actual : Option ScopeCtx) : Bool :=
+  match required, actual with
+  | none, none => true
+  | some r, some a =>
+      (r.activation.isNone || r.activation == a.activation) && compatibleActivations r.parent a.parent
+  | _, _ => false
+
+def siteScope? (ctx : EvalCtx) : Option ScopeCtx :=
+  ctx.headScope.orElse (fun _ => ctx.head?.map Algorithm.asScopeCtx)
+
+partial def activeDeclaration? (required : ScopeCtx) (level : Option ScopeCtx) : Option ScopeCtx :=
+  match level with
+  | none => none
+  | some scope =>
+      if sameDeclaringScope required scope && compatibleActivations (some required) (some scope)
+      then some scope else activeDeclaration? required scope.parent
+
+def scopeInContext (a : Algorithm) (ctx : EvalCtx) : ScopeCtx :=
+  let scope := a.asScopeCtx
+  if scope.activation.isSome then scope
+  else (activeDeclaration? scope (siteScope? ctx)).getD scope
+
+def childOfInContext (parent child : Algorithm) (ctx : EvalCtx) : Algorithm :=
+  child.withParent (some (scopeInContext parent ctx))
+
+partial def scopeChainContains (level : Option ScopeCtx) (owner : ScopeCtx) : Bool :=
+  match level with
+  | none => false
+  | some scope =>
+      (sameDeclaringScope scope owner && scope.activation.isSome &&
+        compatibleActivations (some owner) (some scope)) ||
+      scopeChainContains scope.parent owner
+
+def lexicalChainContains (ctx : EvalCtx) (owner : ScopeCtx) : Bool :=
+  scopeChainContains (siteScope? ctx) owner
+
+def recordParameterActivation (names : List Ident) (ctx : EvalCtx) (env : ValEnv) : EvalM Nat := do
+  let state <- get
+  let id := state.lexicalActivations.size
+  let activation : ParameterActivation := {
+    values := env.filter (fun b => names.contains b.fst)
+    algorithms := ctx.algEnv.filter (fun b => names.contains b.fst)
+    counted := ctx.countedParamEnv.filter (fun b => names.contains b.fst) }
+  set { state with
+    lexicalActivations := state.lexicalActivations.push activation }
+  pure id
+
+def enterAlgorithmBody (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) : EvalM EvalCtx := do
+  if a.params.isEmpty then pure (ctx.push a)
+  else
+    let id <- recordParameterActivation a.params ctx env
+    pure { ctx.push a with headScope := some (a.asScopeCtx.withActivation id) }
+
+def capturedParameterActivation? (name : Ident) (ctx : EvalCtx) : EvalM (Option ParameterActivation) := do
+  match ctx.head?, siteScope? ctx with
+  | some site, some scope =>
+      if site.params.contains name then pure none
+      else
+        let id := scope.parent >>= fun parent =>
+          (requiredParameterOwner? parent name).bind ScopeCtx.activation
+        match id with
+        | none => pure none
+        | some id => pure ((<- get).lexicalActivations[id]?)
+  | _, _ => pure none
+
+def parameterContext (name : Ident) (ctx : EvalCtx) (env : ValEnv) : EvalM (EvalCtx × ValEnv) := do
+  match <- capturedParameterActivation? name ctx with
+  | none => pure (ctx, env)
+  | some activation =>
+      let parameterCtx := { ctx with algEnv := activation.algorithms, countedParamEnv := activation.counted }
+      pure (parameterCtx, activation.values)
+
+/-- THE member-accessibility law, applied AFTER a member has been selected — by structural
+    dot access (`evalDotCallCounted`, `resolveDotReceiver`), by a dotted `open` path step
+    (`resolveAlgForOpen`), and by an `open`-provided name (`lookupOpenProperties`); direct
+    lexical hits never consult it, because a name found on the site's own chain is by
+    construction inside every owner of what it captures.
+
+    An exported member is accessible everywhere. Captured requirements retain exact owner
+    positions across shadowing; names alone use the legacy nearest-owner host convention.
+    Each owner must be the same declaration and activation in the site's lexical chain,
+    including captured ancestors of a static provider. Reads use that owner's snapshot
+    rather than a shadowing dynamic binding. An absent owner refuses the access.
+    `.localConditional` is never assigned to a `PropDef`; declared by a host, it is
+    inaccessible. C#: `Evaluator.IsAccessibleFrom`. -/
+def memberAccessible? (ctx : EvalCtx) (container : Algorithm) (p : PropDef) : Bool :=
+  match p.exposure with
+  | .exported => true
+  | .localConditional => false
+  | .localCapturedAncestorParams required =>
+      match siteScope? ctx with
+      | none => false
+      | some _ =>
+          let declaringScope := scopeInContext container ctx
+          match p.requiredOwnerDepths with
+          | some requirements => requirements.all fun (name, depth) =>
+              match depth >>= declaringScope.ancestor? with
+              | some owner => owner.params.contains name && lexicalChainContains ctx owner
+              | none => false
+          | none => required.all fun name =>
+              match requiredParameterOwner? declaringScope name with
+              | some owner => lexicalChainContains ctx owner
+              | none => false
+
+
 def wireToCaller (ctx : EvalCtx) (a : Algorithm) : Algorithm :=
   match ctx.callStack.head? with
-  | some caller => Algorithm.childOf caller a
+  | some caller => childOfInContext caller a ctx
   | none        => a
+
+/-- Wires a selected branch body under its clause family for one call, publishing the
+    matched pattern binders as the family scope's `params`: the body itself declares no
+    parameters (binders bind by pattern matching), so this is the level at which
+    `memberAccessible?` finds the owner of a binder-capturing member.
+    C#: `Evaluator.ChildOfConditionalCall`. -/
+def wireSelectedBranchBody (callee : Algorithm) (body : Algorithm) (binderNames : List Ident)
+    (ctx : EvalCtx) (env : ValEnv) : EvalM Algorithm := do
+  let id <- recordParameterActivation binderNames ctx env
+  pure (body.withParent (some (.mk callee.parent binderNames callee.opens callee.props
+    callee.output callee.branches (some id) callee.declarationId)))
 
 def wireOpenBlockToGlobalScope (ctx : EvalCtx) (a : Algorithm) : Algorithm :=
   match Algorithm.parent a, ctx.callStack.reverse.head? with
@@ -2214,7 +2462,7 @@ def variadicItemToPatternInput (item : VariadicItem) : ParameterPatternInput :=
   bare single-binder conditionals. -/
 def flatBinderUserEquivalent? (callee : Algorithm) : Option Algorithm :=
   match callee with
-  | .conditional _ _ [branch] =>
+  | .conditional _ _ [branch] _ =>
       match Pattern.flatBinderParamNames? branch.pattern with
       | some ps =>
           let wiredBody := Algorithm.childOf callee branch.body
@@ -2234,7 +2482,7 @@ def flatBinderUserEquivalent? (callee : Algorithm) : Option Algorithm :=
     reports `noMatchingBranch`. Returns `none` for non-conditional algorithms. -/
 def conditionalValueAccessError? (name : String) (a : Algorithm) : Option Error :=
   match a with
-  | .conditional _ _ _ =>
+  | .conditional _ _ _ _ =>
       match flatBinderUserEquivalent? a with
       | some simple => some (Error.arityMismatch (Algorithm.params simple).length 0)
       | none => some (Error.noMatchingBranch name)
@@ -2360,7 +2608,7 @@ def makeCollectionListResult (items : List Result) : CountedResult :=
     genuine value-evaluation error. C#: `IsFunctionShapedAlgorithm`. -/
 def Algorithm.isFunctionShaped : Algorithm -> Bool
   | .builtin _ => true
-  | .conditional _ _ _ => true
+  | .conditional _ _ _ _ => true
   | a => !(Algorithm.params a).isEmpty || !(Algorithm.parameterPatterns a).isEmpty
 
 /-- Collect the item segment assigned to a collecting binding as ONE list value.
@@ -3208,9 +3456,9 @@ def zeroArgPropertyCacheKey (accessKind : ZeroArgPropertyAccessKind)
   let bindingContextFree := binding.exposure.isExported
   {
     accessKind := if bindingContextFree then .lexical else accessKind,
-    owner := reprStr owner.asScopeCtx,
+    owner := reprStr (cacheScopeShape owner.asScopeCtx),
     propertyName := binding.name,
-    propertyAlgorithm := reprStr binding.alg,
+    propertyAlgorithm := reprStr (cacheAlgorithmShape binding.alg),
     valEnv := if bindingContextFree then none else some (reprStr env),
     algEnv := if bindingContextFree then none else some (reprStr ctx.algEnv),
     countedParamEnv := if bindingContextFree then none else some (reprStr ctx.countedParamEnv),
@@ -3218,7 +3466,7 @@ def zeroArgPropertyCacheKey (accessKind : ZeroArgPropertyAccessKind)
   }
 
 def reducerAccumulatorSideHasTopLevelCollecting : Algorithm -> Bool
-  | .mk _ patterns _ _ _ =>
+  | .mk _ patterns _ _ _ _ =>
       match patterns with
       | [] => false
       | _ :: accumulatorPatterns =>
@@ -3683,7 +3931,7 @@ def resolveAlgForOpen (e : Expr) (ctx : EvalCtx) : EvalM Algorithm := do
   | .resolve n =>
     match ctx.callStack with
     | a::_ =>
-      match lookupLexicalDirect a n with
+      match lookupInParentsDirect (scopeInContext a ctx) n with
       | some r =>
           if r.isBuiltin then .error (Error.illegalInOpen s!"builtin '{n}'")
           else pure r
@@ -3698,12 +3946,15 @@ def resolveAlgForOpen (e : Expr) (ctx : EvalCtx) : EvalM Algorithm := do
     | some p =>
         if p.alg.isBuiltin then
           .error (Error.illegalInOpen s!"builtin not allowed in open: {openExprName o}.{n}")
-        else if !p.exposure.isExported then
+        else if !p.isPublic then
+          .error (Error.notPublicProperty (openExprName o) n)
+        -- Open paths select public members before checking contextual accessibility.
+        else if !(memberAccessible? ctx a p) then
           .error (Error.localOnlyProperty (openExprName o) n p.exposure)
         else
           -- Property exists; check if it's public
           match Algorithm.lookupPublicProp a n with
-          | some publicAlg => pure (Algorithm.childOf a publicAlg)
+          | some publicAlg => pure (childOfInContext a publicAlg ctx)
           | none   => .error (Error.notPublicProperty (openExprName o) n)
     | none =>
         if Algorithm.conditionalBranchesDefineProperty a n then
@@ -3717,9 +3968,29 @@ def resolveAlgForOpen (e : Expr) (ctx : EvalCtx) : EvalM Algorithm := do
   | _ =>
       throw (Error.badOpenForm s!"{Expr.kind e}: {openExprName e}")
 
-/-- Resolve an open expression to a library algorithm. -/
-def resolveOpen (e : Expr) (ctx : EvalCtx) : EvalM Algorithm :=
-  resolveAlgForOpen e ctx
+/-- Resolve an open expression to a library algorithm and apply the PROVIDER rule: the
+    resolved provider — the whole target, never an intermediate of a dotted path — must
+    need no call (`Algorithm.requiresArguments`). A parameterized algorithm or a clause
+    family has no members outside an activation, and `open` never creates one (there is
+    no `open Lib(5)`), so it is refused with `illegalInOpen`; a parameterized HEAD of a
+    dotted target is navigated by identity like any structural receiver (`open Lib.Sub`
+    with `Lib(p)` opens a self-contained `Sub`), and a member of it that captures `p` is
+    refused at the access by `memberAccessible?`. C#: `Evaluator.ResolveOpen`. -/
+def openTargetRequiresArgumentsMessage (target : String) : Algorithm -> String
+  | .conditional _ _ _ _ =>
+      s!"'{target}' cannot be opened because it is a clause family that requires arguments; " ++
+        "open imports only an algorithm that needs no call."
+  | a =>
+      s!"'{target}' cannot be opened because it requires arguments " ++
+        s!"({String.intercalate ", " (Algorithm.params a)}); " ++
+        "open imports only an algorithm that needs no call."
+
+def resolveOpen (e : Expr) (ctx : EvalCtx) : EvalM Algorithm := do
+  let provider <- resolveAlgForOpen e ctx
+  if provider.requiresArguments then
+    .error (Error.illegalInOpen (openTargetRequiresArgumentsMessage (openExprName e) provider))
+  else
+    pure provider
 
 /-- Resolve all opens of an algorithm upfront.
     Deduplicates named opens by `openExprName` (first occurrence wins) to
@@ -3767,7 +4038,7 @@ def resolveAllOpens (a : Algorithm) (ctx : EvalCtx) : EvalM (List ResolvedOpen) 
       * error ambiguousOpen if multiple opens provide it publicly -/
 def lookupOpenProperties (a : Algorithm) (name : Ident) (ctx : EvalCtx)
     : EvalM (Option ResolvedProperty) := do
-  let ctx' := EvalCtx.push a ctx
+  let ctx' := { ctx.push a with headScope := some (scopeInContext a ctx) }
   let resolvedOpens <- resolveAllOpens a ctx'
   let mut hits : List OpenPropertyHit := []
   for ri in resolvedOpens do
@@ -3778,15 +4049,26 @@ def lookupOpenProperties (a : Algorithm) (name : Ident) (ctx : EvalCtx)
           property := {
             owner := ri.lib,
             binding := prop,
-            alg := Algorithm.childOf ri.lib prop.alg
+            alg := childOfInContext ri.lib prop.alg ctx
           }
         } :: hits
     | none => pure ()
   hits := hits.reverse
 
+  -- SELECTION IS BY VISIBILITY ONLY: a public member is provided by its open whatever its
+  -- exposure (it takes part in precedence and ambiguity like any provided name), and
+  -- accessibility is checked on the selected member afterwards, from the site — the
+  -- algorithm whose body reads the name (the original context's head), not the level
+  -- whose opens are consulted. Which declaration a name selects therefore never depends
+  -- on exposure, which is what lets the surface layer reproduce the selection before
+  -- exposure is classified.
   match hits with
   | [] => pure none
-  | [h] => pure (some h.property)
+  | [h] =>
+      if memberAccessible? ctx h.property.owner h.property.binding then
+        pure (some h.property)
+      else
+        .error (Error.localOnlyProperty h.provider name h.property.binding.exposure)
   | hs => .error (Error.ambiguousOpen name (hs.map (fun hit => hit.provider)))
 
 --------------------------------------------------------------------------
@@ -3806,8 +4088,12 @@ def lookupInParentsStructuralProperty (sc : ScopeCtx) (name : Ident)
       -- The binding belongs to sc itself. `forOpens sc` is a lookup wrapper
       -- whose PARENT is sc; using it as owner adds a spurious scope level to
       -- the property key, splitting an ancestor read from a direct read.
+      -- The owner rebuilt from the level carries the level's own parameters, so its
+      -- `asScopeCtx` — the cache key's owner identity — equals the declaring
+      -- algorithm's own.
       let owner := match sc with
-        | .mk parent opens props => Algorithm.mk parent [] opens props []
+        | .mk parent params opens props output _ _ id =>
+            Algorithm.mk parent (Algorithm.normalParameters params) opens props output id
       some {
         owner := owner,
         binding := prop,
@@ -3815,8 +4101,8 @@ def lookupInParentsStructuralProperty (sc : ScopeCtx) (name : Ident)
       }
   | none =>
       match sc with
-      | .mk (some sc') _ _ => lookupInParentsStructuralProperty sc' name
-      | .mk none _ _       => none
+      | .mk (some sc') _ _ _ _ _ _ _ => lookupInParentsStructuralProperty sc' name
+      | .mk none _ _ _ _ _ _ _       => none
 
 /-- Open-based lookup in parent chain (helper for lookupOpenPropertiesInChain). -/
 def lookupOpenPropertiesInParentChain (sc : ScopeCtx) (name : Ident)
@@ -3826,8 +4112,8 @@ def lookupOpenPropertiesInParentChain (sc : ScopeCtx) (name : Ident)
   | some r => pure (some r)
   | none =>
       match sc with
-      | .mk (some sc') _ _ => lookupOpenPropertiesInParentChain sc' name ctx
-      | .mk none _ _       => pure none
+      | .mk (some sc') _ _ _ _ _ _ _ => lookupOpenPropertiesInParentChain sc' name ctx
+      | .mk none _ _ _ _ _ _ _       => pure none
 
 /-- Open-based lookup across the algorithm chain (current first, then parents).
     Checks opens at each level of the parent chain as fallback. -/
@@ -3856,7 +4142,7 @@ def lookupLexicalProperty (a : Algorithm) (name : Ident) (ctx : EvalCtx)
       pure {
         owner := a,
         binding := prop,
-        alg := Algorithm.childOf a prop.alg
+        alg := childOfInContext a prop.alg ctx
       }
   | none =>
       match Algorithm.parent a with
@@ -3915,7 +4201,9 @@ def resolveAlg (e : Expr) (ctx : EvalCtx) : EvalM Algorithm :=
       -- binding's parameter names (`EvalCtx.bindParameters`), so a parameter
       -- bound only on the value channel finds NO entry and fails as
       -- not-callable instead of reaching a same-named caller callable.
-      match ctx.algEnv.lookup x with
+      do
+      let activation <- capturedParameterActivation? x ctx
+      match (activation.map ParameterActivation.algorithms |>.getD ctx.algEnv).lookup x with
       | some alg => pure alg
       | none     => .error (Error.notAnAlgorithm s!"param({x})")
   | .num n   => .error (Error.notAnAlgorithm s!"num({n})")
@@ -3962,10 +4250,10 @@ def resolveDotReceiver (e : Expr) (ctx : EvalCtx) : EvalM Algorithm :=
         | .ok a =>
             match Algorithm.lookupPropDefAny? a n with
             | some p =>
-                if !p.exposure.isExported then
+                if !(memberAccessible? ctx a p) then
                   .error (Error.localOnlyProperty (openExprName o) n p.exposure)
                 else
-                  pure (Algorithm.childOf a p.alg)
+                  pure (childOfInContext a p.alg ctx)
             | none =>
                 if Algorithm.conditionalBranchesDefineProperty a n then
                   .error (Error.localOnlyProperty (openExprName o) n .localConditional)
@@ -3979,10 +4267,11 @@ def resolveDotReceiver (e : Expr) (ctx : EvalCtx) : EvalM Algorithm :=
 
 
 def resolveArgAlgExpr (e : Expr) (ctx : EvalCtx) (env : ValEnv) : EvalM Algorithm := do
-  let shouldUseValueSide :=
-    match e with
-    | .param name => (ctx.countedParamEnv.lookup name).isSome || (env.lookup name).isSome
-    | _ => false
+  let shouldUseValueSide <- match e with
+    | .param name => do
+        let (parameterCtx, values) <- parameterContext name ctx env
+        pure ((parameterCtx.countedParamEnv.lookup name).isSome || (values.lookup name).isSome)
+    | _ => pure false
   if shouldWrapArgExprAsValue e || zeroDeclarationBlockValueSlot e || shouldUseValueSide then
     pure (wireToCaller ctx (Algorithm.ofExpr e))
   else
@@ -4352,9 +4641,9 @@ mutual
         | some err => .error err
         | none => pure ()
         match a with
-        | .mk _ _ _ _ [] => .error Error.missingOutput
+        | .mk _ _ _ _ [] _ => .error Error.missingOutput
         | _ => pure ()
-        let pushedCtx := EvalCtx.push a ctx
+        let pushedCtx <- enterAlgorithmBody a ctx env
         let rec collect : List Expr -> List Result -> EvalM (List Result)
           | [], acc => pure acc.reverse
           | e :: rest, acc => do
@@ -4429,9 +4718,10 @@ mutual
         | some err => .error err
         | none => pure ()
         match a with
-        | .mk _ _ _ _ [] => .error Error.missingOutput
+        | .mk _ _ _ _ [] _ => .error Error.missingOutput
         | _ => pure ()
-        evalOutputRowsPreparedCore (Algorithm.output a) (EvalCtx.push a ctx) env
+        let pushedCtx <- enterAlgorithmBody a ctx env
+        evalOutputRowsPreparedCore (Algorithm.output a) pushedCtx env
 
   /-- The ONE shared output-row supply loop: evaluates ordered `OutputBundle`
       rows left to right (a spread row contributes its supplied items, a
@@ -4561,10 +4851,10 @@ mutual
     else
       match matchCountedCallBranches (Algorithm.branches callee) args with
       | some (branch, bindings) =>
-          let wiredBody := Algorithm.childOf callee branch.body
           let names := bindings.map Prod.fst
           let newCtx <- (EvalCtx.push callee ctx).bindParameters names [] bindings
           let newEnv := (bindings.map fun | (name, value) => (name, value.fst)) ++ env
+          let wiredBody <- wireSelectedBranchBody callee branch.body names newCtx newEnv
           evalAlgOutputCounted wiredBody newCtx newEnv
       | none =>
           .error (Error.noMatchingBranch calleeName)
@@ -4583,7 +4873,7 @@ mutual
     match callee with
     | .builtin b =>
         applyBuiltinCounted b (args.map fun arg => { algorithm := countedArgAlgorithm arg }) ctx env
-    | .conditional _ _ _ =>
+    | .conditional _ _ _ _ =>
         match flatBinderUserEquivalent? callee with
         | some simple => do
             if (Algorithm.output simple).isEmpty then
@@ -4641,7 +4931,7 @@ mutual
       (ctx : EvalCtx) (env : ValEnv) (calleeName : String := "conditional")
       : EvalM CountedResult := do
     match callee with
-    | .mk _ patterns _ _ output =>
+    | .mk _ patterns _ _ output _ =>
         if output.isEmpty then
           .error Error.missingOutput
         else do
@@ -5232,9 +5522,10 @@ mutual
         | some err => .error err
         | none => pure ()
         match a with
-        | .mk _ _ _ _ [] => .error Error.missingOutput
+        | .mk _ _ _ _ [] _ => .error Error.missingOutput
         | _ => pure ()
-        evalExplicitSequenceValueRowSlots (Algorithm.output a) (EvalCtx.push a ctx) env
+        let pushedCtx <- enterAlgorithmBody a ctx env
+        evalExplicitSequenceValueRowSlots (Algorithm.output a) pushedCtx env
 
   /-- The shared written-slot loop over ordered bundle rows: each row
       contributes its explicit written slots. Algorithm-shaped groupings reach
@@ -5438,9 +5729,9 @@ mutual
     else
       match matchCallBranches (Algorithm.branches callee) argResults with
       | some (branch, bindings) =>
-          let wiredBody := Algorithm.childOf callee branch.body
           let names := bindings.map Prod.fst
           let newCtx <- (EvalCtx.push callee ctx).bindParameters names [] []
+          let wiredBody <- wireSelectedBranchBody callee branch.body names newCtx (bindings ++ env)
           reCountValueBoundary <$> evalAlgOutputCounted wiredBody newCtx (bindings ++ env)
       | none =>
           .error (Error.noMatchingBranch calleeName)
@@ -5466,7 +5757,7 @@ mutual
     | .builtin b => do
       let argAlgs <- resolveArgAlgsWithSequenceSpread args ctx env
       applyBuiltinCountedResolved b argAlgs ctx env
-    | .conditional _ _ _ =>
+    | .conditional _ _ _ _ =>
       match flatBinderUserEquivalent? callee with
       | some simple => evalUserCallCounted simple args ctx env assembly
       | none => evalConditionalCallCounted callee args ctx env calleeName assembly
@@ -5611,10 +5902,12 @@ mutual
       else
         match Algorithm.lookupPropDefAny? targetAlg name with
         | some p =>
-            if !p.exposure.isExported then
+            -- Selection is by declaration (structural access ignores `public`); the
+            -- member's accessibility from THIS site is decided afterwards.
+            if !(memberAccessible? ctx targetAlg p) then
               .error (Error.localOnlyProperty (openExprName target) name p.exposure)
             else
-            let wired := Algorithm.childOf targetAlg p.alg
+            let wired := childOfInContext targetAlg p.alg ctx
             match argsOpt with
             | none =>
                 match flatBinderUserEquivalent? wired with
@@ -5625,7 +5918,7 @@ mutual
                       .error (Error.arityMismatch (Algorithm.params simple).length 0)
                 | none =>
                     match wired with
-                    | .conditional _ _ _ => .error (Error.noMatchingBranch name)
+                    | .conditional _ _ _ _ => .error (Error.noMatchingBranch name)
                     | _ =>
                         if (Algorithm.params wired).length = 0 then
                           reCountValueBoundary <$> evalZeroArgPropertyAccessCounted .structural targetAlg p wired ctx env
@@ -5871,7 +6164,8 @@ mutual
       result) or one value. -/
   partial def evalCounted (e : Expr) (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult :=
     match e with
-    | .param x =>
+    | .param x => do
+        let (ctx, env) <- parameterContext x ctx env
         match ctx.countedParamEnv.lookup x with
         | some counted => pure counted
         | none =>
@@ -6464,21 +6758,30 @@ mutual
         return .dotMember (<- identifyPropertyExpr target) name
           (<- identifyPropertyExpr fallback) (<- args.mapM (List.mapM identifyPropertyExpr))
 
-  partial def identifyPropertyAlgorithm : Algorithm -> StateM Nat Algorithm
+  partial def identifyPropertyAlgorithm (algorithm : Algorithm) : StateM Nat Algorithm := do
+    let identity <- match algorithm.declarationId with
+      | some (.shared n) => pure (.shared n)
+      | _ => do
+          let next <- get
+          set (next + 1)
+          pure (.syntax next)
+    match algorithm with
     | .builtin b => pure (.builtin b)
-    | .mk parent parameters opens props output =>
+    | .mk parent parameters opens props output _ =>
         return .mk (<- parent.mapM identifyPropertyScope) parameters
           (<- opens.mapM identifyPropertyExpr) (<- props.mapM identifyPropertyDefinition)
-          (<- output.mapM identifyPropertyExpr)
-    | .conditional parent opens branches =>
+          (<- output.mapM identifyPropertyExpr) (some identity)
+    | .conditional parent opens branches _ =>
         return .conditional (<- parent.mapM identifyPropertyScope)
           (<- opens.mapM identifyPropertyExpr)
-          (<- branches.mapM fun b => return { b with body := (<- identifyPropertyAlgorithm b.body) })
+          (<- branches.mapM fun b => return { b with body := (<- identifyPropertyAlgorithm b.body) }) (some identity)
 
   partial def identifyPropertyScope : ScopeCtx -> StateM Nat ScopeCtx
-    | .mk parent opens props =>
-        return .mk (<- parent.mapM identifyPropertyScope)
+    | .mk parent params opens props output branches _ id =>
+        return .mk (<- parent.mapM identifyPropertyScope) params
           (<- opens.mapM identifyPropertyExpr) (<- props.mapM identifyPropertyDefinition)
+          (<- output.mapM identifyPropertyExpr)
+          (<- branches.mapM fun b => return { b with body := (<- identifyPropertyAlgorithm b.body) }) none id
 
   partial def identifyPropertyDefinition (p : PropDef) : StateM Nat PropDef := do
     let identity <- match p.identity with
@@ -6672,11 +6975,11 @@ partial def postElabInvariant : Expr -> Bool
   satisfy `postElabInvariant`. -/
 partial def postElabInvariantAlg : Algorithm -> Bool
   | .builtin _ => true
-  | .mk _ _ opens props output =>
+  | .mk _ _ opens props output _ =>
       opens.all postElabInvariant &&
       props.all (fun p => postElabInvariantAlg p.alg) &&
       output.all postElabInvariant
-  | .conditional _ opens branches =>
+  | .conditional _ opens branches _ =>
       opens.all postElabInvariant &&
       branches.all (fun b => postElabInvariantAlg b.body)
 end

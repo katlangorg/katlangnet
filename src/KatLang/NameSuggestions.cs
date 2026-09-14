@@ -95,12 +95,12 @@ internal static class NameSuggestions
         suggestion = null;
         var candidates = new Dictionary<string, Property>(StringComparer.Ordinal);
 
-        // Structural dot access reaches any Exported property regardless of
-        // publicness (the evaluator's LookupPropBinding + IsExported gate).
+        // Structural dot access selects any declared property regardless of
+        // publicness or exposure (the evaluator's LookupPropBinding; a local-only
+        // member the site may not use is refused at the access, never hidden).
         foreach (var property in receiver.Algorithm.Properties)
         {
-            if (property.Exposure != PropertyExposure.Exported
-                || property.Name.Length == 0
+            if (property.Name.Length == 0
                 || property.Name.Length > MaxNameLength)
             {
                 continue;
@@ -123,14 +123,13 @@ internal static class NameSuggestions
 
         var maxDistance = MaxAllowedMemberDistance(name);
         string? best = null;
-        Property? bestProperty = null;
         var bestDistance = int.MaxValue;
         var bestIsAmbiguous = false;
         Span<int> previousPrevious = stackalloc int[MaxNameLength + 1];
         Span<int> previous = stackalloc int[MaxNameLength + 1];
         Span<int> current = stackalloc int[MaxNameLength + 1];
 
-        foreach (var (candidateName, property) in candidates)
+        foreach (var (candidateName, _) in candidates)
         {
             var distance = EffectiveMemberDistance(
                 name,
@@ -145,7 +144,6 @@ internal static class NameSuggestions
             if (distance.Value < bestDistance)
             {
                 best = candidateName;
-                bestProperty = property;
                 bestDistance = distance.Value;
                 bestIsAmbiguous = false;
             }
@@ -157,7 +155,7 @@ internal static class NameSuggestions
         }
 
         if (!bestIsAmbiguous && best is not null)
-            suggestion = new NameSuggestion(best, bestProperty, receiver.Qualifier, isReceiverMember: true);
+            suggestion = new NameSuggestion(best, receiver.Qualifier, isReceiverMember: true);
 
         return true;
     }
@@ -171,7 +169,7 @@ internal static class NameSuggestions
         ElaboratedPropertyScope scope,
         ParameterOwnership parameters)
     {
-        var candidates = new Dictionary<string, Property?>(StringComparer.Ordinal);
+        var candidates = new HashSet<string>(StringComparer.Ordinal);
 
         // Every parameter binding in scope is a safe suggestion, because the
         // owner walk always resolves such a name uniquely: the walk reaches the
@@ -183,11 +181,11 @@ internal static class NameSuggestions
         // suggestion machinery deliberately does not need to distinguish the two.
         foreach (var boundName in parameters.Names)
         {
-            if (!TryAddCandidate(candidates, boundName, requiredExportedProperty: null))
+            if (!TryAddCandidate(candidates, boundName))
                 return null;
         }
 
-        var potentialNames = new HashSet<string>(candidates.Keys, StringComparer.Ordinal);
+        var potentialNames = new HashSet<string>(candidates, StringComparer.Ordinal);
         if (!ElaboratedScopeLookup.TryCollectVisibleLexicalNames(
                 scope,
                 potentialNames,
@@ -200,7 +198,7 @@ internal static class NameSuggestions
 
         foreach (var visibleName in visibleNames)
         {
-            if (!TryAddCandidate(candidates, visibleName.Name, visibleName.RequiredExportedProperty))
+            if (!TryAddCandidate(candidates, visibleName.Name))
                 return null;
         }
 
@@ -209,14 +207,13 @@ internal static class NameSuggestions
 
         var maxDistance = MaxAllowedDistance(name);
         string? best = null;
-        Property? bestProperty = null;
         var bestDistance = int.MaxValue;
         var bestIsAmbiguous = false;
         Span<int> previousPrevious = stackalloc int[MaxNameLength + 1];
         Span<int> previous = stackalloc int[MaxNameLength + 1];
         Span<int> current = stackalloc int[MaxNameLength + 1];
 
-        foreach (var (candidateName, requiredExportedProperty) in candidates)
+        foreach (var candidateName in candidates)
         {
             var distance = EffectiveDistance(
                 name,
@@ -231,7 +228,6 @@ internal static class NameSuggestions
             if (distance.Value < bestDistance)
             {
                 best = candidateName;
-                bestProperty = requiredExportedProperty;
                 bestDistance = distance.Value;
                 bestIsAmbiguous = false;
             }
@@ -244,26 +240,23 @@ internal static class NameSuggestions
 
         return bestIsAmbiguous || best is null
             ? null
-            : new NameSuggestion(best, bestProperty);
+            : new NameSuggestion(best);
     }
 
     private static bool TryAddCandidate(
-        Dictionary<string, Property?> candidates,
-        string candidate,
-        Property? requiredExportedProperty)
+        HashSet<string> candidates,
+        string candidate)
     {
         if (candidate.Length == 0 || candidate.Length > MaxNameLength)
             return true;
 
-        // A name that is both bound and lexically visible keeps its first
-        // (ungated) registration.
-        if (candidates.ContainsKey(candidate))
+        if (candidates.Contains(candidate))
             return true;
 
         if (candidates.Count >= MaxCandidates)
             return false;
 
-        candidates[candidate] = requiredExportedProperty;
+        candidates.Add(candidate);
         return true;
     }
 

@@ -132,6 +132,9 @@ internal static partial class LoopOptimizer
                         return new LoopExprPlanTryBuildResult(new LoopExprPlan.StateSlot(expr, i, name), null);
                 }
 
+                if (Evaluator.CapturedParameterNeedsOwnerLookup(name, ctx, parentValEnv))
+                    return new LoopExprPlanTryBuildResult(null, $"captured parameter requires its lexical activation: {name}");
+
                 if (TryFindCountedParam(ctx, name, out var countedParamIndex, out var countedParam))
                 {
                     if (!IsSafeCountedParamSlot(countedParam, out var fallbackReason))

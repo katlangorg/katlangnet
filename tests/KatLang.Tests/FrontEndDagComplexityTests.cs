@@ -34,9 +34,50 @@ public class FrontEndDagComplexityTests
 
     private const int DeepDepth = 40;
 
+    [Theory]
+    [InlineData(10)]
+    [InlineData(40)]
+    public Task DependencySummary_CallBoundariesDoNotMultiplySharedPendingPaths(int depth)
+        => AssertCompletesUnderWallClockGuard(() =>
+    {
+        Algorithm shared = EmptyAlgorithm(new Expr.DotCall(new Expr.Resolve("Global"), "X", null));
+        for (var i = 0; i < depth; i++)
+        {
+            var left = EmptyAlgorithm(new Expr.AlgorithmExpr(shared)).WithParams(["left" + i]);
+            var right = EmptyAlgorithm(new Expr.AlgorithmExpr(shared)).WithParams(["right" + i]);
+            shared = EmptyAlgorithm(new Expr.Binary(BinaryOp.Add, new Expr.AlgorithmExpr(left), new Expr.AlgorithmExpr(right)));
+        }
+        var root = EmptyAlgorithm() with { Properties = [new Property("P", shared)] };
+        var observations = new FrontEndTraversalObservations();
+        var graph = PropertyDependencyGraphBuilder.BuildSummaries(root, observations: observations);
+        Assert.Equal(3 * depth + 1, observations.DependencyAlgorithmSummaryComputations);
+        var pending = Assert.Single(graph[0].PendingReferences);
+        Assert.Empty(pending.BoundOwners);
+    });
+
+    [Fact]
+    public Task OpenProviderValidation_SkipsSharedRegionsWithoutOpens()
+        => AssertCompletesUnderWallClockGuard(() =>
+        {
+            Algorithm shared = EmptyAlgorithm(new Expr.Num(1));
+            for (var i = 0; i < DeepDepth; i++)
+                shared = EmptyAlgorithm() with
+                {
+                    Properties = [new Property("Left", EmptyAlgorithm(new Expr.AlgorithmExpr(shared))),
+                        new Property("Right", EmptyAlgorithm(new Expr.AlgorithmExpr(shared)))],
+                };
+            var diagnostics = new List<Diagnostic>();
+            OpenProviderValidator.Validate(shared, diagnostics, (HostOperations?)null);
+            Assert.Empty(diagnostics);
+        });
+
     [Fact]
     public void RegionKeys_DistinguishNamesContainingTheirDelimiters()
     {
+        Assert.NotEqual(new PendingReference("A.B", ["C"], []).ContentKey,
+            new PendingReference("A", ["B", "C"], []).ContentKey);
+        Assert.NotEqual(new PropertyDependencyGraphBuilder.SummarySeed(["a,b"]).ContentKey,
+            new PropertyDependencyGraphBuilder.SummarySeed(["a", "b"]).ContentKey);
         Assert.NotEqual(
             FrontEndRegionKeys.NameSet(["x", "y"]),
             FrontEndRegionKeys.NameSet(["x\u0001y"]));
@@ -1582,8 +1623,8 @@ public class FrontEndDagComplexityTests
 
     /// <summary>
     /// Exposure classification of a shared branch body is computed once per region and the
-    /// families keep ONE rewritten object; a body shared between a family and a plain property
-    /// summarizes under both contexts (binder-owned versus empty locals) but is rewritten once.
+    /// families keep ONE rewritten object. A plain property has a different capture-owner
+    /// context: its unbound b cannot reuse the branch's owner-qualified requirement payload.
     /// </summary>
     [Fact]
     public void Exposure_SharedBranchBody_ClassifiesOnceAndPreservesSharing()
@@ -1601,13 +1642,15 @@ public class FrontEndDagComplexityTests
 
         var rewritten = PropertyExposureResolver.Resolve(root, observations);
 
-        // Root, the shared body once (its two property values are leaves).
-        Assert.Equal(4, observations.ExposureAlgorithmExpansions);
+        // Root and two semantic regions, each with the body and its two property values.
+        Assert.Equal(7, observations.ExposureAlgorithmExpansions);
         Assert.Equal(1, observations.DependencyBranchBodySummaryComputations);
         var leftBody = Assert.IsType<Algorithm.Conditional>(rewritten.Properties[0].Value).Branches[0].Body;
         var rightBody = Assert.IsType<Algorithm.Conditional>(rewritten.Properties[1].Value).Branches[0].Body;
         Assert.Same(leftBody, rightBody);
-        Assert.Same(leftBody, rewritten.Properties[2].Value);
+        Assert.NotSame(leftBody, rewritten.Properties[2].Value);
+        Assert.Equal([new CapturedParameterRequirement("b", 1)], leftBody.Properties[0].CaptureRequirements);
+        Assert.Equal([new CapturedParameterRequirement("b", -1)], rewritten.Properties[2].Value.Properties[0].CaptureRequirements);
         Assert.Equal(PropertyExposure.LocalOnlyCapturedAncestorParameters, Assert.Single(leftBody.Properties, p => p.Name == "Captures").Exposure);
         Assert.Equal(PropertyExposure.Exported, Assert.Single(leftBody.Properties, p => p.Name == "Plain").Exposure);
     }

@@ -289,6 +289,7 @@ internal sealed class DeferredModuleRegion
                     if (!HasErrors(diagnostics))
                     {
                         new ParameterPropertyCollisionValidator(diagnostics, Validation).VisitAlgorithm(resolved);
+                        OpenProviderValidator.Validate(resolved, diagnostics, Exposure!.Scope.PropertyScope);
                     }
                     if (!HasErrors(diagnostics))
                     {
@@ -343,7 +344,7 @@ internal sealed class DeferredModuleRegion
 /// body object that stands in the elaborated tree. Per-node metadata rather than a traversal
 /// memo (it is weak, so it retains nothing beyond the trees it annotates, and it is never
 /// consulted as a cache of traversal work); the same discipline as
-/// <see cref="FinalPropertyExposure"/>. Keys are unique per region by construction: the
+/// <see cref="DiagnosticRecordMetadata{T}"/>. Keys are unique per region by construction: the
 /// loader registers a fresh placeholder per branch occurrence, and each later pass registers
 /// its own output body, so two regions sharing one raw body never share a record.
 /// </summary>

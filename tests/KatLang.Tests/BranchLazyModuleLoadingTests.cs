@@ -811,11 +811,14 @@ public class BranchLazyModuleLoadingTests
         Assert.Equal(0, downloader.Calls(ModuleA));
     }
 
+    // The exposure pass reads an enclosing level's summaries through TryGetValue when a
+    // deferred body's property resolves a name declared at that level (the program below
+    // declares `Local = Root + 1`), which is where this gate blocks the finalization.
     private sealed class GatedSummaries(
         IReadOnlyDictionary<string, PropertyExposureResolver.AnalysisSummary> inner,
-        Action onEnumeration) : IReadOnlyDictionary<string, PropertyExposureResolver.AnalysisSummary>
+        Action onFirstLookup) : IReadOnlyDictionary<string, PropertyExposureResolver.AnalysisSummary>
     {
-        private Action? _onEnumeration = onEnumeration;
+        private Action? _onFirstLookup = onFirstLookup;
 
         public PropertyExposureResolver.AnalysisSummary this[string key] => inner[key];
         public IEnumerable<string> Keys => inner.Keys;
@@ -823,13 +826,13 @@ public class BranchLazyModuleLoadingTests
         public int Count => inner.Count;
         public bool ContainsKey(string key) => inner.ContainsKey(key);
         public bool TryGetValue(string key, out PropertyExposureResolver.AnalysisSummary value)
-            => inner.TryGetValue(key, out value!);
+        {
+            Interlocked.Exchange(ref _onFirstLookup, null)?.Invoke();
+            return inner.TryGetValue(key, out value!);
+        }
 
         public IEnumerator<KeyValuePair<string, PropertyExposureResolver.AnalysisSummary>> GetEnumerator()
-        {
-            Interlocked.Exchange(ref _onEnumeration, null)?.Invoke();
-            return inner.GetEnumerator();
-        }
+            => inner.GetEnumerator();
 
         System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => GetEnumerator();
     }
@@ -839,19 +842,24 @@ public class BranchLazyModuleLoadingTests
     {
         var downloader = new GatedDownloader();
         var parsed = await Parser.ParseAsync(
-            $"F(0) = {{\n    open '{ModuleA}'\n    Local = 1\n    A + Local\n}}\nF(1) = 0\nF(0)",
+            $"Root = 1\nF(0) = {{\n    open '{ModuleA}'\n    Local = Root + 1\n    A + Local\n}}\nF(1) = 0\nF(0)",
             downloader.Options);
         Assert.False(parsed.HasErrors);
         var original = Region(parsed.Root, "F", 0);
         var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         using var release = new ManualResetEventSlim();
         using var cancellation = new CancellationTokenSource();
-        var region = original.WithExposure(new PropertyExposureResolver.DeferredBranchContext(
-            new GatedSummaries(original.Exposure!.VisiblePropertySummaries, () =>
-            {
-                entered.SetResult();
-                Assert.True(release.Wait(TimeSpan.FromSeconds(10)));
-            })));
+        var recorded = original.Exposure!.Scope;
+        PropertyExposureResolver.SummaryScope GateDeclaringLevel(PropertyExposureResolver.SummaryScope scope)
+            => new(scope.Parent is null ? null : GateDeclaringLevel(scope.Parent), scope.PropertyScope,
+                scope.PropertyScope.TryLookupOwnProperty("Root") is not null
+                    ? new GatedSummaries(scope.Summaries, () =>
+                {
+                    entered.SetResult();
+                    Assert.True(release.Wait(TimeSpan.FromSeconds(10)));
+                }) : scope.Summaries,
+                scope.Parameters, scope.Algorithm);
+        var region = original.WithExposure(new PropertyExposureResolver.DeferredBranchContext(GateDeclaringLevel(recorded)));
         var pending = region.MaterializeAsync(cancellation.Token).AsTask();
         await downloader.Started(ModuleA);
         downloader.Release(ModuleA, "public A = 1");

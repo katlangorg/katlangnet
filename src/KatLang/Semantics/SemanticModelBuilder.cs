@@ -460,7 +460,7 @@ public static class SemanticModelBuilder
             for (var current = scope.PropertyScope; current is not null; current = current.Parent)
             {
                 var matches = current.GetResolvedOpenProviders()
-                    .Count(provider => provider.TryLookupExportedMember(name) is not null);
+                    .Count(provider => provider.TryLookupPublicMember(name) is not null);
                 if (matches > 1)
                     return false;
                 if (OwnsDeferredModuleOpen(current))
@@ -980,13 +980,12 @@ public static class SemanticModelBuilder
             if (provider.Kind == StaticStructuralMemberProviderKind.KnownAlgorithm)
             {
                 var targetAlgorithm = provider.Algorithm!;
+                // A declared member is the edge's resolution whatever its exposure — the
+                // evaluator selects it by declaration and checks the site's accessibility
+                // afterwards (a refused access is a diagnostic at the site, never a
+                // different resolution).
                 if (TryResolveDeclaredProperty(targetAlgorithm, dotCall.Name) is { } declaredProperty)
-                {
-                    if (declaredProperty.PropertyInfo?.IsExported == true)
-                        return (ClassifyReferenceSymbol(declaredProperty), declaredProperty.Declaration, declaredProperty.PropertyInfo);
-
-                    return (IdentifierClassification.Unresolved, null, null);
-                }
+                    return (ClassifyReferenceSymbol(declaredProperty), declaredProperty.Declaration, declaredProperty.PropertyInfo);
 
                 if (targetAlgorithm.DefinesConditionalBranchProperty(dotCall.Name))
                     return (IdentifierClassification.Unresolved, null, null);
@@ -1156,7 +1155,7 @@ public static class SemanticModelBuilder
 
         private SymbolDefinition? TryResolvePublicProperty(Algorithm algorithm, string name)
         {
-            var hit = ElaboratedScopeLookup.TryLookupPublicExportedProperty(algorithm, name);
+            var hit = ElaboratedScopeLookup.TryLookupPublicProperty(algorithm, name);
             return hit is null ? null : CreateLookupPropertySymbol(hit.Value.Owner, hit.Value.Property);
         }
 
@@ -1805,7 +1804,7 @@ public static class SemanticModelBuilder
                 var providedNames = new HashSet<string>(StringComparer.Ordinal);
                 foreach (var property in targetAlgorithm.Properties)
                 {
-                    if (!property.IsPublic || property.Exposure != PropertyExposure.Exported)
+                    if (!property.IsPublic)
                         continue;
 
                     // One provider supplies each of its names once (a duplicate
@@ -1866,8 +1865,6 @@ public static class SemanticModelBuilder
                     continue;
 
                 var symbol = CreateLookupPropertySymbol(user, property);
-                if (symbol.PropertyInfo?.IsExported != true)
-                    continue;
 
                 members ??= [];
                 members.Add(new VisibleSymbol(

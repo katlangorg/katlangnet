@@ -623,7 +623,7 @@ public static partial class Evaluator
         if (alg is Algorithm.User { Output.Count: 0 })
             return new EvalError.MissingOutput();
 
-        return EvalExplicitSequenceValueRowSlots(alg.Output, ctx.Push(alg), valEnv);
+        return EvalExplicitSequenceValueRowSlots(alg.Output, EnterAlgorithmBody(alg, ctx, valEnv), valEnv);
     }
 
     /// <summary>

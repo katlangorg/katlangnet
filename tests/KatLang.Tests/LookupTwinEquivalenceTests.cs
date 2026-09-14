@@ -111,9 +111,14 @@ public class LookupTwinEquivalenceTests
             "Pub = {\n    public X = 101\n}\nLib = {\n    X = 202\n}\nA = {\n    open Pub, Lib\n    {0}\n}\nA",
             "ok raw=101 n=1", "ok raw=101 n=1", "ok raw='101' n=1"),
 
-        new("localOnlyMemberIsNotASecondProvider",
-            "Pub = {\n    public X = 101\n}\nLib(p) = {\n    public X = p + 202\n    X\n}\nA = {\n    open Pub, Lib\n    {0}\n}\nA",
-            "ok raw=101 n=1", "ok raw=101 n=1", "ok raw='101' n=1"),
+        // A public local-only member IS provided by its open — selection is by visibility,
+        // accessibility is checked on the selected member afterwards — so beside another
+        // provider of the same name it is a genuine second provider (K1-08, September 2026:
+        // the earlier "not a second provider" pin recorded universal invisibility; a
+        // parameterized `Lib(p)` provider is now refused at the open itself instead).
+        new("localOnlyMemberIsASecondProvider",
+            "Pub = {\n    public X = 101\n}\nOuter(p) = {\n    public Lib = {\n        public X = p + 202\n    }\n    0\n}\nA = {\n    open Pub, Outer.Lib\n    {0}\n}\nA",
+            "err ambiguousOpen", "err ambiguousOpen", "err ambiguousOpen"),
 
         // The ownership-first controls that the shapes above replaced: an
         // ancestor property still wins over an open that provides nothing.
@@ -246,7 +251,7 @@ public class LookupTwinEquivalenceTests
             "innerOpenShadowsOuterOpen",
             "parentOpenReachesChild",
             "privateMemberIsNotASecondProvider",
-            "localOnlyMemberIsNotASecondProvider",
+            "localOnlyMemberIsASecondProvider",
             "ancestorBeatsHiddenOpenMember",
             "dottedPathProvider",
             "inlineBlockProvider",

@@ -133,7 +133,7 @@ internal sealed class LoopRunFrame
 
     public LoopPlanTemplate Template { get; }
 
-    public Evaluator.EvalCtx IterationCtx { get; }
+    public Evaluator.EvalCtx IterationCtx { get; private set; }
 
     public LoopOptimizationDiagnostics? Diagnostics { get; }
 
@@ -145,7 +145,10 @@ internal sealed class LoopRunFrame
             Array.Clear(_tempSlotHasValue);
 
         if (Template.RequiresPerIterationCacheIdentity)
+        {
             _valueEnvironment.BeginIteration();
+            IterationCtx = Evaluator.EnterAlgorithmBody(Template.Step, Template.ParentCtx, _valueEnvironment);
+        }
     }
 
     public Result GetStateSlot(int index)

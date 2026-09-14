@@ -69,6 +69,10 @@ public class TutorialResultSweepTests
                     "A = [1, 2, 3]\nA*.count",
                     "**Result:** error — `A*.count` is the fluent supply chain, exactly `count(A*)`: the three items become three separate argument slots, and the fixed `count(collection)` signature reports an arity error.",
                     KatLangErrorCode.ArityMismatch),
+                new(
+                    "Outer(n) = {\n    Inner = {\n        public X = n\n    }\n    Inner.X\n}\nOuter.Inner.X",
+                    "**Result:** error — `X` is local-only because it depends on the parameter `n` owned by `Outer`, and the root row is not inside `Outer`'s body; the member is still selected, and the report names it and the parameter it needs.",
+                    KatLangErrorCode.LocalOnlyProperty),
             ]);
 
     private static readonly IReadOnlyList<TutorialExample> ResultBearing =

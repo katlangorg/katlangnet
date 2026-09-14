@@ -153,17 +153,21 @@ internal sealed class ElaboratedPropertyScope
 /// One resolved <c>open</c> provider of a scope level, caching the exact target
 /// algorithm the level's open declaration resolved to. Member lookup is served
 /// from a lazy name→first-QUALIFYING-index map replicating
-/// <see cref="ElaboratedScopeLookup.TryLookupPublicExportedProperty"/> exactly:
-/// the first list entry that matches the name AND is public AND exported wins
-/// (a non-qualifying same-name entry earlier in the list is skipped, never an
-/// answer). The target's ordered property list remains the enumeration source
-/// for visible-name gathering.
+/// <see cref="ElaboratedScopeLookup.TryLookupPublicProperty"/> exactly: the
+/// first list entry that matches the name AND is public wins (a private
+/// same-name entry earlier in the list is skipped, never an answer). Exposure
+/// takes no part in SELECTION — a public local-only member is provided by its
+/// open like any other, and whether a site may use it is checked after selection
+/// (the evaluator's accessibility law) — which is what lets detection, which runs
+/// before exposure is classified, select exactly what the evaluator selects.
+/// The target's ordered property list remains the enumeration source for
+/// visible-name gathering.
 /// </summary>
 internal sealed class ResolvedOpenProvider
 {
     private readonly FrontEndTraversalObservations? _observations;
-    private Dictionary<string, int>? _exportedMemberIndex;
-    private int _firstNullExportedMemberIndex = -1;
+    private Dictionary<string, int>? _publicMemberIndex;
+    private int _firstNullPublicMemberIndex = -1;
 
     public ResolvedOpenProvider(Algorithm target, FrontEndTraversalObservations? observations)
     {
@@ -173,10 +177,10 @@ internal sealed class ResolvedOpenProvider
 
     public Algorithm Target { get; }
 
-    public PropertyLookupHit? TryLookupExportedMember(string name)
+    public PropertyLookupHit? TryLookupPublicMember(string name)
     {
         var properties = Target.Properties;
-        var index = _exportedMemberIndex;
+        var index = _publicMemberIndex;
         if (index is null)
         {
             _observations?.RecordLookupOpenMemberIndexBuild();
@@ -184,27 +188,26 @@ internal sealed class ResolvedOpenProvider
             for (var i = 0; i < properties.Count; i++)
             {
                 var property = properties[i];
-                if (property.IsPublic
-                    && property.Exposure == PropertyExposure.Exported)
+                if (property.IsPublic)
                 {
                     if (property.Name is { } memberName)
                         index.TryAdd(memberName, i);
-                    else if (_firstNullExportedMemberIndex < 0)
-                        _firstNullExportedMemberIndex = i;
+                    else if (_firstNullPublicMemberIndex < 0)
+                        _firstNullPublicMemberIndex = i;
                 }
             }
 
-            _exportedMemberIndex = index;
+            _publicMemberIndex = index;
         }
 
         var propertyIndex = name is null
-            ? _firstNullExportedMemberIndex
+            ? _firstNullPublicMemberIndex
             : index.TryGetValue(name, out var namedPropertyIndex) ? namedPropertyIndex : -1;
         return propertyIndex >= 0 ? new PropertyLookupHit(Target, properties[propertyIndex]) : null;
     }
 
     internal void PrewarmSharedLookupCaches()
-        => _ = TryLookupExportedMember(string.Empty);
+        => _ = TryLookupPublicMember(string.Empty);
 }
 
 internal readonly record struct PropertyLookupHit(Algorithm Owner, Property Property);
@@ -254,14 +257,10 @@ internal interface IOwnedParameterBindings
 }
 
 /// <summary>
-/// One spelling that authoritative lexical lookup resolves uniquely. Opened
-/// names carry the exact provider property because their eligibility also
-/// depends on its later final exposure classification; direct lexical names
-/// do not.
+/// One spelling that authoritative lexical lookup resolves uniquely (a direct
+/// property, or a name exactly one open provides).
 /// </summary>
-internal readonly record struct VisibleLexicalName(
-    string Name,
-    Property? RequiredExportedProperty);
+internal readonly record struct VisibleLexicalName(string Name);
 
 internal static class ElaboratedScopeLookup
 {
@@ -286,10 +285,14 @@ internal static class ElaboratedScopeLookup
         return null;
     }
 
-    public static PropertyLookupHit? TryLookupPublicExportedProperty(Algorithm owner, string name)
-        => TryLookupPublicExportedProperty(owner, name, observations: null);
+    /// <summary>
+    /// The first PUBLIC declaration of <paramref name="name"/> — the member an <c>open</c>
+    /// provides, selected by visibility alone (the evaluator's <c>LookupPublicPropBinding</c>).
+    /// </summary>
+    public static PropertyLookupHit? TryLookupPublicProperty(Algorithm owner, string name)
+        => TryLookupPublicProperty(owner, name, observations: null);
 
-    private static PropertyLookupHit? TryLookupPublicExportedProperty(
+    private static PropertyLookupHit? TryLookupPublicProperty(
         Algorithm owner,
         string name,
         FrontEndTraversalObservations? observations)
@@ -299,8 +302,7 @@ internal static class ElaboratedScopeLookup
         {
             comparisons++;
             if (property.Name == name
-                && property.IsPublic
-                && property.Exposure == PropertyExposure.Exported)
+                && property.IsPublic)
             {
                 observations?.RecordLookupPropertyComparisons(comparisons);
                 return new PropertyLookupHit(owner, property);
@@ -405,7 +407,7 @@ internal static class ElaboratedScopeLookup
                 var targetAlgorithm = ResolveOpenTarget(scope, dotCall.Target);
                 return targetAlgorithm is null
                     ? null
-                    : TryLookupPublicExportedProperty(targetAlgorithm, dotCall.Name, scope.Observations)?.Property.Value;
+                    : TryLookupPublicProperty(targetAlgorithm, dotCall.Name, scope.Observations)?.Property.Value;
             }
 
             case Expr.SequenceSpread(var operand):
@@ -452,7 +454,7 @@ internal static class ElaboratedScopeLookup
             List<PropertyLookupHit>? hits = null;
             foreach (var provider in providers)
             {
-                if (provider.TryLookupExportedMember(name) is { } hit)
+                if (provider.TryLookupPublicMember(name) is { } hit)
                 {
                     hits ??= [];
                     hits.Add(hit);
@@ -516,7 +518,6 @@ internal static class ElaboratedScopeLookup
                 foreach (var property in provider.Target.Properties)
                 {
                     if (property.IsPublic
-                        && property.Exposure == PropertyExposure.Exported
                         && !AddPotential(property.Name))
                     {
                         visibleNames = [];
@@ -531,13 +532,13 @@ internal static class ElaboratedScopeLookup
         {
             if (TryLookupDirectLexicalProperty(scope, name) is not null)
             {
-                resolved.Add(new VisibleLexicalName(name, RequiredExportedProperty: null));
+                resolved.Add(new VisibleLexicalName(name));
                 continue;
             }
 
             var openHits = LookupOpenPropertyMatches(scope, name);
             if (openHits.Count == 1)
-                resolved.Add(new VisibleLexicalName(name, openHits[0].Property));
+                resolved.Add(new VisibleLexicalName(name));
         }
 
         visibleNames = resolved;

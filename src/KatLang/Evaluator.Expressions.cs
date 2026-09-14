@@ -357,6 +357,7 @@ public static partial class Evaluator
         EvalCtx ctx,
         IReadOnlyList<(string, Result)> valEnv)
     {
+        ctx = ParameterContext(name, ctx, ref valEnv);
         var counted = LookupCountedParam(ctx.CountedParamEnv, name);
         if (counted is not null)
             return EvalResult<CountedResult>.Ok(counted.Value);

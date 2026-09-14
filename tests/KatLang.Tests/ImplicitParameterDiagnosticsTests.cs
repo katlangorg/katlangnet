@@ -627,12 +627,13 @@ public class ImplicitParameterDiagnosticsTests
     }
 
     [Fact]
-    public void BareNameSuggestion_SuppressesMemberThatBecomesLocalOnly()
+    public void BareNameSuggestion_OffersMemberThatIsLocalOnlyButAccessible()
     {
-        // Candidate collection precedes exposure analysis, but Value captures
-        // Outer's seed and is therefore not exported through open in the final
-        // program. The final exposure classification must veto the early
-        // near-match rather than suggesting a spelling that still fails.
+        // Value captures Outer's seed and is local-only, but `Use` sits inside `Outer`,
+        // whose activation binds `seed`: `open Lib` provides Value there, the corrected
+        // program works, and the near-miss is offered. (K1-08, September 2026: the
+        // earlier pin vetoed this suggestion because local-only members were hidden
+        // from `open` everywhere.)
         var (message, error) = FailWithParity(
             """
             Outer(seed) = {
@@ -646,8 +647,8 @@ public class ImplicitParameterDiagnosticsTests
             Outer(1)
             """);
 
-        Assert.Null(SingleNote(error).SuggestedName);
-        Assert.DoesNotContain("Did you mean", message, StringComparison.Ordinal);
+        Assert.Equal("Value", SingleNote(error).SuggestedName);
+        Assert.Contains("Did you mean 'Value'?", message, StringComparison.Ordinal);
 
         var corrected = SourceProvenance.ParseValid(
             """
@@ -661,8 +662,8 @@ public class ImplicitParameterDiagnosticsTests
             }
             Outer(1)
             """).Evaluate();
-        var unknown = Assert.IsType<EvalError.UnknownName>(Innermost(corrected.Error));
-        Assert.Equal("Value", unknown.Name);
+        Assert.False(corrected.IsError);
+        Assert.Equal(new Result.Atom(1), corrected.Value);
     }
 
     [Fact]

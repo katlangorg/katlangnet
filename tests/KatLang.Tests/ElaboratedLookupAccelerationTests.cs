@@ -312,7 +312,7 @@ public class ElaboratedLookupAccelerationTests
     /// The opened-member lookup rule is first-QUALIFYING-occurrence: a
     /// non-public same-name entry earlier in the provider's list is skipped
     /// and a later public exported entry is the answer — exactly the linear
-    /// <see cref="ElaboratedScopeLookup.TryLookupPublicExportedProperty"/>
+    /// <see cref="ElaboratedScopeLookup.TryLookupPublicProperty"/>
     /// relation, which the provider's member index must replicate.
     /// </summary>
     [Fact]
@@ -328,7 +328,7 @@ public class ElaboratedLookupAccelerationTests
         var userScope = ElaboratedScopeLookup.CreateScope(user, rootScope);
 
         // The linear helper defines the relation…
-        var linear = ElaboratedScopeLookup.TryLookupPublicExportedProperty(lib, "X");
+        var linear = ElaboratedScopeLookup.TryLookupPublicProperty(lib, "X");
         Assert.NotNull(linear);
         Assert.Same(publicX, linear.Value.Property);
 

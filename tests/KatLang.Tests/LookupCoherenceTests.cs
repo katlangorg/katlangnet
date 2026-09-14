@@ -111,9 +111,29 @@ public class LookupCoherenceTests
             "X = 303\nLib = {\n    X = 101\n}\nA = {\n    open Lib\n    X\n}\nA",
             "X", "ok raw=303 n=1", new Declared("X", 1)),
 
-        new("exposure.openLocalOnlyCapturedAncestorParamsIsHidden",
+        // A parameterized algorithm is not an open PROVIDER (open never creates the
+        // activation its members would read): the front end refuses `open Lib` itself
+        // (DiagnosticCode.IllegalInOpen) and the runtime never reaches the member. The
+        // tolerant editor still selects Lib's X by declaration (selection is by
+        // visibility; K1-08, September 2026).
+        new("exposure.openParameterizedProviderIsRefused",
             "Lib(p) = {\n    public X = p + 101\n    X\n}\nA = {\n    open Lib\n    X\n}\nA",
-            "X", "err unknownName", new NoDeclaration()),
+            "X", "parseError", new Declared("X", 1)),
+
+        // A local-only member IS provided by `open` to a site inside the owner of every
+        // input it captures: `Outer`'s activation binds `p`, so `X` is selected and usable
+        // there — the same declaration in all three views. The captured argument is 0 so the
+        // observed value is the sentinel WRITTEN on the declaration line, which is what closes
+        // the identity loop; that X really reads `p` is pinned by LocalMemberAccessTests.
+        new("exposure.openLocalOnlyMemberInsideItsOwner",
+            "Outer(p) = {\n    open Lib\n    Lib = {\n        public X = p + 101\n    }\n    X\n}\nOuter(0)",
+            "X", "ok raw=101 n=1", new Declared("X", 1)),
+
+        // Outside that owner the same member is selected but refused at the access
+        // (runtime localOnlyProperty); the editor resolves the declaration it names.
+        new("exposure.openLocalOnlyMemberOutsideItsOwner",
+            "Outer(p) = {\n    public Lib = {\n        public X = p + 101\n    }\n    0\n}\nA = {\n    open Outer.Lib\n    X\n}\nA",
+            "X", "err localOnlyProperty", new Tolerated("X", 1)),
 
         // A declaration inside a conditional branch body is never reachable BY NAME from
         // outside the conditional: `open Lib` provides Lib's own members (the family F), and
@@ -136,11 +156,12 @@ public class LookupCoherenceTests
             "X", "ok raw=101 n=1", new Declared("X", 1)),
 
         // A branch-local member that captures the branch's pattern binder is local-only for
-        // the same reason a parameter-capturing member is, so `open Lib` hides it exactly as
-        // exposure.openLocalOnlyCapturedAncestorParamsIsHidden does for a parameter.
-        new("exposure.openBranchLocalBinderCapturingMemberIsHidden",
-            "F(0) = 0\nF(n) = {\n    Lib = {\n        public X = n + 101\n    }\n    G = {\n        open Lib\n        X\n    }\n    G\n}\nF(5)",
-            "X", "err unknownName", new NoDeclaration()),
+        // the same reason a parameter-capturing member is, and — exactly like
+        // exposure.openLocalOnlyMemberInsideItsOwner for a parameter — `open Lib` provides
+        // it to the nested body, which lies inside the branch that binds `n`.
+        new("exposure.openBranchLocalBinderCapturingMemberInsideTheBranch",
+            "F(1) = 1\nF(n) = {\n    Lib = {\n        public X = n + 101\n    }\n    G = {\n        open Lib\n        X\n    }\n    G\n}\nF(0)",
+            "X", "ok raw=101 n=1", new Declared("X", 1)),
 
         // The family-level rule in all three views: a structural path into a branch body is
         // refused at the family (runtime localOnlyProperty with the family-level reason), the
@@ -155,9 +176,23 @@ public class LookupCoherenceTests
             "Lib = {\n    X = 101\n}\nLib.X",
             "X", "ok raw=101 n=1", new Declared("X", 1)),
 
-        new("exposure.structuralDotRejectsLocalOnlyMember",
+        // Structural access selects a declared member whatever its exposure; a site outside
+        // the owner of what the member captures is then refused at the access (`B` is not
+        // inside `Lib`, and `Lib` is never called here). The editor resolves the declaration.
+        new("exposure.structuralDotRejectsLocalOnlyMemberOutsideItsOwner",
             "Lib(p) = {\n    public X = p + 101\n    X\n}\nB = {\n    Lib.X\n}\nB",
-            "X", "err localOnlyProperty", new NoDeclaration()),
+            "X", "err localOnlyProperty", new Tolerated("X", 1)),
+
+        // Inside the owner the same access is valid: `Outer`'s body lies inside `Outer`,
+        // whose activation binds the `p` that `Lib.X` captures.
+        new("exposure.structuralDotReachesLocalOnlyMemberInsideItsOwner",
+            "Outer(p) = {\n    Lib = {\n        public X = p + 101\n    }\n    Lib.X\n}\nOuter(0)",
+            "X", "ok raw=101 n=1", new Declared("X", 1)),
+
+        // A sibling scope under the same activation is inside the owner too.
+        new("exposure.siblingScopeReachesLocalOnlyMemberOfTheSameOwner",
+            "Outer(p) = {\n    Left = {\n        public X = p + 101\n    }\n    Right = {\n        open Left\n        X\n    }\n    Right\n}\nOuter(0)",
+            "X", "ok raw=101 n=1", new Declared("X", 1)),
 
         // ---- provider topology ----------------------------------------------
         new("providers.twoProvidersAreAmbiguous",
@@ -385,11 +420,17 @@ public class LookupCoherenceTests
         var parsed = Parser.Parse(lookupCase.Source);
         if (lookupCase.ExpectedRuntime == "parseError")
         {
-            // The two ownership rejections the matrix probes through: a property hiding a
-            // completed parameter, and an open target whose head a parameter owns.
+            // The declaration-level rejections the matrix probes through: a property hiding a
+            // completed parameter, an open target whose head a parameter owns, and an open
+            // target that would need a call to have members.
             Assert.Contains(
                 Assert.Single(parsed.Diagnostics).Code,
-                new[] { DiagnosticCode.ParameterPropertyCollision, DiagnosticCode.OpenTargetIsParameter });
+                new[]
+                {
+                    DiagnosticCode.ParameterPropertyCollision,
+                    DiagnosticCode.OpenTargetIsParameter,
+                    DiagnosticCode.IllegalInOpen,
+                });
         }
         else
             Assert.False(parsed.HasErrors, $"[{caseId}] unexpected parse diagnostics: " +
@@ -533,9 +574,15 @@ public class LookupCoherenceTests
         Assert.Contains(Cases, c => c.Expected is Tolerated);
 
         Assert.Contains(Cases, c => c.ExpectedRuntime == "err ambiguousOpen");
-        Assert.Contains(Cases, c => c.ExpectedRuntime == "err unknownName");
         Assert.Contains(Cases, c => c.ExpectedRuntime == "err localOnlyProperty");
         Assert.Contains(Cases, c => c.ExpectedRuntime == "err illegalInOpen");
+        Assert.Contains(Cases, c => c.ExpectedRuntime == "parseError");
+
+        // There is deliberately no runtime `unknownName` row any more. Its only two sources
+        // were the exposure-hiding cases K1-08 removed: because selection no longer depends on
+        // exposure, a bare name that resolves nowhere is either promoted to an implicit
+        // parameter or rejected by the front end, and a name that DOES select a declaration is
+        // refused at the access (localOnlyProperty), never reported as unknown.
 
         // Distinct-sentinel resolutions: the cases where declaration identity is
         // genuinely observable rather than merely "something resolved".

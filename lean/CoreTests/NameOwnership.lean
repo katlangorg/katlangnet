@@ -2,7 +2,7 @@ import KatLang
 import CoreTests.Common
 
 namespace KatLangTests
-open KatLang (OwnerLevel OwnedDeclaration selectOwnedDeclaration elaboratesToParameter elaborateOpenHead validOwnedDeclarations conflictingOwnedNames Expr Error Result alg algPrivate publicProp runResult)
+open KatLang (OwnerLevel OwnedDeclaration selectOwnedDeclaration elaboratesToParameter elaborateOpenHead validOwnedDeclarations conflictingOwnedNames Algorithm Expr Error Pattern CondBranch PropExposure Result alg algPrivate privateProp publicProp privateLocalProp publicLocalProp runResult)
 
 --------------------------------------------------------------------------------
 -- Surface-layer owner walk (selectOwnedDeclaration / elaboratesToParameter)
@@ -277,5 +277,412 @@ def propertyOwnedOpenHeadStillOpens : Bool :=
   | _ => false
 
 #guard propertyOwnedOpenHeadStillOpens
+
+--------------------------------------------------------------------------------
+-- Member accessibility and the open PROVIDER rule (K1-08)
+--------------------------------------------------------------------------------
+-- Two independent rules, pinned separately here.
+--
+-- SELECTION NEVER DEPENDS ON EXPOSURE. `open` selects a provider's PUBLIC
+-- members and structural dot access selects DECLARED members, so a public
+-- local-only member takes part in precedence and ambiguity like any provided
+-- name. The ONE accessibility law (`memberAccessible?`) is then applied to the
+-- member that was already selected, and it asks a purely LEXICAL question: does
+-- the SITE — the algorithm whose body is being evaluated — lie inside the owner
+-- of every parameter name the member captures? So a captured member is reachable
+-- from every body under that owner, and from nowhere else; a dynamic binding
+-- that merely happens to be live is never consulted.
+--
+-- An `open` PROVIDER must need no call, because `open` imports a namespace and
+-- never creates the activation its members would read. Only the RESOLVED
+-- provider is judged, so a dotted target may travel through a parameterized head.
+
+def innermostIsAmbiguousOpen (name : String) : Error -> Bool
+  | .withContext _ inner => innermostIsAmbiguousOpen name inner
+  | .ambiguousOpen actual _ => actual = name
+  | _ => false
+
+/-- The member-name and captured-requirement half of a local-only refusal. The
+    object description is diagnostics-only rendering, pinned by the structural
+    guard below where the renderer's output is unambiguous. -/
+def innermostRefusesCapturedMember (name : String) (required : List String) : Error -> Bool
+  | .withContext _ inner => innermostRefusesCapturedMember name required inner
+  | .localOnlyProperty _ actualName exposure =>
+      actualName = name && exposure = PropExposure.localCapturedAncestorParams required
+  | _ => false
+
+/-- `Inner = { public X = n }` exactly as the front end elaborates it inside
+    `Outer(n)`: `X` reads a parameter owned by an ancestor of its container, so
+    it is local-only and RECORDS the required name. -/
+def capturedMemberLibrary : Algorithm :=
+  alg [] [] [publicLocalProp "X" (.localCapturedAncestorParams ["n"]) (alg [] [] [] [.param "n"])] []
+
+/-- `Outer(n) = { Inner = { public X = n }  Inner.X }` / `Outer(5)`: the site is
+    `Outer` itself, which owns `n`, so the structurally selected member is
+    accessible and reads the activation's argument. -/
+def memberAccessStructuralInsideOwner : Bool :=
+  let outer := alg ["n"] [] [privateProp "Inner" capturedMemberLibrary]
+    [Expr.dotCall (.resolve "Inner") "X" none]
+  let program := algPrivate [] [] [("Outer", outer)] [.call (.resolve "Outer") [.num 5]]
+  match runResult (.algorithmExpr program) with
+  | .ok (Result.atom 5) => true
+  | _ => false
+
+#guard memberAccessStructuralInsideOwner
+
+/-- `Outer(n) = { open Inner  Inner = { public X = n }  X }` / `Outer(5)`: the
+    same member reached through an `open`-provided name. `open` exposes public
+    members whatever their exposure, and accessibility is decided afterwards from
+    the same site, so this agrees with the structural spelling. -/
+def memberAccessOpenInsideOwner : Bool :=
+  let outer := alg ["n"] [.resolve "Inner"] [privateProp "Inner" capturedMemberLibrary]
+    [.resolve "X"]
+  let program := algPrivate [] [] [("Outer", outer)] [.call (.resolve "Outer") [.num 5]]
+  match runResult (.algorithmExpr program) with
+  | .ok (Result.atom 5) => true
+  | _ => false
+
+#guard memberAccessOpenInsideOwner
+
+/-- `Outer(n) = { Inner = { public X = n }  Deep = { Inner.X }  Deep }`: the site
+    is the nested `Deep`, an ancestor of which is the owner of `n`, so being
+    INSIDE the owner — not being the owner — is what admits the access. `Deep`
+    itself reads a captured member, so it is local-only in turn. -/
+def memberAccessFromNestedBody : Bool :=
+  let deep := alg [] [] [] [Expr.dotCall (.resolve "Inner") "X" none]
+  let outer := alg ["n"] []
+    [privateProp "Inner" capturedMemberLibrary,
+     { name := "Deep", alg := deep, isPublic := false,
+       exposure := .localCapturedAncestorParams ["n"] }]
+    [.resolve "Deep"]
+  let program := algPrivate [] [] [("Outer", outer)] [.call (.resolve "Outer") [.num 5]]
+  match runResult (.algorithmExpr program) with
+  | .ok (Result.atom 5) => true
+  | _ => false
+
+#guard memberAccessFromNestedBody
+
+/-- The escape the law exists to refuse: the root writes `Outer.Inner.X` with no
+    activation of `Outer` anywhere. Navigation still SELECTS `X` — `Inner` is an
+    ordinary exported member and selection ignores exposure — and the refusal
+    happens at the access, naming the member and what it requires. -/
+def memberAccessOutsideOwnerRefused : Bool :=
+  let outer := alg ["n"] [] [privateProp "Inner" capturedMemberLibrary]
+    [Expr.dotCall (.resolve "Inner") "X" none]
+  let program := algPrivate [] [] [("Outer", outer)]
+    [Expr.dotCall (Expr.dotCall (.resolve "Outer") "Inner" none) "X" none]
+  match runResult (.algorithmExpr program) with
+  | .error err => innermostIsLocalOnlyProperty "Outer.Inner" "X" (.localCapturedAncestorParams ["n"]) err
+  | _ => false
+
+#guard memberAccessOutsideOwnerRefused
+
+/-- The same escape through `open Outer.Inner` written at the root, with `Inner`
+    declared `public` so the dotted step's own visibility rule is satisfied and
+    the provider is genuinely reached. The provider needs no call, so the open
+    itself is legal; the refusal is the ordinary member-accessibility one at the
+    name it provides. -/
+def memberAccessOpenOutsideOwnerRefused : Bool :=
+  let outer := alg ["n"] [] [publicProp "Inner" capturedMemberLibrary]
+    [Expr.dotCall (.resolve "Inner") "X" none]
+  let program := algPrivate [] [Expr.dotCall (.resolve "Outer") "Inner" none]
+    [("Outer", outer)] [.resolve "X"]
+  match runResult (.algorithmExpr program) with
+  | .error err => innermostRefusesCapturedMember "X" ["n"] err
+  | _ => false
+
+#guard memberAccessOpenOutsideOwnerRefused
+
+/-- A member captured in a BLOCK is owned by the algorithm that wrote the block, and a
+    callee that merely receives it is outside that owner even when it binds the same
+    parameter NAMES on the same parent: `Take(n, m) = n.X` beside
+    `Outer(n, m) = { Take({ public X = m }, n) }` must not read `X`, which would resolve
+    the captured `m` against TAKE's own binding and answer 5 instead of 7. Declaration
+    identity separates these owners even if their output rows are also shared;
+    output rows are retained for scope reconstruction, not used as owner identity. -/
+def memberAccessBlockCannotEscapeIntoASameShapedCallee : Bool :=
+  let block := alg [] []
+    [publicLocalProp "X" (.localCapturedAncestorParams ["m"]) (alg [] [] [] [.param "m"])] []
+  let take := alg ["n", "m"] [] [] [Expr.dotCall (.param "n") "X" none]
+  let outer := alg ["n", "m"] [] []
+    [.call (.resolve "Take") [.algorithmExpr block, .param "n"]]
+  let program := algPrivate [] [] [("Take", take), ("Outer", outer)]
+    [.call (.resolve "Outer") [.num 5, .num 7]]
+  match runResult (.algorithmExpr program) with
+  | .error err => innermostRefusesCapturedMember "X" ["m"] err
+  | _ => false
+
+#guard memberAccessBlockCannotEscapeIntoASameShapedCallee
+
+/-- A required name no scope on the member's own chain binds can never be
+    satisfied, so the access is refused rather than reaching an unrelated
+    binding. Only a host can build this shape; the front end never does. -/
+def memberAccessUnownedRequirementRefused : Bool :=
+  let lib := alg [] []
+    [publicLocalProp "X" (.localCapturedAncestorParams ["ghost"]) (alg [] [] [] [.num 7])] []
+  let program := algPrivate [] [] [("Lib", lib)]
+    [Expr.dotCall (.resolve "Lib") "X" none]
+  match runResult (.algorithmExpr program) with
+  | .error err => innermostRefusesCapturedMember "X" ["ghost"] err
+  | _ => false
+
+#guard memberAccessUnownedRequirementRefused
+
+/-- Selection is by declaration, so a local-only member is a genuine SECOND
+    provider: `Lib = { public X = 1 }` beside `Inner = { public X = n }` under
+    `open Lib, Inner` is AMBIGUOUS, never a silent fallback to the exported one.
+    (Exposure-filtered selection would have answered 1 here.) -/
+def openSelectionIgnoresExposure : Bool :=
+  let lib := alg [] [] [publicProp "X" (alg [] [] [] [.num 1])] []
+  let helper := alg [] [.resolve "Lib", .resolve "Inner"] [] [.resolve "X"]
+  let outer := alg ["n"] []
+    [privateProp "Inner" capturedMemberLibrary,
+     { name := "Helper", alg := helper, isPublic := false,
+       exposure := .localCapturedAncestorParams ["n"] }]
+    [.resolve "Helper"]
+  let program := algPrivate [] [] [("Lib", lib), ("Outer", outer)]
+    [.call (.resolve "Outer") [.num 5]]
+  match runResult (.algorithmExpr program) with
+  | .error err => innermostIsAmbiguousOpen "X" err
+  | _ => false
+
+#guard openSelectionIgnoresExposure
+
+/-- `Lib(p) = { public X = p + 101  X }` / `A = { open Lib  X }`: the provider
+    needs a call, and `open` never makes one, so the TARGET is refused — `X` is
+    never reinterpreted as an input of `A`, and `Lib` is never instantiated. -/
+def openParameterizedProviderRejected : Bool :=
+  let lib := alg ["p"] []
+    [publicLocalProp "X" (.localCapturedAncestorParams ["p"])
+      (alg [] [] [] [.binary .add (.param "p") (.num 101)])]
+    [.resolve "X"]
+  let a := alg [] [.resolve "Lib"] [] [.resolve "X"]
+  let program := algPrivate [] [] [("Lib", lib), ("A", a)] [.resolve "A"]
+  match runResult (.algorithmExpr program) with
+  | .error err =>
+      innermostIsIllegalInOpen "'Lib' cannot be opened because it requires arguments (p); open imports only an algorithm that needs no call." err
+  | _ => false
+
+#guard openParameterizedProviderRejected
+
+/-- A clause family is refused for the same reason: every alternative takes
+    arguments, so there is nothing to import without calling it. -/
+def openClauseFamilyProviderRejected : Bool :=
+  let family : Algorithm := .conditional none [] [
+    ⟨ .sequenceValue [.litInt 0], alg [] [] [] [.num 0] ⟩,
+    ⟨ .sequenceValue [.bind "x"], alg [] [] [] [.param "x"] ⟩
+  ]
+  let a := alg [] [.resolve "F"] [] [.resolve "X"]
+  let program := algPrivate [] [] [("F", family), ("A", a)] [.resolve "A"]
+  match runResult (.algorithmExpr program) with
+  | .error err =>
+      innermostIsIllegalInOpen "'F' cannot be opened because it is a clause family that requires arguments; open imports only an algorithm that needs no call." err
+  | _ => false
+
+#guard openClauseFamilyProviderRejected
+
+/-- Only the RESOLVED provider is judged: `open Lib.Sub` travels through the
+    parameterized `Lib` to the self-contained `Sub`, which needs no call, so the
+    open is legal and `X` is 7. Static `open` stays static — nothing calls `Lib`. -/
+def openThroughParameterizedHeadIsAllowed : Bool :=
+  let sub := alg [] [] [publicProp "X" (alg [] [] [] [.num 7])] []
+  let lib := alg ["p"] [] [publicProp "Sub" sub] [.param "p"]
+  let a := alg [] [Expr.dotCall (.resolve "Lib") "Sub" none] [] [.resolve "X"]
+  let program := algPrivate [] [] [("Lib", lib), ("A", a)] [.resolve "A"]
+  match runResult (.algorithmExpr program) with
+  | .ok (Result.atom 7) => true
+  | _ => false
+
+#guard openThroughParameterizedHeadIsAllowed
+
+/-- An open head is an identity; its unused output creates no capture requirement. -/
+def openDoesNotEvaluateProviderOutput : Bool :=
+  let lib := alg [] [] [publicProp "X" (alg [] [] [] [.num 10])] [.param "n"]
+  let p := alg [] [.resolve "Lib"] [] [.resolve "X"]
+  let q := alg [] [] [] [Expr.dotCall (.resolve "Lib") "X" none]
+  let outer := alg ["n"] [] [privateLocalProp "Lib" (.localCapturedAncestorParams ["n"]) lib,
+    privateProp "P" p, privateProp "Q" q] [.num 0]
+  let program := algPrivate [] [] [("Outer", outer)] [
+    Expr.dotCall (.resolve "Outer") "P" none, Expr.dotCall (.resolve "Outer") "Q" none]
+  match runResult (.algorithmExpr program) with
+  | .ok value => value == Result.sequenceValue [Result.atom 10, Result.atom 10]
+  | _ => false
+
+#guard openDoesNotEvaluateProviderOutput
+
+/-- Visibility rejects a private dotted-open step before its capture accessibility. -/
+def privateDottedOpenMemberUsesVisibilityError : Bool :=
+  let lib := alg [] [] [publicProp "X" (alg [] [] [] [.num 1])] [.param "n"]
+  let outer := alg ["n"] [] [privateLocalProp "Lib" (.localCapturedAncestorParams ["n"]) lib] [.num 0]
+  let pub := alg [] [] [publicProp "Y" (alg [] [] [] [.num 2])] []
+  let program := algPrivate [] [Expr.dotCall (.resolve "Outer") "Lib" none, .resolve "Pub"]
+    [("Outer", outer), ("Pub", pub)] [.resolve "Y"]
+  let rec isPrivate : Error -> Bool
+    | .withContext _ inner => isPrivate inner
+    | .notPublicProperty _ "Lib" => true
+    | _ => false
+  match runResult (.algorithmExpr program) with
+  | .error error => isPrivate error
+  | _ => false
+
+#guard privateDottedOpenMemberUsesVisibilityError
+
+/-- A navigated owner's unavailable activation is not supplied by an unrelated n. -/
+def navigatedCaptureKeepsUnavailableOwner (outerName : String) : Bool :=
+  let mid := alg ["n"] [] [publicLocalProp "X" (.localCapturedAncestorParams ["n"])
+    (alg [] [] [] [.param "n"])] [.num 0]
+  let p := { privateLocalProp "P" (.localCapturedAncestorParams ["n"])
+      (alg [] [] [] [.call (.resolve "if") [.num 0, Expr.dotCall (.resolve "Mid") "X" none, .num 10]])
+    with requiredOwnerDepths := some [("n", none)] }
+  let read := alg [] [] [] [Expr.dotCall (.resolve "Outer") "P" none]
+  let outer := alg [outerName] [] [privateProp "Mid" mid, p, privateProp "Read" read] [.resolve "Read"]
+  let program := algPrivate [] [] [("Outer", outer)] [.call (.resolve "Outer") [.num 5]]
+  match runResult (.algorithmExpr program) with
+  | .error error => innermostRefusesCapturedMember "P" ["n"] error
+  | _ => false
+
+#guard navigatedCaptureKeepsUnavailableOwner "n"
+#guard navigatedCaptureKeepsUnavailableOwner "m"
+
+/-- Static navigation can name the enclosing active declaration, including through opens. -/
+def navigatedCaptureUsesActiveOwner (outerName : String) (throughOpen : Bool) : Bool :=
+  let lib := alg [] [] [publicLocalProp "X" (.localCapturedAncestorParams ["n"])
+    (alg [] [] [] [.param "n"])] []
+  let path := Expr.dotCall (Expr.dotCall (.resolve "Outer") "Mid" none) "Lib" none
+  let read := if throughOpen then alg [] [path] [] [.resolve "X"]
+    else alg [] [] [] [Expr.dotCall path "X" none]
+  let mid := alg ["n"] [] [publicProp "Lib" lib, privateLocalProp "Read"
+    (.localCapturedAncestorParams ["n"]) read] [.resolve "Read"]
+  let outer := alg [outerName] [] [publicProp "Mid" mid] [.call (.resolve "Mid") [.num 7]]
+  let program := algPrivate [] [] [("Outer", outer)] [.call (.resolve "Outer") [.num 5]]
+  match runResult (.algorithmExpr program) with
+  | .ok value => value == .atom 7
+  | _ => false
+
+#guard navigatedCaptureUsesActiveOwner "n" false
+#guard navigatedCaptureUsesActiveOwner "m" false
+#guard navigatedCaptureUsesActiveOwner "n" true
+#guard navigatedCaptureUsesActiveOwner "m" true
+
+-- A family declaration's active binder view remains part of the owning scope.
+#guard !KatLang.sameDeclaringScope
+  (.mk none ["n"] [] [] [] [] none (some (.shared 0)))
+  (.mk none ["m"] [] [] [] [] none (some (.shared 0)))
+
+
+/-- A shadowing callee cannot replace a lexical capture with its own same-named value. -/
+def memberCaptureKeepsLexicalBinding (throughOpen : Bool) : Bool :=
+  let read := if throughOpen then alg ["n"] [.resolve "Inner"] [] [.resolve "X"]
+    else alg ["n"] [] [] [Expr.dotCall (.resolve "Inner") "X" none]
+  let outer := alg ["n"] [] [privateProp "Inner" capturedMemberLibrary, privateProp "Read" read]
+    [.call (.resolve "Read") [.num 7]]
+  let program := algPrivate [] [] [("Outer", outer)]
+    [.call (.resolve "Outer") [.num 5], .call (.resolve "Outer") [.num 9]]
+  match runResult (.algorithmExpr program) with
+  | .ok value => value == Result.sequenceValue [Result.atom 5, Result.atom 9]
+  | _ => false
+
+#guard memberCaptureKeepsLexicalBinding false
+#guard memberCaptureKeepsLexicalBinding true
+
+/-- Transitive Q belongs to Outer even though Mid binds another n. -/
+def memberTransitiveOwnerBypassesShadow : Bool :=
+  let q := privateLocalProp "Q" (.localCapturedAncestorParams ["n"]) (alg [] [] [] [.param "n"])
+  let x := { publicLocalProp "X" (.localCapturedAncestorParams ["n"]) (alg [] [] [] [.resolve "Q"])
+    with requiredOwnerDepths := some [("n", some 1)] }
+  let mid := alg ["n"] [] [x] [.resolve "X"]
+  let outer := alg ["n"] [] [q, privateLocalProp "Mid" (.localCapturedAncestorParams ["n"]) mid]
+    [Expr.dotCall (.resolve "Mid") "X" none]
+  let program := algPrivate [] [] [("Outer", outer)] [.call (.resolve "Outer") [.num 5]]
+  match runResult (.algorithmExpr program) with
+  | .ok (Result.atom 5) => true
+  | _ => false
+
+#guard memberTransitiveOwnerBypassesShadow
+
+/-- H's next activation cannot receive the previous activation's captured provider. -/
+def memberSameDeclarationDifferentActivationRefused : Bool :=
+  let block := alg [] [] [publicLocalProp "X" (.localCapturedAncestorParams ["n"])
+    (alg [] [] [] [.param "n"])] []
+  let h := alg ["f", "n"] [] [] [.call (.resolve "if") [.param "n",
+    .call (.resolve "H") [.algorithmExpr block, .num 0], Expr.dotCall (.param "f") "X" none]]
+  let initial := alg [] [] [publicProp "X" (alg [] [] [] [.num 0])] []
+  let program := algPrivate [] [] [("H", h)] [.call (.resolve "H") [.algorithmExpr initial, .num 5]]
+  match runResult (.algorithmExpr program) with
+  | .error err => innermostRefusesCapturedMember "X" ["n"] err
+  | _ => false
+
+#guard memberSameDeclarationDifferentActivationRefused
+
+/-- A static nested declaration retains its already captured ancestor activation. -/
+def memberStaticNestedProviderKeepsAncestorActivation : Bool :=
+  let x := publicLocalProp "X" (.localCapturedAncestorParams ["n"]) (alg [] [] [] [.param "n"])
+  let lib := alg ["n"] [] [x] [Expr.dotCall (.param "f") "X" none]
+  let outer := alg ["f", "k"] [] [privateLocalProp "Lib" (.localCapturedAncestorParams ["f"]) lib]
+    [.call (.resolve "if") [.param "k", .call (.resolve "Outer") [.resolve "Lib", .num 0],
+      .call (.resolve "Lib") [.num 7]]]
+  let initial := alg [] [] [publicProp "X" (alg [] [] [] [.num 0])] []
+  let program := algPrivate [] [] [("Outer", outer)] [.call (.resolve "Outer") [.algorithmExpr initial, .num 1]]
+  match runResult (.algorithmExpr program) with
+  | .error err => innermostRefusesCapturedMember "X" ["n"] err
+  | _ => false
+
+#guard memberStaticNestedProviderKeepsAncestorActivation
+
+/-- Two distinct clause families on one parent bind n; F's provider cannot escape into G. -/
+def memberClauseFamiliesHaveDistinctActivations : Bool :=
+  let block := alg [] [] [publicLocalProp "X" (.localCapturedAncestorParams ["n"])
+    (alg [] [] [] [.param "n"])] []
+  let f : Algorithm := .conditional none [] [
+    ⟨.sequenceValue [.litInt 0], alg [] [] [] [.num 0]⟩,
+    ⟨.sequenceValue [.bind "n"], alg [] [] [] [.call (.resolve "H") [.algorithmExpr block, .num 0]]⟩]
+  let g : Algorithm := .conditional none [] [
+    ⟨.sequenceValue [.litInt 0], alg [] [] [] [.num 0]⟩,
+    ⟨.sequenceValue [.bind "n"], alg [] [] [] [Expr.dotCall (.param "f") "X" none]⟩]
+  let h := alg ["f", "k"] [] [privateProp "F" f,
+    privateLocalProp "G" (.localCapturedAncestorParams ["f"]) g]
+    [.call (.resolve "if") [.param "k", .call (.resolve "F") [.param "k"], .call (.resolve "G") [.num 7]]]
+  let initial := alg [] [] [publicProp "X" (alg [] [] [] [.num 0])] []
+  let program := algPrivate [] [] [("H", h)] [.call (.resolve "H") [.algorithmExpr initial, .num 5]]
+  match runResult (.algorithmExpr program) with
+  | .error err => innermostRefusesCapturedMember "X" ["n"] err
+  | _ => false
+
+#guard memberClauseFamiliesHaveDistinctActivations
+
+/-- Sharing body components is not sharing the parameter owner declaration. -/
+def memberSharedComponentsKeepDistinctOwners : Bool :=
+  let x := { publicLocalProp "X" (.localCapturedAncestorParams ["n"])
+      ((alg [] [] [] [.param "n"]).withDeclarationId (some (.shared 1)))
+    with identity := some (.shared 1) }
+  let f := alg ["n"] [] [x] [Expr.dotCall (.resolve "G") "X" none]
+  let g := alg ["n"] [] [x] [Expr.dotCall (.resolve "G") "X" none]
+  let program := algPrivate [] [] [("F", f), ("G", g)] [.call (.resolve "F") [.num 5]]
+  match runResult (.algorithmExpr program) with
+  | .error err => innermostRefusesCapturedMember "X" ["n"] err
+  | _ => false
+
+#guard memberSharedComponentsKeepDistinctOwners
+
+/-- Family-owned opens use the same static member surface as user-body opens. Exposure
+    is a front-end input; the selected member, not Lib's unused output, determines it. -/
+def familyOwnedOpenStaticSurface (captures : Bool) : Bool :=
+  let x := if captures then publicLocalProp "X" (.localCapturedAncestorParams ["n"])
+      (alg [] [] [] [.param "n"])
+    else publicProp "X" (alg [] [] [] [.num 10])
+  let lib := alg [] [] [x] [if captures then .num 0 else .param "n"]
+  let family := Algorithm.conditional none [.resolve "Lib"] [
+    ⟨.litInt 0, alg [] [] [] [.num 10]⟩,
+    ⟨.bind "k", alg [] [] [] [.resolve "X"]⟩]
+  let f := if captures then privateLocalProp "F" (.localCapturedAncestorParams ["n"]) family
+    else privateProp "F" family
+  let outer := alg ["n"] [] [privateProp "Lib" lib, f] [.num 0]
+  let program := algPrivate [] [] [("Outer", outer)] [Expr.dotCall (.resolve "Outer") "F" (some [.num 0])]
+  match runResult (.algorithmExpr program) with
+  | .ok value => !captures && value == .atom 10
+  | .error error => captures && innermostRefusesCapturedMember "F" ["n"] error
+
+#guard familyOwnedOpenStaticSurface false
+#guard familyOwnedOpenStaticSurface true
 
 end KatLangTests

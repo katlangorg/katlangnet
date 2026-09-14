@@ -1,4 +1,17 @@
+using System.Runtime.CompilerServices;
+
 namespace KatLang;
+
+internal readonly record struct OwnerQualifiedParameter(string Name, Algorithm? Owner)
+{
+    private sealed record Identity(long Value);
+    private static long _nextIdentity;
+    private static readonly ConditionalWeakTable<Algorithm, Identity> Identities = new();
+    internal static long OwnerKey(Algorithm owner) => Identities.GetValue(owner, static _ => new(Interlocked.Increment(ref _nextIdentity))).Value;
+    internal string ContentKey => $"{(Owner is null ? 0 : OwnerKey(Owner))}:{Name.Length}:{Name}";
+    public bool Equals(OwnerQualifiedParameter other) => Name == other.Name && ReferenceEquals(Owner, other.Owner);
+    public override int GetHashCode() => HashCode.Combine(Name, Owner is null ? 0 : RuntimeHelpers.GetHashCode(Owner));
+}
 
 internal sealed record PropertyDependencyNode(
     int PropertyIndex,
@@ -8,7 +21,129 @@ internal sealed record PropertyDependencySummaryNode(
     int PropertyIndex,
     IReadOnlyList<int> SummarySiblingDependencyIndices,
     IReadOnlyList<string> SummaryVisiblePropertyDependencyNames,
-    IReadOnlyList<string> RequiredAncestorOwnedParameterNames);
+    IReadOnlyList<string> RequiredAncestorOwnedParameterNames,
+    IReadOnlyList<PendingReference> PendingReferences,
+    IReadOnlyList<OwnerQualifiedParameter> OwnerQualifiedParameters);
+
+/// <summary>
+/// A reference the scope-free summary walk could not reduce to a bare visible name: a
+/// static member PATH (<c>Inner.X</c> — <see cref="Head"/> <c>Inner</c>, <see cref="Members"/>
+/// <c>[X]</c>), and/or a name that escaped a level owning <c>open</c> declarations, whose
+/// providers are carried as <see cref="Candidates"/> (innermost level first — the order
+/// <c>open</c> lookup consults them). The owning level's resolver settles it with the
+/// ownership-first rule: the head as a PROPERTY of the chain first, then the candidates in
+/// order, then the owning level's and its ancestors' own opens (Lean/evaluator:
+/// <c>lookupLexicalProperty</c> then <c>lookupOpenPropertiesInChain</c>). Navigated members
+/// charge THEIR requirement summaries — that is what makes a container that reads a captured
+/// member through <c>Inner.X</c> or <c>open Inner</c> itself local-only. Immutable; equality
+/// is by content so a summary fixed point can compare seeds.
+/// </summary>
+internal sealed class PendingReference : IEquatable<PendingReference>
+{
+    public PendingReference(string head, IReadOnlyList<string> members, IReadOnlyList<OpenCandidate> candidates,
+        IReadOnlyList<Algorithm>? boundOwners = null)
+    {
+        Head = head;
+        Members = members;
+        Candidates = candidates;
+        BoundOwners = boundOwners ?? [];
+        ResolutionKey = KeyParts([head, KeyParts(members), KeyParts(candidates.Select(static candidate => candidate.ContentKey))]);
+        ContentKey = KeyParts([ResolutionKey, string.Join(",", BoundOwners.Select(OwnerQualifiedParameter.OwnerKey).Order())]);
+    }
+
+    public string Head { get; }
+
+    /// <summary>Member steps navigated structurally after the head (any visibility).</summary>
+    public IReadOnlyList<string> Members { get; }
+
+    /// <summary>Open providers of the levels the reference escaped, innermost first.</summary>
+    public IReadOnlyList<OpenCandidate> Candidates { get; }
+    public IReadOnlyList<Algorithm> BoundOwners { get; }
+
+    internal string ContentKey { get; }
+    internal string ResolutionKey { get; }
+
+    internal static string KeyParts(IEnumerable<string> parts)
+        => string.Concat(parts.Select(static part => $"{part.Length}:{part}"));
+
+    public PendingReference WithCandidates(IReadOnlyList<OpenCandidate> candidates)
+        => new(Head, Members, candidates, BoundOwners);
+
+    public PendingReference BoundBy(Algorithm owner)
+        => owner.Params.Count == 0 || BoundOwners.Any(a => ReferenceEquals(a, owner))
+            ? this : new(Head, Members, Candidates, [.. BoundOwners, owner]);
+
+    public bool Equals(PendingReference? other) => other is not null && ContentKey == other.ContentKey;
+
+    public override bool Equals(object? obj) => Equals(obj as PendingReference);
+
+    public override int GetHashCode() => ContentKey.GetHashCode(StringComparison.Ordinal);
+}
+
+/// <summary>
+/// Union of pending requirements. Repeated references with the same resolution context
+/// discharge an owner only when EVERY occurrence binds it. Intersecting those bound sets
+/// implements (requirements - bound1) union (requirements - bound2), without enumerating
+/// the exponentially many call paths of a shared algorithm DAG.
+/// </summary>
+internal sealed class PendingReferenceSet : IReadOnlyCollection<PendingReference>
+{
+    private readonly Dictionary<string, PendingReference> _references = new(StringComparer.Ordinal);
+    public PendingReferenceSet() { }
+    public PendingReferenceSet(IEnumerable<PendingReference> references) => UnionWith(references);
+    public int Count => _references.Count;
+    public void Clear() => _references.Clear();
+    public void Add(PendingReference reference)
+    {
+        if (!_references.TryGetValue(reference.ResolutionKey, out var existing))
+        {
+            _references.Add(reference.ResolutionKey, reference);
+            return;
+        }
+        var common = existing.BoundOwners.Where(owner => reference.BoundOwners.Any(other => ReferenceEquals(owner, other))).ToArray();
+        if (common.Length != existing.BoundOwners.Count)
+            _references[reference.ResolutionKey] = new(existing.Head, existing.Members, existing.Candidates, common);
+    }
+    public void UnionWith(IEnumerable<PendingReference> references)
+    {
+        foreach (var reference in references) Add(reference);
+    }
+    public bool SetEquals(PendingReferenceSet other)
+        => Count == other.Count && _references.All(pair => other._references.TryGetValue(pair.Key, out var value) && pair.Value.Equals(value));
+    public IEnumerator<PendingReference> GetEnumerator() => _references.Values.GetEnumerator();
+    System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => GetEnumerator();
+}
+
+/// <summary>
+/// One <c>open</c> target of a level a <see cref="PendingReference"/> escaped. RESOLVED when
+/// the level could settle it in place — the target's head was that level's own property (or an
+/// inline block) and it provides the referenced name — carrying the charged requirement seed,
+/// relative to the level above the one that resolved it (later levels expand it like every
+/// other escaping seed). UNRESOLVED when the target's head was not a property of that level:
+/// the head name and the public steps of the dotted target are carried outward for a level
+/// whose direct chain declares the head. A target that provides nothing is not a candidate.
+/// </summary>
+internal abstract class OpenCandidate
+{
+    internal abstract string ContentKey { get; }
+}
+
+internal sealed class ResolvedOpenCandidate(PropertyDependencyGraphBuilder.SummarySeed seed) : OpenCandidate
+{
+    /// <summary>Frozen: never mutated after construction; readers clone before accumulating.</summary>
+    public PropertyDependencyGraphBuilder.SummarySeed Seed { get; } = seed;
+
+    internal override string ContentKey => $"resolved({Seed.ContentKey})";
+}
+
+internal sealed class UnresolvedOpenCandidate(string head, IReadOnlyList<string> publicSteps) : OpenCandidate
+{
+    public string Head { get; } = head;
+
+    public IReadOnlyList<string> PublicSteps { get; } = publicSteps;
+
+    internal override string ContentKey => "open" + PendingReference.KeyParts([Head, PendingReference.KeyParts(PublicSteps)]);
+}
 
 /// <summary>
 /// Sibling/processing-order channel result: per-property direct sibling dependency edges and
@@ -144,31 +279,165 @@ internal static class PropertyDependencyGraphBuilder
     {
         public SummarySeed(
             IEnumerable<string>? requiredAncestorOwnedParameterNames = null,
-            IEnumerable<string>? visiblePropertyDependencyNames = null)
+            IEnumerable<string>? visiblePropertyDependencyNames = null,
+            IEnumerable<PendingReference>? pendingReferences = null,
+            IEnumerable<OwnerQualifiedParameter>? ownerQualifiedParameters = null)
         {
             RequiredAncestorOwnedParameterNames = CreateNameSet(requiredAncestorOwnedParameterNames);
             VisiblePropertyDependencyNames = CreateNameSet(visiblePropertyDependencyNames);
+            PendingReferences = pendingReferences is null ? new() : new(pendingReferences);
+            OwnerQualifiedParameters = ownerQualifiedParameters is null ? [] : new(ownerQualifiedParameters);
         }
 
         public HashSet<string> RequiredAncestorOwnedParameterNames { get; }
+        public HashSet<OwnerQualifiedParameter> OwnerQualifiedParameters { get; }
 
+        /// <summary>Bare names no level between the reference and the consumer resolved, with no open providers on the way.</summary>
         public HashSet<string> VisiblePropertyDependencyNames { get; }
 
+        /// <summary>Member paths and open-shadowed names (see <see cref="PendingReference"/>).</summary>
+        public PendingReferenceSet PendingReferences { get; }
+
         public SummarySeed Clone()
-            => new(RequiredAncestorOwnedParameterNames, VisiblePropertyDependencyNames);
+            => new(RequiredAncestorOwnedParameterNames, VisiblePropertyDependencyNames, PendingReferences, OwnerQualifiedParameters);
 
         public void UnionWith(SummarySeed other)
         {
             RequiredAncestorOwnedParameterNames.UnionWith(other.RequiredAncestorOwnedParameterNames);
             VisiblePropertyDependencyNames.UnionWith(other.VisiblePropertyDependencyNames);
+            PendingReferences.UnionWith(other.PendingReferences);
+            OwnerQualifiedParameters.UnionWith(other.OwnerQualifiedParameters);
         }
 
-        public void RemoveRequiredAncestorOwnedParameterNames(IEnumerable<string> names)
-            => RequiredAncestorOwnedParameterNames.ExceptWith(names);
+        public void QualifyParameters(Algorithm owner)
+        {
+            foreach (var name in owner.Params)
+                if (RequiredAncestorOwnedParameterNames.Remove(name))
+                    OwnerQualifiedParameters.Add(new(name, owner));
+
+            var pending = PendingReferences.ToArray();
+            PendingReferences.Clear();
+            foreach (var reference in pending)
+                PendingReferences.Add(reference.WithCandidates(reference.Candidates.Select(candidate =>
+                {
+                    if (candidate is not ResolvedOpenCandidate resolved) return candidate;
+                    var seed = resolved.Seed.Clone();
+                    seed.QualifyParameters(owner);
+                    return new ResolvedOpenCandidate(seed);
+                }).ToArray()));
+        }
+
+        /// <summary>
+        /// Strips the names a level itself binds from every requirement the seed carries —
+        /// its own and those of the resolved open candidates riding along, which are seeds
+        /// relative to the same level.
+        /// </summary>
+        public void RemoveRequiredAncestorOwnedParameterNames(IEnumerable<string> names, Algorithm owner)
+        {
+            RequiredAncestorOwnedParameterNames.ExceptWith(names);
+            OwnerQualifiedParameters.RemoveWhere(r => ReferenceEquals(r.Owner, owner) && names.Contains(r.Name));
+            if (PendingReferences.Count == 0)
+                return;
+
+            var stripped = new List<string>(names);
+            var rewritten = new List<PendingReference>(PendingReferences.Count);
+            var changed = owner.Params.Count > 0;
+            foreach (var pending in PendingReferences)
+            {
+                if (pending.Candidates.Count == 0)
+                {
+                    rewritten.Add(pending.BoundBy(owner));
+                    continue;
+                }
+
+                var candidates = new List<OpenCandidate>(pending.Candidates.Count);
+                foreach (var candidate in pending.Candidates)
+                {
+                    if (candidate is ResolvedOpenCandidate resolved
+                        && resolved.Seed.RequiresAny(stripped, owner))
+                    {
+                        var seed = resolved.Seed.Clone();
+                        seed.RemoveRequiredAncestorOwnedParameterNames(stripped, owner);
+                        candidates.Add(new ResolvedOpenCandidate(seed));
+                        changed = true;
+                    }
+                    else
+                    {
+                        candidates.Add(candidate);
+                    }
+                }
+
+                rewritten.Add(pending.WithCandidates(candidates).BoundBy(owner));
+            }
+
+            if (!changed)
+                return;
+
+            PendingReferences.Clear();
+            PendingReferences.UnionWith(rewritten);
+        }
+
+        private bool RequiresAny(IReadOnlyList<string> names, Algorithm owner)
+        {
+            if (OwnerQualifiedParameters.Any(r => ReferenceEquals(r.Owner, owner) && names.Contains(r.Name)))
+                return true;
+            foreach (var name in names)
+            {
+                if (RequiredAncestorOwnedParameterNames.Contains(name))
+                    return true;
+            }
+
+            foreach (var pending in PendingReferences)
+            {
+                foreach (var candidate in pending.Candidates)
+                {
+                    if (candidate is ResolvedOpenCandidate resolved && resolved.Seed.RequiresAny(names, owner))
+                        return true;
+                }
+            }
+
+            return false;
+        }
 
         public bool SetEquals(SummarySeed other)
             => RequiredAncestorOwnedParameterNames.SetEquals(other.RequiredAncestorOwnedParameterNames)
-                && VisiblePropertyDependencyNames.SetEquals(other.VisiblePropertyDependencyNames);
+                && VisiblePropertyDependencyNames.SetEquals(other.VisiblePropertyDependencyNames)
+                && PendingReferences.SetEquals(other.PendingReferences)
+                && OwnerQualifiedParameters.SetEquals(other.OwnerQualifiedParameters);
+
+        public bool IsEmpty
+            => RequiredAncestorOwnedParameterNames.Count == 0
+                && VisiblePropertyDependencyNames.Count == 0
+                && PendingReferences.Count == 0
+                && OwnerQualifiedParameters.Count == 0;
+
+        /// <summary>Content identity (sorted), for candidate equality within a fixed point.</summary>
+        internal string ContentKey
+            => PendingReference.KeyParts([
+                FrontEndRegionKeys.NameSet(RequiredAncestorOwnedParameterNames),
+                FrontEndRegionKeys.NameSet(VisiblePropertyDependencyNames),
+                FrontEndRegionKeys.NameSet(PendingReferences.Select(static pending => pending.ContentKey)),
+                FrontEndRegionKeys.NameSet(OwnerQualifiedParameters.Select(static r => r.ContentKey))]);
+    }
+
+    /// <summary>
+    /// The completed summary of one algorithm node under the empty locally-owned context: the
+    /// requirements of its OUTPUT (what evaluating the algorithm's value needs) and, per
+    /// declared property, that member's requirements expanded through the algorithm's own
+    /// sibling fixed point (relative to the algorithm's declaring level). The member seeds are
+    /// what structural navigation (<c>Inner.X</c>) and <c>open</c>-provided names charge.
+    /// Both are stored pristine; readers clone before accumulating.
+    /// </summary>
+    internal sealed class AlgorithmSummary(
+        SummarySeed outputSeed,
+        IReadOnlyDictionary<string, SummarySeed> memberSeeds)
+    {
+        public SummarySeed OutputSeed { get; } = outputSeed;
+
+        public IReadOnlyDictionary<string, SummarySeed> MemberSeeds { get; } = memberSeeds;
+
+        public static readonly IReadOnlyDictionary<string, SummarySeed> NoMembers =
+            new Dictionary<string, SummarySeed>(StringComparer.Ordinal);
     }
 
     /// <summary>
@@ -192,7 +461,7 @@ internal static class PropertyDependencyGraphBuilder
     /// </summary>
     internal sealed class SummaryMemo
     {
-        internal Dictionary<Algorithm, SummarySeed>? CompletedAlgorithmSummaries;
+        internal Dictionary<Algorithm, AlgorithmSummary>? CompletedAlgorithmSummaries;
 
         /// <summary>
         /// Completed conditional BRANCH-BODY summaries, keyed by body node REFERENCE plus the
@@ -233,7 +502,7 @@ internal static class PropertyDependencyGraphBuilder
     /// lifetime rather than once per region; conditional BRANCH bodies stay exempt (their
     /// binder-name context varies per branch).
     /// </summary>
-    private sealed class SummaryWalkMemos(SummaryMemo sharedMemo, FrontEndTraversalObservations? observations)
+    internal sealed class SummaryWalkMemos(SummaryMemo sharedMemo, FrontEndTraversalObservations? observations)
     {
         public Dictionary<Expr, SummarySeed>? PrimarySeeds;
 
@@ -242,6 +511,27 @@ internal static class PropertyDependencyGraphBuilder
         public readonly SummaryMemo SharedMemo = sharedMemo;
 
         public readonly FrontEndTraversalObservations? Observations = observations;
+    }
+
+    /// <summary>
+    /// The context ONE level offers to the seeds escaping from inside it: the level's
+    /// algorithm (its properties for navigation, its <c>open</c> targets as candidates) and
+    /// its current local property summaries. Used by the builder for every nested level and
+    /// by the exposure resolver when it expands a navigated member's seed through the
+    /// algorithms of a member path.
+    /// </summary>
+    internal sealed class LevelContext(
+        Algorithm algorithm,
+        IReadOnlyDictionary<string, SummarySeed> localPropertySummaries,
+        SummaryWalkMemos memos)
+    {
+        public Algorithm Algorithm { get; } = algorithm;
+
+        public IReadOnlyDictionary<string, SummarySeed> LocalPropertySummaries { get; } = localPropertySummaries;
+
+        public SummaryWalkMemos Memos { get; } = memos;
+
+        public bool HasOpens => Algorithm.Opens.Count > 0;
     }
 
     /// <summary>
@@ -366,11 +656,17 @@ internal static class PropertyDependencyGraphBuilder
                 i,
                 summarySiblingDependencyIndices.OrderBy(static idx => idx).ToArray(),
                 summaryVisiblePropertyDependencyNames.OrderBy(static name => name, StringComparer.Ordinal).ToArray(),
-                summarySeed.RequiredAncestorOwnedParameterNames.OrderBy(static name => name, StringComparer.Ordinal).ToArray());
+                summarySeed.RequiredAncestorOwnedParameterNames.OrderBy(static name => name, StringComparer.Ordinal).ToArray(),
+                summarySeed.PendingReferences.OrderBy(static pending => pending.ContentKey, StringComparer.Ordinal).ToArray(),
+                summarySeed.OwnerQualifiedParameters.ToArray());
         }
 
         return new PropertyDependencySummaryGraph(algorithm.Properties, propertyNameToIndex, nodes);
     }
+
+    /// <summary>A fresh walk-memo bundle over a shared memo, for the exposure resolver's own charging calls.</summary>
+    internal static SummaryWalkMemos CreateWalkMemos(SummaryMemo memo, FrontEndTraversalObservations? observations)
+        => new(memo, observations);
 
     /// <summary>
     /// Memo-shared nested-algorithm summary for the constant empty locally-owned context —
@@ -382,18 +678,32 @@ internal static class PropertyDependencyGraphBuilder
     private static SummarySeed CollectSharedAlgorithmSummarySeed(
         Algorithm algorithm,
         SummaryWalkMemos memos)
+        => GetAlgorithmSummary(algorithm, memos).OutputSeed.Clone();
+
+    /// <summary>
+    /// The completed summary of a node (output seed and per-member seeds), computed at most
+    /// once per memo lifetime. Conditional families and builtins have no members.
+    /// </summary>
+    internal static AlgorithmSummary GetAlgorithmSummary(Algorithm algorithm, SummaryWalkMemos memos)
     {
         var completedSummaries = memos.SharedMemo.CompletedAlgorithmSummaries ??= new(ReferenceEqualityComparer.Instance);
         if (completedSummaries.TryGetValue(algorithm, out var stored))
-            return stored.Clone();
+            return stored;
 
         memos.Observations?.RecordDependencyAlgorithmSummaryComputation();
-        var seed = CollectSummarySeed(algorithm, CreateNameSet(), memos.SharedMemo, memos.Observations);
-        completedSummaries[algorithm] = seed.Clone();
-        return seed;
+        var summary = CollectAlgorithmSummary(algorithm, CreateNameSet(), memos.SharedMemo, memos.Observations);
+        completedSummaries[algorithm] = summary;
+        return summary;
     }
 
     private static SummarySeed CollectSummarySeed(
+        Algorithm algorithm,
+        HashSet<string> locallyOwnedNames,
+        SummaryMemo sharedMemo,
+        FrontEndTraversalObservations? observations)
+        => CollectAlgorithmSummary(algorithm, locallyOwnedNames, sharedMemo, observations).OutputSeed;
+
+    private static AlgorithmSummary CollectAlgorithmSummary(
         Algorithm algorithm,
         HashSet<string> locallyOwnedNames,
         SummaryMemo sharedMemo,
@@ -402,17 +712,19 @@ internal static class PropertyDependencyGraphBuilder
         switch (algorithm)
         {
             case Algorithm.User user:
-                return CollectSummarySeed(user, locallyOwnedNames, sharedMemo, observations);
+                return CollectAlgorithmSummary(user, locallyOwnedNames, sharedMemo, observations);
 
             case Algorithm.Conditional conditional:
-                return CollectSummarySeed(conditional, locallyOwnedNames, sharedMemo, observations);
+                return new AlgorithmSummary(
+                    CollectSummarySeed(conditional, locallyOwnedNames, sharedMemo, observations),
+                    AlgorithmSummary.NoMembers);
 
             default:
-                return new SummarySeed();
+                return new AlgorithmSummary(new SummarySeed(), AlgorithmSummary.NoMembers);
         }
     }
 
-    private static SummarySeed CollectSummarySeed(
+    private static AlgorithmSummary CollectAlgorithmSummary(
         Algorithm.User algorithm,
         HashSet<string> locallyOwnedNames,
         SummaryMemo sharedMemo,
@@ -426,7 +738,7 @@ internal static class PropertyDependencyGraphBuilder
         // (the ownedHere union below and the fixed-point setup), so a wide deconstruction is
         // O(N^2) across its N sibling helpers without this leaf guard.
         if (algorithm.IsAssignmentDeconstructionHelper)
-            return new SummarySeed();
+            return new AlgorithmSummary(new SummarySeed(), AlgorithmSummary.NoMembers);
 
         var ownedHere = CreateNameSet(locallyOwnedNames);
         ownedHere.UnionWith(algorithm.Params);
@@ -461,13 +773,12 @@ internal static class PropertyDependencyGraphBuilder
 
         while (true)
         {
+            var level = new LevelContext(algorithm, currentPropertySummaries, memos);
             var nextPropertySummaries = new Dictionary<string, SummarySeed>(StringComparer.Ordinal);
             for (var i = 0; i < algorithm.Properties.Count; i++)
             {
                 var property = algorithm.Properties[i];
-                nextPropertySummaries[property.Name] = ExpandLocalPropertyDependencies(
-                    propertyBaseSeeds[i],
-                    currentPropertySummaries);
+                nextPropertySummaries[property.Name] = ExpandAtLevel(propertyBaseSeeds[i], level);
             }
 
             if (SummarySeedsEqual(currentPropertySummaries, nextPropertySummaries))
@@ -479,12 +790,7 @@ internal static class PropertyDependencyGraphBuilder
             currentPropertySummaries = nextPropertySummaries;
         }
 
-        var seed = CollectSummarySeed(
-            algorithm.Opens,
-            currentPropertySummaries,
-            ownedHere,
-            memos,
-            inTransparentContext: false);
+        var seed = CollectOpenTargetSeeds(algorithm.Opens, currentPropertySummaries, ownedHere, memos);
         seed.UnionWith(CollectSummarySeed(
             algorithm.Output,
             currentPropertySummaries,
@@ -501,31 +807,374 @@ internal static class PropertyDependencyGraphBuilder
         // same local fixed point. Without this step `G = { Q = p + 1  (Q) }` reported the bare
         // name `Q` upward: an enclosing level with no `Q` dropped it (a local-only `G` leaked
         // through `open`), and an enclosing sibling `Q` was wrongly consulted (a self-contained
-        // `G` was hidden).
-        seed = ExpandLocalPropertyDependencies(seed, currentPropertySummaries);
-        seed.RemoveRequiredAncestorOwnedParameterNames(ownedHere);
-        return seed;
+        // `G` was hidden). The same expansion turns each name this level's own `open`
+        // declarations may provide into a pending reference carrying those providers.
+        var finalLevel = new LevelContext(algorithm, currentPropertySummaries, memos);
+        seed = ExpandAtLevel(seed, finalLevel);
+        seed.RemoveRequiredAncestorOwnedParameterNames(ownedHere, algorithm);
+
+        // Navigating a member does not call its owner. Retain the exact declaration
+        // that binds each parameter instead of reinterpreting its name at the consumer.
+        foreach (var member in currentPropertySummaries.Values)
+            member.QualifyParameters(algorithm);
+
+        // The member seeds a consumer navigates into (`Inner.X`, an opened `X`) are the
+        // level's final local summaries, which are relative to this level's PARENT: they keep
+        // this level's own parameters as requirements (an `X = p` inside `Lib(p)` requires
+        // `p` — that is exactly what makes it local-only), so only the output seed strips them.
+        return new AlgorithmSummary(seed, currentPropertySummaries);
     }
 
-    private static SummarySeed ExpandLocalPropertyDependencies(
-        SummarySeed baseSeed,
-        IReadOnlyDictionary<string, SummarySeed> localPropertySummaries)
+    /// <summary>
+    /// The level expansion — THE ownership-first step of the summary channel at one level:
+    /// a bare name or a pending reference's head that is one of the level's own properties
+    /// resolves here (a bare name to that property's summary, a member path by structural
+    /// navigation from that property's value); anything else escapes to the enclosing level,
+    /// and when this level declares <c>open</c> targets those become the escaping reference's
+    /// next candidates (after the candidates of the levels inside it — the inner-first order
+    /// <c>open</c> lookup consults them in). Resolved candidate seeds riding along are seeds
+    /// relative to this level and are expanded like everything else.
+    /// </summary>
+    internal static SummarySeed ExpandAtLevel(SummarySeed baseSeed, LevelContext level)
     {
         var expanded = new SummarySeed(
-            requiredAncestorOwnedParameterNames: baseSeed.RequiredAncestorOwnedParameterNames);
+            requiredAncestorOwnedParameterNames: baseSeed.RequiredAncestorOwnedParameterNames,
+            ownerQualifiedParameters: baseSeed.OwnerQualifiedParameters);
 
         foreach (var dependencyName in baseSeed.VisiblePropertyDependencyNames)
         {
-            if (localPropertySummaries.TryGetValue(dependencyName, out var localSummary))
+            if (level.LocalPropertySummaries.TryGetValue(dependencyName, out var localSummary))
             {
                 expanded.UnionWith(localSummary);
                 continue;
             }
 
-            expanded.VisiblePropertyDependencyNames.Add(dependencyName);
+            AddEscaping(expanded, new PendingReference(dependencyName, [], []), level);
         }
 
+        foreach (var pending in baseSeed.PendingReferences)
+        {
+            if (level.LocalPropertySummaries.TryGetValue(pending.Head, out var localSummary))
+            {
+                if (pending.Members.Count == 0)
+                {
+                    expanded.UnionWith(localSummary);
+                    continue;
+                }
+
+                var headNode = LocalPropertyValue(level.Algorithm, pending.Head);
+                var (charged, navigated) = ChargePath(headNode, StructuralSteps(pending.Members), level.Memos);
+                // This locally declared provider is outside the escaped reference's
+                // lexical chain unless its own call boundary accompanied that reference.
+                charged.OwnerQualifiedParameters.RemoveWhere(r => r.Owner is not null
+                    && pending.BoundOwners.Any(a => ReferenceEquals(a, r.Owner)));
+                var unavailable = charged.OwnerQualifiedParameters.Select(r => new OwnerQualifiedParameter(r.Name, null)).ToArray();
+                charged.OwnerQualifiedParameters.Clear();
+                charged.OwnerQualifiedParameters.UnionWith(unavailable);
+                if (navigated == 0)
+                    expanded.UnionWith(localSummary);
+                expanded.UnionWith(ExpandAtLevel(charged, level));
+                continue;
+            }
+
+            AddEscaping(expanded, pending, level);
+        }
+
+        expanded.QualifyParameters(level.Algorithm);
         return expanded;
+    }
+
+    private static void AddEscaping(SummarySeed expanded, PendingReference pending, LevelContext level)
+    {
+        List<OpenCandidate>? candidates = null;
+        foreach (var candidate in pending.Candidates)
+        {
+            candidates ??= new List<OpenCandidate>(pending.Candidates.Count);
+            candidates.Add(candidate is ResolvedOpenCandidate resolved
+                ? new ResolvedOpenCandidate(ExpandAtLevel(resolved.Seed, level))
+                : candidate);
+        }
+
+        if (level.HasOpens)
+        {
+            foreach (var candidate in MakeOpenCandidates(pending, level))
+                (candidates ??= []).Add(candidate);
+        }
+
+        if (candidates is null || candidates.Count == 0)
+        {
+            if (pending.Members.Count == 0)
+                expanded.VisiblePropertyDependencyNames.Add(pending.Head);
+            else
+                expanded.PendingReferences.Add(pending.WithCandidates([]));
+            return;
+        }
+
+        expanded.PendingReferences.Add(pending.WithCandidates(candidates));
+    }
+
+    /// <summary>
+    /// The candidates this level's <c>open</c> targets contribute to an escaping reference, in
+    /// declaration order with the evaluator's dedup rule (<see cref="Evaluator.OpenTargetDedupKey"/>).
+    /// A target whose head is this level's own property (or an inline block) is settled in
+    /// place: it is a candidate exactly when it publicly provides the reference's head, and
+    /// then carries the charged member seed, relative to this level's parent. A target whose
+    /// head is declared farther out is carried unresolved.
+    /// </summary>
+    private static IEnumerable<OpenCandidate> MakeOpenCandidates(PendingReference pending, LevelContext level)
+    {
+        var opens = level.Algorithm.Opens;
+        HashSet<string>? seen = null;
+        for (var i = 0; i < opens.Count; i++)
+        {
+            var target = opens[i];
+            seen ??= new HashSet<string>(StringComparer.Ordinal);
+            if (!seen.Add(Evaluator.OpenTargetDedupKey(target, i)))
+                continue;
+
+            if (target is Expr.AlgorithmExpr(var block))
+            {
+                // An inline target is wired to the prelude: nothing outside it can be
+                // referenced, so only its own requirement names survive.
+                if (TryChargeProvidedMember(block, pending, level.Memos) is { } inlineSeed)
+                    yield return new ResolvedOpenCandidate(new SummarySeed(inlineSeed.RequiredAncestorOwnedParameterNames,
+                        ownerQualifiedParameters: inlineSeed.OwnerQualifiedParameters));
+                continue;
+            }
+
+            if (!TryGetOpenTargetPath(target, out var head, out var steps))
+                continue;
+
+            if (!level.LocalPropertySummaries.ContainsKey(head))
+            {
+                yield return new UnresolvedOpenCandidate(head, steps);
+                continue;
+            }
+
+            var (providerSeed, providerNavigated) = ChargePath(LocalPropertyValue(level.Algorithm, head), PublicSteps(steps), level.Memos);
+            if (providerNavigated < steps.Count)
+                continue;
+
+            var provider = NavigateNode(LocalPropertyValue(level.Algorithm, head), steps);
+            if (provider is null || TryChargeProvidedMember(provider, pending, level.Memos) is not { } memberSeed)
+                continue;
+
+            // The provided member's seed is relative to the provider, which is relative to
+            // the head's declaring level — this level; the dotted steps were navigated by
+            // ChargePath from the head, so expand the member seed through the same nodes.
+            var seed = ExpandThroughNodes(memberSeed, NodePath(LocalPropertyValue(level.Algorithm, head), steps), level.Memos);
+            seed.UnionWith(providerSeed);
+            yield return new ResolvedOpenCandidate(ExpandAtLevel(seed, level));
+        }
+    }
+
+    /// <summary>
+    /// The seed a provider contributes for an opened reference — its PUBLIC member named by
+    /// the reference's head plus the structural members navigated after it — relative to the
+    /// provider's own declaring level; null when the provider does not publicly declare the
+    /// head.
+    /// </summary>
+    internal static SummarySeed? TryChargeProvidedMember(Algorithm provider, PendingReference pending, SummaryWalkMemos memos)
+    {
+        if (ElaboratedScopeLookup.TryLookupPublicProperty(provider, pending.Head) is null)
+            return null;
+
+        var steps = new List<(string Name, bool Public)>(pending.Members.Count + 1) { (pending.Head, true) };
+        foreach (var member in pending.Members)
+            steps.Add((member, false));
+        return ChargePath(provider, steps, memos).Seed;
+    }
+
+    internal static IReadOnlyList<(string Name, bool Public)> StructuralSteps(IReadOnlyList<string> members)
+        => members.Select(static member => (member, false)).ToArray();
+
+    internal static IReadOnlyList<(string Name, bool Public)> PublicSteps(IReadOnlyList<string> members)
+        => members.Select(static member => (member, true)).ToArray();
+
+    /// <summary>
+    /// Structural navigation for the summary channel — the static twin of the evaluator's
+    /// member navigation: from <paramref name="headNode"/>, each step selects the declared
+    /// member (public-only when the step is an <c>open</c> path step) and CHARGES that member's
+    /// requirement seed, expanded back through the nodes navigated before it so the result is
+    /// relative to the head's declaring level. A step whose member is absent stops the walk:
+    /// the last reached node is then evaluated as a value (the dot edge falls back to its
+    /// lexical callable with the receiver injected), so its OUTPUT seed is charged instead.
+    /// Returns the charged seed and the number of steps navigated.
+    /// </summary>
+    internal static (SummarySeed Seed, int Navigated) ChargePath(
+        Algorithm headNode,
+        IReadOnlyList<(string Name, bool Public)> steps,
+        SummaryWalkMemos memos)
+    {
+        var result = new SummarySeed();
+        var nodes = new List<Algorithm> { headNode };
+        var current = headNode;
+        for (var i = 0; i < steps.Count; i++)
+        {
+            var (name, isPublic) = steps[i];
+            var member = isPublic
+                ? ElaboratedScopeLookup.TryLookupPublicProperty(current, name)
+                : ElaboratedScopeLookup.TryLookupProperty(current, name);
+            if (member is null)
+            {
+                if (!isPublic && i > 0)
+                {
+                    // The receiver value of a lexical fallback is evaluated: charge it.
+                    var outputSeed = GetAlgorithmSummary(current, memos).OutputSeed.Clone();
+                    result.UnionWith(ExpandThroughNodes(outputSeed, nodes.GetRange(0, nodes.Count - 1), memos));
+                }
+
+                return (result, i);
+            }
+
+            var summary = GetAlgorithmSummary(current, memos);
+            if (summary.MemberSeeds.TryGetValue(name, out var memberSeed))
+                result.UnionWith(ExpandThroughNodes(memberSeed.Clone(), nodes, memos));
+
+            current = member.Value.Property.Value;
+            nodes.Add(current);
+        }
+
+        return (result, steps.Count);
+    }
+
+    /// <summary>
+    /// Brings a seed relative to the last node's parent level back to the first node's
+    /// declaring level: expand against each node's own local summaries, innermost first.
+    /// </summary>
+    internal static SummarySeed ExpandThroughNodes(SummarySeed seed, IReadOnlyList<Algorithm> nodes, SummaryWalkMemos memos)
+    {
+        for (var k = nodes.Count - 1; k >= 0; k--)
+            seed = ExpandAtLevel(seed, new LevelContext(nodes[k], GetAlgorithmSummary(nodes[k], memos).MemberSeeds, memos));
+        return seed;
+    }
+
+    private static Algorithm LocalPropertyValue(Algorithm level, string name)
+        => ElaboratedScopeLookup.TryLookupProperty(level, name)!.Value.Property.Value;
+
+    internal static Algorithm? NavigateNode(Algorithm head, IReadOnlyList<string> publicSteps)
+    {
+        var current = head;
+        foreach (var step in publicSteps)
+        {
+            if (ElaboratedScopeLookup.TryLookupPublicProperty(current, step) is not { } hit)
+                return null;
+            current = hit.Property.Value;
+        }
+
+        return current;
+    }
+
+    internal static IReadOnlyList<Algorithm> NodePath(Algorithm head, IReadOnlyList<string> publicSteps)
+    {
+        var nodes = new List<Algorithm> { head };
+        var current = head;
+        foreach (var step in publicSteps)
+        {
+            current = ElaboratedScopeLookup.TryLookupPublicProperty(current, step)!.Value.Property.Value;
+            nodes.Add(current);
+        }
+
+        return nodes;
+    }
+
+    /// <summary>
+    /// The lexical head and dotted public steps of a named <c>open</c> target (<c>open A</c>,
+    /// <c>open A.B.C</c>); false for inline, parameter-owned (an <see cref="Expr.Param"/> head
+    /// provides nothing, F2), and illegal target shapes.
+    /// </summary>
+    internal static bool TryGetOpenTargetPath(Expr target, out string head, out IReadOnlyList<string> steps)
+    {
+        var reversed = new List<string>();
+        var current = target;
+        while (current is Expr.DotCall { Args: null } edge && edge.IsCoreOpenForm())
+        {
+            reversed.Add(edge.Name);
+            current = edge.Target;
+        }
+
+        if (current is Expr.Resolve(var name))
+        {
+            reversed.Reverse();
+            head = name;
+            steps = reversed;
+            return true;
+        }
+
+        head = string.Empty;
+        steps = [];
+        return false;
+    }
+
+    /// <summary>
+    /// The static member path of a dot chain — a lexical head followed by argumentless,
+    /// non-<c>string</c> dot steps, the shape the evaluator navigates structurally
+    /// (<c>ResolveDotReceiver</c>) — with the final edge's member included whether or not it
+    /// carries arguments. False for every other receiver shape (a parameter, a block, a
+    /// capture, a call, the <c>string</c> intrinsic).
+    /// </summary>
+    private static bool TryGetStaticMemberPath(Expr.DotCall dotCall, out string head, out IReadOnlyList<string> members)
+    {
+        if (dotCall.UsesOrdinaryDotStringIntrinsic())
+        {
+            head = string.Empty;
+            members = [];
+            return false;
+        }
+
+        var reversed = new List<string> { dotCall.Name };
+        var current = dotCall.Target.UnwrapGraceOperand();
+        while (current is Expr.DotCall { Args: null } edge && !edge.UsesOrdinaryDotStringIntrinsic())
+        {
+            reversed.Add(edge.Name);
+            current = edge.Target.UnwrapGraceOperand();
+        }
+
+        if (current is Expr.Resolve(var name))
+        {
+            reversed.Reverse();
+            head = name;
+            members = reversed;
+            return true;
+        }
+
+        head = string.Empty;
+        members = [];
+        return false;
+    }
+
+    /// <summary>
+    /// The opens walk of a level: a named target charges the navigated provider path
+    /// (<c>open A</c> needs only A's identity; <c>open A.B</c> charges the
+    /// requirements of the navigated member <c>B</c>), and
+    /// any other (illegal, recovery) shape walks as an ordinary expression. An open target is
+    /// not a call, so no lexical fallback is ever charged for it.
+    /// </summary>
+    private static SummarySeed CollectOpenTargetSeeds(
+        IReadOnlyList<Expr> opens,
+        IReadOnlyDictionary<string, SummarySeed> localPropertySummaries,
+        HashSet<string> ownedHere,
+        SummaryWalkMemos memos)
+    {
+        var seed = new SummarySeed();
+        foreach (var target in opens)
+        {
+            if (TryGetOpenTargetPath(target, out var head, out var steps))
+            {
+                if (steps.Count > 0)
+                    seed.UnionWith(new SummarySeed(pendingReferences: [new PendingReference(head, steps, [])]));
+                continue;
+            }
+
+            // An inline provider is also an identity, never an evaluated output.
+            // Provider signature/form validity is checked independently.
+            if (target is Expr.AlgorithmExpr)
+                continue;
+
+            seed.UnionWith(CollectSummarySeed(target, localPropertySummaries, ownedHere, memos, inTransparentContext: false));
+        }
+
+        return seed;
     }
 
     private static SummarySeed CollectSummarySeed(
@@ -535,13 +1184,13 @@ internal static class PropertyDependencyGraphBuilder
         FrontEndTraversalObservations? observations)
     {
         var ownedHere = CreateNameSet(locallyOwnedNames);
-
-        var seed = CollectSummarySeed(
+        var localSummaries = new Dictionary<string, SummarySeed>(StringComparer.Ordinal);
+        var memos = new SummaryWalkMemos(sharedMemo, observations);
+        var seed = CollectOpenTargetSeeds(
             algorithm.Opens,
-            new Dictionary<string, SummarySeed>(StringComparer.Ordinal),
+            localSummaries,
             ownedHere,
-            new SummaryWalkMemos(sharedMemo, observations),
-            inTransparentContext: false);
+            memos);
 
         foreach (var branch in algorithm.Branches)
         {
@@ -553,7 +1202,11 @@ internal static class PropertyDependencyGraphBuilder
             seed.UnionWith(CollectBranchBodySummarySeed(branch, sharedMemo, observations));
         }
 
-        return seed;
+        // Host-built families can own opens. They are a static lookup level above
+        // the branch bodies, just as at runtime: never charge a provider's output,
+        // and carry its candidate members when branch references escape this level.
+        return algorithm.Opens.Count == 0 ? seed
+            : ExpandAtLevel(seed, new LevelContext(algorithm, localSummaries, memos));
     }
 
     /// <summary>
@@ -716,7 +1369,17 @@ internal static class PropertyDependencyGraphBuilder
 
             case Expr.DotCall dotCall:
             {
-                var seed = CollectSummarySeed(dotCall.Target, localPropertySummaries, ownedHere, memos, inTransparentContext);
+                // A static member path (`Inner.X`, `Lib.Sub.Q`, `Lib.F(1)`) is charged by
+                // NAVIGATION at the level that resolves its head: every member the evaluator
+                // would navigate to charges its own requirements — so a container reading a
+                // captured member through `Inner.X` is itself local-only — and a receiver the
+                // walk stops at (the member is absent: the edge falls back) charges its output
+                // exactly as the bare target seed did. A receiver of any other shape (a
+                // parameter, a block, a capture, a call, the `string` intrinsic) is a value
+                // and keeps charging its own seed.
+                var seed = TryGetStaticMemberPath(dotCall, out var pathHead, out var pathMembers)
+                    ? new SummarySeed(pendingReferences: [new PendingReference(pathHead, pathMembers, [])])
+                    : CollectSummarySeed(dotCall.Target, localPropertySummaries, ownedHere, memos, inTransparentContext);
 
                 // The stored lexical-fallback identity is an ordinary
                 // elaborated name expression (Resolve/Param) and participates

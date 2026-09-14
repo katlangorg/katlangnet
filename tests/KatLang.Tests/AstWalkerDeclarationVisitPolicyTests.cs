@@ -52,12 +52,12 @@ public class AstWalkerDeclarationVisitPolicyTests
     public void LibraryWalkers_AreEnumerated()
     {
         // The policy below must actually cover the shipped walkers; an empty enumeration would
-        // make it vacuous. The guard, the pre-evaluation validation walker, the exposure marker,
-        // and the module loader's pre-scan are the known members.
+        // make it vacuous. The guard, the pre-evaluation validation walker, the open-provider
+        // validator, and the module loader's pre-scan are the known members.
         var names = LibraryWalkerTypes().Select(static type => type.Name).ToList();
         Assert.Contains("LoadWalker", names);
         Assert.Contains("PreEvaluationValidationWalker", names);
-        Assert.Contains("FinalExposureMarker", names);
+        Assert.Contains("OpenProviderValidator", names);
         Assert.Contains("LoadBearingMarker", names);
     }
 

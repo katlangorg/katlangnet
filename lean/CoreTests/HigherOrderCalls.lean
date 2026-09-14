@@ -216,8 +216,8 @@ def recursiveDotCallRestAlg : Algorithm :=
 -- make the recursion below read the OUTER call's list forever.
 def recursiveDotCallReduceCollectionAlg : Algorithm :=
   alg ["values"] [] [
-    privateLocalProp "list" .localCapturedAncestorParams recursiveDotCallListAlg,
-    privateLocalProp "rest" .localCapturedAncestorParams recursiveDotCallRestAlg
+    privateLocalProp "list" (.localCapturedAncestorParams ["values"]) recursiveDotCallListAlg,
+    privateLocalProp "rest" (.localCapturedAncestorParams ["values"]) recursiveDotCallRestAlg
   ] [
     .call (resolve "if") [
       .binary .le (.dotCall (resolve "list") "count" none) (.num 1),
@@ -1012,7 +1012,7 @@ def applyClauseAlg19a : Algorithm :=
 
 def test19aShape : Bool :=
   match applyClauseAlg19a with
-  | .mk _ [.capture { name := "x", kind := .normal }, .capture { name := "f", kind := .normal }] _ _ _ => true
+  | .mk _ [.capture { name := "x", kind := .normal }, .capture { name := "f", kind := .normal }] _ _ _ _ => true
   | _ => false
 
 #guard test19aShape
@@ -1037,7 +1037,7 @@ def test19aSingleBinderShape : Bool :=
       pattern := KatLang.Pattern.bind "x"
       body := alg [] [] [] [.param "x"]
     }] with
-  | .mk _ [.capture { name := "x", kind := .normal }] _ _ _ => true
+  | .mk _ [.capture { name := "x", kind := .normal }] _ _ _ _ => true
   | _ => false
 
 #guard test19aSingleBinderShape
@@ -1065,7 +1065,7 @@ def fallbackClauseAlg19a : Algorithm :=
 
 def test19aMultiClauseShape : Bool :=
   match fallbackClauseAlg19a with
-  | .conditional _ _ [_, _] => true
+  | .conditional _ _ [_, _] _ => true
   | _ => false
 
 #guard test19aMultiClauseShape
@@ -1084,7 +1084,7 @@ def test19aLiteralPatternIsConditional : Bool :=
       pattern := KatLang.Pattern.litInt 1
       body := alg [] [] [] [.num 42]
     }] with
-  | .conditional _ _ [_] => true
+  | .conditional _ _ [_] _ => true
   | _ => false
 
 #guard test19aLiteralPatternIsConditional
@@ -1097,7 +1097,7 @@ def test19aSequenceValuePatternIsOrdinaryStructuredParameter : Bool :=
       ]
       body := alg [] [] [] [.param "x"]
     }] with
-  | .mk _ [.capture { name := "x", kind := .normal }, .sequenceValue [.capture { name := "acc", kind := .normal }, .capture { name := "counter", kind := .normal }]] _ _ _ => true
+  | .mk _ [.capture { name := "x", kind := .normal }, .sequenceValue [.capture { name := "acc", kind := .normal }, .capture { name := "counter", kind := .normal }]] _ _ _ _ => true
   | _ => false
 
 #guard test19aSequenceValuePatternIsOrdinaryStructuredParameter

@@ -308,4 +308,18 @@ public enum DiagnosticCode
     /// zero token covering the literal keeps the parser going.
     /// </summary>
     InvalidNumberLiteral = 43,
+
+    /// <summary>
+    /// An <c>open</c> target resolves to an algorithm that requires arguments — an
+    /// explicitly or implicitly parameterized algorithm, or a clause family. <c>open</c>
+    /// imports the members of a namespace and never creates an activation (there is no
+    /// <c>open Lib(5)</c>), so an algorithm whose members can only read their inputs inside a
+    /// call has nothing to provide: the target is refused rather than given an invented
+    /// meaning. Decided after signature completion, when inferred parameters are final, and
+    /// reported at the open target; the evaluator refuses the same target with
+    /// <see cref="EvalError.IllegalInOpen"/>, the host-facing family this code maps to. A
+    /// parameterized HEAD of a dotted target (<c>open Lib.Sub</c> with <c>Lib(p)</c>) is
+    /// navigated by identity like any structural receiver; only the resolved provider counts.
+    /// </summary>
+    IllegalInOpen = 44,
 }

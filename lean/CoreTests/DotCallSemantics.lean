@@ -930,7 +930,7 @@ def openQualifiedPrivatePathStillRestricted : Bool :=
 
 def publicWrapperPrivateHelperAlg : Algorithm :=
   alg ["Candidate"] [] [
-    privateLocalProp "Step" .localCapturedAncestorParams
+    privateLocalProp "Step" (.localCapturedAncestorParams ["Candidate"])
       (alg [] [] [] [.binary .add (.param "Candidate") (.num 1)])
   ] [.resolve "Step"]
 
@@ -1223,7 +1223,7 @@ def chainedLocalOnlySub : Algorithm :=
   alg [] [] [publicProp "Q" (alg [] [] [] [.num 1])] [.param "x"]
 
 def chainedLocalOnlyG : Algorithm :=
-  alg ["x"] [] [publicLocalProp "Sub" .localCapturedAncestorParams chainedLocalOnlySub] [.num 0]
+  alg ["x"] [] [publicLocalProp "Sub" (.localCapturedAncestorParams ["x"]) chainedLocalOnlySub] [.num 0]
 
 def chainedLocalOnlyIntermediateIsAnError : Bool :=
   match runResult (.algorithmExpr (algPrivate [] [] [
@@ -1231,7 +1231,7 @@ def chainedLocalOnlyIntermediateIsAnError : Bool :=
   ] [
     .dotCall (.dotCall (.resolve "G") "Sub" none) "Q" none
   ])) with
-  | Except.error err => innermostIsLocalOnlyProperty "G" "Sub" .localCapturedAncestorParams err
+  | Except.error err => innermostIsLocalOnlyProperty "G" "Sub" (.localCapturedAncestorParams ["x"]) err
   | Except.ok _ => false
 
 #guard chainedLocalOnlyIntermediateIsAnError

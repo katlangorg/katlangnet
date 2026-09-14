@@ -1073,13 +1073,16 @@ public sealed record CondBranch(Pattern Pattern, Algorithm Body)
 /// <summary>
 /// Exposure classification of a property, computed by the C# front end
 /// (<c>PropertyExposureResolver</c>) and consumed as an INPUT by every lookup.
-/// Lean: <c>PropExposure</c>. <c>open</c> exposes public <see cref="Exported"/> members and
-/// structural dot access reaches <see cref="Exported"/> members; the classification is a
-/// fact about the property's VALUE, never about where the declaration is written.
+/// Lean: <c>PropExposure</c>. The classification is a fact about the property's VALUE,
+/// never about where the declaration is written. Selection never depends on it:
+/// <c>open</c> selects public members and structural dot access selects declared members;
+/// whether the selected member may be USED at an access site is the separate
+/// accessibility question below, which both evaluators decide AFTER selection.
 /// The evaluator also trusts this classification for zero-parameter caching:
 /// exported results are shared across the run; local-only results retain binding
-/// context. Publicly constructed ASTs must supply accurate exposure themselves;
-/// Evaluator.Run* performs preflight but does not elaborate or reclassify them.
+/// context. Publicly constructed ASTs must supply accurate exposure themselves
+/// (including <see cref="Property.RequiredAncestorParameters"/>); Evaluator.Run*
+/// performs preflight but does not elaborate or reclassify them.
 /// </summary>
 public enum PropertyExposure
 {
@@ -1089,8 +1092,14 @@ public enum PropertyExposure
     /// <summary>
     /// The value (transitively) requires an input that only an enclosing owner's call binds —
     /// a parameter of an enclosing parameterized algorithm, or a pattern binder of an
-    /// enclosing conditional branch — so the property is usable by name inside that owner
-    /// but never exported through <c>open</c>, <c>load</c>, or dot access.
+    /// enclosing conditional branch — named by <see cref="Property.RequiredAncestorParameters"/>.
+    /// Such a member is LOCAL-CONTEXT-DEPENDENT, not universally hidden: it may be used
+    /// (by name, through <c>open</c>, or through dot access) from any lexical context that
+    /// lies inside the owner of every required input, because that owner's activation is
+    /// then the one the inherited environments carry; from a context outside such an owner
+    /// the access is refused (<c>EvalError.LocalOnlyProperty</c>), never given an invented
+    /// meaning. The owner is selected at the capturing reference; transitive dependencies
+    /// retain that owner across intervening same-named binders (Lean: <c>memberAccessible?</c>).
     /// </summary>
     LocalOnlyCapturedAncestorParameters,
 
@@ -1119,6 +1128,25 @@ public sealed record Property(
     /// Conditional clause families may contribute more than one declaration span.
     /// </summary>
     public IReadOnlyList<SourceSpan> DeclarationSpans { get; init; } = [];
+
+    /// <summary>
+    /// For <see cref="PropertyExposure.LocalOnlyCapturedAncestorParameters"/>: the names of
+    /// the inputs the value requires that only an enclosing owner's call binds (sorted,
+    /// distinct). Elaborated properties also retain exact owner positions internally so
+    /// transitive captures survive shadowing. Host-built properties supplying names alone
+    /// use the nearest binding owner. Access requires that owner's exact lexical activation
+    /// (Lean: the diagnostic payload of
+    /// <c>PropExposure.localCapturedAncestorParams</c>). Empty for exported properties. A
+    /// host-built local-only property that names no required parameter states no
+    /// requirement and is therefore accessible everywhere while keeping the local-only
+    /// (per-binding-context) cache scope.
+    /// </summary>
+    public IReadOnlyList<string> RequiredAncestorParameters { get; init; } = [];
+
+    // The diagnostic names alone cannot identify a transitive capture across a
+    // same-named intervening binder. Depth is relative to this property's declaring
+    // scope; null metadata preserves the nearest-owner convention of host-built trees.
+    internal IReadOnlyList<CapturedParameterRequirement>? CaptureRequirements { get; init; }
 }
 
 /// <summary>
@@ -1770,8 +1798,36 @@ internal static class AlgorithmValidation
 /// <summary>
 /// Scope context used during evaluation for name resolution.
 /// Populated by the evaluator, not the parser.
+/// <para><see cref="Parameters"/> are the parameter names the scope's algorithm binds — its
+/// explicit and inferred parameters, or, on the family scope a conditional call wires the
+/// selected branch body under, the matched pattern binders. They take no part in property
+/// lookup; they let the accessibility check of a local-only member find the owner of each
+/// required input by the same nearest-owner walk the front end elaborated the reference with
+/// (Lean: <c>ScopeCtx.params</c>, <c>requiredParameterOwner?</c>).</para>
 /// </summary>
 public sealed record ScopeCtx(
     ScopeCtx? Parent,
     IReadOnlyList<Expr> Opens,
-    IReadOnlyList<Property> Properties);
+    IReadOnlyList<Property> Properties,
+    IReadOnlyList<string> Parameters)
+{
+    /// <summary>A scope whose algorithm binds no parameters.</summary>
+    public ScopeCtx(
+        ScopeCtx? Parent,
+        IReadOnlyList<Expr> Opens,
+        IReadOnlyList<Property> Properties)
+        : this(Parent, Opens, Properties, [])
+    {
+    }
+
+    /// <summary>Preserves the original three-component deconstruction contract.</summary>
+    public void Deconstruct(
+        out ScopeCtx? Parent,
+        out IReadOnlyList<Expr> Opens,
+        out IReadOnlyList<Property> Properties)
+    {
+        Parent = this.Parent;
+        Opens = this.Opens;
+        Properties = this.Properties;
+    }
+}
