@@ -1,12 +1,17 @@
 using System.Globalization;
 using System.Numerics;
+using KatLang.Evaluation;
+using KatLang.Tests.Randomness;
 
 namespace KatLang.Tests;
 
 /// <summary>
 /// Deterministic coverage for the exact 10^34-point fraction lattice used by
-/// <c>Math.Random</c>. The injected bounded source exercises the same production
-/// composition helper without depending on <see cref="Random.Shared"/> luck.
+/// <c>Math.Random</c>. A scripted <see cref="RandomSource"/> overriding the BOUNDED
+/// seam (<see cref="RandomSource.NextInt64Below"/>) exercises the same production
+/// composition helper without depending on entropy luck and without reverse-engineering
+/// raw 64-bit words: the sampler's composition is what is under test here, and it is
+/// independent of where the source's words come from (seeded or not).
 /// </summary>
 public class RandomFractionSamplingTests
 {
@@ -17,13 +22,9 @@ public class RandomFractionSamplingTests
 
     private static Decimal128 Sample(params long[] components)
     {
-        var queue = new Queue<long>(components);
-        var result = Evaluator.SampleRandomUnitFraction(maxExclusive =>
-        {
-            Assert.Equal(ComponentBound, maxExclusive);
-            return queue.Dequeue();
-        });
-        Assert.Empty(queue);
+        var source = new ScriptedBoundedSource(components);
+        var result = Evaluator.SampleRandomUnitFraction(source);
+        Assert.Equal(0, source.Remaining);
         return result;
     }
 
@@ -96,18 +97,14 @@ public class RandomFractionSamplingTests
     }
 
     [Fact]
-    public void ProductionUInt128Source_IsNotStuckAtZero()
-    {
-        var draws = Enumerable.Range(0, 16).Select(_ => Evaluator.NextRandomUInt128()).ToArray();
-        Assert.Contains(draws, draw => draw != UInt128.Zero);
-    }
-
-    [Fact]
     public void SeededFractions_HaveBroadStableCoverageAndMeanNearOneHalf()
     {
         const int sampleCount = 100_000;
         const int binCount = 20;
-        var source = new DeterministicBoundedInt64Source(0x4d595df4d0f33173UL);
+        // The test-side reference generator (ReferenceRandomOracle) overrides the
+        // bounded seam with its own rejection sampler over its own SplitMix64 words,
+        // so this smoke test exercises the production COMPOSITION only.
+        var source = new ReferenceRandomSource(0x4d595df4d0f33173UL);
         var bins = new int[binCount];
         var highComponents = new HashSet<Int128>();
         var lowComponents = new HashSet<Int128>();
@@ -116,7 +113,7 @@ public class RandomFractionSamplingTests
 
         for (var i = 0; i < sampleCount; i++)
         {
-            var value = Evaluator.SampleRandomUnitFraction(source.Next);
+            var value = Evaluator.SampleRandomUnitFraction(source);
             Assert.True(value >= Decimal128.Zero && value < Decimal128.One);
 
             sum += value;
@@ -137,38 +134,24 @@ public class RandomFractionSamplingTests
     }
 
     /// <summary>
-    /// Stable SplitMix64 byte source plus exact bounded rejection. This test-only
-    /// generator is deterministic across runtime versions and never uses binary
-    /// floating-point scaling.
+    /// Scripts the BOUNDED seam only: every <see cref="RandomSource.NextInt64Below"/>
+    /// call must request the 17-digit component bound and receives the next scripted
+    /// component; a sampler that reaches for raw words (or draws more components than
+    /// scripted) fails loudly.
     /// </summary>
-    private sealed class DeterministicBoundedInt64Source(ulong seed)
+    private sealed class ScriptedBoundedSource(IEnumerable<long> components) : RandomSource
     {
-        private ulong state = seed;
+        private readonly Queue<long> _components = new(components);
 
-        public long Next(long maxExclusive)
+        public int Remaining => _components.Count;
+
+        public override ulong NextUInt64()
+            => throw new InvalidOperationException("The fraction sampler must draw through the bounded seam, not raw words.");
+
+        public override long NextInt64Below(long maxExclusive)
         {
-            var span = (ulong)maxExclusive;
-            var rejectedCount = (ulong.MaxValue % span) + 1;
-            if (rejectedCount == span)
-                rejectedCount = 0;
-
-            ulong draw;
-            do
-            {
-                draw = NextUInt64();
-            }
-            while (rejectedCount != 0 && draw > ulong.MaxValue - rejectedCount);
-
-            return (long)(draw % span);
-        }
-
-        private ulong NextUInt64()
-        {
-            state += 0x9e3779b97f4a7c15UL;
-            var value = state;
-            value = (value ^ (value >> 30)) * 0xbf58476d1ce4e5b9UL;
-            value = (value ^ (value >> 27)) * 0x94d049bb133111ebUL;
-            return value ^ (value >> 31);
+            Assert.Equal(ComponentBound, maxExclusive);
+            return _components.Dequeue();
         }
     }
 }

@@ -3,17 +3,20 @@ using System.Runtime.CompilerServices;
 namespace KatLang.Evaluation;
 
 /// <summary>
-/// Run-scoped mutable evaluation budget: the single place where one evaluation run's
-/// dynamic depth, consumed steps, materialized item slots, and materialized string units live.
+/// Run-scoped mutable evaluation state: the single place where one evaluation run's
+/// dynamic depth, consumed steps, materialized item slots, materialized string units,
+/// and random stream (<see cref="RandomSource"/>) live.
 ///
 /// <para>Exactly one instance is created per top-level run and shared by reference
 /// through every copied <c>EvalCtx</c>, so nested calls, callbacks, properties, loops,
-/// and the engine's <c>DisplayDecimals</c> evaluation all charge the same budget and
-/// none of them can reset it. It is never static, never global, and never reused across
-/// independent runs, so two runs — including concurrent runs that share one
-/// <see cref="RunOptions"/> or <see cref="EvaluationLimits"/> instance — always start
-/// with fresh counters. Thread safety is by isolation: one budget belongs to one run on
-/// one thread.</para>
+/// and the engine's <c>DisplayDecimals</c> evaluation all charge the same budget, draw
+/// from the same random stream, and none of them can reset either. It is never static,
+/// never global, and never reused across independent runs, so two runs — including
+/// concurrent runs that share one <see cref="RunOptions"/> or
+/// <see cref="EvaluationLimits"/> instance — always start with fresh counters and a
+/// fresh stream. Thread safety is by isolation: one budget belongs to one run, evaluator
+/// access to it is sequential, and although an async continuation may resume the run on
+/// a different thread, no two operations of one run ever mutate it concurrently.</para>
 ///
 /// <para>The budget is also the run's cooperative HOST-CANCELLATION observation surface:
 /// every chokepoint method observes the run's <see cref="CancellationToken"/> via
@@ -39,7 +42,8 @@ internal sealed class EvaluationBudget
     internal EvaluationBudget(
         EvaluationLimits limits,
         HostOperations? hostOperations = null,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        long? randomSeed = null)
     {
         ArgumentNullException.ThrowIfNull(limits);
         _maxDepth = limits.EffectiveMaxDepth;
@@ -50,18 +54,38 @@ internal sealed class EvaluationBudget
         _maxMaterializedStringChars = limits.EffectiveMaxMaterializedStringChars ?? long.MaxValue;
         _cancellationToken = cancellationToken;
         HostOperations = hostOperations;
+        // The run's random stream is constructed EAGERLY here, seeded or not: an
+        // unseeded run acquires its entropy once at construction, so the evaluator's
+        // draw path never has a lazy-initialization branch and every run owns exactly
+        // one fully initialized source, whether or not the program ever draws.
+        RandomSource = RandomSourceFactory.Create(randomSeed, RandomSourceFactory.ProductionEntropy);
         HasStepLimit = limits.EffectiveMaxSteps is not null;
         HasConfiguredStringLimit = limits.MaxStringLength is not null
             || limits.MaxMaterializedStringChars is not null;
         HasConfiguredMaterializationLimit = limits.MaxMaterializedItems is not null;
     }
 
-    /// <summary>Creates a fresh budget for one run; <c>null</c> limits mean <see cref="EvaluationLimits.Default"/>.</summary>
+    /// <summary>
+    /// Creates a fresh budget for one run; <c>null</c> limits mean
+    /// <see cref="EvaluationLimits.Default"/>, and a <c>null</c> seed means an unseeded
+    /// (nondeterministic) random stream — see <see cref="RunOptions.RandomSeed"/>.
+    /// </summary>
     internal static EvaluationBudget Create(
         EvaluationLimits? limits,
         HostOperations? hostOperations = null,
-        CancellationToken cancellationToken = default)
-        => new(limits ?? EvaluationLimits.Default, hostOperations, cancellationToken);
+        CancellationToken cancellationToken = default,
+        long? randomSeed = null)
+        => new(limits ?? EvaluationLimits.Default, hostOperations, cancellationToken, randomSeed);
+
+    /// <summary>
+    /// The run's random stream — run-scoped MUTABLE state exactly like the counters,
+    /// consumed in evaluation order by every <c>Math.Random</c> / <c>Math.RandomInt</c>
+    /// (and alias) call of the run through the budget reference every copied
+    /// <c>EvalCtx</c> carries. Seeded from <see cref="RunOptions.RandomSeed"/> (or the
+    /// direct evaluator overloads' <c>randomSeed</c>), otherwise from fresh entropy;
+    /// either way it belongs to this run alone and is abandoned with it.
+    /// </summary>
+    internal RandomSource RandomSource { get; }
 
     /// <summary>
     /// The run's host cancellation token, exposed so host-facing evaluation sites
@@ -78,7 +102,8 @@ internal sealed class EvaluationBudget
     /// execution configuration rides it without growing the hot by-value context
     /// struct, and it participates in the run-identity contract automatically (a run's
     /// operations can never bleed into another run any more than its counters can).
-    /// Immutable configuration only — all mutable state stays in the counters above.
+    /// Immutable configuration — the run's mutable state is the counters and the
+    /// <see cref="RandomSource"/>.
     /// </summary>
     internal HostOperations? HostOperations { get; }
 

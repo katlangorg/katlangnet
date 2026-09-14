@@ -674,7 +674,7 @@ public static partial class Evaluator
         var argsR = CollectMathNativeArguments(argNames, ctx, valEnv);
         if (argsR.IsError) return argsR.Error;
 
-        return ApplyMathNative(fnName, argsR.Value);
+        return ApplyMathNative(fnName, argsR.Value, ctx.Budget.RandomSource);
     }
 
     /// <summary>
@@ -708,12 +708,16 @@ public static partial class Evaluator
     }
 
     /// <summary>
-    /// Applies one Math native to its already-read numeric arguments. Pure
-    /// computation over the argument snapshot — it evaluates nothing and reads
-    /// no environment — so the synchronous dispatch and its async twin share
-    /// this ONE implementation and the member set cannot drift between them.
+    /// Applies one Math native to its already-read numeric arguments. It evaluates
+    /// nothing and reads no environment; its only non-argument input is the run's
+    /// random stream, passed EXPLICITLY (never a static or shared fallback) and
+    /// consumed only by the two random members, which draw from it in evaluation
+    /// order after validating their bounds. The synchronous dispatch and its async
+    /// twin both hand over <c>ctx.Budget.RandomSource</c> and share this ONE
+    /// implementation, so neither the member set nor the draw order can drift
+    /// between them.
     /// </summary>
-    private static EvalResult<Result> ApplyMathNative(string fnName, Decimal128[] args)
+    internal static EvalResult<Result> ApplyMathNative(string fnName, Decimal128[] args, RandomSource randomSource)
     {
         // Host-AST arity gate (bug-hunt B5a). `Expr.NativeCall` is publicly
         // host-constructible, and the arms below read FIXED argument positions
@@ -789,13 +793,16 @@ public static partial class Evaluator
                 return EvalPow(span: null, args[0], args[1]);
             case "Log": result = CanonicalizeMathResult(Decimal128.Log(args[0], args[1])); break;
             case "Random":
+                // Validation precedes every draw: an invalid call consumes no word of
+                // the run's stream, so the next valid draw is exactly what it would
+                // have been had the invalid call never appeared.
                 if (!Decimal128.IsFinite(args[0]) || !Decimal128.IsFinite(args[1]))
                     return new EvalError.IllegalInEval("Math.Random bounds must be finite numbers");
                 if (args[0] >= args[1])
                     return new EvalError.IllegalInEval("Math.Random start must be less than end");
                 if (!Decimal128.IsFinite(args[1] - args[0]))
                     return new EvalError.IllegalInEval("Math.Random range is too large");
-                result = RandomInHalfOpenRange(args[0], args[1]);
+                result = RandomInHalfOpenRange(args[0], args[1], randomSource);
                 break;
             case "RandomInt":
                 // Uniform INTEGER-domain generation, never a scaled fraction: flooring a
@@ -811,7 +818,7 @@ public static partial class Evaluator
                     return new EvalError.IllegalInEval("Math.RandomInt bounds must not exceed 1e34 in magnitude");
                 if (args[0] >= args[1])
                     return new EvalError.IllegalInEval("Math.RandomInt start must be less than end");
-                result = SampleUniformInteger(args[0], args[1], SharedRandomUInt128Source);
+                result = SampleUniformInteger(args[0], args[1], randomSource);
                 break;
             default:
                 return new EvalError.IllegalInEval($"unknown native function: {fnName}");
@@ -989,29 +996,24 @@ public static partial class Evaluator
     private const long RandomDecimalComponentBound = 100_000_000_000_000_000; // 1e17
 
     /// <summary>
-    /// Production component source. <see cref="Random.Shared"/> is the runtime's
-    /// thread-safe shared generator; <see cref="Random.NextInt64(long)"/> returns
-    /// a value in <c>[0, maxExclusive)</c> without the modulo-scaling bias that a
-    /// hand-rolled bounded conversion could introduce.
-    /// </summary>
-    private static readonly Func<long, long> SharedRandomInt64Source =
-        static maxExclusive => Random.Shared.NextInt64(maxExclusive);
-
-    /// <summary>
     /// A uniform random fraction in [0, 1) carrying Decimal128's full 34 significant
     /// digits: two independent 17-digit draws compose one uniform integer in
     /// [0, 1e34), scaled exactly by 1e-34. Every arithmetic step is exact, and the
     /// 1e34 lattice points carry just under 113 bits of entropy —
     /// <c>Random.NextDouble</c> would cap randomness at double's 53 bits.
-    /// The bounded source is injected at this helper boundary so endpoint and
-    /// composition behavior can be tested deterministically without replacing
-    /// production randomness or introducing mutable global test state.
+    /// The HIGH component is always drawn before the LOW one, each through the
+    /// source's exact bounded draw (<see cref="RandomSource.NextInt64Below"/>), so
+    /// under a seed the fraction is reproducible; the source is a parameter at this
+    /// helper boundary so endpoint and composition behavior can be tested
+    /// deterministically by scripting the bounded seam, without replacing production
+    /// randomness or introducing mutable global test state. Sampling is independent
+    /// of where the source's words come from: this composition is unchanged by seeding.
     /// </summary>
-    internal static Decimal128 SampleRandomUnitFraction(Func<long, long> nextInt64Exclusive)
+    internal static Decimal128 SampleRandomUnitFraction(RandomSource source)
     {
-        ArgumentNullException.ThrowIfNull(nextInt64Exclusive);
-        var high = nextInt64Exclusive(RandomDecimalComponentBound);
-        var low = nextInt64Exclusive(RandomDecimalComponentBound);
+        ArgumentNullException.ThrowIfNull(source);
+        var high = source.NextInt64Below(RandomDecimalComponentBound);
+        var low = source.NextInt64Below(RandomDecimalComponentBound);
         if ((ulong)high >= (ulong)RandomDecimalComponentBound
             || (ulong)low >= (ulong)RandomDecimalComponentBound)
         {
@@ -1022,11 +1024,8 @@ public static partial class Evaluator
         return (((Decimal128)high * RandomDecimalComponentBound) + low) * RandomUnitFractionScale;
     }
 
-    private static Decimal128 NextRandomUnitFraction()
-        => SampleRandomUnitFraction(SharedRandomInt64Source);
-
-    private static Decimal128 RandomInHalfOpenRange(Decimal128 start, Decimal128 end)
-        => ScaleRandomUnitFractionToHalfOpenRange(start, end, NextRandomUnitFraction());
+    private static Decimal128 RandomInHalfOpenRange(Decimal128 start, Decimal128 end, RandomSource source)
+        => ScaleRandomUnitFractionToHalfOpenRange(start, end, SampleRandomUnitFraction(source));
 
     internal static Decimal128 ScaleRandomUnitFractionToHalfOpenRange(
         Decimal128 start,
@@ -1035,16 +1034,6 @@ public static partial class Evaluator
     {
         var result = start + (unitFraction * (end - start));
         return result >= end ? start : result;
-    }
-
-    /// <summary>Production 128-bit draw source for <see cref="SampleUniformInteger"/>.</summary>
-    private static readonly Func<UInt128> SharedRandomUInt128Source = NextRandomUInt128;
-
-    internal static UInt128 NextRandomUInt128()
-    {
-        Span<byte> bytes = stackalloc byte[16];
-        Random.Shared.NextBytes(bytes);
-        return System.Buffers.Binary.BinaryPrimitives.ReadUInt128LittleEndian(bytes);
     }
 
     /// <summary>
@@ -1056,15 +1045,18 @@ public static partial class Evaluator
     /// (at most 2e34) fits Int128 with room to spare and the chosen integer
     /// converts back to Decimal128 exactly.
     ///
-    /// <para>The draw source is injected so tests can drive the mapping and
-    /// rejection logic deterministically; production supplies
-    /// <see cref="SharedRandomUInt128Source"/>. Draws at or above the largest
+    /// <para>The 128-bit draws come from the run's <see cref="RandomSource.NextUInt128"/>
+    /// (two raw words, high half first), so tests can drive the mapping and rejection
+    /// logic deterministically by scripting that seam. Draws at or above the largest
     /// multiple of the span below 2^128 are redrawn — the acceptance probability
     /// always exceeds one half, and each draw is independent, so the loop
-    /// terminates with probability one and never biases the accepted values.</para>
+    /// terminates with probability one and never biases the accepted values. Even a
+    /// unit span consumes one 128-bit draw: consumption is part of the seeded-stream
+    /// contract, and this sampler is unchanged by seeding.</para>
     /// </summary>
-    internal static Decimal128 SampleUniformInteger(Decimal128 start, Decimal128 end, Func<UInt128> nextUInt128)
+    internal static Decimal128 SampleUniformInteger(Decimal128 start, Decimal128 end, RandomSource source)
     {
+        ArgumentNullException.ThrowIfNull(source);
         var startInteger = (Int128)start;
         var span = (UInt128)((Int128)end - startInteger);
 
@@ -1078,7 +1070,7 @@ public static partial class Evaluator
         UInt128 draw;
         do
         {
-            draw = nextUInt128();
+            draw = source.NextUInt128();
         }
         while (rejectedDrawCount != 0 && draw > UInt128.MaxValue - rejectedDrawCount);
 

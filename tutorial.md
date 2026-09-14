@@ -13,6 +13,7 @@ Learn KatLang from a first calculation through collections, higher-order algorit
    - [Comparison Operators](#comparison-operators)
    - [Logical Operators](#logical-operators)
    - [Math Constants and Functions](#math-constants-and-functions)
+   - [Reproducible random values](#reproducible-random-values)
    - [Lowercase Math Aliases](#lowercase-math-aliases)
    - [Display Decimal Places](#display-decimal-places)
 5. [Output Rows and Sequences](#output-rows-and-sequences)
@@ -461,6 +462,16 @@ Math.Log(100, 10)
 1
 2
 ```
+
+### Reproducible random values
+
+`Math.Random` and `Math.RandomInt` (and their aliases `random` and `randomInt`) are nondeterministic by default: each run initializes its stream from fresh entropy, so the same program may print different values between runs. A host can instead SEED one evaluation — `RunOptions.RandomSeed` in the .NET library, or `--seed <integer>` on the CLI's `run` and `eval` commands — and then, for a given KatLang version, the same program with the same seed reproduces the same random values on every supported platform:
+
+```
+katlang eval "Math.RandomInt(1, 7), Math.Random(0, 1)" --seed 42
+```
+
+A seed reproduces a *stream*, not individual calls: both random operations, in every spelling, draw from one stream in evaluation order, so the values a call receives depend on which random calls executed before it. The ordinary evaluation rules decide that — arguments evaluate left to right and exactly once, only the selected branch of `if` runs, a zero-parameter property is drawn once and reused while an explicit `A()` draws again, callbacks draw in sequence order, and the output rows draw before a `DisplayDecimals` property is evaluated. Removing an earlier random call therefore generally changes the later values. Unseeded evaluation stays nondeterministic, and KatLang randomness is not cryptographically secure.
 
 ### Lowercase Math Aliases
 
@@ -972,7 +983,7 @@ C()             # re-evaluates C, and A() is fresh because it is explicit
 
 Here `A` is self-contained — its value depends on no caller input — so within one evaluation it has exactly one cached entry: whichever read comes first stores it, and every later property-style read of `A` in that evaluation reuses it, including the reads inside a second `B()` call. Both `B()` calls therefore show the same pair. That reuse is a promise about ONE evaluation and about self-contained properties; it is bounded in two ways:
 
-- **Per evaluation.** Every independent evaluation (each `KatLangEngine.Run` or `RunAsync`, each CLI invocation) starts with an empty cache. Nothing is remembered between two evaluations of the same program, so `B()` in one evaluation and `B()` in the next draw independently.
+- **Per evaluation.** Every independent evaluation (each `KatLangEngine.Run` or `RunAsync`, each CLI invocation) starts with an empty cache. Nothing is remembered between two evaluations of the same program: zero-argument cache state never survives between evaluations, ordinary unseeded evaluations receive independent nondeterministic random streams (so `B()` in one evaluation and `B()` in the next draw independently), and two evaluations deliberately given the same seed replay the same stream — see [Reproducible random values](#reproducible-random-values).
 - **Per binding context for local-only properties.** A property whose value captures an enclosing input — a parameter of the algorithm that declares it, or the pattern binder of an enclosing branch — is cached only within its current binding context. Separate calls, callbacks, and loop iterations of the enclosing algorithm are separate contexts even when their argument values are equal, and an explicit call such as `B()` opens a new context for the local-only properties that `B`'s body reads. Returning restores the caller's context and its cached values. Evaluating an algorithm argument without binding parameters keeps the current context; rebuilding a lookup record alone does not create a new cache scope.
 
 So "the property-style `A` inside `B` is reused" holds for the self-contained `A` above. For a local-only `A` it does not: each explicit `B()` re-draws it, while property-style reads of `B` in one context still share one pair.

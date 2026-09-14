@@ -105,6 +105,45 @@ public sealed class RunOptions
     public HostOperations? HostOperations { get; init; }
 
     /// <summary>
+    /// Optional seed for KatLang's random operations — <c>Math.Random</c> / <c>random</c>
+    /// and <c>Math.RandomInt</c> / <c>randomInt</c>. <c>null</c> (the default) keeps
+    /// evaluation UNSEEDED and nondeterministic: every run draws from fresh entropy.
+    /// Any <see cref="long"/> value is a valid seed — <c>0</c>, negative values,
+    /// <see cref="long.MinValue"/>, and <see cref="long.MaxValue"/> included — and every
+    /// distinct value names a distinct stream (<c>-5</c> and <c>5</c> differ; the seed's
+    /// bit pattern is used as-is, never folded, hashed, or truncated).
+    /// <para><b>Reproducibility contract.</b> For a given KatLang version: the same program
+    /// (loaded module contents and a <c>DisplayDecimals</c> property, which is itself
+    /// evaluated, included), the same seed, and the same semantically executed KatLang
+    /// path produce the same random values on every supported platform. Both random
+    /// operations, in every spelling, consume ONE run-scoped stream in actual evaluation
+    /// order, so the values depend on which random calls execute and in what order —
+    /// removing an earlier random call generally changes every later value (a call can
+    /// consume a variable number of raw words), and the ordinary evaluation rules
+    /// (left-to-right arguments, lazy <c>if</c> branches, the zero-argument property cache,
+    /// explicit <c>A()</c> re-evaluation) decide which calls execute. Synchronous versus
+    /// asynchronous entry points, optimizer strategies, and unrelated
+    /// <see cref="EvaluationLimits"/> settings that do not change the program's actual
+    /// control flow never alter the stream. Host-operation results are the host's
+    /// responsibility and outside this guarantee. The exact stream may change in a future
+    /// KatLang version when the generator, a sampling algorithm, or evaluation semantics
+    /// deliberately change (release-noted); it is NOT promised across versions, and
+    /// KatLang randomness is not cryptographically secure. The internal generator contract
+    /// is documented in <c>docs/design/seeded-randomness-2026-09.md</c>.</para>
+    /// <para><b>Lifetime.</b> This is immutable configuration, safe to share across
+    /// concurrent and sequential runs — no generator state lives here. Each evaluation
+    /// creates its own fresh stream from the seed: reusing one options object for
+    /// sequential runs replays the stream from its beginning every time, and concurrent
+    /// runs sharing one options object get independent stream instances initialized from
+    /// the same seed. The direct <see cref="Evaluator.Run(Expr, EvaluationLimits?, long?, CancellationToken)"/>
+    /// family accepts the same seed with the same semantics.</para>
+    /// <para><see cref="Parser.Parse(string, RunOptions?)"/> and <see cref="Parser.ParseAsync"/>
+    /// ignore this property: seeding is evaluation-only configuration with no effect on
+    /// parsing, module loading, elaboration, or editor semantics.</para>
+    /// </summary>
+    public long? RandomSeed { get; init; }
+
+    /// <summary>
     /// Optional deterministic evaluation resource limits. When null,
     /// <see cref="KatLang.EvaluationLimits.Default"/> applies: hard depth, per-collection,
     /// per-string, and returned-display ceilings are enforced; step and cumulative

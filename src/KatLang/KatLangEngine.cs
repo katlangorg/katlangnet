@@ -350,7 +350,8 @@ public static class KatLangEngine
                         frontEndResult.ElaboratedRoot,
                         options?.EvaluationLimits,
                         hostOperations,
-                        evaluationCancellationToken)
+                        evaluationCancellationToken,
+                        options?.RandomSeed)
                     : []);
         }
 
@@ -358,14 +359,17 @@ public static class KatLangEngine
 
         // One budget for the whole run: the program output and the DisplayDecimals
         // property are evaluated under the same run-scoped budget, so neither can reset
-        // or escape the other's accounting.
+        // or escape the other's accounting — and they share the run's one random stream
+        // (RunOptions.RandomSeed), the output rows drawing first and DisplayDecimals
+        // afterwards, in exactly that evaluation order.
         var evalResult = Evaluator.RunCountedWithTopLevelProperty(
             new Expr.AlgorithmExpr(frontEndResult.ElaboratedRoot),
             DisplayDecimalsPropertyName,
             zeroArgPropertyResultCache,
             options?.EvaluationLimits,
             hostOperations,
-            evaluationCancellationToken);
+            evaluationCancellationToken,
+            options?.RandomSeed);
 
         return ProjectEvaluationOutcome(
             frontEndResult, evalResult, limits, diagnosticDisplayOptions, evaluationCancellationToken);
@@ -427,7 +431,8 @@ public static class KatLangEngine
                         frontEndResult.ElaboratedRoot,
                         options?.EvaluationLimits,
                         hostOperations,
-                        evaluationCancellationToken).ConfigureAwait(false)
+                        evaluationCancellationToken,
+                        options?.RandomSeed).ConfigureAwait(false)
                     : []);
         }
 
@@ -445,7 +450,8 @@ public static class KatLangEngine
             zeroArgPropertyResultCache,
             options?.EvaluationLimits,
             hostOperations,
-            evaluationCancellationToken).ConfigureAwait(false);
+            evaluationCancellationToken,
+            options?.RandomSeed).ConfigureAwait(false);
 
         return ProjectEvaluationOutcome(
             frontEndResult, evalResult, limits, diagnosticDisplayOptions, evaluationCancellationToken);
@@ -699,15 +705,25 @@ public static class KatLangEngine
             Inner: EvalError.MissingOutput,
         };
 
+    /// <summary>
+    /// The additional-error evaluation after evaluable load failures is its OWN evaluator
+    /// run: it receives the configured seed like the primary run and therefore starts a
+    /// fresh stream from that seed — never a partially consumed one.
+    /// </summary>
     private static IReadOnlyList<KatLangError> EvaluateForAdditionalErrors(
-        Algorithm root, EvaluationLimits? limits, HostOperations? hostOperations, CancellationToken cancellationToken)
+        Algorithm root,
+        EvaluationLimits? limits,
+        HostOperations? hostOperations,
+        CancellationToken cancellationToken,
+        long? randomSeed)
     {
         var evalResult = Evaluator.RunCounted(
             new Expr.AlgorithmExpr(root),
             new RunScopedZeroArgPropertyResultCache(),
             limits,
             hostOperations,
-            cancellationToken);
+            cancellationToken,
+            randomSeed);
         if (!evalResult.IsError || IsTopLevelNoProgramOutput(evalResult.Error))
             return [];
 
@@ -716,7 +732,11 @@ public static class KatLangEngine
 
     /// <summary>MIRROR OF <see cref="EvaluateForAdditionalErrors"/> — keep in lock-step.</summary>
     private static async Task<IReadOnlyList<KatLangError>> EvaluateForAdditionalErrorsAsync(
-        Algorithm root, EvaluationLimits? limits, HostOperations? hostOperations, CancellationToken cancellationToken)
+        Algorithm root,
+        EvaluationLimits? limits,
+        HostOperations? hostOperations,
+        CancellationToken cancellationToken,
+        long? randomSeed)
     {
         var program = new Expr.AlgorithmExpr(root);
         var evalResult = await Evaluator.RunCountedAsync(
@@ -724,7 +744,8 @@ public static class KatLangEngine
             Evaluator.CreateRunScopedZeroArgPropertyResultCache(program, hostOperations),
             limits,
             hostOperations,
-            cancellationToken).ConfigureAwait(false);
+            cancellationToken,
+            randomSeed).ConfigureAwait(false);
         if (!evalResult.IsError || IsTopLevelNoProgramOutput(evalResult.Error))
             return [];
 

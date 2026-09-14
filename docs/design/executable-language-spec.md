@@ -232,7 +232,13 @@ source/result/reason drift is reviewed. Use a skip only for structural reasons
 (needs a downloader/host setup, intentionally illustrative); a stale result,
 an inconvenient harness, or a real bug is never a skip reason. Examples with
 nondeterministic output (e.g. `Math.Random`) must not carry an exact
-`**Result:**` claim — describe the range in prose instead.
+`**Result:**` claim — describe the range in prose instead. Seeded evaluation
+(`RunOptions.RandomSeed`, September 2026) does not change this: the tutorial
+sweep and the canonical corpora run unseeded, the corpora carry no per-case
+`RunOptions`, and no random case belongs in `LanguageSpecCorpus` or the
+semantic-explorer corpus (Lean models no random execution). Seeded random
+behavior is pinned by the C#-only `tests/KatLang.Tests/Randomness/` suites
+against a test-side oracle instead (`docs/design/seeded-randomness-2026-09.md`).
 
 Blank lines inside a fenced Results block remain presentation-only grouping
 and are removed before comparison, matching the pre-M13 marker convention.

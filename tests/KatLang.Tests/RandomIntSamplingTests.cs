@@ -1,5 +1,7 @@
 using System.Globalization;
 using System.Numerics;
+using KatLang.Evaluation;
+using KatLang.Tests.Randomness;
 
 namespace KatLang.Tests;
 
@@ -9,37 +11,27 @@ namespace KatLang.Tests;
 /// (<c>Evaluator.SampleUniformInteger</c>), never by scaling the fixed
 /// 10^34-point <c>Math.Random</c> lattice — flooring a scaled fraction biases
 /// every span that does not divide the lattice and cannot even reach every
-/// integer of very large spans. The draw source is injected, so these tests
-/// exercise the mapping and rejection logic DETERMINISTICALLY with scripted
-/// draw sequences; the seeded statistical smoke test is deterministic and is
-/// only a wiring sanity check, not the proof of uniformity.
+/// integer of very large spans. The draw source is a <see cref="RandomSource"/> whose
+/// 128-BIT seam (<see cref="RandomSource.NextUInt128"/>) these tests script directly,
+/// so they exercise the mapping and rejection logic DETERMINISTICALLY with scripted
+/// draw sequences and never have to reverse-engineer raw 64-bit words; the seeded
+/// statistical smoke test is deterministic and is only a wiring sanity check, not the
+/// proof of uniformity. The sampler is independent of where the words come from, so
+/// seeding changes nothing here.
 /// </summary>
 public class RandomIntSamplingTests
 {
     private static Decimal128 N(string text)
         => Decimal128.Parse(text, NumberStyles.Float, CultureInfo.InvariantCulture);
 
-    private static (Func<UInt128> Source, Func<int> Remaining) Draws(params UInt128[] values)
-    {
-        var queue = new Queue<UInt128>(values);
-        // Dequeue on an empty queue throws, so a sampler that draws MORE than the
-        // script supplies fails the test loudly.
-        return (() => queue.Dequeue(), () => queue.Count);
-    }
-
     private static Decimal128 Sample(string start, string end, params UInt128[] draws)
-    {
-        var (source, remaining) = Draws(draws);
-        var result = Evaluator.SampleUniformInteger(N(start), N(end), source);
-        Assert.Equal(0, remaining());
-        return result;
-    }
+        => Sample(N(start), N(end), draws);
 
     private static Decimal128 Sample(Decimal128 start, Decimal128 end, params UInt128[] draws)
     {
-        var (source, remaining) = Draws(draws);
+        var source = new ScriptedUInt128Source(draws);
         var result = Evaluator.SampleUniformInteger(start, end, source);
-        Assert.Equal(0, remaining());
+        Assert.Equal(0, source.Remaining);
         return result;
     }
 
@@ -123,9 +115,7 @@ public class RandomIntSamplingTests
         var span = (UInt128)ulong.MaxValue + 1;
         var start = Decimal128.Zero;
         var end = (Decimal128)((Int128)span);
-        var (source, remaining) = Draws(UInt128.MaxValue);
-        var result = Evaluator.SampleUniformInteger(start, end, source);
-        Assert.Equal(0, remaining());
+        var result = Sample(start, end, UInt128.MaxValue);
         Assert.Equal((Decimal128)((Int128)span - 1), result);
     }
 
@@ -183,10 +173,7 @@ public class RandomIntSamplingTests
     {
         var start = startExpr.Contains(' ') ? EvalConstant(startExpr) : N(startExpr);
         var end = endExpr.Contains(' ') ? EvalConstant(endExpr) : N(endExpr);
-        var (source, remaining) = Draws(draw);
-        var result = Evaluator.SampleUniformInteger(start, end, source);
-        Assert.Equal(0, remaining());
-        return result;
+        return Sample(start, end, draw);
     }
 
     private static Decimal128 EvalConstant(string expression)
@@ -262,11 +249,13 @@ public class RandomIntSamplingTests
         foreach (var span in new[] { 3, 5, 6, 10, 17, 257 })
         {
             const int expectedPerBucket = 400;
-            var source = new DeterministicUInt128Source(0xa0761d6478bd642fUL ^ (ulong)span);
+            // The test-side reference generator (ReferenceRandomOracle) supplies its own
+            // SplitMix64 words and its own hi/lo composition at the 128-bit seam.
+            var source = new ReferenceRandomSource(0xa0761d6478bd642fUL ^ (ulong)span);
             var counts = new int[span];
             for (var i = 0; i < span * expectedPerBucket; i++)
             {
-                var value = Evaluator.SampleUniformInteger(Decimal128.Zero, (Decimal128)span, source.Next);
+                var value = Evaluator.SampleUniformInteger(Decimal128.Zero, (Decimal128)span, source);
                 counts[(int)value]++;
             }
 
@@ -288,20 +277,20 @@ public class RandomIntSamplingTests
         }
     }
 
-    private sealed class DeterministicUInt128Source(ulong seed)
+    /// <summary>
+    /// Scripts the 128-BIT seam only: each <see cref="RandomSource.NextUInt128"/> call
+    /// returns the next scripted draw; dequeuing past the script throws, so a sampler
+    /// that draws MORE than supplied — or reaches for raw words — fails loudly.
+    /// </summary>
+    private sealed class ScriptedUInt128Source(IEnumerable<UInt128> draws) : RandomSource
     {
-        private ulong state = seed;
+        private readonly Queue<UInt128> _draws = new(draws);
 
-        public UInt128 Next()
-            => ((UInt128)NextUInt64() << 64) | NextUInt64();
+        public int Remaining => _draws.Count;
 
-        private ulong NextUInt64()
-        {
-            state += 0x9e3779b97f4a7c15UL;
-            var value = state;
-            value = (value ^ (value >> 30)) * 0xbf58476d1ce4e5b9UL;
-            value = (value ^ (value >> 27)) * 0x94d049bb133111ebUL;
-            return value ^ (value >> 31);
-        }
+        public override ulong NextUInt64()
+            => throw new InvalidOperationException("The integer sampler must draw through the 128-bit seam, not raw words.");
+
+        public override UInt128 NextUInt128() => _draws.Dequeue();
     }
 }

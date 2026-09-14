@@ -85,7 +85,6 @@ Assert-InRegion 'internal static int ClampRoundDigits' 2
 Assert-InRegion 'internal static Decimal128 CanonicalizeMathResult' 2
 Assert-InRegion 'internal static Decimal128 SampleRandomUnitFraction' 2
 Assert-InRegion 'internal static Decimal128 ScaleRandomUnitFractionToHalfOpenRange' 2
-Assert-InRegion 'internal static UInt128 NextRandomUInt128' 2
 Assert-InRegion 'internal static Decimal128 SampleUniformInteger' 2
 Assert-InRegion 'Math.Random bounds must be finite numbers' 2
 Assert-InRegion 'Math.RandomInt bounds must not exceed 1e34 in magnitude' 2

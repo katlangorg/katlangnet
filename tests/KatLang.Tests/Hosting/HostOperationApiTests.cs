@@ -637,8 +637,11 @@ public class HostOperationApiTests
         Assert.True(result.IsOk);
         Assert.Equal(42m, ((Result.Atom)result.Value).Value);
 
+        // The cast selects the host-operation overload explicitly: beside the seeded
+        // Run(Expr, EvaluationLimits?, long?, CancellationToken) overload, two literal
+        // nulls would otherwise be ambiguous.
         Assert.Throws<ArgumentNullException>(() => Evaluator.Run(
-            new Expr.AlgorithmExpr(parsed.Root), null!, null, CancellationToken.None));
+            new Expr.AlgorithmExpr(parsed.Root), (HostOperations)null!, null, CancellationToken.None));
 
         var asyncOperations = HostOperations.Create(
             HostOperation.CreateAsync("Data", (_, _) => ValueTask.FromResult(Atom(1))));

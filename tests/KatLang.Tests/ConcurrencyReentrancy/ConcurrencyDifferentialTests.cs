@@ -9,14 +9,16 @@ namespace KatLang.Tests.ConcurrencyReentrancy;
 /// <para><b>Contract under test</b> (verified at source during the audit):
 /// every public/internal evaluator entry point builds a fresh root context
 /// per call — fresh <c>EvaluationBudget</c> (also the cache-key run
-/// identity), fresh <c>RunScopedZeroArgPropertyResultCache</c> and
+/// identity, and since v0.8.209 the owner of the run's random stream,
+/// <c>EvaluationBudget.RandomSource</c>), fresh <c>RunScopedZeroArgPropertyResultCache</c> and
 /// <c>RunScopedDeconstructionBindingCache</c> (<c>Evaluator.CreateRootCtx</c>) —
 /// and the only process-global mutable object in the runtime is
 /// <c>Evaluator.ScopeOwnerAlgorithms</c> (a <see cref="System.Runtime.CompilerServices.ConditionalWeakTable{TKey,TValue}"/>
 /// whose keys are freshly minted per wiring and published before they
 /// escape). Everything else static is immutable (prelude/Math ASTs consumed
 /// via <c>with</c>-copies, builtin registry, formatter tables, default
-/// options).</para>
+/// options); the runtime's shared entropy generator is consulted only to
+/// initialize an unseeded run's own stream.</para>
 ///
 /// <para><b>Method.</b> Each pair case computes per-lane sequential baselines
 /// (recomputed every round — sequential repeat-stability is itself an oracle
@@ -107,8 +109,8 @@ public class ConcurrencyDifferentialTests
 
     private static string ObserveLane(ConcurrencyPairCase pairCase, bool laneA)
         => laneA
-            ? ConcurrencyHarness.Observe(pairCase.EntryA, pairCase.ProgramA, pairCase.LimitsA)
-            : ConcurrencyHarness.Observe(pairCase.EntryB, pairCase.ProgramB, pairCase.LimitsB);
+            ? ConcurrencyHarness.Observe(pairCase.EntryA, pairCase.ProgramA, pairCase.LimitsA, pairCase.OptionsA)
+            : ConcurrencyHarness.Observe(pairCase.EntryB, pairCase.ProgramB, pairCase.LimitsB, pairCase.OptionsB);
 
     private static void AssertExpectedClass(ConcurrencyPairCase pairCase, string baselineA, string baselineB)
     {

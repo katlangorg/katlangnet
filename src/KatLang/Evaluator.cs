@@ -78,8 +78,8 @@ public static partial class Evaluator
     {
         /// <summary>
         /// A fresh empty context. This is a PROPERTY, not a shared static instance:
-        /// every use must get its own budget, because a shared one would be global
-        /// mutable evaluation state.
+        /// every use must get its own budget — and with it its own UNSEEDED random
+        /// stream — because a shared one would be global mutable evaluation state.
         /// </summary>
         public static EvalCtx Empty => new(
             [], [], [], UncachedZeroArgPropertyResultCache.Instance, UncachedDeconstructionBindingCache.Instance,
@@ -2091,6 +2091,27 @@ public static partial class Evaluator
     /// <paramref name="cancellationToken"/> was cancelled before or during evaluation.
     /// </exception>
     public static EvalResult<Result> Run(Expr expr, EvaluationLimits? limits, CancellationToken cancellationToken)
+        => Run(expr, limits, randomSeed: null, cancellationToken);
+
+    /// <summary>
+    /// Run evaluation under explicit resource limits, an optional random seed, and
+    /// cooperative host cancellation — the direct-evaluator counterpart of
+    /// <see cref="RunOptions.RandomSeed"/>, with the same contract: <c>null</c> keeps the
+    /// unseeded, nondeterministic stream; any <see cref="long"/> selects one reproducible
+    /// stream for this run alone (each call starts it from the beginning), shared in
+    /// evaluation order by every <c>Math.Random</c> / <c>random</c> and
+    /// <c>Math.RandomInt</c> / <c>randomInt</c> call of the run. Limits and cancellation
+    /// behave exactly as in <see cref="Run(Expr, EvaluationLimits?, CancellationToken)"/>.
+    /// KatLang randomness is not cryptographically secure.
+    /// </summary>
+    /// <exception cref="OperationCanceledException">
+    /// <paramref name="cancellationToken"/> was cancelled before or during evaluation.
+    /// </exception>
+    public static EvalResult<Result> Run(
+        Expr expr,
+        EvaluationLimits? limits,
+        long? randomSeed,
+        CancellationToken cancellationToken)
         => Run(
             expr,
             new RunScopedZeroArgPropertyResultCache(),
@@ -2101,7 +2122,8 @@ public static partial class Evaluator
             limits,
             observations: null,
             hostOperations: null,
-            cancellationToken);
+            cancellationToken,
+            randomSeed);
 
     /// <summary>
     /// Run evaluation with SYNCHRONOUS host operations ambiently in scope, under the
@@ -2121,9 +2143,9 @@ public static partial class Evaluator
     /// containing an asynchronous operation is rejected with
     /// <see cref="InvalidOperationException"/> before anything is evaluated — use
     /// <see cref="RunAsync(Expr, HostOperations, EvaluationLimits?, CancellationToken)"/>
-    /// for asynchronous operations. All parameters are explicit on this overload so
-    /// existing <c>Run</c> call sites (including literal-null arguments) keep binding
-    /// exactly as before.</para>
+    /// for asynchronous operations. With the seeded overload present,
+    /// <c>Run(expr, null, null, token)</c> is ambiguous: use named arguments or an
+    /// explicitly typed second argument to select the intended overload.</para>
     /// </summary>
     /// <exception cref="InvalidOperationException">
     /// <paramref name="hostOperations"/> contains an asynchronous operation.
@@ -2135,6 +2157,30 @@ public static partial class Evaluator
         Expr expr,
         HostOperations hostOperations,
         EvaluationLimits? limits,
+        CancellationToken cancellationToken)
+        => Run(expr, hostOperations, limits, randomSeed: null, cancellationToken);
+
+    /// <summary>
+    /// Run evaluation with SYNCHRONOUS host operations ambiently in scope and an
+    /// optional random seed: the host-operation contract of
+    /// <see cref="Run(Expr, HostOperations, EvaluationLimits?, CancellationToken)"/>
+    /// combined with the seed contract of
+    /// <see cref="Run(Expr, EvaluationLimits?, long?, CancellationToken)"/>. Host
+    /// operations are outside the seeded stream — what they return remains the host's
+    /// responsibility — while every KatLang random call of the run draws from the one
+    /// seeded stream in evaluation order.
+    /// </summary>
+    /// <exception cref="InvalidOperationException">
+    /// <paramref name="hostOperations"/> contains an asynchronous operation.
+    /// </exception>
+    /// <exception cref="OperationCanceledException">
+    /// <paramref name="cancellationToken"/> was cancelled before or during evaluation.
+    /// </exception>
+    public static EvalResult<Result> Run(
+        Expr expr,
+        HostOperations hostOperations,
+        EvaluationLimits? limits,
+        long? randomSeed,
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(hostOperations);
@@ -2148,7 +2194,8 @@ public static partial class Evaluator
             limits,
             observations: null,
             hostOperations,
-            cancellationToken);
+            cancellationToken,
+            randomSeed);
     }
 
     internal static EvalResult<Result> Run(
@@ -2384,7 +2431,8 @@ public static partial class Evaluator
         EvaluationLimits? limits,
         EvaluationObservations? observations,
         HostOperations? hostOperations,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        long? randomSeed)
     {
         // Host cancellation preempts every pre-evaluation verdict: an already-cancelled
         // token stops the run before the structural preflight spends O(tree) work.
@@ -2402,20 +2450,23 @@ public static partial class Evaluator
             limits,
             observations,
             hostOperations,
-            cancellationToken);
+            cancellationToken,
+            randomSeed);
     }
 
     /// <summary>
     /// The ONE ordered non-evaluating preparation sequence shared by every evaluator
     /// run entry point, synchronous and async twin alike (none of it awaits):
-    /// fresh run budget, structural safety preflight, Lean-aligned pre-evaluation
-    /// validation, cache argument validation, root context construction. A preflight or
-    /// validation rejection observes the host token (a cancellation requested during
-    /// the rejected pass still escapes as <see cref="OperationCanceledException"/>,
-    /// never as the returned error) and hands the rejection back with the budget.
-    /// Callers reach this only through <see cref="PrepareSynchronousRun"/> or
-    /// <c>PrepareAsyncTwinRun</c>, which own the per-family entry guards and their
-    /// ordering relative to the first token observation.
+    /// fresh run budget (which owns the run's fresh random stream, seeded from
+    /// <paramref name="randomSeed"/> or from entropy), structural safety preflight,
+    /// Lean-aligned pre-evaluation validation, cache argument validation, root context
+    /// construction. A preflight or validation rejection observes the host token (a
+    /// cancellation requested during the rejected pass still escapes as
+    /// <see cref="OperationCanceledException"/>, never as the returned error) and hands
+    /// the rejection back with the budget. Callers reach this only through
+    /// <see cref="PrepareSynchronousRun"/> or <c>PrepareAsyncTwinRun</c>, which own the
+    /// per-family entry guards and their ordering relative to the first token
+    /// observation.
     /// </summary>
     private static PreparedRun PrepareAdmittedRun(
         Expr expr,
@@ -2427,11 +2478,13 @@ public static partial class Evaluator
         EvaluationLimits? limits,
         EvaluationObservations? observations,
         HostOperations? hostOperations,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        long? randomSeed)
     {
-        // Creating the budget is pure field initialization — the structural preflight
-        // still runs before any budget COUNTER can move and charges nothing.
-        var budget = EvaluationBudget.Create(limits, hostOperations, cancellationToken);
+        // Creating the budget is field initialization plus the run's random-stream
+        // construction (unseeded entropy is acquired here, once) — the structural
+        // preflight still runs before any budget COUNTER can move and charges nothing.
+        var budget = EvaluationBudget.Create(limits, hostOperations, cancellationToken, randomSeed);
 
         if (StructuralPreflight(expr, limits) is { } structuralError)
         {
@@ -2467,7 +2520,8 @@ public static partial class Evaluator
         EvaluationLimits? limits = null,
         EvaluationObservations? observations = null,
         HostOperations? hostOperations = null,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        long? randomSeed = null)
     {
         var preparation = PrepareSynchronousRun(
             expr,
@@ -2479,7 +2533,8 @@ public static partial class Evaluator
             limits,
             observations,
             hostOperations,
-            cancellationToken);
+            cancellationToken,
+            randomSeed);
         if (preparation.Error is { } preparationError)
             return preparationError;
 
@@ -2505,7 +2560,8 @@ public static partial class Evaluator
         Expr expr,
         EvaluationObservations observations,
         bool enableOptimizations = true,
-        EvaluationLimits? limits = null)
+        EvaluationLimits? limits = null,
+        long? randomSeed = null)
         => Run(
             expr,
             new RunScopedZeroArgPropertyResultCache(),
@@ -2514,7 +2570,8 @@ public static partial class Evaluator
             enableSequencePipelineOptimization: enableOptimizations,
             sequenceDiagnostics: null,
             limits,
-            observations);
+            observations,
+            randomSeed: randomSeed);
 
     internal static EvalResult<CountedResult> RunCounted(Expr expr)
         => RunCounted(expr, new RunScopedZeroArgPropertyResultCache());
@@ -2548,7 +2605,8 @@ public static partial class Evaluator
         SequencePipelineDiagnostics? sequenceDiagnostics = null,
         EvaluationObservations? observations = null,
         HostOperations? hostOperations = null,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        long? randomSeed = null)
     {
         var preparation = PrepareSynchronousRun(
             expr,
@@ -2560,7 +2618,8 @@ public static partial class Evaluator
             limits,
             observations,
             hostOperations,
-            cancellationToken);
+            cancellationToken,
+            randomSeed);
         if (preparation.Error is { } preparationError)
             return (preparationError, preparation.Budget);
 
@@ -2578,7 +2637,8 @@ public static partial class Evaluator
         IZeroArgPropertyResultCache zeroArgPropertyResultCache,
         EvaluationLimits? limits = null,
         HostOperations? hostOperations = null,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        long? randomSeed = null)
     {
         var preparation = PrepareSynchronousRun(
             expr,
@@ -2590,7 +2650,8 @@ public static partial class Evaluator
             limits,
             observations: null,
             hostOperations,
-            cancellationToken);
+            cancellationToken,
+            randomSeed);
         if (preparation.Error is { } preparationError)
             return preparationError;
 
@@ -2609,7 +2670,8 @@ public static partial class Evaluator
         IZeroArgPropertyResultCache zeroArgPropertyResultCache,
         EvaluationLimits? limits = null,
         HostOperations? hostOperations = null,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        long? randomSeed = null)
     {
         var preparation = PrepareSynchronousRun(
             expr,
@@ -2621,7 +2683,8 @@ public static partial class Evaluator
             limits,
             observations: null,
             hostOperations,
-            cancellationToken);
+            cancellationToken,
+            randomSeed);
         if (preparation.Error is { } preparationError)
             return preparationError;
 
@@ -2783,7 +2846,21 @@ public static partial class Evaluator
     /// </exception>
     public static EvalResult<IReadOnlyList<Decimal128>> RunFlat(
         Expr expr, EvaluationLimits? limits, CancellationToken cancellationToken)
-        => ProjectFlatHostAtoms(Run(expr, limits, cancellationToken), limits, cancellationToken);
+        => RunFlat(expr, limits, randomSeed: null, cancellationToken);
+
+    /// <summary>
+    /// Host-boundary flattening run under explicit resource limits, an optional random
+    /// seed, and cooperative host cancellation. Same seed contract as
+    /// <see cref="Run(Expr, EvaluationLimits?, long?, CancellationToken)"/>; same
+    /// projection and cancellation contract as
+    /// <see cref="RunFlat(Expr, EvaluationLimits?, CancellationToken)"/>.
+    /// </summary>
+    /// <exception cref="OperationCanceledException">
+    /// <paramref name="cancellationToken"/> was cancelled before or during evaluation.
+    /// </exception>
+    public static EvalResult<IReadOnlyList<Decimal128>> RunFlat(
+        Expr expr, EvaluationLimits? limits, long? randomSeed, CancellationToken cancellationToken)
+        => ProjectFlatHostAtoms(Run(expr, limits, randomSeed, cancellationToken), limits, cancellationToken);
 
     /// <summary>
     /// The flat entry family's host-boundary projection, shared by <see cref="RunFlat(Expr, EvaluationLimits?, CancellationToken)"/>

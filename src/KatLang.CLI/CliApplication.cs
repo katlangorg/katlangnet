@@ -106,15 +106,19 @@ public static class CliApplication
             source = fileRead.Source;
         }
 
-        // The ONE place --allow-loading maps onto the KatLang package: with the
-        // flag, KatLang gets a downloader and resolves load / open '<url>' under
-        // its own host and module policy; without it, DownloadCode stays null
-        // and KatLang itself rejects loading source with a diagnostic.
+        // The ONE place --allow-loading and --seed map onto the KatLang package:
+        // with the loading flag, KatLang gets a downloader and resolves
+        // load / open '<url>' under its own host and module policy; without it,
+        // DownloadCode stays null and KatLang itself rejects loading source with
+        // a diagnostic. The seed (run/eval only; the parser refused it for check)
+        // is KatLang's own RunOptions.RandomSeed — the CLI adds no randomness
+        // semantics of its own.
         var options = new RunOptions
         {
             DownloadCode = invocation.AllowLoading
                 ? loadingDownloader ?? HttpSourceDownloader.Shared.DownloadAsync
                 : null,
+            RandomSeed = invocation.RandomSeed,
             SourceProcessingCancellationToken = cancellationToken,
             EvaluationCancellationToken = cancellationToken,
         };

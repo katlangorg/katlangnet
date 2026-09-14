@@ -9,8 +9,8 @@ internal static class HelpText
     // MaxResponseBodyBytes and DownloadTimeout; the help test pins them to the constants.
     public const string Usage = """
         Usage:
-          katlang run <file> [--allow-loading]
-          katlang eval <source> [--allow-loading]
+          katlang run <file> [--allow-loading] [--seed <integer>]
+          katlang eval <source> [--allow-loading] [--seed <integer>]
           katlang check <file> [--allow-loading]
 
         Options:
@@ -24,6 +24,16 @@ internal static class HelpText
                              These stricter CLI limits can refuse valid source.
                              KatLang's source-length limits still apply to
                              the decoded module text.
+
+          --seed <integer>   Seed KatLang's random operations (Math.Random,
+                             random, Math.RandomInt, randomInt) so that run and
+                             eval reproduce the same random values for the same
+                             program, seed, and KatLang version. Any signed
+                             64-bit integer is valid, with an optional leading
+                             sign. Without a seed, random values may differ
+                             between invocations. Not valid for check, which does
+                             not evaluate. KatLang randomness is not
+                             cryptographically secure.
 
           --version          Show the KatLang version.
           --help             Show help.

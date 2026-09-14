@@ -35,6 +35,15 @@ public sealed record ConcurrencyPairCase
 
     public EvaluationLimits? LimitsB { get; init; }
 
+    /// <summary>Optional per-lane run options. Like limits, <see cref="RunOptions"/> is
+    /// immutable, caller-shareable configuration; cases may alias ONE instance into both
+    /// lanes (see <see cref="ConcurrencyCorpus.SharedSeededOptions"/>) to pin that sharing
+    /// a seeded options object never shares a random stream. Engine lanes receive the
+    /// object itself; evaluator lanes receive its <see cref="RunOptions.RandomSeed"/>.</summary>
+    public RunOptions? OptionsA { get; init; }
+
+    public RunOptions? OptionsB { get; init; }
+
     /// <summary>Optional POWER check: required prefix of the lane's sequential
     /// baseline ("ok", "err", "engine ok", "engine evalFailure"). Set on cases
     /// whose meaning depends on the outcome class — a failure case whose
@@ -165,6 +174,27 @@ public static class ConcurrencyCorpus
     /// (~4000 iterations; generic loop path charges at least one step per
     /// iteration).</summary>
     public static readonly EvaluationLimits TinySteps = new() { MaxSteps = 100 };
+
+    // ── Seeded random sentinels ─────────────────────────────────────────────
+
+    /// <summary>Every random operation in every spelling, plus the cache law
+    /// (<c>P</c> reused, <c>P()</c> redrawn) and a loop that draws per
+    /// iteration: many stream positions, so a shared or continued generator
+    /// would change the observation.</summary>
+    public const string SeededRandom =
+        "P = Math.RandomInt(0, 1000000)\nStep(n) = n + randomInt(0, 10)\n"
+        + "Math.Random(0, 1), random(2, 6), P, P, P(), repeat(Step, 4, 0), Math.RandomInt(-5, 5)";
+
+    /// <summary>A second seeded program with a different draw pattern (fraction
+    /// draws first, then integers) for cross-lane pairing.</summary>
+    public const string SeededRandomAlt =
+        "Q = random(0, 1)\nQ, Q(), randomInt(0, 4294967296), Math.Random(-1, 1)";
+
+    /// <summary>ONE seeded options instance deliberately aliased into both lanes
+    /// of the seeded-stream cases: <see cref="RunOptions.RandomSeed"/> is
+    /// immutable configuration; the stream it names lives on each run's own
+    /// <c>EvaluationBudget</c>.</summary>
+    public static readonly RunOptions SharedSeededOptions = new() { RandomSeed = 20260914 };
 
     public static IReadOnlyList<ConcurrencyPairCase> PairCases { get; } =
     [
@@ -492,6 +522,35 @@ public static class ConcurrencyCorpus
             Invariant = "Two different Math-member consumers concurrently: the shared MathAlgorithm AST serves both without cross-talk.",
             ProgramA = "Math.Pi, sum((1, 2))", EntryA = EvalEntryPoint.RunCounted,
             ProgramB = "Math.Pi * 2, avg((4, 8))", EntryB = EvalEntryPoint.RunCounted,
+        },
+
+        // ── SeededStream ────────────────────────────────────────────────────
+        new()
+        {
+            Id = "seed/shared-options-same-program-engine",
+            Scenario = ConcurrencyScenario.SeededStream,
+            Invariant = "ONE RunOptions { RandomSeed } instance aliased into two concurrent engine runs of the same random program: each run's stream is its own SplitMix64 instance on its own EvaluationBudget (RandomSourceFactory.Create per PrepareAdmittedRun), so both observe the sequential seeded baseline and neither continues or perturbs the other's stream.",
+            ProgramA = SeededRandom, EntryA = EvalEntryPoint.EngineRun, OptionsA = SharedSeededOptions,
+            ProgramB = SeededRandom, EntryB = EvalEntryPoint.EngineRun, OptionsB = SharedSeededOptions,
+            ExpectedClassA = "engine ok", ExpectedClassB = "engine ok",
+        },
+        new()
+        {
+            Id = "seed/shared-seed-cross-entry-points",
+            Scenario = ConcurrencyScenario.SeededStream,
+            Invariant = "The same seed through two different evaluator entry points (RunCounted vs RunFlat) on different random programs: per-run streams never interact across entry points.",
+            ProgramA = SeededRandom, EntryA = EvalEntryPoint.RunCounted, OptionsA = SharedSeededOptions,
+            ProgramB = SeededRandomAlt, EntryB = EvalEntryPoint.RunFlat, OptionsB = SharedSeededOptions,
+            ExpectedClassA = "ok", ExpectedClassB = "ok",
+        },
+        new()
+        {
+            Id = "seed/seeded-run-beside-failure",
+            Scenario = ConcurrencyScenario.SeededStream,
+            Invariant = "A seeded random run beside a concurrently FAILING run: the failure's unwind cannot touch the seeded run's stream, and the seeded run observes exactly its baseline.",
+            ProgramA = SeededRandomAlt, EntryA = EvalEntryPoint.RunPlain, OptionsA = SharedSeededOptions,
+            ProgramB = FailingIndex, EntryB = EvalEntryPoint.RunCounted,
+            ExpectedClassA = "ok", ExpectedClassB = "err",
         },
     ];
 

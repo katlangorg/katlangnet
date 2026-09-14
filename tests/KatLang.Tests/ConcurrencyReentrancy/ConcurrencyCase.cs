@@ -60,6 +60,14 @@ public enum ConcurrencyScenario
     /// and immutable: concurrent evaluator wiring must derive per-run copies
     /// rather than mutating the shared originals.</summary>
     SharedImmutable,
+
+    /// <summary>A seeded random stream is run-scoped MUTABLE state on the
+    /// run's <c>EvaluationBudget</c>: concurrent runs aliasing ONE
+    /// <see cref="RunOptions"/> instance with the same <see cref="RunOptions.RandomSeed"/>
+    /// each get their own stream instance started from the seed, never a
+    /// shared generator, so each observes exactly its sequential baseline (and
+    /// the recomputed baselines pin that a later run restarts the stream).</summary>
+    SeededStream,
 }
 
 /// <summary>
@@ -113,23 +121,27 @@ public static class ConcurrencyHarness
     /// <summary>Parses (inside the lane, so parsing itself is exercised under
     /// concurrency) and evaluates through one entry point, returning the
     /// canonical comparable observation string.</summary>
-    public static string Observe(EvalEntryPoint entryPoint, string source, EvaluationLimits? limits = null)
+    /// <param name="options">Optional run options — for engine lanes the object itself is
+    /// passed through (so tests can alias ONE instance into several lanes); for the
+    /// evaluator lanes only its <see cref="RunOptions.RandomSeed"/> applies, threaded to
+    /// the public seed overloads.</param>
+    public static string Observe(EvalEntryPoint entryPoint, string source, EvaluationLimits? limits = null, RunOptions? options = null)
         => entryPoint == EvalEntryPoint.EngineRun
-            ? ObserveEngine(source, limits)
-            : ObservePrepared(entryPoint, ParseRoot(source), limits);
+            ? ObserveEngine(source, limits, options)
+            : ObservePrepared(entryPoint, ParseRoot(source), limits, options?.RandomSeed);
 
     /// <summary>Evaluates an already-parsed (possibly SHARED) root through one
     /// non-engine entry point. Used by the same-AST-object lanes: the exact
     /// same <see cref="Expr"/> instance may be handed to several concurrent
     /// lanes because evaluation wires derived structures and never mutates the
     /// input tree.</summary>
-    public static string ObservePrepared(EvalEntryPoint entryPoint, Expr root, EvaluationLimits? limits = null)
+    public static string ObservePrepared(EvalEntryPoint entryPoint, Expr root, EvaluationLimits? limits = null, long? randomSeed = null)
         => entryPoint switch
         {
-            EvalEntryPoint.RunPlain => EncodePlain(Evaluator.Run(root, limits)),
+            EvalEntryPoint.RunPlain => EncodePlain(Evaluator.Run(root, limits, randomSeed, CancellationToken.None)),
             EvalEntryPoint.RunCounted => EncodeCounted(
-                Evaluator.RunCounted(root, new RunScopedZeroArgPropertyResultCache(), limits)),
-            EvalEntryPoint.RunFlat => EncodeFlat(Evaluator.RunFlat(root, limits)),
+                Evaluator.RunCounted(root, new RunScopedZeroArgPropertyResultCache(), limits, randomSeed: randomSeed)),
+            EvalEntryPoint.RunFlat => EncodeFlat(Evaluator.RunFlat(root, limits, randomSeed, CancellationToken.None)),
             _ => throw new InvalidOperationException(
                 $"Entry point {entryPoint} takes source text, not a prepared AST."),
         };

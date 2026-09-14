@@ -1066,17 +1066,23 @@ public static class KatLang.Evaluator
   method   public static KatLang.EvalResult<KatLang.Result> Run(KatLang.Expr expr)
   method   public static KatLang.EvalResult<KatLang.Result> Run(KatLang.Expr expr, KatLang.EvaluationLimits? limits)
   method   public static KatLang.EvalResult<KatLang.Result> Run(KatLang.Expr expr, KatLang.EvaluationLimits? limits, System.Threading.CancellationToken cancellationToken)
+  method   public static KatLang.EvalResult<KatLang.Result> Run(KatLang.Expr expr, KatLang.EvaluationLimits? limits, long? randomSeed, System.Threading.CancellationToken cancellationToken)
   method   public static KatLang.EvalResult<KatLang.Result> Run(KatLang.Expr expr, KatLang.HostOperations hostOperations, KatLang.EvaluationLimits? limits, System.Threading.CancellationToken cancellationToken)
+  method   public static KatLang.EvalResult<KatLang.Result> Run(KatLang.Expr expr, KatLang.HostOperations hostOperations, KatLang.EvaluationLimits? limits, long? randomSeed, System.Threading.CancellationToken cancellationToken)
   method   public static System.Threading.Tasks.Task<KatLang.EvalResult<KatLang.Result>> RunAsync(KatLang.Expr expr)
   method   public static System.Threading.Tasks.Task<KatLang.EvalResult<KatLang.Result>> RunAsync(KatLang.Expr expr, KatLang.EvaluationLimits? limits)
   method   public static System.Threading.Tasks.Task<KatLang.EvalResult<KatLang.Result>> RunAsync(KatLang.Expr expr, KatLang.EvaluationLimits? limits, System.Threading.CancellationToken cancellationToken)
+  method   public static System.Threading.Tasks.Task<KatLang.EvalResult<KatLang.Result>> RunAsync(KatLang.Expr expr, KatLang.EvaluationLimits? limits, long? randomSeed, System.Threading.CancellationToken cancellationToken)
   method   public static System.Threading.Tasks.Task<KatLang.EvalResult<KatLang.Result>> RunAsync(KatLang.Expr expr, KatLang.HostOperations hostOperations, KatLang.EvaluationLimits? limits, System.Threading.CancellationToken cancellationToken)
+  method   public static System.Threading.Tasks.Task<KatLang.EvalResult<KatLang.Result>> RunAsync(KatLang.Expr expr, KatLang.HostOperations hostOperations, KatLang.EvaluationLimits? limits, long? randomSeed, System.Threading.CancellationToken cancellationToken)
   method   public static KatLang.EvalResult<System.Collections.Generic.IReadOnlyList<System.Numerics.Decimal128>> RunFlat(KatLang.Expr expr)
   method   public static KatLang.EvalResult<System.Collections.Generic.IReadOnlyList<System.Numerics.Decimal128>> RunFlat(KatLang.Expr expr, KatLang.EvaluationLimits? limits)
   method   public static KatLang.EvalResult<System.Collections.Generic.IReadOnlyList<System.Numerics.Decimal128>> RunFlat(KatLang.Expr expr, KatLang.EvaluationLimits? limits, System.Threading.CancellationToken cancellationToken)
+  method   public static KatLang.EvalResult<System.Collections.Generic.IReadOnlyList<System.Numerics.Decimal128>> RunFlat(KatLang.Expr expr, KatLang.EvaluationLimits? limits, long? randomSeed, System.Threading.CancellationToken cancellationToken)
   method   public static System.Threading.Tasks.Task<KatLang.EvalResult<System.Collections.Generic.IReadOnlyList<System.Numerics.Decimal128>>> RunFlatAsync(KatLang.Expr expr)
   method   public static System.Threading.Tasks.Task<KatLang.EvalResult<System.Collections.Generic.IReadOnlyList<System.Numerics.Decimal128>>> RunFlatAsync(KatLang.Expr expr, KatLang.EvaluationLimits? limits)
   method   public static System.Threading.Tasks.Task<KatLang.EvalResult<System.Collections.Generic.IReadOnlyList<System.Numerics.Decimal128>>> RunFlatAsync(KatLang.Expr expr, KatLang.EvaluationLimits? limits, System.Threading.CancellationToken cancellationToken)
+  method   public static System.Threading.Tasks.Task<KatLang.EvalResult<System.Collections.Generic.IReadOnlyList<System.Numerics.Decimal128>>> RunFlatAsync(KatLang.Expr expr, KatLang.EvaluationLimits? limits, long? randomSeed, System.Threading.CancellationToken cancellationToken)
 
 public abstract record KatLang.Expr : System.IEquatable<KatLang.Expr>
   ctor     protected Expr(KatLang.Expr original)
@@ -1898,6 +1904,7 @@ public sealed class KatLang.RunOptions
   property public System.Threading.CancellationToken EvaluationCancellationToken { get; init; }
   property public KatLang.EvaluationLimits? EvaluationLimits { get; init; }
   property public KatLang.HostOperations? HostOperations { get; init; }
+  property public long? RandomSeed { get; init; }
   property public System.Threading.CancellationToken SourceProcessingCancellationToken { get; init; }
   property public KatLang.SourceProcessingLimits? SourceProcessingLimits { get; init; }
 

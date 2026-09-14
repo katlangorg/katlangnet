@@ -122,6 +122,28 @@ The `katlang` CLI's `--allow-loading` flag is off by default: without it, source
 
 These bounds apply per download. KatLang's `SourceProcessingLimits` (decoded per-module source length, aggregate source, module count, import depth) still apply separately to the text the transport returns. A refused or timed-out download is reported as an ordinary `load: failed to fetch` diagnostic with exit code 1.
 
+## Reproducible randomness
+
+`Math.Random` / `random` and `Math.RandomInt` / `randomInt` are nondeterministic by default: every evaluation draws from fresh entropy. A host can make one evaluation reproducible by supplying a seed:
+
+```c#
+var options = new RunOptions { RandomSeed = 42 };
+var first = KatLangEngine.Run("Math.RandomInt(1, 7), Math.Random(0, 1)", options);
+var second = KatLangEngine.Run("Math.RandomInt(1, 7), Math.Random(0, 1)", options);
+// first and second display the same values; any long (0, negative, the extremes) is a valid seed.
+```
+
+The direct `Evaluator.Run`, `RunAsync`, `RunFlat`, and `RunFlatAsync` families accept the same `long? randomSeed`, and the CLI exposes it for the evaluating commands:
+
+```
+katlang run <file> --seed <integer>
+katlang eval <source> --seed <integer>
+```
+
+Source compatibility: `Evaluator.Run(expr, null, null, token)` and the corresponding `RunAsync` call are ambiguous between the host-operation and seeded overloads. Use named arguments such as `limits: null, randomSeed: null, cancellationToken: token`, or explicitly type the second argument to select the intended overload. A null `HostOperations` argument is still rejected by the host-operation overload.
+
+`--seed` takes any signed 64-bit integer as the next token (`--seed -5` and `--seed +5` are different seeds; `--seed=5` is not accepted) and is refused by `check`, which does not evaluate. For a given KatLang version, the same program (loaded module contents and a `DisplayDecimals` property included), the same seed, and the same evaluated KatLang path produce the same random values on every supported platform, through synchronous and asynchronous entry points alike and regardless of internal optimizer strategy. Both random operations, in every spelling, consume one run-scoped stream in evaluation order, so a seed reproduces a stream — it does not memoize calls, and the ordinary rules (left-to-right arguments, lazy `if` branches, the zero-argument property cache, explicit `A()` re-evaluation) decide which calls draw. The seed is immutable configuration: reusing one `RunOptions` object replays the stream from its beginning for every run, and concurrent runs sharing it get independent streams. The exact stream may change between KatLang versions when the generator, a sampling algorithm, or evaluation semantics deliberately change; KatLang randomness is not cryptographically secure. The internal generator contract (a SplitMix64 stream with exact bounded-rejection sampling) is documented in `docs/design/seeded-randomness-2026-09.md`.
+
 ## Nuget package
 https://www.nuget.org/packages/KatLang
 
