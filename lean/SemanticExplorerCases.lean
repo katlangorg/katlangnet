@@ -11,10 +11,10 @@ Lean/C# divergence on that case.
 
 Partition (machine-checked by the `*CaseIds.length` guards below):
 - surface corpus cases: 1584
-- excluded parse-level cases (Lean has no surface parser): 32
-- Lean-representable surface cases: 1552
+- excluded parse-level cases (Lean has no surface parser): 33
+- Lean-representable surface cases: 1551
 - internal-node cases: 14
-- total generated guards: 1566 case guards + 2 count guards
+- total generated guards: 1565 case guards + 2 count guards
 
 Regenerate from the repo root with:
   $env:KATLANG_REGENERATE_SEMANTIC_EXPLORER = "1"
@@ -7747,11 +7747,6 @@ def case_special__openBuiltinNameCollision : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Lib" (alg [] [] [publicProp "count" (alg [] [] [] [.num 101])] []), privateProp "A" (alg [] [.resolve "Lib"] [] [(.call (.resolve "count") [(.listLiteral [.num 1, .num 2, .num 3])])])] [.resolve "A"])
 #guard obs case_special__openBuiltinNameCollision == "ok raw=3 n=1"
 
--- special__openBuiltinTargetIsIllegal: Lib = { \n     public X = 101 \n } \n A = { \n     open count, Lib \n     X \n } \n A
-def case_special__openBuiltinTargetIsIllegal : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "Lib" (alg [] [] [publicProp "X" (alg [] [] [] [.num 101])] []), privateProp "A" (alg [] [.resolve "count", .resolve "Lib"] [] [.resolve "X"])] [.resolve "A"])
-#guard obs case_special__openBuiltinTargetIsIllegal == "err illegalInOpen"
-
 -- special__structuralDotSeesPrivateMember: Lib = { \n     X = 101 \n } \n Lib.X
 def case_special__structuralDotSeesPrivateMember : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Lib" (alg [] [] [privateProp "X" (alg [] [] [] [.num 101])] [])] [(.dotCall (.resolve "Lib") "X" none)])
@@ -7852,7 +7847,7 @@ def case_special__repeatParameterizedStepIsCallback : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))])] [(.call (.resolve "repeat") [.resolve "Inc", .num 2, .num 0])])
 #guard obs case_special__repeatParameterizedStepIsCallback == "ok raw=2 n=1"
 
--- 1552 differential cases.
+-- 1551 differential cases.
 
 /--
 Machine-checked surface partition count: the id list is built by the same
@@ -9391,7 +9386,6 @@ def surfaceCaseIds : List String := [
   "special__openNestedDoesNotLeakOutward",
   "special__openHeadDefinedLater",
   "special__openBuiltinNameCollision",
-  "special__openBuiltinTargetIsIllegal",
   "special__structuralDotSeesPrivateMember",
   "special__openPrivateMemberIsNotASecondProvider",
   "special__openLocalOnlyMemberIsASecondProvider",
@@ -9413,7 +9407,7 @@ def surfaceCaseIds : List String := [
   "special__reduceParameterIgnoringInitialStillRejected",
   "special__repeatParameterizedStepIsCallback"
 ]
-#guard surfaceCaseIds.length == 1552
+#guard surfaceCaseIds.length == 1551
 
 /-!
 Direct internal-node cases: `Expr.sequenceConstruct` is an INTERNAL node —
@@ -9515,5 +9509,5 @@ def internalNodeCaseIds : List String := [
 #guard internalNodeCaseIds.length == 14
 
 -- 14 internal-node cases.
--- Total: 1566 case guards (1552 surface + 14 internal-node).
+-- Total: 1565 case guards (1551 surface + 14 internal-node).
 end SemanticExplorerCases

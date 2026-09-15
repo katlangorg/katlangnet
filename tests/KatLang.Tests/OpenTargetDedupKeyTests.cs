@@ -107,13 +107,20 @@ public class OpenTargetDedupKeyTests
         // dedups to [count, Lib, sum], so the FIRST failure the runtime reports names
         // `count`. Keeping the last occurrence instead would order [Lib, sum, count]
         // and report `sum` first.
+        // Since the final audit (September 2026) the front end refuses every builtin
+        // target eagerly (one IllegalInOpen per written target), so the runtime's
+        // first-occurrence order is pinned over the RECOVERY tree it elaborates anyway.
         const string source = "Lib = {\n    public X = 101\n}\nA = {\n    open count, Lib, sum, count\n    X\n}\nA";
-        Assert.Equal("err illegalInOpen", SemanticExplorerHarness.Observe("dedup.runtimeOrder", source).Neutral);
+        var parsed = SourceProvenance.ParseAllowingDiagnostics(source);
+        Assert.Equal(3, parsed.Diagnostics.Count(d => d.Code == DiagnosticCode.IllegalInOpen));
 
-        var failure = Assert.IsType<RunResult.EvalFailure>(KatLangEngine.Run(source));
-        var message = Assert.Single(failure.Errors).Message;
-        Assert.Contains("count", message, StringComparison.Ordinal);
-        Assert.DoesNotContain("sum", message, StringComparison.Ordinal);
+        var result = Evaluator.Run(new Expr.AlgorithmExpr(parsed.Root));
+        Assert.True(result.IsError);
+        var innermost = result.Error;
+        while (innermost is EvalError.WithContext context) innermost = context.Inner;
+        var illegal = Assert.IsType<EvalError.IllegalInOpen>(innermost);
+        Assert.Contains("count", illegal.Reason, StringComparison.Ordinal);
+        Assert.DoesNotContain("sum", illegal.Reason, StringComparison.Ordinal);
     }
 
     [Fact]

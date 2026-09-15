@@ -349,8 +349,11 @@ public class EvaluatorUserCallTests
         Assert.NotNull(arity.Signature);
         Assert.Equal("Use(f, x)", arity.Signature.DisplayText);
 
+        // The payload keeps the Lean-modeled value-tier view (1 parameter still to bind on the
+        // value channel, 0 value slots); the MESSAGE counts the WRITTEN slots — `Inc` is a
+        // supplied argument — so it says 1, not 0 (final audit, September 2026).
         Assert.Contains(
-            "Callable `Use(f, x)` expects 2 arguments, but was called with 0 arguments.",
+            "Callable `Use(f, x)` expects 2 arguments, but was called with 1 argument.",
             KatLangError.FromEvalError(result.Error).Message,
             StringComparison.Ordinal);
     }

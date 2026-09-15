@@ -676,4 +676,11 @@ Comment         = /#[^\r\n]*/ ;
                      to the next physical newline or end of source; whitespace
                      before "#" is not required. Comments are semantically
                      invisible: they never extend or break a physical-line
-                     continuation decision. *)
+                     continuation decision. A PHYSICAL LINE BREAK is the
+                     line feed alone: "\r\n" breaks the line through its
+                     "\n", while a lone "\r" is ordinary whitespace that
+                     advances no line and no column — it ends a comment or
+                     string literal (the character classes above) but never
+                     separates rows or expression-list slots, so "A = 1\rB = 2"
+                     is ONE physical line and the same-line separator rule
+                     applies to it. Pinned by LexerTests. *)

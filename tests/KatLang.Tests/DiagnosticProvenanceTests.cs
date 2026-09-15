@@ -51,14 +51,15 @@ public class DiagnosticProvenanceTests
     /// so laziness is the modelled semantics.
     ///
     /// <para>
-    /// The four target kinds below are all invalid for different reasons —
-    /// builtin head, missing name, missing dotted member, non-public dotted
-    /// member — and all four evaluate successfully when the body uses only
-    /// owned names.
+    /// The three target kinds below are all invalid for different reasons —
+    /// missing name, missing dotted member, non-public dotted member — and all
+    /// three evaluate successfully when the body uses only owned names. (A
+    /// BUILTIN head is the exception since the final audit: the front end refuses
+    /// it eagerly like a parameterized provider — see
+    /// <see cref="BuiltinOpenTarget_IsRefusedEagerly_ByTheFrontEndAndByKindAtRuntime"/>.)
     /// </para>
     /// </summary>
     [Theory]
-    [InlineData("open count\nQ = 5\nQ")]                                              // builtin head
     [InlineData("open Nope\nQ = 5\nQ")]                                               // missing target
     [InlineData("open Lib.Nope\nLib = {\n    public S = 1\n}\nQ = 5\nQ")]             // missing member
     [InlineData("open Lib.S\nLib = {\n    S = {\n        public X = 1\n    }\n}\nQ = 5\nQ")] // non-public member
@@ -72,13 +73,102 @@ public class DiagnosticProvenanceTests
     [Fact]
     public void TheSameInvalidOpenFailsAsSoonAsALookupDemandsIt()
     {
-        Assert.IsType<EvalError.IllegalInOpen>(
-            InnermostError("open count, Pub\nPub = {\n    public Y = 7\n}\nY"));
+        Assert.IsType<EvalError.UnknownName>(
+            InnermostError("open Nope, Pub\nPub = {\n    public Y = 7\n}\nY"));
 
         // Owned name instead of `Y`: the very same declaration is fine.
         Assert.Equal(
             new Result.Atom(5),
-            EvaluatesTo("open count, Pub\nPub = {\n    public Y = 7\n}\nQ = 5\nQ"));
+            EvaluatesTo("open Nope, Pub\nPub = {\n    public Y = 7\n}\nQ = 5\nQ"));
+    }
+
+    [Theory]
+    [InlineData("count")]
+    [InlineData("if")]
+    [InlineData("sum")]
+    public void BuiltinNameShadowedByALexicalProvider_RemainsOpenable(string name)
+    {
+        foreach (var target in new[] { name, name + ".Sub" })
+        {
+            var source = $"open {target}\n{name} = {{ public X = 7\n public Sub = {{ public X = 7 }} }}\nX";
+            SourceProvenance.ParseValid(source);
+            Assert.Equal("7", Assert.IsType<RunResult.Success>(KatLangEngine.Run(source)).ToDisplayString());
+        }
+    }
+
+    [Theory]
+    [InlineData("F(*) = 0")]
+    [InlineData("F(a, *) = a")]
+    public void OpenProviderDiagnostic_NeverNamesARecoveryBinder(string declaration)
+    {
+        var parsed = SourceProvenance.ParseAllowingDiagnostics($"open F\n{declaration}\n1");
+        Assert.Contains(parsed.Diagnostics, d => d.Code == DiagnosticCode.InvalidCollectMarker);
+        var diagnostic = Assert.Single(parsed.Diagnostics, d => d.Code == DiagnosticCode.IllegalInOpen);
+        Assert.DoesNotContain("_error_", diagnostic.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("arguments ()", diagnostic.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void OpenProviderDiagnostic_PreservesRealNamesEvenWhenTheyMatchTheRecoverySpelling()
+    {
+        var parsed = SourceProvenance.ParseAllowingDiagnostics("open F\nF(_error_) = _error_\n1");
+        Assert.Contains("(_error_)", Assert.Single(parsed.Diagnostics).Message, StringComparison.Ordinal);
+        var provider = new Algorithm.User(null, [new ParameterDeclaration("_error_")], [], [], [new Expr.Num(0)])
+        {
+            ExplicitParameters = [new ParameterDeclaration("_error_")],
+        };
+        Assert.Contains("(_error_)", Evaluator.FormatOpenTargetRequiresArguments("F", provider), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void OpenProviderDiagnostic_PreservesHostParameterNamesWithPartialSpans()
+    {
+        ParameterDeclaration[] parameters =
+        [
+            new("located") { Span = new SourceSpan(1, 1, 1, 7) },
+            new("unlocated"),
+        ];
+        var provider = new Algorithm.User(null, parameters, [], [], [new Expr.Num(0)])
+        {
+            ExplicitParameters = parameters,
+        };
+        Assert.Contains("(located, unlocated)",
+            Evaluator.FormatOpenTargetRequiresArguments("F", provider), StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Final audit (September 2026): a prelude builtin named as an open target is refused
+    /// EAGERLY by the front end (OpenProviderValidator — the same rule that refuses a
+    /// parameterized provider; a builtin's arity lives in registry metadata, not in
+    /// <c>Params</c>) and by KIND at open resolution in the evaluator (Lean
+    /// <c>resolveAlgForOpen</c>), whether or not any name is demanded through the list —
+    /// the layer disagreement the editor already flagged is closed for builtins.
+    /// </summary>
+    [Theory]
+    [InlineData("open count\nQ = 5\nQ", "count", 1, 6, 1, 10)]
+    [InlineData("open if\nQ = 5\nQ", "if", 1, 6, 1, 7)]
+    [InlineData("A = {\n    open sum, Lib\n    1\n}\nLib = { public Z = 1 }\nA", "sum", 2, 10, 2, 12)]
+    // A builtin HEAD of a dotted target is refused by the same rule: a builtin has no members,
+    // so the path can never provide, and the opener's names must not become implicit parameters.
+    [InlineData("open count.X\nQ = 5\nQ", "count.X", 1, 6, 1, 12)]
+    [InlineData("A = {\n    open if.X.Y, Lib\n    1\n}\nLib = { public Z = 1 }\nA", "if.X.Y", 2, 10, 2, 15)]
+    public void BuiltinOpenTarget_IsRefusedEagerly_ByTheFrontEndAndByKindAtRuntime(
+        string source, string runtimeTarget, int line, int column, int endLine, int endColumn)
+    {
+        var parsed = Parser.Parse(source);
+        var diagnostic = Assert.Single(parsed.Diagnostics, d => d.Code == DiagnosticCode.IllegalInOpen);
+        Assert.Equal(new SourceSpan(line, column, endLine, endColumn), diagnostic.Span);
+        Assert.Contains("builtin callable", diagnostic.Message, StringComparison.Ordinal);
+
+        // The runtime, handed the (recovery) tree regardless, refuses the same target by
+        // kind as soon as the open list is demanded: the modelled lazy resolution is unchanged.
+        var demanded = Parser.Parse($"open {runtimeTarget}, Pub\nPub = {{\n    public Y = 7\n}}\nY");
+        Assert.Contains(demanded.Diagnostics, d => d.Code == DiagnosticCode.IllegalInOpen);
+        var result = Evaluator.Run(new Expr.AlgorithmExpr(demanded.Root));
+        Assert.True(result.IsError);
+        var innermost = result.Error;
+        while (innermost is EvalError.WithContext context) innermost = context.Inner;
+        Assert.IsType<EvalError.IllegalInOpen>(innermost);
     }
 
     /// <summary>
@@ -90,7 +180,6 @@ public class DiagnosticProvenanceTests
     /// program and reports the mistake.
     /// </summary>
     [Theory]
-    [InlineData("open count\nQ = 5\nQ", "count")]
     [InlineData("open Nope\nQ = 5\nQ", "Nope")]
     public void EditorFlagsAnInvalidOpenTargetThatTheRuntimeNeverDiagnoses(string source, string flagged)
     {

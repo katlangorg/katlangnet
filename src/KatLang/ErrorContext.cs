@@ -22,6 +22,16 @@ public sealed record PropertyEvaluationContext(string PropertyName) : ErrorConte
     public override string ToLegacyString() => $"while evaluating property {PropertyName}";
 }
 
+/// <summary>
+/// A PARAMETER read that demanded the value of the algorithm bound to it (the
+/// argument the caller supplied) and found no output: the failure belongs to the
+/// argument, not to the callee whose call context encloses it.
+/// </summary>
+public sealed record ParameterEvaluationContext(string ParameterName) : ErrorContext
+{
+    public override string ToLegacyString() => $"while evaluating parameter {ParameterName}";
+}
+
 public sealed record ProgramEvaluationContext() : ErrorContext
 {
     public override string ToLegacyString() => "while evaluating program output";

@@ -170,11 +170,9 @@ public class OpenVisibilityCorpusFidelityTests
                     + "[(.call (.resolve \"count\") [(.listLiteral [.num 1, .num 2, .num 3])])])",
                 ResolveA),
 
-            // A builtin is never a legal open target; validation runs over the
-            // whole open list before any name is resolved through it.
-            ["openBuiltinTargetIsIllegal"] = Golden(
-                LibPublicX + ", privateProp \"A\" (alg [] [.resolve \"count\", .resolve \"Lib\"] [] [.resolve \"X\"])",
-                ResolveA),
+            // `openBuiltinTargetIsIllegal` has no golden: since the final audit (September
+            // 2026) the front end refuses a builtin open target eagerly, so the case is a
+            // parse-level C#-only probe with no derived Lean program (pinned below).
 
             // Structural dot access deliberately ignores visibility; `open` does
             // not. Pinning both spellings keeps the two rules from collapsing.
@@ -218,6 +216,17 @@ public class OpenVisibilityCorpusFidelityTests
     public void DerivedLeanProgramMatchesReviewedGolden(string valueId)
     {
         var explorerCase = Family().Single(c => c.ValueId == valueId);
+        if (explorerCase.LeanExclusionReason is not null)
+        {
+            // A parse-level probe derives no Lean program, so it carries no golden either;
+            // the exclusion itself is pinned by id in SemanticExplorerLeanArtifactTests.
+            Assert.Null(explorerCase.LeanProgram);
+            Assert.False(
+                GoldenPrograms.ContainsKey(valueId),
+                $"'{valueId}' is a C#-only parse-level probe and must not carry a golden Lean program.");
+            return;
+        }
+
         Assert.True(
             GoldenPrograms.TryGetValue(valueId, out var golden),
             $"'{valueId}' has no reviewed golden Lean program in this test; add one deliberately.");

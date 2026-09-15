@@ -4361,5 +4361,153 @@ public static class LanguageSpecCorpus
             ExpectedErrorCategory = "div0",
             Explanation = "Spread evaluates its operand before supplying argument slots, so the failing row is evaluated before builtin if can select a branch.",
         },
+        // ==================== final audit (September 2026) ====================
+        new()
+        {
+            Id = "dot-string-intrinsic-rejects-arguments",
+            Category = "strings",
+            Source = "A = 42\nA.string(1)",
+            Outcome = SpecOutcome.EvalError,
+            ExpectedErrorCategory = "arity",
+            Probes =
+            [
+                new SpecProbe("A = 42\nA.string()", "ok raw='42' n=1"),
+                new SpecProbe("A = 42\nA.string(1, 2)", "err arity"),
+                new SpecProbe("S = 1, 2\nA = 42\nA.string(S*)", "err arity"),
+                new SpecProbe("Obj = {\n    5\n}\nObj.string(1)", "err arity"),
+            ],
+            Explanation = "The `.string` intrinsic is a zero-parameter member. A written argument list is assembled exactly like every call's (each slot evaluated once, spreads opened) and then rejected by arity, the outcome `Obj.V(1)` has for a declared zero-parameter member — a written bundle is never silently dropped. An empty written list (`A.string()`) stays the intrinsic, as `A()` stays a call of `A`.",
+        },
+        new()
+        {
+            Id = "ownership-open-provided-captured-member-read-by-sibling-is-local-only",
+            Category = "access-boundaries",
+            Source = "Outer(p) = {\n    open Lib\n    Lib = { public X = p }\n    public Y = X\n    Y\n}\nOuter.Y",
+            Outcome = SpecOutcome.EvalError,
+            ExpectedErrorCategory = "localOnlyProperty",
+            Probes =
+            [
+                // Inside the owner, with p active, the same read succeeds.
+                new SpecProbe("Outer(p) = {\n    open Lib\n    Lib = { public X = p }\n    public Y = X\n    Y\n}\nOuter(4)", "ok raw=4 n=1"),
+                // The reader charges the requirement through every value-read spelling.
+                new SpecProbe("Outer(p) = {\n    open Lib\n    Lib = { public X = p }\n    public Y = { X }\n    Y\n}\nOuter.Y", "err localOnlyProperty"),
+                // An opened member that captures nothing charges nothing.
+                new SpecProbe("Outer(p) = {\n    open Lib\n    Lib = { public X = 7 }\n    public Z = X\n    Z + p\n}\nOuter.Z", "ok raw=7 n=1"),
+            ],
+            Explanation = "An open-provided member that reads a captured ancestor parameter (`X = p`) is local-only, and so is every sibling that reads it: `Y = X` depends on `p` exactly as `Y = p` would, so `Outer.Y` from outside the owner is refused by the one accessibility check while `Outer(4)` reads it with `p` active. The requirement is settled through the same visible-name resolution a direct property reference uses, whatever the read's spelling; an opened member that captures nothing stays exported.",
+        },
+        new()
+        {
+            Id = "ownership-open-head-between-opener-and-settling-level-charges-the-capture",
+            Category = "access-boundaries",
+            Source = "Outer(p) = {\n    Mid = {\n        Lib = { public X = p }\n        Inner = {\n            open Lib\n            X\n        }\n        Inner\n    }\n    Mid\n}\nOuter.Mid",
+            Outcome = SpecOutcome.EvalError,
+            ExpectedErrorCategory = "localOnlyProperty",
+            Probes =
+            [
+                // Each activation reads its own p: the value is never served from a run cache.
+                new SpecProbe("Outer(p) = {\n    Mid = {\n        Lib = { public X = p }\n        Inner = {\n            open Lib\n            X\n        }\n        Inner\n    }\n    Mid\n}\nOuter(1), Outer(2)", "ok raw=S[1, 2] n=2"),
+                // The nearest declaration of the head provides: Mid's self-contained Lib, so Mid stays exported.
+                new SpecProbe("Outer(p) = {\n    Lib = { public X = p }\n    Mid = {\n        Lib = { public X = 100 }\n        Inner = {\n            open Lib\n            X\n        }\n        Inner\n    }\n    Mid\n}\nOuter.Mid", "ok raw=100 n=1"),
+            ],
+            Explanation = "An `open` target is resolved from the opener's direct lexical chain outward, so a head declared at a level BETWEEN the opener and the level that settles the exposure is the provider, and the provided member's capture of `p` makes every reader up to that level local-only: `Outer.Mid` from outside the owner is refused, while `Outer(1), Outer(2)` reads each activation's own `p`. The nearest declaration of the head wins, exactly as it does for the evaluator's lookup.",
+        },
+        new()
+        {
+            Id = "grace-in-redundant-group-keeps-the-capture-boundary",
+            Category = "name-resolution",
+            Source = "V(x) = x * 2\nF = b + (~a).V\nF(5, 1)",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "11",
+            ExpectedRaw = "11",
+            ExpectedEmittedCount = 1,
+            Probes =
+            [
+                // Without the marker the occurrence order `(b, a)` decides.
+                new SpecProbe("V(x) = x * 2\nF = b + (a).V\nF(5, 1)", "ok raw=7 n=1"),
+                // The group is a CAPTURE receiver whatever the marker: an algorithm-valued
+                // argument is captured for its value (1), never navigated for its member V.
+                new SpecProbe("Obj = {\n    public V = 7\n    1\n}\nV(x) = x * 2\nF = (~a).V\nF(Obj)", "ok raw=2 n=1"),
+            ],
+            Explanation = "Grace is a parameter-order annotation and never changes selection: `(~a).V` orders `a` before `b` exactly like `~a` would, and the redundant parentheses keep the plain name's capture boundary — the receiver is the captured value of `a`, so `.V` falls back to the lexical `V` with the captured value as its leading argument, exactly as `(a).V` does. The marker is stripped before evaluation; it can never turn a capture receiver into structural member access.",
+        },
+        new()
+        {
+            Id = "open-builtin-target-rejected",
+            Category = "name-resolution",
+            Source = "open count\nQ = 5\nQ",
+            Outcome = SpecOutcome.ParseError,
+            ExpectedParseDiagnosticFragment = "'count' cannot be opened because it is a builtin callable",
+            ExpectedDiagnosticCode = DiagnosticCode.IllegalInOpen,
+            Notes = "Front-end rejection by the same rule that refuses a parameterized provider (a builtin's arity lives in registry metadata, not in `Params`, so it is refused by kind); both evaluators refuse the target with `illegalInOpen` at open resolution (Lean `resolveAlgForOpen`) as soon as a lookup demands the list. Before the final audit the front end accepted the target and only the editor flagged it.",
+            Explanation = "A prelude builtin is not an open provider: `open` imports the members of an algorithm that needs no call, and a builtin callable has no members to import, so `open count` is refused at the target rather than silently accepted. To use a builtin, call it.",
+        },
+        new()
+        {
+            Id = "owed-closer-recovery-keeps-later-declarations",
+            Category = "parser-layout",
+            Source = "F(a) = a\nA = F(1, )\nB = 2\nB",
+            Outcome = SpecOutcome.ParseError,
+            ExpectedParseDiagnosticFragment = "Unexpected ')'",
+            ExpectedDiagnosticCode = DiagnosticCode.UnexpectedToken,
+            Notes = "Recovery contract, pinned in `RootStrayCloserRecoveryTests`: the one report is at the `)`, the recovered slot stays inside the call, and `B` is a ROOT declaration. Before the final audit the `)` was consumed as junk, the call stayed open to the end of input, and every later declaration was swallowed into it with cascading reports.",
+            Explanation = "A trailing comma before a closing delimiter is a missing operand, reported once at the closer the enclosing construct is waiting for; recovery leaves that closer to its owner, so later declarations stay in the scope they were written in.",
+        },
+        new()
+        {
+            Id = "order-is-stable",
+            Category = "collection-builtins",
+            Source = "order((1.0, 1, 1.00))",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "[1.0, 1, 1.00]",
+            ExpectedRaw = "L[1.0, 1, 1.00]",
+            ExpectedEmittedCount = 1,
+            LeanExclusionReason = "Decimal128 quantum and signed zero are outside the Lean Int numeric model: two spellings of one value (`1.0` and `1`, `0` and `-0`) compare equal yet display differently, which is what makes sort stability observable in the runtime; the Lean Int core has one spelling per value, so stability is unobservable there.",
+            Probes =
+            [
+                new SpecProbe("orderDesc((1.0, 1, 1.00))", "ok raw=L[1.00, 1, 1.0] n=1"),
+                new SpecProbe("order((0, -0))", "ok raw=L[0, -0] n=1"),
+                new SpecProbe("orderDesc((0, -0))", "ok raw=L[-0, 0] n=1"),
+                new SpecProbe("order((2, 1.0, 1, 1.0, 1, 1.0, 1, 1.0, 1, 1.0, 1, 1.0, 1, 1.0, 1, 1.0, 1, 1.0, 1, 0))", "ok raw=L[0, 1.0, 1, 1.0, 1, 1.0, 1, 1.0, 1, 1.0, 1, 1.0, 1, 1.0, 1, 1.0, 1, 1.0, 1, 2] n=1"),
+            ],
+            Explanation = "`order` is a stable sort: values that compare equal keep their written order, so the spellings `1.0`, `1`, `1.00` come back as written however long the input. `orderDesc` is the reverse of that stable ascending order (Lean `sortIntsDesc`), so equal-comparing values reverse too. The arrangement never depends on the runtime's sort algorithm.",
+        },
+        new()
+        {
+            Id = "display-decimals-rounds-ties-away-from-zero",
+            Category = "arithmetic",
+            Source = "DisplayDecimals = 2\n0.125, 0.375, -0.125, 2.5",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "0.13\n0.38\n-0.13\n2.50",
+            ExpectedRaw = "S[0.125, 0.375, -0.125, 2.5]",
+            ExpectedEmittedCount = 4,
+            LeanExclusionReason = "Fractional Decimal128 literals and the DisplayDecimals presentation option are outside the Lean Int numeric model; LeanAstEncoder refuses fractional numbers by design.",
+            Probes =
+            [
+                new SpecProbe("DisplayDecimals = 0\n0.5, 1.5, 2.5, -0.5", "ok raw=S[0.5, 1.5, 2.5, -0.5] n=4"),
+                new SpecProbe("Math.Round(0.125, 2), Math.Round(2.5, 0), Math.Round(-2.5, 0)", "ok raw=S[0.13, 3, -3] n=3"),
+            ],
+            Explanation = "`DisplayDecimals` presents each numeric leaf rounded to the requested places with midpoints rounded AWAY FROM ZERO — the rule `Math.Round` applies — so `0.125` shows as `0.13` and `-0.125` as `-0.13`. Display never re-rounds the computed value: the raw values keep their digits, only the presentation changes. KatLang owns this rule; it does not follow the host runtime's fixed-point formatter, whose tie rule has changed between releases.",
+        },
+        new()
+        {
+            Id = "logarithm-near-one-is-accurate",
+            Category = "arithmetic",
+            Source = "Math.Ln(1 + 1e-20)",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "0.00000000000000000000999999999999999999995",
+            ExpectedRaw = "0.00000000000000000000999999999999999999995",
+            ExpectedEmittedCount = 1,
+            LeanExclusionReason = "Transcendental Math functions and fractional Decimal128 values are outside the Lean Int numeric model; the accuracy class of `Ln`/`Lg`/`Log` and near-1 powers is a runtime (Decimal128Numerics) contract.",
+            Probes =
+            [
+                // ln(1 − ε) = −ε − ε²/2 − …
+                new SpecProbe("Math.Ln(1 - 1e-20)", "ok raw=-0.00000000000000000001000000000000000000005 n=1"),
+                // A near-1 base with a fractional exponent takes the same reformulation:
+                // (1 + 1e-20) ^ 0.5 = 1 + 5e-21 − 1.25e-41 + …, which rounds to 34 significant digits as 1 + 5e-21
+                new SpecProbe("(1 + 1e-20) ^ 0.5", "ok raw=1.000000000000000000005 n=1"),
+            ],
+            Explanation = "Logarithms of arguments near 1 lose digits to cancellation in a naive ln(1 + ε), so the runtime evaluates them through the log1p reformulation: `Math.Ln(1 + 1e-20)` is `1e-20 − 5e-41 + …`, correct to the last digit of its 34 significant digits. `Lg` and `Log` share the reformulation, and a near-1 base raised to a fractional exponent is computed as `exp(y · ln x)` over it.",
+        },
     ];
 }

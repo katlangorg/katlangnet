@@ -259,7 +259,7 @@ public sealed class KatLangError
             EvalError.UnknownProperty e => $"Unknown property '{e.PropertyName}' on {e.ObjectDesc}",
             EvalError.NotPublicProperty e => $"Property '{e.PropertyName}' on {e.ObjectDesc} is not public",
             EvalError.LocalOnlyProperty e => FormatLocalOnlyProperty(e.ObjectDesc, e.PropertyName, e.Exposure, e.RequiredParameters),
-            EvalError.NotAnAlgorithm e => $"Not an algorithm: {e.Description}",
+            EvalError.NotAnAlgorithm e => FormatNotAnAlgorithm(e.Description),
             EvalError.IllegalInOpen e => $"Illegal in open: {e.Reason}",
             EvalError.BadOpenForm e => $"Bad open form: {e.Reason}",
             EvalError.IllegalInEval e => $"Illegal in eval: {e.Reason}",
@@ -399,6 +399,12 @@ public sealed class KatLangError
         if (error is EvalError.WithContext { ErrorContext: PropertyEvaluationContext propertyContext, Inner: EvalError.MissingOutput })
         {
             message = FormatPropertyMissingOutput(propertyContext.PropertyName);
+            return true;
+        }
+
+        if (error is EvalError.WithContext { ErrorContext: ParameterEvaluationContext parameterContext, Inner: EvalError.MissingOutput })
+        {
+            message = FormatParameterMissingOutput(parameterContext.ParameterName);
             return true;
         }
 
@@ -706,10 +712,18 @@ public sealed class KatLangError
     private static string FormatPropertyArityMismatch(EvalError.ArityMismatch arity, string propertyName)
         => FormatArityMismatch(arity, propertyName, preferPropertyName: true);
 
+    /// <summary>
+    /// Signature first, exactly as the dot-call arm: a builtin value demand inside a call
+    /// (`F(v) = v + sum`) carries the Lean-aligned placeholder <c>Expected = 0</c> beside
+    /// its real signature, and rendering the raw pair read "Expected 0 parameters, but was
+    /// called with 0 arguments". A located error without a signature keeps the generic text.
+    /// </summary>
     private static string FormatCallArityMismatch(EvalError.ArityMismatch arity, string calleeDesc)
-        => arity.Span is null
-            ? FormatArityMismatch(arity, calleeDesc, preferPropertyName: IsSimpleIdentifier(calleeDesc))
-            : FormatGenericArityMismatch(arity.Expected, arity.Actual);
+        => arity.Signature is not null
+            ? FormatArityMismatch(arity)
+            : arity.Span is null
+                ? FormatArityMismatch(arity, calleeDesc, preferPropertyName: IsSimpleIdentifier(calleeDesc))
+                : FormatGenericArityMismatch(arity.Expected, arity.Actual);
 
     /// <summary>
     /// Signature first: builtin arity errors deliberately carry the Lean-aligned
@@ -734,16 +748,71 @@ public sealed class KatLangError
 
     private static string FormatArityMismatch(EvalError.ArityMismatch arity)
         => arity.Signature is { } signature
-            ? CallableSignatureDiagnostics.FormatBadArity(signature, arity.Actual)
+            ? CallableSignatureDiagnostics.FormatBadArity(signature, WrittenArgumentCount(arity, signature))
             : FormatGenericArityMismatch(arity.Expected, arity.Actual);
+
+    /// <summary>
+    /// The number of WRITTEN arguments a signature-worded arity message reports. The
+    /// Lean-modeled payload of a flat fixed user call that received too few slots is the
+    /// VALUE-tier view (`Expected` = the parameters still to bind on the value channel,
+    /// `Actual` = the value slots), which leaves out every slot bound only on the algorithm
+    /// channel — an output-less algorithm argument — so rendering `Actual` beside the
+    /// signature's full parameter count undercounted the call (`R(a, b) = b` with
+    /// `R(Obj)` said "called with 0 arguments"). The payload's difference is the number
+    /// of parameters no slot reached, so the written count is the signature's parameter
+    /// count minus it. Applied only where that view can arise: a user callable's fixed
+    /// flat parameter list with `Expected` below its parameter count; every other payload
+    /// (families, collecting parameters, builtins, too many slots) already counts written
+    /// slots and is rendered as is.
+    /// </summary>
+    private static int WrittenArgumentCount(EvalError.ArityMismatch arity, CallableSignature signature)
+    {
+        var facts = signature.ArityFacts;
+        var fixedFlatUserList = signature.Parameters.Count > 0
+            && signature.Parameters.All(static parameter => parameter.Source != CallableParameterSource.Builtin)
+            && facts.MaxTopLevelArgumentCount == facts.MinTopLevelArgumentCount
+            && facts.MinTopLevelArgumentCount == signature.FlattenedParameterCount;
+        if (!fixedFlatUserList || arity.Expected >= signature.FlattenedParameterCount || arity.Actual > arity.Expected)
+            return arity.Actual;
+
+        return signature.FlattenedParameterCount - (arity.Expected - arity.Actual);
+    }
 
     private static string FormatArityMismatch(EvalError.ArityMismatch arity, string calleeDesc, bool preferPropertyName)
         => arity.Signature is { } signature
-            ? CallableSignatureDiagnostics.FormatBadArity(signature, arity.Actual)
+            ? CallableSignatureDiagnostics.FormatBadArity(signature, WrittenArgumentCount(arity, signature))
             : FormatNamedArityMismatch(calleeDesc, arity.Expected, arity.Actual, preferPropertyName);
+
+    /// <summary>
+    /// The two STRUCTURED not-callable descriptions the evaluators share with Lean
+    /// (<c>param(name)</c>, <c>num(value)</c>) are rendered in KatLang terms — the payload
+    /// is unchanged, only its presentation; every other description names the expression
+    /// shape as before.
+    /// </summary>
+    private static string FormatNotAnAlgorithm(string description)
+    {
+        if (description.StartsWith("param(", StringComparison.Ordinal) && description.EndsWith(')'))
+        {
+            var name = description[6..^1];
+            return $"Parameter '{name}' is not callable here: it is bound to a value, not to an algorithm. Pass an algorithm for '{name}', or read it as a value.";
+        }
+
+        if (description.StartsWith("num(", StringComparison.Ordinal) && description.EndsWith(')'))
+            return $"The number {description[4..^1]} is not callable.";
+
+        return $"Not an algorithm: {description}";
+    }
 
     private static string FormatPropertyMissingOutput(string propertyName)
         => $"Property '{propertyName}' has no defined output.\nAdd an output expression to '{propertyName}', or use `()` if the empty sequence value was intended. To use one of its properties, write `{propertyName}.X`.";
+
+    /// <summary>
+    /// The argument bound to a parameter had no output when the parameter was read for
+    /// its value: blame the argument, never the callee (whose own call context still
+    /// encloses this message).
+    /// </summary>
+    private static string FormatParameterMissingOutput(string parameterName)
+        => $"Parameter '{parameterName}' has no defined output: the argument bound to it is an algorithm without an output expression.\nAdd an output expression to that argument, or use `()` if the empty sequence value was intended.";
 
     private static string FormatParameterList(IReadOnlyList<string> names)
         => names.Count == 1

@@ -288,8 +288,8 @@ reconstructable as a program).
 ## 5. Lean/C# differential results
 
 The generated artifact pins every Lean-representable corpus case
-(**1,552 surface cases** as of this update — the surface corpus minus its 32
-parse-level cases such as `(3,)`, `x:-1`, `A.spread == A.spread`, and `1 ; 2`, which
+(**1,551 surface cases** as of this update — the surface corpus minus its 33
+parse-level cases such as `(3,)`, `x:-1`, `A.spread == A.spread`, `1 ; 2`, and `open count, Lib`, which
 are C#-only typed outcomes since Lean has no surface parser — plus **14**
 direct internal-node cases; see §5.1 for the full accounting). Encoding
 notes:
@@ -338,12 +338,12 @@ parse-level set) is enforced by
 
 | Suite / artifact | Exact count | Included | Excluded | Source of truth |
 |---|---:|---|---|---|
-| Surface corpus (= C# semantic report surface section) | 1,584 | 1,404 template cases (54 receiver templates x 26 values) + 180 specials; outcomes 1,343 ok / 209 err / 32 parse-error | internal-node cases; anchor pins | `SemanticExplorerCorpus.AllCases()`; report `partition.surfaceCases` |
-| Lean-representable surface differential | 1,552 | the 1,584 above minus the 32 parse-level cases (26 `indexNeg__*` + six deliberate parse-error specials) | parse-level cases (Lean has no surface parser) | report `partition.leanRepresentable`; artifact header/footer |
+| Surface corpus (= C# semantic report surface section) | 1,584 | 1,404 template cases (54 receiver templates x 26 values) + 180 specials; outcomes 1,343 ok / 208 err / 33 parse-error | internal-node cases; anchor pins | `SemanticExplorerCorpus.AllCases()`; report `partition.surfaceCases` |
+| Lean-representable surface differential | 1,551 | the 1,584 above minus the 33 parse-level cases (26 `indexNeg__*` + seven deliberate parse-error specials, the builtin open target `open count, Lib` among them since the final audit of September 2026) | parse-level cases (Lean has no surface parser) | report `partition.leanRepresentable`; artifact header/footer |
 | Internal `SequenceConstruct` corpus | 14 | direct-AST `internal__sc_*` cases | everything source-driven | `SemanticExplorerCorpus.InternalNodeCases()`; report `partition.internalNodeCases` |
-| Generated Lean case guards | 1,566 | 1,552 surface + 14 internal-node (one `#guard` per case), plus two partition-count guards | nothing (header states the split) | `SemanticExplorerCases.lean` header/footer |
+| Generated Lean case guards | 1,565 | 1,551 surface + 14 internal-node (one `#guard` per case), plus two partition-count guards | nothing (header states the split) | `SemanticExplorerCases.lean` header/footer |
 | C# semantic report internal-node section | 14 | id, relation, internal + surface observations per case | — | report `internalNodeCases` |
-| Parser/elaboration reachability sweep | 1,584 attempted, 1,552 scanned | every corpus source that parses (post-`FrontEndPipeline` ASTs) | the 32 deliberate parse-error cases (skipped) | `EntireSemanticExplorerCorpus_ParsesWithoutSequenceConstruct` |
+| Parser/elaboration reachability sweep | 1,584 attempted, 1,551 scanned | every corpus source that parses (post-`FrontEndPipeline` ASTs) | the 33 deliberate parse-error cases (skipped) | `EntireSemanticExplorerCorpus_ParsesWithoutSequenceConstruct` |
 | Containment test invocations | 42 | parser theories, corpus sweep, AST-family pins, visitor-preservation facts, direct-node pins, difference facts, and the call-function `NotAnAlgorithm` payload pin | explorer/anchor tests (counted separately) | `dotnet test --filter FullyQualifiedName~SequenceConstructContainmentTests` |
 | Explorer-related test invocations | 44 | 37 explorer/anchor pins + four artifact freshness/comparability/partition/accounting facts + three cross-harness/containment/formatting guards matched by the filter | — | `dotnet test --filter FullyQualifiedName~SemanticExplorer` |
 | Full .NET solution | 6,338 (6,330 main-suite + 8 formatting public-API invocations, as of this audit; the suite grows — the live run is authoritative) | everything incl. all of the above | — | `dotnet test .\KatLang.slnx -p:UseSharedCompilation=false` |
@@ -366,7 +366,7 @@ open-target dedup, inline blocks, dotted paths, ownership-first shadowing,
 nested-scope leakage, builtin collision, and structural dot access to a private
 member, none of which had ANY case in either generated artifact before); the
 generated header, partition guards, JSON report, and table above now agree on
-1,584 surface cases, 32 parse-level exclusions, 1,552 Lean-representable
+1,584 surface cases, 33 parse-level exclusions, 1,551 Lean-representable
 surface cases, and 14 internal-node cases.
 
 Corpus fidelity note (M11, August 2026): NO corpus Lean program is

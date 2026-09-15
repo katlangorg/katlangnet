@@ -486,8 +486,20 @@ internal static class ExprNameRenderer
 
                 return true;
 
-            case Expr.AlgorithmExpr or Expr.Capture:
-                return Append(builder, "(inline library)");
+            // A brace block is an opaque algorithm literal; a capture is the written
+            // parenthesized group and renders as such (its rows, bounded like every
+            // other composite), never as a "library" — a capture is a value boundary,
+            // not algorithm identity.
+            case Expr.AlgorithmExpr:
+                return Append(builder, "{...}");
+
+            case Expr.Capture(var slots):
+            {
+                pending.Push(new Piece(")"));
+                pending.Push(new Piece(slots, 0, ExprNameMode.Open));
+                pending.Push(new Piece("("));
+                return true;
+            }
 
             // SequenceConstruct is an internal value node; ';' is not surface
             // syntax, so render it as one sequence value, never with ';'.

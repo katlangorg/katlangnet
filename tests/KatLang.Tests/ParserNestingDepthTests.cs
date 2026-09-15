@@ -358,11 +358,23 @@ public class ParserNestingDepthTests
                 }
 
             case GraceRunShape.PrefixRunOnRootName:
-            case GraceRunShape.PrefixRunInGroup:
                 {
                     Assert.Empty(result.Diagnostics);
                     Assert.Empty(root.Properties);
                     var grace = Assert.IsType<Expr.Grace>(Assert.Single(root.Output));
+                    Assert.Equal(-k, grace.Weight);
+                    Assert.Equal("x", Assert.IsType<Expr.Resolve>(grace.Inner).Name);
+                    break;
+                }
+
+            case GraceRunShape.PrefixRunInGroup:
+                {
+                    // A graced name keeps the plain name's capture boundary: `(~~~x)` is the
+                    // capture `(x)` with the marker run inside, never an unwrapped name.
+                    Assert.Empty(result.Diagnostics);
+                    Assert.Empty(root.Properties);
+                    var capture = Assert.IsType<Expr.Capture>(Assert.Single(root.Output));
+                    var grace = Assert.IsType<Expr.Grace>(Assert.Single(capture.Body));
                     Assert.Equal(-k, grace.Weight);
                     Assert.Equal("x", Assert.IsType<Expr.Resolve>(grace.Inner).Name);
                     break;
@@ -465,13 +477,15 @@ public class ParserNestingDepthTests
         Assert.Equal(unobserved.Diagnostics, elaborated.Diagnostics);
         // Hand-written recovery/Grace expectations after elaboration. With one
         // inferred parameter, Grace changes no parameter order, and the group
-        // containing Grace is already unwrapped by the raw parser.
+        // containing Grace keeps the plain name's capture boundary (`(~~~x)`
+        // elaborates exactly like `(x)`).
         var expectedSource = shape switch
         {
             GraceRunShape.PostfixRunAtRoot => "1, x",
             GraceRunShape.PostfixRunInDefinitionBody => "F(x) = 1, x\nF(2)",
             GraceRunShape.PrefixRunBeforeDeclaration => "0\nx = 1\nx",
-            GraceRunShape.PrefixRunOnRootName or GraceRunShape.PrefixRunInGroup => "x",
+            GraceRunShape.PrefixRunOnRootName => "x",
+            GraceRunShape.PrefixRunInGroup => "(x)",
             _ => throw new ArgumentOutOfRangeException(nameof(shape)),
         };
         Assert.Equal(

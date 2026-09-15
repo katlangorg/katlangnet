@@ -29,8 +29,15 @@ public static class SemanticModelBuilder
 
     /// <summary>
     /// Builds a semantic model from a parse result returned by the public
-    /// front-end compatibility wrapper.
+    /// front-end compatibility wrapper. A result of the SYNCHRONOUS <see cref="Parser.Parse(string)"/>
+    /// over source that uses <c>load</c> still holds the unresolved directive (source loading
+    /// is async-only, through <see cref="Parser.ParseAsync(string, RunOptions)"/>), and
+    /// modeling it is a host error rather than a partial model.
     /// </summary>
+    /// <exception cref="InvalidOperationException">The parse result still contains an
+    /// unresolved <c>load</c> directive.</exception>
+    /// <exception cref="ArgumentException">The elaborated root is structurally unsafe
+    /// (see <see cref="Build(Algorithm)"/>); never the case for a parser-produced result.</exception>
     public static SemanticModel Build(ParseResult parseResult)
         => BuildElaborated(parseResult.Root);
 
@@ -347,11 +354,25 @@ public static class SemanticModelBuilder
                     parameterSymbols[name] = symbol;
             }
 
+            // A document-owned explicit binder always carries its name token's span; the
+            // only spanless explicit parameter a ParseResult can hold outside a module
+            // subtree is the parser's recovery placeholder for a malformed binding
+            // pattern (`F(*) = …`). It is not source-backed, so it declares no symbol:
+            // it must never surface in completion or classify a reference.
+            var explicitParameters = InModuleProvidedSubtree
+                ? algorithm.ExplicitParameters
+                : algorithm.ExplicitParameters.Where(static parameter => parameter.Span is not null).ToList();
+
             var explicitParameterNames = new HashSet<string>(
-                algorithm.ExplicitParameters.Select(static parameter => parameter.Name),
+                explicitParameters.Select(static parameter => parameter.Name),
+                StringComparer.Ordinal);
+            var recoveryPlaceholderNames = new HashSet<string>(
+                algorithm.ExplicitParameters
+                    .Select(static parameter => parameter.Name)
+                    .Where(name => !explicitParameterNames.Contains(name)),
                 StringComparer.Ordinal);
 
-            foreach (var parameter in algorithm.ExplicitParameters)
+            foreach (var parameter in explicitParameters)
             {
                 if (parameterSymbols.TryGetValue(parameter.Name, out var existingParameter))
                 {
@@ -378,14 +399,14 @@ public static class SemanticModelBuilder
 
             foreach (var parameterName in algorithm.Params)
             {
-                if (parameterSymbols.ContainsKey(parameterName))
+                if (parameterSymbols.ContainsKey(parameterName) || recoveryPlaceholderNames.Contains(parameterName))
                     continue;
 
                 parameterSymbols[parameterName] = explicitParameterNames.Contains(parameterName)
                     ? CreateParameterSymbol(
                         parameterName,
                         SymbolKind.ExplicitParameter,
-                        algorithm.ExplicitParameters.First(parameter => parameter.Name == parameterName).Span,
+                        explicitParameters.First(parameter => parameter.Name == parameterName).Span,
                         OccurrenceKind.ExplicitParameterDefinition,
                         IdentifierClassification.ExplicitParameterDefinition)
                     : new SymbolDefinition(parameterName, SymbolKind.ImplicitParameter, AlgorithmValue: null, Declaration: null, IsPublic: false, PropertyInfo: null);
@@ -706,6 +727,12 @@ public static class SemanticModelBuilder
             {
                 switch (current)
                 {
+                    case Pattern.Bind bind when bind.NameSpan is null && !InModuleProvidedSubtree:
+                        // The parser's spanless recovery binder for a malformed pattern item
+                        // (`F(1, ) = 0`): not source-backed, so it declares no symbol — see
+                        // CreateScope for the explicit-parameter twin of this rule.
+                        break;
+
                     case Pattern.Bind bind:
                         if (symbols.TryGetValue(bind.Name, out var existingBinder))
                         {
@@ -1841,9 +1868,10 @@ public static class SemanticModelBuilder
 
         /// <summary>
         /// One-level structural dot-member surface of an algorithm-valued symbol,
-        /// with the same exposure filter as <see cref="ResolveDotMember"/>:
-        /// exported members only, public-vs-private deliberately ignored because
-        /// structural dot access reaches private members. Conditional-valued
+        /// selected exactly like <see cref="ResolveDotMember"/>: every DECLARED
+        /// member (selection never depends on exposure, K1-08 — a local-only member
+        /// is listed and refused only at an inaccessible access), public-vs-private
+        /// deliberately ignored because structural dot access reaches private members. Conditional-valued
         /// members stay listed (a clause family is an ordinary dot target);
         /// properties declared inside clause bodies are not dot-reachable and are
         /// never listed. Member symbols carry no members of their own.

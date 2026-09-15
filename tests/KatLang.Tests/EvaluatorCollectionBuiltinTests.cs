@@ -1276,4 +1276,58 @@ public class EvaluatorCollectionBuiltinTests
 
         AssertEval(source, 20);
     }
+
+    // ── `order`/`orderDesc` are STABLE ────────────────────────────────────────
+
+    /// <summary>
+    /// Final audit (September 2026): <c>order</c> sorted with the runtime's introsort,
+    /// so above its 16-element insertion-sort threshold equal-comparing values could
+    /// change places — observable because display keeps the quantum and the zero sign
+    /// (<c>1.0</c> and <c>1</c>, <c>0</c> and <c>-0</c> compare equal under
+    /// <c>Decimal128.CompareTo</c> yet display differently). Lean's <c>sortIntsAsc</c> is
+    /// an insertion sort and <c>sortIntsDesc</c> its reverse, so the C# sort is stable
+    /// and the descending order is the reverse of the ascending one, however long the
+    /// input.
+    /// </summary>
+    [Fact]
+    public void Eval_Order_IsStable_ForEqualComparingValues_BeyondTheIntrosortThreshold()
+    {
+        // 40 items alternating between two spellings of one value (well past the
+        // 16-element insertion-sort threshold), plus two spellings of zero.
+        var spellings = Enumerable.Range(0, 40).Select(static i => i % 2 == 0 ? "1.0" : "1").ToList();
+        var source = $"order((0, -0, {string.Join(", ", spellings)}, -0, 0))";
+
+        var result = EvalFull(source);
+        if (result.IsError)
+            Assert.Fail($"Expected a list but got: {result.Error}");
+        var list = Assert.IsType<Result.ListValue>(result.Value);
+
+        // Ascending order: the four zeros (equal-comparing, in WRITTEN order: the leading
+        // `0, -0`, then the trailing `-0, 0`) before the forty ones, which keep their
+        // alternating written spellings.
+        var expected = new List<string> { "0", "-0", "-0", "0" };
+        expected.AddRange(spellings);
+        Assert.Equal(expected, list.Items.Select(Spelling));
+    }
+
+    [Fact]
+    public void Eval_OrderDesc_IsTheReverseOfTheStableAscendingOrder()
+    {
+        var spellings = Enumerable.Range(0, 40).Select(static i => i % 2 == 0 ? "1.0" : "1").ToList();
+        var source = $"orderDesc((0, -0, {string.Join(", ", spellings)}, -0, 0))";
+
+        var result = EvalFull(source);
+        if (result.IsError)
+            Assert.Fail($"Expected a list but got: {result.Error}");
+        var list = Assert.IsType<Result.ListValue>(result.Value);
+
+        var ascending = new List<string> { "0", "-0", "-0", "0" };
+        ascending.AddRange(spellings);
+        ascending.Reverse();
+        Assert.Equal(ascending, list.Items.Select(Spelling));
+    }
+
+    private static string Spelling(Result item)
+        => KatLang.Rendering.ValueTextRenderer.FormatNumberInvariant(Assert.IsType<Result.Atom>(item).Value);
+
 }

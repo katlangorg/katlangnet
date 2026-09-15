@@ -126,8 +126,19 @@ internal sealed class DelimitedStringTextPolicy(StringDelimiterMode mode) : IStr
                 return true;
         }
 
-        return LooksNumeric(value);
+        return LooksNumeric(value) || IsNonFiniteAtomSpelling(value);
     }
+
+    /// <summary>
+    /// The three canonical spellings a non-finite ATOM renders as (<c>NaN</c>,
+    /// <c>Infinity</c>, <c>-Infinity</c> — <c>ValueTextRenderer.FormatNumberInvariant</c>
+    /// keeps the runtime's literal spellings for them): raw string content equal to one
+    /// of them would be indistinguishable from the atom, exactly the confusion the
+    /// numeric-looking rule exists to prevent. Case-sensitive: <c>nan</c> is ordinary
+    /// text, because the atom never renders that way.
+    /// </summary>
+    private static bool IsNonFiniteAtomSpelling(string value)
+        => value is "NaN" or "Infinity" or "-Infinity";
 
     private static bool LooksNumeric(string value)
     {

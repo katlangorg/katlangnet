@@ -936,6 +936,44 @@ public class KatLangEngineTests
         Assert.Equal(expected, result.ToDisplayString());
     }
 
+    /// <summary>
+    /// Final audit (September 2026): the fixed-point arm handed the runtime formatter an
+    /// unrounded value, so the display tie rule was whatever <c>Decimal128.ToString("F")</c>
+    /// happened to use — ties-to-even on .NET 11 RC1 (<c>0.125</c> at two places printed
+    /// <c>0.12</c>) where the preview runtime rounded away from zero. KatLang owns the
+    /// rounding: a midpoint rounds AWAY FROM ZERO, the same rule as <c>Math.Round</c>, so
+    /// the displayed digits and <c>Math.Round(x, n)</c> always agree.
+    /// </summary>
+    [Theory]
+    [InlineData(2, "0.125", "0.13")]
+    [InlineData(2, "0.135", "0.14")]
+    [InlineData(2, "0.145", "0.15")]
+    [InlineData(2, "-0.125", "-0.13")]
+    [InlineData(2, "1.005", "1.01")]
+    [InlineData(2, "2.345", "2.35")]
+    [InlineData(2, "2.675", "2.68")]
+    [InlineData(0, "0.5", "1")]
+    [InlineData(0, "1.5", "2")]
+    [InlineData(0, "2.5", "3")]
+    [InlineData(0, "-0.5", "-1")]
+    [InlineData(0, "-2.5", "-3")]
+    [InlineData(2, "-0.001", "-0.00")]
+    [InlineData(1, "0.05", "0.1")]
+    public void RunResult_ToDisplayString_DisplayDecimals_RoundsTiesAwayFromZero_LikeMathRound(
+        int decimals,
+        string literal,
+        string expected)
+    {
+        var displayed = KatLangEngine.Run($"DisplayDecimals = {decimals}\n{literal}").ToDisplayString();
+        Assert.Equal(expected, displayed);
+
+        // The same digits Math.Round produces for a value that has them.
+        var rounded = Assert.IsType<RunResult.Success>(KatLangEngine.Run($"Math.Round({literal}, {decimals})"));
+        Assert.Equal(
+            System.Numerics.Decimal128.Parse(expected, System.Globalization.CultureInfo.InvariantCulture),
+            Assert.Single(rounded.Atoms));
+    }
+
     [Fact]
     public void RunResult_ToDisplayString_DisplayDecimals_FormatsNestedNumericLeaves()
     {

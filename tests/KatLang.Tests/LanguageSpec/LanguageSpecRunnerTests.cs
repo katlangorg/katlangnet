@@ -273,6 +273,10 @@ public class LanguageSpecRunnerTests
             // rejections, parse-level by construction.
             "conditional-clauses-share-top-level-arity",
             "conditional-clauses-share-top-level-output-arity",
+            // Final audit (September 2026): a builtin open target and the owed-closer
+            // recovery are front-end rejections, parse-level by construction.
+            "open-builtin-target-rejected",
+            "owed-closer-recovery-keeps-later-declarations",
         ];
         string[] expectedModelDivergences =
         [
@@ -294,6 +298,11 @@ public class LanguageSpecRunnerTests
             // The unmodeled Math-native surface.
             "native-argument-value-demand",
             "native-flat-callback-binding",
+            // Final audit (September 2026): Decimal128-only observations (quantum-visible
+            // sort stability, the DisplayDecimals tie rule, near-1 logarithm accuracy).
+            "order-is-stable",
+            "display-decimals-rounds-ties-away-from-zero",
+            "logarithm-near-one-is-accurate",
         ];
 
         Assert.Equal(
@@ -321,7 +330,7 @@ public class LanguageSpecRunnerTests
     {
         const int MinimumEncoderDerivedCases = 170;
         const int MaximumHandAuthoredOverrides = 0;
-        const int MaximumCSharpOnlyCases = 12;
+        const int MaximumCSharpOnlyCases = 15;
 
         var derived = Cases.Count(c => c.DerivedLeanProgram is not null);
         var overrides = Cases.Count(c => c.LeanProgramOverride is not null);

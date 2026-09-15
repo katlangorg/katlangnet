@@ -3249,6 +3249,32 @@ public class ParserTests
         Assert.Contains(result.Diagnostics, d => d.Message.Contains("Invalid open form") && d.Message.Contains("call"));
     }
 
+    /// <summary>
+    /// Final audit (September 2026): a call-like DOTTED open target used to be reported
+    /// twice — once as the call-like form and once more by the open-form validation over
+    /// the unnormalized recovery — while the plain call form (`open F(1)`) reported once.
+    /// The recovery is the argumentless path the target names (`open A.X()` recovers as
+    /// `open A.X`), so the one report is the whole diagnosis and the recovered target
+    /// still provides its names.
+    /// </summary>
+    [Theory]
+    [InlineData("open A.X()\nA = { public X = { public Y = 1 } }\nY")]
+    [InlineData("open A.X(1, 2)\nA = { public X = { public Y = 1 } }\nY")]
+    [InlineData("open A.X{1}\nA = { public X = { public Y = 1 } }\nY")]
+    public void Parse_Open_CallLikeDottedTarget_ReportsOnce_AndRecoversAsTheArgumentlessPath(string source)
+    {
+        var result = Parser.ParseSyntax(source);
+        Assert.True(result.HasErrors);
+        var diagnostic = Assert.Single(result.Diagnostics);
+        Assert.Equal(DiagnosticCode.BadOpenForm, diagnostic.Code);
+        Assert.Contains("call-like dotCall '.X(...)'", diagnostic.Message, StringComparison.Ordinal);
+
+        var target = Assert.IsType<Expr.DotCall>(Assert.Single(result.Root.Opens));
+        Assert.Equal("X", target.Name);
+        Assert.Null(target.Args);
+        Assert.Equal("A", Assert.IsType<Expr.Resolve>(target.Target).Name);
+    }
+
     // -- Open DotCall normalization tests -------------------------------------
 
     [Fact]

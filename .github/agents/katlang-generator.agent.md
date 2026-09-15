@@ -1276,7 +1276,7 @@ BETTER — specific branch first:
 ## Dot-Call Semantics
 
 - `a.count` — top-level value count after evaluation.
-- `a.string` — converts a numeric value to its string representation (e.g. `123.string` → `'123'`).
+- `a.string` — converts a numeric value to its string representation (e.g. `123.string` → `'123'`). It takes no arguments: `a.string(1)` is an arity error, never a silent conversion of `a`.
 - `a.f(args)` where `f` is a structural property of `a` — calls directly, no receiver injection.
 - `a.f(args)` where `f` is not structural — lexical fallback injects `a` as first argument.
 - CHAINED ACCESS is property-first at EVERY level: a receiver that is itself an argumentless dot access (`Lib.Sub` in `Lib.Sub.Q`) is navigated to that member's algorithm first, so `Lib.Sub.Q` reads `Sub`'s own `Q` whenever `Sub` exposes an accessible `Q` — even when a same-named `Q(x)` is visible — and `A.B.C.D` traverses nested public members at any depth without evaluating the containers. Only a receiver WITHOUT the member falls back, and the fallbacks compose along the chain (`3.A.B` is `B(A(3))`). A written call such as `Lib.Sub()` is a value, so a member after it is an extension call on that value; a declared local-only or conditional-branch intermediate member is an error at that edge, never a fallback.
@@ -1308,7 +1308,7 @@ BETTER — specific branch first:
 - Random values are nondeterministic by default and KatLang has NO seeding syntax: never generate `seed(...)`, `setSeed(...)`, `randomSeed(...)`, or similar. Reproducible random values are a host/CLI option outside the program (`RunOptions.RandomSeed` in the .NET library, `katlang run|eval ... --seed <integer>` on the CLI); when a user asks for reproducibility, say so instead of inventing syntax.
 - Multi-argument Math members — always supply every argument:
     - `log(value, base)` / `Math.Log(value, base)` is the logarithm of `value` in the given `base`, not a one-argument natural log.
-    - `pow(x, y)` / `Math.Pow(x, y)` raises `x` to the power `y` and is identical to `^` (they share one implementation): for finite nonzero bases and integer exponents with magnitude at most 9223372036854775807, the certified path rounds the exact power once to Decimal128, ties to even (`2 ^ 10` is exactly `1024`; `0.9999999 ^ 10000000` is correct in every digit). Failure to certify within 4096 working digits reports a structured evaluation error. Fractional, non-finite, and larger exponents, plus negative integer powers whose previous positive-power computation overflows, retain the existing Decimal128.Pow delegation without a correct-rounding guarantee. Prefer `^` for ordinary powers; use `pow`/`Math.Pow` when a Math-member style is specifically wanted.
+    - `pow(x, y)` / `Math.Pow(x, y)` raises `x` to the power `y` and is identical to `^` (they share one implementation): for finite nonzero bases and integer exponents with magnitude at most 9223372036854775807, the certified path rounds the exact power once to Decimal128, ties to even (`2 ^ 10` is exactly `1024`; `0.9999999 ^ 10000000` is correct in every digit). Failure to certify within 4096 working digits reports a structured evaluation error. Fractional and larger finite exponents use the near-one fixed-point approximation when the base is within [0.99, 1.01]. Outside that band, and for non-finite exponents or negative integer powers whose previous positive-power computation overflows, the existing Decimal128.Pow delegation is retained without a correct-rounding guarantee. Prefer `^` for ordinary powers; use `pow`/`Math.Pow` when a Math-member style is specifically wanted.
     - `atan2(y, x)` / `Math.Atan2(y, x)` is the two-argument arctangent in standard `atan2(y, x)` order (`y` first, then `x`).
 - Single-argument logarithms: `ln(x)` / `Math.Ln(x)` is the natural logarithm (base e); `lg(x)` / `Math.Lg(x)` is the base-10 logarithm.
 
@@ -1547,7 +1547,7 @@ Without trailing output, `Order` has no direct result — use `Order.Total(25, 4
 
 === BEGIN GENERATED: katlang-spec-examples (DO NOT EDIT BY HAND) ===
 
-Verified reference examples (88 of the 262-case canonical language specification,
+Verified reference examples (88 of the 271-case canonical language specification,
 tests/KatLang.Tests/LanguageSpec/LanguageSpecCorpus.cs). Every program and expected
 output below is executed against the KatLang engine and (where representable)
 guarded against the Lean model on every build. Treat these as ground truth for the

@@ -157,6 +157,10 @@ public class SemanticExplorerLeanArtifactTests
                 // Front-end rejection of an `open` target that would need a call: Lean states
                 // the same rule at open resolution, but this case never reaches evaluation.
                 "special__providerRequiringArgumentsCannotBeOpened",
+                // Final audit (September 2026): a prelude builtin as an open target is refused
+                // eagerly by the front end (the same IllegalInOpen rule), so it never reaches
+                // evaluation either.
+                "special__openBuiltinTargetIsIllegal",
             ])
             .OrderBy(id => id, StringComparer.Ordinal)
             .ToList();

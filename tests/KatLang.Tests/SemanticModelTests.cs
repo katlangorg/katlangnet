@@ -4,6 +4,30 @@ namespace KatLang.Tests;
 
 public class SemanticModelTests
 {
+    /// <summary>
+    /// Final audit (September 2026): the parser's recovery placeholder for a malformed
+    /// binding pattern (`F(*) = …` binds a spanless `_error_` parameter so the clause keeps
+    /// its shape) is not source-backed, so the semantic model declares no symbol for it —
+    /// it used to surface in completion inside the clause body. The recovery itself is
+    /// unchanged: the diagnostic is reported and the clause's real content is analyzed.
+    /// </summary>
+    [Fact]
+    public void RecoveryPlaceholderParameter_NeverSurfacesAsAVisibleSymbol()
+    {
+        const string source = "F(*) = 5\nF(1)";
+        var parsed = SourceProvenance.ParseAllowingDiagnostics(source);
+        Assert.Contains(parsed.Diagnostics, d => d.Code == DiagnosticCode.InvalidCollectMarker);
+        var clause = Assert.Single(parsed.Root.Properties, p => p.Name == "F");
+        Assert.Contains(clause.Value.ExplicitParameters, p => p.Span is null);
+
+        var model = SemanticModelBuilder.Build(parsed.Parsed);
+        Assert.DoesNotContain(model.GetVisibleSymbolsAt(1, 8), s => s.Name == "_error_");
+        Assert.DoesNotContain(model.GetVisibleSymbolsAt(2, 1), s => s.Name == "_error_");
+        Assert.DoesNotContain(model.ScopeVisibilities.SelectMany(v => v.Symbols), s => s.Name == "_error_");
+        Assert.DoesNotContain(model.Declarations, d => d.Name == "_error_");
+        Assert.DoesNotContain(model.IdentifierResolutions, r => r.Occurrence.Name == "_error_");
+    }
+
     [Fact]
     public void SameOwnerCollision_RecoveryRetainsParameterAndPropertyDeclarationIdentity()
     {

@@ -116,6 +116,18 @@ public sealed class Parser
     internal const int MaxNestingDepth = 384;
     private int _nestingDepth;
 
+    // Closing delimiters currently owed to an enclosing construct, per delimiter kind
+    // (`(` groups and call argument lists, `[` list literals, `{` brace bodies and
+    // trailing-brace call arguments). Primary-expression recovery consults them so
+    // that a closer an enclosing construct is waiting for is NEVER consumed as junk
+    // (`F(1, )`, `(1 + )`, `[1, ]`, `{1, }`): the owner closes its construct at the
+    // written closer and every later declaration stays in the scope it was written
+    // in. A closer no enclosing construct is waiting for (`{ 1, ) }`, a stray `]`
+    // at the root) keeps the junk recovery, exactly as before.
+    private int _openParens;
+    private int _openBrackets;
+    private int _openBraces;
+
     // Per-level surcharges for the heavy productions, calibrated by the same probes:
     // a parenthesized group or brace block runs the block/algorithm machinery each
     // level (~4.7 KB Debug ⇒ 4 total units with the two base charges), a call
@@ -178,6 +190,18 @@ public sealed class Parser
     {
         _nestingDepth += surcharge;
     }
+
+    /// <summary>
+    /// Whether <paramref name="kind"/> is a closing delimiter some enclosing construct is
+    /// still waiting for (see <see cref="_openParens"/>).
+    /// </summary>
+    private bool IsOwedCloser(TokenKind kind) => kind switch
+    {
+        TokenKind.RParen => _openParens > 0,
+        TokenKind.RBracket => _openBrackets > 0,
+        TokenKind.RBrace => _openBraces > 0,
+        _ => false,
+    };
 
     /// <summary>
     /// Records the binary/postfix depth of a newly constructed expression and aborts
@@ -949,11 +973,17 @@ public sealed class Parser
         var itemsParsed = false;
         while (Current.Kind != TokenKind.EndOfFile)
         {
-            if (Current.Kind is TokenKind.RParen or TokenKind.RBrace)
+            if (Current.Kind is TokenKind.RParen or TokenKind.RBrace
+                || (Current.Kind == TokenKind.RBracket && IsOwedCloser(TokenKind.RBracket)))
             {
                 // A closing delimiter ends every NESTED body: the enclosing
                 // group, block, or argument-list parser owns it and consumes it
-                // (or reports the mismatch). The root has no enclosing
+                // (or reports the mismatch). A ']' is a body terminator only
+                // while an enclosing list is waiting for it (`[ (1, ] `): the
+                // group reports its missing ')' and the list closes at the
+                // ']', exactly as the primary parser leaves an OWED closer
+                // unconsumed (see IsOwedCloser) — an unowed ']' is junk the
+                // expression parser reports and skips. The root has no enclosing
                 // delimiter, so a closer reaching it is unmatched. Recover in
                 // place: report the token at its own span, consume it, and keep
                 // collecting into the SAME parts so the root stays one scope
@@ -2855,12 +2885,15 @@ public sealed class Parser
                         : null,
                 };
 
-            case Expr.DotCall(var target, var name, _):
+            case Expr.DotCall dotCall:
                 ReportOpenFormError(
-                    $"Invalid open form: call-like dotCall '.{name}(...)' is not allowed in open declarations.",
+                    $"Invalid open form: call-like dotCall '.{dotCall.Name}(...)' is not allowed in open declarations.",
                     expr);
-                // Return as-is; validation will also flag it
-                return expr;
+                // Recovery: the argumentless path the target names (`open A.X()` recovers
+                // as `open A.X`), so the one report above is the whole diagnosis and the
+                // open-form validation that follows sees a valid form — never a second
+                // report for the same target.
+                return NormalizeOpenExpr(dotCall with { Args = null });
 
             case Expr.AlgorithmExpr or Expr.Capture:
                 // Inline algorithm targets stay as-is and are valid open
@@ -2912,6 +2945,7 @@ public sealed class Parser
         Expr.DotCall => "dotCall",
         Expr.Grace => "grace",
         Expr.NativeCall => "nativeCall",
+        Expr.EmptySequence => "empty sequence",
         _ => "unknown",
     };
 
@@ -2958,9 +2992,18 @@ public sealed class Parser
                 // Semicolon is never valid expression syntax. Report the
                 // diagnostic and consume it as error recovery (treating it like
                 // an expression-list separator) so later parsing and diagnostics
-                // stay useful. This is recovery only, not a supported continuation.
+                // stay useful. This is recovery only, not a supported continuation:
+                // unlike a written comma it never claims a declaration head, a
+                // closer, or the end of input as its next slot — `A = 1;` newline
+                // `B = 2` keeps `B` a declaration of the enclosing scope.
                 ReportUnsupportedSemicolon(Current);
                 Advance();
+                if (!CanStartExpression(Current.Kind)
+                    || StartsDeclaration(includeCommaSpanningBindingPatterns: true))
+                {
+                    OwnSameLineItem(Current);
+                    break;
+                }
             }
             else if (!StartsNextExpressionListSlot(allowNewlineSeparator))
             {
@@ -3736,13 +3779,14 @@ public sealed class Parser
             // algorithm-level declarations keep the same targeted rejection
             // diagnostics and recovery.
             EnterHeavyNesting(CallArgsNestingSurcharge);
+            _openParens++;
             ParsedAlgorithmBody body;
             try
             {
                 GuardNestingDepth();
                 body = ParseParenthesizedBodyParts();
             }
-            finally { _nestingDepth -= CallArgsNestingSurcharge; }
+            finally { _nestingDepth -= CallArgsNestingSurcharge; _openParens--; }
 
             Expect(TokenKind.RParen);
             if (!body.HasDeclarations)
@@ -3766,13 +3810,14 @@ public sealed class Parser
             var start = Current;
             Advance(); // consume '{'
             EnterHeavyNesting(CallArgsNestingSurcharge + BlockNestingSurcharge);
+            _openBraces++;
             Algorithm innerAlg;
             try
             {
                 GuardNestingDepth();
                 innerAlg = ParseScopedAlgorithm();
             }
-            finally { _nestingDepth -= CallArgsNestingSurcharge + BlockNestingSurcharge; }
+            finally { _nestingDepth -= CallArgsNestingSurcharge + BlockNestingSurcharge; _openBraces--; }
 
             Expect(TokenKind.RBrace);
             var blockExpr = new Expr.AlgorithmExpr(innerAlg) { Span = MakeSpan(start) };
@@ -3800,9 +3845,13 @@ public sealed class Parser
             // A parenthesized reference keeps its capture layer so sequence dot-call
             // receiver normalization can observe `(items).builtin` vs the bare name.
             Expr.Resolve => false,
-            // Net-zero markers used to be erased at parse time. Retaining them for
-            // F10 validation must keep the same capture boundary as the plain name.
-            Expr.Grace { Weight: 0 } => false,
+            // A graced name keeps the plain name's capture boundary WHATEVER its weight:
+            // Grace is a front-end ordering annotation the detector strips, so the
+            // elaborated tree of `(~x).M` / `Apply((~g))` / `(~a)(b)` must be the
+            // marker-free program's (`(x).M` is a capture receiver, `Apply((g))` a
+            // capture rejection, `(a)(b)` two same-line items). Unwrapping the graced
+            // form let a marker change selection — the one thing Grace never does.
+            Expr.Grace => false,
             // Redundant parentheses around a scope-owning algorithm expression
             // normalize away (`({...})` is `{...}`); a nested capture keeps its
             // written boundary (`((1, 2))` stays two layers).
@@ -3874,13 +3923,14 @@ public sealed class Parser
                     // machinery, so it carries a calibrated surcharge on the shared
                     // cumulative recursion budget.
                     EnterHeavyNesting(GroupNestingSurcharge);
+                    _openParens++;
                     ParsedAlgorithmBody body;
                     try
                     {
                         GuardNestingDepth();
                         body = ParseParenthesizedBodyParts();
                     }
-                    finally { _nestingDepth -= GroupNestingSurcharge; }
+                    finally { _nestingDepth -= GroupNestingSurcharge; _openParens--; }
 
                     Expect(TokenKind.RParen);
 
@@ -3927,13 +3977,14 @@ public sealed class Parser
                     Advance(); // consume '{'
                     // Heavy production (see the LParen arm).
                     EnterHeavyNesting(BlockNestingSurcharge);
+                    _openBraces++;
                     Algorithm alg;
                     try
                     {
                         GuardNestingDepth();
                         alg = ParseScopedAlgorithm();
                     }
-                    finally { _nestingDepth -= BlockNestingSurcharge; }
+                    finally { _nestingDepth -= BlockNestingSurcharge; _openBraces--; }
 
                     Expect(TokenKind.RBrace);
                     return new Expr.AlgorithmExpr(alg) { Span = MakeSpan(start) };
@@ -3951,6 +4002,7 @@ public sealed class Parser
                     Advance(); // consume '['
                     // Heavy production (lighter than groups/blocks; see the LParen arm).
                     EnterHeavyNesting(ListNestingSurcharge);
+                    _openBrackets++;
                     List<Expr> items;
                     try
                     {
@@ -3959,7 +4011,7 @@ public sealed class Parser
                             ? []
                             : ParseExpressionListOperand(allowNewlineSeparator: true);
                     }
-                    finally { _nestingDepth -= ListNestingSurcharge; }
+                    finally { _nestingDepth -= ListNestingSurcharge; _openBrackets--; }
 
                     Expect(TokenKind.RBracket);
                     return new Expr.ListLiteral(items) { Span = MakeSpan(start) };
@@ -4043,6 +4095,16 @@ public sealed class Parser
                 {
                     var token = Current;
                     ReportError(DiagnosticCode.UnexpectedToken, $"Unexpected {DescribeTokenKind(Current.Kind, includeArticle: false)}.");
+                    if (IsOwedCloser(token.Kind) || token.Kind == TokenKind.EndOfFile)
+                    {
+                        // The token is the closer an ENCLOSING construct is waiting for (a
+                        // trailing comma or a missing operand before it: `F(1, )`, `(1 + )`,
+                        // `[1, ]`, `{1, }`) or the end of input. Consuming it here would leave
+                        // that construct open to the end of the file, swallowing every later
+                        // declaration into it. Report only; the owner closes at its closer.
+                        return new Expr.Num(0) { Span = TokenSpan(token) }; // error placeholder
+                    }
+
                     SkipForRecovery(); // the token after it is a recovery-owned boundary
                     return new Expr.Num(0) { Span = TokenSpan(token) }; // error placeholder
                 }

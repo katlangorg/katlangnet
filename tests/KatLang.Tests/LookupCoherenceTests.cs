@@ -374,14 +374,15 @@ public class LookupCoherenceTests
             "A = {\n    open Math\n    Abs(-101)\n}\nA",
             "Abs", "ok raw=101 n=1", new Builtin()),
 
-        // A builtin is never a legal open target. The runtime validates the whole
-        // open list before resolving any name, so the illegal target fails the
-        // lookup; the editor flags that target separately (see the
-        // BuiltinOpenTarget test below) and still resolves X from the good
-        // provider. Deliberately different contracts, pinned here.
-        new("builtin.illegalBuiltinOpenTargetPoisonsRuntimeLookupOnly",
+        // A builtin is never a legal open target. Since the final audit (September 2026)
+        // the FRONT END refuses it eagerly (the rule that refuses a parameterized provider;
+        // IllegalInOpen), the runtime refuses it by kind as soon as the open list is
+        // demanded (pinned over the recovery tree in DiagnosticProvenanceTests), and the
+        // editor still resolves X from the good provider — the three layers now agree
+        // that the program is invalid, and the editor keeps analyzing it.
+        new("builtin.illegalBuiltinOpenTargetIsRefusedByTheFrontEnd",
             "Lib = {\n    public X = 101\n}\nA = {\n    open count, Lib\n    X\n}\nA",
-            "X", "err illegalInOpen", new Tolerated("X", 1)),
+            "X", "parseError", new Declared("X", 1)),
 
         // ---- access form --------------------------------------------------------
         new("form.zeroArgCallOnOpenedName",
@@ -516,7 +517,15 @@ public class LookupCoherenceTests
     {
         const string source = "A = {\n    open count\n    1\n}\nA";
         var parsed = Parser.Parse(source);
-        Assert.False(parsed.HasErrors);
+
+        // Final audit (September 2026): a builtin is refused as an open PROVIDER eagerly by
+        // the front end (OpenProviderValidator), exactly like a parameterized provider and
+        // exactly as the evaluator refuses it by kind at open resolution — the two views
+        // agree whether or not any name is ever demanded through the list.
+        var diagnostic = Assert.Single(parsed.Diagnostics);
+        Assert.Equal(DiagnosticCode.IllegalInOpen, diagnostic.Code);
+        Assert.Equal(new SourceSpan(2, 10, 2, 14), diagnostic.Span);
+        Assert.Contains("builtin", diagnostic.Message, StringComparison.Ordinal);
 
         var model = SemanticModelBuilder.Build(parsed);
         var target = TokenSite(source, "count", occurrence: null);
@@ -527,12 +536,16 @@ public class LookupCoherenceTests
         Assert.Equal(IdentifierClassification.Unresolved, resolution.Classification);
         Assert.Null(resolution.ResolvedDeclaration);
 
-        // Unused here, so the runtime never resolves the open list at all.
-        Assert.Equal("ok raw=1 n=1", SemanticExplorerHarness.Observe("openBuiltinUnused", source).Neutral);
-
-        // Forcing a lookup through that list reaches the same verdict.
+        // The evaluator's own verdict on the host-built tree (bypassing the front end):
+        // the same refusal, by kind, as soon as the open list is demanded.
         const string forced = "Lib = {\n    public X = 101\n}\nA = {\n    open count, Lib\n    X\n}\nA";
-        Assert.Equal("err illegalInOpen", SemanticExplorerHarness.Observe("openBuiltinForced", forced).Neutral);
+        var forcedParsed = Parser.Parse(forced);
+        Assert.Contains(forcedParsed.Diagnostics, d => d.Code == DiagnosticCode.IllegalInOpen);
+        var runtime = Evaluator.Run(new Expr.AlgorithmExpr(forcedParsed.Root));
+        Assert.True(runtime.IsError);
+        var innermost = runtime.Error;
+        while (innermost is EvalError.WithContext context) innermost = context.Inner;
+        Assert.IsType<EvalError.IllegalInOpen>(innermost);
     }
 
     /// <summary>
@@ -575,7 +588,12 @@ public class LookupCoherenceTests
 
         Assert.Contains(Cases, c => c.ExpectedRuntime == "err ambiguousOpen");
         Assert.Contains(Cases, c => c.ExpectedRuntime == "err localOnlyProperty");
-        Assert.Contains(Cases, c => c.ExpectedRuntime == "err illegalInOpen");
+        // Every illegal open target a written program can name — a parameterized provider,
+        // a clause family, a prelude builtin — is refused by the FRONT END since the final
+        // audit (September 2026), so the runtime's by-kind illegalInOpen is reachable only
+        // from a prebuilt tree (DiagnosticProvenanceTests, CoreTests); the matrix pins the
+        // builtin case at parse level instead.
+        Assert.Contains(Cases, c => c.Id == "builtin.illegalBuiltinOpenTargetIsRefusedByTheFrontEnd" && c.ExpectedRuntime == "parseError");
         Assert.Contains(Cases, c => c.ExpectedRuntime == "parseError");
 
         // There is deliberately no runtime `unknownName` row any more. Its only two sources

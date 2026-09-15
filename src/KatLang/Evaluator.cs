@@ -656,10 +656,43 @@ public static partial class Evaluator
     private static EvalError OpenTargetRequiresArguments(string targetDescription, Algorithm provider)
         => new EvalError.IllegalInOpen(FormatOpenTargetRequiresArguments(targetDescription, provider));
 
-    internal static string FormatOpenTargetRequiresArguments(string targetDescription, Algorithm provider)
-        => provider is Algorithm.Conditional
-            ? $"'{targetDescription}' cannot be opened because it is a clause family that requires arguments; open imports only an algorithm that needs no call."
-            : $"'{targetDescription}' cannot be opened because it requires arguments ({string.Join(", ", provider.Params)}); open imports only an algorithm that needs no call.";
+    internal static string FormatOpenTargetRequiresArguments(string targetDescription, Algorithm provider, bool sourceBacked = false)
+    {
+        if (provider is Algorithm.Conditional)
+            return $"'{targetDescription}' cannot be opened because it is a clause family that requires arguments; open imports only an algorithm that needs no call.";
+
+        var names = NamedParameters(provider, sourceBacked).ToArray();
+        var parameterList = names.Length == 0 ? "" : $" ({string.Join(", ", names)})";
+        return $"'{targetDescription}' cannot be opened because it requires arguments{parameterList}; open imports only an algorithm that needs no call.";
+    }
+
+    /// <summary>
+    /// The parameter names a diagnostic may quote: every parameter except the parser's
+    /// spanless recovery binder for a malformed pattern item (`F(a, *) = …`), which is not
+    /// source-backed and must never be named to the user. Only the front-end validator
+    /// identifies recovery binders this way: a host-built algorithm keeps every name,
+    /// regardless of which parameters the host supplied spans for.
+    /// </summary>
+    private static IEnumerable<string> NamedParameters(Algorithm provider, bool sourceBacked)
+    {
+        var explicitParameters = provider.ExplicitParameters;
+        if (!sourceBacked || explicitParameters.Count == 0)
+            return provider.Params;
+
+        var placeholders = explicitParameters
+            .Where(static parameter => parameter.Span is null)
+            .Select(static parameter => parameter.Name)
+            .ToHashSet(StringComparer.Ordinal);
+        return provider.Params.Where(name => !placeholders.Contains(name));
+    }
+
+    /// <summary>
+    /// The front-end wording for a prelude builtin named as an open target: the evaluator's
+    /// open resolution refuses builtins by kind (<c>IllegalInOpen("builtin 'count'")</c>, Lean
+    /// <c>resolveAlgForOpen</c>); the validator states the same rule in KatLang terms.
+    /// </summary>
+    internal static string FormatOpenTargetIsBuiltin(string targetDescription)
+        => $"'{targetDescription}' cannot be opened because it is a builtin callable; open imports only an algorithm that needs no call.";
 
     /// <summary>Lean: Algorithm.lookupPropDefPublic? (public only — exposure is checked after selection).</summary>
     private static Property? LookupPublicPropBinding(Algorithm alg, string name)
@@ -2955,7 +2988,15 @@ public static partial class Evaluator
         // genuine finite approximations that Decimal128.Pow computes directly.
         if (!Decimal128.IsInteger(exp) || Decimal128.Abs(exp) > long.MaxValue)
         {
-            result = CanonicalizeMathResult(Decimal128.Pow(b, exp));
+            // A near-1 base is the one delegated shape the platform power gets wrong by
+            // far more than the last digit or two (it inherits the logarithm's
+            // cancellation near 1 — see Decimal128Numerics.IsInNearOnePowerBand); a
+            // finite exponent over such a base takes exp(exp · ln b) over the accurate
+            // near-1 logarithm. Non-finite exponents keep the IEEE pow verdicts.
+            result = CanonicalizeMathResult(
+                Decimal128.IsFinite(exp) && Decimal128Numerics.IsInNearOnePowerBand(b)
+                    ? Decimal128Numerics.NearOnePower(b, exp)
+                    : Decimal128.Pow(b, exp));
             return true;
         }
 

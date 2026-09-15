@@ -395,11 +395,15 @@ internal static class PropertyExposureResolver
             level.ResolveRequirements(node.RequiredAncestorOwnedParameterNames));
         requiredAncestorOwnedParameterNames.UnionWith(level.ResolveRequirements(node.OwnerQualifiedParameters));
 
+        // A bare visible name is settled by the ONE settlement the pending references use
+        // (the chain's own properties first, then the owning level's and its ancestors'
+        // opens, in the evaluator's order): a name the property reads through an `open`
+        // declared at THIS level — or at an ancestor level — charges the provided member's
+        // requirements exactly like a dotted path or an open written inside the value.
+        // Dropping such a name classified `Y = X` as Exported beside a local-only opened `X`,
+        // so the run-scoped cache handed the first activation's value to every later one.
         foreach (var dependencyName in node.SummaryVisiblePropertyDependencyNames)
-        {
-            if (level.TryLookup(dependencyName, out _, out _, out var summary))
-                requiredAncestorOwnedParameterNames.UnionWith(summary.Requirements);
-        }
+            requiredAncestorOwnedParameterNames.UnionWith(resolution.ResolveVisibleName(dependencyName, level));
 
         foreach (var dependencyIndex in node.SummarySiblingDependencyIndices)
         {
@@ -563,15 +567,29 @@ internal static class PropertyExposureResolver
             var names = new HashSet<Requirement>(level.ResolveRequirements(seed.RequiredAncestorOwnedParameterNames));
             names.UnionWith(site.ResolveRequirements(seed.OwnerQualifiedParameters, boundOwners));
             foreach (var dependencyName in seed.VisiblePropertyDependencyNames)
-            {
-                if (level.TryLookup(dependencyName, out _, out _, out var summary))
-                    names.UnionWith(summary.Requirements);
-            }
+                names.UnionWith(ResolveVisibleName(dependencyName, level, site, boundOwners));
 
             foreach (var pending in seed.PendingReferences)
                 names.UnionWith(Resolve(pending, level, site, boundOwners));
 
             return names;
+        }
+
+        /// <summary>
+        /// Settlement of a BARE visible name the scope-free summary walk could not reduce
+        /// further: the same rule as a member-less, candidate-less pending reference — the
+        /// name as a property of the level's chain first (its stored summary), and only then
+        /// the level's and its ancestors' <c>open</c> providers, whose provided member charges
+        /// its own requirements. A name provided by nothing (an unresolvable name, or one the
+        /// prelude declares) contributes no requirement.
+        /// </summary>
+        public HashSet<Requirement> ResolveVisibleName(string name, SummaryScope level, SummaryScope? site = null,
+            IReadOnlySet<Algorithm>? boundOwners = null)
+        {
+            if (level.TryLookup(name, out _, out _, out var summary))
+                return [.. summary.Requirements];
+
+            return Resolve(new PendingReference(name, [], []), level, site, boundOwners);
         }
     }
 

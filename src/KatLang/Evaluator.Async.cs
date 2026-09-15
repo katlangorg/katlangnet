@@ -736,7 +736,8 @@ public static partial class Evaluator
             if (ZeroArgumentValueDemandRejection(ZeroArgumentDemandShape.Parameter, name, span, algBound) is { } rejection)
                 return rejection;
 
-            var valueR = WithSpan(
+            var valueR = WithParameterContextOnMissingOutput(
+                name,
                 span,
                 await EvalResolvedAlgOutputForValueDemandAsync(algBound, ctx, valEnv).ConfigureAwait(false));
             return valueR.IsError
@@ -1985,6 +1986,22 @@ public static partial class Evaluator
 
     // ── Argument-assembly and binding twins ─────────────────────────────────
 
+    /// <summary>MIRROR OF <see cref="RejectDotStringIntrinsicArguments"/> — keep in lock-step.</summary>
+    private static async ValueTask<EvalError?> RejectDotStringIntrinsicArgumentsAsync(
+        OutputBundle? argsOpt,
+        EvalCtx ctx,
+        IReadOnlyList<(string, Result)> valEnv)
+    {
+        if (argsOpt is null)
+            return null;
+
+        var inputsR = await BuildCallArgumentInputsAsync(argsOpt, ctx, valEnv).ConfigureAwait(false);
+        if (inputsR.IsError)
+            return inputsR.Error;
+
+        return inputsR.Value.Count == 0 ? null : new EvalError.ArityMismatch(0, inputsR.Value.Count);
+    }
+
     /// <summary>MIRROR OF <see cref="BuildCallArgumentInputs"/> — keep in lock-step.</summary>
     private static async ValueTask<EvalResult<IReadOnlyList<ParameterPatternInput>>> BuildCallArgumentInputsAsync(
         OutputBundle args,
@@ -2408,7 +2425,9 @@ public static partial class Evaluator
         if (ZeroArgumentValueDemandError(arg.Source, algorithm) is { } rejection)
             return rejection;
 
-        return await EvalArgumentAlgOutputCountedAsync(algorithm, ctx, valEnv).ConfigureAwait(false);
+        return BlameDemandedArgumentForMissingOutput(
+            arg.Source,
+            await EvalArgumentAlgOutputCountedAsync(algorithm, ctx, valEnv).ConfigureAwait(false));
     }
 
     /// <summary>MIRROR OF <see cref="EvalResolvedArgument"/> — keep in lock-step.</summary>
@@ -2528,7 +2547,13 @@ public static partial class Evaluator
                 continue;
             }
 
-            items.Add(new VariadicCallItem(Value: null, arg, outputR.Error, Source: resolvedArg.Source));
+            // MIRROR OF BuildCallableCallItems: a named value-shaped argument's missing
+            // output is blamed on the property, never on the callee.
+            items.Add(new VariadicCallItem(
+                Value: null,
+                arg,
+                BlameDemandedArgumentForMissingOutput(resolvedArg.Source, outputR).Error,
+                Source: resolvedArg.Source));
         }
 
         return EvalResult<IReadOnlyList<VariadicCallItem>>.Ok(items);
@@ -2978,7 +3003,7 @@ public static partial class Evaluator
 
         var initialR = preparedInitial is { } preparedValue
             ? EvalResult<CountedResult>.Ok(preparedValue)
-            : await EvalArgumentAlgOutputCountedAsync(initialAlg, ctx, valEnv).ConfigureAwait(false);
+            : BlameDemandedArgumentForMissingOutput(initialSource, await EvalArgumentAlgOutputCountedAsync(initialAlg, ctx, valEnv).ConfigureAwait(false));
         if (initialR.IsError) return initialR.Error;
 
         // The initial accumulator expression occupies ONE written accumulator slot —
@@ -3228,6 +3253,8 @@ public static partial class Evaluator
             {
                 if (dotCall.UsesOrdinaryDotStringIntrinsic())
                 {
+                    if (await RejectDotStringIntrinsicArgumentsAsync(argsOpt, ctx, valEnv).ConfigureAwait(false) is { } arityRejection)
+                        return arityRejection;
                     // The synchronous twin evaluates the value-only target with plain
                     // Eval; the counted twin's value projection is the same value.
                     var valCountedR = await EvalCountedAsync(target, ctx, valEnv).ConfigureAwait(false);
@@ -3246,6 +3273,8 @@ public static partial class Evaluator
 
         if (dotCall.UsesOrdinaryDotStringIntrinsic())
         {
+            if (await RejectDotStringIntrinsicArgumentsAsync(argsOpt, ctx, valEnv).ConfigureAwait(false) is { } arityRejection)
+                return arityRejection;
             var val = await EvalDotStringReceiverAlgOutputAsync(target, targetAlg, receiverIsStructuralMember, ctx, valEnv).ConfigureAwait(false);
             if (val.IsError) return val.Error;
             var outR = ResultToString(ctx, val.Value);
@@ -3441,7 +3470,11 @@ public static partial class Evaluator
 
         switch (target)
         {
-            case Expr.Param:
+            case Expr.Param(var name):
+                // MIRROR OF the synchronous twin: a parameter receiver's missing output is the
+                // parameter's failure.
+                return WithParameterContextOnMissingOutput(name, target.Span, await EvalResolvedAlgOutputForValueDemandAsync(targetAlg, ctx, valEnv).ConfigureAwait(false));
+
             case Expr.Resolve:
                 return await EvalResolvedAlgOutputForValueDemandAsync(targetAlg, ctx, valEnv).ConfigureAwait(false);
 

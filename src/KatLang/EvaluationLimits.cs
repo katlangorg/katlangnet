@@ -6,7 +6,14 @@ namespace KatLang;
 /// <para>The limits are independent and deliberately not collapsed into one number:</para>
 /// <list type="bullet">
 ///   <item><b>Depth</b> (<see cref="MaxDepth"/>) bounds how many dynamic algorithm
-///   invocations may be active at once. Its purpose is host-stack safety.</item>
+///   invocations — user calls, zero-argument property accesses, callback and pattern
+///   invocations — may be active at once. Its purpose is host-stack safety. A LOOP STEP
+///   invocation (`while`/`repeat`) is deliberately NOT one of them: an iteration
+///   repeats work without nesting, so it charges a step and never depth. Recursion
+///   routed through loop steps (a step whose body starts a loop over itself) therefore
+///   nests host frames the depth budget does not see; it is bounded by the evaluator's
+///   host-stack backstop, which reports the structured
+///   <see cref="EvalError.EvaluationStackExhausted"/> rather than overflowing.</item>
 ///   <item><b>Structural AST depth</b> (<see cref="MaxAstDepth"/>) bounds how deeply
 ///   the program tree ITSELF is nested, judged by a non-recursive preflight before any
 ///   recursive validator, optimizer, or evaluator sees the tree. Its purpose is
@@ -270,6 +277,15 @@ public sealed record EvaluationLimits
     /// <c>null</c> to use <see cref="MaxSupportedCollectionItems"/>. Values above the
     /// supported maximum are clamped down to it rather than rejected, so raising the
     /// request can never weaken process safety.
+    ///
+    /// <para>The same effective value also bounds the HOST-ATOM PROJECTION of a run's whole
+    /// output (<see cref="KatLangEngine.Run"/>/<see cref="KatLangEngine.RunAsync"/>
+    /// results and the flat <c>Evaluator.RunFlat*</c> entry points): projecting opens
+    /// every sequence and list boundary recursively, so a value built from many small
+    /// collections can project into more atoms than any one of them holds. A projection
+    /// past the bound is reported as <see cref="EvalError.CollectionSizeLimitExceeded"/>
+    /// with <c>Requested</c> = limit + 1 (a lower bound: the projection stops counting at
+    /// the limit) and no source span, after the evaluation itself succeeded.</para>
     /// </summary>
     /// <exception cref="ArgumentOutOfRangeException">The value is zero or negative.</exception>
     public int? MaxCollectionItems

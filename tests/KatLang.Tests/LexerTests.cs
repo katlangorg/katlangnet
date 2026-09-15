@@ -22,6 +22,44 @@ public class LexerTests
         Assert.Empty(diagnostics);
     }
 
+    /// <summary>
+    /// Final audit (September 2026): the line-break contract is the LINE FEED alone. A lone
+    /// carriage return is whitespace that advances neither the line nor the column — it ends
+    /// a comment or a string literal (their character classes exclude it) but never
+    /// separates rows, so `A = 1\rB = 2` is ONE physical line and reaches the same-line
+    /// separator rule. `\r\n` breaks the line through its `\n`. Pinned here and stated in
+    /// KatLang.ebnf so the lexer, the grammar, and the parser's line rules agree.
+    /// </summary>
+    [Fact]
+    public void Tokenize_LoneCarriageReturn_IsWhitespaceThatBreaksNoLine()
+    {
+        var (tokens, diagnostics) = Lexer.Tokenize("A = 1\rB = 2");
+        Assert.Empty(diagnostics);
+        Assert.All(tokens, token => Assert.Equal(1, token.Line));
+        Assert.Equal(
+            [TokenKind.Identifier, TokenKind.Equals, TokenKind.Number, TokenKind.Identifier, TokenKind.Equals, TokenKind.Number, TokenKind.EndOfFile],
+            tokens.Select(token => token.Kind).ToArray());
+        // The CR advances no column: `B` follows `1` at column 5 directly at column 6.
+        Assert.Equal(6, tokens[3].Column);
+
+        // A comment ends at the CR, and the text after it is still line 1.
+        var (commented, _) = Lexer.Tokenize("# note\rB = 2");
+        Assert.Equal(TokenKind.Comment, commented[0].Kind);
+        Assert.Equal(" note", commented[0].StringValue);
+        Assert.Equal(1, commented[1].Line);
+        Assert.Equal("B", commented[1].StringValue);
+
+        // CRLF breaks the line through its LF.
+        var (crlf, _) = Lexer.Tokenize("A = 1\r\nB = 2");
+        Assert.Equal(2, crlf[3].Line);
+        Assert.Equal(1, crlf[3].Column);
+
+        // The parser therefore treats the CR-joined rows as one physical line: the
+        // same-line separator rule reports the second item, exactly as for `A = 1 B = 2`.
+        var parsed = Parser.ParseSyntax("A = 1\rB = 2");
+        Assert.Contains(parsed.Diagnostics, d => d.Code == DiagnosticCode.UnseparatedSameLineItem);
+    }
+
     [Fact]
     public void Tokenize_Integer_ReturnsNumberToken()
     {
@@ -670,7 +708,7 @@ public class LexerTests
         {
             ("abc!", "abc", 1),
             ("e" + (char)0x0301, "e", 1),
-            ("x" + char.ConvertFromUtf32(0x10400), "x", 2),
+            ("x" + char.ConvertFromUtf32(0x10400), "x", 1), // a well-formed pair is ONE bad token (final audit, September 2026)
             ("_" + (char)0xD835, "_", 1),
         })
         {

@@ -129,8 +129,13 @@ internal static class ValueTextRenderer
         if (Decimal128.IsInteger(value) && Decimal128.GetQuantum(value) >= Decimal128.One)
             return FormatNumberInvariant(value);
 
+        // KatLang owns the rounding as well as the digits: a midpoint rounds AWAY FROM
+        // ZERO, the rule `Math.Round` applies (`0.125` at two places is `0.13`, `2.5` at
+        // none is `3`), so the runtime's fixed-point formatter — whose tie rule changed
+        // between runtime releases — only ever lays out an already-rounded value.
+        var rounded = Decimal128.Round(value, decimals, MidpointRounding.AwayFromZero);
         var format = "F" + decimals.ToString(CultureInfo.InvariantCulture);
-        return value.ToString(format, CultureInfo.InvariantCulture);
+        return rounded.ToString(format, CultureInfo.InvariantCulture);
     }
 
     /// <summary>

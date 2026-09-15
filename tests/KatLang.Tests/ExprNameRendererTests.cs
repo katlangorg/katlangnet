@@ -42,7 +42,9 @@ public class ExprNameRendererTests
         Assert.Equal("1.5", Open(new Expr.Num(1.5m)));
         Assert.Equal("-2", Open(new Expr.Num(-2m)));
         Assert.Equal("'s'", Open(new Expr.StringLiteral("s")));
-        Assert.Equal("(inline library)", Open(new Expr.AlgorithmExpr(new Algorithm.User(null, [], [], [], []))));
+        Assert.Equal("{...}", Open(new Expr.AlgorithmExpr(new Algorithm.User(null, [], [], [], []))));
+        Assert.Equal("(1, x)", Open(new Expr.Capture(OutputBundle.From([new Expr.Num(1m), new Expr.Resolve("x")]))));
+        Assert.Equal("()", Open(new Expr.Capture(OutputBundle.Empty)));
         Assert.Equal("()", Open(new Expr.EmptySequence(0)));
         Assert.Equal("((()))", Open(new Expr.EmptySequence(2)));
         Assert.Equal("(nativeCall)", Open(new Expr.NativeCall("sin", ["x"])));
@@ -303,7 +305,7 @@ public class ExprNameRendererTests
                 $"{shape}/{mode} rendered {first.Length} units");
 
             // Every deep shape elides — except a block outside DiagnosticName mode,
-            // which is an opaque "(inline library)" leaf by the established rules.
+            // which is an opaque "{...}" leaf by the established rules.
             if (shape != "blockOutput" || mode == ExprNameMode.DiagnosticName)
                 Assert.EndsWith(ExprNameRenderer.TruncationMarker, first);
         }

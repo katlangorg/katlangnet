@@ -412,6 +412,126 @@ public class LocalMemberAccessTests
         Assert.Equal("1\n2", Display(source));
     }
 
+    /// <summary>
+    /// Final audit (September 2026): a SIBLING property reading a captured member through an
+    /// <c>open</c> declared at the property's own declaring level (or an ancestor level) —
+    /// not inside the property's value — was classified Exported, so the run-scoped cache
+    /// returned the first activation's value to every later one (`4, 4` instead of `4, 5`).
+    /// A bare opened name is settled exactly like a dotted path or an open written inside the
+    /// value: the provided member's requirements make the reader local-only.
+    /// </summary>
+    [Theory]
+    [InlineData("Outer(p) = {\n    open Lib\n    Lib = { public X = p }\n    Y = X\n    Y\n}\nOuter(4), Outer(5)")]
+    [InlineData("Outer(p) = {\n    open Lib\n    Lib = { public X = p }\n    Y = X + 0\n    Y\n}\nOuter(4), Outer(5)")]
+    [InlineData("Outer(p) = {\n    open Lib\n    Lib = { public X = p }\n    Y = { X }\n    Y\n}\nOuter(4), Outer(5)")]
+    [InlineData("Outer(p) = {\n    open Lib\n    Lib = { public X = p }\n    Y = X\n    Z = Y\n    Z\n}\nOuter(4), Outer(5)")]
+    public async Task SiblingReadingAnOpenProvidedCapturedMember_IsLocalOnly(string source)
+    {
+        var root = SourceProvenance.ParseValid(source).Root;
+        var reader = NestedProperty(root, "Outer", "Y");
+        Assert.Equal(PropertyExposure.LocalOnlyCapturedAncestorParameters, reader.Exposure);
+        Assert.Equal(["p"], reader.RequiredAncestorParameters);
+        Assert.Equal("4\n5", Display(source));
+        await AssertSyncAndAsyncAgree(source);
+        await AssertCaptureRepairThroughSuspendingTwin(source);
+    }
+
+    /// <summary>
+    /// Final hostile pass (September 2026): an <c>open</c> target whose head is declared at a
+    /// level BETWEEN the opener and the settling level. The opener (Inner) carries the head
+    /// outward unresolved; the level that declares it (Mid) must settle it there — exactly as
+    /// the opener would have settled its own head — so the provided member's capture of
+    /// <c>p</c> charges Inner and Mid. The candidate used to be carried PAST its declaration,
+    /// Mid was classified exported, and the run cache served the first activation's value to
+    /// every later call (<c>Outer(1), Outer(2)</c> displayed <c>1 1</c>).
+    /// </summary>
+    [Theory]
+    [InlineData("Outer(p) = {\n    Mid = {\n        Lib = { public X = p }\n        Inner = {\n            open Lib\n            X\n        }\n        Inner\n    }\n    Mid\n}\nOuter(1), Outer(2)")]
+    // Dotted target: the head is at Mid, the public step selects the provider.
+    [InlineData("Outer(p) = {\n    Mid = {\n        Lib = { public Sub = { public X = p } }\n        Inner = {\n            open Lib.Sub\n            X\n        }\n        Inner\n    }\n    Mid\n}\nOuter(1), Outer(2)")]
+    // A sibling reading the opened name inside the opener.
+    [InlineData("Outer(p) = {\n    Mid = {\n        Lib = { public X = p }\n        Inner = {\n            open Lib\n            Y = X\n            Y\n        }\n        Inner\n    }\n    Mid\n}\nOuter(1), Outer(2)")]
+    // One level deeper between the opener and the head.
+    [InlineData("Outer(p) = {\n    Mid = {\n        Lib = { public X = p }\n        Deep = {\n            Inner = {\n                open Lib\n                X\n            }\n            Inner\n        }\n        Deep\n    }\n    Mid\n}\nOuter(1), Outer(2)")]
+    // The head is declared AFTER the opener in the same body.
+    [InlineData("Outer(p) = {\n    Mid = {\n        Inner = {\n            open Lib\n            X\n        }\n        Lib = { public X = p }\n        Inner\n    }\n    Mid\n}\nOuter(1), Outer(2)")]
+    public async Task OpenTargetHeadDeclaredBetweenTheOpenerAndTheSettlingLevel_ChargesTheCapture(string source)
+    {
+        var root = SourceProvenance.ParseValid(source).Root;
+        var mid = NestedProperty(root, "Outer", "Mid");
+        Assert.Equal(PropertyExposure.LocalOnlyCapturedAncestorParameters, mid.Exposure);
+        Assert.Equal(["p"], mid.RequiredAncestorParameters);
+        Assert.Equal("1\n2", Display(source));
+        await AssertSyncAndAsyncAgree(source);
+        await AssertCaptureRepairThroughSuspendingTwin(source);
+    }
+
+    private static async Task AssertCaptureRepairThroughSuspendingTwin(string source)
+    {
+        var program = new Expr.AlgorithmExpr(SourceProvenance.ParseValid(source).Root);
+        var sync = Evaluator.RunCountedObserved(program, enableOptimizations: false);
+        var cache = new AsyncEvaluation.SuspendingAsyncZeroArgPropertyResultCache();
+        var twin = await AsyncEvaluation.AsyncEvaluationHarness.Complete(
+            Evaluator.RunCountedObservedAsync(program, zeroArgPropertyResultCache: cache));
+        Assert.False(sync.Result.IsError);
+        Assert.False(twin.Result.IsError);
+        Assert.True(Result.ValueComparer.Equals(sync.Result.Value.Value, twin.Result.Value.Value));
+        Assert.Equal(sync.Result.Value.EmittedCount, twin.Result.Value.EmittedCount);
+        Assert.True(cache.AsyncAccesses > 0);
+        Assert.Equal(0, cache.SyncAccesses);
+        Assert.Equal(sync.Budget.ConsumedSteps, twin.Budget.ConsumedSteps);
+        Assert.Equal(sync.Budget.PeakDepth, twin.Budget.PeakDepth);
+        Assert.Equal(sync.Budget.MaterializedItems, twin.Budget.MaterializedItems);
+        Assert.Equal(sync.Budget.MaterializedStringChars, twin.Budget.MaterializedStringChars);
+        Assert.Equal(0, twin.Budget.CurrentDepth);
+    }
+
+    [Fact]
+    public async Task OpenTargetHeadDeclaredBetweenTheOpenerAndTheSettlingLevel_NearestDeclarationProvides()
+    {
+        // The mirror: Mid's own self-contained Lib is the opener's provider (the direct chain
+        // reaches it first), never Outer's capturing Lib — so Mid stays exported and is
+        // readable from outside the owner.
+        const string source = "Outer(p) = {\n    Lib = { public X = p }\n    Mid = {\n        Lib = { public X = 100 }\n        Inner = {\n            open Lib\n            X\n        }\n        Inner\n    }\n    Mid\n}\nOuter.Mid";
+        var root = SourceProvenance.ParseValid(source).Root;
+        Assert.Equal(PropertyExposure.Exported, NestedProperty(root, "Outer", "Mid").Exposure);
+        Assert.Equal("100", Display(source));
+        await AssertSyncAndAsyncAgree(source);
+    }
+
+    [Fact]
+    public async Task NestedSiblingReadingAnAncestorLevelOpenProvidedCapturedMember_IsLocalOnly()
+    {
+        // The open lives one level ABOVE the reader's declaring level.
+        const string source = "Outer(p) = {\n    open Lib\n    Lib = { public X = p }\n    Inner = {\n        Y = X\n        Y\n    }\n    Inner\n}\nOuter(4), Outer(5)";
+        var root = SourceProvenance.ParseValid(source).Root;
+        Assert.Equal(["p"], NestedProperty(root, "Outer", "Inner", "Y").RequiredAncestorParameters);
+        Assert.Equal(["p"], NestedProperty(root, "Outer", "Inner").RequiredAncestorParameters);
+        Assert.Equal("4\n5", Display(source));
+        await AssertSyncAndAsyncAgree(source);
+    }
+
+    [Fact]
+    public void SiblingReadingAnOpenProvidedCapturedMember_IsRefusedOutsideTheOwner()
+    {
+        // The accessibility law applies to the reader exactly as to the provided member:
+        // a public sibling that depends on the capture is refused from outside Outer.
+        RunFailure(
+            "Outer(p) = {\n    open Lib\n    Lib = { public X = p }\n    public Y = X\n    Y\n}\nOuter(4), Outer.Y",
+            KatLangErrorCode.LocalOnlyProperty);
+    }
+
+    [Fact]
+    public void SiblingReadingASelfContainedOpenProvidedMember_StaysExported()
+    {
+        // The inverse: an opened member that captures nothing charges nothing.
+        const string source = "Outer(p) = {\n    open Lib\n    Lib = { public X = 7 }\n    Y = X + p\n    Z = X\n    Y, Z\n}\nOuter(4), Outer(5)";
+        var root = SourceProvenance.ParseValid(source).Root;
+        Assert.Equal(PropertyExposure.Exported, NestedProperty(root, "Outer", "Z").Exposure);
+        Assert.Equal(["p"], NestedProperty(root, "Outer", "Y").RequiredAncestorParameters);
+        Assert.Equal("(11, 7)\n(12, 7)", Display(source));
+    }
+
     [Fact]
     public void IdentityNavigation_DoesNotChargeTheReceiversOutput()
     {

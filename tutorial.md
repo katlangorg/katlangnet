@@ -471,7 +471,7 @@ Math.Log(100, 10)
 katlang eval "Math.RandomInt(1, 7), Math.Random(0, 1)" --seed 42
 ```
 
-A seed reproduces a *stream*, not individual calls: both random operations, in every spelling, draw from one stream in evaluation order, so the values a call receives depend on which random calls executed before it. The ordinary evaluation rules decide that — arguments evaluate left to right and exactly once, only the selected branch of `if` runs, a zero-parameter property is drawn once and reused while an explicit `A()` draws again, callbacks draw in sequence order, and the output rows draw before a `DisplayDecimals` property is evaluated. Removing an earlier random call therefore generally changes the later values. Unseeded evaluation stays nondeterministic, and KatLang randomness is not cryptographically secure.
+A seed reproduces a *stream*, not individual calls: both random operations, in every spelling, draw from one stream in evaluation order, so the values a call receives depend on which random calls executed before it. The ordinary evaluation rules decide that — arguments evaluate left to right and exactly once, only the selected branch of `if` runs, a zero-parameter property read as a value (`A`, `A.sum`, `F(A)`) is drawn once and reused while an explicit `A()` and every builtin value slot that demands the algorithm directly (`sum(A)`, `if(1, A, 0)`, `A.string` — see [Zero-Parameter Property Caching](#zero-parameter-property-caching)) draw again, callbacks draw in sequence order, and the output rows draw before a `DisplayDecimals` property is evaluated. Removing an earlier random call therefore generally changes the later values. Unseeded evaluation stays nondeterministic, and KatLang randomness is not cryptographically secure.
 
 ### Lowercase Math Aliases
 
@@ -545,7 +545,7 @@ Math.Exp(1)
 2.718282
 ```
 
-`DisplayDecimals` is display-only. It does not round stored values, intermediate calculations, comparisons, or cached property results:
+`DisplayDecimals` is display-only. It does not round stored values, intermediate calculations, comparisons, or cached property results. A displayed value that falls exactly halfway between two candidates rounds AWAY FROM ZERO, the same rule as `Math.Round` (`0.125` shows as `0.13` at two places, `2.5` as `3` at none, `-2.5` as `-3`), so the digits you see are the digits `Math.Round(value, DisplayDecimals)` would compute:
 
 ```
 DisplayDecimals = 2
@@ -1022,7 +1022,7 @@ Host-backed properties follow the same rule. Every independent evaluation starts
 
 A recursive read entered before any result is stored still evaluates the body. The first successful completion supplies the cache entry; reads already in progress finish with their own results and do not replace it.
 
-The guarantee concerns property-value reads. Passing a name as an algorithm argument follows the receiving callable's rules: for example, `if(1, A, 0)` evaluates the selected algorithm body directly, while `if(1, (A), 0)` evaluates the captured property read and uses A's cache.
+The guarantee concerns property-value reads: a bare `A` in value position, `(A)`, `A + 0`, a user call argument `F(A)`, and the receiver of a dotted collection builtin (`A.sum`, `A.count`) all read A's cached value. Passing a name as an ALGORITHM argument follows the receiving callable's rules instead, and every builtin VALUE slot demands the algorithm directly rather than reading the property: `if(1, A, 0)`, the direct-call collection arguments `sum(A)`, `count(A)`, `take(A, n)`, `first(A)`, `atoms(A)`, `range(A, A)`, a loop's initial state and `repeat` count, the `reduce` initial accumulator, and the `.string` receiver (`A.string`) each evaluate A's body again and neither read nor store its entry, while `if(1, (A), 0)`, `sum((A))`, and `(A).string` capture the property read and use A's cache. Where a property draws randomness or calls a host operation this is observable — `A.sum` reuses A's draw, `sum(A)` draws again — so read such a property through its cached spellings.
 
 A property body may produce several items, but property-style access is a value boundary: the caller observes them as one sequence value. Caller-site spread (`value*`) turns that value back into separate output rows:
 
@@ -1769,7 +1769,7 @@ Outer(20)
 
 `Mid`'s parameter is reached before `Outer`'s, and the root property is never reached at all.
 
-**Compatibility note:** SYN-03 initially allowed parameter/property collisions. The front end now rejects any property matching a completed parameter of its own or an enclosing lexical algorithm, including parameters discovered by later implicit forwarding. Moving the property into a nested body does not make it legal; rename one declaration. Captured parameters still beat farther properties and inner opens, and the nearest enclosing parameter still wins. A root property outside the parameter's owner remains legal, as in the first example above. Inline open targets keep their separate owner region; importing a name does not declare a property in the importing algorithm.
+**Compatibility note:** SYN-03 initially allowed parameter/property collisions. The front end now rejects any property matching a completed parameter of its own or an enclosing lexical algorithm, including parameters discovered by later implicit forwarding. Moving the property into a nested body does not make it legal; rename one declaration. Captured parameters still beat farther properties and inner opens, and the nearest enclosing parameter still wins. A root property outside the parameter's owner remains legal, as in the first example above. Inline open targets keep their separate owner region — an inline `open { ... }` block (and an `open 'url'` string target) sees only its own declarations and the prelude, never the opener's properties or parameters, so a free name inside it becomes that block's own implicit parameter — and importing a name does not declare a property in the importing algorithm.
 
 The root program is the one owner that is never called, so its implicit parameters are names it could not resolve rather than inputs a nested body could hide. A nested property that happens to share such a name is therefore not reported as a collision; the program fails with the root's unresolved-name error instead (reported at the root's first output row and naming the unresolved name), and the root reference is where the fix belongs:
 
@@ -1870,7 +1870,7 @@ Arithmetic operators (`+`, `-`, `*`, etc.) are not defined for strings.
 
 ### Number to String Conversion
 
-Every numeric value exposes a `.string` property that converts it to a first-class string value.
+Every numeric value exposes a `.string` property that converts it to a first-class string value. It takes no arguments — `A.string(1)` is an arity error, never a silent conversion of `A` — while an empty argument list (`A.string()`) is the same conversion.
 
 ```
 123.string
@@ -1927,7 +1927,7 @@ Add6(10)
 16
 ```
 
-The order of implicit parameters is determined by their first appearance in the definition, reading left to right.
+The order of implicit parameters is determined by their first appearance in the definition, reading left to right. Names written DIRECTLY in the definition come first, in that order; parameters a definition acquires only by FORWARDING — referring to a property that has its own implicit parameters passes them along (see [Name Resolution](#name-resolution)) — follow after every direct name, in the order they were forwarded, so `Need = v` and `F = Need * 10 + w` give `F(w, v)`, not `F(v, w)`. Grace reorders within each group and never moves a direct name behind a forwarded one.
 
 ```
 # 'a' appears first, then 'b'
@@ -2755,6 +2755,7 @@ Use `()` for a sequence value, `[]` for a [list](#lists), or receiver-style dot 
 
 - Both builtins evaluate the full collection eagerly before sorting
 - Duplicates are preserved; there is no implicit distinct or unique step, so use `distinct` separately when deduplication is required
+- `order` is stable: items that compare equal keep their written order. `orderDesc` reverses that ascending result, including the order within equal-value groups — visible when equal values are spelled differently (`order((1.0, 1))` is `[1.0, 1]`, `orderDesc((1.0, 1))` is `[1, 1.0]`)
 - The result is one list value (the call is a value boundary); use a caller-site spread (`value*`) when the surrounding context needs the sorted items as an item supply
 - Each top-level element must be exactly one atomic numeric value
 - Sequence values and list values are not flattened or inspected recursively
@@ -4585,6 +4586,8 @@ F(999)
 
 Algorithms can be loaded from URLs using `load`. The loaded algorithm becomes a property whose public sub-properties you access with dot syntax.
 
+Scoping: a module bound with `Name = load('url')` is elaborated and evaluated exactly as if its text were written inline as `Name = { ... }` at that place — its free names resolve through the importing algorithm's owner walk before the prelude (an importer property or parameter with the same name, the import name `Name` included, is what the module's occurrence means; only a name nothing provides becomes an implicit parameter of the module member), and the same URL loaded at two different places elaborates once per place. An `open 'url'` target, by contrast, is elaborated in isolation like an inline `open { ... }` block (its free names see only the prelude), so the two spellings differ for a module that mentions a name it does not define; a module that declares everything it uses means the same thing everywhere.
+
 <!-- spec:skip module loading needs a host-configured network downloader; the URL and its outputs are illustrative -->
 ```
 # Load and bind to property 'Lib':
@@ -4673,7 +4676,7 @@ Sqrt(16)
 
 `open` must appear before all property definitions and output expressions in the current algorithm. This rule keeps KatLang code uniform and easy to read: first declare opened sources, then define properties, then produce output.
 
-**Isolation:** opened libraries do not inherit the opener's scope. A library only sees the properties it defined itself.
+**Isolation:** an inline open target (`open { ... }`) and a string target (`open 'url'`) do not inherit the opener's scope: such a library sees only the properties it defined itself and the prelude. A NAMED target (`open Lib` with `Lib = { ... }` or `Lib = load('url')`) is an ordinary property of the scope that declares it, so its free names resolve exactly as that property's would (see [Loading External Algorithms](#loading-external-algorithms)).
 
 **Imported names stay owned by their library:** `open` makes a library's public properties visible; it does not make them properties of the opener. Opening a library therefore never changes what the opening algorithm owns (see [Functions: Algorithms Without Properties](#functions-algorithms-without-properties)).
 
@@ -4769,8 +4772,8 @@ Helper = Area / 2   # private: never exported through open or load, still reacha
 ## Pitfalls
 
 - **Numeric precision:** KatLang numbers are IEEE 754 Decimal128 — 34 significant decimal digits with a huge exponent range (about ±6144). Results needing more than 34 significant digits round to the nearest representable value, and arithmetic past the representable range saturates to `Infinity`/`-Infinity` rather than erroring.
-- **No hidden rounding of math functions:** trig, logarithm, root, and power results carry full Decimal128 precision and are never snapped toward "nice" values. `Math.Pi` is π rounded to 34 digits, so `Math.Sin(Math.Pi)` is the tiny residual of that rounding (about `-1.158e-34`), not `0` — compare against a tolerance when testing near-zero trig identities. Irrational results such as `Math.Sin(1)` are approximations at 34 digits, correct to roughly the last digit or two. `Math.Acos`/`acos` and `Math.Asin`/`asin` are sensitive to input error near ±1. For `0.9999 < |x| <= 1`, KatLang uses a decimal endpoint reformulation to avoid the tested runtime's accuracy loss (`acos(1 - 1e-30)` previously retained about 9 digits). A deterministic sweep of 23,080 distinct signed inputs, including every representable gap `n * 1e-34` for `n = 1..999`, observed maximum errors of about 1.526 result ulp for `acos` near +1, 0.504 near −1, and 0.503 for `asin` on either side. These are sample measurements, not universal error bounds or a correct-rounding guarantee; some previously correctly rounded in-band results change by one last-place digit. `acos(-1) == Math.Pi` and `asin(±1)` retains the existing Decimal128 ±π/2 value: both identities involve rounded constants. For finite nonzero bases and integer exponents with magnitude at most 9223372036854775807, successful certified powers (`0.9999999 ^ 10000000`, `2 ^ 113`, `1.1 ^ -34`) round the exact mathematical power once to Decimal128, ties to even. If refinement cannot certify the result within 4096 working digits, evaluation reports a structured error. Fractional, non-finite, and larger exponents, plus negative integer powers whose previous positive-power computation overflows, retain the existing Decimal128.Pow delegation; those approximations are outside the certification guarantee. Exact results retain compatible existing display quanta, including the trailing zeros of `5 ^ -50`.
-- **IEEE special values:** `NaN`, `Infinity`, `-Infinity`, and `-0` are ordinary numeric values (from domain violations like `Math.Sqrt(-1)`, overflow, or writing `-0`). Ordering comparisons involving `NaN` are always false, while `==`/`!=` use structural value identity (so `NaN == NaN` is `1`). Dividing by any zero-valued divisor (including `-0` and computed zeros) is still an error, not `Infinity`, and so is raising a zero-valued base to any negative exponent (`0 ^ -1` and `0 ^ -0.5` alike). With `DisplayDecimals` set, the special values keep these same spellings (`NaN`, `Infinity`, `-Infinity`), while a finite signed zero follows the fixed-point rule like any other finite value (`-0` stays `-0`; `-0.0` shows as `-0.00` at two decimals).
+- **No hidden rounding of math functions:** trig, logarithm, root, and power results carry full Decimal128 precision and are never snapped toward "nice" values. `Math.Pi` is π rounded to 34 digits, so `Math.Sin(Math.Pi)` is the tiny residual of that rounding (about `-1.158e-34`), not `0` — compare against a tolerance when testing near-zero trig identities. Irrational results such as `Math.Sin(1)` are approximations at 34 digits, correct to roughly the last digit or two. `Math.Acos`/`acos` and `Math.Asin`/`asin` are sensitive to input error near ±1. For `0.9999 < |x| <= 1`, KatLang uses a decimal endpoint reformulation to avoid the tested runtime's accuracy loss (`acos(1 - 1e-30)` previously retained about 9 digits). The logarithm family gets the same treatment near 1: for `0.5 <= x <= 1.5`, `Math.Ln`, `Math.Lg`, and `Math.Log` compute through the runtime's `log(1 + ε)` primitive on the exact difference `x - 1` (the plain logarithm lost roughly one digit per decade of closeness to 1 — `Math.Ln(1 + 1e-33)` kept five correct digits), and a fractional or beyond-`long` exponent on a base within `0.99 <= b <= 1.01` computes `exp(exponent · ln(base))` with the exponent product carried at 80 fixed-point places instead of the runtime power, which inherited the loss (`(1 + 1e-33) ^ 9223372036854775808` came out smaller than the same base to the power `9223372036854775807`); the product is never rounded to Decimal128 before exponentiation, because a power loses about one digit per decade of `|exponent · ln(base)|` when it is (`0.99 ^ 12345.5` computed through a 34-digit product was 123 last-place units off). The logarithm reformulation is an accurate composition of runtime primitives, verified against an independent series oracle, not a correct-rounding guarantee; the near-1 power uses 80-place fixed-point approximations with truncation error propagated through the exponent, checked against an independent binomial-series oracle and separately derived power constants; it has no interval-certified correct-rounding guarantee. A deterministic sweep of 23,080 distinct signed inputs, including every representable gap `n * 1e-34` for `n = 1..999`, observed maximum errors of about 1.526 result ulp for `acos` near +1, 0.504 near −1, and 0.503 for `asin` on either side. These are sample measurements, not universal error bounds or a correct-rounding guarantee; some previously correctly rounded in-band results change by one last-place digit. `acos(-1) == Math.Pi` and `asin(±1)` retains the existing Decimal128 ±π/2 value: both identities involve rounded constants. For finite nonzero bases and integer exponents with magnitude at most 9223372036854775807, successful certified powers (`0.9999999 ^ 10000000`, `2 ^ 113`, `1.1 ^ -34`) round the exact mathematical power once to Decimal128, ties to even. If refinement cannot certify the result within 4096 working digits, evaluation reports a structured error. Fractional and larger finite exponents use the near-one fixed-point approximation when the base is within [0.99, 1.01]. Outside that band, and for non-finite exponents or negative integer powers whose previous positive-power computation overflows, the existing Decimal128.Pow delegation is retained; those approximations are outside the certification guarantee. Exact results retain compatible existing display quanta, including the trailing zeros of `5 ^ -50`.
+- **IEEE special values:** `NaN`, `Infinity`, `-Infinity`, and `-0` are ordinary numeric values (from domain violations like `Math.Sqrt(-1)`, overflow, writing `-0`, or an integer operation whose zero result takes IEEE's sign rules — `-4 mod 2`, `-7 div 8`, and `0 * -1` are all `-0`, which displays and converts to `'-0'` while comparing equal to `0`). Ordering comparisons involving `NaN` are always false, while `==`/`!=` use structural value identity (so `NaN == NaN` is `1`). Dividing by any zero-valued divisor (including `-0` and computed zeros) is still an error, not `Infinity`, and so is raising a zero-valued base to any negative exponent (`0 ^ -1` and `0 ^ -0.5` alike). With `DisplayDecimals` set, the special values keep these same spellings (`NaN`, `Infinity`, `-Infinity`), while a finite signed zero follows the fixed-point rule like any other finite value (`-0` stays `-0`; `-0.0` shows as `-0.00` at two decimals).
 - **Parameter order surprises:** parameter order is determined by first appearance reading left to right. If your expression reads `b - a`, the first parameter is `b`, not `a`. Use Grace (`~`) to override when needed.
 - **`if` arity:** builtin `if` requires three arguments after spread expansion: `if(cond, a, b)`. There is no two-argument form. A grouped value is one argument, so `if(X)` is invalid when `X = 1, 2, 3`; spread it with `if(X*)` to supply the three slots. The check happens when the call runs, against the callable that [name resolution](#name-resolution) selected — declaring your own `if` shadows the builtin, and a wrong-arity call then reports *your* signature.
 - **Misspelled members on known receivers:** dot syntax is receiver injection — `a.F(x)` is `F(a, x)` when `a` has no structural `F` — and a statically known receiver such as `Math`, a block, or a module gets no special treatment. So `Math.Ceiling(2.1)` is not a "missing member" error: the edge falls back to a lexical `Ceiling`, and since none is visible, `Ceiling` becomes an implicit parameter of the program. The report names the receiver, explains the fallback, and suggests `Math.Ceil`; if a lexical `Ceiling(a, b)` IS visible, the call is the valid fallback `Ceiling(Math, 2.1)` and simply runs (see [Misspelled Members on Known Receivers](#misspelled-members-on-known-receivers)).
@@ -4818,7 +4821,7 @@ Helper = Area / 2   # private: never exported through open or load, still reacha
   f(1000)  # error: Evaluation recursion limit of 128 was exceeded
   ```
 
-  This is a host runtime limit, not a language rule: a program that finishes within the limit produces exactly the result it always did. Recursion deeper than the limit needs an iterative form — `repeat` or `while` — which repeats work without stacking up calls.
+  This is a host runtime limit, not a language rule: a program that finishes within the limit produces exactly the result it always did. Recursion deeper than the limit needs an iterative form — `repeat` or `while` — which repeats work without stacking up calls. The limit is the deterministic ceiling; on a host with a small thread stack (or a debug build of KatLang) the stack-headroom backstop can stop the most stack-expensive shapes — recursion through `if` or through a collection callback — EARLIER, with the structured `EvaluationStackExhausted` error rather than the recursion-limit error, never by terminating the process.
 
 - **Loops still run as long as you ask:** there is no work budget by default, so `Step.while(...)` with a condition that never becomes false runs forever. Check your continuation slot. (Hosts embedding KatLang can configure a step budget to bound this.)
 
@@ -4828,7 +4831,7 @@ Helper = Area / 2   # private: never exported through open or load, still reacha
   range(1, 10000000)  # error: Collection size limit of 100000 items was exceeded; requested 10000000 items
   ```
 
-  This counts the items of a single collection, so nesting is fine — `[[1, 2], [3, 4]]` is three small collections, not one big one. Like the recursion limit it is a host runtime limit, not a language rule: results within the limit are exactly what they always were.
+  This counts the items of a single collection, so nesting is fine for evaluation — `[[1, 2], [3, 4]]` is three small collections, not one big one. One more bound applies to the PROGRAM OUTPUT as a whole on the engine entry points (`KatLangEngine.Run`/`RunAsync`, and therefore the CLI): a successful run is also projected into the flat list of numeric atoms hosts read through `RunResult.Success.Atoms`, and that projection opens every nested sequence and list, so an output whose atoms exceed 100,000 IN TOTAL (`A = range(1, 60000)` then `[A, A]`) is refused with the same collection-size error even though each collection is within the limit; the direct evaluator entry points (`Evaluator.Run`) do not project and accept it. Like the recursion limit these are host runtime limits, not language rules: results within the limits are exactly what they always were.
 
 - **Displayed output size:** printing a value flattens it, and nesting a value inside itself doubles the printed text each time even though the value itself barely grows:
 
@@ -4840,7 +4843,7 @@ Helper = Area / 2   # private: never exported through open or load, still reacha
 
   ```
 
-  Displayed output is capped at 1,000,000 characters. Past that, printing reports the limit instead of the text — never a silent half-answer. The value itself is unaffected: it evaluated fine, and a host embedding KatLang can still work with it structurally.
+  Displayed output is capped at 1,000,000 characters. Past that, printing reports the limit instead of the text — never a silent half-answer. The value itself is unaffected: it evaluated fine, and a host embedding KatLang can still work with it structurally (subject to the whole-output atom projection bound described under "Collection size": the doubling example above reaches that bound before the display limit, because its leaves are numbers).
 ---
 
 ## Full Reference

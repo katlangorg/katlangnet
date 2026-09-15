@@ -546,10 +546,15 @@ public static class SemanticExplorerCorpus
         Special("openBuiltinNameCollision",
             "Lib = {\n    public count = 101\n}\nA = {\n    open Lib\n    count([1, 2, 3])\n}\nA"),
 
-        // A builtin is never a legal open target; validation runs over the whole
-        // open list before any name is resolved through it.
+        // A builtin is never a legal open target. Since the final audit (September 2026)
+        // the front end refuses it eagerly like a parameterized provider (a builtin's
+        // arity lives in registry metadata, so it is refused by kind), so the case is
+        // parse-level and C#-only; both evaluators still refuse the target with
+        // illegalInOpen at open resolution (Lean `resolveAlgForOpen`, CoreTests), and
+        // DiagnosticProvenanceTests pins the runtime refusal over the recovery tree.
         Special("openBuiltinTargetIsIllegal",
-            "Lib = {\n    public X = 101\n}\nA = {\n    open count, Lib\n    X\n}\nA"),
+            "Lib = {\n    public X = 101\n}\nA = {\n    open count, Lib\n    X\n}\nA",
+            "Front-end rejection (DiagnosticCode.IllegalInOpen): a prelude builtin is refused as an open target before evaluation; the elaborated tree is a recovery tree, and both evaluators refuse the same open with illegalInOpen."),
 
         // Structural dot access deliberately ignores visibility; `open` does not.
         // Pinning both spellings keeps the two rules from collapsing into one.

@@ -156,22 +156,59 @@ internal sealed class OpenProviderValidator : AstWalker
     {
         foreach (var target in opens)
         {
-            if (ElaboratedScopeLookup.ResolveOpenTarget(_scope, target) is not { } provider
-                || !Evaluator.RequiresArguments(provider)
-                || target.Span is not { } span
-                || !_reported.Add(span))
+            if (target.Span is not { } span)
+                continue;
+
+            // The HEAD of a dotted target is checked first: a prelude builtin has no members,
+            // so `open count.X` can never provide anything and is refused exactly like the
+            // bare `open count` — never left to become an implicit parameter of the opener
+            // (the evaluators refuse the same head by kind at open resolution).
+            if (DottedHead(target) is { } head
+                && ElaboratedScopeLookup.ResolveOpenTarget(_scope, head) is Algorithm.Builtin
+                && _reported.Add(span))
             {
+                _diagnostics.Add(new Diagnostic(
+                    Evaluator.FormatOpenTargetIsBuiltin(Evaluator.OpenExprName(head)),
+                    DiagnosticSeverity.Error,
+                    span)
+                {
+                    Code = DiagnosticCode.IllegalInOpen,
+                });
                 continue;
             }
 
-            _diagnostics.Add(new Diagnostic(
-                Evaluator.FormatOpenTargetRequiresArguments(Evaluator.OpenExprName(target), provider),
-                DiagnosticSeverity.Error,
-                span)
+            if (ElaboratedScopeLookup.ResolveOpenTarget(_scope, target) is not { } provider)
+                continue;
+
+            // A prelude builtin (`open count`, `open if`) is a callable, never a namespace: the
+            // evaluator refuses it by KIND at open resolution (Lean `resolveAlgForOpen`), so the
+            // front end refuses it eagerly too — exactly like a parameterized provider, whose
+            // arity lives in `Params` where a builtin's lives in registry metadata.
+            var message = provider is Algorithm.Builtin
+                ? Evaluator.FormatOpenTargetIsBuiltin(Evaluator.OpenExprName(target))
+                : Evaluator.RequiresArguments(provider)
+                    ? Evaluator.FormatOpenTargetRequiresArguments(Evaluator.OpenExprName(target), provider, sourceBacked: true)
+                    : null;
+            if (message is null || !_reported.Add(span))
+                continue;
+
+            _diagnostics.Add(new Diagnostic(message, DiagnosticSeverity.Error, span)
             {
                 Code = DiagnosticCode.IllegalInOpen,
             });
         }
+    }
+
+    /// <summary>The bare head of a dotted core open form (`open A.B.C` → `A`), or null for any other target.</summary>
+    private static Expr? DottedHead(Expr target)
+    {
+        if (target is not Expr.DotCall { } dotted || !dotted.IsCoreOpenForm())
+            return null;
+
+        Expr head = dotted;
+        while (head is Expr.DotCall inner)
+            head = inner.Target;
+        return head is Expr.Resolve ? head : null;
     }
 
 }

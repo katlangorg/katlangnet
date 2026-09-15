@@ -402,4 +402,36 @@ def test51 : Bool :=
 
 #guard test51
 
+-- Final audit (September 2026): the `.string` intrinsic is a ZERO-parameter member.
+-- A written argument list is assembled like every call's and then rejected by
+-- arity (`arityMismatch 0 n`) on BOTH receiver paths — the algorithm receiver
+-- (`(block [123]).string(1)`) and the value receiver (`(42).string(1, 2)`) — a
+-- spread slot counts by its opened items, and an EMPTY written list (`x.string()`)
+-- stays the intrinsic. C#: `RejectDotStringIntrinsicArguments`.
+def testStringIntrinsicRejectsArguments_AlgorithmReceiver : Bool :=
+  match runResult (.dotCall (.algorithmExpr (alg [] [] [] [.num 123])) "string" (some [.num 1])) with
+  | Except.error err => innermostIsArityMismatch 0 1 err
+  | _ => false
+
+def testStringIntrinsicRejectsArguments_ValueReceiver : Bool :=
+  match runResult (.dotCall (.num 42) "string" (some [.num 1, .num 2])) with
+  | Except.error err => innermostIsArityMismatch 0 2 err
+  | _ => false
+
+def testStringIntrinsicRejectsArguments_SpreadCountsOpenedItems : Bool :=
+  let three := alg [] [] [] [.num 1, .num 2, .num 3]
+  match runResult (.dotCall (.num 42) "string" (some [.sequenceSpread (.algorithmExpr three)])) with
+  | Except.error err => innermostIsArityMismatch 0 3 err
+  | _ => false
+
+def testStringIntrinsicEmptyArgumentList_StaysTheIntrinsic : Bool :=
+  match runResult (.dotCall (.num 42) "string" (some [])) with
+  | Except.ok (Result.str "42") => true
+  | _ => false
+
+#guard testStringIntrinsicRejectsArguments_AlgorithmReceiver
+#guard testStringIntrinsicRejectsArguments_ValueReceiver
+#guard testStringIntrinsicRejectsArguments_SpreadCountsOpenedItems
+#guard testStringIntrinsicEmptyArgumentList_StaysTheIntrinsic
+
 end KatLangTests

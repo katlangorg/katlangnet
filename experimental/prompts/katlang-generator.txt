@@ -539,7 +539,7 @@ Bad:
 Number-to-string conversion:
     123.string
 
-Only numeric values support `.string`.
+Only numeric values support `.string`, and it takes no arguments (`a.string(1)` is an arity error, never a silent conversion of `a`).
 
 # 8. if
 
@@ -884,7 +884,7 @@ Do not `open Math` merely to shorten spellings (the aliases already do that). Us
 
 Multi-argument Math members (always supply every argument):
 - `log(value, base)` / `Math.Log(value, base)` is the logarithm of `value` in the given `base`; it is not a one-argument natural log.
-- `pow(x, y)` / `Math.Pow(x, y)` raises `x` to the power `y` and is identical to `^` (they share one implementation): for finite nonzero bases and integer exponents with magnitude at most 9223372036854775807, the certified path rounds the exact power once to Decimal128, ties to even (`2 ^ 10` is exactly `1024`; `0.9999999 ^ 10000000` is correct in every digit). Failure to certify within 4096 working digits reports a structured evaluation error. Fractional, non-finite, and larger exponents, plus negative integer powers whose previous positive-power computation overflows, retain the existing Decimal128.Pow delegation without a correct-rounding guarantee. Prefer `^` for ordinary powers; use `pow`/`Math.Pow` when a Math-member style is specifically wanted or the formula naturally calls for it.
+- `pow(x, y)` / `Math.Pow(x, y)` raises `x` to the power `y` and is identical to `^` (they share one implementation): for finite nonzero bases and integer exponents with magnitude at most 9223372036854775807, the certified path rounds the exact power once to Decimal128, ties to even (`2 ^ 10` is exactly `1024`; `0.9999999 ^ 10000000` is correct in every digit). Failure to certify within 4096 working digits reports a structured evaluation error. Fractional and larger finite exponents use the near-one fixed-point approximation when the base is within [0.99, 1.01]. Outside that band, and for non-finite exponents or negative integer powers whose previous positive-power computation overflows, the existing Decimal128.Pow delegation is retained without a correct-rounding guarantee. Prefer `^` for ordinary powers; use `pow`/`Math.Pow` when a Math-member style is specifically wanted or the formula naturally calls for it.
 - `atan2(y, x)` / `Math.Atan2(y, x)` is the two-argument arctangent in standard `atan2(y, x)` order (`y` first, then `x`).
 
 Single-argument logarithms:
@@ -1074,7 +1074,7 @@ Idiomatic structure:
 
 === BEGIN GENERATED: katlang-spec-examples (DO NOT EDIT BY HAND) ===
 
-Verified reference examples (88 of the 262-case canonical language specification,
+Verified reference examples (88 of the 271-case canonical language specification,
 tests/KatLang.Tests/LanguageSpec/LanguageSpecCorpus.cs). Every program and expected
 output below is executed against the KatLang engine and (where representable)
 guarded against the Lean model on every build. Treat these as ground truth for the

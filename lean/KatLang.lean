@@ -5850,6 +5850,22 @@ mutual
       let combinedArgs := prepareLexicalDotCallArgs receiver extraArgs
       evalResolvedCallCounted callee combinedArgs ctx env name .injectedDotReceiverLeading
 
+  /-- The `.string` intrinsic is a ZERO-parameter member. A written argument
+      list is assembled exactly like every call's (each written slot evaluated
+      once, left to right, spreads opened) and then rejected by arity — the
+      same outcome as `Obj.V(1)` for a declared zero-parameter member — so a
+      written bundle is never silently dropped; an EMPTY written list
+      (`x.string()`) stays the intrinsic, as `A()` stays a call of `A`.
+      C#: `RejectDotStringIntrinsicArguments`. -/
+  partial def rejectDotStringIntrinsicArguments (argsOpt : Option OutputBundle)
+      (ctx : EvalCtx) (env : ValEnv) : EvalM Unit := do
+    match argsOpt with
+    | none => pure ()
+    | some args =>
+      let items <- collectVariadicCallItems args ctx env
+      if items.length = 0 then pure ()
+      else .error (Error.arityMismatch 0 items.length)
+
   /-- Evaluate dotCall: a.f or a.f(args). The member result is a value boundary:
       structural zero-arg property access and collection builtins re-count to
       `Result.valueCount`, and user/lexical member calls re-count via
@@ -5887,6 +5903,12 @@ mutual
     match <- evalAttempt (resolveDotReceiver target ctx) with
     | .ok targetAlg =>
       if name = "string" then do
+        -- The intrinsic is a ZERO-parameter member: a written argument list is
+        -- assembled like every call's (each slot evaluated once, spreads opened)
+        -- and then rejected by arity exactly as `Obj.V(1)` is for a declared
+        -- zero-parameter member; `x.string()` (an empty list) stays the intrinsic.
+        -- C#: `RejectDotStringIntrinsicArguments`.
+        rejectDotStringIntrinsicArguments argsOpt ctx env
         -- The receiver is demanded for its VALUE with zero arguments, so the ONE
         -- zero-argument demand law decides from the resolved receiver's
         -- signature before its body is entered: `Inc.string` with `Inc(x)` is
@@ -5933,6 +5955,7 @@ mutual
               callLexicalWithReceiverCounted name target fallback argsOpt ctx env
     | .error (.notAnAlgorithm _) =>
       if name = "string" then do
+        rejectDotStringIntrinsicArguments argsOpt ctx env
         let val <- eval target ctx env
         let out <- resultToString val
         pure (out, Result.valueCount out)
@@ -6523,8 +6546,13 @@ def elaborateOpenHead (chain : List OwnerLevel) (name : Ident) : Expr :=
      At each step, the parameter map is updated with the processed property's
      final parameter-pattern signature before processing subsequent dependents.
 
-   Cycles are handled by leaving cyclic properties unmodified (no implicit
-   argument lifting for properties involved in mutual recursion). -/
+   Cycles (mutually recursive siblings) are not excluded from lifting: the
+   acyclic prefix is processed in topological order and the members of every
+   cycle are then processed in DECLARATION order, each seeing the signatures
+   completed so far (the C# `PropertyDependencyGraph.TopologicalOrder`). This
+   is the one documented way two reaches of a node can observe different
+   sibling signatures (the "sibling CYCLE" exception of the shared-DAG
+   guarantee in `docs/design/language-rules/evaluator-and-hosting.md`). -/
 
 -- Surface syntax support: while/repeat initial-state boundaries
 --------------------------------------------------------------------------------

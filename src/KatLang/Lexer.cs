@@ -108,6 +108,31 @@ public static class Lexer
             ? keywordKind
             : TokenKind.Identifier;
 
+    /// <summary>
+    /// The KatLang-facing spelling of an unexpected code unit in a diagnostic. A
+    /// visible character is quoted verbatim (<c>'@'</c>). A code unit with no glyph of
+    /// its own — a control character, an invisible Unicode format character (bidi
+    /// controls, zero-width spaces, byte-order marks), or an UNPAIRED surrogate — is
+    /// named by its code point (<c>U+001B</c>, <c>U+D83D</c>) with its category, so the
+    /// message itself is always well-formed, printable UTF-16 text: a raw control
+    /// character would steer the terminal or log that displays the message, and a raw
+    /// lone surrogate would make the message ill-formed (rendered as U+FFFD at every
+    /// UTF-8 boundary). The span still locates the code unit exactly.
+    /// </summary>
+    internal static string DescribeUnexpectedCharacter(char c)
+        => DescribeUnexpectedCharacter(c, char.GetUnicodeCategory(c));
+
+    private static string DescribeUnexpectedCharacter(int codePoint, System.Globalization.UnicodeCategory category)
+    {
+        if (category == System.Globalization.UnicodeCategory.Control)
+            return $"U+{codePoint:X4} (a control character)";
+        if (category == System.Globalization.UnicodeCategory.Surrogate)
+            return $"U+{codePoint:X4} (an unpaired surrogate code unit)";
+        if (category == System.Globalization.UnicodeCategory.Format)
+            return $"U+{codePoint:X4} (an invisible format character)";
+        return $"'{char.ConvertFromUtf32(codePoint)}'";
+    }
+
     public static (IReadOnlyList<Token> Tokens, IReadOnlyList<Diagnostic> Diagnostics) Tokenize(string source)
     {
         var tokens = new List<Token>();
@@ -314,9 +339,29 @@ public static class Lexer
                 case '.': tokens.Add(Token.Create(TokenKind.Dot,        singleStart, 1, singleLine, singleCol)); break;
                 case '~': tokens.Add(Token.Create(TokenKind.Tilde,      singleStart, 1, singleLine, singleCol)); break;
                 default:
+                    if (char.IsHighSurrogate(c) && i < source.Length && char.IsLowSurrogate(source[i]))
+                    {
+                        // A well-formed pair is one scalar. Supplementary format characters
+                        // need the same printable description as BMP format characters;
+                        // visible scalars remain quoted over both UTF-16 code units.
+                        i++; col++;
+                        tokens.Add(Token.Bad(singleStart, 2, singleLine, singleCol));
+                        var description = DescribeUnexpectedCharacter(
+                            char.ConvertToUtf32(source, singleStart),
+                            System.Globalization.CharUnicodeInfo.GetUnicodeCategory(source, singleStart));
+                        diagnostics.Add(new Diagnostic(
+                            $"Unexpected character: {description}.",
+                            DiagnosticSeverity.Error,
+                            new SourceSpan(singleLine, singleCol, singleLine, singleCol + 1))
+                        {
+                            Code = DiagnosticCode.UnexpectedCharacter,
+                        });
+                        break;
+                    }
+
                     tokens.Add(Token.Bad(singleStart, 1, singleLine, singleCol));
                     diagnostics.Add(new Diagnostic(
-                        $"Unexpected character: '{c}'.",
+                        $"Unexpected character: {DescribeUnexpectedCharacter(c)}.",
                         DiagnosticSeverity.Error,
                         new SourceSpan(singleLine, singleCol, singleLine, singleCol))
                     {

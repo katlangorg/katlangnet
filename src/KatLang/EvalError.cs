@@ -312,6 +312,10 @@ public abstract record EvalError
     /// sequence or exact list (<see cref="EvaluationLimits.MaxCollectionItems"/>, bounded
     /// by <see cref="EvaluationLimits.MaxSupportedCollectionItems"/>). Reported BEFORE the
     /// collection is allocated. Payload is machine-independent: item counts, never bytes.
+    /// Also reported when the HOST-ATOM PROJECTION of a successful run's whole output
+    /// (engine results, the flat entry points) exceeds the same limit; there
+    /// <c>Requested</c> is the lower bound limit + 1 (the projection stops counting at
+    /// the limit) and the error carries no source span.
     /// </summary>
     public sealed record CollectionSizeLimitExceeded(int Limit, long Requested) : EvalError;
 

@@ -176,15 +176,19 @@ public class Utf16LexerContractTests
     {
         // U+1D400 MATHEMATICAL BOLD CAPITAL A is an uppercase LETTER as a scalar value, but the
         // lexer classifies one code unit at a time and neither half of a pair is a letter. Both
-        // halves therefore become bad tokens. This is a code-unit-level contract, not an oversight
-        // to route around: changing it is a language-design decision.
+        // halves therefore become bad tokens, so the pair never becomes an identifier. This is a
+        // code-unit-level contract, not an oversight to route around: changing it is a
+        // language-design decision. Since the final audit (September 2026) the well-formed pair
+        // is reported ONCE as one two-unit bad token (never as two unpaired halves); the
+        // identifier rule itself is unchanged.
         var (tokens, diagnostics) = Lexer.Tokenize("\uD835\uDC00");
 
-        Assert.Equal(2, diagnostics.Count);
-        Assert.Equal(2, tokens.Count(t => t.Kind == TokenKind.Bad));
+        Assert.Single(diagnostics);
+        var bad = Assert.Single(tokens, t => t.Kind == TokenKind.Bad);
         Assert.DoesNotContain(tokens, t => t.Kind == TokenKind.Identifier);
-        Assert.Equal(1, tokens[0].Column);
-        Assert.Equal(2, tokens[1].Column);
+        Assert.Equal(1, bad.Column);
+        Assert.Equal(2, bad.Length);
+        Assert.Equal(3, tokens[^1].Column);
     }
 
     [Fact]
@@ -363,18 +367,55 @@ public class Utf16LexerContractTests
     // ── Diagnostics ──────────────────────────────────────────────────────────
 
     [Fact]
-    public void AnUnexpectedCharacterDiagnosticQuotesTheOffendingCodeUnitVerbatim()
+    public void AnUnexpectedCharacterDiagnosticNamesAGlyphlessCodeUnitByItsCodePoint()
     {
-        // The message embeds the code unit itself, so for an isolated surrogate the message string
-        // is ill-formed UTF-16 — faithful in memory, and something any UTF-8 boundary downstream
-        // will render as U+FFFD. Pinned because it is a real characteristic of the public
-        // diagnostic surface, not because it is necessarily the last word on the subject.
+        // Final audit (September 2026): the message used to embed the code unit itself, so for
+        // an isolated surrogate the message string was ill-formed UTF-16 (rendered as U+FFFD at
+        // every UTF-8 boundary), and a raw control character steered whatever displayed it.
+        // A code unit with no glyph of its own is now named by its code point and category;
+        // the message is always well-formed, printable text, and the span still locates the
+        // unit exactly.
         var (_, diagnostics) = Lexer.Tokenize("\uD83D");
-        var message = Assert.Single(diagnostics).Message;
+        var diagnostic = Assert.Single(diagnostics);
 
-        Assert.Equal("Unexpected character: '\uD83D'.", message);
-        Assert.Contains('\uD83D', message);
-        Assert.DoesNotContain('\uFFFD', message);
+        Assert.Equal("Unexpected character: U+D83D (an unpaired surrogate code unit).", diagnostic.Message);
+        Assert.DoesNotContain('\uD83D', diagnostic.Message);
+        Assert.Equal(new SourceSpan(1, 1, 1, 1), diagnostic.Span);
+
+        var (_, control) = Lexer.Tokenize("a \u001b b");
+        Assert.Equal("Unexpected character: U+001B (a control character).", Assert.Single(control).Message);
+
+        var (_, format) = Lexer.Tokenize("a\u200Bb");
+        Assert.Equal("Unexpected character: U+200B (an invisible format character).", Assert.Single(format).Message);
+
+        // A visible character is still quoted verbatim.
+        var (_, visible) = Lexer.Tokenize("@");
+        Assert.Equal("Unexpected character: '@'.", Assert.Single(visible).Message);
+
+        // A WELL-FORMED surrogate pair is one visible character: reported once, verbatim,
+        // over both of its code units (columns count code units) — never as two halves.
+        var (pairTokens, pair) = Lexer.Tokenize("a \uD83D\uDE00 b");
+        var pairDiagnostic = Assert.Single(pair);
+        Assert.Equal("Unexpected character: '\uD83D\uDE00'.", pairDiagnostic.Message);
+        Assert.Equal(new SourceSpan(1, 3, 1, 4), pairDiagnostic.Span);
+        Assert.Equal(6, pairTokens.Single(t => t.Kind == TokenKind.Identifier && t.StringValue == "b").Column);
+    }
+
+
+    [Theory]
+    [InlineData(0xE0001)] // LANGUAGE TAG
+    [InlineData(0xE0061)] // TAG LATIN SMALL LETTER A
+    [InlineData(0x1BCA0)] // SHORTHAND FORMAT LETTER OVERLAP
+    public void SupplementaryFormatCharacter_IsNamedWithoutEmbeddingTheInvisibleScalar(int codePoint)
+    {
+        var scalar = char.ConvertFromUtf32(codePoint);
+        var (tokens, diagnostics) = Lexer.Tokenize("a " + scalar + " b");
+        var diagnostic = Assert.Single(diagnostics);
+        Assert.Equal($"Unexpected character: U+{codePoint:X4} (an invisible format character).", diagnostic.Message);
+        Assert.DoesNotContain(scalar, diagnostic.Message, StringComparison.Ordinal);
+        Assert.Equal(new SourceSpan(1, 3, 1, 4), diagnostic.Span);
+        Assert.Equal(2, Assert.Single(tokens, t => t.Kind == TokenKind.Bad).Length);
+        Assert.Equal(6, tokens.Single(t => t.Kind == TokenKind.Identifier && t.StringValue == "b").Column);
     }
 
     [Fact]

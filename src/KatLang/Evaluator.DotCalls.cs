@@ -483,6 +483,30 @@ public static partial class Evaluator
     }
 
     /// <summary>
+    /// The <c>.string</c> intrinsic is a ZERO-parameter member. A written argument list is
+    /// assembled exactly like every call's (each written slot evaluated once, left to
+    /// right, spreads opened — <see cref="BuildCallArgumentInputs"/>) and then rejected by
+    /// arity, the same outcome as <c>Obj.V(1)</c> for a declared zero-parameter member, so a
+    /// written bundle is never silently dropped; an EMPTY written list (<c>x.string()</c>)
+    /// stays the intrinsic, as <c>A()</c> stays a call of <c>A</c>. Returns <c>null</c> when
+    /// the intrinsic may proceed. Lean: <c>rejectDotStringIntrinsicArguments</c>.
+    /// </summary>
+    private static EvalError? RejectDotStringIntrinsicArguments(
+        OutputBundle? argsOpt,
+        EvalCtx ctx,
+        IReadOnlyList<(string, Result)> valEnv)
+    {
+        if (argsOpt is null)
+            return null;
+
+        var inputsR = BuildCallArgumentInputs(argsOpt, ctx, valEnv);
+        if (inputsR.IsError)
+            return inputsR.Error;
+
+        return inputsR.Value.Count == 0 ? null : new EvalError.ArityMismatch(0, inputsR.Value.Count);
+    }
+
+    /// <summary>
     /// Counted dotCall evaluation — the CANONICAL owner of dot-call dispatch
     /// (<see cref="EvalDotCall"/> is its value projection).
     /// Smart dispatch:
@@ -528,6 +552,8 @@ public static partial class Evaluator
             {
                 if (dotCall.UsesOrdinaryDotStringIntrinsic())
                 {
+                    if (RejectDotStringIntrinsicArguments(argsOpt, ctx, valEnv) is { } arityRejection)
+                        return arityRejection;
                     var val = Eval(target, ctx, valEnv);
                     if (val.IsError) return val.Error;
                     var outR = ResultToString(ctx, val.Value);
@@ -544,6 +570,8 @@ public static partial class Evaluator
 
         if (dotCall.UsesOrdinaryDotStringIntrinsic())
         {
+            if (RejectDotStringIntrinsicArguments(argsOpt, ctx, valEnv) is { } arityRejection)
+                return arityRejection;
             var val = EvalDotStringReceiverAlgOutput(target, targetAlg, receiverIsStructuralMember, ctx, valEnv);
             if (val.IsError) return val.Error;
             var outR = ResultToString(ctx, val.Value);

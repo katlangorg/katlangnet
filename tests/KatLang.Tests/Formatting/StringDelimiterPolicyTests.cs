@@ -150,6 +150,32 @@ public class StringDelimiterPolicyTests
         Assert.NotEqual(atomText, stringText);
     }
 
+    /// <summary>
+    /// Final audit (September 2026): the non-finite atoms render as <c>NaN</c>,
+    /// <c>Infinity</c>, and <c>-Infinity</c>, so a STRING with exactly that content used to
+    /// be indistinguishable from the atom under WhenNeeded — the confusion the
+    /// numeric-looking rule exists to prevent. Those three spellings now count as
+    /// numeric-looking (case-sensitively: <c>nan</c> is ordinary text).
+    /// </summary>
+    [Theory]
+    [InlineData("N = (-2) ^ 0.5\nN", "'NaN'", "NaN")]
+    [InlineData("10 ^ 9999\n", "'Infinity'", "Infinity")]
+    [InlineData("-(10 ^ 9999)\n", "'-Infinity'", "-Infinity")]
+    public void NonFiniteAtomSpelling_StaysDistinctFromTheAtom(string atomProgram, string stringLiteral, string spelling)
+    {
+        var options = new OutputFormattingOptions { StringDelimiters = StringDelimiterMode.WhenNeeded, NewLine = "\n" };
+        var atomText = OutputFormatters.Readable.Format(KatLangEngine.Run(atomProgram), options);
+        var stringText = OutputFormatters.Readable.Format(KatLangEngine.Run(stringLiteral), options);
+
+        Assert.Equal(spelling, atomText);
+        Assert.Equal(stringLiteral, stringText);
+        Assert.NotEqual(atomText, stringText);
+
+        // Ordinary text that merely resembles a spelling stays raw.
+        Assert.Equal("nan", OutputFormatters.Readable.Format(KatLangEngine.Run("'nan'"), options));
+        Assert.Equal("Infinite", OutputFormatters.Readable.Format(KatLangEngine.Run("'Infinite'"), options));
+    }
+
     [Fact]
     public void WhitespaceBearingString_StaysDistinctFromAdjacentValues()
     {

@@ -399,6 +399,177 @@ public class RootStrayCloserRecoveryTests
         Assert.Equal("B", Assert.IsType<Expr.Resolve>(root.Output[1]).Name);
     }
 
+    // ── An OWED closer is never consumed as junk ─────────────────────────────
+    //
+    // Final audit (September 2026): primary-expression recovery used to consume
+    // whatever token it could not start an expression with — including the closer
+    // an ENCLOSING construct was waiting for. A trailing comma or a missing operand
+    // before `)`/`]`/`}` (`F(1, )`, `(1 + )`, `[1, ]`, `{1, }`) therefore ate the
+    // construct's own closer, left it open to the end of the file, and swallowed
+    // every later root declaration into it with cascading "declaration inside
+    // parentheses" reports. The owner now closes at its written closer and later
+    // declarations stay in the scope they were written in.
+
+    [Theory]
+    [InlineData("F(a) = a\nA = F(1, )\nB = 2\nC = 3\nA, B, C", "[UnexpectedToken] 2:10-2:10 Unexpected ')'.")]
+    [InlineData("F(a) = a\nA = F(1, -)\nB = 2\nC = 3\nA, B, C", "[UnexpectedToken] 2:11-2:11 Unexpected ')'.")]
+    [InlineData("F(a) = a\nA = (1, )\nB = 2\nC = 3\nA, B, C", "[UnexpectedToken] 2:9-2:9 Unexpected ')'.")]
+    [InlineData("F(a) = a\nA = (1 + )\nB = 2\nC = 3\nA, B, C", "[UnexpectedToken] 2:10-2:10 Unexpected ')'.")]
+    [InlineData("F(a) = a\nA = [1, ]\nB = 2\nC = 3\nA, B, C", "[UnexpectedToken] 2:9-2:9 Unexpected ']'.")]
+    [InlineData("F(a) = a\nA = {1, }\nB = 2\nC = 3\nA, B, C", "[UnexpectedToken] 2:9-2:9 Unexpected '}'.")]
+    [InlineData("F(a) = a\nA = F(F(1, ), 2)\nB = 2\nC = 3\nA, B, C", "[UnexpectedToken] 2:12-2:12 Unexpected ')'.")]
+    public void OwedCloserAfterAMissingOperand_ClosesTheConstruct_AndLaterDeclarationsSurvive(string source, string diagnostic)
+    {
+        var parsed = Parser.ParseSyntax(source);
+
+        Assert.Equal(new[] { diagnostic }, parsed.Diagnostics.Select(Describe));
+        var root = Assert.IsType<Algorithm.User>(parsed.Root);
+        // Clause definitions are elaborated after the simple properties, so the family F
+        // lists last; what matters is that every declaration is a ROOT property.
+        Assert.Equal(new[] { "A", "B", "C", "F" }, root.Properties.Select(p => p.Name));
+        Assert.Equal(new SourceSpan(3, 1, 3, 1), Assert.Single(root.Properties.Single(p => p.Name == "B").DeclarationSpans));
+        Assert.Equal(new SourceSpan(4, 1, 4, 1), Assert.Single(root.Properties.Single(p => p.Name == "C").DeclarationSpans));
+        Assert.Equal(3, root.Output.Count);
+        Assert.Equal("A", Assert.IsType<Expr.Resolve>(root.Output[0]).Name);
+    }
+
+    /// <summary>
+    /// Final audit (September 2026): the owed-closer rule must TERMINATE when the owed
+    /// closer belongs to an OUTER construct of another kind. An enclosing list is waiting
+    /// for `]` while a group or block body is still open (`[ (1, ]`, `[ {1 ]`): the primary
+    /// parser leaves the owed `]` unconsumed, so the body loop must end at it — the group
+    /// or block reports its own missing closer and the list closes at the `]`. (The first
+    /// version of the rule looped forever here: the body loop ended only at `)`/`}`, and
+    /// the editor fuzz corpus found the hang within minutes.) Later declarations survive
+    /// as ROOT declarations and the parse stays linear.
+    /// </summary>
+    [Theory]
+    [InlineData("A = [ (1, ]\nB = 2\nB", "[UnexpectedToken] 1:11-1:11 Unexpected ']'.", "[UnexpectedToken] 1:11-1:11 Expected ')' but found ']'.")]
+    [InlineData("A = [ (1 ]\nB = 2\nB", "[UnexpectedToken] 1:10-1:10 Expected ')' but found ']'.")]
+    [InlineData("A = [ {1, ]\nB = 2\nB", "[UnexpectedToken] 1:11-1:11 Unexpected ']'.", "[UnexpectedToken] 1:11-1:11 Expected '}' but found ']'.")]
+    [InlineData("A = [ {1 ]\nB = 2\nB", "[UnexpectedToken] 1:10-1:10 Expected '}' but found ']'.")]
+    [InlineData("A = [(]\nB = 2\nB", "[UnexpectedToken] 1:7-1:7 Expected ')' but found ']'.")]
+    [InlineData("A = [ F(1, ]\nB = 2\nB", "[UnexpectedToken] 1:12-1:12 Unexpected ']'.", "[UnexpectedToken] 1:12-1:12 Expected ')' but found ']'.")]
+    [InlineData("A = [ ( [ (1 ] ) ]\nB = 2\nB", "[UnexpectedToken] 1:14-1:14 Expected ')' but found ']'.")]
+    [InlineData("A = ( [1, )\nB = 2\nB", "[UnexpectedToken] 1:11-1:11 Unexpected ')'.", "[UnexpectedToken] 1:11-1:11 Expected ']' but found ')'.")]
+    [InlineData("A = { [1, }\nB = 2\nB", "[UnexpectedToken] 1:11-1:11 Unexpected '}'.", "[UnexpectedToken] 1:11-1:11 Expected ']' but found '}'.")]
+    public void OwedCloserOfAnOuterConstructOfAnotherKind_EndsTheNestedBody_AndTheParseTerminates(
+        string source, params string[] diagnostics)
+    {
+        var parsed = Parser.ParseSyntax(source);
+
+        Assert.Equal(diagnostics, parsed.Diagnostics.Select(Describe));
+        var root = Assert.IsType<Algorithm.User>(parsed.Root);
+        Assert.Equal(new[] { "A", "B" }, root.Properties.Select(p => p.Name));
+        Assert.Equal(new SourceSpan(2, 1, 2, 1), Assert.Single(root.Properties.Single(p => p.Name == "B").DeclarationSpans));
+        Assert.Equal("B", Assert.IsType<Expr.Resolve>(Assert.Single(root.Output)).Name);
+    }
+
+    /// <summary>
+    /// Exhaustive delimiter soup: EVERY string over the delimiter/separator/atom alphabet up
+    /// to five characters parses to completion, with a diagnostic count linear in the input.
+    /// Recovery in the parser is a set of non-consuming returns (an owed closer, the end of
+    /// input) balanced by loops that must END at those tokens; this sweep is the executable
+    /// statement that no combination of open and close delimiters re-enters a loop without
+    /// consuming (the September 2026 audit's first owed-closer rule hung on `[ (1, ]`). The
+    /// whole sweep is bounded by a wall-clock guard so a regression fails with the offending
+    /// input instead of hanging the suite.
+    /// </summary>
+    [Fact]
+    public void DelimiterSoup_AlwaysTerminates_WithLinearDiagnostics()
+    {
+        char[] alphabet = ['(', ')', '[', ']', '{', '}', ',', '1', ' ', '\n'];
+        var current = "";
+        var parsed = 0;
+        var sweep = Task.Run(() =>
+        {
+            var buffer = new char[5];
+            for (var length = 1; length <= 5; length++)
+            {
+                var combinations = (int)Math.Pow(alphabet.Length, length);
+                for (var code = 0; code < combinations; code++)
+                {
+                    var rest = code;
+                    for (var i = 0; i < length; i++)
+                    {
+                        buffer[i] = alphabet[rest % alphabet.Length];
+                        rest /= alphabet.Length;
+                    }
+                    var source = new string(buffer, 0, length);
+                    Volatile.Write(ref current, source);
+                    var result = Parser.ParseSyntax(source);
+                    Assert.True(
+                        result.Diagnostics.Count <= 2 * length + 1,
+                        $"{result.Diagnostics.Count} diagnostics for {length} characters: {Escape(source)}");
+                    parsed++;
+                }
+            }
+        });
+
+        Assert.True(
+            sweep.Wait(TimeSpan.FromMinutes(2)),
+            $"The delimiter sweep did not terminate; last input: {Escape(Volatile.Read(ref current))}");
+        Assert.Equal(111_110, parsed);
+
+        static string Escape(string source) => source.Replace("\n", "\\n", StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void OwedCloserRecovery_KeepsTheRecoveredSlotInsideTheConstruct()
+    {
+        // The missing operand becomes one placeholder slot of the SAME list; the
+        // pinned `(3,)` family (LanguageSpec `trailing-comma-in-parens-rejected`)
+        // keeps its UnexpectedToken code.
+        var parsed = Parser.ParseSyntax("F(a, b) = a\nA = F(1, )\nA");
+        var root = Assert.IsType<Algorithm.User>(parsed.Root);
+        var body = Assert.IsType<Algorithm.User>(root.Properties.Single(p => p.Name == "A").Value);
+        var call = Assert.IsType<Expr.Call>(Assert.Single(body.Output));
+        Assert.Equal(2, call.Args.Count);
+        Assert.Equal(1, Assert.IsType<Expr.Num>(call.Args[0]).Value);
+        Assert.Equal(0, Assert.IsType<Expr.Num>(call.Args[1]).Value);
+        Assert.Equal(DiagnosticCode.UnexpectedToken, Assert.Single(parsed.Diagnostics).Code);
+    }
+
+    [Fact]
+    public void CloserNoConstructIsWaitingFor_IsStillRecoveredAsJunk()
+    {
+        // A closer of another kind inside a brace body is not owed by anything: it is
+        // consumed as junk exactly as before, so the block still closes at its own `}`.
+        var parsed = Parser.ParseSyntax("A = { 1, ) 2 }\nB = 2\nA, B");
+        Assert.Equal(new[] { "[UnexpectedToken] 1:10-1:10 Unexpected ')'." }, parsed.Diagnostics.Select(Describe));
+        var root = Assert.IsType<Algorithm.User>(parsed.Root);
+        Assert.Equal(new[] { "A", "B" }, root.Properties.Select(p => p.Name));
+        var block = Assert.IsType<Algorithm.User>(root.Properties[0].Value);
+        Assert.Equal(3, block.Output.Count);
+
+        // At the root nothing is owed either: `1, )` reports once and keeps parsing.
+        var atRoot = Parser.ParseSyntax("1, )\nB = 2\nB");
+        Assert.Equal(new[] { "[UnexpectedToken] 1:4-1:4 Unexpected ')'." }, atRoot.Diagnostics.Select(Describe));
+        Assert.Equal(new[] { "B" }, Assert.IsType<Algorithm.User>(atRoot.Root).Properties.Select(p => p.Name));
+    }
+
+    [Fact]
+    public void SemicolonRecovery_NeverClaimsTheNextDeclarationAsASlot()
+    {
+        // `;` is never expression syntax; its recovery consumes the `;` and stops at a
+        // declaration head, a closer, or the end of input instead of parsing the next
+        // line's `B = 2` as a slot (which tore the head apart and made `B` a parameter).
+        var parsed = Parser.ParseSyntax("A = 1;\nB = 2\nA, B");
+        Assert.Equal(DiagnosticCode.UnsupportedSemicolon, Assert.Single(parsed.Diagnostics).Code);
+        var root = Assert.IsType<Algorithm.User>(parsed.Root);
+        Assert.Equal(new[] { "A", "B" }, root.Properties.Select(p => p.Name));
+        Assert.Equal(1, Assert.IsType<Expr.Num>(Assert.Single(Assert.IsType<Algorithm.User>(root.Properties[0].Value).Output)).Value);
+
+        var sameLine = Parser.ParseSyntax("A = 1; B = 2\nA, B");
+        Assert.Equal(DiagnosticCode.UnsupportedSemicolon, Assert.Single(sameLine.Diagnostics).Code);
+        Assert.Equal(new[] { "A", "B" }, Assert.IsType<Algorithm.User>(sameLine.Root).Properties.Select(p => p.Name));
+
+        // A following EXPRESSION row still recovers as the next slot (unchanged).
+        var expression = Parser.ParseSyntax("A = 1;\n2\nA");
+        Assert.Equal(DiagnosticCode.UnsupportedSemicolon, Assert.Single(expression.Diagnostics).Code);
+        Assert.Equal(2, Assert.IsType<Algorithm.User>(Assert.IsType<Algorithm.User>(expression.Root).Properties[0].Value).Output.Count);
+    }
+
     [Fact]
     public void StrayClosingBracket_KeepsItsOwnRecoveryPath()
     {

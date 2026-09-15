@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using KatLang.Optimizations.Loops;
 
 namespace KatLang.Tests;
 
@@ -27,6 +28,91 @@ public class EvaluationLimitsProcessTests
     [Fact]
     public async Task ResolvedValueDemandRecursion_IsStructurallyBounded_InSubprocess()
         => await RunProbeChild("ResolvedValueDemandRecursion_ProbeChild");
+
+    [Fact]
+    public async Task PlannedLoopUnderRecursion_IsStructurallyBounded_InSubprocess()
+        => await RunProbeChild("PlannedLoopUnderRecursion_ProbeChild");
+
+    /// <summary>
+    /// Final audit (September 2026): the loop planner (<c>LoopOptimizer.TryBuildLoopExprPlan</c>)
+    /// and the planned expression evaluator recurse once per AST level of the step body between
+    /// two budget chokepoints, and a plan is built at loop-INVOCATION time — after the dynamic
+    /// recursion has already consumed most of the host stack. A parser- and preflight-accepted
+    /// step (an 80-operator chain, or 126 nested <c>if</c>s) invoked at a modest recursion depth
+    /// therefore terminated the whole process with an uncatchable stack overflow inside the
+    /// planner, where the generic strategy completes or reports the structured stack error.
+    /// Both walks now probe the host stack per level: an unplannable step falls back to the
+    /// generic strategy, and a planned spine that runs out of headroom degrades to the
+    /// structured <see cref="EvalError.EvaluationStackExhausted"/>. The generic strategy is the
+    /// oracle for the value where the run completes.
+    /// </summary>
+    [Fact]
+    public void PlannedLoopUnderRecursion_ProbeChild()
+    {
+        if (Environment.GetEnvironmentVariable(ProbeChildEnvironment) != "1")
+            return;
+
+        var chain80 = "Step(x) = x" + string.Concat(Enumerable.Repeat(" + 1", 80));
+        var chain200 = "Step(x) = x" + string.Concat(Enumerable.Repeat(" + 1", 200));
+        var nestedIfs = "Step(x) = " + string.Concat(Enumerable.Repeat("if(x + 1, ", 126)) + "x + 1"
+            + string.Concat(Enumerable.Repeat(", 0)", 126));
+
+        // A guard that simply refuses every plan must not satisfy the safety test.
+        // At shallow depth, these accepted spines must execute planned operations,
+        // produce the hand-computed result, and preserve the generic budget relations.
+        foreach (var (step, expected) in new[] { (chain80, 160), (chain200, 400) })
+        {
+            var program = new Expr.AlgorithmExpr(SourceProvenance.ParseValid(step + "\nStep.repeat(2, 0)").Root);
+            var diagnostics = new LoopOptimizationDiagnostics();
+            var planned = Evaluator.RunCountedObserved(program, loopDiagnostics: diagnostics);
+            var generic = Evaluator.RunCountedObserved(program, enableOptimizations: false);
+            Assert.False(planned.Result.IsError);
+            Assert.False(generic.Result.IsError);
+            Assert.Equal(new Result.Atom(expected), planned.Result.Value.Value);
+            Assert.Equal(generic.Result.Value, planned.Result.Value);
+            Assert.True(diagnostics.PlannedBuiltinOperations > 0);
+            Assert.Equal(0, diagnostics.GenericExpressionEvaluationsInsideOptimizedLoops);
+            // Unconfigured step accounting can omit optimized iterations; configuring
+            // MaxSteps pins the generic strategy in CreateRootCtx. Depth and persistent
+            // materialization, in contrast, must agree even on this wholly planned path.
+            Assert.InRange(planned.Budget.ConsumedSteps, 0, generic.Budget.ConsumedSteps);
+            Assert.Equal(generic.Budget.PeakDepth, planned.Budget.PeakDepth);
+            Assert.Equal(generic.Budget.MaterializedItems, planned.Budget.MaterializedItems);
+            Assert.Equal(generic.Budget.MaterializedStringChars, planned.Budget.MaterializedStringChars);
+            Assert.Equal(0, planned.Budget.CurrentDepth);
+            Assert.Equal(0, generic.Budget.CurrentDepth);
+        }
+
+        foreach (var (recursion, step) in new[] { (55, chain80), (60, chain80), (40, chain200), (50, nestedIfs), (30, nestedIfs) })
+        {
+            var source = $"Rec(n) = if(n == 0, Step.repeat(2, 0), Rec(n - 1))\n{step}\nRec({recursion})";
+            var program = new Expr.AlgorithmExpr(SourceProvenance.ParseValid(source).Root);
+
+            // Public engine path under DEFAULT limits — the configuration an embedding host runs with.
+            var result = KatLangEngine.Run(source);
+            switch (result)
+            {
+                case RunResult.Success:
+                    // The optimized run completed (planned, or generic after the planner's
+                    // fallback): its value is the generic strategy's value.
+                    var generic = Evaluator.RunCountedObserved(program, enableOptimizations: false).Result;
+                    Assert.False(generic.IsError, "generic strategy failed for recursion " + recursion + (generic.IsError ? ": " + generic.Error : ""));
+                    Assert.Equal(generic.Value.Value, Assert.IsType<RunResult.Success>(result).Value);
+                    break;
+                case RunResult.EvalFailure failure:
+                    var error = Assert.Single(failure.Errors);
+                    Assert.True(
+                        error.Source is EvalError.EvaluationStackExhausted or EvalError.EvaluationDepthExceeded,
+                        $"expected success or a structured resource error for recursion {recursion}, got: {error.Message}");
+                    break;
+                default:
+                    Assert.Fail($"unexpected outcome {result.GetType().Name} for recursion {recursion}");
+                    break;
+            }
+        }
+
+        WriteProbeMarker();
+    }
 
     [Fact]
     public void BuiltinArgumentRecursion_ProbeChild()

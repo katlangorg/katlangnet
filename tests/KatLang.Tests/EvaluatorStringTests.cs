@@ -118,6 +118,46 @@ public class EvaluatorStringTests
         AssertEvalString(source, "15");
     }
 
+    // ── `.string(args)`: the intrinsic is a ZERO-parameter member ───────────
+
+    /// <summary>
+    /// Final audit (September 2026): a written argument list on the <c>.string</c>
+    /// intrinsic used to be silently DROPPED (<c>A.string(1)</c> converted <c>A</c> as
+    /// if no arguments were written). The intrinsic is a zero-parameter member: the
+    /// written slots are assembled exactly like every call's — each slot evaluated once,
+    /// spreads opened — and then rejected by arity (<c>ArityMismatch(0, n)</c>), the
+    /// outcome <c>Obj.V(1)</c> has for a declared zero-parameter member, on BOTH receiver
+    /// paths (algorithm receiver, value receiver). Lean:
+    /// <c>rejectDotStringIntrinsicArguments</c>, CoreTests <c>Strings.lean</c>.
+    /// </summary>
+    [Theory]
+    [InlineData("A = 42\nA.string(1)", 1)]                        // algorithm receiver (named property)
+    [InlineData("A = 42\nA.string(1, 2)", 2)]
+    [InlineData("42.string(1)", 1)]                               // value receiver (notAnAlgorithm path)
+    [InlineData("(10 + 5).string(1, 2, 3)", 3)]
+    [InlineData("S = 1, 2\nA = 42\nA.string(S*)", 2)]              // a spread slot counts by its opened items
+    [InlineData("S = 1, 2\nA = 42\nA.string(0, S*)", 3)]
+    [InlineData("Obj = {\n    5\n}\nObj.string(1)", 1)]           // brace algorithm receiver
+    public void Eval_StringIntrinsic_RejectsWrittenArguments_ByArity(string source, int written)
+        => AssertEvalFailsWithArityMismatch(source, expected: 0, actual: written);
+
+    [Theory]
+    [InlineData("A = 42\nA.string()", "42")]
+    [InlineData("42.string()", "42")]
+    [InlineData("E = ()\nA = 42\nA.string(E*)", "42")]            // a spread of nothing writes no slot
+    public void Eval_StringIntrinsic_EmptyWrittenArgumentList_StaysTheIntrinsic(string source, string expected)
+        => AssertEvalString(source, expected);
+
+    [Fact]
+    public void Eval_StringIntrinsic_WrittenArgumentsAreEvaluatedBeforeTheArityRejection()
+    {
+        // Assembly precedes the rejection, so a failing slot reports ITS error, exactly as
+        // for any call whose argument fails before arity is checked.
+        var result = EvalFull("A = 42\nA.string(1 / 0)");
+        Assert.True(result.IsError);
+        Assert.IsType<EvalError.DivByZero>(Innermost(result.Error));
+    }
+
     // ── String literals: first-class value tests ────────────────────────────
 
     [Fact]

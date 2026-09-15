@@ -1,4 +1,5 @@
 using System.Numerics;
+using System.Runtime.CompilerServices;
 using KatLang.Evaluation.Caching;
 
 namespace KatLang.Optimizations.Loops;
@@ -87,6 +88,12 @@ internal static partial class LoopOptimizer
         return new LoopExprPlanBuild(new LoopExprPlan.Fallback(expr, reason), false);
     }
 
+    /// <summary>
+    /// The fallback reason recorded when the host stack cannot hold the planner's walk of a
+    /// step expression (see <see cref="TryBuildLoopExprPlan"/>).
+    /// </summary>
+    internal const string InsufficientStackFallbackReason = "insufficient host stack headroom to plan the expression";
+
     private static LoopExprPlanTryBuildResult TryBuildLoopExprPlan(
         Expr expr,
         IReadOnlyList<string> stateNames,
@@ -95,6 +102,16 @@ internal static partial class LoopOptimizer
         IReadOnlyList<LoopTempPlan> tempPlans,
         Dictionary<Expr, LoopExprPlanTryBuildResult>? memo = null)
     {
+        // A plan is built at loop-INVOCATION time, after the dynamic recursion has already
+        // consumed its share of the host stack, and this walk recurses once per AST level of
+        // the step (two frames per level, three through a planned `if`) between two budget
+        // chokepoints. Probe the host stack per level exactly like the chokepoints do: a step
+        // that no longer fits is simply not plannable HERE and takes the generic strategy,
+        // whose expression spines are iterative and whose invocations probe. A stack-position
+        // verdict is never memoized — the same node may fit on a later, shallower visit.
+        if (!RuntimeHelpers.TryEnsureSufficientExecutionStack())
+            return new LoopExprPlanTryBuildResult(null, InsufficientStackFallbackReason);
+
         memo ??= new(ReferenceEqualityComparer.Instance);
         if (memo.TryGetValue(expr, out var existing))
             return existing;
@@ -561,6 +578,13 @@ internal static partial class LoopOptimizer
 
             case LoopExprPlan.Unary unary:
             {
+                // The planned spine recurses per plan level with no chokepoint in between (the
+                // generic spine is iterative). The planner probed at the same stack position,
+                // so this backstop fires only when its margin was not enough; like every
+                // chokepoint probe it can only stop EARLIER with the structured error.
+                if (!RuntimeHelpers.TryEnsureSufficientExecutionStack())
+                    return new EvalError.EvaluationStackExhausted();
+
                 var operandR = EvalLoopExprPlan(unary.Operand, frame);
                 if (operandR.IsError) return operandR.Error;
                 frame.Diagnostics?.RecordPlannedBuiltinOperation();
@@ -569,6 +593,9 @@ internal static partial class LoopOptimizer
 
             case LoopExprPlan.Binary binary:
             {
+                if (!RuntimeHelpers.TryEnsureSufficientExecutionStack())
+                    return new EvalError.EvaluationStackExhausted();
+
                 var leftR = EvalLoopExprPlan(binary.Left, frame);
                 if (leftR.IsError) return leftR.Error;
                 var rightR = EvalLoopExprPlan(binary.Right, frame);

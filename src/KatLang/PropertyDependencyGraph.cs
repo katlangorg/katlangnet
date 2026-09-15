@@ -890,9 +890,30 @@ internal static class PropertyDependencyGraphBuilder
         foreach (var candidate in pending.Candidates)
         {
             candidates ??= new List<OpenCandidate>(pending.Candidates.Count);
-            candidates.Add(candidate is ResolvedOpenCandidate resolved
-                ? new ResolvedOpenCandidate(ExpandAtLevel(resolved.Seed, level))
-                : candidate);
+            switch (candidate)
+            {
+                case ResolvedOpenCandidate resolved:
+                    candidates.Add(new ResolvedOpenCandidate(ExpandAtLevel(resolved.Seed, level)));
+                    break;
+
+                case UnresolvedOpenCandidate unresolved when level.LocalPropertySummaries.ContainsKey(unresolved.Head):
+                    // THIS level declares the carried target's head (the opener's direct
+                    // chain reaches it here, before any farther level): settle the candidate
+                    // in place exactly as the opener would have settled its own head — the
+                    // charged provider seed, relative to this level. A head that does not
+                    // publicly provide the referenced name is not a candidate (final audit,
+                    // September 2026: an unsettled head declared BETWEEN the opener and the
+                    // settling level used to be carried past its declaration, so a property
+                    // reading `p` through it was classified exported and the run cache
+                    // served the first activation's value to every later call).
+                    if (TryResolveLocalHeadCandidate(unresolved.Head, unresolved.PublicSteps, pending, level) is { } settled)
+                        candidates.Add(settled);
+                    break;
+
+                default:
+                    candidates.Add(candidate);
+                    break;
+            }
         }
 
         if (level.HasOpens)
@@ -951,21 +972,40 @@ internal static class PropertyDependencyGraphBuilder
                 continue;
             }
 
-            var (providerSeed, providerNavigated) = ChargePath(LocalPropertyValue(level.Algorithm, head), PublicSteps(steps), level.Memos);
-            if (providerNavigated < steps.Count)
-                continue;
-
-            var provider = NavigateNode(LocalPropertyValue(level.Algorithm, head), steps);
-            if (provider is null || TryChargeProvidedMember(provider, pending, level.Memos) is not { } memberSeed)
-                continue;
-
-            // The provided member's seed is relative to the provider, which is relative to
-            // the head's declaring level — this level; the dotted steps were navigated by
-            // ChargePath from the head, so expand the member seed through the same nodes.
-            var seed = ExpandThroughNodes(memberSeed, NodePath(LocalPropertyValue(level.Algorithm, head), steps), level.Memos);
-            seed.UnionWith(providerSeed);
-            yield return new ResolvedOpenCandidate(ExpandAtLevel(seed, level));
+            if (TryResolveLocalHeadCandidate(head, steps, pending, level) is { } candidate)
+                yield return candidate;
         }
+    }
+
+    /// <summary>
+    /// The ONE settlement of an <c>open</c> target whose head is a property of
+    /// <paramref name="level"/> — reached either by the opener itself
+    /// (<see cref="MakeOpenCandidates"/>) or by an escaping reference carrying the head
+    /// outward (<see cref="AddEscaping"/>): the dotted steps must be public members, the
+    /// provider must publicly declare the referenced head, and the charged seed (the
+    /// navigated steps' and the provided member's requirements) is relative to this level's
+    /// parent. Null when the target provides nothing.
+    /// </summary>
+    private static ResolvedOpenCandidate? TryResolveLocalHeadCandidate(
+        string head,
+        IReadOnlyList<string> steps,
+        PendingReference pending,
+        LevelContext level)
+    {
+        var (providerSeed, providerNavigated) = ChargePath(LocalPropertyValue(level.Algorithm, head), PublicSteps(steps), level.Memos);
+        if (providerNavigated < steps.Count)
+            return null;
+
+        var provider = NavigateNode(LocalPropertyValue(level.Algorithm, head), steps);
+        if (provider is null || TryChargeProvidedMember(provider, pending, level.Memos) is not { } memberSeed)
+            return null;
+
+        // The provided member's seed is relative to the provider, which is relative to
+        // the head's declaring level — this level; the dotted steps were navigated by
+        // ChargePath from the head, so expand the member seed through the same nodes.
+        var seed = ExpandThroughNodes(memberSeed, NodePath(LocalPropertyValue(level.Algorithm, head), steps), level.Memos);
+        seed.UnionWith(providerSeed);
+        return new ResolvedOpenCandidate(ExpandAtLevel(seed, level));
     }
 
     /// <summary>

@@ -44,7 +44,8 @@ public enum StringDelimiterMode
     /// only where the raw content would obscure item boundaries or the value
     /// kind: the empty string, strings containing whitespace,
     /// numeric-looking strings (including signed, fractional, exponent, and
-    /// KatLang digit-separator forms, regardless of numeric overflow), strings
+    /// KatLang digit-separator forms, regardless of numeric overflow, and the
+    /// non-finite atom spellings <c>NaN</c>, <c>Infinity</c>, <c>-Infinity</c>), strings
     /// containing structural characters
     /// (<c>,</c> <c>(</c> <c>)</c> <c>[</c> <c>]</c> <c>'</c>), strings
     /// containing control characters, invisible Unicode format characters

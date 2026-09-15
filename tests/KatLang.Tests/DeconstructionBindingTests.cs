@@ -599,7 +599,9 @@ public class DeconstructionBindingTests
         var failure = Assert.IsType<RunResult.EvalFailure>(KatLangEngine.Run("a, b = sum\na"));
         var message = failure.ToDisplayString();
         Assert.DoesNotContain("Assignment pattern", message, StringComparison.Ordinal);
-        Assert.Contains("Expected 0 parameters", message, StringComparison.Ordinal);
+        // The builtin's own signature-worded arity error (final audit, September 2026: the
+        // signature is rendered first wherever it is carried, never the raw placeholder pair).
+        Assert.Contains("Callable `sum(collection)` expects 1 argument, but was called with 0 arguments", message, StringComparison.Ordinal);
 
         var bindingFailure = Assert.IsType<RunResult.EvalFailure>(KatLangEngine.Run("x, *rest = sum\nx"));
         Assert.DoesNotContain("Assignment pattern", bindingFailure.ToDisplayString(), StringComparison.Ordinal);

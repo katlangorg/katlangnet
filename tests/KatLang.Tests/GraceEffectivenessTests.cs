@@ -59,12 +59,13 @@ public class GraceEffectivenessTests
             source, "a", "it already resolves to an explicit parameter", new SourceSpan(line, column, endLine, endColumn));
 
     [Fact]
-    public void GraceOnAnExplicitParameter_InsideARedundantGroup_IsRejectedAtTheGroup()
+    public void GraceOnAnExplicitParameter_InsideARedundantGroup_IsRejectedAtTheOccurrence()
     {
-        // `(~a)` unwraps to the graced occurrence and, by the grouped-expression span
-        // rule (F6), the occurrence is located as the whole group it was written as.
+        // `(~a)` keeps the plain name's capture boundary (`(a)` is a capture, never an
+        // unwrapped name — final audit, September 2026), so the marked occurrence inside
+        // the group is what the report locates, exactly as in `(b, ~a)`.
         AssertIneffective(
-            "K(b, a) = b, (~a)\nK(1, 2)", "a", "it already resolves to an explicit parameter", new SourceSpan(1, 14, 1, 17));
+            "K(b, a) = b, (~a)\nK(1, 2)", "a", "it already resolves to an explicit parameter", new SourceSpan(1, 15, 1, 16));
     }
 
     [Theory]

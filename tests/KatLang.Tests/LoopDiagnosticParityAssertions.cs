@@ -147,6 +147,7 @@ internal static class LoopDiagnosticParityAssertions
         {
             TextErrorContext(var message) => $"Text[{Text(message)}]",
             PropertyEvaluationContext(var propertyName) => $"Property[{Text(propertyName)}]",
+            ParameterEvaluationContext(var parameterName) => $"Parameter[{Text(parameterName)}]",
             ProgramEvaluationContext => "Program[]",
             DotCallContext(var receiver, var propertyName) => $"DotCall[{Text(receiver)}|{Text(propertyName)}]",
             CallContext(var callee) => $"Call[{Text(callee)}]",

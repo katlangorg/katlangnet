@@ -68,14 +68,16 @@ public class ParserGraceScanDepthTests
     [InlineData("F(0) = [~a, ~b]", 1, 9, 1, 10)]
     // Call: argument output slots in written order.
     [InlineData("F(0) = G(~a, ~b)", 1, 10, 1, 11)]
-    // Call: the function expression is scanned before the argument outputs.
-    // (A graced name unwrapped from a redundant group `(~a)` carries the
-    // group's extent — the grouped-expression span rule, F6.)
-    [InlineData("F(0) = (~a)(~b)", 1, 8, 1, 11)]
+    // Grouped receivers: a graced name keeps the plain name's CAPTURE boundary
+    // (`(~a)` is the capture `(a)` with a marker inside, never an unwrapped name),
+    // so the first match is the marked occurrence inside the group. `(~a)(~b)` is
+    // then two same-line items — the separator diagnostic joins, the scan order
+    // does not change.
+    [InlineData("F(0) = (~a)(~b)", 1, 9, 1, 10)]
     // Dot-call: the receiver target is scanned before the argument outputs.
-    [InlineData("F(0) = (~a).G(~b)", 1, 8, 1, 11)]
+    [InlineData("F(0) = (~a).G(~b)", 1, 9, 1, 10)]
     // Dot-call without arguments: target-only descent.
-    [InlineData("F(0) = (~a).count", 1, 8, 1, 11)]
+    [InlineData("F(0) = (~a).count", 1, 9, 1, 10)]
     // Block: output rows in written order (a multi-row group is a capture, so
     // its rows keep their own spans).
     [InlineData("F(0) = (~a, ~b)", 1, 9, 1, 10)]
@@ -83,10 +85,10 @@ public class ParserGraceScanDepthTests
     // Unary: operand descent.
     [InlineData("F(0) = -~a", 1, 9, 1, 10)]
     // Index: the target is scanned before the selector.
-    [InlineData("F(0) = (~a):(~b)", 1, 8, 1, 11)]
-    [InlineData("F(0) = x:(~b)", 1, 10, 1, 13)]
+    [InlineData("F(0) = (~a):(~b)", 1, 9, 1, 10)]
+    [InlineData("F(0) = x:(~b)", 1, 11, 1, 12)]
     // Spread: operand descent.
-    [InlineData("F(0) = (~a)*", 1, 8, 1, 11)]
+    [InlineData("F(0) = (~a)*", 1, 9, 1, 10)]
     // Nested combination across list, binary, call, and block forms.
     [InlineData("F(0) = [1 + 2, G(3, (4, ~c + ~d))]", 1, 25, 1, 26)]
     // Postfix grace spelling participates in the same source order.

@@ -37,6 +37,10 @@ internal static class HelpText
 
           --version          Show the KatLang version.
           --help             Show help.
+
+          --                 End of options: every later argument is a file or
+                             source, even one that begins with two dashes
+                             (katlang eval -- "--1").
         """;
 
     public const string UsageHint = $"Run '{CommandLine.ProgramName} {CommandLine.HelpOption}' for usage.";

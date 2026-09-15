@@ -727,4 +727,210 @@ internal static class Decimal128Numerics
     /// </summary>
     private static Decimal128 EndpointComplement(Decimal128 x)
         => Decimal128.Sqrt(Decimal128.FusedMultiplyAdd(-x, x, Decimal128.One));
+
+    // ── Logarithms and powers near 1 ─────────────────────────────────────────
+
+    /// <summary>
+    /// Natural logarithm with the accuracy of <c>ln(1 + ε)</c> near 1. The platform
+    /// <see cref="Decimal128.Log"/> loses roughly one significant digit per decade of
+    /// closeness to 1 (cancellation: <c>Log(1 + 1e-33)</c> kept five correct digits of
+    /// 34 in the tested runtime), which the tutorial's stated accuracy of the logarithm
+    /// family does not allow. For <c>0.5 &lt;= x &lt;= 1.5</c> the difference <c>x - 1</c>
+    /// is EXACT in Decimal128 (the two operands are within a factor of two of each other),
+    /// so <see cref="Decimal128.LogP1"/> of that exact difference is the logarithm without
+    /// the cancellation; it agrees with <see cref="Decimal128.Log"/> to the last digit
+    /// away from 1 and at the window's edges. Outside the window, and for every
+    /// non-finite, zero, or negative input, the platform function's verdict is kept
+    /// bit-for-bit. Like the inverse-trigonometric reformulation this is an accurate
+    /// composition of platform primitives, not a certified rounding.
+    /// </summary>
+    internal static Decimal128 NaturalLog(Decimal128 x)
+        => IsInLogOnePlusWindow(x)
+            ? Decimal128.LogP1(x - Decimal128.One)
+            : Decimal128.Log(x);
+
+    /// <summary>
+    /// Base-10 logarithm: <see cref="NaturalLog"/> over <c>ln 10</c> inside the near-1
+    /// window (where <see cref="Decimal128.Log10"/> loses the same digits), the platform
+    /// function elsewhere — so exact results away from 1, such as <c>Lg(1000) = 3</c>,
+    /// keep their existing platform value.
+    /// </summary>
+    internal static Decimal128 Log10(Decimal128 x)
+        => IsInLogOnePlusWindow(x)
+            ? NaturalLog(x) / NaturalLogOfTen
+            : Decimal128.Log10(x);
+
+    /// <summary>
+    /// Logarithm of <paramref name="value"/> in the given <paramref name="newBase"/>:
+    /// the ratio of the two natural logarithms whenever either argument lies in the
+    /// near-1 window, the platform <see cref="Decimal128.Log(Decimal128, Decimal128)"/>
+    /// otherwise (its exact results such as <c>Log(100, 10) = 2</c> are unchanged). A
+    /// DEGENERATE base or value — zero, negative, non-finite, or a base of exactly 1 —
+    /// always keeps the platform verdict (NaN, an infinity, or zero by its rules), so that
+    /// verdict never depends on whether the OTHER argument happens to lie in the window.
+    /// </summary>
+    internal static Decimal128 Log(Decimal128 value, Decimal128 newBase)
+        => IsOrdinaryLogArgument(value) && IsOrdinaryLogArgument(newBase) && newBase != Decimal128.One
+            && (IsInLogOnePlusWindow(value) || IsInLogOnePlusWindow(newBase))
+            ? NaturalLog(value) / NaturalLog(newBase)
+            : Decimal128.Log(value, newBase);
+
+    /// <summary>Finite and strictly positive: an argument the reformulation may take.</summary>
+    private static bool IsOrdinaryLogArgument(Decimal128 x)
+        => Decimal128.IsFinite(x) && x > Decimal128.Zero;
+
+    /// <summary>
+    /// <see cref="Decimal128.Log"/> of 10, computed once from the platform function
+    /// (10 is far from 1, where that function is accurate to the last digit).
+    /// </summary>
+    private static readonly Decimal128 NaturalLogOfTen = Decimal128.Log((Decimal128)10);
+
+    /// <summary>
+    /// <c>0.5 &lt;= x &lt;= 1.5</c>: the window in which <c>x - 1</c> is an exact
+    /// Decimal128 subtraction. NaN compares false on both sides, so non-finite inputs
+    /// keep the platform verdict.
+    /// </summary>
+    private static bool IsInLogOnePlusWindow(Decimal128 x)
+        => x >= LogOnePlusWindowLow && x <= LogOnePlusWindowHigh;
+
+    private static readonly Decimal128 LogOnePlusWindowLow = Decimal128.Parse("0.5", System.Globalization.CultureInfo.InvariantCulture);
+    private static readonly Decimal128 LogOnePlusWindowHigh = Decimal128.Parse("1.5", System.Globalization.CultureInfo.InvariantCulture);
+
+    /// <summary>
+    /// The band of bases around 1 (<c>0.99 &lt;= b &lt;= 1.01</c>) in which the DELEGATED
+    /// power paths — a fractional exponent, or an integral one beyond <see cref="long"/> —
+    /// stop using the platform <see cref="Decimal128.Pow"/> and compute
+    /// <c>exp(exponent · ln(base))</c> with the exponent product carried in EXACT
+    /// arithmetic (<see cref="NearOnePower"/>). The platform power inherits the
+    /// logarithm's near-1 cancellation, so <c>(1 + 1e-33) ^ 9223372036854775808</c> lost
+    /// fourteen digits and came out SMALLER than the same base to the power
+    /// <c>9223372036854775807</c> (the certified integer path); away from 1 the platform
+    /// power is at least as accurate and is kept unchanged.
+    /// </summary>
+    internal static bool IsInNearOnePowerBand(Decimal128 b)
+        => b >= NearOnePowerBandLow && b <= NearOnePowerBandHigh;
+
+    private static readonly Decimal128 NearOnePowerBandLow = Decimal128.Parse("0.99", System.Globalization.CultureInfo.InvariantCulture);
+    private static readonly Decimal128 NearOnePowerBandHigh = Decimal128.Parse("1.01", System.Globalization.CultureInfo.InvariantCulture);
+
+    /// <summary>
+    /// Fixed-point scale of the logarithm and exponent product. Logarithm truncation
+    /// is amplified by |exponent|: it is NOT an absolute 10^-80 product-error bound.
+    /// In this band |base - 1| is either zero or at least 10^-34. A product within
+    /// the 20,000 cutoff therefore has |exponent| below 2.1e38. Fewer than 41 log
+    /// terms, each with less than two scale units of error, give a conservative
+    /// product-error bound below 10^-39, still well below Decimal128 result precision.
+    /// </summary>
+    private const int NearOneProductScale = 80;
+
+    /// <summary>
+    /// <c>base ^ exponent</c> for a finite base in <see cref="IsInNearOnePowerBand"/> and a
+    /// finite exponent, correct to about one unit in the last place: a power is
+    /// ill-conditioned in its exponent product (a relative error <c>δ</c> in
+    /// <c>t = exponent · ln(base)</c> becomes a relative error <c>|t| · δ</c> in
+    /// <c>exp(t)</c>, so rounding <c>t</c> to 34 digits loses <c>log10 |t|</c> digits — 123
+    /// ulp for <c>0.99 ^ 12345.5</c>, two thousand for <c>(1 + 1e-15) ^ 2^63</c>), so the
+    /// product is never rounded to Decimal128: <c>ln(1 + ε)</c> is approximated by a fixed-point series
+    /// (<c>ε = base − 1</c> is an exact Decimal128 difference in the band, and the series
+    /// terms shrink a hundredfold each), multiplied by the exact exponent, and only then
+    /// split as <c>t = n + f</c> with <c>n</c> an exact integer and <c>0 &lt;= f &lt; 1</c>.
+    /// <c>exp(n) · exp(f)</c> is then evaluated in the same exact fixed-point arithmetic
+    /// (the Taylor series for <c>exp(f)</c> and for <c>e</c>, binary powering for
+    /// <c>e^n</c>) and rounded ONCE into Decimal128 terms by <see cref="RoundRational"/>.
+    /// The fixed-point approximation is not an interval-certified rounding. A product
+    /// past the exponential's range yields the IEEE infinity/zero of the true limit.
+    /// </summary>
+    internal static Decimal128 NearOnePower(Decimal128 b, Decimal128 exponent)
+    {
+        if (exponent == Decimal128.Zero || b == Decimal128.One)
+            return Decimal128.One;
+
+        // ε = b − 1 exactly (both operands share a quantum range in the band).
+        var epsilon = b - Decimal128.One;
+        var epsilonNegative = Decimal128.IsNegative(epsilon);
+        var epsilonCoefficient = CoefficientOf(Decimal128.Abs(epsilon), out var epsilonQuantum);
+        var scale = BigInteger.Pow(10, NearOneProductScale);
+
+        // ln(1 + ε) = ε − ε²/2 + ε³/3 − … at the fixed-point scale (truncated terms; each
+        // is at most a hundredth of the previous one, so the truncation error stays below
+        // a few units of 10^-80). ε · 10^Scale is an exact integer because |ε| >= 10^-34.
+        var epsilonScaled = epsilonCoefficient * BigInteger.Pow(10, NearOneProductScale + epsilonQuantum);
+        if (epsilonNegative) epsilonScaled = -epsilonScaled;
+        var epsilonDenominator = BigInteger.Pow(10, Math.Max(0, -epsilonQuantum));
+        var epsilonNumerator = epsilonCoefficient * BigInteger.Pow(10, Math.Max(0, epsilonQuantum));
+        var power = epsilonScaled;
+        var logScaled = BigInteger.Zero;
+        for (var n = 1; ; n++)
+        {
+            var term = power / n;
+            if (term.IsZero) break;
+            logScaled += (n % 2 == 1) ? term : -term;
+            power = power * epsilonNumerator / epsilonDenominator;
+            if (epsilonNegative) power = -power;
+        }
+
+        // t = exponent · ln(1 + ε), the exponent taken exactly (coefficient × 10^quantum).
+        var exponentCoefficient = CoefficientOf(Decimal128.Abs(exponent), out var exponentQuantum);
+        var productScaled = logScaled * exponentCoefficient;
+        productScaled = exponentQuantum >= 0
+            ? productScaled * BigInteger.Pow(10, exponentQuantum)
+            : productScaled / BigInteger.Pow(10, -exponentQuantum);
+        if (Decimal128.IsNegative(exponent)) productScaled = -productScaled;
+
+        // Past the exponential's range the true value overflows or underflows: let the
+        // platform exponential produce the IEEE limit from a rounded product (its sign and
+        // magnitude are all that matter there).
+        var integerPart = BigInteger.DivRem(productScaled, scale, out var fractionScaled);
+        if (fractionScaled.Sign < 0)
+        {
+            integerPart -= 1;
+            fractionScaled += scale;
+        }
+        if (BigInteger.Abs(integerPart) > 20_000)
+            return Decimal128.Exp(exponent * NaturalLog(b));
+
+        // exp(t) = exp(n) · exp(f) in exact fixed-point arithmetic, rounded ONCE into
+        // Decimal128 terms. RoundRational rounds this approximation; it does not certify
+        // the exact transcendental result. Overflow/underflow use the same rounding.
+        var fractionExp = ExpFractionScaled(fractionScaled, scale);
+        var wholeExp = ExpNaturalScaled((int)BigInteger.Abs(integerPart), scale);
+        var (numerator, denominator) = integerPart.Sign >= 0
+            ? (fractionExp * wholeExp, scale * scale)
+            : (fractionExp * scale, scale * wholeExp);
+        return RoundRational(numerator, denominator, 0).ToDecimal128(negative: false);
+    }
+
+    /// <summary><c>e^f · scale</c> for <c>0 &lt;= f &lt; 1</c> given as <c>f · scale</c>, by the Taylor series.</summary>
+    private static BigInteger ExpFractionScaled(BigInteger fractionScaled, BigInteger scale)
+    {
+        var sum = scale;
+        var term = scale;
+        for (var k = 1; ; k++)
+        {
+            term = term * fractionScaled / scale / k;
+            if (term.IsZero) break;
+            sum += term;
+        }
+        return sum;
+    }
+
+    /// <summary>
+    /// <c>e^n · scale</c> for a non-negative integer <c>n</c>: <c>e · scale</c> from the
+    /// series, then binary powering on scaled integers (each product truncated back to the
+    /// scale — a relative slack of 10^-80 per multiplication, amplified at most <c>n</c>-fold).
+    /// </summary>
+    private static BigInteger ExpNaturalScaled(int n, BigInteger scale)
+    {
+        var e = ExpFractionScaled(scale, scale); // e^1
+        var result = scale;
+        var basePower = e;
+        for (var remaining = n; remaining > 0; remaining >>= 1)
+        {
+            if ((remaining & 1) == 1)
+                result = result * basePower / scale;
+            if (remaining > 1)
+                basePower = basePower * basePower / scale;
+        }
+        return result;
+    }
 }

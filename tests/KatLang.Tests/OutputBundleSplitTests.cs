@@ -311,6 +311,51 @@ public class OutputBundleSplitTests
         Assert.Equal(7, Assert.IsType<Result.Atom>(structural).Value);
     }
 
+    /// <summary>
+    /// Final audit (September 2026): a GRACED name inside redundant parentheses kept the
+    /// capture boundary only at net weight zero; any other weight unwrapped the group to
+    /// the bare graced name, so `(~obj).V` navigated structurally where `(obj).V` is a
+    /// capture receiver, and `(~a)(b)` became a call where `(a)(b)` is the same-line
+    /// separator error — a Grace marker changing selection. Grace is stripped before
+    /// evaluation, so the elaborated tree of a graced spelling must equal the marker-free
+    /// program's; the group therefore keeps the plain name's capture boundary whatever the
+    /// marker's weight.
+    /// </summary>
+    [Theory]
+    [InlineData("(~obj)")]
+    [InlineData("(obj~)")]
+    [InlineData("(~~obj)")]
+    [InlineData("(~obj~)")]
+    [InlineData("(obj)")]
+    public void GracedNameInRedundantParentheses_KeepsThePlainNamesCaptureBoundary(string receiver)
+    {
+        var parsed = SourceProvenance.ParseValid($"V = 99\nM = {{ public V = 5 }}\nF = {receiver}.V\nF(M)");
+        var body = Assert.IsType<Algorithm.User>(parsed.Root.Properties.Single(p => p.Name == "F").Value);
+        var edge = Assert.IsType<Expr.DotCall>(Assert.Single(body.Output));
+        Assert.IsType<Expr.Capture>(edge.Target);
+        Assert.Equal(["obj"], body.Params);
+
+        // Same executable meaning as the plain spelling: the capture exposes no
+        // members, so the edge is the lexical fallback V(receiverValue) — and M has
+        // properties but no output, so the fallback call reports M's missing output.
+        Assert.IsType<EvalError.MissingOutput>(Innermost(EvalError($"V = 99\nM = {{ public V = 5 }}\nF = {receiver}.V\nF(M)")));
+    }
+
+    [Theory]
+    [InlineData("(~a)(b)")]
+    [InlineData("(a)(b)")]
+    public void GracedNameInRedundantParentheses_IsNeverACallTarget(string source)
+    {
+        // `(a)(b)` is two same-line items (a capture is not a callable target); a
+        // marker inside the group does not turn it into the call `a(b)`.
+        var parsed = Parser.ParseSyntax(source);
+        var diagnostic = Assert.Single(parsed.Diagnostics);
+        Assert.Equal(DiagnosticCode.UnseparatedSameLineItem, diagnostic.Code);
+        var root = Assert.IsType<Algorithm.User>(parsed.Root);
+        Assert.Equal(2, root.Output.Count);
+        Assert.IsType<Expr.Capture>(root.Output[0]);
+    }
+
     [Fact]
     public void OpenCaptureTarget_IsRejectedAtParse()
     {

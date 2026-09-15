@@ -33,6 +33,9 @@ public sealed class CliApplicationTests
         Assert.Contains("bytes), excluding HTTP headers and chunk framing.", result.TrimmedOutput);
         Assert.Contains("--version", result.TrimmedOutput);
         Assert.Contains("--help", result.TrimmedOutput);
+        // The options terminator the parser implements is part of the documented contract.
+        Assert.Contains("--                 End of options", result.TrimmedOutput);
+        Assert.Contains("katlang eval -- \"--1\"", result.TrimmedOutput);
     }
 
     [Fact]

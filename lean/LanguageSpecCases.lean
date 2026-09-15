@@ -14,11 +14,11 @@ This is bounded differential validation over the Lean-guarded partition,
 not a formal verification of the evaluators.
 
 Partition (machine-checked by the `specCaseIds.length` guard below):
-- specification surface cases: 262
-- excluded parse-level cases (Lean has no surface parser): 35
-- excluded C#-only cases (each carries an explicit reason in the corpus): 12
-- Lean-guarded cases: 215
-- probe observations (C#-only by design): 605
+- specification surface cases: 271
+- excluded parse-level cases (Lean has no surface parser): 37
+- excluded C#-only cases (each carries an explicit reason in the corpus): 15
+- Lean-guarded cases: 219
+- probe observations (C#-only by design): 624
 - internal-node cases live in the semantic-explorer corpus, not here: see
   lean/SemanticExplorerCases.lean
 
@@ -1173,7 +1173,27 @@ def case_if_spread_builds_values_before_branch_selection : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Risky" (alg [] [] [] [(.capture [.num 10, (.binary .div (.num 1) (.num 0))])])] [(.call (.resolve "if") [.num 1, (.sequenceSpread (.resolve "Risky"))])])
 #guard obs case_if_spread_builds_values_before_branch_selection == "err div0"
 
--- 215 canonical Lean-guarded specification cases.
+-- dot-string-intrinsic-rejects-arguments [strings]: A = 42 \n A.string(1)
+def case_dot_string_intrinsic_rejects_arguments : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "A" (alg [] [] [] [.num 42])] [(.dotCall (.resolve "A") "string" (some [.num 1]))])
+#guard obs case_dot_string_intrinsic_rejects_arguments == "err arity"
+
+-- ownership-open-provided-captured-member-read-by-sibling-is-local-only [access-boundaries]: Outer(p) = { \n     open Lib \n     Lib = { public X = p } \n     public Y = X \n     Y \n } \n Outer.Y
+def case_ownership_open_provided_captured_member_read_by_sibling_is_local_only : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Outer" (alg ["p"] [.resolve "Lib"] [privateProp "Lib" (alg [] [] [{ (publicLocalProp "X" (.localCapturedAncestorParams ["p"]) (alg [] [] [] [.param "p"])) with requiredOwnerDepths := some [("p", some 1)] }] []), { (publicLocalProp "Y" (.localCapturedAncestorParams ["p"]) (alg [] [] [] [.resolve "X"])) with requiredOwnerDepths := some [("p", some 0)] }] [.resolve "Y"])] [(.dotCall (.resolve "Outer") "Y" none)])
+#guard obs case_ownership_open_provided_captured_member_read_by_sibling_is_local_only == "err localOnlyProperty"
+
+-- ownership-open-head-between-opener-and-settling-level-charges-the-capture [access-boundaries]: Outer(p) = { \n     Mid = { \n         Lib = { public X = p } \n         Inner = { \n             open Lib \n             X \n         } \n         Inner \n     } \n     Mid \n } \n Outer.Mid
+def case_ownership_open_head_between_opener_and_settling_level_charges_the_capture : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Outer" (alg ["p"] [] [{ (privateLocalProp "Mid" (.localCapturedAncestorParams ["p"]) (alg [] [] [privateProp "Lib" (alg [] [] [{ (publicLocalProp "X" (.localCapturedAncestorParams ["p"]) (alg [] [] [] [.param "p"])) with requiredOwnerDepths := some [("p", some 2)] }] []), { (privateLocalProp "Inner" (.localCapturedAncestorParams ["p"]) (alg [] [.resolve "Lib"] [] [.resolve "X"])) with requiredOwnerDepths := some [("p", some 1)] }] [.resolve "Inner"])) with requiredOwnerDepths := some [("p", some 0)] }] [.resolve "Mid"])] [(.dotCall (.resolve "Outer") "Mid" none)])
+#guard obs case_ownership_open_head_between_opener_and_settling_level_charges_the_capture == "err localOnlyProperty"
+
+-- grace-in-redundant-group-keeps-the-capture-boundary [name-resolution]: V(x) = x * 2 \n F = b + (~a).V \n F(5, 1)
+def case_grace_in_redundant_group_keeps_the_capture_boundary : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["a", "b"] [] [] [(.binary .add (.param "b") (.dotCall (.capture [.param "a"]) "V" none))]), privateProp "V" (alg ["x"] [] [] [(.binary .mul (.param "x") (.num 2))])] [(.call (.resolve "F") [.num 5, .num 1])])
+#guard obs case_grace_in_redundant_group_keeps_the_capture_boundary == "ok raw=11 n=1"
+
+-- 219 canonical Lean-guarded specification cases.
 
 /--
 Machine-checked Lean-guarded partition count: the id list is built by the
@@ -1395,8 +1415,12 @@ def specCaseIds : List String := [
   "dot-string-receiver-is-a-zero-argument-value-demand",
   "same-arity-user-if-keeps-user-identity",
   "parameter-named-if-carries-the-supplied-callable",
-  "if-spread-builds-values-before-branch-selection"
+  "if-spread-builds-values-before-branch-selection",
+  "dot-string-intrinsic-rejects-arguments",
+  "ownership-open-provided-captured-member-read-by-sibling-is-local-only",
+  "ownership-open-head-between-opener-and-settling-level-charges-the-capture",
+  "grace-in-redundant-group-keeps-the-capture-boundary"
 ]
-#guard specCaseIds.length == 215
+#guard specCaseIds.length == 219
 
 end LanguageSpecCases

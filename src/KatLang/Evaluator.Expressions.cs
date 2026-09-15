@@ -375,7 +375,7 @@ public static partial class Evaluator
             if (ZeroArgumentValueDemandRejection(ZeroArgumentDemandShape.Parameter, name, span, algBound) is { } rejection)
                 return rejection;
 
-            var valueR = WithSpan(span, EvalResolvedAlgOutputForValueDemand(algBound, ctx, valEnv));
+            var valueR = WithParameterContextOnMissingOutput(name, span, EvalResolvedAlgOutputForValueDemand(algBound, ctx, valEnv));
             return valueR.IsError
                 ? valueR.Error
                 : EvalResult<CountedResult>.Ok(new CountedResult(valueR.Value, valueR.Value.ValueCount()));
@@ -383,6 +383,17 @@ public static partial class Evaluator
 
         return new EvalError.UnknownName(name) { Span = span };
     }
+
+    /// <summary>
+    /// A parameter bound on the algorithm channel whose value demand finds no output is
+    /// reported as that PARAMETER's failure (the argument the caller supplied has no
+    /// output), so the enclosing call context never reads as if the callee itself had
+    /// none. Any other outcome keeps the plain span attachment.
+    /// </summary>
+    private static EvalResult<Result> WithParameterContextOnMissingOutput(string name, SourceSpan? span, EvalResult<Result> result)
+        => result.IsError && result.Error is EvalError.MissingOutput
+            ? WithSpan<Result>(span, new EvalError.WithContext(new ParameterEvaluationContext(name), result.Error))
+            : WithSpan(span, result);
 
     /// <summary>
     /// Counted lexical property-reference evaluation — the CANONICAL Resolve
@@ -778,8 +789,10 @@ public static partial class Evaluator
                 break;
             case "Sqrt": result = CanonicalizeMathResult(Decimal128.Sqrt(args[0])); break;
             case "Exp": result = CanonicalizeMathResult(Decimal128.Exp(args[0])); break;
-            case "Ln": result = CanonicalizeMathResult(Decimal128.Log(args[0])); break;
-            case "Lg": result = CanonicalizeMathResult(Decimal128.Log10(args[0])); break;
+            // The logarithm family takes the near-1 reformulation (Decimal128Numerics):
+            // the platform Log loses a digit per decade of closeness to 1.
+            case "Ln": result = CanonicalizeMathResult(Decimal128Numerics.NaturalLog(args[0])); break;
+            case "Lg": result = CanonicalizeMathResult(Decimal128Numerics.Log10(args[0])); break;
             case "Sin": result = CanonicalizeMathResult(Decimal128.Sin(args[0])); break;
             case "Asin": result = CanonicalizeMathResult(Decimal128Numerics.Asin(args[0])); break;
             case "Cos": result = CanonicalizeMathResult(Decimal128.Cos(args[0])); break;
@@ -791,7 +804,7 @@ public static partial class Evaluator
                 // Math.Pow and the `^` operator share one implementation, so the
                 // exact integer-exponent path and the zero-base rule cannot drift.
                 return EvalPow(span: null, args[0], args[1]);
-            case "Log": result = CanonicalizeMathResult(Decimal128.Log(args[0], args[1])); break;
+            case "Log": result = CanonicalizeMathResult(Decimal128Numerics.Log(args[0], args[1])); break;
             case "Random":
                 // Validation precedes every draw: an invalid call consumes no word of
                 // the run's stream, so the next valid draw is exactly what it would

@@ -668,7 +668,14 @@ public static partial class Evaluator
                 continue;
             }
 
-            items.Add(new VariadicCallItem(Value: null, arg, outputR.Error, Source: resolvedArg.Source));
+            // A value-shaped NAMED argument with no output is that property's failure when a
+            // value position later demands it (BlameDemandedArgumentForMissingOutput), never
+            // the callee's; callback positions ignore the value error as before.
+            items.Add(new VariadicCallItem(
+                Value: null,
+                arg,
+                BlameDemandedArgumentForMissingOutput(resolvedArg.Source, outputR).Error,
+                Source: resolvedArg.Source));
         }
 
         return EvalResult<IReadOnlyList<VariadicCallItem>>.Ok(items);
@@ -834,7 +841,7 @@ public static partial class Evaluator
 
         var initialR = preparedInitial is { } preparedValue
             ? EvalResult<CountedResult>.Ok(preparedValue)
-            : EvalArgumentAlgOutputCounted(initialAlg, ctx, valEnv);
+            : BlameDemandedArgumentForMissingOutput(initialSource, EvalArgumentAlgOutputCounted(initialAlg, ctx, valEnv));
         if (initialR.IsError) return initialR.Error;
 
         // The initial accumulator expression occupies ONE written accumulator
@@ -1229,10 +1236,35 @@ public static partial class Evaluator
     {
         // Decimal128.CompareTo is a total order over every value, including the IEEE
         // specials: NaN sorts before every other value (mirroring double), the
-        // infinities take the extremes, and -0 compares equal to 0.
-        var sorted = numbers.ToList();
-        sorted.Sort();
-        return MakeCollectionListResult(ctx, sorted.Select(static value => (Result)new Result.Atom(value)).ToList());
+        // infinities take the extremes, and -0 compares equal to 0. The sort is STABLE
+        // like Lean's insertion sort (`sortIntsAsc`): equal-comparing values keep their
+        // written order, which is observable through the quantum and zero sign that
+        // display preserves (`order((1.0, 1))` is `[1.0, 1]` however long the input) and
+        // must not depend on the runtime sort algorithm.
+        return MakeCollectionListResult(ctx, SortStable(numbers).Select(static value => (Result)new Result.Atom(value)).ToList());
+    }
+
+    /// <summary>
+    /// Stable ascending sort under <see cref="Decimal128.CompareTo(Decimal128)"/>'s total
+    /// order: equal-comparing values keep their input order (the index breaks ties), so
+    /// the arrangement never depends on the runtime's sort algorithm.
+    /// </summary>
+    private static List<Decimal128> SortStable(IReadOnlyList<Decimal128> numbers)
+    {
+        var keyed = new (Decimal128 Value, int Index)[numbers.Count];
+        for (var i = 0; i < keyed.Length; i++)
+            keyed[i] = (numbers[i], i);
+
+        Array.Sort(keyed, static (left, right) =>
+        {
+            var order = left.Value.CompareTo(right.Value);
+            return order != 0 ? order : left.Index.CompareTo(right.Index);
+        });
+
+        var sorted = new List<Decimal128>(keyed.Length);
+        foreach (var (value, _) in keyed)
+            sorted.Add(value);
+        return sorted;
     }
 
     /// <summary>
@@ -1246,8 +1278,9 @@ public static partial class Evaluator
         EvalCtx ctx,
         IReadOnlyList<Decimal128> numbers)
     {
-        var sorted = numbers.ToList();
-        sorted.Sort(static (left, right) => right.CompareTo(left));
+        // Lean `sortIntsDesc`: the reverse of the stable ascending order.
+        var sorted = SortStable(numbers);
+        sorted.Reverse();
         return MakeCollectionListResult(ctx, sorted.Select(static value => (Result)new Result.Atom(value)).ToList());
     }
 
@@ -1775,7 +1808,12 @@ public static partial class Evaluator
 
         switch (target)
         {
-            case Expr.Param:
+            case Expr.Param(var name):
+                // The receiver is a PARAMETER read for its value: an output-less argument is
+                // that parameter's failure (never "Property 'a' has no defined output"),
+                // exactly as the value-position read `a` reports it.
+                return WithParameterContextOnMissingOutput(name, target.Span, EvalResolvedAlgOutputForValueDemand(targetAlg, ctx, valEnv));
+
             case Expr.Resolve:
                 return EvalResolvedAlgOutputForValueDemand(targetAlg, ctx, valEnv);
 
@@ -1814,7 +1852,31 @@ public static partial class Evaluator
         if (ZeroArgumentValueDemandError(arg.Source, algorithm) is { } rejection)
             return rejection;
 
-        return EvalArgumentAlgOutputCounted(algorithm, ctx, valEnv);
+        return BlameDemandedArgumentForMissingOutput(arg.Source, EvalArgumentAlgOutputCounted(algorithm, ctx, valEnv));
+    }
+
+    /// <summary>
+    /// A demanded VALUE argument with no defined output is the argument's failure, not the
+    /// callee's: a NAMED argument (`sum(L)`, `if(1, L, 0)`) is reported through the same
+    /// property context a value-position read of `L` attaches
+    /// (<see cref="WithPropertyContextOnMissingOutput{T}"/>), so the enclosing call context
+    /// renders "Property 'L' has no defined output" instead of blaming the callee.
+    /// </summary>
+    private static EvalResult<CountedResult> BlameDemandedArgumentForMissingOutput(
+        Expr? source,
+        EvalResult<CountedResult> result)
+    {
+        if (!result.IsError || result.Error is not EvalError.MissingOutput)
+            return result;
+
+        return source switch
+        {
+            Expr.Resolve(var name) => WithPropertyContextOnMissingOutput(name, source.Span, result),
+            // A PARAMETER read in the slot (`F(a) = sum(a)` with an output-less argument):
+            // the parameter's failure, exactly as a value-position read reports it.
+            Expr.Param(var name) => WithSpan<CountedResult>(source.Span, new EvalError.WithContext(new ParameterEvaluationContext(name), result.Error)),
+            _ => result,
+        };
     }
 
     /// <summary>

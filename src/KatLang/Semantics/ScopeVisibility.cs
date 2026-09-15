@@ -37,11 +37,12 @@ public sealed record VisibleSymbol
     public PropertyInfo? Property { get; }
 
     /// <summary>
-    /// One-level structural dot-member surface: the exported properties of an
+    /// One-level structural dot-member surface: the DECLARED properties of an
     /// algorithm-valued symbol, exactly the members ordinary structural dot
-    /// access <c>Symbol.Member</c> can reach (exposure-filtered like the
-    /// semantic model's dot-member resolution; public-vs-private is deliberately
-    /// ignored, matching structural access). Member symbols never carry members
+    /// access <c>Symbol.Member</c> selects (selection never depends on exposure —
+    /// K1-08 — and public-vs-private is deliberately ignored, matching structural
+    /// access; accessibility of a local-only member is decided at the access, so it
+    /// is listed here). Member symbols never carry members
     /// of their own; descendants are deliberately not flattened into this surface.
     /// </summary>
     public IReadOnlyList<VisibleSymbol> Members { get; }
