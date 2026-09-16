@@ -664,7 +664,7 @@ internal static class PropertyExposureResolver
         FrontEndTraversalObservations? observations = null)
         => ResolveInScope(resolvedBody, context.Scope, observations);
 
-    private static IReadOnlyList<Expr> RewriteExprList(IReadOnlyList<Expr> expressions, ExposureWalkMemos memos)
+    private static List<Expr> RewriteExprList(IReadOnlyList<Expr> expressions, ExposureWalkMemos memos)
     {
         var rewritten = new List<Expr>(expressions.Count);
         foreach (var expression in expressions)
@@ -696,138 +696,79 @@ internal static class PropertyExposureResolver
 
     private static Expr RewriteExprCore(Expr expr, ExposureWalkMemos memos)
     {
-        switch (expr)
+        return expr switch
         {
-            case Expr.Grace grace:
+            // Defensive only — parameter detection strips every grace
+            // before exposure resolution runs; `with` keeps the stored
+            // grace facts for host-built trees.
+            Expr.Grace grace => grace with { Inner = RewriteExpr(grace.Inner, memos) },
+
+            Expr.Unary(var op, var operand) => new Expr.Unary(op,
+                RewriteExpr(operand, memos)) { Span = expr.Span },
+
+            Expr.Binary(var op, var left, var right) => new Expr.Binary(op,
+                RewriteExpr(left, memos),
+                RewriteExpr(right, memos)) { Span = expr.Span },
+
+            Expr.Index(var target, var selector) => new Expr.Index(
+                RewriteExpr(target, memos),
+                RewriteExpr(selector, memos)) { Span = expr.Span },
+
+            Expr.SequenceSpread(var operand) => new Expr.SequenceSpread(
+                RewriteExpr(operand, memos))
             {
-                // Defensive only — parameter detection strips every grace
-                // before exposure resolution runs; `with` keeps the stored
-                // grace facts for host-built trees.
-                var rewrittenInner = RewriteExpr(grace.Inner, memos);
-                return grace with { Inner = rewrittenInner };
-            }
+                Span = expr.Span,
+                SpreadMarkerSpan = ((Expr.SequenceSpread)expr).SpreadMarkerSpan,
+            },
 
-            case Expr.Unary(var op, var operand):
-            {
-                var rewrittenOperand = RewriteExpr(operand, memos);
-                return new Expr.Unary(op, rewrittenOperand) { Span = expr.Span };
-            }
+            Expr.SequenceConstruct(var left, var right) => new Expr.SequenceConstruct(
+                RewriteExpr(left, memos),
+                RewriteExpr(right, memos)) { Span = expr.Span },
 
-            case Expr.Binary(var op, var left, var right):
-            {
-                var rewrittenLeft = RewriteExpr(left, memos);
-                var rewrittenRight = RewriteExpr(right, memos);
-                return new Expr.Binary(op, rewrittenLeft, rewrittenRight) { Span = expr.Span };
-            }
+            Expr.ListLiteral(var items) => new Expr.ListLiteral(
+                RewriteExprList(items, memos)) { Span = expr.Span },
 
-            case Expr.Index(var target, var selector):
-            {
-                var rewrittenTarget = RewriteExpr(target, memos);
-                var rewrittenSelector = RewriteExpr(selector, memos);
-                return new Expr.Index(rewrittenTarget, rewrittenSelector) { Span = expr.Span };
-            }
+            Expr.AlgorithmExpr(var algorithm) => new Expr.AlgorithmExpr(
+                ProcessSharedNestedAlgorithm(algorithm, memos)) { Span = expr.Span },
 
-            case Expr.SequenceSpread(var operand):
-            {
-                var rewrittenOperand = RewriteExpr(operand, memos);
-                return new Expr.SequenceSpread(rewrittenOperand)
-                {
-                    Span = expr.Span,
-                    SpreadMarkerSpan = ((Expr.SequenceSpread)expr).SpreadMarkerSpan,
-                };
-            }
+            // A capture owns no names and no properties, so its rows rewrite
+            // with the same visible summaries — the exact effect the
+            // pre-split transparent wrapper had through ProcessAlgorithm.
+            Expr.Capture(var captureBody) => new Expr.Capture(
+                RewriteExprList(captureBody, memos)) { Span = expr.Span },
 
-            case Expr.SequenceConstruct(var left, var right):
-            {
-                var rewrittenLeft = RewriteExpr(left, memos);
-                var rewrittenRight = RewriteExpr(right, memos);
-                return new Expr.SequenceConstruct(rewrittenLeft, rewrittenRight) { Span = expr.Span };
-            }
+            // Argument bundles own no scope: slots rewrite in the enclosing
+            // context, exactly like capture rows.
+            Expr.Call(var function, var args) => new Expr.Call(
+                RewriteExpr(function, memos),
+                RewriteExprList(args, memos)) { Span = expr.Span },
 
-            case Expr.ListLiteral(var items):
-            {
-                var rewrittenItems = new List<Expr>(items.Count);
-                foreach (var item in items)
-                    rewrittenItems.Add(RewriteExpr(item, memos));
-
-                return new Expr.ListLiteral(rewrittenItems) { Span = expr.Span };
-            }
-
-            case Expr.AlgorithmExpr(var algorithm):
-            {
-                var rewrittenAlgorithm = ProcessSharedNestedAlgorithm(algorithm, memos);
-                return new Expr.AlgorithmExpr(rewrittenAlgorithm) { Span = expr.Span };
-            }
-
-            case Expr.Capture(var captureBody):
-            {
-                // A capture owns no names and no properties, so its rows rewrite
-                // with the same visible summaries — the exact effect the
-                // pre-split transparent wrapper had through ProcessAlgorithm.
-                var rewrittenRows = new List<Expr>(captureBody.Count);
-                foreach (var row in captureBody)
-                    rewrittenRows.Add(RewriteExpr(row, memos));
-
-                return new Expr.Capture(new OutputBundle(rewrittenRows)) { Span = expr.Span };
-            }
-
-            case Expr.Call(var function, var args):
-            {
-                var rewrittenFunction = RewriteExpr(function, memos);
-                // Argument bundles own no scope: slots rewrite in the enclosing
-                // context, exactly like capture rows.
-                var rewrittenArgs = new List<Expr>(args.Count);
-                foreach (var argExpr in args)
-                    rewrittenArgs.Add(RewriteExpr(argExpr, memos));
-
-                return new Expr.Call(rewrittenFunction, new OutputBundle(rewrittenArgs)) { Span = expr.Span };
-            }
-
-            case Expr.DotCall(var target, _, var argsOpt):
-            {
-                // Diagnostic claims are finalized after the whole pass by the provenance
-                // finalizer, against the classified tree.
-                memos.Run.HasDotMemberOrigins |= DiagnosticRecordMetadata<ImplicitParameterProvenance>.Get(expr) is not null;
-
-                var rewrittenTarget = RewriteExpr(target, memos);
-                OutputBundle? rewrittenArgs = null;
-                if (argsOpt is not null)
-                {
-                    var rewrittenSlots = new List<Expr>(argsOpt.Count);
-                    foreach (var argExpr in argsOpt)
-                        rewrittenSlots.Add(RewriteExpr(argExpr, memos));
-
-                    rewrittenArgs = new OutputBundle(rewrittenSlots);
-                }
-
-                // `with` keeps the stored dot-edge facts (member span, lexical fallback, the
-                // detector's elaborated fallback selection) intact: exposure never changes
-                // what a receiver resolves to, so the detector's verdict is final.
-                return ((Expr.DotCall)expr) with
-                {
-                    Target = rewrittenTarget,
-                    Args = rewrittenArgs,
-                };
-            }
+            Expr.DotCall dotCall => RewriteDotCall(dotCall, memos),
 
             // Intentional leaves: no nested algorithm to reach, so the
             // expression keeps its exact shape and metadata.
-            case Expr.Resolve:
-            case Expr.Param:
-            case Expr.Num:
-            case Expr.StringLiteral:
-            case Expr.EmptySequence:
-            case Expr.NativeCall:
-                return expr;
+            Expr.Resolve or Expr.Param or Expr.Num or Expr.StringLiteral
+                or Expr.EmptySequence or Expr.NativeCall => expr,
+        };
+    }
 
-            // Exhaustiveness guard, matching AstWalker.VisitExpr: a new Expr
-            // variant must be classified above rather than silently skipping
-            // exposure classification for algorithms nested inside it.
-            default:
-                throw new InvalidOperationException(
-                    $"Unhandled Expr variant in {nameof(PropertyExposureResolver)}.{nameof(RewriteExpr)}: {expr.GetType().Name}. " +
-                    "Classify the new variant explicitly as a recursive rewrite case or an intentional leaf.");
-        }
+    private static Expr RewriteDotCall(Expr.DotCall dotCall, ExposureWalkMemos memos)
+    {
+        // Diagnostic claims are finalized after the whole pass by the provenance
+        // finalizer, against the classified tree.
+        memos.Run.HasDotMemberOrigins |= DiagnosticRecordMetadata<ImplicitParameterProvenance>.Get(dotCall) is not null;
+
+        var rewrittenTarget = RewriteExpr(dotCall.Target, memos);
+        var rewrittenArgs = dotCall.Args is { } args ? OutputBundle.From(RewriteExprList(args, memos)) : null;
+
+        // `with` keeps the stored dot-edge facts (member span, lexical fallback, the
+        // detector's elaborated fallback selection) intact: exposure never changes
+        // what a receiver resolves to, so the detector's verdict is final.
+        return dotCall with
+        {
+            Target = rewrittenTarget,
+            Args = rewrittenArgs,
+        };
     }
 
     private static bool SummariesEqual(

@@ -148,7 +148,11 @@ internal sealed class LeanAstEncoding
             $"(.sequenceConstruct {Arg(left)} {Arg(right)})",
         Expr.DotCall dotCall => EncodeDotCall(dotCall),
         Expr.Call(var callee, var args) => $"(.call {Arg(callee)} {EncodeBundle(args)})",
-        _ => throw new NotSupportedException(
+        // DELIBERATELY refused: elaboration consumes and strips Grace, and the Lean core
+        // does not model natives (NativeCall exists only inside prelude/host wrapper
+        // bodies). The switch is compiler-exhaustive over the closed Expr hierarchy, so a
+        // new variant must be encoded or refused here explicitly — never approximated.
+        Expr.Grace or Expr.NativeCall => throw new NotSupportedException(
             $"{nameof(LeanAstEncoder)} does not cover {expr.GetType().Name}. " +
             "Add it deliberately rather than letting the encoder approximate."),
     };

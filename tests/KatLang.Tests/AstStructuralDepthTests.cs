@@ -1454,19 +1454,15 @@ public class AstStructuralDepthTests
     public void Preflight_KnowsEveryAstVariant()
     {
         // The preflight fails loudly on unknown node kinds instead of skipping their
-        // children. This reflection sweep turns "a new AST variant was added" into a
-        // failing test here, so the child enumeration cannot silently fall behind.
-        string[] knownExpr =
-        [
-            "Param", "Num", "StringLiteral", "Unary", "Binary", "Index",
-            "SequenceConstruct", "EmptySequence", "SequenceSpread", "ListLiteral",
-            "Resolve", "DotCall", "Grace", "AlgorithmExpr", "Capture", "Call", "NativeCall",
-        ];
+        // children. Expr is a closed hierarchy, so its child enumeration
+        // (TryGetExprChild) is compiler-exhaustive and needs no sweep; the remaining
+        // node hierarchies are ordinary abstract records, and this reflection sweep
+        // turns "a new variant was added" into a failing test here, so their child
+        // enumeration cannot silently fall behind.
         string[] knownAlgorithm = ["User", "Builtin", "Conditional"];
         string[] knownPattern = ["Bind", "LitInt", "LitString", "SequenceValue"];
         string[] knownParameterPattern = ["CaptureParameterPattern", "SequenceValueParameterPattern"];
 
-        AssertVariants(typeof(Expr), knownExpr);
         AssertVariants(typeof(Algorithm), knownAlgorithm);
         AssertVariants(typeof(Pattern), knownPattern);
 
@@ -1916,6 +1912,14 @@ public class AstStructuralDepthProcessTests
                     new Expr.Unary(UnaryOp.Minus, new Expr.Num(1))),
                 -1m);                                                                            // depth max
             AssertDepthRejected(AstStructuralDepthTests.BlockSpine((max + 1) / 2));              // depth max + 1
+
+            // The expression-shaped dispatch shares the value-position block helper
+            // with the counted head. Pin both on the calibrated minimum stack.
+            var countedBlock = Evaluator.RunCounted(AstStructuralDepthTests.BlockSpine(
+                (max - 1) / 2, new Expr.Unary(UnaryOp.Minus, new Expr.Num(1))));
+            Assert.True(countedBlock.IsOk);
+            Assert.Equal(1, countedBlock.Value.EmittedCount);
+            Assert.True(Result.ValueComparer.Equals(new Result.Atom(-1), countedBlock.Value.Value));
 
             // ── Nested calls (invocation machinery; frame cost differs from blocks)
             // At and below the limit the outcome is the value on roomy stacks or the

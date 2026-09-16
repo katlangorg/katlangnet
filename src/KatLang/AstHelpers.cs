@@ -288,8 +288,8 @@ internal static class AstHelpers
 
     /// <summary>
     /// The ONE static classification of an expression's algorithm-position
-    /// capability relevant to structural lookup. The switch is intentionally
-    /// exhaustive and fail-loud: adding a new <see cref="Expr"/> form requires
+    /// capability relevant to structural lookup. The switch is compiler-exhaustive
+    /// over the closed <see cref="Expr"/> hierarchy: adding a new form requires
     /// deciding this one fundamental capability, rather than adding
     /// DotCall-specific receiver cases in every static consumer.
     /// <para><paramref name="resolveLexicalReference"/> is the caller's
@@ -350,9 +350,6 @@ internal static class AstHelpers
                 or Expr.Grace
                 or Expr.NativeCall
                 => new(StaticStructuralMemberProviderKind.DefinitelyAbsent),
-
-            _ => throw new InvalidOperationException(
-                $"Unhandled Expr type in static structural-member classification: {expr.GetType().Name}"),
         };
 
     /// <summary>

@@ -1,209 +1,56 @@
 namespace KatLang.Tests;
 
 /// <summary>
-/// Mechanical exhaustiveness pins for the hand-written <see cref="Expr"/>
-/// traversals of the front-end elaboration passes (H4 Stage 1): ParameterDetector,
-/// ImplicitArgumentResolver, PropertyExposureResolver, PropertyDependencyGraphBuilder,
-/// and ModuleLoader.
+/// Traversal-semantics pins for the hand-written <see cref="Expr"/> walks of the
+/// front-end elaboration passes: ParameterDetector, ImplicitArgumentResolver,
+/// PropertyExposureResolver, PropertyDependencyGraphBuilder, and ModuleLoader,
+/// together with the parser's Grace scan and the semantic model visitor.
 ///
-/// <para>Each of those passes used to end its expression switches in a silent
-/// default (<c>_ =&gt; expr</c> / <c>_ =&gt; null</c> / <c>default: break</c>), so a
-/// newly added <see cref="Expr"/> variant would have been silently skipped —
-/// changing elaboration semantics with no compile-time error. The switches now
-/// enumerate intentional leaves explicitly and fail loudly on an unknown variant.
-/// These tests pin the contract mechanically:</para>
+/// <para>For expression-shaped dispatch, variant COVERAGE is the compiler's job:
+/// <see cref="Expr"/> is a closed hierarchy, and the full-hierarchy switch expressions
+/// are compiler-exhaustive (a new variant fails the build there).
+/// What remains for tests is behavior the compiler cannot see:</para>
 /// <list type="number">
-///   <item>the per-variant sample table is reflection-complete, so a new variant
-///   must first be added here;</item>
-///   <item>every current variant dispatches through every targeted traversal
-///   without hitting a fail-loud exhaustiveness guard;</item>
+///   <item>the four side-effect COLLECTORS, parser scan, semantic visitor, and loader's async twin are switch
+///   statements and keep a runtime guard; every current variant is pinned to dispatch
+///   through them without tripping it;</item>
 ///   <item>representative true leaves are preserved by reference (intentionally
 ///   ignored, not accidentally skipped);</item>
-///   <item>representative recursive variants prove their children are actually
-///   traversed with each pass's own semantics (free-name detection, implicit-call
-///   lifting, exposure classification, sibling ordering, load elaboration).</item>
+///   <item>every composite variant's children are actually traversed with each pass's
+///   own semantics (free-name detection, implicit-call lifting, exposure
+///   classification, sibling ordering, load elaboration) — a present-but-childless
+///   arm is compiler-exhaustive and still wrong.</item>
 /// </list>
 /// </summary>
-public class FrontEndTraversalExhaustivenessTests
+public class FrontEndTraversalTests
 {
-    // ── Variant samples (reflection-complete) ───────────────────────────────
-
     private static Algorithm.User EmptyAlgorithm(params Expr[] output)
         => new(Parent: null, Parameters: [], Opens: [], Properties: [], Output: output);
 
-    /// <summary>
-    /// One embeddable sample per concrete <see cref="Expr"/> variant. Samples are
-    /// immutable records and are freely shared across embedding positions.
-    /// </summary>
-    private static IReadOnlyDictionary<string, Expr> VariantSamples { get; } = BuildVariantSamples();
+    private static IReadOnlyDictionary<string, Expr> VariantSamples => ExprVariantCatalog.Samples;
 
-    private static IReadOnlyDictionary<string, Expr> BuildVariantSamples()
-    {
-        var leaf = new Expr.Num(1);
-        return new Dictionary<string, Expr>(StringComparer.Ordinal)
-        {
-            [nameof(Expr.Param)] = new Expr.Param("p"),
-            [nameof(Expr.Num)] = leaf,
-            [nameof(Expr.StringLiteral)] = new Expr.StringLiteral("s"),
-            [nameof(Expr.Unary)] = new Expr.Unary(UnaryOp.Minus, leaf),
-            [nameof(Expr.Binary)] = new Expr.Binary(BinaryOp.Add, leaf, leaf),
-            [nameof(Expr.Index)] = new Expr.Index(leaf, leaf),
-            [nameof(Expr.SequenceConstruct)] = new Expr.SequenceConstruct(leaf, leaf),
-            [nameof(Expr.EmptySequence)] = new Expr.EmptySequence(0),
-            [nameof(Expr.SequenceSpread)] = new Expr.SequenceSpread(leaf),
-            [nameof(Expr.ListLiteral)] = new Expr.ListLiteral([leaf, leaf]),
-            [nameof(Expr.Resolve)] = new Expr.Resolve("R"),
-            [nameof(Expr.DotCall)] = new Expr.DotCall(leaf, "M", new OutputBundle([leaf])),
-            [nameof(Expr.Grace)] = new Expr.Grace(leaf, 1),
-            [nameof(Expr.AlgorithmExpr)] = new Expr.AlgorithmExpr(EmptyAlgorithm(leaf)),
-            [nameof(Expr.Capture)] = new Expr.Capture([leaf, leaf]),
-            [nameof(Expr.Call)] = new Expr.Call(leaf, new OutputBundle([leaf])),
-            [nameof(Expr.NativeCall)] = new Expr.NativeCall("Abs", ["x"]),
-        };
-    }
-
-    private static IReadOnlyList<string> DeclaredExprVariantNames()
-        => typeof(Expr).GetNestedTypes()
-            .Where(type => !type.IsAbstract && typeof(Expr).IsAssignableFrom(type))
-            .Select(type => type.Name)
-            .OrderBy(name => name, StringComparer.Ordinal)
-            .ToList();
-
-    private static bool HasStructuralExprChildren(Type variantType)
-        => variantType
-            .GetProperties(System.Reflection.BindingFlags.Public
-                | System.Reflection.BindingFlags.Instance
-                | System.Reflection.BindingFlags.DeclaredOnly)
-            .Any(property =>
-                typeof(Expr).IsAssignableFrom(property.PropertyType)
-                || typeof(Algorithm).IsAssignableFrom(property.PropertyType)
-                || typeof(OutputBundle).IsAssignableFrom(property.PropertyType)
-                || typeof(IEnumerable<Expr>).IsAssignableFrom(property.PropertyType));
-
-    /// <summary>
-    /// A newly added <see cref="Expr"/> variant must appear in the sample table
-    /// before any traversal can be pinned for it — this is the forcing function
-    /// that turns "new AST variant" into per-traversal test failures below.
-    /// </summary>
-    [Fact]
-    public void VariantSamples_CoverEveryExprVariant()
-    {
-        Assert.Equal(
-            DeclaredExprVariantNames(),
-            VariantSamples.Keys.OrderBy(name => name, StringComparer.Ordinal).ToList());
-    }
-
-    /// <summary>
-    /// The sample table alone could be updated with a child-free sample for a new
-    /// composite variant, allowing every pass to classify it as a leaf while the
-    /// reflection-completeness test stayed green. Derive structural recursion from
-    /// the actual public AST shape so the leaf set cannot grow that way silently.
-    /// </summary>
-    [Fact]
-    public void StructuralLeafSet_IsDerivedFromTheActualExprShape()
-    {
-        var structuralLeaves = typeof(Expr).GetNestedTypes()
-            .Where(type => !type.IsAbstract && typeof(Expr).IsAssignableFrom(type))
-            .Where(type => !HasStructuralExprChildren(type))
-            .Select(type => type.Name)
-            .OrderBy(name => name, StringComparer.Ordinal)
-            .ToList();
-
-        Assert.Equal(
-            new[]
-            {
-                nameof(Expr.EmptySequence),
-                nameof(Expr.NativeCall),
-                nameof(Expr.Num),
-                nameof(Expr.Param),
-                nameof(Expr.Resolve),
-                nameof(Expr.StringLiteral),
-            }.OrderBy(name => name, StringComparer.Ordinal),
-            structuralLeaves);
-    }
-
-    // ── Traversal drivers ───────────────────────────────────────────────────
+    // ── Statement-form traversals: runtime guards pinned per variant ─────────
     //
-    // Each driver embeds one sample in every syntactic position needed to reach
-    // ALL of that component's Expr switches. A traversal whose switch lacks an
-    // explicit case for the sample's variant now throws its fail-loud
-    // exhaustiveness guard, failing the theory with a message naming the
-    // traversal and the variant.
+    // These seven walks are side-effect switch statements (collectors, visitors, and the loader's
+    // awaiting twin), the one dispatch shape a closed hierarchy cannot make
+    // compiler-exhaustive, so each keeps a fail-loud guard. Every current variant must
+    // dispatch through each of them without hitting it; the theory fails with a message
+    // naming the traversal and the variant.
 
-    private static Task RunParameterDetectorOpenExpr(Expr sample)
-    {
-        var root = new Algorithm.User(null, [], [sample], [], OutputBundle.Empty);
-        var (detected, _) = ParameterDetector.Detect(root);
-        Assert.NotNull(detected);
-        return Task.CompletedTask;
-    }
-
-    private static Task RunParameterDetectorProcessExpr(Expr sample)
-    {
-        var root = new Algorithm.User(
-            null, [], [new Expr.Capture([sample])], [], OutputBundle.Empty);
-        var (detected, _) = ParameterDetector.Detect(root);
-        Assert.NotNull(detected);
-        return Task.CompletedTask;
-    }
-
-    private static Task RunParameterDetectorOutputWalks(Expr sample)
+    private static Task RunParameterDetectorCollectFreeParams(Expr sample)
     {
         var (detected, _) = ParameterDetector.Detect(EmptyAlgorithm(sample));
         Assert.NotNull(detected);
         return Task.CompletedTask;
     }
 
-    private static Task RunParameterDetectorConditionalRewrite(Expr sample)
-    {
-        var conditional = new Algorithm.Conditional(
-            Parent: null,
-            Opens: [],
-            Branches: [new CondBranch(new Pattern.Bind("b"), EmptyAlgorithm(sample))]);
-        var root = new Algorithm.User(
-            null, [], [], [new Property("Cond", conditional)], OutputBundle.Empty);
-        var (detected, _) = ParameterDetector.Detect(root);
-        Assert.NotNull(detected);
-        return Task.CompletedTask;
-    }
-
-    private static Task RunParameterDetectorResolveSpanSearch(Expr sample)
-    {
-        // The sentinel is deliberately after the sample, so locating its
-        // diagnostic span must first search through the sample's whole shape.
-        var body = EmptyAlgorithm(sample, new Expr.Resolve("zzUndeclaredFreeName"));
-        var conditional = new Algorithm.Conditional(
-            Parent: null,
-            Opens: [],
-            Branches: [new CondBranch(new Pattern.Bind("b"), body)]);
-        var root = new Algorithm.User(
-            null, [], [], [new Property("Cond", conditional)], OutputBundle.Empty);
-        var (detected, _) = ParameterDetector.Detect(root);
-        Assert.NotNull(detected);
-        return Task.CompletedTask;
-    }
-
-    private static Task RunImplicitOpenExpr(Expr sample)
-    {
-        var root = new Algorithm.User(null, [], [sample], [], OutputBundle.Empty);
-        Assert.NotNull(ImplicitArgumentResolver.Resolve(root));
-        return Task.CompletedTask;
-    }
-
-    private static Task RunImplicitNestedExpr(Expr sample)
-    {
-        var root = EmptyAlgorithm(new Expr.Capture([sample]));
-        Assert.NotNull(ImplicitArgumentResolver.Resolve(root));
-        return Task.CompletedTask;
-    }
-
-    private static Task RunImplicitOutputWalks(Expr sample)
+    private static Task RunImplicitCollectImplicitDeps(Expr sample)
     {
         Assert.NotNull(ImplicitArgumentResolver.Resolve(EmptyAlgorithm(sample)));
         return Task.CompletedTask;
     }
 
-    private static Task RunImplicitReferenceNames(Expr sample)
+    private static Task RunImplicitCollectReferenceNames(Expr sample)
     {
         // The free-reference-name walk keys the region memo of every NESTED algorithm, so the
         // sample sits in a property value's output.
@@ -217,15 +64,9 @@ public class FrontEndTraversalExhaustivenessTests
         return Task.CompletedTask;
     }
 
-    private static Task RunExposureRewrite(Expr sample)
+    private static Task RunDependencyCollectSiblingIndices(Expr sample)
     {
-        Assert.NotNull(PropertyExposureResolver.Resolve(EmptyAlgorithm(sample)));
-        return Task.CompletedTask;
-    }
-
-    private static Algorithm.User DependencyWalkRoot(Expr sample)
-    {
-        return new Algorithm.User(
+        var root = new Algorithm.User(
             Parent: null,
             Parameters: [],
             Opens: [],
@@ -235,29 +76,8 @@ public class FrontEndTraversalExhaustivenessTests
                 new Property("B", EmptyAlgorithm(new Expr.Num(1))),
             ],
             Output: OutputBundle.Empty);
-    }
-
-    private static Task RunDependencyOrderWalk(Expr sample)
-    {
-        Assert.Equal(2, PropertyDependencyGraphBuilder.BuildDependencyOrder(DependencyWalkRoot(sample)).Count);
+        Assert.Equal(2, PropertyDependencyGraphBuilder.BuildDependencyOrder(root).Count);
         return Task.CompletedTask;
-    }
-
-    private static Task RunDependencySummaryWalk(Expr sample)
-    {
-        Assert.Equal(2, PropertyDependencyGraphBuilder.BuildSummaries(DependencyWalkRoot(sample)).Count);
-        return Task.CompletedTask;
-    }
-
-    private static async Task RunModuleLoaderSyncWalk(Expr sample)
-    {
-        var diagnostics = new List<Diagnostic>();
-        var loader = new ModuleLoader(
-            diagnostics,
-            (url, cancellationToken) => ValueTask.FromResult("public X = 1"));
-
-        var elaborated = await loader.ElaborateAsync(EmptyAlgorithm(sample));
-        Assert.NotNull(elaborated);
     }
 
     private static async Task RunModuleLoaderAsyncWalkDispatch(Expr sample)
@@ -284,37 +104,41 @@ public class FrontEndTraversalExhaustivenessTests
         Assert.NotNull(await pending);
     }
 
-    private static readonly IReadOnlyDictionary<string, Func<Expr, Task>> TraversalDrivers =
+    private static readonly IReadOnlyDictionary<string, Func<Expr, Task>> RuntimeGuardedTraversals =
         new Dictionary<string, Func<Expr, Task>>(StringComparer.Ordinal)
         {
-            ["ParameterDetector.ProcessOpenExpr"] = RunParameterDetectorOpenExpr,
-            ["ParameterDetector.RewriteParams (conditional body)"] = RunParameterDetectorConditionalRewrite,
-            ["ParameterDetector.CollectFreeParams"] = RunParameterDetectorOutputWalks,
-            ["ParameterDetector.RewriteParams"] = RunParameterDetectorOutputWalks,
-            ["ParameterDetector.ProcessExpr"] = RunParameterDetectorProcessExpr,
-            ["ParameterDetector.FindResolveSpan"] = RunParameterDetectorResolveSpanSearch,
-            ["ImplicitArgumentResolver.ProcessOpenExpr"] = RunImplicitOpenExpr,
-            ["ImplicitArgumentResolver.CollectImplicitDeps"] = RunImplicitOutputWalks,
-            ["ImplicitArgumentResolver.RewriteImplicitCalls"] = RunImplicitOutputWalks,
-            ["ImplicitArgumentResolver.ProcessExprNested"] = RunImplicitNestedExpr,
-            ["ImplicitArgumentResolver.CollectReferenceNames"] = RunImplicitReferenceNames,
-            ["PropertyExposureResolver.RewriteExpr"] = RunExposureRewrite,
-            ["PropertyDependencyGraphBuilder.CollectSummarySeed"] = RunDependencySummaryWalk,
-            ["PropertyDependencyGraphBuilder.CollectSiblingDependencyIndices"] = RunDependencyOrderWalk,
-            ["ModuleLoader.ProcessExpr"] = RunModuleLoaderSyncWalk,
+            ["ParameterDetector.CollectFreeParams"] = RunParameterDetectorCollectFreeParams,
+            ["ImplicitArgumentResolver.CollectImplicitDeps"] = RunImplicitCollectImplicitDeps,
+            ["ImplicitArgumentResolver.CollectReferenceNames"] = RunImplicitCollectReferenceNames,
+            ["PropertyDependencyGraphBuilder.CollectSiblingDependencyIndices"] = RunDependencyCollectSiblingIndices,
             ["ModuleLoader.ProcessExprAsync"] = RunModuleLoaderAsyncWalkDispatch,
+            ["Parser.ScanPendingForGraceSpan"] = sample =>
+            {
+                Assert.Null(FindGraceSpan(sample));
+                return Task.CompletedTask;
+            },
+            ["SemanticModelBuilder.VisitExpr"] = sample =>
+            {
+                Assert.NotNull(Semantics.SemanticModelBuilder.Build(EmptyAlgorithm(sample)));
+                return Task.CompletedTask;
+            },
         };
 
-    [Fact]
-    public void TraversalInventory_IsExactlyTheSixteenH4Sites()
-        => Assert.Equal(16, TraversalDrivers.Count);
+    // The parser scan runs before the public parse boundary and must remain iterative;
+    // direct invocation also covers the internal join node the parser never produces.
+    private static SourceSpan? FindGraceSpan(Expr sample)
+    {
+        var scan = typeof(Parser).GetMethod("ScanPendingForGraceSpan",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)!;
+        return (SourceSpan?)scan.Invoke(null, [new Stack<Expr>([sample])]);
+    }
 
-    public static TheoryData<string, string> TraversalVariantMatrix()
+    public static TheoryData<string, string> RuntimeGuardedTraversalMatrix()
     {
         var data = new TheoryData<string, string>();
-        foreach (var traversal in TraversalDrivers.Keys.OrderBy(name => name, StringComparer.Ordinal))
+        foreach (var traversal in RuntimeGuardedTraversals.Keys.OrderBy(name => name, StringComparer.Ordinal))
         {
-            foreach (var variant in VariantSamples.Keys.OrderBy(name => name, StringComparer.Ordinal))
+            foreach (var variant in ExprVariantCatalog.DeclaredVariantNames)
                 data.Add(traversal, variant);
         }
 
@@ -323,15 +147,15 @@ public class FrontEndTraversalExhaustivenessTests
 
     /// <summary>
     /// Every current <see cref="Expr"/> variant has an explicit policy in every
-    /// targeted front-end traversal: the pass completes without hitting a
-    /// fail-loud exhaustiveness guard. (Ordinary diagnostics are fine — several
-    /// samples are deliberately illegal in some positions; silence about a
-    /// VARIANT is what the guards forbid.)
+    /// statement-form front-end traversal: the pass completes without hitting a
+    /// fail-loud guard. (Ordinary diagnostics are fine — several samples are
+    /// deliberately illegal in some positions; silence about a VARIANT is what the
+    /// guards forbid.)
     /// </summary>
     [Theory]
-    [MemberData(nameof(TraversalVariantMatrix))]
-    public async Task Traversal_HasAnExplicitPolicyForVariant(string traversal, string variant)
-        => await TraversalDrivers[traversal](VariantSamples[variant]);
+    [MemberData(nameof(RuntimeGuardedTraversalMatrix))]
+    public async Task RuntimeGuardedTraversal_HasAnExplicitPolicyForVariant(string traversal, string variant)
+        => await RuntimeGuardedTraversals[traversal](VariantSamples[variant]);
 
     // ── Intentional-leaf pins (preserved by reference, not skipped) ─────────
 
@@ -415,6 +239,19 @@ public class FrontEndTraversalExhaustivenessTests
 
     // ── ParameterDetector: recursive child positions detect free names ──────
 
+    [Fact]
+    public void ParameterDetector_CallRewritePreservesArgumentBeforeCalleeDiagnostics()
+    {
+        // Rewriting historically visits the argument bundle before the callee. Moving
+        // this arm into a switch expression must not reverse observable diagnostics.
+        var diagnostics = SourceProvenance.ExpectFrontEndError("F(x) = x\nK(x) = ~F(~x)\nK(1)");
+
+        Assert.Equal(2, diagnostics.Count);
+        Assert.All(diagnostics, d => Assert.Equal(DiagnosticCode.InvalidGraceMarker, d.Code));
+        Assert.Equal(new SourceSpan(2, 11, 2, 12), diagnostics[0].Span);
+        Assert.Equal(new SourceSpan(2, 8, 2, 9), diagnostics[1].Span);
+    }
+
     private static IReadOnlyDictionary<string, Func<Expr, Expr>> RecursiveEmbeddings { get; } =
         new Dictionary<string, Func<Expr, Expr>>(StringComparer.Ordinal)
         {
@@ -446,30 +283,50 @@ public class FrontEndTraversalExhaustivenessTests
         return data;
     }
 
+    [Theory]
+    [MemberData(nameof(RecursiveEmbeddingPositions))]
+    public void SemanticModel_VisitsNamesInsideRecursiveChildren(string position)
+    {
+        var span = new SourceSpan(1, 1, 1, 2);
+        var embedded = RecursiveEmbeddings[position](new Expr.Resolve("q") { Span = span });
+        var model = Semantics.SemanticModelBuilder.Build(EmptyAlgorithm(embedded));
+
+        Assert.Contains(model.IdentifierOccurrences, occurrence => occurrence.Name == "q" && occurrence.Span == span);
+    }
+
+    [Theory]
+    [MemberData(nameof(RecursiveEmbeddingPositions))]
+    public void Parser_GraceScanVisitsItsChildrenAndHonorsGraceBoundaries(string position)
+    {
+        var span = new SourceSpan(1, 1, 1, 3);
+        var embedded = RecursiveEmbeddings[position](new Expr.Grace(new Expr.Resolve("q"), 1) { Span = span });
+
+        // Even a spanless written Grace is a match boundary: it does not search Inner.
+        Assert.Equal(position == "Grace.Inner" ? null : span, FindGraceSpan(embedded));
+    }
+
+    [Fact]
+    public void Parser_GraceScanVisitsBlockRowsAndStoredDotFallback()
+    {
+        var span = new SourceSpan(1, 1, 1, 3);
+        var grace = new Expr.Grace(new Expr.Resolve("q"), 1) { Span = span };
+        Assert.Equal(span, FindGraceSpan(new Expr.AlgorithmExpr(EmptyAlgorithm(grace))));
+        Assert.Equal(span, FindGraceSpan(new Expr.DotCall(new Expr.Num(1), "q") { LexicalFallback = grace }));
+    }
+
     /// <summary>
     /// Every structurally composite variant has at least one semantic child
-    /// embedding below. Together with the per-position theories, this prevents a
-    /// newly added composite variant from being represented only by a child-free
-    /// sample and silently classified as a leaf by all traversal switches.
+    /// embedding below, so the per-position theories cover a newly added composite
+    /// variant's children — the property the compiler's exhaustiveness proof does not
+    /// reach. <see cref="Expr.AlgorithmExpr"/> is the one ownership boundary and is
+    /// pinned separately (<see cref="ParameterDetector_LeavesAlgorithmExprNamesToTheNestedScope"/>).
     /// </summary>
     [Fact]
     public void RecursiveEmbeddings_CoverEveryStructurallyRecursiveVariant()
-    {
-        var structurallyRecursive = typeof(Expr).GetNestedTypes()
-            .Where(type => !type.IsAbstract && typeof(Expr).IsAssignableFrom(type))
-            .Where(HasStructuralExprChildren)
-            .Select(type => type.Name)
-            .OrderBy(name => name, StringComparer.Ordinal)
-            .ToList();
-        var embeddedVariants = RecursiveEmbeddings.Values
-            .Select(embed => embed(new Expr.Num(1)).GetType().Name)
-            .Append(nameof(Expr.AlgorithmExpr))
-            .Distinct(StringComparer.Ordinal)
-            .OrderBy(name => name, StringComparer.Ordinal)
-            .ToList();
-
-        Assert.Equal(structurallyRecursive, embeddedVariants);
-    }
+        => ExprVariantCatalog.AssertCoversEveryCompositeVariant(
+            RecursiveEmbeddings.Values.Select(embed => embed(new Expr.Num(1)).GetType().Name),
+            $"{nameof(FrontEndTraversalTests)}.{nameof(RecursiveEmbeddings)}",
+            nameof(Expr.AlgorithmExpr));
 
     private sealed class ParamOccurrenceCollector : AstWalker
     {
@@ -681,8 +538,8 @@ public class FrontEndTraversalExhaustivenessTests
     /// <summary>
     /// The split SUMMARY channel independently descends through every recursive value
     /// position. This is the semantic mutation guard for misclassifying one explicit arm as
-    /// a leaf: the generic H4 dispatch matrix catches a missing arm through the fail-loud
-    /// default, while this test catches a present-but-non-recursive arm.
+    /// a leaf: the compiler catches a MISSING arm of the summary switch expression, while
+    /// this test catches a present-but-non-recursive arm.
     /// </summary>
     [Theory]
     [MemberData(nameof(SiblingDependencyPositions))]

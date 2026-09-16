@@ -1005,48 +1005,23 @@ internal static class ParameterDetector
         {
             var open = opens[i];
             var head = OpenTargetHead(open);
-            string? headName;
-            switch (head)
+            // A new Expr variant must be classified here as a lexical open head or an
+            // intentional no-head form (a skipped name-like head would be a bypass).
+            string? headName = head switch
             {
-                case Expr.Resolve resolve:
-                    headName = resolve.Name;
-                    break;
-
-                case Expr.Param parameter:
-                    headName = reclassifyParameterHeads ? parameter.Name : null;
-                    break;
+                Expr.Resolve resolve => resolve.Name,
+                Expr.Param parameter => reclassifyParameterHeads ? parameter.Name : null,
 
                 // Intentional no-head forms: an inline algorithm or capture owns no lexical
                 // head (inline targets are separate owner regions), an argument-bearing dot
                 // edge, a spread, a join, a list, a literal, an operator form, a call, a
                 // native call, and a Grace wrapper are never lexical heads — the parser and
                 // open-form validation reject the illegal ones with their own diagnostics.
-                case Expr.AlgorithmExpr:
-                case Expr.Capture:
-                case Expr.DotCall:
-                case Expr.SequenceSpread:
-                case Expr.SequenceConstruct:
-                case Expr.ListLiteral:
-                case Expr.Call:
-                case Expr.Num:
-                case Expr.StringLiteral:
-                case Expr.EmptySequence:
-                case Expr.NativeCall:
-                case Expr.Unary:
-                case Expr.Binary:
-                case Expr.Index:
-                case Expr.Grace:
-                    headName = null;
-                    break;
-
-                // Exhaustiveness guard, matching AstWalker.VisitExpr: a new Expr variant must
-                // be classified above as a lexical open head or an intentional no-head form,
-                // never silently skipped (a skipped name-like head would be a bypass).
-                default:
-                    throw new InvalidOperationException(
-                        $"Unhandled Expr variant in {nameof(ParameterDetector)}.{nameof(ClassifyOpenTargetHeads)}: {head.GetType().Name}. " +
-                        "Classify the new variant explicitly as a lexical open head or an intentional no-head form.");
-            }
+                Expr.AlgorithmExpr or Expr.Capture or Expr.DotCall or Expr.SequenceSpread
+                    or Expr.SequenceConstruct or Expr.ListLiteral or Expr.Call or Expr.Num
+                    or Expr.StringLiteral or Expr.EmptySequence or Expr.NativeCall
+                    or Expr.Unary or Expr.Binary or Expr.Index or Expr.Grace => null,
+            };
 
             var rewritten = open;
             if (headName is not null)
@@ -1195,100 +1170,89 @@ internal static class ParameterDetector
         List<Diagnostic>? diagnostics,
         OpenWalkMemo memo)
     {
-        switch (expr)
+        return expr switch
         {
-            case Expr.Grace(var gracedTarget, _):
-                // An open target has no parameter inference to reorder, so a
-                // grace annotation is meaningless here. The parser rejects and
-                // unwraps written ones; a host-built tree is unwrapped the same
-                // way so no Grace can survive elaboration in any position.
-                return ProcessOpenExpr(gracedTarget, openParentScope, diagnostics, memo);
+            // An open target has no parameter inference to reorder, so a
+            // grace annotation is meaningless here. The parser rejects and
+            // unwraps written ones; a host-built tree is unwrapped the same
+            // way so no Grace can survive elaboration in any position.
+            Expr.Grace(var gracedTarget, _) => ProcessOpenExpr(gracedTarget, openParentScope, diagnostics, memo),
 
-            case Expr.AlgorithmExpr(var algorithm):
+            Expr.AlgorithmExpr(var algorithm) => new Expr.AlgorithmExpr(
+                ProcessSharedOpenAlgorithm(algorithm, openParentScope, diagnostics, memo)) { Span = expr.Span },
+
+            // A capture target owns no scope: its rows are processed in the
+            // open-target parent scope (the pre-split transparent wrapper
+            // added only an empty lookup level here).
+            Expr.Capture(var captureBody) => new Expr.Capture(new OutputBundle(
+                captureBody.Select(row => ProcessExpr(row, openParentScope, memo)).ToList()))
+            { Span = expr.Span },
+
+            // `with` keeps the stored dot-edge facts (member span). Open
+            // targets are ordinary structural paths, so the fallback
+            // identity is inert here, but the detector is the
+            // normalization owner: every DotCall it emits carries an
+            // EXPLICIT fallback (null is only a host-construction
+            // shorthand for Resolve(Name)).
+            Expr.DotCall dotCall => dotCall with
             {
-                memo.OpenAlgorithms ??= new(ReferenceEqualityComparer.Instance);
-                if (!memo.OpenAlgorithms.TryGetValue(algorithm, out var processedAlgorithm))
-                {
-                    processedAlgorithm = ProcessAlgorithm(
-                        algorithm, openParentScope, ParameterOwnership.Empty, diagnostics, memo.Observations, memo.Run);
-                    memo.OpenAlgorithms[algorithm] = processedAlgorithm;
-                }
+                Target = ProcessOpenExpr(dotCall.Target, openParentScope, diagnostics, memo),
+                Args = dotCall.Args is { } dotArgs
+                    ? new OutputBundle(dotArgs.Select(argExpr => ProcessExpr(argExpr, openParentScope, memo)).ToList())
+                    : null,
+                LexicalFallback = ProcessOpenExpr(
+                    dotCall.EffectiveLexicalFallback, openParentScope, diagnostics, memo),
+            },
 
-                return new Expr.AlgorithmExpr(processedAlgorithm) { Span = expr.Span };
-            }
+            Expr.SequenceSpread(var operand) => new Expr.SequenceSpread(
+                ProcessOpenExpr(operand, openParentScope, diagnostics, memo))
+            {
+                Span = expr.Span,
+                SpreadMarkerSpan = ((Expr.SequenceSpread)expr).SpreadMarkerSpan,
+            },
 
-            case Expr.Capture(var captureBody):
-                // A capture target owns no scope: its rows are processed in the
-                // open-target parent scope (the pre-split transparent wrapper
-                // added only an empty lookup level here).
-                return new Expr.Capture(new OutputBundle(
-                    captureBody.Select(row => ProcessExpr(row, openParentScope, memo)).ToList()))
-                { Span = expr.Span };
+            Expr.SequenceConstruct(var left, var right) => new Expr.SequenceConstruct(
+                ProcessOpenExpr(left, openParentScope, diagnostics, memo),
+                ProcessOpenExpr(right, openParentScope, diagnostics, memo)) { Span = expr.Span },
 
-            case Expr.DotCall dotCall:
-                // `with` keeps the stored dot-edge facts (member span). Open
-                // targets are ordinary structural paths, so the fallback
-                // identity is inert here, but the detector is the
-                // normalization owner: every DotCall it emits carries an
-                // EXPLICIT fallback (null is only a host-construction
-                // shorthand for Resolve(Name)).
-                return dotCall with
-                {
-                    Target = ProcessOpenExpr(dotCall.Target, openParentScope, diagnostics, memo),
-                    Args = dotCall.Args is { } dotArgs
-                        ? new OutputBundle(dotArgs.Select(argExpr => ProcessExpr(argExpr, openParentScope, memo)).ToList())
-                        : null,
-                    LexicalFallback = ProcessOpenExpr(
-                        dotCall.EffectiveLexicalFallback, openParentScope, diagnostics, memo),
-                };
+            Expr.ListLiteral(var items) => new Expr.ListLiteral(
+                items.Select(item => ProcessOpenExpr(item, openParentScope, diagnostics, memo)).ToList())
+            { Span = expr.Span },
 
-            case Expr.SequenceSpread(var operand):
-                return new Expr.SequenceSpread(
-                    ProcessOpenExpr(operand, openParentScope, diagnostics, memo))
-                {
-                    Span = expr.Span,
-                    SpreadMarkerSpan = ((Expr.SequenceSpread)expr).SpreadMarkerSpan,
-                };
-
-            case Expr.SequenceConstruct(var left, var right):
-                return new Expr.SequenceConstruct(
-                    ProcessOpenExpr(left, openParentScope, diagnostics, memo),
-                    ProcessOpenExpr(right, openParentScope, diagnostics, memo)) { Span = expr.Span };
-
-            case Expr.ListLiteral(var items):
-                return new Expr.ListLiteral(
-                    items.Select(item => ProcessOpenExpr(item, openParentScope, diagnostics, memo)).ToList())
-                { Span = expr.Span };
-
-            case Expr.Call(var function, var args):
-                return new Expr.Call(
-                    ProcessOpenExpr(function, openParentScope, diagnostics, memo),
-                    new OutputBundle(args.Select(argExpr => ProcessExpr(argExpr, openParentScope, memo)).ToList())) { Span = expr.Span };
+            Expr.Call(var function, var args) => new Expr.Call(
+                ProcessOpenExpr(function, openParentScope, diagnostics, memo),
+                new OutputBundle(args.Select(argExpr => ProcessExpr(argExpr, openParentScope, memo)).ToList())) { Span = expr.Span },
 
             // Intentional leaves: name/literal leaves carry no nested algorithm
             // to process (a bare Resolve IS the ordinary open-target form), and
             // operator forms are never valid open targets — the evaluator's
             // open-form validation rejects them (BadOpenForm) — so a host-built
             // one passes through unprocessed like a leaf.
-            case Expr.Resolve:
-            case Expr.Param:
-            case Expr.Num:
-            case Expr.StringLiteral:
-            case Expr.EmptySequence:
-            case Expr.NativeCall:
-            case Expr.Unary:
-            case Expr.Binary:
-            case Expr.Index:
-                return expr;
+            Expr.Resolve or Expr.Param or Expr.Num or Expr.StringLiteral or Expr.EmptySequence
+                or Expr.NativeCall or Expr.Unary or Expr.Binary or Expr.Index => expr,
+        };
+    }
 
-            // Exhaustiveness guard, matching AstWalker.VisitExpr: a new Expr
-            // variant must be classified above (recursive rewrite or
-            // intentional leaf) rather than silently passing through.
-            default:
-                throw new InvalidOperationException(
-                    $"Unhandled Expr variant in {nameof(ParameterDetector)}.{nameof(ProcessOpenExpr)}: {expr.GetType().Name}. " +
-                    "Classify the new variant explicitly as a recursive rewrite case or an intentional leaf.");
+    /// <summary>
+    /// Region-memoized inline-algorithm processing for the open-target walk: two
+    /// distinct <see cref="Expr.AlgorithmExpr"/> wrappers over ONE shared algorithm
+    /// elaborate it once per open-target region.
+    /// </summary>
+    private static Algorithm ProcessSharedOpenAlgorithm(
+        Algorithm algorithm,
+        ElaboratedPropertyScope openParentScope,
+        List<Diagnostic>? diagnostics,
+        OpenWalkMemo memo)
+    {
+        memo.OpenAlgorithms ??= new(ReferenceEqualityComparer.Instance);
+        if (!memo.OpenAlgorithms.TryGetValue(algorithm, out var processedAlgorithm))
+        {
+            processedAlgorithm = ProcessAlgorithm(
+                algorithm, openParentScope, ParameterOwnership.Empty, diagnostics, memo.Observations, memo.Run);
+            memo.OpenAlgorithms[algorithm] = processedAlgorithm;
         }
+
+        return processedAlgorithm;
     }
 
     /// <summary>
@@ -1800,10 +1764,11 @@ internal static class ParameterDetector
             case Expr.NativeCall:
                 break;
 
-            // Exhaustiveness guard, matching AstWalker.VisitExpr: a new Expr
-            // variant must be classified above rather than silently
-            // contributing no free names (which would silently change the
-            // inferred implicit-parameter signature).
+            // Runtime exhaustiveness guard (statement-form collector, which the
+            // closed Expr hierarchy cannot make compiler-exhaustive — see
+            // AstWalker.VisitExpr): a new Expr variant must be classified above
+            // rather than silently contributing no free names (which would
+            // silently change the inferred implicit-parameter signature).
             default:
                 throw new InvalidOperationException(
                     $"Unhandled Expr variant in {nameof(ParameterDetector)}.{nameof(CollectFreeParams)}: {expr.GetType().Name}. " +
@@ -2084,178 +2049,198 @@ internal static class ParameterDetector
         if (memo.Run.ImplicitCallOrigins is not null
             && memo.Run.GraceOrigins?.Occurrences.TryGetValue(expr, out var sourceGrace) == true)
             ReportIneffectiveGrace(sourceGrace, sourceGrace.UnwrapGraceOperand(), null, scope, parameters, memo);
-        switch (expr)
+        return expr switch
         {
-            case Expr.Grace:
+            Expr.Grace grace => RewriteGrace(grace, scope, parameters, memo),
+
+            Expr.Resolve(var name) when ShouldRewriteAsParam(name, scope, parameters)
+                => RewriteResolveAsParam(name, expr.Span, memo),
+
+            Expr.Binary(var op, var left, var right) => new Expr.Binary(op,
+                RewriteParams(left, scope, parameters, memo),
+                RewriteParams(right, scope, parameters, memo)) { Span = expr.Span },
+
+            Expr.Unary(var op, var operand) => new Expr.Unary(op,
+                RewriteParams(operand, scope, parameters, memo)) { Span = expr.Span },
+
+            Expr.Index(var target, var selector) => new Expr.Index(
+                RewriteParams(target, scope, parameters, memo),
+                RewriteParams(selector, scope, parameters, memo)) { Span = expr.Span },
+
+            Expr.SequenceSpread(var operand) => new Expr.SequenceSpread(
+                RewriteParams(operand, scope, parameters, memo))
             {
-                // Ordinary collection consumed the weight of an EFFECTIVE marker — one on
-                // a bare name this level inferred as its own parameter. A marker that could
-                // not reorder anything is reported here (F10, ReportIneffectiveGrace): this
-                // pass runs on every detection run, so the report survives ownership
-                // completion, which replays rewriting but never inference. The wrapper is
-                // stripped either way; stacked wrappers on the one occurrence are unwrapped
-                // together so the occurrence is examined — and reported — exactly once. (In
-                // a conditional body the parser already diagnosed Grace; that region's
-                // policy strips it for recovery without a second report.)
-                var gracedCore = expr.UnwrapGraceOperand();
-                ReportIneffectiveGrace(expr, gracedCore, memberEdge: null, scope, parameters, memo);
-                var rewrittenGrace = RewriteParams(gracedCore, scope, parameters, memo);
-                if (memo.Run.ImplicitCallOrigins is null
-                    && memo.Run.GraceOrigins is { } origins
-                    && gracedCore is Expr.Resolve)
-                {
-                    // Keep this written occurrence distinct from an ungraced reference
-                    // sharing its operand in a host DAG. Repeated reaches of the Grace
-                    // node still reuse this copy through the ordinary rewrite memo.
-                    rewrittenGrace = rewrittenGrace with { };
-                    origins.Occurrences.Add(rewrittenGrace, (Expr.Grace)expr);
-                }
-                return rewrittenGrace;
-            }
+                Span = expr.Span,
+                SpreadMarkerSpan = ((Expr.SequenceSpread)expr).SpreadMarkerSpan,
+            },
 
-            case Expr.Resolve(var name) when ShouldRewriteAsParam(name, scope, parameters):
-                memo.Run.OwnershipChanged = true;
-                return new Expr.Param(name) { Span = expr.Span };
+            Expr.SequenceConstruct(var left, var right) => new Expr.SequenceConstruct(
+                RewriteParams(left, scope, parameters, memo),
+                RewriteParams(right, scope, parameters, memo)) { Span = expr.Span },
 
-            case Expr.Binary(var op, var left, var right):
-                return new Expr.Binary(op,
-                    RewriteParams(left, scope, parameters, memo),
-                    RewriteParams(right, scope, parameters, memo)) { Span = expr.Span };
+            Expr.ListLiteral(var items) => new Expr.ListLiteral(
+                RewriteParams(items, scope, parameters, memo)) { Span = expr.Span },
 
-            case Expr.Unary(var op, var operand):
-                return new Expr.Unary(op, RewriteParams(operand, scope, parameters, memo)) { Span = expr.Span };
+            Expr.DotCall dotCall => RewriteDotCall(dotCall, scope, parameters, memo),
 
-            case Expr.Index(var target, var selector):
-                return new Expr.Index(
-                    RewriteParams(target, scope, parameters, memo),
-                    RewriteParams(selector, scope, parameters, memo)) { Span = expr.Span };
+            Expr.AlgorithmExpr(var alg) => new Expr.AlgorithmExpr(
+                RewriteSharedAlgorithm(alg, scope, parameters, memo)) { Span = expr.Span },
 
-            case Expr.SequenceSpread(var operand):
-                return new Expr.SequenceSpread(
-                    RewriteParams(operand, scope, parameters, memo))
-                {
-                    Span = expr.Span,
-                    SpreadMarkerSpan = ((Expr.SequenceSpread)expr).SpreadMarkerSpan,
-                };
+            // Captures are transparent: rewrite rows in the enclosing param scope.
+            Expr.Capture(var captureBody) => new Expr.Capture(
+                RewriteParams(captureBody, scope, parameters, memo)) { Span = expr.Span },
 
-            case Expr.SequenceConstruct(var left, var right):
-                return new Expr.SequenceConstruct(
-                    RewriteParams(left, scope, parameters, memo),
-                    RewriteParams(right, scope, parameters, memo)) { Span = expr.Span };
-
-            case Expr.ListLiteral(var items):
-                return new Expr.ListLiteral(
-                    items.Select(item => RewriteParams(item, scope, parameters, memo)).ToList())
-                { Span = expr.Span };
-
-            case Expr.DotCall dotCall:
-            {
-                // Argument bundles own no scope: slots rewrite in the enclosing
-                // param context. The stored lexical-fallback identity rewrites
-                // by the SAME rule as a bare callee name (Resolve → Param when
-                // the member is a known local or captured parameter) —
-                // including a fallback name the collection itself just
-                // inferred because the fallback may be selected at runtime.
-                OutputBundle? rewrittenArgs = null;
-                if (dotCall.Args is { } dotArgs)
-                {
-                    var rewrittenSlots = new List<Expr>(dotArgs.Count);
-                    foreach (var argExpr in dotArgs)
-                        rewrittenSlots.Add(RewriteParams(argExpr, scope, parameters, memo));
-                    rewrittenArgs = new OutputBundle(rewrittenSlots);
-                }
-
-                // The scope-aware selection verdict this walk already derives for
-                // implicit-signature collection (CollectFreeParams), stamped on the
-                // edge so the scope-free exposure walk charges a parameter-naming
-                // fallback exactly when the runtime may take it
-                // (AstHelpers.LexicalFallbackMayBeSelected).
-                var selection = dotCall.GetLexicalFallbackSelection(
-                    ResolveDotCallReceiverProvider(dotCall, scope, parameters));
-
-                // Prefix member Grace (`recv.~t`) decorates the fallback occurrence. It
-                // is effective only when that occurrence joined this level's inferred
-                // signature — which a member that always resolves structurally (or the
-                // dot-only `.string` intrinsic) never does — so it is examined here with
-                // the edge's own verdict (F10) and stripped like every other marker. A
-                // graced receiver (`a~.t`) is an ordinary bare-name occurrence and takes
-                // the Grace arm through the Target rewrite below.
-                var fallback = dotCall.EffectiveLexicalFallback;
-                var memberGrace = fallback as Expr.Grace;
-                if (memberGrace is null && memo.Run.GraceOrigins is { } graceOrigins)
-                    graceOrigins.Occurrences.TryGetValue(fallback, out memberGrace);
-                if (memberGrace is not null)
-                {
-                    var memberCore = memberGrace.UnwrapGraceOperand();
-                    ReportIneffectiveGrace(memberGrace, memberCore, (dotCall, selection), scope, parameters, memo);
-                }
-
-                var rewrittenDot = dotCall with
-                {
-                    Target = RewriteParams(dotCall.Target, scope, parameters, memo),
-                    Args = rewrittenArgs,
-                    LexicalFallback = RewriteParams(fallback, scope, parameters, memo),
-                    ElaboratedFallbackSelection = selection,
-                };
-                if (memo.DotMembers?.TryGetValue(dotCall, out var provenance) == true)
-                    DiagnosticRecordMetadata<ImplicitParameterProvenance>.Set(rewrittenDot, provenance);
-                return rewrittenDot;
-            }
-
-            case Expr.AlgorithmExpr(var alg):
-            {
-                memo.Algorithms ??= new(ReferenceEqualityComparer.Instance);
-                if (!memo.Algorithms.TryGetValue(alg, out var processedAlg))
-                {
-                    processedAlg = ProcessAlgorithm(
-                        alg, scope, parameters, memo.Diagnostics, memo.Observations, memo.Run);
-                    memo.Algorithms[alg] = processedAlg;
-                }
-
-                return new Expr.AlgorithmExpr(processedAlg) { Span = expr.Span };
-            }
-
-            case Expr.Capture(var captureBody):
-                {
-                    // Captures are transparent: rewrite rows in the enclosing param scope.
-                    var rewrittenRows = new List<Expr>(captureBody.Count);
-                    foreach (var row in captureBody)
-                        rewrittenRows.Add(RewriteParams(row, scope, parameters, memo));
-                    return new Expr.Capture(new OutputBundle(rewrittenRows)) { Span = expr.Span };
-                }
-
-            case Expr.Call(var func, var args):
-            {
-                // Argument bundles own no scope: slots rewrite in the enclosing
-                // param context. (A brace block argument is an AlgorithmExpr
-                // slot and processes as an independent algorithm.)
-                var rewrittenArgs = new List<Expr>(args.Count);
-                foreach (var argExpr in args)
-                    rewrittenArgs.Add(RewriteParams(argExpr, scope, parameters, memo));
-                return new Expr.Call(
-                    RewriteParams(func, scope, parameters, memo),
-                    new OutputBundle(rewrittenArgs)) { Span = expr.Span };
-            }
+            // Argument bundles own no scope: slots rewrite in the enclosing
+            // param context. (A brace block argument is an AlgorithmExpr
+            // slot and processes as an independent algorithm.)
+            Expr.Call call => RewriteCall(call, scope, parameters, memo),
 
             // Intentional leaves: a Resolve that failed the guarded parameter
             // test above stays an ordinary lexical reference, and the
             // remaining leaves contain no parameter references to rewrite.
-            case Expr.Resolve:
-            case Expr.Param:
-            case Expr.Num:
-            case Expr.StringLiteral:
-            case Expr.EmptySequence:
-            case Expr.NativeCall:
-                return expr;
+            Expr.Resolve or Expr.Param or Expr.Num or Expr.StringLiteral
+                or Expr.EmptySequence or Expr.NativeCall => expr,
+        };
+    }
 
-            // Exhaustiveness guard, matching AstWalker.VisitExpr: a new Expr
-            // variant must be classified above rather than silently keeping
-            // detected parameter references inside it unrewritten.
-            default:
-                throw new InvalidOperationException(
-                    $"Unhandled Expr variant in {nameof(ParameterDetector)}.{nameof(RewriteParams)}: {expr.GetType().Name}. " +
-                    "Classify the new variant explicitly as a recursive rewrite case or an intentional leaf.");
+    private static Expr RewriteCall(
+        Expr.Call call,
+        ElaboratedPropertyScope scope,
+        ParameterOwnership parameters,
+        RewriteWalkMemo memo)
+    {
+        // Keep the established argument-before-callee rewrite order: both sides can
+        // report diagnostics and update the region's shared-node metadata.
+        var rewrittenArgs = RewriteParams(call.Args, scope, parameters, memo);
+        return new Expr.Call(
+            RewriteParams(call.Function, scope, parameters, memo), rewrittenArgs) { Span = call.Span };
+    }
+
+    /// <summary>Rewrites every slot of a scope-less bundle (capture rows, list elements, argument slots) in the enclosing param context.</summary>
+    private static OutputBundle RewriteParams(
+        OutputBundle bundle,
+        ElaboratedPropertyScope scope,
+        ParameterOwnership parameters,
+        RewriteWalkMemo memo)
+    {
+        var rewrittenSlots = new List<Expr>(bundle.Count);
+        foreach (var slot in bundle)
+            rewrittenSlots.Add(RewriteParams(slot, scope, parameters, memo));
+        return new OutputBundle(rewrittenSlots);
+    }
+
+    private static Expr RewriteResolveAsParam(string name, SourceSpan? span, RewriteWalkMemo memo)
+    {
+        memo.Run.OwnershipChanged = true;
+        return new Expr.Param(name) { Span = span };
+    }
+
+    /// <summary>
+    /// The Grace arm of <see cref="RewriteParamsCore"/>. Ordinary collection consumed the
+    /// weight of an EFFECTIVE marker — one on a bare name this level inferred as its own
+    /// parameter. A marker that could not reorder anything is reported here (F10,
+    /// <see cref="ReportIneffectiveGrace"/>): this pass runs on every detection run, so
+    /// the report survives ownership completion, which replays rewriting but never
+    /// inference. The wrapper is stripped either way; stacked wrappers on the one
+    /// occurrence are unwrapped together so the occurrence is examined — and reported —
+    /// exactly once. (In a conditional body the parser already diagnosed Grace; that
+    /// region's policy strips it for recovery without a second report.)
+    /// </summary>
+    private static Expr RewriteGrace(
+        Expr.Grace grace,
+        ElaboratedPropertyScope scope,
+        ParameterOwnership parameters,
+        RewriteWalkMemo memo)
+    {
+        var gracedCore = grace.UnwrapGraceOperand();
+        ReportIneffectiveGrace(grace, gracedCore, memberEdge: null, scope, parameters, memo);
+        var rewrittenGrace = RewriteParams(gracedCore, scope, parameters, memo);
+        if (memo.Run.ImplicitCallOrigins is null
+            && memo.Run.GraceOrigins is { } origins
+            && gracedCore is Expr.Resolve)
+        {
+            // Keep this written occurrence distinct from an ungraced reference
+            // sharing its operand in a host DAG. Repeated reaches of the Grace
+            // node still reuse this copy through the ordinary rewrite memo.
+            rewrittenGrace = rewrittenGrace with { };
+            origins.Occurrences.Add(rewrittenGrace, grace);
         }
+        return rewrittenGrace;
+    }
+
+    /// <summary>
+    /// The DotCall arm of <see cref="RewriteParamsCore"/>. Argument bundles own no scope:
+    /// slots rewrite in the enclosing param context. The stored lexical-fallback identity
+    /// rewrites by the SAME rule as a bare callee name (Resolve → Param when the member is
+    /// a known local or captured parameter) — including a fallback name the collection
+    /// itself just inferred because the fallback may be selected at runtime.
+    /// </summary>
+    private static Expr RewriteDotCall(
+        Expr.DotCall dotCall,
+        ElaboratedPropertyScope scope,
+        ParameterOwnership parameters,
+        RewriteWalkMemo memo)
+    {
+        var rewrittenArgs = dotCall.Args is { } dotArgs
+            ? RewriteParams(dotArgs, scope, parameters, memo)
+            : null;
+
+        // The scope-aware selection verdict this walk already derives for
+        // implicit-signature collection (CollectFreeParams), stamped on the
+        // edge so the scope-free exposure walk charges a parameter-naming
+        // fallback exactly when the runtime may take it
+        // (AstHelpers.LexicalFallbackMayBeSelected).
+        var selection = dotCall.GetLexicalFallbackSelection(
+            ResolveDotCallReceiverProvider(dotCall, scope, parameters));
+
+        // Prefix member Grace (`recv.~t`) decorates the fallback occurrence. It
+        // is effective only when that occurrence joined this level's inferred
+        // signature — which a member that always resolves structurally (or the
+        // dot-only `.string` intrinsic) never does — so it is examined here with
+        // the edge's own verdict (F10) and stripped like every other marker. A
+        // graced receiver (`a~.t`) is an ordinary bare-name occurrence and takes
+        // the Grace arm through the Target rewrite below.
+        var fallback = dotCall.EffectiveLexicalFallback;
+        var memberGrace = fallback as Expr.Grace;
+        if (memberGrace is null && memo.Run.GraceOrigins is { } graceOrigins)
+            graceOrigins.Occurrences.TryGetValue(fallback, out memberGrace);
+        if (memberGrace is not null)
+        {
+            var memberCore = memberGrace.UnwrapGraceOperand();
+            ReportIneffectiveGrace(memberGrace, memberCore, (dotCall, selection), scope, parameters, memo);
+        }
+
+        var rewrittenDot = dotCall with
+        {
+            Target = RewriteParams(dotCall.Target, scope, parameters, memo),
+            Args = rewrittenArgs,
+            LexicalFallback = RewriteParams(fallback, scope, parameters, memo),
+            ElaboratedFallbackSelection = selection,
+        };
+        if (memo.DotMembers?.TryGetValue(dotCall, out var provenance) == true)
+            DiagnosticRecordMetadata<ImplicitParameterProvenance>.Set(rewrittenDot, provenance);
+        return rewrittenDot;
+    }
+
+    /// <summary>
+    /// Region-memoized nested-algorithm processing for the rewrite walk: two distinct
+    /// <see cref="Expr.AlgorithmExpr"/> wrappers over ONE shared algorithm elaborate it once.
+    /// </summary>
+    private static Algorithm RewriteSharedAlgorithm(
+        Algorithm alg,
+        ElaboratedPropertyScope scope,
+        ParameterOwnership parameters,
+        RewriteWalkMemo memo)
+    {
+        memo.Algorithms ??= new(ReferenceEqualityComparer.Instance);
+        if (!memo.Algorithms.TryGetValue(alg, out var processedAlg))
+        {
+            processedAlg = ProcessAlgorithm(
+                alg, scope, parameters, memo.Diagnostics, memo.Observations, memo.Run);
+            memo.Algorithms[alg] = processedAlg;
+        }
+
+        return processedAlg;
     }
 
     /// <summary>
@@ -2337,12 +2322,6 @@ internal static class ParameterDetector
             // the owning algorithm's collection walk).
             Expr.Resolve or Expr.Param or Expr.Num or Expr.StringLiteral
                 or Expr.EmptySequence or Expr.NativeCall => expr,
-            // Exhaustiveness guard, matching AstWalker.VisitExpr: a new Expr
-            // variant must be classified above rather than silently skipping
-            // nested-algorithm processing.
-            _ => throw new InvalidOperationException(
-                $"Unhandled Expr variant in {nameof(ParameterDetector)}.{nameof(ProcessExpr)}: {expr.GetType().Name}. " +
-                "Classify the new variant explicitly as a recursive rewrite case or an intentional leaf."),
         };
     }
 
@@ -2437,12 +2416,6 @@ internal static class ParameterDetector
             // written Resolve occurrence.
             Expr.Resolve or Expr.Param or Expr.Num or Expr.StringLiteral
                 or Expr.EmptySequence or Expr.NativeCall => null,
-            // Exhaustiveness guard, matching AstWalker.VisitExpr: a new Expr
-            // variant must be classified above rather than silently reporting
-            // "no occurrence" for identifiers written inside it.
-            _ => throw new InvalidOperationException(
-                $"Unhandled Expr variant in {nameof(ParameterDetector)}.{nameof(FindResolveSpan)}: {expr.GetType().Name}. " +
-                "Classify the new variant explicitly as a searched case or an intentional miss."),
         };
     }
 }

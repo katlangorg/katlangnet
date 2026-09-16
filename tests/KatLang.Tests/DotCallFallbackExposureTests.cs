@@ -1029,8 +1029,13 @@ public class DotCallFallbackExposureTests
         Assert.False(new Expr.DotCall(new Expr.Num(5m), "string").LexicalFallbackMayBeSelected());
     }
 
+    /// <summary>
+    /// The static structural-member classification is compiler-exhaustive over the closed
+    /// Expr hierarchy; this pins the CLASSIFICATION each variant receives, with one row
+    /// per variant so a new form is classified here as well as in production.
+    /// </summary>
     [Fact]
-    public void StructuralMemberProviderClassification_IsExhaustiveAndFailLoud()
+    public void StructuralMemberProviderClassification_ClassifiesEveryVariant()
     {
         var leaf = new Expr.Num(1m);
         var samples = new Dictionary<Type, Expr>
@@ -1054,13 +1059,9 @@ public class DotCallFallbackExposureTests
             [typeof(Expr.NativeCall)] = new Expr.NativeCall("F", []),
         };
 
-        var declaredVariants = typeof(Expr)
-            .GetNestedTypes(System.Reflection.BindingFlags.Public)
-            .Where(type => typeof(Expr).IsAssignableFrom(type))
-            .ToHashSet();
-        Assert.True(
-            declaredVariants.SetEquals(samples.Keys),
-            $"Static structural-member samples drifted. Declared: {string.Join(", ", declaredVariants.Select(t => t.Name).Order())}; sampled: {string.Join(", ", samples.Keys.Select(t => t.Name).Order())}");
+        ExprVariantCatalog.AssertCoversEveryVariant(
+            samples.Keys.Select(type => type.Name),
+            "the static structural-member classification samples");
 
         foreach (var (type, sample) in samples)
         {

@@ -396,10 +396,17 @@ public sealed record SequenceValueParameterPattern(IReadOnlyList<ParameterPatter
 // ── Expressions (Lean: Expr) ────────────────────────────────────────────────
 
 /// <summary>
-/// Abstract base for all KatLang expressions.
-/// Each sealed nested record corresponds to a constructor in the Lean <c>Expr</c> inductive.
+/// The KatLang expression hierarchy: a C# <c>closed</c> record whose direct
+/// descendants are exactly the sealed nested records below, mirroring the Lean
+/// <c>Expr</c> forms plus front-end/native-only forms. Because the hierarchy is closed, a switch
+/// expression that handles every nested variant is compiler-exhaustive with no
+/// catch-all arm, and adding a variant is a compile error at every such dispatch
+/// until the new case is decided (<c>CS8509</c> is an error in this project).
+/// Variants are kept nested here by repository convention. The private parameterless
+/// constructor does not prevent same-assembly derivation through the synthesized
+/// protected copy constructor; <c>closed</c> prevents derivation from other assemblies.
 /// </summary>
-public abstract record Expr
+public closed record Expr
 {
     /// <summary>Source location of this expression, populated by the parser.</summary>
     public SourceSpan? Span { get; init; }

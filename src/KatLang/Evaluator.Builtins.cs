@@ -134,6 +134,15 @@ public static partial class Evaluator
     private static EvalResult<CountedResult> ReCountValueBoundary(EvalResult<CountedResult> r)
         => r.IsError ? r.Error : EvalResult<CountedResult>.Ok(ReCountValueBoundary(r.Value));
 
+    // The counted view of ONE plain value — a leaf, a native result, a captured
+    // group, an empty sequence, a value-position block: it emits Result.ValueCount
+    // values (0 for `()`, otherwise 1). Errors propagate unchanged.
+    private static EvalResult<CountedResult> CountValue(Result value)
+        => EvalResult<CountedResult>.Ok(new CountedResult(value, value.ValueCount()));
+
+    private static EvalResult<CountedResult> CountValue(EvalResult<Result> r)
+        => r.IsError ? r.Error : CountValue(r.Value);
+
     /// <summary>
     /// The ONE value-projection helper for plain results over counted
     /// evaluation: discards only the emitted-count metadata, propagating

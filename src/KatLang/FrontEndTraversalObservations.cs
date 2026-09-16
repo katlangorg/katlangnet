@@ -307,8 +307,9 @@ internal sealed class FrontEndTraversalObservations
 /// paths. Analysis walks and rewrites that return childless leaves unchanged can skip memo entries
 /// for the excluded variants. A rewrite that can REPLACE a leaf (for example Resolve to Param/Call)
 /// must still memoize that leaf to preserve input sharing; its wrapper owns that decision. This
-/// list deliberately does not participate in the fail-loud variant-exhaustiveness contract of the
-/// traversal switches themselves.
+/// is deliberately a NEGATIVE list (a variant not named here is treated as having children), so
+/// a new variant errs toward memoization; classifying it is a performance decision, not part of
+/// the compiler-checked exhaustiveness of the traversal switches themselves.
 /// </summary>
 internal static class AstTraversalDagSafety
 {

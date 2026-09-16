@@ -222,7 +222,7 @@ public class EvaluatorDefensiveBranchTests
     /// zero-argument property additionally makes the run touch the property
     /// cache seam, which selects the async TWIN family below. Value-bound native
     /// arguments themselves touch no cache seam; algorithm-channel native reads
-    /// are covered by AsyncDispatchExhaustivenessTests.
+    /// are covered by AsyncEvaluation/AsyncExpressionDispatchTests.
     /// </summary>
     private static Expr NativeWrapperProgram(
         string nativeName,

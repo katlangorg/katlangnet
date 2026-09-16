@@ -736,7 +736,6 @@ public static partial class Evaluator
         Expr.DotCall => "dotCall",
         Expr.Grace => "grace",
         Expr.NativeCall => "nativeCall",
-        _ => "unknown",
     };
 
     /// <summary>
@@ -1955,62 +1954,20 @@ public static partial class Evaluator
     /// <summary>Lean: resolveAlg → EvalM Algorithm.</summary>
     private static EvalResult<Algorithm> ResolveAlg(Expr expr, EvalCtx ctx)
     {
-        switch (expr)
+        return expr switch
         {
-            case Expr.SequenceConstruct(var e1, var e2):
-                {
-                    _ = e1;
-                    _ = e2;
-                    // Lean: notAnAlgorithm "sequence construct expression" — the
-                    // description is structured payload and must match exactly.
-                    return new EvalError.NotAnAlgorithm("sequence construct expression") { Span = expr.Span };
-                }
+            Expr.AlgorithmExpr(var alg) => EvalResult<Algorithm>.Ok(WireToCaller(ctx, alg)),
 
-            case Expr.SequenceSpread(var operand):
-                {
-                    _ = operand;
-                    return new EvalError.NotAnAlgorithm("spread expression") { Span = expr.Span };
-                }
+            // Capture is not algorithm identity: the algorithm channel sees
+            // only a zero-parameter value thunk over the bundle, exactly as
+            // the pre-split transparent wrapper behaved. `(F)(1)` therefore
+            // stays an arity error and `Apply((Increment))` never receives
+            // Increment's callable identity.
+            Expr.Capture(var captureBody) => EvalResult<Algorithm>.Ok(CaptureValueThunk(captureBody, ctx)),
 
-            case Expr.AlgorithmExpr(var alg):
-                return EvalResult<Algorithm>.Ok(WireToCaller(ctx, alg));
+            Expr.Resolve(var name) => ResolveNamedAlgorithm(name, expr.Span, ctx),
 
-            case Expr.Capture(var captureBody):
-                // Capture is not algorithm identity: the algorithm channel sees
-                // only a zero-parameter value thunk over the bundle, exactly as
-                // the pre-split transparent wrapper behaved. `(F)(1)` therefore
-                // stays an arity error and `Apply((Increment))` never receives
-                // Increment's callable identity.
-                return EvalResult<Algorithm>.Ok(CaptureValueThunk(captureBody, ctx));
-
-            case Expr.Resolve(var name):
-                return ResolveNamedAlgorithm(name, expr.Span, ctx);
-
-            case Expr.DotCall { Args: var dotArgs } dotCall:
-                {
-                    // Math functions have one canonical callable identity across
-                    // `Math.X`, opened `X`, and the predefined alias. In algorithm
-                    // position, return the verified native wrapper itself so the
-                    // callback/loop binder can bind its declared parameters. The
-                    // generic DotCall thunk below remains authoritative for every
-                    // other dotted expression (and for explicit argument lists).
-                    if (dotArgs is null
-                        && TryResolveQualifiedMathNativeReference(dotCall, ctx) is { } mathNative)
-                    {
-                        return EvalResult<Algorithm>.Ok(mathNative);
-                    }
-
-                    // Lean: resolveAlg (.dotCall o n args) — lift to wrapper algorithm;
-                    // evalDotCall handles all semantics (builtin property special cases, structural lookup, lexical fallback).
-                    // This is the higher-order/value identity of a dot RESULT. A dot edge in
-                    // RECEIVER position resolves through ResolveDotReceiver instead, which
-                    // navigates an argumentless chain's exported structural members before
-                    // falling back to this memberless wrapper (Lean: resolveDotReceiver).
-                    var wrapper = new Algorithm.User(
-                        Parent: null, Parameters: [], Opens: [],
-                        Properties: [], Output: [expr]);
-                    return EvalResult<Algorithm>.Ok(WireToCaller(ctx, wrapper));
-                }
+            Expr.DotCall dotCall => ResolveDotCallAlgorithm(dotCall, ctx),
 
             // Algorithm resolution for parameters (Lean: resolveAlg Param(x)):
             // Check AlgEnv first — if x is bound to an algorithm, return it.
@@ -2019,37 +1976,52 @@ public static partial class Evaluator
             // binding's parameter names (ShadowInheritedParameterEnvironments), so a
             // parameter bound only on the value channel finds NO entry and fails as
             // not-callable instead of reaching a same-named caller callable.
-            case Expr.Param(var x):
-                {
-                    var algBound = LookupAlg(CapturedParameterActivation(x, ctx)?.Algorithms ?? ctx.AlgEnv, x);
-                    if (algBound is not null)
-                        return EvalResult<Algorithm>.Ok(algBound);
-                    return new EvalError.NotAnAlgorithm($"param({x})") { Span = expr.Span };
-                }
-            case Expr.Num(var n):
-                return new EvalError.NotAnAlgorithm($"num({Rendering.ValueTextRenderer.FormatNumberInvariant(n)})") { Span = expr.Span };
-            case Expr.EmptySequence:
-                return new EvalError.NotAnAlgorithm("empty sequence value") { Span = expr.Span };
-            case Expr.ListLiteral:
-                return new EvalError.NotAnAlgorithm("list literal") { Span = expr.Span };
-            case Expr.Unary:
-                return new EvalError.NotAnAlgorithm("unary expression") { Span = expr.Span };
-            case Expr.Binary:
-                return new EvalError.NotAnAlgorithm("binary expression") { Span = expr.Span };
-            case Expr.Index:
-                return new EvalError.NotAnAlgorithm("index expression") { Span = expr.Span };
-            case Expr.Call:
-                return new EvalError.NotAnAlgorithm("call expression") { Span = expr.Span };
-            case Expr.NativeCall:
-                return new EvalError.NotAnAlgorithm("native call") { Span = expr.Span };
-            case Expr.Grace:
-                return new EvalError.NotAnAlgorithm("grace expression") { Span = expr.Span };
-            case Expr.StringLiteral:
-                return new EvalError.NotAnAlgorithm("string literal") { Span = expr.Span };
+            Expr.Param(var x) => LookupAlg(CapturedParameterActivation(x, ctx)?.Algorithms ?? ctx.AlgEnv, x) is { } algBound
+                ? EvalResult<Algorithm>.Ok(algBound)
+                : new EvalError.NotAnAlgorithm($"param({x})") { Span = expr.Span },
 
-            default:
-                throw new InvalidOperationException($"Unhandled Expr type in ResolveAlg: {expr.GetType().Name}");
+            // Value forms are not algorithms. Lean: notAnAlgorithm <description> — each
+            // description is structured payload and must match exactly.
+            Expr.SequenceConstruct => new EvalError.NotAnAlgorithm("sequence construct expression") { Span = expr.Span },
+            Expr.SequenceSpread => new EvalError.NotAnAlgorithm("spread expression") { Span = expr.Span },
+            Expr.Num(var n) => new EvalError.NotAnAlgorithm($"num({Rendering.ValueTextRenderer.FormatNumberInvariant(n)})") { Span = expr.Span },
+            Expr.EmptySequence => new EvalError.NotAnAlgorithm("empty sequence value") { Span = expr.Span },
+            Expr.ListLiteral => new EvalError.NotAnAlgorithm("list literal") { Span = expr.Span },
+            Expr.Unary => new EvalError.NotAnAlgorithm("unary expression") { Span = expr.Span },
+            Expr.Binary => new EvalError.NotAnAlgorithm("binary expression") { Span = expr.Span },
+            Expr.Index => new EvalError.NotAnAlgorithm("index expression") { Span = expr.Span },
+            Expr.Call => new EvalError.NotAnAlgorithm("call expression") { Span = expr.Span },
+            Expr.NativeCall => new EvalError.NotAnAlgorithm("native call") { Span = expr.Span },
+            Expr.Grace => new EvalError.NotAnAlgorithm("grace expression") { Span = expr.Span },
+            Expr.StringLiteral => new EvalError.NotAnAlgorithm("string literal") { Span = expr.Span },
+        };
+    }
+
+    /// <summary>
+    /// The higher-order/value identity of a dot RESULT (Lean: resolveAlg (.dotCall o n args)).
+    /// Math functions have one canonical callable identity across <c>Math.X</c>, opened
+    /// <c>X</c>, and the predefined alias: in algorithm position an argumentless canonical
+    /// reference resolves to the verified native wrapper itself so the callback/loop
+    /// binder can bind its declared parameters. Every other dotted expression (and every
+    /// explicit argument list) lifts to a memberless wrapper algorithm whose evaluation —
+    /// <c>evalDotCall</c> — owns all dot semantics (builtin property special cases,
+    /// structural lookup, lexical fallback). A dot edge in RECEIVER position resolves
+    /// through <c>ResolveDotReceiver</c> instead, which navigates an argumentless chain's
+    /// exported structural members before falling back to this memberless wrapper
+    /// (Lean: resolveDotReceiver).
+    /// </summary>
+    private static EvalResult<Algorithm> ResolveDotCallAlgorithm(Expr.DotCall dotCall, EvalCtx ctx)
+    {
+        if (dotCall.Args is null
+            && TryResolveQualifiedMathNativeReference(dotCall, ctx) is { } mathNative)
+        {
+            return EvalResult<Algorithm>.Ok(mathNative);
         }
+
+        var wrapper = new Algorithm.User(
+            Parent: null, Parameters: [], Opens: [],
+            Properties: [], Output: [dotCall]);
+        return EvalResult<Algorithm>.Ok(WireToCaller(ctx, wrapper));
     }
 
     // ── Entry points ────────────────────────────────────────────────────────

@@ -5,6 +5,9 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <IsPackable>false</IsPackable>
+    <!-- Same rule as src/KatLang: a switch expression over the closed `Expr` hierarchy
+         (the Lean AST encoder, test walkers) that misses a variant fails the build. -->
+    <WarningsAsErrors>$(WarningsAsErrors);CS8509;CS8655</WarningsAsErrors>
   </PropertyGroup>
 
   <ItemGroup>

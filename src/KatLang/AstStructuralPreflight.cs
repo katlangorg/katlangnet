@@ -399,7 +399,7 @@ internal static class AstStructuralPreflight
     /// <para>Leaves are excluded because they terminate the spine without recursing, which
     /// is what keeps pure chains such as <c>SequenceConstruct(prev, Num)</c> free. The leaf
     /// test is <see cref="TryGetChild"/> itself rather than a duplicated node list, so it
-    /// can never drift from the traversal (and inherits its fail-loud exhaustiveness).</para>
+    /// can never drift from the traversal (and inherits its compiler-checked exhaustiveness).</para>
     ///
     /// <para>Before this charge, a host-built tree interleaving ONE zero-cost join with
     /// each weight-1 or weight-2 layer measured exactly at the 300-unit ceiling and then
@@ -468,73 +468,17 @@ internal static class AstStructuralPreflight
     /// fixed deterministic order, without copying any child collection. Children are
     /// exactly the references the recursive consumers (walker, front-end passes,
     /// optimizers, evaluator) follow later. Node kinds without recursive children
-    /// return <c>false</c> immediately. An unknown node kind fails loudly instead of
-    /// being silently treated as a leaf: skipping unknown children would let a future
-    /// AST variant smuggle unmeasured depth past this guard.
+    /// return <c>false</c> immediately. Expressions dispatch through the
+    /// compiler-exhaustive <see cref="TryGetExprChild"/>; any other unknown node kind
+    /// fails loudly instead of being silently treated as a leaf: skipping unknown
+    /// children would let a future AST variant smuggle unmeasured depth past this guard.
     /// </summary>
     internal static bool TryGetChild(object node, int index, out object child)
     {
         switch (node)
         {
-            case Expr.Unary unary:
-                return PickOne(index, unary.Operand, out child);
-            case Expr.Binary binary:
-                return PickTwo(index, binary.Left, binary.Right, out child);
-            case Expr.Index indexExpr:
-                return PickTwo(index, indexExpr.Target, indexExpr.Selector, out child);
-            case Expr.SequenceConstruct sequenceConstruct:
-                return PickTwo(index, sequenceConstruct.Left, sequenceConstruct.Right, out child);
-            case Expr.SequenceSpread spread:
-                return PickOne(index, spread.Operand, out child);
-            case Expr.Grace grace:
-                return PickOne(index, grace.Inner, out child);
-            case Expr.AlgorithmExpr block:
-                return PickOne(index, block.Algorithm, out child);
-            case Expr.Capture capture:
-                return PickFromList(index, capture.Body, out child);
-            case Expr.Call call:
-                if (index == 0)
-                {
-                    child = call.Function;
-                    return true;
-                }
-
-                return PickFromList(index - 1, call.Args, out child);
-            case Expr.DotCall dotCall:
-                if (index == 0)
-                {
-                    child = dotCall.Target;
-                    return true;
-                }
-
-                index--;
-                // The elaborated lexical-fallback identity is an Expr child
-                // (Resolve/Param leaf for parser/front-end trees, but a
-                // host-built tree could place anything here), so it is
-                // enumerated for the same cycle/depth safety as every other
-                // reference the recursive consumers follow.
-                if (dotCall.LexicalFallback is { } lexicalFallback)
-                {
-                    if (index == 0)
-                    {
-                        child = lexicalFallback;
-                        return true;
-                    }
-
-                    index--;
-                }
-
-                if (dotCall.Args is { } dotArgs)
-                    return PickFromList(index, dotArgs, out child);
-
-                child = null!;
-                return false;
-            case Expr.ListLiteral listLiteral:
-                return PickFromList(index, listLiteral.Items, out child);
-            case Expr.Param or Expr.Num or Expr.StringLiteral or Expr.EmptySequence
-                or Expr.Resolve or Expr.NativeCall:
-                child = null!;
-                return false;
+            case Expr expr:
+                return TryGetExprChild(expr, index, out child);
 
             // ONE uniform case for every algorithm subtype: the recursive collections
             // are declared as virtual init properties on the Algorithm BASE, so a host
@@ -665,6 +609,77 @@ internal static class AstStructuralPreflight
                     + "Every recursively reachable node kind must enumerate its children here "
                     + "before trees containing it can be accepted safely.");
         }
+    }
+
+    /// <summary>
+    /// The expression half of <see cref="TryGetChild"/>: compiler-exhaustive over the
+    /// closed <see cref="Expr"/> hierarchy, so a new variant cannot be accepted by the
+    /// preflight until its children are enumerated here.
+    /// </summary>
+    private static bool TryGetExprChild(Expr node, int index, out object child)
+        => node switch
+        {
+            Expr.Unary unary => PickOne(index, unary.Operand, out child),
+            Expr.Binary binary => PickTwo(index, binary.Left, binary.Right, out child),
+            Expr.Index indexExpr => PickTwo(index, indexExpr.Target, indexExpr.Selector, out child),
+            Expr.SequenceConstruct sequenceConstruct => PickTwo(index, sequenceConstruct.Left, sequenceConstruct.Right, out child),
+            Expr.SequenceSpread spread => PickOne(index, spread.Operand, out child),
+            Expr.Grace grace => PickOne(index, grace.Inner, out child),
+            Expr.AlgorithmExpr block => PickOne(index, block.Algorithm, out child),
+            Expr.Capture capture => PickFromList(index, capture.Body, out child),
+            Expr.Call call => PickCallChild(index, call, out child),
+            Expr.DotCall dotCall => PickDotCallChild(index, dotCall, out child),
+            Expr.ListLiteral listLiteral => PickFromList(index, listLiteral.Items, out child),
+            Expr.Param or Expr.Num or Expr.StringLiteral or Expr.EmptySequence
+                or Expr.Resolve or Expr.NativeCall => PickNone(out child),
+        };
+
+    private static bool PickCallChild(int index, Expr.Call call, out object child)
+    {
+        if (index == 0)
+        {
+            child = call.Function;
+            return true;
+        }
+
+        return PickFromList(index - 1, call.Args, out child);
+    }
+
+    private static bool PickDotCallChild(int index, Expr.DotCall dotCall, out object child)
+    {
+        if (index == 0)
+        {
+            child = dotCall.Target;
+            return true;
+        }
+
+        index--;
+        // The elaborated lexical-fallback identity is an Expr child
+        // (Resolve/Param leaf for parser/front-end trees, but a
+        // host-built tree could place anything here), so it is
+        // enumerated for the same cycle/depth safety as every other
+        // reference the recursive consumers follow.
+        if (dotCall.LexicalFallback is { } lexicalFallback)
+        {
+            if (index == 0)
+            {
+                child = lexicalFallback;
+                return true;
+            }
+
+            index--;
+        }
+
+        if (dotCall.Args is { } dotArgs)
+            return PickFromList(index, dotArgs, out child);
+
+        return PickNone(out child);
+    }
+
+    private static bool PickNone(out object child)
+    {
+        child = null!;
+        return false;
     }
 
     private static bool PickOne(int index, object only, out object child)

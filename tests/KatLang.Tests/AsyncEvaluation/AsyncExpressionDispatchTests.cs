@@ -1,179 +1,40 @@
 namespace KatLang.Tests.AsyncEvaluation;
 
 /// <summary>
-/// Mechanical exhaustiveness pins for the async twin dispatch (M10).
+/// Dispatch-equivalence pins for the async twin dispatch (M10).
 ///
-/// <para><c>EvalCountedAsync</c> used to end in an open default that delegated
-/// every unmatched variant to the SYNCHRONOUS evaluator on the assumption it was
-/// a leaf. A newly added recursive <see cref="Expr"/> variant would therefore
-/// have evaluated its children synchronously — bypassing the async twin family —
-/// while still passing outcome-differential tests (the sync oracle produces the
-/// same values). The dispatch now enumerates the sync-delegable leaves
-/// explicitly (<c>Num</c>, <c>StringLiteral</c>, and the illegal-in-eval
-/// <c>Grace</c>) and fails loudly on anything else, in lock-step with the
-/// synchronous <c>EvalCounted</c> mirror.</para>
+/// <para><c>EvalCountedAsync</c> is a compiler-exhaustive switch expression over the
+/// closed <see cref="Expr"/> hierarchy, mirrored case for case on <c>EvalCounted</c>: a
+/// newly added variant fails the build until it is given an explicit twin case or joins
+/// the enumerated sync-delegable leaf group (<c>Num</c>, <c>StringLiteral</c>, and the
+/// illegal-in-eval <c>Grace</c>). What the compiler cannot prove is that a variant's arm
+/// is the RIGHT one: a recursive variant delegated to the synchronous evaluator would
+/// evaluate its children synchronously — bypassing the async twin family — while still
+/// passing outcome-differential tests (the sync oracle produces the same values).</para>
 ///
-/// <para>These tests pin the contract three ways: (1) a reflection-complete
-/// classification of every concrete variant into explicitly-async-cased vs
-/// sync-delegable-leaf; (2) every variant dispatches through the twin path
-/// without an unhandled-variant failure and with the synchronous outcome;
-/// (3) for every recursive variant, an async-sensitive property access placed
-/// in each meaningful child position routes through the ASYNC cache seam with
-/// genuine suspension — a variant silently delegated to sync evaluation would
-/// reach the synchronous seam instead and fail the counters.</para>
+/// <para>These tests pin the contract three ways: (1) every variant dispatches through
+/// the twin path with the synchronous outcome; (2) the declared sync-delegable leaves
+/// really are leaves — delegation touches neither cache seam; (3) for every recursive
+/// variant, an async-sensitive property access placed in each meaningful child position
+/// routes through the ASYNC cache seam with genuine suspension — a variant silently
+/// delegated to sync evaluation would reach the synchronous seam instead and fail the
+/// counters.</para>
 /// </summary>
-public class AsyncDispatchExhaustivenessTests
+public class AsyncExpressionDispatchTests
 {
-    // ── Declared dispatch classification (reflection-complete) ──────────────
-
-    private enum AsyncDispatchPolicy
-    {
-        /// <summary>Handled by an explicit case of the async twin dispatch.</summary>
-        ExplicitAsyncCase,
-
-        /// <summary>
-        /// Delegated to the synchronous evaluator's uncharged leaf core
-        /// (<c>EvalLeafUncharged</c> — never the plain <c>Eval</c> head, which would
-        /// charge the node's bulk-work checkpoint a second time) because the
-        /// variant provably evaluates no child expression (Grace is the
-        /// illegal-in-eval catch-all: a structured error, no child evaluation).
-        /// </summary>
-        SyncDelegatedLeaf,
-    }
-
-    private static IReadOnlyDictionary<string, AsyncDispatchPolicy> DeclaredPolicies { get; } =
-        new Dictionary<string, AsyncDispatchPolicy>(StringComparer.Ordinal)
-        {
-            [nameof(Expr.Param)] = AsyncDispatchPolicy.ExplicitAsyncCase,
-            [nameof(Expr.Resolve)] = AsyncDispatchPolicy.ExplicitAsyncCase,
-            [nameof(Expr.EmptySequence)] = AsyncDispatchPolicy.ExplicitAsyncCase,
-            [nameof(Expr.Unary)] = AsyncDispatchPolicy.ExplicitAsyncCase,
-            [nameof(Expr.Binary)] = AsyncDispatchPolicy.ExplicitAsyncCase,
-            [nameof(Expr.Index)] = AsyncDispatchPolicy.ExplicitAsyncCase,
-            [nameof(Expr.ListLiteral)] = AsyncDispatchPolicy.ExplicitAsyncCase,
-            [nameof(Expr.SequenceConstruct)] = AsyncDispatchPolicy.ExplicitAsyncCase,
-            [nameof(Expr.SequenceSpread)] = AsyncDispatchPolicy.ExplicitAsyncCase,
-            [nameof(Expr.AlgorithmExpr)] = AsyncDispatchPolicy.ExplicitAsyncCase,
-            [nameof(Expr.Capture)] = AsyncDispatchPolicy.ExplicitAsyncCase,
-            [nameof(Expr.Call)] = AsyncDispatchPolicy.ExplicitAsyncCase,
-            [nameof(Expr.DotCall)] = AsyncDispatchPolicy.ExplicitAsyncCase,
-            [nameof(Expr.NativeCall)] = AsyncDispatchPolicy.ExplicitAsyncCase,
-            [nameof(Expr.Num)] = AsyncDispatchPolicy.SyncDelegatedLeaf,
-            [nameof(Expr.StringLiteral)] = AsyncDispatchPolicy.SyncDelegatedLeaf,
-            [nameof(Expr.Grace)] = AsyncDispatchPolicy.SyncDelegatedLeaf,
-        };
-
-    /// <summary>
-    /// A newly added <see cref="Expr"/> variant must be classified here before
-    /// the dispatch pins below can cover it — and must then be given an explicit
-    /// case in BOTH counted dispatch twins (their fail-loud defaults reject
-    /// anything unclassified at runtime).
-    /// </summary>
-    [Fact]
-    public void DeclaredPolicies_CoverEveryExprVariant()
-    {
-        var declared = typeof(Expr).GetNestedTypes()
-            .Where(type => !type.IsAbstract && typeof(Expr).IsAssignableFrom(type))
-            .Select(type => type.Name)
-            .OrderBy(name => name, StringComparer.Ordinal)
-            .ToList();
-
-        var unclassified = declared.Except(DeclaredPolicies.Keys, StringComparer.Ordinal).ToList();
-        Assert.True(
-            unclassified.Count == 0,
-            $"Expr variant(s) with no async-dispatch exhaustiveness classification: {string.Join(", ", unclassified)}. "
-            + "Classify each in DeclaredPolicies and give it an explicit case in BOTH counted dispatch twins "
-            + "(EvalCounted / EvalCountedAsync) or a proven-leaf delegation.");
-        var unsampled = declared.Except(VariantSamples.Keys, StringComparer.Ordinal).ToList();
-        Assert.True(
-            unsampled.Count == 0,
-            $"Expr variant(s) with no dispatch-coverage sample: {string.Join(", ", unsampled)}. "
-            + "Add a valid sample to VariantSamples so the twin-path dispatch pins cover the variant.");
-
-        Assert.Equal(
-            declared,
-            DeclaredPolicies.Keys.OrderBy(name => name, StringComparer.Ordinal).ToList());
-        Assert.Equal(
-            declared,
-            VariantSamples.Keys.OrderBy(name => name, StringComparer.Ordinal).ToList());
-    }
-
-    private static bool HasStructuralExprChildren(Type variantType)
-        => variantType
-            .GetProperties(System.Reflection.BindingFlags.Public
-                | System.Reflection.BindingFlags.Instance
-                | System.Reflection.BindingFlags.DeclaredOnly)
-            .Any(property =>
-                typeof(Expr).IsAssignableFrom(property.PropertyType)
-                || typeof(Algorithm).IsAssignableFrom(property.PropertyType)
-                || typeof(OutputBundle).IsAssignableFrom(property.PropertyType)
-                || typeof(IEnumerable<Expr>).IsAssignableFrom(property.PropertyType));
-
-    /// <summary>
-    /// A future composite variant cannot be placed in the synchronous delegation
-    /// group merely by adding it to the policy/sample tables. Grace is the sole
-    /// structural exception: evaluation deliberately rejects it without touching
-    /// its Inner expression.
-    /// </summary>
-    [Fact]
-    public void SyncDelegatedPolicies_ContainNoEvaluatedCompositeVariant()
-    {
-        var structurallyCompositeDelegates = DeclaredPolicies
-            .Where(pair => pair.Value == AsyncDispatchPolicy.SyncDelegatedLeaf)
-            .Select(pair => typeof(Expr).GetNestedType(pair.Key))
-            .Where(type => type is not null && HasStructuralExprChildren(type))
-            .Select(type => type!.Name)
-            .OrderBy(name => name, StringComparer.Ordinal)
-            .ToList();
-
-        Assert.Equal([nameof(Expr.Grace)], structurallyCompositeDelegates);
-    }
-
-    // ── Per-variant dispatch coverage through the twin path ─────────────────
-
     private static Algorithm.User EmptyAlgorithm(params Expr[] output)
         => new(Parent: null, Parameters: [], Opens: [], Properties: [], Output: output);
 
-    private static IReadOnlyDictionary<string, Expr> VariantSamples { get; } = BuildVariantSamples();
+    private static IReadOnlyDictionary<string, Expr> VariantSamples => ExprVariantCatalog.Samples;
 
-    private static IReadOnlyDictionary<string, Expr> BuildVariantSamples()
-    {
-        var leaf = new Expr.Num(1);
-        return new Dictionary<string, Expr>(StringComparer.Ordinal)
-        {
-            [nameof(Expr.Param)] = new Expr.Param("p"),
-            [nameof(Expr.Num)] = leaf,
-            [nameof(Expr.StringLiteral)] = new Expr.StringLiteral("s"),
-            [nameof(Expr.Unary)] = new Expr.Unary(UnaryOp.Minus, leaf),
-            [nameof(Expr.Binary)] = new Expr.Binary(BinaryOp.Add, leaf, leaf),
-            [nameof(Expr.Index)] = new Expr.Index(new Expr.Capture([leaf, leaf]), new Expr.Num(0)),
-            [nameof(Expr.SequenceConstruct)] = new Expr.SequenceConstruct(leaf, leaf),
-            [nameof(Expr.EmptySequence)] = new Expr.EmptySequence(0),
-            [nameof(Expr.SequenceSpread)] = new Expr.SequenceSpread(new Expr.Capture([leaf, leaf])),
-            [nameof(Expr.ListLiteral)] = new Expr.ListLiteral([leaf, leaf]),
-            [nameof(Expr.Resolve)] = new Expr.Resolve("R"),
-            [nameof(Expr.DotCall)] = new Expr.DotCall(new Expr.Capture([leaf, leaf]), "count"),
-            [nameof(Expr.Grace)] = new Expr.Grace(leaf, 1),
-            [nameof(Expr.AlgorithmExpr)] = new Expr.AlgorithmExpr(EmptyAlgorithm(leaf)),
-            [nameof(Expr.Capture)] = new Expr.Capture([leaf, leaf]),
-            [nameof(Expr.Call)] = new Expr.Call(new Expr.Resolve("F"), new OutputBundle([leaf])),
-            [nameof(Expr.NativeCall)] = new Expr.NativeCall("Abs", ["x"]),
-        };
-    }
+    // ── Per-variant dispatch equivalence through the twin path ──────────────
 
-    public static TheoryData<string> AllVariantNames()
-    {
-        var data = new TheoryData<string>();
-        foreach (var name in BuildVariantSamples().Keys.OrderBy(name => name, StringComparer.Ordinal))
-            data.Add(name);
-        return data;
-    }
+    public static TheoryData<string> AllVariantNames() => ExprVariantCatalog.VariantNames();
 
     /// <summary>
     /// Every current variant dispatches through the async twin path (as a root
-    /// program output row) without an unhandled-variant failure, produces
-    /// exactly the synchronous outcome — ok or error alike — and never touches
-    /// the synchronous seam member.
+    /// program output row), produces exactly the synchronous outcome — ok or
+    /// error alike — and never touches the synchronous seam member.
     /// </summary>
     [Theory]
     [MemberData(nameof(AllVariantNames))]
@@ -191,17 +52,17 @@ public class AsyncDispatchExhaustivenessTests
         Assert.Equal(0, cache.SyncAccesses);
     }
 
-    public static TheoryData<string> SyncDelegatedLeafNames()
+    /// <summary>
+    /// The sync-delegable leaf group enumerated by BOTH counted dispatches. Grace is
+    /// the sole structurally composite member: evaluation deliberately rejects it
+    /// without touching its Inner expression.
+    /// </summary>
+    public static TheoryData<string> SyncDelegatedLeafNames() => new()
     {
-        var data = new TheoryData<string>();
-        foreach (var (name, policy) in DeclaredPolicies.OrderBy(pair => pair.Key, StringComparer.Ordinal))
-        {
-            if (policy == AsyncDispatchPolicy.SyncDelegatedLeaf)
-                data.Add(name);
-        }
-
-        return data;
-    }
+        nameof(Expr.Grace),
+        nameof(Expr.Num),
+        nameof(Expr.StringLiteral),
+    };
 
     /// <summary>
     /// The declared sync-delegable leaves really are leaves: delegating them to
@@ -237,8 +98,16 @@ public class AsyncDispatchExhaustivenessTests
     [Fact]
     public async Task NativeCallWithValueBoundArguments_TouchesNoSeam()
     {
-        var ast = new Expr.AlgorithmExpr(EmptyAlgorithm(VariantSamples[nameof(Expr.NativeCall)]));
+        // The catalog's bare NativeCall has an unbound x and fails before computation.
+        // Bind a real value so this pin exercises successful native argument demand.
+        var wrapper = new Algorithm.User(
+            Parent: null, Parameters: Algorithm.NormalParameters(["x"]), Opens: [], Properties: [],
+            Output: [new Expr.NativeCall("Abs", ["x"])]);
+        var ast = new Expr.Call(new Expr.AlgorithmExpr(wrapper), [new Expr.Num(-7)]);
         var sync = Evaluator.RunCounted(ast);
+        Assert.True(sync.IsOk, AsyncEvaluationHarness.NeutralOf(sync));
+        Assert.True(Result.ValueComparer.Equals(new Result.Atom(7), sync.Value.Value));
+        Assert.Equal(1, sync.Value.EmittedCount);
         var cache = new PassThroughAsyncZeroArgPropertyResultCache();
         var async = await AsyncEvaluationHarness.Complete(
             Evaluator.RunCountedAsync(ast, cache));
@@ -370,29 +239,22 @@ public class AsyncDispatchExhaustivenessTests
         { "DotCall.Argument", "P = 2\n(7, 8, 9).take(P + 0)" },
     };
 
+    /// <summary>
+    /// Every composite variant that evaluates children has an async-sensitive program
+    /// here (or the host-built <see cref="Expr.SequenceConstruct"/> pin below), so a new
+    /// recursive variant's seam routing is tested or the table fails. Grace is
+    /// deliberately illegal-in-eval and never evaluates Inner; Resolve has no structural
+    /// child, but its property-value demand is async-sensitive and stays in the matrix.
+    /// </summary>
     [Fact]
     public void AsyncSensitivePrograms_CoverEveryCompositeVariantThatEvaluatesChildren()
-    {
-        var structurallyComposite = typeof(Expr).GetNestedTypes()
-            .Where(type => !type.IsAbstract && typeof(Expr).IsAssignableFrom(type))
-            .Where(HasStructuralExprChildren)
-            // Grace is deliberately illegal-in-eval and never evaluates Inner.
-            .Where(type => type.Name != nameof(Expr.Grace))
-            .Select(type => type.Name)
-            .OrderBy(name => name, StringComparer.Ordinal)
-            .ToList();
-        var exercised = AsyncSensitiveChildPrograms()
-            .Select(row => ((string)row[0]!).Split('.')[0])
-            // Resolve has no structural child, but its property-value demand is
-            // async-sensitive and remains covered by the same behavioral matrix.
-            .Where(name => name != nameof(Expr.Resolve))
-            .Append(nameof(Expr.SequenceConstruct))
-            .Distinct(StringComparer.Ordinal)
-            .OrderBy(name => name, StringComparer.Ordinal)
-            .ToList();
-
-        Assert.Equal(structurallyComposite, exercised);
-    }
+        => ExprVariantCatalog.AssertCoversEveryCompositeVariant(
+            AsyncSensitiveChildPrograms()
+                .Select(row => ((string)row[0]!).Split('.')[0])
+                .Where(name => name != nameof(Expr.Resolve))
+                .Append(nameof(Expr.SequenceConstruct)),
+            $"{nameof(AsyncExpressionDispatchTests)}.{nameof(AsyncSensitiveChildPrograms)}",
+            nameof(Expr.Grace));
 
     [Theory]
     [MemberData(nameof(AsyncSensitiveChildPrograms))]

@@ -965,115 +965,79 @@ internal sealed class ModuleLoader
             TraversalObservations?.RecordLoaderWalkExpansion();
         }
 
-        Expr result;
-        switch (expr)
+        // Compiler-exhaustive over the closed Expr hierarchy: a new variant is a build
+        // error here until it is classified (recursive rewrite or leaf). Keep this switch
+        // and the async twin below in lock-step — the twin's statement form keeps a
+        // runtime guard instead.
+        Expr result = expr switch
         {
-            case Expr.Call(var func, var args):
-                result = new Expr.Call(
-                    ProcessExpr(func, LoadContext.RuntimeExpr, depth + 1),
-                    new OutputBundle(args.Select(argExpr => ProcessExpr(argExpr, LoadContext.RuntimeExpr, depth + 1)).ToList()))
-                { Span = expr.Span };
-                break;
+            Expr.Call(var func, var args) => new Expr.Call(
+                ProcessExpr(func, LoadContext.RuntimeExpr, depth + 1),
+                new OutputBundle(args.Select(argExpr => ProcessExpr(argExpr, LoadContext.RuntimeExpr, depth + 1)).ToList()))
+            { Span = expr.Span },
 
-            case Expr.AlgorithmExpr(var alg):
-                result = new Expr.AlgorithmExpr(ProcessAlgorithm(alg, context, depth + 1)) { Span = expr.Span };
-                break;
+            Expr.AlgorithmExpr(var alg) => new Expr.AlgorithmExpr(ProcessAlgorithm(alg, context, depth + 1)) { Span = expr.Span },
 
             // Capture rows inherit the surrounding load context, exactly like
             // list-literal elements and internal sequence joins: `X = (load('url'), 1)`
             // elaborates where `X = [load('url')]` does.
-            case Expr.Capture(var captureBody):
-                result = new Expr.Capture(new OutputBundle(
-                    captureBody.Select(row => ProcessExpr(row, context, depth + 1)).ToList()))
-                { Span = expr.Span };
-                break;
+            Expr.Capture(var captureBody) => new Expr.Capture(new OutputBundle(
+                captureBody.Select(row => ProcessExpr(row, context, depth + 1)).ToList()))
+            { Span = expr.Span },
 
-            case Expr.Binary(var op, var left, var right):
-                result = new Expr.Binary(op,
-                    ProcessExpr(left, LoadContext.RuntimeExpr, depth + 1),
-                    ProcessExpr(right, LoadContext.RuntimeExpr, depth + 1))
-                { Span = expr.Span };
-                break;
+            Expr.Binary(var op, var left, var right) => new Expr.Binary(op,
+                ProcessExpr(left, LoadContext.RuntimeExpr, depth + 1),
+                ProcessExpr(right, LoadContext.RuntimeExpr, depth + 1))
+            { Span = expr.Span },
 
-            case Expr.Unary(var op, var operand):
-                result = new Expr.Unary(op, ProcessExpr(operand, LoadContext.RuntimeExpr, depth + 1))
-                { Span = expr.Span };
-                break;
+            Expr.Unary(var op, var operand) => new Expr.Unary(op, ProcessExpr(operand, LoadContext.RuntimeExpr, depth + 1))
+            { Span = expr.Span },
 
-            case Expr.Index(var target, var selector):
-                result = new Expr.Index(
-                    ProcessExpr(target, LoadContext.RuntimeExpr, depth + 1),
-                    ProcessExpr(selector, LoadContext.RuntimeExpr, depth + 1))
-                { Span = expr.Span };
-                break;
+            Expr.Index(var target, var selector) => new Expr.Index(
+                ProcessExpr(target, LoadContext.RuntimeExpr, depth + 1),
+                ProcessExpr(selector, LoadContext.RuntimeExpr, depth + 1))
+            { Span = expr.Span },
 
-            case Expr.SequenceSpread(var operand):
-                result = new Expr.SequenceSpread(
-                    ProcessExpr(operand, context, depth + 1))
-                {
-                    Span = expr.Span,
-                    SpreadMarkerSpan = ((Expr.SequenceSpread)expr).SpreadMarkerSpan,
-                };
-                break;
+            Expr.SequenceSpread(var operand) => new Expr.SequenceSpread(
+                ProcessExpr(operand, context, depth + 1))
+            {
+                Span = expr.Span,
+                SpreadMarkerSpan = ((Expr.SequenceSpread)expr).SpreadMarkerSpan,
+            },
 
-            case Expr.SequenceConstruct(var left, var right):
-                result = new Expr.SequenceConstruct(
-                    ProcessExpr(left, context, depth + 1),
-                    ProcessExpr(right, context, depth + 1))
-                { Span = expr.Span };
-                break;
+            Expr.SequenceConstruct(var left, var right) => new Expr.SequenceConstruct(
+                ProcessExpr(left, context, depth + 1),
+                ProcessExpr(right, context, depth + 1))
+            { Span = expr.Span },
 
             // List-literal elements inherit the surrounding load context,
             // exactly like capture rows (Expr.Capture) and internal sequence
             // joins: `X = [load('url')]` elaborates where
             // `X = (load('url'), 1)` does.
-            case Expr.ListLiteral(var items):
-                result = new Expr.ListLiteral(
-                    items.Select(item => ProcessExpr(item, context, depth + 1)).ToList())
-                { Span = expr.Span };
-                break;
+            Expr.ListLiteral(var items) => new Expr.ListLiteral(
+                items.Select(item => ProcessExpr(item, context, depth + 1)).ToList())
+            { Span = expr.Span },
 
-            case Expr.DotCall dotCall:
-                // `with` keeps every stored dot-edge fact (member span,
-                // lexical fallback) intact — rebuilding positionally here
-                // silently dropped the elaborated fallback identity for every
-                // module-elaborated tree.
-                result = dotCall with
-                {
-                    Target = ProcessExpr(dotCall.Target, dotCall.Args is null ? context : LoadContext.RuntimeExpr, depth + 1),
-                    Args = dotCall.Args is { } dotArgs
-                        ? new OutputBundle(dotArgs.Select(argExpr => ProcessExpr(argExpr, LoadContext.RuntimeExpr, depth + 1)).ToList())
-                        : null,
-                };
-                break;
+            // `with` keeps every stored dot-edge fact (member span,
+            // lexical fallback) intact — rebuilding positionally here
+            // silently dropped the elaborated fallback identity for every
+            // module-elaborated tree.
+            Expr.DotCall dotCall => dotCall with
+            {
+                Target = ProcessExpr(dotCall.Target, dotCall.Args is null ? context : LoadContext.RuntimeExpr, depth + 1),
+                Args = dotCall.Args is { } dotArgs
+                    ? new OutputBundle(dotArgs.Select(argExpr => ProcessExpr(argExpr, LoadContext.RuntimeExpr, depth + 1)).ToList())
+                    : null,
+            },
 
-            case Expr.Grace grace:
-                // `with` keeps the stored Grace weight intact — module
-                // elaboration runs BEFORE parameter detection, so the
-                // annotation is still live here.
-                result = grace with { Inner = ProcessExpr(grace.Inner, context, depth + 1) };
-                break;
+            // `with` keeps the stored Grace weight intact — module
+            // elaboration runs BEFORE parameter detection, so the
+            // annotation is still live here.
+            Expr.Grace grace => grace with { Inner = ProcessExpr(grace.Inner, context, depth + 1) },
 
             // Leaf nodes — no transformation needed
-            case Expr.Resolve:
-            case Expr.Param:
-            case Expr.Num:
-            case Expr.StringLiteral:
-            case Expr.EmptySequence:
-            case Expr.NativeCall:
-                result = expr;
-                break;
-
-            // Exhaustiveness guard, matching AstWalker.VisitExpr: a new Expr
-            // variant must be classified above (recursive rewrite or leaf)
-            // rather than silently passing through with unelaborated loads
-            // inside it. Keep this switch and the async twin below in
-            // lock-step.
-            default:
-                throw new InvalidOperationException(
-                    $"Unhandled Expr variant in {nameof(ModuleLoader)}.{nameof(ProcessExpr)}: {expr.GetType().Name}. " +
-                    "Classify the new variant explicitly as a recursive rewrite case or an intentional leaf, in both walk twins.");
-        }
+            Expr.Resolve or Expr.Param or Expr.Num or Expr.StringLiteral or Expr.EmptySequence or Expr.NativeCall => expr,
+        };
 
         if (memo is not null)
             memo[expr] = result;
@@ -1234,14 +1198,16 @@ internal sealed class ModuleLoader
                 result = expr;
                 break;
 
-            // Exhaustiveness guard — MIRROR OF the synchronous walk's guard,
-            // keep in lock-step: a new Expr variant must be classified above
-            // rather than silently passing through with unelaborated loads
-            // inside it.
+            // Runtime exhaustiveness guard. The synchronous twin is a compiler-exhaustive
+            // switch expression; this twin stays a statement because its arms await inside
+            // loops, and extracting them into helpers would add async state machines to the
+            // calibrated recursion spine. A new Expr variant that the compiler forces into
+            // the synchronous switch must be classified here by hand — the guard turns an
+            // omission into a loud failure rather than a load silently left unelaborated.
             default:
                 throw new InvalidOperationException(
                     $"Unhandled Expr variant in {nameof(ModuleLoader)}.{nameof(ProcessExprAsync)}: {expr.GetType().Name}. " +
-                    "Classify the new variant explicitly as a recursive rewrite case or an intentional leaf, in both walk twins.");
+                    "Classify the new variant explicitly as a recursive rewrite case or an intentional leaf, mirroring the synchronous walk.");
         }
 
         if (rewritesByDepth is not null)

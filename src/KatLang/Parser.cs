@@ -2306,7 +2306,8 @@ public sealed class Parser
     {
         while (pending.Count > 0)
         {
-            switch (pending.Pop())
+            var expr = pending.Pop();
+            switch (expr)
             {
                 case Expr.Grace g:
                     if (g.Span is { } span)
@@ -2350,6 +2351,14 @@ public sealed class Parser
                 case Expr.Capture(var body):
                     PushInReverse(pending, body);
                     break;
+                case Expr.Resolve or Expr.Param or Expr.Num or Expr.StringLiteral
+                    or Expr.EmptySequence or Expr.NativeCall:
+                    break;
+                // Closed hierarchies do not make switch statements exhaustive. Keep
+                // this iterative scan fail-loud when a new expression shape is added.
+                default:
+                    throw new InvalidOperationException(
+                        $"Unhandled Expr variant in {nameof(Parser)}.{nameof(ScanPendingForGraceSpan)}: {expr.GetType().Name}.");
             }
         }
         return null;

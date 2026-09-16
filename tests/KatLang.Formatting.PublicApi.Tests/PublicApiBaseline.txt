@@ -1084,7 +1084,7 @@ public static class KatLang.Evaluator
   method   public static System.Threading.Tasks.Task<KatLang.EvalResult<System.Collections.Generic.IReadOnlyList<System.Numerics.Decimal128>>> RunFlatAsync(KatLang.Expr expr, KatLang.EvaluationLimits? limits, System.Threading.CancellationToken cancellationToken)
   method   public static System.Threading.Tasks.Task<KatLang.EvalResult<System.Collections.Generic.IReadOnlyList<System.Numerics.Decimal128>>> RunFlatAsync(KatLang.Expr expr, KatLang.EvaluationLimits? limits, long? randomSeed, System.Threading.CancellationToken cancellationToken)
 
-public abstract record KatLang.Expr : System.IEquatable<KatLang.Expr>
+public closed record KatLang.Expr : System.IEquatable<KatLang.Expr>
   ctor     protected Expr(KatLang.Expr original)
   property protected virtual System.Type EqualityContract { get; }
   property public KatLang.SourceSpan? Span { get; init; }

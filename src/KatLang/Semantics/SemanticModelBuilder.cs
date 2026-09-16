@@ -991,7 +991,13 @@ public static class SemanticModelBuilder
                 case Expr.NativeCall:
                 case Expr.Num:
                 case Expr.StringLiteral:
+                case Expr.EmptySequence:
                     break;
+                // Closed hierarchies do not make switch statements exhaustive. A new
+                // variant must be classified here, never silently lose semantic sites.
+                default:
+                    throw new InvalidOperationException(
+                        $"Unhandled Expr variant in {nameof(SemanticModelBuilder)}.{nameof(VisitExpr)}: {expr.GetType().Name}.");
             }
         }
 

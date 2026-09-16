@@ -9,6 +9,16 @@
 		<Nullable>enable</Nullable>
 		<RootNamespace>KatLang</RootNamespace>
 
+		<!--
+		  `Expr` is a C# `closed` hierarchy: a switch expression over it that names every
+		  variant is compiler-exhaustive without a catch-all arm. The compiler reports a
+		  MISSING variant only as warning CS8509 (and an unhandled `null` input as CS8655),
+		  so both are errors here — adding an `Expr` variant must fail the build at every
+		  exhaustive dispatch until the new case is decided, never degrade to a runtime
+		  SwitchExpressionException.
+		-->
+		<WarningsAsErrors>$(WarningsAsErrors);CS8509;CS8655</WarningsAsErrors>
+
 		<PackageId>KatLang</PackageId>
 		<Version>$(KatLangVersion)</Version>
 		<Authors>katlangorg</Authors>

@@ -481,74 +481,69 @@ public static partial class Evaluator
         if (ctx.Budget.TryChargeExpressionNodeWork() is { } nodeWorkError)
             return nodeWorkError;
 
-        switch (expr)
+        return expr switch
         {
-            case Expr.Num:
-            case Expr.StringLiteral:
-                return EvalLeafUncharged(expr, ctx);
+            Expr.Num or Expr.StringLiteral => EvalLeafUncharged(expr, ctx),
 
-            case Expr.Param(var name):
-                // Value projection of the canonical counted Param dispatch
-                // (dual-view lookup order documented on EvalParamCounted).
-                return ProjectCountedValue(EvalParamCounted(name, expr.Span, ctx, valEnv));
+            // Value projection of the canonical counted Param dispatch
+            // (dual-view lookup order documented on EvalParamCounted).
+            Expr.Param(var name) => ProjectCountedValue(EvalParamCounted(name, expr.Span, ctx, valEnv)),
 
-            case Expr.Unary or Expr.Binary:
-                // Unary and binary spines evaluate iteratively; the machine
-                // preserves operand validation, error propagation, and spans
-                // through the shared unary and binary applications.
-                return ProjectCountedValue(EvalExpressionSpineCounted(expr, ctx, valEnv));
+            // Unary and binary spines evaluate iteratively; the machine
+            // preserves operand validation, error propagation, and spans
+            // through the shared unary and binary applications.
+            Expr.Unary or Expr.Binary => ProjectCountedValue(EvalExpressionSpineCounted(expr, ctx, valEnv)),
 
-            case Expr.SequenceConstruct:
-                return ProjectCountedValue(EvalSequenceConstructCounted(expr, ctx, valEnv));
+            Expr.SequenceConstruct => ProjectCountedValue(EvalSequenceConstructCounted(expr, ctx, valEnv)),
 
-            case Expr.EmptySequence(var depth):
-                return EvalResult<Result>.Ok(BuildEmptySequenceValue(depth));
+            Expr.EmptySequence(var depth) => EvalResult<Result>.Ok(BuildEmptySequenceValue(depth)),
 
-            case Expr.SequenceSpread:
-                return ProjectCountedValue(EvalSequenceSpreadCounted(expr, ctx, valEnv));
+            Expr.SequenceSpread => ProjectCountedValue(EvalSequenceSpreadCounted(expr, ctx, valEnv)),
 
-            case Expr.ListLiteral:
-                return ProjectCountedValue(EvalExpressionSpineCounted(expr, ctx, valEnv));
+            Expr.ListLiteral => ProjectCountedValue(EvalExpressionSpineCounted(expr, ctx, valEnv)),
 
-            case Expr.AlgorithmExpr(var alg):
-                {
-                    var wired = WireToCaller(ctx, alg);
-                    var blockSpan = PreferExpressionSpan(expr.Span, wired.Output);
-                    if (ZeroArgumentValueDemandRejection(ZeroArgumentDemandShape.Block, name: null, blockSpan, wired) is { } rejection)
-                        return rejection;
-                    return WithSpan(blockSpan, EvalAlgOutput(wired, ctx, valEnv));
-                }
+            Expr.AlgorithmExpr(var alg) => EvalAlgorithmExprValue(expr, alg, ctx, valEnv),
 
-            case Expr.Capture(var captureBody):
-                return WithSpan(PreferExpressionSpan(expr.Span, captureBody), EvalCaptureValue(captureBody, ctx, valEnv));
+            Expr.Capture(var captureBody) => WithSpan(
+                PreferExpressionSpan(expr.Span, captureBody), EvalCaptureValue(captureBody, ctx, valEnv)),
 
-            case Expr.Resolve(var name):
-                // Value projection of the canonical counted Resolve dispatch.
-                return ProjectCountedValue(EvalResolveCounted(name, expr.Span, ctx, valEnv));
+            // Value projection of the canonical counted Resolve dispatch.
+            Expr.Resolve(var name) => ProjectCountedValue(EvalResolveCounted(name, expr.Span, ctx, valEnv)),
 
-            case Expr.DotCall dotCallExpr:
-                // Lean: eval (.dotMember o n fallback mode argsOpt) => withCtx (CtxMsg.dotCall o n) do evalDotCall
-                // (the context — which renders the receiver's name — is built only on error).
-                return WithSpan(expr.Span, WithDotCallCtx(dotCallExpr, ctx,
-                    EvalDotCall(dotCallExpr, ctx, valEnv)));
+            // Lean: eval (.dotMember o n fallback mode argsOpt) => withCtx (CtxMsg.dotCall o n) do evalDotCall
+            // (the context — which renders the receiver's name — is built only on error).
+            Expr.DotCall dotCallExpr => WithSpan(expr.Span, WithDotCallCtx(dotCallExpr, ctx,
+                EvalDotCall(dotCallExpr, ctx, valEnv))),
 
-            case Expr.Call(var func, var callArgs):
-                return WithSpan(expr.Span,
-                    EvalCallExpr(func, callArgs, ctx, valEnv));
+            Expr.Call(var func, var callArgs) => WithSpan(expr.Span,
+                EvalCallExpr(func, callArgs, ctx, valEnv)),
 
-            case Expr.Index:
-                // The spine machine owns the index-expression span.
-                return ProjectCountedValue(EvalExpressionSpineCounted(expr, ctx, valEnv));
+            // The spine machine owns the index-expression span.
+            Expr.Index => ProjectCountedValue(EvalExpressionSpineCounted(expr, ctx, valEnv)),
 
-            case Expr.NativeCall(var fnName, var argNames):
-                return EvalNativeCall(fnName, argNames, ctx, valEnv);
+            Expr.NativeCall(var fnName, var argNames) => EvalNativeCall(fnName, argNames, ctx, valEnv),
 
-            case Expr.Grace:
-                return EvalLeafUncharged(expr, ctx);
+            Expr.Grace => EvalLeafUncharged(expr, ctx),
+        };
+    }
 
-            default:
-                return new EvalError.IllegalInEval(ExprKind(expr)) { Span = expr.Span };
-        }
+    /// <summary>
+    /// A scope-owning algorithm expression in VALUE position, shared by the plain,
+    /// counted, and (mirrored) async dispatches: the block is wired to the caller,
+    /// a parameterized block is the ordinary zero-argument value-demand rejection,
+    /// and otherwise its output is evaluated under the block's span.
+    /// </summary>
+    private static EvalResult<Result> EvalAlgorithmExprValue(
+        Expr expr,
+        Algorithm alg,
+        EvalCtx ctx,
+        IReadOnlyList<(string, Result)> valEnv)
+    {
+        var wired = WireToCaller(ctx, alg);
+        var blockSpan = PreferExpressionSpan(expr.Span, wired.Output);
+        if (ZeroArgumentValueDemandRejection(ZeroArgumentDemandShape.Block, name: null, blockSpan, wired) is { } rejection)
+            return rejection;
+        return WithSpan(blockSpan, EvalAlgOutput(wired, ctx, valEnv));
     }
 
     /// <summary>
@@ -574,93 +569,53 @@ public static partial class Evaluator
         if (ctx.Budget.TryChargeExpressionNodeWork() is { } nodeWorkError)
             return nodeWorkError;
 
-        switch (expr)
+        // Compiler-exhaustive over the closed Expr hierarchy — MIRRORED case for case by
+        // EvalCountedAsync. A new variant is a build error here until it is given a
+        // counted case (or joins the proven-leaf group at the end), so it can never
+        // silently take a plain value with a single-value count and erase multi-item
+        // emission.
+        return expr switch
         {
-            case Expr.Param(var name):
-                return EvalParamCounted(name, expr.Span, ctx, valEnv);
+            Expr.Param(var name) => EvalParamCounted(name, expr.Span, ctx, valEnv),
 
-            case Expr.SequenceSpread:
-                return EvalSequenceSpreadCounted(expr, ctx, valEnv);
+            Expr.SequenceSpread => EvalSequenceSpreadCounted(expr, ctx, valEnv),
 
-            case Expr.SequenceConstruct:
-                return EvalSequenceConstructCounted(expr, ctx, valEnv);
+            Expr.SequenceConstruct => EvalSequenceConstructCounted(expr, ctx, valEnv),
 
-            case Expr.Unary or Expr.Binary or Expr.ListLiteral:
-                return EvalExpressionSpineCounted(expr, ctx, valEnv);
+            Expr.Unary or Expr.Binary or Expr.ListLiteral => EvalExpressionSpineCounted(expr, ctx, valEnv),
 
-            case Expr.EmptySequence(var depth):
-                {
-                    var emptyValue = BuildEmptySequenceValue(depth);
-                    return EvalResult<CountedResult>.Ok(new CountedResult(emptyValue, emptyValue.ValueCount()));
-                }
+            Expr.EmptySequence(var depth) => CountValue(BuildEmptySequenceValue(depth)),
 
-            case Expr.AlgorithmExpr(var alg):
-                {
-                    var wired = WireToCaller(ctx, alg);
-                    var blockSpan = PreferExpressionSpan(expr.Span, wired.Output);
-                    if (ZeroArgumentValueDemandRejection(ZeroArgumentDemandShape.Block, name: null, blockSpan, wired) is { } rejection)
-                        return rejection;
+            Expr.AlgorithmExpr(var alg) => CountValue(EvalAlgorithmExprValue(expr, alg, ctx, valEnv)),
 
-                    var blockR = WithSpan(blockSpan, EvalAlgOutput(wired, ctx, valEnv));
-                    if (blockR.IsError) return blockR.Error;
-                    return EvalResult<CountedResult>.Ok(new CountedResult(blockR.Value, blockR.Value.ValueCount()));
-                }
+            // A capture in value position is a value boundary: the body's
+            // supply is captured to one canonical value and re-counted as
+            // that value's ValueCount.
+            Expr.Capture(var captureBody) => CountValue(WithSpan(
+                PreferExpressionSpan(expr.Span, captureBody), EvalCaptureValue(captureBody, ctx, valEnv))),
 
-            case Expr.Capture(var captureBody):
-                {
-                    // A capture in value position is a value boundary: the body's
-                    // supply is captured to one canonical value and re-counted as
-                    // that value's ValueCount.
-                    var captureR = WithSpan(PreferExpressionSpan(expr.Span, captureBody), EvalCaptureValue(captureBody, ctx, valEnv));
-                    if (captureR.IsError) return captureR.Error;
-                    return EvalResult<CountedResult>.Ok(new CountedResult(captureR.Value, captureR.Value.ValueCount()));
-                }
+            Expr.Resolve(var name) => EvalResolveCounted(name, expr.Span, ctx, valEnv),
 
-            case Expr.Resolve(var name):
-                return EvalResolveCounted(name, expr.Span, ctx, valEnv);
+            Expr.DotCall dotCallExpr => WithSpan(expr.Span, WithDotCallCtx(dotCallExpr, ctx,
+                EvalDotCallCounted(dotCallExpr, ctx, valEnv))),
 
-            case Expr.DotCall dotCallExpr:
-                return WithSpan(expr.Span, WithDotCallCtx(dotCallExpr, ctx,
-                    EvalDotCallCounted(dotCallExpr, ctx, valEnv)));
+            Expr.Call(var func, var callArgs) => WithSpan(expr.Span,
+                EvalCallCountedExpr(func, callArgs, ctx, valEnv)),
 
-            case Expr.Call(var func, var callArgs):
-                return WithSpan(expr.Span,
-                    EvalCallCountedExpr(func, callArgs, ctx, valEnv));
-
-            case Expr.Index:
-                // The spine machine owns the index-expression span.
-                return EvalExpressionSpineCounted(expr, ctx, valEnv);
+            // The spine machine owns the index-expression span.
+            Expr.Index => EvalExpressionSpineCounted(expr, ctx, valEnv),
 
             // This head already charged the dispatch checkpoint. Enter the shared
             // implementations directly, never through the charging plain Eval head.
             // NativeCall is recursive: its parameter reads can demand algorithms,
             // so the async counted dispatcher uses EvalNativeCallAsync.
-            case Expr.NativeCall(var nativeFnName, var nativeArgNames):
-                {
-                    var nativeR = EvalNativeCall(nativeFnName, nativeArgNames, ctx, valEnv);
-                    if (nativeR.IsError) return nativeR.Error;
-                    return EvalResult<CountedResult>.Ok(new CountedResult(nativeR.Value, nativeR.Value.ValueCount()));
-                }
+            Expr.NativeCall(var nativeFnName, var nativeArgNames)
+                => CountValue(EvalNativeCall(nativeFnName, nativeArgNames, ctx, valEnv)),
 
-            case Expr.Num:
-            case Expr.StringLiteral:
-            case Expr.Grace:
-                {
-                    var resultR = EvalLeafUncharged(expr, ctx);
-                    if (resultR.IsError) return resultR.Error;
-                    return EvalResult<CountedResult>.Ok(new CountedResult(resultR.Value, resultR.Value.ValueCount()));
-                }
-
-            // Exhaustiveness guard, matching AstWalker.VisitExpr: a new Expr
-            // variant must be classified above — an explicit counted case, or
-            // a proven leaf added to the delegation group — rather than
-            // silently taking the plain evaluator's value with a single-value
-            // count (which would silently erase multi-item emission).
-            default:
-                throw new InvalidOperationException(
-                    $"Unhandled Expr variant in {nameof(Evaluator)}.{nameof(EvalCounted)}: {expr.GetType().Name}. " +
-                    "Add an explicit counted case (or classify it as a proven leaf) here and in EvalCountedAsync.");
-        }
+            // PROVEN LEAVES — the only kinds the async twin may delegate to the
+            // synchronous leaf core: none evaluates a child expression.
+            Expr.Num or Expr.StringLiteral or Expr.Grace => CountValue(EvalLeafUncharged(expr, ctx)),
+        };
     }
 
     private static EvalResult<Result> EvalNativeCall(

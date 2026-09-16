@@ -309,6 +309,13 @@ internal static class PropertyDependencyGraphBuilder
             OwnerQualifiedParameters.UnionWith(other.OwnerQualifiedParameters);
         }
 
+        /// <summary><see cref="UnionWith"/> returning this seed, for expression-shaped folds.</summary>
+        public SummarySeed Absorb(SummarySeed other)
+        {
+            UnionWith(other);
+            return this;
+        }
+
         public void QualifyParameters(Algorithm owner)
         {
             foreach (var name in owner.Params)
@@ -1320,173 +1327,120 @@ internal static class PropertyDependencyGraphBuilder
         SummaryWalkMemos memos,
         bool inTransparentContext)
     {
-        switch (expr)
+        SummarySeed Seed(Expr child)
+            => CollectSummarySeed(child, localPropertySummaries, ownedHere, memos, inTransparentContext);
+
+        return expr switch
         {
-            case Expr.Param(var name):
-                return ownedHere.Contains(name)
-                    ? new SummarySeed()
-                    : new SummarySeed(requiredAncestorOwnedParameterNames: [name]);
+            Expr.Param(var name) => ownedHere.Contains(name)
+                ? new SummarySeed()
+                : new SummarySeed(requiredAncestorOwnedParameterNames: [name]),
 
-            case Expr.Resolve(var name):
-                return localPropertySummaries.TryGetValue(name, out var localPropertySummary)
-                    ? localPropertySummary.Clone()
-                    : new SummarySeed(visiblePropertyDependencyNames: [name]);
+            Expr.Resolve(var name) => localPropertySummaries.TryGetValue(name, out var localPropertySummary)
+                ? localPropertySummary.Clone()
+                : new SummarySeed(visiblePropertyDependencyNames: [name]),
 
-            case Expr.Grace(var inner, _):
-                return CollectSummarySeed(inner, localPropertySummaries, ownedHere, memos, inTransparentContext);
+            Expr.Grace(var inner, _) => Seed(inner),
+            Expr.Binary(_, var left, var right) => Seed(left).Absorb(Seed(right)),
+            Expr.Unary(_, var operand) => Seed(operand),
+            Expr.Index(var target, var selector) => Seed(target).Absorb(Seed(selector)),
+            Expr.SequenceSpread(var operand) => Seed(operand),
+            Expr.SequenceConstruct(var left, var right) => Seed(left).Absorb(Seed(right)),
+            Expr.ListLiteral(var listItems) => CollectSummarySeed(
+                listItems, localPropertySummaries, ownedHere, memos, inTransparentContext),
 
-            case Expr.Binary(_, var left, var right):
-            {
-                var seed = CollectSummarySeed(left, localPropertySummaries, ownedHere, memos, inTransparentContext);
-                seed.UnionWith(CollectSummarySeed(right, localPropertySummaries, ownedHere, memos, inTransparentContext));
-                return seed;
-            }
+            Expr.AlgorithmExpr(var algorithm) => CollectSharedAlgorithmSummarySeed(algorithm, memos),
 
-            case Expr.Unary(_, var operand):
-                return CollectSummarySeed(operand, localPropertySummaries, ownedHere, memos, inTransparentContext);
+            // A capture owns no names: its rows walk with an empty
+            // owned-here set and an empty local-summary map — exactly what
+            // the pre-split transparent wrapper algorithm's output walk did
+            // (the same attribution as call-argument bundles). The names it
+            // reports unresolved are resolved against the enclosing
+            // algorithm's own property summaries at the algorithm level
+            // (CollectSummarySeed(Algorithm.User)), never left to escape.
+            Expr.Capture(var captureBody) => CollectTransparentBundleSummarySeed(captureBody, memos),
 
-            case Expr.Index(var target, var selector):
-            {
-                var seed = CollectSummarySeed(target, localPropertySummaries, ownedHere, memos, inTransparentContext);
-                seed.UnionWith(CollectSummarySeed(selector, localPropertySummaries, ownedHere, memos, inTransparentContext));
-                return seed;
-            }
+            // An argument bundle owns no names: slots walk with an empty
+            // owned-here set and an empty local-summary map — the same
+            // attribution as capture rows (and as the pre-Track-B empty
+            // transparent args wrapper).
+            Expr.Call(var function, var args) => Seed(function).Absorb(CollectTransparentBundleSummarySeed(args, memos)),
 
-            case Expr.SequenceSpread(var operand):
-            {
-                var seed = CollectSummarySeed(operand, localPropertySummaries, ownedHere, memos, inTransparentContext);
-                return seed;
-            }
-
-            case Expr.SequenceConstruct(var left, var right):
-            {
-                var seed = CollectSummarySeed(left, localPropertySummaries, ownedHere, memos, inTransparentContext);
-                seed.UnionWith(CollectSummarySeed(right, localPropertySummaries, ownedHere, memos, inTransparentContext));
-                return seed;
-            }
-
-            case Expr.ListLiteral(var listItems):
-            {
-                var seed = new SummarySeed();
-                foreach (var item in listItems)
-                    seed.UnionWith(CollectSummarySeed(item, localPropertySummaries, ownedHere, memos, inTransparentContext));
-                return seed;
-            }
-
-            case Expr.AlgorithmExpr(var algorithm):
-                return CollectSharedAlgorithmSummarySeed(algorithm, memos);
-
-            case Expr.Capture(var captureBody):
-                // A capture owns no names: its rows walk with an empty
-                // owned-here set and an empty local-summary map — exactly what
-                // the pre-split transparent wrapper algorithm's output walk did
-                // (the same attribution as call-argument bundles). The names it
-                // reports unresolved are resolved against the enclosing
-                // algorithm's own property summaries at the algorithm level
-                // (CollectSummarySeed(Algorithm.User)), never left to escape.
-                return CollectSummarySeed(
-                    captureBody,
-                    new Dictionary<string, SummarySeed>(StringComparer.Ordinal),
-                    CreateNameSet(),
-                    memos,
-                    inTransparentContext: true);
-
-            case Expr.Call(var function, var args):
-            {
-                // An argument bundle owns no names: slots walk with an empty
-                // owned-here set and an empty local-summary map — the same
-                // attribution as capture rows (and as the pre-Track-B empty
-                // transparent args wrapper).
-                var seed = CollectSummarySeed(function, localPropertySummaries, ownedHere, memos, inTransparentContext);
-                seed.UnionWith(CollectSummarySeed(
-                    args,
-                    new Dictionary<string, SummarySeed>(StringComparer.Ordinal),
-                    CreateNameSet(),
-                    memos,
-                    inTransparentContext: true));
-                return seed;
-            }
-
-            case Expr.DotCall dotCall:
-            {
-                // A static member path (`Inner.X`, `Lib.Sub.Q`, `Lib.F(1)`) is charged by
-                // NAVIGATION at the level that resolves its head: every member the evaluator
-                // would navigate to charges its own requirements — so a container reading a
-                // captured member through `Inner.X` is itself local-only — and a receiver the
-                // walk stops at (the member is absent: the edge falls back) charges its output
-                // exactly as the bare target seed did. A receiver of any other shape (a
-                // parameter, a block, a capture, a call, the `string` intrinsic) is a value
-                // and keeps charging its own seed.
-                var seed = TryGetStaticMemberPath(dotCall, out var pathHead, out var pathMembers)
-                    ? new SummarySeed(pendingReferences: [new PendingReference(pathHead, pathMembers, [])])
-                    : CollectSummarySeed(dotCall.Target, localPropertySummaries, ownedHere, memos, inTransparentContext);
-
-                // The stored lexical-fallback identity is an ordinary
-                // elaborated name expression (Resolve/Param) and participates
-                // in dependency analysis EXACTLY like a written callee name —
-                // through this same walk with the enclosing attribution —
-                // whenever the fallback MAY be selected at runtime
-                // (AstHelpers.LexicalFallbackMayBeSelected: the detector's
-                // stamped scope-aware verdict, or the raw shape classification
-                // on an unstamped edge). A receiver that declares the member
-                // never selects the fallback, so a Param fallback hidden behind
-                // a structural winner charges nothing and the property keeps
-                // its exported structural/open access; a receiver known to
-                // lack it — a sibling property whose value is a list, a call
-                // result, a literal — always does, so `Big = Data.f` with `f`
-                // an enclosing parameter is local-only exactly like the direct
-                // call `f(Data)`. Charging only CERTAIN selections left such a
-                // property exported although its value depends on the
-                // parameter: structural navigation could then read a dynamic
-                // binding through it, and the run-wide zero-argument property
-                // cache of an exported binding would have served one
-                // activation's value to another (SEMANTIC-ALIGNMENT, F3).
-                // The sibling evaluation-order channel
-                // (CollectSiblingDependencyIndices) deliberately takes no
-                // fallback contribution: the fallback is a CALLED name, and
-                // called siblings are not order dependencies there (the same
-                // rule as Call function position).
-                if (dotCall.LexicalFallbackMayBeSelected())
-                {
-                    seed.UnionWith(CollectSummarySeed(
-                        dotCall.EffectiveLexicalFallback,
-                        localPropertySummaries,
-                        ownedHere,
-                        memos,
-                        inTransparentContext));
-                }
-
-                if (dotCall.Args is { } argsOpt)
-                {
-                    seed.UnionWith(CollectSummarySeed(
-                        argsOpt,
-                        new Dictionary<string, SummarySeed>(StringComparer.Ordinal),
-                        CreateNameSet(),
-                        memos,
-                        inTransparentContext: true));
-                }
-
-                return seed;
-            }
+            Expr.DotCall dotCall => CollectDotCallSummarySeed(
+                dotCall, localPropertySummaries, ownedHere, memos, inTransparentContext),
 
             // Intentional leaves with no name occurrences: literals, the empty
             // sequence, and native-call bodies (whose argument names are
             // parameter references by construction).
-            case Expr.Num:
-            case Expr.StringLiteral:
-            case Expr.EmptySequence:
-            case Expr.NativeCall:
-                return new SummarySeed();
+            Expr.Num or Expr.StringLiteral or Expr.EmptySequence or Expr.NativeCall => new SummarySeed(),
+        };
+    }
 
-            // Exhaustiveness guard, matching AstWalker.VisitExpr: a new Expr
-            // variant must be classified above rather than silently seeding no
-            // dependencies (which would silently change exposure
-            // classification for properties referencing it).
-            default:
-                throw new InvalidOperationException(
-                    $"Unhandled Expr variant in {nameof(PropertyDependencyGraphBuilder)}.{nameof(CollectSummarySeed)}: {expr.GetType().Name}. " +
-                    "Classify the new variant explicitly as a collected case or an intentional leaf.");
+    /// <summary>
+    /// Seed of a scope-less bundle (capture rows, argument slots): the rows walk with an
+    /// empty owned-here set and an empty local-summary map in the transparent context.
+    /// </summary>
+    private static SummarySeed CollectTransparentBundleSummarySeed(OutputBundle bundle, SummaryWalkMemos memos)
+        => CollectSummarySeed(
+            bundle,
+            new Dictionary<string, SummarySeed>(StringComparer.Ordinal),
+            CreateNameSet(),
+            memos,
+            inTransparentContext: true);
+
+    /// <summary>
+    /// The DotCall arm of <see cref="CollectSummarySeedCore"/>. A static member path
+    /// (<c>Inner.X</c>, <c>Lib.Sub.Q</c>, <c>Lib.F(1)</c>) is charged by NAVIGATION at the
+    /// level that resolves its head: every member the evaluator would navigate to charges
+    /// its own requirements — so a container reading a captured member through
+    /// <c>Inner.X</c> is itself local-only — and a receiver the walk stops at (the member
+    /// is absent: the edge falls back) charges its output exactly as the bare target seed
+    /// did. A receiver of any other shape (a parameter, a block, a capture, a call, the
+    /// <c>string</c> intrinsic) is a value and keeps charging its own seed.
+    /// <para>The stored lexical-fallback identity is an ordinary elaborated name expression
+    /// (Resolve/Param) and participates in dependency analysis EXACTLY like a written
+    /// callee name — through this same walk with the enclosing attribution — whenever the
+    /// fallback MAY be selected at runtime (<see cref="AstHelpers.LexicalFallbackMayBeSelected"/>:
+    /// the detector's stamped scope-aware verdict, or the raw shape classification on an
+    /// unstamped edge). A receiver that declares the member never selects the fallback, so
+    /// a Param fallback hidden behind a structural winner charges nothing and the property
+    /// keeps its exported structural/open access; a receiver known to lack it — a sibling
+    /// property whose value is a list, a call result, a literal — always does, so
+    /// <c>Big = Data.f</c> with <c>f</c> an enclosing parameter is local-only exactly like
+    /// the direct call <c>f(Data)</c>. Charging only CERTAIN selections left such a
+    /// property exported although its value depends on the parameter: structural
+    /// navigation could then read a dynamic binding through it, and the run-wide
+    /// zero-argument property cache of an exported binding would have served one
+    /// activation's value to another (SEMANTIC-ALIGNMENT, F3). The sibling
+    /// evaluation-order channel (<see cref="CollectSiblingDependencyIndices"/>) deliberately
+    /// takes no fallback contribution: the fallback is a CALLED name, and called siblings
+    /// are not order dependencies there (the same rule as Call function position).</para>
+    /// </summary>
+    private static SummarySeed CollectDotCallSummarySeed(
+        Expr.DotCall dotCall,
+        IReadOnlyDictionary<string, SummarySeed> localPropertySummaries,
+        HashSet<string> ownedHere,
+        SummaryWalkMemos memos,
+        bool inTransparentContext)
+    {
+        var seed = TryGetStaticMemberPath(dotCall, out var pathHead, out var pathMembers)
+            ? new SummarySeed(pendingReferences: [new PendingReference(pathHead, pathMembers, [])])
+            : CollectSummarySeed(dotCall.Target, localPropertySummaries, ownedHere, memos, inTransparentContext);
+
+        if (dotCall.LexicalFallbackMayBeSelected())
+        {
+            seed.UnionWith(CollectSummarySeed(
+                dotCall.EffectiveLexicalFallback,
+                localPropertySummaries,
+                ownedHere,
+                memos,
+                inTransparentContext));
         }
+
+        if (dotCall.Args is { } argsOpt)
+            seed.UnionWith(CollectTransparentBundleSummarySeed(argsOpt, memos));
+
+        return seed;
     }
 
     private static bool SummarySeedsEqual(
@@ -1771,9 +1725,10 @@ internal static class PropertyDependencyGraphBuilder
             case Expr.NativeCall:
                 break;
 
-            // Exhaustiveness guard, matching AstWalker.VisitExpr: a new Expr
-            // variant must be classified above rather than silently
-            // contributing no processing-order dependencies.
+            // Runtime exhaustiveness guard (statement-form collector, which the
+            // closed Expr hierarchy cannot make compiler-exhaustive — see
+            // AstWalker.VisitExpr): a new Expr variant must be classified above
+            // rather than silently contributing no processing-order dependencies.
             default:
                 throw new InvalidOperationException(
                     $"Unhandled Expr variant in {nameof(PropertyDependencyGraphBuilder)}.{nameof(CollectSiblingDependencyIndices)}: {expr.GetType().Name}. " +

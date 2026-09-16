@@ -357,8 +357,10 @@ internal static class ImplicitArgumentResolver
             case Expr.NativeCall:
                 break;
 
-            // Exhaustiveness guard, matching AstWalker.VisitExpr: a new Expr variant must be
-            // classified above rather than silently keeping its names out of the region key.
+            // Runtime exhaustiveness guard (statement-form collector, which the closed Expr
+            // hierarchy cannot make compiler-exhaustive — see AstWalker.VisitExpr): a new Expr
+            // variant must be classified above rather than silently keeping its names out of
+            // the region key.
             default:
                 throw new InvalidOperationException(
                     $"Unhandled Expr variant in {nameof(ImplicitArgumentResolver)}.{nameof(CollectReferenceNames)}: {expr.GetType().Name}. " +
@@ -974,58 +976,51 @@ internal static class ImplicitArgumentResolver
 
     private static Expr ProcessOpenExprCore(Expr expr, ResolverWalkMemos memos)
     {
-        switch (expr)
+        return expr switch
         {
-            case Expr.AlgorithmExpr(var algorithm):
-                return new Expr.AlgorithmExpr(
-                    ProcessSharedNestedAlgorithm(algorithm, new Dictionary<string, CallableSignature>(), memos))
-                {
-                    Span = expr.Span,
-                };
+            Expr.AlgorithmExpr(var algorithm) => new Expr.AlgorithmExpr(
+                ProcessSharedNestedAlgorithm(algorithm, new Dictionary<string, CallableSignature>(), memos))
+            {
+                Span = expr.Span,
+            },
 
-            case Expr.Capture(var captureBody):
-                // Capture targets own no scope; rows recurse without lifting,
-                // with a fresh signature map like every other open target.
-                return new Expr.Capture(new OutputBundle(
-                    captureBody
-                        .Select(row => ProcessExprNested(row, new Dictionary<string, CallableSignature>(), memos))
-                        .ToList()))
-                {
-                    Span = expr.Span,
-                };
+            // Capture targets own no scope; rows recurse without lifting,
+            // with a fresh signature map like every other open target.
+            Expr.Capture(var captureBody) => new Expr.Capture(new OutputBundle(
+                captureBody
+                    .Select(row => ProcessExprNested(row, new Dictionary<string, CallableSignature>(), memos))
+                    .ToList()))
+            {
+                Span = expr.Span,
+            },
 
-            case Expr.DotCall dotCall:
-                // `with` keeps the stored dot-edge facts (member span, lexical
-                // fallback) intact.
-                return dotCall with
-                {
-                    Target = ProcessOpenExpr(dotCall.Target, memos),
-                    Args = dotCall.Args is { } dotArgs
-                        ? ProcessArgumentBundle(dotArgs, new Dictionary<string, CallableSignature>(), memos)
-                        : null,
-                };
+            // `with` keeps the stored dot-edge facts (member span, lexical
+            // fallback) intact.
+            Expr.DotCall dotCall => dotCall with
+            {
+                Target = ProcessOpenExpr(dotCall.Target, memos),
+                Args = dotCall.Args is { } dotArgs
+                    ? ProcessArgumentBundle(dotArgs, new Dictionary<string, CallableSignature>(), memos)
+                    : null,
+            },
 
-            case Expr.SequenceSpread(var operand):
-                return new Expr.SequenceSpread(
-                    ProcessOpenExpr(operand, memos))
-                {
-                    Span = expr.Span,
-                    SpreadMarkerSpan = ((Expr.SequenceSpread)expr).SpreadMarkerSpan,
-                };
+            Expr.SequenceSpread(var operand) => new Expr.SequenceSpread(
+                ProcessOpenExpr(operand, memos))
+            {
+                Span = expr.Span,
+                SpreadMarkerSpan = ((Expr.SequenceSpread)expr).SpreadMarkerSpan,
+            },
 
-            case Expr.SequenceConstruct(var left, var right):
-                return new Expr.SequenceConstruct(
-                    ProcessOpenExpr(left, memos),
-                    ProcessOpenExpr(right, memos)) { Span = expr.Span };
+            Expr.SequenceConstruct(var left, var right) => new Expr.SequenceConstruct(
+                ProcessOpenExpr(left, memos),
+                ProcessOpenExpr(right, memos)) { Span = expr.Span },
 
-            case Expr.ListLiteral(var items):
-                return new Expr.ListLiteral(
-                    items.Select(item => ProcessOpenExpr(item, memos)).ToList()) { Span = expr.Span };
+            Expr.ListLiteral(var items) => new Expr.ListLiteral(
+                items.Select(item => ProcessOpenExpr(item, memos)).ToList()) { Span = expr.Span },
 
-            case Expr.Call(var function, var args):
-                return new Expr.Call(
-                    ProcessOpenExpr(function, memos),
-                    ProcessArgumentBundle(args, new Dictionary<string, CallableSignature>(), memos)) { Span = expr.Span };
+            Expr.Call(var function, var args) => new Expr.Call(
+                ProcessOpenExpr(function, memos),
+                ProcessArgumentBundle(args, new Dictionary<string, CallableSignature>(), memos)) { Span = expr.Span },
 
             // Intentional leaves: name/literal leaves carry no nested algorithm
             // to process (a bare Resolve IS the ordinary open-target form);
@@ -1034,26 +1029,9 @@ internal static class ImplicitArgumentResolver
             // forms are never valid open targets — the evaluator's open-form
             // validation rejects them (BadOpenForm) — so a host-built one
             // passes through unprocessed like a leaf.
-            case Expr.Resolve:
-            case Expr.Param:
-            case Expr.Num:
-            case Expr.StringLiteral:
-            case Expr.EmptySequence:
-            case Expr.NativeCall:
-            case Expr.Grace:
-            case Expr.Unary:
-            case Expr.Binary:
-            case Expr.Index:
-                return expr;
-
-            // Exhaustiveness guard, matching AstWalker.VisitExpr: a new Expr
-            // variant must be classified above rather than silently passing
-            // through.
-            default:
-                throw new InvalidOperationException(
-                    $"Unhandled Expr variant in {nameof(ImplicitArgumentResolver)}.{nameof(ProcessOpenExpr)}: {expr.GetType().Name}. " +
-                    "Classify the new variant explicitly as a recursive rewrite case or an intentional leaf.");
-        }
+            Expr.Resolve or Expr.Param or Expr.Num or Expr.StringLiteral or Expr.EmptySequence
+                or Expr.NativeCall or Expr.Grace or Expr.Unary or Expr.Binary or Expr.Index => expr,
+        };
     }
 
     private static bool ShouldPreserveBareRootResolve(
@@ -1618,9 +1596,10 @@ internal static class ImplicitArgumentResolver
             case Expr.NativeCall:
                 break;
 
-            // Exhaustiveness guard, matching AstWalker.VisitExpr: a new Expr
-            // variant must be classified above rather than silently
-            // contributing no implicit dependencies.
+            // Runtime exhaustiveness guard (statement-form collector, which the
+            // closed Expr hierarchy cannot make compiler-exhaustive — see
+            // AstWalker.VisitExpr): a new Expr variant must be classified above
+            // rather than silently contributing no implicit dependencies.
             default:
                 throw new InvalidOperationException(
                     $"Unhandled Expr variant in {nameof(ImplicitArgumentResolver)}.{nameof(CollectImplicitDeps)}: {expr.GetType().Name}. " +
@@ -1705,167 +1684,192 @@ internal static class ImplicitArgumentResolver
         ResolverWalkMemos memos,
         bool inStrictValueDemand)
     {
-        switch (expr)
+        return expr switch
         {
-            case Expr.Resolve(var name):
-                if (!inCallPosition
-                    && paramMap.TryGetValue(name, out var ps)
-                    && ps.Parameters.Count > 0)
-                {
-                    if (ClosedListBlocksLifting(context, ps.ParameterPatterns))
-                    {
-                        if (inStrictValueDemand)
-                            ReportBlockedStrictValueForwarding(expr, name, ps.ParameterPatterns, context, memos);
-                        return expr;
-                    }
+            Expr.Resolve(var name) => RewriteBareReference(
+                expr, name, paramMap, context, inCallPosition, memos, inStrictValueDemand),
 
-                    var implicitArgs = OutputBundle.From(BuildImplicitCallArguments(
-                        ps.ParameterPatterns, context.CallerParameterPatterns, context.SourceBindingKinds));
-                    return memos.Run.RecordImplicitCall(
-                        new Expr.Call(new Expr.Resolve(name) { Span = expr.Span }, implicitArgs) { Span = expr.Span }, expr);
-                }
+            Expr.Call call => RewriteCall(call, paramMap, context, memos),
 
-                // Bare Math ALIAS in value position: lift exactly like the bare
-                // canonical `Math.X` arm below, from the same registry facts.
-                // The constant (`pi`) carries no facts and stays a bare reference.
-                if (!inCallPosition
-                    && expr.TryGetRegistryProvenMathAliasFacts(paramMap.ContainsKey, out var bareAliasFacts))
-                {
-                    if (ClosedListBlocksLifting(context, bareAliasFacts.Signature.ParameterPatterns))
-                    {
-                        if (inStrictValueDemand)
-                        {
-                            ReportBlockedStrictValueForwarding(
-                                expr, bareAliasFacts.SpelledName, bareAliasFacts.Signature.ParameterPatterns, context, memos);
-                        }
+            Expr.Binary(var op, var left, var right) => new Expr.Binary(op,
+                RewriteImplicitCalls(left, paramMap, context, false, memos, inStrictValueDemand),
+                RewriteImplicitCalls(right, paramMap, context, false, memos, inStrictValueDemand)) { Span = expr.Span },
 
-                        return expr;
-                    }
+            Expr.Unary(var op, var operand) => new Expr.Unary(op,
+                RewriteImplicitCalls(operand, paramMap, context, false, memos, inStrictValueDemand)) { Span = expr.Span },
 
-                    var aliasArgs = OutputBundle.From(BuildImplicitCallArguments(
-                        bareAliasFacts.Signature.ParameterPatterns, context.CallerParameterPatterns, context.SourceBindingKinds));
-                    return memos.Run.RecordImplicitCall(
-                        new Expr.Call(new Expr.Resolve(name) { Span = expr.Span }, aliasArgs) { Span = expr.Span }, expr);
-                }
-                return expr;
+            Expr.Index(var target, var selector) => new Expr.Index(
+                RewriteImplicitCalls(target, paramMap, context, false, memos, inStrictValueDemand),
+                RewriteImplicitCalls(selector, paramMap, context, false, memos, inStrictValueDemand)) { Span = expr.Span },
 
-            case Expr.Call(var func, var args) call:
-                // If func is a direct Resolve, leave it (explicitly called).
-                // Otherwise recurse into func normally.
-                var newFunc = func is Expr.Resolve
-                    ? func
-                    : RewriteImplicitCalls(func, paramMap, context, inCallPosition: false, memos);
+            Expr.SequenceSpread(var operand) => new Expr.SequenceSpread(
+                RewriteImplicitCalls(operand, paramMap, context, false, memos, inStrictValueDemand))
+            {
+                Span = expr.Span,
+                SpreadMarkerSpan = ((Expr.SequenceSpread)expr).SpreadMarkerSpan,
+            },
 
-                // A Math-alias call shares the written `Math.X(...)` dot shape's
-                // registry-proven strict-value argument contract (the DotCall arm
-                // below), classified by the shared alias-call twin: its argument
-                // slots are ordinary value positions and lift. Every other call
-                // keeps NEUTRAL argument processing so bare higher-order
-                // references survive.
-                var newArgs = call.HasRegistryProvenStrictValueArguments(paramMap.ContainsKey)
-                    ? ProcessValueDemandingArgumentBundle(args, paramMap, context, memos)
-                    : ProcessArgumentBundle(args, paramMap, memos);
-                return new Expr.Call(newFunc, newArgs) { Span = expr.Span };
+            Expr.SequenceConstruct(var left, var right) => new Expr.SequenceConstruct(
+                RewriteImplicitCalls(left, paramMap, context, false, memos, inStrictValueDemand),
+                RewriteImplicitCalls(right, paramMap, context, false, memos, inStrictValueDemand)) { Span = expr.Span },
 
-            case Expr.Binary(var op, var left, var right):
-                return new Expr.Binary(op,
-                    RewriteImplicitCalls(left, paramMap, context, false, memos, inStrictValueDemand),
-                    RewriteImplicitCalls(right, paramMap, context, false, memos, inStrictValueDemand)) { Span = expr.Span };
+            Expr.ListLiteral(var listItems) => new Expr.ListLiteral(
+                listItems.Select(item => RewriteImplicitCalls(item, paramMap, context, false, memos, inStrictValueDemand)).ToList())
+            { Span = expr.Span },
 
-            case Expr.Unary(var op, var operand):
-                return new Expr.Unary(op, RewriteImplicitCalls(operand, paramMap, context, false, memos, inStrictValueDemand)) { Span = expr.Span };
-
-            case Expr.Index(var target, var selector):
-                return new Expr.Index(
-                    RewriteImplicitCalls(target, paramMap, context, false, memos, inStrictValueDemand),
-                    RewriteImplicitCalls(selector, paramMap, context, false, memos, inStrictValueDemand)) { Span = expr.Span };
-
-            case Expr.SequenceSpread(var operand):
-                return new Expr.SequenceSpread(
-                    RewriteImplicitCalls(operand, paramMap, context, false, memos, inStrictValueDemand))
-                {
-                    Span = expr.Span,
-                    SpreadMarkerSpan = ((Expr.SequenceSpread)expr).SpreadMarkerSpan,
-                };
-
-            case Expr.SequenceConstruct(var left, var right):
-                return new Expr.SequenceConstruct(
-                    RewriteImplicitCalls(left, paramMap, context, false, memos, inStrictValueDemand),
-                    RewriteImplicitCalls(right, paramMap, context, false, memos, inStrictValueDemand)) { Span = expr.Span };
-
-            case Expr.ListLiteral(var listItems):
-                return new Expr.ListLiteral(
-                    listItems.Select(item => RewriteImplicitCalls(item, paramMap, context, false, memos, inStrictValueDemand)).ToList())
-                { Span = expr.Span };
-
-            case Expr.DotCall(var target, var name, null)
+            // A bare argumentless builtin dot shape in value position (`Math.Pow`) lifts
+            // like a bare param-bearing property reference.
+            Expr.DotCall { Args: null } bareDotCall
                 when !inCallPosition
-                    && TryGetBareBuiltinCallableSignature(expr, paramMap, out var bareBuiltinKey, out var builtinSignature):
-                if (ClosedListBlocksLifting(context, builtinSignature.ParameterPatterns))
-                {
-                    if (inStrictValueDemand)
-                    {
-                        ReportBlockedStrictValueForwarding(
-                            expr, bareBuiltinKey, builtinSignature.ParameterPatterns, context, memos);
-                    }
+                    && TryGetBareBuiltinCallableSignature(bareDotCall, paramMap, out var bareBuiltinKey, out var builtinSignature)
+                => LiftBareBuiltinDotCall(
+                    bareDotCall, bareBuiltinKey, builtinSignature, paramMap, context, memos, inStrictValueDemand),
 
-                    return expr;
-                }
+            // DotCall target is in algorithm position (resolveAlg, not eval).
+            // The stored lexical fallback is a Resolve/Param leaf and needs
+            // no implicit-call rewriting; `with` carries it forward.
+            Expr.DotCall dotCall => dotCall with
+            {
+                Target = RewriteImplicitCalls(dotCall.Target, paramMap, context, inCallPosition: true, memos),
+                Args = dotCall.Args is { } dotArgs
+                    ? dotCall.HasRegistryProvenStrictValueArguments(paramMap.ContainsKey)
+                        ? ProcessValueDemandingArgumentBundle(dotArgs, paramMap, context, memos)
+                        : ProcessArgumentBundle(dotArgs, paramMap, memos)
+                    : null,
+            },
 
-                var liftedDotArgs = OutputBundle.From(BuildImplicitCallArguments(
-                    builtinSignature.ParameterPatterns, context.CallerParameterPatterns, context.SourceBindingKinds));
-                return memos.Run.RecordImplicitCall(((Expr.DotCall)expr) with
-                {
-                    Target = RewriteImplicitCalls(target, paramMap, context, inCallPosition: true, memos),
-                    Args = liftedDotArgs,
-                }, expr);
+            Expr.Grace(var inner, _) => RewriteImplicitCalls(inner, paramMap, context, inCallPosition, memos, inStrictValueDemand),
 
-            case Expr.DotCall dotCall:
-                // DotCall target is in algorithm position (resolveAlg, not eval).
-                // The stored lexical fallback is a Resolve/Param leaf and needs
-                // no implicit-call rewriting; `with` carries it forward.
-                return dotCall with
-                {
-                    Target = RewriteImplicitCalls(dotCall.Target, paramMap, context, inCallPosition: true, memos),
-                    Args = dotCall.Args is { } dotArgs
-                        ? dotCall.HasRegistryProvenStrictValueArguments(paramMap.ContainsKey)
-                            ? ProcessValueDemandingArgumentBundle(dotArgs, paramMap, context, memos)
-                            : ProcessArgumentBundle(dotArgs, paramMap, memos)
-                        : null,
-                };
+            Expr.AlgorithmExpr(var alg) => new Expr.AlgorithmExpr(
+                ProcessSharedNestedAlgorithm(alg, paramMap, memos)) { Span = expr.Span },
 
-            case Expr.Grace(var inner, _):
-                return RewriteImplicitCalls(inner, paramMap, context, inCallPosition, memos, inStrictValueDemand);
-
-            case Expr.AlgorithmExpr(var alg):
-                return new Expr.AlgorithmExpr(
-                    ProcessSharedNestedAlgorithm(alg, paramMap, memos)) { Span = expr.Span };
-
-            case Expr.Capture(var captureBody):
-                // Capture rows recurse without lifting at this level, exactly as
-                // the pre-split transparent group algorithm's rows did.
-                return new Expr.Capture(new OutputBundle(
-                    captureBody.Select(row => ProcessExprNested(row, paramMap, memos)).ToList()))
-                { Span = expr.Span };
+            // Capture rows recurse without lifting at this level, exactly as
+            // the pre-split transparent group algorithm's rows did.
+            Expr.Capture(var captureBody) => new Expr.Capture(new OutputBundle(
+                captureBody.Select(row => ProcessExprNested(row, paramMap, memos)).ToList()))
+            { Span = expr.Span },
 
             // Intentional leaves: nothing to lift or rewrite. (A Param is an
-            // already-elaborated parameter reference; the guarded Resolve arms
-            // above handled every liftable name shape.)
-            case Expr.Num:
-            case Expr.Param:
-            case Expr.StringLiteral:
-            case Expr.EmptySequence:
-            case Expr.NativeCall:
-                return expr;
+            // already-elaborated parameter reference; the Resolve arm above
+            // handled every liftable name shape.)
+            Expr.Num or Expr.Param or Expr.StringLiteral or Expr.EmptySequence or Expr.NativeCall => expr,
+        };
+    }
 
-            // Exhaustiveness guard, matching AstWalker.VisitExpr: a new Expr
-            // variant must be classified above rather than silently keeping
-            // bare param-bearing references inside it unlifted.
-            default:
-                throw new InvalidOperationException(
-                    $"Unhandled Expr variant in {nameof(ImplicitArgumentResolver)}.{nameof(RewriteImplicitCalls)}: {expr.GetType().Name}. " +
-                    "Classify the new variant explicitly as a recursive rewrite case or an intentional leaf.");
+    /// <summary>
+    /// The bare-reference arm of <see cref="RewriteImplicitCallsCore"/>: a value-position
+    /// reference to a param-bearing property — or to a registry-proven Math alias — lifts to
+    /// an explicit implicit-argument call unless the caller's closed explicit parameter list
+    /// blocks the forwarding (reported only under strict value demand). Every other bare
+    /// reference stays bare.
+    /// </summary>
+    private static Expr RewriteBareReference(
+        Expr expr,
+        string name,
+        Dictionary<string, CallableSignature> paramMap,
+        ImplicitRewriteContext context,
+        bool inCallPosition,
+        ResolverWalkMemos memos,
+        bool inStrictValueDemand)
+    {
+        if (!inCallPosition
+            && paramMap.TryGetValue(name, out var ps)
+            && ps.Parameters.Count > 0)
+        {
+            if (ClosedListBlocksLifting(context, ps.ParameterPatterns))
+            {
+                if (inStrictValueDemand)
+                    ReportBlockedStrictValueForwarding(expr, name, ps.ParameterPatterns, context, memos);
+                return expr;
+            }
+
+            var implicitArgs = OutputBundle.From(BuildImplicitCallArguments(
+                ps.ParameterPatterns, context.CallerParameterPatterns, context.SourceBindingKinds));
+            return memos.Run.RecordImplicitCall(
+                new Expr.Call(new Expr.Resolve(name) { Span = expr.Span }, implicitArgs) { Span = expr.Span }, expr);
         }
+
+        // Bare Math ALIAS in value position: lift exactly like the bare
+        // canonical `Math.X` arm, from the same registry facts.
+        // The constant (`pi`) carries no facts and stays a bare reference.
+        if (!inCallPosition
+            && expr.TryGetRegistryProvenMathAliasFacts(paramMap.ContainsKey, out var bareAliasFacts))
+        {
+            if (ClosedListBlocksLifting(context, bareAliasFacts.Signature.ParameterPatterns))
+            {
+                if (inStrictValueDemand)
+                {
+                    ReportBlockedStrictValueForwarding(
+                        expr, bareAliasFacts.SpelledName, bareAliasFacts.Signature.ParameterPatterns, context, memos);
+                }
+
+                return expr;
+            }
+
+            var aliasArgs = OutputBundle.From(BuildImplicitCallArguments(
+                bareAliasFacts.Signature.ParameterPatterns, context.CallerParameterPatterns, context.SourceBindingKinds));
+            return memos.Run.RecordImplicitCall(
+                new Expr.Call(new Expr.Resolve(name) { Span = expr.Span }, aliasArgs) { Span = expr.Span }, expr);
+        }
+
+        return expr;
+    }
+
+    /// <summary>
+    /// The Call arm of <see cref="RewriteImplicitCallsCore"/>. A direct Resolve callee is
+    /// left as written (explicitly called); any other callee recurses normally. A Math-alias
+    /// call shares the written <c>Math.X(...)</c> dot shape's registry-proven strict-value
+    /// argument contract, classified by the shared alias-call twin: its argument slots are
+    /// ordinary value positions and lift. Every other call keeps NEUTRAL argument processing
+    /// so bare higher-order references survive.
+    /// </summary>
+    private static Expr RewriteCall(
+        Expr.Call call,
+        Dictionary<string, CallableSignature> paramMap,
+        ImplicitRewriteContext context,
+        ResolverWalkMemos memos)
+    {
+        var newFunc = call.Function is Expr.Resolve
+            ? call.Function
+            : RewriteImplicitCalls(call.Function, paramMap, context, inCallPosition: false, memos);
+        var newArgs = call.HasRegistryProvenStrictValueArguments(paramMap.ContainsKey)
+            ? ProcessValueDemandingArgumentBundle(call.Args, paramMap, context, memos)
+            : ProcessArgumentBundle(call.Args, paramMap, memos);
+        return new Expr.Call(newFunc, newArgs) { Span = call.Span };
+    }
+
+    /// <summary>
+    /// The bare-builtin arm of <see cref="RewriteImplicitCallsCore"/>: an argumentless
+    /// canonical Math dot shape in value position lifts to an explicit implicit-argument
+    /// call unless the caller's closed explicit parameter list blocks the forwarding.
+    /// </summary>
+    private static Expr LiftBareBuiltinDotCall(
+        Expr.DotCall bareDotCall,
+        string bareBuiltinKey,
+        CallableSignature builtinSignature,
+        Dictionary<string, CallableSignature> paramMap,
+        ImplicitRewriteContext context,
+        ResolverWalkMemos memos,
+        bool inStrictValueDemand)
+    {
+        if (ClosedListBlocksLifting(context, builtinSignature.ParameterPatterns))
+        {
+            if (inStrictValueDemand)
+            {
+                ReportBlockedStrictValueForwarding(
+                    bareDotCall, bareBuiltinKey, builtinSignature.ParameterPatterns, context, memos);
+            }
+
+            return bareDotCall;
+        }
+
+        var liftedDotArgs = OutputBundle.From(BuildImplicitCallArguments(
+            builtinSignature.ParameterPatterns, context.CallerParameterPatterns, context.SourceBindingKinds));
+        return memos.Run.RecordImplicitCall(bareDotCall with
+        {
+            Target = RewriteImplicitCalls(bareDotCall.Target, paramMap, context, inCallPosition: true, memos),
+            Args = liftedDotArgs,
+        }, bareDotCall);
     }
 
     /// <summary>
@@ -2057,12 +2061,6 @@ internal static class ImplicitArgumentResolver
             // process.
             Expr.Resolve or Expr.Param or Expr.Num or Expr.StringLiteral
                 or Expr.EmptySequence or Expr.NativeCall => expr,
-            // Exhaustiveness guard, matching AstWalker.VisitExpr: a new Expr
-            // variant must be classified above rather than silently skipping
-            // nested-algorithm processing.
-            _ => throw new InvalidOperationException(
-                $"Unhandled Expr variant in {nameof(ImplicitArgumentResolver)}.{nameof(ProcessExprNested)}: {expr.GetType().Name}. " +
-                "Classify the new variant explicitly as a recursive rewrite case or an intentional leaf."),
         };
     }
 }

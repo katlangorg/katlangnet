@@ -88,17 +88,20 @@ One decision per run, at the async entry point:
   41020 synchronously; `AsyncTwinDifferentialTests` pins the large-loop equality).
   The sync-delegable leaves are ENUMERATED EXPLICITLY in `EvalCountedAsync` — `Num`,
   `StringLiteral`, and `Grace` (the illegal-in-eval catch-all: a structured error, no
-  child evaluation) — and the dispatch default is a FAIL-LOUD
-  exhaustiveness guard, mirrored in the synchronous `EvalCounted`, so a newly added
-  recursive `Expr` variant can never silently fall through to synchronous child
-  evaluation (it would have passed outcome differentials while bypassing the twin
-  family). `AsyncDispatchExhaustivenessTests` pins the classification by reflection
-  over every concrete `Expr` variant, pins that the declared leaves delegate exactly
-  and touch neither cache seam, and proves per recursive variant (every meaningful
-  child position, `SequenceConstruct` from a host-built tree) that an async-sensitive
-  property access in a child routes through the ASYNC seam with genuine suspension and
-  zero synchronous-seam accesses. Adding an `Expr` variant therefore requires updating
-  BOTH counted dispatches and that suite's declared-policy table.
+  child evaluation) — and the dispatch is a COMPILER-EXHAUSTIVE switch expression over
+  the closed `Expr` hierarchy with no catch-all arm, mirrored case for case in the
+  synchronous `EvalCounted` (September 2026; `CS8509` is a build error), so a newly added
+  recursive `Expr` variant fails the build until it is given a twin case and can never
+  silently fall through to synchronous child evaluation (it would have passed outcome
+  differentials while bypassing the twin family). `AsyncExpressionDispatchTests` pins
+  per variant that the twin path produces the synchronous outcome, pins that the
+  declared leaves delegate exactly and touch neither cache seam, and proves per
+  recursive variant (every meaningful child position, `SequenceConstruct` from a
+  host-built tree) that an async-sensitive property access in a child routes through
+  the ASYNC seam with genuine suspension and zero synchronous-seam accesses; its
+  child-position table is ratcheted against the one test-side variant enumeration
+  (`ExprVariantCatalog`). Adding an `Expr` variant therefore means satisfying the
+  compiler in BOTH counted dispatches and giving that table a row.
 - The twins are COUNTED-family mirrors. Where the synchronous family used a
   plain-evaluation wrapper, the twin awaits the counted core and projects its value —
   every such synchronous wrapper is exactly that projection, and the plain/counted

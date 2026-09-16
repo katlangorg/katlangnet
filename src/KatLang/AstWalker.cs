@@ -235,10 +235,15 @@ public abstract class AstWalker
             case Expr.EmptySequence:
                 break;
 
-            // Exhaustiveness guard, matching AstStructuralPreflight's fail-loud
-            // child enumeration: a new Expr variant must be added above rather
-            // than being silently skipped by every walker subclass (semantic
-            // modelling, exposure resolution, module loading, the fuzz probes).
+            // Runtime exhaustiveness guard. Expr is a closed hierarchy and each full-hierarchy
+            // switch-EXPRESSION dispatch over it is compiler-exhaustive, but this
+            // side-effect visitor is a switch statement, which the compiler does
+            // not check. A new variant — which the build already forces into
+            // AstStructuralPreflight.TryGetExprChild and every other expression
+            // dispatch — must be added above by hand rather than being silently
+            // skipped by every walker subclass (semantic modelling, exposure
+            // resolution, module loading, the fuzz probes);
+            // AstWalkerTraversalTests pins every current variant.
             default:
                 throw new InvalidOperationException(
                     $"Unhandled Expr variant in {nameof(AstWalker)}.{nameof(VisitExpr)}: {expr.GetType().Name}. " +

@@ -38,8 +38,9 @@ namespace KatLang;
 /// helpers verified not to evaluate expressions; and the plain synchronous
 /// <see cref="Eval"/> only where the dispatched kind is a proven leaf (see
 /// <see cref="EvalCountedAsync"/>'s explicitly enumerated sync-delegable leaf
-/// group; the dispatch default is a fail-loud exhaustiveness guard, so a new
-/// recursive <see cref="Expr"/> variant can never silently fall through to
+/// group; the dispatch is a compiler-exhaustive switch over the closed
+/// <see cref="Expr"/> hierarchy, so a new recursive variant is a build error
+/// until it is given a twin case and can never silently fall through to
 /// synchronous child evaluation). Twins are COUNTED-family mirrors;
 /// where the synchronous code used a plain-evaluation wrapper, the twin awaits the
 /// counted core and projects its value — every such wrapper in the synchronous family is
@@ -865,106 +866,58 @@ public static partial class Evaluator
         if (ctx.Budget.TryChargeExpressionNodeWork() is { } nodeWorkError)
             return nodeWorkError;
 
-        switch (expr)
+        // MIRROR OF EvalCounted's compiler-exhaustive switch expression, case for case. A
+        // new Expr variant is a build error here until it is given an explicit twin case
+        // or joins the proven-leaf delegation group at the end — so a recursive variant
+        // can never silently bypass the async twin family by evaluating its children
+        // synchronously.
+        return expr switch
         {
-            case Expr.Param(var name):
-                return await EvalParamCountedAsync(name, expr.Span, ctx, valEnv).ConfigureAwait(false);
+            Expr.Param(var name) => await EvalParamCountedAsync(name, expr.Span, ctx, valEnv).ConfigureAwait(false),
 
-            case Expr.SequenceSpread:
-                return await EvalSequenceSpreadCountedAsync(expr, ctx, valEnv).ConfigureAwait(false);
+            Expr.SequenceSpread => await EvalSequenceSpreadCountedAsync(expr, ctx, valEnv).ConfigureAwait(false),
 
-            case Expr.SequenceConstruct:
-                return await EvalSequenceConstructCountedAsync(expr, ctx, valEnv).ConfigureAwait(false);
+            Expr.SequenceConstruct => await EvalSequenceConstructCountedAsync(expr, ctx, valEnv).ConfigureAwait(false),
 
-            case Expr.Unary or Expr.Binary or Expr.ListLiteral:
-                return await EvalExpressionSpineCountedAsync(expr, ctx, valEnv).ConfigureAwait(false);
+            Expr.Unary or Expr.Binary or Expr.ListLiteral => await EvalExpressionSpineCountedAsync(expr, ctx, valEnv).ConfigureAwait(false),
 
-            case Expr.EmptySequence(var depth):
-                {
-                    var emptyValue = BuildEmptySequenceValue(depth);
-                    return EvalResult<CountedResult>.Ok(new CountedResult(emptyValue, emptyValue.ValueCount()));
-                }
+            Expr.EmptySequence(var depth) => CountValue(BuildEmptySequenceValue(depth)),
 
-            case Expr.AlgorithmExpr(var alg):
-                {
-                    // Sync counted case calls the plain EvalAlgOutput; the twin awaits the
-                    // counted core and projects its value (the plain wrapper is that projection).
-                    var wired = WireToCaller(ctx, alg);
-                    var blockSpan = PreferExpressionSpan(expr.Span, wired.Output);
-                    if (ZeroArgumentValueDemandRejection(ZeroArgumentDemandShape.Block, name: null, blockSpan, wired) is { } rejection)
-                        return rejection;
+            Expr.AlgorithmExpr(var alg) => CountValue(await EvalAlgorithmExprValueAsync(expr, alg, ctx, valEnv).ConfigureAwait(false)),
 
-                    var blockR = WithSpan(
-                        blockSpan,
-                        await EvalAlgOutputValueAsync(wired, ctx, valEnv).ConfigureAwait(false));
-                    if (blockR.IsError) return blockR.Error;
-                    return EvalResult<CountedResult>.Ok(new CountedResult(blockR.Value, blockR.Value.ValueCount()));
-                }
+            Expr.Capture(var captureBody) => CountValue(WithSpan(
+                PreferExpressionSpan(expr.Span, captureBody),
+                await EvalCaptureValueAsync(captureBody, ctx, valEnv).ConfigureAwait(false))),
 
-            case Expr.Capture(var captureBody):
-                {
-                    var captureR = WithSpan(
-                        PreferExpressionSpan(expr.Span, captureBody),
-                        await EvalCaptureValueAsync(captureBody, ctx, valEnv).ConfigureAwait(false));
-                    if (captureR.IsError) return captureR.Error;
-                    return EvalResult<CountedResult>.Ok(new CountedResult(captureR.Value, captureR.Value.ValueCount()));
-                }
+            Expr.Resolve(var name) => await EvalResolveCountedAsync(name, expr.Span, ctx, valEnv).ConfigureAwait(false),
 
-            case Expr.Resolve(var name):
-                {
-                    if (ctx.CallStack.Count == 0)
-                        return new EvalError.UnknownName(name) { Span = expr.Span };
+            Expr.DotCall dotCallExpr => WithSpan(expr.Span, WithDotCallCtx(dotCallExpr, ctx,
+                await EvalDotCallCountedAsync(dotCallExpr, ctx, valEnv).ConfigureAwait(false))),
 
-                    var resolvedR = LookupLexical(ctx.CallStack[0], name, ctx);
-                    if (resolvedR.IsError)
-                        return AtSpanIfMissing(resolvedR.Error, expr.Span);
+            Expr.Call(var func, var callArgs) => WithSpan(expr.Span,
+                await EvalCallCountedExprAsync(func, callArgs, ctx, valEnv).ConfigureAwait(false)),
 
-                    if (ZeroArgumentValueDemandRejection(ZeroArgumentDemandShape.Property, name, expr.Span, resolvedR.Value.ResolvedAlgorithm) is { } rejection)
-                        return rejection;
+            Expr.Index => await EvalExpressionSpineCountedAsync(expr, ctx, valEnv).ConfigureAwait(false),
 
-                    var propertyR = WithPropertyContextOnMissingOutput(name, expr.Span,
-                        await EvalZeroArgPropertyAccessCountedAsync(resolvedR.Value, ctx, valEnv).ConfigureAwait(false));
-                    return propertyR.IsError
-                        ? propertyR.Error
-                        : EvalResult<CountedResult>.Ok(new CountedResult(
-                            propertyR.Value.Value,
-                            propertyR.Value.Value.ValueCount()));
-                }
-
-            case Expr.DotCall dotCallExpr:
-                return WithSpan(expr.Span, WithDotCallCtx(dotCallExpr, ctx,
-                    await EvalDotCallCountedAsync(dotCallExpr, ctx, valEnv).ConfigureAwait(false)));
-
-            case Expr.Call(var func, var callArgs):
-                return WithSpan(expr.Span,
-                    await EvalCallCountedExprAsync(func, callArgs, ctx, valEnv).ConfigureAwait(false));
-
-            case Expr.Index:
-                return await EvalExpressionSpineCountedAsync(expr, ctx, valEnv).ConfigureAwait(false);
-
-            case Expr.NativeCall(var nativeFnName, var nativeArgNames)
+            // THE Phase 3 await site: an ASYNCHRONOUS host operation completes by
+            // suspending the spine here. Every other native — a synchronous host
+            // operation or a built-in Math member — takes the ordinary twin case
+            // below, which awaits its declared-argument reads.
+            Expr.NativeCall(var nativeFnName, var nativeArgNames)
                 when ctx.Budget.HostOperations is { } hostOperations
                     && nativeFnName.StartsWith(HostOperations.NativeNamePrefix, StringComparison.Ordinal)
                     && hostOperations.TryGetByNativeName(nativeFnName, out var hostOperation)
-                    && hostOperation.IsAsynchronous:
-                // THE Phase 3 await site: an ASYNCHRONOUS host operation completes by
-                // suspending the spine here. Every other native — a synchronous host
-                // operation or a built-in Math member — takes the ordinary twin case
-                // below, which awaits its declared-argument reads.
-                return await EvalAsynchronousHostOperationCountedAsync(
-                    hostOperation, nativeArgNames, ctx, valEnv).ConfigureAwait(false);
+                    && hostOperation.IsAsynchronous
+                => await EvalAsynchronousHostOperationCountedAsync(
+                    hostOperation, nativeArgNames, ctx, valEnv).ConfigureAwait(false),
 
-            case Expr.NativeCall(var nativeFnName, var nativeArgNames):
-                {
-                    // A native wrapper's declared-argument reads ARE ordinary
-                    // Expr.Param value reads (LookupNativeArgument), so a demanded
-                    // algorithm-channel binding re-enters an algorithm body — that
-                    // makes NativeCall a recursive variant, not a leaf, and it must
-                    // stay on the twin family.
-                    var nativeR = await EvalNativeCallAsync(nativeFnName, nativeArgNames, ctx, valEnv).ConfigureAwait(false);
-                    if (nativeR.IsError) return nativeR.Error;
-                    return EvalResult<CountedResult>.Ok(new CountedResult(nativeR.Value, nativeR.Value.ValueCount()));
-                }
+            // A native wrapper's declared-argument reads ARE ordinary
+            // Expr.Param value reads (LookupNativeArgument), so a demanded
+            // algorithm-channel binding re-enters an algorithm body — that
+            // makes NativeCall a recursive variant, not a leaf, and it must
+            // stay on the twin family.
+            Expr.NativeCall(var nativeFnName, var nativeArgNames)
+                => CountValue(await EvalNativeCallAsync(nativeFnName, nativeArgNames, ctx, valEnv).ConfigureAwait(false)),
 
             // SYNC-DELEGABLE LEAVES — the only kinds allowed to run through
             // the synchronous evaluator on the twin path: none evaluates a
@@ -978,25 +931,53 @@ public static partial class Evaluator
             // scale. Grace is the illegal-in-eval catch-all (a structured
             // error, no child evaluation). Keep this classification in
             // lock-step with EvalCounted.
-            case Expr.Num:
-            case Expr.StringLiteral:
-            case Expr.Grace:
-                {
-                    var resultR = EvalLeafUncharged(expr, ctx);
-                    if (resultR.IsError) return resultR.Error;
-                    return EvalResult<CountedResult>.Ok(new CountedResult(resultR.Value, resultR.Value.ValueCount()));
-                }
+            Expr.Num or Expr.StringLiteral or Expr.Grace => CountValue(EvalLeafUncharged(expr, ctx)),
+        };
+    }
 
-            // Exhaustiveness guard, matching AstWalker.VisitExpr: a new Expr
-            // variant must be classified above — an explicit twin case, or a
-            // proven non-recursive leaf added to the delegation group — so a
-            // recursive variant can never silently bypass the async twin
-            // family by evaluating its children synchronously.
-            default:
-                throw new InvalidOperationException(
-                    $"Unhandled Expr variant in {nameof(Evaluator)}.{nameof(EvalCountedAsync)}: {expr.GetType().Name}. " +
-                    "Add an explicit async twin case (or classify it as a proven leaf) here and in EvalCounted.");
-        }
+    /// <summary>
+    /// MIRROR OF <see cref="EvalAlgorithmExprValue"/> — keep in lock-step. The sync
+    /// helper calls the plain <c>EvalAlgOutput</c>; the twin awaits the counted core and
+    /// projects its value (the plain wrapper is that projection).
+    /// </summary>
+    private static async ValueTask<EvalResult<Result>> EvalAlgorithmExprValueAsync(
+        Expr expr,
+        Algorithm alg,
+        EvalCtx ctx,
+        IReadOnlyList<(string, Result)> valEnv)
+    {
+        var wired = WireToCaller(ctx, alg);
+        var blockSpan = PreferExpressionSpan(expr.Span, wired.Output);
+        if (ZeroArgumentValueDemandRejection(ZeroArgumentDemandShape.Block, name: null, blockSpan, wired) is { } rejection)
+            return rejection;
+        return WithSpan(blockSpan, await EvalAlgOutputValueAsync(wired, ctx, valEnv).ConfigureAwait(false));
+    }
+
+    /// <summary>
+    /// MIRROR OF <see cref="EvalResolveCounted"/> — keep in lock-step: the zero-argument
+    /// property access is awaited on the async cache seam.
+    /// </summary>
+    private static async ValueTask<EvalResult<CountedResult>> EvalResolveCountedAsync(
+        string name,
+        SourceSpan? span,
+        EvalCtx ctx,
+        IReadOnlyList<(string, Result)> valEnv)
+    {
+        if (ctx.CallStack.Count == 0)
+            return new EvalError.UnknownName(name) { Span = span };
+
+        var resolvedR = LookupLexical(ctx.CallStack[0], name, ctx);
+        if (resolvedR.IsError)
+            return AtSpanIfMissing(resolvedR.Error, span);
+
+        if (ZeroArgumentValueDemandRejection(ZeroArgumentDemandShape.Property, name, span, resolvedR.Value.ResolvedAlgorithm) is { } rejection)
+            return rejection;
+
+        var propertyR = WithPropertyContextOnMissingOutput(name, span,
+            await EvalZeroArgPropertyAccessCountedAsync(resolvedR.Value, ctx, valEnv).ConfigureAwait(false));
+        return propertyR.IsError
+            ? propertyR.Error
+            : CountValue(propertyR.Value.Value);
     }
 
     // ── Expression-spine machine twin ───────────────────────────────────────

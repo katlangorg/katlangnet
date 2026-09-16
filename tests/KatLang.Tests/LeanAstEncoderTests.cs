@@ -598,20 +598,18 @@ public class LeanAstEncoderTests
     /// refused set is exactly {Grace, NativeCall} — Grace because elaboration
     /// consumes and strips it, NativeCall because it exists only inside
     /// prelude/host wrapper bodies and the Lean core deliberately does not
-    /// model natives. A NEW Expr variant added to the AST fails this
-    /// reflection sweep until it is classified here and in the encoder.
+    /// model natives. The encoder is a compiler-exhaustive switch over the closed
+    /// Expr hierarchy, so a NEW variant fails the build until it is encoded or
+    /// refused there; this sweep pins the refused set and keeps one sample per
+    /// variant so each encoding is exercised.
     /// </summary>
     [Fact]
     public void EveryExprVariant_IsEitherEncodableOrDeliberatelyRefused()
     {
         string[] deliberatelyUnsupported = [nameof(Expr.Grace), nameof(Expr.NativeCall)];
-        var variants = typeof(Expr).GetNestedTypes()
-            .Where(t => t.IsAssignableTo(typeof(Expr)) && !t.IsAbstract)
-            .Select(t => t.Name)
-            .OrderBy(n => n, StringComparer.Ordinal)
-            .ToList();
+        var variants = ExprVariantCatalog.DeclaredVariantNames;
 
-        // Reflection-complete sample table: one constructible instance per variant.
+        // One constructible instance per variant (completeness checked against the catalog below).
         var samples = new Dictionary<string, Expr>(StringComparer.Ordinal)
         {
             [nameof(Expr.Param)] = new Expr.Param("a"),

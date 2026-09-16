@@ -14,7 +14,10 @@ namespace KatLang.Formatting.PublicApi.Tests;
 /// <para><b>Covered.</b> Every exported type plus protected and protected-
 /// internal nested types reachable by an external subclass, with its kind —
 /// class, record, struct, record struct, interface, enum, delegate — and its
-/// static/abstract/sealed/readonly/ref modifiers; generic parameters with
+/// static/abstract/sealed/closed/readonly/ref modifiers (a `closed` hierarchy
+/// renders the keyword in place of the implied abstract, because the closure
+/// itself — no derivation from another assembly — is the consumer contract);
+/// generic parameters with
 /// variance and constraints (class, struct, unmanaged, new(), type constraints);
 /// the base type when it is not object; the minimal set of implemented visible
 /// interfaces (those not implied by the base type or by another listed
@@ -209,6 +212,13 @@ internal static class PublicApiSurfaceRenderer
         if (type.IsAbstract && type.IsSealed)
         {
             modifiers.Add("static");
+        }
+        else if (HasAttribute(type, "System.Runtime.CompilerServices.IsClosedTypeAttribute"))
+        {
+            // A C# `closed` hierarchy: implicitly abstract, and no assembly other than the
+            // declaring one may derive from it — a consumer-visible contract, so it renders
+            // as the source keyword rather than the `abstract` the metadata also carries.
+            modifiers.Add("closed");
         }
         else
         {

@@ -2,7 +2,7 @@ namespace KatLang.Tests.AsyncEvaluation;
 
 /// <summary>
 /// Stack-shape safety of the async twin family. The SYNCHRONOUS evaluator's calibrated
-/// guarantees are untouched (its code is unchanged and its own pins keep running); these
+/// guarantees are checked by its own boundary pins; these
 /// tests characterize the TWIN path, whose synchronously-completing async frames are
 /// larger than their synchronous counterparts:
 ///
@@ -148,19 +148,20 @@ public class AsyncStackDepthTests
     [Fact]
     public void TwinPath_NestedAlgorithmBodies_OnOneMiBThread_StructuredOrSuccess()
     {
-        // Nested zero-declaration algorithm bodies at 120 levels (2 counted structural
-        // units per level — the calibration's "deepest remaining recursive shape"),
+        // Nested zero-declaration algorithm bodies at the structural ceiling (2 counted
+        // units per level plus an inner unary — the deepest recursive block shape),
         // host-built because the parser's own nesting budget rejects the equivalent
         // brace source before evaluation is reached. The twin path must either
         // evaluate it or fail structurally on this minimum-supported stack.
-        Expr ast = new Expr.Num(42);
-        for (var level = 0; level < 120; level++)
+        Expr ast = new Expr.Unary(UnaryOp.Minus, new Expr.Num(-42));
+        for (var level = 0; level < (EvaluationLimits.MaxSupportedAstDepth - 1) / 2; level++)
         {
             ast = new Expr.AlgorithmExpr(new Algorithm.User(
                 Parent: null, Parameters: [], Opens: [], Properties: [], Output: [ast]));
         }
 
         var sync = Evaluator.RunCounted(ast);
+        Assert.True(sync.IsOk, AsyncEvaluationHarness.NeutralOf(sync));
 
         EvalResult<Evaluator.CountedResult>? asyncOutcome = null;
         AstStructuralDepthProcessTests.RunOnThreadWithStack(1_048_576, () =>
