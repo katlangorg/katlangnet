@@ -79,8 +79,12 @@ internal sealed class BoundedDisplayWriter(int limit) : IDisplaySink
 /// Discriminated-union result of a KatLang parse+evaluate run.
 /// Pattern-match on <see cref="Success"/>, <see cref="NoProgramOutput"/>,
 /// <see cref="ParseFailure"/>, or <see cref="EvalFailure"/>.
+/// A C# <c>closed</c> hierarchy: those four nested records are its only
+/// variants, no other assembly can derive from it, and a switch EXPRESSION
+/// naming all four is compiler-exhaustive with no catch-all arm (a switch
+/// statement receives no such guarantee).
 /// </summary>
-public abstract record RunResult
+public closed record RunResult
 {
     private RunResult() { }
 
@@ -196,7 +200,6 @@ public abstract record RunResult
         NoProgramOutput n => FormatText(n.Message, n.DisplayOptions.MaxDisplayLength),
         ParseFailure p => FormatErrors(p.Errors, p.DisplayOptions.MaxDisplayLength),
         EvalFailure e => FormatErrors(e.Errors, e.DisplayOptions.MaxDisplayLength),
-        _ => throw new InvalidOperationException("Unknown RunResult variant."),
     };
 
     private static DisplayRendering FormatSuccess(Success success)
@@ -568,7 +571,6 @@ public static class KatLangEngine
             RunResult.NoProgramOutput n => throw new KatLangException([n.Diagnostic]),
             RunResult.ParseFailure p => throw new KatLangException(p.Errors),
             RunResult.EvalFailure e => throw new KatLangException(e.Errors),
-            _ => throw new InvalidOperationException("Unknown RunResult variant."),
         };
     }
 
@@ -592,7 +594,6 @@ public static class KatLangEngine
             RunResult.NoProgramOutput n => throw new KatLangException([n.Diagnostic]),
             RunResult.ParseFailure p => throw new KatLangException(p.Errors),
             RunResult.EvalFailure e => throw new KatLangException(e.Errors),
-            _ => throw new InvalidOperationException("Unknown RunResult variant."),
         };
     }
 

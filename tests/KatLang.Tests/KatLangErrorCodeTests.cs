@@ -573,4 +573,36 @@ public class KatLangErrorCodeTests
             "Evaluation step limit of 8 was exceeded",
             KatLangError.FromEvalError(new EvalError.EvaluationStepLimitExceeded(8)).Message);
     }
+
+    // ── Every variant renders a real message ────────────────────────────────
+
+    [Fact]
+    public void EveryEvalErrorVariant_RendersAMessage_NeverTheRecordToString()
+    {
+        // The message formatter is compiler-exhaustive over the closed EvalError
+        // hierarchy. Its former catch-all rendered a variant without an arm as the
+        // record's ToString() ("DuplicateProperty { Span = , Name = A }"), which is
+        // exactly how DuplicateProperty and DuplicateBranchPattern — front-end
+        // diagnostics for source programs, evaluator errors for host-built trees —
+        // shipped without a message. Every sample must render as prose.
+        foreach (var (type, (sample, _, _)) in VariantSamples)
+        {
+            var message = KatLangError.FromEvalError(sample).Message;
+            Assert.False(string.IsNullOrWhiteSpace(message), $"{type.Name} renders an empty message.");
+            Assert.DoesNotContain("{ Span =", message, StringComparison.Ordinal);
+            Assert.False(
+                message.StartsWith(type.Name + " {", StringComparison.Ordinal),
+                $"{type.Name} renders as its record ToString(): {message}");
+        }
+
+        Assert.Equal(
+            "Property 'A' is already defined",
+            KatLangError.FromEvalError(new EvalError.DuplicateProperty("A")).Message);
+        Assert.Equal(
+            "Duplicate branch pattern",
+            KatLangError.FromEvalError(new EvalError.DuplicateBranchPattern()).Message);
+        Assert.Equal(
+            "in F: Property 'A' is already defined",
+            KatLangError.FromEvalError(new EvalError.WithContext("in F", new EvalError.DuplicateProperty("A"))).Message);
+    }
 }

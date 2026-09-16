@@ -264,7 +264,6 @@ internal static class ConditionalBranchHeadFormatter
             Pattern.LitInt litInt => Rendering.ValueTextRenderer.FormatNumberInvariant(litInt.Value),
             Pattern.LitString litString => $"'{litString.Value}'",
             Pattern.SequenceValue sequenceValue => FormatSequenceValue(sequenceValue, nested),
-            _ => string.Empty,
         };
 
     private static string FormatSequenceValue(Pattern.SequenceValue sequenceValue, bool nested)

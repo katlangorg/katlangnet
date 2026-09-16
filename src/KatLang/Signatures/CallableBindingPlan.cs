@@ -246,7 +246,6 @@ public sealed record PatternListBindingPlan
         {
             CaptureParameterPattern capture => CreateCaptureNode(capture, parameters, isTopLevel),
             SequenceValueParameterPattern group => new SequenceValueBindingNode(FromParameterPatterns(group.Items, parameters, isTopLevel: false)),
-            _ => throw new InvalidOperationException("Unknown callable parameter pattern."),
         };
 
     private static CallableBindingNode CreateCaptureNode(
@@ -279,7 +278,14 @@ public sealed record CallableBindingCapture(
     public string DisplayName => Kind == ParameterKind.Collecting ? $"*{Name}" : Name;
 }
 
-public abstract record CallableBindingNode
+/// <summary>
+/// One node of a callable's binding plan. A C# <c>closed</c> hierarchy:
+/// <see cref="CaptureBindingNode"/>, <see cref="CollectingCaptureBindingNode"/>, and
+/// <see cref="SequenceValueBindingNode"/> (top-level records of this assembly) are its
+/// only variants, no other assembly can derive from it, and a switch EXPRESSION naming
+/// all three is compiler-exhaustive with no catch-all arm.
+/// </summary>
+public closed record CallableBindingNode
 {
     private protected CallableBindingNode() { }
 

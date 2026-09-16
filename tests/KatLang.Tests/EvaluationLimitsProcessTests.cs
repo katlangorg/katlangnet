@@ -33,6 +33,41 @@ public class EvaluationLimitsProcessTests
     public async Task PlannedLoopUnderRecursion_IsStructurallyBounded_InSubprocess()
         => await RunProbeChild("PlannedLoopUnderRecursion_ProbeChild");
 
+    [Fact]
+    public async Task DeepErrorContextCode_IsStackSafe_InSubprocess()
+        => await RunProbeChild(nameof(DeepErrorContextCode_ProbeChild));
+
+    [Fact]
+    public void DeepErrorContextCode_ProbeChild()
+    {
+        if (Environment.GetEnvironmentVariable(ProbeChildEnvironment) != "1")
+            return;
+
+        // Code is public and host-built wrappers have no AST-depth ceiling.
+        // Its exhaustive terminal dispatch must not replace iterative unwrapping
+        // with one native stack frame per context. Isolate a regression's process
+        // termination; do not format the error (a separate, recursive operation).
+        foreach (var terminal in new EvalError[]
+        {
+            new EvalError.DivByZero(),
+            new EvalError.EvaluationStepLimitExceeded(1),
+            EvalError.ModuleRegionMaterializationFailed.From(
+                [new Diagnostic("fetch failed", DiagnosticSeverity.Error, new SourceSpan(1, 1, 1, 2))
+                    { Code = DiagnosticCode.LoadFetchFailed }]),
+        })
+        {
+            var expected = terminal.Code;
+            EvalError wrapped = terminal;
+            var context = new CallContext("F");
+            for (var i = 0; i < 100_000; i++)
+                wrapped = new EvalError.WithContext(context, wrapped);
+
+            Assert.Equal(expected, wrapped.Code);
+        }
+
+        WriteProbeMarker();
+    }
+
     /// <summary>
     /// Final audit (September 2026): the loop planner (<c>LoopOptimizer.TryBuildLoopExprPlan</c>)
     /// and the planned expression evaluator recurse once per AST level of the step body between

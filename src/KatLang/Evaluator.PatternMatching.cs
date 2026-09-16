@@ -20,64 +20,65 @@ public static partial class Evaluator
 
     /// <summary>
     /// Match a pattern against a Result, returning accumulated bindings on success.
-    /// Lean: matchPattern.
+    /// Lean: matchPattern. Compiler-exhaustive over the closed Pattern hierarchy,
+    /// like Lean's total match: a new pattern kind fails this build instead of
+    /// silently matching nothing.
     /// </summary>
     private static bool MatchPattern(
         Pattern pattern,
         Result result,
         List<(string, Result)> bindings)
-    {
-        switch (pattern)
+        => pattern switch
         {
-            case Pattern.Bind(var name):
-                {
-                    var existing = LookupVal(bindings, name);
-                    if (existing is not null)
-                        return Result.ValueComparer.Equals(existing, result);
-
-                    bindings.Add((name, result));
-                    return true;
-                }
-
+            Pattern.Bind(var name) => MatchBindPattern(name, result, bindings),
             // Literal patterns match by STRUCTURAL numeric equality (Decimal128.Equals:
             // NaN is one value, quantum ignored) — the same semantics the repeated-binder
             // arm above and Result.ValueComparer use. The IEEE `==` operator would make a
             // host-built LitInt(NaN) pattern unable to match anything, including itself.
-            case Pattern.LitInt(var n):
-                return result is Result.Atom(var v) && v.Equals(n);
+            Pattern.LitInt(var n) => result is Result.Atom(var v) && v.Equals(n),
+            Pattern.LitString(var s) => result is Result.Str(var sv)
+                && string.Equals(sv, s, StringComparison.Ordinal),
+            Pattern.SequenceValue(var items) => MatchSequenceValuePattern(items, result, bindings),
+        };
 
-            case Pattern.LitString(var s):
-                return result is Result.Str(var sv)
-                    && string.Equals(sv, s, StringComparison.Ordinal);
+    private static bool MatchBindPattern(string name, Result result, List<(string, Result)> bindings)
+    {
+        var existing = LookupVal(bindings, name);
+        if (existing is not null)
+            return Result.ValueComparer.Equals(existing, result);
 
-            case Pattern.SequenceValue(var items):
-                // Result.normalize collapses sequenceValue [x] -> x, so a
-                // singleton sequence-value pattern (e.g. "(b)") must also
-                // match a non-sequence-value result by treating it as if it
-                // were sequenceValue [result].
-                if (result is Result.SequenceValue(var rs))
-                {
-                    if (rs.Count != items.Count) return false;
-                }
-                else if (items.Count == 1)
-                {
-                    rs = [result];
-                }
-                else
-                {
-                    return false;
-                }
+        bindings.Add((name, result));
+        return true;
+    }
 
-                for (var i = 0; i < items.Count; i++)
-                {
-                    if (!MatchPattern(items[i], rs[i], bindings))
-                        return false;
-                }
-                return true;
+    private static bool MatchSequenceValuePattern(
+        IReadOnlyList<Pattern> items,
+        Result result,
+        List<(string, Result)> bindings)
+    {
+        // Result.normalize collapses sequenceValue [x] -> x, so a
+        // singleton sequence-value pattern (e.g. "(b)") must also
+        // match a non-sequence-value result by treating it as if it
+        // were sequenceValue [result].
+        if (result is Result.SequenceValue(var rs))
+        {
+            if (rs.Count != items.Count) return false;
+        }
+        else if (items.Count == 1)
+        {
+            rs = [result];
+        }
+        else
+        {
+            return false;
+        }
 
-            default:
+        for (var i = 0; i < items.Count; i++)
+        {
+            if (!MatchPattern(items[i], rs[i], bindings))
                 return false;
         }
+        return true;
     }
 
     private static IReadOnlyList<(string, Result)>? MatchPattern(Pattern pattern, Result result)
@@ -131,63 +132,69 @@ public static partial class Evaluator
         return null;
     }
 
+    /// <summary>
+    /// Counted twin of the plain <c>MatchPattern</c> above,
+    /// dispatched the same compiler-exhaustive way over the closed Pattern hierarchy.
+    /// </summary>
     private static bool MatchCountedPattern(
         Pattern pattern,
         CountedResult result,
         List<(string, CountedResult)> bindings)
-    {
-        switch (pattern)
+        => pattern switch
         {
-            case Pattern.Bind(var name):
-                {
-                    var existing = LookupCountedParam(bindings, name);
-                    if (existing is not null)
-                        return Result.ValueComparer.Equals(existing.Value.Value, result.Value);
-
-                    bindings.Add((name, result));
-                    return true;
-                }
-
+            Pattern.Bind(var name) => MatchCountedBindPattern(name, result, bindings),
             // Structural numeric equality, mirroring the plain MatchPattern arm.
-            case Pattern.LitInt(var n):
-                return result.Value is Result.Atom(var v) && v.Equals(n);
+            Pattern.LitInt(var n) => result.Value is Result.Atom(var v) && v.Equals(n),
+            Pattern.LitString(var s) => result.Value is Result.Str(var sv)
+                && string.Equals(sv, s, StringComparison.Ordinal),
+            Pattern.SequenceValue(var items) => MatchCountedSequenceValuePattern(items, result, bindings),
+        };
 
-            case Pattern.LitString(var s):
-                return result.Value is Result.Str(var sv)
-                    && string.Equals(sv, s, StringComparison.Ordinal);
+    private static bool MatchCountedBindPattern(
+        string name,
+        CountedResult result,
+        List<(string, CountedResult)> bindings)
+    {
+        var existing = LookupCountedParam(bindings, name);
+        if (existing is not null)
+            return Result.ValueComparer.Equals(existing.Value.Value, result.Value);
 
-            case Pattern.SequenceValue(var items):
-                IReadOnlyList<Result> members;
-                if (result.Value is Result.SequenceValue(var groupedMembers))
-                {
-                    if (groupedMembers.Count != items.Count)
-                        return false;
+        bindings.Add((name, result));
+        return true;
+    }
 
-                    members = groupedMembers;
-                }
-                else if (items.Count == 1)
-                {
-                    members = [result.Value];
-                }
-                else
-                {
-                    return false;
-                }
+    private static bool MatchCountedSequenceValuePattern(
+        IReadOnlyList<Pattern> items,
+        CountedResult result,
+        List<(string, CountedResult)> bindings)
+    {
+        IReadOnlyList<Result> members;
+        if (result.Value is Result.SequenceValue(var groupedMembers))
+        {
+            if (groupedMembers.Count != items.Count)
+                return false;
 
-                for (var i = 0; i < items.Count; i++)
-                {
-                    if (!MatchCountedPattern(
-                        items[i],
-                        new CountedResult(members[i], members[i].ValueCount()),
-                        bindings))
-                        return false;
-                }
+            members = groupedMembers;
+        }
+        else if (items.Count == 1)
+        {
+            members = [result.Value];
+        }
+        else
+        {
+            return false;
+        }
 
-                return true;
-
-            default:
+        for (var i = 0; i < items.Count; i++)
+        {
+            if (!MatchCountedPattern(
+                items[i],
+                new CountedResult(members[i], members[i].ValueCount()),
+                bindings))
                 return false;
         }
+
+        return true;
     }
 
     private static IReadOnlyList<(string, CountedResult)>? MatchCountedPattern(

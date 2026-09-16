@@ -22,27 +22,17 @@ var source = """
     NetSalary(1600, 2)
     """;
 
-switch (KatLangEngine.Run(source))
+var text = KatLangEngine.Run(source) switch
 {
-    case RunResult.Success s:
-        Console.WriteLine(s.ToDisplayString());
-        break;
-
-    case RunResult.NoProgramOutput n:
-        Console.WriteLine(n.ToDisplayString());
-        break;
-
-    case RunResult.ParseFailure p:
-        foreach (var error in p.Errors)
-            Console.WriteLine(error);
-        break;
-
-    case RunResult.EvalFailure e:
-        foreach (var error in e.Errors)
-            Console.WriteLine(error);
-        break;
-}
+    RunResult.Success s => s.ToDisplayString(),
+    RunResult.NoProgramOutput n => n.ToDisplayString(),
+    RunResult.ParseFailure p => string.Join(Environment.NewLine, p.Errors),
+    RunResult.EvalFailure e => string.Join(Environment.NewLine, e.Errors),
+};
+Console.WriteLine(text);
 ```
+
+`RunResult` is a C# `closed` record hierarchy: those four variants are the only ones and no other assembly can add one, so a switch *expression* like the one above needs no catch-all arm — the compiler proves it exhaustive and reports a missing variant (warning `CS8509`, worth promoting to an error in your project). A switch *statement* over the same value compiles without that check, so use the expression form when you want the guarantee. `Result`, `Algorithm`, `Pattern`, `Expr`, and the parameter-pattern and binding-node hierarchies are closed the same way. `EvalError` is closed too but keeps one internal variant, so classify errors through `KatLangError.Code` rather than by enumerating its variants.
 
 ## Plain-text output formatting
 

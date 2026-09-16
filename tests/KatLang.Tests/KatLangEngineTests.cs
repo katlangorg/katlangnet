@@ -503,7 +503,6 @@ public class KatLangEngineTests
             RunResult.NoProgramOutput n => n.ToDisplayString(),
             RunResult.ParseFailure p => $"parse: {p.Errors.Count}",
             RunResult.EvalFailure e => $"eval: {e.Errors.Count}",
-            _ => throw new InvalidOperationException("Unknown RunResult variant."),
         };
         Assert.Equal("25", text);
     }

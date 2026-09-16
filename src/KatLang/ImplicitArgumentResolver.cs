@@ -1046,30 +1046,27 @@ internal static class ImplicitArgumentResolver
     private static ParameterPattern? MissingCapturePattern(
         ParameterPattern pattern,
         IReadOnlySet<string> existingParams)
-    {
-        switch (pattern)
+        => pattern switch
         {
-            case CaptureParameterPattern capture:
-                return existingParams.Contains(capture.Name) ? null : capture;
+            CaptureParameterPattern capture => existingParams.Contains(capture.Name) ? null : capture,
+            SequenceValueParameterPattern group => MissingGroupCapturePattern(group, existingParams),
+        };
 
-            case SequenceValueParameterPattern group:
-            {
-                var missingItems = new List<ParameterPattern>(group.Items.Count);
-                foreach (var item in group.Items)
-                {
-                    var missingItem = MissingCapturePattern(item, existingParams);
-                    if (missingItem is not null)
-                        missingItems.Add(missingItem);
-                }
-
-                return missingItems.Count == 0
-                    ? null
-                    : new SequenceValueParameterPattern(missingItems);
-            }
-
-            default:
-                return null;
+    private static SequenceValueParameterPattern? MissingGroupCapturePattern(
+        SequenceValueParameterPattern group,
+        IReadOnlySet<string> existingParams)
+    {
+        var missingItems = new List<ParameterPattern>(group.Items.Count);
+        foreach (var item in group.Items)
+        {
+            var missingItem = MissingCapturePattern(item, existingParams);
+            if (missingItem is not null)
+                missingItems.Add(missingItem);
         }
+
+        return missingItems.Count == 0
+            ? null
+            : new SequenceValueParameterPattern(missingItems);
     }
 
     private static bool TryGetSingleTopLevelCollectingCapture(
@@ -1423,7 +1420,6 @@ internal static class ImplicitArgumentResolver
             // written capture boundary — a value grouping, not a scope.
             SequenceValueParameterPattern group => new Expr.Capture(new OutputBundle(
                 BuildPatternArgumentOutput(group.Items, mapCaptureName, forwardAsSpread))),
-            _ => throw new InvalidOperationException("Unknown parameter pattern."),
         };
     }
 

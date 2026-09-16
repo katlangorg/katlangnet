@@ -32,8 +32,19 @@ namespace KatLang;
 /// </code>
 /// C# carries structured <see cref="ErrorContext"/> values in <see cref="WithContext"/>
 /// while preserving Lean's user-visible context wording where needed.
+///
+/// <para>A C# <c>closed</c> hierarchy, like the Lean inductive: the nested records
+/// declared here are its only variants and no other assembly can derive from it.
+/// Inside this assembly a switch EXPRESSION naming every variant is
+/// compiler-exhaustive with no catch-all arm, so adding a variant fails the build
+/// at every such classifier (<see cref="Code"/>, the message formatter) until the
+/// new case is decided. One variant
+/// (<see cref="ModuleRegionMaterializationFailed"/>) is internal, so a switch
+/// written OUTSIDE this assembly still needs a catch-all; hosts classify through
+/// <see cref="Code"/> and <see cref="KatLangError"/> rather than by enumerating
+/// variants.</para>
 /// </summary>
-public abstract record EvalError
+public closed record EvalError
 {
     /// <summary>Source location of the expression that caused this error.</summary>
     public SourceSpan? Span { get; init; }
@@ -81,9 +92,11 @@ public abstract record EvalError
     /// <see cref="VariadicArityMismatch"/>, <see cref="BadArity"/>) deliberately
     /// share <see cref="KatLangErrorCode.ArityMismatch"/> — one host-facing
     /// family, distinguishable through the structured error itself. Every other
-    /// variant maps one-to-one. The mapping is fail-loud: an unmapped future
-    /// variant throws instead of silently inheriting
-    /// <see cref="KatLangErrorCode.Unspecified"/>.
+    /// variant maps one-to-one. The mapping is compiler-exhaustive over the
+    /// closed hierarchy: an unmapped future variant fails the build here instead
+    /// of silently inheriting <see cref="KatLangErrorCode.Unspecified"/> or
+    /// reaching a runtime fallback. Context wrappers are unwrapped iteratively
+    /// so classification remains stack-safe even for deep host-built errors.
     /// </summary>
     public KatLangErrorCode Code
     {
@@ -95,6 +108,9 @@ public abstract record EvalError
 
             return terminal switch
             {
+                // The loop has eliminated this variant; name it explicitly so
+                // every future terminal variant still requires a mapping below.
+                WithContext => throw new System.Diagnostics.UnreachableException(),
                 UnknownName => KatLangErrorCode.UnknownName,
                 UnknownProperty => KatLangErrorCode.UnknownProperty,
                 NotPublicProperty => KatLangErrorCode.NotPublicProperty,
@@ -130,9 +146,6 @@ public abstract record EvalError
                 AstDepthLimitExceeded => KatLangErrorCode.AstDepthLimitExceeded,
                 AstCycleDetected => KatLangErrorCode.AstCycleDetected,
                 ModuleRegionMaterializationFailed e => KatLangError.MapDiagnosticCode(e.Primary.Code),
-                _ => throw new InvalidOperationException(
-                    $"Unhandled EvalError variant in {nameof(EvalError)}.{nameof(Code)}: {terminal.GetType().Name}. "
-                    + "Map the new variant to a KatLangErrorCode family explicitly."),
             };
         }
     }

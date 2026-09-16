@@ -191,7 +191,6 @@ public static partial class Evaluator
             => new Expr.EmptySequence(0),
         Result.SequenceValue => null,
         Result.ListValue => null,
-        _ => EmptyResultExpr(),
     };
 
     /// <summary>One in-progress structure rebuild in the <see cref="ResultToExpr"/> walk.</summary>

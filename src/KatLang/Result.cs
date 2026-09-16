@@ -52,8 +52,17 @@ namespace KatLang;
 /// only what actually changes: an already-normal node normalizes to ITSELF, and
 /// a shared child contributes the SAME normalized reference to each of its
 /// parents.</para>
+///
+/// <para>A C# <c>closed</c> hierarchy, like the Lean inductive: <see cref="Atom"/>,
+/// <see cref="Str"/>, <see cref="SequenceValue"/>, and <see cref="ListValue"/> are
+/// its only variants, no other assembly can derive from it, and a switch EXPRESSION
+/// naming all four is compiler-exhaustive with no catch-all arm — the value views
+/// here (<see cref="ToItems"/>, <see cref="AsNum"/>) and the evaluator's
+/// Lean-modeled projections are written that way, so a new variant fails the build
+/// there until it is decided. Iterative statement-form walks (equality, hashing,
+/// rendering) cannot be compiler-checked and keep their own defaults.</para>
 /// </summary>
-public abstract record Result
+public closed record Result
 {
     private Result() { }
 
@@ -842,7 +851,6 @@ public abstract record Result
                 _ => null,
             },
             ListValue _ => null,
-            _ => null,
         };
     }
 
@@ -865,7 +873,6 @@ public abstract record Result
             Atom or Str => [this],
             SequenceValue(var items) => items,
             ListValue _ => [this],
-            _ => [],
         };
     }
 

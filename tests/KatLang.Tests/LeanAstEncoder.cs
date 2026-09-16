@@ -304,15 +304,14 @@ internal sealed class LeanAstEncoding
     /// different program from the flat <c>F(x)</c>, and the flattened
     /// <see cref="Algorithm.Parameters"/> list cannot distinguish them — the
     /// original Track 9 failure mode. Encoding the pattern tree keeps the
-    /// distinction.
+    /// distinction. Compiler-exhaustive over the closed ParameterPattern hierarchy:
+    /// a new variant fails this build until the encoder covers it.
     /// </summary>
     private static string EncodeParameterPattern(ParameterPattern pattern) => pattern switch
     {
         CaptureParameterPattern capture => $".capture {EncodeCallableParameter(capture)}",
         SequenceValueParameterPattern(var items) =>
             $".sequenceValue [{EncodeList(items, EncodeParameterPattern)}]",
-        _ => throw new NotSupportedException(
-            $"{nameof(LeanAstEncoder)} does not cover parameter pattern {pattern.GetType().Name}."),
     };
 
     /// <summary>
@@ -347,6 +346,8 @@ internal sealed class LeanAstEncoding
     /// <c>sequenceValue [bind]</c> head (written <c>F((x))</c>) is a different
     /// clause from a bare <c>bind</c> head (written <c>F(x)</c>), and only the
     /// former exercises the documented whole-argument singleton rule.
+    /// Compiler-exhaustive over the closed Pattern hierarchy: a new variant fails
+    /// this build until the encoder covers it.
     /// </summary>
     public static string EncodePattern(Pattern pattern) => pattern switch
     {
@@ -354,8 +355,6 @@ internal sealed class LeanAstEncoding
         Pattern.LitInt(var value) => $".litInt {EncodeNumber(value)}",
         Pattern.LitString(var value) => $".litString {Quote(value)}",
         Pattern.SequenceValue(var items) => $".sequenceValue [{EncodeList(items, EncodePattern)}]",
-        _ => throw new NotSupportedException(
-            $"{nameof(LeanAstEncoder)} does not cover pattern {pattern.GetType().Name}."),
     };
 
     private static string EncodeExposure(PropertyExposure exposure, IReadOnlyList<string> requiredAncestorParameters) => exposure switch

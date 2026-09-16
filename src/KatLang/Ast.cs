@@ -250,8 +250,13 @@ public sealed record ParameterDeclaration(string Name, SourceSpan? Span = null, 
 /// Recursive explicit parameter pattern for ordinary user-call binding.
 /// Capture nodes bind names; sequence-value nodes preserve one parent-level
 /// slot and destructure that slot's immediate sequence elements.
+/// A C# <c>closed</c> hierarchy: <see cref="CaptureParameterPattern"/> and
+/// <see cref="SequenceValueParameterPattern"/> (top-level records of this
+/// assembly) are its only variants, no other assembly can derive from it, and a
+/// switch EXPRESSION naming both is compiler-exhaustive with no catch-all arm
+/// (the signature/binding planners are written that way).
 /// </summary>
-public abstract record ParameterPattern
+public closed record ParameterPattern
 {
     private protected ParameterPattern() { }
 
@@ -673,8 +678,15 @@ public closed record Expr
 /// <see cref="Algorithm.User"/> only when it contains exactly one clause and
 /// that sole head is a supported recursive explicit parameter pattern; multi-clause
 /// families and literal/mixed heads elaborate as <see cref="Algorithm.Conditional"/>.
+///
+/// A C# <c>closed</c> hierarchy, like the Lean inductive: <see cref="Bind"/>,
+/// <see cref="LitInt"/>, <see cref="LitString"/>, and <see cref="SequenceValue"/> are
+/// its only variants, no other assembly can derive from it, and a switch EXPRESSION
+/// naming all four is compiler-exhaustive with no catch-all arm — the evaluator's
+/// pattern matchers are written that way, so a new pattern kind fails the build
+/// there until decided; statement-form pattern walks need separate coverage review.
 /// </summary>
-public abstract record Pattern
+public closed record Pattern
 {
     private Pattern() { }
 
@@ -1164,8 +1176,16 @@ public sealed record Property(
 ///
 /// Virtual properties provide Lean-style accessors that return defaults for Builtin variant
 /// (null/[] as appropriate), matching Lean's Algorithm.parent, Algorithm.parameters, etc.
+///
+/// A C# <c>closed</c> hierarchy, like the Lean inductive: <see cref="User"/>,
+/// <see cref="Builtin"/>, and <see cref="Conditional"/> are its only variants, no other
+/// assembly can derive from it, and a switch EXPRESSION naming all three is
+/// compiler-exhaustive with no catch-all arm — the Lean-mirroring dispatches
+/// (<c>withParent</c>, <c>isFunctionShaped</c>, signature and exposure classification,
+/// the <c>WithParams</c> family here) name the variants a case applies to instead of
+/// hiding them under <c>_</c>, so a new variant fails the build there until decided.
 /// </summary>
-public abstract record Algorithm
+public closed record Algorithm
 {
     private Algorithm() { }
 
@@ -1258,7 +1278,7 @@ public abstract record Algorithm
     public Algorithm WithParams(IReadOnlyList<string> parameters) => this switch
     {
         User user => user.WithParameterPatternList(MergeParameterPatterns(user.ParameterPatterns, parameters)),
-        _ => this,
+        Builtin or Conditional => this,
     };
 
     /// <summary>
@@ -1275,19 +1295,19 @@ public abstract record Algorithm
         {
             User user => user.WithParameterPatternList(
                 MergeParameterPatterns(user.ParameterPatterns, parameters, inferredProvenance)),
-            _ => this,
+            Builtin or Conditional => this,
         };
 
     public Algorithm WithParameters(IReadOnlyList<ParameterDeclaration> parameters) => this switch
     {
         User user => user.WithParameterPatternList(ParameterPattern.FromDeclarations(parameters)),
-        _ => this,
+        Builtin or Conditional => this,
     };
 
     public Algorithm WithParameterPatterns(IReadOnlyList<ParameterPattern> parameterPatterns) => this switch
     {
         User user => user.WithParameterPatternList(parameterPatterns),
-        _ => this,
+        Builtin or Conditional => this,
     };
 
     internal static IReadOnlyList<ParameterDeclaration> NormalParameters(IEnumerable<string> names)

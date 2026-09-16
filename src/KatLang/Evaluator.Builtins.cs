@@ -803,7 +803,6 @@ public static partial class Evaluator
         Result.SequenceValue => "sequence value",
         Result.ListValue(var items) when items.Count == 0 => "empty list value",
         Result.ListValue => "list value",
-        _ => "value",
     };
 
     private static string NumericSequenceItemErrorContext(BuiltinId builtin, int index, Result item)

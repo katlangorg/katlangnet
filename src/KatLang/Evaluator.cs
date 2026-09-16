@@ -420,7 +420,7 @@ public static partial class Evaluator
     private static Algorithm WithParent(Algorithm alg, ScopeCtx? parent) => alg switch
     {
         Algorithm.Builtin => alg,
-        _ => PreserveDeclarationIdentity(alg, alg with { Parent = parent }),
+        Algorithm.User or Algorithm.Conditional => PreserveDeclarationIdentity(alg, alg with { Parent = parent }),
     };
 
     private static ScopeCtx AsScopeCtx(Algorithm alg)
@@ -1516,7 +1516,6 @@ public static partial class Evaluator
         Result.Str => $"a string: {FormatResultForDiagnostic(value)}",
         Result.Atom(var number) => $"numeric value {Rendering.ValueTextRenderer.FormatNumberInvariant(number)}",
         Result.ListValue(var items) => $"a list value with {items.Count} {Pluralize(items.Count, "element")}: {FormatResultForDiagnostic(value)}",
-        _ => $"a value: {FormatResultForDiagnostic(value)}",
     };
 
     private static string Pluralize(int count, string singular)

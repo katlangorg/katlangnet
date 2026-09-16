@@ -60,7 +60,8 @@ else if (result is RunResult.ParseFailure parseFailure)
 - `KatLangError.Code : KatLangErrorCode`, `KatLangError.Source : EvalError?`,
   `KatLangError.IsResourceLimit : bool`.
 - `EvalError.Code : KatLangErrorCode` — the one authoritative variant→family
-  mapping (fail-loud on an unmapped future variant).
+  mapping (fail-loud on an unmapped future variant: since September 2026 a
+  compile error, the switch being exhaustive over the closed `EvalError`).
 - `EvalError.IsResourceLimit` — the pre-existing internal classifier promoted
   to public, semantics unchanged.
 

@@ -257,7 +257,7 @@ internal static class PropertyExposureResolver
             Algorithm.Conditional conditional => ProcessConditionalAlgorithm(
                 conditional,
                 new ExposureWalkMemos(summaryMemo, observations, parent, run)),
-            _ => algorithm,
+            Algorithm.Builtin => algorithm,
         };
 
     private static Algorithm ProcessUserAlgorithm(

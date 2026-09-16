@@ -253,6 +253,9 @@ public sealed class KatLangError
         if (TryFormatReduceInitialAccumulator(error, out var formattedReduceInitialAccumulator))
             return formattedReduceInitialAccumulator;
 
+        // Compiler-exhaustive over the closed EvalError hierarchy: a new variant
+        // fails this build until it has a message, instead of silently rendering
+        // through a catch-all as its record ToString().
         return error switch
         {
             EvalError.UnknownName e => $"Unknown name: {e.Name}",
@@ -277,6 +280,11 @@ public sealed class KatLangError
             EvalError.BranchOutputArityMismatch e =>
                 $"All branches of conditional algorithm '{e.AlgorithmName}' must have the same top-level output arity. " +
                 $"Expected {e.Expected} (from first branch), but a branch has output arity {e.Actual}",
+            // Both are ordinarily caught by the front end (DiagnosticCode.DuplicateProperty /
+            // DuplicateBranchPattern) and reach the evaluator only from host-built trees; the
+            // former catch-all rendered them as the record's ToString().
+            EvalError.DuplicateProperty e => $"Property '{e.Name}' is already defined",
+            EvalError.DuplicateBranchPattern => "Duplicate branch pattern",
             EvalError.ExplicitParametersRequireOutput => AlgorithmValidation.ExplicitParametersRequireOutputMessage,
             EvalError.MissingOutput => FormatGenericMissingOutput(),
             EvalError.SpreadMissingOutput => FormatSpreadMissingOutput(),
@@ -308,7 +316,6 @@ public sealed class KatLangError
                 + "KatLang ASTs must be acyclic: shared subtrees are allowed, but no node may reach itself through its own children",
             EvalError.ModuleRegionMaterializationFailed e => FormatModuleRegionMaterializationFailed(e),
             EvalError.WithContext e => $"{e.Context}: {FormatEvalError(e.Inner)}",
-            _ => error.ToString()!,
         };
     }
 

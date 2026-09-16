@@ -44,7 +44,6 @@ public static partial class Evaluator
         Result.Str _ => [r],
         Result.SequenceValue(var items) => items,
         Result.ListValue _ => [r],
-        _ => [],
     };
 
     /// <summary>
@@ -581,7 +580,7 @@ public static partial class Evaluator
         {
             Algorithm.Builtin => true,
             Algorithm.Conditional => true,
-            _ => algorithm.Params.Count > 0 || algorithm.ParameterPatterns.Count > 0,
+            Algorithm.User user => user.Params.Count > 0 || user.ParameterPatterns.Count > 0,
         };
 
     private static EvalResult<CollectingCapture> CreateCollectingCapture(

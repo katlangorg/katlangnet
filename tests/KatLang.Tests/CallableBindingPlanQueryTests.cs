@@ -51,7 +51,6 @@ public class CallableBindingPlanQueryTests
             CaptureBindingNode capture => $"Capture({capture.Name}:{capture.Source})",
             CollectingCaptureBindingNode variadic => $"Variadic({variadic.Name}:{variadic.Source}:{(variadic.IsTopLevel ? "top" : "nested")})",
             SequenceValueBindingNode group => $"SequenceValue({DescribePatternList(group.Children)})",
-            _ => throw new InvalidOperationException("Unknown binding node."),
         };
 
     private static string DescribePatternList(PatternListBindingPlan plan)

@@ -252,8 +252,6 @@ internal static class LoopDiagnosticParityAssertions
                 + $"|collectSpan={SpanText(capture.CollectMarkerSpan)}"
                 + $"|provenance={DescribeProvenance(capture.InferredProvenance)}]",
             SequenceValueParameterPattern sequence => $"Sequence[{DescribePatterns(sequence.Items)}]",
-            _ => throw new Xunit.Sdk.XunitException(
-                $"DescribePattern does not handle pattern kind '{pattern.GetType().Name}'; extend it so structured comparisons stay faithful."),
         };
 
     private static string DescribeProvenances(IReadOnlyList<ImplicitParameterProvenance>? provenances)

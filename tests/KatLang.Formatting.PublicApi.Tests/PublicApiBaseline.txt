@@ -6,7 +6,7 @@
 # One block per exported type in ordinal order of its heading; members sorted by kind, name,
 # then signature; enum members by numeric value. See the renderer for the exact policy.
 
-public abstract record KatLang.Algorithm : System.IEquatable<KatLang.Algorithm>
+public closed record KatLang.Algorithm : System.IEquatable<KatLang.Algorithm>
   ctor     protected Algorithm(KatLang.Algorithm original)
   property public virtual System.Collections.Generic.IReadOnlyList<KatLang.CondBranch> Branches { get; init; }
   property protected virtual System.Type EqualityContract { get; }
@@ -196,7 +196,7 @@ public sealed record KatLang.CallableBindingCapture : System.IEquatable<KatLang.
   operator public static bool op_Equality(KatLang.CallableBindingCapture? left, KatLang.CallableBindingCapture? right)
   operator public static bool op_Inequality(KatLang.CallableBindingCapture? left, KatLang.CallableBindingCapture? right)
 
-public abstract record KatLang.CallableBindingNode : System.IEquatable<KatLang.CallableBindingNode>
+public closed record KatLang.CallableBindingNode : System.IEquatable<KatLang.CallableBindingNode>
   ctor     protected CallableBindingNode(KatLang.CallableBindingNode original)
   property public abstract System.Collections.Generic.IReadOnlyList<KatLang.CallableBindingCapture> Captures { get; }
   property protected virtual System.Type EqualityContract { get; }
@@ -487,7 +487,7 @@ public abstract record KatLang.ErrorContext : System.IEquatable<KatLang.ErrorCon
   operator public static bool op_Equality(KatLang.ErrorContext? left, KatLang.ErrorContext? right)
   operator public static bool op_Inequality(KatLang.ErrorContext? left, KatLang.ErrorContext? right)
 
-public abstract record KatLang.EvalError : System.IEquatable<KatLang.EvalError>
+public closed record KatLang.EvalError : System.IEquatable<KatLang.EvalError>
   ctor     protected EvalError(KatLang.EvalError original)
   property public KatLang.KatLangErrorCode Code { get; }
   property protected virtual System.Type EqualityContract { get; }
@@ -1619,7 +1619,7 @@ public enum KatLang.ParameterKind : int
   Normal = 0
   Collecting = 1
 
-public abstract record KatLang.ParameterPattern : System.IEquatable<KatLang.ParameterPattern>
+public closed record KatLang.ParameterPattern : System.IEquatable<KatLang.ParameterPattern>
   ctor     protected ParameterPattern(KatLang.ParameterPattern original)
   property public abstract System.Collections.Generic.IReadOnlyList<KatLang.ParameterDeclaration> Captures { get; }
   property public bool ContainsCollectingCapture { get; }
@@ -1659,7 +1659,7 @@ public sealed class KatLang.Parser
   method   public static KatLang.ParseResult Parse(string source, KatLang.RunOptions? options)
   method   public static System.Threading.Tasks.Task<KatLang.ParseResult> ParseAsync(string source, KatLang.RunOptions? options = null)
 
-public abstract record KatLang.Pattern : System.IEquatable<KatLang.Pattern>
+public closed record KatLang.Pattern : System.IEquatable<KatLang.Pattern>
   ctor     protected Pattern(KatLang.Pattern original)
   property protected virtual System.Type EqualityContract { get; }
   method   public abstract KatLang.Pattern <Clone>$()
@@ -1822,7 +1822,7 @@ public sealed record KatLang.ReduceInitialAccumulatorContext : KatLang.ErrorCont
   operator public static bool op_Equality(KatLang.ReduceInitialAccumulatorContext? left, KatLang.ReduceInitialAccumulatorContext? right)
   operator public static bool op_Inequality(KatLang.ReduceInitialAccumulatorContext? left, KatLang.ReduceInitialAccumulatorContext? right)
 
-public abstract record KatLang.Result : System.IEquatable<KatLang.Result>
+public closed record KatLang.Result : System.IEquatable<KatLang.Result>
   ctor     protected Result(KatLang.Result original)
   property protected virtual System.Type EqualityContract { get; }
   property public static System.Collections.Generic.IEqualityComparer<KatLang.Result> ValueComparer { get; }
@@ -1923,7 +1923,7 @@ public sealed class KatLang.RunOptions
   property public System.Threading.CancellationToken SourceProcessingCancellationToken { get; init; }
   property public KatLang.SourceProcessingLimits? SourceProcessingLimits { get; init; }
 
-public abstract record KatLang.RunResult : System.IEquatable<KatLang.RunResult>
+public closed record KatLang.RunResult : System.IEquatable<KatLang.RunResult>
   ctor     protected RunResult(KatLang.RunResult original)
   property protected virtual System.Type EqualityContract { get; }
   property public bool IsFailure { get; }

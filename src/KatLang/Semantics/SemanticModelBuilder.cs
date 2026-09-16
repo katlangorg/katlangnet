@@ -1268,7 +1268,9 @@ public static class SemanticModelBuilder
                     documentLocalSpans ? declarationSpans : null,
                     documentLocalSpans,
                     moduleProvidedSpans),
-                _ => new PropertyInfo(name, declaration, PropertyShape.Ordinary, isPublic, exposure, [], []),
+                // A symbol carrying no algorithm keeps the ordinary shape; a Builtin never
+                // reaches this switch (handled above) but the closed hierarchy is named in full.
+                null or Algorithm.Builtin => new PropertyInfo(name, declaration, PropertyShape.Ordinary, isPublic, exposure, [], []),
             };
         }
 

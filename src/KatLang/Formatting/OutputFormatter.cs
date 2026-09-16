@@ -74,36 +74,31 @@ public abstract class OutputFormatter
         var effectiveOptions = options ?? OutputFormattingOptions.Default;
         var limit = effectiveOptions.EffectiveDisplayLimit(result.DisplayOptions.MaxDisplayLength);
 
-        switch (result)
+        // Compiler-exhaustive over the closed RunResult hierarchy: a new variant
+        // fails this build instead of reaching a runtime "unknown variant" arm.
+        return result switch
         {
-            case RunResult.Success success:
-                {
-                    var core = new BoundedDisplayWriter(limit);
-                    var completed = WriteSuccessOutput(
-                        success.OutputRows,
-                        effectiveOptions,
-                        new BoundedOutputWriter(core, result.DisplayOptions));
-                    if (!completed && !core.LimitExceeded)
-                    {
-                        throw new InvalidOperationException(
-                            "The output formatter reported incomplete output without exceeding the display limit.");
-                    }
+            RunResult.Success success => RenderSuccess(success, effectiveOptions, limit),
+            RunResult.NoProgramOutput noOutput => RunResult.FormatText(noOutput.Message, limit),
+            RunResult.ParseFailure parseFailure => RunResult.FormatErrors(parseFailure.Errors, limit),
+            RunResult.EvalFailure evalFailure => RunResult.FormatErrors(evalFailure.Errors, limit),
+        };
+    }
 
-                    return RunResult.Finish(core, limit);
-                }
-
-            case RunResult.NoProgramOutput noOutput:
-                return RunResult.FormatText(noOutput.Message, limit);
-
-            case RunResult.ParseFailure parseFailure:
-                return RunResult.FormatErrors(parseFailure.Errors, limit);
-
-            case RunResult.EvalFailure evalFailure:
-                return RunResult.FormatErrors(evalFailure.Errors, limit);
-
-            default:
-                throw new InvalidOperationException("Unknown RunResult variant.");
+    private DisplayRendering RenderSuccess(RunResult.Success success, OutputFormattingOptions effectiveOptions, int limit)
+    {
+        var core = new BoundedDisplayWriter(limit);
+        var completed = WriteSuccessOutput(
+            success.OutputRows,
+            effectiveOptions,
+            new BoundedOutputWriter(core, success.DisplayOptions));
+        if (!completed && !core.LimitExceeded)
+        {
+            throw new InvalidOperationException(
+                "The output formatter reported incomplete output without exceeding the display limit.");
         }
+
+        return RunResult.Finish(core, limit);
     }
 
     /// <summary>

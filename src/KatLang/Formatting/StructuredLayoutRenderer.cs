@@ -432,7 +432,6 @@ internal static class StructuredLayoutRenderer
                     => CanSpaceJoinTokens(sequence.Items, 0)
                         || (!RequiresStructuredLayout(item, asChild: true) && FitsInline(item, 0, 0)),
                 Result.SequenceValue or Result.ListValue => FitsInline(item, 0, 0),
-                _ => false,
             };
 
         /// <summary>

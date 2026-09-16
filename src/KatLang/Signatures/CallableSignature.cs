@@ -92,7 +92,7 @@ public sealed record CallableSignature
         {
             Algorithm.User user => FromUserAlgorithm(name, user),
             Algorithm.Builtin(var builtin) => FromBuiltin(builtin),
-            _ => new CallableSignature(name, []),
+            Algorithm.Conditional => new CallableSignature(name, []),
         };
 
     public static CallableSignature FromBuiltin(BuiltinId builtin)
@@ -212,7 +212,7 @@ public sealed record CallableSignature
         => parameterPattern switch
         {
             SequenceValueParameterPattern => true,
-            _ => false,
+            CaptureParameterPattern => false,
         };
 
     /// <summary>

@@ -185,7 +185,6 @@ public static class ConcurrencyHarness
             RunResult.NoProgramOutput => $"engine noOutput display={display}",
             RunResult.ParseFailure p => $"engine parseFailure errors={p.Errors.Count.ToString(CultureInfo.InvariantCulture)} display={display}",
             RunResult.EvalFailure => $"engine evalFailure display={display}",
-            _ => throw new InvalidOperationException($"Unknown RunResult variant {run.GetType().Name}."),
         };
     }
 

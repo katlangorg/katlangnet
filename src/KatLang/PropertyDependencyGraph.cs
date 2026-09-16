@@ -715,21 +715,14 @@ internal static class PropertyDependencyGraphBuilder
         HashSet<string> locallyOwnedNames,
         SummaryMemo sharedMemo,
         FrontEndTraversalObservations? observations)
-    {
-        switch (algorithm)
+        => algorithm switch
         {
-            case Algorithm.User user:
-                return CollectAlgorithmSummary(user, locallyOwnedNames, sharedMemo, observations);
-
-            case Algorithm.Conditional conditional:
-                return new AlgorithmSummary(
-                    CollectSummarySeed(conditional, locallyOwnedNames, sharedMemo, observations),
-                    AlgorithmSummary.NoMembers);
-
-            default:
-                return new AlgorithmSummary(new SummarySeed(), AlgorithmSummary.NoMembers);
-        }
-    }
+            Algorithm.User user => CollectAlgorithmSummary(user, locallyOwnedNames, sharedMemo, observations),
+            Algorithm.Conditional conditional => new AlgorithmSummary(
+                CollectSummarySeed(conditional, locallyOwnedNames, sharedMemo, observations),
+                AlgorithmSummary.NoMembers),
+            Algorithm.Builtin => new AlgorithmSummary(new SummarySeed(), AlgorithmSummary.NoMembers),
+        };
 
     private static AlgorithmSummary CollectAlgorithmSummary(
         Algorithm.User algorithm,
