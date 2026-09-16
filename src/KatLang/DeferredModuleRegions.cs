@@ -32,7 +32,7 @@ namespace KatLang;
 /// </summary>
 internal sealed class DeferredModuleRegion
 {
-    private readonly object _runLock = new();
+    private readonly Lock _runLock = new();
     private Algorithm? _materialized;
     private int _materializationAttempts;
     private MaterializationRun? _inFlight;

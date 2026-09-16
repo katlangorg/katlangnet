@@ -444,7 +444,7 @@ public class BranchLazyModuleLoadingTests
             public bool AbortedByCancellation;
         }
 
-        private readonly object _lock = new();
+        private readonly Lock _lock = new();
         private readonly Dictionary<string, Request> _requests = new(StringComparer.Ordinal);
 
         private Request For(string url)
