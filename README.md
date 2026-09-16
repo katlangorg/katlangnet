@@ -32,7 +32,7 @@ var text = KatLangEngine.Run(source) switch
 Console.WriteLine(text);
 ```
 
-`RunResult` is a C# `closed` record hierarchy: those four variants are the only ones and no other assembly can add one, so a switch *expression* like the one above needs no catch-all arm — the compiler proves it exhaustive and reports a missing variant (warning `CS8509`, worth promoting to an error in your project). A switch *statement* over the same value compiles without that check, so use the expression form when you want the guarantee. `Result`, `Algorithm`, `Pattern`, `Expr`, and the parameter-pattern and binding-node hierarchies are closed the same way. `EvalError` is closed too but keeps one internal variant, so classify errors through `KatLangError.Code` rather than by enumerating its variants.
+`RunResult` is a C# `closed` record hierarchy: those four variants are the only ones and no other assembly can add one, so a switch *expression* like the one above needs no catch-all arm — the compiler proves it exhaustive and reports a missing variant (warning `CS8509`, worth promoting to an error in your project). A switch *statement* over the same value compiles without that check, so use the expression form when you want the guarantee. `Result`, `Algorithm`, `Pattern`, `Expr`, `ErrorContext`, and the parameter-pattern and binding-node hierarchies are closed the same way. `EvalError` is closed too but keeps one internal variant, so classify errors through `KatLangError.Code` rather than by enumerating its variants.
 
 ## Plain-text output formatting
 

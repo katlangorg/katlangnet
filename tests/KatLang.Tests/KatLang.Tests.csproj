@@ -6,8 +6,8 @@
     <Nullable>enable</Nullable>
     <IsPackable>false</IsPackable>
     <!-- Same rule as src/KatLang: a switch expression over a closed KatLang hierarchy
-         (`Expr`, `Pattern`, `ParameterPattern`, `RunResult`, ... — the Lean AST encoder,
-         test walkers, describe helpers) that misses a variant fails the build. -->
+         (`Expr`, `Pattern`, `ParameterPattern`, `RunResult`, `ErrorContext`, ... — the Lean
+         AST encoder, test walkers, describe helpers) that misses a variant fails the build. -->
     <WarningsAsErrors>$(WarningsAsErrors);CS8509;CS8655</WarningsAsErrors>
   </PropertyGroup>
 

@@ -19,7 +19,9 @@ namespace KatLang.Formatting.PublicApi.Tests;
 /// hierarchies, because a record's synthesized COPY constructor is
 /// <c>protected</c> — <c>sealed record Rogue(RunResult o) : RunResult(o)</c>
 /// compiled from another assembly against the pre-<c>closed</c> package and could
-/// reach a production "unknown variant" fallback. Only the compiler enforces the
+/// reach a production "unknown variant" fallback — and <see cref="ErrorContext"/>,
+/// which declares no constructor at all, was derivable through its synthesized
+/// protected ordinary constructor as well. Only the compiler enforces the
 /// closure (CS9382 for a foreign derivation), so only the compiler can witness it.
 /// Reflection pins the CHEAP half: which types carry the closed metadata.</para>
 ///
@@ -58,6 +60,10 @@ public class ClosedHierarchyContractTests
         new(
             typeof(CallableBindingNode),
             "new KatLang.CaptureBindingNode(new KatLang.CallableBindingCapture(\"x\", KatLang.ParameterKind.Normal, KatLang.CallableParameterSource.Explicit))"),
+        // The one root whose variants are structured evaluation-context FRAMES rather
+        // than values: hosts still construct every built-in context, and attach
+        // free-form text through TextErrorContext / EvalError.WithContext(string, inner).
+        new(typeof(ErrorContext), "new KatLang.TextErrorContext(\"text\")"),
     ];
 
     public static TheoryData<Type> ClosedRoots
@@ -67,6 +73,22 @@ public class ClosedHierarchyContractTests
             var data = new TheoryData<Type>();
             foreach (var hierarchy in ClosedHierarchies)
                 data.Add(hierarchy.Root);
+            return data;
+        }
+    }
+
+    /// <summary>The closed roots every consumer can switch over exhaustively: those whose variants are all public.</summary>
+    public static TheoryData<Type> ConsumerExhaustiveRoots
+    {
+        get
+        {
+            var data = new TheoryData<Type>();
+            foreach (var hierarchy in ClosedHierarchies)
+            {
+                if (HasOnlyPublicVariants(hierarchy.Root))
+                    data.Add(hierarchy.Root);
+            }
+
             return data;
         }
     }
@@ -106,30 +128,38 @@ public class ClosedHierarchyContractTests
     // ── Compiler: external derivation is rejected ───────────────────────────
 
     [Fact]
-    public void EveryClosedRoot_RejectsExternalDerivation_ThroughTheRecordCopyConstructor()
+    public void EveryClosedRoot_RejectsExternalDerivation_ThroughEveryDerivableConstructor()
     {
+        // One probe per derivation route the root's constructors leave open to a
+        // derived record: always the synthesized protected copy constructor, plus
+        // the ordinary route for a root that declares no constructor of its own
+        // (ErrorContext), whose default constructor is protected too.
+        var probes = ClosedHierarchies
+            .SelectMany(hierarchy => RogueDerivations(hierarchy.Root).Select(probe => (hierarchy.Root, probe.Name, probe.Source)))
+            .ToList();
+        Assert.Contains(probes, probe => probe.Root == typeof(ErrorContext) && probe.Name == RogueOrdinaryName(typeof(ErrorContext)));
+
         var source = new StringBuilder("namespace Rogue;\n");
-        foreach (var hierarchy in ClosedHierarchies)
-            source.Append(RogueDerivation(hierarchy.Root)).Append('\n');
+        foreach (var probe in probes)
+            source.Append(probe.Source).Append('\n');
 
         var compilation = Compile(source.ToString(), "rogue");
 
         Assert.NotEqual(0, compilation.ExitCode);
-        foreach (var hierarchy in ClosedHierarchies)
+        foreach (var probe in probes)
         {
-            var rogueName = RogueName(hierarchy.Root);
             Assert.True(
-                compilation.Diagnostics.Any(d => d.Code == "CS9382" && d.Message.Contains($"'{rogueName}'", StringComparison.Ordinal)),
-                $"Deriving {rogueName} from the closed {hierarchy.Root.Name} through its copy constructor must be refused with CS9382."
+                compilation.Diagnostics.Any(d => d.Code == "CS9382" && d.Message.Contains($"'{probe.Name}'", StringComparison.Ordinal)),
+                $"Deriving {probe.Name} from the closed {probe.Root.Name} must be refused with CS9382."
                 + Environment.NewLine + compilation.Output);
         }
 
         // CS9382 is the ONLY reason the file fails: any other error would mean the
         // derivation was stopped by something other than the closed contract (an
-        // inaccessible constructor, a missing override), which is not the guarantee
-        // under test.
+        // inaccessible constructor, a missing abstract override), which is not the
+        // guarantee under test.
         Assert.All(compilation.Diagnostics, d => Assert.Equal("CS9382", d.Code));
-        Assert.Equal(ClosedHierarchies.Count, compilation.Diagnostics.Count);
+        Assert.Equal(probes.Count, compilation.Diagnostics.Count);
     }
 
     // ── Compiler: the hierarchies stay usable and consumer-exhaustive ───────
@@ -155,17 +185,19 @@ public class ClosedHierarchyContractTests
             + "with no catch-all arm under CS8509/CS8655-as-errors, must compile cleanly." + Environment.NewLine + compilation.Output);
     }
 
-    [Fact]
-    public void ExhaustivenessVerdict_IsLive_AnOmittedVariantFailsToCompile()
+    [Theory]
+    [MemberData(nameof(ConsumerExhaustiveRoots))]
+    public void ExhaustivenessVerdict_IsLive_AnOmittedVariantFailsToCompile(Type root)
     {
-        // Negative control for the positive probe above: the same compiler settings
-        // must reject a switch that skips one public variant, naming that variant.
-        var omitted = DirectVariants(typeof(RunResult)).First();
+        // Negative control for the positive probe above, per consumer-exhaustive
+        // root: the same compiler settings must reject a switch that skips one
+        // public variant, naming that variant.
+        var omitted = DirectVariants(root).First();
         var source = "namespace Consumer;\npublic static class Usage\n{\n"
-            + ExhaustiveSwitch(typeof(RunResult), omit: omitted)
+            + ExhaustiveSwitch(root, omit: omitted)
             + "}\n";
 
-        var compilation = Compile(source, "omitted");
+        var compilation = Compile(source, "omitted-" + root.Name);
 
         Assert.NotEqual(0, compilation.ExitCode);
         var error = Assert.Single(compilation.Diagnostics);
@@ -216,20 +248,58 @@ public class ClosedHierarchyContractTests
 
     private static string RogueName(Type root) => "Rogue" + root.Name;
 
+    private static string RogueOrdinaryName(Type root) => "RogueOrdinary" + root.Name;
+
     /// <summary>
-    /// A record deriving from <paramref name="root"/> through the synthesized
-    /// protected copy constructor — the route that stayed open under a private
-    /// ordinary constructor — implementing every abstract property so that, were
-    /// the root open, nothing else could stop the derivation from compiling.
+    /// Records deriving from <paramref name="root"/> through every constructor a
+    /// derived record could reach: the synthesized protected copy constructor —
+    /// the route that stayed open under a private ordinary constructor — and, for a
+    /// root whose ordinary parameterless constructor is itself derivable (declared
+    /// or synthesized as protected/public), that ordinary route too. Each implements
+    /// every abstract member so that, were the root open, nothing else could stop
+    /// the derivation from compiling.
     /// </summary>
-    private static string RogueDerivation(Type root)
+    private static IReadOnlyList<(string Name, string Source)> RogueDerivations(Type root)
     {
         var rootName = FullName(root);
-        var overrides = root.GetProperties(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
+        var overrides = AbstractMemberOverrides(root);
+        var probes = new List<(string, string)>
+        {
+            (RogueName(root), $"public sealed record {RogueName(root)}({rootName} original) : {rootName}(original)\n{{\n{overrides}}}\n"),
+        };
+
+        var ordinaryDerivable = root.GetConstructors(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
+            .Any(constructor => constructor.GetParameters().Length == 0
+                && (constructor.IsPublic || constructor.IsFamily || constructor.IsFamilyOrAssembly));
+        if (ordinaryDerivable)
+            probes.Add((RogueOrdinaryName(root), $"public sealed record {RogueOrdinaryName(root)}() : {rootName}\n{{\n{overrides}}}\n"));
+
+        return probes;
+    }
+
+    /// <summary>
+    /// Overrides for every abstract property and method of <paramref name="root"/>
+    /// a derived record must implement (the record's own synthesized members, such
+    /// as the clone method, are excluded), so a probe fails only for the reason
+    /// under test.
+    /// </summary>
+    private static string AbstractMemberOverrides(Type root)
+    {
+        const BindingFlags declared = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance;
+        var properties = root.GetProperties(declared)
             .Where(property => property.GetGetMethod(nonPublic: true) is { IsAbstract: true, IsPrivate: false })
             .Select(property => $"    public override {FullName(property.PropertyType)} {property.Name} => default!;\n");
+        var methods = root.GetMethods(declared)
+            .Where(method => method is { IsAbstract: true, IsPrivate: false, IsSpecialName: false }
+                && !method.Name.Contains('<', StringComparison.Ordinal))
+            .Select(method =>
+            {
+                var parameters = string.Join(", ", method.GetParameters().Select(parameter => $"{FullName(parameter.ParameterType)} {parameter.Name}"));
+                var returnsVoid = method.ReturnType == typeof(void);
+                return $"    public override {(returnsVoid ? "void" : FullName(method.ReturnType))} {method.Name}({parameters}) {(returnsVoid ? "{ }" : "=> default!;")}\n";
+            });
 
-        return $"public sealed record {RogueName(root)}({rootName} original) : {rootName}(original)\n{{\n{string.Concat(overrides)}}}\n";
+        return string.Concat(properties) + string.Concat(methods);
     }
 
     /// <summary>

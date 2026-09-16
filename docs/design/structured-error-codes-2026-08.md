@@ -169,6 +169,10 @@ KatLang-produced diagnostic remains `Error`); context stamping; parser
 recovery; CLI output and exit codes; evaluation semantics; Lean. The legacy
 prose-context formatting branches inside `KatLangError` (reachable only via
 host-constructed `EvalError.WithContext(string, …)` values) remain as
-rendering compatibility, not classification. The ~288 existing message-substring
+rendering compatibility, not classification. (Since September 2026 that string
+constructor — a `TextErrorContext` — is also the ONE host channel for attaching
+context: `ErrorContext` is a `closed` hierarchy, so a host constructs the
+built-in structured contexts or free text, never a context type of its own.)
+The ~288 existing message-substring
 test assertions continue to pass and continue protecting wording; migrating
 them to codes is deliberate follow-up work, not part of M5.

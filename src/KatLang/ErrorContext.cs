@@ -1,11 +1,24 @@
 namespace KatLang;
 
 /// <summary>
-/// Structured runtime error context carried by <see cref="EvalError.WithContext"/>.
-/// Each context can still render the legacy prose form used by existing tests
-/// and unmigrated formatter fallbacks.
+/// Structured runtime error context carried by <see cref="EvalError.WithContext"/>:
+/// the evaluation frame ("while evaluating call to F", "while binding X step
+/// state") in which an inner error occurred.
+///
+/// <para>A C# <c>closed</c> hierarchy: the records declared in this file are the
+/// complete set of structured evaluation-context frames KatLang produces, and no
+/// other assembly can derive from it (<c>CS9382</c>). Subclassing is not an
+/// extension mechanism — a host that needs to attach free-form descriptive text
+/// uses <see cref="TextErrorContext"/> (or the string constructor of
+/// <see cref="EvalError.WithContext"/>, which wraps one), the variant that
+/// carries arbitrary text.</para>
+///
+/// <para><see cref="ToLegacyString"/> is each variant's textual projection — the
+/// prose <see cref="EvalError.WithContext.Context"/> reports and the message
+/// formatter falls back to when it has no message tailored to the
+/// (context, inner error) shape.</para>
 /// </summary>
-public abstract record ErrorContext
+public closed record ErrorContext
 {
     public abstract string ToLegacyString();
 

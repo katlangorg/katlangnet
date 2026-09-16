@@ -473,7 +473,7 @@ public sealed record KatLang.DotCallContext : KatLang.ErrorContext, System.IEqua
   operator public static bool op_Equality(KatLang.DotCallContext? left, KatLang.DotCallContext? right)
   operator public static bool op_Inequality(KatLang.DotCallContext? left, KatLang.DotCallContext? right)
 
-public abstract record KatLang.ErrorContext : System.IEquatable<KatLang.ErrorContext>
+public closed record KatLang.ErrorContext : System.IEquatable<KatLang.ErrorContext>
   ctor     protected ErrorContext()
   ctor     protected ErrorContext(KatLang.ErrorContext original)
   property protected virtual System.Type EqualityContract { get; }

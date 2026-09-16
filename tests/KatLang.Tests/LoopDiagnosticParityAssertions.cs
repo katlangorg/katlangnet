@@ -110,7 +110,9 @@ internal static class LoopDiagnosticParityAssertions
     // asserted over a normalized recursive description that captures, per node:
     // the exact runtime type, span presence and all four coordinates, the full
     // context payload of WithContext frames, and every type-specific payload.
-    // Unknown variants/contexts fail loudly instead of comparing as equal.
+    // The context description is compiler-exhaustive over the closed ErrorContext
+    // (a new context kind fails this build); an unknown leaf payload fails loudly
+    // instead of comparing as equal.
 
     internal static string DescribeErrorTree(EvalError error)
     {
@@ -164,8 +166,6 @@ internal static class LoopDiagnosticParityAssertions
             OpenResolutionContext(var openDescription) => $"Open[{Text(openDescription)}]",
             ImplicitParameterContext(var paramNames, var providedCount) =>
                 $"ImplicitParameter[{TextList(paramNames)}|{providedCount}]",
-            _ => throw new Xunit.Sdk.XunitException(
-                $"DescribeContext does not handle context kind '{context.GetType().Name}'; extend it so structured comparisons stay faithful."),
         };
 
     private static string DescribeLeafPayload(EvalError error)
