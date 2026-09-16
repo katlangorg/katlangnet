@@ -201,17 +201,17 @@ public static class Lexer
                     { i = savedI; col = savedCol; } // no digit after 'e' — backtrack
                 }
 
-                // Strip digit separators before parsing. Source text parses DIRECTLY
-                // into Decimal128 — no narrower intermediate representation. A finite
-                // literal with more than 34 significant digits rounds to the nearest
-                // representable value (IEEE round-half-even). Two failure modes stay
-                // distinct: text Decimal128 cannot parse at all (the scan admits any
-                // Unicode decimal digit so a digit never starts an identifier, but
-                // only the ASCII digits 0-9 form a value) is the invalid-literal
-                // diagnostic, while a well-formed literal whose magnitude exceeds the
-                // Decimal128 range (parses to an infinity) is the too-large diagnostic.
-                var text = source[start..i].Replace("_", "");
-                var parsed = Decimal128.TryParse(text, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var value);
+                // The scan above owns the literal's extent; conversion reads exactly
+                // that text. Source text parses DIRECTLY into Decimal128 — no narrower
+                // intermediate representation. A finite literal with more than 34
+                // significant digits rounds to the nearest representable value (IEEE
+                // round-half-even). Two failure modes stay distinct: text Decimal128
+                // cannot parse at all (the scan admits any Unicode decimal digit so a
+                // digit never starts an identifier, but only the ASCII digits 0-9 form
+                // a value) is the invalid-literal diagnostic, while a well-formed
+                // literal whose magnitude exceeds the Decimal128 range (parses to an
+                // infinity) is the too-large diagnostic.
+                var parsed = TryParseNumberLiteral(source.AsSpan(start, i - start), out var value);
                 if (parsed && Decimal128.IsFinite(value))
                 {
                     tokens.Add(Token.CreateNumber(value, start, i - start, startLine, startCol));
@@ -401,5 +401,42 @@ public static class Lexer
                 }
             }
         }
+    }
+
+    /// <summary>
+    /// Converts the text of an already-scanned numeric literal to its value. The scan loop
+    /// alone decides where a literal ends; this reads exactly the selected text, so a false
+    /// result means Decimal128 could not read it (a non-ASCII digit), never that the scan
+    /// stopped early. An ordinary literal parses straight from the span over the source.
+    /// Digit separators — admitted by <see cref="ScanDigits"/> only between digits — are not
+    /// Decimal128 syntax, so a literal containing one is first copied without them into one
+    /// exactly-sized temporary string: the rare separator form pays for the copy, the common
+    /// form allocates nothing.
+    /// </summary>
+    private static bool TryParseNumberLiteral(ReadOnlySpan<char> literal, out Decimal128 value)
+    {
+        if (literal.Contains('_'))
+        {
+            var stripped = string.Create(literal.Length - literal.Count('_'), literal, static (destination, source) =>
+            {
+                var written = 0;
+                foreach (var c in source)
+                {
+                    if (c != '_')
+                        destination[written++] = c;
+                }
+            });
+            return Decimal128.TryParse(
+                stripped,
+                System.Globalization.NumberStyles.Float,
+                System.Globalization.CultureInfo.InvariantCulture,
+                out value);
+        }
+
+        return Decimal128.TryParse(
+            literal,
+            System.Globalization.NumberStyles.Float,
+            System.Globalization.CultureInfo.InvariantCulture,
+            out value);
     }
 }
