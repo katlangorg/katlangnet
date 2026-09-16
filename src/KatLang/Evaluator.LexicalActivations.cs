@@ -9,9 +9,9 @@ public static partial class Evaluator
     // Weak metadata is runtime-only; it neither changes public record equality nor
     // participates in the exported property's declaration-scoped cache key.
     private sealed record ParameterActivation(
-        IReadOnlyList<(string, Result)> Values,
-        IReadOnlyList<(string Name, Algorithm Value, EvalError? ValueError)> Algorithms,
-        IReadOnlyList<(string Name, CountedResult Value)> Counted);
+        ValEnv Values,
+        AlgEnv Algorithms,
+        CountedParamEnv Counted);
 
     private static readonly ConditionalWeakTable<Algorithm, ParameterActivation> AlgorithmActivations = new();
     private static readonly ConditionalWeakTable<ScopeCtx, ParameterActivation> ScopeActivations = new();
@@ -26,7 +26,7 @@ public static partial class Evaluator
         return wired;
     }
 
-    internal static EvalCtx EnterAlgorithmBody(Algorithm algorithm, EvalCtx ctx, IReadOnlyList<(string, Result)> values)
+    internal static EvalCtx EnterAlgorithmBody(Algorithm algorithm, EvalCtx ctx, ValEnv values)
     {
         if (algorithm.Params.Count == 0)
             return ctx.Push(algorithm);
@@ -37,7 +37,7 @@ public static partial class Evaluator
     }
 
     private static ParameterActivation SnapshotParameters(IReadOnlyList<string> names, EvalCtx ctx,
-        IReadOnlyList<(string Name, Result Value)> values)
+        ValEnv values)
     {
         var owned = new HashSet<string>(names, StringComparer.Ordinal);
         return new(
@@ -90,7 +90,7 @@ public static partial class Evaluator
             : null;
     }
 
-    private static EvalCtx ParameterContext(string name, EvalCtx ctx, ref IReadOnlyList<(string, Result)> values)
+    private static EvalCtx ParameterContext(string name, EvalCtx ctx, ref ValEnv values)
     {
         if (CapturedParameterActivation(name, ctx) is not { } activation)
             return ctx;
@@ -99,13 +99,13 @@ public static partial class Evaluator
         return ctx.WithAlgEnv(activation.Algorithms).WithCountedParamEnv(activation.Counted);
     }
 
-    private static bool ParameterHasValue(string name, EvalCtx ctx, IReadOnlyList<(string, Result)> values)
+    private static bool ParameterHasValue(string name, EvalCtx ctx, ValEnv values)
     {
         var parameterCtx = ParameterContext(name, ctx, ref values);
         return LookupCountedParam(parameterCtx.CountedParamEnv, name) is not null || LookupVal(values, name) is not null;
     }
 
-    internal static bool CapturedParameterNeedsOwnerLookup(string name, EvalCtx ctx, IReadOnlyList<(string, Result)> values)
+    internal static bool CapturedParameterNeedsOwnerLookup(string name, EvalCtx ctx, ValEnv values)
     {
         if (CapturedParameterActivation(name, ctx) is not { } activation)
             return false;

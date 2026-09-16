@@ -76,7 +76,7 @@ internal static partial class LoopOptimizer
         Expr expr,
         IReadOnlyList<string> stateNames,
         Evaluator.EvalCtx ctx,
-        IReadOnlyList<(string Name, Result Value)> parentValEnv,
+        ValEnv parentValEnv,
         IReadOnlyList<LoopTempPlan> tempPlans)
     {
         var result = TryBuildLoopExprPlan(expr, stateNames, ctx, parentValEnv, tempPlans);
@@ -98,7 +98,7 @@ internal static partial class LoopOptimizer
         Expr expr,
         IReadOnlyList<string> stateNames,
         Evaluator.EvalCtx ctx,
-        IReadOnlyList<(string Name, Result Value)> parentValEnv,
+        ValEnv parentValEnv,
         IReadOnlyList<LoopTempPlan> tempPlans,
         Dictionary<Expr, LoopExprPlanTryBuildResult>? memo = null)
     {
@@ -125,7 +125,7 @@ internal static partial class LoopOptimizer
         Expr expr,
         IReadOnlyList<string> stateNames,
         Evaluator.EvalCtx ctx,
-        IReadOnlyList<(string Name, Result Value)> parentValEnv,
+        ValEnv parentValEnv,
         IReadOnlyList<LoopTempPlan> tempPlans,
         Dictionary<Expr, LoopExprPlanTryBuildResult> memo)
     {
@@ -360,7 +360,7 @@ internal static partial class LoopOptimizer
         OutputBundle callArgs,
         IReadOnlyList<string> stateNames,
         Evaluator.EvalCtx ctx,
-        IReadOnlyList<(string Name, Result Value)> parentValEnv,
+        ValEnv parentValEnv,
         IReadOnlyList<LoopTempPlan> tempPlans,
         Dictionary<Expr, LoopExprPlanTryBuildResult> memo)
     {

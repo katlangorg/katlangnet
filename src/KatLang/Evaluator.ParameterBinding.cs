@@ -19,17 +19,17 @@ public static partial class Evaluator
     // ── Bind parameters ─────────────────────────────────────────────────────
 
     /// <summary>Lean: bindParams → EvalM ValEnv. Errors with ArityMismatch.</summary>
-    private static EvalResult<IReadOnlyList<(string, Result)>> BindParams(
+    private static EvalResult<ValEnv> BindParams(
         IReadOnlyList<string> paramNames,
         IReadOnlyList<Result> values)
     {
         if (paramNames.Count != values.Count)
             return new EvalError.ArityMismatch(paramNames.Count, values.Count);
 
-        var result = new List<(string, Result)>(paramNames.Count);
+        var result = new List<(string Name, Result Value)>(paramNames.Count);
         for (var i = 0; i < paramNames.Count; i++)
             result.Add((paramNames[i], values[i]));
-        return EvalResult<IReadOnlyList<(string, Result)>>.Ok(result);
+        return EvalResult<ValEnv>.Ok(result);
     }
 
     /// <summary>
@@ -105,12 +105,12 @@ public static partial class Evaluator
     }
 
     private readonly record struct UserCallBindings(
-        IReadOnlyList<(string, Result)> ValueBindings,
-        IReadOnlyList<(string, CountedResult)> CountedBindings,
-        IReadOnlyList<(string Name, Algorithm Value, EvalError? ValueError)> AlgorithmBindings);
+        ValEnv ValueBindings,
+        CountedParamEnv CountedBindings,
+        AlgEnv AlgorithmBindings);
 
     private readonly record struct CountedParameterPatternBindings(
-        IReadOnlyList<(string, CountedResult)> CountedBindings);
+        CountedParamEnv CountedBindings);
 
     private readonly record struct FlatFixedCallSlot(
         Result? Value,
@@ -124,11 +124,11 @@ public static partial class Evaluator
     /// </summary>
     private readonly record struct UserCallEnvironments(
         EvalCtx Context,
-        IReadOnlyList<(string, Result)> ValueEnvironment);
+        ValEnv ValueEnvironment);
 
     private readonly record struct EvaluatedSlotBindings(
-        IReadOnlyList<(string Name, Result Value)> ValueBindings,
-        IReadOnlyList<(string Name, CountedResult Value)> CountedBindings);
+        ValEnv ValueBindings,
+        CountedParamEnv CountedBindings);
 
     private enum GenericLoopStepBindingShape
     {
@@ -283,8 +283,8 @@ public static partial class Evaluator
     private readonly record struct PreparedGenericLoopStep(
         GenericLoopStepBindingContract BindingContract,
         GenericLoopStepBindingSelection BindingSelection,
-        IReadOnlyList<(string Name, Algorithm Value, EvalError? ValueError)> ShadowedAlgEnv,
-        IReadOnlyList<(string Name, CountedResult Value)> ShadowedCountedParamEnv,
+        AlgEnv ShadowedAlgEnv,
+        CountedParamEnv ShadowedCountedParamEnv,
         bool PreserveSequenceSpreadExpressionBoundaries);
 
     /// <summary>
@@ -603,7 +603,7 @@ public static partial class Evaluator
     private static EvalResult<IReadOnlyList<Result>> EvalExplicitSequenceValueItems(
         Algorithm alg,
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv)
+        ValEnv valEnv)
     {
         if (alg is Algorithm.Builtin(var builtin))
         {
@@ -640,7 +640,7 @@ public static partial class Evaluator
     private static EvalResult<IReadOnlyList<Result>> EvalExplicitSequenceValueRowSlots(
         IReadOnlyList<Expr> rows,
         EvalCtx rowCtx,
-        IReadOnlyList<(string, Result)> valEnv)
+        ValEnv valEnv)
     {
         if (!RuntimeHelpers.TryEnsureSufficientExecutionStack())
             return new EvalError.EvaluationStackExhausted();
@@ -659,7 +659,7 @@ public static partial class Evaluator
     private static EvalResult<IReadOnlyList<Result>> EvalExplicitSequenceValueExprSlots(
         Expr expr,
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv)
+        ValEnv valEnv)
     {
         // A nested written grouping level materializes exactly one item,
         // combined with the same shallow singleton-erasing rule as ordinary
@@ -746,7 +746,7 @@ public static partial class Evaluator
         {
             case CaptureParameterPattern { Kind: ParameterKind.Normal } capture:
                 {
-                    var valueBindings = new List<(string, Result)>(1);
+                    var valueBindings = new List<(string Name, Result Value)>(1);
                     var algorithmBindings = new List<(string Name, Algorithm Value, EvalError? ValueError)>(1);
 
                     if (input.Value is not null)
@@ -820,8 +820,8 @@ public static partial class Evaluator
             collectingIndex = index;
         }
 
-        var valueBindings = new List<(string, Result)>();
-        var countedBindings = new List<(string, CountedResult)>();
+        var valueBindings = new List<(string Name, Result Value)>();
+        var countedBindings = new List<(string Name, CountedResult Value)>();
         var algorithmBindings = new List<(string Name, Algorithm Value, EvalError? ValueError)>();
         // Running name -> value indexes over the accumulators. The prior implementation rebuilt a
         // name set and linear-scanned the accumulators on EVERY added binding, which is O(k) per
@@ -843,47 +843,47 @@ public static partial class Evaluator
             {
                 existingValueNames = valueBindingIndex.Keys.ToHashSet(StringComparer.Ordinal);
                 incomingValueNames = bindings.ValueBindings
-                    .Select(static binding => binding.Item1)
+                    .Select(static binding => binding.Name)
                     .ToHashSet(StringComparer.Ordinal);
             }
 
             foreach (var binding in bindings.ValueBindings)
             {
-                if (valueBindingIndex.TryGetValue(binding.Item1, out var existing))
+                if (valueBindingIndex.TryGetValue(binding.Name, out var existing))
                 {
-                    if (!Result.ValueComparer.Equals(existing, binding.Item2))
+                    if (!Result.ValueComparer.Equals(existing, binding.Value))
                         return new EvalError.BadArity();
                     continue;
                 }
 
                 valueBindings.Add(binding);
-                valueBindingIndex[binding.Item1] = binding.Item2;
+                valueBindingIndex[binding.Name] = binding.Value;
             }
 
             foreach (var binding in bindings.CountedBindings)
             {
-                if (countedBindingIndex.TryGetValue(binding.Item1, out var existing))
+                if (countedBindingIndex.TryGetValue(binding.Name, out var existing))
                 {
-                    if (!Result.ValueComparer.Equals(existing.Value, binding.Item2.Value))
+                    if (!Result.ValueComparer.Equals(existing.Value, binding.Value.Value))
                         return new EvalError.BadArity();
                     continue;
                 }
 
                 countedBindings.Add(binding);
-                countedBindingIndex[binding.Item1] = binding.Item2;
+                countedBindingIndex[binding.Name] = binding.Value;
             }
 
             foreach (var binding in bindings.AlgorithmBindings)
             {
                 var existingIndex = algorithmBindings.FindIndex(
-                    existing => string.Equals(existing.Item1, binding.Item1, StringComparison.Ordinal));
+                    existing => string.Equals(existing.Name, binding.Name, StringComparison.Ordinal));
                 if (existingIndex < 0)
                 {
                     algorithmBindings.Add(binding);
                     continue;
                 }
 
-                if (!existingValueNames!.Contains(binding.Item1) || !incomingValueNames!.Contains(binding.Item1))
+                if (!existingValueNames!.Contains(binding.Name) || !incomingValueNames!.Contains(binding.Name))
                 {
                     return new EvalError.TypeMismatch(
                         "Repeated bind equality is not supported for algorithm-only arguments");
@@ -985,7 +985,7 @@ public static partial class Evaluator
         Algorithm callee,
         OutputBundle args,
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv,
+        ValEnv valEnv,
         CallDiagnosticName calleeName,
         CallArgumentAssembly argumentAssembly = CallArgumentAssembly.OrdinaryArguments)
     {
@@ -1076,7 +1076,7 @@ public static partial class Evaluator
         Algorithm.User helper,
         OutputBundle args,
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv,
+        ValEnv valEnv,
         CallDiagnosticName calleeName,
         CallArgumentAssembly argumentAssembly)
     {
@@ -1163,7 +1163,7 @@ public static partial class Evaluator
     private static EvalResult<IReadOnlyList<ParameterPatternInput>> BuildCallArgumentInputs(
         OutputBundle args,
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv,
+        ValEnv valEnv,
         CallArgumentAssembly argumentAssembly = CallArgumentAssembly.OrdinaryArguments,
         bool includeExplicitSequenceValueItems = false)
     {
@@ -1236,7 +1236,7 @@ public static partial class Evaluator
     private static EvalResult<PreparedCallArgumentEvaluation> PrepareCallArgumentEvaluation(
         Expr argExpr,
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv,
+        ValEnv valEnv,
         bool isDotReceiverSegment,
         bool includeExplicitSequenceValueItems)
     {
@@ -1296,7 +1296,7 @@ public static partial class Evaluator
     private static EvalResult<CountedResult> EvalDotReceiverCallSegmentCounted(
         Expr receiver,
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv)
+        ValEnv valEnv)
     {
         // A grouped receiver keeps its multi-item emitted count as the injected
         // leading argument segment (no value-boundary re-count), for both the
@@ -1366,7 +1366,7 @@ public static partial class Evaluator
         Algorithm callee,
         OutputBundle args,
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv,
+        ValEnv valEnv,
         CallDiagnosticName calleeName,
         CallArgumentAssembly argumentAssembly = CallArgumentAssembly.OrdinaryArguments)
     {
@@ -1407,7 +1407,7 @@ public static partial class Evaluator
     private static UserCallEnvironments WithUserCallBindingEnvironments(
         EvalCtx ctx,
         UserCallBindings bindings,
-        IReadOnlyList<(string, Result)> valEnv,
+        ValEnv valEnv,
         IReadOnlyList<string> shadowedNames)
     {
         var inherited = ShadowInheritedParameterEnvironments(ctx, shadowedNames);
@@ -1431,7 +1431,7 @@ public static partial class Evaluator
     /// </summary>
     private static EvalCtx WithCountedParameterEnvironments(
         EvalCtx ctx,
-        IReadOnlyList<(string, CountedResult)> countedBindings,
+        CountedParamEnv countedBindings,
         IEnumerable<string> shadowedNames)
     {
         var inherited = ShadowInheritedParameterEnvironments(ctx, shadowedNames.ToArray());
@@ -1447,7 +1447,7 @@ public static partial class Evaluator
         IReadOnlyList<string> parameterNames,
         OutputBundle args,
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv)
+        ValEnv valEnv)
     {
         var paramCount = parameterNames.Count;
 

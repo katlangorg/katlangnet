@@ -83,7 +83,7 @@ public static partial class Evaluator
     private static EvalResult<CountedResult> EvalExpressionSpineCounted(
         Expr root,
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv)
+        ValEnv valEnv)
     {
         var frames = new ExpressionSpineFrame[16];
         var frameCount = 0;
@@ -355,7 +355,7 @@ public static partial class Evaluator
         string name,
         SourceSpan? span,
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv)
+        ValEnv valEnv)
     {
         ctx = ParameterContext(name, ctx, ref valEnv);
         var counted = LookupCountedParam(ctx.CountedParamEnv, name);
@@ -407,7 +407,7 @@ public static partial class Evaluator
         string name,
         SourceSpan? span,
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv)
+        ValEnv valEnv)
     {
         if (ctx.CallStack.Count == 0)
             return new EvalError.UnknownName(name) { Span = span };
@@ -461,7 +461,7 @@ public static partial class Evaluator
     private static EvalResult<Result> Eval(
         Expr expr,
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv)
+        ValEnv valEnv)
     {
         // Structural nesting charges no dynamic invocation depth; the pre-evaluation
         // structural preflight (AstStructuralPreflight) bounds every accepted tree to
@@ -537,7 +537,7 @@ public static partial class Evaluator
         Expr expr,
         Algorithm alg,
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv)
+        ValEnv valEnv)
     {
         var wired = WireToCaller(ctx, alg);
         var blockSpan = PreferExpressionSpan(expr.Span, wired.Output);
@@ -561,7 +561,7 @@ public static partial class Evaluator
     internal static EvalResult<CountedResult> EvalCounted(
         Expr expr,
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv)
+        ValEnv valEnv)
     {
         // Bulk pathological-work bound (see TryChargeExpressionNodeWork): free for
         // small ordinary programs, but a reference-shared (DAG-shaped) host tree that
@@ -622,7 +622,7 @@ public static partial class Evaluator
         string fnName,
         IReadOnlyList<string> argNames,
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv)
+        ValEnv valEnv)
     {
         // Host-operation dispatch precedes the built-in switch. Host wrapper bodies
         // carry the "host:"-prefixed native name (a spelling no built-in native uses,
@@ -654,7 +654,7 @@ public static partial class Evaluator
     private static EvalResult<Decimal128[]> CollectMathNativeArguments(
         IReadOnlyList<string> argNames,
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv)
+        ValEnv valEnv)
     {
         var args = new Decimal128[argNames.Count];
         for (var i = 0; i < argNames.Count; i++)
@@ -809,7 +809,7 @@ public static partial class Evaluator
         HostOperation hostOperation,
         IReadOnlyList<string> argNames,
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv)
+        ValEnv valEnv)
     {
         // Every entry point routes asynchronous configurations away from the
         // synchronous evaluator; reaching one here means a routing guard was bypassed.
@@ -907,7 +907,7 @@ public static partial class Evaluator
     private static EvalResult<IReadOnlyList<Result>> CollectHostOperationArguments(
         IReadOnlyList<string> argNames,
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv)
+        ValEnv valEnv)
     {
         if (argNames.Count == 0)
             return EvalResult<IReadOnlyList<Result>>.Ok([]);

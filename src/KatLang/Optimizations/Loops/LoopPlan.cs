@@ -49,17 +49,17 @@ internal readonly record struct PlannedLoopValue(
         => HasNumericValue ? NumericValue : Value?.AsNum();
 }
 
-internal sealed class LoopValueEnvironment : IReadOnlyList<(string Name, Result Value)>, IValueEnvironmentCacheIdentityProvider
+internal sealed class LoopValueEnvironment : ValEnv, IValueEnvironmentCacheIdentityProvider
 {
     private readonly IReadOnlyList<string> _stateNames;
     private readonly Result[] _stateSlots;
-    private readonly IReadOnlyList<(string Name, Result Value)> _parent;
+    private readonly ValEnv _parent;
     private object _cacheIdentity = new();
 
     public LoopValueEnvironment(
         IReadOnlyList<string> stateNames,
         Result[] stateSlots,
-        IReadOnlyList<(string Name, Result Value)> parent)
+        ValEnv parent)
     {
         _stateNames = stateNames;
         _stateSlots = stateSlots;
@@ -112,7 +112,7 @@ internal sealed class LoopRunFrame
 
     public LoopRunFrame(
         LoopPlanTemplate template,
-        IReadOnlyList<(string Name, Result Value)> parentValEnv,
+        ValEnv parentValEnv,
         IReadOnlyList<Result> initialStateValues)
     {
         Template = template;
@@ -137,7 +137,7 @@ internal sealed class LoopRunFrame
 
     public LoopOptimizationDiagnostics? Diagnostics { get; }
 
-    public IReadOnlyList<(string Name, Result Value)> ValueEnvironment => _valueEnvironment;
+    public ValEnv ValueEnvironment => _valueEnvironment;
 
     public void BeginIteration()
     {

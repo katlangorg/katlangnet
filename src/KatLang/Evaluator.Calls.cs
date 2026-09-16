@@ -68,7 +68,7 @@ public static partial class Evaluator
     private static bool ShouldWrapBuiltinArgExprAsValue(
         Expr expr,
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv)
+        ValEnv valEnv)
         => ShouldWrapArgExprAsValue(expr)
             || IsZeroDeclarationBlockValueSlot(expr)
             || expr is Expr.Param(var name)
@@ -77,7 +77,7 @@ public static partial class Evaluator
     private static EvalResult<IReadOnlyList<Algorithm>> ResolveArgAlgs(
         OutputBundle args,
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv)
+        ValEnv valEnv)
     {
         var resolvedR = ResolveArgAlgsWithSequenceSpread(args, ctx, valEnv);
         if (resolvedR.IsError) return resolvedR.Error;
@@ -96,7 +96,7 @@ public static partial class Evaluator
     private static EvalResult<IReadOnlyList<ResolvedArgumentAlgorithm>> ResolveArgAlgsWithSequenceSpread(
         OutputBundle args,
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv)
+        ValEnv valEnv)
     {
         var result = new List<ResolvedArgumentAlgorithm>(args.Count);
         foreach (var argExpr in args)
@@ -207,7 +207,7 @@ public static partial class Evaluator
         Expr func,
         OutputBundle args,
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv)
+        ValEnv valEnv)
         => ProjectCountedValue(EvalCallCountedExpr(func, args, ctx, valEnv));
 
     /// <summary>
@@ -220,7 +220,7 @@ public static partial class Evaluator
         Expr func,
         OutputBundle args,
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv)
+        ValEnv valEnv)
     {
         var diagnosticName = CallDiagnosticName.FromExpression(func);
         var calleeR = ResolveAlg(func, ctx);
@@ -298,7 +298,7 @@ public static partial class Evaluator
     private static EvalResult<IReadOnlyList<Result>> EvalConditionalCallArguments(
         OutputBundle args,
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv,
+        ValEnv valEnv,
         CallArgumentAssembly argumentAssembly)
     {
         var inputsR = BuildCallArgumentInputs(args, ctx, valEnv, argumentAssembly);
@@ -347,7 +347,7 @@ public static partial class Evaluator
     private static EvalResult<CountedResult> EvalConditionalCallCounted(
         Algorithm callee, OutputBundle args,
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv,
+        ValEnv valEnv,
         CallDiagnosticName calleeName,
         CallArgumentAssembly argumentAssembly = CallArgumentAssembly.OrdinaryArguments)
     {
@@ -369,7 +369,7 @@ public static partial class Evaluator
     private static EvalResult<CountedResult> EvalConditionalCallCountedCore(
         Algorithm callee, OutputBundle args,
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv,
+        ValEnv valEnv,
         CallDiagnosticName calleeName,
         CallArgumentAssembly argumentAssembly)
     {
@@ -390,7 +390,7 @@ public static partial class Evaluator
         // exactly like a user call's parameter list (the value tier is shadowed
         // by the prepended bindings themselves). The same names are published on
         // the family scope the body is wired under, for member accessibility.
-        var shadowedNames = bindings.Select(static binding => binding.Item1).ToArray();
+        var shadowedNames = bindings.Select(static binding => binding.Name).ToArray();
         var newCtx = ShadowInheritedParameterEnvironments(ctx.Push(callee), shadowedNames);
         var newEnv = Concat(bindings, valEnv);
         var wiredBody = ChildOfConditionalCall(callee, SelectedBranchBody(branch), shadowedNames, newCtx, newEnv);
@@ -436,7 +436,7 @@ public static partial class Evaluator
     private static EvalResult<CountedResult> EvalUserCallCounted(
         Algorithm callee, OutputBundle args,
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv,
+        ValEnv valEnv,
         CallArgumentAssembly argumentAssembly,
         CallDiagnosticName calleeName)
     {
@@ -456,7 +456,7 @@ public static partial class Evaluator
     private static EvalResult<CountedResult> EvalUserCallCountedCore(
         Algorithm callee, OutputBundle args,
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv,
+        ValEnv valEnv,
         CallArgumentAssembly argumentAssembly,
         CallDiagnosticName calleeName)
     {
@@ -524,7 +524,7 @@ public static partial class Evaluator
         Algorithm callee,
         OutputBundle args,
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv,
+        ValEnv valEnv,
         CallDiagnosticName calleeName,
         CallArgumentAssembly argumentAssembly = CallArgumentAssembly.OrdinaryArguments)
     {

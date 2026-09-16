@@ -33,7 +33,7 @@ public static partial class Evaluator
     private static EvalResult<Result> EvalDotCall(
         Expr.DotCall dotCall,
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv)
+        ValEnv valEnv)
         => ProjectCountedValue(EvalDotCallCounted(dotCall, ctx, valEnv));
 
     private readonly record struct SequenceBuiltinDotCall(
@@ -57,7 +57,7 @@ public static partial class Evaluator
     private static EvalResult<CountedResult> EvalSequenceBuiltinDotReceiverCounted(
         Expr receiver,
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv)
+        ValEnv valEnv)
     {
         // The receiver is this builtin call's collection ARGUMENT, so it consumes
         // one depth-only argument-evaluation level exactly like the plain-call
@@ -83,7 +83,7 @@ public static partial class Evaluator
     private static EvalResult<IReadOnlyList<ResolvedArgumentAlgorithm>> SequenceBuiltinDotReceiverArgs(
         Expr receiver,
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv)
+        ValEnv valEnv)
     {
         var receiverR = EvalSequenceBuiltinDotReceiverCounted(receiver, ctx, valEnv);
         if (receiverR.IsError) return receiverR.Error;
@@ -109,7 +109,7 @@ public static partial class Evaluator
         Expr receiver,
         OutputBundle? extraArgs,
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv)
+        ValEnv valEnv)
     {
         var calleeR = ResolveNamedAlgorithm(name, span: null, ctx);
         if (calleeR.IsError
@@ -189,7 +189,7 @@ public static partial class Evaluator
     private static bool TryEvaluateSequencePipeline(
         SequencePipelineInvocation invocation,
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv,
+        ValEnv valEnv,
         out EvalResult<CountedResult> result)
     {
         result = default;
@@ -224,7 +224,7 @@ public static partial class Evaluator
         FilterCountPipelineSyntax syntax,
         SequencePipelineInvocation invocation,
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv,
+        ValEnv valEnv,
         SequencePipelineDiagnostics? diagnostics,
         out EvalResult<CountedResult> result)
     {
@@ -254,7 +254,7 @@ public static partial class Evaluator
     private static EvalResult<IReadOnlyList<CountedResult>> EvaluateDotReceiverIterationItemsForSequenceOptimizer(
         Expr receiver,
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv)
+        ValEnv valEnv)
     {
         var receiverR = EvalSequenceBuiltinDotReceiverCounted(receiver, ctx, valEnv);
         if (receiverR.IsError)
@@ -281,7 +281,7 @@ public static partial class Evaluator
         OutputBundle args,
         SourceSpan? callSpan,
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv)
+        ValEnv valEnv)
     {
         // Depth parity with the generic strategy: the fused pipeline consumes this
         // `range(...)` call as the FILTER's collection argument, which the generic
@@ -333,7 +333,7 @@ public static partial class Evaluator
     private static EvalResult<InclusiveRange> EvalBuiltinRangeCallArguments(
         OutputBundle args,
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv)
+        ValEnv valEnv)
     {
         var argAlgsR = ResolveArgAlgsWithSequenceSpread(args, ctx, valEnv);
         if (argAlgsR.IsError) return argAlgsR.Error;
@@ -359,7 +359,7 @@ public static partial class Evaluator
     private static EvalResult<CountedResult> CallLexicalFallbackCalleeWithReceiverCounted(
         Expr.DotCall dotCall,
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv)
+        ValEnv valEnv)
     {
         var calleeR = ResolveAlg(dotCall.EffectiveLexicalFallback, ctx);
         if (calleeR.IsError) return calleeR.Error;
@@ -494,7 +494,7 @@ public static partial class Evaluator
     private static EvalError? RejectDotStringIntrinsicArguments(
         OutputBundle? argsOpt,
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv)
+        ValEnv valEnv)
     {
         if (argsOpt is null)
             return null;
@@ -532,7 +532,7 @@ public static partial class Evaluator
     private static EvalResult<CountedResult> EvalDotCallCounted(
         Expr.DotCall dotCall,
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv)
+        ValEnv valEnv)
     {
         if (TryEvaluateSequencePipeline(
             SequencePipelineInvocation.DotCall(dotCall),
@@ -632,7 +632,7 @@ public static partial class Evaluator
     private static EvalResult<CountedResult> CallLexicalWithReceiverCounted(
         Expr.DotCall dotCall,
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv)
+        ValEnv valEnv)
     {
         // The STORED lexical-fallback identity decides the callee channel —
         // the front-end's Param-vs-Resolve decision is CONSUMED here, never

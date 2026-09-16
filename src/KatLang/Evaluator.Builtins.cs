@@ -159,13 +159,13 @@ public static partial class Evaluator
     private static EvalResult<CountedResult> EvalAlgOutputCounted(
         Algorithm alg,
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv)
+        ValEnv valEnv)
         => EvalAlgOutputCountedCore(alg, ctx, valEnv);
 
     private static EvalResult<CountedResult> EvalProgramOutputCounted(
         Algorithm alg,
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv)
+        ValEnv valEnv)
         => EvalAlgOutputCountedCore(alg, ctx, valEnv);
 
     // No builtin is valid as a bare zero-argument value; every builtin requires
@@ -176,7 +176,7 @@ public static partial class Evaluator
     private static EvalResult<ZeroArgPropertyResult> EvaluateZeroArgPropertyResult(
         Algorithm resolvedAlgorithm,
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv)
+        ValEnv valEnv)
     {
         var countedR = EvalAlgOutputCounted(resolvedAlgorithm, ctx, valEnv);
         if (countedR.IsError)
@@ -202,7 +202,7 @@ public static partial class Evaluator
         ZeroArgPropertyAccessKind accessKind,
         Algorithm resolvedAlgorithm,
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv)
+        ValEnv valEnv)
     {
         if (TryEnterDynamicInvocation(ctx, binding.DeclarationSpans.FirstOrDefault(), out var level) is { } limitError)
             return limitError;
@@ -219,7 +219,7 @@ public static partial class Evaluator
         ZeroArgPropertyAccessKind accessKind,
         Algorithm resolvedAlgorithm,
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv)
+        ValEnv valEnv)
     {
         if (owner is null)
             return EvaluateZeroArgPropertyResult(resolvedAlgorithm, ctx, valEnv);
@@ -246,7 +246,7 @@ public static partial class Evaluator
         ZeroArgPropertyAccessKind accessKind,
         Algorithm resolvedAlgorithm,
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv)
+        ValEnv valEnv)
     {
         var propertyR = GetOrEvaluateZeroArgPropertyResult(owner, binding, accessKind, resolvedAlgorithm, ctx, valEnv);
         return propertyR.IsError
@@ -257,7 +257,7 @@ public static partial class Evaluator
     private static EvalResult<CountedResult> EvalZeroArgPropertyAccessCounted(
         ResolvedLexicalProperty resolvedProperty,
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv)
+        ValEnv valEnv)
         => EvalZeroArgPropertyAccessCounted(
             resolvedProperty.Owner,
             resolvedProperty.Binding,
@@ -270,7 +270,7 @@ public static partial class Evaluator
         Algorithm callee,
         IReadOnlyList<CountedResult> explicitArgs,
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv,
+        ValEnv valEnv,
         string calleeName = "conditional")
     {
         if (callee.HasDuplicateBranchPatterns())
@@ -281,12 +281,12 @@ public static partial class Evaluator
             return new EvalError.NoMatchingBranch(calleeName);
 
         var (branch, bindings) = match.Value;
-        var binderNames = bindings.Select(static binding => binding.Item1).ToArray();
+        var binderNames = bindings.Select(static binding => binding.Name).ToArray();
         var newCtx = WithCountedParameterEnvironments(
             ctx.Push(callee),
             bindings,
             binderNames);
-        var newEnv = Concat(bindings.Select(static binding => (binding.Item1, binding.Item2.Value)).ToList(), valEnv);
+        var newEnv = Concat(bindings.Select(static binding => (binding.Name, binding.Value.Value)).ToList(), valEnv);
         var wiredBody = ChildOfConditionalCall(callee, SelectedBranchBody(branch), binderNames, newCtx, newEnv);
         return EvalAlgOutputCounted(wiredBody, newCtx, newEnv);
     }
@@ -311,7 +311,7 @@ public static partial class Evaluator
         Algorithm.User callee,
         IReadOnlyList<CountedResult> args,
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv)
+        ValEnv valEnv)
     {
         // Charged dynamic invocation boundary. This reducer shape is dispatched INSTEAD
         // of EvalResolvedCallbackCallCounted, never in addition to it, so charging here
@@ -333,7 +333,7 @@ public static partial class Evaluator
         Algorithm.User callee,
         IReadOnlyList<CountedResult> args,
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv)
+        ValEnv valEnv)
     {
         if (callee.Output.Count == 0)
             return new EvalError.MissingOutput();
@@ -350,7 +350,7 @@ public static partial class Evaluator
         var callbackCtx = WithCountedParameterEnvironments(
             ctx,
             patternBindings.CountedBindings,
-            patternBindings.CountedBindings.Select(static binding => binding.Item1));
+            patternBindings.CountedBindings.Select(static binding => binding.Name));
         return EvalAlgOutputCounted(callee, callbackCtx, valEnv);
     }
 
@@ -365,7 +365,7 @@ public static partial class Evaluator
         CountedResult element,
         Result accumulator,
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv,
+        ValEnv valEnv,
         string calleeName = "conditional")
     {
         var elementArg = CountedSequenceCallbackItem(element);
@@ -451,7 +451,7 @@ public static partial class Evaluator
     private static EvalResult<CountedResult> EvalSequenceConstructCounted(
         Expr expr,
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv)
+        ValEnv valEnv)
     {
         var leaves = SequenceConstructLeaves(expr);
         var items = new List<Result>(leaves.Count);
@@ -496,7 +496,7 @@ public static partial class Evaluator
     private static EvalResult<IReadOnlyList<Result>> EvalSequenceSpreadOperandItems(
         Expr expr,
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv)
+        ValEnv valEnv)
     {
         if (expr is Expr.Capture(var captureBody))
         {
@@ -550,7 +550,7 @@ public static partial class Evaluator
     private static EvalResult<CountedResult> EvalSequenceSpreadCounted(
         Expr expr,
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv)
+        ValEnv valEnv)
     {
         var operand = expr;
         var layers = 0;
@@ -597,7 +597,7 @@ public static partial class Evaluator
     internal static EvalResult<Algorithm> PrepareFilterPredicateArgument(
         Algorithm argument,
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv)
+        ValEnv valEnv)
     {
         var itemsR = BuildCallableCallItems(
             [new ResolvedArgumentAlgorithm(argument, SpreadsSequence: false)], ctx, valEnv);
@@ -614,7 +614,7 @@ public static partial class Evaluator
     private static EvalResult<IReadOnlyList<VariadicCallItem>> BuildCallableCallItems(
         IReadOnlyList<ResolvedArgumentAlgorithm> args,
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv)
+        ValEnv valEnv)
     {
         var items = new List<VariadicCallItem>();
         foreach (var resolvedArg in args)
@@ -833,7 +833,7 @@ public static partial class Evaluator
         CountedResult? preparedInitial,
         Expr? initialSource,
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv)
+        ValEnv valEnv)
     {
         // The initial accumulator is a written VALUE slot: when call-item assembly
         // already evaluated it (a value-shaped argument), that result IS the slot's
@@ -887,7 +887,7 @@ public static partial class Evaluator
         IReadOnlyList<CountedResult> items,
         Algorithm predicateAlg,
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv)
+        ValEnv valEnv)
     {
         var kept = new List<Result>();
         for (var index = 0; index < items.Count; index++)
@@ -914,7 +914,7 @@ public static partial class Evaluator
         CountedResult item,
         int index,
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv)
+        ValEnv valEnv)
     {
         var predicateR = WithFilterItemCtx(
             item.Value,
@@ -949,7 +949,7 @@ public static partial class Evaluator
         IReadOnlyList<CountedResult> items,
         Algorithm transformAlg,
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv)
+        ValEnv valEnv)
     {
         var mapped = new List<Result>(items.Count);
         foreach (var item in items)
@@ -1061,7 +1061,7 @@ public static partial class Evaluator
         SequenceBuiltinMetadata metadata,
         IReadOnlyList<ResolvedArgumentAlgorithm> args,
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv)
+        ValEnv valEnv)
     {
         var descriptor = BuiltinRegistry.GetBuiltin(builtin);
         var signature = descriptor.PlainSignature;
@@ -1589,7 +1589,7 @@ public static partial class Evaluator
         SequenceBuiltinMetadata metadata,
         IReadOnlyList<ResolvedArgumentAlgorithm> args,
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv)
+        ValEnv valEnv)
     {
         var boundR = BindSequenceBuiltinArguments(builtin, metadata, args, ctx, valEnv);
         if (boundR.IsError) return boundR.Error;
@@ -1734,7 +1734,7 @@ public static partial class Evaluator
     private static EvalResult<CountedResult> EvalArgumentAlgOutputCounted(
         Algorithm algorithm,
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv)
+        ValEnv valEnv)
     {
         if (TryEnterArgumentEvaluationLevel(ctx, out var level) is { } limitError)
             return limitError;
@@ -1761,7 +1761,7 @@ public static partial class Evaluator
     private static EvalResult<Result> EvalResolvedAlgOutputForValueDemand(
         Algorithm algorithm,
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv)
+        ValEnv valEnv)
     {
         if (TryEnterArgumentEvaluationLevel(ctx, out var level) is { } limitError)
             return limitError;
@@ -1803,7 +1803,7 @@ public static partial class Evaluator
         Algorithm targetAlg,
         bool receiverIsStructuralMember,
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv)
+        ValEnv valEnv)
     {
         if (target is Expr.Param(var paramName)
             && LookupAlgBinding(ctx.AlgEnv, paramName) is { ValueError: { } stickyLimit })
@@ -1851,7 +1851,7 @@ public static partial class Evaluator
     private static EvalResult<CountedResult> EvalResolvedArgumentCounted(
         ResolvedArgumentAlgorithm arg,
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv)
+        ValEnv valEnv)
     {
         if (arg.PreparedValue is { } prepared)
             return EvalResult<CountedResult>.Ok(prepared);
@@ -1903,13 +1903,13 @@ public static partial class Evaluator
     private static EvalResult<Result> EvalResolvedArgument(
         ResolvedArgumentAlgorithm arg,
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv)
+        ValEnv valEnv)
         => ProjectCountedValue(EvalResolvedArgumentCounted(arg, ctx, valEnv));
 
     private static EvalResult<IReadOnlyList<ResolvedArgumentAlgorithm>> ExpandSequenceSpreadBuiltinArguments(
         IReadOnlyList<ResolvedArgumentAlgorithm> args,
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv)
+        ValEnv valEnv)
     {
         var expanded = new List<ResolvedArgumentAlgorithm>(args.Count);
         foreach (var arg in args)
@@ -1942,7 +1942,7 @@ public static partial class Evaluator
         BuiltinId builtin,
         IReadOnlyList<ResolvedArgumentAlgorithm> resolvedArgs,
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv)
+        ValEnv valEnv)
     {
         if (GetSequenceBuiltinMetadata(builtin) is { } metadata)
             return ApplyBuiltinCountedSequence(builtin, metadata, resolvedArgs, ctx, valEnv);

@@ -27,7 +27,7 @@ public static partial class Evaluator
     private static bool MatchPattern(
         Pattern pattern,
         Result result,
-        List<(string, Result)> bindings)
+        List<(string Name, Result Value)> bindings)
         => pattern switch
         {
             Pattern.Bind(var name) => MatchBindPattern(name, result, bindings),
@@ -41,7 +41,7 @@ public static partial class Evaluator
             Pattern.SequenceValue(var items) => MatchSequenceValuePattern(items, result, bindings),
         };
 
-    private static bool MatchBindPattern(string name, Result result, List<(string, Result)> bindings)
+    private static bool MatchBindPattern(string name, Result result, List<(string Name, Result Value)> bindings)
     {
         var existing = LookupVal(bindings, name);
         if (existing is not null)
@@ -54,7 +54,7 @@ public static partial class Evaluator
     private static bool MatchSequenceValuePattern(
         IReadOnlyList<Pattern> items,
         Result result,
-        List<(string, Result)> bindings)
+        List<(string Name, Result Value)> bindings)
     {
         // Result.normalize collapses sequenceValue [x] -> x, so a
         // singleton sequence-value pattern (e.g. "(b)") must also
@@ -81,9 +81,9 @@ public static partial class Evaluator
         return true;
     }
 
-    private static IReadOnlyList<(string, Result)>? MatchPattern(Pattern pattern, Result result)
+    private static ValEnv? MatchPattern(Pattern pattern, Result result)
     {
-        var bindings = new List<(string, Result)>();
+        var bindings = new List<(string Name, Result Value)>();
         return MatchPattern(pattern, result, bindings) ? bindings : null;
     }
 
@@ -96,7 +96,7 @@ public static partial class Evaluator
     /// while a sequence-value head expects one explicit argument per sequence element. Nested
     /// sequence-value structure is still matched through <see cref="MatchPattern"/>.
     /// </summary>
-    private static IReadOnlyList<(string, Result)>? MatchCallPattern(
+    private static ValEnv? MatchCallPattern(
         Pattern pattern,
         IReadOnlyList<Result> explicitArgs)
     {
@@ -105,7 +105,7 @@ public static partial class Evaluator
             if (items.Count != explicitArgs.Count)
                 return null;
 
-            var bindings = new List<(string, Result)>();
+            var bindings = new List<(string Name, Result Value)>();
             for (var i = 0; i < items.Count; i++)
             {
                 if (!MatchPattern(items[i], explicitArgs[i], bindings))
@@ -118,7 +118,7 @@ public static partial class Evaluator
         return explicitArgs.Count == 1 ? MatchPattern(pattern, explicitArgs[0]) : null;
     }
 
-    private static (CondBranch Branch, IReadOnlyList<(string, Result)> Bindings)? MatchCallBranches(
+    private static (CondBranch Branch, ValEnv Bindings)? MatchCallBranches(
         IReadOnlyList<CondBranch> branches,
         IReadOnlyList<Result> explicitArgs)
     {
@@ -139,7 +139,7 @@ public static partial class Evaluator
     private static bool MatchCountedPattern(
         Pattern pattern,
         CountedResult result,
-        List<(string, CountedResult)> bindings)
+        List<(string Name, CountedResult Value)> bindings)
         => pattern switch
         {
             Pattern.Bind(var name) => MatchCountedBindPattern(name, result, bindings),
@@ -153,7 +153,7 @@ public static partial class Evaluator
     private static bool MatchCountedBindPattern(
         string name,
         CountedResult result,
-        List<(string, CountedResult)> bindings)
+        List<(string Name, CountedResult Value)> bindings)
     {
         var existing = LookupCountedParam(bindings, name);
         if (existing is not null)
@@ -166,7 +166,7 @@ public static partial class Evaluator
     private static bool MatchCountedSequenceValuePattern(
         IReadOnlyList<Pattern> items,
         CountedResult result,
-        List<(string, CountedResult)> bindings)
+        List<(string Name, CountedResult Value)> bindings)
     {
         IReadOnlyList<Result> members;
         if (result.Value is Result.SequenceValue(var groupedMembers))
@@ -197,15 +197,15 @@ public static partial class Evaluator
         return true;
     }
 
-    private static IReadOnlyList<(string, CountedResult)>? MatchCountedPattern(
+    private static CountedParamEnv? MatchCountedPattern(
         Pattern pattern,
         CountedResult result)
     {
-        var bindings = new List<(string, CountedResult)>();
+        var bindings = new List<(string Name, CountedResult Value)>();
         return MatchCountedPattern(pattern, result, bindings) ? bindings : null;
     }
 
-    private static IReadOnlyList<(string, CountedResult)>? MatchCountedCallPattern(
+    private static CountedParamEnv? MatchCountedCallPattern(
         Pattern pattern,
         IReadOnlyList<CountedResult> explicitArgs)
     {
@@ -214,7 +214,7 @@ public static partial class Evaluator
             if (items.Count != explicitArgs.Count)
                 return null;
 
-            var bindings = new List<(string, CountedResult)>();
+            var bindings = new List<(string Name, CountedResult Value)>();
             for (var i = 0; i < items.Count; i++)
             {
                 if (!MatchCountedPattern(items[i], explicitArgs[i], bindings))
@@ -227,7 +227,7 @@ public static partial class Evaluator
         return explicitArgs.Count == 1 ? MatchCountedPattern(pattern, explicitArgs[0]) : null;
     }
 
-    private static (CondBranch Branch, IReadOnlyList<(string, CountedResult)> Bindings)? MatchCountedCallBranches(
+    private static (CondBranch Branch, CountedParamEnv Bindings)? MatchCountedCallBranches(
         IReadOnlyList<CondBranch> branches,
         IReadOnlyList<CountedResult> explicitArgs)
     {
@@ -332,7 +332,7 @@ public static partial class Evaluator
     /// the iterated item. This keeps callback params behaving like <c>S:i</c>
     /// without making them callable algorithms.
     /// </summary>
-    private static EvalResult<IReadOnlyList<(string, CountedResult)>> BindCountedCallbackParams(
+    private static EvalResult<CountedParamEnv> BindCountedCallbackParams(
         IReadOnlyList<string> paramNames,
         IReadOnlyList<CountedResult> args)
     {
@@ -357,11 +357,11 @@ public static partial class Evaluator
         if (boundValues.Count != paramNames.Count)
             return new EvalError.ArityMismatch(paramNames.Count, boundValues.Count);
 
-        var bindings = new List<(string, CountedResult)>(paramNames.Count);
+        var bindings = new List<(string Name, CountedResult Value)>(paramNames.Count);
         for (var i = 0; i < paramNames.Count; i++)
             bindings.Add((paramNames[i], boundValues[i]));
 
-        return EvalResult<IReadOnlyList<(string, CountedResult)>>.Ok(bindings);
+        return EvalResult<CountedParamEnv>.Ok(bindings);
     }
 
     /// <summary>
@@ -460,16 +460,16 @@ public static partial class Evaluator
             collectingIndex = index;
         }
 
-        var bindings = new List<(string, CountedResult)>();
+        var bindings = new List<(string Name, CountedResult Value)>();
 
         EvalResult<bool> AddBindings(CountedParameterPatternBindings added)
         {
             foreach (var binding in added.CountedBindings)
             {
-                var existing = LookupCountedParam(bindings, binding.Item1);
+                var existing = LookupCountedParam(bindings, binding.Name);
                 if (existing is not null)
                 {
-                    if (!Result.ValueComparer.Equals(existing.Value.Value, binding.Item2.Value))
+                    if (!Result.ValueComparer.Equals(existing.Value.Value, binding.Value.Value))
                         return new EvalError.BadArity();
                     continue;
                 }
@@ -559,7 +559,7 @@ public static partial class Evaluator
         Algorithm callee,
         IReadOnlyList<CountedResult> args,
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv,
+        ValEnv valEnv,
         string calleeName = "conditional")
     {
         // Charged dynamic invocation boundary. This is the single callback dispatch
@@ -583,7 +583,7 @@ public static partial class Evaluator
         Algorithm callee,
         IReadOnlyList<CountedResult> args,
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv,
+        ValEnv valEnv,
         string calleeName)
     {
         switch (callee)
@@ -635,7 +635,7 @@ public static partial class Evaluator
                         var patternCtx = WithCountedParameterEnvironments(
                             ctx,
                             patternBindings.CountedBindings,
-                            patternBindings.CountedBindings.Select(static binding => binding.Item1));
+                            patternBindings.CountedBindings.Select(static binding => binding.Name));
                         return EvalAlgOutputCounted(callee, patternCtx, valEnv);
                     }
 
@@ -656,7 +656,7 @@ public static partial class Evaluator
                         var collectingCtx = WithCountedParameterEnvironments(
                             ctx,
                             collectingBindings.CountedBindings,
-                            collectingBindings.CountedBindings.Select(static binding => binding.Item1));
+                            collectingBindings.CountedBindings.Select(static binding => binding.Name));
                         return EvalAlgOutputCounted(callee, collectingCtx, valEnv);
                     }
 
@@ -686,7 +686,7 @@ public static partial class Evaluator
         Algorithm callee,
         IReadOnlyList<CountedResult> args,
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv,
+        ValEnv valEnv,
         string calleeName = "conditional")
         => ProjectCountedValue(EvalResolvedCallbackCallCounted(callee, args, ctx, valEnv, calleeName));
 
@@ -697,7 +697,7 @@ public static partial class Evaluator
         Algorithm callee,
         CountedResult item,
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv,
+        ValEnv valEnv,
         string calleeName = "conditional")
         => EvalResolvedCallbackCall(callee, [CountedSequenceCallbackItem(item)], ctx, valEnv, calleeName);
 
@@ -708,7 +708,7 @@ public static partial class Evaluator
         Algorithm callee,
         CountedResult item,
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv,
+        ValEnv valEnv,
         string calleeName = "conditional")
         => EvalResolvedCallbackCallCounted(callee, [CountedSequenceCallbackItem(item)], ctx, valEnv, calleeName);
 
@@ -722,7 +722,7 @@ public static partial class Evaluator
     private static EvalResult<PreparedAlgorithmOutput> EvalAlgOutputPreparedCore(
         Algorithm alg,
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv)
+        ValEnv valEnv)
     {
         if (DeferredModuleRegions.TryGet(alg, out var region))
         {
@@ -787,7 +787,7 @@ public static partial class Evaluator
         IReadOnlyList<Expr> rows,
         EvalCtx rowCtx,
         EvalCtx reserveCtx,
-        IReadOnlyList<(string, Result)> valEnv)
+        ValEnv valEnv)
     {
         if (!RuntimeHelpers.TryEnsureSufficientExecutionStack())
             return new EvalError.EvaluationStackExhausted();
@@ -836,13 +836,13 @@ public static partial class Evaluator
     private static EvalResult<PreparedAlgorithmOutput> EvalCapturePreparedCore(
         OutputBundle body,
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv)
+        ValEnv valEnv)
         => EvalOutputRowsPreparedCore(body, ctx, ctx, valEnv);
 
     private static EvalResult<CountedResult> EvalCaptureCountedCore(
         OutputBundle body,
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv)
+        ValEnv valEnv)
     {
         var preparedR = EvalCapturePreparedCore(body, ctx, valEnv);
         return preparedR.IsError
@@ -856,7 +856,7 @@ public static partial class Evaluator
     private static EvalResult<Result> EvalCaptureValue(
         OutputBundle body,
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv)
+        ValEnv valEnv)
         => ProjectCountedValue(EvalCaptureCountedCore(body, ctx, valEnv));
 
     /// <summary>
@@ -881,7 +881,7 @@ public static partial class Evaluator
     private static EvalResult<CountedResult> EvalAlgOutputCountedCore(
         Algorithm alg,
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv)
+        ValEnv valEnv)
     {
         var preparedR = EvalAlgOutputPreparedCore(alg, ctx, valEnv);
         return preparedR.IsError

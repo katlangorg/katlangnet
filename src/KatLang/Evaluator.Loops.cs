@@ -32,25 +32,25 @@ public static partial class Evaluator
     private static EvalResult<Result> EvalAlgOutputCore(
         Algorithm alg,
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv)
+        ValEnv valEnv)
         => ProjectCountedValue(EvalAlgOutputCountedCore(alg, ctx, valEnv));
 
     private static EvalResult<Result> EvalAlgOutput(
         Algorithm alg,
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv)
+        ValEnv valEnv)
         => EvalAlgOutputCore(alg, ctx, valEnv);
 
     private static EvalResult<Result> EvalProgramOutput(
         Algorithm alg,
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv)
+        ValEnv valEnv)
         => EvalAlgOutputCore(alg, ctx, valEnv);
 
     private static EvalResult<IReadOnlyList<Result>> EvalInitialLoopStateSlots(
         IReadOnlyList<ResolvedArgumentAlgorithm> initArgs,
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv)
+        ValEnv valEnv)
     {
         // Initial loop state preserves explicit argument boundaries: repeat(Step, 3, a, b)
         // starts with two slots, while repeat(Step, 3, Pair) starts with one slot even
@@ -70,7 +70,7 @@ public static partial class Evaluator
     private static EvalResult<IReadOnlyList<Result>> EvalAlgOutputSlots(
         Algorithm alg,
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv,
+        ValEnv valEnv,
         bool preserveSequenceSpreadExpressionBoundaries = false)
     {
         if (alg is Algorithm.Builtin(var builtin))
@@ -198,7 +198,7 @@ public static partial class Evaluator
                 InferredImplicitParameters = ImplicitParameterProvenance.CollectFrom(parameters),
             });
 
-    private static EvalResult<IReadOnlyList<(string Name, Result Value)>> BindEvaluatedSlotValueBindings(
+    private static EvalResult<ValEnv> BindEvaluatedSlotValueBindings(
         FlatCollectingBindingLayout layout,
         IReadOnlyList<(string ParameterName, BindingInputSlot Item)> normalBindings,
         CollectingCapture collectingCapture)
@@ -227,7 +227,7 @@ public static partial class Evaluator
         if (normalBindingIndex != normalBindings.Count)
             return new EvalError.BadArity();
 
-        return EvalResult<IReadOnlyList<(string Name, Result Value)>>.Ok(valueBindings);
+        return EvalResult<ValEnv>.Ok(valueBindings);
     }
 
     private static EvalResult<EvaluatedSlotBindings> BindEvaluatedSlotsToParameters(
@@ -478,7 +478,7 @@ public static partial class Evaluator
     /// <summary>Evaluate an expression and coerce to a number.
     /// Lean: expectInt over eval (the model has no dedicated wrapper).</summary>
     private static EvalResult<Decimal128> EvalInt(
-        Expr expr, EvalCtx ctx, IReadOnlyList<(string, Result)> valEnv)
+        Expr expr, EvalCtx ctx, ValEnv valEnv)
     {
         var r = Eval(expr, ctx, valEnv);
         if (r.IsError) return r.Error;
@@ -488,7 +488,7 @@ public static partial class Evaluator
     private static EvalResult<IReadOnlyList<Result>> RunStepSlots(
         Algorithm step,
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv,
+        ValEnv valEnv,
         IReadOnlyList<Result> stateSlots,
         string loopName,
         PreparedGenericLoopStep prepared)
@@ -559,7 +559,7 @@ public static partial class Evaluator
         Algorithm step,
         IReadOnlyList<Result> initialStateSlots,
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv)
+        ValEnv valEnv)
     {
         ctx.LoopDiagnostics?.RecordLoopExecution();
 
@@ -599,7 +599,7 @@ public static partial class Evaluator
         Algorithm step,
         IReadOnlyList<Result> initialStateSlots,
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv)
+        ValEnv valEnv)
     {
         // `while` always runs its step at least once, so the loop-invariant step
         // binding is prepared unconditionally — once per loop invocation, not per
@@ -623,7 +623,7 @@ public static partial class Evaluator
         long count,
         IReadOnlyList<Result> initialStateSlots,
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv)
+        ValEnv valEnv)
     {
         ctx.LoopDiagnostics?.RecordLoopExecution();
 
@@ -668,7 +668,7 @@ public static partial class Evaluator
         long count,
         IReadOnlyList<Result> initialStateSlots,
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv)
+        ValEnv valEnv)
     {
         var stateSlots = initialStateSlots.ToList();
         // A zero-iteration repeat never binds its step, so it must not gain step

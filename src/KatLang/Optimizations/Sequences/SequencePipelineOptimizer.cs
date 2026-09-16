@@ -49,7 +49,7 @@ internal static class SequencePipelineOptimizer
         SequencePipelineInvocation invocation,
         SequencePipelineEvaluationServices services,
         Evaluator.EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv,
+        ValEnv valEnv,
         SequencePipelineDiagnostics? diagnostics,
         out EvalResult<Evaluator.CountedResult> result)
     {
@@ -129,7 +129,7 @@ internal static class SequencePipelineOptimizer
         SequencePipelineInvocation invocation,
         SequencePipelineEvaluationServices services,
         Evaluator.EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv,
+        ValEnv valEnv,
         SequencePipelineDiagnostics? diagnostics,
         out EvalResult<Evaluator.CountedResult> result)
     {
@@ -639,7 +639,7 @@ internal static class SequencePipelineOptimizer
         FilterCountPipelinePreparation preparation,
         SequencePipelineEvaluationServices services,
         Evaluator.EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv,
+        ValEnv valEnv,
         SequencePipelineDiagnostics? diagnostics,
         out FilterCountPipelinePlan? plan,
         out EvalResult<Evaluator.CountedResult> result)
@@ -726,7 +726,7 @@ internal static class SequencePipelineOptimizer
     private static EvalResult<Evaluator.CountedResult> ExecuteFilterCount(
         FilterCountPipelinePlan plan,
         Evaluator.EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv,
+        ValEnv valEnv,
         SequencePipelineDiagnostics? diagnostics)
     {
         diagnostics?.RecordFilterCountFusionHit();
@@ -745,7 +745,7 @@ internal static class SequencePipelineOptimizer
         FilterCountPipelinePlan plan,
         FilterCountSourcePlan.Generic sourcePlan,
         Evaluator.EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv,
+        ValEnv valEnv,
         SequencePipelineDiagnostics? diagnostics)
     {
         var diagnosticKey = diagnostics?.RecordPipelineDiagnostic(
@@ -804,7 +804,7 @@ internal static class SequencePipelineOptimizer
         FilterCountPipelinePlan plan,
         Evaluator.InclusiveRange range,
         Evaluator.EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv,
+        ValEnv valEnv,
         SequencePipelineDiagnostics? diagnostics)
     {
         diagnostics?.RecordDirectRangeFusionHit();

@@ -8,7 +8,7 @@ internal static partial class LoopOptimizer
         Algorithm step,
         IReadOnlyList<Result> stateValues,
         Evaluator.EvalCtx ctx,
-        IReadOnlyList<(string Name, Result Value)> valEnv,
+        ValEnv valEnv,
         Func<IReadOnlyList<Result>, EvalResult<Evaluator.CountedResult>> genericContinuation,
         out EvalResult<Evaluator.CountedResult> result)
     {
@@ -135,7 +135,7 @@ internal static partial class LoopOptimizer
         long count,
         IReadOnlyList<Result> stateValues,
         Evaluator.EvalCtx ctx,
-        IReadOnlyList<(string Name, Result Value)> valEnv,
+        ValEnv valEnv,
         Func<long, IReadOnlyList<Result>, EvalResult<Evaluator.CountedResult>> genericContinuation,
         out EvalResult<Evaluator.CountedResult> result)
     {
@@ -282,7 +282,7 @@ internal static partial class LoopOptimizer
         Algorithm step,
         int stateArity,
         Evaluator.EvalCtx ctx,
-        IReadOnlyList<(string Name, Result Value)> parentValEnv)
+        ValEnv parentValEnv)
     {
         ctx.LoopDiagnostics?.RecordLoopPlanBuild();
 

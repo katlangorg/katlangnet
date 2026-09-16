@@ -28,7 +28,7 @@ internal static partial class LoopOptimizer
         Algorithm.User userStep,
         IReadOnlyList<string> stateNames,
         Evaluator.EvalCtx ctx,
-        IReadOnlyList<(string Name, Result Value)> parentValEnv,
+        ValEnv parentValEnv,
         bool includeDiagnostics)
     {
         var plans = new List<LoopTempPlan>(userStep.Properties.Count);
@@ -80,7 +80,7 @@ internal static partial class LoopOptimizer
         IReadOnlyList<LoopTempPlan> earlierTempPlans,
         IReadOnlyList<string> stateNames,
         Evaluator.EvalCtx ctx,
-        IReadOnlyList<(string Name, Result Value)> parentValEnv)
+        ValEnv parentValEnv)
     {
         if (property.Value is not Algorithm.User userProperty)
             return new LoopTempPlanTryBuildResult(null, $"unsupported local property kind: {property.Name}");
@@ -114,7 +114,7 @@ internal static partial class LoopOptimizer
     private static bool IsLoopPlanVisibleParameter(
         string name,
         IReadOnlyList<string> stateNames,
-        IReadOnlyList<(string Name, Result Value)> parentValEnv,
+        ValEnv parentValEnv,
         Evaluator.EvalCtx ctx,
         out string? fallbackReason)
     {

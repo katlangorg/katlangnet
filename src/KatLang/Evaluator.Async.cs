@@ -680,7 +680,7 @@ public static partial class Evaluator
         Algorithm alg,
         string name,
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv)
+        ValEnv valEnv)
     {
         var binding = LookupPropBinding(alg, name);
         if (binding is null)
@@ -717,7 +717,7 @@ public static partial class Evaluator
         string name,
         SourceSpan? span,
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv)
+        ValEnv valEnv)
     {
         ctx = ParameterContext(name, ctx, ref valEnv);
         var counted = LookupCountedParam(ctx.CountedParamEnv, name);
@@ -752,7 +752,7 @@ public static partial class Evaluator
     /// <summary>MIRROR OF <see cref="LookupNativeArgument"/> — keep in lock-step.</summary>
     private static async ValueTask<EvalResult<Result>> LookupNativeArgumentAsync(
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv,
+        ValEnv valEnv,
         string name)
         => ProjectCountedValue(await EvalParamCountedAsync(name, span: null, ctx, valEnv).ConfigureAwait(false));
 
@@ -760,7 +760,7 @@ public static partial class Evaluator
     private static async ValueTask<EvalResult<Decimal128[]>> CollectMathNativeArgumentsAsync(
         IReadOnlyList<string> argNames,
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv)
+        ValEnv valEnv)
     {
         var args = new Decimal128[argNames.Count];
         for (var i = 0; i < argNames.Count; i++)
@@ -783,7 +783,7 @@ public static partial class Evaluator
     private static async ValueTask<EvalResult<IReadOnlyList<Result>>> CollectHostOperationArgumentsAsync(
         IReadOnlyList<string> argNames,
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv)
+        ValEnv valEnv)
     {
         if (argNames.Count == 0)
             return EvalResult<IReadOnlyList<Result>>.Ok([]);
@@ -804,7 +804,7 @@ public static partial class Evaluator
         HostOperation hostOperation,
         IReadOnlyList<string> argNames,
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv)
+        ValEnv valEnv)
     {
         if (hostOperation.SynchronousImplementation is not { } implementation)
         {
@@ -837,7 +837,7 @@ public static partial class Evaluator
         string fnName,
         IReadOnlyList<string> argNames,
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv)
+        ValEnv valEnv)
     {
         if (ctx.Budget.HostOperations is { } hostOperations
             && fnName.StartsWith(HostOperations.NativeNamePrefix, StringComparison.Ordinal)
@@ -860,7 +860,7 @@ public static partial class Evaluator
     private static async ValueTask<EvalResult<CountedResult>> EvalCountedAsync(
         Expr expr,
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv)
+        ValEnv valEnv)
     {
         // Bulk pathological-work bound — identical charging to the synchronous dispatch heads.
         if (ctx.Budget.TryChargeExpressionNodeWork() is { } nodeWorkError)
@@ -944,7 +944,7 @@ public static partial class Evaluator
         Expr expr,
         Algorithm alg,
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv)
+        ValEnv valEnv)
     {
         var wired = WireToCaller(ctx, alg);
         var blockSpan = PreferExpressionSpan(expr.Span, wired.Output);
@@ -961,7 +961,7 @@ public static partial class Evaluator
         string name,
         SourceSpan? span,
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv)
+        ValEnv valEnv)
     {
         if (ctx.CallStack.Count == 0)
             return new EvalError.UnknownName(name) { Span = span };
@@ -1000,7 +1000,7 @@ public static partial class Evaluator
     private static async ValueTask<EvalResult<CountedResult>> EvalExpressionSpineCountedAsync(
         Expr root,
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv)
+        ValEnv valEnv)
     {
         var frames = new ExpressionSpineFrame[16];
         var frameCount = 0;
@@ -1232,7 +1232,7 @@ public static partial class Evaluator
     private static async ValueTask<EvalResult<PreparedAlgorithmOutput>> EvalAlgOutputPreparedCoreAsync(
         Algorithm alg,
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv)
+        ValEnv valEnv)
     {
         if (DeferredModuleRegions.TryGet(alg, out var region))
         {
@@ -1281,7 +1281,7 @@ public static partial class Evaluator
         IReadOnlyList<Expr> rows,
         EvalCtx rowCtx,
         EvalCtx reserveCtx,
-        IReadOnlyList<(string, Result)> valEnv)
+        ValEnv valEnv)
     {
         if (!RuntimeHelpers.TryEnsureSufficientExecutionStack())
             return new EvalError.EvaluationStackExhausted();
@@ -1318,14 +1318,14 @@ public static partial class Evaluator
     private static ValueTask<EvalResult<PreparedAlgorithmOutput>> EvalCapturePreparedCoreAsync(
         OutputBundle body,
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv)
+        ValEnv valEnv)
         => EvalOutputRowsPreparedCoreAsync(body, ctx, ctx, valEnv);
 
     /// <summary>MIRROR OF <see cref="EvalCaptureCountedCore"/> — keep in lock-step.</summary>
     private static async ValueTask<EvalResult<CountedResult>> EvalCaptureCountedCoreAsync(
         OutputBundle body,
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv)
+        ValEnv valEnv)
     {
         var preparedR = await EvalCapturePreparedCoreAsync(body, ctx, valEnv).ConfigureAwait(false);
         return preparedR.IsError
@@ -1337,7 +1337,7 @@ public static partial class Evaluator
     private static async ValueTask<EvalResult<Result>> EvalCaptureValueAsync(
         OutputBundle body,
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv)
+        ValEnv valEnv)
     {
         var countedR = await EvalCaptureCountedCoreAsync(body, ctx, valEnv).ConfigureAwait(false);
         return countedR.IsError
@@ -1349,7 +1349,7 @@ public static partial class Evaluator
     private static async ValueTask<EvalResult<CountedResult>> EvalAlgOutputCountedCoreAsync(
         Algorithm alg,
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv)
+        ValEnv valEnv)
     {
         var preparedR = await EvalAlgOutputPreparedCoreAsync(alg, ctx, valEnv).ConfigureAwait(false);
         return preparedR.IsError
@@ -1366,7 +1366,7 @@ public static partial class Evaluator
     private static async ValueTask<EvalResult<Result>> EvalAlgOutputValueAsync(
         Algorithm alg,
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv)
+        ValEnv valEnv)
     {
         var preparedR = await EvalAlgOutputPreparedCoreAsync(alg, ctx, valEnv).ConfigureAwait(false);
         return preparedR.IsError
@@ -1378,7 +1378,7 @@ public static partial class Evaluator
     private static async ValueTask<EvalResult<IReadOnlyList<Result>>> EvalAlgOutputSlotsAsync(
         Algorithm alg,
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv,
+        ValEnv valEnv,
         bool preserveSequenceSpreadExpressionBoundaries = false)
     {
         if (alg is Algorithm.Builtin(var builtin))
@@ -1427,7 +1427,7 @@ public static partial class Evaluator
     private static async ValueTask<EvalResult<IReadOnlyList<Result>>> EvalExplicitSequenceValueItemsAsync(
         Algorithm alg,
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv)
+        ValEnv valEnv)
     {
         if (alg is Algorithm.Builtin(var builtin))
         {
@@ -1459,7 +1459,7 @@ public static partial class Evaluator
     private static async ValueTask<EvalResult<IReadOnlyList<Result>>> EvalExplicitSequenceValueRowSlotsAsync(
         IReadOnlyList<Expr> rows,
         EvalCtx rowCtx,
-        IReadOnlyList<(string, Result)> valEnv)
+        ValEnv valEnv)
     {
         if (!RuntimeHelpers.TryEnsureSufficientExecutionStack())
             return new EvalError.EvaluationStackExhausted();
@@ -1479,7 +1479,7 @@ public static partial class Evaluator
     private static async ValueTask<EvalResult<IReadOnlyList<Result>>> EvalExplicitSequenceValueExprSlotsAsync(
         Expr expr,
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv)
+        ValEnv valEnv)
     {
         if (expr is Expr.Capture(var captureBody))
         {
@@ -1516,7 +1516,7 @@ public static partial class Evaluator
     private static async ValueTask<EvalResult<ZeroArgPropertyResult>> EvaluateZeroArgPropertyResultAsync(
         Algorithm resolvedAlgorithm,
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv)
+        ValEnv valEnv)
     {
         var countedR = await EvalAlgOutputCountedCoreAsync(resolvedAlgorithm, ctx, valEnv).ConfigureAwait(false);
         if (countedR.IsError)
@@ -1533,7 +1533,7 @@ public static partial class Evaluator
         ZeroArgPropertyAccessKind accessKind,
         Algorithm resolvedAlgorithm,
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv)
+        ValEnv valEnv)
     {
         // Charged dynamic invocation boundary, entered BEFORE the cache is consulted —
         // the SAME enter helper and scoped release as the synchronous twin
@@ -1561,7 +1561,7 @@ public static partial class Evaluator
         ZeroArgPropertyAccessKind accessKind,
         Algorithm resolvedAlgorithm,
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv)
+        ValEnv valEnv)
     {
         if (owner is null)
             return await EvaluateZeroArgPropertyResultAsync(resolvedAlgorithm, ctx, valEnv).ConfigureAwait(false);
@@ -1596,7 +1596,7 @@ public static partial class Evaluator
         ZeroArgPropertyAccessKind accessKind,
         Algorithm resolvedAlgorithm,
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv)
+        ValEnv valEnv)
     {
         var propertyR = await GetOrEvaluateZeroArgPropertyResultAsync(
             owner, binding, accessKind, resolvedAlgorithm, ctx, valEnv).ConfigureAwait(false);
@@ -1609,7 +1609,7 @@ public static partial class Evaluator
     private static ValueTask<EvalResult<CountedResult>> EvalZeroArgPropertyAccessCountedAsync(
         ResolvedLexicalProperty resolvedProperty,
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv)
+        ValEnv valEnv)
         => EvalZeroArgPropertyAccessCountedAsync(
             resolvedProperty.Owner,
             resolvedProperty.Binding,
@@ -1633,7 +1633,7 @@ public static partial class Evaluator
         HostOperation hostOperation,
         IReadOnlyList<string> argNames,
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv)
+        ValEnv valEnv)
     {
         if (ValidateHostOperationNativeSignature(hostOperation, argNames) is { } signatureError)
             return signatureError;
@@ -1663,7 +1663,7 @@ public static partial class Evaluator
     private static async ValueTask<EvalResult<Result>> EvalResolvedAlgOutputForValueDemandAsync(
         Algorithm algorithm,
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv)
+        ValEnv valEnv)
     {
         if (TryEnterArgumentEvaluationLevel(ctx, out var level) is { } limitError)
             return limitError;
@@ -1686,7 +1686,7 @@ public static partial class Evaluator
         Expr func,
         OutputBundle args,
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv)
+        ValEnv valEnv)
     {
         ThrowIfAsyncStrategyPinningViolated(ctx);
 
@@ -1722,7 +1722,7 @@ public static partial class Evaluator
         Algorithm callee,
         OutputBundle args,
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv,
+        ValEnv valEnv,
         CallDiagnosticName calleeName,
         CallArgumentAssembly argumentAssembly = CallArgumentAssembly.OrdinaryArguments)
     {
@@ -1758,7 +1758,7 @@ public static partial class Evaluator
     private static async ValueTask<EvalResult<CountedResult>> EvalUserCallCountedAsync(
         Algorithm callee, OutputBundle args,
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv,
+        ValEnv valEnv,
         CallArgumentAssembly argumentAssembly,
         CallDiagnosticName calleeName)
     {
@@ -1777,7 +1777,7 @@ public static partial class Evaluator
     private static async ValueTask<EvalResult<CountedResult>> EvalUserCallCountedCoreAsync(
         Algorithm callee, OutputBundle args,
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv,
+        ValEnv valEnv,
         CallArgumentAssembly argumentAssembly,
         CallDiagnosticName calleeName)
     {
@@ -1837,7 +1837,7 @@ public static partial class Evaluator
         Algorithm.User helper,
         OutputBundle args,
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv,
+        ValEnv valEnv,
         CallDiagnosticName calleeName,
         CallArgumentAssembly argumentAssembly)
     {
@@ -1895,7 +1895,7 @@ public static partial class Evaluator
     private static async ValueTask<EvalResult<CountedResult>> EvalConditionalCallCountedAsync(
         Algorithm callee, OutputBundle args,
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv,
+        ValEnv valEnv,
         CallDiagnosticName calleeName,
         CallArgumentAssembly argumentAssembly = CallArgumentAssembly.OrdinaryArguments)
     {
@@ -1918,7 +1918,7 @@ public static partial class Evaluator
     private static async ValueTask<EvalResult<CountedResult>> EvalConditionalCallCountedCoreAsync(
         Algorithm callee, OutputBundle args,
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv,
+        ValEnv valEnv,
         CallDiagnosticName calleeName,
         CallArgumentAssembly argumentAssembly)
     {
@@ -1936,7 +1936,7 @@ public static partial class Evaluator
         var (branch, bindings) = match.Value;
         var selectedBodyR = await SelectedBranchBodyAsync(branch, ctx).ConfigureAwait(false);
         if (selectedBodyR.IsError) return selectedBodyR.Error;
-        var shadowedNames = bindings.Select(static binding => binding.Item1).ToArray();
+        var shadowedNames = bindings.Select(static binding => binding.Name).ToArray();
         var newCtx = ShadowInheritedParameterEnvironments(ctx.Push(callee), shadowedNames);
         var newEnv = Concat(bindings, valEnv);
         var wiredBody = ChildOfConditionalCall(callee, selectedBodyR.Value, shadowedNames, newCtx, newEnv);
@@ -1947,7 +1947,7 @@ public static partial class Evaluator
     private static async ValueTask<EvalResult<IReadOnlyList<Result>>> EvalConditionalCallArgumentsAsync(
         OutputBundle args,
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv,
+        ValEnv valEnv,
         CallArgumentAssembly argumentAssembly)
     {
         var inputsR = await BuildCallArgumentInputsAsync(args, ctx, valEnv, argumentAssembly).ConfigureAwait(false);
@@ -1971,7 +1971,7 @@ public static partial class Evaluator
     private static async ValueTask<EvalError?> RejectDotStringIntrinsicArgumentsAsync(
         OutputBundle? argsOpt,
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv)
+        ValEnv valEnv)
     {
         if (argsOpt is null)
             return null;
@@ -1987,7 +1987,7 @@ public static partial class Evaluator
     private static async ValueTask<EvalResult<IReadOnlyList<ParameterPatternInput>>> BuildCallArgumentInputsAsync(
         OutputBundle args,
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv,
+        ValEnv valEnv,
         CallArgumentAssembly argumentAssembly = CallArgumentAssembly.OrdinaryArguments,
         bool includeExplicitSequenceValueItems = false)
     {
@@ -2050,7 +2050,7 @@ public static partial class Evaluator
     private static async ValueTask<EvalResult<PreparedCallArgumentEvaluation>> PrepareCallArgumentEvaluationAsync(
         Expr argExpr,
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv,
+        ValEnv valEnv,
         bool isDotReceiverSegment,
         bool includeExplicitSequenceValueItems)
     {
@@ -2098,7 +2098,7 @@ public static partial class Evaluator
     private static async ValueTask<EvalResult<CountedResult>> EvalDotReceiverCallSegmentCountedAsync(
         Expr receiver,
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv)
+        ValEnv valEnv)
     {
         if (receiver is Expr.Capture(var captureBody))
             return WithSpan(PreferExpressionSpan(receiver.Span, captureBody), await EvalCaptureCountedCoreAsync(captureBody, ctx, valEnv).ConfigureAwait(false));
@@ -2118,7 +2118,7 @@ public static partial class Evaluator
         Algorithm callee,
         OutputBundle args,
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv,
+        ValEnv valEnv,
         CallDiagnosticName calleeName,
         CallArgumentAssembly argumentAssembly = CallArgumentAssembly.OrdinaryArguments)
     {
@@ -2166,7 +2166,7 @@ public static partial class Evaluator
         Algorithm callee,
         OutputBundle args,
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv,
+        ValEnv valEnv,
         CallDiagnosticName calleeName,
         CallArgumentAssembly argumentAssembly = CallArgumentAssembly.OrdinaryArguments)
     {
@@ -2196,7 +2196,7 @@ public static partial class Evaluator
         IReadOnlyList<string> parameterNames,
         OutputBundle args,
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv)
+        ValEnv valEnv)
     {
         var paramCount = parameterNames.Count;
 
@@ -2268,7 +2268,7 @@ public static partial class Evaluator
         BuiltinId builtin,
         IReadOnlyList<ResolvedArgumentAlgorithm> resolvedArgs,
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv)
+        ValEnv valEnv)
     {
         if (GetSequenceBuiltinMetadata(builtin) is { } metadata)
             return await ApplyBuiltinCountedSequenceAsync(builtin, metadata, resolvedArgs, ctx, valEnv).ConfigureAwait(false);
@@ -2355,7 +2355,7 @@ public static partial class Evaluator
     private static async ValueTask<EvalResult<InclusiveRange>> EvalBuiltinRangeArgumentsAsync(
         IReadOnlyList<ResolvedArgumentAlgorithm> args,
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv)
+        ValEnv valEnv)
     {
         if (args.Count != 2)
             return WrongBuiltinArity(BuiltinId.@range, args.Count);
@@ -2377,7 +2377,7 @@ public static partial class Evaluator
     private static async ValueTask<EvalResult<IReadOnlyList<Result>>> EvalInitialLoopStateSlotsAsync(
         IReadOnlyList<ResolvedArgumentAlgorithm> initArgs,
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv)
+        ValEnv valEnv)
     {
         var stateSlots = new List<Result>(initArgs.Count);
         foreach (var init in initArgs)
@@ -2394,7 +2394,7 @@ public static partial class Evaluator
     private static async ValueTask<EvalResult<CountedResult>> EvalResolvedArgumentCountedAsync(
         ResolvedArgumentAlgorithm arg,
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv)
+        ValEnv valEnv)
     {
         if (arg.PreparedValue is { } prepared)
             return EvalResult<CountedResult>.Ok(prepared);
@@ -2415,7 +2415,7 @@ public static partial class Evaluator
     private static async ValueTask<EvalResult<Result>> EvalResolvedArgumentValueAsync(
         ResolvedArgumentAlgorithm arg,
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv)
+        ValEnv valEnv)
     {
         var countedR = await EvalResolvedArgumentCountedAsync(arg, ctx, valEnv).ConfigureAwait(false);
         return countedR.IsError
@@ -2427,7 +2427,7 @@ public static partial class Evaluator
     private static async ValueTask<EvalResult<CountedResult>> EvalArgumentAlgOutputCountedAsync(
         Algorithm algorithm,
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv)
+        ValEnv valEnv)
     {
         // The SAME enter helper and scoped release as the synchronous twin
         // (Evaluator.BudgetScopes.cs).
@@ -2444,7 +2444,7 @@ public static partial class Evaluator
     private static async ValueTask<EvalResult<IReadOnlyList<ResolvedArgumentAlgorithm>>> ExpandSequenceSpreadBuiltinArgumentsAsync(
         IReadOnlyList<ResolvedArgumentAlgorithm> args,
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv)
+        ValEnv valEnv)
     {
         var expanded = new List<ResolvedArgumentAlgorithm>(args.Count);
         foreach (var arg in args)
@@ -2477,7 +2477,7 @@ public static partial class Evaluator
     private static async ValueTask<EvalResult<IReadOnlyList<VariadicCallItem>>> BuildCallableCallItemsAsync(
         IReadOnlyList<ResolvedArgumentAlgorithm> args,
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv)
+        ValEnv valEnv)
     {
         var items = new List<VariadicCallItem>();
         foreach (var resolvedArg in args)
@@ -2546,7 +2546,7 @@ public static partial class Evaluator
         SequenceBuiltinMetadata metadata,
         IReadOnlyList<ResolvedArgumentAlgorithm> args,
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv)
+        ValEnv valEnv)
     {
         var descriptor = BuiltinRegistry.GetBuiltin(builtin);
         var signature = descriptor.PlainSignature;
@@ -2601,7 +2601,7 @@ public static partial class Evaluator
         SequenceBuiltinMetadata metadata,
         IReadOnlyList<ResolvedArgumentAlgorithm> args,
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv)
+        ValEnv valEnv)
     {
         var boundR = await BindSequenceBuiltinArgumentsAsync(builtin, metadata, args, ctx, valEnv).ConfigureAwait(false);
         if (boundR.IsError) return boundR.Error;
@@ -2746,7 +2746,7 @@ public static partial class Evaluator
         Algorithm callee,
         IReadOnlyList<CountedResult> args,
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv,
+        ValEnv valEnv,
         string calleeName = "conditional")
     {
         // Charged dynamic invocation boundary — the single callback dispatch chokepoint.
@@ -2768,7 +2768,7 @@ public static partial class Evaluator
         Algorithm callee,
         IReadOnlyList<CountedResult> args,
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv,
+        ValEnv valEnv,
         string calleeName)
     {
         switch (callee)
@@ -2820,7 +2820,7 @@ public static partial class Evaluator
                         var patternCtx = WithCountedParameterEnvironments(
                             ctx,
                             patternBindings.CountedBindings,
-                            patternBindings.CountedBindings.Select(static binding => binding.Item1));
+                            patternBindings.CountedBindings.Select(static binding => binding.Name));
                         return await EvalAlgOutputCountedCoreAsync(callee, patternCtx, valEnv).ConfigureAwait(false);
                     }
 
@@ -2835,7 +2835,7 @@ public static partial class Evaluator
                         var collectingCtx = WithCountedParameterEnvironments(
                             ctx,
                             collectingBindings.CountedBindings,
-                            collectingBindings.CountedBindings.Select(static binding => binding.Item1));
+                            collectingBindings.CountedBindings.Select(static binding => binding.Name));
                         return await EvalAlgOutputCountedCoreAsync(callee, collectingCtx, valEnv).ConfigureAwait(false);
                     }
 
@@ -2855,7 +2855,7 @@ public static partial class Evaluator
         Algorithm callee,
         CountedResult item,
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv,
+        ValEnv valEnv,
         string calleeName = "conditional")
         => EvalResolvedCallbackCallCountedAsync(callee, [CountedSequenceCallbackItem(item)], ctx, valEnv, calleeName);
 
@@ -2864,7 +2864,7 @@ public static partial class Evaluator
         Algorithm callee,
         IReadOnlyList<CountedResult> explicitArgs,
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv,
+        ValEnv valEnv,
         string calleeName = "conditional")
     {
         if (callee.HasDuplicateBranchPatterns())
@@ -2877,12 +2877,12 @@ public static partial class Evaluator
         var (branch, bindings) = match.Value;
         var selectedBodyR = await SelectedBranchBodyAsync(branch, ctx).ConfigureAwait(false);
         if (selectedBodyR.IsError) return selectedBodyR.Error;
-        var binderNames = bindings.Select(static binding => binding.Item1).ToArray();
+        var binderNames = bindings.Select(static binding => binding.Name).ToArray();
         var newCtx = WithCountedParameterEnvironments(
             ctx.Push(callee),
             bindings,
             binderNames);
-        var newEnv = Concat(bindings.Select(static binding => (binding.Item1, binding.Item2.Value)).ToList(), valEnv);
+        var newEnv = Concat(bindings.Select(static binding => (binding.Name, binding.Value.Value)).ToList(), valEnv);
         var wiredBody = ChildOfConditionalCall(callee, selectedBodyR.Value, binderNames, newCtx, newEnv);
         return await EvalAlgOutputCountedCoreAsync(wiredBody, newCtx, newEnv).ConfigureAwait(false);
     }
@@ -2892,7 +2892,7 @@ public static partial class Evaluator
         Algorithm.User callee,
         IReadOnlyList<CountedResult> args,
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv)
+        ValEnv valEnv)
     {
         // Charged dynamic invocation boundary — dispatched INSTEAD of the ordinary
         // callback chokepoint, so one reduce step stays one charged invocation.
@@ -2914,7 +2914,7 @@ public static partial class Evaluator
         Algorithm.User callee,
         IReadOnlyList<CountedResult> args,
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv)
+        ValEnv valEnv)
     {
         if (callee.Output.Count == 0)
             return new EvalError.MissingOutput();
@@ -2931,7 +2931,7 @@ public static partial class Evaluator
         var callbackCtx = WithCountedParameterEnvironments(
             ctx,
             patternBindings.CountedBindings,
-            patternBindings.CountedBindings.Select(static binding => binding.Item1));
+            patternBindings.CountedBindings.Select(static binding => binding.Name));
         return await EvalAlgOutputCountedCoreAsync(callee, callbackCtx, valEnv).ConfigureAwait(false);
     }
 
@@ -2941,7 +2941,7 @@ public static partial class Evaluator
         CountedResult element,
         Result accumulator,
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv,
+        ValEnv valEnv,
         string calleeName = "conditional")
     {
         var elementArg = CountedSequenceCallbackItem(element);
@@ -2973,7 +2973,7 @@ public static partial class Evaluator
         CountedResult? preparedInitial,
         Expr? initialSource,
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv)
+        ValEnv valEnv)
     {
         // A parameterized initial accumulator is rejected from its signature at this
         // boundary, never by entering its body — see the synchronous twin.
@@ -3011,7 +3011,7 @@ public static partial class Evaluator
         IReadOnlyList<CountedResult> items,
         Algorithm predicateAlg,
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv)
+        ValEnv valEnv)
     {
         var kept = new List<Result>();
         for (var index = 0; index < items.Count; index++)
@@ -3037,7 +3037,7 @@ public static partial class Evaluator
         CountedResult item,
         int index,
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv)
+        ValEnv valEnv)
     {
         var predicateCountedR = await EvalSequenceCallbackCallCountedAsync(
             predicateAlg, item, ctx, valEnv, "filter predicate").ConfigureAwait(false);
@@ -3067,7 +3067,7 @@ public static partial class Evaluator
         IReadOnlyList<CountedResult> items,
         Algorithm transformAlg,
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv)
+        ValEnv valEnv)
     {
         var mapped = new List<Result>(items.Count);
         foreach (var item in items)
@@ -3098,7 +3098,7 @@ public static partial class Evaluator
         Algorithm step,
         IReadOnlyList<Result> initialStateSlots,
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv)
+        ValEnv valEnv)
     {
         ThrowIfAsyncStrategyPinningViolated(ctx);
 
@@ -3112,7 +3112,7 @@ public static partial class Evaluator
         Algorithm step,
         IReadOnlyList<Result> initialStateSlots,
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv)
+        ValEnv valEnv)
     {
         // Loop-invariant step preparation, once per loop invocation — the SAME shared
         // non-evaluating helper as the synchronous twin (nothing here awaits).
@@ -3136,7 +3136,7 @@ public static partial class Evaluator
         long count,
         IReadOnlyList<Result> initialStateSlots,
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv)
+        ValEnv valEnv)
     {
         ThrowIfAsyncStrategyPinningViolated(ctx);
 
@@ -3155,7 +3155,7 @@ public static partial class Evaluator
         long count,
         IReadOnlyList<Result> initialStateSlots,
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv)
+        ValEnv valEnv)
     {
         var stateSlots = initialStateSlots.ToList();
         // Zero-iteration guard mirrors the synchronous twin: no step preparation for a
@@ -3179,7 +3179,7 @@ public static partial class Evaluator
     private static async ValueTask<EvalResult<IReadOnlyList<Result>>> RunStepSlotsAsync(
         Algorithm step,
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv,
+        ValEnv valEnv,
         IReadOnlyList<Result> stateSlots,
         string loopName,
         PreparedGenericLoopStep prepared)
@@ -3219,7 +3219,7 @@ public static partial class Evaluator
     private static async ValueTask<EvalResult<CountedResult>> EvalDotCallCountedAsync(
         Expr.DotCall dotCall,
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv)
+        ValEnv valEnv)
     {
         ThrowIfAsyncStrategyPinningViolated(ctx);
 
@@ -3304,7 +3304,7 @@ public static partial class Evaluator
     private static async ValueTask<EvalResult<CountedResult>> CallLexicalWithReceiverCountedAsync(
         Expr.DotCall dotCall,
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv)
+        ValEnv valEnv)
     {
         // Stored-fallback consumption — see CallLexicalWithReceiverCounted.
         if (dotCall.EffectiveLexicalFallback is not Expr.Resolve(var fallbackName))
@@ -3337,7 +3337,7 @@ public static partial class Evaluator
     private static async ValueTask<EvalResult<CountedResult>> CallLexicalFallbackCalleeWithReceiverCountedAsync(
         Expr.DotCall dotCall,
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv)
+        ValEnv valEnv)
     {
         var calleeR = ResolveAlg(dotCall.EffectiveLexicalFallback, ctx);
         if (calleeR.IsError) return calleeR.Error;
@@ -3356,7 +3356,7 @@ public static partial class Evaluator
         Expr receiver,
         OutputBundle? extraArgs,
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv)
+        ValEnv valEnv)
     {
         var calleeR = ResolveNamedAlgorithm(name, span: null, ctx);
         if (calleeR.IsError
@@ -3392,7 +3392,7 @@ public static partial class Evaluator
     private static async ValueTask<EvalResult<IReadOnlyList<ResolvedArgumentAlgorithm>>> SequenceBuiltinDotReceiverArgsAsync(
         Expr receiver,
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv)
+        ValEnv valEnv)
     {
         var receiverR = await EvalSequenceBuiltinDotReceiverCountedAsync(receiver, ctx, valEnv).ConfigureAwait(false);
         if (receiverR.IsError) return receiverR.Error;
@@ -3409,7 +3409,7 @@ public static partial class Evaluator
     private static async ValueTask<EvalResult<CountedResult>> EvalSequenceBuiltinDotReceiverCountedAsync(
         Expr receiver,
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv)
+        ValEnv valEnv)
     {
         // The receiver is this builtin call's collection ARGUMENT and consumes one
         // depth-only argument-evaluation level — identical protocol to the synchronous twin.
@@ -3436,7 +3436,7 @@ public static partial class Evaluator
         Algorithm targetAlg,
         bool receiverIsStructuralMember,
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv)
+        ValEnv valEnv)
     {
         if (target is Expr.Param(var paramName)
             && LookupAlgBinding(ctx.AlgEnv, paramName) is { ValueError: { } stickyLimit })
@@ -3473,7 +3473,7 @@ public static partial class Evaluator
     private static async ValueTask<EvalResult<CountedResult>> EvalSequenceConstructCountedAsync(
         Expr expr,
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv)
+        ValEnv valEnv)
     {
         var leaves = SequenceConstructLeaves(expr);
         var items = new List<Result>(leaves.Count);
@@ -3511,7 +3511,7 @@ public static partial class Evaluator
     private static async ValueTask<EvalResult<IReadOnlyList<Result>>> EvalSequenceSpreadOperandItemsAsync(
         Expr expr,
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv)
+        ValEnv valEnv)
     {
         if (expr is Expr.Capture(var captureBody))
         {
@@ -3556,7 +3556,7 @@ public static partial class Evaluator
     private static async ValueTask<EvalResult<CountedResult>> EvalSequenceSpreadCountedAsync(
         Expr expr,
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv)
+        ValEnv valEnv)
     {
         var operand = expr;
         var layers = 0;

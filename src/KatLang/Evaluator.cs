@@ -65,8 +65,8 @@ public static partial class Evaluator
     /// </summary>
     internal readonly record struct EvalCtx(
         IReadOnlyList<Algorithm> CallStack,
-        IReadOnlyList<(string Name, Algorithm Value, EvalError? ValueError)> AlgEnv,
-        IReadOnlyList<(string Name, CountedResult Value)> CountedParamEnv,
+        AlgEnv AlgEnv,
+        CountedParamEnv CountedParamEnv,
         IZeroArgPropertyResultCache ZeroArgPropertyResultCache,
         IDeconstructionBindingCache DeconstructionBindingCache,
         bool EnableLoopOptimization,
@@ -106,7 +106,7 @@ public static partial class Evaluator
         public Algorithm? Head => CallStack.Count > 0 ? CallStack[0] : null;
 
         /// <summary>Lean: EvalCtx.withAlgEnv — replace the algorithm environment.</summary>
-        public EvalCtx WithAlgEnv(IReadOnlyList<(string Name, Algorithm Value, EvalError? ValueError)> algEnv)
+        public EvalCtx WithAlgEnv(AlgEnv algEnv)
             => new(
                 CallStack,
                 algEnv,
@@ -121,7 +121,7 @@ public static partial class Evaluator
                 Budget);
 
         /// <summary>Replace the counted callback-parameter environment.</summary>
-        public EvalCtx WithCountedParamEnv(IReadOnlyList<(string, CountedResult)> countedParamEnv)
+        public EvalCtx WithCountedParamEnv(CountedParamEnv countedParamEnv)
             => new(
                 CallStack,
                 AlgEnv,
@@ -153,7 +153,7 @@ public static partial class Evaluator
 
     // ── Environment types ────────────────────────────────────────────────────
 
-    internal static object ValueEnvironmentCacheIdentity(IReadOnlyList<(string, Result)> valEnv)
+    internal static object ValueEnvironmentCacheIdentity(ValEnv valEnv)
         => valEnv is IValueEnvironmentCacheIdentityProvider provider
             ? provider.CacheIdentity
             : valEnv;
@@ -171,7 +171,7 @@ public static partial class Evaluator
             : new object();
 
     /// <summary>Value environment: maps parameter names to results. Lean: ValEnv.lookup (Option).</summary>
-    private static Result? LookupVal(IReadOnlyList<(string Name, Result Value)> env, string name)
+    private static Result? LookupVal(ValEnv env, string name)
     {
         foreach (var (n, v) in env)
             if (n == name) return v;
@@ -183,7 +183,7 @@ public static partial class Evaluator
     /// These bindings preserve both the normalized value and the emitted
     /// top-level count so callback params behave like <c>S:i</c>.
     /// </summary>
-    private static CountedResult? LookupCountedParam(IReadOnlyList<(string Name, CountedResult Value)> env, string name)
+    private static CountedResult? LookupCountedParam(CountedParamEnv env, string name)
     {
         foreach (var (n, v) in env)
             if (n == name) return v;
@@ -212,12 +212,12 @@ public static partial class Evaluator
     /// </summary>
     private static EvalResult<Result> LookupNativeArgument(
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv,
+        ValEnv valEnv,
         string name)
         => ProjectCountedValue(EvalParamCounted(name, span: null, ctx, valEnv));
 
-    internal static IReadOnlyList<(string Name, CountedResult Value)> ShadowCountedParamEnv(
-        IReadOnlyList<(string Name, CountedResult Value)> env,
+    internal static CountedParamEnv ShadowCountedParamEnv(
+        CountedParamEnv env,
         IEnumerable<string> shadowedNames)
     {
         if (env.Count == 0)
@@ -262,8 +262,8 @@ public static partial class Evaluator
     /// zero-arg cache entry (an exported property's key carries no environment).
     /// Lean: <c>AlgEnv.shadow</c>.
     /// </summary>
-    internal static IReadOnlyList<(string Name, Algorithm Value, EvalError? ValueError)> ShadowAlgEnv(
-        IReadOnlyList<(string Name, Algorithm Value, EvalError? ValueError)> env,
+    internal static AlgEnv ShadowAlgEnv(
+        AlgEnv env,
         IReadOnlyList<string> shadowedNames)
     {
         if (env.Count == 0 || shadowedNames.Count == 0)
@@ -343,8 +343,8 @@ public static partial class Evaluator
     /// so filtering the tail changes nothing for them.</para>
     /// Lean: <c>ValEnv.shadow</c>.
     /// </summary>
-    internal static IReadOnlyList<(string Name, Result Value)> ShadowValEnv(
-        IReadOnlyList<(string Name, Result Value)> env,
+    internal static ValEnv ShadowValEnv(
+        ValEnv env,
         IReadOnlyList<string> shadowedNames)
     {
         if (env.Count == 0 || shadowedNames.Count == 0)
@@ -398,7 +398,7 @@ public static partial class Evaluator
     }
 
     private static (Algorithm Algorithm, EvalError? ValueError)? LookupAlgBinding(
-        IReadOnlyList<(string Name, Algorithm Value, EvalError? ValueError)> env,
+        AlgEnv env,
         string name)
     {
         foreach (var (n, algorithm, valueError) in env)
@@ -408,7 +408,7 @@ public static partial class Evaluator
 
     /// <summary>Algorithm environment: maps parameter names to algorithms. Lean: AlgEnv.lookup.</summary>
     private static Algorithm? LookupAlg(
-        IReadOnlyList<(string Name, Algorithm Value, EvalError? ValueError)> env,
+        AlgEnv env,
         string name)
         => LookupAlgBinding(env, name) is { } binding ? binding.Algorithm : null;
 
@@ -440,7 +440,7 @@ public static partial class Evaluator
     /// Lean: <c>evalConditionalCallCounted</c>'s <c>ScopeCtx.mk</c> with the binder names.
     /// </summary>
     private static Algorithm ChildOfConditionalCall(Algorithm callee, Algorithm body, IReadOnlyList<string> binderNames,
-        EvalCtx ctx, IReadOnlyList<(string, Result)> values)
+        EvalCtx ctx, ValEnv values)
     {
         var scope = new ScopeCtx(callee.Parent, callee.Opens, callee.Properties, binderNames);
         ScopeOwnerAlgorithms.Add(scope, callee);
@@ -1560,7 +1560,7 @@ public static partial class Evaluator
     private static EvalResult<InclusiveRange> EvalBuiltinRangeArguments(
         IReadOnlyList<ResolvedArgumentAlgorithm> args,
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv)
+        ValEnv valEnv)
     {
         if (args.Count != 2)
             return WrongBuiltinArity(BuiltinId.@range, args.Count);
@@ -2797,7 +2797,7 @@ public static partial class Evaluator
         Algorithm alg,
         string name,
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv)
+        ValEnv valEnv)
     {
         var binding = LookupPropBinding(alg, name);
         if (binding is null)
