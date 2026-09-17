@@ -756,7 +756,7 @@ internal static class PropertyExposureResolver
     {
         // Diagnostic claims are finalized after the whole pass by the provenance
         // finalizer, against the classified tree.
-        memos.Run.HasDotMemberOrigins |= DiagnosticRecordMetadata<ImplicitParameterProvenance>.Get(dotCall) is not null;
+        memos.Run.HasDotMemberOrigins |= dotCall.InferredFallbackProvenance is not null;
 
         var rewrittenTarget = RewriteExpr(dotCall.Target, memos);
         var rewrittenArgs = dotCall.Args is { } args ? OutputBundle.From(RewriteExprList(args, memos)) : null;

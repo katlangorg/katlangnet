@@ -203,15 +203,7 @@ public enum ParameterKind
 
 public sealed record ParameterDeclaration(string Name, SourceSpan? Span = null, ParameterKind Kind = ParameterKind.Normal)
 {
-    private ParameterDeclaration(ParameterDeclaration original)
-        : base()
-    {
-        Name = original.Name;
-        Span = original.Span;
-        Kind = original.Kind;
-        CollectMarkerSpan = original.CollectMarkerSpan;
-        DiagnosticRecordMetadata<ImplicitParameterProvenance>.Copy(original, this);
-    }
+    private readonly RuntimeStateSlot<ImplicitParameterProvenance?> _inferredProvenance;
 
     /// <summary>Exact span of the source prefix <c>*</c> collect marker, when source-backed.</summary>
     public SourceSpan? CollectMarkerSpan { get; init; }
@@ -226,11 +218,16 @@ public sealed record ParameterDeclaration(string Name, SourceSpan? Span = null, 
     /// eventual arity/unresolved-parameter diagnostics — and has no Lean
     /// counterpart (wording/provenance metadata, like
     /// <see cref="EvalError.ArityMismatch.Signature"/>).
+    /// Carried in an equality-transparent slot: every <c>with</c> copy and the
+    /// pattern/declaration conversions (<see cref="ToPattern"/>,
+    /// <see cref="ParameterPattern.Captures"/>) reference the SAME note object
+    /// (the sharing that <see cref="ImplicitParameterProvenance"/> defines),
+    /// and record equality, hashing, and printing ignore it.
     /// </summary>
     internal ImplicitParameterProvenance? InferredProvenance
     {
-        get => DiagnosticRecordMetadata<ImplicitParameterProvenance>.Get(this);
-        init => DiagnosticRecordMetadata<ImplicitParameterProvenance>.Set(this, value);
+        get => _inferredProvenance.Value;
+        init => _inferredProvenance = new(value);
     }
 
     public string DisplayName => Kind switch
@@ -319,15 +316,7 @@ public closed record ParameterPattern
 public sealed record CaptureParameterPattern(string Name, SourceSpan? Span = null, ParameterKind Kind = ParameterKind.Normal)
     : ParameterPattern
 {
-    private CaptureParameterPattern(CaptureParameterPattern original)
-        : base(original)
-    {
-        Name = original.Name;
-        Span = original.Span;
-        Kind = original.Kind;
-        CollectMarkerSpan = original.CollectMarkerSpan;
-        DiagnosticRecordMetadata<ImplicitParameterProvenance>.Copy(original, this);
-    }
+    private readonly RuntimeStateSlot<ImplicitParameterProvenance?> _inferredProvenance;
 
     /// <summary>Exact span of the source prefix <c>*</c> collect marker, when source-backed.</summary>
     public SourceSpan? CollectMarkerSpan { get; init; }
@@ -335,11 +324,15 @@ public sealed record CaptureParameterPattern(string Name, SourceSpan? Span = nul
     /// <summary>
     /// Diagnostic-only provenance when this capture was inferred from an
     /// unresolved identifier; see <see cref="ParameterDeclaration.InferredProvenance"/>.
+    /// The inferred capture is the note's FIRST carrier
+    /// (<see cref="Algorithm.MergeParameterPatterns"/>), and implicit argument
+    /// resolution lifts this very record into every transitive caller's
+    /// signature, so the callers share the note by construction.
     /// </summary>
     internal ImplicitParameterProvenance? InferredProvenance
     {
-        get => DiagnosticRecordMetadata<ImplicitParameterProvenance>.Get(this);
-        init => DiagnosticRecordMetadata<ImplicitParameterProvenance>.Set(this, value);
+        get => _inferredProvenance.Value;
+        init => _inferredProvenance = new(value);
     }
 
     public override string DisplayName => Kind == ParameterKind.Collecting ? $"*{Name}" : Name;
@@ -543,16 +536,7 @@ public closed record Expr
     /// </summary>
     public sealed record DotCall(Expr Target, string Name, OutputBundle? Args = null) : Expr
     {
-        private DotCall(DotCall original) : base(original)
-        {
-            Target = original.Target;
-            Name = original.Name;
-            Args = original.Args;
-            MemberSpan = original.MemberSpan;
-            LexicalFallback = original.LexicalFallback;
-            ElaboratedFallbackSelection = original.ElaboratedFallbackSelection;
-            DiagnosticRecordMetadata<ImplicitParameterProvenance>.Copy(original, this);
-        }
+        private readonly RuntimeStateSlot<ImplicitParameterProvenance?> _inferredFallbackProvenance;
 
         /// <summary>
         /// Exact span of the member identifier to the right of the dot when the
@@ -594,6 +578,27 @@ public closed record Expr
         /// receiver expression's raw shape classification.
         /// </summary>
         internal LexicalFallbackSelection? ElaboratedFallbackSelection { get; init; }
+
+        /// <summary>
+        /// Diagnostic-only: the provenance note of the implicit parameter that
+        /// THIS edge's lexical-fallback occurrence promoted — the same note
+        /// object the owner's inferred capture carries — stamped by parameter
+        /// detection when the receiver is a statically known algorithm that
+        /// provably lacks the member (<see cref="ImplicitParameterProvenance.DotMemberOrigin"/>);
+        /// <c>null</c> for a bare or opaque receiver, a fallback that resolved,
+        /// a raw parser tree, and a host-built one. It exists so the
+        /// post-exposure provenance walk (<see cref="DotMemberProvenanceFinalizer"/>)
+        /// can re-examine the edge against the completed tree and update the
+        /// shared note in place; it never takes part in resolution. Carried in an
+        /// equality-transparent slot, so every <c>with</c> copy of the edge — the
+        /// resolver's, completion's, and exposure's rewrites — keeps it while
+        /// record equality, hashing, and printing ignore it.
+        /// </summary>
+        internal ImplicitParameterProvenance? InferredFallbackProvenance
+        {
+            get => _inferredFallbackProvenance.Value;
+            init => _inferredFallbackProvenance = new(value);
+        }
     }
 
     /// <summary>
@@ -1243,19 +1248,11 @@ public closed record Algorithm
         init => _deferredRegion = new(value);
     }
 
-    // The ONE storage shape for runtime/front-end state carried by an algorithm value: the
-    // record copy constructor copies the one-reference value automatically, and only the
-    // PRIVATE SLOT is equality-transparent, never the value exposed above (a declaration
-    // token's ordinary Equals, dictionaries, and LINQ all retain reference identity).
-    // Keeping the exclusion here also leaves the compiler responsible for comparing every
-    // structural Algorithm field, including any added in the future.
-    private readonly struct RuntimeStateSlot<T>(T value) : IEquatable<RuntimeStateSlot<T>>
-    {
-        internal T Value { get; } = value;
-        public bool Equals(RuntimeStateSlot<T> other) => true;
-        public override bool Equals(object? obj) => obj is RuntimeStateSlot<T>;
-        public override int GetHashCode() => 0;
-    }
+    // Both slots are the ONE equality-transparent storage shape for carried state
+    // (RuntimeStateSlot<T>): the record copy constructor copies the one-reference value
+    // automatically, and only the PRIVATE SLOT is transparent, never the value exposed
+    // above (a declaration token's ordinary Equals, dictionaries, and LINQ all retain
+    // reference identity).
 
     /// <summary>Lean: Algorithm.parent. Returns null for Builtin.</summary>
     public virtual ScopeCtx? Parent { get; init; }

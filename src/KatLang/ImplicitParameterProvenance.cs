@@ -1,5 +1,3 @@
-using System.Runtime.CompilerServices;
-
 namespace KatLang;
 
 /// <summary>
@@ -8,6 +6,35 @@ namespace KatLang;
 /// structured-error consumers need the ordinary parameter/error payloads,
 /// while only KatLang's diagnostic renderer consumes this implementation
 /// metadata.
+///
+/// <para><b>Identity and sharing.</b> ONE note is ONE promotion: the moment a
+/// detection run over one body first promotes an unresolved name
+/// (<c>ParameterDetector.ImplicitParameterOccurrenceRecorder</c>), in one
+/// front-end context. Every record that stands for that promotion references
+/// the SAME note object: the inferred capture, the declarations flattened from
+/// it, every caller signature implicit argument resolution lifts that very
+/// capture into, the dot edge whose fallback occurrence caused the promotion
+/// (<see cref="Expr.DotCall.InferredFallbackProvenance"/>), and the error
+/// snapshots the evaluator takes from a callee's parameters. Each carrier holds
+/// the reference in an equality-transparent <c>RuntimeStateSlot</c>, so a
+/// <c>with</c> copy is one more view of the same note and record equality never
+/// sees it. Nothing ever forks a note: a body elaborated again in another
+/// context (a module spliced under a second owner, a deferred branch
+/// materialized, a re-detected host tree) is a new promotion with a new note,
+/// which is why an independent context can reach an independent verdict.</para>
+///
+/// <para><b>Mutation.</b> <see cref="Name"/> and <see cref="Span"/> are fixed
+/// at promotion. The receiver-aware half — <see cref="DotMemberOrigin"/>, the
+/// suggestion, and <see cref="CanPositionAtOrigin"/> — is finalized IN PLACE
+/// by <see cref="DotMemberProvenanceFinalizer"/>, the one walk that runs after
+/// exposure completion (once per pipeline run; a deferred materialization is
+/// its own run over the notes it minted), through the three named operations
+/// below and nothing else; because the note is shared, the verdict reaches every view
+/// (every lifted caller included) without rewriting any executable node. The
+/// finalizer runs before its tree is published — inside the synchronous front
+/// end, or inside a deferred region's gated materialization over notes that
+/// materialization itself minted — and evaluation only reads, so no note is
+/// ever mutated concurrently.</para>
 /// </summary>
 internal sealed class ImplicitParameterProvenance
 {
@@ -48,7 +75,14 @@ internal sealed class ImplicitParameterProvenance
     /// </summary>
     internal DotMemberFallbackOrigin? DotMemberOrigin { get; private set; }
 
-    internal bool CanPositionAtOrigin { get; set; } = true;
+    /// <summary>
+    /// Whether a single-parameter report may be positioned at
+    /// <see cref="Span"/> (the member token of the dot edge). False once the
+    /// finalizer finds the edge inside a load-elaborated module, whose spans
+    /// belong to the module's source text: the report then keeps the local
+    /// demand span.
+    /// </summary>
+    internal bool CanPositionAtOrigin { get; private set; } = true;
 
     private NameSuggestion? Suggestion { get; set; }
 
@@ -65,6 +99,13 @@ internal sealed class ImplicitParameterProvenance
 
     internal void ConfirmDotMemberReceiver(Algorithm receiver)
         => Suggestion = Suggestion?.RestrictToReceiver(receiver);
+
+    /// <summary>
+    /// The edge lies in an imported module: keep the receiver-aware wording and
+    /// suggestion, but never position the importing document's report at the
+    /// module's coordinates.
+    /// </summary>
+    internal void ForgetOriginPosition() => CanPositionAtOrigin = false;
 
     internal static IReadOnlyList<ImplicitParameterProvenance>? CollectFrom(
         IReadOnlyList<ParameterDeclaration> parameters)
@@ -136,7 +177,10 @@ internal sealed class NameSuggestion
 /// owner may bind a former opened receiver as a parameter, or exposure may
 /// reveal a different opened provider. First-occurrence notes are shared with
 /// lifted captures, so invalidation reaches every caller without changing any
-/// executable node. Scope/node identity bounds shared-DAG traversal.
+/// executable node. Reads each dot edge's own carried note
+/// (<see cref="Expr.DotCall.InferredFallbackProvenance"/>) — the ONE place a
+/// note is mutated — and rewrites nothing. Scope/node identity bounds
+/// shared-DAG traversal.
 /// </summary>
 internal sealed class DotMemberProvenanceFinalizer(ElaboratedPropertyScope parentScope) : AstWalker
 {
@@ -190,11 +234,10 @@ internal sealed class DotMemberProvenanceFinalizer(ElaboratedPropertyScope paren
     {
         if (!Enter(expr))
             return;
-        if (expr is Expr.DotCall edge
-            && DiagnosticRecordMetadata<ImplicitParameterProvenance>.Get(edge) is { DotMemberOrigin: not null } note)
+        if (expr is Expr.DotCall { InferredFallbackProvenance: { DotMemberOrigin: not null } note } edge)
         {
             if (_inModule)
-                note.CanPositionAtOrigin = false;
+                note.ForgetOriginPosition();
             var receiver = edge.Target.UnwrapGraceOperand().ResolveStaticStructuralMemberProvider(name =>
             {
                 var hits = ElaboratedScopeLookup.LookupLexicalPropertyMatches(_scope, name);
@@ -210,33 +253,4 @@ internal sealed class DotMemberProvenanceFinalizer(ElaboratedPropertyScope paren
         }
         base.VisitExpr(expr);
     }
-}
-
-/// <summary>
-/// Stores diagnostic metadata beside records without adding an instance field.
-/// Record equality/hash/printing therefore remain exactly the pre-feature
-/// semantic identity. Explicit copy constructors call <see cref="Copy"/> so a
-/// user or evaluator <c>with</c> clone retains the diagnostic payload.
-/// </summary>
-internal static class DiagnosticRecordMetadata<T> where T : class
-{
-    private sealed class Holder(T value)
-    {
-        internal T Value { get; } = value;
-    }
-
-    private static readonly ConditionalWeakTable<object, Holder> Values = new();
-
-    internal static T? Get(object owner)
-        => Values.TryGetValue(owner, out var holder) ? holder.Value : null;
-
-    internal static void Set(object owner, T? value)
-    {
-        Values.Remove(owner);
-        if (value is not null)
-            Values.Add(owner, new Holder(value));
-    }
-
-    internal static void Copy(object source, object destination)
-        => Set(destination, Get(source));
 }

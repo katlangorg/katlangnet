@@ -2204,16 +2204,21 @@ internal static class ParameterDetector
             ReportIneffectiveGrace(memberGrace, memberCore, (dotCall, selection), scope, parameters, memo);
         }
 
-        var rewrittenDot = dotCall with
+        // The promotion note this collection recorded for the edge's fallback
+        // occurrence travels on the rewritten edge, so the post-exposure
+        // finalizer can re-examine the edge against the completed tree. A
+        // completion run records nothing and keeps the note the input edge
+        // already carries.
+        return dotCall with
         {
             Target = RewriteParams(dotCall.Target, scope, parameters, memo),
             Args = rewrittenArgs,
             LexicalFallback = RewriteParams(fallback, scope, parameters, memo),
             ElaboratedFallbackSelection = selection,
+            InferredFallbackProvenance = memo.DotMembers is { } dotMembers && dotMembers.TryGetValue(dotCall, out var provenance)
+                ? provenance
+                : dotCall.InferredFallbackProvenance,
         };
-        if (memo.DotMembers?.TryGetValue(dotCall, out var provenance) == true)
-            DiagnosticRecordMetadata<ImplicitParameterProvenance>.Set(rewrittenDot, provenance);
-        return rewrittenDot;
     }
 
     /// <summary>

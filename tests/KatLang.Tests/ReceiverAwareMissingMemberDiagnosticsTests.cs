@@ -542,11 +542,11 @@ public class ReceiverAwareMissingMemberDiagnosticsTests
     public void DotRecordClone_PreservesMetadataWithoutChangingIdentity()
     {
         var dot = Assert.IsType<Expr.DotCall>(Assert.Single(SourceProvenance.ParseValid(MathCeilingTypo).Root.Output));
-        var note = DiagnosticRecordMetadata<ImplicitParameterProvenance>.Get(dot);
+        var note = dot.InferredFallbackProvenance;
         Assert.NotNull(note);
-        var clone = dot with { };
-        Assert.Same(note, DiagnosticRecordMetadata<ImplicitParameterProvenance>.Get(clone));
-        DiagnosticRecordMetadata<ImplicitParameterProvenance>.Set(clone, null);
+        Assert.Same(note, (dot with { }).InferredFallbackProvenance);
+        var clone = dot with { InferredFallbackProvenance = null };
+        Assert.Null(clone.InferredFallbackProvenance);
         Assert.Equal(dot, clone);
         Assert.Equal(dot.GetHashCode(), clone.GetHashCode());
         Assert.Equal(dot.ToString(), clone.ToString());
