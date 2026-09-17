@@ -509,8 +509,9 @@ genuinely awaits module acquisition is (`ModuleLoader.ElaborateAsync`,
   synchronous primitives over already-constructed `Expr`, alongside the Phase 2
   `RunAsync`/`RunFlatAsync` twins. Trees carrying deferred regions require the async
   entries, including host copies and enclosing captures. Routing scans structural
-  children iteratively by identity. Host flat-binder normalization preserves region
-  metadata but demands the body only after argument binding, never during arity inspection.
+  children iteratively by identity. Host flat-binder normalization is a `with` view of
+  the branch body, so it carries the region, but demands the body only after argument
+  binding, never during arity inspection.
 
 ## Loader traversal: routed sync/async walks
 
@@ -529,17 +530,23 @@ The loader's rewrite walk exists in two lock-step forms, routed per subtree:
 - Clause families are handled by ownership (B2c, branch-lazy module loading, September
   2026): a family's own open list (host trees) is shared by every alternative and rewrites
   eagerly as an open list, while each alternative branch body that owns an unresolved load
-  is a DEFERRED module-elaboration region the walks never descend into. It is registered
-  (`DeferredModuleRegions`) with the family's load context, its counted depth (one level
-  below the family — `CondBranch` is a depth membrane like `Property`), and the live
-  traversal base, and it is materialized only when evaluation selects the branch:
+  is a DEFERRED module-elaboration region the walks never descend into. The region is
+  carried by the placeholder body that stands for it (`Algorithm.DeferredRegion`, an
+  equality-transparent record slot copied by `with`; September 2026, invalid-state audit
+  §3.2 — the earlier `DeferredModuleRegions` weak registry and root mark are gone) with the
+  family's load context, its counted depth (one level below the family — `CondBranch` is a
+  depth membrane like `Property`), and the live traversal base; each rewriting front-end
+  pass installs a fork of the region (plus its own context) on its output view, the
+  declaration validator records its bindings in place, and every ordinary `with` view
+  shares the region object. It is materialized only when evaluation selects the branch:
   `DeferredModuleRegion.MaterializeAsync` runs `ModuleLoader.LoadDeferredRegionAsync` (own
   pre-scan, the same routed walks, cache, cycle detection, policy, and budgets, diagnostics
   into a per-materialization list) and then the ordinary detector, resolver, and exposure
   passes under the contexts the eager passes recorded, serialized per loader by
   `MaterializationGate`. Nested families inside a materialized body are deferred again. A
-  root carrying deferred regions is marked and evaluated by the async twin family only,
-  with the async-capable cache. Previously the walks visited only the base `Algorithm`
+  tree carrying deferred regions (recognized from the tree itself,
+  `DeferredModuleRegion.RequiresAsyncEvaluation`) is evaluated by the async twin family
+  only, with the async-capable cache. Previously the walks visited only the base `Algorithm`
   accessors, which are empty for a family, leaving a load under a conditional for the
   post-elaboration guard to report; an interim repair descended every branch eagerly.
 - Deferred materialization is evaluation-owned (B2c hardening, September 2026): a region

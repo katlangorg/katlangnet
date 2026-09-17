@@ -203,7 +203,7 @@ public class SeededAsyncEvaluationTests
         var deferred = await Parser.ParseAsync(deferredSource, new RunOptions { DownloadCode = deferredDownloads.DownloadAsync });
         Assert.False(deferred.HasErrors, string.Join(Environment.NewLine, deferred.Diagnostics));
         var deferredAst = new Expr.AlgorithmExpr(deferred.Root);
-        Assert.True(DeferredModuleRegions.RequiresAsyncEvaluation(deferredAst));
+        Assert.True(DeferredModuleRegion.RequiresAsyncEvaluation(deferredAst));
         Assert.Equal(0, deferredDownloads.Fetches);
         // Genuinely deferred: the synchronous family cannot even start it.
         Assert.Throws<InvalidOperationException>(() => Evaluator.Run(deferredAst, null, Seed, CancellationToken.None));
@@ -228,7 +228,7 @@ public class SeededAsyncEvaluationTests
         Assert.False(eager.HasErrors, string.Join(Environment.NewLine, eager.Diagnostics));
         Assert.Equal(1, eagerDownloads.Fetches);
         var eagerAst = new Expr.AlgorithmExpr(eager.Root);
-        Assert.False(DeferredModuleRegions.RequiresAsyncEvaluation(eagerAst));
+        Assert.False(DeferredModuleRegion.RequiresAsyncEvaluation(eagerAst));
         AssertSameAtoms(expected, Atoms(Evaluator.Run(eagerAst, null, Seed, CancellationToken.None), static value => value));
 
         // Through the engine, deferred and eager routes agree too, and a second run of

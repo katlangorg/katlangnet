@@ -261,10 +261,10 @@ public static partial class Evaluator
         if (ChildOf(callee, cond.Branches[0].Body) is not Algorithm.User body)
             return null;
 
-        var equivalent = (Algorithm.User)body.WithParameters(Algorithm.NormalParameters(paramNames));
-        if (DeferredModuleRegions.TryGet(cond.Branches[0].Body, out var region))
-            DeferredModuleRegions.Register(equivalent, region);
-        return equivalent;
+        // A `with` view of the branch body: a deferred placeholder's region comes along
+        // (Algorithm.DeferredRegion), so demanding the equivalent's output materializes —
+        // and shares — the very region the branch carries.
+        return (Algorithm.User)body.WithParameters(Algorithm.NormalParameters(paramNames));
     }
 
     /// <summary>
@@ -723,10 +723,10 @@ public static partial class Evaluator
         EvalCtx ctx,
         ValEnv valEnv)
     {
-        if (DeferredModuleRegions.TryGet(alg, out var region))
+        if (alg.DeferredRegion is { } region)
         {
             if (!region.TryGetMaterialized(out var materialized))
-                throw DeferredModuleRegions.SynchronousSelectionNotSupported();
+                throw DeferredModuleRegion.SynchronousSelectionNotSupported();
             alg = materialized.WithParameters(alg.Parameters) with { Parent = alg.Parent };
         }
 

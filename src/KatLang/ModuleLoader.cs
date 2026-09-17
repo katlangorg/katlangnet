@@ -8,7 +8,7 @@ namespace KatLang;
 ///
 /// <para>
 /// <c>load</c> is a source-elaboration directive, NOT a runtime callable.
-/// Outside registered deferred branch regions, load calls are replaced with
+/// Outside deferred branch regions, load calls are replaced with
 /// <see cref="Expr.AlgorithmExpr"/> nodes containing the parsed remote algorithm.
 /// A selected deferred region completes loading and front-end elaboration before its body runs.
 /// </para>
@@ -887,12 +887,15 @@ internal sealed class ModuleLoader
     /// becomes a deferred module-elaboration region — nothing under it is fetched, parsed,
     /// elaborated, or budget-charged until evaluation selects that branch — represented in
     /// the output tree by a fresh placeholder object (a shallow clone of the raw body, so the
-    /// family keeps its written branch shape and output arity) registered in
-    /// <see cref="DeferredModuleRegions"/> with this walk's context: the family's load
+    /// family keeps its written branch shape and output arity) that CARRIES its region
+    /// (<see cref="Algorithm.DeferredRegion"/>) with this walk's context: the family's load
     /// context (the body inherits it exactly as eager elaboration would), the body's counted
     /// depth (<c>CondBranch</c> is a depth membrane, so one level below the family), and the
     /// live traversal base. A fresh placeholder per branch OCCURRENCE keeps regions distinct
-    /// even when host branches share one raw body object.
+    /// even when host branches share one raw body object (the clones share that body's
+    /// declaration identity; region identity is the placeholder's own). A body that is itself
+    /// a placeholder of an earlier elaboration is deferred over its region-free copy, so the
+    /// earlier region can never surface through a materialization of this one.
     /// </summary>
     private IReadOnlyList<CondBranch> DeferOrKeepBranches(Algorithm.Conditional conditional, LoadContext context, int depth)
     {
@@ -905,10 +908,11 @@ internal sealed class ModuleLoader
                 continue;
             }
 
-            var placeholder = branch.Body with { };
-            DeferredModuleRegions.Register(
-                placeholder,
-                new DeferredModuleRegion(this, branch.Body, context, depth + 1, _nestedTraversalBase));
+            var rawBody = branch.Body.DeferredRegion is null ? branch.Body : branch.Body with { DeferredRegion = null };
+            var placeholder = rawBody with
+            {
+                DeferredRegion = new DeferredModuleRegion(this, rawBody, context, depth + 1, _nestedTraversalBase),
+            };
             DeferredRegionCount++;
             branches.Add(new CondBranch(branch.Pattern, placeholder));
         }

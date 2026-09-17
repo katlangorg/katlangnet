@@ -291,8 +291,9 @@ public class ParameterPropertyCollisionTests
         Assert.Empty(parsed.Diagnostics);
         Assert.Equal("Q", Assert.Single(parsed.Root.Params));
         var family = Assert.Single(parsed.Root.Properties).Value;
-        Assert.True(DeferredModuleRegions.TryGet(family.Branches[1].Body, out var region));
-        Assert.Equal("n", Assert.Single(region!.Validation!.Declarations).Key);
+        var region = family.Branches[1].Body.DeferredRegion;
+        Assert.NotNull(region);
+        Assert.Equal("n", Assert.Single(region.Validation!.Declarations).Key);
         var failure = Assert.IsType<RunResult.EvalFailure>(await KatLangEngine.RunAsync(source, options));
         Assert.Equal(KatLangErrorCode.UnresolvedImplicitParams, Assert.Single(failure.Errors).Code);
         Assert.Equal(0, downloads);

@@ -160,7 +160,7 @@ internal sealed class DotMemberProvenanceFinalizer(ElaboratedPropertyScope paren
         var previousScope = _scope;
         var previousModule = _inModule;
         _inModule |= algorithm is Algorithm.User { IsModuleElaborated: true };
-        if (DeferredModuleRegions.IsDeferred(algorithm) || !Enter(algorithm))
+        if (algorithm.DeferredRegion is not null || !Enter(algorithm))
         {
             _inModule = previousModule;
             return;

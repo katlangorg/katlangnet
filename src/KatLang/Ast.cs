@@ -1195,10 +1195,20 @@ public sealed record Property(
 /// declarations with identical bodies are distinct because they were constructed separately.
 /// The private storage slot excludes the token from structural record equality and printing;
 /// equal algorithms still hash alike. The token itself has ordinary reference equality.</para>
+///
+/// <para><b>Deferred-region state.</b> The one other equality-transparent fact an algorithm
+/// value carries is <see cref="DeferredRegion"/>: the deferred module-elaboration region a
+/// branch-body PLACEHOLDER stands for (B2c; null for every ordinary algorithm). It lives in
+/// the same kind of slot, so a <c>with</c> copy of a placeholder is a view of the same
+/// region with no registration step, while the front-end passes install a forked region
+/// (the same loader facts plus their own context) on the output view they produce. Region
+/// identity is NOT declaration identity: two placeholders cloned from one shared raw body
+/// share a declaration and have two independent regions.</para>
 /// </summary>
 public closed record Algorithm
 {
-    private readonly DeclarationIdentitySlot _declaration;
+    private readonly RuntimeStateSlot<DeclarationIdentity?> _declaration;
+    private readonly RuntimeStateSlot<DeferredModuleRegion?> _deferredRegion;
 
     private Algorithm(DeclarationIdentity? declaration)
     {
@@ -1212,18 +1222,38 @@ public closed record Algorithm
     /// (Lean: <c>Algorithm.declarationId</c>, <c>none</c> for <c>.builtin</c>). Compared by
     /// reference. Runtime-only: it takes no part in record equality.
     /// </summary>
-    internal DeclarationIdentity? Declaration => _declaration.Identity;
+    internal DeclarationIdentity? Declaration => _declaration.Value;
 
-    // The record copy constructor copies this one-reference value automatically. Only
-    // the PRIVATE SLOT is equality-transparent, never the semantic token exposed above:
-    // ordinary token Equals, dictionaries, and LINQ all retain reference identity.
-    // Keeping this exclusion here also leaves the compiler responsible for comparing
-    // every structural Algorithm field, including any added in the future.
-    private readonly struct DeclarationIdentitySlot(DeclarationIdentity? identity) : IEquatable<DeclarationIdentitySlot>
+    /// <summary>
+    /// [HOST] B2c: the deferred module-elaboration region this algorithm value is the
+    /// placeholder body of, or null for every ordinary algorithm (Lean has no counterpart:
+    /// its input model has no external modules and no demand timing). Set by the module
+    /// loader when it defers a load-bearing branch body, and REPLACED — never registered
+    /// anywhere — by each front-end pass on the output view it produces for that placeholder
+    /// (<see cref="DeferredModuleRegion.WithDetection"/> and its siblings fork the region
+    /// with the pass's own context). Every <c>with</c> copy of a placeholder carries the same
+    /// region object through the record copy constructor: the evaluator's parent wiring and
+    /// the flat-binder equivalent of a one-clause family read the very state machine the
+    /// branch body carries, so one materialization serves them all. Takes no part in record
+    /// equality, hashing, or printing, and is not a structural child: no traversal follows it.
+    /// </summary>
+    internal DeferredModuleRegion? DeferredRegion
     {
-        internal DeclarationIdentity? Identity { get; } = identity;
-        public bool Equals(DeclarationIdentitySlot other) => true;
-        public override bool Equals(object? obj) => obj is DeclarationIdentitySlot;
+        get => _deferredRegion.Value;
+        init => _deferredRegion = new(value);
+    }
+
+    // The ONE storage shape for runtime/front-end state carried by an algorithm value: the
+    // record copy constructor copies the one-reference value automatically, and only the
+    // PRIVATE SLOT is equality-transparent, never the value exposed above (a declaration
+    // token's ordinary Equals, dictionaries, and LINQ all retain reference identity).
+    // Keeping the exclusion here also leaves the compiler responsible for comparing every
+    // structural Algorithm field, including any added in the future.
+    private readonly struct RuntimeStateSlot<T>(T value) : IEquatable<RuntimeStateSlot<T>>
+    {
+        internal T Value { get; } = value;
+        public bool Equals(RuntimeStateSlot<T> other) => true;
+        public override bool Equals(object? obj) => obj is RuntimeStateSlot<T>;
         public override int GetHashCode() => 0;
     }
 

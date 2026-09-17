@@ -61,9 +61,11 @@ internal sealed class ParameterPropertyCollisionValidator(
         if (!FirstVisit(algorithm))
             return;
         // Provisional deferred signatures are not declarations of the loaded program.
-        // Record completed ancestors and branch binders; validate after materialization.
-        if (DeferredModuleRegions.TryGet(algorithm, out var region))
-            DeferredModuleRegions.Register(algorithm, region.WithValidation(_parameters));
+        // Record completed ancestors and branch binders on the region the placeholder
+        // carries; validate after materialization. (This walk rewrites nothing, so the
+        // recording is the one in-place update a region ever receives from the front end.)
+        if (algorithm.DeferredRegion is { } region)
+            region.RecordValidation(_parameters);
         else
             base.VisitAlgorithm(algorithm);
     }

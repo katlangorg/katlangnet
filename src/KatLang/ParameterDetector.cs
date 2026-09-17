@@ -392,7 +392,7 @@ internal static class ParameterDetector
         foreach (var branch in condAlg.Branches)
         {
             var binderNames = new HashSet<string>(branch.Pattern.BoundNames());
-            if (DeferredModuleRegions.TryGet(branch.Body, out var region))
+            if (branch.Body.DeferredRegion is { } region)
             {
                 // Even a body with no provisional reference to the lifted name must carry
                 // the completed owner chain: its loaded source may reference it later.
@@ -404,9 +404,10 @@ internal static class ParameterDetector
                 // the same walk with the diagnostics sink withheld, so binder and
                 // ancestor-parameter references become Params (what the exposure summary
                 // channel needs to classify the family soundly) while no undeclared-identifier
-                // diagnostic can be raised against names a deferred module may provide. The
-                // region records this exact context for the demand-time run and is re-keyed
-                // by this region's own output body.
+                // diagnostic can be raised against names a deferred module may provide. This
+                // pass's output view of the placeholder carries the region forked with this
+                // exact context for the demand-time run — one view per family occurrence, so
+                // a placeholder reached under two contexts yields two independent regions.
                 var provisionalBody = ProcessConditionalBranchBody(
                     branch.Body,
                     branchParentScope,
@@ -416,14 +417,14 @@ internal static class ParameterDetector
                     diagnostics: null,
                     observations,
                     run);
-                DeferredModuleRegions.Register(
-                    provisionalBody,
-                    region.WithDetection(new DeferredBranchContext(
+                processedBranches.Add(new CondBranch(branch.Pattern, provisionalBody with
+                {
+                    DeferredRegion = region.WithDetection(new DeferredBranchContext(
                         branchParentScope,
                         new HashSet<string>(binderNames),
                         propertyName,
-                        capturedParameters)));
-                processedBranches.Add(new CondBranch(branch.Pattern, provisionalBody));
+                        capturedParameters)),
+                }));
                 continue;
             }
 

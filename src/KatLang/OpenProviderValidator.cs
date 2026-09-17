@@ -57,7 +57,7 @@ internal sealed class OpenProviderValidator : AstWalker
     {
         // A deferred region's provisional body is validated when it materializes, under the
         // chain recorded at its branch.
-        if (DeferredModuleRegions.IsDeferred(algorithm) || !_openPresence.Contains(algorithm) || !FirstVisit(algorithm))
+        if (algorithm.DeferredRegion is not null || !_openPresence.Contains(algorithm) || !FirstVisit(algorithm))
             return;
 
         base.VisitAlgorithm(algorithm);

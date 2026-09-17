@@ -337,11 +337,10 @@ internal static class FrontEndPipeline
         cancellationToken.ThrowIfCancellationRequested();
 
         // B2c: a tree with deferred module regions is evaluated by the async evaluation
-        // family only (materializing a selected branch awaits the module downloader); the
-        // mark is what routes it there and what makes the synchronous entry points reject it.
-        if (hasDeferredModuleRegions)
-            DeferredModuleRegions.MarkRootRequiresAsyncEvaluation(propertyExposedRoot);
-
+        // family only (materializing a selected branch awaits the module downloader). The
+        // placeholders the tree carries are what route it there and what make the synchronous
+        // entry points reject it (DeferredModuleRegion.RequiresAsyncEvaluation walks the tree
+        // itself), so no root has to be marked — and no copy of one can lose a mark.
         return new FrontEndResult(propertyExposedRoot, diagnostics, canEvaluateAfterLoadErrors, hasDeferredModuleRegions);
     }
 }

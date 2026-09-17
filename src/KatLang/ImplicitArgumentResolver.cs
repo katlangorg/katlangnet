@@ -867,21 +867,21 @@ internal static class ImplicitArgumentResolver
         var branches = new List<CondBranch>(conditional.Branches.Count);
         foreach (var branch in conditional.Branches)
         {
-            if (DeferredModuleRegions.TryGet(branch.Body, out var region))
+            if (branch.Body.DeferredRegion is { } region)
             {
                 // B2c: a deferred module region is not resolved eagerly (its provisional body
                 // is never evaluated, and resolving it could only report false forwarding
-                // refusals against names a deferred module provides). The region records the
-                // visible signature map as it stands HERE — a snapshot, since the property loop
-                // keeps extending the map — and is re-keyed by this region's own output body.
-                var placeholder = branch.Body with { };
-                DeferredModuleRegions.Register(
-                    placeholder,
-                    region.WithResolution(new DeferredBranchContext(
+                // refusals against names a deferred module provides). This pass's output view
+                // of the placeholder carries the region forked with the visible signature map
+                // as it stands HERE — a snapshot, since the property loop keeps extending the
+                // map — one view per family occurrence.
+                branches.Add(new CondBranch(branch.Pattern, branch.Body with
+                {
+                    DeferredRegion = region.WithResolution(new DeferredBranchContext(
                         new Dictionary<string, CallableSignature>(parentParamMap),
                         propertyName,
-                        branch.Pattern)));
-                branches.Add(new CondBranch(branch.Pattern, placeholder));
+                        branch.Pattern)),
+                }));
                 continue;
             }
 

@@ -1,5 +1,4 @@
 using System.Diagnostics.CodeAnalysis;
-using System.Runtime.CompilerServices;
 
 namespace KatLang;
 
@@ -19,10 +18,25 @@ namespace KatLang;
 /// boundaries. The materialized body is cached on the region for the lifetime of the
 /// elaborated tree (the same lifetime as the loader's per-URL module cache).
 ///
-/// <para>Contexts are recorded per REGION, never per shared node: every pass that reaches a
-/// deferred branch registers a fresh body object for its own output tree, so a branch body
-/// shared between two host regions gets two independent records and can never inherit the
-/// materialization of whichever region ran first.</para>
+/// <para><b>Where a region lives.</b> A region is carried BY the placeholder body that stands
+/// for it in the elaborated tree — <see cref="Algorithm.DeferredRegion"/>, an
+/// equality-transparent slot the record copy constructor copies — never by a side table
+/// keyed on the body's identity. One region is one deferred branch OCCURRENCE: the loader
+/// clones a fresh placeholder per load-bearing branch it defers (its own region object, even
+/// when host branches share one raw body object, so region identity is NOT declaration
+/// identity — every clone of one raw body keeps that body's <see cref="Algorithm.Declaration"/>),
+/// and each rewriting front-end pass installs a FORK of the region it found — the same loader
+/// facts plus the pass's own context, see <see cref="WithDetection"/>,
+/// <see cref="WithResolution"/>, and <see cref="WithExposure"/> — on the output view it
+/// produces for the placeholder, so a placeholder reached under two front-end contexts (a
+/// shared host subtree, one module spliced at two sites) yields two independent regions, and
+/// a branch body can never inherit the materialization of whichever context ran first. The
+/// one pass that observes without rewriting, declaration validation, RECORDS its bindings on
+/// the region the tree already carries (<see cref="RecordValidation"/>). Everything that
+/// merely copies a placeholder — parent wiring, a parameter-list replacement, the flat-binder
+/// equivalent of a one-clause family — is a view of the same occurrence and shares its
+/// region object, and with it the one materialization; nothing has to remember to re-attach
+/// anything.</para>
 ///
 /// <para>Lean has no counterpart: its input model is an already-elaborated tree with no
 /// external modules and no demand timing. Once materialized, the selected branch is the very
@@ -36,6 +50,7 @@ internal sealed class DeferredModuleRegion
     private Algorithm? _materialized;
     private int _materializationAttempts;
     private MaterializationRun? _inFlight;
+    private ParameterPropertyCollisionValidator.ParameterBindings? _validation;
 
     internal DeferredModuleRegion(
         ModuleLoader loader,
@@ -44,6 +59,9 @@ internal sealed class DeferredModuleRegion
         int depth,
         int nestedTraversalBase)
     {
+        if (rawBody.DeferredRegion is not null)
+            throw new ArgumentException("A deferred region's raw body is unelaborated source structure and carries no region.", nameof(rawBody));
+
         Loader = loader;
         RawBody = rawBody;
         Context = context;
@@ -51,6 +69,8 @@ internal sealed class DeferredModuleRegion
         NestedTraversalBase = nestedTraversalBase;
     }
 
+    // A fork: the same occurrence's loader facts and every context recorded so far, with
+    // its OWN materialization state (a fork is made by the front end, before any evaluation).
     private DeferredModuleRegion(DeferredModuleRegion source)
     {
         Loader = source.Loader;
@@ -60,14 +80,20 @@ internal sealed class DeferredModuleRegion
         NestedTraversalBase = source.NestedTraversalBase;
         Detection = source.Detection;
         Resolution = source.Resolution;
-        Validation = source.Validation;
+        _validation = source._validation;
         Exposure = source.Exposure;
     }
 
     /// <summary>The loader that deferred the region: its cache, budget, policy, and downloader.</summary>
     internal ModuleLoader Loader { get; }
 
-    /// <summary>The branch body exactly as the loader found it — unelaborated, with its load directives.</summary>
+    /// <summary>
+    /// The branch body exactly as the loader found it — unelaborated, with its load directives
+    /// and, by construction, no <see cref="Algorithm.DeferredRegion"/> of its own (the loader
+    /// strips one before deferring a body that was itself a placeholder of an earlier
+    /// elaboration), so a materialization derived from it by <c>with</c> copies is never a
+    /// placeholder for anything.
+    /// </summary>
     internal Algorithm RawBody { get; }
 
     /// <summary>The load context the family was reached under; the body inherits it, exactly as eager elaboration would apply it.</summary>
@@ -79,13 +105,17 @@ internal sealed class DeferredModuleRegion
     /// <summary>The live traversal base at deferral (non-zero when the family sits inside a loaded module).</summary>
     internal int NestedTraversalBase { get; }
 
+    /// <summary>Installed by parameter detection on its output view of the placeholder (replaced when ownership completion re-detects).</summary>
     internal ParameterDetector.DeferredBranchContext? Detection { get; private init; }
 
+    /// <summary>Installed by implicit-argument resolution on its output view (replaced by the signature-preserving re-resolution).</summary>
     internal ImplicitArgumentResolver.DeferredBranchContext? Resolution { get; private init; }
 
+    /// <summary>Installed by property-exposure resolution on its output view — the last eager pass, so the tree's final region carries every context.</summary>
     internal PropertyExposureResolver.DeferredBranchContext? Exposure { get; private init; }
 
-    internal ParameterPropertyCollisionValidator.ParameterBindings? Validation { get; private init; }
+    /// <summary>Recorded by declaration validation (see <see cref="RecordValidation"/>); carried by every later fork.</summary>
+    internal ParameterPropertyCollisionValidator.ParameterBindings? Validation => _validation;
 
     internal DeferredModuleRegion WithDetection(ParameterDetector.DeferredBranchContext detection)
         => new(this) { Detection = detection };
@@ -96,8 +126,16 @@ internal sealed class DeferredModuleRegion
     internal DeferredModuleRegion WithExposure(PropertyExposureResolver.DeferredBranchContext exposure)
         => new(this) { Exposure = exposure };
 
-    internal DeferredModuleRegion WithValidation(ParameterPropertyCollisionValidator.ParameterBindings validation)
-        => new(this) { Validation = validation };
+    /// <summary>
+    /// Records the completed enclosing parameter bindings declaration validation held at the
+    /// branch. Validation is an observation walk over a completed tree — it rewrites nothing,
+    /// so there is no output view to install a fork on — and it runs before exposure
+    /// resolution, whose fork carries the recording into the tree's final region. A later
+    /// recording replaces an earlier one (a placeholder reached under two binding contexts of
+    /// a shared host subtree keeps the last, as the registry it replaces did).
+    /// </summary>
+    internal void RecordValidation(ParameterPropertyCollisionValidator.ParameterBindings validation)
+        => _validation = validation;
 
     /// <summary>Completed materializations plus failed attempts; test-observable, never a decision input.</summary>
     internal int MaterializationAttempts => Volatile.Read(ref _materializationAttempts);
@@ -140,7 +178,7 @@ internal sealed class DeferredModuleRegion
         {
             throw new InvalidOperationException(
                 "Internal error: a deferred module region reached evaluation without its complete elaboration context. " +
-                "The front-end pipeline registers every deferred branch through parameter detection, implicit-argument " +
+                "The front-end pipeline carries every deferred branch through parameter detection, implicit-argument " +
                 "resolution, declaration validation, and exposure resolution before a tree is evaluated.");
         }
 
@@ -337,43 +375,19 @@ internal sealed class DeferredModuleRegion
 
         return false;
     }
-}
 
-/// <summary>
-/// The registry of deferred module regions, keyed by the REFERENCE identity of the branch
-/// body object that stands in the elaborated tree. Per-node metadata rather than a traversal
-/// memo (it is weak, so it retains nothing beyond the trees it annotates, and it is never
-/// consulted as a cache of traversal work); the same discipline as
-/// <see cref="DiagnosticRecordMetadata{T}"/>. Keys are unique per region by construction: the
-/// loader registers a fresh placeholder per branch occurrence, and each later pass registers
-/// its own output body, so two regions sharing one raw body never share a record.
-/// </summary>
-internal static class DeferredModuleRegions
-{
-    private static readonly ConditionalWeakTable<Algorithm, DeferredModuleRegion> Regions = new();
-
-    private static readonly ConditionalWeakTable<Algorithm, object> RootsRequiringAsyncEvaluation = new();
-
-    private static readonly object RootMarker = new();
-
-    internal static void Register(Algorithm body, DeferredModuleRegion region)
-        => Regions.AddOrUpdate(body, region);
-
-    internal static bool TryGet(Algorithm body, [NotNullWhen(true)] out DeferredModuleRegion? region)
-        => Regions.TryGetValue(body, out region);
-
-    internal static bool IsDeferred(Algorithm body)
-        => Regions.TryGetValue(body, out _);
+    // ── Routing helpers (stateless) ─────────────────────────────────────────
 
     /// <summary>
-    /// Marks an elaborated root that contains deferred regions: evaluating it requires the
-    /// async evaluation family, because materialization awaits the module downloader. The
-    /// front-end pipeline marks every such root; a manually assembled pipeline marks its
-    /// root the same way.
+    /// Whether evaluating <paramref name="expr"/> can reach a deferred module region — the
+    /// ONE fact that routes a run to the async evaluation family (materializing a selected
+    /// branch awaits the module downloader) and makes the synchronous entry points reject
+    /// the tree. Answered from the tree itself: an iterative walk over the structural
+    /// children (the same enumeration the structural preflight uses, host copies and
+    /// enclosing captures included) that stops at the first placeholder body it meets. There
+    /// is no root mark to keep in step with copies: a <c>with</c> copy of the root, or of
+    /// any subtree, carries its placeholders and their regions with it.
     /// </summary>
-    internal static void MarkRootRequiresAsyncEvaluation(Algorithm root)
-        => RootsRequiringAsyncEvaluation.AddOrUpdate(root, RootMarker);
-
     internal static bool RequiresAsyncEvaluation(Expr expr)
     {
         var pending = new Stack<object>();
@@ -384,8 +398,7 @@ internal static class DeferredModuleRegions
             if (!visited.Add(node))
                 continue;
 
-            if (node is Algorithm algorithm
-                && (RootsRequiringAsyncEvaluation.TryGetValue(algorithm, out _) || IsDeferred(algorithm)))
+            if (node is Algorithm { DeferredRegion: not null })
                 return true;
 
             for (var index = 0; AstStructuralPreflight.TryGetChild(node, index, out var child); index++)

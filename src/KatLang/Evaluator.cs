@@ -2376,7 +2376,7 @@ public static partial class Evaluator
     /// </summary>
     private static void ThrowIfDeferredModuleRegionsOnSynchronousEntry(Expr expr)
     {
-        if (DeferredModuleRegions.RequiresAsyncEvaluation(expr))
+        if (DeferredModuleRegion.RequiresAsyncEvaluation(expr))
         {
             throw new InvalidOperationException(
                 "The program contains conditional branches whose module dependencies load on demand " +

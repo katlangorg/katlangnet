@@ -1329,7 +1329,6 @@ public class FrontEndDagComplexityTests
             var resolved = ImplicitArgumentResolver.Resolve(detected);
             new ParameterPropertyCollisionValidator(diagnostics).VisitAlgorithm(resolved);
             var exposed = PropertyExposureResolver.Resolve(resolved);
-            DeferredModuleRegions.MarkRootRequiresAsyncEvaluation(exposed);
             var demandObservations = new FrontEndTraversalObservations();
             loader.TraversalObservations = demandObservations;
 
@@ -1351,10 +1350,12 @@ public class FrontEndDagComplexityTests
             {
                 var left = Assert.IsType<Algorithm.Conditional>(Assert.Single(current.Properties, p => p.Name == "Left").Value);
                 var right = Assert.IsType<Algorithm.Conditional>(Assert.Single(current.Properties, p => p.Name == "Right").Value);
-                Assert.True(DeferredModuleRegions.TryGet(Assert.Single(left.Branches).Body, out var leftRegion));
-                Assert.True(DeferredModuleRegions.TryGet(Assert.Single(right.Branches).Body, out var rightRegion));
+                var leftRegion = Assert.Single(left.Branches).Body.DeferredRegion;
+                var rightRegion = Assert.Single(right.Branches).Body.DeferredRegion;
+                Assert.NotNull(leftRegion);
+                Assert.NotNull(rightRegion);
                 Assert.NotSame(leftRegion, rightRegion);
-                Assert.Same(leftRegion!.RawBody, rightRegion!.RawBody);
+                Assert.Same(leftRegion.RawBody, rightRegion.RawBody);
                 Assert.Equal(1, leftRegion.MaterializationAttempts);
                 Assert.Equal(0, rightRegion.MaterializationAttempts);
                 Assert.True(leftRegion.TryGetMaterialized(out var materialized));

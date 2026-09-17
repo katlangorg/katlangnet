@@ -243,8 +243,8 @@ public static partial class Evaluator
 
     /// <summary>
     /// The body a SELECTED conditional branch evaluates. An ordinary branch evaluates its
-    /// written body; a branch whose body is a deferred module region
-    /// (<see cref="DeferredModuleRegions"/>) evaluates its MATERIALIZED body — the one
+    /// written body; a branch whose body is a deferred module region's placeholder
+    /// (<see cref="Algorithm.DeferredRegion"/>) evaluates its MATERIALIZED body — the one
     /// eager elaboration would have produced, so the core rules from here on are unchanged.
     /// The synchronous family can only use a materialization that already exists: producing
     /// one awaits the module downloader, which the async family does through
@@ -256,13 +256,13 @@ public static partial class Evaluator
     /// </summary>
     private static Algorithm SelectedBranchBody(CondBranch branch)
     {
-        if (!DeferredModuleRegions.TryGet(branch.Body, out var region))
+        if (branch.Body.DeferredRegion is not { } region)
             return branch.Body;
 
         if (region.TryGetMaterialized(out var materialized))
             return materialized;
 
-        throw DeferredModuleRegions.SynchronousSelectionNotSupported();
+        throw DeferredModuleRegion.SynchronousSelectionNotSupported();
     }
 
     /// <summary>
@@ -275,7 +275,7 @@ public static partial class Evaluator
     /// </summary>
     private static async ValueTask<EvalResult<Algorithm>> SelectedBranchBodyAsync(CondBranch branch, EvalCtx ctx)
     {
-        if (!DeferredModuleRegions.TryGet(branch.Body, out var region))
+        if (branch.Body.DeferredRegion is not { } region)
             return EvalResult<Algorithm>.Ok(branch.Body);
 
         if (region.TryGetMaterialized(out var materialized))

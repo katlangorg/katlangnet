@@ -296,7 +296,7 @@ public static partial class Evaluator
             // B2c: a root carrying deferred module regions — materializing a selected branch
             // awaits the module downloader, the third and only other run component that can
             // complete asynchronously.
-            || DeferredModuleRegions.RequiresAsyncEvaluation(expr);
+            || DeferredModuleRegion.RequiresAsyncEvaluation(expr);
 
     /// <summary>
     /// Routing enforcement for the twin path's property seam: the twin family awaits
@@ -323,7 +323,7 @@ public static partial class Evaluator
                 "for the run; use an async evaluation entry point that constructs one.");
         }
 
-        if (DeferredModuleRegions.RequiresAsyncEvaluation(expr))
+        if (DeferredModuleRegion.RequiresAsyncEvaluation(expr))
         {
             throw new InvalidOperationException(
                 "A program with deferred module regions (conditional branches whose module dependencies load " +
@@ -350,7 +350,7 @@ public static partial class Evaluator
         => hostOperations?.ContainsAsynchronousOperations == true
             // B2c: a root carrying deferred module regions runs on the twin path too, and
             // so pairs with the async-capable cache by the same rule.
-            || DeferredModuleRegions.RequiresAsyncEvaluation(expr)
+            || DeferredModuleRegion.RequiresAsyncEvaluation(expr)
             ? new RunScopedAsyncZeroArgPropertyResultCache()
             : new RunScopedZeroArgPropertyResultCache();
 
@@ -1234,7 +1234,7 @@ public static partial class Evaluator
         EvalCtx ctx,
         ValEnv valEnv)
     {
-        if (DeferredModuleRegions.TryGet(alg, out var region))
+        if (alg.DeferredRegion is { } region)
         {
             var materialized = await region.MaterializeAsync(ctx.Budget.CancellationToken).ConfigureAwait(false);
             if (materialized.IsError)

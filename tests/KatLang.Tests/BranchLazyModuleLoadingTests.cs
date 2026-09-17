@@ -81,8 +81,9 @@ public class BranchLazyModuleLoadingTests
 
     private static DeferredModuleRegion Region(Algorithm root, string family, int branch)
     {
-        Assert.True(DeferredModuleRegions.TryGet(Family(root, family).Branches[branch].Body, out var region));
-        return region!;
+        var region = Family(root, family).Branches[branch].Body.DeferredRegion;
+        Assert.NotNull(region);
+        return region;
     }
 
     // ── A. A dead branch may contain an unavailable module ──────────────────
@@ -257,10 +258,12 @@ public class BranchLazyModuleLoadingTests
         Assert.True(outer.TryGetMaterialized(out var materializedOuter));
         var inner = Assert.IsType<Algorithm.Conditional>(
             materializedOuter!.Properties.Single(property => property.Name == "G").Value);
-        Assert.True(DeferredModuleRegions.TryGet(inner.Branches[0].Body, out var selectedInner));
-        Assert.True(DeferredModuleRegions.TryGet(inner.Branches[1].Body, out var unselectedInner));
-        Assert.True(selectedInner!.IsMaterialized);
-        Assert.False(unselectedInner!.IsMaterialized);
+        var selectedInner = inner.Branches[0].Body.DeferredRegion;
+        var unselectedInner = inner.Branches[1].Body.DeferredRegion;
+        Assert.NotNull(selectedInner);
+        Assert.NotNull(unselectedInner);
+        Assert.True(selectedInner.IsMaterialized);
+        Assert.False(unselectedInner.IsMaterialized);
         Assert.Equal(0, unselectedInner.MaterializationAttempts);
         Assert.Equal(0, modules[ModuleB]);
     }
@@ -459,9 +462,14 @@ public class BranchLazyModuleLoadingTests
 
         public RunOptions Options => new() { DownloadCode = Download };
 
-        public Task Started(string url) => For(url).Started.Task;
+        // Bounded: a regression that never reaches (or never leaves) the downloader — a
+        // placeholder that lost its region, a materialization that never starts — fails the
+        // test instead of hanging the suite.
+        private static readonly TimeSpan WaitLimit = TimeSpan.FromSeconds(30);
 
-        public Task Exited(string url) => For(url).Exited.Task;
+        public Task Started(string url) => For(url).Started.Task.WaitAsync(WaitLimit);
+
+        public Task Exited(string url) => For(url).Exited.Task.WaitAsync(WaitLimit);
 
         public int Calls(string url) => For(url).Calls;
 

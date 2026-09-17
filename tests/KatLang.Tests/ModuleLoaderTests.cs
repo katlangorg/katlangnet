@@ -979,13 +979,14 @@ public class ModuleLoaderTests
         Assert.False(parsed.HasErrors, string.Join(Environment.NewLine, parsed.Diagnostics.Select(d => d.Message)));
         Assert.Equal(0, downloads);
         var family = Assert.IsType<Algorithm.Conditional>(parsed.Root.Properties.Single(p => p.Name == "F").Value);
-        Assert.True(DeferredModuleRegions.TryGet(family.Branches[0].Body, out var region));
-        Assert.False(region!.IsMaterialized);
+        var region = family.Branches[0].Body.DeferredRegion;
+        Assert.NotNull(region);
+        Assert.False(region.IsMaterialized);
         Assert.Equal(0, region.MaterializationAttempts);
         // The directive stays inside the deferred region by design (never an unresolved load
         // the pipeline forgot), and the load-free alternative is an ordinary eager branch.
         Assert.True(ContainsRawLoad(family.Branches[0].Body));
-        Assert.False(DeferredModuleRegions.IsDeferred(family.Branches[1].Body));
+        Assert.Null(family.Branches[1].Body.DeferredRegion);
 
         var result = await Evaluator.RunFlatAsync(new Expr.AlgorithmExpr(parsed.Root));
 
@@ -1049,11 +1050,17 @@ public class ModuleLoaderTests
         var familyModule = Assert.IsType<Expr.AlgorithmExpr>(Assert.Single(family.Opens)).Algorithm;
         Assert.Contains(familyModule.Properties, p => p.Name == "FamilyValue");
         Assert.NotSame(family.Branches[0].Body, family.Branches[1].Body);
-        Assert.True(DeferredModuleRegions.TryGet(family.Branches[0].Body, out var loaderRegion0));
-        Assert.True(DeferredModuleRegions.TryGet(family.Branches[1].Body, out var loaderRegion1));
+        var loaderRegion0 = family.Branches[0].Body.DeferredRegion;
+        var loaderRegion1 = family.Branches[1].Body.DeferredRegion;
+        Assert.NotNull(loaderRegion0);
+        Assert.NotNull(loaderRegion1);
         Assert.NotSame(loaderRegion0, loaderRegion1);
-        Assert.Same(loaderRegion0!.RawBody, loaderRegion1!.RawBody);
-        Assert.False(DeferredModuleRegions.IsDeferred(family.Branches[2].Body));
+        Assert.Same(loaderRegion0.RawBody, loaderRegion1.RawBody);
+        // The two placeholders are views of the ONE shared declaration: region identity is
+        // the placeholder's own, never the declaration's.
+        Assert.Same(sharedBody.Declaration, family.Branches[0].Body.Declaration);
+        Assert.Same(sharedBody.Declaration, family.Branches[1].Body.Declaration);
+        Assert.Null(family.Branches[2].Body.DeferredRegion);
 
         var (detected, detectorDiagnostics) = ParameterDetector.Detect(elaborated);
         Assert.Empty(detectorDiagnostics);
@@ -1061,25 +1068,25 @@ public class ModuleLoaderTests
         new ParameterPropertyCollisionValidator(diagnostics).VisitAlgorithm(resolved);
         var exposed = PropertyExposureResolver.Resolve(resolved);
         family = Assert.IsType<Algorithm.Conditional>(Assert.Single(exposed.Properties).Value);
-        Assert.True(DeferredModuleRegions.TryGet(family.Branches[0].Body, out var region0));
-        Assert.True(DeferredModuleRegions.TryGet(family.Branches[1].Body, out var region1));
+        var region0 = family.Branches[0].Body.DeferredRegion;
+        var region1 = family.Branches[1].Body.DeferredRegion;
+        Assert.NotNull(region0);
+        Assert.NotNull(region1);
 
+        // A host copy of the root carries its placeholders — and with them the regions that
+        // route the run to the async family — with no marking step.
         Algorithm Program(int literal)
-        {
-            var program = exposed with
+            => exposed with
             {
                 Output = new OutputBundle([new Expr.Call(new Expr.Resolve("F"), new OutputBundle([new Expr.Num(literal)]))]),
             };
-            DeferredModuleRegions.MarkRootRequiresAsyncEvaluation(program);
-            return program;
-        }
 
         var first = await Evaluator.RunFlatAsync(new Expr.AlgorithmExpr(Program(0)));
         Assert.False(first.IsError, first.IsError ? first.Error.ToString() : null);
         Assert.Equal([15m], first.Value);
         Assert.Equal(1, downloads["https://katlang.org/demo/branch.kat"]);
-        Assert.Equal(1, region0!.MaterializationAttempts);
-        Assert.Equal(0, region1!.MaterializationAttempts);
+        Assert.Equal(1, region0.MaterializationAttempts);
+        Assert.Equal(0, region1.MaterializationAttempts);
 
         var second = await Evaluator.RunFlatAsync(new Expr.AlgorithmExpr(Program(1)));
         Assert.False(second.IsError, second.IsError ? second.Error.ToString() : null);

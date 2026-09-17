@@ -213,8 +213,8 @@ public class RunEntryPreparationTests
 
         Assert.IsAssignableFrom<IAsyncZeroArgPropertyResultCache>(
             Evaluator.CreateRunScopedZeroArgPropertyResultCache(lazyRoot, hostOperations: null));
-        Assert.True(DeferredModuleRegions.RequiresAsyncEvaluation(lazyRoot));
-        Assert.False(DeferredModuleRegions.RequiresAsyncEvaluation(Program));
+        Assert.True(DeferredModuleRegion.RequiresAsyncEvaluation(lazyRoot));
+        Assert.False(DeferredModuleRegion.RequiresAsyncEvaluation(Program));
     }
 
     [Fact]

@@ -109,7 +109,8 @@ public class EvaluatorIdentityStateReviewTests
         var parsed = await SourceProvenance.ParseValidAsync(source, options);
         var family = Assert.IsType<Algorithm.Conditional>(Assert.Single(parsed.Root.Properties).Value);
         var placeholder = family.Branches[1].Body;
-        Assert.True(DeferredModuleRegions.TryGet(placeholder, out var region));
+        var region = placeholder.DeferredRegion;
+        Assert.NotNull(region);
         Assert.Equal(0, downloads);
         for (var run = 0; run < 2; run++)
         {

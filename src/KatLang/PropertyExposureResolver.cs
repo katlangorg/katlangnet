@@ -610,18 +610,18 @@ internal static class PropertyExposureResolver
         {
             var branchMemos = memos.ForBranch(algorithm, branch.Pattern.BoundNames());
 
-            if (DeferredModuleRegions.TryGet(branch.Body, out var region))
+            if (branch.Body.DeferredRegion is { } region)
             {
                 // B2c: a deferred module region is not materialized eagerly (its provisional
                 // body is never evaluated; the FAMILY's classification reads the
-                // provisional body's captures through the summary channel above). The region
-                // records the summary chain at the branch and is re-keyed by this region's
-                // output body.
-                var placeholder = branch.Body with { };
-                DeferredModuleRegions.Register(
-                    placeholder,
-                    region.WithExposure(new DeferredBranchContext(branchMemos.Scope)));
-                rewrittenBranches.Add(new CondBranch(branch.Pattern, placeholder));
+                // provisional body's captures through the summary channel above). This pass's
+                // output view of the placeholder carries the region forked with the summary
+                // chain at the branch — the tree's final region, complete with every earlier
+                // context and the recorded validation bindings.
+                rewrittenBranches.Add(new CondBranch(branch.Pattern, branch.Body with
+                {
+                    DeferredRegion = region.WithExposure(new DeferredBranchContext(branchMemos.Scope)),
+                }));
                 continue;
             }
 
