@@ -33,7 +33,7 @@ public enum ConcurrencyScenario
 
     /// <summary>Structurally similar scope graphs with identical names but
     /// distinct identities, including error paths that render owner names
-    /// through <c>Evaluator.ScopeOwnerAlgorithms</c> — no run may observe the
+    /// through <c>ScopeCtx.Owner</c> — no run may observe the
     /// other run's owners, values, or diagnostic paths.</summary>
     ScopeOwnership,
 

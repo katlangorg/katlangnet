@@ -12,10 +12,13 @@ namespace KatLang.Tests.ConcurrencyReentrancy;
 /// identity, and since v0.8.209 the owner of the run's random stream,
 /// <c>EvaluationBudget.RandomSource</c>), fresh <c>RunScopedZeroArgPropertyResultCache</c> and
 /// <c>RunScopedDeconstructionBindingCache</c> (<c>Evaluator.CreateRootCtx</c>) —
-/// and the only process-global mutable object in the runtime is
-/// <c>Evaluator.ScopeOwnerAlgorithms</c> (a <see cref="System.Runtime.CompilerServices.ConditionalWeakTable{TKey,TValue}"/>
-/// whose keys are freshly minted per wiring and published before they
-/// escape). Everything else static is immutable (prelude/Math ASTs consumed
+/// and the evaluator's declaration, activation, and scope-owner identity is
+/// carried by the run's own algorithms, scopes, and contexts
+/// (<c>Algorithm.Declaration</c>, <c>ScopeCtx.Owner</c>/<c>Activation</c>,
+/// <c>EvalCtx.HeadScope</c>) — the process-global weak tables that once
+/// recovered it by reference are gone; the remaining process-global weak
+/// tables (deferred module regions, diagnostic provenance) are per-node
+/// metadata keyed by freshly minted nodes. Everything static is immutable (prelude/Math ASTs consumed
 /// via <c>with</c>-copies, builtin registry, formatter tables, default
 /// options); the runtime's shared entropy generator is consulted only to
 /// initialize an unseeded run's own stream.</para>

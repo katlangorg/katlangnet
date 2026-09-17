@@ -1,6 +1,5 @@
 using System.Collections;
 using System.Numerics;
-using System.Runtime.CompilerServices;
 using KatLang.Evaluation;
 using KatLang.Evaluation.Caching;
 using KatLang.Optimizations.Loops;
@@ -46,24 +45,30 @@ public static partial class Evaluator
         Property Binding,
         Algorithm ResolvedAlgorithm);
 
-    private static readonly ConditionalWeakTable<ScopeCtx, Algorithm> ScopeOwnerAlgorithms = new();
-
     // ── EvalCtx (Lean: EvalCtx) ─────────────────────────────────────────────
 
     /// <summary>
     /// Evaluation context threaded through resolution and evaluation.
     /// Wraps the algorithm chain (current algorithm + enclosing callers) used for
     /// both lexical resolution and runtime dispatch.
+    /// HeadScope is the ACTIVATED declaring scope of the head when the head was entered
+    /// with parameters (<see cref="EnterAlgorithmBody"/>): the level whose
+    /// <see cref="ScopeCtx.Activation"/> captured-parameter reads and the accessibility law
+    /// consult, and the parent every scope wired under the head receives. It is null for a
+    /// head pushed without an activation, whose site scope is then its plain declaring scope
+    /// (<c>SiteScope</c>); every push resets it, because it describes the head alone.
     /// AlgEnv carries algorithm-typed parameter bindings for higher-order dispatch.
     /// A binding may additionally retain a resource-limit failure from its eager value
     /// channel; that failure is observed only if the parameter is demanded as a value.
     /// Budget is the run-scoped resource budget: it is a REFERENCE deliberately carried
     /// by this copied struct, so every derived context charges the same run's counters
     /// and no copy can reset them.
-    /// Lean: structure EvalCtx where callStack : List Algorithm; algEnv : AlgEnv := [].
+    /// Lean: structure EvalCtx where callStack : List Algorithm; algEnv : AlgEnv := [];
+    /// headScope : Option ScopeCtx := none.
     /// </summary>
     internal readonly record struct EvalCtx(
         IReadOnlyList<Algorithm> CallStack,
+        ScopeCtx? HeadScope,
         AlgEnv AlgEnv,
         CountedParamEnv CountedParamEnv,
         IZeroArgPropertyResultCache ZeroArgPropertyResultCache,
@@ -81,15 +86,24 @@ public static partial class Evaluator
         /// stream — because a shared one would be global mutable evaluation state.
         /// </summary>
         public static EvalCtx Empty => new(
-            [], [], [], UncachedZeroArgPropertyResultCache.Instance, UncachedDeconstructionBindingCache.Instance,
+            [], null, [], [], UncachedZeroArgPropertyResultCache.Instance, UncachedDeconstructionBindingCache.Instance,
             true, null, true, null,
             null,
             EvaluationBudget.Create(null));
 
-        /// <summary>Lean: EvalCtx.push — prepend an algorithm to the call stack.</summary>
+        /// <summary>
+        /// Lean: EvalCtx.push — prepend an algorithm to the call stack. The pushed head has no
+        /// activated head scope (<c>headScope := none</c>); <see cref="EnterAlgorithmBody"/>
+        /// supplies one through <see cref="Push(Algorithm, ScopeCtx?)"/>.
+        /// </summary>
         public EvalCtx Push(Algorithm alg)
+            => Push(alg, headScope: null);
+
+        /// <summary>Prepend an algorithm to the call stack with its activated head scope.</summary>
+        public EvalCtx Push(Algorithm alg, ScopeCtx? headScope)
             => new(
                 Prepend(alg, CallStack),
+                headScope,
                 AlgEnv,
                 CountedParamEnv,
                 ZeroArgPropertyResultCache,
@@ -108,6 +122,7 @@ public static partial class Evaluator
         public EvalCtx WithAlgEnv(AlgEnv algEnv)
             => new(
                 CallStack,
+                HeadScope,
                 algEnv,
                 CountedParamEnv,
                 ZeroArgPropertyResultCache,
@@ -123,6 +138,7 @@ public static partial class Evaluator
         public EvalCtx WithCountedParamEnv(CountedParamEnv countedParamEnv)
             => new(
                 CallStack,
+                HeadScope,
                 AlgEnv,
                 countedParamEnv,
                 ZeroArgPropertyResultCache,
@@ -138,6 +154,7 @@ public static partial class Evaluator
         public EvalCtx WithZeroArgPropertyResultCache(IZeroArgPropertyResultCache zeroArgPropertyResultCache)
             => new(
                 CallStack,
+                HeadScope,
                 AlgEnv,
                 CountedParamEnv,
                 zeroArgPropertyResultCache,
@@ -395,9 +412,9 @@ public static partial class Evaluator
     /// Parameter-list length at which <see cref="ShadowValEnv"/> switches from a
     /// linear membership scan to a hash set.
     /// </summary>
-    private const int LinearShadowNameScanLimit = 8;
+    internal const int LinearShadowNameScanLimit = 8;
 
-    private static bool ContainsOrdinal(IReadOnlyList<string> names, string name)
+    internal static bool ContainsOrdinal(IReadOnlyList<string> names, string name)
     {
         for (var index = 0; index < names.Count; index++)
             if (string.Equals(names[index], name, StringComparison.Ordinal))
@@ -423,43 +440,40 @@ public static partial class Evaluator
     // ── Algorithm helpers ────────────────────────────────────────────────────
 
     /// <summary>
-    /// Lean: Algorithm.withParent. No-op for Builtin variant.
+    /// Lean: Algorithm.withParent. No-op for Builtin variant. The wired copy is a VIEW of the
+    /// same written declaration: the record copy carries <see cref="Algorithm.Declaration"/>.
     /// </summary>
     private static Algorithm WithParent(Algorithm alg, ScopeCtx? parent) => alg switch
     {
         Algorithm.Builtin => alg,
-        Algorithm.User or Algorithm.Conditional => PreserveDeclarationIdentity(alg, alg with { Parent = parent }),
+        Algorithm.User or Algorithm.Conditional => alg with { Parent = parent },
     };
 
+    /// <summary>
+    /// The plain (non-activated) declaring scope of an algorithm, owned by it.
+    /// Lean: <c>Algorithm.asScopeCtx</c>.
+    /// </summary>
     private static ScopeCtx AsScopeCtx(Algorithm alg)
-    {
-        var scope = new ScopeCtx(alg.Parent, alg.Opens, alg.Properties, alg.Params);
-        ScopeOwnerAlgorithms.Add(scope, alg);
-        if (AlgorithmActivations.TryGetValue(alg, out var activation))
-            ScopeActivations.Add(scope, activation);
-        return scope;
-    }
+        => new(alg.Parent, alg.Opens, alg.Properties, alg.Params) { Owner = alg };
 
     /// <summary>
     /// Wires a selected branch body under its clause family for one call, publishing the
-    /// matched pattern binders as the family scope's <see cref="ScopeCtx.Parameters"/>: the
-    /// body itself declares no parameters (binders bind by pattern matching), so this is the
-    /// level at which the accessibility walk finds the owner of a binder-capturing member.
-    /// Lean: <c>evalConditionalCallCounted</c>'s <c>ScopeCtx.mk</c> with the binder names.
+    /// matched pattern binders as the family scope's <see cref="ScopeCtx.Parameters"/> and
+    /// the binders' bindings as its <see cref="ScopeCtx.Activation"/>: the body itself
+    /// declares no parameters (binders bind by pattern matching), so this is the level at
+    /// which the accessibility walk finds the owner of a binder-capturing member.
+    /// Lean: <c>wireSelectedBranchBody</c>.
     /// </summary>
     private static Algorithm ChildOfConditionalCall(Algorithm callee, Algorithm body, IReadOnlyList<string> binderNames,
         EvalCtx ctx, ValEnv values)
     {
-        var scope = new ScopeCtx(callee.Parent, callee.Opens, callee.Properties, binderNames);
-        ScopeOwnerAlgorithms.Add(scope, callee);
-        ScopeActivations.Add(scope, SnapshotParameters(binderNames, ctx, values));
+        var scope = new ScopeCtx(callee.Parent, callee.Opens, callee.Properties, binderNames)
+        {
+            Owner = callee,
+            Activation = ParameterActivation.Capture(binderNames, ctx, values),
+        };
         return WithParent(body, scope);
     }
-
-    private static Algorithm? TryGetScopeOwnerAlgorithm(ScopeCtx scope)
-        => ScopeOwnerAlgorithms.TryGetValue(scope, out var owner)
-            ? owner
-            : null;
 
     /// <summary>Best-effort algorithm path for internal diagnostics.</summary>
     internal static string? TryGetAlgorithmPath(Algorithm algorithm)
@@ -471,7 +485,7 @@ public static partial class Evaluator
         if (name is null)
             return null;
 
-        var owner = TryGetScopeOwnerAlgorithm(scope);
+        var owner = scope.Owner;
         var ownerPath = owner is null || ReferenceEquals(owner, algorithm)
             ? null
             : TryGetAlgorithmPath(owner);
@@ -532,7 +546,7 @@ public static partial class Evaluator
     {
         if (IsExported(member))
             return true;
-        if (member.Exposure != PropertyExposure.LocalOnlyCapturedAncestorParameters || ctx.Head is not { } site)
+        if (member.Exposure != PropertyExposure.LocalOnlyCapturedAncestorParameters || ctx.Head is null)
             return false;
 
         var declaringScope = ScopeInContext(container, ctx);
@@ -545,14 +559,14 @@ public static partial class Evaluator
                     owner = owner.Parent;
                 if (requirement.OwnerDepth < 0 || owner is null
                     || !owner.Parameters.Contains(requirement.Name, StringComparer.Ordinal)
-                    || !LexicalChainContains(site, owner))
+                    || !LexicalChainContains(ctx, owner))
                     return false;
             }
             return true;
         }
         foreach (var name in member.RequiredAncestorParameters)
         {
-            if (RequiredParameterOwner(declaringScope, name) is not { } owner || !LexicalChainContains(site, owner))
+            if (RequiredParameterOwner(declaringScope, name) is not { } owner || !LexicalChainContains(ctx, owner))
                 return false;
         }
 
@@ -579,18 +593,20 @@ public static partial class Evaluator
     }
 
     /// <summary>
-    /// Whether the exact required owner activation is in the site's lexical chain. Static owners
-    /// may match an active declaration only when their already captured ancestor activations agree.
-    /// Runtime identity is separate from exported-property structural cache identity.
+    /// Whether the exact required owner activation is in the site's lexical chain: a level of
+    /// the site scope's chain that is the same declaring scope, is itself activated, and
+    /// agrees with every activation the owner names — its own and every captured ancestor's
+    /// (<see cref="CompatibleActivations"/> starts at the owner itself). Static owners may
+    /// match an active declaration only when their already captured ancestor activations
+    /// agree. Runtime identity is separate from exported-property structural cache identity.
+    /// Lean: <c>lexicalChainContains</c>.
     /// </summary>
-    private static bool LexicalChainContains(Algorithm site, ScopeCtx owner)
+    private static bool LexicalChainContains(EvalCtx ctx, ScopeCtx owner)
     {
-        for (var level = AsScopeCtx(site); level is not null; level = level.Parent)
+        for (var level = SiteScope(ctx); level is not null; level = level.Parent)
         {
             if (IsSameDeclaringScope(level, owner)
-                && ScopeActivations.TryGetValue(level, out var siteActivation)
-                && (!ScopeActivations.TryGetValue(owner, out var requiredActivation)
-                    || ReferenceEquals(siteActivation, requiredActivation))
+                && level.Activation is not null
                 && CompatibleActivations(owner, level))
                 return true;
         }
@@ -618,18 +634,19 @@ public static partial class Evaluator
     }
 
     /// <summary>
-    /// Evaluator-created scopes retain the identity of their algorithm declaration across wiring.
-    /// Distinct declarations remain distinct even with shared output/property nodes or identical
-    /// clause binders. An opaque host scope can establish identity only by sharing that scope.
+    /// Evaluator-created scopes carry the identity of their algorithm declaration across wiring
+    /// (<see cref="ScopeCtx.Declaration"/>). Distinct declarations remain distinct even with
+    /// shared output/property nodes or identical clause binders. An opaque host scope, or one
+    /// owned by a builtin, carries no declaration and can establish identity only by being the
+    /// same scope.
     /// </summary>
     private static bool SameDeclarationBody(ScopeCtx left, ScopeCtx right)
     {
         if (ReferenceEquals(left, right))
             return true;
 
-        return ScopeOwnerAlgorithms.TryGetValue(left, out var leftOwner)
-            && ScopeOwnerAlgorithms.TryGetValue(right, out var rightOwner)
-            && ReferenceEquals(DeclarationIdentity(leftOwner), DeclarationIdentity(rightOwner));
+        return left.Declaration is { } leftDeclaration
+            && ReferenceEquals(leftDeclaration, right.Declaration);
     }
 
     private static bool IsSameScopeComponent<T>(IReadOnlyList<T> left, IReadOnlyList<T> right)
@@ -1282,7 +1299,11 @@ public static partial class Evaluator
     {
         if (alg.Opens.Count == 0) return EvalResult<ResolvedLexicalProperty?>.Ok(null);
 
-        var innerCtx = ctx.Push(alg);
+        // The opens are resolved from the consulted level as its own site: the head keeps
+        // its activated scope (a dotted target's captured member is judged from inside the
+        // head's activation), a parent-chain wrapper is its plain scope.
+        // Lean: `{ ctx.push a with headScope := some (scopeInContext a ctx) }`.
+        var innerCtx = ctx.Push(alg, ScopeInContext(alg, ctx));
         var resolvedResult = ResolveAllOpens(alg, innerCtx);
         if (resolvedResult.IsError) return resolvedResult.Error;
 
@@ -1330,7 +1351,7 @@ public static partial class Evaluator
                 if (prop.Name == name)
                 {
                     return new ResolvedLexicalProperty(
-                        TryGetScopeOwnerAlgorithm(current),
+                        current.Owner,
                         prop,
                         WithParent(prop.Value, current));
                 }
@@ -2271,6 +2292,7 @@ public static partial class Evaluator
         // prelude choice and the dispatch registry can never disagree within a run.
         return new EvalCtx(
             [budget.HostOperations?.RuntimePreludeAlgorithm ?? PreludeAlg],
+            null,
             [],
             [],
             zeroArgPropertyResultCache,

@@ -88,7 +88,7 @@ public static class ConcurrencyCorpus
     public const string CaptureSpread = "S = 1, (2, 3), 4\nS*, (S:1)*";
 
     /// <summary>Per-call brace scopes: each call mints fresh scope contexts
-    /// (Evaluator.AsScopeCtx) registered in the process-global owner table.</summary>
+    /// (Evaluator.AsScopeCtx), each carrying its own owner.</summary>
     public const string NestedScopes = "x = 2\nF(a) = {Inner = a * x\nInner}\nD = {G = 5\nG}\nF(3), D";
 
     public const string DeepScopes = "A = {B = {C = {V = 41\nV + 1}\nC}\nB}\nA";
@@ -313,7 +313,7 @@ public static class ConcurrencyCorpus
         {
             Id = "same/deep-scopes-plain",
             Scenario = ConcurrencyScenario.SameProgram,
-            Invariant = "The same deeply nested scope program in both lanes: every lane mints its own ScopeCtx chain in the process-global owner table without cross-talk.",
+            Invariant = "The same deeply nested scope program in both lanes: every lane mints its own ScopeCtx chain, each scope carrying its own owner, without cross-talk.",
             ProgramA = DeepScopes, EntryA = EvalEntryPoint.RunPlain,
             ProgramB = DeepScopes, EntryB = EvalEntryPoint.RunPlain,
         },
@@ -340,7 +340,7 @@ public static class ConcurrencyCorpus
         {
             Id = "scope/identical-shape-distinct-identity",
             Scenario = ConcurrencyScenario.ScopeOwnership,
-            Invariant = "Identical scope structure and names with distinct identities: ScopeOwnerAlgorithms (ConditionalWeakTable, fresh ScopeCtx keys per wiring) never associates one run's scopes with the other run's algorithms.",
+            Invariant = "Identical scope structure and names with distinct identities: a scope carries its own owner (ScopeCtx.Owner, minted per wiring), so one run's scopes can never be associated with the other run's algorithms.",
             ProgramA = ScopeShapeA, EntryA = EvalEntryPoint.EngineRun,
             ProgramB = ScopeShapeB, EntryB = EvalEntryPoint.EngineRun,
         },
@@ -348,7 +348,7 @@ public static class ConcurrencyCorpus
         {
             Id = "scope/error-owner-paths",
             Scenario = ConcurrencyScenario.ScopeOwnership,
-            Invariant = "Errors that render owner/member names (structural dot miss) name each run's OWN identifiers; concurrent diagnostics cannot swap owners (Evaluator.TryGetAlgorithmPath reads the owner table).",
+            Invariant = "Errors that render owner/member names (structural dot miss) name each run's OWN identifiers; concurrent diagnostics cannot swap owners (Evaluator.TryGetAlgorithmPath reads ScopeCtx.Owner).",
             ProgramA = OwnerErrorA, EntryA = EvalEntryPoint.EngineRun,
             ProgramB = OwnerErrorB, EntryB = EvalEntryPoint.EngineRun,
             ExpectedClassA = "engine evalFailure", ExpectedClassB = "engine evalFailure",

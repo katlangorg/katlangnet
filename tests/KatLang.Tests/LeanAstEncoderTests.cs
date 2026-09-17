@@ -19,6 +19,29 @@ public class LeanAstEncoderTests
     private static string EncodeSource(string source)
         => LeanAstEncoder.EncodeProgram(SourceProvenance.ParseValid(source).Root);
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void SharedDeclarations_CopyViewsUseTheDeclarationToken(bool conditional)
+    {
+        Algorithm first = conditional
+            ? new Algorithm.Conditional(null, [], [])
+            : new Algorithm.User(null, [], [], [], [new Expr.Num(1)]);
+        var copy = first with { };
+        Algorithm fresh = conditional
+            ? new Algorithm.Conditional(null, first.Opens, first.Branches)
+            : new Algorithm.User(null, first.Parameters, first.Opens, first.Properties, first.Output);
+        static Expr Pair(Algorithm a, Algorithm b) => new Expr.Capture([new Expr.AlgorithmExpr(a), new Expr.AlgorithmExpr(b)]);
+        var body = conditional ? "(.conditional none [] [])" : "(alg [] [] [] [.num 1])";
+        var shared = $"(.algorithmExpr (Algorithm.withDeclarationId (some (.shared 0)) {body}))";
+        var distinct = $"(.algorithmExpr {body})";
+
+        Assert.NotSame(first, copy);
+        Assert.Same(first.Declaration, copy.Declaration);
+        Assert.Equal($"(.capture [{shared}, {shared}])", LeanAstEncoder.EncodeExpr(Pair(first, copy)));
+        Assert.Equal($"(.capture [{distinct}, {distinct}])", LeanAstEncoder.EncodeExpr(Pair(first, fresh)));
+    }
+
     [Fact]
     public void SharedDeclarations_PreserveIdentityWithoutMergingDistinctOwners()
     {

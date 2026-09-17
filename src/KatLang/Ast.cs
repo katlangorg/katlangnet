@@ -1184,10 +1184,48 @@ public sealed record Property(
 /// (<c>withParent</c>, <c>isFunctionShaped</c>, signature and exposure classification,
 /// the <c>WithParams</c> family here) name the variants a case applies to instead of
 /// hiding them under <c>_</c>, so a new variant fails the build there until decided.
+///
+/// <para><b>Declaration identity.</b> Every <see cref="User"/> and <see cref="Conditional"/>
+/// CONSTRUCTED with <c>new</c> is one written declaration and carries its own
+/// <see cref="Declaration"/> token (Lean: <c>Algorithm.declarationId</c>, assigned once per
+/// declaration at run preparation). A <c>with</c> copy is a VIEW of that same declaration —
+/// the evaluator's parent wiring, the front end's elaboration passes, and a host's own
+/// copies alike — and keeps the token through the record copy constructor, so no copy can
+/// become a new declaration by accident and no copy needs any registration step. Two
+/// declarations with identical bodies are distinct because they were constructed separately.
+/// The private storage slot excludes the token from structural record equality and printing;
+/// equal algorithms still hash alike. The token itself has ordinary reference equality.</para>
 /// </summary>
 public closed record Algorithm
 {
-    private Algorithm() { }
+    private readonly DeclarationIdentitySlot _declaration;
+
+    private Algorithm(DeclarationIdentity? declaration)
+    {
+        _declaration = new(declaration);
+    }
+
+    /// <summary>
+    /// The identity of the written declaration this algorithm value represents: shared by
+    /// every <c>with</c> copy of one constructed <see cref="User"/> or <see cref="Conditional"/>,
+    /// distinct for every separately constructed one, and null for a <see cref="Builtin"/>
+    /// (Lean: <c>Algorithm.declarationId</c>, <c>none</c> for <c>.builtin</c>). Compared by
+    /// reference. Runtime-only: it takes no part in record equality.
+    /// </summary>
+    internal DeclarationIdentity? Declaration => _declaration.Identity;
+
+    // The record copy constructor copies this one-reference value automatically. Only
+    // the PRIVATE SLOT is equality-transparent, never the semantic token exposed above:
+    // ordinary token Equals, dictionaries, and LINQ all retain reference identity.
+    // Keeping this exclusion here also leaves the compiler responsible for comparing
+    // every structural Algorithm field, including any added in the future.
+    private readonly struct DeclarationIdentitySlot(DeclarationIdentity? identity) : IEquatable<DeclarationIdentitySlot>
+    {
+        internal DeclarationIdentity? Identity { get; } = identity;
+        public bool Equals(DeclarationIdentitySlot other) => true;
+        public override bool Equals(object? obj) => obj is DeclarationIdentitySlot;
+        public override int GetHashCode() => 0;
+    }
 
     /// <summary>Lean: Algorithm.parent. Returns null for Builtin.</summary>
     public virtual ScopeCtx? Parent { get; init; }
@@ -1441,6 +1479,7 @@ public closed record Algorithm
             IReadOnlyList<Expr> Opens,
             IReadOnlyList<Property> Properties,
             OutputBundle Output)
+            : base(new DeclarationIdentity())
         {
             this.Parent = Parent;
             this.Parameters = Parameters;
@@ -1527,8 +1566,9 @@ public closed record Algorithm
 
     /// <summary>
     /// Built-in algorithm. Corresponds to <c>Algorithm.builtin</c> in the Lean specification.
+    /// A builtin is not a written declaration and has no <see cref="Declaration"/> token.
     /// </summary>
-    public sealed record Builtin(BuiltinId Id) : Algorithm;
+    public sealed record Builtin(BuiltinId Id) : Algorithm(declaration: null);
 
     /// <summary>
     /// Conditional algorithm with ordered pattern branches.
@@ -1572,6 +1612,7 @@ public closed record Algorithm
             ScopeCtx? Parent,
             IReadOnlyList<Expr> Opens,
             IReadOnlyList<CondBranch> Branches)
+            : base(new DeclarationIdentity())
         {
             this.Parent = Parent;
             this.Opens = Opens;
@@ -1596,6 +1637,21 @@ public closed record Algorithm
 /// one unit because neither is meaningful without the other. Not part of the Lean model.
 /// </summary>
 internal readonly record struct AssignmentDeconstructionTarget(object Group, int Index);
+
+/// <summary>
+/// The identity of ONE written declaration (<see cref="Algorithm.Declaration"/>): minted by
+/// the constructor of every <see cref="Algorithm.User"/> and <see cref="Algorithm.Conditional"/>
+/// and carried unchanged by every record copy. Ordinary equality and hashing are REFERENCE
+/// identity, including in collections. Algorithm's private storage slot excludes the token
+/// from synthesized record equality; semantic consumers never see that slot. Lean:
+/// <c>PropertyIdentity</c> as an <c>Algorithm.declarationId</c>, where the C# object reference
+/// plays the role of the number assigned at run preparation.
+/// </summary>
+internal sealed class DeclarationIdentity
+{
+    public override string ToString()
+        => $"declaration#{System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(this):x8}";
+}
 
 internal sealed record ExplicitParameterOutputViolation(SourceSpan? Span);
 
@@ -1847,6 +1903,13 @@ internal static class AlgorithmValidation
 /// lookup; they let the accessibility check of a local-only member find the owner of each
 /// required input by the same nearest-owner walk the front end elaborated the reference with
 /// (Lean: <c>ScopeCtx.params</c>, <c>requiredParameterOwner?</c>).</para>
+/// <para>An evaluator-wired scope additionally carries its runtime OWNERSHIP —
+/// <see cref="Owner"/>, the algorithm it was wired from (and through it the
+/// <see cref="Declaration"/> the scope is a level of), and <see cref="Activation"/>, the call
+/// of that owner it belongs to, if any (Lean: <c>ScopeCtx.declarationId</c> and
+/// <c>ScopeCtx.activation</c>, plus the owner's <c>output</c>/<c>branches</c> components).
+/// Ownership is internal runtime state: a host-constructed scope has none, and structural
+/// equality — the public positional components — never sees it.</para>
 /// </summary>
 public sealed record ScopeCtx(
     ScopeCtx? Parent,
@@ -1862,6 +1925,42 @@ public sealed record ScopeCtx(
         : this(Parent, Opens, Properties, [])
     {
     }
+
+    /// <summary>
+    /// The algorithm this scope was wired from — the owner whose opens, properties, and
+    /// parameters (or matched binders) the scope publishes — or null for a scope a host
+    /// constructed directly. Every evaluator-created scope has one; the owner's
+    /// <see cref="Algorithm.Declaration"/> is this scope's declaration identity.
+    /// </summary>
+    internal Algorithm? Owner { get; init; }
+
+    /// <summary>
+    /// The activation of the owner's call this scope belongs to: the parameter bindings
+    /// captured when that call entered its body (or matched its clause), read by every
+    /// captured-parameter reference and compared by identity by the accessibility law. Null
+    /// for a static scope or a parameterless user-body entry. A matched clause always
+    /// has an activation, including when its pattern binds no names.
+    /// </summary>
+    internal ParameterActivation? Activation { get; init; }
+
+    /// <summary>The identity of the declaration this scope is a level of; null without an owner or for a builtin owner.</summary>
+    internal DeclarationIdentity? Declaration => Owner?.Declaration;
+
+    /// <summary>
+    /// Structural equality over the positional components only. The runtime ownership
+    /// members (<see cref="Owner"/>, <see cref="Activation"/>) are deliberately excluded:
+    /// two rebuilt scopes of one declaring scope are equal whichever call they belong to.
+    /// </summary>
+    public bool Equals(ScopeCtx? other)
+        => ReferenceEquals(this, other)
+            || (other is not null
+                && EqualityComparer<ScopeCtx?>.Default.Equals(Parent, other.Parent)
+                && EqualityComparer<IReadOnlyList<Expr>>.Default.Equals(Opens, other.Opens)
+                && EqualityComparer<IReadOnlyList<Property>>.Default.Equals(Properties, other.Properties)
+                && EqualityComparer<IReadOnlyList<string>>.Default.Equals(Parameters, other.Parameters));
+
+    public override int GetHashCode()
+        => HashCode.Combine(Parent, Opens, Properties, Parameters);
 
     /// <summary>Preserves the original three-component deconstruction contract.</summary>
     public void Deconstruct(

@@ -52,7 +52,7 @@ internal sealed class LeanAstEncoding
 {
     private readonly SharedDeclarations _sharing = new();
     private readonly Dictionary<StructuralOwnerIdentity, Dictionary<Property, int>> _identities = new();
-    private readonly Dictionary<Algorithm, int> _algorithmIdentities = new(ReferenceEqualityComparer.Instance);
+    private readonly Dictionary<DeclarationIdentity, int> _algorithmIdentities = new();
     private int _nextIdentity;
     private ScopeCtx? _scope;
 
@@ -74,14 +74,22 @@ internal sealed class LeanAstEncoding
     private sealed class SharedDeclarations : AstWalker
     {
         private readonly HashSet<Algorithm> _algorithms = new(ReferenceEqualityComparer.Instance);
+        private readonly HashSet<DeclarationIdentity> _declarations = new();
+        private readonly HashSet<DeclarationIdentity> _sharedDeclarations = new();
         private readonly HashSet<Expr> _expressions = new(ReferenceEqualityComparer.Instance);
         private readonly HashSet<Property> _properties = new(ReferenceEqualityComparer.Instance);
         private readonly SharedMarker _marker = new();
         public bool Contains(Property property) => _marker.Properties.Contains(property);
-        public bool Contains(Algorithm algorithm) => _marker.Algorithms.Contains(algorithm);
+        public bool Contains(Algorithm algorithm) => _marker.Algorithms.Contains(algorithm)
+            || (algorithm.Declaration is { } declaration && _sharedDeclarations.Contains(declaration));
         protected override bool VisitsExplicitParameterDeclarations => false;
         public override void VisitAlgorithm(Algorithm algorithm)
         {
+            // A host `with` copy is another object representing the SAME declaration.
+            // Visit distinct object graphs normally (copies may have different children),
+            // but give every view of a repeated declaration the same Lean shared id.
+            if (algorithm.Declaration is { } declaration && !_declarations.Add(declaration))
+                _sharedDeclarations.Add(declaration);
             if (_algorithms.Add(algorithm)) base.VisitAlgorithm(algorithm);
             else _marker.VisitAlgorithm(algorithm);
         }
@@ -197,8 +205,10 @@ internal sealed class LeanAstEncoding
         {
             var encoded = EncodeAlgorithmCore(algorithm);
             if (!_sharing.Contains(algorithm)) return encoded;
-            if (!_algorithmIdentities.TryGetValue(algorithm, out var identity))
-                _algorithmIdentities[algorithm] = identity = _algorithmIdentities.Count;
+            var declaration = algorithm.Declaration
+                ?? throw new NotSupportedException("A shared algorithm must have a declaration identity.");
+            if (!_algorithmIdentities.TryGetValue(declaration, out var identity))
+                _algorithmIdentities[declaration] = identity = _algorithmIdentities.Count;
             return $"(Algorithm.withDeclarationId (some (.shared {identity})) {encoded})";
         }
         finally { _scope = parent; }

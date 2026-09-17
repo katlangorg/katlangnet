@@ -34,6 +34,7 @@ public class EvaluatorSequencePipelineTests
     private static Evaluator.EvalCtx PreludeEvalCtx()
         => new(
             [BuiltinRegistry.CreateRuntimePreludeAlgorithm()],
+            HeadScope: null,
             [],
             [],
             UncachedZeroArgPropertyResultCache.Instance,

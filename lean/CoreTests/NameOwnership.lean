@@ -664,6 +664,20 @@ def memberSharedComponentsKeepDistinctOwners : Bool :=
 
 #guard memberSharedComponentsKeepDistinctOwners
 
+/-- A wired/copied view of ONE declaration retains its owner identity. This is the
+    positive control for the distinct-owner guard above and for C# host `with` copies;
+    the AST encoder must preserve their shared declaration id, not their object ids. -/
+def memberCopiesKeepOneDeclarationOwner : Bool :=
+  let x := publicLocalProp "X" (.localCapturedAncestorParams ["n"]) (alg [] [] [] [.param "n"])
+  let f := (alg ["n"] [] [x] [Expr.dotCall (.resolve "G") "X" none]).withDeclarationId (some (.shared 0))
+  let g := f.withParent none
+  let program := algPrivate [] [] [("F", f), ("G", g)] [.call (.resolve "F") [.num 5]]
+  match runResult (.algorithmExpr program) with
+  | .ok (Result.atom 5) => true
+  | _ => false
+
+#guard memberCopiesKeepOneDeclarationOwner
+
 /-- Family-owned opens use the same static member surface as user-body opens. Exposure
     is a front-end input; the selected member, not Lib's unused output, determines it. -/
 def familyOwnedOpenStaticSurface (captures : Bool) : Bool :=
