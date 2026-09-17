@@ -282,7 +282,7 @@ public static partial class Evaluator
 
         var simple = TryGetFlatBinderUserEquivalent(alg);
         if (simple is not null)
-            return new EvalError.ArityMismatch(simple.Params.Count, 0);
+            return new EvalError.ArityMismatch(simple.Parameters.Count, 0);
 
         return new EvalError.NoMatchingBranch(name);
     }
@@ -605,11 +605,12 @@ public static partial class Evaluator
                     if (simpleCallee.Output.Count == 0)
                         return new EvalError.MissingOutput();
 
-                    var countedEnvR = BindCountedCallbackParams(simpleCallee.Params, args);
+                    var parameterNames = simpleCallee.Params;
+                    var countedEnvR = BindCountedCallbackParams(parameterNames, args);
                     if (countedEnvR.IsError)
                         return AttachImplicitParameterProvenance(countedEnvR.Error, simpleCallee);
 
-                    var newCtx = WithCountedParameterEnvironments(ctx, countedEnvR.Value, simpleCallee.Params);
+                    var newCtx = WithCountedParameterEnvironments(ctx, countedEnvR.Value, parameterNames);
                     return EvalAlgOutputCounted(simpleCallee, newCtx, valEnv);
                 }
 
@@ -666,11 +667,12 @@ public static partial class Evaluator
                     // singleton-boundary normalization. Scalar callback
                     // deconstruction stays deferred so the counted callback path
                     // keeps Lean/C# parity.
-                    var countedEnvR = BindCountedCallbackParams(callee.Params, args);
+                    var parameterNames = callee.Params;
+                    var countedEnvR = BindCountedCallbackParams(parameterNames, args);
                     if (countedEnvR.IsError)
                         return AttachImplicitParameterProvenance(countedEnvR.Error, callee);
 
-                    var newCtx = WithCountedParameterEnvironments(ctx, countedEnvR.Value, callee.Params);
+                    var newCtx = WithCountedParameterEnvironments(ctx, countedEnvR.Value, parameterNames);
                     return EvalAlgOutputCounted(callee, newCtx, valEnv);
                 }
         }

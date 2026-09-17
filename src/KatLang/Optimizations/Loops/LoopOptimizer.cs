@@ -292,7 +292,7 @@ internal static partial class LoopOptimizer
             return null;
         }
 
-        if (userStep.FindDuplicatePropName() is not null || userStep.Params.Count != stateArity)
+        if (userStep.FindDuplicatePropName() is not null || userStep.Parameters.Count != stateArity)
         {
             RecordLoopPlanFallbackDiagnostic(kind, step, stateArity, ctx, "loop plan parameter/property shape mismatch");
             return null;

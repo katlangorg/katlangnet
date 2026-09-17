@@ -513,7 +513,7 @@ public static partial class Evaluator
         {
             var wired = WireToCaller(ctx, alg);
             var blockSpan = PreferExpressionSpan(expr.Span, wired.Output);
-            if (wired.Params.Count != 0)
+            if (wired.Parameters.Count != 0)
                 return MissingImplicitArguments<IReadOnlyList<Result>>(wired, blockSpan);
 
             var blockR = EvalAlgOutput(wired, ctx, valEnv);
@@ -584,7 +584,7 @@ public static partial class Evaluator
 
     /// <summary>Only arguments without callback parameters are eagerly value-evaluated.</summary>
     private static bool IsValueShapedArgument(Algorithm argument)
-        => argument.Params.Count == 0 && argument.ParameterPatterns.Count == 0;
+        => argument.Parameters.Count == 0 && argument.ParameterPatterns.Count == 0;
 
     /// <summary>
     /// Prepares a filter predicate through the generic call-item and suffix binding
@@ -842,7 +842,7 @@ public static partial class Evaluator
         // with reduce's dedicated hint, the same rejection the dotted
         // `Values.reduce(Add)` form reports for a visibly parameterized reducer.
         if (preparedInitial is null && ZeroArgumentValueDemandError(initialSource, initialAlg) is { } rejection)
-            return initialAlg.Params.Count != 0
+            return initialAlg.Parameters.Count != 0
                 ? ReduceInitialAccumulatorRequiresValueError(initialAlg)
                 : rejection;
 

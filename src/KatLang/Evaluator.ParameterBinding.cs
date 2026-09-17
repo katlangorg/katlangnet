@@ -573,7 +573,7 @@ public static partial class Evaluator
         {
             Algorithm.Builtin => true,
             Algorithm.Conditional => true,
-            Algorithm.User user => user.Params.Count > 0 || user.ParameterPatterns.Count > 0,
+            Algorithm.User user => user.Parameters.Count > 0 || user.ParameterPatterns.Count > 0,
         };
 
     private static EvalResult<CollectingCapture> CreateCollectingCapture(
@@ -672,7 +672,7 @@ public static partial class Evaluator
         if (expr is Expr.AlgorithmExpr(var algorithm))
         {
             var wired = WireToCaller(ctx, algorithm);
-            if (wired.Params.Count == 0)
+            if (wired.Parameters.Count == 0)
             {
                 var nestedItemsR = EvalExplicitSequenceValueItems(wired, ctx, valEnv);
                 if (nestedItemsR.IsError) return nestedItemsR.Error;
@@ -1248,7 +1248,7 @@ public static partial class Evaluator
         if (includeExplicitSequenceValueItems && argExpr is Expr.AlgorithmExpr(var algorithm))
         {
             var wired = WireToCaller(ctx, algorithm);
-            if (wired.Params.Count == 0)
+            if (wired.Parameters.Count == 0)
             {
                 var blockSpan = PreferExpressionSpan(argExpr.Span, wired.Output);
                 var preparedR = WithSpan(blockSpan, EvalAlgOutputPreparedCore(wired, ctx, valEnv));
@@ -1296,7 +1296,7 @@ public static partial class Evaluator
         if (receiver is Expr.AlgorithmExpr(var algorithm))
         {
             var wired = WireToCaller(ctx, algorithm);
-            if (wired.Params.Count == 0)
+            if (wired.Parameters.Count == 0)
                 return WithSpan(PreferExpressionSpan(receiver.Span, wired.Output), EvalAlgOutputCounted(wired, ctx, valEnv));
         }
 
@@ -1421,11 +1421,22 @@ public static partial class Evaluator
     private static EvalCtx WithCountedParameterEnvironments(
         EvalCtx ctx,
         CountedParamEnv countedBindings,
-        IEnumerable<string> shadowedNames)
+        IReadOnlyList<string> shadowedNames)
     {
-        var inherited = ShadowInheritedParameterEnvironments(ctx, shadowedNames.ToArray());
+        var inherited = ShadowInheritedParameterEnvironments(ctx, shadowedNames);
         return inherited.WithCountedParamEnv(Concat(countedBindings, inherited.CountedParamEnv));
     }
+
+    /// <summary>
+    /// <see cref="WithCountedParameterEnvironments(EvalCtx, CountedParamEnv, IReadOnlyList{string})"/>
+    /// for a lazily projected name sequence, materialized once so the tier shadowing
+    /// scans a stable list instead of re-enumerating the projection.
+    /// </summary>
+    private static EvalCtx WithCountedParameterEnvironments(
+        EvalCtx ctx,
+        CountedParamEnv countedBindings,
+        IEnumerable<string> shadowedNames)
+        => WithCountedParameterEnvironments(ctx, countedBindings, shadowedNames.ToArray());
 
     internal static EvalError? RetainResourceLimitForAlgorithmBinding(EvalError? valueError)
         => valueError is { IsResourceLimit: true } ? valueError : null;

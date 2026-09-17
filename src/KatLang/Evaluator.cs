@@ -676,7 +676,7 @@ public static partial class Evaluator
     /// from (Lean: <c>Algorithm.requiresArguments</c>).
     /// </summary>
     internal static bool RequiresArguments(Algorithm algorithm)
-        => algorithm is Algorithm.Conditional || algorithm.Params.Count > 0;
+        => algorithm is Algorithm.Conditional || algorithm.Parameters.Count > 0;
 
     private static EvalError OpenTargetRequiresArguments(string targetDescription, Algorithm provider)
         => new EvalError.IllegalInOpen(FormatOpenTargetRequiresArguments(targetDescription, provider));
@@ -1019,7 +1019,7 @@ public static partial class Evaluator
     /// mismatch for callees with no inferred parameters.
     /// </summary>
     private static EvalError.ArityMismatch ZeroArgumentDemandArityMismatch(Algorithm callee)
-        => new(callee.Params.Count, 0)
+        => new(callee.Parameters.Count, 0)
         {
             InferredImplicitParameters = ImplicitParameterProvenance.CollectFrom(callee.Parameters),
         };
@@ -1078,7 +1078,7 @@ public static partial class Evaluator
     {
         if (shape == ZeroArgumentDemandShape.Block)
         {
-            return algorithm.Params.Count == 0
+            return algorithm.Parameters.Count == 0
                 ? null
                 : MissingImplicitArgumentsError(algorithm, span);
         }
@@ -1086,7 +1086,7 @@ public static partial class Evaluator
         if (name is not null && ConditionalValueAccessError(name, algorithm) is { } conditionalError)
             return conditionalError with { Span = span };
 
-        if (algorithm.Params.Count == 0)
+        if (algorithm.Parameters.Count == 0)
             return null;
 
         var arity = ZeroArgumentDemandArityMismatch(algorithm);
@@ -2744,7 +2744,7 @@ public static partial class Evaluator
     private static EvalResult<Result> EvalRootProgram(Algorithm alg, SourceSpan? span, EvalCtx ctx)
     {
         var wired = WireToCaller(ctx, alg);
-        if (wired.Params.Count == 0)
+        if (wired.Parameters.Count == 0)
         {
             var result = EvalProgramOutput(wired, ctx, []);
             if (result.IsError
@@ -2767,7 +2767,7 @@ public static partial class Evaluator
     private static EvalResult<CountedResult> EvalRootProgramCounted(Algorithm alg, SourceSpan? span, EvalCtx ctx)
     {
         var wired = WireToCaller(ctx, alg);
-        if (wired.Params.Count == 0)
+        if (wired.Parameters.Count == 0)
         {
             var result = EvalProgramOutputCounted(wired, ctx, []);
             if (result.IsError
@@ -2794,7 +2794,7 @@ public static partial class Evaluator
         string topLevelPropertyName)
     {
         var wired = WireToCaller(ctx, alg);
-        if (wired.Params.Count != 0)
+        if (wired.Parameters.Count != 0)
         {
             var blockSpan = span ?? FirstSpan(wired.Output);
             return MissingImplicitArguments<CountedRootProgramResult>(wired, blockSpan);
@@ -2833,7 +2833,7 @@ public static partial class Evaluator
 
         var resolvedAlgorithm = ChildOf(alg, binding.Value);
         var span = binding.DeclarationSpans.FirstOrDefault();
-        if (resolvedAlgorithm.Params.Count != 0)
+        if (resolvedAlgorithm.Parameters.Count != 0)
         {
             return WithSpan<CountedResult?>(
                 span,

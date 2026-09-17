@@ -591,12 +591,12 @@ public static partial class Evaluator
             {
                 var simpleCallee = TryGetFlatBinderUserEquivalent(wired);
                 if (simpleCallee is not null)
-                    return new EvalError.ArityMismatch(simpleCallee.Params.Count, 0);
+                    return new EvalError.ArityMismatch(simpleCallee.Parameters.Count, 0);
 
                 if (wired is Algorithm.Conditional)
                     return new EvalError.NoMatchingBranch(name);
 
-                if (wired.Params.Count == 0)
+                if (wired.Parameters.Count == 0)
                     return ReCountValueBoundary(EvalZeroArgPropertyAccessCounted(targetAlg, prop, ZeroArgPropertyAccessKind.CountedStructural, wired, ctx, valEnv));
                 return ZeroArgumentDemandArityMismatch(wired);
             }

@@ -559,8 +559,8 @@ public static partial class Evaluator
             return WhileLoopGenericCounted(step, initialStateSlots, ctx, valEnv);
         }
 
-        if (step.Params.Count != initialStateSlots.Count)
-            return LoopStateArityMismatch(step, step.Params.Count, initialStateSlots.Count, "while");
+        if (step.Parameters.Count != initialStateSlots.Count)
+            return LoopStateArityMismatch(step, step.Parameters.Count, initialStateSlots.Count, "while");
 
         return LoopOptimizer.TryEvaluateWhile(
             step,
@@ -626,8 +626,8 @@ public static partial class Evaluator
             return RepeatLoopGenericCounted(step, count, initialStateSlots, ctx, valEnv);
         }
 
-        if (step.Params.Count != initialStateSlots.Count)
-            return LoopStateArityMismatch(step, step.Params.Count, initialStateSlots.Count, "repeat");
+        if (step.Parameters.Count != initialStateSlots.Count)
+            return LoopStateArityMismatch(step, step.Parameters.Count, initialStateSlots.Count, "repeat");
 
         return LoopOptimizer.TryEvaluateRepeat(
             step,

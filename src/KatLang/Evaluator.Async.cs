@@ -593,7 +593,7 @@ public static partial class Evaluator
     private static async ValueTask<EvalResult<Result>> EvalRootProgramValueAsync(Algorithm alg, SourceSpan? span, EvalCtx ctx)
     {
         var wired = WireToCaller(ctx, alg);
-        if (wired.Params.Count == 0)
+        if (wired.Parameters.Count == 0)
         {
             var countedR = await EvalAlgOutputCountedCoreAsync(wired, ctx, []).ConfigureAwait(false);
             var result = countedR.IsError
@@ -620,7 +620,7 @@ public static partial class Evaluator
     private static async ValueTask<EvalResult<CountedResult>> EvalRootProgramCountedAsync(Algorithm alg, SourceSpan? span, EvalCtx ctx)
     {
         var wired = WireToCaller(ctx, alg);
-        if (wired.Params.Count == 0)
+        if (wired.Parameters.Count == 0)
         {
             var result = await EvalAlgOutputCountedCoreAsync(wired, ctx, []).ConfigureAwait(false);
             if (result.IsError
@@ -648,7 +648,7 @@ public static partial class Evaluator
         string topLevelPropertyName)
     {
         var wired = WireToCaller(ctx, alg);
-        if (wired.Params.Count != 0)
+        if (wired.Parameters.Count != 0)
         {
             var blockSpan = span ?? FirstSpan(wired.Output);
             return MissingImplicitArguments<CountedRootProgramResult>(wired, blockSpan);
@@ -688,7 +688,7 @@ public static partial class Evaluator
 
         var resolvedAlgorithm = ChildOf(alg, binding.Value);
         var span = binding.DeclarationSpans.FirstOrDefault();
-        if (resolvedAlgorithm.Params.Count != 0)
+        if (resolvedAlgorithm.Parameters.Count != 0)
         {
             return WithSpan<CountedResult?>(
                 span,
@@ -1492,7 +1492,7 @@ public static partial class Evaluator
         if (expr is Expr.AlgorithmExpr(var algorithm))
         {
             var wired = WireToCaller(ctx, algorithm);
-            if (wired.Params.Count == 0)
+            if (wired.Parameters.Count == 0)
             {
                 var nestedItemsR = await EvalExplicitSequenceValueItemsAsync(wired, ctx, valEnv).ConfigureAwait(false);
                 if (nestedItemsR.IsError) return nestedItemsR.Error;
@@ -2067,7 +2067,7 @@ public static partial class Evaluator
         if (includeExplicitSequenceValueItems && argExpr is Expr.AlgorithmExpr(var algorithm))
         {
             var wired = WireToCaller(ctx, algorithm);
-            if (wired.Params.Count == 0)
+            if (wired.Parameters.Count == 0)
             {
                 var blockSpan = PreferExpressionSpan(argExpr.Span, wired.Output);
                 var preparedR = WithSpan(blockSpan, await EvalAlgOutputPreparedCoreAsync(wired, ctx, valEnv).ConfigureAwait(false));
@@ -2102,7 +2102,7 @@ public static partial class Evaluator
         if (receiver is Expr.AlgorithmExpr(var algorithm))
         {
             var wired = WireToCaller(ctx, algorithm);
-            if (wired.Params.Count == 0)
+            if (wired.Parameters.Count == 0)
                 return WithSpan(PreferExpressionSpan(receiver.Span, wired.Output), await EvalAlgOutputCountedCoreAsync(wired, ctx, valEnv).ConfigureAwait(false));
         }
 
@@ -2787,11 +2787,12 @@ public static partial class Evaluator
                     if (simpleCallee.Output.Count == 0)
                         return new EvalError.MissingOutput();
 
-                    var countedEnvR = BindCountedCallbackParams(simpleCallee.Params, args);
+                    var parameterNames = simpleCallee.Params;
+                    var countedEnvR = BindCountedCallbackParams(parameterNames, args);
                     if (countedEnvR.IsError)
                         return AttachImplicitParameterProvenance(countedEnvR.Error, simpleCallee);
 
-                    var newCtx = WithCountedParameterEnvironments(ctx, countedEnvR.Value, simpleCallee.Params);
+                    var newCtx = WithCountedParameterEnvironments(ctx, countedEnvR.Value, parameterNames);
                     return await EvalAlgOutputCountedCoreAsync(simpleCallee, newCtx, valEnv).ConfigureAwait(false);
                 }
 
@@ -2836,11 +2837,12 @@ public static partial class Evaluator
                     }
 
                     // Fixed-only flat callback binding — see the synchronous twin.
-                    var countedEnvR = BindCountedCallbackParams(callee.Params, args);
+                    var parameterNames = callee.Params;
+                    var countedEnvR = BindCountedCallbackParams(parameterNames, args);
                     if (countedEnvR.IsError)
                         return AttachImplicitParameterProvenance(countedEnvR.Error, callee);
 
-                    var newCtx = WithCountedParameterEnvironments(ctx, countedEnvR.Value, callee.Params);
+                    var newCtx = WithCountedParameterEnvironments(ctx, countedEnvR.Value, parameterNames);
                     return await EvalAlgOutputCountedCoreAsync(callee, newCtx, valEnv).ConfigureAwait(false);
                 }
         }
@@ -2974,7 +2976,7 @@ public static partial class Evaluator
         // A parameterized initial accumulator is rejected from its signature at this
         // boundary, never by entering its body — see the synchronous twin.
         if (preparedInitial is null && ZeroArgumentValueDemandError(initialSource, initialAlg) is { } rejection)
-            return initialAlg.Params.Count != 0
+            return initialAlg.Parameters.Count != 0
                 ? ReduceInitialAccumulatorRequiresValueError(initialAlg)
                 : rejection;
 
@@ -3270,12 +3272,12 @@ public static partial class Evaluator
             {
                 var simpleCallee = TryGetFlatBinderUserEquivalent(wired);
                 if (simpleCallee is not null)
-                    return new EvalError.ArityMismatch(simpleCallee.Params.Count, 0);
+                    return new EvalError.ArityMismatch(simpleCallee.Parameters.Count, 0);
 
                 if (wired is Algorithm.Conditional)
                     return new EvalError.NoMatchingBranch(name);
 
-                if (wired.Params.Count == 0)
+                if (wired.Parameters.Count == 0)
                     return ReCountValueBoundary(
                         await EvalZeroArgPropertyAccessCountedAsync(
                             targetAlg, prop, ZeroArgPropertyAccessKind.CountedStructural, wired, ctx, valEnv).ConfigureAwait(false));
@@ -3525,7 +3527,7 @@ public static partial class Evaluator
         {
             var wired = WireToCaller(ctx, alg);
             var blockSpan = PreferExpressionSpan(expr.Span, wired.Output);
-            if (wired.Params.Count != 0)
+            if (wired.Parameters.Count != 0)
                 return MissingImplicitArguments<IReadOnlyList<Result>>(wired, blockSpan);
 
             var blockR = await EvalAlgOutputValueAsync(wired, ctx, valEnv).ConfigureAwait(false);

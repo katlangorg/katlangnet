@@ -1263,7 +1263,13 @@ public closed record Algorithm
     /// <summary>Top-level recursive parameter patterns for ordinary call binding.</summary>
     public virtual IReadOnlyList<ParameterPattern> ParameterPatterns { get; init; } = [];
 
-    /// <summary>Lean: Algorithm.params. Derived parameter names; returns [] for Builtin.</summary>
+    /// <summary>
+    /// Lean: Algorithm.params. Derived parameter names; returns [] for Builtin.
+    /// A fresh projection of the CURRENT <see cref="Parameters"/> on every read, never a
+    /// cache (see <see cref="ParameterNames"/>): free for a zero-parameter algorithm, one
+    /// array for a parameterized one — so count-only consumers read
+    /// <c>Parameters.Count</c>, which is the same number by construction.
+    /// </summary>
     public virtual IReadOnlyList<string> Params => ParameterNames(Parameters);
 
     /// <summary>Lean: Algorithm.opens. Returns [] for Builtin.</summary>
@@ -1378,8 +1384,30 @@ public closed record Algorithm
     internal static IReadOnlyList<ParameterDeclaration> NormalParameters(IEnumerable<string> names)
         => names.Select(static name => new ParameterDeclaration(name)).ToList();
 
-    private static IReadOnlyList<string> ParameterNames(IEnumerable<ParameterDeclaration> parameters)
-        => parameters.Select(static parameter => parameter.Name).ToList();
+    /// <summary>
+    /// The name projection behind <see cref="Params"/>: exactly the names of
+    /// <paramref name="parameters"/>, in order, duplicates included (Lean:
+    /// <c>Algorithm.params</c>), read from the CURRENT list on every call. It is
+    /// deliberately not cached on the record: a host-built algorithm keeps its
+    /// caller-owned <see cref="Parameters"/> list, and <see cref="Params"/> reads through to
+    /// it (<c>LoopStrategyPreparationTests.HostOwnedCallableMetadata_*</c>), which no stored
+    /// derived copy could honor. The cost is instead kept where the evaluator pays it: a
+    /// zero-parameter algorithm — every evaluator-synthesized wrapper and most written
+    /// properties — returns the shared empty list without allocating, and a parameterized
+    /// one allocates ONE array per read (no LINQ iterator, no list wrapper); consumers that
+    /// need only the count read <c>Parameters.Count</c>, identical by construction.
+    /// </summary>
+    private static IReadOnlyList<string> ParameterNames(IReadOnlyList<ParameterDeclaration> parameters)
+    {
+        var count = parameters.Count;
+        if (count == 0)
+            return [];
+
+        var names = new string[count];
+        for (var index = 0; index < names.Length; index++)
+            names[index] = parameters[index].Name;
+        return names;
+    }
 
     internal static IReadOnlyList<ParameterDeclaration> MergeParameters(
         IReadOnlyList<ParameterDeclaration> oldParameters,

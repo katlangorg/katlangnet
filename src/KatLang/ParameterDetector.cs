@@ -235,7 +235,7 @@ internal static class ParameterDetector
         // same bindings with exactly the same owners.
         // Collection only adds names; Grace changes their order, not this map's contents.
         // Reuse the established map when no names were inferred, including completion runs.
-        var bodyParameters = paramOrder.Count == alg.Params.Count
+        var bodyParameters = paramOrder.Count == alg.Parameters.Count
             ? boundParameters
             : capturedParameters.Extend(scope, paramOrder, isProgramRoot);
 

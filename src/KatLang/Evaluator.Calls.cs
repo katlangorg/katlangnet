@@ -50,7 +50,7 @@ public static partial class Evaluator
     /// </summary>
     private static bool IsZeroDeclarationBlockValueSlot(Expr expr) => expr is
         Expr.AlgorithmExpr(var algorithm)
-            && algorithm.Params.Count == 0
+            && algorithm.Parameters.Count == 0
             && algorithm.Opens.Count == 0
             && algorithm.Properties.Count == 0;
 
