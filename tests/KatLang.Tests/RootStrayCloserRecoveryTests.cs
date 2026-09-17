@@ -473,10 +473,11 @@ public class RootStrayCloserRecoveryTests
     /// statement that no combination of open and close delimiters re-enters a loop without
     /// consuming (the September 2026 audit's first owed-closer rule hung on `[ (1, ]`). The
     /// whole sweep is bounded by a wall-clock guard so a regression fails with the offending
-    /// input instead of hanging the suite.
+    /// input instead of hanging the suite; the guard is awaited, never blocked on, so a
+    /// diagnostic-count failure inside the sweep surfaces as itself rather than wrapped.
     /// </summary>
     [Fact]
-    public void DelimiterSoup_AlwaysTerminates_WithLinearDiagnostics()
+    public async Task DelimiterSoup_AlwaysTerminates_WithLinearDiagnostics()
     {
         char[] alphabet = ['(', ')', '[', ']', '{', '}', ',', '1', ' ', '\n'];
         var current = "";
@@ -506,9 +507,11 @@ public class RootStrayCloserRecoveryTests
             }
         });
 
+        var finished = await Task.WhenAny(sweep, Task.Delay(TimeSpan.FromMinutes(2)));
         Assert.True(
-            sweep.Wait(TimeSpan.FromMinutes(2)),
+            finished == sweep,
             $"The delimiter sweep did not terminate; last input: {Escape(Volatile.Read(ref current))}");
+        await sweep;
         Assert.Equal(111_110, parsed);
 
         static string Escape(string source) => source.Replace("\n", "\\n", StringComparison.Ordinal);
