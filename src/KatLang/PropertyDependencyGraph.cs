@@ -122,9 +122,16 @@ internal sealed class PendingReferenceSet : IReadOnlyCollection<PendingReference
 /// other escaping seed). UNRESOLVED when the target's head was not a property of that level:
 /// the head name and the public steps of the dotted target are carried outward for a level
 /// whose direct chain declares the head. A target that provides nothing is not a candidate.
+/// A C# <c>closed</c> class: the two sealed classes below are its only kinds. Its consumers
+/// are switch STATEMENTS (no compiler exhaustiveness); the <c>default</c> arm of
+/// <c>PropertyDependencyGraphBuilder.AddEscaping</c> is a semantic default — an unresolved
+/// candidate whose head this level does not declare is carried outward unchanged — not an
+/// unknown-kind guard.
 /// </summary>
-internal abstract class OpenCandidate
+internal closed class OpenCandidate
 {
+    private protected OpenCandidate() { }
+
     internal abstract string ContentKey { get; }
 }
 
@@ -737,7 +744,7 @@ internal static class PropertyDependencyGraphBuilder
         // summary is therefore empty. Walking it costs O(N) per helper in its capture count
         // (the ownedHere union below and the fixed-point setup), so a wide deconstruction is
         // O(N^2) across its N sibling helpers without this leaf guard.
-        if (algorithm.IsAssignmentDeconstructionHelper)
+        if (algorithm.AssignmentDeconstructionTarget is not null)
             return new AlgorithmSummary(new SummarySeed(), AlgorithmSummary.NoMembers);
 
         var ownedHere = CreateNameSet(locallyOwnedNames);

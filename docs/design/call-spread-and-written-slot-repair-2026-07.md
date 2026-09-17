@@ -149,7 +149,7 @@ colliding with the element separator. Display-only; no Lean impact.
   right-hand side, but it supplied 0 values.`) instead of leaking the
   parser-synthesized helper ("Algorithm `(inline library)` expects ...").
   Mechanism: the parser marks the synthesized helper
-  (`Algorithm.User.IsAssignmentDeconstructionHelper`), the patterned binder
+  (`Algorithm.User.AssignmentDeconstructionTarget`, non-null exactly for a helper), the patterned binder
   wraps arity failures in `DeconstructionBindingContext`, and the formatter
   owns the wording. The wrapper fires ONLY when every argument slot carried a
   value (a genuine shape failure): a right-hand side whose own evaluation

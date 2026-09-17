@@ -5,7 +5,6 @@ using KatLang.Evaluation;
 using KatLang.Evaluation.Caching;
 using KatLang.Optimizations.Loops;
 using KatLang.Optimizations.Sequences;
-using KatLang.Runtime;
 
 namespace KatLang;
 
@@ -325,8 +324,18 @@ public static partial class Evaluator
         public IReadOnlyList<Result> FlattenedItems => Collected.FlattenedItems;
     }
 
-    private abstract record PreparedSequenceBuiltinSuffixArg
+    /// <summary>
+    /// One prepared suffix argument of a sequence builtin (Lean:
+    /// <c>PreparedSequenceBuiltinSuffixArg</c>): a C# <c>closed</c> record whose three sealed
+    /// nested records are its only kinds. Its consumers are the per-kind projectors
+    /// (<c>ExpectPrepared…SuffixArg</c>), which check the prepared kind against the
+    /// builtin's registered metadata kind — a mismatch is an internal metadata error, not
+    /// an unknown variant.
+    /// </summary>
+    private closed record PreparedSequenceBuiltinSuffixArg
     {
+        private PreparedSequenceBuiltinSuffixArg() { }
+
         /// <summary>
         /// An algorithm-kind suffix argument. <see cref="PreparedValue"/> carries the
         /// slot's already-computed counted value when call-item assembly evaluated it

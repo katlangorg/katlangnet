@@ -65,8 +65,15 @@ internal readonly record struct SequencePipelineEvaluationServices(
     Func<Expr, EvalResult<Algorithm>> ResolveAlgorithm,
     Func<Expr, OutputBundle, SourceSpan?, EvalResult<Evaluator.InclusiveRange>> EvaluateRangeCallArguments);
 
-internal abstract record FilterCountSourcePlan
+/// <summary>
+/// The source half of a fused filter-count pipeline: a C# <c>closed</c> record whose two
+/// sealed nested records are its only kinds, so the executor and the diagnostic
+/// classifier switch over it exhaustively with no catch-all arm.
+/// </summary>
+internal closed record FilterCountSourcePlan
 {
+    private FilterCountSourcePlan() { }
+
     public sealed record Generic(
         IReadOnlyList<Evaluator.CountedResult> SourceItems,
         string DirectRangeFallbackReason) : FilterCountSourcePlan;

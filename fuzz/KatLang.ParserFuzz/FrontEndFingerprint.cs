@@ -58,7 +58,7 @@ internal static class FrontEndFingerprint
                 break;
 
             case Algorithm.User u:
-                sb.Append("User{decon:").Append(u.IsAssignmentDeconstructionHelper ? '1' : '0')
+                sb.Append("User{decon:").Append(u.AssignmentDeconstructionTarget is not null ? '1' : '0')
                   .Append("}(");
                 sb.Append("params[");
                 foreach (var p in u.Parameters) ParamDecl(sb, p);

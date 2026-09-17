@@ -5,7 +5,6 @@ using KatLang.Evaluation;
 using KatLang.Evaluation.Caching;
 using KatLang.Optimizations.Loops;
 using KatLang.Optimizations.Sequences;
-using KatLang.Runtime;
 
 namespace KatLang;
 
@@ -466,8 +465,8 @@ public static partial class Evaluator
         // Assignment-deconstruction target: project this target's slot from the group's shared
         // run-scoped bind. The projected value is re-counted at this value boundary exactly as the
         // helper body's `Param(xi)` result would be (`ReCountValueBoundary`): count = ValueCount().
-        if (callee is Algorithm.User { IsAssignmentDeconstructionHelper: true } deconstructionHelper
-            && TryProjectSharedDeconstructionTarget(deconstructionHelper, args, ctx, valEnv, calleeName, argumentAssembly) is { } sharedTarget)
+        if (callee is Algorithm.User { AssignmentDeconstructionTarget: { } target } deconstructionHelper
+            && TryProjectSharedDeconstructionTarget(deconstructionHelper, target, args, ctx, valEnv, calleeName, argumentAssembly) is { } sharedTarget)
         {
             return sharedTarget.IsError
                 ? sharedTarget.Error

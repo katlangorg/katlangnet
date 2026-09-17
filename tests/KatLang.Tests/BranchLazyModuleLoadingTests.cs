@@ -1267,4 +1267,130 @@ public class BranchLazyModuleLoadingTests
         Assert.Equal(resolution.Classification, visible.Classification);
         Assert.Equal(directlyDeclared, visible.Declaration is not null);
     }
+
+    // ── K. The loader's walk context is a scope ────────────────────────────
+
+    [Fact]
+    public void WalkContextScopes_RejectCopiedAndOutOfOrderDisposal_AndRestoreAfterAnException()
+    {
+        var loader = new ModuleLoader([], (_, _) => ValueTask.FromResult("1"));
+        var original = loader.WalkContext;
+        IDisposable Enter(string name, params object[] args)
+            => (IDisposable)typeof(ModuleLoader).GetMethod(name,
+                System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!.Invoke(loader, args)!;
+
+        using var tokenSource = new CancellationTokenSource();
+        var outer = Enter("EnterMaterializationContext", new List<Diagnostic>(), 7, tokenSource.Token);
+        var outerContext = loader.WalkContext;
+        var copied = (IDisposable)System.Runtime.CompilerServices.RuntimeHelpers.GetObjectValue(outer);
+        Assert.Throws<OperationCanceledException>((Action)(() =>
+        {
+            using var inner = Enter("EnterNestedTraversal", 19);
+            var innerContext = loader.WalkContext;
+            Assert.Throws<InvalidOperationException>(() => copied.Dispose());
+            Assert.Equal(innerContext, loader.WalkContext);
+            throw new OperationCanceledException();
+        }));
+        Assert.Equal(outerContext, loader.WalkContext);
+        outer.Dispose();
+        Assert.Equal(original, loader.WalkContext);
+        using (Enter("EnterMaterializationContext", new List<Diagnostic>(), 23, tokenSource.Token))
+        {
+            var later = loader.WalkContext;
+            Assert.Throws<InvalidOperationException>(() => copied.Dispose());
+            Assert.Equal(later, loader.WalkContext);
+        }
+        ((IDisposable)Activator.CreateInstance(outer.GetType())!).Dispose();
+        Assert.Equal(original, loader.WalkContext);
+    }
+
+    /// <summary>
+    /// A materialization runs the loader under a temporary WALK CONTEXT — its own
+    /// diagnostics sink, the region's recorded traversal base, and the linked cancellation
+    /// token — installed and restored by one scope (<c>ModuleLoader.WalkContextScope</c>)
+    /// rather than three hand-restored fields. Whatever way the materialization ends — a
+    /// spliced body, a failed download, a cancelled one — the loader is back at the
+    /// elaboration's own context: the parse result's diagnostics list, base zero, and the
+    /// configured source-processing token (never the disposed linked one).
+    /// </summary>
+    private static void AssertWalkContextAtElaborationDefaults(ParseResult parsed, DeferredModuleRegion region)
+    {
+        var (sink, nestedTraversalBase, cancellationToken) = region.Loader.WalkContext;
+        Assert.Same(parsed.Diagnostics, sink);
+        Assert.Equal(0, nestedTraversalBase);
+        Assert.Equal(region.Loader.SourceProcessingCancellationToken, cancellationToken);
+    }
+
+    [Fact]
+    public async Task Materialization_RestoresTheLoaderWalkContext_AfterSuccess_AndAfterANestedModuleChain()
+    {
+        // The selected branch loads a module that itself loads another: the nested traversal
+        // base is raised twice (the region's recorded base, then the fetched module's), and
+        // both scopes must unwind.
+        var modules = new CountingModules((ModuleA, $"open '{ModuleC}'\npublic A = C + 1"), (ModuleC, "public C = 3"));
+        var parsed = await Parser.ParseAsync(TwoAlternatives + "F(0)", modules.Options);
+        Assert.False(parsed.HasErrors);
+        var region = Region(parsed.Root, "F", 0);
+        AssertWalkContextAtElaborationDefaults(parsed, region);
+
+        var result = await RunFlat(parsed.Root);
+
+        Assert.Equal([4m], result.Value);
+        Assert.True(region.IsMaterialized);
+        Assert.Equal(2, region.Loader.CachedModuleCount);
+        AssertWalkContextAtElaborationDefaults(parsed, region);
+        Assert.Empty(parsed.Diagnostics);
+    }
+
+    [Fact]
+    public async Task Materialization_RestoresTheLoaderWalkContext_AfterAFailedDownload()
+    {
+        var modules = Modules();
+        var parsed = await Parser.ParseAsync($"F(0) = 42\nF(1) = {{\n    open '{Missing}'\n    X\n}}\nF(1)", modules.Options);
+        Assert.False(parsed.HasErrors);
+        var region = Region(parsed.Root, "F", 1);
+
+        var result = await RunFlat(parsed.Root);
+
+        Assert.Equal(KatLangErrorCode.LoadFetchFailed, result.Error.Code);
+        AssertWalkContextAtElaborationDefaults(parsed, region);
+        // The failure was reported into the materialization's own sink, never the published parse result.
+        Assert.Empty(parsed.Diagnostics);
+    }
+
+    [Fact]
+    public async Task Materialization_RestoresTheLoaderWalkContext_AfterCancellation()
+    {
+        var downloader = new GatedDownloader();
+        var parsed = await Parser.ParseAsync(TwoAlternatives + "F(0)", downloader.Options);
+        Assert.False(parsed.HasErrors);
+        var region = Region(parsed.Root, "F", 0);
+        using var cancellation = new CancellationTokenSource();
+
+        var run = RunFlat(parsed.Root, cancellation.Token);
+        try
+        {
+            await downloader.Started(ModuleA).WaitAsync(TimeSpan.FromSeconds(10));
+            cancellation.Cancel();
+            await downloader.Exited(ModuleA).WaitAsync(TimeSpan.FromSeconds(10));
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => run.WaitAsync(TimeSpan.FromSeconds(10)));
+
+            // The evaluation leaves as soon as its own token is cancelled, while the abandoned
+            // run still unwinds asynchronously; acquiring the gate proves the loader walk has
+            // unwound. Cancel the WAIT itself on timeout so it cannot later steal the gate.
+            using var gateTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            await region.Loader.MaterializationGate.WaitAsync(gateTimeout.Token);
+            region.Loader.MaterializationGate.Release();
+
+            AssertWalkContextAtElaborationDefaults(parsed, region);
+            downloader.Release(ModuleA, "public A = 1");
+            Assert.Equal([1m], (await RunFlat(parsed.Root).WaitAsync(TimeSpan.FromSeconds(10))).Value);
+            AssertWalkContextAtElaborationDefaults(parsed, region);
+        }
+        finally
+        {
+            cancellation.Cancel();
+            downloader.Release(ModuleA, "public A = 1");
+        }
+    }
 }

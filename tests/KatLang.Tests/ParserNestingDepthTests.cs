@@ -134,7 +134,7 @@ public class ParserNestingDepthTests
         // A trailing-brace call level charges 5 units: the two base charges
         // (ParseExpression + ParseUnary) plus BOTH heavy surcharges, because
         // the form runs the call machinery AND the block machinery
-        // (EnterHeavyNesting(CallArgsNestingSurcharge + BlockNestingSurcharge)
+        // (EnterDelimitedProduction(TokenKind.RBrace, CallArgsNestingSurcharge + BlockNestingSurcharge)
         // in ParseCallArgs). 76 levels peak at 76 x 5 + 2 (innermost leaf)
         // = 382 <= 384 and parse; level 77's surcharge chokepoint reaches
         // 77 x 5 = 385 > 384 and diagnoses. The historical calibration

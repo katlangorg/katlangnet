@@ -1784,9 +1784,9 @@ public static partial class Evaluator
         if (callee.Output.Count == 0)
             return new EvalError.MissingOutput();
 
-        if (callee is Algorithm.User { IsAssignmentDeconstructionHelper: true } deconstructionHelper
+        if (callee is Algorithm.User { AssignmentDeconstructionTarget: { } target } deconstructionHelper
             && await TryProjectSharedDeconstructionTargetAsync(
-                deconstructionHelper, args, ctx, valEnv, calleeName, argumentAssembly).ConfigureAwait(false) is { } sharedTarget)
+                deconstructionHelper, target, args, ctx, valEnv, calleeName, argumentAssembly).ConfigureAwait(false) is { } sharedTarget)
         {
             return sharedTarget.IsError
                 ? sharedTarget.Error
@@ -1835,18 +1835,15 @@ public static partial class Evaluator
     /// <summary>MIRROR OF <see cref="TryProjectSharedDeconstructionTarget"/> — keep in lock-step.</summary>
     private static async ValueTask<EvalResult<Result>?> TryProjectSharedDeconstructionTargetAsync(
         Algorithm.User helper,
+        AssignmentDeconstructionTarget target,
         OutputBundle args,
         EvalCtx ctx,
         ValEnv valEnv,
         CallDiagnosticName calleeName,
         CallArgumentAssembly argumentAssembly)
     {
-        var group = helper.AssignmentDeconstructionGroup;
-        if (group is null)
-            return null;
-
         var execution = new DeconstructionBindingExecution(
-            group,
+            target.Group,
             DeconstructionOwnerIdentity(ctx),
             ValueEnvironmentCacheIdentity(valEnv),
             ctx.AlgEnv,
@@ -1884,11 +1881,10 @@ public static partial class Evaluator
             return sharedR.Error;
 
         var values = sharedR.Value;
-        var index = helper.AssignmentDeconstructionTargetIndex;
-        if ((uint)index >= (uint)values.Count)
+        if ((uint)target.Index >= (uint)values.Count)
             return null;
 
-        return EvalResult<Result>.Ok(values[index]);
+        return EvalResult<Result>.Ok(values[target.Index]);
     }
 
     /// <summary>MIRROR OF <see cref="EvalConditionalCallCounted"/> — keep in lock-step.</summary>
@@ -2122,7 +2118,7 @@ public static partial class Evaluator
         CallDiagnosticName calleeName,
         CallArgumentAssembly argumentAssembly = CallArgumentAssembly.OrdinaryArguments)
     {
-        if (callee is Algorithm.User { IsAssignmentDeconstructionHelper: true })
+        if (callee is Algorithm.User { AssignmentDeconstructionTarget: not null })
             ctx.Observations?.RecordDeconstructionFullBind();
 
         var inputsR = await BuildCallArgumentInputsAsync(
@@ -2147,7 +2143,7 @@ public static partial class Evaluator
         // Assignment-deconstruction shape failures are rephrased against the WRITTEN
         // pattern — identical rule and conditions to the synchronous twin.
         if (bindingsR.IsError
-            && callee is Algorithm.User { IsAssignmentDeconstructionHelper: true }
+            && callee is Algorithm.User { AssignmentDeconstructionTarget: not null }
             && TryGetDeconstructionShapeMismatch(bindingsR.Error) is { } deconstructionMismatch
             && inputsR.Value.All(static input => input.Value is not null))
         {

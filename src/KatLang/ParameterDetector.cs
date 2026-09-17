@@ -165,7 +165,7 @@ internal static class ParameterDetector
         // parameter-ownership map, and MergeParameterPatterns per helper, so a wide
         // deconstruction is O(N^2) across its N sibling helpers. This leaf path is O(1) in
         // the capture count and produces the identical elaborated helper.
-        if (alg is Algorithm.User { IsAssignmentDeconstructionHelper: true } deconstructionHelper)
+        if (alg is Algorithm.User { AssignmentDeconstructionTarget: not null } deconstructionHelper)
             return RewriteAssignmentDeconstructionHelperOutput(deconstructionHelper);
 
         var newOpens = ProcessOpenExprs(alg.Opens, parentScope, diagnostics, observations, run);
@@ -1811,30 +1811,22 @@ internal static class ParameterDetector
         ParameterOwnership boundParameters)
     {
         var owned = ElaboratedScopeLookup.SelectOwnedDeclaration(scope, name, boundParameters);
-        switch (owned.Kind)
+        if (owned.TryGetParameter(out _))
+            return new(StaticStructuralMemberProviderKind.RuntimeParameter);
+
+        if (owned.TryGetProperty(out _, out var hit))
+            return new(StaticStructuralMemberProviderKind.KnownAlgorithm, hit.Property.Value);
+
+        // Undecided by ownership: the ordinary open fallback, and — when
+        // that provides nothing either — the name this collection is
+        // about to promote to an implicit parameter.
+        var openHits = ElaboratedScopeLookup.LookupOpenPropertyMatches(scope, name);
+        return openHits.Count switch
         {
-            case OwnedDeclarationKind.Parameter:
-                return new(StaticStructuralMemberProviderKind.RuntimeParameter);
-
-            case OwnedDeclarationKind.Property:
-                return new(
-                    StaticStructuralMemberProviderKind.KnownAlgorithm,
-                    owned.PropertyHit!.Value.Property.Value);
-
-            default:
-            {
-                // Undecided by ownership: the ordinary open fallback, and — when
-                // that provides nothing either — the name this collection is
-                // about to promote to an implicit parameter.
-                var openHits = ElaboratedScopeLookup.LookupOpenPropertyMatches(scope, name);
-                return openHits.Count switch
-                {
-                    0 => new(StaticStructuralMemberProviderKind.RuntimeParameter),
-                    1 => new(StaticStructuralMemberProviderKind.KnownAlgorithm, openHits[0].Property.Value),
-                    _ => new(StaticStructuralMemberProviderKind.LexicalReference),
-                };
-            }
-        }
+            0 => new(StaticStructuralMemberProviderKind.RuntimeParameter),
+            1 => new(StaticStructuralMemberProviderKind.KnownAlgorithm, openHits[0].Property.Value),
+            _ => new(StaticStructuralMemberProviderKind.LexicalReference),
+        };
     }
 
     /// <summary>
@@ -1960,18 +1952,19 @@ internal static class ParameterDetector
         RewriteWalkMemo memo)
     {
         var owned = ElaboratedScopeLookup.SelectOwnedDeclaration(scope, name, parameters);
-        switch (owned.Kind)
+        if (owned.TryGetParameter(out var parameterOwner))
         {
-            case OwnedDeclarationKind.Parameter:
-                return ReferenceEquals(owned.OwnerScope, memo.Level)
-                    ? "it already resolves to an explicit parameter"
-                    : "it already resolves to a parameter of an enclosing algorithm";
+            return ReferenceEquals(parameterOwner, memo.Level)
+                ? "it already resolves to an explicit parameter"
+                : "it already resolves to a parameter of an enclosing algorithm";
+        }
 
-            case OwnedDeclarationKind.Property:
-                // The prelude is the outermost property level of the owner walk.
-                return owned.OwnerScope!.Parent is null
-                    ? $"it already resolves to the builtin '{name}'"
-                    : "it already resolves to a property";
+        if (owned.TryGetProperty(out var propertyOwner, out _))
+        {
+            // The prelude is the outermost property level of the owner walk.
+            return propertyOwner.Parent is null
+                ? $"it already resolves to the builtin '{name}'"
+                : "it already resolves to a property";
         }
 
         if (ElaboratedScopeLookup.LookupOpenPropertyMatches(scope, name).Count > 0)

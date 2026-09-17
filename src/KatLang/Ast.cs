@@ -1458,15 +1458,35 @@ public closed record Algorithm
         public override IReadOnlyList<Property> Properties { get; init; } = [];
         public override OutputBundle Output { get; init; } = OutputBundle.Empty;
 
+        private readonly object? _assignmentGroup;
+        private readonly int _assignmentTargetIndex;
+
         /// <summary>
-        /// True for the synthetic inline helper the parser elaborates an
-        /// assignment deconstruction (<c>x, *y, z = RHS</c>) into.
-        /// Diagnostics-only metadata: binding failures are phrased against the
-        /// written assignment pattern instead of the anonymous helper call.
-        /// Never encoded to the Lean model (wording-only, the structured error
-        /// kind is unchanged).
+        /// Non-null exactly for the synthetic inline helper the parser elaborates ONE
+        /// target of an assignment deconstruction (<c>x, *y, z = RHS</c>) into: the
+        /// deconstruction group the helper belongs to and the index of the target it
+        /// projects, as one unit (see <see cref="KatLang.AssignmentDeconstructionTarget"/>).
+        /// Null for every other algorithm. Its compact private storage is copied by
+        /// <c>with</c>, so record transformations preserve it without allocating metadata
+        /// objects or enlarging every ordinary algorithm with a nullable struct field.
+        /// Not part of the Lean model:
+        /// the group and index drive a run-scoped reuse mechanism (the shared bind of
+        /// the group's N targets), and the helper identity is diagnostics-only
+        /// (binding failures are phrased against the written assignment pattern instead
+        /// of the anonymous helper call — wording only, the structured error kind is
+        /// unchanged).
         /// </summary>
-        internal bool IsAssignmentDeconstructionHelper { get; init; }
+        internal AssignmentDeconstructionTarget? AssignmentDeconstructionTarget
+        {
+            get => _assignmentGroup is { } group ? new(group, _assignmentTargetIndex) : null;
+            init
+            {
+                if (value is { Group: null })
+                    throw new ArgumentException("A deconstruction target requires a group identity.", nameof(value));
+                _assignmentGroup = value?.Group;
+                _assignmentTargetIndex = value?.Index ?? 0;
+            }
+        }
 
         /// <summary>
         /// True for the parser-synthesized <c>$deconstruct$N</c> property that hoists an
@@ -1496,25 +1516,6 @@ public closed record Algorithm
         /// evaluation semantics depend on it.
         /// </summary>
         internal bool IsModuleElaborated { get; init; }
-
-        /// <summary>
-        /// Stable per-deconstruction identity token shared by all N target helpers of one
-        /// <c>x0, ..., x{N-1} = RHS</c> (a fresh token per deconstruction, assigned at parse).
-        /// The run-scoped deconstruction binding cache groups the N helpers by this token so the
-        /// shared N-capture pattern is bound once per group per binding context instead of once
-        /// per demanded target. It is a plain reference field copied by <c>with</c>, so record
-        /// transformations provably preserve it; only meaningful when
-        /// <see cref="IsAssignmentDeconstructionHelper"/> is true. Not part of the Lean model
-        /// (a run-scoped reuse mechanism, no observable-semantics effect).
-        /// </summary>
-        internal object? AssignmentDeconstructionGroup { get; init; }
-
-        /// <summary>
-        /// Zero-based position of this helper's target within its deconstruction group, i.e. the
-        /// capture index this helper projects out of the shared ordered bind. Only meaningful
-        /// when <see cref="IsAssignmentDeconstructionHelper"/> is true.
-        /// </summary>
-        internal int AssignmentDeconstructionTargetIndex { get; init; }
 
         internal User WithParameterPatternList(IReadOnlyList<ParameterPattern> parameterPatterns)
             => this with
@@ -1583,6 +1584,19 @@ public closed record Algorithm
     }
 }
 
+/// <summary>
+/// The assignment-deconstruction target a synthetic inline helper projects
+/// (<see cref="Algorithm.User.AssignmentDeconstructionTarget"/>): <paramref name="Group"/>
+/// is the stable identity token shared by all N target helpers of one
+/// <c>x0, ..., x{N-1} = RHS</c> (a fresh token per deconstruction, minted at parse), by
+/// which the run-scoped deconstruction binding cache binds the shared N-capture pattern
+/// once per group per binding context instead of once per demanded target;
+/// <paramref name="Index"/> is the zero-based position of this helper's target within
+/// the group, i.e. the capture it projects out of the shared ordered bind. The two are
+/// one unit because neither is meaningful without the other. Not part of the Lean model.
+/// </summary>
+internal readonly record struct AssignmentDeconstructionTarget(object Group, int Index);
+
 internal sealed record ExplicitParameterOutputViolation(SourceSpan? Span);
 
 /// <summary>
@@ -1590,8 +1604,10 @@ internal sealed record ExplicitParameterOutputViolation(SourceSpan? Span);
 /// preconstructed AST. Lean: the error cases of
 /// <c>validateExplicitParamOutputInvariant</c> / <c>validateConditionalBranchArities</c>
 /// in <c>lean/KatLang.lean</c>, which <c>runResultM</c> raises before any evaluation.
+/// A C# <c>closed</c> record: its three sealed nested records are its only kinds, so the
+/// evaluator's translation to <see cref="EvalError"/> names each one with no catch-all arm.
 /// </summary>
-internal abstract record PreEvaluationAstViolation
+internal closed record PreEvaluationAstViolation
 {
     private PreEvaluationAstViolation() { }
 

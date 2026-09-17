@@ -115,6 +115,7 @@ public sealed class Parser
     // in-budget program parses identically (same AST, spans, and diagnostics).
     internal const int MaxNestingDepth = 384;
     private int _nestingDepth;
+    private StateScopeStack _stateScopes;
 
     // Closing delimiters currently owed to an enclosing construct, per delimiter kind
     // (`(` groups and call argument lists, `[` list literals, `{` brace bodies and
@@ -166,14 +167,18 @@ public sealed class Parser
 
     /// <summary>
     /// Aborts the whole parse with a single structured diagnostic when the recursion
-    /// budget is exceeded. Recursive callers increment <see cref="_nestingDepth"/>,
-    /// call this, and decrement in a <c>finally</c>.
+    /// budget is exceeded: the check of the pre-charged loader debt at the root, and the
+    /// check every admitted level runs through <see cref="EnterNestingLevel"/> /
+    /// <see cref="EnterDelimitedProduction"/>.
     /// </summary>
     private void GuardNestingDepth()
     {
-        if (_nestingDepth <= MaxNestingDepth)
-            return;
+        if (_nestingDepth > MaxNestingDepth)
+            ThrowNestingTooDeep();
+    }
 
+    private void ThrowNestingTooDeep()
+    {
         ReportError(
             DiagnosticCode.NestingTooDeep,
             NestingTooDeepMessage +
@@ -182,13 +187,86 @@ public sealed class Parser
     }
 
     /// <summary>
-    /// Charges a heavy production's surcharge on top of the base chokepoint units.
-    /// Callers guard from inside a <c>try</c> and release the same amount in its
-    /// <c>finally</c>, so a limit exception cannot leave the shared counter charged.
+    /// One admitted base level of the shared recursion budget — the chokepoint charge of
+    /// every expression level, every unary level, and every clause-head pattern level.
+    /// Released exactly once by <see cref="Dispose"/>, always from a <c>using</c>, so the
+    /// release runs on the ordinary return, on recovery, and on a budget exception's
+    /// unwind alike; the counter can therefore never be left charged by a level that
+    /// forgot its release. The default value (never handed out by
+    /// <see cref="EnterNestingLevel"/>, which throws instead of returning a refused level)
+    /// releases nothing.
     /// </summary>
-    private void EnterHeavyNesting(int surcharge)
+    private readonly struct NestingLevel(Parser parser, StateScopeStack.Ticket ticket) : IDisposable
     {
+        public void Dispose()
+        {
+            if (parser is null)
+                return;
+            parser._stateScopes.Exit(ticket);
+            parser._nestingDepth--;
+        }
+    }
+
+    /// <summary>
+    /// Admits and charges ONE base unit of the recursion budget, returning the level
+    /// the caller MUST dispose from a <c>using</c>. A refused enter mutates nothing: the
+    /// budget diagnostic aborts the parse before the unit is charged, so no release is
+    /// owed for a level that was never admitted.
+    /// </summary>
+    private NestingLevel EnterNestingLevel()
+    {
+        if (_nestingDepth >= MaxNestingDepth)
+            ThrowNestingTooDeep();
+
+        var ticket = _stateScopes.Enter();
+        _nestingDepth++;
+        return new NestingLevel(this, ticket);
+    }
+
+    /// <summary>
+    /// One admitted heavy delimited production: a parenthesized group or call argument
+    /// list (<c>(</c>), a brace body or trailing-brace call argument (<c>{</c>), or a list
+    /// literal (<c>[</c>). Entry charges the production's calibrated surcharge on the
+    /// shared recursion budget AND registers the closer the production is now owed
+    /// (<see cref="IsOwedCloser"/>); <see cref="Dispose"/> releases exactly those two
+    /// changes, once, always from a <c>using</c> that ends where the production's body
+    /// parse ends — before the closer is consumed, exactly like the <c>finally</c> it
+    /// replaces. The default value releases nothing.
+    /// </summary>
+    private readonly struct DelimitedProduction(Parser parser, TokenKind closer, int surcharge, StateScopeStack.Ticket ticket) : IDisposable
+    {
+        public void Dispose()
+        {
+            if (parser is null)
+                return;
+
+            parser._stateScopes.Exit(ticket);
+            parser._nestingDepth -= surcharge;
+            parser.ReleaseOwedCloser(closer);
+        }
+    }
+
+    /// <summary>
+    /// Enters a heavy delimited production (<see cref="DelimitedProduction"/>): charges
+    /// <paramref name="surcharge"/> on top of the base chokepoint units the body's
+    /// expression levels will charge and registers the owed <paramref name="closer"/>.
+    /// A refused enter mutates nothing: admission precedes both changes.
+    /// </summary>
+    private DelimitedProduction EnterDelimitedProduction(TokenKind closer, int surcharge)
+    {
+        // Validate every potentially rejecting input before acquiring the state scope.
+        if (closer is not (TokenKind.RParen or TokenKind.RBracket or TokenKind.RBrace))
+            throw new ArgumentOutOfRangeException(nameof(closer), closer, "Not a closing delimiter.");
+        if (surcharge < 0)
+            throw new ArgumentOutOfRangeException(nameof(surcharge));
+        if (surcharge > MaxNestingDepth - _nestingDepth)
+            ThrowNestingTooDeep();
+
+        var ticket = _stateScopes.Enter();
+        RegisterOwedCloser(closer);
         _nestingDepth += surcharge;
+
+        return new DelimitedProduction(this, closer, surcharge, ticket);
     }
 
     /// <summary>
@@ -202,6 +280,28 @@ public sealed class Parser
         TokenKind.RBrace => _openBraces > 0,
         _ => false,
     };
+
+    private void RegisterOwedCloser(TokenKind closer)
+    {
+        switch (closer)
+        {
+            case TokenKind.RParen: _openParens++; break;
+            case TokenKind.RBracket: _openBrackets++; break;
+            case TokenKind.RBrace: _openBraces++; break;
+            default: throw new ArgumentOutOfRangeException(nameof(closer), closer, "Not a closing delimiter.");
+        }
+    }
+
+    private void ReleaseOwedCloser(TokenKind closer)
+    {
+        switch (closer)
+        {
+            case TokenKind.RParen: _openParens--; break;
+            case TokenKind.RBracket: _openBrackets--; break;
+            case TokenKind.RBrace: _openBraces--; break;
+            default: throw new ArgumentOutOfRangeException(nameof(closer), closer, "Not a closing delimiter.");
+        }
+    }
 
     /// <summary>
     /// Records the binary/postfix depth of a newly constructed expression and aborts
@@ -307,8 +407,8 @@ public sealed class Parser
         var diagnostics = new List<Diagnostic>(lexDiags);
         var parser = new Parser(tokens, diagnostics, comparisonObservations);
         // Pre-charge the caller's live stack debt (nested-module parses under active
-        // module-loader frames). Recursive charges pair with finally-releases, so the
-        // counter's floor stays at the debt for the whole parse.
+        // module-loader frames). Every recursive charge is released by its scope's
+        // Dispose, so the counter's floor stays at the debt for the whole parse.
         // Clamp hostile/internal callers before adding any recursive charges. The
         // one-above value is enough to reject immediately and avoids signed overflow
         // when an arbitrarily large debt is supplied.
@@ -1906,9 +2006,7 @@ public sealed class Parser
                 ParameterPatterns = [seqPattern],
                 ExplicitParameterPatterns = [seqPattern],
                 ExplicitParameters = explicitParameters,
-                IsAssignmentDeconstructionHelper = true,
-                AssignmentDeconstructionGroup = deconstructionGroup,
-                AssignmentDeconstructionTargetIndex = targetIndex,
+                AssignmentDeconstructionTarget = new AssignmentDeconstructionTarget(deconstructionGroup, targetIndex),
             };
 
             OutputBundle args = [new Expr.Resolve(sourceName)];
@@ -2518,13 +2616,8 @@ public sealed class Parser
     {
         // Clause-head pattern nesting recurses through here (the nested `(pattern)`
         // case), so enforce the shared parser recursion budget once per level.
-        _nestingDepth++;
-        try
-        {
-            GuardNestingDepth();
-            return ParsePatternAtomCore();
-        }
-        finally { _nestingDepth--; }
+        using var level = EnterNestingLevel();
+        return ParsePatternAtomCore();
     }
 
     /// <summary>
@@ -3198,13 +3291,8 @@ public sealed class Parser
         // right-associative `^` recursion is bounded separately: its exponent
         // re-enters ParseUnary, whose entry charge stays live across that
         // recursion — see ParsePower.)
-        _nestingDepth++;
-        try
-        {
-            GuardNestingDepth();
-            return ParseExpressionCore(minPrecedence);
-        }
-        finally { _nestingDepth--; }
+        using var level = EnterNestingLevel();
+        return ParseExpressionCore(minPrecedence);
     }
 
     private Expr ParseExpressionCore(int minPrecedence = 0)
@@ -3301,27 +3389,22 @@ public sealed class Parser
         // right-associative `^` exponent re-enters here from ParsePower while
         // this frame's charge is still live — that held charge is what bounds
         // power chains (one live unit per `^` level; see ParsePower).
-        _nestingDepth++;
-        try
-        {
-            GuardNestingDepth();
+        using var level = EnterNestingLevel();
 
-            if (Current.Kind is TokenKind.Minus or TokenKind.KeywordNot)
-            {
-                // CreateUnaryExpression also rejects spread operands
-                // (`-values*` is an error; spread the whole expression
-                // instead: `(-values)*`).
-                //
-                // The operand recursion re-enters the whole unary level,
-                // whose non-prefix arm is ParsePower — so `^` binds tighter
-                // than the prefix tier on the left (`-2 ^ 2` is `-(2 ^ 2)`;
-                // write `(-2) ^ 2` to raise the negated base).
-                var start = Advance(); // consume '-' / 'not'
-                return CreateUnaryExpression(start, ParseUnary());
-            }
-            return ParsePower();
+        if (Current.Kind is TokenKind.Minus or TokenKind.KeywordNot)
+        {
+            // CreateUnaryExpression also rejects spread operands
+            // (`-values*` is an error; spread the whole expression
+            // instead: `(-values)*`).
+            //
+            // The operand recursion re-enters the whole unary level,
+            // whose non-prefix arm is ParsePower — so `^` binds tighter
+            // than the prefix tier on the left (`-2 ^ 2` is `-(2 ^ 2)`;
+            // write `(-2) ^ 2` to raise the negated base).
+            var start = Advance(); // consume '-' / 'not'
+            return CreateUnaryExpression(start, ParseUnary());
         }
-        finally { _nestingDepth--; }
+        return ParsePower();
     }
 
     /// <summary>
@@ -3787,15 +3870,11 @@ public sealed class Parser
             // The parenthesized parse mode is shared with ordinary parens so
             // algorithm-level declarations keep the same targeted rejection
             // diagnostics and recovery.
-            EnterHeavyNesting(CallArgsNestingSurcharge);
-            _openParens++;
             ParsedAlgorithmBody body;
-            try
+            using (EnterDelimitedProduction(TokenKind.RParen, CallArgsNestingSurcharge))
             {
-                GuardNestingDepth();
                 body = ParseParenthesizedBodyParts();
             }
-            finally { _nestingDepth -= CallArgsNestingSurcharge; _openParens--; }
 
             Expect(TokenKind.RParen);
             if (!body.HasDeclarations)
@@ -3818,15 +3897,11 @@ public sealed class Parser
             // runs both machineries per level.
             var start = Current;
             Advance(); // consume '{'
-            EnterHeavyNesting(CallArgsNestingSurcharge + BlockNestingSurcharge);
-            _openBraces++;
             Algorithm innerAlg;
-            try
+            using (EnterDelimitedProduction(TokenKind.RBrace, CallArgsNestingSurcharge + BlockNestingSurcharge))
             {
-                GuardNestingDepth();
                 innerAlg = ParseScopedAlgorithm();
             }
-            finally { _nestingDepth -= CallArgsNestingSurcharge + BlockNestingSurcharge; _openBraces--; }
 
             Expect(TokenKind.RBrace);
             var blockExpr = new Expr.AlgorithmExpr(innerAlg) { Span = MakeSpan(start) };
@@ -3931,15 +4006,11 @@ public sealed class Parser
                     // Heavy production: each group level runs the block/algorithm
                     // machinery, so it carries a calibrated surcharge on the shared
                     // cumulative recursion budget.
-                    EnterHeavyNesting(GroupNestingSurcharge);
-                    _openParens++;
                     ParsedAlgorithmBody body;
-                    try
+                    using (EnterDelimitedProduction(TokenKind.RParen, GroupNestingSurcharge))
                     {
-                        GuardNestingDepth();
                         body = ParseParenthesizedBodyParts();
                     }
-                    finally { _nestingDepth -= GroupNestingSurcharge; _openParens--; }
 
                     Expect(TokenKind.RParen);
 
@@ -3985,15 +4056,11 @@ public sealed class Parser
                     var start = Current;
                     Advance(); // consume '{'
                     // Heavy production (see the LParen arm).
-                    EnterHeavyNesting(BlockNestingSurcharge);
-                    _openBraces++;
                     Algorithm alg;
-                    try
+                    using (EnterDelimitedProduction(TokenKind.RBrace, BlockNestingSurcharge))
                     {
-                        GuardNestingDepth();
                         alg = ParseScopedAlgorithm();
                     }
-                    finally { _nestingDepth -= BlockNestingSurcharge; _openBraces--; }
 
                     Expect(TokenKind.RBrace);
                     return new Expr.AlgorithmExpr(alg) { Span = MakeSpan(start) };
@@ -4010,17 +4077,13 @@ public sealed class Parser
                     var start = Current;
                     Advance(); // consume '['
                     // Heavy production (lighter than groups/blocks; see the LParen arm).
-                    EnterHeavyNesting(ListNestingSurcharge);
-                    _openBrackets++;
                     List<Expr> items;
-                    try
+                    using (EnterDelimitedProduction(TokenKind.RBracket, ListNestingSurcharge))
                     {
-                        GuardNestingDepth();
                         items = Current.Kind == TokenKind.RBracket
                             ? []
                             : ParseExpressionListOperand(allowNewlineSeparator: true);
                     }
-                    finally { _nestingDepth -= ListNestingSurcharge; _openBrackets--; }
 
                     Expect(TokenKind.RBracket);
                     return new Expr.ListLiteral(items) { Span = MakeSpan(start) };

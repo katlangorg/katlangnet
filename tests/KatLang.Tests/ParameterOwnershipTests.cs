@@ -23,6 +23,15 @@ namespace KatLang.Tests;
 /// </summary>
 public class ParameterOwnershipTests
 {
+    [Fact]
+    public void OwnedDeclarationFactories_RejectMissingPayloads()
+    {
+        var scope = ElaboratedScopeLookup.CreateScope(Owner(Value("v", 1)));
+        Assert.Throws<ArgumentException>(() => OwnedDeclaration.Property(scope, default));
+        Assert.Throws<ArgumentNullException>(() => OwnedDeclaration.Parameter(null!));
+        Assert.Throws<ArgumentNullException>(() => OwnedDeclaration.Property(null!, scope.Properties[0]));
+    }
+
     // ── the walk itself, over an explicitly constructed owner chain ──────────
 
     private static Algorithm.User Owner(params Property[] properties)
@@ -63,7 +72,9 @@ public class ParameterOwnershipTests
 
         Assert.Equal(OwnedDeclarationKind.Parameter, selected.Kind);
         Assert.Same(middle, selected.OwnerScope);
-        Assert.Null(selected.PropertyHit);
+        Assert.True(selected.TryGetParameter(out var parameterOwner));
+        Assert.Same(middle, parameterOwner);
+        Assert.False(selected.TryGetProperty(out _, out _));
         // The root's property is still there — it simply belongs to a farther owner.
         var farther = ElaboratedScopeLookup.TryLookupDirectLexicalProperty(inner, "v");
         Assert.Same(root.Properties.Single().Property, farther!.Value.Property);
@@ -80,7 +91,10 @@ public class ParameterOwnershipTests
 
         Assert.Equal(OwnedDeclarationKind.Property, selected.Kind);
         Assert.Same(middle, selected.OwnerScope);
-        Assert.Equal(101, (int)((Expr.Num)selected.PropertyHit!.Value.Property.Value.Output[0]).Value);
+        Assert.False(selected.TryGetParameter(out _));
+        Assert.True(selected.TryGetProperty(out var propertyOwner, out var hit));
+        Assert.Same(middle, propertyOwner);
+        Assert.Equal(101, (int)((Expr.Num)hit.Property.Value.Output[0]).Value);
     }
 
     [Fact]
@@ -103,7 +117,11 @@ public class ParameterOwnershipTests
 
         Assert.Equal(OwnedDeclarationKind.None, selected.Kind);
         Assert.Null(selected.OwnerScope);
-        Assert.Null(selected.PropertyHit);
+        Assert.False(selected.TryGetParameter(out _));
+        Assert.False(selected.TryGetProperty(out _, out _));
+        // The struct's default value IS the None verdict.
+        Assert.Equal(OwnedDeclaration.None, selected);
+        Assert.Equal(default, selected);
     }
 
     /// <summary>
@@ -122,7 +140,8 @@ public class ParameterOwnershipTests
 
         Assert.Equal(OwnedDeclarationKind.Property, selected.Kind);
         Assert.Same(middle, selected.OwnerScope);
-        Assert.Same(direct!.Value.Property, selected.PropertyHit!.Value.Property);
+        Assert.True(selected.TryGetProperty(out _, out var hit));
+        Assert.Same(direct!.Value.Property, hit.Property);
     }
 
     // ── ParameterOwnership: nearest binding wins by construction ─────────────

@@ -5,7 +5,6 @@ using KatLang.Evaluation;
 using KatLang.Evaluation.Caching;
 using KatLang.Optimizations.Loops;
 using KatLang.Optimizations.Sequences;
-using KatLang.Runtime;
 
 namespace KatLang;
 
@@ -200,7 +199,7 @@ public static partial class Evaluator
 
     private static EvalResult<ValEnv> BindEvaluatedSlotValueBindings(
         FlatCollectingBindingLayout layout,
-        IReadOnlyList<(string ParameterName, BindingInputSlot Item)> normalBindings,
+        IReadOnlyList<(string ParameterName, Result Item)> normalBindings,
         CollectingCapture collectingCapture)
     {
         var valueBindings = new List<(string Name, Result Value)>(layout.Signature.Parameters.Count);
@@ -217,11 +216,7 @@ public static partial class Evaluator
             if (normalBindingIndex >= normalBindings.Count)
                 return new EvalError.BadArity();
 
-            var binding = normalBindings[normalBindingIndex++];
-            if (binding.Item.Value is null)
-                return new EvalError.BadArity();
-
-            valueBindings.Add((binding.ParameterName, binding.Item.Value));
+            valueBindings.Add(normalBindings[normalBindingIndex++]);
         }
 
         if (normalBindingIndex != normalBindings.Count)
@@ -273,32 +268,15 @@ public static partial class Evaluator
 
         EvalResult<EvaluatedSlotBindings> BindFlatCollectingSlots(FlatCollectingBindingLayout layout)
         {
-            var inputSlots = evaluatedSlots
-                .Select(BindingInputSlot.FromEvaluatedValue)
-                .ToArray();
-
-            var boundItemsR = BindItemsToFlatCollectingLayout(
-                layout,
-                inputSlots,
-                variadicArityMismatch);
+            // Evaluated state slots are already Result values, so they are the binder's items
+            // directly: the shared flat collecting allocation (BindCallableArguments) assigns
+            // the fixed prefix and suffix and leaves the movable middle for the collector.
+            var boundItemsR = BindCallableArguments(layout.Signature, evaluatedSlots, variadicArityMismatch);
             if (boundItemsR.IsError) return boundItemsR.Error;
 
             var boundItems = boundItemsR.Value;
-            var capturedValues = new List<Result>(boundItems.CollectingItems.Count);
-            foreach (var item in boundItems.CollectingItems)
-            {
-                if (item.Value is null)
-                    return new EvalError.BadArity();
-
-                capturedValues.Add(item.Value);
-            }
-
-            var collectingName = boundItems.CollectingParameterName
-                ?? layout.CollectingName;
-            if (collectingName is null)
-                return new EvalError.BadArity();
-
-            var collectingCaptureR = CreateCollectingCapture(ctx, collectingName, capturedValues);
+            var collectingName = boundItems.CollectingParameterName ?? layout.CollectingName;
+            var collectingCaptureR = CreateCollectingCapture(ctx, collectingName, boundItems.CollectingItems);
             if (collectingCaptureR.IsError) return collectingCaptureR.Error;
             var collectingCapture = collectingCaptureR.Value;
 

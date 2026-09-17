@@ -4,7 +4,14 @@ using KatLang.Evaluation.Caching;
 
 namespace KatLang.Optimizations.Loops;
 
-internal abstract record LoopExprPlan(Expr Source)
+/// <summary>
+/// One planned node of a loop step expression: a C# <c>closed</c> record whose direct
+/// descendants are exactly the sealed nested records below, so
+/// <see cref="LoopOptimizer.EvalLoopExprPlan"/> and the diagnostic renderer are switch
+/// expressions that name every kind with no catch-all arm — a new plan kind is a build
+/// error at each of them until it is given an evaluation and a rendering.
+/// </summary>
+internal closed record LoopExprPlan(Expr Source)
 {
     public sealed record Constant(Expr Source, PlannedLoopValue Value) : LoopExprPlan(Source);
 
@@ -524,112 +531,123 @@ internal static partial class LoopOptimizer
         LoopRunFrame frame,
         int index)
     {
-        var suspended = frame.SuspendTempMemo();
-        try
+        using (frame.SuspendTempMemo())
         {
             return EvalLoopExprPlan(frame.Template.TempPlans[index].Plan, frame);
         }
-        finally
-        {
-            frame.RestoreTempMemo(suspended);
-        }
     }
 
+    /// <summary>
+    /// Evaluates one planned node. Compiler-exhaustive over the closed
+    /// <see cref="LoopExprPlan"/> hierarchy: every kind is named, there is no catch-all
+    /// arm, and a new kind fails the build here until it is given an evaluation.
+    /// </summary>
     private static EvalResult<PlannedLoopValue> EvalLoopExprPlan(
         LoopExprPlan plan,
         LoopRunFrame frame)
-    {
-        switch (plan)
+        => plan switch
         {
-            case LoopExprPlan.Constant constant:
-                return EvalResult<PlannedLoopValue>.Ok(constant.Value);
+            LoopExprPlan.Constant constant => EvalResult<PlannedLoopValue>.Ok(constant.Value),
 
-            case LoopExprPlan.StringConstant constant:
-            {
-                var valueR = Evaluator.MakeStringResult(
-                    frame.IterationCtx,
-                    constant.Value,
-                    constant.Source.Span);
-                return valueR.IsError
-                    ? valueR.Error
-                    : EvalResult<PlannedLoopValue>.Ok(PlannedLoopValue.FromResult(valueR.Value));
-            }
+            LoopExprPlan.StringConstant constant => EvalLoopStringConstant(constant, frame),
 
-            case LoopExprPlan.StateSlot stateSlot:
-                return EvalResult<PlannedLoopValue>.Ok(PlannedLoopValue.FromResult(frame.GetStateSlot(stateSlot.Index)));
+            LoopExprPlan.StateSlot stateSlot =>
+                EvalResult<PlannedLoopValue>.Ok(PlannedLoopValue.FromResult(frame.GetStateSlot(stateSlot.Index))),
 
-            case LoopExprPlan.CapturedSlot capturedSlot:
-                return EvalResult<PlannedLoopValue>.Ok(PlannedLoopValue.FromResult(frame.GetCapturedSlot(capturedSlot.Index)));
+            LoopExprPlan.CapturedSlot capturedSlot =>
+                EvalResult<PlannedLoopValue>.Ok(PlannedLoopValue.FromResult(frame.GetCapturedSlot(capturedSlot.Index))),
 
-            case LoopExprPlan.CountedParamSlot countedParamSlot:
-            {
-                var countedParam = frame.GetCountedParamSlot(countedParamSlot.Index);
-                return EvalResult<PlannedLoopValue>.Ok(
-                    PlannedLoopValue.FromResult(countedParam.Value, countedParam.EmittedCount));
-            }
+            LoopExprPlan.CountedParamSlot countedParamSlot => EvalLoopCountedParamSlot(countedParamSlot, frame),
 
-            case LoopExprPlan.TempSlot tempSlot:
-                // MIRROR of the generic value-position read (Evaluator.EvalResolveCounted):
-                // the reference's own span is attached to an error that carries none.
-                return Evaluator.WithSpan(tempSlot.Source.Span, EvalLoopTempSlot(frame, tempSlot.Index));
+            // MIRROR of the generic value-position read (Evaluator.EvalResolveCounted):
+            // the reference's own span is attached to an error that carries none.
+            LoopExprPlan.TempSlot tempSlot =>
+                Evaluator.WithSpan(tempSlot.Source.Span, EvalLoopTempSlot(frame, tempSlot.Index)),
 
-            case LoopExprPlan.TempCall tempCall:
-                return EvalLoopTempCall(tempCall, frame);
+            LoopExprPlan.TempCall tempCall => EvalLoopTempCall(tempCall, frame),
 
-            case LoopExprPlan.Unary unary:
-            {
-                // The planned spine recurses per plan level with no chokepoint in between (the
-                // generic spine is iterative). The planner probed at the same stack position,
-                // so this backstop fires only when its margin was not enough; like every
-                // chokepoint probe it can only stop EARLIER with the structured error.
-                if (!RuntimeHelpers.TryEnsureSufficientExecutionStack())
-                    return new EvalError.EvaluationStackExhausted();
+            LoopExprPlan.Unary unary => EvalLoopUnaryPlan(unary, frame),
 
-                var operandR = EvalLoopExprPlan(unary.Operand, frame);
-                if (operandR.IsError) return operandR.Error;
-                frame.Diagnostics?.RecordPlannedBuiltinOperation();
-                return ApplyPlannedUnary(unary.Op, operandR.Value, unary.Source.Span);
-            }
+            LoopExprPlan.Binary binary => EvalLoopBinaryPlan(binary, frame),
 
-            case LoopExprPlan.Binary binary:
-            {
-                if (!RuntimeHelpers.TryEnsureSufficientExecutionStack())
-                    return new EvalError.EvaluationStackExhausted();
+            // A planned `if` REPLACES an ordinary `if` call expression, so its
+            // failures must carry the same diagnostic boundary the generic call
+            // dispatch attaches (`EvalCallExpr`/`EvalCallCountedExpr` inside
+            // `WithSpan`) — for a failing condition, for the selected branch, and
+            // for the `if`'s own truth-value rejection alike. Only the RETURNED
+            // result is decorated, so branch laziness, planned-operation counts,
+            // budget charges, and cache state are untouched, and a nested planned
+            // `if` nests its own frame exactly like the generic composition.
+            LoopExprPlan.If ifPlan => Evaluator.WithPlannedCallBoundary(
+                ifPlan.Source,
+                ifPlan.Callee,
+                frame.IterationCtx,
+                EvalLoopIfExprPlanBody(ifPlan, frame)),
 
-                var leftR = EvalLoopExprPlan(binary.Left, frame);
-                if (leftR.IsError) return leftR.Error;
-                var rightR = EvalLoopExprPlan(binary.Right, frame);
-                if (rightR.IsError) return rightR.Error;
-                frame.Diagnostics?.RecordPlannedBuiltinOperation();
-                return ApplyPlannedBinary(binary.Op, binary.Left.Source, binary.Right.Source, leftR.Value, rightR.Value, binary.Source.Span);
-            }
+            LoopExprPlan.Fallback fallback => EvalLoopFallbackPlan(fallback, frame),
+        };
 
-            case LoopExprPlan.If ifPlan:
-                // A planned `if` REPLACES an ordinary `if` call expression, so its
-                // failures must carry the same diagnostic boundary the generic call
-                // dispatch attaches (`EvalCallExpr`/`EvalCallCountedExpr` inside
-                // `WithSpan`) — for a failing condition, for the selected branch, and
-                // for the `if`'s own truth-value rejection alike. Only the RETURNED
-                // result is decorated, so branch laziness, planned-operation counts,
-                // budget charges, and cache state are untouched, and a nested planned
-                // `if` nests its own frame exactly like the generic composition.
-                return Evaluator.WithPlannedCallBoundary(
-                    ifPlan.Source,
-                    ifPlan.Callee,
-                    frame.IterationCtx,
-                    EvalLoopIfExprPlanBody(ifPlan, frame));
+    private static EvalResult<PlannedLoopValue> EvalLoopStringConstant(
+        LoopExprPlan.StringConstant constant,
+        LoopRunFrame frame)
+    {
+        var valueR = Evaluator.MakeStringResult(
+            frame.IterationCtx,
+            constant.Value,
+            constant.Source.Span);
+        return valueR.IsError
+            ? valueR.Error
+            : EvalResult<PlannedLoopValue>.Ok(PlannedLoopValue.FromResult(valueR.Value));
+    }
 
-            case LoopExprPlan.Fallback fallback:
-            {
-                var fallbackR = Evaluator.EvalCounted(fallback.Source, frame.IterationCtx, frame.ValueEnvironment);
-                if (fallbackR.IsError) return fallbackR.Error;
-                return EvalResult<PlannedLoopValue>.Ok(
-                    PlannedLoopValue.FromResult(fallbackR.Value.Value, fallbackR.Value.EmittedCount));
-            }
+    private static EvalResult<PlannedLoopValue> EvalLoopCountedParamSlot(
+        LoopExprPlan.CountedParamSlot countedParamSlot,
+        LoopRunFrame frame)
+    {
+        var countedParam = frame.GetCountedParamSlot(countedParamSlot.Index);
+        return EvalResult<PlannedLoopValue>.Ok(
+            PlannedLoopValue.FromResult(countedParam.Value, countedParam.EmittedCount));
+    }
 
-            default:
-                throw new InvalidOperationException($"Unhandled loop expression plan: {plan.GetType().Name}");
-        }
+    private static EvalResult<PlannedLoopValue> EvalLoopUnaryPlan(
+        LoopExprPlan.Unary unary,
+        LoopRunFrame frame)
+    {
+        // The planned spine recurses per plan level (the generic spine is iterative).
+        // Probe again before descending: planning and evaluation have different frame
+        // sizes, including this per-kind helper. Exhaustion is a structured rejection.
+        if (!RuntimeHelpers.TryEnsureSufficientExecutionStack())
+            return new EvalError.EvaluationStackExhausted();
+
+        var operandR = EvalLoopExprPlan(unary.Operand, frame);
+        if (operandR.IsError) return operandR.Error;
+        frame.Diagnostics?.RecordPlannedBuiltinOperation();
+        return ApplyPlannedUnary(unary.Op, operandR.Value, unary.Source.Span);
+    }
+
+    private static EvalResult<PlannedLoopValue> EvalLoopBinaryPlan(
+        LoopExprPlan.Binary binary,
+        LoopRunFrame frame)
+    {
+        if (!RuntimeHelpers.TryEnsureSufficientExecutionStack())
+            return new EvalError.EvaluationStackExhausted();
+
+        var leftR = EvalLoopExprPlan(binary.Left, frame);
+        if (leftR.IsError) return leftR.Error;
+        var rightR = EvalLoopExprPlan(binary.Right, frame);
+        if (rightR.IsError) return rightR.Error;
+        frame.Diagnostics?.RecordPlannedBuiltinOperation();
+        return ApplyPlannedBinary(binary.Op, binary.Left.Source, binary.Right.Source, leftR.Value, rightR.Value, binary.Source.Span);
+    }
+
+    private static EvalResult<PlannedLoopValue> EvalLoopFallbackPlan(
+        LoopExprPlan.Fallback fallback,
+        LoopRunFrame frame)
+    {
+        var fallbackR = Evaluator.EvalCounted(fallback.Source, frame.IterationCtx, frame.ValueEnvironment);
+        if (fallbackR.IsError) return fallbackR.Error;
+        return EvalResult<PlannedLoopValue>.Ok(
+            PlannedLoopValue.FromResult(fallbackR.Value.Value, fallbackR.Value.EmittedCount));
     }
 
     /// <summary>
@@ -818,49 +836,16 @@ internal static partial class LoopOptimizer
     {
         const int maxLength = 2048;
         var text = new System.Text.StringBuilder();
+        // The work stack holds plan nodes still to render and the literal fragments
+        // (an opening head, a separator, a closer) already decided for them.
         var pending = new Stack<object>();
         pending.Push(plan);
         while (pending.Count != 0 && text.Length < maxLength)
         {
             var current = pending.Pop();
-            switch (current)
-            {
-                case LoopExprPlan.Unary unary:
-                    pending.Push(")");
-                    pending.Push(unary.Operand);
-                    pending.Push($"{LoopUnaryPlanName(unary.Op)}(");
-                    continue;
-                case LoopExprPlan.Binary binary:
-                    pending.Push(")");
-                    pending.Push(binary.Right);
-                    pending.Push(", ");
-                    pending.Push(binary.Left);
-                    pending.Push($"{LoopBinaryPlanName(binary.Op)}(");
-                    continue;
-                case LoopExprPlan.If ifPlan:
-                    pending.Push(")");
-                    pending.Push(ifPlan.FalseBranch);
-                    pending.Push(", ");
-                    pending.Push(ifPlan.TrueBranch);
-                    pending.Push(", ");
-                    pending.Push(ifPlan.Condition);
-                    pending.Push("If(");
-                    continue;
-            }
-
-            var part = current switch
-            {
-                string literal => literal,
-                LoopExprPlan.Constant constant => $"Const({Evaluator.FormatResultForDiagnostic(constant.Value.ToResult())})",
-                LoopExprPlan.StringConstant constant => $"StringConst(length={constant.Value.Length})",
-                LoopExprPlan.StateSlot stateSlot => $"StateSlot({stateSlot.Name})",
-                LoopExprPlan.CapturedSlot capturedSlot => $"CapturedSlot({capturedSlot.Name})",
-                LoopExprPlan.CountedParamSlot countedParamSlot => $"CountedParamSlot({countedParamSlot.Name})",
-                LoopExprPlan.TempSlot tempSlot => $"TempSlot({tempSlot.Name})",
-                LoopExprPlan.TempCall tempCall => $"TempCall({tempCall.Name})",
-                LoopExprPlan.Fallback fallback => $"Fallback({fallback.Reason})",
-                _ => throw new InvalidOperationException($"Unhandled loop expression plan: {current.GetType().Name}"),
-            };
+            var part = current is string literal
+                ? literal
+                : DescribeLoopExprPlanNode((LoopExprPlan)current, pending);
             var available = maxLength - text.Length;
             text.Append(part.AsSpan(0, Math.Min(part.Length, available)));
             if (part.Length > available || pending.Count != 0 && text.Length == maxLength)
@@ -868,6 +853,44 @@ internal static partial class LoopOptimizer
         }
 
         return text.ToString();
+    }
+
+    /// <summary>
+    /// The text emitted for one plan node when it is reached: a leaf's whole rendering, or
+    /// a composite's opening head after its operands and closer have been queued on
+    /// <paramref name="pending"/>. Compiler-exhaustive over the closed hierarchy.
+    /// </summary>
+    private static string DescribeLoopExprPlanNode(LoopExprPlan plan, Stack<object> pending)
+        => plan switch
+        {
+            LoopExprPlan.Unary unary => QueueOperands(pending, $"{LoopUnaryPlanName(unary.Op)}(", unary.Operand),
+            LoopExprPlan.Binary binary => QueueOperands(pending, $"{LoopBinaryPlanName(binary.Op)}(", binary.Left, binary.Right),
+            LoopExprPlan.If ifPlan => QueueOperands(pending, "If(", ifPlan.Condition, ifPlan.TrueBranch, ifPlan.FalseBranch),
+            LoopExprPlan.Constant constant => $"Const({Evaluator.FormatResultForDiagnostic(constant.Value.ToResult())})",
+            LoopExprPlan.StringConstant constant => $"StringConst(length={constant.Value.Length})",
+            LoopExprPlan.StateSlot stateSlot => $"StateSlot({stateSlot.Name})",
+            LoopExprPlan.CapturedSlot capturedSlot => $"CapturedSlot({capturedSlot.Name})",
+            LoopExprPlan.CountedParamSlot countedParamSlot => $"CountedParamSlot({countedParamSlot.Name})",
+            LoopExprPlan.TempSlot tempSlot => $"TempSlot({tempSlot.Name})",
+            LoopExprPlan.TempCall tempCall => $"TempCall({tempCall.Name})",
+            LoopExprPlan.Fallback fallback => $"Fallback({fallback.Reason})",
+        };
+
+    /// <summary>
+    /// Queues a composite's closer and its comma-separated operands (last operand first,
+    /// so they pop in written order) and returns the head to emit now.
+    /// </summary>
+    private static string QueueOperands(Stack<object> pending, string head, params ReadOnlySpan<LoopExprPlan> operands)
+    {
+        pending.Push(")");
+        for (var index = operands.Length - 1; index >= 0; index--)
+        {
+            pending.Push(operands[index]);
+            if (index != 0)
+                pending.Push(", ");
+        }
+
+        return head;
     }
 
     private static string LoopUnaryPlanName(UnaryOp op)

@@ -85,7 +85,9 @@ public class OwnershipConformanceTests
         if (kind == "parameter")
         {
             Assert.Equal("v", Assert.IsType<Expr.Param>(reference).Name);
-            Assert.Null(selected.PropertyHit);
+            Assert.True(selected.TryGetParameter(out var parameterOwner));
+            Assert.Same(scopes[ownerIndex], parameterOwner);
+            Assert.False(selected.TryGetProperty(out _, out _));
             declaration = decidingOwner.Binder is null
                 ? decidingOwner.Algorithm.ExplicitParameters.SingleOrDefault(p => p.Name == "v")?.Span
                 : BinderSpan(decidingOwner.Binder, "v");
@@ -97,8 +99,11 @@ public class OwnershipConformanceTests
         {
             Assert.Equal("v", Assert.IsType<Expr.Resolve>(reference).Name);
             var property = decidingOwner.Algorithm.Properties.Single(p => p.Name == "v");
-            Assert.Same(property, selected.PropertyHit!.Value.Property);
-            Assert.Same(decidingOwner.Algorithm, selected.PropertyHit.Value.Owner);
+            Assert.False(selected.TryGetParameter(out _));
+            Assert.True(selected.TryGetProperty(out var propertyOwner, out var hit));
+            Assert.Same(scopes[ownerIndex], propertyOwner);
+            Assert.Same(property, hit.Property);
+            Assert.Same(decidingOwner.Algorithm, hit.Owner);
             Assert.Same(property, ElaboratedScopeLookup.TryLookupDirectLexicalProperty(scopes[0], "v")!.Value.Property);
             declaration = property.DeclarationSpans.Single();
             classification = IdentifierClassification.PropertyReference;

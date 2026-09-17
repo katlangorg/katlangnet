@@ -1,4 +1,3 @@
-using KatLang.Runtime;
 using static KatLang.Tests.EvaluatorTestSupport;
 
 namespace KatLang.Tests;

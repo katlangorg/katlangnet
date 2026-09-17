@@ -271,7 +271,7 @@ internal static class PropertyExposureResolver
         // leaf: no properties, no opens, and an output that is exactly its own bound Param. It
         // captures no ancestor-owned parameter, so it needs no exposure rewriting. The general
         // path would still analyze and rewrite it per helper for no observable effect.
-        if (algorithm is Algorithm.User { IsAssignmentDeconstructionHelper: true })
+        if (algorithm is Algorithm.User { AssignmentDeconstructionTarget: not null })
             return algorithm;
 
         observations?.RecordExposureAlgorithmExpansion();

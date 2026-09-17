@@ -228,14 +228,74 @@ internal enum OwnedDeclarationKind
 }
 
 /// <summary>
-/// The declaration the owner walk selected together with the level that OWNS
-/// it. <see cref="PropertyHit"/> carries the selected property for
-/// <see cref="OwnedDeclarationKind.Property"/> and is null otherwise.
+/// The declaration the owner walk selected together with the level that OWNS it —
+/// the C# form of Lean's <c>OwnedDeclaration</c> (<c>none | parameter level |
+/// property level</c>). Constructed only through <see cref="None"/>,
+/// <see cref="Parameter"/>, and <see cref="Property"/>, so a verdict can never carry a
+/// payload that does not belong to its kind: a parameter verdict names its owning
+/// level, a property verdict names its owning level AND the selected property, and
+/// the <c>None</c> verdict (the struct's default value) names nothing. Consumers read
+/// the payload through <see cref="TryGetParameter"/> / <see cref="TryGetProperty"/>,
+/// which yield it exactly when the kind matches.
 /// </summary>
-internal readonly record struct OwnedDeclaration(
-    OwnedDeclarationKind Kind,
-    ElaboratedPropertyScope? OwnerScope,
-    PropertyLookupHit? PropertyHit);
+internal readonly record struct OwnedDeclaration
+{
+    private readonly ElaboratedPropertyScope? _ownerScope;
+    private readonly PropertyLookupHit _propertyHit;
+
+    private OwnedDeclaration(OwnedDeclarationKind kind, ElaboratedPropertyScope? ownerScope, PropertyLookupHit propertyHit)
+    {
+        Kind = kind;
+        _ownerScope = ownerScope;
+        _propertyHit = propertyHit;
+    }
+
+    /// <summary>No level of the chain declares the name; lookup is left to opens.</summary>
+    public static OwnedDeclaration None => default;
+
+    /// <summary>The deciding level <paramref name="owner"/> binds the name as a parameter.</summary>
+    public static OwnedDeclaration Parameter(ElaboratedPropertyScope owner)
+    {
+        ArgumentNullException.ThrowIfNull(owner);
+        return new(OwnedDeclarationKind.Parameter, owner, default);
+    }
+
+    /// <summary>The deciding level <paramref name="owner"/> declares the name as the property <paramref name="hit"/> (and binds no parameter of that name).</summary>
+    public static OwnedDeclaration Property(ElaboratedPropertyScope owner, PropertyLookupHit hit)
+    {
+        ArgumentNullException.ThrowIfNull(owner);
+        if (hit.Owner is null || hit.Property is null)
+            throw new ArgumentException("A property declaration requires a complete lookup hit.", nameof(hit));
+        return new(OwnedDeclarationKind.Property, owner, hit);
+    }
+
+    public OwnedDeclarationKind Kind { get; }
+
+    /// <summary>The level that decided, or null exactly for <see cref="None"/>.</summary>
+    public ElaboratedPropertyScope? OwnerScope => _ownerScope;
+
+    /// <summary>The owning level of a parameter verdict.</summary>
+    public bool TryGetParameter([System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out ElaboratedPropertyScope? owner)
+    {
+        owner = Kind == OwnedDeclarationKind.Parameter ? _ownerScope : null;
+        return owner is not null;
+    }
+
+    /// <summary>The owning level and selected property of a property verdict.</summary>
+    public bool TryGetProperty([System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out ElaboratedPropertyScope? owner, out PropertyLookupHit hit)
+    {
+        if (Kind == OwnedDeclarationKind.Property)
+        {
+            owner = _ownerScope;
+            hit = _propertyHit;
+            return owner is not null;
+        }
+
+        owner = null;
+        hit = default;
+        return false;
+    }
+}
 
 /// <summary>
 /// Parameter ownership beside the scope chain's property tables. During discovery,
@@ -371,13 +431,13 @@ internal static class ElaboratedScopeLookup
             // never be reached while a nearer or same-level parameter binds the
             // name, and a nearer property is reached before a farther parameter.
             if (parameters.DeclaresParameter(current, name))
-                return new OwnedDeclaration(OwnedDeclarationKind.Parameter, current, PropertyHit: null);
+                return OwnedDeclaration.Parameter(current);
 
             if (current.TryLookupOwnProperty(name) is { } hit)
-                return new OwnedDeclaration(OwnedDeclarationKind.Property, current, hit);
+                return OwnedDeclaration.Property(current, hit);
         }
 
-        return default;
+        return OwnedDeclaration.None;
     }
 
     /// <summary>

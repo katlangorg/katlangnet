@@ -737,7 +737,6 @@ internal static class SequencePipelineOptimizer
                 ExecuteRangeFilterCount(plan, directRange.Range, ctx, valEnv, diagnostics),
             FilterCountSourcePlan.Generic generic =>
                 ExecuteGenericFilterCount(plan, generic, ctx, valEnv, diagnostics),
-            _ => throw new InvalidOperationException($"Unsupported filter-count source plan '{plan.SourcePlan.GetType().Name}'."),
         };
     }
 
@@ -974,7 +973,6 @@ internal static class SequencePipelineOptimizer
         {
             FilterCountSourcePlan.DirectRange => BuiltinRangeSourceKind,
             FilterCountSourcePlan.Generic => GenericSourceKind,
-            _ => GenericSourceKind,
         };
 
     private static string SequencePipelineSourceSummary(Expr source)

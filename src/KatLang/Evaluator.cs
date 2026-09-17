@@ -5,7 +5,6 @@ using KatLang.Evaluation;
 using KatLang.Evaluation.Caching;
 using KatLang.Optimizations.Loops;
 using KatLang.Optimizations.Sequences;
-using KatLang.Runtime;
 
 namespace KatLang;
 
@@ -257,9 +256,13 @@ public static partial class Evaluator
     /// <c>Inner(5)</c> inside <c>Apply(f)</c> invoked the caller's <c>f</c>
     /// instead of failing as not-callable, exactly as the standalone
     /// <c>Inner(5)</c> does.</para>
-    /// Returns the SAME instance when nothing is removed: the environment's
-    /// reference identity is a key component of a LOCAL-ONLY property's
-    /// zero-arg cache entry (an exported property's key carries no environment).
+    /// Returns the SAME instance when nothing is removed. That is correct, not merely
+    /// cheap: a shadowed inherited tier is a VIEW of the caller's binding context, and
+    /// the reference identity that keys a LOCAL-ONLY property's zero-arg cache entry
+    /// (an exported property's key carries no environment) is the CALLEE's new
+    /// identity, minted by <see cref="Concat"/> when its own bindings are prepended —
+    /// <see cref="Concat"/> never returns an operand, so no activation can inherit
+    /// another's identity through a shadow that removed nothing.
     /// Lean: <c>AlgEnv.shadow</c>.
     /// </summary>
     internal static AlgEnv ShadowAlgEnv(
@@ -315,8 +318,10 @@ public static partial class Evaluator
     /// planned, synchronous and async twin — derives its callee context from
     /// this ONE helper and then prepends its own bindings, so no path can
     /// shadow one tier and forget another. Each tier keeps its instance when
-    /// nothing is removed, because both identities are key components of a
-    /// LOCAL-ONLY property's zero-arg cache entry.</para>
+    /// nothing is removed — a view of the caller's context — while the callee's
+    /// binding-context identity (the key component of a LOCAL-ONLY property's
+    /// zero-arg cache entry) is minted by the <see cref="Concat"/> that prepends its
+    /// own bindings.</para>
     /// Lean: <c>EvalCtx.bindParameters</c> (which also performs the prepend).
     /// </summary>
     internal static EvalCtx ShadowInheritedParameterEnvironments(EvalCtx ctx, IReadOnlyList<string> parameterNames)
@@ -341,6 +346,9 @@ public static partial class Evaluator
     /// apply (<see cref="ShadowInheritedParameterEnvironments"/>); names that
     /// DO carry a value binding are shadowed by the prepended bindings anyway,
     /// so filtering the tail changes nothing for them.</para>
+    /// Returns the SAME instance when nothing is removed: like <see cref="ShadowAlgEnv"/>,
+    /// a shadowed tier is a view of the caller's binding context, and the callee's own
+    /// context identity is minted by the <see cref="Concat"/> that prepends its bindings.
     /// Lean: <c>ValEnv.shadow</c>.
     /// </summary>
     internal static ValEnv ShadowValEnv(
@@ -2375,8 +2383,6 @@ public static partial class Evaluator
                 new EvalError.BranchArityMismatch(v.AlgorithmName, v.Expected, v.Actual),
             PreEvaluationAstViolation.ConditionalBranchOutputArityMismatch v =>
                 new EvalError.BranchOutputArityMismatch(v.AlgorithmName, v.Expected, v.Actual),
-            var unknown => throw new InvalidOperationException(
-                $"Unhandled pre-evaluation violation kind: {unknown.GetType().Name}"),
         };
 
     /// <summary>
@@ -3080,7 +3086,35 @@ public static partial class Evaluator
             => GetEnumerator();
     }
 
-    private static IReadOnlyList<T> Concat<T>(IReadOnlyList<T> a, IReadOnlyList<T> b)
+    /// <summary>
+    /// Prepends a binding's own entries to an inherited environment tier, producing the
+    /// tier of a NEW binding context: an ordinary user call, a conditional-family call,
+    /// a callback invocation, or a generic loop iteration, in both sync and async paths.
+    /// Planned loops instead give their reusable value environment an explicit fresh
+    /// iteration identity through <see cref="ValueEnvironmentCacheIdentity"/>.
+    ///
+    /// <para><b>Load-bearing invariant: the result is ALWAYS a fresh list, never
+    /// <paramref name="a"/> or <paramref name="b"/> itself — even when the other operand
+    /// is empty.</b> The reference identity of an environment tier is the binding-context
+    /// identity of the zero-argument property cache (<see cref="ZeroArgPropertyCacheKey"/>:
+    /// a LOCAL-ONLY entry is keyed by the identities of the three tiers at the access,
+    /// <see cref="ValueEnvironmentCacheIdentity"/>) and of the deconstruction binding
+    /// cache (<see cref="DeconstructionBindingExecution"/>). Two activations that bind
+    /// NOTHING new — <c>Inner()</c> called twice from one caller, a zero-parameter
+    /// callback, an iteration of a step with no state — must still be two binding
+    /// contexts, so that a local-only property (one reading a captured ancestor
+    /// parameter, possibly together with a host value or the random stream) is evaluated
+    /// once per activation
+    /// and never served another activation's entry. The apparently obvious
+    /// short-circuit <c>if (a.Count == 0) return b;</c> would silently collapse those
+    /// activations into one context. Contrast <see cref="ShadowValEnv"/>,
+    /// <see cref="ShadowAlgEnv"/>, and <see cref="ShadowCountedParamEnv"/>, which MAY
+    /// return their input unchanged: a shadowed inherited tier is a VIEW of the caller's
+    /// context, not a new one, and the new context's identity is minted here when the
+    /// callee's own bindings are prepended. Pinned by
+    /// <c>EnvironmentIdentityInvariantTests</c>.</para>
+    /// </summary>
+    internal static IReadOnlyList<T> Concat<T>(IReadOnlyList<T> a, IReadOnlyList<T> b)
     {
         var result = new List<T>(a.Count + b.Count);
         result.AddRange(a);

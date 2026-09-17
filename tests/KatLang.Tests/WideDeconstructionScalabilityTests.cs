@@ -19,6 +19,32 @@ namespace KatLang.Tests;
 /// </summary>
 public class WideDeconstructionScalabilityTests(ITestOutputHelper output)
 {
+    [Fact]
+    public void TargetMetadata_DoesNotAllocateBeyondTheHelperRecord()
+    {
+        var original = new Algorithm.User(null, [], [], [], []);
+        var group = new object();
+        static long Measure(Algorithm.User original, object group, bool attach)
+        {
+            var before = GC.GetAllocatedBytesForCurrentThread();
+            for (var i = 0; i < 1024; i++)
+            {
+                var copy = attach
+                    ? original with { AssignmentDeconstructionTarget = new AssignmentDeconstructionTarget(group, i) }
+                    : original with { };
+                GC.KeepAlive(copy);
+            }
+            return GC.GetAllocatedBytesForCurrentThread() - before;
+        }
+
+        _ = Measure(original, group, false);
+        _ = Measure(original, group, true);
+        var plain = Measure(original, group, false);
+        var helpers = Measure(original, group, true);
+        output.WriteLine($"1024 plain/helper copies: {plain}/{helpers} allocated bytes");
+        Assert.Equal(plain, helpers);
+    }
+
     private static Decimal128[] Atoms(string source) => KatLangEngine.EvaluateToAtoms(source).ToArray();
 
     /// <summary>Builds <c>x0, x1, ..., x{n-1} = rhs</c> (n >= 2 targets).</summary>
@@ -62,7 +88,8 @@ public class WideDeconstructionScalabilityTests(ITestOutputHelper output)
             // The helper is the synthetic assignment-deconstruction leaf and STILL carries the full
             // N-capture sequence-value pattern — the frontend leaf guards must preserve it, because
             // the evaluator needs it for arity binding and written-pattern error phrasing.
-            Assert.True(helper.IsAssignmentDeconstructionHelper);
+            var target = Assert.IsType<AssignmentDeconstructionTarget>(helper.AssignmentDeconstructionTarget);
+            Assert.Equal(i, target.Index);
             var sequence = Assert.IsType<SequenceValueParameterPattern>(Assert.Single(helper.ParameterPatterns));
             Assert.Equal(n, sequence.Items.Count);
             Assert.Equal(n, helper.Params.Count);
@@ -75,6 +102,51 @@ public class WideDeconstructionScalabilityTests(ITestOutputHelper output)
             var argument = Assert.IsType<Expr.Resolve>(Assert.Single(call.Args));
             Assert.Equal("$deconstruct$0", argument.Name);
         }
+    }
+
+    [Fact]
+    public void Elaboration_HelpersOfOneDeconstruction_CarryOneGroupTokenAndTheirOwnIndex_ThroughEveryCopy()
+    {
+        // The helper metadata is ONE unit (AssignmentDeconstructionTarget): the group token all
+        // N target helpers share — the key the run-scoped shared bind is grouped by — and the
+        // index of the target each helper projects. Non-null exactly for helpers, one token per
+        // deconstruction, indices 0..N-1 in written order, and preserved by the front end's
+        // record copies (the elaborated tree is a `with` copy of the parsed one).
+        const int n = 5;
+        var source = WideSource(n, $"range(1, {n})") + "\ny0, y1 = (1, 2)\nx0";
+        var parsed = (Algorithm.User)SourceProvenance.ParseValid(source).Root;
+
+        static Algorithm.User HelperOf(Algorithm.User root, string property)
+        {
+            var body = Assert.IsType<Algorithm.User>(root.Properties.Single(p => p.Name == property).Value);
+            var call = Assert.IsType<Expr.Call>(Assert.Single(body.Output));
+            return Assert.IsType<Algorithm.User>(Assert.IsType<Expr.AlgorithmExpr>(call.Function).Algorithm);
+        }
+
+        static AssignmentDeconstructionTarget TargetOf(Algorithm.User root, string property)
+            => Assert.IsType<AssignmentDeconstructionTarget>(HelperOf(root, property).AssignmentDeconstructionTarget);
+
+        var targets = Enumerable.Range(0, n).Select(i => TargetOf(parsed, $"x{i}")).ToList();
+        Assert.Equal(Enumerable.Range(0, n), targets.Select(target => target.Index));
+        Assert.All(targets, target => Assert.Same(targets[0].Group, target.Group));
+
+        // A second deconstruction is a second group; the source properties and ordinary
+        // algorithms carry no target at all.
+        Assert.NotSame(targets[0].Group, TargetOf(parsed, "y0").Group);
+        Assert.Same(TargetOf(parsed, "y0").Group, TargetOf(parsed, "y1").Group);
+        Assert.Null(((Algorithm.User)parsed.Properties.Single(p => p.Name == "$deconstruct$0").Value).AssignmentDeconstructionTarget);
+        Assert.Null(((Algorithm.User)parsed.Properties.Single(p => p.Name == "x0").Value).AssignmentDeconstructionTarget);
+
+        // The front end reaches the evaluator through record copies (`with`), which carry the
+        // group and index along: a copy projects the same target of the same group, and the
+        // target itself compares by value (same token, same index).
+        var helper = HelperOf(parsed, "x2");
+        var copy = helper with { Output = [new Expr.Num(0)] };
+        Assert.Equal(helper.AssignmentDeconstructionTarget, copy.AssignmentDeconstructionTarget);
+        Assert.Equal(new AssignmentDeconstructionTarget(targets[0].Group, 2), copy.AssignmentDeconstructionTarget);
+        Assert.NotEqual(new AssignmentDeconstructionTarget(new object(), 2), copy.AssignmentDeconstructionTarget);
+        Assert.Throws<ArgumentException>(() => helper with { AssignmentDeconstructionTarget = default(AssignmentDeconstructionTarget) });
+        Assert.Null((helper with { AssignmentDeconstructionTarget = null }).AssignmentDeconstructionTarget);
     }
 
     // ───────────────────────── per-position values ─────────────────────────

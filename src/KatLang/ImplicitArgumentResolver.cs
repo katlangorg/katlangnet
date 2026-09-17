@@ -376,9 +376,9 @@ internal static class ImplicitArgumentResolver
     /// unchanged into every sub-context of the same algorithm — including value-demanding
     /// (Math) argument bundles, which are ordinary value positions of the SAME caller.
     ///
-    /// <para>Bundling the four values is deliberate: they are one semantic unit, and the
-    /// defect this record replaces was exactly a call site that supplied two of them
-    /// degenerately and silently defaulted the other two away
+    /// <para>Bundling the values is deliberate: they are one semantic unit, and the
+    /// defect this record replaces was exactly a call site that supplied some of them
+    /// degenerately and silently defaulted the others away
     /// (see <see cref="ProcessValueDemandingArgumentBundle"/>).</para>
     /// </summary>
     /// <param name="CallerParameterPatterns">
@@ -388,13 +388,12 @@ internal static class ImplicitArgumentResolver
     /// Caller capture name to binding kind, so re-spread decisions read the source binding
     /// (see <see cref="BuildSourceBindingKinds"/>).
     /// </param>
-    /// <param name="RequireExistingParameters">
-    /// True inside an algorithm whose explicit parameter list is CLOSED: nothing may be lifted
-    /// that would need a capture the list does not already declare.
-    /// </param>
-    /// <param name="ExistingParameterNames">
-    /// The closed list's declared capture names; consulted only when
-    /// <paramref name="RequireExistingParameters"/> is true.
+    /// <param name="ClosedParameterNames">
+    /// Non-null inside an algorithm whose parameter list is CLOSED — a written explicit
+    /// parameter list, or a conditional branch pattern — carrying that list's declared
+    /// capture names: nothing may be lifted that would need a capture the list does not
+    /// already declare. Null when the list is OPEN and lifting may add captures. The
+    /// presence of the set IS the closed state; there is no separate flag to keep in step.
     /// </param>
     /// <param name="ConditionalBranchName">
     /// Non-null when the closed specification is a conditional BRANCH PATTERN rather than a
@@ -406,13 +405,12 @@ internal static class ImplicitArgumentResolver
     /// through the whole walk: that makes the region's memo-soundness guard one reference
     /// comparison (<see cref="ResolverWalkMemos.PinRewriteContext"/>) instead of a per-node
     /// field-by-field comparison, and keeps the recursion spine passing one reference rather
-    /// than copying four values.
+    /// than copying several values.
     /// </remarks>
     private sealed record ImplicitRewriteContext(
         IReadOnlyList<ParameterPattern> CallerParameterPatterns,
         IReadOnlyDictionary<string, ParameterKind> SourceBindingKinds,
-        bool RequireExistingParameters,
-        IReadOnlySet<string>? ExistingParameterNames,
+        IReadOnlySet<string>? ClosedParameterNames,
         string? ConditionalBranchName = null);
 
     /// <summary>
@@ -591,7 +589,7 @@ internal static class ImplicitArgumentResolver
         // would still build an O(N) existing-parameter set and source-binding-kind map per helper —
         // O(N^2) across a wide deconstruction's N helpers — only to rewrite an output that has no
         // implicit calls. Returning it unchanged is O(1) and identical.
-        if (alg is Algorithm.User { IsAssignmentDeconstructionHelper: true })
+        if (alg is Algorithm.User { AssignmentDeconstructionTarget: not null })
             return alg;
 
         // The root is processed exactly once and keeps its bare-root rule; nothing shares it.
@@ -735,14 +733,13 @@ internal static class ImplicitArgumentResolver
             var closedPatterns = branchContext is null
                 ? alg.ParameterPatterns
                 : BranchBinderParameterPatterns(branchContext.Pattern);
-            var closedExistingParams = branchContext is null
+            var closedParameterNames = branchContext is null
                 ? new HashSet<string>(alg.Params)
                 : new HashSet<string>(branchContext.Pattern.BoundNames());
             var explicitContext = new ImplicitRewriteContext(
                 closedPatterns,
                 BuildSourceBindingKinds(closedPatterns),
-                RequireExistingParameters: true,
-                closedExistingParams,
+                ClosedParameterNames: closedParameterNames,
                 branchContext?.BranchName);
             var newOutput = new List<Expr>(alg.Output.Count);
             foreach (var expr in alg.Output)
@@ -812,8 +809,7 @@ internal static class ImplicitArgumentResolver
         var liftedContext = new ImplicitRewriteContext(
             alg.ParameterPatterns,
             BuildSourceBindingKinds(newPatterns),
-            RequireExistingParameters: false,
-            ExistingParameterNames: null);
+            ClosedParameterNames: null);
         var rewrittenOutput = new List<Expr>(alg.Output.Count);
         foreach (var expr in alg.Output)
         {
@@ -1185,12 +1181,11 @@ internal static class ImplicitArgumentResolver
     private static bool ClosedListBlocksLifting(
         ImplicitRewriteContext context,
         IReadOnlyList<ParameterPattern> calleePatterns)
-        => context.RequireExistingParameters
-            && (context.ExistingParameterNames is null
-                || !CanBuildImplicitCallArgumentsFromExistingParameters(
-                    calleePatterns,
-                    context.CallerParameterPatterns,
-                    context.ExistingParameterNames));
+        => context.ClosedParameterNames is { } closedParameterNames
+            && !CanBuildImplicitCallArgumentsFromExistingParameters(
+                calleePatterns,
+                context.CallerParameterPatterns,
+                closedParameterNames);
 
     /// <summary>
     /// Reports a STATICALLY IMPOSSIBLE strict value demand: a registry-proven
@@ -1207,9 +1202,10 @@ internal static class ImplicitArgumentResolver
     /// reference (<c>F(x) = A</c>, <c>Apply(A)</c>), and outside a blocked lift there is
     /// nothing wrong at all.</para>
     ///
-    /// <para>Conservative by construction — it reports only what it can name. A context
-    /// with no recorded <see cref="ImplicitRewriteContext.ExistingParameterNames"/> blocks
-    /// lifting without identifying a closed list, so it yields no diagnostic and the
+    /// <para>Conservative by construction — it reports only what it can name: the missing
+    /// captures of the closed list (<see cref="ImplicitRewriteContext.ClosedParameterNames"/>,
+    /// always present here because only a closed list ever blocks a lift). A blocked
+    /// reference whose missing captures cannot be named yields no diagnostic and the
     /// program keeps its ordinary runtime checking.</para>
     /// </summary>
     /// <param name="referenceDisplayName">
@@ -1224,11 +1220,11 @@ internal static class ImplicitArgumentResolver
         ImplicitRewriteContext context,
         ResolverWalkMemos memos)
     {
-        if (memos.Diagnostics is not { } diagnostics || context.ExistingParameterNames is null)
+        if (memos.Diagnostics is not { } diagnostics || context.ClosedParameterNames is not { } closedParameterNames)
             return;
 
         var missing = MissingClosedListForwardingNames(
-            calleePatterns, context.CallerParameterPatterns, context.ExistingParameterNames);
+            calleePatterns, context.CallerParameterPatterns, closedParameterNames);
         if (missing.Count == 0)
             return;
 

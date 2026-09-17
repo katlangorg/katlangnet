@@ -5,7 +5,6 @@ using KatLang.Evaluation;
 using KatLang.Evaluation.Caching;
 using KatLang.Optimizations.Loops;
 using KatLang.Optimizations.Sequences;
-using KatLang.Runtime;
 
 namespace KatLang;
 

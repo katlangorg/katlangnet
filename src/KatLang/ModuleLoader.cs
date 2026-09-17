@@ -242,13 +242,86 @@ internal sealed class ModuleLoader
     /// <summary>
     /// Counted traversal levels held live by ancestor module elaborations while a
     /// nested module is being processed. Adjusted around the nested routed
-    /// traversal call with <c>finally</c> restore, so downloader failures,
+    /// traversal call through a <see cref="WalkContextScope"/>, so downloader failures,
     /// cancellation, and nested rejections can never leak or corrupt it. Cache hits
     /// splice without re-traversal and charge nothing. The loader processes one
     /// logical elaboration sequentially (a suspension resumes the same walk, never a
     /// parallel one), so this stays a plain field across await boundaries.
     /// </summary>
     private int _nestedTraversalBase;
+    private StateScopeStack _walkContextScopes;
+
+    /// <summary>
+    /// The loader's swappable WALK CONTEXT: the three fields a nested walk temporarily
+    /// changes — the diagnostics sink (<see cref="_sink"/>), the live traversal base
+    /// (<see cref="_nestedTraversalBase"/>), and the active cancellation token
+    /// (<see cref="_cancellationToken"/>). Constructing the scope captures the current
+    /// values; the entry helper then installs the temporary ones; <see cref="Dispose"/>
+    /// restores exactly the captured values — always from a <c>using</c>, so restoration
+    /// runs on the ordinary return, on a structured rejection, on cancellation, and on a
+    /// downloader exception alike, and no field can be left pointing at a finished walk's
+    /// sink, base, or token. Scopes nest (a nested module load inside a deferred
+    /// materialization): each restores what it displaced, in reverse order of entry. The
+    /// default value installed nothing and restores nothing.
+    /// </summary>
+    private readonly struct WalkContextScope : IDisposable
+    {
+        private readonly ModuleLoader? _loader;
+        private readonly List<Diagnostic> _sink;
+        private readonly int _nestedTraversalBase;
+        private readonly CancellationToken _cancellationToken;
+        private readonly StateScopeStack.Ticket _ticket;
+
+        /// <summary>Captures <paramref name="loader"/>'s current walk context.</summary>
+        internal WalkContextScope(ModuleLoader loader)
+        {
+            _loader = loader;
+            _sink = loader._sink;
+            _nestedTraversalBase = loader._nestedTraversalBase;
+            _cancellationToken = loader._cancellationToken;
+            _ticket = loader._walkContextScopes.Enter();
+        }
+
+        public void Dispose()
+        {
+            if (_loader is null)
+                return;
+
+            _loader._walkContextScopes.Exit(_ticket);
+            _loader._cancellationToken = _cancellationToken;
+            _loader._nestedTraversalBase = _nestedTraversalBase;
+            _loader._sink = _sink;
+        }
+    }
+
+    /// <summary>
+    /// Enters the walk context of a deferred-region materialization
+    /// (<see cref="LoadDeferredRegionAsync"/>): diagnostics go to the materialization's own
+    /// list, traversal depth is judged from the base the eager walk recorded for the
+    /// region, and every walk check and the downloader observe the linked token.
+    /// </summary>
+    private WalkContextScope EnterMaterializationContext(
+        List<Diagnostic> sink,
+        int nestedTraversalBase,
+        CancellationToken cancellationToken)
+    {
+        var scope = new WalkContextScope(this);
+        _sink = sink;
+        _nestedTraversalBase = nestedTraversalBase;
+        _cancellationToken = cancellationToken;
+        return scope;
+    }
+
+    /// <summary>
+    /// Enters the walk context of a fetched nested module's elaboration: only the live
+    /// traversal base changes; the sink and the token stay those of the enclosing walk.
+    /// </summary>
+    private WalkContextScope EnterNestedTraversal(int nestedTraversalBase)
+    {
+        var scope = new WalkContextScope(this);
+        _nestedTraversalBase = nestedTraversalBase;
+        return scope;
+    }
 
     /// <summary>
     /// True when this elaboration emitted a source/module resource-policy diagnostic. Engine runs
@@ -262,6 +335,13 @@ internal sealed class ModuleLoader
 
     /// <summary>Run-local state exposed internally for cache-commit regression tests.</summary>
     internal int CachedModuleCount => _cache.Count;
+
+    /// <summary>
+    /// The walk context (<see cref="WalkContextScope"/>) exposed internally for scope-restoration
+    /// regression tests: the sink by identity, the live traversal base, and the active token.
+    /// </summary>
+    internal (object Sink, int NestedTraversalBase, CancellationToken CancellationToken) WalkContext
+        => (_sink, _nestedTraversalBase, _cancellationToken);
 
     /// <summary>
     /// Creates a new ModuleLoader.
@@ -873,14 +953,12 @@ internal sealed class ModuleLoader
         using var linkedCancellation = CancellationTokenSource.CreateLinkedTokenSource(
             _sourceProcessingCancellationToken,
             materializationCancellationToken);
-        var previousSink = _sink;
-        var previousTraversalBase = _nestedTraversalBase;
-        var previousCancellationToken = _cancellationToken;
-        _sink = diagnostics;
-        _nestedTraversalBase = region.NestedTraversalBase;
-        _cancellationToken = linkedCancellation.Token;
         try
         {
+            // Restore the walk context before clearing the walk memos, and before disposing
+            // the linked source, preserving the original unwind order.
+            using var materialization = EnterMaterializationContext(
+                diagnostics, region.NestedTraversalBase, linkedCancellation.Token);
             Algorithm loaded;
             try
             {
@@ -923,9 +1001,8 @@ internal sealed class ModuleLoader
         }
         finally
         {
-            _cancellationToken = previousCancellationToken;
-            _nestedTraversalBase = previousTraversalBase;
-            _sink = previousSink;
+            // As at the elaboration boundary: the walk memos and the load-bearing set never
+            // outlive one walk. The scope has already restored the enclosing walk context.
             _loadBearing.Clear();
             Array.Clear(_exprWalkMemos);
             Array.Clear(_algorithmWalkMemos);
@@ -1520,17 +1597,11 @@ internal sealed class ModuleLoader
             ThrowIfCancellationRequested();
             var nestedDiagnosticStart = _sink.Count;
             MarkLoadBearing(syntaxResult.SyntaxRoot);
-            var previousTraversalBase = _nestedTraversalBase;
-            _nestedTraversalBase = traversalBase;
             Algorithm elaborated;
-            try
+            using (EnterNestedTraversal(traversalBase))
             {
                 elaborated = await RouteAlgorithmAsync(syntaxResult.SyntaxRoot, LoadContext.TopLevel, depth: 1)
                     .ConfigureAwait(false);
-            }
-            finally
-            {
-                _nestedTraversalBase = previousTraversalBase;
             }
 
             // Cancellation never commits a partial module. This check also observes cancellation

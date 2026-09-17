@@ -5,7 +5,6 @@ using KatLang.Evaluation;
 using KatLang.Evaluation.Caching;
 using KatLang.Optimizations.Loops;
 using KatLang.Optimizations.Sequences;
-using KatLang.Runtime;
 
 namespace KatLang;
 
@@ -529,12 +528,6 @@ public static partial class Evaluator
             collectingItems));
     }
 
-    private static EvalResult<CallableArgumentBindings<BindingInputSlot>> BindItemsToFlatCollectingLayout(
-        FlatCollectingBindingLayout layout,
-        IReadOnlyList<BindingInputSlot> items,
-        Func<int, int, EvalError> arityMismatch)
-        => BindCallableArguments(layout.Signature, items, arityMismatch);
-
     /// <summary>
     /// Collect the item segment assigned to a collecting binding as ONE list value.
     ///
@@ -993,7 +986,7 @@ public static partial class Evaluator
         // shared N-capture pattern in both the old per-target and new shared-bind implementations, so
         // a run's observer counts N binds under the old design and exactly one under the shared bind.
         // Null for ordinary runs (no material effect); an observed run records through this context.
-        if (callee is Algorithm.User { IsAssignmentDeconstructionHelper: true })
+        if (callee is Algorithm.User { AssignmentDeconstructionTarget: not null })
             ctx.Observations?.RecordDeconstructionFullBind();
 
         var inputsR = BuildCallArgumentInputs(
@@ -1028,7 +1021,7 @@ public static partial class Evaluator
         // SequenceValueParameterBindingContext — the assignment-focused
         // DeconstructionBindingContext takes precedence and replaces it.
         if (bindingsR.IsError
-            && callee is Algorithm.User { IsAssignmentDeconstructionHelper: true }
+            && callee is Algorithm.User { AssignmentDeconstructionTarget: not null }
             && TryGetDeconstructionShapeMismatch(bindingsR.Error) is { } deconstructionMismatch
             && inputsR.Value.All(static input => input.Value is not null))
         {
@@ -1068,24 +1061,21 @@ public static partial class Evaluator
     /// O(1). Deferred semantics are unchanged: nothing binds until a target is demanded, and a
     /// binding failure (wrong arity, phrased against the written pattern by
     /// <see cref="BindPatternedUserCall"/>) surfaces from the first demanded target with its span
-    /// intact. Returns <c>null</c> only when the helper is not a shareable parser-elaborated group
-    /// (no group token, or an out-of-range projection index on a hand-built AST), so the caller
-    /// falls back to the ordinary per-call binding path.
+    /// intact. Returns <c>null</c> only when <paramref name="target"/> projects an index outside the
+    /// shared bind (a hand-built helper whose metadata disagrees with its parameter list), so the
+    /// caller falls back to the ordinary per-call binding path.
     /// </summary>
     private static EvalResult<Result>? TryProjectSharedDeconstructionTarget(
         Algorithm.User helper,
+        AssignmentDeconstructionTarget target,
         OutputBundle args,
         EvalCtx ctx,
         ValEnv valEnv,
         CallDiagnosticName calleeName,
         CallArgumentAssembly argumentAssembly)
     {
-        var group = helper.AssignmentDeconstructionGroup;
-        if (group is null)
-            return null;
-
         var execution = new DeconstructionBindingExecution(
-            group,
+            target.Group,
             // The CALLER lexical scope resolves the hoisted `$deconstruct$` source, so the bind
             // is a function of it too. A structural scope identity (not the caller REFERENCE)
             // keeps the N targets of one group in one scope sharing a single bind — the
@@ -1137,11 +1127,10 @@ public static partial class Evaluator
             return sharedR.Error;
 
         var values = sharedR.Value;
-        var index = helper.AssignmentDeconstructionTargetIndex;
-        if ((uint)index >= (uint)values.Count)
+        if ((uint)target.Index >= (uint)values.Count)
             return null;
 
-        return EvalResult<Result>.Ok(values[index]);
+        return EvalResult<Result>.Ok(values[target.Index]);
     }
 
     /// <summary>
