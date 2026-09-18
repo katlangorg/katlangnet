@@ -157,10 +157,12 @@ public class TokenTests
         Assert.Equal(new Token(TokenKind.Bad, 5, 2, 1, 6), Token.Bad(5, 2, 1, 6));
     }
 
+    // The diagnostic is positioned at the current token's own extent: the four-column name,
+    // or an EMPTY span at end of input — no fabricated one-column width past the text.
     [Theory]
-    [InlineData("name", "a name", 4)]
+    [InlineData("name", "a name", 5)]
     [InlineData("", "end of input", 1)]
-    public void ParserExpect_UsesAnInternalZeroLengthBadMarkerWithoutConsumingInput(string source, string found, int diagnosticLength)
+    public void ParserExpect_UsesAnInternalZeroLengthBadMarkerWithoutConsumingInput(string source, string found, int diagnosticEndColumn)
     {
         const System.Reflection.BindingFlags flags = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance;
         var tokens = Lexer.Tokenize(source).Tokens;
@@ -173,7 +175,9 @@ public class TokenTests
         Assert.Equal(DiagnosticCode.UnexpectedToken, diagnostic.Code);
         Assert.Equal(DiagnosticSeverity.Error, diagnostic.Severity);
         Assert.Equal($"Expected ')' but found {found}.", diagnostic.Message);
-        Assert.Equal(new SourceSpan(1, 1, 1, diagnosticLength), diagnostic.Span);
+        Assert.Equal(new SourceSpan(1, 1, 1, diagnosticEndColumn), diagnostic.Span);
+        Assert.Equal(new SourceSpan(1, 1, 1, 1), marker.Span);   // the zero-length marker is an empty span at its position
+        Assert.Equal(source.Length == 0, Assert.NotNull(diagnostic.Span).IsEmpty);
     }
 
     // ── Production valid-state matrix ────────────────────────────────────────

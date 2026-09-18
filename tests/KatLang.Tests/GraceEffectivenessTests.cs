@@ -48,12 +48,12 @@ public class GraceEffectivenessTests
     // ── Rejected: the occurrence's binding is already fixed ─────────────────
 
     [Theory]
-    [InlineData("K(b, a) = b, ~a\nK(1, 2)", 1, 14, 1, 15)]
-    [InlineData("K(b, a) = b, a~\nK(1, 2)", 1, 14, 1, 15)]
-    [InlineData("K(b, a) = b, ~~a\nK(1, 2)", 1, 14, 1, 16)]
-    [InlineData("K(b, a) = (b, ~a)\nK(1, 2)", 1, 15, 1, 16)]
-    [InlineData("F(v) = v\nK(b, a) = F(~a)\nK(1, 2)", 2, 13, 2, 14)]
-    [InlineData("K(b, a) = b, [~a]\nK(1, 2)", 1, 15, 1, 16)]
+    [InlineData("K(b, a) = b, ~a\nK(1, 2)", 1, 14, 1, 16)]
+    [InlineData("K(b, a) = b, a~\nK(1, 2)", 1, 14, 1, 16)]
+    [InlineData("K(b, a) = b, ~~a\nK(1, 2)", 1, 14, 1, 17)]
+    [InlineData("K(b, a) = (b, ~a)\nK(1, 2)", 1, 15, 1, 17)]
+    [InlineData("F(v) = v\nK(b, a) = F(~a)\nK(1, 2)", 2, 13, 2, 15)]
+    [InlineData("K(b, a) = b, [~a]\nK(1, 2)", 1, 15, 1, 17)]
     public void GraceOnAnExplicitParameter_IsRejected(string source, int line, int column, int endLine, int endColumn)
         => AssertIneffective(
             source, "a", "it already resolves to an explicit parameter", new SourceSpan(line, column, endLine, endColumn));
@@ -65,7 +65,7 @@ public class GraceEffectivenessTests
         // unwrapped name — final audit, September 2026), so the marked occurrence inside
         // the group is what the report locates, exactly as in `(b, ~a)`.
         AssertIneffective(
-            "K(b, a) = b, (~a)\nK(1, 2)", "a", "it already resolves to an explicit parameter", new SourceSpan(1, 15, 1, 16));
+            "K(b, a) = b, (~a)\nK(1, 2)", "a", "it already resolves to an explicit parameter", new SourceSpan(1, 15, 1, 17));
     }
 
     [Theory]
@@ -144,8 +144,8 @@ public class GraceEffectivenessTests
         var diagnostics = SourceProvenance.ExpectFrontEndError("X = 1\nK = ~X + X~\nK");
         Assert.Equal(2, diagnostics.Count);
         Assert.All(diagnostics, d => Assert.Equal(DiagnosticCode.InvalidGraceMarker, d.Code));
-        Assert.Equal(new SourceSpan(2, 5, 2, 6), diagnostics[0].Span);
-        Assert.Equal(new SourceSpan(2, 10, 2, 11), diagnostics[1].Span);
+        Assert.Equal(new SourceSpan(2, 5, 2, 7), diagnostics[0].Span);
+        Assert.Equal(new SourceSpan(2, 10, 2, 12), diagnostics[1].Span);
     }
 
     [Fact]
@@ -158,7 +158,7 @@ public class GraceEffectivenessTests
         var diagnostic = Assert.Single(SourceProvenance.ExpectFrontEndError("Need = v\nQ = {\n    X = 1\n    ~X + Need\n}\nQ(1)"));
         Assert.Equal(DiagnosticCode.InvalidGraceMarker, diagnostic.Code);
         Assert.StartsWith("Grace has no effect on 'X' because it already resolves to a property", diagnostic.Message, StringComparison.Ordinal);
-        Assert.Equal(new SourceSpan(4, 5, 4, 6), diagnostic.Span);
+        Assert.Equal(new SourceSpan(4, 5, 4, 7), diagnostic.Span);
     }
 
     [Fact]
@@ -189,10 +189,10 @@ public class GraceEffectivenessTests
         // the enclosing parameter. Completion must keep the error and update its reason.
         const string source = "Lib = { public v = 99 }\nOuter = {\nInner = { open Lib\n~v }\nNeed = v\nInner + Need\n}\nOuter(7)";
         AssertIneffective(source, "v", "it already resolves to a parameter of an enclosing algorithm",
-            new SourceSpan(4, 1, 4, 2));
+            new SourceSpan(4, 1, 4, 3));
         var model = SemanticModelBuilder.Build(Parser.Parse(source));
         Assert.Equal(IdentifierClassification.ImplicitParameterReference,
-            model.FindResolutionAt(4, 2)!.Classification);
+            model.FindResolutionAt(new SourcePosition(4, 2))!.Classification);
     }
 
     [Theory]
@@ -212,8 +212,8 @@ public class GraceEffectivenessTests
     [Fact]
     public void SharedMemberMarker_IsReportedOnceAndKeepsRewriteSharing()
     {
-        var name = new Expr.Resolve("V") { Span = new SourceSpan(2, 4, 2, 4) };
-        var grace = new Expr.Grace(name, -1) { Span = new SourceSpan(2, 3, 2, 4) };
+        var name = new Expr.Resolve("V") { Span = new SourceSpan(2, 4, 2, 5) };
+        var grace = new Expr.Grace(name, -1) { Span = new SourceSpan(2, 3, 2, 5) };
         var first = new Expr.DotCall(new Expr.Num(1), "V", null) { LexicalFallback = grace };
         var second = new Expr.DotCall(new Expr.Num(2), "V", null) { LexicalFallback = grace };
         var syntax = Parser.ParseSyntax("V(x) = x");
@@ -254,7 +254,7 @@ public class GraceEffectivenessTests
         Assert.Contains("parameter of an enclosing algorithm", error.Message, StringComparison.Ordinal);
         // The marker sits on the module's line 4, which is no position in this document:
         // the report is positioned at the import site, the declaring `M` of the branch body.
-        Assert.Equal((2, 10, 2, 10), (error.StartLine, error.StartColumn, error.EndLine, error.EndColumn));
+        Assert.Equal(new SourceSpan(2, 10, 2, 11), error.Span);
         Assert.Equal(1, fetches);
     }
 
@@ -271,7 +271,7 @@ public class GraceEffectivenessTests
         var model = SemanticModelBuilder.Build(parsed);
         var line = prefix.Length == 0 ? 3 : 4;
         Assert.Equal(IdentifierClassification.ExplicitParameterReference,
-            model.FindResolutionAt(line, 2)!.Classification);
+            model.FindResolutionAt(new SourcePosition(line, 2))!.Classification);
     }
 
     [Fact]
@@ -283,7 +283,7 @@ public class GraceEffectivenessTests
         Assert.Equal(2, bound.Diagnostics.Count);
         Assert.Single(bound.Diagnostics, d => d.Code == DiagnosticCode.UnexpectedToken);
         var grace = Assert.Single(bound.Diagnostics, d => d.Code == DiagnosticCode.InvalidGraceMarker);
-        Assert.Equal(new SourceSpan(2, 1, 2, 2), grace.Span);
+        Assert.Equal(new SourceSpan(2, 1, 2, 3), grace.Span);
     }
 
     [Theory]
@@ -305,7 +305,7 @@ public class GraceEffectivenessTests
         var failure = Assert.IsType<RunResult.ParseFailure>(KatLangEngine.Run("K(b, a) = b, ~a\nK(1, 2)"));
         var error = Assert.Single(failure.Errors);
         Assert.Equal(KatLangErrorCode.InvalidGraceMarker, error.Code);
-        Assert.Equal((1, 14, 1, 15), (error.StartLine, error.StartColumn, error.EndLine, error.EndColumn));
+        Assert.Equal(new SourceSpan(1, 14, 1, 16), error.Span);
     }
 
     [Fact]
@@ -336,7 +336,7 @@ public class GraceEffectivenessTests
         Assert.Contains(reasonFragment, diagnostic.Message, StringComparison.Ordinal);
 
         var model = SemanticModelBuilder.Build(parsed);
-        var resolution = Assert.IsType<IdentifierResolution>(model.FindResolutionAt(line, column));
+        var resolution = Assert.IsType<IdentifierResolution>(model.FindResolutionAt(new SourcePosition(line, column)));
         Assert.Equal(classification, resolution.Classification);
     }
 

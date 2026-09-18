@@ -33,8 +33,8 @@ public class CollectingBindingSyntaxTests
         var collect = Assert.Single(parse.Root.Properties, static p => p.Name == "Collect");
         var parameter = Assert.Single(collect.Value.Parameters);
         Assert.Equal(ParameterKind.Collecting, parameter.Kind);
-        Assert.Equal(new SourceSpan(1, 9, 1, 9), parameter.CollectMarkerSpan);
-        Assert.Equal(new SourceSpan(1, 10, 1, 14), parameter.Span);
+        Assert.Equal(new SourceSpan(1, 9, 1, 10), parameter.CollectMarkerSpan);
+        Assert.Equal(new SourceSpan(1, 10, 1, 15), parameter.Span);
         Assert.Equal("*items", parameter.DisplayName);
     }
 
@@ -50,7 +50,7 @@ public class CollectingBindingSyntaxTests
         Assert.Equal(ParameterKind.Normal, parameters[0].Kind);
         Assert.Equal(ParameterKind.Collecting, parameters[1].Kind);
         Assert.Equal(ParameterKind.Normal, parameters[2].Kind);
-        Assert.Equal(new SourceSpan(1, 15, 1, 15), parameters[1].CollectMarkerSpan);
+        Assert.Equal(new SourceSpan(1, 15, 1, 16), parameters[1].CollectMarkerSpan);
     }
 
     [Fact]
@@ -89,7 +89,7 @@ public class CollectingBindingSyntaxTests
         var parse = Parse("F(* items) = items\nF(1)");
         var error = Assert.Single(parse.Diagnostics);
         // Span covers the star through the detached name: columns 3..9.
-        Assert.Equal(new SourceSpan(1, 3, 1, 9), error.Span);
+        Assert.Equal(new SourceSpan(1, 3, 1, 10), error.Span);
     }
 
     [Fact]

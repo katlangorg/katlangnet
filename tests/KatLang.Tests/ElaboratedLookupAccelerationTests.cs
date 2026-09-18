@@ -1021,7 +1021,7 @@ public class ElaboratedLookupAccelerationTests
         Parallel.For(0, 16, _ =>
         {
             var model = SemanticModelBuilder.Build(parsed);
-            var symbols = model.GetVisibleSymbolsAt(6, 5);
+            var symbols = model.GetVisibleSymbolsAt(new SourcePosition(6, 5));
             Assert.Contains(symbols, s => s.Name == "Exported");
 
             var reparsed = Parser.Parse(source);
@@ -1058,16 +1058,16 @@ public class ElaboratedLookupAccelerationTests
 
         // Position inside A's body (the output row).
         var line = source.Split('\n').ToList().FindIndex(l => l.Contains("Exported + Shadow")) + 1;
-        var symbols = model.GetVisibleSymbolsAt(line, 5);
+        var symbols = model.GetVisibleSymbolsAt(new SourcePosition(line, 5));
 
         var exported = symbols.Single(s => s.Name == "Exported");
         Assert.Equal(IdentifierClassification.PropertyReference, exported.Classification);
         Assert.NotNull(exported.Declaration);
-        Assert.Equal(2, exported.Declaration!.Span.StartLineNumber);
+        Assert.Equal(2, exported.Declaration!.Span.Start.Line);
 
         var shadow = symbols.Single(s => s.Name == "Shadow");
         Assert.NotNull(shadow.Declaration);
-        Assert.Equal(8, shadow.Declaration!.Span.StartLineNumber);
+        Assert.Equal(8, shadow.Declaration!.Span.Start.Line);
 
         Assert.DoesNotContain(symbols, s => s.Name == "Hidden");
     }

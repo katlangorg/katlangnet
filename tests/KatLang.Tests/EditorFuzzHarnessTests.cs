@@ -233,17 +233,23 @@ public class EditorFuzzHarnessTests
     public void SpanValidator_DetectsEveryOutOfRangeClass()
     {
         var lineWidths = SourceSpanValidator.LineWidths("ab = 1");
-        Assert.NotNull(SourceSpanValidator.Validate(new SourceSpan(1, 0, 1, 1), lineWidths));   // negative/zero start column
-        Assert.NotNull(SourceSpanValidator.Validate(new SourceSpan(1, 3, 1, 1), lineWidths));   // reversed range
-        Assert.NotNull(SourceSpanValidator.Validate(new SourceSpan(5, 1, 5, 1), lineWidths));   // line beyond source
-        Assert.NotNull(SourceSpanValidator.Validate(new SourceSpan(1, 1, 1, 99), lineWidths));  // column beyond line width
-        Assert.Null(SourceSpanValidator.Validate(new SourceSpan(1, 1, 1, 2), lineWidths));      // valid
+        // A zero coordinate and a reversed range cannot be constructed at all: SourceSpan
+        // rejects them (1-based coordinates, Start <= End). The validator still reports the
+        // shapes the constructor cannot know about: the default value, and spans that
+        // address text the source does not have.
+        Assert.Throws<ArgumentOutOfRangeException>(() => new SourceSpan(1, 0, 1, 2));   // zero start column
+        Assert.Throws<ArgumentOutOfRangeException>(() => new SourceSpan(1, 3, 1, 2));   // reversed range
+        Assert.NotNull(SourceSpanValidator.Validate(default, lineWidths));                 // default(SourceSpan) is not a location
+        Assert.NotNull(SourceSpanValidator.Validate(new SourceSpan(5, 1, 5, 2), lineWidths));   // line beyond source
+        Assert.NotNull(SourceSpanValidator.Validate(new SourceSpan(1, 1, 1, 100), lineWidths));  // column beyond line width
+        Assert.Null(SourceSpanValidator.Validate(new SourceSpan(1, 1, 1, 3), lineWidths));      // valid: `ab`
+        Assert.Null(SourceSpanValidator.Validate(new SourceSpan(1, 7, 1, 7), lineWidths));      // valid: the empty end-of-line position
     }
 
     [Fact]
     public void ValidateModel_ThrowsOnAnOutOfRangeOccurrenceSpan()
     {
-        var occurrence = new IdentifierOccurrence("ab", new SourceSpan(1, 1, 9, 9), OccurrenceKind.ResolveReference);
+        var occurrence = new IdentifierOccurrence("ab", new SourceSpan(1, 1, 9, 10), OccurrenceKind.ResolveReference);
         var model = DoctoredModel("ab = 1", occurrences: [occurrence]);
         Assert.Throws<EditorInvariantException>(() => EditorModel.ValidateModel("ab = 1", model));
     }
@@ -251,7 +257,7 @@ public class EditorFuzzHarnessTests
     [Fact]
     public void ValidateModel_ThrowsOnASyntheticName()
     {
-        var occurrence = new IdentifierOccurrence("$x", new SourceSpan(1, 1, 1, 2), OccurrenceKind.ResolveReference);
+        var occurrence = new IdentifierOccurrence("$x", new SourceSpan(1, 1, 1, 3), OccurrenceKind.ResolveReference);
         var model = DoctoredModel("ab = 1", occurrences: [occurrence]);
         Assert.Throws<EditorInvariantException>(() => EditorModel.ValidateModel("ab = 1", model));
     }
@@ -259,7 +265,7 @@ public class EditorFuzzHarnessTests
     [Fact]
     public void ValidateModel_ThrowsOnAnInventedBuiltin()
     {
-        var occurrence = new IdentifierOccurrence("nostuff", new SourceSpan(1, 1, 1, 7), OccurrenceKind.ResolveReference);
+        var occurrence = new IdentifierOccurrence("nostuff", new SourceSpan(1, 1, 1, 8), OccurrenceKind.ResolveReference);
         var resolution = new IdentifierResolution(occurrence, IdentifierClassification.Builtin, null, null);
         var model = DoctoredModel("nostuff", resolutions: [resolution]);
         Assert.Throws<EditorInvariantException>(() => EditorModel.ValidateModel("nostuff", model));
@@ -269,8 +275,8 @@ public class EditorFuzzHarnessTests
     public void ValidateModel_ThrowsWhenAResolutionTargetsADifferentlyNamedDeclaration()
     {
         var source = "A = 1\nB = 2";
-        var occurrence = new IdentifierOccurrence("A", new SourceSpan(1, 1, 1, 1), OccurrenceKind.ResolveReference);
-        var declaration = new DeclarationOccurrence("B", new SourceSpan(2, 1, 2, 1), OccurrenceKind.PropertyDefinition);
+        var occurrence = new IdentifierOccurrence("A", new SourceSpan(1, 1, 1, 2), OccurrenceKind.ResolveReference);
+        var declaration = new DeclarationOccurrence("B", new SourceSpan(2, 1, 2, 2), OccurrenceKind.PropertyDefinition);
         var resolution = new IdentifierResolution(occurrence, IdentifierClassification.PropertyReference, declaration, null);
         var model = DoctoredModel(source, occurrences: [occurrence], declarations: [declaration], resolutions: [resolution]);
         Assert.Throws<EditorInvariantException>(() => EditorModel.ValidateModel(source, model));

@@ -60,8 +60,8 @@ public class CollectionBuiltinBindingTests
 
         var run = Assert.IsType<RunResult.EvalFailure>(KatLangEngine.Run(source));
         var diagnostic = Assert.Single(run.Errors);
-        Assert.Equal(expectedLine, diagnostic.StartLine);
-        Assert.Equal(1, diagnostic.StartColumn);
+        Assert.Equal(expectedLine, Assert.NotNull(diagnostic.Span).Start.Line);
+        Assert.Equal(1, Assert.NotNull(diagnostic.Span).Start.Column);
     }
 
     // ───────────────────────── Single-collection builtins ───────────────────────

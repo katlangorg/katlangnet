@@ -197,7 +197,7 @@ public class EmptySequenceOperandTests
             Assert.True(counted.IsError);
             Assert.IsType<EvalError.BadArity>(LoopDiagnosticParityAssertions.Innermost(plain.Error));
             // The BadArity is located at the whole unary expression (F5).
-            Assert.Equal(new SourceSpan(1, 1, 1, source.Length), LoopDiagnosticParityAssertions.Innermost(plain.Error).Span);
+            Assert.Equal(new SourceSpan(1, 1, 1, source.Length + 1), LoopDiagnosticParityAssertions.Innermost(plain.Error).Span);
             Assert.Equal(
                 LoopDiagnosticParityAssertions.DescribeErrorTree(plain.Error),
                 LoopDiagnosticParityAssertions.DescribeErrorTree(counted.Error));
@@ -233,7 +233,7 @@ public class EmptySequenceOperandTests
         Assert.True(result.IsError);
         var error = Assert.IsType<EvalError.DivByZero>(LoopDiagnosticParityAssertions.Innermost(result.Error));
         var start = source.IndexOf('(') + 1;
-        Assert.Equal(new SourceSpan(1, start, 1, start + 6), error.Span);
+        Assert.Equal(new SourceSpan(1, start, 1, start + 7), error.Span);   // `(1 / 0)` is seven code units
     }
 
     [Fact]
@@ -363,9 +363,7 @@ public class EmptySequenceOperandTests
         Assert.Equal(KatLangErrorCode.TypeMismatch, rendered.Code);
         Assert.Contains($"while evaluating `{source}`", rendered.Message);
         Assert.Contains($"the {side} operand was a sequence value with 0 sequence elements: ()", rendered.Message);
-        Assert.Equal(
-            ((int?)1, (int?)1, (int?)1, (int?)source.Length),
-            (rendered.StartLine, rendered.StartColumn, rendered.EndLine, rendered.EndColumn));
+        Assert.Equal(new SourceSpan(1, 1, 1, source.Length + 1), rendered.Span);
     }
 
     [Theory]
@@ -377,9 +375,7 @@ public class EmptySequenceOperandTests
 
         Assert.Equal(KatLangErrorCode.TypeMismatch, rendered.Code);
         Assert.Contains("Cannot apply operator to string and non-string operands", rendered.Message);
-        Assert.Equal(
-            ((int?)1, (int?)1, (int?)1, (int?)source.Length),
-            (rendered.StartLine, rendered.StartColumn, rendered.EndLine, rendered.EndColumn));
+        Assert.Equal(new SourceSpan(1, 1, 1, source.Length + 1), rendered.Span);
     }
 
     // ── `()` is one case of the ONE non-scalar operand rule ─────────────────
@@ -400,9 +396,7 @@ public class EmptySequenceOperandTests
 
         Assert.Equal(KatLangErrorCode.TypeMismatch, rendered.Code);
         Assert.Contains($"the {side} operand was {description}", rendered.Message);
-        Assert.Equal(
-            ((int?)1, (int?)1, (int?)1, (int?)source.Length),
-            (rendered.StartLine, rendered.StartColumn, rendered.EndLine, rendered.EndColumn));
+        Assert.Equal(new SourceSpan(1, 1, 1, source.Length + 1), rendered.Span);
     }
 
     // ── `()` is a value; a no-output body is not ────────────────────────────

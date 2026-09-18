@@ -750,14 +750,14 @@ public class ParameterDetectorTests
     public void ConditionalDiagnostic_FirstRepeatedNameComesFromBinaryLeftOperand()
     {
         var error = Assert.Single(ParseAndDetectDiagnostics("F(1, a) = missing + missing"));
-        Assert.Equal(new SourceSpan(1, 11, 1, 17), error.Span);
+        Assert.Equal(new SourceSpan(1, 11, 1, 18), error.Span);
     }
 
     [Fact]
     public void ConditionalDiagnostic_FirstRepeatedNameComesFromCallCallee()
     {
         var error = Assert.Single(ParseAndDetectDiagnostics("F(1, a) = missing(missing)"));
-        Assert.Equal(new SourceSpan(1, 11, 1, 17), error.Span);
+        Assert.Equal(new SourceSpan(1, 11, 1, 18), error.Span);
     }
 
     [Fact]
@@ -765,7 +765,7 @@ public class ParameterDetectorTests
     {
         var source = "Known(x) = x\nF(1, a) = Known(missing)";
         var error = Assert.Single(ParseAndDetectDiagnostics(source));
-        Assert.Equal(new SourceSpan(2, 17, 2, 23), error.Span);
+        Assert.Equal(new SourceSpan(2, 17, 2, 24), error.Span);
     }
 
     [Fact]
@@ -891,7 +891,7 @@ public class ParameterDetectorTests
         var body = Assert.Single(k.Output);
         Assert.IsType(expectedShape, body);
         Assert.NotNull(body.Span);
-        Assert.Equal(1, body.Span!.StartLineNumber);
+        Assert.Equal(1, Assert.NotNull(body.Span).Start.Line);
     }
 
     // ── Conditional branch bodies are elaborated like every other body (B2b) ───────
@@ -984,7 +984,7 @@ public class ParameterDetectorTests
 
         var error = Assert.Single(diagnostics, d => d.Code == DiagnosticCode.UndeclaredIdentifier);
         Assert.Contains(fragment, error.Message);
-        Assert.NotEqual(new SourceSpan(0, 0, 0, 0), error.Span);
+        Assert.NotNull(error.Span);   // positioned at the written occurrence, never unpositioned
     }
 
     [Fact]

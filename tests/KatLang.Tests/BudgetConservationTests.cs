@@ -48,7 +48,7 @@ public class BudgetConservationTests
     {
         var limit = new EvalError.EvaluationStepLimitExceeded(17)
         {
-            Span = new SourceSpan(2, 3, 2, 8),
+            Span = new SourceSpan(2, 3, 2, 9),
         };
         var wrappedLimit = new EvalError.WithContext(
             new PropertyEvaluationContext("Probe"),

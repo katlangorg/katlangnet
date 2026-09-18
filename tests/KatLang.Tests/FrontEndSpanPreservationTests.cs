@@ -36,10 +36,10 @@ public class FrontEndSpanPreservationTests
     [Fact]
     public void ParameterDetection_PreservesHostSequenceConstructSpan()
     {
-        var joinSpan = new SourceSpan(4, 2, 4, 12);
+        var joinSpan = new SourceSpan(4, 2, 4, 13);
         var join = new Expr.SequenceConstruct(
-            new Expr.Resolve("x") { Span = new SourceSpan(4, 2, 4, 2) },
-            new Expr.Num(1) { Span = new SourceSpan(4, 12, 4, 12) })
+            new Expr.Resolve("x") { Span = new SourceSpan(4, 2, 4, 3) },
+            new Expr.Num(1) { Span = new SourceSpan(4, 12, 4, 13) })
         {
             Span = joinSpan,
         };
@@ -68,10 +68,10 @@ public class FrontEndSpanPreservationTests
     public void ImplicitResolution_PreservesCompositeSpansInNeutralArgumentBundle()
     {
         var call = new Expr.Call(
-            new Expr.Resolve("Unknown") { Span = new SourceSpan(8, 1, 8, 7) },
+            new Expr.Resolve("Unknown") { Span = new SourceSpan(8, 1, 8, 8) },
             OutputBundle.From([HostCompositeTree()]))
         {
-            Span = new SourceSpan(8, 1, 8, 40),
+            Span = new SourceSpan(8, 1, 8, 41),
         };
         var root = User(output: OutputBundle.From([call]));
 
@@ -128,32 +128,32 @@ public class FrontEndSpanPreservationTests
     private static Expr HostCompositeTree()
     {
         var nested = User(output: OutputBundle.From([
-            new Expr.Resolve("nested") { Span = new SourceSpan(7, 30, 7, 35) }]));
+            new Expr.Resolve("nested") { Span = new SourceSpan(7, 30, 7, 36) }]));
         return new Expr.ListLiteral(OutputBundle.From([
             new Expr.Unary(
                 UnaryOp.Minus,
-                new Expr.Resolve("x") { Span = new SourceSpan(7, 3, 7, 3) })
+                new Expr.Resolve("x") { Span = new SourceSpan(7, 3, 7, 4) })
             {
-                Span = new SourceSpan(7, 2, 7, 3),
+                Span = new SourceSpan(7, 2, 7, 4),
             },
             new Expr.SequenceSpread(
-                new Expr.Resolve("y") { Span = new SourceSpan(7, 7, 7, 7) })
+                new Expr.Resolve("y") { Span = new SourceSpan(7, 7, 7, 8) })
             {
-                Span = new SourceSpan(7, 7, 7, 8),
-                SpreadMarkerSpan = new SourceSpan(7, 8, 7, 8),
+                Span = new SourceSpan(7, 7, 7, 9),
+                SpreadMarkerSpan = new SourceSpan(7, 8, 7, 9),
             },
             new Expr.Capture(OutputBundle.From([
-                new Expr.Resolve("z") { Span = new SourceSpan(7, 12, 7, 12) },
-                new Expr.Num(1) { Span = new SourceSpan(7, 15, 7, 15) }]))
+                new Expr.Resolve("z") { Span = new SourceSpan(7, 12, 7, 13) },
+                new Expr.Num(1) { Span = new SourceSpan(7, 15, 7, 16) }]))
             {
-                Span = new SourceSpan(7, 11, 7, 16),
+                Span = new SourceSpan(7, 11, 7, 17),
             },
             new Expr.AlgorithmExpr(nested)
             {
-                Span = new SourceSpan(7, 20, 7, 36),
+                Span = new SourceSpan(7, 20, 7, 37),
             }]))
         {
-            Span = new SourceSpan(7, 1, 7, 37),
+            Span = new SourceSpan(7, 1, 7, 38),
         };
     }
 

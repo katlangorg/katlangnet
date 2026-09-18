@@ -967,6 +967,25 @@ public static partial class Evaluator
         result.IsError ? AtSpanIfMissing(result.Error, span) : result;
 
     /// <summary>
+    /// <see cref="WithSpan{T}"/> positioned by an expression, reading its span only when there IS
+    /// an error to position. The recursive evaluation frame that awaits <paramref name="result"/>
+    /// then holds a node reference instead of a span copy: a span is a 20-byte value as
+    /// <c>SourceSpan?</c>, and one eager copy per dispatch arm measurably fattened every
+    /// frame on the call-recursion spine (frame-size discipline, see the parser's leaf-frame
+    /// helpers).
+    /// </summary>
+    internal static EvalResult<T> WithSpanOf<T>(Expr expr, EvalResult<T> result) =>
+        result.IsError ? AtSpanIfMissing(result.Error, expr.Span) : result;
+
+    /// <summary>
+    /// <see cref="WithSpanOf{T}"/> for a capture: the expression's own span, else the first
+    /// positioned row of <paramref name="body"/> (<see cref="PreferExpressionSpan"/>), chosen on
+    /// error only.
+    /// </summary>
+    private static EvalResult<T> WithPreferredSpanOf<T>(Expr expr, IReadOnlyList<Expr> body, EvalResult<T> result) =>
+        result.IsError ? AtSpanIfMissing(result.Error, PreferExpressionSpan(expr.Span, body)) : result;
+
+    /// <summary>
     /// Attaches a source span to an error that does not already carry one. The single
     /// implementation behind <see cref="WithSpan{T}"/> and the resource-limit charge
     /// points, which hold a bare <see cref="EvalError"/> rather than a result.

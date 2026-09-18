@@ -118,6 +118,19 @@ public sealed record Token
     /// </summary>
     public int Column { get; internal init; }
 
+    /// <summary>
+    /// The token's source extent in human coordinates: the half-open span from
+    /// <see cref="Line"/>:<see cref="Column"/> up to but not including the column
+    /// <see cref="Length"/> code units later. It is derived on every read from the token's
+    /// stored offset model, never stored: no token spans a line break (a string literal and a
+    /// comment end at the line's end), and columns count UTF-16 code units exactly as
+    /// <see cref="Length"/> does, so the end column is <c>Column + Length</c> on the same line
+    /// — a surrogate pair inside an unexpected-character token widens the span by two, a
+    /// keyword by its spelling. The end-of-file token and the parser's zero-length recovery
+    /// marker are EMPTY spans at their position: a location, not a fabricated one-column width.
+    /// </summary>
+    public SourceSpan Span => new(Line, Column, Line, Column + Length);
+
     /// <summary>The value of a <see cref="TokenKind.Number"/> token; <c>default</c> for every other kind.</summary>
     public Decimal128 NumValue { get; internal init; }
 

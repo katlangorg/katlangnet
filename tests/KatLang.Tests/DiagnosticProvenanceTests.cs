@@ -125,7 +125,7 @@ public class DiagnosticProvenanceTests
     {
         ParameterDeclaration[] parameters =
         [
-            new("located") { Span = new SourceSpan(1, 1, 1, 7) },
+            new("located") { Span = new SourceSpan(1, 1, 1, 8) },
             new("unlocated"),
         ];
         var provider = new Algorithm.User(null, ParameterPattern.FromDeclarations(parameters), [], [], [new Expr.Num(0)])
@@ -145,13 +145,13 @@ public class DiagnosticProvenanceTests
     /// the layer disagreement the editor already flagged is closed for builtins.
     /// </summary>
     [Theory]
-    [InlineData("open count\nQ = 5\nQ", "count", 1, 6, 1, 10)]
-    [InlineData("open if\nQ = 5\nQ", "if", 1, 6, 1, 7)]
-    [InlineData("A = {\n    open sum, Lib\n    1\n}\nLib = { public Z = 1 }\nA", "sum", 2, 10, 2, 12)]
+    [InlineData("open count\nQ = 5\nQ", "count", 1, 6, 1, 11)]
+    [InlineData("open if\nQ = 5\nQ", "if", 1, 6, 1, 8)]
+    [InlineData("A = {\n    open sum, Lib\n    1\n}\nLib = { public Z = 1 }\nA", "sum", 2, 10, 2, 13)]
     // A builtin HEAD of a dotted target is refused by the same rule: a builtin has no members,
     // so the path can never provide, and the opener's names must not become implicit parameters.
-    [InlineData("open count.X\nQ = 5\nQ", "count.X", 1, 6, 1, 12)]
-    [InlineData("A = {\n    open if.X.Y, Lib\n    1\n}\nLib = { public Z = 1 }\nA", "if.X.Y", 2, 10, 2, 15)]
+    [InlineData("open count.X\nQ = 5\nQ", "count.X", 1, 6, 1, 13)]
+    [InlineData("A = {\n    open if.X.Y, Lib\n    1\n}\nLib = { public Z = 1 }\nA", "if.X.Y", 2, 10, 2, 16)]
     public void BuiltinOpenTarget_IsRefusedEagerly_ByTheFrontEndAndByKindAtRuntime(
         string source, string runtimeTarget, int line, int column, int endLine, int endColumn)
     {

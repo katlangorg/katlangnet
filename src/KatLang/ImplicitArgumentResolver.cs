@@ -254,7 +254,7 @@ internal static class ImplicitArgumentResolver
     private readonly record struct BlockedForwardingTemplate(
         string ReferenceDisplayName,
         IReadOnlyList<string> MissingParameterNames,
-        SourceSpan Span);
+        SourceSpan? Span);
 
     /// <summary>
     /// The FREE reference names of an algorithm's subtree: every <see cref="Expr.Resolve"/>
@@ -1022,20 +1022,19 @@ internal static class ImplicitArgumentResolver
     {
         return expr switch
         {
-            Expr.AlgorithmExpr block => new Expr.AlgorithmExpr(
-                ProcessSharedNestedAlgorithm(block.Algorithm, ImportSite.OfBlock(block), new Dictionary<string, CallableSignature>(), memos))
+            Expr.AlgorithmExpr block => block with
             {
-                Span = expr.Span,
+                Algorithm = ProcessSharedNestedAlgorithm(block.Algorithm, ImportSite.OfBlock(block), new Dictionary<string, CallableSignature>(), memos),
             },
 
             // Capture targets own no scope; rows recurse without lifting,
             // with a fresh signature map like every other open target.
-            Expr.Capture(var captureBody) => new Expr.Capture(new OutputBundle(
-                captureBody
-                    .Select(row => ProcessExprNested(row, new Dictionary<string, CallableSignature>(), memos))
-                    .ToList()))
+            Expr.Capture capture => capture with
             {
-                Span = expr.Span,
+                Body = new OutputBundle(
+                    capture.Body
+                        .Select(row => ProcessExprNested(row, new Dictionary<string, CallableSignature>(), memos))
+                        .ToList()),
             },
 
             // `with` keeps the stored dot-edge facts (member span, lexical
@@ -1048,23 +1047,21 @@ internal static class ImplicitArgumentResolver
                     : null,
             },
 
-            Expr.SequenceSpread(var operand) => new Expr.SequenceSpread(
-                ProcessOpenExpr(operand, memos))
+            Expr.SequenceSpread spread => spread with { Operand = ProcessOpenExpr(spread.Operand, memos) },
+
+            Expr.SequenceConstruct construct => construct with
             {
-                Span = expr.Span,
-                SpreadMarkerSpan = ((Expr.SequenceSpread)expr).SpreadMarkerSpan,
+                Left = ProcessOpenExpr(construct.Left, memos),
+                Right = ProcessOpenExpr(construct.Right, memos),
             },
 
-            Expr.SequenceConstruct(var left, var right) => new Expr.SequenceConstruct(
-                ProcessOpenExpr(left, memos),
-                ProcessOpenExpr(right, memos)) { Span = expr.Span },
+            Expr.ListLiteral list => list with { Items = list.Items.Select(item => ProcessOpenExpr(item, memos)).ToList() },
 
-            Expr.ListLiteral(var items) => new Expr.ListLiteral(
-                items.Select(item => ProcessOpenExpr(item, memos)).ToList()) { Span = expr.Span },
-
-            Expr.Call(var function, var args) => new Expr.Call(
-                ProcessOpenExpr(function, memos),
-                ProcessArgumentBundle(args, new Dictionary<string, CallableSignature>(), memos)) { Span = expr.Span },
+            Expr.Call call => call with
+            {
+                Function = ProcessOpenExpr(call.Function, memos),
+                Args = ProcessArgumentBundle(call.Args, new Dictionary<string, CallableSignature>(), memos),
+            },
 
             // Intentional leaves: name/literal leaves carry no nested algorithm
             // to process (a bare Resolve IS the ordinary open-target form);
@@ -1278,7 +1275,7 @@ internal static class ImplicitArgumentResolver
 
         // A reference the document wrote is reported at its span; one inside imported
         // content at the import site.
-        var span = reference.Span ?? memos.Run.ImportSite ?? new SourceSpan(0, 0, 0, 0);
+        var span = reference.Span ?? memos.Run.ImportSite;
         diagnostics.Add(new Diagnostic(
             FormatBlockedStrictValueForwarding(referenceDisplayName, missing, context.ConditionalBranchName),
             DiagnosticSeverity.Error,
@@ -1726,6 +1723,9 @@ internal static class ImplicitArgumentResolver
         ResolverWalkMemos memos,
         bool inStrictValueDemand)
     {
+        // Every child rewrite is a `with` copy of the node: the record copy carries the span
+        // (and every other stored fact) inside the copy constructor, so this calibrated
+        // recursion frame holds no span temporaries — see ModuleLoader.ProcessExpr.
         return expr switch
         {
             Expr.Resolve(var name) => RewriteBareReference(
@@ -1733,31 +1733,38 @@ internal static class ImplicitArgumentResolver
 
             Expr.Call call => RewriteCall(call, paramMap, context, memos),
 
-            Expr.Binary(var op, var left, var right) => new Expr.Binary(op,
-                RewriteImplicitCalls(left, paramMap, context, false, memos, inStrictValueDemand),
-                RewriteImplicitCalls(right, paramMap, context, false, memos, inStrictValueDemand)) { Span = expr.Span },
-
-            Expr.Unary(var op, var operand) => new Expr.Unary(op,
-                RewriteImplicitCalls(operand, paramMap, context, false, memos, inStrictValueDemand)) { Span = expr.Span },
-
-            Expr.Index(var target, var selector) => new Expr.Index(
-                RewriteImplicitCalls(target, paramMap, context, false, memos, inStrictValueDemand),
-                RewriteImplicitCalls(selector, paramMap, context, false, memos, inStrictValueDemand)) { Span = expr.Span },
-
-            Expr.SequenceSpread(var operand) => new Expr.SequenceSpread(
-                RewriteImplicitCalls(operand, paramMap, context, false, memos, inStrictValueDemand))
+            Expr.Binary binary => binary with
             {
-                Span = expr.Span,
-                SpreadMarkerSpan = ((Expr.SequenceSpread)expr).SpreadMarkerSpan,
+                Left = RewriteImplicitCalls(binary.Left, paramMap, context, false, memos, inStrictValueDemand),
+                Right = RewriteImplicitCalls(binary.Right, paramMap, context, false, memos, inStrictValueDemand),
             },
 
-            Expr.SequenceConstruct(var left, var right) => new Expr.SequenceConstruct(
-                RewriteImplicitCalls(left, paramMap, context, false, memos, inStrictValueDemand),
-                RewriteImplicitCalls(right, paramMap, context, false, memos, inStrictValueDemand)) { Span = expr.Span },
+            Expr.Unary unary => unary with
+            {
+                Operand = RewriteImplicitCalls(unary.Operand, paramMap, context, false, memos, inStrictValueDemand),
+            },
 
-            Expr.ListLiteral(var listItems) => new Expr.ListLiteral(
-                listItems.Select(item => RewriteImplicitCalls(item, paramMap, context, false, memos, inStrictValueDemand)).ToList())
-            { Span = expr.Span },
+            Expr.Index index => index with
+            {
+                Target = RewriteImplicitCalls(index.Target, paramMap, context, false, memos, inStrictValueDemand),
+                Selector = RewriteImplicitCalls(index.Selector, paramMap, context, false, memos, inStrictValueDemand),
+            },
+
+            Expr.SequenceSpread spread => spread with
+            {
+                Operand = RewriteImplicitCalls(spread.Operand, paramMap, context, false, memos, inStrictValueDemand),
+            },
+
+            Expr.SequenceConstruct construct => construct with
+            {
+                Left = RewriteImplicitCalls(construct.Left, paramMap, context, false, memos, inStrictValueDemand),
+                Right = RewriteImplicitCalls(construct.Right, paramMap, context, false, memos, inStrictValueDemand),
+            },
+
+            Expr.ListLiteral list => list with
+            {
+                Items = list.Items.Select(item => RewriteImplicitCalls(item, paramMap, context, false, memos, inStrictValueDemand)).ToList(),
+            },
 
             // A bare argumentless builtin dot shape in value position (`Math.Pow`) lifts
             // like a bare param-bearing property reference.
@@ -1782,14 +1789,17 @@ internal static class ImplicitArgumentResolver
 
             Expr.Grace(var inner, _) => RewriteImplicitCalls(inner, paramMap, context, inCallPosition, memos, inStrictValueDemand),
 
-            Expr.AlgorithmExpr block => new Expr.AlgorithmExpr(
-                ProcessSharedNestedAlgorithm(block.Algorithm, ImportSite.OfBlock(block), paramMap, memos)) { Span = expr.Span },
+            Expr.AlgorithmExpr block => block with
+            {
+                Algorithm = ProcessSharedNestedAlgorithm(block.Algorithm, ImportSite.OfBlock(block), paramMap, memos),
+            },
 
             // Capture rows recurse without lifting at this level, exactly as
             // the pre-split transparent group algorithm's rows did.
-            Expr.Capture(var captureBody) => new Expr.Capture(new OutputBundle(
-                captureBody.Select(row => ProcessExprNested(row, paramMap, memos)).ToList()))
-            { Span = expr.Span },
+            Expr.Capture capture => capture with
+            {
+                Body = new OutputBundle(capture.Body.Select(row => ProcessExprNested(row, paramMap, memos)).ToList()),
+            },
 
             // Intentional leaves: nothing to lift or rewrite. (A Param is an
             // already-elaborated parameter reference; the Resolve arm above
@@ -2061,34 +2071,38 @@ internal static class ImplicitArgumentResolver
     {
         return expr switch
         {
-            Expr.AlgorithmExpr block => new Expr.AlgorithmExpr(
-                ProcessSharedNestedAlgorithm(block.Algorithm, ImportSite.OfBlock(block), paramMap, memos)) { Span = expr.Span },
-            Expr.Capture(var captureBody) => new Expr.Capture(new OutputBundle(
-                captureBody.Select(row => ProcessExprNested(row, paramMap, memos)).ToList()))
-            { Span = expr.Span },
-            Expr.Call(var func, var args) => new Expr.Call(
-                ProcessExprNested(func, paramMap, memos),
-                ProcessArgumentBundle(args, paramMap, memos)) { Span = expr.Span },
-            Expr.Binary(var op, var l, var r) => new Expr.Binary(op,
-                ProcessExprNested(l, paramMap, memos),
-                ProcessExprNested(r, paramMap, memos)) { Span = expr.Span },
-            Expr.Unary(var op, var operand) => new Expr.Unary(op,
-                ProcessExprNested(operand, paramMap, memos)) { Span = expr.Span },
-            Expr.Index(var t, var s) => new Expr.Index(
-                ProcessExprNested(t, paramMap, memos),
-                ProcessExprNested(s, paramMap, memos)) { Span = expr.Span },
-            Expr.SequenceSpread(var operand) => new Expr.SequenceSpread(
-                ProcessExprNested(operand, paramMap, memos))
+            Expr.AlgorithmExpr block => block with
             {
-                Span = expr.Span,
-                SpreadMarkerSpan = ((Expr.SequenceSpread)expr).SpreadMarkerSpan,
+                Algorithm = ProcessSharedNestedAlgorithm(block.Algorithm, ImportSite.OfBlock(block), paramMap, memos),
             },
-            Expr.SequenceConstruct(var l, var r) => new Expr.SequenceConstruct(
-                ProcessExprNested(l, paramMap, memos),
-                ProcessExprNested(r, paramMap, memos)) { Span = expr.Span },
-            Expr.ListLiteral(var items) => new Expr.ListLiteral(
-                items.Select(item => ProcessExprNested(item, paramMap, memos)).ToList())
-            { Span = expr.Span },
+            Expr.Capture capture => capture with
+            {
+                Body = new OutputBundle(
+                    capture.Body.Select(row => ProcessExprNested(row, paramMap, memos)).ToList()),
+            },
+            Expr.Call call => call with
+            {
+                Function = ProcessExprNested(call.Function, paramMap, memos),
+                Args = ProcessArgumentBundle(call.Args, paramMap, memos),
+            },
+            Expr.Binary binary => binary with
+            {
+                Left = ProcessExprNested(binary.Left, paramMap, memos),
+                Right = ProcessExprNested(binary.Right, paramMap, memos),
+            },
+            Expr.Unary unary => unary with { Operand = ProcessExprNested(unary.Operand, paramMap, memos) },
+            Expr.Index index => index with
+            {
+                Target = ProcessExprNested(index.Target, paramMap, memos),
+                Selector = ProcessExprNested(index.Selector, paramMap, memos),
+            },
+            Expr.SequenceSpread spread => spread with { Operand = ProcessExprNested(spread.Operand, paramMap, memos) },
+            Expr.SequenceConstruct construct => construct with
+            {
+                Left = ProcessExprNested(construct.Left, paramMap, memos),
+                Right = ProcessExprNested(construct.Right, paramMap, memos),
+            },
+            Expr.ListLiteral list => list with { Items = list.Items.Select(item => ProcessExprNested(item, paramMap, memos)).ToList() },
             // `with` keeps the stored dot-edge facts (member span, lexical
             // fallback) — a positional rebuild here silently dropped the
             // elaborated fallback identity inside argument bundles, capture

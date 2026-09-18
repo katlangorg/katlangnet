@@ -566,7 +566,7 @@ public class MetamorphicFuzzHarnessTests
     [Fact]
     public void ErrorObservation_UsesStableKindsAndMachineIndependentPayloads()
     {
-        var span = new SourceSpan(2, 3, 2, 7);
+        var span = new SourceSpan(2, 3, 2, 8);
 
         Assert.Equal(
             "MaterializationLimitExceeded",

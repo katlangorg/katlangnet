@@ -219,7 +219,7 @@ public class DotCallFallbackInvariantTests
         var baseline = new Expr.DotCall(new Expr.Num(1m), "F")
         {
             LexicalFallback = new Expr.Resolve("F"),
-            MemberSpan = new SourceSpan(1, 4, 1, 4),
+            MemberSpan = new SourceSpan(1, 4, 1, 5),
         };
         var paramFallback = baseline with { LexicalFallback = new Expr.Param("F") };
 

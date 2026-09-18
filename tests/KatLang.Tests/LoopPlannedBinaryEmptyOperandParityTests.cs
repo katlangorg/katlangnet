@@ -128,7 +128,7 @@ public class LoopPlannedBinaryEmptyOperandParityTests
         // the written binary on line 2 (`    S(x) = ` is eleven characters; the
         // continuation slot follows `x, `).
         var start = position == "while-continuation" ? 15 : 12;
-        var expectedSpan = new SourceSpan(2, start, 2, start + binaryText.Length - 1);
+        var expectedSpan = new SourceSpan(2, start, 2, start + binaryText.Length);
         var generic = Run(source, enableLoopOptimization: false);
         Assert.True(generic.IsError);
         Assert.Equal(expectedSpan, BinaryContextSpan(generic.Error));

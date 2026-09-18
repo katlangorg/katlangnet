@@ -125,7 +125,7 @@ public class ClauseFamilyScalabilityTests
         var duplicates = DuplicateBranchDiagnostics(sb.ToString());
         Assert.Equal(3, duplicates.Count);
 
-        var lines = duplicates.Select(d => d.Span.StartLineNumber).ToList();
+        var lines = duplicates.Select(d => Assert.NotNull(d.Span).Start.Line).ToList();
         Assert.Equal(lines.OrderBy(line => line).ToList(), lines); // strictly increasing (declaration order)
     }
 
@@ -134,7 +134,7 @@ public class ClauseFamilyScalabilityTests
     {
         var duplicates = DuplicateBranchDiagnostics("F(0) = 1\nF(1) = 2\nF(0) = 3\nF(0)");
         var duplicate = Assert.Single(duplicates);
-        Assert.Equal(3, duplicate.Span.StartLineNumber); // the offending re-declaration, not the original
+        Assert.Equal(3, Assert.NotNull(duplicate.Span).Start.Line); // the offending re-declaration, not the original
     }
 
     // ───────────────────────── executable behavior of a compact family ─────────────────────────

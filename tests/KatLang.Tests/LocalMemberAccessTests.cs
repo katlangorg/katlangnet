@@ -234,7 +234,7 @@ public class LocalMemberAccessTests
         var diagnostic = FrontEndRejection(source, DiagnosticCode.IllegalInOpen);
         Assert.Contains(fragment, diagnostic.Message, StringComparison.Ordinal);
         // Reported at the open target's own span, never at a later member.
-        Assert.Contains("open ", source.Split('\n')[diagnostic.Span.StartLineNumber - 1], StringComparison.Ordinal);
+        Assert.Contains("open ", source.Split('\n')[Assert.NotNull(diagnostic.Span).Start.Line - 1], StringComparison.Ordinal);
     }
 
     [Fact]
@@ -550,17 +550,17 @@ public class LocalMemberAccessTests
     {
         var inside = SourceProvenance.ParseValid(DirectOpenCapture);
         var model = SemanticModelBuilder.Build(inside.Parsed);
-        var reference = model.FindResolutionAt(8, 5);
+        var reference = model.FindResolutionAt(new SourcePosition(8, 5));
         Assert.NotNull(reference);
         Assert.Equal(IdentifierClassification.PropertyReference, reference.Classification);
-        Assert.Equal(new SourceSpan(5, 16, 5, 16), reference.ResolvedDeclaration?.Span);
+        Assert.Equal(new SourceSpan(5, 16, 5, 17), reference.ResolvedDeclaration?.Span);
 
         var outside = SourceProvenance.ParseValid("Outer(n) = {\n    Inner = {\n        public X = n\n    }\n    Inner.X\n}\n\nOuter.Inner.X");
         var outsideModel = SemanticModelBuilder.Build(outside.Parsed);
-        var escaped = outsideModel.FindResolutionAt(8, 13);
+        var escaped = outsideModel.FindResolutionAt(new SourcePosition(8, 13));
         Assert.NotNull(escaped);
         Assert.Equal(IdentifierClassification.PropertyReference, escaped.Classification);
-        Assert.Equal(new SourceSpan(3, 16, 3, 16), escaped.ResolvedDeclaration?.Span);
+        Assert.Equal(new SourceSpan(3, 16, 3, 17), escaped.ResolvedDeclaration?.Span);
     }
 
     // ── Host-built trees ─────────────────────────────────────────────────────
@@ -607,7 +607,7 @@ public class LocalMemberAccessTests
     [Fact]
     public void SharedOpenBody_IsValidatedInEachLexicalContext()
     {
-        var span = new SourceSpan(1, 6, 1, 13);
+        var span = new SourceSpan(1, 6, 1, 14);
         var shared = new Algorithm.User(null, [], [new Expr.Resolve("Provider") { Span = span }], [], [new Expr.Num(0)]);
         Algorithm Owner(Algorithm provider) => new Algorithm.User(null, [], [],
             [new Property("Provider", provider), new Property("Body", shared)], [new Expr.Num(0)]);

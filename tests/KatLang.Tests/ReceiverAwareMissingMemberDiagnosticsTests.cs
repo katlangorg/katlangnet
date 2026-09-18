@@ -118,15 +118,15 @@ public class ReceiverAwareMissingMemberDiagnosticsTests
         // whole first output row (the former position) starts at column 1.
         var note = SingleNote(error);
         Assert.NotNull(note.Span);
-        Assert.Equal(1, note.Span!.StartLineNumber);
-        Assert.Equal(6, note.Span.StartColumn);
+        Assert.Equal(1, Assert.NotNull(note.Span).Start.Line);
+        Assert.Equal(6, Assert.NotNull(note.Span).Start.Column);
         Assert.Equal(note.Span, error.Span);
         Assert.Equal(note.Span, Innermost(error).Span);
 
         var engineError = EngineFailure(MathCeilingTypo);
-        Assert.Equal(1, engineError.StartLine);
-        Assert.Equal(6, engineError.StartColumn);
-        Assert.Equal(note.Span.EndColumn, engineError.EndColumn);
+        Assert.Equal(1, Assert.NotNull(engineError.Span).Start.Line);
+        Assert.Equal(6, Assert.NotNull(engineError.Span).Start.Column);
+        Assert.Equal(Assert.NotNull(note.Span).End.Column, Assert.NotNull(engineError.Span).End.Column);
         Assert.Equal(MathCeilingTypoMessage, engineError.Message);
     }
 
@@ -138,8 +138,8 @@ public class ReceiverAwareMissingMemberDiagnosticsTests
         var asyncError = Assert.Single(asyncFailure.Errors);
 
         Assert.Equal(syncError.Message, asyncError.Message);
-        Assert.Equal(syncError.StartLine, asyncError.StartLine);
-        Assert.Equal(syncError.StartColumn, asyncError.StartColumn);
+        Assert.Equal(Assert.NotNull(syncError.Span).Start.Line, Assert.NotNull(asyncError.Span).Start.Line);
+        Assert.Equal(Assert.NotNull(syncError.Span).Start.Column, Assert.NotNull(asyncError.Span).Start.Column);
         Assert.Equal(syncError.Code, asyncError.Code);
     }
 
@@ -209,8 +209,8 @@ public class ReceiverAwareMissingMemberDiagnosticsTests
         Assert.Equal("Dubel", note.Name);
         Assert.Equal("Lib", note.DotMemberOrigin?.ReceiverDescription);
         Assert.Equal("Lib.Double", note.SuggestedName);
-        Assert.Equal(5, note.Span!.StartLineNumber);
-        Assert.Equal(5, note.Span.StartColumn);
+        Assert.Equal(5, Assert.NotNull(note.Span).Start.Line);
+        Assert.Equal(5, Assert.NotNull(note.Span).Start.Column);
         Assert.Equal(note.Span, error.Span);
 
         Assert.Equal(
@@ -327,8 +327,8 @@ public class ReceiverAwareMissingMemberDiagnosticsTests
         Assert.Null(note.DotMemberOrigin);
         Assert.Equal("Valeu", note.SuggestedName);
         // The ordinary position: the first output row, not the name.
-        Assert.Equal(2, error.Span!.StartLineNumber);
-        Assert.Equal(1, error.Span.StartColumn);
+        Assert.Equal(2, Assert.NotNull(error.Span).Start.Line);
+        Assert.Equal(1, Assert.NotNull(error.Span).Start.Column);
         Assert.Equal(
             "Identifier 'Value' does not resolve to a property or other visible name here, so KatLang interprets it as an implicit parameter. "
             + "Its value is provided by the caller. No argument was provided, so the program cannot be executed (expected 1 argument, got 0).\n"
@@ -336,7 +336,7 @@ public class ReceiverAwareMissingMemberDiagnosticsTests
             message);
 
         var engineError = EngineFailure("x + 1");
-        Assert.Equal(1, engineError.StartColumn);
+        Assert.Equal(1, Assert.NotNull(engineError.Span).Start.Column);
         Assert.StartsWith("Identifier 'x' does not resolve to a property or other visible name here", engineError.Message, StringComparison.Ordinal);
     }
 
@@ -349,7 +349,7 @@ public class ReceiverAwareMissingMemberDiagnosticsTests
 
         var note = SingleNote(error);
         Assert.Null(note.DotMemberOrigin);
-        Assert.Equal(1, error.Span!.StartColumn);
+        Assert.Equal(1, Assert.NotNull(error.Span).Start.Column);
         Assert.StartsWith("Identifier 'Ceiling' does not resolve", message, StringComparison.Ordinal);
         Assert.DoesNotContain("was not found on", message, StringComparison.Ordinal);
     }
@@ -362,7 +362,7 @@ public class ReceiverAwareMissingMemberDiagnosticsTests
         var (message, error) = FailWithParity("Math.Ceiling(x)");
 
         // Two names: the position stays the ordinary first output row.
-        Assert.Equal(1, error.Span!.StartColumn);
+        Assert.Equal(1, Assert.NotNull(error.Span).Start.Column);
         Assert.Equal(
             "Identifiers 'Ceiling' and 'x' do not resolve to properties or other visible names here, so KatLang interprets them as implicit parameters. "
             + "Their values are provided by the caller. No arguments were provided, so the program cannot be executed (expected 2 arguments, got 0).\n"
@@ -411,8 +411,8 @@ public class ReceiverAwareMissingMemberDiagnosticsTests
         var note = SingleNote(error);
         Assert.Equal("S", note.DotMemberOrigin?.ReceiverDescription);
         Assert.Equal("count", note.SuggestedName);
-        Assert.Equal(2, error.Span!.StartLineNumber);
-        Assert.Equal(3, error.Span.StartColumn);
+        Assert.Equal(2, Assert.NotNull(error.Span).Start.Line);
+        Assert.Equal(3, Assert.NotNull(error.Span).Start.Column);
         Assert.StartsWith(
             "Property 'Count' was not found on `S`, so the dotted call fell back to a lexical callable named 'Count'. That name does not resolve",
             message,
@@ -503,7 +503,7 @@ public class ReceiverAwareMissingMemberDiagnosticsTests
         var (_, error) = FailWithParity(definitions + expression);
         var note = SingleNote(error);
         Assert.Equal("Lib.Sub.Quotient", note.SuggestedName);
-        Assert.Equal(new SourceSpan(line + 1, column, line + 1, column + "Quotent".Length - 1), error.Span);
+        Assert.Equal(new SourceSpan(line + 1, column, line + 1, column + "Quotent".Length), error.Span);
     }
 
     [Fact]
@@ -520,7 +520,7 @@ public class ReceiverAwareMissingMemberDiagnosticsTests
         var note = SingleNote(error);
         Assert.Equal("Lib", note.DotMemberOrigin?.ReceiverDescription);
         Assert.Equal("Lib.Double", note.SuggestedName);
-        Assert.Equal(new SourceSpan(2, 11, 2, 15), note.Span);
+        Assert.Equal(new SourceSpan(2, 11, 2, 16), note.Span);
     }
 
     [Fact]
@@ -562,9 +562,9 @@ public class ReceiverAwareMissingMemberDiagnosticsTests
         download.SetResult("public Double(x) = x * 2");
         var error = Assert.Single(Assert.IsType<RunResult.EvalFailure>(await pending).Errors);
         Assert.Equal(KatLangErrorCode.UnresolvedImplicitParams, error.Code);
-        Assert.Equal(2, error.StartLine);
-        Assert.Equal(5, error.StartColumn);
-        Assert.Equal(9, error.EndColumn);
+        Assert.Equal(2, Assert.NotNull(error.Span).Start.Line);
+        Assert.Equal(5, Assert.NotNull(error.Span).Start.Column);
+        Assert.Equal(10, Assert.NotNull(error.Span).End.Column);
         Assert.Contains("Did you mean 'Lib.Double'?", error.Message, StringComparison.Ordinal);
     }
 
@@ -604,8 +604,8 @@ public class ReceiverAwareMissingMemberDiagnosticsTests
             new RunOptions { DownloadCode = (_, _) => ValueTask.FromResult("public Use = Math.Ceiling(2.1)") });
         var error = Assert.Single(Assert.IsType<RunResult.EvalFailure>(result).Errors);
         Assert.Equal(KatLangErrorCode.ArityMismatch, error.Code);
-        Assert.Equal(2, error.StartLine);
-        Assert.Equal(1, error.StartColumn);
+        Assert.Equal(2, Assert.NotNull(error.Span).Start.Line);
+        Assert.Equal(1, Assert.NotNull(error.Span).Start.Column);
         Assert.Contains("Did you mean 'Math.Ceil'?", error.Message, StringComparison.Ordinal);
     }
 
@@ -616,8 +616,8 @@ public class ReceiverAwareMissingMemberDiagnosticsTests
             new RunOptions { DownloadCode = (_, _) => ValueTask.FromResult("Math.Ceiling(2.1)") });
         var error = Assert.Single(Assert.IsType<RunResult.EvalFailure>(result).Errors);
         Assert.Equal(KatLangErrorCode.UnresolvedImplicitParams, error.Code);
-        Assert.Equal(1, error.StartLine);
-        Assert.Equal(10, error.StartColumn);
+        Assert.Equal(1, Assert.NotNull(error.Span).Start.Line);
+        Assert.Equal(10, Assert.NotNull(error.Span).Start.Column);
         Assert.Contains("Did you mean 'Math.Ceil'?", error.Message, StringComparison.Ordinal);
     }
 

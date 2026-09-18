@@ -243,10 +243,9 @@ public class LexerTests
         Assert.Single(diagnostics);
         Assert.Contains("Unexpected character", diagnostics[0].Message);
         Assert.Equal(TokenKind.Bad, tokens[0].Kind);
-        Assert.Equal(1, diagnostics[0].Span.StartLineNumber);
-        Assert.Equal(1, diagnostics[0].Span.StartColumn);
-        Assert.Equal(1, diagnostics[0].Span.EndLineNumber);
-        Assert.Equal(1, diagnostics[0].Span.EndColumn);
+        // The one unexpected code unit: a half-open span one column wide, the Bad token's own extent.
+        Assert.Equal(new SourceSpan(1, 1, 1, 2), diagnostics[0].Span);
+        Assert.Equal(tokens[0].Span, diagnostics[0].Span);
     }
 
     [Fact]
@@ -322,10 +321,7 @@ public class LexerTests
         var (_, diagnostics) = Lexer.Tokenize("ab\n  @");
 
         Assert.Single(diagnostics);
-        Assert.Equal(2, diagnostics[0].Span.StartLineNumber);
-        Assert.Equal(3, diagnostics[0].Span.StartColumn);
-        Assert.Equal(2, diagnostics[0].Span.EndLineNumber);
-        Assert.Equal(3, diagnostics[0].Span.EndColumn);
+        Assert.Equal(new SourceSpan(2, 3, 2, 4), diagnostics[0].Span);
     }
 
     [Fact]

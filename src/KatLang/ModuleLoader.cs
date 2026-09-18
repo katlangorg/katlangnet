@@ -1080,54 +1080,63 @@ internal sealed partial class ModuleLoader
         // error here until it is classified (recursive rewrite or leaf). Keep this switch
         // and the async twin below in lock-step — the twin's statement form keeps a
         // runtime guard instead.
+        //
+        // Every rewrite is a `with` copy of the node: the record copy carries the node's
+        // source span (and every other stored init-only fact) inside the copy constructor,
+        // so this calibrated recursion frame holds NO span temporaries of its own. A
+        // `new Node(...) { Span = expr.Span }` per arm would give each arm a hidden
+        // return buffer and a copy of the 20-byte nullable span in THIS frame — enough,
+        // in Debug builds, to push the synchronous walk's 1 MiB envelope below the gated
+        // MaxTraversalDepth (measured while converting SourceSpan to a value type).
         Expr result = expr switch
         {
-            Expr.Call(var func, var args) => new Expr.Call(
-                ProcessExpr(func, LoadContext.RuntimeExpr, depth + 1),
-                new OutputBundle(args.Select(argExpr => ProcessExpr(argExpr, LoadContext.RuntimeExpr, depth + 1)).ToList()))
-            { Span = expr.Span },
+            Expr.Call call => call with
+            {
+                Function = ProcessExpr(call.Function, LoadContext.RuntimeExpr, depth + 1),
+                Args = new OutputBundle(call.Args.Select(argExpr => ProcessExpr(argExpr, LoadContext.RuntimeExpr, depth + 1)).ToList()),
+            },
 
-            Expr.AlgorithmExpr(var alg) => new Expr.AlgorithmExpr(ProcessAlgorithm(alg, context, depth + 1)) { Span = expr.Span },
+            Expr.AlgorithmExpr block => block with { Algorithm = ProcessAlgorithm(block.Algorithm, context, depth + 1) },
 
             // Capture rows inherit the surrounding load context, exactly like
             // list-literal elements and internal sequence joins: `X = (load('url'), 1)`
             // elaborates where `X = [load('url')]` does.
-            Expr.Capture(var captureBody) => new Expr.Capture(new OutputBundle(
-                captureBody.Select(row => ProcessExpr(row, context, depth + 1)).ToList()))
-            { Span = expr.Span },
-
-            Expr.Binary(var op, var left, var right) => new Expr.Binary(op,
-                ProcessExpr(left, LoadContext.RuntimeExpr, depth + 1),
-                ProcessExpr(right, LoadContext.RuntimeExpr, depth + 1))
-            { Span = expr.Span },
-
-            Expr.Unary(var op, var operand) => new Expr.Unary(op, ProcessExpr(operand, LoadContext.RuntimeExpr, depth + 1))
-            { Span = expr.Span },
-
-            Expr.Index(var target, var selector) => new Expr.Index(
-                ProcessExpr(target, LoadContext.RuntimeExpr, depth + 1),
-                ProcessExpr(selector, LoadContext.RuntimeExpr, depth + 1))
-            { Span = expr.Span },
-
-            Expr.SequenceSpread(var operand) => new Expr.SequenceSpread(
-                ProcessExpr(operand, context, depth + 1))
+            Expr.Capture capture => capture with
             {
-                Span = expr.Span,
-                SpreadMarkerSpan = ((Expr.SequenceSpread)expr).SpreadMarkerSpan,
+                Body = new OutputBundle(capture.Body.Select(row => ProcessExpr(row, context, depth + 1)).ToList()),
             },
 
-            Expr.SequenceConstruct(var left, var right) => new Expr.SequenceConstruct(
-                ProcessExpr(left, context, depth + 1),
-                ProcessExpr(right, context, depth + 1))
-            { Span = expr.Span },
+            Expr.Binary binary => binary with
+            {
+                Left = ProcessExpr(binary.Left, LoadContext.RuntimeExpr, depth + 1),
+                Right = ProcessExpr(binary.Right, LoadContext.RuntimeExpr, depth + 1),
+            },
+
+            Expr.Unary unary => unary with { Operand = ProcessExpr(unary.Operand, LoadContext.RuntimeExpr, depth + 1) },
+
+            Expr.Index index => index with
+            {
+                Target = ProcessExpr(index.Target, LoadContext.RuntimeExpr, depth + 1),
+                Selector = ProcessExpr(index.Selector, LoadContext.RuntimeExpr, depth + 1),
+            },
+
+            // `with` keeps the stored spread-marker span intact alongside the node span.
+            Expr.SequenceSpread spread => spread with { Operand = ProcessExpr(spread.Operand, context, depth + 1) },
+
+            Expr.SequenceConstruct construct => construct with
+            {
+                Left = ProcessExpr(construct.Left, context, depth + 1),
+                Right = ProcessExpr(construct.Right, context, depth + 1),
+            },
 
             // List-literal elements inherit the surrounding load context,
             // exactly like capture rows (Expr.Capture) and internal sequence
             // joins: `X = [load('url')]` elaborates where
             // `X = (load('url'), 1)` does.
-            Expr.ListLiteral(var items) => new Expr.ListLiteral(
-                items.Select(item => ProcessExpr(item, context, depth + 1)).ToList())
-            { Span = expr.Span },
+            Expr.ListLiteral list => list with
+            {
+                Items = list.Items.Select(item => ProcessExpr(item, context, depth + 1)).ToList(),
+            },
 
             // `with` keeps every stored dot-edge fact (member span,
             // lexical fallback) intact — rebuilding positionally here
@@ -1203,73 +1212,78 @@ internal sealed partial class ModuleLoader
 
         switch (expr)
         {
-            case Expr.Call(var func, var args):
+            // Every rewrite is a `with` copy, exactly as in the synchronous walk (the record
+            // copy carries the span and every other stored fact).
+            case Expr.Call call:
             {
-                var newFunc = await RouteExprAsync(func, LoadContext.RuntimeExpr, depth + 1).ConfigureAwait(false);
-                var newArgs = new List<Expr>(args.Count);
-                foreach (var argExpr in args)
+                var newFunc = await RouteExprAsync(call.Function, LoadContext.RuntimeExpr, depth + 1).ConfigureAwait(false);
+                var newArgs = new List<Expr>(call.Args.Count);
+                foreach (var argExpr in call.Args)
                     newArgs.Add(await RouteExprAsync(argExpr, LoadContext.RuntimeExpr, depth + 1).ConfigureAwait(false));
-                result = new Expr.Call(newFunc, new OutputBundle(newArgs)) { Span = expr.Span };
+                result = call with { Function = newFunc, Args = new OutputBundle(newArgs) };
                 break;
             }
 
-            case Expr.AlgorithmExpr(var alg):
-                result = new Expr.AlgorithmExpr(
-                    await RouteAlgorithmAsync(alg, context, depth + 1).ConfigureAwait(false))
-                { Span = expr.Span };
-                break;
-
-            case Expr.Capture(var captureBody):
-            {
-                var newRows = new List<Expr>(captureBody.Count);
-                foreach (var row in captureBody)
-                    newRows.Add(await RouteExprAsync(row, context, depth + 1).ConfigureAwait(false));
-                result = new Expr.Capture(new OutputBundle(newRows)) { Span = expr.Span };
-                break;
-            }
-
-            case Expr.Binary(var op, var left, var right):
-                result = new Expr.Binary(op,
-                    await RouteExprAsync(left, LoadContext.RuntimeExpr, depth + 1).ConfigureAwait(false),
-                    await RouteExprAsync(right, LoadContext.RuntimeExpr, depth + 1).ConfigureAwait(false))
-                { Span = expr.Span };
-                break;
-
-            case Expr.Unary(var op, var operand):
-                result = new Expr.Unary(op,
-                    await RouteExprAsync(operand, LoadContext.RuntimeExpr, depth + 1).ConfigureAwait(false))
-                { Span = expr.Span };
-                break;
-
-            case Expr.Index(var target, var selector):
-                result = new Expr.Index(
-                    await RouteExprAsync(target, LoadContext.RuntimeExpr, depth + 1).ConfigureAwait(false),
-                    await RouteExprAsync(selector, LoadContext.RuntimeExpr, depth + 1).ConfigureAwait(false))
-                { Span = expr.Span };
-                break;
-
-            case Expr.SequenceSpread(var operand):
-                result = new Expr.SequenceSpread(
-                    await RouteExprAsync(operand, context, depth + 1).ConfigureAwait(false))
+            case Expr.AlgorithmExpr block:
+                result = block with
                 {
-                    Span = expr.Span,
-                    SpreadMarkerSpan = ((Expr.SequenceSpread)expr).SpreadMarkerSpan,
+                    Algorithm = await RouteAlgorithmAsync(block.Algorithm, context, depth + 1).ConfigureAwait(false),
                 };
                 break;
 
-            case Expr.SequenceConstruct(var left, var right):
-                result = new Expr.SequenceConstruct(
-                    await RouteExprAsync(left, context, depth + 1).ConfigureAwait(false),
-                    await RouteExprAsync(right, context, depth + 1).ConfigureAwait(false))
-                { Span = expr.Span };
+            case Expr.Capture capture:
+            {
+                var newRows = new List<Expr>(capture.Body.Count);
+                foreach (var row in capture.Body)
+                    newRows.Add(await RouteExprAsync(row, context, depth + 1).ConfigureAwait(false));
+                result = capture with { Body = new OutputBundle(newRows) };
+                break;
+            }
+
+            case Expr.Binary binary:
+                result = binary with
+                {
+                    Left = await RouteExprAsync(binary.Left, LoadContext.RuntimeExpr, depth + 1).ConfigureAwait(false),
+                    Right = await RouteExprAsync(binary.Right, LoadContext.RuntimeExpr, depth + 1).ConfigureAwait(false),
+                };
                 break;
 
-            case Expr.ListLiteral(var items):
+            case Expr.Unary unary:
+                result = unary with
+                {
+                    Operand = await RouteExprAsync(unary.Operand, LoadContext.RuntimeExpr, depth + 1).ConfigureAwait(false),
+                };
+                break;
+
+            case Expr.Index index:
+                result = index with
+                {
+                    Target = await RouteExprAsync(index.Target, LoadContext.RuntimeExpr, depth + 1).ConfigureAwait(false),
+                    Selector = await RouteExprAsync(index.Selector, LoadContext.RuntimeExpr, depth + 1).ConfigureAwait(false),
+                };
+                break;
+
+            case Expr.SequenceSpread spread:
+                result = spread with
+                {
+                    Operand = await RouteExprAsync(spread.Operand, context, depth + 1).ConfigureAwait(false),
+                };
+                break;
+
+            case Expr.SequenceConstruct construct:
+                result = construct with
+                {
+                    Left = await RouteExprAsync(construct.Left, context, depth + 1).ConfigureAwait(false),
+                    Right = await RouteExprAsync(construct.Right, context, depth + 1).ConfigureAwait(false),
+                };
+                break;
+
+            case Expr.ListLiteral list:
             {
-                var newItems = new List<Expr>(items.Count);
-                foreach (var item in items)
+                var newItems = new List<Expr>(list.Items.Count);
+                foreach (var item in list.Items)
                     newItems.Add(await RouteExprAsync(item, context, depth + 1).ConfigureAwait(false));
-                result = new Expr.ListLiteral(newItems) { Span = expr.Span };
+                result = list with { Items = newItems };
                 break;
             }
 
@@ -1619,7 +1633,7 @@ internal sealed partial class ModuleLoader
                 _sink.Add(new Diagnostic(
                     $"[while loading {normalizedUrl}] {diag.Message}",
                     diag.Severity,
-                    site ?? new SourceSpan(1, 1, 1, 1))
+                    site)
                 {
                     Code = diag.Code,
                 });
@@ -1760,7 +1774,7 @@ internal sealed partial class ModuleLoader
         _sink.Add(new Diagnostic(
             message,
             DiagnosticSeverity.Error,
-            span ?? new SourceSpan(1, 1, 1, 1))
+            span)
         {
             Code = code,
         });

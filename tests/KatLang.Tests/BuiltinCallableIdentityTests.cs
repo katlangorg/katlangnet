@@ -283,15 +283,15 @@ public class BuiltinCallableIdentityTests
     /// boundary instead of duplicated ahead of it.
     /// </summary>
     [Theory]
-    [InlineData("if(1, 2)", 1, 1, 1, 8)]
-    [InlineData("if()", 1, 1, 1, 4)]
-    [InlineData("if(1, 2, 3, 4)", 1, 1, 1, 14)]
-    [InlineData("P = if(1, 2)\nP", 1, 5, 1, 12)]
-    [InlineData("X = 1\nif(1, 2)\nX", 2, 1, 2, 8)]
-    [InlineData("X = 1\nif(1, 2)\nLongIdentifierHere = 3\nLongIdentifierHere", 2, 1, 2, 8)]
-    [InlineData("if(\n  1,\n  2\n)", 1, 1, 4, 1)]
-    [InlineData("1.if(2)", 1, 1, 1, 7)]
-    [InlineData("if((1, 2)*)", 1, 1, 1, 11)]
+    [InlineData("if(1, 2)", 1, 1, 1, 9)]
+    [InlineData("if()", 1, 1, 1, 5)]
+    [InlineData("if(1, 2, 3, 4)", 1, 1, 1, 15)]
+    [InlineData("P = if(1, 2)\nP", 1, 5, 1, 13)]
+    [InlineData("X = 1\nif(1, 2)\nX", 2, 1, 2, 9)]
+    [InlineData("X = 1\nif(1, 2)\nLongIdentifierHere = 3\nLongIdentifierHere", 2, 1, 2, 9)]
+    [InlineData("if(\n  1,\n  2\n)", 1, 1, 4, 2)]
+    [InlineData("1.if(2)", 1, 1, 1, 8)]
+    [InlineData("if((1, 2)*)", 1, 1, 1, 12)]
     public void ArityDiagnostic_SpansTheWholeCall(
         string source, int startLine, int startColumn, int endLine, int endColumn)
     {
@@ -299,10 +299,7 @@ public class BuiltinCallableIdentityTests
         var error = Assert.Single(failure.Errors);
 
         Assert.Equal(KatLangErrorCode.ArityMismatch, error.Code);
-        Assert.Equal(startLine, error.StartLine);
-        Assert.Equal(startColumn, error.StartColumn);
-        Assert.Equal(endLine, error.EndLine);
-        Assert.Equal(endColumn, error.EndColumn);
+        Assert.Equal(new SourceSpan(startLine, startColumn, endLine, endColumn), error.Span);
     }
 
     // ── G. Laziness belongs to the builtin identity ─────────────────────────
@@ -684,15 +681,15 @@ public class BuiltinCallableIdentityTests
         var parsed = SourceProvenance.ParseValid(source);
         var model = SemanticModelBuilder.Build(parsed.Parsed);
 
-        var declaration = model.FindPropertyAt(1, 1);
+        var declaration = model.FindPropertyAt(new SourcePosition(1, 1));
         Assert.Equal("if", declaration!.Name);
         Assert.Equal("if(x)", declaration.DisplaySignature);
 
-        var reference = model.FindResolutionAt(2, 1);
+        var reference = model.FindResolutionAt(new SourcePosition(2, 1));
         Assert.Equal(IdentifierClassification.PropertyReference, reference!.Classification);
         Assert.Equal(declaration.Declaration!.Span, reference.ResolvedDeclaration!.Span);
 
-        var visible = Assert.Single(model.GetVisibleSymbolsAt(2, 1), symbol => symbol.Name == "if");
+        var visible = Assert.Single(model.GetVisibleSymbolsAt(new SourcePosition(2, 1)), symbol => symbol.Name == "if");
         Assert.Equal(declaration.Declaration!.Span, visible.Declaration!.Span);
     }
 
@@ -705,12 +702,12 @@ public class BuiltinCallableIdentityTests
     {
         var model = SemanticModelBuilder.Build(SourceProvenance.ParseValid("if(1, 10, 20)").Parsed);
 
-        var reference = Assert.IsType<IdentifierResolution>(model.FindResolutionAt(1, 1));
+        var reference = Assert.IsType<IdentifierResolution>(model.FindResolutionAt(new SourcePosition(1, 1)));
         Assert.Equal(IdentifierClassification.Builtin, reference.Classification);
         Assert.Null(reference.ResolvedDeclaration);
-        var property = Assert.IsType<PropertyInfo>(model.FindPropertyAt(1, 1));
+        var property = Assert.IsType<PropertyInfo>(model.FindPropertyAt(new SourcePosition(1, 1)));
         Assert.Equal("if(condition, whenTrue, whenFalse)", property.DisplaySignature);
-        var visible = Assert.Single(model.GetVisibleSymbolsAt(1, 1), symbol => symbol.Name == "if");
+        var visible = Assert.Single(model.GetVisibleSymbolsAt(new SourcePosition(1, 1)), symbol => symbol.Name == "if");
         Assert.Null(visible.Declaration);
     }
 
@@ -719,10 +716,10 @@ public class BuiltinCallableIdentityTests
     {
         const string source = "Apply(if, x) = {\n Inner = if(x)\n Inner\n}\nInc(x) = x + 1\nApply(Inc, 7)";
         var model = SemanticModelBuilder.Build(SourceProvenance.ParseValid(source).Parsed);
-        var reference = Assert.IsType<IdentifierResolution>(model.FindResolutionAt(2, 10));
+        var reference = Assert.IsType<IdentifierResolution>(model.FindResolutionAt(new SourcePosition(2, 10)));
         Assert.Equal(IdentifierClassification.ExplicitParameterReference, reference.Classification);
-        Assert.Equal(new SourceSpan(1, 7, 1, 8), reference.ResolvedDeclaration!.Span);
-        var visible = Assert.Single(model.GetVisibleSymbolsAt(2, 10), symbol => symbol.Name == "if");
+        Assert.Equal(new SourceSpan(1, 7, 1, 9), reference.ResolvedDeclaration!.Span);
+        var visible = Assert.Single(model.GetVisibleSymbolsAt(new SourcePosition(2, 10)), symbol => symbol.Name == "if");
         Assert.Equal(reference.ResolvedDeclaration, visible.Declaration);
     }
 

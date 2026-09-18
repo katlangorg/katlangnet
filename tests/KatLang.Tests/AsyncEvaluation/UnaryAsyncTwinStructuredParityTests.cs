@@ -46,8 +46,8 @@ public class UnaryAsyncTwinStructuredParityTests
             var asyncRendered = KatLangError.FromEvalError(asyncResult.Error);
             Assert.Equal(syncRendered.Message, asyncRendered.Message);
             Assert.Equal(
-                (syncRendered.StartLine, syncRendered.StartColumn, syncRendered.EndLine, syncRendered.EndColumn),
-                (asyncRendered.StartLine, asyncRendered.StartColumn, asyncRendered.EndLine, asyncRendered.EndColumn));
+                syncRendered.Span,
+                asyncRendered.Span);
         }
         else
         {
@@ -69,7 +69,7 @@ public class UnaryAsyncTwinStructuredParityTests
         Assert.True(sync.IsError);
         // The unary BadArity carries the unary expression's span (F5); after a genuine
         // suspension the twin must report the identical span, not a spanless copy.
-        Assert.Equal(new SourceSpan(2, 1, 2, op.Length + 1), Assert.IsType<EvalError.BadArity>(Innermost(sync.Error)).Span);
+        Assert.Equal(new SourceSpan(2, 1, 2, op.Length + 2), Assert.IsType<EvalError.BadArity>(Innermost(sync.Error)).Span);
 
         var cache = new SuspendingAsyncZeroArgPropertyResultCache();
         var result = await AsyncEvaluationHarness.Complete(Evaluator.RunCountedAsync(ast, cache));

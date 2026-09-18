@@ -444,9 +444,9 @@ internal static class EvaluatorTestSupport
         Assert.DoesNotContain("while evaluating", formatted.Message);
 
         if (expectedLine is not null)
-            Assert.Equal(expectedLine, formatted.StartLine);
+            Assert.Equal(expectedLine, Assert.NotNull(formatted.Span).Start.Line);
         if (expectedColumn is not null)
-            Assert.Equal(expectedColumn, formatted.StartColumn);
+            Assert.Equal(expectedColumn, Assert.NotNull(formatted.Span).Start.Column);
     }
 
     internal static void AssertSequenceValueAtoms(Result value, params Decimal128[] expected)

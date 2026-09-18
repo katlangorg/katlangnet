@@ -222,8 +222,8 @@ public class CompletionIdentityDifferentialTests
         var baseSource = program.Template.Replace(ProbeMarker, "0", StringComparison.Ordinal);
         var provenance = SourceProvenance.ParseValid(baseSource);
         var model = SemanticModelBuilder.Build(provenance.Parsed);
-        var scope = model.FindScopeAt(probe.Line, probe.Column);
-        var merged = model.GetVisibleSymbolsAt(probe.Line, probe.Column);
+        var scope = model.FindScopeAt(new SourcePosition(probe.Line, probe.Column));
+        var merged = model.GetVisibleSymbolsAt(new SourcePosition(probe.Line, probe.Column));
         var chain = BuildAuthoritativeChain(provenance.Root, program.ScopePath);
 
         if (program.ScopePath.Count == 0)
@@ -276,7 +276,7 @@ public class CompletionIdentityDifferentialTests
             Assert.False(
                 parsedVariant.HasErrors,
                 $"[{programId}] probing '{name}' produced front-end errors: {string.Join(" | ", parsedVariant.Diagnostics.Select(d => d.Message))}");
-            var resolution = SemanticModelBuilder.Build(parsedVariant).FindResolutionAt(probe.Line, probe.Column);
+            var resolution = SemanticModelBuilder.Build(parsedVariant).FindResolutionAt(new SourcePosition(probe.Line, probe.Column));
             Assert.True(resolution is not null, $"[{programId}] no editor resolution at the probe for '{name}'.");
             Assert.Equal(name, resolution!.Occurrence.Name);
 
@@ -298,7 +298,7 @@ public class CompletionIdentityDifferentialTests
 
             // Oracle 3 — the runtime produces the sentinel on the line completion named.
             if (symbol is { Classification: IdentifierClassification.PropertyReference, Declaration: { } declaration }
-                && TryFindSentinel(baseSource, declaration.Span.StartLineNumber, out var sentinel))
+                && TryFindSentinel(baseSource, declaration.Span.Start.Line, out var sentinel))
             {
                 Assert.Equal(
                     $"ok raw={sentinel} n=1",
@@ -321,8 +321,8 @@ public class CompletionIdentityDifferentialTests
         var probe = ProbeSite(program.Template);
         var model = SemanticModelBuilder.Build(
             SourceProvenance.ParseValid(program.Template.Replace(ProbeMarker, "0", StringComparison.Ordinal)).Parsed);
-        var scope = model.FindScopeAt(probe.Line, probe.Column);
-        var merged = model.GetVisibleSymbolsAt(probe.Line, probe.Column);
+        var scope = model.FindScopeAt(new SourcePosition(probe.Line, probe.Column));
+        var merged = model.GetVisibleSymbolsAt(new SourcePosition(probe.Line, probe.Column));
 
         Assert.NotEmpty(program.Expectations);
         foreach (var expectation in program.Expectations)
@@ -334,7 +334,7 @@ public class CompletionIdentityDifferentialTests
                     var symbol = Assert.Single(scope.Symbols, candidate => candidate.Name == name);
                     Assert.Equal(classification, symbol.Classification);
                     Assert.True(symbol.Declaration is not null, $"[{programId}] '{name}' is offered without a declaration.");
-                    Assert.Equal(line, symbol.Declaration!.Span.StartLineNumber);
+                    Assert.Equal(line, symbol.Declaration!.Span.Start.Line);
 
                     var mergedSymbol = Assert.Single(merged, candidate => candidate.Name == name);
                     Assert.Same(symbol, mergedSymbol);
@@ -385,8 +385,8 @@ public class CompletionIdentityDifferentialTests
         var probe = ProbeSite(program.Template);
         var model = SemanticModelBuilder.Build(
             SourceProvenance.ParseValid(program.Template.Replace(ProbeMarker, "0", StringComparison.Ordinal)).Parsed);
-        var scope = model.FindScopeAt(probe.Line, probe.Column);
-        var merged = model.GetVisibleSymbolsAt(probe.Line, probe.Column);
+        var scope = model.FindScopeAt(new SourcePosition(probe.Line, probe.Column));
+        var merged = model.GetVisibleSymbolsAt(new SourcePosition(probe.Line, probe.Column));
 
         var scopeNames = scope.Symbols.Select(static symbol => symbol.Name).ToList();
         Assert.Equal(scopeNames.OrderBy(static name => name, StringComparer.Ordinal).ToList(), scopeNames);
@@ -407,20 +407,20 @@ public class CompletionIdentityDifferentialTests
         var exportedX = PropertyAt("X", line: 3, isPublic: true, PropertyExposure.Exported);
         var library = User(properties: [privateX, localOnlyX, exportedX]);
         var use = User(
-            opens: [new Expr.Resolve("Lib") { Span = new SourceSpan(5, 10, 5, 12) }],
-            output: [new Expr.Num(0) { Span = new SourceSpan(6, 1, 6, 1) }]);
+            opens: [new Expr.Resolve("Lib") { Span = new SourceSpan(5, 10, 5, 13) }],
+            output: [new Expr.Num(0) { Span = new SourceSpan(6, 1, 6, 2) }]);
         var root = User(
             properties:
             [
-                new Property("Lib", library) { DeclarationSpans = [new SourceSpan(4, 1, 4, 3)] },
-                new Property("Use", use) { DeclarationSpans = [new SourceSpan(5, 1, 5, 3)] },
+                new Property("Lib", library) { DeclarationSpans = [new SourceSpan(4, 1, 4, 4)] },
+                new Property("Use", use) { DeclarationSpans = [new SourceSpan(5, 1, 5, 4)] },
             ],
-            output: [new Expr.Resolve("Use") { Span = new SourceSpan(7, 1, 7, 3) }]);
+            output: [new Expr.Resolve("Use") { Span = new SourceSpan(7, 1, 7, 4) }]);
 
         var model = SemanticModelBuilder.Build(root);
-        var completion = model.FindScopeAt(6, 1);
+        var completion = model.FindScopeAt(new SourcePosition(6, 1));
         var x = Assert.Single(completion.Symbols, static symbol => symbol.Name == "X");
-        Assert.Equal(new SourceSpan(2, 1, 2, 1), x.Declaration?.Span);
+        Assert.Equal(new SourceSpan(2, 1, 2, 2), x.Declaration?.Span);
 
         var rootScope = ElaboratedScopeLookup.CreateScope(root, ElaboratedScopeLookup.CreateScope(SemanticPrelude));
         var useScope = ElaboratedScopeLookup.CreateScope(use, rootScope);
@@ -440,12 +440,12 @@ public class CompletionIdentityDifferentialTests
         var second = PropertyAt("Dup", line: 2, isPublic: false, PropertyExposure.Exported);
         var root = User(
             properties: [first, second],
-            output: [new Expr.Num(0) { Span = new SourceSpan(3, 1, 3, 1) }]);
+            output: [new Expr.Num(0) { Span = new SourceSpan(3, 1, 3, 2) }]);
 
         var model = SemanticModelBuilder.Build(root);
-        var completion = model.FindScopeAt(3, 1);
+        var completion = model.FindScopeAt(new SourcePosition(3, 1));
         var dup = Assert.Single(completion.Symbols, static symbol => symbol.Name == "Dup");
-        Assert.Equal(new SourceSpan(1, 1, 1, 1), dup.Declaration?.Span);
+        Assert.Equal(new SourceSpan(1, 1, 1, 2), dup.Declaration?.Span);
 
         var scope = ElaboratedScopeLookup.CreateScope(root, ElaboratedScopeLookup.CreateScope(SemanticPrelude));
         var hit = Assert.Single(ElaboratedScopeLookup.LookupLexicalPropertyMatches(scope, "Dup"));
@@ -536,7 +536,7 @@ public class CompletionIdentityDifferentialTests
     }
 
     private static string Describe(SourceSpan? span)
-        => span is null ? "<none>" : $"{span.StartLineNumber}:{span.StartColumn}";
+        => span is { } located ? $"{located.Start.Line}:{located.Start.Column}" : "<none>";
 
     private static string Describe(DeclarationOccurrence? declaration)
         => Describe(declaration?.Span);
@@ -545,7 +545,7 @@ public class CompletionIdentityDifferentialTests
         => new(name, User(), IsPublic: isPublic)
         {
             Exposure = exposure,
-            DeclarationSpans = [new SourceSpan(line, 1, line, 1)],
+            DeclarationSpans = [new SourceSpan(line, 1, line, 2)],
         };
 
     private static Algorithm.User User(

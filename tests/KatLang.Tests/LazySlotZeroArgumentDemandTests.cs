@@ -72,8 +72,8 @@ public class LazySlotZeroArgumentDemandTests
         Assert.Contains($"Property '{propertyName}' expects {expectedParameters} parameter", rendered.Message);
         Assert.Contains("was called with 0 arguments", rendered.Message);
         Assert.DoesNotContain("Unknown name", rendered.Message);
-        Assert.Equal(line, rendered.StartLine);
-        Assert.Equal(column, rendered.StartColumn);
+        Assert.Equal(line, Assert.NotNull(rendered.Span).Start.Line);
+        Assert.Equal(column, Assert.NotNull(rendered.Span).Start.Column);
         return arity;
     }
 
@@ -240,8 +240,8 @@ public class LazySlotZeroArgumentDemandTests
         var error = FailingError("F(0) = 10\nF(x) = x + 1\n" + rows);
         Assert.Equal("F", Assert.IsType<EvalError.NoMatchingBranch>(Innermost(error)).AlgorithmName);
         var rendered = KatLangError.FromEvalError(error);
-        Assert.Equal(rows.Contains('\n') ? 4 : 3, rendered.StartLine);
-        Assert.Equal(column, rendered.StartColumn);
+        Assert.Equal(rows.Contains('\n') ? 4 : 3, Assert.NotNull(rendered.Span).Start.Line);
+        Assert.Equal(column, Assert.NotNull(rendered.Span).Start.Column);
     }
 
     [Fact]
@@ -424,8 +424,8 @@ public class LazySlotZeroArgumentDemandTests
         var rendered = KatLangError.FromEvalError(error);
         Assert.Contains("Expected 1 parameter, but was called with 0 arguments.", rendered.Message);
         Assert.DoesNotContain("Unknown name", rendered.Message);
-        Assert.Equal(2, rendered.StartLine);
-        Assert.Equal(18, rendered.StartColumn);
+        Assert.Equal(2, Assert.NotNull(rendered.Span).Start.Line);
+        Assert.Equal(18, Assert.NotNull(rendered.Span).Start.Column);
     }
 
     [Fact]
@@ -453,8 +453,8 @@ public class LazySlotZeroArgumentDemandTests
         Assert.Equal(1, Assert.IsType<EvalError.ArityMismatch>(Innermost(navigated)).Expected);
         var rendered = KatLangError.FromEvalError(navigated);
         Assert.DoesNotContain("Unknown name", rendered.Message);
-        Assert.Equal(2, rendered.StartLine);
-        Assert.Equal(1, rendered.StartColumn);
+        Assert.Equal(2, Assert.NotNull(rendered.Span).Start.Line);
+        Assert.Equal(1, Assert.NotNull(rendered.Span).Start.Column);
     }
 
     // ── 8. Execution parity: plain, counted, forced async, suspending async, planned loops

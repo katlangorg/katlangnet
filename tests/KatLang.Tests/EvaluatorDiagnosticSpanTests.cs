@@ -132,8 +132,7 @@ public class EvaluatorDiagnosticSpanTests
         Assert.Equal(InnerSpan, error.Span);
 
         var rendered = KatLangError.FromEvalError(error);
-        Assert.Equal(((int?)11, (int?)4, (int?)11, (int?)14),
-            (rendered.StartLine, rendered.StartColumn, rendered.EndLine, rendered.EndColumn));
+        Assert.Equal(InnerSpan, rendered.Span);
     }
 
     [Theory]
@@ -148,8 +147,7 @@ public class EvaluatorDiagnosticSpanTests
         Assert.Equal(InnerSpan, error.Span);
 
         var rendered = KatLangError.FromEvalError(error);
-        Assert.Equal(((int?)11, (int?)4, (int?)11, (int?)14),
-            (rendered.StartLine, rendered.StartColumn, rendered.EndLine, rendered.EndColumn));
+        Assert.Equal(InnerSpan, rendered.Span);
     }
 
     [Fact]

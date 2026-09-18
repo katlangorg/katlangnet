@@ -80,7 +80,7 @@ public class SemanticModelDeclarationRegistrationTests
         // Hidden is private and unreferenced, so eager CreateScope registration is its only
         // semantic-model registration path. Both clause heads must map to the ONE family info.
         var declarations = model.FindDeclarations("Hidden").ToList();
-        Assert.Equal([1, 2], declarations.Select(static declaration => declaration.Span.StartLineNumber).ToList());
+        Assert.Equal([1, 2], declarations.Select(static declaration => declaration.Span.Start.Line).ToList());
 
         var property = Assert.Single(model.FindProperties("Hidden"));
         Assert.Same(declarations[0], property.Declaration);
@@ -128,8 +128,8 @@ public class SemanticModelDeclarationRegistrationTests
     {
         var declaration = Assert.Single(model.FindDeclarations(name));
         Assert.Equal(OccurrenceKind.PropertyDefinition, declaration.Kind);
-        Assert.Equal(line, declaration.Span.StartLineNumber);
-        Assert.Equal(column, declaration.Span.StartColumn);
+        Assert.Equal(line, declaration.Span.Start.Line);
+        Assert.Equal(column, declaration.Span.Start.Column);
 
         var property = Assert.Single(model.FindProperties(name));
         Assert.Same(declaration, property.Declaration);

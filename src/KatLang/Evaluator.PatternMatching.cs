@@ -818,7 +818,7 @@ public static partial class Evaluator
         // Output-slot capture is a persistent collection: spread can expand it well beyond
         // any single input (`(A*, A*)` doubles), so the reservation happens
         // here, before the sequence value is built.
-        if (ReserveSequenceCapture(reserveCtx, results.Count, FirstSpan(rows)) is { } capturedLimitError)
+        if (ReserveSequenceCaptureAtRows(reserveCtx, results.Count, rows) is { } capturedLimitError)
             return capturedLimitError;
 
         var counted = new CountedResult(CombineOutputSlots(results), emittedCount);

@@ -42,12 +42,10 @@ public class ModuleCoordinateSpaceTests
         => Assert.Single(Assert.IsType<RunResult.EvalFailure>(result).Errors);
 
     private static void AssertSpan(KatLangError error, int line, int column, int endLine, int endColumn)
-        => Assert.Equal((line, column, endLine, endColumn), (error.StartLine, error.StartColumn, error.EndLine, error.EndColumn));
+        => Assert.Equal(new SourceSpan(line, column, endLine, endColumn), error.Span);
 
     private static void AssertNotTheModuleSpan(KatLangError error)
-        => Assert.NotEqual(
-            (ModuleBoomSpan.StartLineNumber, ModuleBoomSpan.StartColumn, ModuleBoomSpan.EndLineNumber, ModuleBoomSpan.EndColumn),
-            (error.StartLine, error.StartColumn, error.EndLine, error.EndColumn));
+        => Assert.NotEqual(ModuleBoomSpan, error.Span);
 
     private static Algorithm.User ImportedModule(Algorithm.User root, string propertyName)
         => Assert.IsType<Algorithm.User>(Assert.Single(root.Properties, p => p.Name == propertyName).Value);
@@ -65,10 +63,10 @@ public class ModuleCoordinateSpaceTests
         // so the attach-if-missing rule positions it at the demanding reference `Boom`.
         var error = SingleEvalError(await KatLangEngine.RunAsync("open '" + Lib + "'\nBoom", Options((Lib, BoomModule))));
         Assert.Equal(KatLangErrorCode.DivisionByZero, error.Code);
-        AssertSpan(error, 2, 1, 2, 4);
+        AssertSpan(error, 2, 1, 2, 5);
         AssertNotTheModuleSpan(error);
         // The attachment happened on the error itself: no context frame supplied it.
-        Assert.Equal(new SourceSpan(2, 1, 2, 4), Innermost(error.Source!).Span);
+        Assert.Equal(new SourceSpan(2, 1, 2, 5), Innermost(error.Source!).Span);
     }
 
     [Fact]
@@ -76,7 +74,7 @@ public class ModuleCoordinateSpaceTests
     {
         var error = SingleEvalError(await KatLangEngine.RunAsync("M = load('" + Lib + "')\nM.Boom", Options((Lib, BoomModule))));
         Assert.Equal(KatLangErrorCode.DivisionByZero, error.Code);
-        AssertSpan(error, 2, 1, 2, 6);
+        AssertSpan(error, 2, 1, 2, 7);
         AssertNotTheModuleSpan(error);
     }
 
@@ -86,7 +84,7 @@ public class ModuleCoordinateSpaceTests
         var source = "M = load('" + Lib + "')\nG = {\n  H = M.Boom + 1\n  H }\nG";
         var error = SingleEvalError(await KatLangEngine.RunAsync(source, Options((Lib, BoomModule))));
         Assert.Equal(KatLangErrorCode.DivisionByZero, error.Code);
-        AssertSpan(error, 3, 7, 3, 12);
+        AssertSpan(error, 3, 7, 3, 13);
     }
 
     [Fact]
@@ -95,7 +93,7 @@ public class ModuleCoordinateSpaceTests
         var error = SingleEvalError(await KatLangEngine.RunAsync(
             "open '" + Lib + "'\nFine(1)", Options((Lib, "\n\n\npublic Fine(a, b) = a + b"))));
         Assert.Equal(KatLangErrorCode.ArityMismatch, error.Code);
-        AssertSpan(error, 2, 1, 2, 7);
+        AssertSpan(error, 2, 1, 2, 8);
     }
 
     // ── 3. Nested module chain: A's result stays in A's coordinate space ────
@@ -110,7 +108,7 @@ public class ModuleCoordinateSpaceTests
             (ModuleC, "\n\n\n\n\n\n\n\n\n\n\n\n        public FromC = 10 / 0"));
         var error = SingleEvalError(await KatLangEngine.RunAsync("open '" + ModuleB + "'\nFromB", options));
         Assert.Equal(KatLangErrorCode.DivisionByZero, error.Code);
-        AssertSpan(error, 2, 1, 2, 5);
+        AssertSpan(error, 2, 1, 2, 6);
     }
 
     [Fact]
@@ -123,7 +121,7 @@ public class ModuleCoordinateSpaceTests
             "open '" + ModuleB + "'\nFromB",
             Options((ModuleB, "\n\n\n\n\nopen '" + ModuleC + "'\npublic FromB = FromC + 1")));
         var failure = Assert.Single(parsed.Diagnostics, d => d.Code == DiagnosticCode.LoadFetchFailed);
-        Assert.Equal(new SourceSpan(1, 6, 1, 32), failure.Span);
+        Assert.Equal(new SourceSpan(1, 6, 1, 33), failure.Span);
         Assert.Contains(ModuleC, failure.Message, StringComparison.Ordinal);
     }
 
@@ -136,7 +134,7 @@ public class ModuleCoordinateSpaceTests
                 (ModuleB, "\n\n\n\nopen '" + ModuleC + "'\npublic FromB = 1"),
                 (ModuleC, "\n\n\n\n\n\nopen '" + ModuleB + "'\npublic FromC = 2")));
         var cycle = Assert.Single(parsed.Diagnostics, d => d.Code == DiagnosticCode.LoadCycle);
-        Assert.Equal(new SourceSpan(1, 6, 1, 32), cycle.Span);
+        Assert.Equal(new SourceSpan(1, 6, 1, 33), cycle.Span);
     }
 
     // ── 4. Deferred materialization ─────────────────────────────────────────
@@ -156,7 +154,7 @@ public class ModuleCoordinateSpaceTests
 
         var first = SingleEvalError(await KatLangEngine.RunAsync(source, options));
         Assert.Equal(KatLangErrorCode.DivisionByZero, first.Code);
-        AssertSpan(first, 3, 2, 3, 5);
+        AssertSpan(first, 3, 2, 3, 6);
         AssertNotTheModuleSpan(first);
 
         // The same parsed tree evaluated twice: the region materializes once and is reused;
@@ -166,7 +164,7 @@ public class ModuleCoordinateSpaceTests
         var run2 = await Evaluator.RunFlatAsync(new Expr.AlgorithmExpr(parsed.Root));
         Assert.True(run1.IsError);
         Assert.True(run2.IsError);
-        Assert.Equal(new SourceSpan(3, 2, 3, 5), run1.Error.Span);
+        Assert.Equal(new SourceSpan(3, 2, 3, 6), run1.Error.Span);
         Assert.Equal(run1.Error.Span, run2.Error.Span);
         Assert.Equal(1, region.MaterializationAttempts);
         Assert.True(region.TryGetMaterialized(out var materialized));
@@ -175,7 +173,7 @@ public class ModuleCoordinateSpaceTests
         Assert.True(openedModule.IsModuleElaborated);
         LocationlessAssertion.AssertLocationless(openedModule);
         // The branch's own open target keeps its LOCAL span on the wrapper node.
-        Assert.Equal(new SourceSpan(2, 15, 2, 43), Assert.IsType<Expr.AlgorithmExpr>(Assert.Single(materialized.Opens)).Span);
+        Assert.Equal(new SourceSpan(2, 15, 2, 44), Assert.IsType<Expr.AlgorithmExpr>(Assert.Single(materialized.Opens)).Span);
     }
 
     [Fact]
@@ -194,11 +192,11 @@ public class ModuleCoordinateSpaceTests
         var family = Assert.IsType<Algorithm.Conditional>(Assert.Single(ImportedModule(parsed.Root, "M").Properties).Value);
         var region = family.Branches[1].Body.DeferredRegion;
         Assert.NotNull(region);
-        Assert.Equal(new SourceSpan(3, 5, 3, 37), region.ImportSite);
+        Assert.Equal(new SourceSpan(3, 5, 3, 38), region.ImportSite);
 
         var error = SingleEvalError(await KatLangEngine.RunAsync(source, options));
         Assert.Equal(KatLangErrorCode.ParameterPropertyCollision, error.Code);
-        AssertSpan(error, 3, 5, 3, 37);
+        AssertSpan(error, 3, 5, 3, 38);
         Assert.DoesNotContain("line 4", error.Message, StringComparison.Ordinal);
     }
 
@@ -218,12 +216,12 @@ public class ModuleCoordinateSpaceTests
 
         // The second splice — a cache hit — reports at ITS demand, on line 5.
         var viaB = SingleEvalError(await KatLangEngine.RunAsync(source, options));
-        AssertSpan(viaB, 5, 4, 5, 9);
+        AssertSpan(viaB, 5, 4, 5, 10);
 
         // The first splice, demanded in its own run, reports at ITS demand, on line 6.
         const string demandA = "A = load('" + Lib + "')\n\nB = load('" + Lib + "')\n\n\nA.Boom";
         var viaA = SingleEvalError(await KatLangEngine.RunAsync(demandA, options));
-        AssertSpan(viaA, 6, 1, 6, 6);
+        AssertSpan(viaA, 6, 1, 6, 7);
     }
 
     [Fact]
@@ -231,7 +229,7 @@ public class ModuleCoordinateSpaceTests
     {
         const string source = "open '" + Lib + "'\nA = Fine\n\n\n      B = Boom\nA + B";
         var error = SingleEvalError(await KatLangEngine.RunAsync(source, Options((Lib, BoomModule))));
-        AssertSpan(error, 5, 11, 5, 14);
+        AssertSpan(error, 5, 11, 5, 15);
         AssertNotTheModuleSpan(error);
     }
 
@@ -246,7 +244,7 @@ public class ModuleCoordinateSpaceTests
         var error = SingleEvalError(await KatLangEngine.RunAsync(
             "open '" + Lib + "'\nFine", Options((Lib, "\n\n\npublic Fine = Math.Ceiling(2.1)"))));
         Assert.Equal(KatLangErrorCode.ArityMismatch, error.Code);
-        AssertSpan(error, 2, 1, 2, 4);
+        AssertSpan(error, 2, 1, 2, 5);
         Assert.Contains("An implicit parameter 'Ceiling' was inferred from an unresolved name.", error.Message, StringComparison.Ordinal);
         Assert.Contains("Did you mean 'Math.Ceil'?", error.Message, StringComparison.Ordinal);
         Assert.DoesNotContain("[4:", error.Message, StringComparison.Ordinal);
@@ -283,7 +281,7 @@ public class ModuleCoordinateSpaceTests
         var parsed = await Parser.ParseAsync("open '" + Lib + "'\nFine", Options((Lib, module)));
         var diagnostic = Assert.Single(parsed.Diagnostics, d => d.Severity == DiagnosticSeverity.Error);
         Assert.Equal(code, diagnostic.Code);
-        Assert.Equal(new SourceSpan(1, 6, 1, 34), diagnostic.Span);
+        Assert.Equal(new SourceSpan(1, 6, 1, 35), diagnostic.Span);
         Assert.DoesNotContain("line 4", diagnostic.Message, StringComparison.Ordinal);
         Assert.DoesNotContain("line 5", diagnostic.Message, StringComparison.Ordinal);
     }
@@ -303,7 +301,7 @@ public class ModuleCoordinateSpaceTests
         var parsed = await Parser.ParseAsync("\n\nM = load('" + Lib + "')\nM.Fine", Options((Lib, module)));
         var diagnostic = Assert.Single(parsed.Diagnostics, d => d.Severity == DiagnosticSeverity.Error);
         Assert.Equal(code, diagnostic.Code);
-        Assert.Equal(new SourceSpan(3, 1, 3, 1), diagnostic.Span);
+        Assert.Equal(new SourceSpan(3, 1, 3, 2), diagnostic.Span);
     }
 
     [Theory]
@@ -317,7 +315,7 @@ public class ModuleCoordinateSpaceTests
             Options((ModuleB, "\n\n\nopen '" + ModuleC + "'\npublic FromB = Fine"), (ModuleC, module)));
         var diagnostic = Assert.Single(parsed.Diagnostics, d => d.Severity == DiagnosticSeverity.Error);
         Assert.Equal(code, diagnostic.Code);
-        Assert.Equal(new SourceSpan(2, 6, 2, 32), diagnostic.Span);
+        Assert.Equal(new SourceSpan(2, 6, 2, 33), diagnostic.Span);
     }
 
     [Fact]
@@ -328,7 +326,7 @@ public class ModuleCoordinateSpaceTests
             Options((Lib, "\n\n\nopen count\n5")));
         var diagnostic = Assert.Single(parsed.Diagnostics, d => d.Severity == DiagnosticSeverity.Error);
         Assert.Equal(DiagnosticCode.IllegalInOpen, diagnostic.Code);
-        Assert.Equal(new SourceSpan(1, 10, 1, 44), diagnostic.Span);
+        Assert.Equal(new SourceSpan(1, 10, 1, 45), diagnostic.Span);
     }
 
     [Fact]
@@ -341,7 +339,7 @@ public class ModuleCoordinateSpaceTests
             Options((Lib, "\n\n\npublic a = 3")));
         var diagnostic = Assert.Single(parsed.Diagnostics, d => d.Severity == DiagnosticSeverity.Error);
         Assert.Equal(DiagnosticCode.ParameterPropertyCollision, diagnostic.Code);
-        Assert.Equal(new SourceSpan(2, 3, 2, 3), diagnostic.Span);
+        Assert.Equal(new SourceSpan(2, 3, 2, 4), diagnostic.Span);
         Assert.Contains("declared at line 1, column 3", diagnostic.Message, StringComparison.Ordinal);
     }
 
@@ -366,8 +364,8 @@ public class ModuleCoordinateSpaceTests
         LocationlessAssertion.AssertLocationless(opened);
         // The document's own wrapper of the opened module keeps the local open-target span,
         // and the document's own declaration keeps its span.
-        Assert.Equal(new SourceSpan(1, 6, 1, 34), Assert.IsType<Expr.AlgorithmExpr>(Assert.Single(parsed.Root.Opens)).Span);
-        Assert.Equal([new SourceSpan(2, 1, 2, 1)], Assert.Single(parsed.Root.Properties, p => p.Name == "M").DeclarationSpans);
+        Assert.Equal(new SourceSpan(1, 6, 1, 35), Assert.IsType<Expr.AlgorithmExpr>(Assert.Single(parsed.Root.Opens)).Span);
+        Assert.Equal([new SourceSpan(2, 1, 2, 2)], Assert.Single(parsed.Root.Properties, p => p.Name == "M").DeclarationSpans);
     }
 
     [Fact]
@@ -391,7 +389,7 @@ public class ModuleCoordinateSpaceTests
     public void ImportView_StripsEveryVariantsSpan_AndPreservesASpanlessVariantByReference(string variant)
     {
         var sample = ExprVariantCatalog.Samples[variant];
-        var spanned = sample with { Span = new SourceSpan(7, 1, 7, 9) };
+        var spanned = sample with { Span = new SourceSpan(7, 1, 7, 10) };
         var root = new Algorithm.User(null, [], [], [], [spanned, sample]);
 
         var view = InvokeToImportView(root);
@@ -408,7 +406,7 @@ public class ModuleCoordinateSpaceTests
     [Fact]
     public void ImportView_ClearsEveryLocationBearingField_AndPreservesSharingAndIdentity()
     {
-        var span = new SourceSpan(9, 9, 9, 9);
+        var span = new SourceSpan(9, 9, 9, 10);
         var sharedLeaf = new Expr.Resolve("shared") { Span = span };
         var dot = new Expr.DotCall(sharedLeaf, "m", [sharedLeaf]) { Span = span, MemberSpan = span, LexicalFallback = new Expr.Resolve("m") { Span = span } };
         var spread = new Expr.SequenceSpread(dot) { Span = span, SpreadMarkerSpan = span };
@@ -470,10 +468,10 @@ public class ModuleCoordinateSpaceTests
 
     [Theory]
     [InlineData("A = (1, 2\nA", DiagnosticCode.UnexpectedToken, 2, 2, 2, 2)]
-    [InlineData("F(a) = a + zz\nF(1)", DiagnosticCode.UndeclaredIdentifier, 1, 12, 1, 13)]
-    [InlineData("F(a) = { a = 3\n a }\nF(1)", DiagnosticCode.ParameterPropertyCollision, 1, 10, 1, 10)]
-    [InlineData("open count\n1", DiagnosticCode.IllegalInOpen, 1, 6, 1, 10)]
-    [InlineData("K(p) = ~p\nK(1)", DiagnosticCode.InvalidGraceMarker, 1, 8, 1, 9)]
+    [InlineData("F(a) = a + zz\nF(1)", DiagnosticCode.UndeclaredIdentifier, 1, 12, 1, 14)]
+    [InlineData("F(a) = { a = 3\n a }\nF(1)", DiagnosticCode.ParameterPropertyCollision, 1, 10, 1, 11)]
+    [InlineData("open count\n1", DiagnosticCode.IllegalInOpen, 1, 6, 1, 11)]
+    [InlineData("K(p) = ~p\nK(1)", DiagnosticCode.InvalidGraceMarker, 1, 8, 1, 10)]
     public void LocalFrontEndDiagnostics_KeepTheirExactPositions(string source, DiagnosticCode code, int line, int column, int endLine, int endColumn)
     {
         var parsed = Parser.Parse(source);
@@ -490,11 +488,11 @@ public class ModuleCoordinateSpaceTests
     }
 
     [Theory]
-    [InlineData("10 / 0", KatLangErrorCode.DivisionByZero, 1, 1, 1, 6)]
-    [InlineData("\nBoom = 10 / 0\nBoom", KatLangErrorCode.DivisionByZero, 2, 8, 2, 13)]
-    [InlineData("Fine = Math.Ceiling(2.1)\nFine", KatLangErrorCode.ArityMismatch, 2, 1, 2, 4)]
-    [InlineData("Lib = { public Double(x) = x * 2 }\nLib.Dubel(4)", KatLangErrorCode.UnresolvedImplicitParams, 2, 5, 2, 9)]
-    [InlineData("F(a, b) = a + b\nF(1)", KatLangErrorCode.ArityMismatch, 2, 1, 2, 4)]
+    [InlineData("10 / 0", KatLangErrorCode.DivisionByZero, 1, 1, 1, 7)]
+    [InlineData("\nBoom = 10 / 0\nBoom", KatLangErrorCode.DivisionByZero, 2, 8, 2, 14)]
+    [InlineData("Fine = Math.Ceiling(2.1)\nFine", KatLangErrorCode.ArityMismatch, 2, 1, 2, 5)]
+    [InlineData("Lib = { public Double(x) = x * 2 }\nLib.Dubel(4)", KatLangErrorCode.UnresolvedImplicitParams, 2, 5, 2, 10)]
+    [InlineData("F(a, b) = a + b\nF(1)", KatLangErrorCode.ArityMismatch, 2, 1, 2, 5)]
     public void LocalEvaluationErrors_KeepTheirExactPositions(string source, KatLangErrorCode code, int line, int column, int endLine, int endColumn)
     {
         var error = SingleEvalError(KatLangEngine.Run(source));
@@ -507,8 +505,8 @@ public class ModuleCoordinateSpaceTests
     [Fact]
     public void ErrorAttachment_KeepsAnInnerSpan_AttachesAnOuterOneOnlyWhenMissing_AndStaysAbsentOtherwise()
     {
-        var inner = new SourceSpan(3, 3, 3, 8);
-        var outer = new SourceSpan(1, 1, 1, 12);
+        var inner = new SourceSpan(3, 3, 3, 9);
+        var outer = new SourceSpan(1, 1, 1, 13);
         var positioned = new EvalError.DivByZero { Span = inner };
         var unpositioned = new EvalError.DivByZero();
 
@@ -517,7 +515,7 @@ public class ModuleCoordinateSpaceTests
         Assert.Null(Evaluator.WithSpan(null, EvalResult<Result>.Err(unpositioned)).Error.Span);
         Assert.Equal(inner, Evaluator.WithSpan(null, EvalResult<Result>.Err(positioned)).Error.Span);
         // A value-equal outer span attaches by value, not by any object identity.
-        Assert.Equal(new SourceSpan(1, 1, 1, 12), Evaluator.WithSpan(new SourceSpan(1, 1, 1, 12), EvalResult<Result>.Err(unpositioned)).Error.Span);
+        Assert.Equal(new SourceSpan(1, 1, 1, 13), Evaluator.WithSpan(new SourceSpan(1, 1, 1, 13), EvalResult<Result>.Err(unpositioned)).Error.Span);
         Assert.True(Evaluator.WithSpan(outer, EvalResult<Result>.Ok(new Result.Atom(1))).IsOk);
     }
 
@@ -529,11 +527,11 @@ public class ModuleCoordinateSpaceTests
         // Two distinct declarations (in one owner, under a parameter of that name) whose
         // declaration spans are the SAME object: each declaration is one report, so a
         // value-type span (which has no identity) changes nothing here.
-        var span = new SourceSpan(2, 1, 2, 1);
+        var span = new SourceSpan(2, 1, 2, 2);
         var value = new Algorithm.User(null, [], [], [], [new Expr.Num(1)]);
         var owner = new Algorithm.User(
             null,
-            [new CaptureParameterPattern("v", new SourceSpan(1, 3, 1, 3))],
+            [new CaptureParameterPattern("v", new SourceSpan(1, 3, 1, 4))],
             [],
             [new Property("v", value) { DeclarationSpans = [span] }, new Property("v", value with { }) { DeclarationSpans = [span] }],
             [new Expr.Num(0)]);
@@ -547,7 +545,7 @@ public class ModuleCoordinateSpaceTests
     [Fact]
     public void OpenProviderValidator_ReportsEachTargetNode_EvenWhenTwoShareOneSpanObject()
     {
-        var span = new SourceSpan(1, 6, 1, 10);
+        var span = new SourceSpan(1, 6, 1, 11);
         var root = new Algorithm.User(
             null,
             [],
@@ -610,7 +608,7 @@ public class ModuleCoordinateSpaceTests
             Options((Lib, "\n\n\n\n\nX = (1, 2\nX")));
         var diagnostic = Assert.Single(parsed.Diagnostics);
         Assert.Equal(DiagnosticCode.InvalidLoadedSource, diagnostic.Code);
-        Assert.Equal(new SourceSpan(1, 5, 1, 39), diagnostic.Span);
+        Assert.Equal(new SourceSpan(1, 5, 1, 40), diagnostic.Span);
     }
 
     // ── 13. The semantic model over an import view ──────────────────────────
@@ -624,7 +622,7 @@ public class ModuleCoordinateSpaceTests
         Assert.False(parsed.HasErrors);
         var model = SemanticModelBuilder.Build(parsed);
         var reference = Assert.Single(model.IdentifierResolutions);
-        Assert.Equal(new SourceSpan(2, 1, 2, 4), reference.Occurrence.Span);
+        Assert.Equal(new SourceSpan(2, 1, 2, 5), reference.Occurrence.Span);
         Assert.Null(reference.ResolvedDeclaration);
         var target = Assert.IsType<PropertyInfo>(reference.ResolvedProperty);
         Assert.Equal("Fine", target.Name);

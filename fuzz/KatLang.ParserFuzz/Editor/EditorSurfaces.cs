@@ -72,7 +72,7 @@ internal static class EditorSurfaces
             if (token.Kind is not (TokenKind.Comment or TokenKind.StringLiteral) || token.Length <= 0)
                 continue;
 
-            var tokenSpan = new SourceSpan(token.Line, token.Column, token.Line, token.Column + token.Length - 1);
+            var tokenSpan = token.Span;
             foreach (var occurrence in model.IdentifierOccurrences)
             {
                 if (Overlaps(occurrence.Span, tokenSpan))
@@ -130,11 +130,12 @@ internal static class EditorSurfaces
 
     private static string ExercisePositionResolution(SemanticModel model, int line, int column)
     {
-        var resolution = model.FindResolutionAt(line, column);
+        var position = new SourcePosition(line, column);
+        var resolution = model.FindResolutionAt(position);
         if (resolution is null)
             return "resolution=none";
 
-        if (!Contains(resolution.Occurrence.Span, line, column))
+        if (!resolution.Occurrence.Span.Contains(position))
             throw new EditorInvariantException(
                 $"FindResolutionAt({line},{column}) returned a resolution whose span " +
                 $"{SourceSpanValidator.Describe(resolution.Occurrence.Span)} does not contain the queried position.");
@@ -148,7 +149,7 @@ internal static class EditorSurfaces
 
     private static string ExercisePropertyAtPosition(SemanticModel model, int line, int column)
     {
-        var property = model.FindPropertyAt(line, column);
+        var property = model.FindPropertyAt(new SourcePosition(line, column));
         if (property is null)
             return "property=none";
 
@@ -190,7 +191,7 @@ internal static class EditorSurfaces
 
     private static string ExerciseDefinition(SemanticModel model, int line, int column)
     {
-        var resolution = model.FindResolutionAt(line, column);
+        var resolution = model.FindResolutionAt(new SourcePosition(line, column));
         if (resolution?.ResolvedDeclaration is not { } declaration)
             return "definition=none";
 
@@ -233,24 +234,8 @@ internal static class EditorSurfaces
 
     // ── Span helpers ─────────────────────────────────────────────────────────
 
-    private static bool Contains(SourceSpan span, int line, int column)
-    {
-        if (line < span.StartLineNumber || line > span.EndLineNumber)
-            return false;
-        if (line == span.StartLineNumber && column < span.StartColumn)
-            return false;
-        if (line == span.EndLineNumber && column > span.EndColumn)
-            return false;
-        return true;
-    }
-
+    // Two half-open spans overlap when each starts before the other ends; spans that merely
+    // share a boundary (one's exclusive end is the other's start) do not.
     private static bool Overlaps(SourceSpan left, SourceSpan right)
-        => ComparePosition(left.StartLineNumber, left.StartColumn, right.EndLineNumber, right.EndColumn) <= 0
-           && ComparePosition(right.StartLineNumber, right.StartColumn, left.EndLineNumber, left.EndColumn) <= 0;
-
-    private static int ComparePosition(int line, int column, int otherLine, int otherColumn)
-    {
-        var byLine = line.CompareTo(otherLine);
-        return byLine != 0 ? byLine : column.CompareTo(otherColumn);
-    }
+        => left.Start < right.End && right.Start < left.End;
 }

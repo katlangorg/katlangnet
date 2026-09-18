@@ -488,7 +488,7 @@ public class OperationalMetamorphicTests
     [Fact]
     public void EveryResourceLimitVariant_IsClassifiedAndFormattedUniformly()
     {
-        var span = new SourceSpan(2, 3, 2, 7);
+        var span = new SourceSpan(2, 3, 2, 8);
         EvalError[] allResourceVariants =
         {
             new EvalError.EvaluationDepthExceeded(8) { Span = span },
@@ -514,7 +514,7 @@ public class OperationalMetamorphicTests
             {
                 Assert.IsNotType<EvalError.WithContext>(error);
                 Assert.NotNull(error.Span);
-                Assert.NotNull(publicError.StartLine);
+                Assert.NotNull(publicError.Span);
             }
         });
 
@@ -559,7 +559,7 @@ public class OperationalMetamorphicTests
             Assert.NotNull(error.Span);
 
             var publicError = KatLangError.FromEvalError(error);
-            Assert.NotNull(publicError.StartLine);
+            Assert.NotNull(publicError.Span);
             Assert.DoesNotContain("while evaluating", publicError.Message, StringComparison.OrdinalIgnoreCase);
             Assert.InRange(publicError.Message.Length, 1, 240);
         });

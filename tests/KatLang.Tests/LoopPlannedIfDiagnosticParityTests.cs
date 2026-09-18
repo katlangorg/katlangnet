@@ -173,8 +173,8 @@ public class LoopPlannedIfDiagnosticParityTests
         Assert.Equal(
             ["while evaluating call to repeat", "while evaluating call to if"],
             ContextChain(optimized.Error));
-        Assert.Equal(((int?)1, (int?)8, (int?)1, (int?)24), Span(optimized.Error));
-        Assert.Equal(((int?)1, (int?)8, (int?)1, (int?)24), Span(generic.Error));
+        Assert.Equal(new SourceSpan(1, 8, 1, 25), Span(optimized.Error));
+        Assert.Equal(new SourceSpan(1, 8, 1, 25), Span(generic.Error));
     }
 
     [Fact]
@@ -236,10 +236,10 @@ public class LoopPlannedIfDiagnosticParityTests
             ContextChain(error));
 
         // The `1 / 0` operand on line 1, not the enclosing line-2 expression.
-        var span = Span(error);
-        Assert.Equal(1, span.StartLine);
-        Assert.Equal(25, span.StartColumn);
-        Assert.Equal(1, span.EndLine);
+        var span = Assert.NotNull(Span(error));
+        Assert.Equal(1, span.Start.Line);
+        Assert.Equal(25, span.Start.Column);
+        Assert.Equal(1, span.End.Line);
     }
 
     // ── Preserved behavior: values, laziness, counters, cache ────────────────

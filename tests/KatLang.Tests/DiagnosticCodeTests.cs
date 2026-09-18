@@ -16,18 +16,18 @@ public class DiagnosticCodeTests
     {
         // The pre-M5 positional constructor shape, exactly as external source
         // invokes it today.
-        var diagnostic = new Diagnostic("boom", DiagnosticSeverity.Warning, new SourceSpan(1, 2, 3, 4));
+        var diagnostic = new Diagnostic("boom", DiagnosticSeverity.Warning, new SourceSpan(1, 2, 3, 5));
 
         Assert.Equal("boom", diagnostic.Message);
         Assert.Equal(DiagnosticSeverity.Warning, diagnostic.Severity);
-        Assert.Equal(new SourceSpan(1, 2, 3, 4), diagnostic.Span);
+        Assert.Equal(new SourceSpan(1, 2, 3, 5), diagnostic.Span);
         Assert.Equal(DiagnosticCode.Unspecified, diagnostic.Code);
     }
 
     [Fact]
     public void Deconstruct_ShapeIsUnchanged_ThreePositionalComponents()
     {
-        var diagnostic = new Diagnostic("boom", DiagnosticSeverity.Error, new SourceSpan(1, 2, 3, 4))
+        var diagnostic = new Diagnostic("boom", DiagnosticSeverity.Error, new SourceSpan(1, 2, 3, 5))
         {
             Code = DiagnosticCode.UnexpectedToken,
         };
@@ -37,7 +37,7 @@ public class DiagnosticCodeTests
         var (message, severity, span) = diagnostic;
         Assert.Equal("boom", message);
         Assert.Equal(DiagnosticSeverity.Error, severity);
-        Assert.Equal(new SourceSpan(1, 2, 3, 4), span);
+        Assert.Equal(new SourceSpan(1, 2, 3, 5), span);
 
         var deconstruct = typeof(Diagnostic).GetMethod(nameof(Diagnostic.Deconstruct));
         Assert.NotNull(deconstruct);
@@ -47,12 +47,12 @@ public class DiagnosticCodeTests
     [Fact]
     public void WithCopy_PreservesTheCode()
     {
-        var diagnostic = new Diagnostic("boom", DiagnosticSeverity.Error, new SourceSpan(1, 2, 3, 4))
+        var diagnostic = new Diagnostic("boom", DiagnosticSeverity.Error, new SourceSpan(1, 2, 3, 5))
         {
             Code = DiagnosticCode.DuplicateProperty,
         };
 
-        var relocated = diagnostic with { Span = new SourceSpan(9, 9, 9, 9) };
+        var relocated = diagnostic with { Span = new SourceSpan(9, 9, 9, 10) };
 
         Assert.Equal(DiagnosticCode.DuplicateProperty, relocated.Code);
         Assert.Equal("boom", relocated.Message);
@@ -64,7 +64,7 @@ public class DiagnosticCodeTests
         // The code is semantic diagnostic identity, so it participates in value
         // equality and hashing: two diagnostics differing only in code are
         // different diagnostics.
-        var span = new SourceSpan(1, 2, 3, 4);
+        var span = new SourceSpan(1, 2, 3, 5);
         var coded = new Diagnostic("boom", DiagnosticSeverity.Error, span) { Code = DiagnosticCode.UnexpectedToken };
         var sameCoded = new Diagnostic("boom", DiagnosticSeverity.Error, span) { Code = DiagnosticCode.UnexpectedToken };
         var uncoded = new Diagnostic("boom", DiagnosticSeverity.Error, span);
@@ -77,7 +77,7 @@ public class DiagnosticCodeTests
     [Fact]
     public void SynthesizedToString_IncludesTheCode_Deliberately()
     {
-        var diagnostic = new Diagnostic("boom", DiagnosticSeverity.Error, new SourceSpan(1, 2, 3, 4))
+        var diagnostic = new Diagnostic("boom", DiagnosticSeverity.Error, new SourceSpan(1, 2, 3, 5))
         {
             Code = DiagnosticCode.UnsupportedSemicolon,
         };
@@ -99,7 +99,7 @@ public class DiagnosticCodeTests
             "Semicolon is not supported as an expression separator. Use ',' between expressions on one line (a new line separates them where the context allows it), or parentheses for one sequence value.",
             diagnostic.Message);
         Assert.Equal(DiagnosticSeverity.Error, diagnostic.Severity);
-        Assert.Equal(new SourceSpan(1, 3, 1, 3), diagnostic.Span);
+        Assert.Equal(new SourceSpan(1, 3, 1, 4), diagnostic.Span);
         Assert.Equal(DiagnosticCode.UnsupportedSemicolon, diagnostic.Code);
     }
 
@@ -264,12 +264,12 @@ public class DiagnosticCodeTests
     public void StructuralPreflightDiagnostics_CarryDepthAndCycleCodes()
     {
         var depth = AstStructuralPreflight.ToParseDiagnostic(
-            new AstStructuralRejection(AstStructuralViolation.DepthExceeded, new SourceSpan(1, 1, 1, 1)),
+            new AstStructuralRejection(AstStructuralViolation.DepthExceeded, new SourceSpan(1, 1, 1, 2)),
             limit: 300);
         Assert.Equal(DiagnosticCode.AstDepthLimitExceeded, depth.Code);
 
         var cycle = AstStructuralPreflight.ToParseDiagnostic(
-            new AstStructuralRejection(AstStructuralViolation.CycleDetected, new SourceSpan(1, 1, 1, 1)),
+            new AstStructuralRejection(AstStructuralViolation.CycleDetected, new SourceSpan(1, 1, 1, 2)),
             limit: 300);
         Assert.Equal(DiagnosticCode.AstCycleDetected, cycle.Code);
     }

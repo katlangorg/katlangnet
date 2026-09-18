@@ -9,10 +9,17 @@ namespace KatLang;
 public sealed class KatLangError
 {
     public string Message { get; }
-    public int? StartLine { get; }
-    public int? StartColumn { get; }
-    public int? EndLine { get; }
-    public int? EndColumn { get; }
+
+    /// <summary>
+    /// The error's location in the document whose result carries it — the half-open
+    /// <see cref="SourceSpan"/> of the diagnostic or of the expression the evaluation error is
+    /// positioned at (<see cref="EvalError.Span"/> after the attach-if-missing law) — or
+    /// <see langword="null"/> for an error with no position in this document. Every span a
+    /// result exposes belongs to that result's coordinate space: an error inside a loaded module
+    /// is positioned at the local demand (the demanding expression, load site, or import site)
+    /// or is unpositioned, never at a module-relative or fabricated coordinate.
+    /// </summary>
+    public SourceSpan? Span { get; }
 
     /// <summary>
     /// Stable machine-readable classification of this error's semantic family.
@@ -53,36 +60,19 @@ public sealed class KatLangError
     /// </summary>
     public bool IsResourceLimit => Source?.IsResourceLimit ?? false;
 
-    private KatLangError(
-        string message,
-        int? startLine,
-        int? startColumn,
-        int? endLine,
-        int? endColumn,
-        KatLangErrorCode code,
-        EvalError? source)
+    private KatLangError(string message, SourceSpan? span, KatLangErrorCode code, EvalError? source)
     {
         Message = message;
-        StartLine = startLine;
-        StartColumn = startColumn;
-        EndLine = endLine;
-        EndColumn = endColumn;
+        Span = span;
         Code = code;
         Source = source;
     }
 
     public static KatLangError FromDiagnostic(Diagnostic diag)
-        => new(diag.Message, diag.Span.StartLineNumber, diag.Span.StartColumn,
-               diag.Span.EndLineNumber, diag.Span.EndColumn,
-               MapDiagnosticCode(diag.Code), source: null);
+        => new(diag.Message, diag.Span, MapDiagnosticCode(diag.Code), source: null);
 
     public static KatLangError FromEvalError(EvalError error)
-    {
-        var message = AppendInferredImplicitParameterNotes(FormatEvalError(error), error);
-        if (error.Span is { } span)
-            return new(message, span.StartLineNumber, span.StartColumn, span.EndLineNumber, span.EndColumn, error.Code, error);
-        return new(message, null, null, null, null, error.Code, error);
-    }
+        => new(AppendInferredImplicitParameterNotes(FormatEvalError(error), error), error.Span, error.Code, error);
 
     /// <summary>
     /// Total mapping from front-end <see cref="DiagnosticCode"/> families to the
@@ -212,7 +202,7 @@ public sealed class KatLangError
 
                         builder.Append('\n');
                         builder.Append(note.Span is { } noteSpan
-                            ? $"An implicit parameter '{note.Name}' was inferred at [{noteSpan.StartLineNumber}:{noteSpan.StartColumn}]."
+                            ? $"An implicit parameter '{note.Name}' was inferred at [{noteSpan.Start.Line}:{noteSpan.Start.Column}]."
                             : $"An implicit parameter '{note.Name}' was inferred from an unresolved name.");
                         if (note.DotMemberOrigin is { } origin)
                         {
@@ -703,7 +693,7 @@ public sealed class KatLangError
     /// </summary>
     private static string FormatDotMemberFallbackInference(string memberName, string receiverDesc, SourceSpan? at)
     {
-        var location = at is { } span ? $" at [{span.StartLineNumber}:{span.StartColumn}]" : string.Empty;
+        var location = at is { } span ? $" at [{span.Start.Line}:{span.Start.Column}]" : string.Empty;
         return $"{FormatDotMemberNotFound(memberName, receiverDesc)}{location}, so the dotted call fell back to a lexical callable named '{memberName}'.";
     }
 
@@ -969,12 +959,12 @@ public sealed class KatLangError
         return null;
     }
 
+    /// <summary>
+    /// Renders <c>[line:column] message</c> — the start coordinate of <see cref="Span"/> — or the
+    /// bare message for an unpositioned error.
+    /// </summary>
     public override string ToString()
-    {
-        if (StartLine is { } line && StartColumn is { } col)
-            return $"[{line}:{col}] {Message}";
-        return Message;
-    }
+        => Span is { } span ? $"[{span.Start.Line}:{span.Start.Column}] {Message}" : Message;
 }
 
 /// <summary>

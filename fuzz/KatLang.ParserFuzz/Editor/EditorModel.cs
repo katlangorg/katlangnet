@@ -160,7 +160,7 @@ internal static class EditorModel
         SourceSpan? previous = null;
         foreach (var span in spans)
         {
-            if (previous is not null && CompareSpan(previous, span) > 0)
+            if (previous is { } earlier && CompareSpan(earlier, span) > 0)
                 throw new EditorInvariantException(
                     $"The model's {what} are not sorted by span: {SourceSpanValidator.Describe(previous)} " +
                     $"precedes {SourceSpanValidator.Describe(span)} out of order.");
@@ -218,7 +218,7 @@ internal static class EditorModel
         foreach (var resolution in model.IdentifierResolutions)
         {
             var start = resolution.Occurrence.Span;
-            var hit = model.FindResolutionAt(start.StartLineNumber, start.StartColumn);
+            var hit = model.FindResolutionAt(start.Start);
             if (hit is null)
                 throw new EditorInvariantException(
                     $"FindResolutionAt returns nothing at the start {SourceSpanValidator.Describe(start)} of an " +
@@ -244,21 +244,23 @@ internal static class EditorModel
 
     /// <summary>
     /// The source text under an occurrence's span must be exactly the reported name — proof the site
-    /// is source-backed with an exact span and no invented text. Skipped only where a carriage return
-    /// inside the span region makes the offset mapping ambiguous, which never happens for an
-    /// identifier token but is guarded against defensively.
+    /// is source-backed with an exact span and no invented text. The span is half-open, so the
+    /// slice runs from the offset of its start to the offset of its exclusive end (which may be the
+    /// source length). Skipped only where a carriage return inside the span region makes the offset
+    /// mapping ambiguous, which never happens for an identifier token but is guarded against
+    /// defensively.
     /// </summary>
     private static void CheckSlice(string source, SourceSpan span, string name, string what)
     {
-        if (span.StartLineNumber != span.EndLineNumber)
+        if (span.Start.Line != span.End.Line)
             return;
 
-        var start = EditorCursor.OffsetAtLineColumn(source, span.StartLineNumber, span.StartColumn);
-        var endInclusive = EditorCursor.OffsetAtLineColumn(source, span.EndLineNumber, span.EndColumn);
-        if (start < 0 || endInclusive < 0 || endInclusive < start || endInclusive >= source.Length)
+        var start = EditorCursor.OffsetAtLineColumn(source, span.Start.Line, span.Start.Column);
+        var end = EditorCursor.OffsetAtLineColumn(source, span.End.Line, span.End.Column);
+        if (start < 0 || end < 0 || end < start || end > source.Length)
             return;
 
-        var slice = source[start..(endInclusive + 1)];
+        var slice = source[start..end];
         if (slice.Contains('\r', StringComparison.Ordinal))
             return;
 
@@ -311,12 +313,13 @@ internal static class EditorModel
                    .Append('\n');
         }
 
-        var resolutionAt = model.FindResolutionAt(cursorLine, cursorColumn);
+        var cursor = new SourcePosition(cursorLine, cursorColumn);
+        var resolutionAt = model.FindResolutionAt(cursor);
         builder.Append("cursorResolution:")
                .Append(resolutionAt is null ? "none" : $"{resolutionAt.Classification}|{Span(resolutionAt.Occurrence.Span)}")
                .Append('\n');
 
-        var propertyAt = model.FindPropertyAt(cursorLine, cursorColumn);
+        var propertyAt = model.FindPropertyAt(cursor);
         builder.Append("cursorProperty:").Append(propertyAt is null ? "none" : $"{propertyAt.Name}:{propertyAt.Shape}").Append('\n');
 
         builder.Append("lookupResolutions:").Append(model.FindResolutions(lookupName).Count).Append('\n');
@@ -327,17 +330,12 @@ internal static class EditorModel
     }
 
     private static string Span(SourceSpan span)
-        => $"{span.StartLineNumber}:{span.StartColumn}-{span.EndLineNumber}:{span.EndColumn}";
+        => $"{span.Start.Line}:{span.Start.Column}-{span.End.Line}:{span.End.Column}";
 
     private static int CompareSpan(SourceSpan x, SourceSpan y)
     {
-        var byStartLine = x.StartLineNumber.CompareTo(y.StartLineNumber);
-        if (byStartLine != 0) return byStartLine;
-        var byStartColumn = x.StartColumn.CompareTo(y.StartColumn);
-        if (byStartColumn != 0) return byStartColumn;
-        var byEndLine = x.EndLineNumber.CompareTo(y.EndLineNumber);
-        if (byEndLine != 0) return byEndLine;
-        return x.EndColumn.CompareTo(y.EndColumn);
+        var byStart = x.Start.CompareTo(y.Start);
+        return byStart != 0 ? byStart : x.End.CompareTo(y.End);
     }
 
     /// <summary>Diagnostic/identifier text may contain an isolated surrogate; keep reports well-formed.</summary>

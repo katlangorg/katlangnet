@@ -62,8 +62,8 @@ public class BinaryAsyncTwinStructuredParityTests
             Assert.Equal(syncRendered.Message, asyncRendered.Message);
             Assert.Equal(syncRendered.Code, asyncRendered.Code);
             Assert.Equal(
-                (syncRendered.StartLine, syncRendered.StartColumn, syncRendered.EndLine, syncRendered.EndColumn),
-                (asyncRendered.StartLine, asyncRendered.StartColumn, asyncRendered.EndLine, asyncRendered.EndColumn));
+                syncRendered.Span,
+                asyncRendered.Span);
         }
         else
         {
@@ -91,7 +91,7 @@ public class BinaryAsyncTwinStructuredParityTests
         // The rejection is located at the whole binary expression on line 2; after a
         // genuine suspension the twin must report the identical tree, not a copy that
         // lost the context frame or its span.
-        Assert.Equal(((int?)2, (int?)1, (int?)2, (int?)expression.Length), Span(sync.Error));
+        Assert.Equal(new SourceSpan(2, 1, 2, expression.Length + 1), Span(sync.Error));
 
         var cache = new SuspendingAsyncZeroArgPropertyResultCache();
         var result = await AsyncEvaluationHarness.Complete(Evaluator.RunCountedAsync(ast, cache));

@@ -123,11 +123,10 @@ public class LexerNumericLiteralConversionTests
             diagnostics.Select(static d => (d.Code, d.Message, Describe(d.Span))).ToArray());
     }
 
-    private static SourceSpan TokenSpan(Token token)
-        => new(token.Line, token.Column, token.Line, token.Column + token.Length - 1);
+    // The diagnostic covers exactly the placeholder token: its half-open span.
+    private static SourceSpan TokenSpan(Token token) => token.Span;
 
-    private static string Describe(SourceSpan span)
-        => $"{span.StartLineNumber}:{span.StartColumn}-{span.EndLineNumber}:{span.EndColumn}";
+    private static string Describe(SourceSpan? span) => span?.ToString() ?? "<none>";
 
     private static string Printable(string text)
         => string.Concat(text.Select(static c =>
@@ -323,10 +322,8 @@ public class LexerNumericLiteralConversionTests
         Assert.Equal(code, diagnostic.Code);
         Assert.Equal(message, diagnostic.Message);
         Assert.Equal(DiagnosticSeverity.Error, diagnostic.Severity);
-        Assert.Equal(1, diagnostic.Span.StartLineNumber);
-        Assert.Equal(5, diagnostic.Span.StartColumn);
-        Assert.Equal(1, diagnostic.Span.EndLineNumber);
-        Assert.Equal(4 + literal.Length, diagnostic.Span.EndColumn); // inclusive end column
+        // The diagnostic spans exactly the literal (columns 5 .. 4 + length), half-open.
+        Assert.Equal(new SourceSpan(1, 5, 1, 5 + literal.Length), diagnostic.Span);
     }
 
     // ── Token boundaries: where the scan stops ───────────────────────────────

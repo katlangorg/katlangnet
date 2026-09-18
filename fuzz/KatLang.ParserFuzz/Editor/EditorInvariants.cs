@@ -188,11 +188,12 @@ internal static class EditorInvariants
             foreach (var resolution in model.IdentifierResolutions)
                 classifications.Add(resolution.Classification.ToString());
 
-        var cursorResolution = model?.FindResolutionAt(cursorLine, cursorColumn);
-        var cursorProperty = model?.FindPropertyAt(cursorLine, cursorColumn);
+        var cursor = new SourcePosition(cursorLine, cursorColumn);
+        var cursorResolution = model?.FindResolutionAt(cursor);
+        var cursorProperty = model?.FindPropertyAt(cursor);
 
         var multilineDiagnostic = result.Diagnostics.Any(diagnostic =>
-            diagnostic.Span is { } span && span.EndLineNumber != span.StartLineNumber);
+            diagnostic.Span is { } span && span.End.Line != span.Start.Line);
 
         return new EditorObservation(
             Outcome: result.Outcome,

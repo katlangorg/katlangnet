@@ -227,19 +227,21 @@ public static class Lexer
                 }
                 else
                 {
-                    // EndColumn is inclusive: `col` sits one past the last
-                    // consumed digit (at least one digit was consumed).
+                    // The diagnostic covers exactly the scanned literal: the placeholder
+                    // token's span, whose exclusive end is the lexer's live cursor column
+                    // (one past the last consumed digit; at least one digit was consumed).
+                    var placeholder = Token.CreateNumber(0, start, i - start, startLine, startCol);
                     var (message, code) = parsed
                         ? ("Number literal is too large.", DiagnosticCode.NumberLiteralTooLarge)
                         : ("Number literal is not a valid KatLang number: only the ASCII digits 0-9 are recognized (with an optional fraction and a lowercase 'e' exponent).", DiagnosticCode.InvalidNumberLiteral);
                     diagnostics.Add(new Diagnostic(
                         message,
                         DiagnosticSeverity.Error,
-                        new SourceSpan(startLine, startCol, line, col - 1))
+                        placeholder.Span)
                     {
                         Code = code,
                     });
-                    tokens.Add(Token.CreateNumber(0, start, i - start, startLine, startCol));
+                    tokens.Add(placeholder);
                 }
                 continue;
             }
@@ -255,21 +257,25 @@ public static class Lexer
                 while (i < source.Length && source[i] != '\'' && source[i] != '\n' && source[i] != '\r')
                 { i++; col++; }
                 var value = source[valueStart..i];
-                if (i < source.Length && source[i] == '\'')
+                var terminated = i < source.Length && source[i] == '\'';
+                if (terminated)
                 { i++; col++; } // skip closing quote
-                else
+                var literal = Token.CreateStringLiteral(value, start, i - start, startLine, startCol);
+                if (!terminated)
                 {
-                    // EndColumn is inclusive: `col` sits one past the last
-                    // consumed code unit (at least the opening quote).
+                    // The diagnostic covers exactly the consumed text — the token's span,
+                    // whose exclusive end is the lexer's live cursor column (at least the
+                    // opening quote was consumed; the literal ends before the line break
+                    // or the end of input, so it never crosses a line).
                     diagnostics.Add(new Diagnostic(
                         "Unterminated string literal.",
                         DiagnosticSeverity.Error,
-                        new SourceSpan(startLine, startCol, line, col - 1))
+                        literal.Span)
                     {
                         Code = DiagnosticCode.UnterminatedStringLiteral,
                     });
                 }
-                tokens.Add(Token.CreateStringLiteral(value, start, i - start, startLine, startCol));
+                tokens.Add(literal);
                 continue;
             }
 
@@ -326,11 +332,12 @@ public static class Lexer
                     { i++; col++; tokens.Add(Token.Create(TokenKind.BangEqual, singleStart, 2, singleLine, singleCol)); }
                     else
                     {
-                        tokens.Add(Token.Bad(singleStart, 1, singleLine, singleCol));
+                        var bang = Token.Bad(singleStart, 1, singleLine, singleCol);
+                        tokens.Add(bang);
                         diagnostics.Add(new Diagnostic(
                             "Unexpected character: '!'. Use 'not' for logical negation.",
                             DiagnosticSeverity.Error,
-                            new SourceSpan(singleLine, singleCol, singleLine, singleCol))
+                            bang.Span)
                         {
                             Code = DiagnosticCode.UnexpectedCharacter,
                         });
@@ -354,25 +361,27 @@ public static class Lexer
                         // need the same printable description as BMP format characters;
                         // visible scalars remain quoted over both UTF-16 code units.
                         i++; col++;
-                        tokens.Add(Token.Bad(singleStart, 2, singleLine, singleCol));
+                        var pair = Token.Bad(singleStart, 2, singleLine, singleCol);
+                        tokens.Add(pair);
                         var description = DescribeUnexpectedCharacter(
                             char.ConvertToUtf32(source, singleStart),
                             System.Globalization.CharUnicodeInfo.GetUnicodeCategory(source, singleStart));
                         diagnostics.Add(new Diagnostic(
                             $"Unexpected character: {description}.",
                             DiagnosticSeverity.Error,
-                            new SourceSpan(singleLine, singleCol, singleLine, singleCol + 1))
+                            pair.Span)
                         {
                             Code = DiagnosticCode.UnexpectedCharacter,
                         });
                         break;
                     }
 
-                    tokens.Add(Token.Bad(singleStart, 1, singleLine, singleCol));
+                    var unexpected = Token.Bad(singleStart, 1, singleLine, singleCol);
+                    tokens.Add(unexpected);
                     diagnostics.Add(new Diagnostic(
                         $"Unexpected character: {DescribeUnexpectedCharacter(c)}.",
                         DiagnosticSeverity.Error,
-                        new SourceSpan(singleLine, singleCol, singleLine, singleCol))
+                        unexpected.Span)
                     {
                         Code = DiagnosticCode.UnexpectedCharacter,
                     });

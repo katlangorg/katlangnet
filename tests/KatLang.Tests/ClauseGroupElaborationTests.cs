@@ -29,140 +29,140 @@ public class ClauseGroupElaborationTests
     private sealed record DiagnosticCase(
         string Id,
         string Source,
-        IReadOnlyList<(DiagnosticCode Code, string Message, SourceSpan Span)> Expected);
+        IReadOnlyList<(DiagnosticCode Code, string Message, SourceSpan? Span)> Expected);
 
     private static readonly IReadOnlyList<DiagnosticCase> DiagnosticCases =
     [
         new("dupPattern.literal",
             "F(1) = 100\nF(1) = 200\nF(1)",
-            [(DiagnosticCode.DuplicateBranchPattern, DuplicateBranchF, new SourceSpan(2, 1, 2, 10))]),
+            [(DiagnosticCode.DuplicateBranchPattern, DuplicateBranchF, new SourceSpan(2, 1, 2, 11))]),
 
         new("dupPattern.alphaEquivalentBinders",
             "Equal(x, x) = 1\nEqual(a, a) = 0\nEqual(1, 1)",
-            [(DiagnosticCode.DuplicateBranchPattern, "Duplicate branch pattern for conditional algorithm 'Equal'.", new SourceSpan(2, 1, 2, 15))]),
+            [(DiagnosticCode.DuplicateBranchPattern, "Duplicate branch pattern for conditional algorithm 'Equal'.", new SourceSpan(2, 1, 2, 16))]),
 
         new("dupPattern.severalInWrittenOrder",
             "F(0) = 0\nF(1) = 1\nF(2) = 2\nF(1) = 11\nF(0) = 10\nF(3)",
             [
-                (DiagnosticCode.DuplicateBranchPattern, DuplicateBranchF, new SourceSpan(4, 1, 4, 9)),
-                (DiagnosticCode.DuplicateBranchPattern, DuplicateBranchF, new SourceSpan(5, 1, 5, 9)),
+                (DiagnosticCode.DuplicateBranchPattern, DuplicateBranchF, new SourceSpan(4, 1, 4, 10)),
+                (DiagnosticCode.DuplicateBranchPattern, DuplicateBranchF, new SourceSpan(5, 1, 5, 10)),
             ]),
 
         // The mismatch is anchored on the NAME token of the offending clause; after a
         // `public` modifier that token sits at column 8.
         new("visibility.plainThenPublic",
             "F(0) = 0\npublic F(x) = 1\nF(1)",
-            [(DiagnosticCode.ClauseVisibilityMismatch, VisibilityMismatchF, new SourceSpan(2, 8, 2, 8))]),
+            [(DiagnosticCode.ClauseVisibilityMismatch, VisibilityMismatchF, new SourceSpan(2, 8, 2, 9))]),
 
         new("visibility.publicThenPlain",
             "public F(0) = 0\nF(x) = 1\nF(1)",
-            [(DiagnosticCode.ClauseVisibilityMismatch, VisibilityMismatchF, new SourceSpan(2, 1, 2, 1))]),
+            [(DiagnosticCode.ClauseVisibilityMismatch, VisibilityMismatchF, new SourceSpan(2, 1, 2, 2))]),
 
         // Only the clause disagreeing with the FIRST clause's visibility is reported.
         new("visibility.thirdClauseAgreesWithFirst",
             "F(0) = 0\npublic F(1) = 1\nF(x) = 2\nF(1)",
-            [(DiagnosticCode.ClauseVisibilityMismatch, VisibilityMismatchF, new SourceSpan(2, 8, 2, 8))]),
+            [(DiagnosticCode.ClauseVisibilityMismatch, VisibilityMismatchF, new SourceSpan(2, 8, 2, 9))]),
 
         new("arity.patternMismatch",
             "F(0) = 0\nF(x, y) = 1\nF(1)",
-            [(DiagnosticCode.BranchArityMismatch, ArityMismatch("F", 2, 2), new SourceSpan(2, 1, 2, 11))]),
+            [(DiagnosticCode.BranchArityMismatch, ArityMismatch("F", 2, 2), new SourceSpan(2, 1, 2, 12))]),
 
         new("arity.outputMismatch",
             "F(0) = 0\nF(x) = 1, 2\nF(1)",
-            [(DiagnosticCode.BranchOutputArityMismatch, OutputArityMismatch("F", 2, 2), new SourceSpan(2, 1, 2, 11))]),
+            [(DiagnosticCode.BranchOutputArityMismatch, OutputArityMismatch("F", 2, 2), new SourceSpan(2, 1, 2, 12))]),
 
         // Pattern arity is validated before output arity, both on the same clause span.
         new("arity.bothMismatchPatternFirst",
             "F(0) = 0\nF(x, y) = 1, 2\nF(1)",
             [
-                (DiagnosticCode.BranchArityMismatch, ArityMismatch("F", 2, 2), new SourceSpan(2, 1, 2, 14)),
-                (DiagnosticCode.BranchOutputArityMismatch, OutputArityMismatch("F", 2, 2), new SourceSpan(2, 1, 2, 14)),
+                (DiagnosticCode.BranchArityMismatch, ArityMismatch("F", 2, 2), new SourceSpan(2, 1, 2, 15)),
+                (DiagnosticCode.BranchOutputArityMismatch, OutputArityMismatch("F", 2, 2), new SourceSpan(2, 1, 2, 15)),
             ]),
 
         new("arity.laterBranchNumbering",
             "F(0) = 0\nF(1) = 1\nF(a, b) = 2\nF(1)",
-            [(DiagnosticCode.BranchArityMismatch, ArityMismatch("F", 3, 2), new SourceSpan(3, 1, 3, 11))]),
+            [(DiagnosticCode.BranchArityMismatch, ArityMismatch("F", 3, 2), new SourceSpan(3, 1, 3, 12))]),
 
         new("collecting.inConditionalFamily",
             "F(0) = 0\nF(*xs) = 1\nF(1)",
-            [(DiagnosticCode.InvalidCollectingBinding, "Collecting bindings are only supported in ordinary explicit parameter lists for 'F'.", new SourceSpan(2, 1, 2, 10))]),
+            [(DiagnosticCode.InvalidCollectingBinding, "Collecting bindings are only supported in ordinary explicit parameter lists for 'F'.", new SourceSpan(2, 1, 2, 11))]),
 
         new("grace.inConditionalBody",
             "F(0) = 0\nF(x) = ~y + x\nF(1)",
-            [(DiagnosticCode.InvalidGraceMarker, "Grace is not allowed in conditional branch bodies for 'F'.", new SourceSpan(2, 8, 2, 9))]),
+            [(DiagnosticCode.InvalidGraceMarker, "Grace is not allowed in conditional branch bodies for 'F'.", new SourceSpan(2, 8, 2, 10))]),
 
         // In-loop duplicate detection precedes the post-loop family validation, so the
         // duplicate is reported before the arity mismatch even though both belong to F.
         new("recovery.duplicateThenArity",
             "F(0) = 0\nF(0) = 1\nF(x, y) = 2\nF(1)",
             [
-                (DiagnosticCode.DuplicateBranchPattern, DuplicateBranchF, new SourceSpan(2, 1, 2, 8)),
-                (DiagnosticCode.BranchArityMismatch, ArityMismatch("F", 3, 2), new SourceSpan(3, 1, 3, 11)),
+                (DiagnosticCode.DuplicateBranchPattern, DuplicateBranchF, new SourceSpan(2, 1, 2, 9)),
+                (DiagnosticCode.BranchArityMismatch, ArityMismatch("F", 3, 2), new SourceSpan(3, 1, 3, 12)),
             ]),
 
         // ---- "does a clause family named A exist?" — every historical consumer ----
         // A plain property after a family: the property branch consults the family set.
         new("duplicate.familyThenPlainProperty",
             "A(0) = 1\nA(x) = 2\nA = 5\nA(1)",
-            [(DiagnosticCode.DuplicateProperty, DuplicatePropertyA, new SourceSpan(3, 1, 3, 1))]),
+            [(DiagnosticCode.DuplicateProperty, DuplicatePropertyA, new SourceSpan(3, 1, 3, 2))]),
 
         // A public property after a family: the public branch consults the family set.
         new("duplicate.familyThenPublicProperty",
             "A(0) = 1\nA(x) = 2\npublic A = 5\nA(1)",
-            [(DiagnosticCode.DuplicateProperty, DuplicatePropertyA, new SourceSpan(3, 8, 3, 8))]),
+            [(DiagnosticCode.DuplicateProperty, DuplicatePropertyA, new SourceSpan(3, 8, 3, 9))]),
 
         // A deconstruction target after a family: the binding-pattern parser consults it.
         new("duplicate.familyThenDeconstruction",
             "A(0) = 1\nA(x) = 2\nA, B = (1, 2)\nA(1)",
-            [(DiagnosticCode.DuplicateProperty, DuplicatePropertyA, new SourceSpan(3, 1, 3, 1))]),
+            [(DiagnosticCode.DuplicateProperty, DuplicatePropertyA, new SourceSpan(3, 1, 3, 2))]),
 
         // The reverse direction consults the declared-property set: every clause of the
         // family collides with the earlier plain/public/deconstruction declaration.
         new("duplicate.plainPropertyThenFamily",
             "A = 5\nA(0) = 1\nA(x) = 2\nA(1)",
             [
-                (DiagnosticCode.DuplicateProperty, DuplicatePropertyA, new SourceSpan(2, 1, 2, 1)),
-                (DiagnosticCode.DuplicateProperty, DuplicatePropertyA, new SourceSpan(3, 1, 3, 1)),
+                (DiagnosticCode.DuplicateProperty, DuplicatePropertyA, new SourceSpan(2, 1, 2, 2)),
+                (DiagnosticCode.DuplicateProperty, DuplicatePropertyA, new SourceSpan(3, 1, 3, 2)),
             ]),
 
         new("duplicate.publicPropertyThenFamily",
             "public A = 5\nA(0) = 1\nA(x) = 2\nA(1)",
             [
-                (DiagnosticCode.DuplicateProperty, DuplicatePropertyA, new SourceSpan(2, 1, 2, 1)),
-                (DiagnosticCode.DuplicateProperty, DuplicatePropertyA, new SourceSpan(3, 1, 3, 1)),
+                (DiagnosticCode.DuplicateProperty, DuplicatePropertyA, new SourceSpan(2, 1, 2, 2)),
+                (DiagnosticCode.DuplicateProperty, DuplicatePropertyA, new SourceSpan(3, 1, 3, 2)),
             ]),
 
         new("duplicate.deconstructionThenFamily",
             "A, B = (1, 2)\nA(0) = 1\nA(x) = 2\nA(1)",
             [
-                (DiagnosticCode.DuplicateProperty, DuplicatePropertyA, new SourceSpan(2, 1, 2, 1)),
-                (DiagnosticCode.DuplicateProperty, DuplicatePropertyA, new SourceSpan(3, 1, 3, 1)),
+                (DiagnosticCode.DuplicateProperty, DuplicatePropertyA, new SourceSpan(2, 1, 2, 2)),
+                (DiagnosticCode.DuplicateProperty, DuplicatePropertyA, new SourceSpan(3, 1, 3, 2)),
             ]),
 
         // ---- public/plain property spellings share one mechanic ----
         new("property.plainDuplicate",
             "A = 5\nA = 6\nA",
-            [(DiagnosticCode.DuplicateProperty, DuplicatePropertyA, new SourceSpan(2, 1, 2, 1))]),
+            [(DiagnosticCode.DuplicateProperty, DuplicatePropertyA, new SourceSpan(2, 1, 2, 2))]),
 
         new("property.publicDuplicate",
             "public A = 5\npublic A = 6\nA",
-            [(DiagnosticCode.DuplicateProperty, DuplicatePropertyA, new SourceSpan(2, 8, 2, 8))]),
+            [(DiagnosticCode.DuplicateProperty, DuplicatePropertyA, new SourceSpan(2, 8, 2, 9))]),
 
         new("property.plainThenPublicDuplicate",
             "A = 5\npublic A = 6\nA",
-            [(DiagnosticCode.DuplicateProperty, DuplicatePropertyA, new SourceSpan(2, 8, 2, 8))]),
+            [(DiagnosticCode.DuplicateProperty, DuplicatePropertyA, new SourceSpan(2, 8, 2, 9))]),
 
         new("property.publicThenPlainDuplicate",
             "public A = 5\nA = 6\nA",
-            [(DiagnosticCode.DuplicateProperty, DuplicatePropertyA, new SourceSpan(2, 1, 2, 1))]),
+            [(DiagnosticCode.DuplicateProperty, DuplicatePropertyA, new SourceSpan(2, 1, 2, 2))]),
 
         new("property.plainInParentheses",
             "(A = 1, 2)",
-            [(DiagnosticCode.DeclarationInParentheses, "A property declaration is not allowed inside parentheses. Use a `{ ... }` block for a scoped algorithm.", new SourceSpan(1, 2, 1, 2))]),
+            [(DiagnosticCode.DeclarationInParentheses, "A property declaration is not allowed inside parentheses. Use a `{ ... }` block for a scoped algorithm.", new SourceSpan(1, 2, 1, 3))]),
 
         new("property.publicInParentheses",
             "(public A = 1, 2)",
-            [(DiagnosticCode.DeclarationInParentheses, "A property declaration is not allowed inside parentheses. Use a `{ ... }` block for a scoped algorithm.", new SourceSpan(1, 9, 1, 9))]),
+            [(DiagnosticCode.DeclarationInParentheses, "A property declaration is not allowed inside parentheses. Use a `{ ... }` block for a scoped algorithm.", new SourceSpan(1, 9, 1, 10))]),
 
         // ---- family order is FIRST-SEEN source order, never alphabetical ----
         // Families Z, A, M are declared in that order; M's duplicate is caught in the
@@ -170,9 +170,9 @@ public class ClauseGroupElaborationTests
         new("order.nonAlphabeticFamilies",
             "Z(0) = 0\nZ(x, y) = 1\nA(0) = 0\nA(1) = 1, 2\nM(0) = 0\nM(0) = 1\nZ(1), A(1), M(0)",
             [
-                (DiagnosticCode.DuplicateBranchPattern, "Duplicate branch pattern for conditional algorithm 'M'.", new SourceSpan(6, 1, 6, 8)),
-                (DiagnosticCode.BranchArityMismatch, ArityMismatch("Z", 2, 2), new SourceSpan(2, 1, 2, 11)),
-                (DiagnosticCode.BranchOutputArityMismatch, OutputArityMismatch("A", 2, 2), new SourceSpan(4, 1, 4, 11)),
+                (DiagnosticCode.DuplicateBranchPattern, "Duplicate branch pattern for conditional algorithm 'M'.", new SourceSpan(6, 1, 6, 9)),
+                (DiagnosticCode.BranchArityMismatch, ArityMismatch("Z", 2, 2), new SourceSpan(2, 1, 2, 12)),
+                (DiagnosticCode.BranchOutputArityMismatch, OutputArityMismatch("A", 2, 2), new SourceSpan(4, 1, 4, 12)),
             ]),
 
         // Interleaving clauses of different families does not change family order:
@@ -180,9 +180,9 @@ public class ClauseGroupElaborationTests
         new("order.interleavedFamilies",
             "Z(0) = 0\nA(0) = 0\nZ(x, y) = 1\nM(0) = 0\nA(1) = 1, 2\nM(0) = 1\nZ(1)",
             [
-                (DiagnosticCode.DuplicateBranchPattern, "Duplicate branch pattern for conditional algorithm 'M'.", new SourceSpan(6, 1, 6, 8)),
-                (DiagnosticCode.BranchArityMismatch, ArityMismatch("Z", 2, 2), new SourceSpan(3, 1, 3, 11)),
-                (DiagnosticCode.BranchOutputArityMismatch, OutputArityMismatch("A", 2, 2), new SourceSpan(5, 1, 5, 11)),
+                (DiagnosticCode.DuplicateBranchPattern, "Duplicate branch pattern for conditional algorithm 'M'.", new SourceSpan(6, 1, 6, 9)),
+                (DiagnosticCode.BranchArityMismatch, ArityMismatch("Z", 2, 2), new SourceSpan(3, 1, 3, 12)),
+                (DiagnosticCode.BranchOutputArityMismatch, OutputArityMismatch("A", 2, 2), new SourceSpan(5, 1, 5, 12)),
             ]),
     ];
 
@@ -213,7 +213,7 @@ public class ClauseGroupElaborationTests
     private static (string Name, bool IsPublic, string DeclarationSpans, int? BranchCount) Describe(Property property)
         => (property.Name,
             property.IsPublic,
-            string.Join(";", property.DeclarationSpans.Select(static span => $"{span.StartLineNumber}:{span.StartColumn}")),
+            string.Join(";", property.DeclarationSpans.Select(static span => $"{span.Start.Line}:{span.Start.Column}")),
             property.Value is Algorithm.Conditional conditional ? conditional.Branches.Count : null);
 
     [Fact]
@@ -282,7 +282,7 @@ public class ClauseGroupElaborationTests
         var syntax = Parser.ParseSyntax(source);
 
         Assert.Equal(
-            [(DiagnosticCode.InvalidGraceMarker, "Grace is not allowed in conditional branch bodies for 'Z'.", new SourceSpan(1, 8, 1, 9))],
+            [(DiagnosticCode.InvalidGraceMarker, "Grace is not allowed in conditional branch bodies for 'Z'.", new SourceSpan(1, 8, 1, 10))],
             syntax.Diagnostics.Select(d => (d.Code, d.Message, d.Span)).ToList());
         Assert.Equal(
             [
@@ -327,7 +327,7 @@ public class ClauseGroupElaborationTests
         var syntax = Parser.ParseSyntax(source);
 
         Assert.Equal(
-            [(DiagnosticCode.DuplicateBranchPattern, DuplicateBranchF, new SourceSpan(3, 1, 3, 8))],
+            [(DiagnosticCode.DuplicateBranchPattern, DuplicateBranchF, new SourceSpan(3, 1, 3, 9))],
             syntax.Diagnostics.Select(d => (d.Code, d.Message, d.Span)).ToList());
 
         var root = SourceProvenance.ParseAllowingDiagnostics(source).Root;

@@ -172,29 +172,33 @@ public sealed class SemanticModel
     public IReadOnlyList<ScopeVisibility> ScopeVisibilities { get; }
 
     /// <summary>
-    /// Finds the innermost scope region containing the supplied position, falling
-    /// back to the root scope for positions outside every nested region.
+    /// Finds the innermost scope region containing the supplied position (a region is a
+    /// half-open source hull, so a position at the hull's exclusive end is outside it),
+    /// falling back to the root scope for positions outside every nested region.
     /// </summary>
-    public ScopeVisibility FindScopeAt(int lineNumber, int column)
+    public ScopeVisibility FindScopeAt(SourcePosition position)
     {
         ScopeVisibility? root = null;
         ScopeVisibility? best = null;
-
+        SourceSpan? bestHull = null;
         foreach (var scope in ScopeVisibilities)
         {
-            if (scope.Span is null)
+            if (scope.Span is not { } hull)
             {
                 root ??= scope;
                 continue;
             }
 
-            if (!Contains(scope.Span, lineNumber, column))
+            if (!hull.Contains(position))
                 continue;
 
             if (best is null
                 || scope.NestingDepth > best.NestingDepth
-                || (scope.NestingDepth == best.NestingDepth && IsInnerSpan(scope.Span, best.Span!)))
+                || (scope.NestingDepth == best.NestingDepth && bestHull is { } current && IsInnerSpan(hull, current)))
+            {
                 best = scope;
+                bestHull = hull;
+            }
         }
 
         return best ?? root ?? new ScopeVisibility(Span: null, Symbols: []);
@@ -206,9 +210,9 @@ public sealed class SemanticModel
     /// Dot-only intrinsics (<see cref="PreludeCatalog.DotIntrinsicSymbols"/>) are
     /// not bare-name-visible and are deliberately excluded.
     /// </summary>
-    public IReadOnlyList<VisibleSymbol> GetVisibleSymbolsAt(int lineNumber, int column)
+    public IReadOnlyList<VisibleSymbol> GetVisibleSymbolsAt(SourcePosition position)
     {
-        var scope = FindScopeAt(lineNumber, column);
+        var scope = FindScopeAt(position);
         var result = new List<VisibleSymbol>(scope.Symbols.Count + PreludeCatalog.Symbols.Count);
         result.AddRange(scope.Symbols);
 
@@ -232,23 +236,17 @@ public sealed class SemanticModel
     /// </summary>
     private static bool IsInnerSpan(SourceSpan candidate, SourceSpan current)
     {
-        var byStart = candidate.StartLineNumber != current.StartLineNumber
-            ? candidate.StartLineNumber.CompareTo(current.StartLineNumber)
-            : candidate.StartColumn.CompareTo(current.StartColumn);
-        if (byStart != 0)
-            return byStart > 0;
-
-        var byEnd = candidate.EndLineNumber != current.EndLineNumber
-            ? candidate.EndLineNumber.CompareTo(current.EndLineNumber)
-            : candidate.EndColumn.CompareTo(current.EndColumn);
-        return byEnd < 0;
+        var byStart = candidate.Start.CompareTo(current.Start);
+        return byStart != 0 ? byStart > 0 : candidate.End < current.End;
     }
 
     /// <summary>
-    /// Finds the first identifier resolution whose span contains the supplied position.
+    /// Finds the first identifier resolution whose site contains the supplied position
+    /// (half-open: the site's first column is inside, the column just past its last
+    /// character is not).
     /// </summary>
-    public IdentifierResolution? FindResolutionAt(int lineNumber, int column)
-        => IdentifierResolutions.FirstOrDefault(resolution => Contains(resolution.Occurrence.Span, lineNumber, column));
+    public IdentifierResolution? FindResolutionAt(SourcePosition position)
+        => IdentifierResolutions.FirstOrDefault(resolution => resolution.Occurrence.Span.Contains(position));
 
     /// <summary>
     /// Finds all identifier resolutions with the supplied name.
@@ -266,8 +264,8 @@ public sealed class SemanticModel
     /// Finds the first property-centered semantic object whose identifier site
     /// contains the supplied position.
     /// </summary>
-    public PropertyInfo? FindPropertyAt(int lineNumber, int column)
-        => FindResolutionAt(lineNumber, column)?.ResolvedProperty;
+    public PropertyInfo? FindPropertyAt(SourcePosition position)
+        => FindResolutionAt(position)?.ResolvedProperty;
 
     /// <summary>
     /// Finds the property-centered semantic object associated with a specific
@@ -287,18 +285,4 @@ public sealed class SemanticModel
         => _propertiesByName.TryGetValue(name, out var properties)
             ? properties
             : [];
-
-    private static bool Contains(SourceSpan span, int lineNumber, int column)
-    {
-        if (lineNumber < span.StartLineNumber || lineNumber > span.EndLineNumber)
-            return false;
-
-        if (lineNumber == span.StartLineNumber && column < span.StartColumn)
-            return false;
-
-        if (lineNumber == span.EndLineNumber && column > span.EndColumn)
-            return false;
-
-        return true;
-    }
 }

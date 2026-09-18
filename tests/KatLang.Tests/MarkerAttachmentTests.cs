@@ -141,7 +141,7 @@ public class MarkerAttachmentTests
         // never the multiplication `A * B`.
         Assert.Equal("1\n2\n5", Display("A = (1, 2)\nA*\nB = 5\nB"));
         var detached = AssertRejected("A = (1, 2)\nA *\nB = 5\nB", DiagnosticCode.InvalidSpreadMarker, SpreadAttachmentFragment);
-        Assert.Equal(new SourceSpan(2, 1, 2, 3), detached.Span);
+        Assert.Equal(new SourceSpan(2, 1, 2, 4), detached.Span);
     }
 
     // ── Postfix spread: attached forms valid, detached forms rejected ───────
@@ -165,17 +165,17 @@ public class MarkerAttachmentTests
         => AssertValid(source, expected);
 
     [Theory]
-    [InlineData("F(*items) = items\nvalues = (1, 2)\nF(values *)", 3, 3, 3, 10)]
-    [InlineData("F(*items) = items\nvalues = (1, 2)\nother = 3\nF(values *, other)", 4, 3, 4, 10)]
-    [InlineData("values = (1, 2)\n(values *)", 2, 2, 2, 9)]
-    [InlineData("values = (1, 2)\n[values *]", 2, 2, 2, 9)]
-    [InlineData("values = (1, 2)\n{ values * }", 2, 3, 2, 10)]
-    [InlineData("values = (1, 2)\nvalues *,\n3", 2, 1, 2, 8)]
-    [InlineData("values = (1, 2)\nvalues *", 2, 1, 2, 8)]
-    [InlineData("values = (1, 2)\nvalues *\nB = 5\nB", 2, 1, 2, 8)]
-    [InlineData("values = (1, 2)\nX = (values *)\nX", 2, 6, 2, 13)]
-    [InlineData("values = (1, 2)\nvalues* *", 2, 1, 2, 9)]
-    [InlineData("F(*items) = items\nF(5 *)", 2, 3, 2, 5)]
+    [InlineData("F(*items) = items\nvalues = (1, 2)\nF(values *)", 3, 3, 3, 11)]
+    [InlineData("F(*items) = items\nvalues = (1, 2)\nother = 3\nF(values *, other)", 4, 3, 4, 11)]
+    [InlineData("values = (1, 2)\n(values *)", 2, 2, 2, 10)]
+    [InlineData("values = (1, 2)\n[values *]", 2, 2, 2, 10)]
+    [InlineData("values = (1, 2)\n{ values * }", 2, 3, 2, 11)]
+    [InlineData("values = (1, 2)\nvalues *,\n3", 2, 1, 2, 9)]
+    [InlineData("values = (1, 2)\nvalues *", 2, 1, 2, 9)]
+    [InlineData("values = (1, 2)\nvalues *\nB = 5\nB", 2, 1, 2, 9)]
+    [InlineData("values = (1, 2)\nX = (values *)\nX", 2, 6, 2, 14)]
+    [InlineData("values = (1, 2)\nvalues* *", 2, 1, 2, 10)]
+    [InlineData("F(*items) = items\nF(5 *)", 2, 3, 2, 6)]
     public void DetachedPostfixSpread_IsRejected(string source, int startLine, int startColumn, int endLine, int endColumn)
     {
         var error = AssertRejected(source, DiagnosticCode.InvalidSpreadMarker, SpreadAttachmentFragment);
@@ -203,12 +203,12 @@ public class MarkerAttachmentTests
         => AssertValid(source, expected);
 
     [Theory]
-    [InlineData("F(* x) = x\nF(1, 2)", 1, 3, 1, 5)]
-    [InlineData("F(a, * x, z) = x\nF(1, 2, 3, 4)", 1, 6, 1, 8)]
-    [InlineData("F((a, * x, z)) = x\nF((1, 2, 3, 4))", 1, 7, 1, 9)]
-    [InlineData("* items = 1, 2\nitems", 1, 1, 1, 7)]
-    [InlineData("a, * rest = 1, 2, 3\nrest", 1, 4, 1, 9)]
-    [InlineData("public F(* x) = x\nF(1)", 1, 10, 1, 12)]
+    [InlineData("F(* x) = x\nF(1, 2)", 1, 3, 1, 6)]
+    [InlineData("F(a, * x, z) = x\nF(1, 2, 3, 4)", 1, 6, 1, 9)]
+    [InlineData("F((a, * x, z)) = x\nF((1, 2, 3, 4))", 1, 7, 1, 10)]
+    [InlineData("* items = 1, 2\nitems", 1, 1, 1, 8)]
+    [InlineData("a, * rest = 1, 2, 3\nrest", 1, 4, 1, 10)]
+    [InlineData("public F(* x) = x\nF(1)", 1, 10, 1, 13)]
     public void DetachedCollectMarker_IsRejected_OnEveryBindingSurface(string source, int startLine, int startColumn, int endLine, int endColumn)
     {
         // Explicit parameter lists, mixed prefix/collecting/suffix lists,
@@ -246,14 +246,14 @@ public class MarkerAttachmentTests
         => AssertValid(source, expected);
 
     [Theory]
-    [InlineData("Divide = y / ~ x\nDivide(2, 10)", "x", 1, 14, 1, 16)]
-    [InlineData("Divide = y ~ / x\nDivide(2, 10)", "y", 1, 10, 1, 12)]
-    [InlineData("Divide = y / ~ ~x\nDivide(2, 10)", "x", 1, 14, 1, 17)]
-    [InlineData("Divide = y / ~x ~\nDivide(2, 10)", "x", 1, 14, 1, 17)]
-    [InlineData("K = {\n  a\n  ~ b\n}\nK(10, 20)", "b", 3, 3, 3, 5)]
-    [InlineData("K(a, t) = a ~ .t\nK(7, {a+1})", "a", 1, 11, 1, 13)]
-    [InlineData("K(a, t) = a ~.t\nK(7, {a+1})", "a", 1, 11, 1, 13)]
-    [InlineData("K(a, t) = a.~ t\nK(7, {a+1})", "t", 1, 13, 1, 15)]
+    [InlineData("Divide = y / ~ x\nDivide(2, 10)", "x", 1, 14, 1, 17)]
+    [InlineData("Divide = y ~ / x\nDivide(2, 10)", "y", 1, 10, 1, 13)]
+    [InlineData("Divide = y / ~ ~x\nDivide(2, 10)", "x", 1, 14, 1, 18)]
+    [InlineData("Divide = y / ~x ~\nDivide(2, 10)", "x", 1, 14, 1, 18)]
+    [InlineData("K = {\n  a\n  ~ b\n}\nK(10, 20)", "b", 3, 3, 3, 6)]
+    [InlineData("K(a, t) = a ~ .t\nK(7, {a+1})", "a", 1, 11, 1, 14)]
+    [InlineData("K(a, t) = a ~.t\nK(7, {a+1})", "a", 1, 11, 1, 14)]
+    [InlineData("K(a, t) = a.~ t\nK(7, {a+1})", "t", 1, 13, 1, 16)]
     public void DetachedGrace_IsRejected(string source, string name, int startLine, int startColumn, int endLine, int endColumn)
     {
         var error = AssertRejected(source, DiagnosticCode.InvalidGraceMarker, GraceAttachmentFragment);

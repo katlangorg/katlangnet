@@ -214,7 +214,7 @@ public class WideDeconstructionScalabilityTests(ITestOutputHelper output)
             duplicates,
             d => Assert.Contains("Property 'a'", d.Message, StringComparison.Ordinal),
             d => Assert.Contains("Property 'b'", d.Message, StringComparison.Ordinal));
-        Assert.True(duplicates[0].Span.StartColumn < duplicates[1].Span.StartColumn);
+        Assert.True(Assert.NotNull(duplicates[0].Span).Start.Column < Assert.NotNull(duplicates[1].Span).Start.Column);
     }
 
     [Fact]
@@ -236,7 +236,7 @@ public class WideDeconstructionScalabilityTests(ITestOutputHelper output)
 
         var lines = result.Diagnostics
             .Where(d => d.Message.Contains("already defined", StringComparison.Ordinal))
-            .Select(d => d.Span.StartLineNumber)
+            .Select(d => Assert.NotNull(d.Span).Start.Line)
             .ToList();
 
         Assert.Equal([4, 5, 6], lines);
@@ -451,7 +451,7 @@ public class WideDeconstructionScalabilityTests(ITestOutputHelper output)
 
         Assert.Equal(3, unobserved.Count);
         Assert.All(unobserved, d => Assert.Equal(DiagnosticCode.LoadElaborationUnavailable, d.Code));
-        Assert.Equal([1, 2, 6], unobserved.Select(d => d.Span.StartLineNumber));
+        Assert.Equal([1, 2, 6], unobserved.Select(d => Assert.NotNull(d.Span).Start.Line));
         Assert.Equal(
             unobserved.Select(d => (d.Message, d.Code, d.Severity, d.Span)),
             observed.Select(d => (d.Message, d.Code, d.Severity, d.Span)));

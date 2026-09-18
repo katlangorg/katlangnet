@@ -193,17 +193,18 @@ internal static class EditorRelations
                 continue;
 
             var span = resolution.Occurrence.Span;
-            if (span.StartLineNumber != span.EndLineNumber)
+            if (span.Start.Line != span.End.Line)
                 return null;
 
-            var start = EditorCursor.OffsetAtLineColumn(source, span.StartLineNumber, span.StartColumn);
-            var endInclusive = EditorCursor.OffsetAtLineColumn(source, span.EndLineNumber, span.EndColumn);
-            if (start < 0 || endInclusive < 0 || endInclusive < start || endInclusive >= source.Length)
+            // Half-open span: the edit runs from the start offset to the exclusive end offset.
+            var start = EditorCursor.OffsetAtLineColumn(source, span.Start.Line, span.Start.Column);
+            var end = EditorCursor.OffsetAtLineColumn(source, span.End.Line, span.End.Column);
+            if (start < 0 || end < 0 || end < start || end > source.Length)
                 return null;
-            if (!string.Equals(source[start..(endInclusive + 1)], target, StringComparison.Ordinal))
+            if (!string.Equals(source[start..end], target, StringComparison.Ordinal))
                 return null;
 
-            edits.Add((start, endInclusive + 1));
+            edits.Add((start, end));
         }
 
         if (edits.Count == 0)

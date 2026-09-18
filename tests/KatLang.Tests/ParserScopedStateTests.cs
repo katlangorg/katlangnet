@@ -94,7 +94,7 @@ public class ParserScopedStateTests
         => result.Diagnostics.Any(d => d.Code == DiagnosticCode.NestingTooDeep);
 
     private static string Describe(Diagnostic diagnostic)
-        => $"[{diagnostic.Code}] {diagnostic.Span.StartLineNumber}:{diagnostic.Span.StartColumn} {diagnostic.Message}";
+        => $"[{diagnostic.Code}] {Assert.NotNull(diagnostic.Span).Start.Line}:{Assert.NotNull(diagnostic.Span).Start.Column} {diagnostic.Message}";
 
     /// <summary>
     /// The deepest level count in <c>[1, 400]</c> at which <paramref name="sourceAt"/> parses
@@ -177,8 +177,8 @@ public class ParserScopedStateTests
         var strays = recovered.Diagnostics.Where(d => d.Message.Contains("at the top level", StringComparison.Ordinal)).ToList();
         Assert.Equal(2, strays.Count);
         var strayParenLine = recoveredRow.Count(c => c == '\n') + 2;
-        Assert.Contains(strays, d => d.Message.StartsWith("Unexpected ')' at the top level", StringComparison.Ordinal) && d.Span.StartLineNumber == strayParenLine);
-        Assert.Contains(strays, d => d.Message.StartsWith("Unexpected '}' at the top level", StringComparison.Ordinal) && d.Span.StartLineNumber == strayParenLine + 1);
+        Assert.Contains(strays, d => d.Message.StartsWith("Unexpected ')' at the top level", StringComparison.Ordinal) && Assert.NotNull(d.Span).Start.Line == strayParenLine);
+        Assert.Contains(strays, d => d.Message.StartsWith("Unexpected '}' at the top level", StringComparison.Ordinal) && Assert.NotNull(d.Span).Start.Line == strayParenLine + 1);
         Assert.Equal(
             control.Diagnostics.Select(Describe),
             recovered.Diagnostics.Except(strays).Select(Describe));

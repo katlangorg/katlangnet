@@ -312,7 +312,7 @@ public class CommentSyntaxTests
         var (_, diagnostics) = Lexer.Tokenize("# one\n# two\n!");
         var diagnostic = Assert.Single(diagnostics);
         Assert.Contains("Unexpected character: '!'", diagnostic.Message);
-        Assert.Equal(new SourceSpan(3, 1, 3, 1), diagnostic.Span);
+        Assert.Equal(new SourceSpan(3, 1, 3, 2), diagnostic.Span);
     }
 
     [Fact]
@@ -321,7 +321,7 @@ public class CommentSyntaxTests
         var parse = Parser.ParseSyntax("1 # first\n!\n2 # recovered");
 
         Assert.True(parse.HasErrors);
-        Assert.Contains(parse.Diagnostics, diagnostic => diagnostic.Span == new SourceSpan(2, 1, 2, 1));
+        Assert.Contains(parse.Diagnostics, diagnostic => diagnostic.Span == new SourceSpan(2, 1, 2, 2));
         Assert.Equal(
             new Decimal128[] { 1, 2 },
             parse.Root.Output.OfType<Expr.Num>().Select(number => number.Value));

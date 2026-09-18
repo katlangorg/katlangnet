@@ -85,7 +85,7 @@ public class KatLangErrorCodeTests
                     new Diagnostic(
                         "load: failed to fetch 'https://katlang.org/m.kat': 404",
                         DiagnosticSeverity.Error,
-                        new SourceSpan(3, 5, 3, 40))
+                        new SourceSpan(3, 5, 3, 41))
                     {
                         Code = DiagnosticCode.LoadFetchFailed,
                     },
@@ -150,7 +150,7 @@ public class KatLangErrorCodeTests
     [Fact]
     public void FromEvalError_PreservesTheOriginalStructuredError_ByReference()
     {
-        var direct = new EvalError.DivByZero { Span = new SourceSpan(3, 2, 3, 5) };
+        var direct = new EvalError.DivByZero { Span = new SourceSpan(3, 2, 3, 6) };
         Assert.Same(direct, KatLangError.FromEvalError(direct).Source);
 
         // Context wrappers are preserved whole: Source keeps the richer
@@ -197,7 +197,7 @@ public class KatLangErrorCodeTests
         // here mechanically.
         foreach (var diagnosticCode in Enum.GetValues<DiagnosticCode>())
         {
-            var diagnostic = new Diagnostic("m", DiagnosticSeverity.Error, new SourceSpan(1, 1, 1, 1))
+            var diagnostic = new Diagnostic("m", DiagnosticSeverity.Error, new SourceSpan(1, 1, 1, 2))
             {
                 Code = diagnosticCode,
             };
@@ -225,13 +225,13 @@ public class KatLangErrorCodeTests
         // projects to the explicit Unspecified state — including an undeclared
         // numeric value smuggled in by cast.
         var legacy = KatLangError.FromDiagnostic(
-            new Diagnostic("legacy", DiagnosticSeverity.Error, new SourceSpan(1, 1, 1, 1)));
+            new Diagnostic("legacy", DiagnosticSeverity.Error, new SourceSpan(1, 1, 1, 2)));
         Assert.Equal(KatLangErrorCode.Unspecified, legacy.Code);
         Assert.Null(legacy.Source);
         Assert.False(legacy.IsResourceLimit);
 
         var undeclared = KatLangError.FromDiagnostic(
-            new Diagnostic("cast", DiagnosticSeverity.Error, new SourceSpan(1, 1, 1, 1))
+            new Diagnostic("cast", DiagnosticSeverity.Error, new SourceSpan(1, 1, 1, 2))
             {
                 Code = (DiagnosticCode)9999,
             });
@@ -543,15 +543,15 @@ public class KatLangErrorCodeTests
         Assert.True(evalErrorCode!.GetMethod!.IsPublic);
         Assert.Null(evalErrorCode.SetMethod);
 
-        // Existing compatibility surface: the three-parameter positional
-        // constructor and three-component Deconstruct survive untouched.
+        // The three-parameter positional constructor and three-component Deconstruct: the
+        // span component is the NULLABLE value span (a diagnostic may be unpositioned).
         Assert.NotNull(typeof(Diagnostic).GetConstructor(
-            [typeof(string), typeof(DiagnosticSeverity), typeof(SourceSpan)]));
+            [typeof(string), typeof(DiagnosticSeverity), typeof(SourceSpan?)]));
         var deconstruct = typeof(Diagnostic).GetMethod(nameof(Diagnostic.Deconstruct))!;
         Assert.True(deconstruct.IsPublic);
         Assert.Equal(typeof(void), deconstruct.ReturnType);
         Assert.Equal(
-            [typeof(string).MakeByRefType(), typeof(DiagnosticSeverity).MakeByRefType(), typeof(SourceSpan).MakeByRefType()],
+            [typeof(string).MakeByRefType(), typeof(DiagnosticSeverity).MakeByRefType(), typeof(SourceSpan?).MakeByRefType()],
             deconstruct.GetParameters().Select(static parameter => parameter.ParameterType));
         Assert.All(deconstruct.GetParameters(), static parameter => Assert.True(parameter.IsOut));
 

@@ -378,13 +378,13 @@ public sealed record KatLang.DeconstructionBindingContext : KatLang.ErrorContext
   operator public static bool op_Inequality(KatLang.DeconstructionBindingContext? left, KatLang.DeconstructionBindingContext? right)
 
 public sealed record KatLang.Diagnostic : System.IEquatable<KatLang.Diagnostic>
-  ctor     public Diagnostic(string Message, KatLang.DiagnosticSeverity Severity, KatLang.SourceSpan Span)
+  ctor     public Diagnostic(string Message, KatLang.DiagnosticSeverity Severity, KatLang.SourceSpan? Span)
   property public KatLang.DiagnosticCode Code { get; init; }
   property public string Message { get; init; }
   property public KatLang.DiagnosticSeverity Severity { get; init; }
-  property public KatLang.SourceSpan Span { get; init; }
+  property public KatLang.SourceSpan? Span { get; init; }
   method   public KatLang.Diagnostic <Clone>$()
-  method   public void Deconstruct(out string Message, out KatLang.DiagnosticSeverity Severity, out KatLang.SourceSpan Span)
+  method   public void Deconstruct(out string Message, out KatLang.DiagnosticSeverity Severity, out KatLang.SourceSpan? Span)
   method   public bool Equals(KatLang.Diagnostic? other)
   method   public override bool Equals(object? obj)
   method   public override int GetHashCode()
@@ -1444,13 +1444,10 @@ public static class KatLang.KatLangEngine
 
 public sealed class KatLang.KatLangError
   property public KatLang.KatLangErrorCode Code { get; }
-  property public int? EndColumn { get; }
-  property public int? EndLine { get; }
   property public bool IsResourceLimit { get; }
   property public string Message { get; }
   property public KatLang.EvalError? Source { get; }
-  property public int? StartColumn { get; }
-  property public int? StartLine { get; }
+  property public KatLang.SourceSpan? Span { get; }
   method   public static KatLang.KatLangError FromDiagnostic(KatLang.Diagnostic diag)
   method   public static KatLang.KatLangError FromEvalError(KatLang.EvalError error)
   method   public override string ToString()
@@ -2212,12 +2209,12 @@ public sealed class KatLang.Semantics.SemanticModel
   property public System.Collections.Generic.IReadOnlyList<KatLang.Semantics.ScopeVisibility> ScopeVisibilities { get; }
   method   public System.Collections.Generic.IReadOnlyList<KatLang.Semantics.DeclarationOccurrence> FindDeclarations(string name)
   method   public System.Collections.Generic.IReadOnlyList<KatLang.Semantics.PropertyInfo> FindProperties(string name)
-  method   public KatLang.Semantics.PropertyInfo? FindPropertyAt(int lineNumber, int column)
+  method   public KatLang.Semantics.PropertyInfo? FindPropertyAt(KatLang.SourcePosition position)
   method   public KatLang.Semantics.PropertyInfo? FindPropertyByDeclaration(KatLang.Semantics.DeclarationOccurrence declaration)
-  method   public KatLang.Semantics.IdentifierResolution? FindResolutionAt(int lineNumber, int column)
+  method   public KatLang.Semantics.IdentifierResolution? FindResolutionAt(KatLang.SourcePosition position)
   method   public System.Collections.Generic.IReadOnlyList<KatLang.Semantics.IdentifierResolution> FindResolutions(string name)
-  method   public KatLang.Semantics.ScopeVisibility FindScopeAt(int lineNumber, int column)
-  method   public System.Collections.Generic.IReadOnlyList<KatLang.Semantics.VisibleSymbol> GetVisibleSymbolsAt(int lineNumber, int column)
+  method   public KatLang.Semantics.ScopeVisibility FindScopeAt(KatLang.SourcePosition position)
+  method   public System.Collections.Generic.IReadOnlyList<KatLang.Semantics.VisibleSymbol> GetVisibleSymbolsAt(KatLang.SourcePosition position)
 
 public static class KatLang.Semantics.SemanticModelBuilder
   method   public static KatLang.Semantics.SemanticModel Build(KatLang.Algorithm root)
@@ -2293,6 +2290,25 @@ public sealed record KatLang.SequenceValueParameterPattern : KatLang.ParameterPa
   operator public static bool op_Equality(KatLang.SequenceValueParameterPattern? left, KatLang.SequenceValueParameterPattern? right)
   operator public static bool op_Inequality(KatLang.SequenceValueParameterPattern? left, KatLang.SequenceValueParameterPattern? right)
 
+public readonly record struct KatLang.SourcePosition : System.IComparable<KatLang.SourcePosition>, System.IEquatable<KatLang.SourcePosition>
+  ctor     public SourcePosition(int line, int column)
+  property public int Column { get; }
+  property public int Line { get; }
+  method   public int CompareTo(KatLang.SourcePosition other)
+  method   public void Deconstruct(out int line, out int column)
+  method   public bool Equals(KatLang.SourcePosition other)
+  method   public override bool Equals(object obj)
+  method   public override int GetHashCode()
+  method   public static KatLang.SourcePosition Max(KatLang.SourcePosition left, KatLang.SourcePosition right)
+  method   public static KatLang.SourcePosition Min(KatLang.SourcePosition left, KatLang.SourcePosition right)
+  method   public override string ToString()
+  operator public static bool op_Equality(KatLang.SourcePosition left, KatLang.SourcePosition right)
+  operator public static bool op_GreaterThan(KatLang.SourcePosition left, KatLang.SourcePosition right)
+  operator public static bool op_GreaterThanOrEqual(KatLang.SourcePosition left, KatLang.SourcePosition right)
+  operator public static bool op_Inequality(KatLang.SourcePosition left, KatLang.SourcePosition right)
+  operator public static bool op_LessThan(KatLang.SourcePosition left, KatLang.SourcePosition right)
+  operator public static bool op_LessThanOrEqual(KatLang.SourcePosition left, KatLang.SourcePosition right)
+
 public sealed record KatLang.SourceProcessingLimits : System.IEquatable<KatLang.SourceProcessingLimits>
   const    public const long MaxSupportedAggregateSourceLength = 8388608
   const    public const int MaxSupportedModuleCount = 256
@@ -2312,20 +2328,21 @@ public sealed record KatLang.SourceProcessingLimits : System.IEquatable<KatLang.
   operator public static bool op_Equality(KatLang.SourceProcessingLimits? left, KatLang.SourceProcessingLimits? right)
   operator public static bool op_Inequality(KatLang.SourceProcessingLimits? left, KatLang.SourceProcessingLimits? right)
 
-public sealed record KatLang.SourceSpan : System.IEquatable<KatLang.SourceSpan>
-  ctor     public SourceSpan(int StartLineNumber, int StartColumn, int EndLineNumber, int EndColumn)
-  property public int EndColumn { get; init; }
-  property public int EndLineNumber { get; init; }
-  property public int StartColumn { get; init; }
-  property public int StartLineNumber { get; init; }
-  method   public KatLang.SourceSpan <Clone>$()
-  method   public void Deconstruct(out int StartLineNumber, out int StartColumn, out int EndLineNumber, out int EndColumn)
-  method   public bool Equals(KatLang.SourceSpan? other)
-  method   public override bool Equals(object? obj)
+public readonly record struct KatLang.SourceSpan : System.IEquatable<KatLang.SourceSpan>
+  ctor     public SourceSpan(KatLang.SourcePosition start, KatLang.SourcePosition end)
+  ctor     public SourceSpan(int startLine, int startColumn, int endLine, int endColumn)
+  property public KatLang.SourcePosition End { get; }
+  property public bool IsEmpty { get; }
+  property public KatLang.SourcePosition Start { get; }
+  method   public bool Contains(KatLang.SourcePosition position)
+  method   public void Deconstruct(out KatLang.SourcePosition start, out KatLang.SourcePosition end)
+  method   public bool Equals(KatLang.SourceSpan other)
+  method   public override bool Equals(object obj)
   method   public override int GetHashCode()
   method   public override string ToString()
-  operator public static bool op_Equality(KatLang.SourceSpan? left, KatLang.SourceSpan? right)
-  operator public static bool op_Inequality(KatLang.SourceSpan? left, KatLang.SourceSpan? right)
+  method   public KatLang.SourceSpan Union(KatLang.SourceSpan other)
+  operator public static bool op_Equality(KatLang.SourceSpan left, KatLang.SourceSpan right)
+  operator public static bool op_Inequality(KatLang.SourceSpan left, KatLang.SourceSpan right)
 
 public sealed record KatLang.TextErrorContext : KatLang.ErrorContext, System.IEquatable<KatLang.TextErrorContext>
   ctor     public TextErrorContext(string Message)
@@ -2349,6 +2366,7 @@ public sealed record KatLang.Token : System.IEquatable<KatLang.Token>
   property public int Line { get; }
   property public System.Numerics.Decimal128 NumValue { get; }
   property public int Position { get; }
+  property public KatLang.SourceSpan Span { get; }
   property public string? StringValue { get; }
   method   public KatLang.Token <Clone>$()
   method   public bool Equals(KatLang.Token? other)

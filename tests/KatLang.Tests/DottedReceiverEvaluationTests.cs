@@ -281,7 +281,7 @@ public class DottedReceiverEvaluationTests
     public void ReceiverEvaluationError_IsSurfacedWithASpan()
     {
         var failure = Assert.IsType<RunResult.EvalFailure>(KatLangEngine.Run("Missing.count"));
-        Assert.NotNull(failure.Errors[0].StartLine);
+        Assert.NotNull(failure.Errors[0].Span);
     }
 
     [Fact]

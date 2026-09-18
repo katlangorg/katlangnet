@@ -35,7 +35,7 @@ public class DeclarationHeadLineRuleTests
         var diagnostic = Assert.Single(raw.Diagnostics);
         Assert.Equal(DiagnosticCode.UnexpectedToken, diagnostic.Code);
         Assert.Contains(HeadLineRuleFragment, diagnostic.Message, StringComparison.Ordinal);
-        Assert.Equal(new SourceSpan(line, column, line, column), diagnostic.Span);
+        Assert.Equal(new SourceSpan(line, column, line, column + 1), diagnostic.Span);   // the one-character `=`
 
         var elaborated = Parser.Parse(source);
         Assert.True(elaborated.HasErrors);
@@ -133,7 +133,7 @@ public class DeclarationHeadLineRuleTests
 
         var diagnostic = Assert.Single(raw.Diagnostics);
         Assert.Equal(DiagnosticCode.UnexpectedToken, diagnostic.Code);
-        Assert.Equal(new SourceSpan(1, 1, 1, 6), diagnostic.Span);
+        Assert.Equal(new SourceSpan(1, 1, 1, 7), diagnostic.Span);
         var property = Assert.Single(raw.Root.Properties);
         Assert.Equal("Name", property.Name);
         Assert.False(property.IsPublic);
@@ -149,7 +149,7 @@ public class DeclarationHeadLineRuleTests
 
         var diagnostic = Assert.Single(raw.Diagnostics);
         Assert.Equal(DiagnosticCode.UnexpectedToken, diagnostic.Code);
-        Assert.Equal(new SourceSpan(2, 1, 2, 1), diagnostic.Span);
+        Assert.Equal(new SourceSpan(2, 1, 2, 2), diagnostic.Span);
         var grace = Assert.IsType<Expr.Grace>(raw.Root.Output[0]);
         Assert.Equal("q", Assert.IsType<Expr.Resolve>(grace.Inner).Name);
         Assert.Empty(raw.Root.Properties);
@@ -163,7 +163,7 @@ public class DeclarationHeadLineRuleTests
         var diagnostic = Assert.Single(raw.Diagnostics);
         Assert.Equal(DiagnosticCode.UnexpectedToken, diagnostic.Code);
         Assert.Contains(HeadLineRuleFragment, diagnostic.Message, StringComparison.Ordinal);
-        Assert.Equal(new SourceSpan(3, 9, 3, 9), diagnostic.Span);
+        Assert.Equal(new SourceSpan(3, 9, 3, 10), diagnostic.Span);
         var q = Assert.Single(raw.Root.Properties).Value;
         Assert.Empty(q.Properties);
         Assert.Equal("Foo", Assert.IsType<Expr.Resolve>(q.Output[0]).Name);

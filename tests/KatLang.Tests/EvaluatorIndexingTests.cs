@@ -362,21 +362,21 @@ public class EvaluatorIndexingTests
 
     [Theory]
     // A selector error carries the full `target:selector` span rather than
-    // escaping unlocated. Columns are 1-based and end-exclusive.
-    [InlineData("[1, 2]:'x'", 1, 1, 1, 10)]
-    [InlineData("(1, 2):'x'", 1, 1, 1, 10)]
-    [InlineData("[1, 2]:(0, 1)", 1, 1, 1, 13)]
-    [InlineData("[1, 2]:()", 1, 1, 1, 9)]
-    [InlineData("[1, 2]:3000000000", 1, 1, 1, 17)]
+    // escaping unlocated. Columns are 1-based and the end column is exclusive.
+    [InlineData("[1, 2]:'x'", 1, 1, 1, 11)]
+    [InlineData("(1, 2):'x'", 1, 1, 1, 11)]
+    [InlineData("[1, 2]:(0, 1)", 1, 1, 1, 14)]
+    [InlineData("[1, 2]:()", 1, 1, 1, 10)]
+    [InlineData("[1, 2]:3000000000", 1, 1, 1, 18)]
     // Nested projection points at the failing index expression: the inner
     // `[[1, 2]]:5` for an inner failure, the whole expression for an outer one.
-    [InlineData("[[1, 2]]:5:0", 1, 1, 1, 10)]
-    [InlineData("[[1, 2]]:0:5", 1, 1, 1, 12)]
+    [InlineData("[[1, 2]]:5:0", 1, 1, 1, 11)]
+    [InlineData("[[1, 2]]:0:5", 1, 1, 1, 13)]
     // A selector sub-expression that fails on its own keeps its own, more
     // specific span — the written group `(1 div 0)` the index consumes (the
     // grouped-expression span rule, F6); WithSpan only fills a missing one.
-    [InlineData("[1, 2]:(1 div 0)", 1, 8, 1, 16)]
-    [InlineData("[[1, 2]]:0:(1 div 0)", 1, 12, 1, 20)]
+    [InlineData("[1, 2]:(1 div 0)", 1, 8, 1, 17)]
+    [InlineData("[[1, 2]]:0:(1 div 0)", 1, 12, 1, 21)]
     public void Eval_Index_SelectorError_CarriesIndexExpressionSpan(
         string source, int startLine, int startColumn, int endLine, int endColumn)
     {
@@ -385,8 +385,7 @@ public class EvaluatorIndexingTests
             Assert.Fail($"Expected a diagnostic but got: {result.Value}");
 
         var error = KatLangError.FromEvalError(result.Error);
-        Assert.Equal((startLine, startColumn, endLine, endColumn),
-            (error.StartLine, error.StartColumn, error.EndLine, error.EndColumn));
+        Assert.Equal(new SourceSpan(startLine, startColumn, endLine, endColumn), error.Span);
     }
 
     [Fact]
@@ -400,7 +399,6 @@ public class EvaluatorIndexingTests
             Assert.Fail($"Expected a diagnostic but got: {result.Value}");
 
         var error = KatLangError.FromEvalError(result.Error);
-        Assert.Equal((1, 5, 1, 14),
-            (error.StartLine, error.StartColumn, error.EndLine, error.EndColumn));
+        Assert.Equal(new SourceSpan(1, 5, 1, 15), error.Span);
     }
 }

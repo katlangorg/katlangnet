@@ -258,7 +258,7 @@ public class AstStructuralDepthTests
         // Machine-driven paths must decorate errors exactly like the recursive code:
         // an index expression attaches its span to child and coercion errors, while
         // unary/binary/list propagate child errors untouched.
-        var indexSpan = new SourceSpan(3, 1, 3, 9);
+        var indexSpan = new SourceSpan(3, 1, 3, 10);
         var badSelector = new Expr.Index(new Expr.Num(1), new Expr.StringLiteral("x")) { Span = indexSpan };
         var badSelectorR = Evaluator.Run(badSelector);
         Assert.True(badSelectorR.IsError);
@@ -271,7 +271,7 @@ public class AstStructuralDepthTests
         Assert.IsType<EvalError.BadIndex>(badIndexR.Error);
         Assert.Equal(indexSpan, badIndexR.Error.Span);
 
-        var unarySpan = new SourceSpan(7, 2, 7, 4);
+        var unarySpan = new SourceSpan(7, 2, 7, 5);
         var unaryOnString = new Expr.Unary(UnaryOp.Minus, new Expr.StringLiteral("s")) { Span = unarySpan };
         var unaryR = Evaluator.Run(unaryOnString);
         Assert.True(unaryR.IsError);
@@ -280,7 +280,7 @@ public class AstStructuralDepthTests
 
         // A failing operand inside a spine keeps ITS error and innermost span; the
         // enclosing binary adds nothing.
-        var innerSpan = new SourceSpan(9, 5, 9, 6);
+        var innerSpan = new SourceSpan(9, 5, 9, 7);
         var failingOperand = new Expr.Resolve("noSuchName") { Span = innerSpan };
         var nested = new Expr.Binary(
             BinaryOp.Add,
@@ -358,7 +358,7 @@ public class AstStructuralDepthTests
     {
         var limits = new EvaluationLimits { MaxAstDepth = 25 };
         var spans = Enumerable.Range(0, 40)
-            .Select(i => (SourceSpan?)new SourceSpan(1, i + 1, 1, i + 1))
+            .Select(i => (SourceSpan?)new SourceSpan(1, i + 1, 1, i + 2))
             .ToList();
         var expr = UnarySpine(40, spans);
 
@@ -520,7 +520,7 @@ public class AstStructuralDepthTests
     {
         // Order and duplicate-name behavior are unchanged from the recursive flatten:
         // left-to-right depth-first, duplicates preserved, kinds and spans carried.
-        var span = new SourceSpan(1, 2, 1, 3);
+        var span = new SourceSpan(1, 2, 1, 4);
         var mixed = new SequenceValueParameterPattern(
         [
             new CaptureParameterPattern("a"),

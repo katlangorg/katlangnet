@@ -107,8 +107,8 @@ public class BranchLazyModuleLoadingTests
         Assert.Contains(Missing, error.Message, StringComparison.Ordinal);
         Assert.Equal(1, modules[Missing]);
         // Provenance: the branch-local `open` site, not the family call or the selection point.
-        Assert.Equal(LineOf(branch, "open '"), error.StartLine);
-        Assert.Equal(10, error.StartColumn);
+        Assert.Equal(LineOf(branch, "open '"), Assert.NotNull(error.Span).Start.Line);
+        Assert.Equal(10, Assert.NotNull(error.Span).Start.Column);
 
         // The very diagnostic the equivalent eager load reports — only its timing differs.
         var eager = Assert.IsType<RunResult.ParseFailure>(
@@ -355,8 +355,8 @@ public class BranchLazyModuleLoadingTests
 
         var error = Assert.Single(Assert.IsType<RunResult.EvalFailure>(result).Errors);
         Assert.Equal(KatLangErrorCode.LoadFetchFailed, error.Code);
-        Assert.Equal(LineOf(source, "open '"), error.StartLine);
-        Assert.Equal(14, error.StartColumn);
+        Assert.Equal(LineOf(source, "open '"), Assert.NotNull(error.Span).Start.Line);
+        Assert.Equal(14, Assert.NotNull(error.Span).Start.Column);
     }
 
     // ── I. Policy and cycle failures in a dead branch ───────────────────────
@@ -998,7 +998,7 @@ public class BranchLazyModuleLoadingTests
         var error = Assert.Single(Assert.IsType<RunResult.EvalFailure>(selected).Errors);
         Assert.Equal(KatLangErrorCode.UndeclaredIdentifier, error.Code);
         Assert.Contains("Identifier 'Undeclared' is used in conditional branch 'F'", error.Message, StringComparison.Ordinal);
-        Assert.Equal(LineOf(branch, "Undeclared + B"), error.StartLine);
+        Assert.Equal(LineOf(branch, "Undeclared + B"), Assert.NotNull(error.Span).Start.Line);
         Assert.Equal(1, modules[ModuleB]);
     }
 
@@ -1269,8 +1269,8 @@ public class BranchLazyModuleLoadingTests
             ? IdentifierClassification.PropertyReference
             : IdentifierClassification.DeferredModuleReference, resolution.Classification);
         Assert.Equal(directlyDeclared, resolution.ResolvedDeclaration is not null);
-        var visible = Assert.Single(model.GetVisibleSymbolsAt(
-            resolution.Occurrence.Span.StartLineNumber, resolution.Occurrence.Span.StartColumn),
+        var visible = Assert.Single(model.GetVisibleSymbolsAt(new SourcePosition(
+            resolution.Occurrence.Span.Start.Line, resolution.Occurrence.Span.Start.Column)),
             candidate => candidate.Name == "X");
         Assert.Equal(resolution.Classification, visible.Classification);
         Assert.Equal(directlyDeclared, visible.Declaration is not null);
@@ -1293,7 +1293,7 @@ public class BranchLazyModuleLoadingTests
         var copied = (IDisposable)System.Runtime.CompilerServices.RuntimeHelpers.GetObjectValue(outer);
         Assert.Throws<OperationCanceledException>((Action)(() =>
         {
-            using var inner = Enter("EnterNestedTraversal", 19, new SourceSpan(3, 1, 3, 4));
+            using var inner = Enter("EnterNestedTraversal", 19, new SourceSpan(3, 1, 3, 5));
             var innerContext = loader.WalkContext;
             Assert.Throws<InvalidOperationException>(() => copied.Dispose());
             Assert.Equal(innerContext, loader.WalkContext);
@@ -1302,7 +1302,7 @@ public class BranchLazyModuleLoadingTests
         Assert.Equal(outerContext, loader.WalkContext);
         outer.Dispose();
         Assert.Equal(original, loader.WalkContext);
-        using (Enter("EnterMaterializationContext", new List<Diagnostic>(), 23, new SourceSpan(5, 1, 5, 2), tokenSource.Token))
+        using (Enter("EnterMaterializationContext", new List<Diagnostic>(), 23, new SourceSpan(5, 1, 5, 3), tokenSource.Token))
         {
             var later = loader.WalkContext;
             Assert.Throws<InvalidOperationException>(() => copied.Dispose());

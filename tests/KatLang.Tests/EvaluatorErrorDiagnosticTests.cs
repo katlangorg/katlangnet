@@ -71,12 +71,8 @@ public class EvaluatorErrorDiagnosticTests
     {
         var err = GetEvalError("5 / 0");
         Assert.NotNull(err);
-        Assert.NotNull(err.Span);
-        // Binary expression "5 / 0" spans full expression
-        Assert.Equal(1, err.Span.StartLineNumber);
-        Assert.Equal(1, err.Span.StartColumn);
-        Assert.Equal(1, err.Span.EndLineNumber);
-        Assert.Equal(5, err.Span.EndColumn);
+        // Binary expression "5 / 0" spans the full expression: [1:1, 1:6).
+        Assert.Equal(new SourceSpan(1, 1, 1, 6), err.Span);
     }
 
     [Fact]
@@ -390,7 +386,7 @@ public class EvaluatorErrorDiagnosticTests
         Assert.NotNull(err);
         Assert.NotNull(err.Span);
         // Span should point to "Inner(param)" on line 2, NOT "Outer(50000)" on line 3.
-        Assert.Equal(2, err.Span.StartLineNumber);
+        Assert.Equal(2, Assert.NotNull(err.Span).Start.Line);
     }
 
     // ── Top-level unresolved implicit parameters ──

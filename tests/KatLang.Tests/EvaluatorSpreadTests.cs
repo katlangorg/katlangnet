@@ -30,12 +30,11 @@ public class EvaluatorSpreadTests
             error = context.Inner;
 
         var spreadError = Assert.IsType<EvalError.SpreadMissingOutput>(error);
-        var span = spreadError.Span;
-        Assert.NotNull(span);
-        Assert.Equal(expectedStartLine, span!.StartLineNumber);
-        Assert.Equal(expectedStartColumn, span.StartColumn);
-        Assert.Equal(expectedEndLine, span.EndLineNumber);
-        Assert.Equal(expectedEndColumn, span.EndColumn);
+        var span = Assert.NotNull(spreadError.Span);
+        Assert.Equal(expectedStartLine, span.Start.Line);
+        Assert.Equal(expectedStartColumn, span.Start.Column);
+        Assert.Equal(expectedEndLine, span.End.Line);
+        Assert.Equal(expectedEndColumn, span.End.Column);
     }
 
     // ── Postfix spread marker ──────────────────────────────────────
@@ -521,7 +520,7 @@ public class EvaluatorSpreadTests
 
             Bad*
             """;
-        AssertSpreadMissingOutput(operandSource, 5, 1, 5, 3);
+        AssertSpreadMissingOutput(operandSource, 5, 1, 5, 4);
 
         // A no-output expression in the slot after the spread is an ordinary
         // missing-output failure, not part of the spread: `3*, Bad` is the two
@@ -546,10 +545,10 @@ public class EvaluatorSpreadTests
         // resolved-name operand — never raw MissingOutput (T4-2; the Lean
         // `.algorithmExpr` arm translates identically). Root row: span is the block
         // `{A = 1}` (line 1, columns 1-7).
-        AssertSpreadMissingOutput("{A = 1}*", 1, 1, 1, 7);
+        AssertSpreadMissingOutput("{A = 1}*", 1, 1, 1, 8);
 
         // The same rule inside a list literal element slot.
-        AssertSpreadMissingOutput("[{A = 1}*]", 1, 2, 1, 8);
+        AssertSpreadMissingOutput("[{A = 1}*]", 1, 2, 1, 9);
 
         // And inside a call-argument slot: the structured kind stays
         // SpreadMissingOutput under the call's context wrapper.
@@ -560,16 +559,12 @@ public class EvaluatorSpreadTests
             callError = context.Inner;
 
         var callSpread = Assert.IsType<EvalError.SpreadMissingOutput>(callError);
-        Assert.NotNull(callSpread.Span);
-        Assert.Equal(2, callSpread.Span!.StartLineNumber);
-        Assert.Equal(3, callSpread.Span.StartColumn);
-        Assert.Equal(2, callSpread.Span.EndLineNumber);
-        Assert.Equal(9, callSpread.Span.EndColumn);
+        Assert.Equal(new SourceSpan(2, 3, 2, 10), callSpread.Span);
 
         // Resolved-name control: reaching the same no-output block through a
         // property keeps the identical structured error, so the direct and
         // resolved spellings agree.
-        AssertSpreadMissingOutput("X = {A = 1}\nX*", 2, 1, 2, 1);
+        AssertSpreadMissingOutput("X = {A = 1}\nX*", 2, 1, 2, 2);
     }
 
     [Fact]

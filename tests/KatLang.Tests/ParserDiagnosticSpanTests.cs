@@ -34,11 +34,9 @@ public class ParserDiagnosticSpanTests
         string expectedSlice)
     {
         Assert.Equal(DiagnosticSeverity.Error, diagnostic.Severity);
-        Assert.Equal(startLine, diagnostic.Span.StartLineNumber);
-        Assert.Equal(startColumn, diagnostic.Span.StartColumn);
-        Assert.Equal(endLine, diagnostic.Span.EndLineNumber);
-        Assert.Equal(endColumn, diagnostic.Span.EndColumn);
-        Assert.Equal(expectedSlice, SourceSlice(source, diagnostic.Span));
+        var span = Assert.NotNull(diagnostic.Span);
+        Assert.Equal(new SourceSpan(startLine, startColumn, endLine, endColumn), span);
+        Assert.Equal(expectedSlice, SourceSlice(source, span));
     }
 
     /// <summary>
@@ -47,9 +45,9 @@ public class ParserDiagnosticSpanTests
     /// </summary>
     private static string SourceSlice(string source, SourceSpan span)
     {
-        Assert.Equal(span.StartLineNumber, span.EndLineNumber);
-        var line = source.Split('\n')[span.StartLineNumber - 1].TrimEnd('\r');
-        return line.Substring(span.StartColumn - 1, span.EndColumn - span.StartColumn + 1);
+        Assert.Equal(span.Start.Line, span.End.Line);
+        var line = source.Split('\n')[span.Start.Line - 1].TrimEnd('\r');
+        return line.Substring(span.Start.Column - 1, span.End.Column - span.Start.Column);
     }
 
     // ── F4: clause-head grace diagnostics span the marker + atom ────────────
@@ -60,7 +58,7 @@ public class ParserDiagnosticSpanTests
         const string source = "F(~a, b) = a";
         var diagnostic = SingleDiagnosticContaining(source, GraceInClauseHeadMessage);
         Assert.Equal(GraceInClauseHeadMessage, diagnostic.Message);
-        AssertSpan(source, diagnostic, 1, 3, 1, 4, "~a");
+        AssertSpan(source, diagnostic, 1, 3, 1, 5, "~a");
     }
 
     [Fact]
@@ -69,7 +67,7 @@ public class ParserDiagnosticSpanTests
         const string source = "F(a~, b) = a";
         var diagnostic = SingleDiagnosticContaining(source, GraceInClauseHeadMessage);
         Assert.Equal(GraceInClauseHeadMessage, diagnostic.Message);
-        AssertSpan(source, diagnostic, 1, 3, 1, 4, "a~");
+        AssertSpan(source, diagnostic, 1, 3, 1, 5, "a~");
     }
 
     [Fact]
@@ -77,7 +75,7 @@ public class ParserDiagnosticSpanTests
     {
         const string source = "F(a, (~b, c)) = a";
         var diagnostic = SingleDiagnosticContaining(source, GraceInClauseHeadMessage);
-        AssertSpan(source, diagnostic, 1, 7, 1, 8, "~b");
+        AssertSpan(source, diagnostic, 1, 7, 1, 9, "~b");
     }
 
     [Fact]
@@ -85,7 +83,7 @@ public class ParserDiagnosticSpanTests
     {
         const string source = "F(~~a, b) = a";
         var diagnostic = SingleDiagnosticContaining(source, GraceInClauseHeadMessage);
-        AssertSpan(source, diagnostic, 1, 3, 1, 5, "~~a");
+        AssertSpan(source, diagnostic, 1, 3, 1, 6, "~~a");
     }
 
     [Fact]
@@ -93,7 +91,7 @@ public class ParserDiagnosticSpanTests
     {
         const string source = "F(~a~, b) = a";
         var diagnostic = SingleDiagnosticContaining(source, GraceInClauseHeadMessage);
-        AssertSpan(source, diagnostic, 1, 3, 1, 5, "~a~");
+        AssertSpan(source, diagnostic, 1, 3, 1, 6, "~a~");
     }
 
     [Fact]
@@ -101,7 +99,7 @@ public class ParserDiagnosticSpanTests
     {
         const string source = "F(a~~, b) = a";
         var diagnostic = SingleDiagnosticContaining(source, GraceInClauseHeadMessage);
-        AssertSpan(source, diagnostic, 1, 3, 1, 5, "a~~");
+        AssertSpan(source, diagnostic, 1, 3, 1, 6, "a~~");
     }
 
     [Fact]
@@ -112,7 +110,7 @@ public class ParserDiagnosticSpanTests
         // parses `2` as an ordinary literal pattern atom.
         const string source = "F(~2, b) = a";
         var diagnostic = SingleDiagnosticContaining(source, GraceInClauseHeadMessage);
-        AssertSpan(source, diagnostic, 1, 3, 1, 3, "~");
+        AssertSpan(source, diagnostic, 1, 3, 1, 4, "~");
     }
 
     [Fact]
@@ -122,7 +120,7 @@ public class ParserDiagnosticSpanTests
         // marker (further recovery diagnostics may follow it).
         const string source = "F(~) = 1";
         var diagnostic = SingleDiagnosticContaining(source, GraceInClauseHeadMessage);
-        AssertSpan(source, diagnostic, 1, 3, 1, 3, "~");
+        AssertSpan(source, diagnostic, 1, 3, 1, 4, "~");
     }
 
     // ── K5-R1: expression-position grace diagnostics span the marker run ────
@@ -135,7 +133,7 @@ public class ParserDiagnosticSpanTests
         const string source = "K = f(x)~\ny";
         var diagnostic = SingleDiagnosticContaining(source, GraceLawMessage);
         Assert.Equal(GraceLawMessage, diagnostic.Message);
-        AssertSpan(source, diagnostic, 1, 9, 1, 9, "~");
+        AssertSpan(source, diagnostic, 1, 9, 1, 10, "~");
     }
 
     [Fact]
@@ -143,7 +141,7 @@ public class ParserDiagnosticSpanTests
     {
         const string source = "K = f(x)~~~\ny";
         var diagnostic = SingleDiagnosticContaining(source, GraceLawMessage);
-        AssertSpan(source, diagnostic, 1, 9, 1, 11, "~~~");
+        AssertSpan(source, diagnostic, 1, 9, 1, 12, "~~~");
     }
 
     [Fact]
@@ -151,7 +149,7 @@ public class ParserDiagnosticSpanTests
     {
         const string source = "c = 3\n5~ c";
         var diagnostic = SingleDiagnosticContaining(source, GraceLawMessage);
-        AssertSpan(source, diagnostic, 2, 2, 2, 2, "~");
+        AssertSpan(source, diagnostic, 2, 2, 2, 3, "~");
     }
 
     [Fact]
@@ -161,7 +159,7 @@ public class ParserDiagnosticSpanTests
         // of it (and stays valid prefix Grace, so it reports nothing).
         const string source = "a = 1\n~~\n~a";
         var diagnostic = SingleDiagnosticContaining(source, GraceLawMessage);
-        AssertSpan(source, diagnostic, 2, 1, 2, 2, "~~");
+        AssertSpan(source, diagnostic, 2, 1, 2, 3, "~~");
     }
 
     [Fact]
@@ -170,7 +168,7 @@ public class ParserDiagnosticSpanTests
         // The diagnostic covers the marker run, never the token after it.
         const string source = "~~42";
         var diagnostic = SingleDiagnosticContaining(source, GraceLawMessage);
-        AssertSpan(source, diagnostic, 1, 1, 1, 2, "~~");
+        AssertSpan(source, diagnostic, 1, 1, 1, 3, "~~");
     }
 
     [Fact]
@@ -178,7 +176,7 @@ public class ParserDiagnosticSpanTests
     {
         const string source = "K = (x + y)~.t";
         var diagnostic = SingleDiagnosticContaining(source, GraceLawMessage);
-        AssertSpan(source, diagnostic, 1, 12, 1, 12, "~");
+        AssertSpan(source, diagnostic, 1, 12, 1, 13, "~");
     }
 
     // ── F4 (related): collecting-binding diagnostic includes the marker ─────
@@ -192,6 +190,6 @@ public class ParserDiagnosticSpanTests
         Assert.Equal(
             "A deconstruction binding pattern may contain at most one collecting binding (`*name`).",
             diagnostic.Message);
-        AssertSpan(source, diagnostic, 1, 1, 1, 2, "*a");
+        AssertSpan(source, diagnostic, 1, 1, 1, 3, "*a");
     }
 }

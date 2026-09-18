@@ -98,13 +98,10 @@ public class ChainedDotStructuralPrecedenceTests
     }
 
     private static IdentifierResolution ResolutionAt(SemanticModel model, int line, int column)
-        => Assert.IsType<IdentifierResolution>(model.FindResolutionAt(line, column));
+        => Assert.IsType<IdentifierResolution>(model.FindResolutionAt(new SourcePosition(line, column)));
 
     private static void AssertSpanStartsAt(SourceSpan? span, int line, int column)
-    {
-        Assert.NotNull(span);
-        Assert.Equal((line, column), (span.StartLineNumber, span.StartColumn));
-    }
+        => Assert.Equal(new SourcePosition(line, column), Assert.NotNull(span).Start);
 
     private static Expr.DotCall LastEdge(string source)
         => Assert.IsType<Expr.DotCall>(SourceProvenance.ParseValid(source).Root.Output[^1]);
@@ -607,7 +604,7 @@ public class ChainedDotStructuralPrecedenceTests
 
         var declarations = model.FindDeclarations("Q");
         Assert.Equal(2, declarations.Count);
-        var structural = Assert.Single(declarations, d => d.Span.StartLineNumber == 3);
+        var structural = Assert.Single(declarations, d => d.Span.Start.Line == 3);
         AssertSpanStartsAt(structural.Span, 3, 16);
 
         var member = ResolutionAt(model, 9, 9);
@@ -615,7 +612,7 @@ public class ChainedDotStructuralPrecedenceTests
         Assert.Equal(IdentifierClassification.PropertyReference, member.Classification);
         Assert.Equal(structural, member.ResolvedDeclaration);
 
-        var property = Assert.IsType<PropertyInfo>(model.FindPropertyAt(9, 9));
+        var property = Assert.IsType<PropertyInfo>(model.FindPropertyAt(new SourcePosition(9, 9)));
         Assert.Equal("Q", property.Name);
         AssertSpanStartsAt(property.Declaration?.Span, 3, 16);
 

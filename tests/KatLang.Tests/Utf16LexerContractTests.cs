@@ -36,11 +36,11 @@ public class Utf16LexerContractTests
         Assert.Equal(1, second.Column);
         Assert.Equal(3, second.Position);
 
-        // A diagnostic's end column is INCLUSIVE: a one-unit token spans column c..c.
+        // A diagnostic's span is HALF-OPEN: a one-unit token at column c spans [c, c + 1).
         var syntax = Parser.ParseSyntax("!");
-        var span = Assert.Single(syntax.Diagnostics).Span;
-        Assert.Equal(1, span.StartColumn);
-        Assert.Equal(1, span.EndColumn);
+        var span = Assert.NotNull(Assert.Single(syntax.Diagnostics).Span);
+        Assert.Equal(1, span.Start.Column);
+        Assert.Equal(2, span.End.Column);
     }
 
     [Fact]
@@ -137,8 +137,7 @@ public class Utf16LexerContractTests
         Assert.Contains(tokens, t => t.Kind == TokenKind.Bad);
         var diagnostic = Assert.Single(diagnostics);
         Assert.StartsWith("Unexpected character:", diagnostic.Message, StringComparison.Ordinal);
-        Assert.Equal(2, diagnostic.Span.StartColumn);
-        Assert.Equal(2, diagnostic.Span.EndColumn);
+        Assert.Equal(new SourceSpan(1, 2, 1, 3), diagnostic.Span);   // the one format code unit at column 2
     }
 
     // ── Identifiers ──────────────────────────────────────────────────────────
@@ -246,8 +245,7 @@ public class Utf16LexerContractTests
         Assert.Equal(DiagnosticCode.InvalidNumberLiteral, diagnostic.Code);
         Assert.Contains("not a valid KatLang number", diagnostic.Message);
         Assert.DoesNotContain("too large", diagnostic.Message);
-        Assert.Equal(1, diagnostic.Span.StartColumn);
-        Assert.Equal(text.Length, diagnostic.Span.EndColumn);
+        Assert.Equal(new SourceSpan(1, 1, 1, text.Length + 1), diagnostic.Span);   // the whole literal, half-open
     }
 
     [Fact]
@@ -380,7 +378,7 @@ public class Utf16LexerContractTests
 
         Assert.Equal("Unexpected character: U+D83D (an unpaired surrogate code unit).", diagnostic.Message);
         Assert.DoesNotContain('\uD83D', diagnostic.Message);
-        Assert.Equal(new SourceSpan(1, 1, 1, 1), diagnostic.Span);
+        Assert.Equal(new SourceSpan(1, 1, 1, 2), diagnostic.Span);
 
         var (_, control) = Lexer.Tokenize("a \u001b b");
         Assert.Equal("Unexpected character: U+001B (a control character).", Assert.Single(control).Message);
@@ -397,7 +395,7 @@ public class Utf16LexerContractTests
         var (pairTokens, pair) = Lexer.Tokenize("a \uD83D\uDE00 b");
         var pairDiagnostic = Assert.Single(pair);
         Assert.Equal("Unexpected character: '\uD83D\uDE00'.", pairDiagnostic.Message);
-        Assert.Equal(new SourceSpan(1, 3, 1, 4), pairDiagnostic.Span);
+        Assert.Equal(new SourceSpan(1, 3, 1, 5), pairDiagnostic.Span);
         Assert.Equal(6, pairTokens.Single(t => t.Kind == TokenKind.Identifier && t.StringValue == "b").Column);
     }
 
@@ -413,7 +411,7 @@ public class Utf16LexerContractTests
         var diagnostic = Assert.Single(diagnostics);
         Assert.Equal($"Unexpected character: U+{codePoint:X4} (an invisible format character).", diagnostic.Message);
         Assert.DoesNotContain(scalar, diagnostic.Message, StringComparison.Ordinal);
-        Assert.Equal(new SourceSpan(1, 3, 1, 4), diagnostic.Span);
+        Assert.Equal(new SourceSpan(1, 3, 1, 5), diagnostic.Span);
         Assert.Equal(2, Assert.Single(tokens, t => t.Kind == TokenKind.Bad).Length);
         Assert.Equal(6, tokens.Single(t => t.Kind == TokenKind.Identifier && t.StringValue == "b").Column);
     }
@@ -430,7 +428,7 @@ public class Utf16LexerContractTests
             var widths = SourceSpanValidator.LineWidths(source);
             var (_, diagnostics) = Lexer.Tokenize(source);
             foreach (var diagnostic in diagnostics)
-                Assert.Null(SourceSpanValidator.Validate(diagnostic.Span, widths));
+                Assert.Null(SourceSpanValidator.Validate(Assert.NotNull(diagnostic.Span), widths));
         }
     }
 

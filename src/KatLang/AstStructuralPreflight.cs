@@ -434,7 +434,7 @@ internal static class AstStructuralPreflight
     /// crossing node's own, or its nearest positioned ancestor — otherwise at
     /// <paramref name="importSite"/> (the site, in the current document, of the module
     /// content a spanless tree belongs to; see <c>DeferredModuleRegion.ImportSite</c>), and
-    /// only then at the established sentinel.
+    /// otherwise unpositioned.
     /// </summary>
     internal static Diagnostic ToParseDiagnostic(AstStructuralRejection rejection, int limit, SourceSpan? importSite = null)
         => new(
@@ -442,7 +442,7 @@ internal static class AstStructuralPreflight
                 ? ParseCycleDiagnosticMessage
                 : ParseDepthDiagnosticMessage(limit),
             DiagnosticSeverity.Error,
-            rejection.Span ?? importSite ?? new SourceSpan(1, 1, 1, 1))
+            rejection.Span ?? importSite)
         {
             Code = rejection.Kind == AstStructuralViolation.CycleDetected
                 ? DiagnosticCode.AstCycleDetected

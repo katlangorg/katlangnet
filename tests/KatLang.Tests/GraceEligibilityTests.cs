@@ -110,7 +110,7 @@ public class GraceEligibilityTests
             "Grace has no effect on 'X' because it already resolves to a property",
             diagnostic.Message,
             StringComparison.Ordinal);
-        Assert.Equal(new SourceSpan(2, 5, 2, 6), diagnostic.Span);
+        Assert.Equal(new SourceSpan(2, 5, 2, 7), diagnostic.Span);
     }
 
     [Fact]
@@ -191,7 +191,7 @@ public class GraceEligibilityTests
         var diagnostic = Assert.Single(result.Diagnostics);
         Assert.Equal(DiagnosticCode.InvalidGraceMarker, diagnostic.Code);
         Assert.Contains(GraceLawFragment, diagnostic.Message, StringComparison.Ordinal);
-        Assert.Equal(2, diagnostic.Span.StartLineNumber);
+        Assert.Equal(2, Assert.NotNull(diagnostic.Span).Start.Line);
 
         var rows = result.Root.Output;
         Assert.Equal(3, rows.Count);
@@ -215,8 +215,8 @@ public class GraceEligibilityTests
 
         var diagnostic = Assert.Single(result.Diagnostics);
         Assert.Equal(DiagnosticCode.InvalidGraceMarker, diagnostic.Code);
-        Assert.Equal(2, diagnostic.Span.StartLineNumber);
-        Assert.Equal(2, diagnostic.Span.EndLineNumber);
+        Assert.Equal(2, Assert.NotNull(diagnostic.Span).Start.Line);
+        Assert.Equal(2, Assert.NotNull(diagnostic.Span).End.Line);
 
         var grace = Assert.IsType<Expr.Grace>(result.Root.Output[^1]);
         Assert.Equal("a", Assert.IsType<Expr.Resolve>(grace.Inner).Name);
@@ -286,7 +286,7 @@ public class GraceEligibilityTests
             var raw = Parser.ParseSyntax(source);
             var diagnostic = Assert.Single(raw.Diagnostics);
             Assert.Equal(DiagnosticCode.InvalidGraceMarker, diagnostic.Code);
-            Assert.Equal(new SourceSpan(1, 3, 1, 4), diagnostic.Span);
+            Assert.Equal(new SourceSpan(1, 3, 1, 5), diagnostic.Span);
             Assert.Equal("a", Assert.IsType<Expr.Resolve>(raw.Root.Output[0]).Name);
             Assert.Equal(7, Assert.IsType<Expr.Num>(raw.Root.Output[^1]).Value);
             if (next == "~b")
@@ -303,7 +303,7 @@ public class GraceEligibilityTests
 
         // EOF and a same-line non-name also blame the whole marker run once.
         foreach (var source in new[] { "a.~~", "a.~~ 7" })
-            Assert.Equal(new SourceSpan(1, 3, 1, 4), Assert.Single(Parser.ParseSyntax(source).Diagnostics).Span);
+            Assert.Equal(new SourceSpan(1, 3, 1, 5), Assert.Single(Parser.ParseSyntax(source).Diagnostics).Span);
     }
 
     [Theory]
@@ -316,14 +316,14 @@ public class GraceEligibilityTests
         Assert.All(raw.Diagnostics, d =>
         {
             Assert.Equal(DiagnosticCode.InvalidGraceMarker, d.Code);
-            Assert.Equal(d.Span.StartLineNumber, d.Span.EndLineNumber);
+            Assert.Equal(Assert.NotNull(d.Span).Start.Line, Assert.NotNull(d.Span).End.Line);
         });
-        Assert.Equal(new SourceSpan(1, 3, 1, 4), raw.Diagnostics[0].Span);
+        Assert.Equal(new SourceSpan(1, 3, 1, 5), raw.Diagnostics[0].Span);
         Assert.Equal("F", Assert.Single(raw.Root.Properties).Name);
         Assert.Equal(7, Assert.IsType<Expr.Num>(Assert.Single(raw.Root.Output)).Value);
 
         var property = Parser.ParseSyntax($"~~Name = 1{newline}7");
-        Assert.Equal(new SourceSpan(1, 1, 1, 2), Assert.Single(property.Diagnostics).Span);
+        Assert.Equal(new SourceSpan(1, 1, 1, 3), Assert.Single(property.Diagnostics).Span);
         Assert.Equal("Name", Assert.Single(property.Root.Properties).Name);
     }
 

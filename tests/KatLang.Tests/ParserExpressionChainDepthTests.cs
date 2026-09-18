@@ -53,9 +53,9 @@ public class ParserExpressionChainDepthTests
         var diagnostic = Assert.Single(
             result.Diagnostics,
             diagnostic => diagnostic.Message.Contains(ChainMessage, StringComparison.Ordinal));
-        Assert.True(diagnostic.Span.StartLineNumber >= 1);
-        Assert.True(diagnostic.Span.StartColumn >= 1);
-        Assert.True(diagnostic.Span.EndLineNumber >= diagnostic.Span.StartLineNumber);
+        Assert.True(Assert.NotNull(diagnostic.Span).Start.Line >= 1);
+        Assert.True(Assert.NotNull(diagnostic.Span).Start.Column >= 1);
+        Assert.True(Assert.NotNull(diagnostic.Span).End.Line >= Assert.NotNull(diagnostic.Span).Start.Line);
         return diagnostic;
     }
 
@@ -133,10 +133,7 @@ public class ParserExpressionChainDepthTests
         var offendingColumn = "1".Length + (Parser.MaxExpressionChainDepth * SpreadContinuation.Length) + 1;
 
         var first = AssertControlledChainFailure(source);
-        Assert.Equal(1, first.Span.StartLineNumber);
-        Assert.Equal(offendingColumn, first.Span.StartColumn);
-        Assert.Equal(1, first.Span.EndLineNumber);
-        Assert.Equal(offendingColumn, first.Span.EndColumn);
+        Assert.Equal(new SourceSpan(1, offendingColumn, 1, offendingColumn + 1), first.Span);   // the one-character `*`
 
         // Parsing terminates normally and repeats identically: same severity, message, span.
         for (var repeat = 0; repeat < 3; repeat++)
@@ -144,10 +141,10 @@ public class ParserExpressionChainDepthTests
             var again = AssertControlledChainFailure(source);
             Assert.Equal(first.Severity, again.Severity);
             Assert.Equal(first.Message, again.Message);
-            Assert.Equal(first.Span.StartLineNumber, again.Span.StartLineNumber);
-            Assert.Equal(first.Span.StartColumn, again.Span.StartColumn);
-            Assert.Equal(first.Span.EndLineNumber, again.Span.EndLineNumber);
-            Assert.Equal(first.Span.EndColumn, again.Span.EndColumn);
+            Assert.Equal(Assert.NotNull(first.Span).Start.Line, Assert.NotNull(again.Span).Start.Line);
+            Assert.Equal(Assert.NotNull(first.Span).Start.Column, Assert.NotNull(again.Span).Start.Column);
+            Assert.Equal(Assert.NotNull(first.Span).End.Line, Assert.NotNull(again.Span).End.Line);
+            Assert.Equal(Assert.NotNull(first.Span).End.Column, Assert.NotNull(again.Span).End.Column);
         }
     }
 

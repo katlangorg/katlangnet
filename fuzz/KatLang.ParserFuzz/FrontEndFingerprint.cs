@@ -47,7 +47,7 @@ internal static class FrontEndFingerprint
     }
 
     private static string Span(SourceSpan? s)
-        => s is null ? "-" : $"{s.StartLineNumber},{s.StartColumn},{s.EndLineNumber},{s.EndColumn}";
+        => s is { } span ? $"{span.Start.Line},{span.Start.Column},{span.End.Line},{span.End.Column}" : "-";
 
     private static void Alg(StringBuilder sb, Algorithm a)
     {

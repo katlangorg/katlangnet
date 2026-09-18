@@ -73,19 +73,22 @@ public class RootStrayCloserRecoveryTests
         return positions;
     }
 
+    // `[Code] start-end message`, the end exclusive (a one-character closer at column c reads `c-(c + 1)`).
     private static string Describe(Diagnostic diagnostic)
-        => $"[{diagnostic.Code}] {diagnostic.Span.StartLineNumber}:{diagnostic.Span.StartColumn}-"
-            + $"{diagnostic.Span.EndLineNumber}:{diagnostic.Span.EndColumn} {diagnostic.Message}";
+    {
+        var span = Assert.NotNull(diagnostic.Span);
+        return $"[{diagnostic.Code}] {span.Start.Line}:{span.Start.Column}-{span.End.Line}:{span.End.Column} {diagnostic.Message}";
+    }
 
     /// <summary>
-    /// The source text covered by a single-line span under the inclusive
+    /// The source text covered by a single-line span under the half-open
     /// 1-based line/column convention (UTF-16 code units, like the lexer).
     /// </summary>
     private static string SourceSlice(string source, SourceSpan span)
     {
-        Assert.Equal(span.StartLineNumber, span.EndLineNumber);
-        var line = source.Split('\n')[span.StartLineNumber - 1];
-        return line.Substring(span.StartColumn - 1, span.EndColumn - span.StartColumn + 1);
+        Assert.Equal(span.Start.Line, span.End.Line);
+        var line = source.Split('\n')[span.Start.Line - 1];
+        return line.Substring(span.Start.Column - 1, span.End.Column - span.Start.Column);
     }
 
     private static void AssertStrayDiagnostic(Diagnostic diagnostic, char closer, int line, int column, string source)
@@ -93,8 +96,9 @@ public class RootStrayCloserRecoveryTests
         Assert.Equal(MessageFor(closer), diagnostic.Message);
         Assert.Equal(DiagnosticCode.UnexpectedToken, diagnostic.Code);
         Assert.Equal(DiagnosticSeverity.Error, diagnostic.Severity);
-        Assert.Equal(new SourceSpan(line, column, line, column), diagnostic.Span);
-        Assert.Equal(closer.ToString(), SourceSlice(source, diagnostic.Span));
+        // The one-character closer: a half-open span one column wide.
+        Assert.Equal(new SourceSpan(line, column, line, column + 1), diagnostic.Span);
+        Assert.Equal(closer.ToString(), SourceSlice(source, Assert.NotNull(diagnostic.Span)));
     }
 
     /// <summary>
@@ -159,12 +163,12 @@ public class RootStrayCloserRecoveryTests
 
         var root = Assert.IsType<Algorithm.User>(parsed.Root);
         Assert.Equal(new[] { "Before", "After" }, root.Properties.Select(p => p.Name));
-        Assert.Equal(new SourceSpan(1, 1, 1, 6), Assert.Single(root.Properties[0].DeclarationSpans));
-        Assert.Equal(new SourceSpan(3, 1, 3, 5), Assert.Single(root.Properties[1].DeclarationSpans));
+        Assert.Equal(new SourceSpan(1, 1, 1, 7), Assert.Single(root.Properties[0].DeclarationSpans));
+        Assert.Equal(new SourceSpan(3, 1, 3, 6), Assert.Single(root.Properties[1].DeclarationSpans));
 
         var after = Assert.IsType<Expr.Resolve>(Assert.Single(root.Output));
         Assert.Equal("After", after.Name);
-        Assert.Equal(new SourceSpan(4, 1, 4, 5), after.Span);
+        Assert.Equal(new SourceSpan(4, 1, 4, 6), after.Span);
 
         // `Before`'s body is exactly `1`: nothing after the stray token was
         // absorbed into the earlier property, and the root gained no parameter.
@@ -275,11 +279,11 @@ public class RootStrayCloserRecoveryTests
         Assert.Equal(
             new[]
             {
-                "[UnexpectedToken] 2:1-2:1 " + StrayParenMessage,
-                "[UnexpectedToken] 2:2-2:2 " + StrayBraceMessage,
-                "[UnexpectedToken] 2:3-2:3 " + StrayBraceMessage,
-                "[UnexpectedToken] 2:4-2:4 " + StrayParenMessage,
-                "[UnexpectedToken] 2:5-2:5 " + StrayParenMessage,
+                "[UnexpectedToken] 2:1-2:2 " + StrayParenMessage,
+                "[UnexpectedToken] 2:2-2:3 " + StrayBraceMessage,
+                "[UnexpectedToken] 2:3-2:4 " + StrayBraceMessage,
+                "[UnexpectedToken] 2:4-2:5 " + StrayParenMessage,
+                "[UnexpectedToken] 2:5-2:6 " + StrayParenMessage,
             },
             parsed.Diagnostics.Select(Describe));
 
@@ -313,7 +317,7 @@ public class RootStrayCloserRecoveryTests
         // `A = 1   2` reports a missing separator and recovers both slots inside A.
         var parsed = Parser.ParseSyntax("A = 1 ) 2\nA");
 
-        Assert.Equal(new[] { "[UnexpectedToken] 1:7-1:7 " + StrayParenMessage }, parsed.Diagnostics.Select(Describe));
+        Assert.Equal(new[] { "[UnexpectedToken] 1:7-1:8 " + StrayParenMessage }, parsed.Diagnostics.Select(Describe));
         var root = Assert.IsType<Algorithm.User>(parsed.Root);
         var a = Assert.IsType<Algorithm.User>(Assert.Single(root.Properties).Value);
         Assert.Equal(1, Assert.IsType<Expr.Num>(Assert.Single(a.Output)).Value);
@@ -333,7 +337,7 @@ public class RootStrayCloserRecoveryTests
         Assert.Equal(
             new[]
             {
-                "[DeclarationInParentheses] 2:1-2:1 A property declaration is not allowed inside parentheses. Use a `{ ... }` block for a scoped algorithm.",
+                "[DeclarationInParentheses] 2:1-2:2 A property declaration is not allowed inside parentheses. Use a `{ ... }` block for a scoped algorithm.",
                 "[UnexpectedToken] 3:2-3:2 Expected ')' but found end of input.",
             },
             parsed.Diagnostics.Select(Describe));
@@ -360,9 +364,9 @@ public class RootStrayCloserRecoveryTests
         Assert.Equal(
             new[]
             {
-                "[UnexpectedToken] 1:5-1:5 Expected '}' but found ')'.",
-                "[UnexpectedToken] 1:5-1:5 " + StrayParenMessage,
-                "[UnexpectedToken] 1:9-1:9 " + StrayBraceMessage,
+                "[UnexpectedToken] 1:5-1:6 Expected '}' but found ')'.",
+                "[UnexpectedToken] 1:5-1:6 " + StrayParenMessage,
+                "[UnexpectedToken] 1:9-1:10 " + StrayBraceMessage,
             },
             parsed.Diagnostics.Select(Describe));
 
@@ -386,14 +390,14 @@ public class RootStrayCloserRecoveryTests
         Assert.Equal(
             new[]
             {
-                "[UnexpectedToken] 1:4-1:4 Expected ')' but found '}'.",
-                "[UnexpectedToken] 1:4-1:4 " + StrayBraceMessage,
+                "[UnexpectedToken] 1:4-1:5 Expected ')' but found '}'.",
+                "[UnexpectedToken] 1:4-1:5 " + StrayBraceMessage,
             },
             parsed.Diagnostics.Select(Describe));
 
         var root = Assert.IsType<Algorithm.User>(parsed.Root);
         Assert.Equal(new[] { "B" }, root.Properties.Select(p => p.Name));
-        Assert.Equal(new SourceSpan(2, 1, 2, 1), Assert.Single(root.Properties[0].DeclarationSpans));
+        Assert.Equal(new SourceSpan(2, 1, 2, 2), Assert.Single(root.Properties[0].DeclarationSpans));
         Assert.Equal(2, root.Output.Count);
         Assert.Equal(1, Assert.IsType<Expr.Num>(root.Output[0]).Value);
         Assert.Equal("B", Assert.IsType<Expr.Resolve>(root.Output[1]).Name);
@@ -411,13 +415,13 @@ public class RootStrayCloserRecoveryTests
     // declarations stay in the scope they were written in.
 
     [Theory]
-    [InlineData("F(a) = a\nA = F(1, )\nB = 2\nC = 3\nA, B, C", "[UnexpectedToken] 2:10-2:10 Unexpected ')'.")]
-    [InlineData("F(a) = a\nA = F(1, -)\nB = 2\nC = 3\nA, B, C", "[UnexpectedToken] 2:11-2:11 Unexpected ')'.")]
-    [InlineData("F(a) = a\nA = (1, )\nB = 2\nC = 3\nA, B, C", "[UnexpectedToken] 2:9-2:9 Unexpected ')'.")]
-    [InlineData("F(a) = a\nA = (1 + )\nB = 2\nC = 3\nA, B, C", "[UnexpectedToken] 2:10-2:10 Unexpected ')'.")]
-    [InlineData("F(a) = a\nA = [1, ]\nB = 2\nC = 3\nA, B, C", "[UnexpectedToken] 2:9-2:9 Unexpected ']'.")]
-    [InlineData("F(a) = a\nA = {1, }\nB = 2\nC = 3\nA, B, C", "[UnexpectedToken] 2:9-2:9 Unexpected '}'.")]
-    [InlineData("F(a) = a\nA = F(F(1, ), 2)\nB = 2\nC = 3\nA, B, C", "[UnexpectedToken] 2:12-2:12 Unexpected ')'.")]
+    [InlineData("F(a) = a\nA = F(1, )\nB = 2\nC = 3\nA, B, C", "[UnexpectedToken] 2:10-2:11 Unexpected ')'.")]
+    [InlineData("F(a) = a\nA = F(1, -)\nB = 2\nC = 3\nA, B, C", "[UnexpectedToken] 2:11-2:12 Unexpected ')'.")]
+    [InlineData("F(a) = a\nA = (1, )\nB = 2\nC = 3\nA, B, C", "[UnexpectedToken] 2:9-2:10 Unexpected ')'.")]
+    [InlineData("F(a) = a\nA = (1 + )\nB = 2\nC = 3\nA, B, C", "[UnexpectedToken] 2:10-2:11 Unexpected ')'.")]
+    [InlineData("F(a) = a\nA = [1, ]\nB = 2\nC = 3\nA, B, C", "[UnexpectedToken] 2:9-2:10 Unexpected ']'.")]
+    [InlineData("F(a) = a\nA = {1, }\nB = 2\nC = 3\nA, B, C", "[UnexpectedToken] 2:9-2:10 Unexpected '}'.")]
+    [InlineData("F(a) = a\nA = F(F(1, ), 2)\nB = 2\nC = 3\nA, B, C", "[UnexpectedToken] 2:12-2:13 Unexpected ')'.")]
     public void OwedCloserAfterAMissingOperand_ClosesTheConstruct_AndLaterDeclarationsSurvive(string source, string diagnostic)
     {
         var parsed = Parser.ParseSyntax(source);
@@ -427,8 +431,8 @@ public class RootStrayCloserRecoveryTests
         // Clause definitions are elaborated after the simple properties, so the family F
         // lists last; what matters is that every declaration is a ROOT property.
         Assert.Equal(new[] { "A", "B", "C", "F" }, root.Properties.Select(p => p.Name));
-        Assert.Equal(new SourceSpan(3, 1, 3, 1), Assert.Single(root.Properties.Single(p => p.Name == "B").DeclarationSpans));
-        Assert.Equal(new SourceSpan(4, 1, 4, 1), Assert.Single(root.Properties.Single(p => p.Name == "C").DeclarationSpans));
+        Assert.Equal(new SourceSpan(3, 1, 3, 2), Assert.Single(root.Properties.Single(p => p.Name == "B").DeclarationSpans));
+        Assert.Equal(new SourceSpan(4, 1, 4, 2), Assert.Single(root.Properties.Single(p => p.Name == "C").DeclarationSpans));
         Assert.Equal(3, root.Output.Count);
         Assert.Equal("A", Assert.IsType<Expr.Resolve>(root.Output[0]).Name);
     }
@@ -444,15 +448,15 @@ public class RootStrayCloserRecoveryTests
     /// as ROOT declarations and the parse stays linear.
     /// </summary>
     [Theory]
-    [InlineData("A = [ (1, ]\nB = 2\nB", "[UnexpectedToken] 1:11-1:11 Unexpected ']'.", "[UnexpectedToken] 1:11-1:11 Expected ')' but found ']'.")]
-    [InlineData("A = [ (1 ]\nB = 2\nB", "[UnexpectedToken] 1:10-1:10 Expected ')' but found ']'.")]
-    [InlineData("A = [ {1, ]\nB = 2\nB", "[UnexpectedToken] 1:11-1:11 Unexpected ']'.", "[UnexpectedToken] 1:11-1:11 Expected '}' but found ']'.")]
-    [InlineData("A = [ {1 ]\nB = 2\nB", "[UnexpectedToken] 1:10-1:10 Expected '}' but found ']'.")]
-    [InlineData("A = [(]\nB = 2\nB", "[UnexpectedToken] 1:7-1:7 Expected ')' but found ']'.")]
-    [InlineData("A = [ F(1, ]\nB = 2\nB", "[UnexpectedToken] 1:12-1:12 Unexpected ']'.", "[UnexpectedToken] 1:12-1:12 Expected ')' but found ']'.")]
-    [InlineData("A = [ ( [ (1 ] ) ]\nB = 2\nB", "[UnexpectedToken] 1:14-1:14 Expected ')' but found ']'.")]
-    [InlineData("A = ( [1, )\nB = 2\nB", "[UnexpectedToken] 1:11-1:11 Unexpected ')'.", "[UnexpectedToken] 1:11-1:11 Expected ']' but found ')'.")]
-    [InlineData("A = { [1, }\nB = 2\nB", "[UnexpectedToken] 1:11-1:11 Unexpected '}'.", "[UnexpectedToken] 1:11-1:11 Expected ']' but found '}'.")]
+    [InlineData("A = [ (1, ]\nB = 2\nB", "[UnexpectedToken] 1:11-1:12 Unexpected ']'.", "[UnexpectedToken] 1:11-1:12 Expected ')' but found ']'.")]
+    [InlineData("A = [ (1 ]\nB = 2\nB", "[UnexpectedToken] 1:10-1:11 Expected ')' but found ']'.")]
+    [InlineData("A = [ {1, ]\nB = 2\nB", "[UnexpectedToken] 1:11-1:12 Unexpected ']'.", "[UnexpectedToken] 1:11-1:12 Expected '}' but found ']'.")]
+    [InlineData("A = [ {1 ]\nB = 2\nB", "[UnexpectedToken] 1:10-1:11 Expected '}' but found ']'.")]
+    [InlineData("A = [(]\nB = 2\nB", "[UnexpectedToken] 1:7-1:8 Expected ')' but found ']'.")]
+    [InlineData("A = [ F(1, ]\nB = 2\nB", "[UnexpectedToken] 1:12-1:13 Unexpected ']'.", "[UnexpectedToken] 1:12-1:13 Expected ')' but found ']'.")]
+    [InlineData("A = [ ( [ (1 ] ) ]\nB = 2\nB", "[UnexpectedToken] 1:14-1:15 Expected ')' but found ']'.")]
+    [InlineData("A = ( [1, )\nB = 2\nB", "[UnexpectedToken] 1:11-1:12 Unexpected ')'.", "[UnexpectedToken] 1:11-1:12 Expected ']' but found ')'.")]
+    [InlineData("A = { [1, }\nB = 2\nB", "[UnexpectedToken] 1:11-1:12 Unexpected '}'.", "[UnexpectedToken] 1:11-1:12 Expected ']' but found '}'.")]
     public void OwedCloserOfAnOuterConstructOfAnotherKind_EndsTheNestedBody_AndTheParseTerminates(
         string source, params string[] diagnostics)
     {
@@ -461,7 +465,7 @@ public class RootStrayCloserRecoveryTests
         Assert.Equal(diagnostics, parsed.Diagnostics.Select(Describe));
         var root = Assert.IsType<Algorithm.User>(parsed.Root);
         Assert.Equal(new[] { "A", "B" }, root.Properties.Select(p => p.Name));
-        Assert.Equal(new SourceSpan(2, 1, 2, 1), Assert.Single(root.Properties.Single(p => p.Name == "B").DeclarationSpans));
+        Assert.Equal(new SourceSpan(2, 1, 2, 2), Assert.Single(root.Properties.Single(p => p.Name == "B").DeclarationSpans));
         Assert.Equal("B", Assert.IsType<Expr.Resolve>(Assert.Single(root.Output)).Name);
     }
 
@@ -539,7 +543,7 @@ public class RootStrayCloserRecoveryTests
         // A closer of another kind inside a brace body is not owed by anything: it is
         // consumed as junk exactly as before, so the block still closes at its own `}`.
         var parsed = Parser.ParseSyntax("A = { 1, ) 2 }\nB = 2\nA, B");
-        Assert.Equal(new[] { "[UnexpectedToken] 1:10-1:10 Unexpected ')'." }, parsed.Diagnostics.Select(Describe));
+        Assert.Equal(new[] { "[UnexpectedToken] 1:10-1:11 Unexpected ')'." }, parsed.Diagnostics.Select(Describe));
         var root = Assert.IsType<Algorithm.User>(parsed.Root);
         Assert.Equal(new[] { "A", "B" }, root.Properties.Select(p => p.Name));
         var block = Assert.IsType<Algorithm.User>(root.Properties[0].Value);
@@ -547,7 +551,7 @@ public class RootStrayCloserRecoveryTests
 
         // At the root nothing is owed either: `1, )` reports once and keeps parsing.
         var atRoot = Parser.ParseSyntax("1, )\nB = 2\nB");
-        Assert.Equal(new[] { "[UnexpectedToken] 1:4-1:4 Unexpected ')'." }, atRoot.Diagnostics.Select(Describe));
+        Assert.Equal(new[] { "[UnexpectedToken] 1:4-1:5 Unexpected ')'." }, atRoot.Diagnostics.Select(Describe));
         Assert.Equal(new[] { "B" }, Assert.IsType<Algorithm.User>(atRoot.Root).Properties.Select(p => p.Name));
     }
 
@@ -581,7 +585,7 @@ public class RootStrayCloserRecoveryTests
         // here. Pinned so the root closer recovery is provably not widened.
         var parsed = Parser.ParseSyntax("Before = 1\n]\nAfter = 2\nAfter");
 
-        Assert.Equal(new[] { "[UnexpectedToken] 2:1-2:1 Unexpected ']'." }, parsed.Diagnostics.Select(Describe));
+        Assert.Equal(new[] { "[UnexpectedToken] 2:1-2:2 Unexpected ']'." }, parsed.Diagnostics.Select(Describe));
         var root = Assert.IsType<Algorithm.User>(parsed.Root);
         Assert.Equal(new[] { "Before", "After" }, root.Properties.Select(p => p.Name));
         Assert.Equal(2, root.Output.Count);
@@ -602,21 +606,21 @@ public class RootStrayCloserRecoveryTests
         var model = SemanticModelBuilder.Build(parsed.Parsed);
 
         var declaration = Assert.Single(model.FindDeclarations("After"));
-        Assert.Equal(new SourceSpan(3, 1, 3, 5), declaration.Span);
+        Assert.Equal(new SourceSpan(3, 1, 3, 6), declaration.Span);
         Assert.Equal(OccurrenceKind.PropertyDefinition, declaration.Kind);
 
         // Go-to-definition from the final output row.
-        var reference = Assert.IsType<IdentifierResolution>(model.FindResolutionAt(4, 3));
+        var reference = Assert.IsType<IdentifierResolution>(model.FindResolutionAt(new SourcePosition(4, 3)));
         Assert.Equal(IdentifierClassification.PropertyReference, reference.Classification);
-        Assert.Equal(new SourceSpan(4, 1, 4, 5), reference.Occurrence.Span);
+        Assert.Equal(new SourceSpan(4, 1, 4, 6), reference.Occurrence.Span);
         Assert.Equal(declaration, reference.ResolvedDeclaration);
 
         // The reference INSIDE the later body resolves across the recovery
         // boundary to the earlier sibling: one root scope, not an implicit parameter.
-        var crossReference = Assert.IsType<IdentifierResolution>(model.FindResolutionAt(3, 9));
+        var crossReference = Assert.IsType<IdentifierResolution>(model.FindResolutionAt(new SourcePosition(3, 9)));
         Assert.Equal(IdentifierClassification.PropertyReference, crossReference.Classification);
-        Assert.Equal(new SourceSpan(3, 9, 3, 14), crossReference.Occurrence.Span);
-        Assert.Equal(new SourceSpan(1, 1, 1, 6), crossReference.ResolvedDeclaration!.Span);
+        Assert.Equal(new SourceSpan(3, 9, 3, 15), crossReference.Occurrence.Span);
+        Assert.Equal(new SourceSpan(1, 1, 1, 7), crossReference.ResolvedDeclaration!.Span);
 
         // Hover/signature metadata for the later declaration.
         var property = Assert.Single(model.FindProperties("After"));
@@ -627,7 +631,7 @@ public class RootStrayCloserRecoveryTests
         // Completion at the final row sees both declarations.
         Assert.Equal(
             new[] { "After", "Before" },
-            model.GetVisibleSymbolsAt(4, 1)
+            model.GetVisibleSymbolsAt(new SourcePosition(4, 1))
                 .Where(symbol => symbol.Classification == IdentifierClassification.PropertyReference)
                 .Select(symbol => symbol.Name)
                 .Order());
@@ -649,11 +653,11 @@ public class RootStrayCloserRecoveryTests
 
         var model = SemanticModelBuilder.Build(parsed.Parsed);
         var declaration = Assert.Single(model.FindDeclarations("Äfter"));
-        Assert.Equal(new SourceSpan(2, 1, 2, 5), declaration.Span);
+        Assert.Equal(new SourceSpan(2, 1, 2, 6), declaration.Span);
 
-        var reference = Assert.IsType<IdentifierResolution>(model.FindResolutionAt(3, 1));
+        var reference = Assert.IsType<IdentifierResolution>(model.FindResolutionAt(new SourcePosition(3, 1)));
         Assert.Equal(IdentifierClassification.PropertyReference, reference.Classification);
-        Assert.Equal(new SourceSpan(3, 1, 3, 5), reference.Occurrence.Span);
+        Assert.Equal(new SourceSpan(3, 1, 3, 6), reference.Occurrence.Span);
         Assert.Equal(declaration, reference.ResolvedDeclaration);
         Assert.All(model.IdentifierOccurrences, occurrence => Assert.Equal(occurrence.Name, SourceSlice(source, occurrence.Span)));
     }
@@ -688,7 +692,7 @@ public class RootStrayCloserRecoveryTests
         Assert.Equal(MessageFor(closer), error.Message);
         Assert.Equal(KatLangErrorCode.UnexpectedToken, error.Code);
         Assert.Null(error.Source); // front-end diagnostic, not an evaluation error
-        Assert.Equal((2, 1, 2, 1), (error.StartLine, error.StartColumn, error.EndLine, error.EndColumn));
+        Assert.Equal(new SourceSpan(2, 1, 2, 2), error.Span);
         Assert.Equal(0, calls);
 
         var asyncFailure = Assert.IsType<RunResult.ParseFailure>(await KatLangEngine.RunAsync(source, options));

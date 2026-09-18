@@ -196,7 +196,7 @@ internal static class EditorCursor
         {
             if (diagnostic.Span is not { } span)
                 continue;
-            var offset = OffsetAtLineColumn(source, span.StartLineNumber, span.StartColumn);
+            var offset = OffsetAtLineColumn(source, span.Start.Line, span.Start.Column);
             if (offset >= 0)
                 return Math.Min(offset + (bias % 2), source.Length);
         }

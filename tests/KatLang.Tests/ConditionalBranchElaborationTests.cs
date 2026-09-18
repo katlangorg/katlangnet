@@ -418,7 +418,7 @@ public class ConditionalBranchElaborationTests
         var diagnostic = Assert.Single(parsed.Diagnostics);
         Assert.Equal(DiagnosticCode.UndeclaredIdentifier, diagnostic.Code);
         Assert.Contains("'missing'", diagnostic.Message, StringComparison.Ordinal);
-        Assert.True(diagnostic.Span!.StartLineNumber > 0);
+        Assert.True(Assert.NotNull(diagnostic.Span).Start.Line > 0);
     }
 
     [Theory]

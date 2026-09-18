@@ -123,7 +123,7 @@ public class AstWalkerTraversalTests
     [Fact]
     public void VisitExpr_SurfacesTheDotMemberSpanOnce()
     {
-        var memberSpan = new SourceSpan(1, 4, 1, 4);
+        var memberSpan = new SourceSpan(1, 4, 1, 5);
         var edge = new Expr.DotCall(new Expr.Num(1), "F")
         {
             LexicalFallback = new Expr.Resolve("F"),

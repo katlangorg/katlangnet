@@ -446,7 +446,7 @@ public class LookupCoherenceTests
         // View 2 — editor.
         var model = SemanticModelBuilder.Build(parsed);
         var referenceToken = TokenSite(lookupCase.Source, lookupCase.ReferenceName, lookupCase.ReferenceOccurrence);
-        var resolution = model.FindResolutionAt(referenceToken.Line, referenceToken.Column);
+        var resolution = model.FindResolutionAt(new SourcePosition(referenceToken.Line, referenceToken.Column));
         Assert.True(
             resolution is not null,
             $"[{caseId}] no editor resolution at the probed site " +
@@ -524,12 +524,12 @@ public class LookupCoherenceTests
         // agree whether or not any name is ever demanded through the list.
         var diagnostic = Assert.Single(parsed.Diagnostics);
         Assert.Equal(DiagnosticCode.IllegalInOpen, diagnostic.Code);
-        Assert.Equal(new SourceSpan(2, 10, 2, 14), diagnostic.Span);
+        Assert.Equal(new SourceSpan(2, 10, 2, 15), diagnostic.Span);
         Assert.Contains("builtin", diagnostic.Message, StringComparison.Ordinal);
 
         var model = SemanticModelBuilder.Build(parsed);
         var target = TokenSite(source, "count", occurrence: null);
-        var resolution = model.FindResolutionAt(target.Line, target.Column);
+        var resolution = model.FindResolutionAt(new SourcePosition(target.Line, target.Column));
 
         Assert.NotNull(resolution);
         Assert.Equal(OccurrenceKind.OpenTargetReference, resolution.Occurrence.Kind);
@@ -567,7 +567,7 @@ public class LookupCoherenceTests
             var site = TokenSite(lookupCase.Source, lookupCase.ReferenceName, lookupCase.ReferenceOccurrence);
             var model = SemanticModelBuilder.Build(parsed);
             Assert.True(
-                model.FindResolutionAt(site.Line, site.Column) is not null,
+                model.FindResolutionAt(new SourcePosition(site.Line, site.Column)) is not null,
                 $"[{lookupCase.Id}] probed site is not a semantic identifier occurrence.");
         }
     }
@@ -615,8 +615,8 @@ public class LookupCoherenceTests
     {
         var declaration = resolution.ResolvedDeclaration;
         Assert.True(declaration is not null, $"[{caseId}] editor reported no declaration.");
-        Assert.Equal(site.Line, declaration!.Span.StartLineNumber);
-        Assert.Equal(site.Column, declaration.Span.StartColumn);
+        Assert.Equal(site.Line, declaration!.Span.Start.Line);
+        Assert.Equal(site.Column, declaration.Span.Start.Column);
     }
 
     /// <summary>

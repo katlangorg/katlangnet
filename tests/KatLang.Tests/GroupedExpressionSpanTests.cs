@@ -19,10 +19,10 @@ public class GroupedExpressionSpanTests
     }
 
     [Theory]
-    [InlineData("(1)", 1, 3)]
-    [InlineData("((1))", 1, 5)]
-    [InlineData("( 1 )", 1, 5)]
-    [InlineData("(((1)))", 1, 7)]
+    [InlineData("(1)", 1, 4)]
+    [InlineData("((1))", 1, 6)]
+    [InlineData("( 1 )", 1, 6)]
+    [InlineData("(((1)))", 1, 8)]
     public void UnwrappedLiteral_SpansTheWholeGroup(string source, int startColumn, int endColumn)
     {
         var row = Assert.IsType<Expr.Num>(SingleRow(source));
@@ -34,40 +34,40 @@ public class GroupedExpressionSpanTests
     public void UnwrappedCompoundExpressions_SpanTheWholeGroup_ChildrenKeepTheirs()
     {
         var binary = Assert.IsType<Expr.Binary>(SingleRow("(1 + 2)"));
-        Assert.Equal(new SourceSpan(1, 1, 1, 7), binary.Span);
-        Assert.Equal(new SourceSpan(1, 2, 1, 2), binary.Left.Span);
-        Assert.Equal(new SourceSpan(1, 6, 1, 6), binary.Right.Span);
+        Assert.Equal(new SourceSpan(1, 1, 1, 8), binary.Span);
+        Assert.Equal(new SourceSpan(1, 2, 1, 3), binary.Left.Span);
+        Assert.Equal(new SourceSpan(1, 6, 1, 7), binary.Right.Span);
 
         var call = Assert.IsType<Expr.Call>(SingleRow("(F(1))"));
-        Assert.Equal(new SourceSpan(1, 1, 1, 6), call.Span);
-        Assert.Equal(new SourceSpan(1, 2, 1, 2), call.Function.Span);
-        Assert.Equal(new SourceSpan(1, 4, 1, 4), Assert.Single(call.Args).Span);
+        Assert.Equal(new SourceSpan(1, 1, 1, 7), call.Span);
+        Assert.Equal(new SourceSpan(1, 2, 1, 3), call.Function.Span);
+        Assert.Equal(new SourceSpan(1, 4, 1, 5), Assert.Single(call.Args).Span);
 
         var dot = Assert.IsType<Expr.DotCall>(SingleRow("(a.b)"));
-        Assert.Equal(new SourceSpan(1, 1, 1, 5), dot.Span);
-        Assert.Equal(new SourceSpan(1, 2, 1, 2), dot.Target.Span);
-        Assert.Equal(new SourceSpan(1, 4, 1, 4), dot.MemberSpan);
+        Assert.Equal(new SourceSpan(1, 1, 1, 6), dot.Span);
+        Assert.Equal(new SourceSpan(1, 2, 1, 3), dot.Target.Span);
+        Assert.Equal(new SourceSpan(1, 4, 1, 5), dot.MemberSpan);
 
         var unary = Assert.IsType<Expr.Unary>(SingleRow("(-1)"));
-        Assert.Equal(new SourceSpan(1, 1, 1, 4), unary.Span);
-        Assert.Equal(new SourceSpan(1, 3, 1, 3), unary.Operand.Span);
+        Assert.Equal(new SourceSpan(1, 1, 1, 5), unary.Span);
+        Assert.Equal(new SourceSpan(1, 3, 1, 4), unary.Operand.Span);
 
         var block = Assert.IsType<Expr.AlgorithmExpr>(SingleRow("({ 1 })"));
-        Assert.Equal(new SourceSpan(1, 1, 1, 7), block.Span);
+        Assert.Equal(new SourceSpan(1, 1, 1, 8), block.Span);
 
         var list = Assert.IsType<Expr.ListLiteral>(SingleRow("([1])"));
-        Assert.Equal(new SourceSpan(1, 1, 1, 5), list.Span);
-        Assert.Equal(new SourceSpan(1, 3, 1, 3), Assert.Single(list.Items).Span);
+        Assert.Equal(new SourceSpan(1, 1, 1, 6), list.Span);
+        Assert.Equal(new SourceSpan(1, 3, 1, 4), Assert.Single(list.Items).Span);
 
         var text = Assert.IsType<Expr.StringLiteral>(SingleRow("('a')"));
-        Assert.Equal(new SourceSpan(1, 1, 1, 5), text.Span);
+        Assert.Equal(new SourceSpan(1, 1, 1, 6), text.Span);
     }
 
     [Fact]
     public void MultiLineGroup_SpansFromTheOpeningToTheClosingParenthesis()
     {
         var binary = Assert.IsType<Expr.Binary>(SingleRow("(1 +\n  2)"));
-        Assert.Equal(new SourceSpan(1, 1, 2, 4), binary.Span);
+        Assert.Equal(new SourceSpan(1, 1, 2, 5), binary.Span);
     }
 
     [Fact]
@@ -77,20 +77,20 @@ public class GroupedExpressionSpanTests
         // a capture: both already spanned their parentheses, and the inner nodes keep
         // their own spans exactly as before.
         var capture = Assert.IsType<Expr.Capture>(SingleRow("(x)"));
-        Assert.Equal(new SourceSpan(1, 1, 1, 3), capture.Span);
-        Assert.Equal(new SourceSpan(1, 2, 1, 2), Assert.Single(capture.Body).Span);
+        Assert.Equal(new SourceSpan(1, 1, 1, 4), capture.Span);
+        Assert.Equal(new SourceSpan(1, 2, 1, 3), Assert.Single(capture.Body).Span);
 
         var pair = Assert.IsType<Expr.Capture>(SingleRow("(1, 2)"));
-        Assert.Equal(new SourceSpan(1, 1, 1, 6), pair.Span);
-        Assert.Equal(new SourceSpan(1, 2, 1, 2), pair.Body[0].Span);
-        Assert.Equal(new SourceSpan(1, 5, 1, 5), pair.Body[1].Span);
+        Assert.Equal(new SourceSpan(1, 1, 1, 7), pair.Span);
+        Assert.Equal(new SourceSpan(1, 2, 1, 3), pair.Body[0].Span);
+        Assert.Equal(new SourceSpan(1, 5, 1, 6), pair.Body[1].Span);
 
         var nestedPair = Assert.IsType<Expr.Capture>(SingleRow("((1, 2))"));
-        Assert.Equal(new SourceSpan(1, 1, 1, 8), nestedPair.Span);
-        Assert.Equal(new SourceSpan(1, 2, 1, 7), Assert.IsType<Expr.Capture>(Assert.Single(nestedPair.Body)).Span);
+        Assert.Equal(new SourceSpan(1, 1, 1, 9), nestedPair.Span);
+        Assert.Equal(new SourceSpan(1, 2, 1, 8), Assert.IsType<Expr.Capture>(Assert.Single(nestedPair.Body)).Span);
 
         var empty = Assert.IsType<Expr.EmptySequence>(SingleRow("(())"));
-        Assert.Equal(new SourceSpan(1, 1, 1, 4), empty.Span);
+        Assert.Equal(new SourceSpan(1, 1, 1, 5), empty.Span);
     }
 
     [Fact]
@@ -101,12 +101,12 @@ public class GroupedExpressionSpanTests
         var failure = Assert.IsType<RunResult.EvalFailure>(KatLangEngine.Run("(1) + 'a'"));
         var error = Assert.Single(failure.Errors);
         Assert.Equal(KatLangErrorCode.TypeMismatch, error.Code);
-        Assert.Equal((1, 1, 1, 9), (error.StartLine, error.StartColumn, error.EndLine, error.EndColumn));
+        Assert.Equal(new SourceSpan(1, 1, 1, 10), error.Span);
 
         var nested = Assert.IsType<RunResult.EvalFailure>(KatLangEngine.Run("((1)) + 'a'"));
         var nestedError = Assert.Single(nested.Errors);
         Assert.Equal(KatLangErrorCode.TypeMismatch, nestedError.Code);
-        Assert.Equal((1, 1, 1, 11), (nestedError.StartLine, nestedError.StartColumn, nestedError.EndLine, nestedError.EndColumn));
+        Assert.Equal(new SourceSpan(1, 1, 1, 12), nestedError.Span);
     }
 
     [Fact]
@@ -117,7 +117,7 @@ public class GroupedExpressionSpanTests
         var failure = Assert.IsType<RunResult.EvalFailure>(KatLangEngine.Run("-(1, 2)"));
         var error = Assert.Single(failure.Errors);
         Assert.Equal(KatLangErrorCode.ArityMismatch, error.Code);
-        Assert.Equal((1, 1, 1, 7), (error.StartLine, error.StartColumn, error.EndLine, error.EndColumn));
+        Assert.Equal(new SourceSpan(1, 1, 1, 8), error.Span);
     }
 
     [Theory]
@@ -179,12 +179,12 @@ public class GroupedExpressionSpanTests
         const string source = "F(x) = x\n((F(1))).string";
         var parsed = SourceProvenance.ParseValid(source);
         var edge = Assert.IsType<Expr.DotCall>(parsed.Root.Output[0]);
-        Assert.Equal(new SourceSpan(2, 1, 2, 8), edge.Target.Span);
+        Assert.Equal(new SourceSpan(2, 1, 2, 9), edge.Target.Span);
         var model = KatLang.Semantics.SemanticModelBuilder.Build(parsed.Root);
-        var reference = model.FindResolutionAt(2, 3)!;
+        var reference = model.FindResolutionAt(new SourcePosition(2, 3))!;
         Assert.Equal(KatLang.Semantics.IdentifierClassification.PropertyReference, reference.Classification);
-        Assert.Equal(new SourceSpan(1, 1, 1, 1), reference.ResolvedDeclaration!.Span);
-        Assert.Null(model.FindResolutionAt(2, 1));
-        Assert.Null(model.FindResolutionAt(2, 2));
+        Assert.Equal(new SourceSpan(1, 1, 1, 2), reference.ResolvedDeclaration!.Span);
+        Assert.Null(model.FindResolutionAt(new SourcePosition(2, 1)));
+        Assert.Null(model.FindResolutionAt(new SourcePosition(2, 2)));
     }
 }

@@ -710,9 +710,9 @@ public static class SemanticModelBuilder
             // A parameter or binder declared inside a load-elaborated module has no
             // document site (and no span): the symbol still binds its references (all of
             // which lie inside the same module and register nothing either), locationlessly.
-            var declaration = span is null || InModuleProvidedSubtree
+            var declaration = span is not { } written || InModuleProvidedSubtree
                 ? null
-                : AddDeclaration(name, span, occurrenceKind, definitionClassification);
+                : AddDeclaration(name, written, occurrenceKind, definitionClassification);
             return new SymbolDefinition(name, kind, AlgorithmValue: null, Declaration: declaration, IsPublic: false, PropertyInfo: null);
         }
 
@@ -1556,7 +1556,7 @@ public static class SemanticModelBuilder
             for (var i = 0; i < algorithm.Branches.Count; i++)
             {
                 var branch = algorithm.Branches[i];
-                var headSpan = declarationSpans is not null && i < declarationSpans.Count
+                SourceSpan? headSpan = declarationSpans is not null && i < declarationSpans.Count
                     ? declarationSpans[i]
                     : null;
                 branches.Add(new ConditionalBranchInfo(
@@ -1605,10 +1605,10 @@ public static class SemanticModelBuilder
             // in source, there is no identifier occurrence to record. A token inside a
             // load-elaborated module is positioned in the MODULE's text: it is not a
             // site of the current document, so it records nothing either.
-            if (span is null || InModuleProvidedSubtree)
+            if (span is not { } written || InModuleProvidedSubtree)
                 return;
 
-            var occurrence = new IdentifierOccurrence(name, span, kind);
+            var occurrence = new IdentifierOccurrence(name, written, kind);
             _identifierOccurrences.Add(occurrence);
             AddResolution(occurrence, classification, declaration, propertyInfo);
         }
@@ -2103,25 +2103,8 @@ public static class SemanticModelBuilder
             if (span is null || Suppressed)
                 return;
 
-            if (Hull is null)
-            {
-                Hull = span;
-                return;
-            }
-
-            var startsEarlier = span.StartLineNumber < Hull.StartLineNumber
-                || (span.StartLineNumber == Hull.StartLineNumber && span.StartColumn < Hull.StartColumn);
-            var endsLater = span.EndLineNumber > Hull.EndLineNumber
-                || (span.EndLineNumber == Hull.EndLineNumber && span.EndColumn > Hull.EndColumn);
-
-            if (!startsEarlier && !endsLater)
-                return;
-
-            Hull = new SourceSpan(
-                startsEarlier ? span.StartLineNumber : Hull.StartLineNumber,
-                startsEarlier ? span.StartColumn : Hull.StartColumn,
-                endsLater ? span.EndLineNumber : Hull.EndLineNumber,
-                endsLater ? span.EndColumn : Hull.EndColumn);
+            // The region is the hull of every extent it sees (half-open like every span).
+            Hull = Hull is { } hull ? hull.Union(span.Value) : span;
         }
     }
 
@@ -2198,30 +2181,25 @@ public static class SemanticModelBuilder
         public override void VisitPattern(Pattern pattern) { }
     }
 
+    /// <summary>
+    /// Source order for the model's listings: by start position, then by end position
+    /// (a containing span sorts after the spans it starts with and outlasts), with
+    /// locationless entries last. This is an ORDERING over spans, distinct from their
+    /// value equality; it never treats two spans at equal coordinates as one entry.
+    /// </summary>
     private sealed class SpanComparer : IComparer<SourceSpan?>
     {
         public static SpanComparer Instance { get; } = new();
 
         public int Compare(SourceSpan? x, SourceSpan? y)
         {
-            if (x is null)
+            if (x is not { } left)
                 return y is null ? 0 : 1;
-            if (y is null)
+            if (y is not { } right)
                 return -1;
 
-            var byStartLine = x.StartLineNumber.CompareTo(y.StartLineNumber);
-            if (byStartLine != 0)
-                return byStartLine;
-
-            var byStartColumn = x.StartColumn.CompareTo(y.StartColumn);
-            if (byStartColumn != 0)
-                return byStartColumn;
-
-            var byEndLine = x.EndLineNumber.CompareTo(y.EndLineNumber);
-            if (byEndLine != 0)
-                return byEndLine;
-
-            return x.EndColumn.CompareTo(y.EndColumn);
+            var byStart = left.Start.CompareTo(right.Start);
+            return byStart != 0 ? byStart : left.End.CompareTo(right.End);
         }
     }
 }

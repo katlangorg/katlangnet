@@ -338,13 +338,13 @@ public class ParameterOwnershipTests
         var model = SemanticModelBuilder.Build(parsed);
 
         var (line, column) = LastOccurrence(source, "v");
-        var resolution = model.FindResolutionAt(line, column);
+        var resolution = model.FindResolutionAt(new SourcePosition(line, column));
 
         Assert.NotNull(resolution);
         Assert.Equal(expectedClassification, resolution.Classification);
         Assert.NotNull(resolution.ResolvedDeclaration);
-        Assert.Equal(expectedDeclarationLine, resolution.ResolvedDeclaration.Span.StartLineNumber);
-        Assert.Equal(expectedDeclarationColumn, resolution.ResolvedDeclaration.Span.StartColumn);
+        Assert.Equal(expectedDeclarationLine, resolution.ResolvedDeclaration.Span.Start.Line);
+        Assert.Equal(expectedDeclarationColumn, resolution.ResolvedDeclaration.Span.Start.Column);
     }
 
     /// <summary>
@@ -362,7 +362,7 @@ public class ParameterOwnershipTests
 
         var (line, column) = LastOccurrence(source, "v");
         var symbol = Assert.Single(
-            model.GetVisibleSymbolsAt(line, column), candidate => candidate.Name == "v");
+            model.GetVisibleSymbolsAt(new SourcePosition(line, column)), candidate => candidate.Name == "v");
 
         Assert.Equal(IdentifierClassification.ExplicitParameterReference, symbol.Classification);
     }

@@ -226,9 +226,9 @@ public class ParserNestingDepthTests
     {
         var result = Parser.ParseSyntax(Rep("(", 5000) + "1" + Rep(")", 5000));
         var diagnostic = result.Diagnostics.First(d => d.Message.Contains(NestingMessage, StringComparison.Ordinal));
-        Assert.True(diagnostic.Span.StartLineNumber >= 1);
-        Assert.True(diagnostic.Span.StartColumn >= 1);
-        Assert.True(diagnostic.Span.EndLineNumber >= diagnostic.Span.StartLineNumber);
+        Assert.True(Assert.NotNull(diagnostic.Span).Start.Line >= 1);
+        Assert.True(Assert.NotNull(diagnostic.Span).Start.Column >= 1);
+        Assert.True(Assert.NotNull(diagnostic.Span).End.Line >= Assert.NotNull(diagnostic.Span).Start.Line);
     }
 
     // ── Semantics preserved for in-budget programs ────────────────────────────
@@ -316,7 +316,7 @@ public class ParserNestingDepthTests
                 {
                     var diagnostic = Assert.Single(result.Diagnostics);
                     Assert.Equal(DiagnosticCode.InvalidGraceMarker, diagnostic.Code);
-                    Assert.Equal(new SourceSpan(1, 3, 1, k + 2), diagnostic.Span);
+                    Assert.Equal(new SourceSpan(1, 3, 1, k + 3), diagnostic.Span);
                     Assert.Empty(root.Properties);
                     Assert.Equal(2, root.Output.Count);
                     Assert.Equal(1m, Assert.IsType<Expr.Num>(root.Output[0]).Value);
@@ -328,7 +328,7 @@ public class ParserNestingDepthTests
                 {
                     var diagnostic = Assert.Single(result.Diagnostics);
                     Assert.Equal(DiagnosticCode.InvalidGraceMarker, diagnostic.Code);
-                    Assert.Equal(new SourceSpan(1, 10, 1, k + 9), diagnostic.Span);
+                    Assert.Equal(new SourceSpan(1, 10, 1, k + 10), diagnostic.Span);
                     var f = Assert.Single(root.Properties);
                     Assert.Equal("F", f.Name);
                     var body = Assert.IsType<Algorithm.User>(f.Value);
@@ -346,7 +346,7 @@ public class ParserNestingDepthTests
                 {
                     var diagnostic = Assert.Single(result.Diagnostics);
                     Assert.Equal(DiagnosticCode.InvalidGraceMarker, diagnostic.Code);
-                    Assert.Equal(new SourceSpan(1, 1, 1, k), diagnostic.Span);
+                    Assert.Equal(new SourceSpan(1, 1, 1, k + 1), diagnostic.Span);
                     var x = Assert.Single(root.Properties);
                     Assert.Equal("x", x.Name);
                     Assert.Equal(1m, Assert.IsType<Expr.Num>(Assert.Single(Assert.IsType<Algorithm.User>(x.Value).Output)).Value);

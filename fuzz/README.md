@@ -989,7 +989,7 @@ The contract this target rests on — written down in `Utf16LexerContractTests`,
 | Question | Answer |
 |---|---|
 | What indexes a source position? | UTF-16 code units. Token `Position`/`Length` are code-unit offsets. |
-| Line and column base | 1-based; `SourceSpan` end positions are **inclusive**. |
+| Line and column base | 1-based; a `SourceSpan` is **half-open** `[Start, End)` — its `End` is the first column after the covered text, so an end-of-input diagnostic is an empty span. |
 | What do columns count? | UTF-16 code units — not scalars, not graphemes, not tab-expanded columns. |
 | Surrogate pair | **Two** columns. Neither half is ever an identifier character (`char.IsLetter` is per code unit), so an astral letter lexes as two bad tokens. |
 | Combining mark | Its own column, and not an identifier character. Precomposed and decomposed forms are different sources and stay different values. |
@@ -1196,7 +1196,7 @@ stay representable), a placement, a line-ending encoding, an execution mode, a c
 a bounded edit. Nothing grows with an encoded integer; bytes past the prefix are ignored.
 
 * **Source** is exact UTF-16 code units (`ImmutableArray<ushort>`), built once to a `string`.
-* **Coordinates.** `SourceSpan` is 1-based, end-inclusive, columns in UTF-16 code units, `\n`-only
+* **Coordinates.** `SourceSpan` is 1-based, half-open (`End` exclusive), columns in UTF-16 code units, `\n`-only
   line breaks with `\r` transparent — the same model the shared `SourceSpanValidator` enforces. The
   cursor is stored as an exact UTF-16 offset for replay and converted to (line, column) for the query
   through that one model; an out-of-range `PastEndOfFile` cursor deliberately queries past the last

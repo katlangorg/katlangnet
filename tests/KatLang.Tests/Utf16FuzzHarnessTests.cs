@@ -389,19 +389,27 @@ public class Utf16FuzzHarnessTests
 
     // ── Span validator: each violation must be caught, not merely usually caught ──
 
+    // A malformed shape cannot be CONSTRUCTED: SourceSpan rejects zero or negative coordinates
+    // and an end before the start, so no fuzzed layer can hand the validator one. The one
+    // shape that bypasses construction — the struct's default value — is still reported.
     [Theory]
-    [InlineData(0, 1, 1, 1, "start line < 1")]
-    [InlineData(1, 0, 1, 1, "start column < 1")]
-    [InlineData(1, 1, 0, 1, "end line < 1")]
-    [InlineData(1, 1, 1, 0, "end column < 1")]
-    [InlineData(2, 1, 1, 1, "end line precedes start line")]
-    [InlineData(1, 4, 1, 2, "end column precedes start column")]
-    [InlineData(-5, 1, 1, 1, "start line < 1")]
-    public void MalformedSpanShapesAreRejected(int startLine, int startColumn, int endLine, int endColumn, string expected)
+    [InlineData(0, 1, 1, 1)]   // start line < 1
+    [InlineData(1, 0, 1, 1)]   // start column < 1
+    [InlineData(1, 1, 0, 1)]   // end line < 1
+    [InlineData(1, 1, 1, 0)]   // end column < 1
+    [InlineData(2, 1, 1, 1)]   // end line precedes start line
+    [InlineData(1, 4, 1, 2)]   // end column precedes start column
+    [InlineData(-5, 1, 1, 1)]  // negative start line
+    public void MalformedSpanShapesAreRejected(int startLine, int startColumn, int endLine, int endColumn)
+    {
+        Assert.Throws<ArgumentOutOfRangeException>(() => new SourceSpan(startLine, startColumn, endLine, endColumn));
+    }
+
+    [Fact]
+    public void TheDefaultSpanValueIsReportedAsMalformed()
     {
         var widths = SourceSpanValidator.LineWidths("abc\ndef");
-        var reason = SourceSpanValidator.Validate(new SourceSpan(startLine, startColumn, endLine, endColumn), widths);
-        Assert.Equal(expected, reason);
+        Assert.Equal("start line < 1", SourceSpanValidator.Validate(default, widths));
     }
 
     [Fact]
@@ -409,16 +417,18 @@ public class Utf16FuzzHarnessTests
     {
         var widths = SourceSpanValidator.LineWidths("abc\ndef");     // two lines, width 3 each
 
-        Assert.NotNull(SourceSpanValidator.Validate(new SourceSpan(3, 1, 3, 1), widths));   // line past end
-        Assert.NotNull(SourceSpanValidator.Validate(new SourceSpan(1, 1, 3, 1), widths));   // end line past end
-        Assert.NotNull(SourceSpanValidator.Validate(new SourceSpan(1, 5, 1, 5), widths));   // column past width+1
-        Assert.NotNull(SourceSpanValidator.Validate(new SourceSpan(1, 1, 2, 5), widths));   // end column past width+1
+        Assert.NotNull(SourceSpanValidator.Validate(new SourceSpan(3, 1, 3, 2), widths));   // line past end
+        Assert.NotNull(SourceSpanValidator.Validate(new SourceSpan(1, 1, 3, 2), widths));   // end line past end
+        Assert.NotNull(SourceSpanValidator.Validate(new SourceSpan(1, 5, 1, 6), widths));   // column past width+1
+        Assert.NotNull(SourceSpanValidator.Validate(new SourceSpan(1, 1, 2, 6), widths));   // end column past width+1
         Assert.NotNull(SourceSpanValidator.Validate(new SourceSpan(int.MaxValue, 1, int.MaxValue, 1), widths));
 
-        // The one-past-end column is the legal EOF / end-exclusive position.
+        // The one-past-end column is the legal end-of-line / end-of-file position: an EMPTY
+        // span there, and the exclusive end of a span covering the whole line, are both legal.
         Assert.Null(SourceSpanValidator.Validate(new SourceSpan(1, 4, 1, 4), widths));
         Assert.Null(SourceSpanValidator.Validate(new SourceSpan(2, 4, 2, 4), widths));
-        Assert.Null(SourceSpanValidator.Validate(new SourceSpan(1, 1, 2, 3), widths));      // multiline is legal
+        Assert.Null(SourceSpanValidator.Validate(new SourceSpan(1, 1, 1, 4), widths));      // `abc`
+        Assert.Null(SourceSpanValidator.Validate(new SourceSpan(1, 1, 2, 4), widths));      // multiline is legal
     }
 
     [Fact]
@@ -435,8 +445,8 @@ public class Utf16FuzzHarnessTests
         // Each half of a surrogate pair is its own column — this parser indexes code units.
         var pair = SourceSpanValidator.LineWidths("\uD83D\uDE00");
         Assert.Equal([2], pair);
-        Assert.Null(SourceSpanValidator.Validate(new SourceSpan(1, 1, 1, 2), pair));
-        Assert.NotNull(SourceSpanValidator.Validate(new SourceSpan(1, 1, 1, 4), pair));
+        Assert.Null(SourceSpanValidator.Validate(new SourceSpan(1, 1, 1, 3), pair));
+        Assert.NotNull(SourceSpanValidator.Validate(new SourceSpan(1, 1, 1, 5), pair));
 
         // A zero-length span at end of file is legal and must not be flagged.
         var empty = SourceSpanValidator.LineWidths("");

@@ -87,12 +87,10 @@ public class SameLineSeparatorTests
             Assert.Equal(DiagnosticSeverity.Error, diagnostic.Severity);
             Assert.Equal(DiagnosticCode.UnseparatedSameLineItem, diagnostic.Code);
             Assert.Equal(message, diagnostic.Message);
-            Assert.Equal(expected.Line, diagnostic.Span.StartLineNumber);
-            Assert.Equal(expected.Column, diagnostic.Span.StartColumn);
-            Assert.Equal(expected.Line, diagnostic.Span.EndLineNumber);
+            // The diagnostic covers exactly the unseparated item's first token.
             var token = Assert.Single(Lexer.Tokenize(source).Tokens,
                 t => t.Line == expected.Line && t.Column == expected.Column);
-            Assert.Equal(expected.Column + token.Length - 1, diagnostic.Span.EndColumn);
+            Assert.Equal(token.Span, diagnostic.Span);
         }
 
         var elaborated = Parser.Parse(source);
@@ -175,7 +173,7 @@ public class SameLineSeparatorTests
         Assert.Equal(
             [DiagnosticCode.UnseparatedSameLineItem, DiagnosticCode.InvalidOpenDeclaration],
             syntax.Diagnostics.Select(static d => d.Code));
-        Assert.Equal((1, 7), (syntax.Diagnostics[0].Span.StartLineNumber, syntax.Diagnostics[0].Span.StartColumn));
+        Assert.Equal((1, 7), (Assert.NotNull(syntax.Diagnostics[0].Span).Start.Line, Assert.NotNull(syntax.Diagnostics[0].Span).Start.Column));
     }
 
     // ── Recovery: the item stays where it was written ───────────────────────
@@ -412,7 +410,7 @@ public class SameLineSeparatorTests
         Assert.Equal(
             [DiagnosticCode.InvalidGraceMarker, DiagnosticCode.UnseparatedSameLineItem],
             syntax.Diagnostics.Select(static d => d.Code));
-        Assert.Equal((3, 9), (syntax.Diagnostics[1].Span.StartLineNumber, syntax.Diagnostics[1].Span.StartColumn));
+        Assert.Equal((3, 9), (Assert.NotNull(syntax.Diagnostics[1].Span).Start.Line, Assert.NotNull(syntax.Diagnostics[1].Span).Start.Column));
     }
 
     [Theory]
@@ -428,7 +426,7 @@ public class SameLineSeparatorTests
                 ? [DiagnosticCode.UnexpectedToken, DiagnosticCode.UnexpectedToken, DiagnosticCode.UnseparatedSameLineItem]
                 : new[] { DiagnosticCode.UnexpectedToken, DiagnosticCode.UnseparatedSameLineItem },
             syntax.Diagnostics.Select(static d => d.Code));
-        Assert.Equal(new SourceSpan(1, laterColumn, 1, laterColumn), syntax.Diagnostics[^1].Span);
+        Assert.Equal(new SourceSpan(1, laterColumn, 1, laterColumn + 1), syntax.Diagnostics[^1].Span);
     }
 
     [Theory]
@@ -445,7 +443,7 @@ public class SameLineSeparatorTests
         Assert.Equal(
             [DiagnosticCode.InvalidGraceMarker, DiagnosticCode.UnseparatedSameLineItem],
             syntax.Diagnostics.Select(static d => d.Code));
-        Assert.Equal(new SourceSpan(1, laterColumn, 1, laterColumn), syntax.Diagnostics[1].Span);
+        Assert.Equal(new SourceSpan(1, laterColumn, 1, laterColumn + 1), syntax.Diagnostics[1].Span);
     }
 
     [Fact]
@@ -455,7 +453,7 @@ public class SameLineSeparatorTests
         Assert.Equal(
             [DiagnosticCode.InvalidGraceMarker, DiagnosticCode.UnseparatedSameLineItem],
             syntax.Diagnostics.Select(static d => d.Code));
-        Assert.Equal(new SourceSpan(1, 13, 1, 13), syntax.Diagnostics[1].Span);
+        Assert.Equal(new SourceSpan(1, 13, 1, 14), syntax.Diagnostics[1].Span);
         var body = Assert.IsType<Algorithm.User>(Assert.Single(syntax.Root.Properties).Value);
         Assert.Equal(["x", "y", "z"], body.Output.Select(static e => Assert.IsType<Expr.Resolve>(e).Name));
         Assert.Empty(syntax.Root.Output);
@@ -468,7 +466,7 @@ public class SameLineSeparatorTests
         Assert.Equal(
             [DiagnosticCode.InvalidCollectMarker, DiagnosticCode.UnseparatedSameLineItem],
             syntax.Diagnostics.Select(static d => d.Code));
-        Assert.Equal(new SourceSpan(1, 16, 1, 16), syntax.Diagnostics[1].Span);
+        Assert.Equal(new SourceSpan(1, 16, 1, 17), syntax.Diagnostics[1].Span);
         Assert.Equal(["P", "Q"], syntax.Root.Properties.Select(static p => p.Name));
     }
 
@@ -515,8 +513,8 @@ public class SameLineSeparatorTests
         var tokens = Lexer.Tokenize(source).Tokens;
         foreach (var diagnostic in diagnostics.Reverse())
         {
-            var token = Assert.Single(tokens, t => t.Line == diagnostic.Span.StartLineNumber
-                && t.Column == diagnostic.Span.StartColumn);
+            var token = Assert.Single(tokens, t => t.Line == Assert.NotNull(diagnostic.Span).Start.Line
+                && t.Column == Assert.NotNull(diagnostic.Span).Start.Column);
             repaired = repaired.Insert(token.Position, ",");
         }
         var recovered = SourceProvenance.ParseAllowingDiagnostics(source).Root;
@@ -614,7 +612,7 @@ public class SameLineSeparatorTests
         var diagnostic = Assert.Single(parse.Diagnostics);
         Assert.Equal(DiagnosticCode.UnexpectedToken, diagnostic.Code);
         Assert.Equal("Expected number after '-' in pattern.", diagnostic.Message);
-        Assert.Equal(new SourceSpan(1, column, 1, column), diagnostic.Span);
+        Assert.Equal(new SourceSpan(1, column, 1, column + 1), diagnostic.Span);
         Assert.Equal("F", Assert.Single(parse.Root.Properties).Name);
         Assert.Empty(parse.Root.Output);
         Assert.Empty(parse.Root.Parameters);
@@ -634,13 +632,13 @@ public class SameLineSeparatorTests
             {
                 Assert.Equal(DiagnosticCode.UnseparatedSameLineItem, separator.Code);
                 Assert.Equal(PatternMessage, separator.Message);
-                Assert.Equal(new SourceSpan(1, 5, 1, 5), separator.Span);
+                Assert.Equal(new SourceSpan(1, 5, 1, 6), separator.Span);
             },
             marker =>
             {
                 Assert.Equal(DiagnosticCode.InvalidCollectMarker, marker.Code);
                 Assert.Equal("The collect marker `*` must be directly attached to its binding name: write `*b`.", marker.Message);
-                Assert.Equal(new SourceSpan(1, 5, 2, 1), marker.Span);
+                Assert.Equal(new SourceSpan(1, 5, 2, 2), marker.Span);
             });
         var f = Assert.IsType<Algorithm.User>(Assert.Single(parse.Root.Properties).Value);
         Assert.Equal([("a", ParameterKind.Normal), ("b", ParameterKind.Normal)],
@@ -660,7 +658,7 @@ public class SameLineSeparatorTests
             {
                 Assert.Equal(DiagnosticCode.UnseparatedSameLineItem, separator.Code);
                 Assert.Equal(PatternMessage, separator.Message);
-                Assert.Equal(new SourceSpan(1, column, 1, column), separator.Span);
+                Assert.Equal(new SourceSpan(1, column, 1, column + 1), separator.Span);
             },
             eof =>
             {
@@ -707,7 +705,7 @@ public class SameLineSeparatorTests
         var first = syntax.Diagnostics[0];
         Assert.Equal(DiagnosticCode.UnexpectedToken, first.Code);
         Assert.Equal($"Expected ')' but found {found}.", first.Message);
-        Assert.Equal((line, column), (first.Span.StartLineNumber, first.Span.StartColumn));
+        Assert.Equal((line, column), (Assert.NotNull(first.Span).Start.Line, Assert.NotNull(first.Span).Start.Column));
         Assert.DoesNotContain(syntax.Diagnostics, static d => d.Code == DiagnosticCode.UnseparatedSameLineItem);
     }
 
@@ -801,7 +799,7 @@ public class SameLineSeparatorTests
 
             var report = Assert.Single(reports);
             Assert.Equal(DiagnosticCode.UnseparatedSameLineItem, report.Code);
-            Assert.Equal((1, 5), (report.Span.StartLineNumber, report.Span.StartColumn));
+            Assert.Equal((1, 5), (Assert.NotNull(report.Span).Start.Line, Assert.NotNull(report.Span).Start.Column));
             Assert.Equal(report, syntax.Diagnostics[0]);
         }
     }

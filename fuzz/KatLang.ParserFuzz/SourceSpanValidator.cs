@@ -8,7 +8,8 @@ namespace KatLang.ParserFuzz;
 /// <c>Lexer.Tokenize</c>): a line boundary is <c>'\n'</c> only, <c>'\r'</c> is
 /// transparent (advances neither line nor column), every other character advances the
 /// column by one, and columns/lines are 1-based so the largest legal column on a line
-/// is (visible width + 1) — the one-past-end position used for EOF / end-exclusive spans.
+/// is (visible width + 1) — the one-past-end position: the end-of-file position, and the
+/// exclusive <see cref="SourceSpan.End"/> of a span that runs to the end of a line.
 /// </summary>
 internal static class SourceSpanValidator
 {
@@ -56,31 +57,36 @@ internal static class SourceSpanValidator
     }
 
     /// <summary>Returns null when the span is valid for the source, otherwise a short
-    /// reason describing the violation.</summary>
+    /// reason describing the violation. A span is half-open: its start must address a real
+    /// coordinate or the one-past-end position of a line, and so must its exclusive end
+    /// (an empty span at end of file is valid). The 1-based and start-before-end checks
+    /// are the constructor's own invariants, repeated here so a <c>default</c> struct that
+    /// bypassed construction is still reported rather than trusted.</summary>
     public static string? Validate(SourceSpan s, int[] lineWidths)
     {
         int maxLine = lineWidths.Length;
+        var (start, end) = s;
 
-        if (s.StartLineNumber < 1) return "start line < 1";
-        if (s.StartColumn < 1) return "start column < 1";
-        if (s.EndLineNumber < 1) return "end line < 1";
-        if (s.EndColumn < 1) return "end column < 1";
+        if (start.Line < 1) return "start line < 1";
+        if (start.Column < 1) return "start column < 1";
+        if (end.Line < 1) return "end line < 1";
+        if (end.Column < 1) return "end column < 1";
 
-        if (s.EndLineNumber < s.StartLineNumber) return "end line precedes start line";
-        if (s.EndLineNumber == s.StartLineNumber && s.EndColumn < s.StartColumn)
+        if (end.Line < start.Line) return "end line precedes start line";
+        if (end.Line == start.Line && end.Column < start.Column)
             return "end column precedes start column";
 
-        if (s.StartLineNumber > maxLine) return $"start line {s.StartLineNumber} > line count {maxLine}";
-        if (s.EndLineNumber > maxLine) return $"end line {s.EndLineNumber} > line count {maxLine}";
+        if (start.Line > maxLine) return $"start line {start.Line} > line count {maxLine}";
+        if (end.Line > maxLine) return $"end line {end.Line} > line count {maxLine}";
 
-        int startMax = lineWidths[s.StartLineNumber - 1] + 1;
-        int endMax = lineWidths[s.EndLineNumber - 1] + 1;
-        if (s.StartColumn > startMax) return $"start column {s.StartColumn} > line width+1 ({startMax})";
-        if (s.EndColumn > endMax) return $"end column {s.EndColumn} > line width+1 ({endMax})";
+        int startMax = lineWidths[start.Line - 1] + 1;
+        int endMax = lineWidths[end.Line - 1] + 1;
+        if (start.Column > startMax) return $"start column {start.Column} > line width+1 ({startMax})";
+        if (end.Column > endMax) return $"end column {end.Column} > line width+1 ({endMax})";
 
         return null;
     }
 
     public static string Describe(SourceSpan? s)
-        => s is null ? "<null>" : $"({s.StartLineNumber},{s.StartColumn})-({s.EndLineNumber},{s.EndColumn})";
+        => s is { } span ? span.ToString() : "<null>";
 }

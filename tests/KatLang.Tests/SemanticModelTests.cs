@@ -23,8 +23,8 @@ public class SemanticModelTests
         Assert.Contains(written.Parameters, p => p.Span is null);
 
         var model = SemanticModelBuilder.Build(parsed.Parsed);
-        Assert.DoesNotContain(model.GetVisibleSymbolsAt(1, 8), s => s.Name == "_error_");
-        Assert.DoesNotContain(model.GetVisibleSymbolsAt(2, 1), s => s.Name == "_error_");
+        Assert.DoesNotContain(model.GetVisibleSymbolsAt(new SourcePosition(1, 8)), s => s.Name == "_error_");
+        Assert.DoesNotContain(model.GetVisibleSymbolsAt(new SourcePosition(2, 1)), s => s.Name == "_error_");
         Assert.DoesNotContain(model.ScopeVisibilities.SelectMany(v => v.Symbols), s => s.Name == "_error_");
         Assert.DoesNotContain(model.Declarations, d => d.Name == "_error_");
         Assert.DoesNotContain(model.IdentifierResolutions, r => r.Occurrence.Name == "_error_");
@@ -41,14 +41,14 @@ public class SemanticModelTests
             var model = SemanticModelBuilder.Build(parsed.Parsed);
             foreach (var line in new[] { 3, 4 })
             {
-                var resolution = model.FindResolutionAt(line, 13);
+                var resolution = model.FindResolutionAt(new SourcePosition(line, 13));
                 Assert.Equal(IdentifierClassification.ExplicitParameterReference, resolution!.Classification);
-                Assert.Equal(new SourceSpan(1, 7, 1, 7), resolution.ResolvedDeclaration!.Span);
-                Assert.Null(model.FindPropertyAt(line, 13));
-                var visible = Assert.Single(model.GetVisibleSymbolsAt(line, 13), s => s.Name == "v");
+                Assert.Equal(new SourceSpan(1, 7, 1, 8), resolution.ResolvedDeclaration!.Span);
+                Assert.Null(model.FindPropertyAt(new SourcePosition(line, 13)));
+                var visible = Assert.Single(model.GetVisibleSymbolsAt(new SourcePosition(line, 13)), s => s.Name == "v");
                 Assert.Equal(resolution.ResolvedDeclaration, visible.Declaration);
             }
-            Assert.Equal(new SourceSpan(2, 5, 2, 5), model.FindPropertyAt(2, 5)!.Declaration!.Span);
+            Assert.Equal(new SourceSpan(2, 5, 2, 6), model.FindPropertyAt(new SourcePosition(2, 5))!.Declaration!.Span);
         }
     }
 
@@ -83,10 +83,10 @@ public class SemanticModelTests
     }
 
     private static IdentifierResolution ResolutionAt(SemanticModel model, int line, int column)
-        => Assert.IsType<IdentifierResolution>(model.FindResolutionAt(line, column));
+        => Assert.IsType<IdentifierResolution>(model.FindResolutionAt(new SourcePosition(line, column)));
 
     private static PropertyInfo PropertyAt(SemanticModel model, int line, int column)
-        => Assert.IsType<PropertyInfo>(model.FindPropertyAt(line, column));
+        => Assert.IsType<PropertyInfo>(model.FindPropertyAt(new SourcePosition(line, column)));
 
     private static PropertyInfo SingleProperty(SemanticModel model, string name)
         => Assert.Single(model.FindProperties(name));
@@ -97,34 +97,19 @@ public class SemanticModelTests
         Assert.Equal(expectedParameters, property.Parameters.Select(parameter => parameter.DisplayName).ToList());
     }
 
+    // Half-open coordinates: endColumn is the column just past the identifier.
     private static void AssertSpan(SourceSpan span, int startLine, int startColumn, int endLine, int endColumn)
-    {
-        Assert.Equal(startLine, span.StartLineNumber);
-        Assert.Equal(startColumn, span.StartColumn);
-        Assert.Equal(endLine, span.EndLineNumber);
-        Assert.Equal(endColumn, span.EndColumn);
-    }
+        => Assert.Equal(new SourceSpan(startLine, startColumn, endLine, endColumn), span);
 
     private static SourceSpan StringLiteralSpan(string source)
     {
         var (tokens, _) = Lexer.Tokenize(source);
-        var token = Assert.Single(tokens, token => token.Kind == TokenKind.StringLiteral);
-        return new SourceSpan(
-            token.Line,
-            token.Column,
-            token.Line,
-            token.Column + Math.Max(token.Length, 1) - 1);
+        return Assert.Single(tokens, token => token.Kind == TokenKind.StringLiteral).Span;
     }
 
-    private static int ComparePosition(int line, int column, int otherLine, int otherColumn)
-    {
-        var lineComparison = line.CompareTo(otherLine);
-        return lineComparison != 0 ? lineComparison : column.CompareTo(otherColumn);
-    }
-
+    // Half-open spans overlap when each starts before the other ends; a shared boundary is not an overlap.
     private static bool SpansOverlap(SourceSpan left, SourceSpan right)
-        => ComparePosition(left.StartLineNumber, left.StartColumn, right.EndLineNumber, right.EndColumn) <= 0
-            && ComparePosition(right.StartLineNumber, right.StartColumn, left.EndLineNumber, left.EndColumn) <= 0;
+        => left.Start < right.End && right.Start < left.End;
 
     private static void AssertNoIdentifierSemanticSiteOverlaps(SemanticModel model, SourceSpan span)
     {
@@ -148,13 +133,13 @@ public class SemanticModelTests
                 && resolution.Occurrence.Kind == OccurrenceKind.ResolveReference);
         Assert.Equal(IdentifierClassification.PropertyReference, alphaReference.Classification);
         Assert.Equal(alphaDeclaration, alphaReference.ResolvedDeclaration);
-        AssertSpan(alphaReference.Occurrence.Span, 3, 2, 3, 6);
+        AssertSpan(alphaReference.Occurrence.Span, 3, 2, 3, 7);
 
         var betaReference = Assert.Single(
             model.IdentifierResolutions,
             resolution => resolution.Occurrence.Name == "Beta"
                 && resolution.Occurrence.Kind == OccurrenceKind.ResolveReference);
-        AssertSpan(betaReference.Occurrence.Span, 3, 9, 3, 12);
+        AssertSpan(betaReference.Occurrence.Span, 3, 9, 3, 13);
     }
 
     [Fact]
@@ -164,7 +149,7 @@ public class SemanticModelTests
 
         var alphaDeclaration = Assert.Single(model.FindDeclarations("Alpha"));
         Assert.Equal(OccurrenceKind.PropertyDefinition, alphaDeclaration.Kind);
-        AssertSpan(alphaDeclaration.Span, 1, 1, 1, 5);
+        AssertSpan(alphaDeclaration.Span, 1, 1, 1, 6);
 
         var alphaReference = Assert.Single(
             model.IdentifierResolutions,
@@ -172,12 +157,12 @@ public class SemanticModelTests
                 && resolution.Occurrence.Kind == OccurrenceKind.ResolveReference);
         Assert.Equal(IdentifierClassification.PropertyReference, alphaReference.Classification);
         Assert.Equal(alphaDeclaration, alphaReference.ResolvedDeclaration);
-        AssertSpan(alphaReference.Occurrence.Span, 2, 1, 2, 5);
+        AssertSpan(alphaReference.Occurrence.Span, 2, 1, 2, 6);
 
-        Assert.Equal(alphaReference, model.FindResolutionAt(2, 1));
-        Assert.Equal(alphaReference, model.FindResolutionAt(2, 3));
-        Assert.Equal(alphaReference, model.FindResolutionAt(2, 5));
-        Assert.Null(model.FindResolutionAt(2, 6));
+        Assert.Equal(alphaReference, model.FindResolutionAt(new SourcePosition(2, 1)));
+        Assert.Equal(alphaReference, model.FindResolutionAt(new SourcePosition(2, 3)));
+        Assert.Equal(alphaReference, model.FindResolutionAt(new SourcePosition(2, 5)));
+        Assert.Null(model.FindResolutionAt(new SourcePosition(2, 6)));
     }
 
     [Fact]
@@ -192,7 +177,7 @@ public class SemanticModelTests
 
         var declaration = Assert.Single(model.FindDeclarations("T"));
         Assert.Equal(OccurrenceKind.PropertyDefinition, declaration.Kind);
-        AssertSpan(declaration.Span, 1, 1, 1, 1);
+        AssertSpan(declaration.Span, 1, 1, 1, 2);
 
         var resolution = ResolutionAt(model, 1, 1);
         Assert.Equal(IdentifierClassification.PropertyDefinition, resolution.Classification);
@@ -211,11 +196,11 @@ public class SemanticModelTests
 
         var applyDeclaration = Assert.Single(model.FindDeclarations("apply"));
         Assert.Equal(OccurrenceKind.PropertyDefinition, applyDeclaration.Kind);
-        AssertSpan(applyDeclaration.Span, 1, 1, 1, 5);
+        AssertSpan(applyDeclaration.Span, 1, 1, 1, 6);
 
         var xDeclaration = Assert.Single(model.FindDeclarations("x"));
         Assert.Equal(OccurrenceKind.ExplicitParameterDefinition, xDeclaration.Kind);
-        AssertSpan(xDeclaration.Span, 1, 7, 1, 7);
+        AssertSpan(xDeclaration.Span, 1, 7, 1, 8);
 
         var xReference = ResolutionAt(model, 1, 12);
         Assert.Equal(OccurrenceKind.ParameterReference, xReference.Occurrence.Kind);
@@ -246,7 +231,7 @@ public class SemanticModelTests
 
         var itemsDeclaration = Assert.Single(model.FindDeclarations("items"));
         Assert.Equal(OccurrenceKind.ExplicitParameterDefinition, itemsDeclaration.Kind);
-        AssertSpan(itemsDeclaration.Span, 1, 7, 1, 11);
+        AssertSpan(itemsDeclaration.Span, 1, 7, 1, 12);
         Assert.Equal(itemsDeclaration, ResolutionAt(model, 1, 16).ResolvedDeclaration);
 
         var pack = SingleProperty(model, "Pack");
@@ -265,8 +250,8 @@ public class SemanticModelTests
             static property => property.Name == "Pack").Value;
         var parameter = Assert.Single(packAlgorithm.Parameters);
         Assert.Equal(ParameterKind.Collecting, parameter.Kind);
-        AssertSpan(Assert.IsType<SourceSpan>(parameter.CollectMarkerSpan), 1, 6, 1, 6);
-        AssertNoIdentifierSemanticSiteOverlaps(model, Assert.IsType<SourceSpan>(parameter.CollectMarkerSpan));
+        AssertSpan(Assert.NotNull(parameter.CollectMarkerSpan), 1, 6, 1, 7);
+        AssertNoIdentifierSemanticSiteOverlaps(model, Assert.NotNull(parameter.CollectMarkerSpan));
 
         var call = Assert.IsType<Expr.Call>(Assert.Single(parseResult.Root.Output));
         var spread = Assert.IsType<Expr.SequenceSpread>(Assert.Single(call.Args));
@@ -275,7 +260,7 @@ public class SemanticModelTests
         // The postfix `*` spread marker is punctuation too: no identifier
         // occurrence, symbol, or classification is created for it.
         var spreadMarkerSpan = Assert.IsType<SourceSpan>(spread.SpreadMarkerSpan);
-        AssertSpan(spreadMarkerSpan, 3, 12, 3, 12);
+        AssertSpan(spreadMarkerSpan, 3, 12, 3, 13);
         AssertNoIdentifierSemanticSiteOverlaps(model, spreadMarkerSpan);
     }
 
@@ -299,16 +284,16 @@ public class SemanticModelTests
         // for it — only the operand keeps its identifier semantics.
         var spread = Assert.IsType<Expr.SequenceSpread>(Assert.Single(parseResult.Root.Output));
         var markerSpan = Assert.IsType<SourceSpan>(spread.SpreadMarkerSpan);
-        AssertSpan(markerSpan, 2, 2, 2, 2);
+        AssertSpan(markerSpan, 2, 2, 2, 3);
         AssertNoIdentifierSemanticSiteOverlaps(model, markerSpan);
-        Assert.Null(model.FindResolutionAt(2, 2));
+        Assert.Null(model.FindResolutionAt(new SourcePosition(2, 2)));
 
         var aDeclaration = Assert.Single(model.FindDeclarations("A"));
         var operandReference = ResolutionAt(model, 2, 1);
         Assert.Equal(OccurrenceKind.ResolveReference, operandReference.Occurrence.Kind);
         Assert.Equal(IdentifierClassification.PropertyReference, operandReference.Classification);
         Assert.Equal(aDeclaration, operandReference.ResolvedDeclaration);
-        AssertSpan(operandReference.Occurrence.Span, 2, 1, 2, 1);
+        AssertSpan(operandReference.Occurrence.Span, 2, 1, 2, 2);
     }
 
     [Fact]
@@ -356,7 +341,7 @@ public class SemanticModelTests
         // property named `spread` declares and resolves ordinarily.
         var spreadDeclaration = Assert.Single(model.FindDeclarations("spread"));
         Assert.Equal(OccurrenceKind.PropertyDefinition, spreadDeclaration.Kind);
-        AssertSpan(spreadDeclaration.Span, 1, 1, 1, 6);
+        AssertSpan(spreadDeclaration.Span, 1, 1, 1, 7);
 
         var spreadReference = Assert.Single(
             model.IdentifierResolutions,
@@ -364,7 +349,7 @@ public class SemanticModelTests
                 && resolution.Occurrence.Kind == OccurrenceKind.ResolveReference);
         Assert.Equal(IdentifierClassification.PropertyReference, spreadReference.Classification);
         Assert.Equal(spreadDeclaration, spreadReference.ResolvedDeclaration);
-        AssertSpan(spreadReference.Occurrence.Span, 2, 1, 2, 6);
+        AssertSpan(spreadReference.Occurrence.Span, 2, 1, 2, 7);
         Assert.Equal("spread", Assert.IsType<PropertyInfo>(spreadReference.ResolvedProperty).Name);
     }
 
@@ -380,15 +365,15 @@ public class SemanticModelTests
 
         var xDeclaration = Assert.Single(model.FindDeclarations("x"));
         Assert.Equal(OccurrenceKind.PropertyDefinition, xDeclaration.Kind);
-        AssertSpan(xDeclaration.Span, 2, 1, 2, 1);
+        AssertSpan(xDeclaration.Span, 2, 1, 2, 2);
 
         var yDeclaration = Assert.Single(model.FindDeclarations("y"));
         Assert.Equal(OccurrenceKind.PropertyDefinition, yDeclaration.Kind);
-        AssertSpan(yDeclaration.Span, 2, 5, 2, 5);
+        AssertSpan(yDeclaration.Span, 2, 5, 2, 6);
 
         var zDeclaration = Assert.Single(model.FindDeclarations("z"));
         Assert.Equal(OccurrenceKind.PropertyDefinition, zDeclaration.Kind);
-        AssertSpan(zDeclaration.Span, 2, 8, 2, 8);
+        AssertSpan(zDeclaration.Span, 2, 8, 2, 9);
 
         // The synthetic shared-source property and the helper constructs that bind
         // the right-hand side carry no source spans, so no synthetic property ever
@@ -415,7 +400,7 @@ public class SemanticModelTests
         var model = BuildModel("F = {\n a, b = x, 10\n a + b\n}\nF(1)");
         var reference = Assert.Single(model.FindResolutions("x"));
         Assert.Equal(IdentifierClassification.ImplicitParameterReference, reference.Classification);
-        AssertSpan(reference.Occurrence.Span, 2, 9, 2, 9);
+        AssertSpan(reference.Occurrence.Span, 2, 9, 2, 10);
         Assert.Empty(model.FindDeclarations("x"));
         Assert.DoesNotContain(model.PropertyInfos, property => property.Name.StartsWith('$'));
         Assert.DoesNotContain(model.IdentifierResolutions, resolution => resolution.Occurrence.Name.StartsWith('$'));
@@ -427,7 +412,7 @@ public class SemanticModelTests
         var model = BuildModel("F(x, x) = x");
 
         var declaration = Assert.Single(model.FindDeclarations("x"));
-        AssertSpan(declaration.Span, 1, 3, 1, 3);
+        AssertSpan(declaration.Span, 1, 3, 1, 4);
 
         var repeatedBinder = ResolutionAt(model, 1, 6);
         Assert.Equal(OccurrenceKind.ParameterReference, repeatedBinder.Occurrence.Kind);
@@ -453,8 +438,8 @@ public class SemanticModelTests
 
         var xDeclarations = model.FindDeclarations("x").ToList();
         Assert.Equal(2, xDeclarations.Count);
-        var innerXDeclaration = xDeclarations.Single(d => d.Span.StartLineNumber == 3);
-        AssertSpan(innerXDeclaration.Span, 3, 1, 3, 1);
+        var innerXDeclaration = xDeclarations.Single(d => d.Span.Start.Line == 3);
+        AssertSpan(innerXDeclaration.Span, 3, 1, 3, 2);
 
         var innerXReference = ResolutionAt(model, 4, 10);
         Assert.Equal(IdentifierClassification.PropertyReference, innerXReference.Classification);
@@ -478,12 +463,12 @@ public class SemanticModelTests
 
         var fDeclarations = model.FindDeclarations("f").ToList();
         Assert.Equal(2, fDeclarations.Count);
-        Assert.Contains(fDeclarations, declaration => declaration.Span.StartLineNumber == 1);
-        Assert.Contains(fDeclarations, declaration => declaration.Span.StartLineNumber == 2);
+        Assert.Contains(fDeclarations, declaration => declaration.Span.Start.Line == 1);
+        Assert.Contains(fDeclarations, declaration => declaration.Span.Start.Line == 2);
 
         var xDeclaration = Assert.Single(model.FindDeclarations("x"));
         Assert.Equal(OccurrenceKind.ConditionalBinderDefinition, xDeclaration.Kind);
-        AssertSpan(xDeclaration.Span, 2, 3, 2, 3);
+        AssertSpan(xDeclaration.Span, 2, 3, 2, 4);
 
         var xReference = ResolutionAt(model, 2, 8);
         Assert.Equal(OccurrenceKind.ParameterReference, xReference.Occurrence.Kind);
@@ -505,8 +490,8 @@ public class SemanticModelTests
             """);
 
         var firstBranchDeclaration = model.FindDeclarations("x")
-            .Single(declaration => declaration.Span.StartLineNumber == 1);
-        AssertSpan(firstBranchDeclaration.Span, 1, 7, 1, 7);
+            .Single(declaration => declaration.Span.Start.Line == 1);
+        AssertSpan(firstBranchDeclaration.Span, 1, 7, 1, 8);
 
         var repeatedBinder = ResolutionAt(model, 1, 10);
         Assert.Equal(OccurrenceKind.ParameterReference, repeatedBinder.Occurrence.Kind);
@@ -529,13 +514,13 @@ public class SemanticModelTests
             """);
 
         var outerDeclaration = Assert.Single(model.FindDeclarations("outer"));
-        AssertSpan(outerDeclaration.Span, 2, 1, 2, 5);
+        AssertSpan(outerDeclaration.Span, 2, 1, 2, 6);
 
         var innerDeclaration = Assert.Single(model.FindDeclarations("inner"));
-        AssertSpan(innerDeclaration.Span, 3, 8, 3, 12);
+        AssertSpan(innerDeclaration.Span, 3, 8, 3, 13);
 
         var valDeclaration = Assert.Single(model.FindDeclarations("val"));
-        AssertSpan(valDeclaration.Span, 4, 8, 4, 10);
+        AssertSpan(valDeclaration.Span, 4, 8, 4, 11);
 
         var outerOpenReference = ResolutionAt(model, 1, 6);
         Assert.Equal(OccurrenceKind.OpenTargetReference, outerOpenReference.Occurrence.Kind);
@@ -567,7 +552,7 @@ public class SemanticModelTests
         var model = BuildModel(source, remoteFiles);
         var urlSpan = StringLiteralSpan(source);
 
-        Assert.Null(model.FindResolutionAt(urlSpan.StartLineNumber, urlSpan.StartColumn));
+        Assert.Null(model.FindResolutionAt(new SourcePosition(urlSpan.Start.Line, urlSpan.Start.Column)));
         AssertNoIdentifierSemanticSiteOverlaps(model, urlSpan);
     }
 
@@ -640,10 +625,10 @@ public class SemanticModelTests
             """);
 
         var propDeclaration = Assert.Single(model.FindDeclarations("prop"));
-        AssertSpan(propDeclaration.Span, 1, 8, 1, 11);
+        AssertSpan(propDeclaration.Span, 1, 8, 1, 12);
 
         var valDeclaration = Assert.Single(model.FindDeclarations("val"));
-        AssertSpan(valDeclaration.Span, 3, 8, 3, 10);
+        AssertSpan(valDeclaration.Span, 3, 8, 3, 11);
 
         var parameterFallbackMember = ResolutionAt(model, 5, 12);
         Assert.Equal(OccurrenceKind.DotMemberReference, parameterFallbackMember.Occurrence.Kind);
@@ -730,7 +715,7 @@ public class SemanticModelTests
 
         var tDeclaration = Assert.Single(model.FindDeclarations("t"));
         Assert.Equal(OccurrenceKind.ExplicitParameterDefinition, tDeclaration.Kind);
-        AssertSpan(tDeclaration.Span, 1, 6, 1, 6);
+        AssertSpan(tDeclaration.Span, 1, 6, 1, 7);
 
         var memberReference = ResolutionAt(model, 1, 13);
         Assert.Equal(OccurrenceKind.DotMemberReference, memberReference.Occurrence.Kind);
@@ -851,7 +836,7 @@ public class SemanticModelTests
 
         var structuralDeclaration = Assert.Single(
             model.FindDeclarations("V"),
-            declaration => declaration.Span is { } span && span.StartLineNumber == 3);
+            declaration => declaration.Span is { } span && span.Start.Line == 3);
 
         var memberReference = ResolutionAt(model, 6, 6);
         Assert.Equal(OccurrenceKind.DotMemberReference, memberReference.Occurrence.Kind);
@@ -876,7 +861,7 @@ public class SemanticModelTests
 
         var structuralDeclaration = Assert.Single(
             model.FindDeclarations("V"),
-            declaration => declaration.Span is { } span && span.StartLineNumber == 3);
+            declaration => declaration.Span is { } span && span.Start.Line == 3);
 
         var memberReference = ResolutionAt(model, 6, 5);
         Assert.Equal(OccurrenceKind.DotMemberReference, memberReference.Occurrence.Kind);
@@ -1094,7 +1079,7 @@ public class SemanticModelTests
             """);
 
         var rootSumDeclaration = Assert.Single(model.FindDeclarations("sum"));
-        AssertSpan(rootSumDeclaration.Span, 4, 1, 4, 3);
+        AssertSpan(rootSumDeclaration.Span, 4, 1, 4, 4);
 
         var sumReference = ResolutionAt(model, 2, 21);
         Assert.Equal(OccurrenceKind.DotMemberReference, sumReference.Occurrence.Kind);
@@ -1120,7 +1105,7 @@ public class SemanticModelTests
             """);
 
         var valuesDeclaration = Assert.Single(model.FindDeclarations("Values"));
-        AssertSpan(valuesDeclaration.Span, 1, 1, 1, 6);
+        AssertSpan(valuesDeclaration.Span, 1, 1, 1, 7);
 
         var valuesReference = ResolutionAt(model, 2, 1);
         Assert.Equal(OccurrenceKind.ResolveReference, valuesReference.Occurrence.Kind);
@@ -1160,7 +1145,7 @@ public class SemanticModelTests
             """);
 
         var valuesDeclaration = Assert.Single(model.FindDeclarations("Values"));
-        AssertSpan(valuesDeclaration.Span, 1, 1, 1, 6);
+        AssertSpan(valuesDeclaration.Span, 1, 1, 1, 7);
 
         var valuesReference = ResolutionAt(model, 2, 1);
         Assert.Equal(OccurrenceKind.ResolveReference, valuesReference.Occurrence.Kind);
@@ -1353,7 +1338,7 @@ public class SemanticModelTests
 
         var outputDeclaration = Assert.Single(model.FindDeclarations("Output"));
         Assert.Equal(OccurrenceKind.PropertyDefinition, outputDeclaration.Kind);
-        AssertSpan(outputDeclaration.Span, 1, 1, 1, 6);
+        AssertSpan(outputDeclaration.Span, 1, 1, 1, 7);
 
         var outputResolution = ResolutionAt(model, 1, 1);
         Assert.Equal(IdentifierClassification.PropertyDefinition, outputResolution.Classification);
@@ -1471,7 +1456,7 @@ public class SemanticModelTests
         var model = BuildModel(source);
         var stringSpan = StringLiteralSpan(source);
 
-        Assert.Null(model.FindResolutionAt(stringSpan.StartLineNumber, stringSpan.StartColumn));
+        Assert.Null(model.FindResolutionAt(new SourcePosition(stringSpan.Start.Line, stringSpan.Start.Column)));
         AssertNoIdentifierSemanticSiteOverlaps(model, stringSpan);
 
         var labelDeclaration = Assert.Single(model.FindDeclarations("Label"));
@@ -1557,8 +1542,7 @@ public class SemanticModelTests
         var parameter = Assert.Single(property.Parameters);
         Assert.Equal("x", parameter.Name);
         Assert.Equal(PropertyParameterKind.Explicit, parameter.Kind);
-        Assert.NotNull(parameter.Span);
-        AssertSpan(parameter.Span!, 1, 5, 1, 5);
+        AssertSpan(Assert.NotNull(parameter.Span), 1, 5, 1, 6);
         Assert.Empty(property.ConditionalBranches);
 
         var definitionProperty = PropertyAt(model, 1, 1);
@@ -1743,7 +1727,7 @@ public class SemanticModelTests
 
         var dotResolution = ResolutionAt(model, 5, 6);
         Assert.Equal(IdentifierClassification.PropertyReference, dotResolution.Classification);
-        Assert.Equal(new SourceSpan(2, 1, 2, 4), dotResolution.ResolvedDeclaration?.Span);
+        Assert.Equal(new SourceSpan(2, 1, 2, 5), dotResolution.ResolvedDeclaration?.Span);
         Assert.Same(property, dotResolution.ResolvedProperty);
     }
 
@@ -1812,7 +1796,7 @@ public class SemanticModelTests
         Assert.Equal(["F(1)", "F(x)"], property.ConditionalBranches.Select(branch => branch.HeadText).ToList());
         Assert.Empty(property.ConditionalBranches[0].BinderNames);
         Assert.Equal(["x"], property.ConditionalBranches[1].BinderNames.ToList());
-        Assert.Equal([1, 2], property.ConditionalBranches.Select(branch => branch.HeadSpan?.StartLineNumber).ToList());
+        Assert.Equal([1, 2], property.ConditionalBranches.Select(branch => branch.HeadSpan?.Start.Line).ToList());
 
         var declarations = model.FindDeclarations("F").ToList();
         Assert.Equal(2, declarations.Count);
@@ -2032,13 +2016,13 @@ public class SemanticModelTests
     {
         var model = BuildModel("Alpha = 1\nBeta = Alpha + missing\nBeta");
 
-        var root = model.FindScopeAt(3, 1);
+        var root = model.FindScopeAt(new SourcePosition(3, 1));
         Assert.Null(root.Span);
         Assert.Equal(["Alpha", "Beta"], SymbolNames(root));
         Assert.Equal(IdentifierClassification.PropertyReference, SingleSymbol(root, "Alpha").Classification);
 
         // `missing` is an implicit parameter of Beta's BODY scope, not a root name.
-        var betaBody = model.FindScopeAt(2, 10);
+        var betaBody = model.FindScopeAt(new SourcePosition(2, 10));
         Assert.NotNull(betaBody.Span);
         Assert.Equal(
             IdentifierClassification.ImplicitParameterReference,
@@ -2059,17 +2043,17 @@ public class SemanticModelTests
             F(3)
             """);
 
-        var body = model.FindScopeAt(5, 5);
+        var body = model.FindScopeAt(new SourcePosition(5, 5));
         Assert.Equal(["F", "Inner", "X", "a"], SymbolNames(body));
 
         // The inner X shadows the root X: exactly one entry, declared on line 4.
         var x = SingleSymbol(body, "X");
-        Assert.Equal(4, x.Declaration!.Span.StartLineNumber);
+        Assert.Equal(4, x.Declaration!.Span.Start.Line);
         Assert.Equal(IdentifierClassification.ExplicitParameterReference, SingleSymbol(body, "a").Classification);
 
         // At root, X is the line-1 declaration and the parameter is not visible.
-        var root = model.FindScopeAt(7, 1);
-        Assert.Equal(1, SingleSymbol(root, "X").Declaration!.Span.StartLineNumber);
+        var root = model.FindScopeAt(new SourcePosition(7, 1));
+        Assert.Equal(1, SingleSymbol(root, "X").Declaration!.Span.Start.Line);
         Assert.DoesNotContain(root.Symbols, symbol => symbol.Name is "a" or "Inner");
     }
 
@@ -2078,7 +2062,7 @@ public class SemanticModelTests
     {
         var model = BuildModel("sum = 5\nsum");
 
-        var visible = model.GetVisibleSymbolsAt(2, 1);
+        var visible = model.GetVisibleSymbolsAt(new SourcePosition(2, 1));
         var sum = Assert.Single(visible, symbol => symbol.Name == "sum");
         Assert.Equal(IdentifierClassification.PropertyReference, sum.Classification);
 
@@ -2104,13 +2088,13 @@ public class SemanticModelTests
             Use
             """);
 
-        var use = model.FindScopeAt(8, 5);
+        var use = model.FindScopeAt(new SourcePosition(8, 5));
         Assert.Equal(IdentifierClassification.PropertyReference, SingleSymbol(use, "Tax").Classification);
         Assert.Single(use.Symbols, symbol => symbol.Name == "Rate");
         Assert.DoesNotContain(use.Symbols, symbol => symbol.Name == "Hidden");
 
         // Inside Lib itself, Hidden is an ordinary directly-visible property.
-        var lib = model.FindScopeAt(3, 5);
+        var lib = model.FindScopeAt(new SourcePosition(3, 5));
         Assert.Single(lib.Symbols, symbol => symbol.Name == "Hidden");
     }
 
@@ -2133,7 +2117,7 @@ public class SemanticModelTests
             U
             """);
 
-        var u = model.FindScopeAt(10, 3);
+        var u = model.FindScopeAt(new SourcePosition(10, 3));
 
         // `open A, A` dedups first-occurrence-wins, so A is ONE provider and
         // `Only` is offered; X has two distinct providers (A and B) at the same
@@ -2159,10 +2143,10 @@ public class SemanticModelTests
 
         // Direct-anywhere beats open-anywhere: the prelude `sum` wins, so the
         // scope emits no `sum` entry and the merged view shows the builtin.
-        var u = model.FindScopeAt(6, 3);
+        var u = model.FindScopeAt(new SourcePosition(6, 3));
         Assert.DoesNotContain(u.Symbols, symbol => symbol.Name == "sum");
 
-        var mergedSum = Assert.Single(model.GetVisibleSymbolsAt(6, 3), symbol => symbol.Name == "sum");
+        var mergedSum = Assert.Single(model.GetVisibleSymbolsAt(new SourcePosition(6, 3)), symbol => symbol.Name == "sum");
         Assert.Equal(IdentifierClassification.Builtin, mergedSum.Classification);
     }
 
@@ -2184,7 +2168,7 @@ public class SemanticModelTests
         // the local-only L (it captures the ancestor parameter `a`) is a member of the
         // surface too: whether a site may use it is the accessibility question the
         // evaluator decides after selection, not a different member set.
-        var f = SingleSymbol(model.FindScopeAt(7, 1), "F");
+        var f = SingleSymbol(model.FindScopeAt(new SourcePosition(7, 1)), "F");
         Assert.Equal(["L", "V", "W"], f.Members.Select(static member => member.Name).ToList());
         Assert.All(f.Members, static member => Assert.Empty(member.Members));
     }
@@ -2200,14 +2184,14 @@ public class SemanticModelTests
             Fib(10)
             """);
 
-        var clauseBody = model.FindScopeAt(3, 15);
+        var clauseBody = model.FindScopeAt(new SourcePosition(3, 15));
         Assert.Equal(
             IdentifierClassification.ConditionalBinderReference,
             SingleSymbol(clauseBody, "n").Classification);
         Assert.Single(clauseBody.Symbols, symbol => symbol.Name == "Fib");
 
         // Literal-clause bodies bind nothing.
-        Assert.DoesNotContain(model.FindScopeAt(4, 1).Symbols, symbol => symbol.Name == "n");
+        Assert.DoesNotContain(model.FindScopeAt(new SourcePosition(4, 1)).Symbols, symbol => symbol.Name == "n");
     }
 
     [Fact]
@@ -2215,14 +2199,14 @@ public class SemanticModelTests
     {
         var model = BuildModel("K = a.t\nK(7, {x + 1})");
 
-        var brace = model.FindScopeAt(2, 8);
-        AssertSpan(brace.Span!, 2, 6, 2, 12);
+        var brace = model.FindScopeAt(new SourcePosition(2, 8));
+        AssertSpan(Assert.NotNull(brace.Span), 2, 6, 2, 13);
         Assert.Equal(
             IdentifierClassification.ImplicitParameterReference,
             SingleSymbol(brace, "x").Classification);
 
         // K's one-line body scope carries its implicit parameters.
-        var kBody = model.FindScopeAt(1, 6);
+        var kBody = model.FindScopeAt(new SourcePosition(1, 6));
         Assert.Single(kBody.Symbols, symbol => symbol.Name == "a");
         Assert.Single(kBody.Symbols, symbol => symbol.Name == "t");
     }
@@ -2291,16 +2275,16 @@ public class SemanticModelTests
 
     private static string[] Lines(string source) => source.Replace("\r", "").Split('\n');
 
-    /// <summary>The document text an identifier site claims: a single-line range inside the document.</summary>
+    /// <summary>The document text an identifier site claims: a single-line half-open range inside the document.</summary>
     private static string SliceOf(string source, SourceSpan span)
     {
         var lines = Lines(source);
-        Assert.Equal(span.StartLineNumber, span.EndLineNumber);
-        Assert.InRange(span.StartLineNumber, 1, lines.Length);
-        var line = lines[span.StartLineNumber - 1];
-        Assert.InRange(span.StartColumn, 1, line.Length);
-        Assert.InRange(span.EndColumn, span.StartColumn, line.Length);
-        return line.Substring(span.StartColumn - 1, span.EndColumn - span.StartColumn + 1);
+        Assert.Equal(span.Start.Line, span.End.Line);
+        Assert.InRange(span.Start.Line, 1, lines.Length);
+        var line = lines[span.Start.Line - 1];
+        Assert.InRange(span.Start.Column, 1, line.Length);
+        Assert.InRange(span.End.Column, span.Start.Column + 1, line.Length + 1);
+        return line.Substring(span.Start.Column - 1, span.End.Column - span.Start.Column);
     }
 
     private static HashSet<DeclarationOccurrence> DocumentDeclarations(SemanticModel model)
@@ -2391,18 +2375,18 @@ public class SemanticModelTests
         {
             for (var column = 1; column <= lines[line - 1].Length; column++)
             {
-                var resolution = model.FindResolutionAt(line, column);
+                var resolution = model.FindResolutionAt(new SourcePosition(line, column));
                 if (resolution is not null)
                 {
                     Assert.Contains(model.IdentifierResolutions, candidate => ReferenceEquals(candidate, resolution));
                     Assert.Equal(resolution.Occurrence.Name, SliceOf(source, resolution.Occurrence.Span));
-                    Assert.Equal(line, resolution.Occurrence.Span.StartLineNumber);
-                    Assert.InRange(column, resolution.Occurrence.Span.StartColumn, resolution.Occurrence.Span.EndColumn);
+                    Assert.Equal(line, resolution.Occurrence.Span.Start.Line);
+                    Assert.InRange(column, resolution.Occurrence.Span.Start.Column, resolution.Occurrence.Span.End.Column);
                 }
 
-                Assert.Same(resolution?.ResolvedProperty, model.FindPropertyAt(line, column));
-                Assert.Contains(model.ScopeVisibilities, candidate => ReferenceEquals(candidate, model.FindScopeAt(line, column)));
-                foreach (var symbol in model.GetVisibleSymbolsAt(line, column))
+                Assert.Same(resolution?.ResolvedProperty, model.FindPropertyAt(new SourcePosition(line, column)));
+                Assert.Contains(model.ScopeVisibilities, candidate => ReferenceEquals(candidate, model.FindScopeAt(new SourcePosition(line, column))));
+                foreach (var symbol in model.GetVisibleSymbolsAt(new SourcePosition(line, column)))
                     AssertDocumentSymbol(source, declarations, symbol);
             }
         }
@@ -2437,7 +2421,7 @@ public class SemanticModelTests
         // K7-SEM-R1, repro A. The module's private `Fee` is declared at MODULE coordinates
         // 2:1–2:3, which coincide with the document's `Total` reference at 2:1–2:5: a
         // definition site registered for it sorted ahead of the document's own site and won
-        // FindResolutionAt(2, 1).
+        // FindResolutionAt(new SourcePosition(2, 1)).
         const string source = "open 'https://katlang.org/lib2.kat'\nTotal + 1";
         var remoteFiles = new Dictionary<string, string>
         {
@@ -2447,14 +2431,14 @@ public class SemanticModelTests
 
         var reference = ResolutionAt(model, 2, 1);
         Assert.Equal("Total", reference.Occurrence.Name);
-        AssertSpan(reference.Occurrence.Span, 2, 1, 2, 5);
+        AssertSpan(reference.Occurrence.Span, 2, 1, 2, 6);
         Assert.Equal(OccurrenceKind.ResolveReference, reference.Occurrence.Kind);
         Assert.Equal(IdentifierClassification.PropertyReference, reference.Classification);
         var target = AssertModuleProvidedTarget(reference, "Total");
         Assert.Equal(PropertyShape.Ordinary, target.Shape);
         Assert.True(target.IsPublic);
         Assert.True(target.IsExported);
-        Assert.Same(target, model.FindPropertyAt(2, 1));
+        Assert.Same(target, model.FindPropertyAt(new SourcePosition(2, 1)));
         Assert.Same(target, Assert.Single(model.FindProperties("Total")));
 
         // Fee contributes no site of any kind, and neither does the imported Total's own
@@ -2487,11 +2471,11 @@ public class SemanticModelTests
             model.IdentifierResolutions,
             resolution => resolution.Classification == IdentifierClassification.PropertyDefinition);
         AssertNoIdentifierSemanticSiteOverlaps(model, StringLiteralSpan(source));
-        Assert.Null(model.FindResolutionAt(1, 8));
+        Assert.Null(model.FindResolutionAt(new SourcePosition(1, 8)));
 
         var reference = ResolutionAt(model, 2, 1);
         Assert.Equal("Tax", reference.Occurrence.Name);
-        AssertSpan(reference.Occurrence.Span, 2, 1, 2, 3);
+        AssertSpan(reference.Occurrence.Span, 2, 1, 2, 4);
         Assert.Equal(OccurrenceKind.ResolveReference, reference.Occurrence.Kind);
         Assert.Equal(IdentifierClassification.PropertyReference, reference.Classification);
         var target = AssertModuleProvidedTarget(reference, "Tax");
@@ -2500,7 +2484,7 @@ public class SemanticModelTests
 
         // Every position of "Tax + " sees the document's reference or nothing — never Helper.
         for (var column = 1; column <= 6; column++)
-            Assert.Same(column <= 3 ? reference : null, model.FindResolutionAt(2, column));
+            Assert.Same(column <= 3 ? reference : null, model.FindResolutionAt(new SourcePosition(2, column)));
         AssertNoSites(model, "Helper");
 
         AssertIdentifierSitesSliceToTheirSpelling(model, source);
@@ -2529,9 +2513,9 @@ public class SemanticModelTests
         var model = BuildModel(source);
 
         Assert.Equal(
-            [("Total", 2, 10, 14), ("Fee", 3, 3, 5), ("Lib", 5, 1, 3), ("Tax", 6, 10, 12), ("Helper", 7, 3, 8)],
+            [("Total", 2, 10, 15), ("Fee", 3, 3, 6), ("Lib", 5, 1, 4), ("Tax", 6, 10, 13), ("Helper", 7, 3, 9)],
             model.Declarations
-                .Select(static declaration => (declaration.Name, declaration.Span.StartLineNumber, declaration.Span.StartColumn, declaration.Span.EndColumn))
+                .Select(static declaration => (declaration.Name, declaration.Span.Start.Line, declaration.Span.Start.Column, declaration.Span.End.Column))
                 .ToList());
         foreach (var declaration in model.Declarations)
         {
@@ -2572,10 +2556,10 @@ public class SemanticModelTests
 
         // Visibility: the open provides Total (public) to the root, never Fee; inside the
         // block both are directly visible with their local declaration sites.
-        var root = model.FindScopeAt(9, 1);
+        var root = model.FindScopeAt(new SourcePosition(9, 1));
         Assert.Same(total, SingleSymbol(root, "Total").Declaration);
         Assert.DoesNotContain(root.Symbols, symbol => symbol.Name is "Fee" or "Tax" or "Helper");
-        var block = model.FindScopeAt(3, 3);
+        var block = model.FindScopeAt(new SourcePosition(3, 3));
         Assert.Same(fee, SingleSymbol(block, "Fee").Declaration);
         Assert.Same(total, SingleSymbol(block, "Total").Declaration);
 
@@ -2608,9 +2592,9 @@ public class SemanticModelTests
         var model = BuildModel(source, remoteFiles);
 
         Assert.Equal(
-            [("Local", 2, 1, 5), ("Helper", 3, 1, 6), ("F", 4, 1, 1), ("Fee", 5, 3, 5)],
+            [("Local", 2, 1, 6), ("Helper", 3, 1, 7), ("F", 4, 1, 2), ("Fee", 5, 3, 6)],
             model.Declarations
-                .Select(static declaration => (declaration.Name, declaration.Span.StartLineNumber, declaration.Span.StartColumn, declaration.Span.EndColumn))
+                .Select(static declaration => (declaration.Name, declaration.Span.Start.Line, declaration.Span.Start.Column, declaration.Span.End.Column))
                 .ToList());
 
         var helper = Assert.Single(model.FindDeclarations("Helper"));
@@ -2640,11 +2624,11 @@ public class SemanticModelTests
 
         // The nested block sees its own Fee and the local Helper; the module's private Fee and
         // public Helper never reach either scope, and Total is visible without a location.
-        var block = model.FindScopeAt(6, 3);
+        var block = model.FindScopeAt(new SourcePosition(6, 3));
         Assert.Same(fee, SingleSymbol(block, "Fee").Declaration);
         Assert.Same(helper, SingleSymbol(block, "Helper").Declaration);
         Assert.Null(SingleSymbol(block, "Total").Declaration);
-        var root = model.FindScopeAt(8, 1);
+        var root = model.FindScopeAt(new SourcePosition(8, 1));
         Assert.DoesNotContain(root.Symbols, symbol => symbol.Name == "Fee");
         Assert.Same(helper, SingleSymbol(root, "Helper").Declaration);
         var visibleTotal = SingleSymbol(root, "Total");
@@ -2690,9 +2674,9 @@ public class SemanticModelTests
 
         Assert.Empty(model.Declarations);
         Assert.Equal(
-            [("Tax", 2, 1, 3), ("Deep", 2, 7, 10), ("Inner", 2, 12, 16)],
+            [("Tax", 2, 1, 4), ("Deep", 2, 7, 11), ("Inner", 2, 12, 17)],
             model.IdentifierOccurrences
-                .Select(static occurrence => (occurrence.Name, occurrence.Span.StartLineNumber, occurrence.Span.StartColumn, occurrence.Span.EndColumn))
+                .Select(static occurrence => (occurrence.Name, occurrence.Span.Start.Line, occurrence.Span.Start.Column, occurrence.Span.End.Column))
                 .ToList());
         AssertNoSites(model, "Base", "Hidden", "Secret", "Helper");
 
@@ -2797,9 +2781,9 @@ public class SemanticModelTests
         var model = BuildModel(source, remoteFiles);
 
         Assert.Equal(
-            [("A", 2, 1, 1), ("M", 3, 1, 1)],
+            [("A", 2, 1, 2), ("M", 3, 1, 2)],
             model.Declarations
-                .Select(static declaration => (declaration.Name, declaration.Span.StartLineNumber, declaration.Span.StartColumn, declaration.Span.EndColumn))
+                .Select(static declaration => (declaration.Name, declaration.Span.Start.Line, declaration.Span.Start.Column, declaration.Span.End.Column))
                 .ToList());
         AssertNoSites(model, "Hid");
         Assert.Empty(model.FindDeclarations("Sub"));
@@ -2842,9 +2826,9 @@ public class SemanticModelTests
         Assert.Equal("Total", reference.Occurrence.Name);
         Assert.Equal(OccurrenceKind.ResolveReference, reference.Occurrence.Kind);
         Assert.Equal(IdentifierClassification.PropertyReference, reference.Classification);
-        AssertSpan(reference.Occurrence.Span, 2, 1, 2, 5);
+        AssertSpan(reference.Occurrence.Span, 2, 1, 2, 6);
         var target = AssertModuleProvidedTarget(reference, "Total");
-        Assert.Same(target, Assert.Single(model.GetVisibleSymbolsAt(2, 1), symbol => symbol.Name == "Total").Property);
+        Assert.Same(target, Assert.Single(model.GetVisibleSymbolsAt(new SourcePosition(2, 1)), symbol => symbol.Name == "Total").Property);
         Assert.Empty(model.Declarations);
         AssertIdentifierSitesSliceToTheirSpelling(model, source);
         AssertPositionalQueriesReturnOnlyDocumentSites(model, source);
@@ -2881,7 +2865,7 @@ public class SemanticModelTests
         // in turn stays locationless.
         var model = SemanticModelBuilder.Build(await Parser.ParseAsync(moduleSource, options));
         var total = Assert.Single(model.FindDeclarations("Total"));
-        AssertSpan(total.Span, 2, 8, 2, 12);
+        AssertSpan(total.Span, 2, 8, 2, 13);
         var reference = ResolutionAt(model, 3, 1);
         Assert.Equal(IdentifierClassification.PropertyReference, reference.Classification);
         Assert.Same(total, reference.ResolvedDeclaration);
@@ -2969,13 +2953,13 @@ public class SemanticModelTests
         Assert.Same(Assert.Single(model.FindDeclarations("Alias")), aliasInfo.Declaration);
         AssertPropertySignature(aliasInfo, "Alias(x)", "x");
         Assert.Null(Assert.Single(aliasInfo.Parameters).Span);
-        var visible = Assert.Single(model.GetVisibleSymbolsAt(4, 1), symbol => symbol.Name == "F");
+        var visible = Assert.Single(model.GetVisibleSymbolsAt(new SourcePosition(4, 1)), symbol => symbol.Name == "F");
         Assert.Equal(IdentifierClassification.PropertyReference, visible.Classification);
         Assert.Null(visible.Declaration);
         Assert.Equal("F(x)", visible.Property!.DisplaySignature);
         // The copied block has no extent (its nodes are locationless), so it cannot create a
         // local scope over the document's Local declaration either.
-        Assert.Same(model.ScopeVisibilities[0], model.FindScopeAt(3, 1));
+        Assert.Same(model.ScopeVisibilities[0], model.FindScopeAt(new SourcePosition(3, 1)));
         AssertIdentifierSitesSliceToTheirSpelling(model, source);
         AssertPositionalQueriesReturnOnlyDocumentSites(model, source);
     }
@@ -3052,15 +3036,15 @@ public class SemanticModelTests
         Assert.Equal(IdentifierClassification.PropertyReference, eagerTotal.Classification);
         AssertModuleProvidedTarget(eagerTotal, "Total");
 
-        var visibleTotal = Assert.Single(model.GetVisibleSymbolsAt(6, 8), symbol => symbol.Name == "Total");
+        var visibleTotal = Assert.Single(model.GetVisibleSymbolsAt(new SourcePosition(6, 8)), symbol => symbol.Name == "Total");
         Assert.Equal(IdentifierClassification.PropertyReference, visibleTotal.Classification);
         Assert.Null(visibleTotal.Declaration);
         Assert.Equal("Total", visibleTotal.Property!.Name);
-        Assert.DoesNotContain(model.GetVisibleSymbolsAt(6, 8), symbol => symbol.Name == "Fee");
-        var deferredVisibleTotal = Assert.Single(model.GetVisibleSymbolsAt(4, 3), symbol => symbol.Name == "Total");
+        Assert.DoesNotContain(model.GetVisibleSymbolsAt(new SourcePosition(6, 8)), symbol => symbol.Name == "Fee");
+        var deferredVisibleTotal = Assert.Single(model.GetVisibleSymbolsAt(new SourcePosition(4, 3)), symbol => symbol.Name == "Total");
         Assert.Equal(IdentifierClassification.DeferredModuleReference, deferredVisibleTotal.Classification);
         Assert.Null(deferredVisibleTotal.Declaration);
-        Assert.DoesNotContain(model.GetVisibleSymbolsAt(4, 3), symbol => symbol.Name == "Fee");
+        Assert.DoesNotContain(model.GetVisibleSymbolsAt(new SourcePosition(4, 3)), symbol => symbol.Name == "Fee");
 
         AssertNoSites(model, "Fee");
         Assert.Equal(2, model.FindDeclarations("F").Count);
@@ -3077,7 +3061,7 @@ public class SemanticModelTests
     {
         var model = BuildModel("x, *y = (1, 2, 3)\nx");
 
-        var root = model.FindScopeAt(2, 1);
+        var root = model.FindScopeAt(new SourcePosition(2, 1));
         Assert.Single(root.Symbols, symbol => symbol.Name == "x");
         Assert.Single(root.Symbols, symbol => symbol.Name == "y");
         Assert.DoesNotContain(root.Symbols, symbol => symbol.Name.StartsWith('$'));
@@ -3176,7 +3160,7 @@ public class SemanticModelTests
     [Fact]
     public void FindScopeAt_EqualHullsUseLexicalDepthNotCollectionOrder()
     {
-        var span = new SourceSpan(1, 1, 1, 5);
+        var span = new SourceSpan(1, 1, 1, 6);
         var outer = new ScopeVisibility(
             span,
             [new VisibleSymbol("Outer", IdentifierClassification.PropertyReference, null, null)],
@@ -3195,7 +3179,7 @@ public class SemanticModelTests
             new Dictionary<DeclarationOccurrence, PropertyInfo>(),
             [outer, inner, new ScopeVisibility(null, [], NestingDepth: 0)]);
 
-        Assert.Equal("Inner", Assert.Single(model.FindScopeAt(1, 3).Symbols).Name);
+        Assert.Equal("Inner", Assert.Single(model.FindScopeAt(new SourcePosition(1, 3)).Symbols).Name);
     }
 
     [Fact]
@@ -3248,7 +3232,7 @@ public class SemanticModelTests
     [Fact]
     public void FindPropertyByDeclaration_DoesNotCollapseEqualModuleLocalCoordinates()
     {
-        var span = new SourceSpan(1, 1, 1, 1);
+        var span = new SourceSpan(1, 1, 1, 2);
         var firstDeclaration = new DeclarationOccurrence("X", span, OccurrenceKind.PropertyDefinition);
         var secondDeclaration = new DeclarationOccurrence("X", span, OccurrenceKind.PropertyDefinition);
         Assert.Equal(firstDeclaration, secondDeclaration);
@@ -3312,7 +3296,7 @@ public class SemanticModelTests
 
         foreach (var (line, column) in new[] { (1, 1), (4, 5), (6, 1) })
         {
-            var names = model.GetVisibleSymbolsAt(line, column).Select(static symbol => symbol.Name).ToList();
+            var names = model.GetVisibleSymbolsAt(new SourcePosition(line, column)).Select(static symbol => symbol.Name).ToList();
             Assert.Equal(names.Count, names.Distinct(StringComparer.Ordinal).Count());
         }
     }

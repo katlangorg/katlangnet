@@ -90,10 +90,12 @@ public class ParserDiagnosticWordingTests
     }
 
     [Theory]
+    // End columns are exclusive: the end-of-input diagnostic is an EMPTY span at the
+    // end position, a one-character token spans [c, c + 1).
     [InlineData("(1", "Expected ')' but found end of input.", 3, 3)]
-    [InlineData("public = 1", "Unexpected 'public'.", 1, 6)]
-    [InlineData("F() = 1", "Unexpected ')' in a pattern.", 3, 3)]
-    [InlineData("1 + @", "Unexpected unrecognized character.", 5, 5)]
+    [InlineData("public = 1", "Unexpected 'public'.", 1, 7)]
+    [InlineData("F() = 1", "Unexpected ')' in a pattern.", 3, 4)]
+    [InlineData("1 + @", "Unexpected unrecognized character.", 5, 6)]
     public void UnexpectedTokenWording_PreservesCodeAndSpan(string source, string message, int column, int endColumn)
     {
         var diagnostic = Assert.Single(Parser.ParseSyntax(source).Diagnostics,

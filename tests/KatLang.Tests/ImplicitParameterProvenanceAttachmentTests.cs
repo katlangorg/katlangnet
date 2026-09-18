@@ -101,7 +101,7 @@ public class ImplicitParameterProvenanceAttachmentTests
         var note = pattern.InferredProvenance;
         Assert.NotNull(note);
         Assert.Equal("Dubel", note.Name);
-        Assert.Equal(new SourceSpan(2, 11, 2, 15), note.Span);
+        Assert.Equal(new SourceSpan(2, 11, 2, 16), note.Span);
         Assert.Equal("Lib", note.DotMemberOrigin?.ReceiverDescription);
 
         // The declaration flattened from the capture and the edge that caused the
@@ -120,7 +120,7 @@ public class ImplicitParameterProvenanceAttachmentTests
         // span-attaching copy on the way out keeps the snapshot.
         var arity = Assert.IsType<EvalError.ArityMismatch>(Innermost(Fail(root)));
         Assert.Same(note, Assert.Single(arity.InferredImplicitParameters!));
-        Assert.Same(arity.InferredImplicitParameters, (arity with { Span = new SourceSpan(9, 9, 9, 9) }).InferredImplicitParameters);
+        Assert.Same(arity.InferredImplicitParameters, (arity with { Span = new SourceSpan(9, 9, 9, 10) }).InferredImplicitParameters);
     }
 
     [Fact]
@@ -215,8 +215,8 @@ public class ImplicitParameterProvenanceAttachmentTests
         var error = Fail(parsed.Root);
         Assert.Same(note, Assert.Single(Notes(error)));
         Assert.Equal(KatLangErrorCode.ArityMismatch, error.Code);
-        Assert.Equal(2, error.Span?.StartLineNumber);
-        Assert.Equal(1, error.Span?.StartColumn);
+        Assert.Equal(2, error.Span?.Start.Line);
+        Assert.Equal(1, error.Span?.Start.Column);
         var message = KatLangError.FromEvalError(error).Message;
         Assert.Contains("Did you mean 'Math.Ceil'?", message, StringComparison.Ordinal);
         Assert.DoesNotContain("[1:19]", message, StringComparison.Ordinal);
@@ -233,8 +233,8 @@ public class ImplicitParameterProvenanceAttachmentTests
         var noteA = Parameter(PropertyValue(root, "A"), "Dubel").InferredProvenance!;
         var noteB = Parameter(PropertyValue(root, "B"), "Dubel").InferredProvenance!;
         Assert.NotSame(noteA, noteB);
-        Assert.Equal(new SourceSpan(2, 9, 2, 13), noteA.Span);
-        Assert.Equal(new SourceSpan(3, 9, 3, 13), noteB.Span);
+        Assert.Equal(new SourceSpan(2, 9, 2, 14), noteA.Span);
+        Assert.Equal(new SourceSpan(3, 9, 3, 14), noteB.Span);
 
         // The root lifts Dubel once, from the first dependency: its declaration is a
         // view of A's promotion and of nothing else.

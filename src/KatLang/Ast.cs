@@ -88,15 +88,7 @@ public enum UnaryOp { Minus, Not }
 /// </summary>
 public enum BuiltinId { @if, @while, @repeat, @atoms, @range, @filter, @map, @order, @orderDesc, @count, @contains, @first, @last, @distinct, @take, @skip, @min, @max, @sum, @avg, @reduce }
 
-// ── Source span ──────────────────────────────────────────────────────────────
-
-/// <summary>
-/// Source location of an expression or error. Lines and columns are 1-based,
-/// and end positions are inclusive.
-/// </summary>
-public sealed record SourceSpan(
-    int StartLineNumber, int StartColumn,
-    int EndLineNumber, int EndColumn);
+// ── Source span: SourceSpan.cs (SourcePosition, SourceSpan) ──────────────────
 
 // ── OutputBundle (Lean: OutputBundle) ───────────────────────────────────────
 

@@ -26,7 +26,7 @@ public class UnaryOperatorSemanticsTests
         // SYN-01: `()` is an ordinary operand and fails numeric conversion like
         // `(1, 2)`; the BadArity carries the unary expression's span (F5) — the
         // same location policy as the string rejection below.
-        var span = new SourceSpan(7, 3, 7, 8);
+        var span = new SourceSpan(7, 3, 7, 9);
         var result = Evaluator.ApplyUnaryOperator(op, Result.SequenceValue.TakeOwnership([]), span);
 
         Assert.True(result.IsError);
@@ -87,7 +87,7 @@ public class UnaryOperatorSemanticsTests
     [InlineData(UnaryOp.Not)]
     public void StringFailure_HasTheUnaryExpressionSpan(UnaryOp op)
     {
-        var span = new SourceSpan(7, 3, 7, 12);
+        var span = new SourceSpan(7, 3, 7, 13);
         var result = Evaluator.ApplyUnaryOperator(op, new Result.Str("text"), span);
 
         Assert.True(result.IsError);
@@ -107,7 +107,7 @@ public class UnaryOperatorSemanticsTests
             Result.ListValue.TakeOwnership([new Result.Atom(1), new Result.Atom(2)]),
             Result.SequenceValue.TakeOwnership([new Result.Atom(1), new Result.Atom(2)]),
         ];
-        var span = new SourceSpan(9, 2, 9, 8);
+        var span = new SourceSpan(9, 2, 9, 9);
 
         foreach (var op in new[] { UnaryOp.Minus, UnaryOp.Not })
         {

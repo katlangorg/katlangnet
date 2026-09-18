@@ -163,7 +163,7 @@ public class ClauseFamilyOpenOwnershipTests
         Assert.All(result.Diagnostics, d =>
         {
             Assert.NotNull(d.Span);
-            Assert.True(d.Span!.StartLineNumber >= 1 && d.Span.StartColumn >= 1);
+            Assert.True(Assert.NotNull(d.Span).Start.Line >= 1 && Assert.NotNull(d.Span).Start.Column >= 1);
         });
         Assert.False(ContainsSequenceConstruct(result.Root));
     }

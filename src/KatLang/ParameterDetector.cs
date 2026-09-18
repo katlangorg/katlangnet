@@ -735,7 +735,7 @@ internal static class ParameterDetector
     /// identifiers it reported (name and first-occurrence span) — the one diagnostic whose
     /// wording names the family, re-issued for every further family that shares the body.
     /// </summary>
-    private sealed record BranchBodyRegion(Algorithm Rewritten, IReadOnlyList<(string Name, SourceSpan Span)>? UndeclaredNames);
+    private sealed record BranchBodyRegion(Algorithm Rewritten, IReadOnlyList<(string Name, SourceSpan? Span)>? UndeclaredNames);
 
     /// <summary>
     /// Reference-identity memo state for ONE <see cref="CollectFreeParams(IReadOnlyList{Expr}, ElaboratedPropertyScope, ParameterOwnership, HashSet{string}, List{string}, Dictionary{string, int}, FreeNameCollection, ImplicitParameterOccurrenceRecorder?, FreeNameWalkMemo)"/>
@@ -1179,7 +1179,7 @@ internal static class ParameterDetector
         => new(
             FormatOpenTargetIsParameter(Evaluator.OpenExprName(open), headName),
             DiagnosticSeverity.Error,
-            span ?? new SourceSpan(0, 0, 0, 0))
+            span)
         {
             Code = DiagnosticCode.OpenTargetIsParameter,
         };
@@ -1233,15 +1233,19 @@ internal static class ParameterDetector
             // way so no Grace can survive elaboration in any position.
             Expr.Grace(var gracedTarget, _) => ProcessOpenExpr(gracedTarget, openParentScope, diagnostics, memo),
 
-            Expr.AlgorithmExpr block => new Expr.AlgorithmExpr(
-                ProcessSharedOpenAlgorithm(block.Algorithm, ImportSite.OfBlock(block), openParentScope, diagnostics, memo)) { Span = expr.Span },
+            Expr.AlgorithmExpr block => block with
+            {
+                Algorithm = ProcessSharedOpenAlgorithm(block.Algorithm, ImportSite.OfBlock(block), openParentScope, diagnostics, memo),
+            },
 
             // A capture target owns no scope: its rows are processed in the
             // open-target parent scope (the pre-split transparent wrapper
             // added only an empty lookup level here).
-            Expr.Capture(var captureBody) => new Expr.Capture(new OutputBundle(
-                captureBody.Select(row => ProcessExpr(row, openParentScope, memo)).ToList()))
-            { Span = expr.Span },
+            Expr.Capture capture => capture with
+            {
+                Body = new OutputBundle(
+                    capture.Body.Select(row => ProcessExpr(row, openParentScope, memo)).ToList()),
+            },
 
             // `with` keeps the stored dot-edge facts (member span). Open
             // targets are ordinary structural paths, so the fallback
@@ -1259,24 +1263,21 @@ internal static class ParameterDetector
                     dotCall.EffectiveLexicalFallback, openParentScope, diagnostics, memo),
             },
 
-            Expr.SequenceSpread(var operand) => new Expr.SequenceSpread(
-                ProcessOpenExpr(operand, openParentScope, diagnostics, memo))
+            Expr.SequenceSpread spread => spread with { Operand = ProcessOpenExpr(spread.Operand, openParentScope, diagnostics, memo) },
+
+            Expr.SequenceConstruct construct => construct with
             {
-                Span = expr.Span,
-                SpreadMarkerSpan = ((Expr.SequenceSpread)expr).SpreadMarkerSpan,
+                Left = ProcessOpenExpr(construct.Left, openParentScope, diagnostics, memo),
+                Right = ProcessOpenExpr(construct.Right, openParentScope, diagnostics, memo),
             },
 
-            Expr.SequenceConstruct(var left, var right) => new Expr.SequenceConstruct(
-                ProcessOpenExpr(left, openParentScope, diagnostics, memo),
-                ProcessOpenExpr(right, openParentScope, diagnostics, memo)) { Span = expr.Span },
+            Expr.ListLiteral list => list with { Items = list.Items.Select(item => ProcessOpenExpr(item, openParentScope, diagnostics, memo)).ToList() },
 
-            Expr.ListLiteral(var items) => new Expr.ListLiteral(
-                items.Select(item => ProcessOpenExpr(item, openParentScope, diagnostics, memo)).ToList())
-            { Span = expr.Span },
-
-            Expr.Call(var function, var args) => new Expr.Call(
-                ProcessOpenExpr(function, openParentScope, diagnostics, memo),
-                new OutputBundle(args.Select(argExpr => ProcessExpr(argExpr, openParentScope, memo)).ToList())) { Span = expr.Span },
+            Expr.Call call => call with
+            {
+                Function = ProcessOpenExpr(call.Function, openParentScope, diagnostics, memo),
+                Args = new OutputBundle(call.Args.Select(argExpr => ProcessExpr(argExpr, openParentScope, memo)).ToList()),
+            },
 
             // Intentional leaves: name/literal leaves carry no nested algorithm
             // to process (a bare Resolve IS the ordinary open-target form), and
@@ -1419,7 +1420,7 @@ internal static class ParameterDetector
 
         // Detect free identifiers that would be implicit parameters — these are
         // forbidden in conditional branch bodies (full-input-specification rule).
-        List<(string Name, SourceSpan Span)>? undeclaredNames = null;
+        List<(string Name, SourceSpan? Span)>? undeclaredNames = null;
         if (diagnostics is not null)
         {
             var freeNames = new HashSet<string>();
@@ -1440,8 +1441,7 @@ internal static class ParameterDetector
                 // Find the span for the first occurrence of this free identifier; an occurrence
                 // inside imported content has none and is reported at the import site.
                 var span = FindResolveSpan(writtenRows, freeName, new ResolveSpanSearchMemo(observations))
-                    ?? run.ImportSite
-                    ?? new SourceSpan(0, 0, 0, 0);
+                    ?? run.ImportSite;
                 (undeclaredNames ??= []).Add((freeName, span));
                 diagnostics.Add(CreateConditionalBranchUndeclaredIdentifierDiagnostic(freeName, branchName, span));
             }
@@ -1535,7 +1535,7 @@ internal static class ParameterDetector
             diagnostics.Add(CreateConditionalBranchUndeclaredIdentifierDiagnostic(name, branchName, span));
     }
 
-    private static Diagnostic CreateConditionalBranchUndeclaredIdentifierDiagnostic(string identifierName, string branchName, SourceSpan span)
+    private static Diagnostic CreateConditionalBranchUndeclaredIdentifierDiagnostic(string identifierName, string branchName, SourceSpan? span)
         => new(
             FormatConditionalBranchUndeclaredIdentifier(identifierName, branchName),
             DiagnosticSeverity.Error,
@@ -1584,7 +1584,7 @@ internal static class ParameterDetector
             diagnostics.Add(new Diagnostic(
                 FormatExplicitParameterUndeclaredIdentifier(freeName),
                 DiagnosticSeverity.Error,
-                span ?? new SourceSpan(0, 0, 0, 0))
+                span)
             {
                 Code = DiagnosticCode.UndeclaredIdentifier,
             });
@@ -2022,7 +2022,7 @@ internal static class ParameterDetector
         memo.Diagnostics.Add(new Diagnostic(
             FormatIneffectiveGrace(name, reason),
             DiagnosticSeverity.Error,
-            graceNode.Span ?? gracedCore.Span ?? memo.Run.ImportSite ?? new SourceSpan(0, 0, 0, 0))
+            graceNode.Span ?? gracedCore.Span ?? memo.Run.ImportSite)
         {
             Code = DiagnosticCode.InvalidGraceMarker,
         });
@@ -2136,39 +2136,39 @@ internal static class ParameterDetector
             Expr.Resolve(var name) when ShouldRewriteAsParam(name, scope, parameters)
                 => RewriteResolveAsParam(name, expr.Span, memo),
 
-            Expr.Binary(var op, var left, var right) => new Expr.Binary(op,
-                RewriteParams(left, scope, parameters, memo),
-                RewriteParams(right, scope, parameters, memo)) { Span = expr.Span },
-
-            Expr.Unary(var op, var operand) => new Expr.Unary(op,
-                RewriteParams(operand, scope, parameters, memo)) { Span = expr.Span },
-
-            Expr.Index(var target, var selector) => new Expr.Index(
-                RewriteParams(target, scope, parameters, memo),
-                RewriteParams(selector, scope, parameters, memo)) { Span = expr.Span },
-
-            Expr.SequenceSpread(var operand) => new Expr.SequenceSpread(
-                RewriteParams(operand, scope, parameters, memo))
+            Expr.Binary binary => binary with
             {
-                Span = expr.Span,
-                SpreadMarkerSpan = ((Expr.SequenceSpread)expr).SpreadMarkerSpan,
+                Left = RewriteParams(binary.Left, scope, parameters, memo),
+                Right = RewriteParams(binary.Right, scope, parameters, memo),
             },
 
-            Expr.SequenceConstruct(var left, var right) => new Expr.SequenceConstruct(
-                RewriteParams(left, scope, parameters, memo),
-                RewriteParams(right, scope, parameters, memo)) { Span = expr.Span },
+            Expr.Unary unary => unary with { Operand = RewriteParams(unary.Operand, scope, parameters, memo) },
 
-            Expr.ListLiteral(var items) => new Expr.ListLiteral(
-                RewriteParams(items, scope, parameters, memo)) { Span = expr.Span },
+            Expr.Index index => index with
+            {
+                Target = RewriteParams(index.Target, scope, parameters, memo),
+                Selector = RewriteParams(index.Selector, scope, parameters, memo),
+            },
+
+            Expr.SequenceSpread spread => spread with { Operand = RewriteParams(spread.Operand, scope, parameters, memo) },
+
+            Expr.SequenceConstruct construct => construct with
+            {
+                Left = RewriteParams(construct.Left, scope, parameters, memo),
+                Right = RewriteParams(construct.Right, scope, parameters, memo),
+            },
+
+            Expr.ListLiteral list => list with { Items = RewriteParams(list.Items, scope, parameters, memo) },
 
             Expr.DotCall dotCall => RewriteDotCall(dotCall, scope, parameters, memo),
 
-            Expr.AlgorithmExpr block => new Expr.AlgorithmExpr(
-                RewriteSharedAlgorithm(block.Algorithm, ImportSite.OfBlock(block), scope, parameters, memo)) { Span = expr.Span },
+            Expr.AlgorithmExpr block => block with
+            {
+                Algorithm = RewriteSharedAlgorithm(block.Algorithm, ImportSite.OfBlock(block), scope, parameters, memo),
+            },
 
             // Captures are transparent: rewrite rows in the enclosing param scope.
-            Expr.Capture(var captureBody) => new Expr.Capture(
-                RewriteParams(captureBody, scope, parameters, memo)) { Span = expr.Span },
+            Expr.Capture capture => capture with { Body = RewriteParams(capture.Body, scope, parameters, memo) },
 
             // Argument bundles own no scope: slots rewrite in the enclosing
             // param context. (A brace block argument is an AlgorithmExpr
@@ -2364,34 +2364,38 @@ internal static class ParameterDetector
         return expr switch
         {
             Expr.Grace(var inner, _) => ProcessExpr(inner, scope, memo),
-            Expr.AlgorithmExpr block => new Expr.AlgorithmExpr(
-                ProcessSharedTransparentAlgorithm(block.Algorithm, ImportSite.OfBlock(block), scope, memo)) { Span = expr.Span },
-            Expr.Capture(var captureBody) => new Expr.Capture(new OutputBundle(
-                captureBody.Select(row => ProcessExpr(row, scope, memo)).ToList()))
-            { Span = expr.Span },
-            Expr.Call(var func, var args) => new Expr.Call(
-                ProcessExpr(func, scope, memo),
-                new OutputBundle(args.Select(argExpr => ProcessExpr(argExpr, scope, memo)).ToList())) { Span = expr.Span },
-            Expr.Binary(var op, var l, var r) => new Expr.Binary(op,
-                ProcessExpr(l, scope, memo),
-                ProcessExpr(r, scope, memo)) { Span = expr.Span },
-            Expr.Unary(var op, var operand) => new Expr.Unary(op,
-                ProcessExpr(operand, scope, memo)) { Span = expr.Span },
-            Expr.Index(var t, var s) => new Expr.Index(
-                ProcessExpr(t, scope, memo),
-                ProcessExpr(s, scope, memo)) { Span = expr.Span },
-            Expr.SequenceSpread(var operand) => new Expr.SequenceSpread(
-                ProcessExpr(operand, scope, memo))
+            Expr.AlgorithmExpr block => block with
             {
-                Span = expr.Span,
-                SpreadMarkerSpan = ((Expr.SequenceSpread)expr).SpreadMarkerSpan,
+                Algorithm = ProcessSharedTransparentAlgorithm(block.Algorithm, ImportSite.OfBlock(block), scope, memo),
             },
-            Expr.SequenceConstruct(var l, var r) => new Expr.SequenceConstruct(
-                ProcessExpr(l, scope, memo),
-                ProcessExpr(r, scope, memo)) { Span = expr.Span },
-            Expr.ListLiteral(var items) => new Expr.ListLiteral(
-                items.Select(item => ProcessExpr(item, scope, memo)).ToList())
-            { Span = expr.Span },
+            Expr.Capture capture => capture with
+            {
+                Body = new OutputBundle(
+                    capture.Body.Select(row => ProcessExpr(row, scope, memo)).ToList()),
+            },
+            Expr.Call call => call with
+            {
+                Function = ProcessExpr(call.Function, scope, memo),
+                Args = new OutputBundle(call.Args.Select(argExpr => ProcessExpr(argExpr, scope, memo)).ToList()),
+            },
+            Expr.Binary binary => binary with
+            {
+                Left = ProcessExpr(binary.Left, scope, memo),
+                Right = ProcessExpr(binary.Right, scope, memo),
+            },
+            Expr.Unary unary => unary with { Operand = ProcessExpr(unary.Operand, scope, memo) },
+            Expr.Index index => index with
+            {
+                Target = ProcessExpr(index.Target, scope, memo),
+                Selector = ProcessExpr(index.Selector, scope, memo),
+            },
+            Expr.SequenceSpread spread => spread with { Operand = ProcessExpr(spread.Operand, scope, memo) },
+            Expr.SequenceConstruct construct => construct with
+            {
+                Left = ProcessExpr(construct.Left, scope, memo),
+                Right = ProcessExpr(construct.Right, scope, memo),
+            },
+            Expr.ListLiteral list => list with { Items = list.Items.Select(item => ProcessExpr(item, scope, memo)).ToList() },
             // The detector is the normalization owner: every DotCall it emits
             // carries an EXPLICIT fallback identity (null is only a
             // host-construction shorthand for Resolve(Name)).

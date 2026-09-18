@@ -31,8 +31,7 @@ public class ZeroBasePowerContractTests
             Assert.Equal(Reason, Assert.IsType<EvalError.IllegalInEval>(Innermost(error)).Reason);
             Assert.Equal(KatLangErrorCode.IllegalInEval, error.Code);
             var diagnostic = KatLangError.FromEvalError(error);
-            Assert.Equal(((int?)3, (int?)1, (int?)3, (int?)expression.Length),
-                (diagnostic.StartLine, diagnostic.StartColumn, diagnostic.EndLine, diagnostic.EndColumn));
+            Assert.Equal(new SourceSpan(3, 1, 3, expression.Length + 1), diagnostic.Span);
             Assert.Equal(DescribeErrorTree(plain.Error), DescribeErrorTree(error));
         }
         Assert.True(cache.AsyncAccesses > 0);
@@ -43,8 +42,7 @@ public class ZeroBasePowerContractTests
         var publicError = Assert.Single(engine.Errors);
         Assert.Equal(KatLangErrorCode.IllegalInEval, publicError.Code);
         Assert.Equal(KatLangError.FromEvalError(plain.Error).Message, publicError.Message);
-        Assert.Equal(((int?)3, (int?)1, (int?)3, (int?)expression.Length),
-            (publicError.StartLine, publicError.StartColumn, publicError.EndLine, publicError.EndColumn));
+        Assert.Equal(new SourceSpan(3, 1, 3, expression.Length + 1), publicError.Span);
     }
 
     [Theory]
@@ -60,7 +58,7 @@ public class ZeroBasePowerContractTests
         Assert.True(generic.IsError);
         Assert.True(planned.IsError);
         Assert.Equal(Reason, Assert.IsType<EvalError.IllegalInEval>(Innermost(planned.Error)).Reason);
-        Assert.Equal(new SourceSpan(1, 8, 1, 15), Innermost(planned.Error).Span);
+        Assert.Equal(new SourceSpan(1, 8, 1, 16), Innermost(planned.Error).Span);
         Assert.Equal(DescribeErrorTree(generic.Error), DescribeErrorTree(planned.Error));
 
         // Outcome equality alone could pass if both executions became generic.

@@ -248,8 +248,8 @@ public class FrontEndTraversalTests
 
         Assert.Equal(2, diagnostics.Count);
         Assert.All(diagnostics, d => Assert.Equal(DiagnosticCode.InvalidGraceMarker, d.Code));
-        Assert.Equal(new SourceSpan(2, 11, 2, 12), diagnostics[0].Span);
-        Assert.Equal(new SourceSpan(2, 8, 2, 9), diagnostics[1].Span);
+        Assert.Equal(new SourceSpan(2, 11, 2, 13), diagnostics[0].Span);
+        Assert.Equal(new SourceSpan(2, 8, 2, 10), diagnostics[1].Span);
     }
 
     private static IReadOnlyDictionary<string, Func<Expr, Expr>> RecursiveEmbeddings { get; } =
@@ -287,7 +287,7 @@ public class FrontEndTraversalTests
     [MemberData(nameof(RecursiveEmbeddingPositions))]
     public void SemanticModel_VisitsNamesInsideRecursiveChildren(string position)
     {
-        var span = new SourceSpan(1, 1, 1, 2);
+        var span = new SourceSpan(1, 1, 1, 3);
         var embedded = RecursiveEmbeddings[position](new Expr.Resolve("q") { Span = span });
         var model = Semantics.SemanticModelBuilder.Build(EmptyAlgorithm(embedded));
 
@@ -298,7 +298,7 @@ public class FrontEndTraversalTests
     [MemberData(nameof(RecursiveEmbeddingPositions))]
     public void Parser_GraceScanVisitsItsChildrenAndHonorsGraceBoundaries(string position)
     {
-        var span = new SourceSpan(1, 1, 1, 3);
+        var span = new SourceSpan(1, 1, 1, 4);
         var embedded = RecursiveEmbeddings[position](new Expr.Grace(new Expr.Resolve("q"), 1) { Span = span });
 
         // Even a spanless written Grace is a match boundary: it does not search Inner.
@@ -308,7 +308,7 @@ public class FrontEndTraversalTests
     [Fact]
     public void Parser_GraceScanVisitsBlockRowsAndStoredDotFallback()
     {
-        var span = new SourceSpan(1, 1, 1, 3);
+        var span = new SourceSpan(1, 1, 1, 4);
         var grace = new Expr.Grace(new Expr.Resolve("q"), 1) { Span = span };
         Assert.Equal(span, FindGraceSpan(new Expr.AlgorithmExpr(EmptyAlgorithm(grace))));
         Assert.Equal(span, FindGraceSpan(new Expr.DotCall(new Expr.Num(1), "q") { LexicalFallback = grace }));

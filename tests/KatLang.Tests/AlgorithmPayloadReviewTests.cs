@@ -24,8 +24,8 @@ public class AlgorithmPayloadReviewTests
     [Fact]
     public void WithParams_RepeatedCaptureNames_UsesFirstDeclarationLikeLean()
     {
-        var first = new ParameterDeclaration("x", new SourceSpan(1, 1, 1, 1), ParameterKind.Collecting);
-        var second = new ParameterDeclaration("x", new SourceSpan(2, 1, 2, 1));
+        var first = new ParameterDeclaration("x", new SourceSpan(1, 1, 1, 2), ParameterKind.Collecting);
+        var second = new ParameterDeclaration("x", new SourceSpan(2, 1, 2, 2));
         var user = new Algorithm.User(null,
             [new SequenceValueParameterPattern([first.ToPattern(), second.ToPattern()])],
             [], [], [new Expr.Num(1)]);

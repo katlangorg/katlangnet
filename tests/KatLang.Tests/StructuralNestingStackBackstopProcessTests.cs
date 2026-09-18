@@ -292,7 +292,7 @@ public class StructuralNestingStackBackstopProcessTests
                     $"expected EvaluationStackExhausted, got {error.Code}: {error.Message}\n{source}");
                 Assert.True(error.IsResourceLimit);
                 Assert.IsType<EvalError.EvaluationStackExhausted>(error.Source);
-                Assert.NotNull(error.StartLine);
+                Assert.NotNull(error.Span);
                 return true;
 
             default:

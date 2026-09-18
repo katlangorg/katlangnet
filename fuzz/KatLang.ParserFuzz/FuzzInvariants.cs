@@ -33,10 +33,16 @@ internal static class FuzzInvariants
         var lineWidths = SourceSpanValidator.LineWidths(source);
         foreach (var d in diagnostics)
         {
-            if (d.Span is null)
+            if (d.Span is not { } span)
+            {
+                // The raw parser positions every diagnostic at a token or a node; the only
+                // unpositioned ones are the whole-document source-length limits.
+                if (d.Code is DiagnosticCode.SourceLengthExceeded or DiagnosticCode.AggregateSourceLengthExceeded)
+                    continue;
                 throw new FuzzInvariantException($"Diagnostic span is null: message='{d.Message}'");
+            }
 
-            var reason = SourceSpanValidator.Validate(d.Span, lineWidths);
+            var reason = SourceSpanValidator.Validate(span, lineWidths);
             if (reason is not null)
                 throw new FuzzInvariantException(
                     $"Invalid diagnostic span [{reason}]: span={SourceSpanValidator.Describe(d.Span)} message='{d.Message}'");

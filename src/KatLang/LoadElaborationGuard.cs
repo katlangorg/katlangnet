@@ -27,7 +27,7 @@ internal static class LoadElaborationGuard
             diagnostics.Add(new Diagnostic(
                 ModuleElaborationUnavailableDiagnostic,
                 DiagnosticSeverity.Error,
-                span ?? new SourceSpan(1, 1, 1, 1))
+                span)
             {
                 Code = DiagnosticCode.LoadElaborationUnavailable,
             });
@@ -40,7 +40,7 @@ internal static class LoadElaborationGuard
     /// The invariant-violation diagnostic, positioned at the offending load call when it has
     /// a span of its own, otherwise at <paramref name="importSite"/> — the site, in the
     /// current document, of the module content the call lies in (module content carries no
-    /// locations) — and only then at the established sentinel.
+    /// locations) — and otherwise unpositioned.
     /// </summary>
     internal static Diagnostic CreatePostElaborationInvariantDiagnostic(Algorithm root, SourceSpan? importSite = null)
     {
@@ -48,7 +48,7 @@ internal static class LoadElaborationGuard
         return new Diagnostic(
             PostElaborationInvariantDiagnostic,
             DiagnosticSeverity.Error,
-            span ?? importSite ?? new SourceSpan(1, 1, 1, 1))
+            span ?? importSite)
         {
             Code = DiagnosticCode.InternalError,
         };

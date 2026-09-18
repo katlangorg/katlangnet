@@ -44,6 +44,22 @@ public static partial class Evaluator
         => slotCount >= 2 ? ReserveCollection(ctx, slotCount, span) : null;
 
     /// <summary>
+    /// <see cref="ReserveSequenceCapture"/> positioned at the first positioned row of
+    /// <paramref name="rows"/>, read only when the reservation is REFUSED: the row-loop
+    /// funnel that calls this sits on every call-recursion level, and an eager span copy
+    /// (a 20-byte value) per level measurably fattened that frame (frame-size discipline).
+    /// </summary>
+    private static EvalError? ReserveSequenceCaptureAtRows(EvalCtx ctx, int slotCount, IReadOnlyList<Expr> rows)
+        => slotCount >= 2 && ctx.Budget.TryReserveCollection(slotCount) is { } error
+            ? AtFirstSpanIfMissing(error, rows)
+            : null;
+
+    /// <summary>The attach-if-missing law positioned at the first positioned expression of <paramref name="exprs"/>, computed in this leaf frame.</summary>
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private static EvalError AtFirstSpanIfMissing(EvalError error, IReadOnlyList<Expr> exprs)
+        => AtSpanIfMissing(error, FirstSpan(exprs));
+
+    /// <summary>
     /// Canonically captures an item supply after reserving only the slots that the
     /// resulting persistent sequence actually stores. Empty capture stores no item
     /// slots, singleton capture returns the existing child value, and two or more

@@ -600,13 +600,12 @@ public class IntegerDivisionContractTests
         Assert.True(plain.IsError);
         Assert.IsType<EvalError.DivByZero>(Innermost(plain.Error));
         Assert.Equal(KatLangErrorCode.DivisionByZero, plain.Error.Code);
-        Assert.Equal(new SourceSpan(1, 1, 1, source.Length), Innermost(plain.Error).Span);
+        Assert.Equal(new SourceSpan(1, 1, 1, source.Length + 1), Innermost(plain.Error).Span);
 
         var engine = Assert.IsType<RunResult.EvalFailure>(KatLangEngine.Run(source));
         var publicError = Assert.Single(engine.Errors);
         Assert.Equal(KatLangErrorCode.DivisionByZero, publicError.Code);
-        Assert.Equal(((int?)1, (int?)1, (int?)1, (int?)source.Length),
-            (publicError.StartLine, publicError.StartColumn, publicError.EndLine, publicError.EndColumn));
+        Assert.Equal(new SourceSpan(1, 1, 1, source.Length + 1), publicError.Span);
     }
 
     // ── The planned numeric arm actually executes, and agrees ───────────────
@@ -666,7 +665,7 @@ public class IntegerDivisionContractTests
         Assert.True(generic.IsError);
         Assert.True(planned.IsError);
         Assert.IsType<EvalError.DivByZero>(Innermost(planned.Error));
-        Assert.Equal(new SourceSpan(1, 8, 1, 7 + expression.Length), Innermost(planned.Error).Span);
+        Assert.Equal(new SourceSpan(1, 8, 1, 8 + expression.Length), Innermost(planned.Error).Span);
         Assert.Equal(DescribeErrorTree(generic.Error), DescribeErrorTree(planned.Error));
         Assert.Equal(1, observed.OptimizedLoopHits);
         Assert.Equal(0, observed.PlannedExpressionFallbacks);
@@ -736,8 +735,7 @@ public class IntegerDivisionContractTests
             Assert.IsType<EvalError.DivByZero>(Innermost(error));
             Assert.Equal(KatLangErrorCode.DivisionByZero, error.Code);
             var diagnostic = KatLangError.FromEvalError(error);
-            Assert.Equal(((int?)3, (int?)1, (int?)3, (int?)expression.Length),
-                (diagnostic.StartLine, diagnostic.StartColumn, diagnostic.EndLine, diagnostic.EndColumn));
+            Assert.Equal(new SourceSpan(3, 1, 3, expression.Length + 1), diagnostic.Span);
             Assert.Equal(DescribeErrorTree(plain.Error), DescribeErrorTree(error));
         }
         Assert.True(cache.AsyncAccesses > 0);

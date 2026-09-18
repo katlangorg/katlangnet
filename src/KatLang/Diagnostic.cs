@@ -8,11 +8,20 @@ public enum DiagnosticSeverity
     Error = 8,
 }
 
-/// <summary>A single diagnostic message produced during lexing or parsing.</summary>
+/// <summary>
+/// A single diagnostic message produced during lexing, parsing, or front-end elaboration.
+/// <see cref="Span"/> is the diagnostic's location in the document whose result carries it —
+/// the half-open <see cref="SourceSpan"/> of the offending text, an empty span at an
+/// insertion point (end of input, a missing token) — or <see langword="null"/> for a
+/// diagnostic that has no position at all: a whole-document limit (source length, aggregate
+/// module budget, elaboration stack), or a fact about content that has no location in this
+/// document and no import site to report at. A missing location is never spelled as a
+/// sentinel coordinate.
+/// </summary>
 public sealed record Diagnostic(
     string Message,
     DiagnosticSeverity Severity,
-    SourceSpan Span)
+    SourceSpan? Span)
 {
     /// <summary>
     /// Stable machine-readable identity of the diagnostic's semantic family —

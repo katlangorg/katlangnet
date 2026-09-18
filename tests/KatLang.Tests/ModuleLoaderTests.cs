@@ -777,7 +777,7 @@ public class ModuleLoaderTests
         Assert.Equal(DiagnosticSeverity.Error, diagnostic.Severity);
         Assert.Equal(DiagnosticCode.LoadElaborationUnavailable, diagnostic.Code);
         Assert.Equal(LoadElaborationGuard.ModuleElaborationUnavailableDiagnostic, diagnostic.Message);
-        Assert.Equal(new SourceSpan(1, 7, 1, 46), diagnostic.Span);
+        Assert.Equal(new SourceSpan(1, 7, 1, 47), diagnostic.Span);
     }
 
     [Fact]
@@ -791,7 +791,7 @@ public class ModuleLoaderTests
         Assert.Equal(DiagnosticSeverity.Error, diagnostic.Severity);
         Assert.Equal(DiagnosticCode.LoadElaborationUnavailable, diagnostic.Code);
         Assert.Equal(LoadElaborationGuard.ModuleElaborationUnavailableDiagnostic, diagnostic.Message);
-        Assert.Equal(new SourceSpan(1, 6, 1, 39), diagnostic.Span);
+        Assert.Equal(new SourceSpan(1, 6, 1, 40), diagnostic.Span);
     }
 
     [Fact]
@@ -804,7 +804,7 @@ public class ModuleLoaderTests
         Assert.Equal(DiagnosticSeverity.Error, diagnostic.Severity);
         Assert.Equal(DiagnosticCode.LoadElaborationUnavailable, diagnostic.Code);
         Assert.Equal(LoadElaborationGuard.ModuleElaborationUnavailableDiagnostic, diagnostic.Message);
-        Assert.Equal(new SourceSpan(1, 7, 1, 46), diagnostic.Span);
+        Assert.Equal(new SourceSpan(1, 7, 1, 47), diagnostic.Span);
 
         static void AssertEngineProjection(RunResult result)
         {
@@ -812,10 +812,10 @@ public class ModuleLoaderTests
             var error = Assert.Single(failure.Errors);
             Assert.Equal(KatLangErrorCode.LoadElaborationUnavailable, error.Code);
             Assert.Equal(LoadElaborationGuard.ModuleElaborationUnavailableDiagnostic, error.Message);
-            Assert.Equal(1, error.StartLine);
-            Assert.Equal(7, error.StartColumn);
-            Assert.Equal(1, error.EndLine);
-            Assert.Equal(46, error.EndColumn);
+            Assert.Equal(1, Assert.NotNull(error.Span).Start.Line);
+            Assert.Equal(7, Assert.NotNull(error.Span).Start.Column);
+            Assert.Equal(1, Assert.NotNull(error.Span).End.Line);
+            Assert.Equal(47, Assert.NotNull(error.Span).End.Column);
             Assert.Null(error.Source);
             Assert.False(error.IsResourceLimit);
         }

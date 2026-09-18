@@ -55,6 +55,9 @@ public class TokenPublicSurfaceTests
         ("WithColumn", "_ = Existing with { Column = 9 };", [("CS0200", "'Token.Column' cannot be assigned to")]),
         ("WithNumValue", "_ = Existing with { NumValue = 7 };", [("CS0200", "'Token.NumValue' cannot be assigned to")]),
         ("WithStringValue", "_ = Existing with { StringValue = \"forged\" };", [("CS0200", "'Token.StringValue' cannot be assigned to")]),
+        // The derived span has no setter at all: it is computed from the offset model on every read.
+        ("WithSpan", "_ = Existing with { Span = new SourceSpan(1, 1, 1, 2) };", [("CS0200", "'Token.Span' cannot be assigned to")]),
+        ("InitializerSpan", "_ = new Token { Span = new SourceSpan(1, 1, 1, 2) };", [("CS1729", "'Token' does not contain a constructor that takes 0 arguments"), ("CS0200", "'Token.Span' cannot be assigned to")]),
         // Positional deconstruction: the record is non-positional and declares no Deconstruct.
         ("Deconstruct", "(TokenKind kind, int position, int length, int line, int column, Decimal128 numValue, string? stringValue) = Existing;", [("CS1061", "'Token' does not contain a definition for 'Deconstruct'"), ("CS8129", "No suitable 'Deconstruct' instance or extension method was found for type 'Token', with 7 out parameters")]),
         ("DeconstructCall", "Existing.Deconstruct(out TokenKind k, out int p, out int l, out int ln, out int c, out Decimal128 n, out string? s);", [("CS1061", "'Token' does not contain a definition for 'Deconstruct'")]),
@@ -121,8 +124,9 @@ public class TokenPublicSurfaceTests
     public void AConsumer_ObtainsTokensFromTheLexer_AndReadsEveryProperty()
     {
         // The positive control: everything the type is FOR compiles for a consumer —
-        // tokenizing, reading all seven properties by name, property patterns, value
-        // equality, hashing, and exactly the reads the KatLangWeb colorizer performs.
+        // tokenizing, reading all seven stored properties and the derived span by name,
+        // property patterns, value equality, hashing, and exactly the reads the KatLangWeb
+        // colorizer performs.
         const string source = ProbePreamble + """
             public static class Valid
             {
@@ -130,6 +134,14 @@ public class TokenPublicSurfaceTests
 
                 public static string Describe(Token token)
                     => $"{token.Kind} @{token.Position}+{token.Length} ({token.Line}:{token.Column}) = {token.NumValue} / {token.StringValue}";
+
+                // The derived human-coordinate extent: half-open, so an end-of-file token is empty.
+                public static (int Line, int Column, int EndLine, int EndColumn, bool Empty) Extent(Token token)
+                {
+                    SourceSpan span = token.Span;
+                    var (start, end) = span;
+                    return (start.Line, start.Column, end.Line, end.Column, span.IsEmpty);
+                }
 
                 public static int Sum(string program)
                 {
@@ -190,7 +202,7 @@ public class TokenPublicSurfaceTests
 
     // ── Reflection half: the compiled shape ─────────────────────────────────
 
-    private static readonly string[] TokenProperties = ["Kind", "Position", "Length", "Line", "Column", "NumValue", "StringValue"];
+    private static readonly string[] TokenProperties = ["Kind", "Position", "Length", "Line", "Column", "NumValue", "StringValue", "Span"];
 
     [Fact]
     public void Token_IsAPublicSealedRecordClass_ReadableButNotConstructible()
@@ -224,10 +236,15 @@ public class TokenPublicSurfaceTests
         Assert.False(clone.IsStatic);
         Assert.False(clone.IsVirtual); // sealed record: no consumer override/subclass hook
 
-        // Every property has a public getter and an internal init-only setter.
+        // Every stored property has a public getter and an internal init-only setter; the
+        // derived Span has a public getter and no setter of any accessibility.
         var properties = type.GetProperties(BindingFlags.Public | BindingFlags.Instance);
         Assert.Equal(TokenProperties.Order(StringComparer.Ordinal), properties.Select(p => p.Name).Order(StringComparer.Ordinal));
-        foreach (var property in properties)
+        var span = Assert.Single(properties, p => p.Name == "Span");
+        Assert.True(span.GetMethod is { IsPublic: true });
+        Assert.Null(span.SetMethod);
+        Assert.Equal(typeof(SourceSpan), span.PropertyType);
+        foreach (var property in properties.Where(p => p.Name != "Span"))
         {
             Assert.True(property.GetMethod is { IsPublic: true }, $"{property.Name} must be publicly readable.");
             var setter = property.SetMethod;

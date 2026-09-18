@@ -847,12 +847,12 @@ public class GraceDotCompositionTests
         foreach (var source in new[] { "K = a~.t\nK({a+1}, 7)", "K = a.~t\nK({a+1}, 7)" })
         {
             var dotCall = Body(source);
-            Assert.Equal(new SourceSpan(1, 8, 1, 8), dotCall.MemberSpan);
-            Assert.Equal(new SourceSpan(1, 5, 1, 5), dotCall.Target.Span);
+            Assert.Equal(new SourceSpan(1, 8, 1, 9), dotCall.MemberSpan);
+            Assert.Equal(new SourceSpan(1, 5, 1, 6), dotCall.Target.Span);
         }
 
         var ordinary = Body("K(a, t) = a.t\nK(7, {a+1})");
-        Assert.Equal(new SourceSpan(1, 13, 1, 13), ordinary.MemberSpan);
+        Assert.Equal(new SourceSpan(1, 13, 1, 14), ordinary.MemberSpan);
     }
 
     // ── G. Chaining ─────────────────────────────────────────────────────────
@@ -970,11 +970,11 @@ public class GraceDotCompositionTests
     }
 
     [Theory]
-    [InlineData("~.F", 8)]
-    [InlineData("~ .F", 8)]
-    [InlineData("~~.F", 9)]
-    [InlineData("~ ~.F", 10)]
-    [InlineData("~\n.F", 8)]
+    [InlineData("~.F", 9)]
+    [InlineData("~ .F", 9)]
+    [InlineData("~~.F", 10)]
+    [InlineData("~ ~.F", 11)]
+    [InlineData("~\n.F", 9)]
     public void InvalidGraceBeforeDot_KeepsSpreadRecoveryIndependentOfLayout(string continuation, int markerEnd)
     {
         var syntax = Parser.ParseSyntax("K = xs*" + continuation);
@@ -1008,7 +1008,7 @@ public class GraceDotCompositionTests
         var rawEdge = Assert.IsType<Expr.DotCall>(Assert.Single(rawK.Output));
         Assert.Equal("t", rawEdge.Name);
         Assert.IsType<Expr.Call>(rawEdge.Target);
-        Assert.Equal(new SourceSpan(1, 11, 1, 11), rawEdge.MemberSpan);
+        Assert.Equal(new SourceSpan(1, 11, 1, 12), rawEdge.MemberSpan);
         Assert.Null(DotCallElaborationInvariant.CheckElaborated(syntax.Root));
 
         var elaborated = Parser.Parse(source);
@@ -1038,8 +1038,8 @@ public class GraceDotCompositionTests
         => Assert.Equal(["t", "a"], ParamsOf("K = a~ .t"));
 
     [Theory]
-    [InlineData("K = a ~ .t", 5, 7)]
-    [InlineData("K = a ~.t", 5, 7)]
+    [InlineData("K = a ~ .t", 5, 8)]
+    [InlineData("K = a ~.t", 5, 8)]
     public void Adjacency_DetachedTilde_IsRejectedByTheAttachmentLaw_AndRecoversToThePlainEdge(
         string source, int startColumn, int endColumn)
     {
@@ -1064,9 +1064,9 @@ public class GraceDotCompositionTests
     }
 
     [Theory]
-    [InlineData("K = a.~ t", 7, 9)]
-    [InlineData("K = a.~ ~t", 7, 10)]
-    [InlineData("K = a.~~ ~t", 7, 11)]
+    [InlineData("K = a.~ t", 7, 10)]
+    [InlineData("K = a.~ ~t", 7, 11)]
+    [InlineData("K = a.~~ ~t", 7, 12)]
     public void MemberGrace_DetachedFromTheMemberName_IsRejectedByTheAttachmentLaw(
         string source, int startColumn, int endColumn)
     {

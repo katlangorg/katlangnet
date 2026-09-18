@@ -39,7 +39,7 @@ public class ParameterPropertyCollisionTests
         var diagnostic = Assert.Single(parsed.Diagnostics);
         Assert.Equal(DiagnosticCode.ParameterPropertyCollision, diagnostic.Code);
         Assert.Equal(DiagnosticSeverity.Error, diagnostic.Severity);
-        Assert.Equal(new SourceSpan(line, column, line, column), diagnostic.Span);
+        Assert.Equal(new SourceSpan(line, column, line, column + 1), diagnostic.Span);   // the one-character name `v`
         Assert.Contains("Property 'v' conflicts with parameter 'v'", diagnostic.Message);
         Assert.Contains($"line {parameterLine}, column {parameterColumn}", diagnostic.Message);
         var failure = Assert.IsType<RunResult.ParseFailure>(KatLangEngine.Run(source));
@@ -66,7 +66,7 @@ public class ParameterPropertyCollisionTests
     {
         const string source = "Outer(v) = {\nv(0) = 5\nv(n) = 6\n0\n}\n0";
         var parsed = SourceProvenance.ParseAllowingDiagnostics(source);
-        Assert.Equal([new SourceSpan(2, 1, 2, 1), new SourceSpan(3, 1, 3, 1)], parsed.Diagnostics.Select(d => d.Span));
+        Assert.Equal([new SourceSpan(2, 1, 2, 2), new SourceSpan(3, 1, 3, 2)], parsed.Diagnostics.Select(d => d.Span));
         Assert.All(parsed.Diagnostics, d => Assert.Equal(DiagnosticCode.ParameterPropertyCollision, d.Code));
     }
 
@@ -92,8 +92,8 @@ public class ParameterPropertyCollisionTests
     [Fact]
     public void SharedBranchBody_ReportsEachDeclarationOnceAcrossBinderContexts()
     {
-        var vSpan = new SourceSpan(2, 1, 2, 1);
-        var qSpan = new SourceSpan(3, 1, 3, 1);
+        var vSpan = new SourceSpan(2, 1, 2, 2);
+        var qSpan = new SourceSpan(3, 1, 3, 2);
         var body = new Algorithm.User(null, [], [],
             [new Property("v", new Algorithm.User(null, [], [], [], [new Expr.Num(5)])) { DeclarationSpans = [vSpan] },
              new Property("q", new Algorithm.User(null, [], [], [], [new Expr.Num(6)])) { DeclarationSpans = [qSpan] }],
@@ -116,7 +116,7 @@ public class ParameterPropertyCollisionTests
     {
         var value = new Algorithm.User(null, [], [], [], [new Expr.Num(5)]);
         var properties = new ObservedProperties(Enumerable.Range(0, width).Select(i =>
-            new Property($"p{i}", value) { DeclarationSpans = [new SourceSpan(i + 1, 1, i + 1, 1)] }).ToArray());
+            new Property($"p{i}", value) { DeclarationSpans = [new SourceSpan(i + 1, 1, i + 1, 2)] }).ToArray());
         var body = new Algorithm.User(null, [], [], properties, [new Expr.Num(0)]);
         // Distinct pattern objects and binder order, but the SAME semantic input.
         var branches = Enumerable.Range(0, width).Select(i => new CondBranch(
@@ -127,7 +127,7 @@ public class ParameterPropertyCollisionTests
         var diagnostics = new List<Diagnostic>();
         new ParameterPropertyCollisionValidator(diagnostics).VisitAlgorithm(new Algorithm.Conditional(null, [], branches));
 
-        Assert.Equal([1, 2, 3], diagnostics.Select(d => d.Span!.StartLineNumber));
+        Assert.Equal([1, 2, 3], diagnostics.Select(d => Assert.NotNull(d.Span).Start.Line));
         Assert.All(diagnostics, d => Assert.Equal(DiagnosticCode.ParameterPropertyCollision, d.Code));
         Assert.InRange(properties.Reads, width, 5 * width);
     }
@@ -135,8 +135,8 @@ public class ParameterPropertyCollisionTests
     [Fact]
     public void SharedNestedExpression_IsValidatedInEachAncestorContext_WithoutSiblingLeakage()
     {
-        var span = new SourceSpan(3, 1, 3, 1);
-        var parameterSpan = new SourceSpan(1, 7, 1, 7);
+        var span = new SourceSpan(3, 1, 3, 2);
+        var parameterSpan = new SourceSpan(1, 7, 1, 8);
         var value = new Algorithm.User(null, [], [], [], [new Expr.Num(5)]);
         var body = new Algorithm.User(null, [], [], [new Property("v", value) { DeclarationSpans = [span] }], [new Expr.Num(0)]);
         var shared = new Expr.Capture(new OutputBundle([new Expr.AlgorithmExpr(body)]));
@@ -254,7 +254,7 @@ public class ParameterPropertyCollisionTests
         var parsed = SourceProvenance.ParseAllowingDiagnostics(source);
         var diagnostic = Assert.Single(parsed.Diagnostics);
         Assert.Equal(DiagnosticCode.ParameterPropertyCollision, diagnostic.Code);
-        Assert.Equal(new SourceSpan(line, column, line, column), diagnostic.Span);
+        Assert.Equal(new SourceSpan(line, column, line, column + 1), diagnostic.Span);   // the one-character name
     }
 
     [Fact]
@@ -278,7 +278,7 @@ public class ParameterPropertyCollisionTests
         var rejected = await Parser.ParseAsync(callable, options);
         var diagnostic = Assert.Single(rejected.Diagnostics);
         Assert.Equal(DiagnosticCode.ParameterPropertyCollision, diagnostic.Code);
-        Assert.Equal(new SourceSpan(2, 1, 2, 3), diagnostic.Span);
+        Assert.Equal(new SourceSpan(2, 1, 2, 4), diagnostic.Span);
         Assert.Contains("declared at line 1, column 7", diagnostic.Message, StringComparison.Ordinal);
     }
 

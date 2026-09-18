@@ -146,13 +146,11 @@ internal sealed class SourceProcessingBudget
 /// </summary>
 internal static class SourceProcessingDiagnostics
 {
-    private static readonly SourceSpan DefaultSpan = new(1, 1, 1, 1);
-
     internal static Diagnostic SourceLengthExceeded(int actualLength, int limit)
         => Error(
             DiagnosticCode.SourceLengthExceeded,
             $"Source length {Quantity(actualLength, "UTF-16 code unit")} exceeds the maximum of {Quantity(limit, "UTF-16 code unit")}.",
-            DefaultSpan);
+            span: null);
 
     internal static Diagnostic ModuleSourceLengthExceeded(string url, int actualLength, int limit, SourceSpan? span)
         => Error(
@@ -185,7 +183,7 @@ internal static class SourceProcessingDiagnostics
         => Error(
             DiagnosticCode.AggregateSourceLengthExceeded,
             $"Program source ({Quantity(requestedLength, "UTF-16 code unit")}) exceeds the maximum total source of {Quantity(limit, "UTF-16 code unit")}.",
-            DefaultSpan);
+            span: null);
 
     internal static Diagnostic ModuleCountExceeded(string url, int requestedCount, int limit, SourceSpan? span)
         => Error(
@@ -206,11 +204,14 @@ internal static class SourceProcessingDiagnostics
             "Module elaboration stopped: the host thread's remaining stack cannot safely walk this composition, "
             + $"although it is within the structural depth limit of {Quantity(limit, "level")}. "
             + "Run source processing on a thread with at least the documented 1 MiB stack, or reduce structural nesting around load directives.",
-            DefaultSpan);
+            span: null);
 
     private static string Quantity(long value, string singular)
         => $"{value} {singular}{(value == 1 ? string.Empty : "s")}";
 
+    // A whole-document limit (the program's own length, the aggregate budget, the
+    // elaboration stack) has no position and is reported unpositioned; a module limit is
+    // positioned at the load or import site the loader supplies, when it has one.
     private static Diagnostic Error(DiagnosticCode code, string message, SourceSpan? span)
-        => new(message, DiagnosticSeverity.Error, span ?? DefaultSpan) { Code = code };
+        => new(message, DiagnosticSeverity.Error, span) { Code = code };
 }

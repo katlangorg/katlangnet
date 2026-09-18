@@ -108,13 +108,13 @@ public class ClosedListStrictValueDiagnosticTests
             F(x) = Math.Abs(A)
             F(7)
             """;
-        var span = SingleBlocked(Source).Span;
+        var span = Assert.NotNull(SingleBlocked(Source).Span);
 
-        var line = Source.ReplaceLineEndings("\n").Split('\n')[span.StartLineNumber - 1];
+        var line = Source.ReplaceLineEndings("\n").Split('\n')[span.Start.Line - 1];
         Assert.Equal("F(x) = Math.Abs(A)", line);
-        Assert.Equal("A", line.Substring(span.StartColumn - 1, 1));
-        Assert.Equal(span.StartLineNumber, span.EndLineNumber);
-        Assert.Equal(span.StartColumn, span.EndColumn);
+        Assert.Equal("A", line.Substring(span.Start.Column - 1, 1));
+        Assert.Equal(span.Start.Line, span.End.Line);
+        Assert.Equal(span.Start.Column + 1, span.End.Column); // half-open: one code unit wide
     }
 
     // ── Spelling parity: the rule reads metadata, never the written name ─────
@@ -249,7 +249,7 @@ public class ClosedListStrictValueDiagnosticTests
             """);
 
         Assert.Equal(2, blocked.Count);
-        Assert.Equal(2, blocked.Select(d => d.Span.StartColumn).Distinct().Count());
+        Assert.Equal(2, blocked.Select(d => Assert.NotNull(d.Span).Start.Column).Distinct().Count());
     }
 
     // ── Not diagnosed: everything the rule cannot prove ──────────────────────
@@ -497,7 +497,7 @@ public class ClosedListStrictValueDiagnosticTests
             """);
 
         Assert.Contains("'q'", diagnostic.Message, StringComparison.Ordinal);
-        Assert.Equal(4, diagnostic.Span.StartLineNumber);
+        Assert.Equal(4, Assert.NotNull(diagnostic.Span).Start.Line);
     }
 
     // ── Host-built shared nodes ──────────────────────────────────────────────

@@ -184,8 +184,8 @@ public class KatLangEngineTests
         var result = KatLangEngine.Run("2 +");
         var failure = Assert.IsType<RunResult.ParseFailure>(result);
         var error = Assert.Single(failure.Errors);
-        Assert.NotNull(error.StartLine);
-        Assert.NotNull(error.StartColumn);
+        Assert.NotNull(error.Span);
+        Assert.NotNull(error.Span);
     }
 
     [Fact]
@@ -256,8 +256,8 @@ public class KatLangEngineTests
             {
                 Assert.Contains("cannot load 'https://katlang.org/libraries2/example.kat'", error.Message);
                 Assert.Contains("returned HTML", error.Message);
-                Assert.Equal(1, error.StartLine);
-                Assert.Equal(5, error.StartColumn);
+                Assert.Equal(1, Assert.NotNull(error.Span).Start.Line);
+                Assert.Equal(5, Assert.NotNull(error.Span).Start.Column);
             },
             error =>
             {
@@ -1243,23 +1243,23 @@ public class KatLangEngineTests
     public void KatLangError_FromDiagnostic_MapsFields()
     {
         var diag = new Diagnostic("test error", DiagnosticSeverity.Error,
-            new SourceSpan(1, 5, 1, 10));
+            new SourceSpan(1, 5, 1, 11));
         var error = KatLangError.FromDiagnostic(diag);
         Assert.Equal("test error", error.Message);
-        Assert.Equal(1, error.StartLine);
-        Assert.Equal(5, error.StartColumn);
-        Assert.Equal(1, error.EndLine);
-        Assert.Equal(10, error.EndColumn);
+        Assert.Equal(1, Assert.NotNull(error.Span).Start.Line);
+        Assert.Equal(5, Assert.NotNull(error.Span).Start.Column);
+        Assert.Equal(1, Assert.NotNull(error.Span).End.Line);
+        Assert.Equal(11, Assert.NotNull(error.Span).End.Column);
     }
 
     [Fact]
     public void KatLangError_FromEvalError_WithSpan_MapsFields()
     {
-        var evalErr = new EvalError.DivByZero() { Span = new SourceSpan(3, 2, 3, 5) };
+        var evalErr = new EvalError.DivByZero() { Span = new SourceSpan(3, 2, 3, 6) };
         var error = KatLangError.FromEvalError(evalErr);
         Assert.Contains("zero", error.Message, StringComparison.OrdinalIgnoreCase);
-        Assert.Equal(3, error.StartLine);
-        Assert.Equal(2, error.StartColumn);
+        Assert.Equal(3, Assert.NotNull(error.Span).Start.Line);
+        Assert.Equal(2, Assert.NotNull(error.Span).Start.Column);
     }
 
     [Fact]
@@ -1268,15 +1268,15 @@ public class KatLangEngineTests
         var evalErr = new EvalError.UnknownName("x");
         var error = KatLangError.FromEvalError(evalErr);
         Assert.Contains("x", error.Message);
-        Assert.Null(error.StartLine);
-        Assert.Null(error.StartColumn);
+        Assert.Null(error.Span);
+        Assert.Null(error.Span);
     }
 
     [Fact]
     public void KatLangError_ToString_WithSpan_IncludesLocation()
     {
         var diag = new Diagnostic("oops", DiagnosticSeverity.Error,
-            new SourceSpan(2, 3, 2, 7));
+            new SourceSpan(2, 3, 2, 8));
         var error = KatLangError.FromDiagnostic(diag);
         var str = error.ToString();
         Assert.Contains("[2:3]", str);

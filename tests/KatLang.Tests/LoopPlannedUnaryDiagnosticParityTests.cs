@@ -103,8 +103,8 @@ public class LoopPlannedUnaryDiagnosticParityTests
         Assert.True(generic.IsError);
         var genericInnermost = Assert.IsType<EvalError.BadArity>(Innermost(generic.Error));
         var optimizedInnermost = Assert.IsType<EvalError.BadArity>(Innermost(error));
-        Assert.Equal(new SourceSpan(2, 11, 2, 12), genericInnermost.Span);
-        Assert.Equal(new SourceSpan(2, 11, 2, 12), optimizedInnermost.Span);
+        Assert.Equal(new SourceSpan(2, 11, 2, 13), genericInnermost.Span);
+        Assert.Equal(new SourceSpan(2, 11, 2, 13), optimizedInnermost.Span);
     }
 
     [Fact]
@@ -212,7 +212,7 @@ public class LoopPlannedUnaryDiagnosticParityTests
         Assert.NotNull(genericInnermost.Span);
         Assert.Equal(genericInnermost.Span, optimizedInnermost.Span);
         var stepLine = source.Split('\n').Select((line, index) => (line, index)).Single(row => row.line.StartsWith("S(", StringComparison.Ordinal)).index + 1;
-        Assert.Equal(stepLine, genericInnermost.Span.StartLineNumber);
+        Assert.Equal(stepLine, Assert.NotNull(genericInnermost.Span).Start.Line);
 
         // The optimized side really exercised the planned unary.
         var (_, loop, _) = RunObserved(source, enableLoopOptimization: true);
@@ -249,13 +249,8 @@ public class LoopPlannedUnaryDiagnosticParityTests
         // Absolute span pin on BOTH innermost errors: the shared helper stamps
         // the unary expression's span, so strategy parity alone cannot mask a
         // policy regression here.
-        Assert.NotNull(genericInnermost.Span);
-        Assert.NotNull(optimizedInnermost.Span);
         Assert.Equal(genericInnermost.Span, optimizedInnermost.Span);
-        Assert.Equal(1, genericInnermost.Span!.StartLineNumber);
-        Assert.Equal(8, genericInnermost.Span!.StartColumn);
-        Assert.Equal(1, genericInnermost.Span!.EndLineNumber);
-        Assert.Equal(30, genericInnermost.Span!.EndColumn);
+        Assert.Equal(new SourceSpan(1, 8, 1, 31), genericInnermost.Span);
 
         // The optimized side is FULLY planned: nothing fell back, so the failing
         // application is unambiguously the planned unary over the planned if.
@@ -290,9 +285,9 @@ public class LoopPlannedUnaryDiagnosticParityTests
         var optimizedInnermost = Assert.IsType<EvalError.TypeMismatch>(Innermost(error));
         Assert.NotNull(genericInnermost.Span);
         Assert.Equal(genericInnermost.Span, optimizedInnermost.Span);
-        Assert.Equal(new SourceSpan(2, 11, 2, 15), genericInnermost.Span);
-        Assert.Equal(((int?)2, (int?)11, (int?)2, (int?)15), Span(generic.Error));
-        Assert.Equal(((int?)2, (int?)11, (int?)2, (int?)15), Span(error));
+        Assert.Equal(new SourceSpan(2, 11, 2, 16), genericInnermost.Span);
+        Assert.Equal(new SourceSpan(2, 11, 2, 16), Span(generic.Error));
+        Assert.Equal(new SourceSpan(2, 11, 2, 16), Span(error));
 
         var (_, loop, _) = RunObserved(source, enableLoopOptimization: true);
         AssertPlannedUnarySlot(loop, "S.repeat", "output", 0, "Not(StateSlot(y))");
@@ -316,11 +311,11 @@ public class LoopPlannedUnaryDiagnosticParityTests
         var generic = Run(source, enableLoopOptimization: false);
         Assert.True(generic.IsError);
 
-        var expectedSpan = new SourceSpan(1, 22, 1, 40);
+        var expectedSpan = new SourceSpan(1, 22, 1, 41);
         Assert.Equal(expectedSpan, Assert.IsType<EvalError.TypeMismatch>(Innermost(generic.Error)).Span);
         Assert.Equal(expectedSpan, Assert.IsType<EvalError.TypeMismatch>(Innermost(optimizedError)).Span);
-        Assert.Equal(((int?)1, (int?)22, (int?)1, (int?)40), Span(generic.Error));
-        Assert.Equal(((int?)1, (int?)22, (int?)1, (int?)40), Span(optimizedError));
+        Assert.Equal(new SourceSpan(1, 22, 1, 41), Span(generic.Error));
+        Assert.Equal(new SourceSpan(1, 22, 1, 41), Span(optimizedError));
 
         var (_, loop, _) = RunObserved(source, enableLoopOptimization: true);
         AssertPlannedUnarySlot(
@@ -523,8 +518,8 @@ public class LoopPlannedUnaryDiagnosticParityTests
         Assert.True(generic.IsError);
         // The innermost BadArity sits at the unary expression `-a` (line 1, columns 8-9)
         // on both paths (F5).
-        Assert.Equal(new SourceSpan(1, 8, 1, 9), Assert.IsType<EvalError.BadArity>(Innermost(generic.Error)).Span);
-        Assert.Equal(new SourceSpan(1, 8, 1, 9), Assert.IsType<EvalError.BadArity>(Innermost(error)).Span);
+        Assert.Equal(new SourceSpan(1, 8, 1, 10), Assert.IsType<EvalError.BadArity>(Innermost(generic.Error)).Span);
+        Assert.Equal(new SourceSpan(1, 8, 1, 10), Assert.IsType<EvalError.BadArity>(Innermost(error)).Span);
 
         var (_, loop, _) = RunObserved(source, enableLoopOptimization: true);
         Assert.Equal(0, loop.OptimizedLoopHits);
@@ -544,8 +539,8 @@ public class LoopPlannedUnaryDiagnosticParityTests
             """;
 
         var error = AssertOptimizerTransparentFailure(source);
-        // `{op}a` starts at column 8 of line 1 and ends at the operand (F5).
-        Assert.Equal(new SourceSpan(1, 8, 1, 8 + op.Length), Assert.IsType<EvalError.BadArity>(Innermost(error)).Span);
+        // `{op}a` starts at column 8 of line 1 and ends just past the operand (F5).
+        Assert.Equal(new SourceSpan(1, 8, 1, 9 + op.Length), Assert.IsType<EvalError.BadArity>(Innermost(error)).Span);
 
         var (_, loop, _) = RunObserved(source, enableLoopOptimization: true);
         Assert.Equal(0, loop.OptimizedLoopHits);
@@ -584,9 +579,8 @@ public class LoopPlannedUnaryDiagnosticParityTests
         // The planned unary reports the BadArity at the written unary expression on
         // line 2 (F5); AssertOptimizerTransparentFailure has already proven the span
         // identical on the generic path.
-        var innermostSpan = Assert.IsType<EvalError.BadArity>(Innermost(error)).Span;
-        Assert.NotNull(innermostSpan);
-        Assert.Equal(2, innermostSpan.StartLineNumber);
+        var innermostSpan = Assert.NotNull(Assert.IsType<EvalError.BadArity>(Innermost(error)).Span);
+        Assert.Equal(2, innermostSpan.Start.Line);
         var (generic, _) = RunCountedObserved(source, enableLoopOptimization: false);
         var (optimized, loop) = RunCountedObserved(source, enableLoopOptimization: true);
         Assert.True(generic.IsError);
@@ -624,8 +618,8 @@ public class LoopPlannedUnaryDiagnosticParityTests
 
         var generic = Run(source, enableLoopOptimization: false);
         Assert.True(generic.IsError);
-        Assert.Equal(new SourceSpan(2, 11, 2, 12), Assert.IsType<EvalError.BadArity>(Innermost(generic.Error)).Span);
-        Assert.Equal(new SourceSpan(2, 11, 2, 12), Assert.IsType<EvalError.BadArity>(Innermost(error)).Span);
+        Assert.Equal(new SourceSpan(2, 11, 2, 13), Assert.IsType<EvalError.BadArity>(Innermost(generic.Error)).Span);
+        Assert.Equal(new SourceSpan(2, 11, 2, 13), Assert.IsType<EvalError.BadArity>(Innermost(error)).Span);
 
         var (_, loop, _) = RunObserved(source, enableLoopOptimization: true);
         AssertPlannedUnarySlot(loop, "S.repeat", "output", 0, "Negate(StateSlot(y))");

@@ -311,7 +311,7 @@ public sealed class Parser
     /// </summary>
     private Expr GuardExpressionChainDepth(
         Expr expression,
-        SourceSpan operatorSpan,
+        Token operatorToken,
         Expr firstChild,
         Expr? secondChild = null)
     {
@@ -322,11 +322,11 @@ public sealed class Parser
         var depth = childDepth + 1;
         if (depth > MaxExpressionChainDepth)
         {
-            ReportError(
+            ReportErrorAt(
                 DiagnosticCode.ExpressionChainTooDeep,
                 "Expression operator or postfix chain is too deep for the frontend to process safely. " +
                 "Break the expression into named intermediate properties.",
-                operatorSpan);
+                operatorToken);
             throw new ExpressionChainLimitExceededException();
         }
 
@@ -461,7 +461,7 @@ public sealed class Parser
             diagnostics.Add(new Diagnostic(
                 AlgorithmValidation.ExplicitParametersRequireOutputMessage,
                 DiagnosticSeverity.Error,
-                violation.Span ?? new SourceSpan(1, 1, 1, 1))
+                violation.Span)
             {
                 Code = DiagnosticCode.ExplicitParametersRequireOutput,
             });
@@ -611,21 +611,14 @@ public sealed class Parser
     // explicit DiagnosticCode — the required parameter is what keeps
     // "KatLang-produced diagnostics always carry a deliberate code" a
     // compile-time property rather than a runtime audit.
+    // Positioned at the current token's own extent: an empty span at end of input, so an
+    // "expected X but found end of input" diagnostic is an insertion point, never a
+    // fabricated one-column width past the text.
+    [System.Runtime.CompilerServices.MethodImpl(LeafFrame)]
     private void ReportError(DiagnosticCode code, string message)
-    {
-        _diagnostics.Add(new Diagnostic(
-            message,
-            DiagnosticSeverity.Error,
-            new SourceSpan(
-                Current.Line,
-                Current.Column,
-                Current.Line,
-                Current.Column + Math.Max(Current.Length, 1) - 1))
-        {
-            Code = code,
-        });
-    }
+        => ReportError(code, message, Current.Span);
 
+    [System.Runtime.CompilerServices.MethodImpl(LeafFrame)]
     private void ReportError(DiagnosticCode code, string message, SourceSpan span)
     {
         _diagnostics.Add(new Diagnostic(
@@ -753,18 +746,119 @@ public sealed class Parser
         return Math.Min(index, _tokens.Count - 1);
     }
 
-    private SourceSpan MakeSpan(Token start) => new(
-        start.Line, start.Column,
-        Previous.Line, Previous.Column + Math.Max(Previous.Length, 1) - 1);
+    // Every parser span is half-open and derived from token extents (Token.Span): a
+    // construct runs from the start of its first token to the exclusive end of the last
+    // token consumed for it. A zero-length token (end of input, the recovery marker)
+    // contributes an empty extent, so no span ever pretends a missing character exists.
+    private SourceSpan MakeSpan(Token start) => new(start.Span.Start, Previous.Span.End);
 
-    private static SourceSpan TokenSpan(Token t) => new(
-        t.Line, t.Column, t.Line, t.Column + Math.Max(t.Length, 1) - 1);
+    private static SourceSpan TokenSpan(Token t) => t.Span;
 
-    private SourceSpan SpanFrom(Expr start) => new(
-        start.Span?.StartLineNumber ?? Previous.Line,
-        start.Span?.StartColumn ?? Previous.Column,
-        Previous.Line,
-        Previous.Column + Math.Max(Previous.Length, 1) - 1);
+    private SourceSpan SpanFrom(Expr start) => new(start.Span?.Start ?? Previous.Span.Start, Previous.Span.End);
+
+    // ── Span-carrying construction (frame-size discipline) ───────────────────
+    // Every node and diagnostic that carries a span is built INSIDE one of these
+    // small non-inlined helpers, from the token or expression that positions it.
+    // A span is a 16-byte value (20 bytes as `SourceSpan?`), and a hidden return
+    // buffer plus an argument copy per construction site would otherwise live in
+    // the RECURSIVE parsing frame that wrote the `{ Span = ... }` initializer:
+    // measured while SourceSpan became a value type, inline construction grew the
+    // recursive-descent frames by 15-60% and the calibrated 1 MiB envelope behind
+    // MaxNestingDepth no longer held. Built here, the span is a temporary of a
+    // short-lived leaf frame instead.
+    private const System.Runtime.CompilerServices.MethodImplOptions LeafFrame =
+        System.Runtime.CompilerServices.MethodImplOptions.NoInlining;
+
+    [System.Runtime.CompilerServices.MethodImpl(LeafFrame)]
+    private void ReportErrorAt(DiagnosticCode code, string message, Token token)
+        => ReportError(code, message, token.Span);
+
+    [System.Runtime.CompilerServices.MethodImpl(LeafFrame)]
+    private void ReportErrorFrom(DiagnosticCode code, string message, Token start)
+        => ReportError(code, message, MakeSpan(start));
+
+    [System.Runtime.CompilerServices.MethodImpl(LeafFrame)]
+    private void ReportErrorFrom(DiagnosticCode code, string message, Expr start)
+        => ReportError(code, message, SpanFrom(start));
+
+    /// <summary>The diagnostic covers <paramref name="first"/> through <paramref name="last"/> (their hull).</summary>
+    [System.Runtime.CompilerServices.MethodImpl(LeafFrame)]
+    private void ReportErrorAcross(DiagnosticCode code, string message, Token first, Token last)
+        => ReportError(code, message, first.Span.Union(last.Span));
+
+    [System.Runtime.CompilerServices.MethodImpl(LeafFrame)]
+    private static Expr.Num NumAt(Token token) => new(token.NumValue) { Span = token.Span };
+
+    /// <summary>The error-recovery placeholder value, positioned at the offending token.</summary>
+    [System.Runtime.CompilerServices.MethodImpl(LeafFrame)]
+    private static Expr.Num PlaceholderAt(Token token) => new(0) { Span = token.Span };
+
+    /// <summary>The error-recovery placeholder value, spanning <paramref name="start"/> through the last consumed token.</summary>
+    [System.Runtime.CompilerServices.MethodImpl(LeafFrame)]
+    private Expr.Num PlaceholderFrom(Token start) => new(0) { Span = MakeSpan(start) };
+
+    [System.Runtime.CompilerServices.MethodImpl(LeafFrame)]
+    private static Expr.StringLiteral StringLiteralAt(Token token) => new(token.StringValue ?? "") { Span = token.Span };
+
+    [System.Runtime.CompilerServices.MethodImpl(LeafFrame)]
+    private static Expr.Resolve ResolveAt(Token token) => new(token.StringValue!) { Span = token.Span };
+
+    [System.Runtime.CompilerServices.MethodImpl(LeafFrame)]
+    private Expr.EmptySequence EmptySequenceFrom(Token start) => new(0) { Span = MakeSpan(start) };
+
+    [System.Runtime.CompilerServices.MethodImpl(LeafFrame)]
+    private Expr.AlgorithmExpr AlgorithmExprFrom(Algorithm algorithm, Token start) => new(algorithm) { Span = MakeSpan(start) };
+
+    [System.Runtime.CompilerServices.MethodImpl(LeafFrame)]
+    private Expr.Capture CaptureFrom(OutputBundle body, Token start) => new(body) { Span = MakeSpan(start) };
+
+    [System.Runtime.CompilerServices.MethodImpl(LeafFrame)]
+    private Expr.ListLiteral ListLiteralFrom(OutputBundle items, Token start) => new(items) { Span = MakeSpan(start) };
+
+    [System.Runtime.CompilerServices.MethodImpl(LeafFrame)]
+    private Expr.Grace GraceFrom(Expr inner, int weight, Token start) => new(inner, weight) { Span = MakeSpan(start) };
+
+    /// <summary>A binary node spanning its left operand through the last consumed token.</summary>
+    [System.Runtime.CompilerServices.MethodImpl(LeafFrame)]
+    private Expr.Binary BinaryFrom(BinaryOp op, Expr lhs, Expr rhs) => new(op, lhs, rhs) { Span = SpanFrom(lhs) };
+
+    /// <summary>A unary node spanning its operator token through the last consumed token.</summary>
+    [System.Runtime.CompilerServices.MethodImpl(LeafFrame)]
+    private Expr.Unary UnaryFrom(UnaryOp op, Expr operand, Token operatorToken) => new(op, operand) { Span = MakeSpan(operatorToken) };
+
+    [System.Runtime.CompilerServices.MethodImpl(LeafFrame)]
+    private Expr.Index IndexFrom(Expr lhs, Expr selector) => new(lhs, selector) { Span = SpanFrom(lhs) };
+
+    /// <summary>A call node spanning <paramref name="start"/> (the callee, or a fluent spread receiver) through the consumed ')'.</summary>
+    [System.Runtime.CompilerServices.MethodImpl(LeafFrame)]
+    private Expr.Call CallFrom(Expr callee, OutputBundle args, Expr start) => new(callee, args) { Span = SpanFrom(start) };
+
+    [System.Runtime.CompilerServices.MethodImpl(LeafFrame)]
+    private Expr.DotCall DotCallFrom(Expr lhs, Token memberToken, OutputBundle? args, Expr lexicalFallback)
+        => new(lhs, memberToken.StringValue!, args)
+        {
+            Span = SpanFrom(lhs),
+            MemberSpan = memberToken.Span,
+            LexicalFallback = lexicalFallback,
+        };
+
+    /// <summary>Every SequenceSpread the parser builds goes through here (architecture-tested).</summary>
+    [System.Runtime.CompilerServices.MethodImpl(LeafFrame)]
+    private Expr.SequenceSpread SequenceSpreadFrom(Expr operand, Token starToken)
+        => new(operand) { Span = SpanFrom(operand), SpreadMarkerSpan = starToken.Span };
+
+    [System.Runtime.CompilerServices.MethodImpl(LeafFrame)]
+    private Expr WithGroupExtentFrom(Expr inner, Token start) => WithGroupExtent(inner, MakeSpan(start));
+
+    /// <summary>A simple property, declared at its name token.</summary>
+    [System.Runtime.CompilerServices.MethodImpl(LeafFrame)]
+    private static Property PropertyDeclaredAt(string name, Algorithm body, bool isPublic, Token nameToken)
+        => new(name, body, IsPublic: isPublic) { DeclarationSpans = [nameToken.Span] };
+
+    /// <summary>Records a clause spanning its name token through the last consumed token; false for a duplicate pattern.</summary>
+    [System.Runtime.CompilerServices.MethodImpl(LeafFrame)]
+    private bool AddClauseFrom(ClauseGroupBuilder group, Pattern pattern, Algorithm body, Token nameToken)
+        => group.AddClause(pattern, body, MakeSpan(nameToken), nameToken.Span);
 
     // ── Algorithm parsing ───────────────────────────────────────────────────
     // Reads property definitions (Name = ...) and output expression lines.
@@ -903,10 +997,10 @@ public sealed class Parser
     private void ReportStrayRootCloser(Token closer)
     {
         var (written, opener) = closer.Kind == TokenKind.RParen ? (")", "(") : ("}", "{");
-        ReportError(
+        ReportErrorAt(
             DiagnosticCode.UnexpectedToken,
             $"Unexpected '{written}' at the top level. There is no open '{opener}' for it to close.",
-            TokenSpan(closer));
+            closer);
     }
 
     /// <summary>
@@ -979,19 +1073,16 @@ public sealed class Parser
 
             if (!declarationsAllowed)
             {
-                ReportError(
+                ReportErrorAt(
                     DiagnosticCode.DeclarationInParentheses,
                     PropertyDeclarationInParenthesesDiagnostic,
-                    TokenSpan(nameToken));
+                    nameToken);
             }
 
             Advance(); // consume identifier
             Advance(); // consume '='
             var body = ParseOutputLine();
-            properties.Add(new Property(name, body, IsPublic: isPublic)
-            {
-                DeclarationSpans = [TokenSpan(nameToken)]
-            });
+            properties.Add(PropertyDeclaredAt(name, body, isPublic, nameToken));
             declaredPropertyNames.Add(name);
         }
 
@@ -1013,10 +1104,10 @@ public sealed class Parser
 
             if (!declarationsAllowed)
             {
-                ReportError(
+                ReportErrorAt(
                     DiagnosticCode.DeclarationInParentheses,
                     PropertyDeclarationInParenthesesDiagnostic,
-                    TokenSpan(nameToken));
+                    nameToken);
             }
 
             Advance(); // consume identifier
@@ -1024,11 +1115,10 @@ public sealed class Parser
             var pattern = ParsePattern();
             Expect(TokenKind.RParen);
 
-            ValidateCollectingParameterDeclarations(name, pattern, TokenSpan(nameToken));
+            ValidateCollectingParameterDeclarations(name, pattern, nameToken);
 
             Expect(TokenKind.Equals);
             var body = ParseOutputLine();
-            var clauseSpan = MakeSpan(nameToken);
 
             if (!clauseGroups.TryGetValue(name, out var group))
             {
@@ -1041,20 +1131,20 @@ public sealed class Parser
             }
             else if (group.IsPublic != isPublic)
             {
-                ReportError(
+                ReportErrorAt(
                     DiagnosticCode.ClauseVisibilityMismatch,
                     $"All clauses of '{name}' must use the same public modifier. Either mark every clause public or none of them.",
-                    TokenSpan(nameToken));
+                    nameToken);
             }
 
             // The clause is always recorded (recovery keeps a truthful family); an earlier
             // match-equivalent pattern in the same family additionally reports the duplicate.
-            if (!group.AddClause(pattern, body, clauseSpan, TokenSpan(nameToken)))
+            if (!AddClauseFrom(group, pattern, body, nameToken))
             {
-                ReportError(
+                ReportErrorFrom(
                     DiagnosticCode.DuplicateBranchPattern,
                     $"Duplicate branch pattern for conditional algorithm '{name}'.",
-                    clauseSpan);
+                    nameToken);
             }
         }
 
@@ -1130,10 +1220,10 @@ public sealed class Parser
                 var lastMarker = firstMarker;
                 while (Current.Kind == TokenKind.Tilde && MayContinueClosedExpression(TokenKind.Tilde))
                     lastMarker = Advance();
-                ReportError(
+                ReportErrorAcross(
                     DiagnosticCode.InvalidGraceMarker,
                     "Grace operator cannot be applied to property names.",
-                    CombineSpans(TokenSpan(firstMarker), TokenSpan(lastMarker))!);
+                    firstMarker, lastMarker);
                 // Fall through to normal property definition handling
             }
 
@@ -1161,10 +1251,10 @@ public sealed class Parser
                 {
                     // The span covers the whole declaration, keyword through
                     // the last parsed target.
-                    ReportError(
+                    ReportErrorFrom(
                         DiagnosticCode.DeclarationInParentheses,
                         OpenDeclarationInParenthesesDiagnostic,
-                        MakeSpan(openToken));
+                        openToken);
                 }
                 opens.AddRange(openExprs);
             }
@@ -1265,8 +1355,7 @@ public sealed class Parser
             // Validate no Grace operators in true conditional branch bodies.
             foreach (var branch in condAlg.Branches)
             {
-                var graceSpan = FindGraceSpan(branch.Body.Output);
-                if (graceSpan is not null)
+                if (FindGraceSpan(branch.Body.Output) is { } graceSpan)
                 {
                     ReportError(
                         DiagnosticCode.InvalidGraceMarker,
@@ -1318,16 +1407,16 @@ public sealed class Parser
         return new ParsedAlgorithmBody(opens, properties, output);
     }
 
+    // The hull of two written extents (either may be absent): the diagnostic or node
+    // covers from the earlier start to the later end.
+    private static SourceSpan CombineSpans(SourceSpan left, SourceSpan right) => left.Union(right);
+
     private static SourceSpan? CombineSpans(SourceSpan? left, SourceSpan? right)
         => left is null
             ? right
             : right is null
                 ? left
-                : new SourceSpan(
-                    left.StartLineNumber,
-                    left.StartColumn,
-                    right.EndLineNumber,
-                    right.EndColumn);
+                : left.Value.Union(right.Value);
 
     private const string UnsupportedSemicolonExpressionMessage =
         "Semicolon is not supported as an expression separator. Use ',' between expressions on one line (a new line separates them where the context allows it), or parentheses for one sequence value.";
@@ -1366,7 +1455,7 @@ public sealed class Parser
         if (item.Position == _ownedSameLineItemPosition || item.Position == _reportedSameLineItemPosition)
             return;
         _reportedSameLineItemPosition = item.Position;
-        ReportError(DiagnosticCode.UnseparatedSameLineItem, message, TokenSpan(item));
+        ReportErrorAt(DiagnosticCode.UnseparatedSameLineItem, message, item);
     }
 
     // Cascade suppression: a recovery that has consumed or diagnosed a
@@ -1434,11 +1523,7 @@ public sealed class Parser
     // Semicolon is not a valid way to continue or join an expression;
     // `A* ; B` is unsupported-semicolon diagnostic recovery only.
     // Every SequenceSpread the parser builds goes through
-    // CreateSequenceSpread (architecture-tested).
-    private static Expr.SequenceSpread CreateSequenceSpread(
-        Expr operand, SourceSpan? span, SourceSpan? spreadMarkerSpan)
-        => new Expr.SequenceSpread(operand) { Span = span, SpreadMarkerSpan = spreadMarkerSpan };
-
+    // SequenceSpreadFrom (architecture-tested).
     private static void AppendOutputContribution(List<Expr> output, IReadOnlyList<Expr> exprs)
     {
         if (exprs.Count == 0)
@@ -1474,10 +1559,10 @@ public sealed class Parser
         // next line stays a separate statement/output row.
         if (!IsSamePhysicalLineAsPreviousToken() || !StartsOpenTargetAtom())
         {
-            ReportError(
+            ReportErrorAt(
                 DiagnosticCode.InvalidOpenTargetList,
                 "Expected an open target after 'open' on the same physical line.",
-                TokenSpan(Previous));
+                Previous);
             return targets;
         }
 
@@ -1492,10 +1577,10 @@ public sealed class Parser
             var comma = Advance(); // consume ','
             if (!StartsOpenTargetAtom())
             {
-                ReportError(
+                ReportErrorAt(
                     DiagnosticCode.InvalidOpenTargetList,
                     "Expected an open target after ','.",
-                    TokenSpan(comma));
+                    comma);
                 break;
             }
             if (ParseOpenTargetAtom() is { } target)
@@ -1509,19 +1594,19 @@ public sealed class Parser
         {
             if (Current.Kind == TokenKind.Semicolon)
             {
-                ReportError(
+                ReportErrorAt(
                     DiagnosticCode.InvalidOpenTargetList,
                     "Open target lists use ',' separators, not ';'. Write `open A, B` to open multiple targets.",
-                    TokenSpan(Current));
+                    Current);
                 Advance(); // consume ';' so it is not re-reported at statement level
                 OwnSameLineItem(Current); // the leftover after ';' is this diagnostic's boundary
             }
             else
             {
-                ReportError(
+                ReportErrorAt(
                     DiagnosticCode.InvalidOpenTargetList,
                     "Expected ',' between open targets. Open targets are separated by commas.",
-                    TokenSpan(Current));
+                    Current);
 
                 // A string open target is pure sugar with no postfix
                 // continuations, so a trailing star after one (`open 'url'*`)
@@ -1578,7 +1663,7 @@ public sealed class Parser
         {
             // String literal sugar: open 'url' → open load('url').
             var token = Advance();
-            return CreateLoadOpenTarget(token.StringValue ?? "", TokenSpan(token));
+            return CreateLoadOpenTarget(token);
         }
 
         // One plain expression: resolve, dotted path (a leading '.' may
@@ -1588,9 +1673,11 @@ public sealed class Parser
         return ParseExpression();
     }
 
-    private static Expr CreateLoadOpenTarget(string url, SourceSpan? span)
+    [System.Runtime.CompilerServices.MethodImpl(LeafFrame)]
+    private static Expr CreateLoadOpenTarget(Token urlToken)
     {
-        var urlExpr = new Expr.StringLiteral(url) { Span = span };
+        SourceSpan? span = urlToken.Span;
+        var urlExpr = new Expr.StringLiteral(urlToken.StringValue ?? "") { Span = span };
         OutputBundle loadArgs = [urlExpr];
         // This synthetic load has no identifier token in source, so it must
         // stay spanless. Borrowing the quoted URL span would make downstream
@@ -1724,8 +1811,12 @@ public sealed class Parser
     private readonly record struct BindingTarget(
         string Name,
         ParameterKind Kind,
-        SourceSpan? NameSpan,
+        SourceSpan NameSpan,
         SourceSpan? CollectMarkerSpan);
+
+    [System.Runtime.CompilerServices.MethodImpl(LeafFrame)]
+    private static BindingTarget BindingTargetAt(string name, ParameterKind kind, Token nameToken, Token? collectMarkerToken)
+        => new(name, kind, nameToken.Span, collectMarkerToken?.Span);
 
     // Last FAILED binding-pattern scan: [start, break) with the breaking token
     // index exclusive. Sound to reuse because the scan is a forward DFA over the
@@ -1874,25 +1965,21 @@ public sealed class Parser
             }
             else if (starCount == 1)
             {
-                ReportError(
+                ReportErrorAcross(
                     DiagnosticCode.InvalidCollectMarker,
                     CollectMarkerAttachmentDiagnostic(name),
-                    CombineSpans(TokenSpan(firstStarToken!), TokenSpan(nameToken))!);
+                    firstStarToken!, nameToken);
             }
             else if (starCount > 1)
             {
-                ReportError(
+                ReportErrorAcross(
                     DiagnosticCode.InvalidCollectMarker,
                     RepeatedCollectMarkerDiagnostic(name),
-                    CombineSpans(TokenSpan(firstStarToken!), TokenSpan(nameToken))!);
+                    firstStarToken!, nameToken);
             }
 
             var kind = isCollectingBinding ? ParameterKind.Collecting : ParameterKind.Normal;
-            targets.Add(new BindingTarget(
-                name,
-                kind,
-                TokenSpan(nameToken),
-                collectMarkerToken is { } markerForSpan ? TokenSpan(markerForSpan) : null));
+            targets.Add(BindingTargetAt(name, kind, nameToken, collectMarkerToken));
 
             if (Current.Kind == TokenKind.Comma)
             {
@@ -1911,7 +1998,7 @@ public sealed class Parser
             ReportError(
                 DiagnosticCode.DeclarationInParentheses,
                 PropertyDeclarationInParenthesesDiagnostic,
-                CombineSpans(first.CollectMarkerSpan ?? first.NameSpan, targets[^1].NameSpan)!);
+                CombineSpans(first.CollectMarkerSpan ?? first.NameSpan, targets[^1].NameSpan));
         }
 
         Expect(TokenKind.Equals);
@@ -1926,7 +2013,7 @@ public sealed class Parser
             ReportError(
                 DiagnosticCode.InvalidCollectingBinding,
                 "A deconstruction binding pattern may contain at most one collecting binding (`*name`).",
-                CombineSpans(firstCollecting.CollectMarkerSpan, firstCollecting.NameSpan)!);
+                CombineSpans(firstCollecting.CollectMarkerSpan, firstCollecting.NameSpan) ?? firstCollecting.NameSpan);
         }
 
         var seen = new HashSet<string>(StringComparer.Ordinal);
@@ -1936,11 +2023,10 @@ public sealed class Parser
                 || declaredPropertyNames.Contains(target.Name)
                 || clauseGroups.ContainsKey(target.Name))
             {
-                if (target.NameSpan is { } targetNameSpan)
-                    ReportError(
-                        DiagnosticCode.DuplicateProperty,
-                        $"Property '{target.Name}' is already defined.",
-                        targetNameSpan);
+                ReportError(
+                    DiagnosticCode.DuplicateProperty,
+                    $"Property '{target.Name}' is already defined.",
+                    target.NameSpan);
             }
         }
 
@@ -2024,9 +2110,7 @@ public sealed class Parser
 
             properties.Add(new Property(target.Name, propertyBody)
             {
-                DeclarationSpans = target.NameSpan is { } targetNameSpan
-                    ? [targetNameSpan]
-                    : []
+                DeclarationSpans = [target.NameSpan]
             });
             declaredPropertyNames.Add(target.Name);
         }
@@ -2107,13 +2191,13 @@ public sealed class Parser
     [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
     private Expr CreateGracedName(Token firstToken, Token nameToken, Token lastToken, int weight, bool attached)
     {
-        var resolve = new Expr.Resolve(nameToken.StringValue!) { Span = TokenSpan(nameToken) };
+        var resolve = ResolveAt(nameToken);
         if (!attached)
         {
-            ReportError(
+            ReportErrorAcross(
                 DiagnosticCode.InvalidGraceMarker,
                 GraceMarkerAttachmentDiagnostic(nameToken.StringValue!),
-                CombineSpans(TokenSpan(firstToken), TokenSpan(lastToken))!);
+                firstToken, lastToken);
             return resolve;
         }
 
@@ -2121,7 +2205,7 @@ public sealed class Parser
         // A genuinely unmarked name stays plain; elaboration strips every marker.
         return firstToken == nameToken && lastToken == nameToken
             ? resolve
-            : new Expr.Grace(resolve, weight) { Span = MakeSpan(firstToken) };
+            : GraceFrom(resolve, weight, firstToken);
     }
 
     /// <summary>
@@ -2162,10 +2246,10 @@ public sealed class Parser
         var lastTilde = firstTilde;
         while (Current.Kind == TokenKind.Tilde && MayContinueClosedExpression(TokenKind.Tilde))
             lastTilde = Advance();
-        ReportError(
+        ReportErrorAcross(
             DiagnosticCode.InvalidGraceMarker,
             GraceEligibilityMessage,
-            CombineSpans(TokenSpan(firstTilde), TokenSpan(lastTilde))!);
+            firstTilde, lastTilde);
         // The rejected run owns the boundary after it: `f(x)~ c` reports the
         // Grace law once and leaves `c` as a recovery-owned item, never a
         // second separator-rule diagnostic.
@@ -2206,14 +2290,14 @@ public sealed class Parser
 
         if (Current.Kind != TokenKind.Identifier || !IsSamePhysicalLineAsPreviousToken())
         {
-            ReportError(
+            ReportErrorAcross(
                 DiagnosticCode.InvalidGraceMarker,
                 GraceEligibilityMessage,
-                CombineSpans(TokenSpan(firstTilde), TokenSpan(lastTilde))!);
+                firstTilde, lastTilde);
             // The lone run owns the boundary after it (`~ 5` reports the Grace
             // law once; `5` is not additionally a separator error).
             OwnSameLineItem(Current);
-            return new Expr.Num(0) { Span = MakeSpan(firstTilde) };
+            return PlaceholderFrom(firstTilde);
         }
 
         attached &= IsDirectlyAttached(lastTilde, Current);
@@ -2480,33 +2564,34 @@ public sealed class Parser
             _ => false,
         };
 
-    private void ValidateCollectingParameterDeclarations(string propertyName, Pattern pattern, SourceSpan span)
+    /// <summary>Reports collecting-binding misuse in a clause head at the clause's name token.</summary>
+    private void ValidateCollectingParameterDeclarations(string propertyName, Pattern pattern, Token nameToken)
     {
         if (pattern.TryGetOrdinaryClauseParameterPatterns() is not { } parameterPatterns)
         {
             if (PatternContainsCollectingParameter(pattern))
             {
-                ReportError(
+                ReportErrorAt(
                     DiagnosticCode.InvalidCollectingBinding,
                     $"Collecting bindings are only supported in ordinary explicit parameter lists for '{propertyName}'.",
-                    span);
+                    nameToken);
             }
             return;
         }
 
         if (ParameterPattern.HasMultipleCollectingCapturesAtAnyLevel(parameterPatterns))
         {
-            ReportError(
+            ReportErrorAt(
                 DiagnosticCode.InvalidCollectingBinding,
                 "Only one collecting binding is allowed per pattern level.",
-                span);
+                nameToken);
         }
         else if (ParameterPattern.HasRepeatedCaptureNameIncludingCollecting(parameterPatterns))
         {
-            ReportError(
+            ReportErrorAt(
                 DiagnosticCode.InvalidCollectingBinding,
                 "Repeated parameter names cannot include collecting bindings.",
-                span);
+                nameToken);
         }
     }
 
@@ -2627,15 +2712,16 @@ public sealed class Parser
     /// <summary>
     /// Builds a named binding pattern with optional collecting metadata.
     /// </summary>
+    [System.Runtime.CompilerServices.MethodImpl(LeafFrame)]
     private static Pattern CreateBindingPattern(
         Token nameToken,
         ParameterKind kind = ParameterKind.Normal,
-        SourceSpan? collectMarkerSpan = null)
+        Token? collectMarkerToken = null)
         => new Pattern.Bind(nameToken.StringValue!)
         {
-            NameSpan = TokenSpan(nameToken),
+            NameSpan = nameToken.Span,
             ParameterKind = kind,
-            CollectMarkerSpan = collectMarkerSpan,
+            CollectMarkerSpan = collectMarkerToken?.Span,
         };
 
     /// <summary>
@@ -2650,7 +2736,6 @@ public sealed class Parser
     private Pattern ParseCollectingBindingPatternAtom()
     {
         var markerToken = Advance(); // consume '*'
-        var markerSpan = TokenSpan(markerToken);
 
         // Repeated markers (`**items`): consume the run, report once, and
         // never create a collecting binding from the malformed shape.
@@ -2663,23 +2748,23 @@ public sealed class Parser
             if (Current.Kind == TokenKind.Identifier)
             {
                 var repeatedNameToken = Advance();
-                ReportError(
+                ReportErrorAcross(
                     DiagnosticCode.InvalidCollectMarker,
                     RepeatedCollectMarkerDiagnostic(repeatedNameToken.StringValue!),
-                    CombineSpans(markerSpan, TokenSpan(repeatedNameToken))!);
+                    markerToken, repeatedNameToken);
                 return CreateBindingPattern(repeatedNameToken);
             }
 
-            ReportError(
+            ReportErrorAcross(
                 DiagnosticCode.InvalidCollectMarker,
                 CollectMarkerMissingNameDiagnostic,
-                CombineSpans(markerSpan, TokenSpan(lastStar))!);
+                markerToken, lastStar);
             return new Pattern.Bind("_error_");
         }
 
         if (Current.Kind != TokenKind.Identifier)
         {
-            ReportError(DiagnosticCode.InvalidCollectMarker, CollectMarkerMissingNameDiagnostic, markerSpan);
+            ReportErrorAt(DiagnosticCode.InvalidCollectMarker, CollectMarkerMissingNameDiagnostic, markerToken);
 
             // Consume one malformed same-line pattern atom where possible so a
             // following comma/closing delimiter remains available to the caller.
@@ -2700,10 +2785,10 @@ public sealed class Parser
 
         if (!IsDirectlyAttached(markerToken, nameToken))
         {
-            ReportError(
+            ReportErrorAcross(
                 DiagnosticCode.InvalidCollectMarker,
                 CollectMarkerAttachmentDiagnostic(name),
-                CombineSpans(markerSpan, TokenSpan(nameToken))!);
+                markerToken, nameToken);
             // A detached marker is not a collecting binding; the name stays
             // an ordinary fixed binding in the recovered tree.
             return CreateBindingPattern(nameToken);
@@ -2716,12 +2801,12 @@ public sealed class Parser
             Advance();
         }
         if (hadPostfixGrace)
-            ReportError(
+            ReportErrorAt(
                 DiagnosticCode.InvalidGraceMarker,
                 "Collecting bindings cannot use `~` reordering.",
-                TokenSpan(nameToken));
+                nameToken);
 
-        return CreateBindingPattern(nameToken, ParameterKind.Collecting, markerSpan);
+        return CreateBindingPattern(nameToken, ParameterKind.Collecting, markerToken);
     }
 
     private Pattern ParsePatternAtomCore()
@@ -2743,19 +2828,19 @@ public sealed class Parser
                         lastGraceToken = token;
                         while (Current.Kind == TokenKind.Tilde && MayContinueClosedExpression(TokenKind.Tilde))
                             lastGraceToken = Advance(); // skip postfix tildes
-                        ReportError(
+                        ReportErrorAcross(
                             DiagnosticCode.InvalidGraceMarker,
                             "Grace is not allowed in clause-head patterns.",
-                            CombineSpans(TokenSpan(firstTilde), TokenSpan(lastGraceToken))!);
+                            firstTilde, lastGraceToken);
                         return CreateBindingPattern(token);
                     }
 
                     // No identifier follows: the diagnostic covers the marker
                     // run itself; the recovered atom reports its own errors.
-                    ReportError(
+                    ReportErrorAcross(
                         DiagnosticCode.InvalidGraceMarker,
                         "Grace is not allowed in clause-head patterns.",
-                        CombineSpans(TokenSpan(firstTilde), TokenSpan(lastGraceToken))!);
+                        firstTilde, lastGraceToken);
                     // Try to parse remaining atom for recovery. `~*name` reaches
                     // the collecting-binding atom below, so the grace error keeps
                     // the collecting binding.
@@ -2800,10 +2885,10 @@ public sealed class Parser
                         lastPostfixTilde = Advance();
 
                     if (lastPostfixTilde is not null)
-                        ReportError(
+                        ReportErrorAcross(
                             DiagnosticCode.InvalidGraceMarker,
                             "Grace is not allowed in clause-head patterns.",
-                            CombineSpans(TokenSpan(token), TokenSpan(lastPostfixTilde))!);
+                            token, lastPostfixTilde);
 
                     // Postfix `*` after a binding name is spread syntax, never
                     // binding syntax. Report the targeted marker-side diagnostic
@@ -2826,10 +2911,10 @@ public sealed class Parser
                             while (Current.Kind == TokenKind.Star
                                 && MayContinueClosedExpression(TokenKind.Star))
                                 lastStar = Advance(); // consume a malformed star run whole
-                            ReportError(
+                            ReportErrorAcross(
                                 DiagnosticCode.InvalidCollectMarker,
                                 SpreadMarkerInBindingPatternDiagnostic(name),
-                                CombineSpans(TokenSpan(token), TokenSpan(lastStar))!);
+                                token, lastStar);
                             return CreateBindingPattern(token);
                         }
                     }
@@ -3123,7 +3208,7 @@ public sealed class Parser
     }
 
     private void ReportUnsupportedSemicolon(Token token)
-        => ReportError(DiagnosticCode.UnsupportedSemicolon, UnsupportedSemicolonExpressionMessage, TokenSpan(token));
+        => ReportErrorAt(DiagnosticCode.UnsupportedSemicolon, UnsupportedSemicolonExpressionMessage, token);
 
     /// <summary>
     /// True when the current token starts the next slot of the expression list
@@ -3352,11 +3437,11 @@ public sealed class Parser
         // explanation names the cause and distinguishes the possible repairs.
         rhs = RejectMisplacedSpreadOperand(
             rhs,
-            op == BinaryOp.Mul && rhs is Expr.SequenceSpread { Span: { } rhsSpan } && rhsSpan.StartLineNumber > operatorToken.Line
+            op == BinaryOp.Mul && rhs is Expr.SequenceSpread { Span: { } rhsSpan } && rhsSpan.Start.Line > operatorToken.Line
                 ? LineFinalStarContinuationDiagnostic
                 : MisplacedSpreadDiagnostic);
-        var binary = new Expr.Binary(op, lhs, rhs) { Span = SpanFrom(lhs) };
-        return GuardExpressionChainDepth(binary, TokenSpan(operatorToken), lhs, rhs);
+        var binary = BinaryFrom(op, lhs, rhs);
+        return GuardExpressionChainDepth(binary, operatorToken, lhs, rhs);
     }
 
     // `^` (TokenKind.Caret) is deliberately absent: power binds tighter than
@@ -3422,7 +3507,7 @@ public sealed class Parser
     {
         operand = RejectMisplacedSpreadOperand(operand);
         var op = operatorToken.Kind == TokenKind.Minus ? UnaryOp.Minus : UnaryOp.Not;
-        return new Expr.Unary(op, operand) { Span = MakeSpan(operatorToken) };
+        return UnaryFrom(op, operand, operatorToken);
     }
 
     // ── Power (binds tighter than prefix unary on the left) ─────────────────
@@ -3567,9 +3652,8 @@ public sealed class Parser
                     // evaluator knows, so `if(1, 2)` is diagnosed exactly like
                     // `count(1, 2, 3)`: at the binding boundary, against the
                     // resolved signature, reported on this same call span.
-                    var callSpan = SpanFrom(lhs);
-                    var call = new Expr.Call(lhs, callArgs) { Span = callSpan };
-                    lhs = GuardExpressionChainDepth(call, TokenSpan(callToken), lhs);
+                    var call = CallFrom(lhs, callArgs, lhs);
+                    lhs = GuardExpressionChainDepth(call, callToken, lhs);
                     break;
 
                 default:
@@ -3589,8 +3673,8 @@ public sealed class Parser
     {
         lhs = RejectMisplacedSpreadOperand(lhs, SpreadSelectionDiagnostic);
         var selector = RejectMisplacedSpreadOperand(ParsePrimary(), SpreadSelectionDiagnostic);
-        var index = new Expr.Index(lhs, selector) { Span = SpanFrom(lhs) };
-        return GuardExpressionChainDepth(index, TokenSpan(colonToken), lhs, selector);
+        var index = IndexFrom(lhs, selector);
+        return GuardExpressionChainDepth(index, colonToken, lhs, selector);
     }
 
     /// <summary>
@@ -3653,8 +3737,8 @@ public sealed class Parser
     [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
     private Expr CreateSpreadExpression(Expr operand, Token starToken)
     {
-        var spreadNode = CreateSequenceSpread(operand, SpanFrom(operand), TokenSpan(starToken));
-        return GuardExpressionChainDepth(spreadNode, TokenSpan(starToken), operand);
+        var spreadNode = SequenceSpreadFrom(operand, starToken);
+        return GuardExpressionChainDepth(spreadNode, starToken, operand);
     }
 
     /// <summary>
@@ -3695,10 +3779,10 @@ public sealed class Parser
             Advance();
         }
 
-        ReportError(
+        ReportErrorFrom(
             DiagnosticCode.InvalidSpreadMarker,
             SpreadMarkerAttachmentDiagnostic(operand),
-            SpanFrom(operand));
+            operand);
         // The malformed run owns the boundary after it: whatever follows a
         // detached star on the same line is explained by this diagnostic, not
         // by a second separator-rule diagnostic.
@@ -3749,10 +3833,10 @@ public sealed class Parser
 
             if (Current.Kind != TokenKind.Identifier || !IsSamePhysicalLineAsPreviousToken())
             {
-                ReportError(
+                ReportErrorAcross(
                     DiagnosticCode.InvalidGraceMarker,
                     GraceEligibilityMessage,
-                    CombineSpans(TokenSpan(memberGraceStart), TokenSpan(Previous))!);
+                    memberGraceStart, Previous);
                 // The rejected run owns the boundary after it (`a.~~ 7` blames
                 // the run once; `7` is not additionally a separator error).
                 OwnSameLineItem(Current);
@@ -3772,22 +3856,18 @@ public sealed class Parser
 
         var propNameToken = Advance();
         var propName = propNameToken.StringValue!;
-        var memberSpan = TokenSpan(propNameToken);
 
-        Expr lexicalFallback = new Expr.Resolve(propName) { Span = memberSpan };
+        Expr lexicalFallback = ResolveAt(propNameToken);
         if (!memberGraceAttached)
         {
-            ReportError(
+            ReportErrorAcross(
                 DiagnosticCode.InvalidGraceMarker,
                 GraceMarkerAttachmentDiagnostic(propName),
-                CombineSpans(TokenSpan(memberGraceStart!), memberSpan)!);
+                memberGraceStart!, propNameToken);
         }
         else if (memberGraceWeight != 0)
         {
-            lexicalFallback = new Expr.Grace(lexicalFallback, memberGraceWeight)
-            {
-                Span = MakeSpan(memberGraceStart!),
-            };
+            lexicalFallback = GraceFrom(lexicalFallback, memberGraceWeight, memberGraceStart!);
         }
 
         if (lhs is Expr.SequenceSpread)
@@ -3798,17 +3878,12 @@ public sealed class Parser
             // a spread receiver is rejected before this arm. Prefix Grace on
             // the member is ordinary Grace on that lexical callee occurrence,
             // so preserve the same expression when lowering the fluent form.
-            return ParseSpreadReceiverContinuation(lhs, dotToken, lexicalFallback, memberSpan);
+            return ParseSpreadReceiverContinuation(lhs, dotToken, lexicalFallback);
         }
 
         OutputBundle? args = IsCallArgumentStart() ? ParseCallArgs() : null;
-        var dotCall = new Expr.DotCall(lhs, propName, args)
-        {
-            Span = SpanFrom(lhs),
-            MemberSpan = memberSpan,
-            LexicalFallback = lexicalFallback,
-        };
-        return GuardExpressionChainDepth(dotCall, TokenSpan(dotToken), lhs);
+        var dotCall = DotCallFrom(lhs, propNameToken, args, lexicalFallback);
+        return GuardExpressionChainDepth(dotCall, dotToken, lhs);
     }
 
     /// <summary>
@@ -3827,16 +3902,14 @@ public sealed class Parser
     /// nesting budget is calibrated against the native stack boundary.
     /// </summary>
     [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
-    private Expr ParseSpreadReceiverContinuation(
-        Expr spreadReceiver, Token dotToken, Expr callee, SourceSpan memberSpan)
+    private Expr ParseSpreadReceiverContinuation(Expr spreadReceiver, Token dotToken, Expr callee)
     {
         OutputBundle args = IsCallArgumentStart()
             ? [spreadReceiver, .. ParseCallArgs()]
             : [spreadReceiver];
 
-        var callSpan = SpanFrom(spreadReceiver);
-        var call = new Expr.Call(callee, args) { Span = callSpan };
-        return GuardExpressionChainDepth(call, TokenSpan(dotToken), spreadReceiver);
+        var call = CallFrom(callee, args, spreadReceiver);
+        return GuardExpressionChainDepth(call, dotToken, spreadReceiver);
     }
 
     // A '(' or '{' starts call arguments only when it appears on the same
@@ -3889,7 +3962,7 @@ public sealed class Parser
             // diagnostic. Retain them for downstream tooling as one recovery
             // AlgorithmExpr argument — the same recovery shape parenthesized
             // primaries use — instead of silently discarding the declarations.
-            return [new Expr.AlgorithmExpr(CreateAlgorithm(body)) { Span = MakeSpan(start) }];
+            return [AlgorithmExprFrom(CreateAlgorithm(body), start)];
         }
         else
         {
@@ -3908,7 +3981,7 @@ public sealed class Parser
             }
 
             Expect(TokenKind.RBrace);
-            var blockExpr = new Expr.AlgorithmExpr(innerAlg) { Span = MakeSpan(start) };
+            var blockExpr = AlgorithmExprFrom(innerAlg, start);
             return [blockExpr];
         }
     }
@@ -3975,13 +4048,13 @@ public sealed class Parser
             case TokenKind.Number:
                 {
                     var token = Advance();
-                    return new Expr.Num(token.NumValue) { Span = TokenSpan(token) };
+                    return NumAt(token);
                 }
 
             case TokenKind.StringLiteral:
                 {
                     var token = Advance();
-                    return new Expr.StringLiteral(token.StringValue ?? "") { Span = TokenSpan(token) };
+                    return StringLiteralAt(token);
                 }
 
             case TokenKind.Identifier:
@@ -3997,7 +4070,7 @@ public sealed class Parser
                     // enforces the marker attachment law.
                     if (Current.Kind == TokenKind.Tilde && MayContinueClosedExpression(TokenKind.Tilde))
                         return ParsePostfixGraceOnName(token);
-                    return new Expr.Resolve(token.StringValue!) { Span = TokenSpan(token) };
+                    return ResolveAt(token);
                 }
 
             case TokenKind.Tilde:
@@ -4024,9 +4097,9 @@ public sealed class Parser
                     if (!body.HasDeclarations)
                     {
                         if (body.Output.Count == 0)
-                            return new Expr.EmptySequence(0) { Span = MakeSpan(start) };
+                            return EmptySequenceFrom(start);
                         if (body.Output.Count == 1 && body.Output[0] is Expr.EmptySequence)
-                            return new Expr.EmptySequence(0) { Span = MakeSpan(start) };
+                            return EmptySequenceFrom(start);
                     }
 
                     // Ordinary parenthesized expressions usually unwrap to the inner
@@ -4036,7 +4109,7 @@ public sealed class Parser
                     // expression keeps its meaning but takes the group's full
                     // written extent as its source span (see WithGroupExtent).
                     if (ShouldUnwrapParenthesizedPrimary(body))
-                        return WithGroupExtent(body.Output[0], MakeSpan(start));
+                        return WithGroupExtentFrom(body.Output[0], start);
 
                     // Declarations inside parentheses are a parse error (reported
                     // at the declaration by the parenthesized body parser), so
@@ -4047,12 +4120,12 @@ public sealed class Parser
                     // write (`{ ... }`) — because a Capture's OutputBundle is
                     // declaration-free by construction.
                     if (body.HasDeclarations)
-                        return new Expr.AlgorithmExpr(CreateAlgorithm(body)) { Span = MakeSpan(start) };
+                        return AlgorithmExprFrom(CreateAlgorithm(body), start);
 
                     // A surviving parenthesized group is a normalized capture
                     // boundary over its ordered written expression slots — a
                     // value/output boundary, not an algorithm.
-                    return new Expr.Capture(OutputBundle.From(body.Output)) { Span = MakeSpan(start) };
+                    return CaptureFrom(OutputBundle.From(body.Output), start);
                 }
 
             case TokenKind.LBrace:
@@ -4067,7 +4140,7 @@ public sealed class Parser
                     }
 
                     Expect(TokenKind.RBrace);
-                    return new Expr.AlgorithmExpr(alg) { Span = MakeSpan(start) };
+                    return AlgorithmExprFrom(alg, start);
                 }
 
             case TokenKind.LBracket:
@@ -4090,7 +4163,7 @@ public sealed class Parser
                     }
 
                     Expect(TokenKind.RBracket);
-                    return new Expr.ListLiteral(items) { Span = MakeSpan(start) };
+                    return ListLiteralFrom(items, start);
                 }
 
             case TokenKind.KeywordOpen:
@@ -4100,7 +4173,7 @@ public sealed class Parser
                         DiagnosticCode.InvalidOpenDeclaration,
                         "'open' is a declaration and cannot be used in expression position.");
                     SkipForRecovery(); // the token after it is a recovery-owned boundary
-                    return new Expr.Num(0) { Span = TokenSpan(token) }; // error placeholder
+                    return PlaceholderAt(token); // error placeholder
                 }
 
             case TokenKind.Star:
@@ -4113,10 +4186,10 @@ public sealed class Parser
                     // `x = *values` degrades to `x = values` and later
                     // declarations keep parsing.
                     var starToken = Current;
-                    ReportError(
+                    ReportErrorAt(
                         DiagnosticCode.InvalidCollectMarker,
                         CollectMarkerInExpressionDiagnostic,
-                        TokenSpan(starToken));
+                        starToken);
                     Advance(); // consume '*'
                     while (Current.Kind == TokenKind.Star)
                         Advance(); // consume a malformed star run whole, one diagnostic
@@ -4128,7 +4201,7 @@ public sealed class Parser
                     // No operand was consumed: the collect-marker diagnostic
                     // owns this boundary, including a following declaration.
                     OwnSameLineItem(Current);
-                    return new Expr.Num(0) { Span = TokenSpan(starToken) }; // error placeholder
+                    return PlaceholderAt(starToken); // error placeholder
                 }
 
             case TokenKind.Semicolon:
@@ -4136,7 +4209,7 @@ public sealed class Parser
                     var token = Current;
                     ReportUnsupportedSemicolon(token);
                     SkipForRecovery(); // the token after it is a recovery-owned boundary
-                    return new Expr.Num(0) { Span = TokenSpan(token) };
+                    return PlaceholderAt(token);
                 }
 
             case TokenKind.Colon:
@@ -4149,7 +4222,7 @@ public sealed class Parser
                         DiagnosticCode.UnexpectedToken,
                         "Unexpected ':'. Indexing is postfix and must follow the indexed expression on the same physical line, as in 'Pair:0'.");
                     SkipForRecovery(); // the token after it is a recovery-owned boundary
-                    return new Expr.Num(0) { Span = TokenSpan(token) }; // error placeholder
+                    return PlaceholderAt(token); // error placeholder
                 }
 
             case TokenKind.Equals:
@@ -4164,7 +4237,7 @@ public sealed class Parser
                     var token = Current;
                     ReportError(DiagnosticCode.UnexpectedToken, StrayEqualsDiagnostic);
                     SkipForRecovery();
-                    return new Expr.Num(0) { Span = TokenSpan(token) }; // error placeholder
+                    return PlaceholderAt(token); // error placeholder
                 }
 
             default:
@@ -4178,11 +4251,11 @@ public sealed class Parser
                         // `[1, ]`, `{1, }`) or the end of input. Consuming it here would leave
                         // that construct open to the end of the file, swallowing every later
                         // declaration into it. Report only; the owner closes at its closer.
-                        return new Expr.Num(0) { Span = TokenSpan(token) }; // error placeholder
+                        return PlaceholderAt(token); // error placeholder
                     }
 
                     SkipForRecovery(); // the token after it is a recovery-owned boundary
-                    return new Expr.Num(0) { Span = TokenSpan(token) }; // error placeholder
+                    return PlaceholderAt(token); // error placeholder
                 }
         }
     }

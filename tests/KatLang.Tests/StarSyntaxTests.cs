@@ -241,25 +241,25 @@ public class StarSyntaxTests
     {
         // source, the recovered operand's display, the diagnostic span, and the
         // rewrite the diagnostic proposes.
-        { "values = (1, 2)\nvalues *", "(1, 2)", new SourceSpan(2, 1, 2, 8), "values*" },
-        { "values = (1, 2)\nvalues *, 9", "(1, 2)\n9", new SourceSpan(2, 1, 2, 8), "values*" },
-        { "values = (1, 2)\nvalues *,\n9", "(1, 2)\n9", new SourceSpan(2, 1, 2, 8), "values*" },
-        { "values = (1, 2)\n(values *)", "(1, 2)", new SourceSpan(2, 2, 2, 9), "values*" },
-        { "values = (1, 2)\n[values *]", "[(1, 2)]", new SourceSpan(2, 2, 2, 9), "values*" },
-        { "values = (1, 2)\n{ values * }", "(1, 2)", new SourceSpan(2, 3, 2, 10), "values*" },
-        { "F(*items) = items\nvalues = (1, 2)\nF(values *)", "[(1, 2)]", new SourceSpan(3, 3, 3, 10), "values*" },
-        { "F(*items) = items\nvalues = (1, 2)\nF(values *, 3)", "[(1, 2), 3]", new SourceSpan(3, 3, 3, 10), "values*" },
-        { "F(*items) = items\nvalues = (1, 2)\nF(values *\n)", "[(1, 2)]", new SourceSpan(3, 3, 3, 10), "values*" },
-        { "values = (1, 2)\nvalues *\nB = 5\nB", "(1, 2)\n5", new SourceSpan(2, 1, 2, 8), "values*" },
-        { "values = (1, 2)\nvalues *\n.count", "2", new SourceSpan(2, 1, 2, 8), "values*" },
-        { "values = (1, 2)\nX = values *\nY = 5\nX", "(1, 2)", new SourceSpan(2, 5, 2, 12), "values*" },
-        { "values = (1, 2)\nvalues * *", "(1, 2)", new SourceSpan(2, 1, 2, 10), "values*" },
-        { "values = (1, 2)\nvalues** *", "1\n2", new SourceSpan(2, 1, 2, 10), "values***" },
-        { "F(x) = x, x\n(F(1) *)", "(1, 1)", new SourceSpan(2, 2, 2, 7), "F(...)*" },
+        { "values = (1, 2)\nvalues *", "(1, 2)", new SourceSpan(2, 1, 2, 9), "values*" },
+        { "values = (1, 2)\nvalues *, 9", "(1, 2)\n9", new SourceSpan(2, 1, 2, 9), "values*" },
+        { "values = (1, 2)\nvalues *,\n9", "(1, 2)\n9", new SourceSpan(2, 1, 2, 9), "values*" },
+        { "values = (1, 2)\n(values *)", "(1, 2)", new SourceSpan(2, 2, 2, 10), "values*" },
+        { "values = (1, 2)\n[values *]", "[(1, 2)]", new SourceSpan(2, 2, 2, 10), "values*" },
+        { "values = (1, 2)\n{ values * }", "(1, 2)", new SourceSpan(2, 3, 2, 11), "values*" },
+        { "F(*items) = items\nvalues = (1, 2)\nF(values *)", "[(1, 2)]", new SourceSpan(3, 3, 3, 11), "values*" },
+        { "F(*items) = items\nvalues = (1, 2)\nF(values *, 3)", "[(1, 2), 3]", new SourceSpan(3, 3, 3, 11), "values*" },
+        { "F(*items) = items\nvalues = (1, 2)\nF(values *\n)", "[(1, 2)]", new SourceSpan(3, 3, 3, 11), "values*" },
+        { "values = (1, 2)\nvalues *\nB = 5\nB", "(1, 2)\n5", new SourceSpan(2, 1, 2, 9), "values*" },
+        { "values = (1, 2)\nvalues *\n.count", "2", new SourceSpan(2, 1, 2, 9), "values*" },
+        { "values = (1, 2)\nX = values *\nY = 5\nX", "(1, 2)", new SourceSpan(2, 5, 2, 13), "values*" },
+        { "values = (1, 2)\nvalues * *", "(1, 2)", new SourceSpan(2, 1, 2, 11), "values*" },
+        { "values = (1, 2)\nvalues** *", "1\n2", new SourceSpan(2, 1, 2, 11), "values***" },
+        { "F(x) = x, x\n(F(1) *)", "(1, 1)", new SourceSpan(2, 2, 2, 8), "F(...)*" },
         // The detached star's operand is the group `(1 + 2)` (its unwrapped binary
         // carries the group's extent — the grouped-expression span rule, F6), so
         // the diagnostic spans from that group's `(` through the star.
-        { "((1 + 2) *)", "3", new SourceSpan(1, 2, 1, 10), "(1 + 2)*" },
+        { "((1 + 2) *)", "3", new SourceSpan(1, 2, 1, 11), "(1 + 2)*" },
     };
 
     [Theory]
@@ -419,7 +419,7 @@ public class StarSyntaxTests
             Assert.Equal(declarationHead ? 1 : 0,
                 sameLine.Diagnostics.Count(static d => d.Code == DiagnosticCode.UnseparatedSameLineItem));
             Assert.All(sameLine.Diagnostics.Where(static d => d.Code == DiagnosticCode.UnseparatedSameLineItem),
-                static d => Assert.Equal((3, 4), (d.Span.StartLineNumber, d.Span.StartColumn)));
+                static d => Assert.Equal((3, 4), (Assert.NotNull(d.Span).Start.Line, Assert.NotNull(d.Span).Start.Column)));
             Assert.DoesNotContain(nextLine.Diagnostics, static d => d.Code == DiagnosticCode.UnseparatedSameLineItem);
             Assert.Equal(
                 sameLine.Diagnostics.Where(static d => d.Code != DiagnosticCode.UnseparatedSameLineItem).Select(static d => d.Code),
@@ -522,7 +522,7 @@ public class StarSyntaxTests
         var sameLine = Parser.ParseSyntax("A = (1, 2)\nA* *r = 1, 2\nr");
         var error = Assert.Single(sameLine.Diagnostics);
         Assert.Equal(DiagnosticCode.InvalidSpreadMarker, error.Code);
-        Assert.Equal(new SourceSpan(2, 1, 2, 4), error.Span); // covers `A* *`
+        Assert.Equal(new SourceSpan(2, 1, 2, 5), error.Span); // covers `A* *`
         var collector = new CollectMarkerSpanCollector();
         collector.VisitAlgorithm(sameLine.Root);
         Assert.Empty(collector.MarkerSpans);
@@ -595,8 +595,8 @@ public class StarSyntaxTests
         Assert.Equal("items", parameter.Name);
         Assert.Equal(ParameterKind.Collecting, parameter.Kind);
         // `*` sits at line 1, column 9; the name at columns 10..14.
-        Assert.Equal(new SourceSpan(1, 9, 1, 9), parameter.CollectMarkerSpan);
-        Assert.Equal(new SourceSpan(1, 10, 1, 14), parameter.Span);
+        Assert.Equal(new SourceSpan(1, 9, 1, 10), parameter.CollectMarkerSpan);
+        Assert.Equal(new SourceSpan(1, 10, 1, 15), parameter.Span);
         Assert.Equal("*items", parameter.DisplayName);
     }
 
@@ -611,7 +611,7 @@ public class StarSyntaxTests
         var collector = new CollectMarkerSpanCollector();
         collector.VisitAlgorithm(parse.Root);
         var markerSpan = Assert.Single(collector.MarkerSpans.Distinct());
-        Assert.Equal(new SourceSpan(1, 8, 1, 8), markerSpan);
+        Assert.Equal(new SourceSpan(1, 8, 1, 9), markerSpan);
     }
 
     private sealed class CollectMarkerSpanCollector : AstWalker
@@ -744,9 +744,9 @@ public class StarSyntaxTests
 
         var spread = Assert.IsType<Expr.SequenceSpread>(Assert.Single(parse.Root.Output));
         Assert.IsType<Expr.Resolve>(spread.Operand);
-        Assert.Equal(new SourceSpan(2, 1, 2, 2), spread.Span);
-        Assert.Equal(new SourceSpan(2, 2, 2, 2), spread.SpreadMarkerSpan);
-        Assert.Equal(new SourceSpan(2, 1, 2, 1), spread.Operand.Span);
+        Assert.Equal(new SourceSpan(2, 1, 2, 3), spread.Span);
+        Assert.Equal(new SourceSpan(2, 2, 2, 3), spread.SpreadMarkerSpan);
+        Assert.Equal(new SourceSpan(2, 1, 2, 2), spread.Operand.Span);
     }
 
     [Theory]
@@ -1044,8 +1044,8 @@ public class StarSyntaxTests
         var outer = Assert.IsType<Expr.SequenceSpread>(Assert.Single(parse.Root.Output));
         var inner = Assert.IsType<Expr.SequenceSpread>(outer.Operand);
         Assert.IsType<Expr.Resolve>(inner.Operand);
-        Assert.Equal(new SourceSpan(2, 7, 2, 7), outer.SpreadMarkerSpan);
-        Assert.Equal(new SourceSpan(2, 6, 2, 6), inner.SpreadMarkerSpan);
+        Assert.Equal(new SourceSpan(2, 7, 2, 8), outer.SpreadMarkerSpan);
+        Assert.Equal(new SourceSpan(2, 6, 2, 7), inner.SpreadMarkerSpan);
     }
 
     [Fact]
@@ -1087,14 +1087,14 @@ public class StarSyntaxTests
     /// would send the user to the wrong star.
     /// </summary>
     [Theory]
-    [InlineData("A = 1, 2\nB = 3, 4\nA*\nB*", 4, 1, 4, 2)]
-    [InlineData("A = 1, 2\nB = 3, 4\nA * # a comment\n\nB*", 5, 1, 5, 2)]
-    [InlineData("A = 1, 2\nB = 3, 4\nX = A*\nB*\nY = X\nY", 4, 1, 4, 2)]
-    [InlineData("A*\r\nB*", 2, 1, 2, 2)]
-    [InlineData("A*# comment\r\n\tB*# end", 2, 2, 2, 3)]
-    [InlineData("A*\nB**", 2, 1, 2, 3)]
-    [InlineData("A~*\nB~*", 2, 1, 2, 3)]
-    [InlineData("A*\n~B*", 2, 1, 2, 3)]
+    [InlineData("A = 1, 2\nB = 3, 4\nA*\nB*", 4, 1, 4, 3)]
+    [InlineData("A = 1, 2\nB = 3, 4\nA * # a comment\n\nB*", 5, 1, 5, 3)]
+    [InlineData("A = 1, 2\nB = 3, 4\nX = A*\nB*\nY = X\nY", 4, 1, 4, 3)]
+    [InlineData("A*\r\nB*", 2, 1, 2, 3)]
+    [InlineData("A*# comment\r\n\tB*# end", 2, 2, 2, 4)]
+    [InlineData("A*\nB**", 2, 1, 2, 4)]
+    [InlineData("A~*\nB~*", 2, 1, 2, 4)]
+    [InlineData("A*\n~B*", 2, 1, 2, 4)]
     public void SpreadRowFollowedBySpreadRow_ExplainsTheLineFinalStarContinuation(
         string source, int line, int column, int endLine, int endColumn)
     {
@@ -1419,7 +1419,7 @@ public class StarSyntaxTests
         Assert.Equal(
             "Selection cannot be applied directly to a spread expression — a spread supplies items to the surrounding item supply, not one selectable value. Write `(A:0)*` to select first and then spread the selected value, or `(A*):0` to capture the spread items as one sequence value and then select; the two forms have different meanings.",
             error.Message);
-        Assert.Equal(new SourceSpan(2, 1, 2, 7), error.Span); // covers `values*`
+        Assert.Equal(new SourceSpan(2, 1, 2, 8), error.Span); // covers `values*`
 
         // Recovery unwraps the spread (no embedded SequenceSpread survives):
         // the recovered row is the ordinary index `values:0`, and following

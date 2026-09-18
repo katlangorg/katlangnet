@@ -210,6 +210,15 @@ public static partial class Evaluator
         => ProjectCountedValue(EvalCallCountedExpr(func, args, ctx, valEnv));
 
     /// <summary>
+    /// The call-context frame around a callee that failed to RESOLVE, keeping the
+    /// resolution error's own span. A non-inlined leaf so the span copy lives here, not in
+    /// the call-recursion frame of <see cref="EvalCallCountedExpr"/> (frame-size discipline).
+    /// </summary>
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private static EvalError CalleeResolutionFailure(CallDiagnosticName diagnosticName, EvalCtx ctx, EvalError error)
+        => new EvalError.WithContext(CtxCall(diagnosticName, ctx), error) { Span = error.Span };
+
+    /// <summary>
     /// Counted expression-position call evaluation — the CANONICAL
     /// expression-position call dispatch (<see cref="EvalCallExpr"/> is its
     /// value projection).
@@ -224,7 +233,7 @@ public static partial class Evaluator
         var diagnosticName = CallDiagnosticName.FromExpression(func);
         var calleeR = ResolveAlg(func, ctx);
         if (calleeR.IsError)
-            return new EvalError.WithContext(CtxCall(diagnosticName, ctx), calleeR.Error) { Span = calleeR.Error.Span };
+            return CalleeResolutionFailure(diagnosticName, ctx, calleeR.Error);
 
         if (TryEvaluateSequencePipeline(
             SequencePipelineInvocation.PlainCall(func, args, calleeR.Value),
@@ -353,7 +362,7 @@ public static partial class Evaluator
         // Charged dynamic invocation boundary; this counted core owns the
         // boundary for both counted evaluation and its plain projection.
         if (ctx.Budget.TryEnterInvocation() is { } limitError)
-            return AtSpanIfMissing(limitError, FirstSpan(args));
+            return AtFirstSpanIfMissing(limitError, args);
 
         try
         {

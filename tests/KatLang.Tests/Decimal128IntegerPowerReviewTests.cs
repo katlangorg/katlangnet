@@ -109,7 +109,7 @@ public class Decimal128IntegerPowerReviewTests
         Assert.Equal(N("97.71036217420039313913263975817349"), certified);
         Assert.Throws<ArgumentOutOfRangeException>(() => Decimal128Numerics.TryIntegerPower(b, 3, 35, 34, out _));
 
-        var span = new SourceSpan(1, 1, 1, 39);
+        var span = new SourceSpan(1, 1, 1, 40);
         var failed = Evaluator.EvalPow(span, b, 3, initialWorkingDigits: 39, maxWorkingDigits: 39);
         Assert.True(failed.IsError);
         var error = Assert.IsType<EvalError.IllegalInEval>(failed.Error);

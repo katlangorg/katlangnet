@@ -116,8 +116,8 @@ internal static class FrontEndInvariants
     {
         foreach (var d in diagnostics)
         {
-            if (d.Span is null) continue;   // synthetic diagnostics may be spanless
-            var reason = SourceSpanValidator.Validate(d.Span, lineWidths);
+            if (d.Span is not { } span) continue;   // unpositioned diagnostics carry no coordinate to check
+            var reason = SourceSpanValidator.Validate(span, lineWidths);
             if (reason is not null)
                 throw new FrontEndInvariantException(
                     $"Invalid frontend diagnostic span [{reason}]: span={SourceSpanValidator.Describe(d.Span)} message='{d.Message}'");
@@ -146,12 +146,8 @@ internal static class FrontEndInvariants
         }
     }
 
-    private static bool SpanEquals(SourceSpan? a, SourceSpan? b)
-    {
-        if (a is null || b is null) return a is null && b is null;
-        return a.StartLineNumber == b.StartLineNumber && a.StartColumn == b.StartColumn
-            && a.EndLineNumber == b.EndLineNumber && a.EndColumn == b.EndColumn;
-    }
+    // Spans are values: lifted equality compares coordinates, and two absent spans are equal.
+    private static bool SpanEquals(SourceSpan? a, SourceSpan? b) => a == b;
 
     /// <summary>FNV-1a over UTF-16 code units — stable across processes (unlike
     /// <c>string.GetHashCode</c>) so sampling decisions are reproducible.</summary>
@@ -187,8 +183,8 @@ internal static class FrontEndInvariants
 
         private void Check(SourceSpan? span, string kind)
         {
-            if (span is null) return;   // synthetic / spanless nodes are allowed
-            var reason = SourceSpanValidator.Validate(span, lineWidths);
+            if (span is not { } written) return;   // synthetic / spanless nodes are allowed
+            var reason = SourceSpanValidator.Validate(written, lineWidths);
             if (reason is not null)
                 throw new FrontEndInvariantException(
                     $"Invalid {which} {kind} span [{reason}]: span={SourceSpanValidator.Describe(span)}");

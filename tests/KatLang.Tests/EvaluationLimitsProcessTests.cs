@@ -52,7 +52,7 @@ public class EvaluationLimitsProcessTests
             new EvalError.DivByZero(),
             new EvalError.EvaluationStepLimitExceeded(1),
             EvalError.ModuleRegionMaterializationFailed.From(
-                [new Diagnostic("fetch failed", DiagnosticSeverity.Error, new SourceSpan(1, 1, 1, 2))
+                [new Diagnostic("fetch failed", DiagnosticSeverity.Error, new SourceSpan(1, 1, 1, 3))
                     { Code = DiagnosticCode.LoadFetchFailed }]),
         })
         {

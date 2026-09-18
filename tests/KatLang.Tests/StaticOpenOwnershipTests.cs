@@ -75,7 +75,7 @@ public class StaticOpenOwnershipTests
         var rejection = Assert.Single(diagnostics, d => d.Code == DiagnosticCode.OpenTargetIsParameter);
         Assert.Same(rejection, diagnostics[0]);
         Assert.Equal(DiagnosticSeverity.Error, rejection.Severity);
-        Assert.Equal(new SourceSpan(line, column, line, column + head.Length - 1), rejection.Span);
+        Assert.Equal(new SourceSpan(line, column, line, column + head.Length), rejection.Span);
         Assert.Contains($"'{head}' refers to a parameter", rejection.Message);
         Assert.Contains("a parameter cannot be used as an open target", rejection.Message);
         Assert.DoesNotContain("lookup", rejection.Message, StringComparison.OrdinalIgnoreCase);
@@ -106,7 +106,7 @@ public class StaticOpenOwnershipTests
         // J. the editor agrees: the open head resolves to the PARAMETER — never to a farther
         // property — classified as the parameter reference it is, and it provides no property.
         var model = SemanticModelBuilder.Build(parsed.Parsed);
-        var resolution = Assert.IsType<IdentifierResolution>(model.FindResolutionAt(line, column));
+        var resolution = Assert.IsType<IdentifierResolution>(model.FindResolutionAt(new SourcePosition(line, column)));
         Assert.Equal(head, resolution.Occurrence.Name);
         Assert.Equal(OccurrenceKind.OpenTargetReference, resolution.Occurrence.Kind);
         Assert.Equal(classification, resolution.Classification);
@@ -118,12 +118,12 @@ public class StaticOpenOwnershipTests
         else
         {
             var declaration = Assert.IsType<DeclarationOccurrence>(resolution.ResolvedDeclaration);
-            Assert.Equal((declarationLine, declarationColumn), (declaration.Span.StartLineNumber, declaration.Span.StartColumn));
+            Assert.Equal((declarationLine, declarationColumn), (declaration.Span.Start.Line, declaration.Span.Start.Column));
             Assert.NotEqual(OccurrenceKind.PropertyDefinition, declaration.Kind);
         }
 
         // Completion at the site already listed the head as that parameter; resolution now agrees.
-        var visible = Assert.Single(model.GetVisibleSymbolsAt(line, column), symbol => symbol.Name == head);
+        var visible = Assert.Single(model.GetVisibleSymbolsAt(new SourcePosition(line, column)), symbol => symbol.Name == head);
         Assert.Equal(classification, visible.Classification);
         Assert.Null(visible.Property);
         Assert.Equal(resolution.ResolvedDeclaration?.Span, visible.Declaration?.Span);
@@ -168,11 +168,11 @@ public class StaticOpenOwnershipTests
             headsWith.Select(h => (h.GetType(), HeadName(h), Shift(h.Span, -shift))));
 
         // Same editor verdict at the head: the parameter, never the prepended declaration.
-        var (line, column) = (without.Diagnostics[0].Span.StartLineNumber, without.Diagnostics[0].Span.StartColumn);
+        var (line, column) = (Assert.NotNull(without.Diagnostics[0].Span).Start.Line, Assert.NotNull(without.Diagnostics[0].Span).Start.Column);
         var resolutionWithout = Assert.IsType<IdentifierResolution>(
-            SemanticModelBuilder.Build(without.Parsed).FindResolutionAt(line, column));
+            SemanticModelBuilder.Build(without.Parsed).FindResolutionAt(new SourcePosition(line, column)));
         var resolutionWith = Assert.IsType<IdentifierResolution>(
-            SemanticModelBuilder.Build(with.Parsed).FindResolutionAt(line + shift, column));
+            SemanticModelBuilder.Build(with.Parsed).FindResolutionAt(new SourcePosition(line + shift, column)));
         Assert.Equal(OccurrenceKind.OpenTargetReference, resolutionWith.Occurrence.Kind);
         Assert.Equal(resolutionWithout.Classification, resolutionWith.Classification);
         Assert.Equal(resolutionWithout.ResolvedDeclaration?.Span, Shift(resolutionWith.ResolvedDeclaration?.Span, -shift));
@@ -273,13 +273,13 @@ public class StaticOpenOwnershipTests
         var parsed = SourceProvenance.ParseAllowingDiagnostics(source);
         Assert.Equal(
             [(2, 10), (2, 20)],
-            parsed.Diagnostics.Select(d => (d.Span.StartLineNumber, d.Span.StartColumn)));
+            parsed.Diagnostics.Select(d => (Assert.NotNull(d.Span).Start.Line, Assert.NotNull(d.Span).Start.Column)));
         Assert.All(parsed.Diagnostics, d => Assert.Equal(DiagnosticCode.OpenTargetIsParameter, d.Code));
         Assert.Contains("Cannot open 'Root.Sub': its first name 'Root' refers to a parameter", parsed.Diagnostics[0].Message);
         Assert.Contains("Cannot open 'Root': 'Root' refers to a parameter", parsed.Diagnostics[1].Message);
 
         var model = SemanticModelBuilder.Build(parsed.Parsed);
-        var member = Assert.IsType<IdentifierResolution>(model.FindResolutionAt(2, 15));
+        var member = Assert.IsType<IdentifierResolution>(model.FindResolutionAt(new SourcePosition(2, 15)));
         Assert.Equal(OccurrenceKind.OpenTargetMemberReference, member.Occurrence.Kind);
         Assert.Equal(IdentifierClassification.Unresolved, member.Classification);
         Assert.Null(member.ResolvedDeclaration);
@@ -351,7 +351,7 @@ public class StaticOpenOwnershipTests
         const string rejected = "M = load('https://katlang.org/lib.kat')\nF(M) = {\n    open M\n    Total\n}\nF(3)";
         var parsed = await Parser.ParseAsync(rejected, options);
         var rejection = Assert.Single(parsed.Diagnostics, d => d.Code == DiagnosticCode.OpenTargetIsParameter);
-        Assert.Equal(new SourceSpan(3, 10, 3, 10), rejection.Span);
+        Assert.Equal(new SourceSpan(3, 10, 3, 11), rejection.Span);
         Assert.All(parsed.Diagnostics, d => Assert.Contains(
             d.Code, new[] { DiagnosticCode.OpenTargetIsParameter, DiagnosticCode.UndeclaredIdentifier }));
         var failure = Assert.IsType<RunResult.ParseFailure>(await KatLangEngine.RunAsync(rejected, options));
@@ -441,11 +441,9 @@ public class StaticOpenOwnershipTests
     }
 
     private static SourceSpan? Shift(SourceSpan? span, int lines)
-        => span is null
-            ? null
-            : span with
-            {
-                StartLineNumber = span.StartLineNumber + lines,
-                EndLineNumber = span.EndLineNumber + lines,
-            };
+        => span is { } located
+            ? new SourceSpan(
+                new SourcePosition(located.Start.Line + lines, located.Start.Column),
+                new SourcePosition(located.End.Line + lines, located.End.Column))
+            : null;
 }

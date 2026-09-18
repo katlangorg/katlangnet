@@ -54,10 +54,10 @@ public class TutorialSemanticContractTests
 
         // Binding: the `v` in Inner's body (line 2, column 13) is Outer's explicit parameter, declared at (1, 7).
         var model = SemanticModelBuilder.Build(parsed.Parsed);
-        var reference = model.FindResolutionAt(2, 13);
+        var reference = model.FindResolutionAt(new SourcePosition(2, 13));
         Assert.NotNull(reference);
         Assert.Equal(IdentifierClassification.ExplicitParameterReference, reference.Classification);
-        Assert.Equal(new SourceSpan(1, 7, 1, 7), reference.ResolvedDeclaration!.Span);
+        Assert.Equal(new SourceSpan(1, 7, 1, 8), reference.ResolvedDeclaration!.Span);
 
         Assert.Equal("8", Display(BraceOwnedInner));
 
@@ -79,7 +79,7 @@ public class TutorialSemanticContractTests
         Assert.Empty(PropertyOf(root, "Outer").Value.Properties);  // Outer owns nothing
 
         var model = SemanticModelBuilder.Build(parsed.Parsed);
-        var reference = model.FindResolutionAt(2, 11);
+        var reference = model.FindResolutionAt(new SourcePosition(2, 11));
         Assert.NotNull(reference);
         Assert.Equal(IdentifierClassification.ImplicitParameterReference, reference.Classification);
 
@@ -186,13 +186,13 @@ public class TutorialSemanticContractTests
         var pattern = FrontEndRejection(
             "F(0) = 1\nF(x, y) = 2\n\nF(0)",
             DiagnosticCode.BranchArityMismatch, KatLangErrorCode.BranchArityMismatch);
-        Assert.Equal(2, pattern.Span.StartLineNumber);
-        Assert.Equal(1, pattern.Span.StartColumn);
+        Assert.Equal(2, Assert.NotNull(pattern.Span).Start.Line);
+        Assert.Equal(1, Assert.NotNull(pattern.Span).Start.Column);
 
         var output = FrontEndRejection(
             "F(0) = 1\nF(x) = 1, 2\n\nF(5)",
             DiagnosticCode.BranchOutputArityMismatch, KatLangErrorCode.BranchOutputArityMismatch);
-        Assert.Equal(2, output.Span.StartLineNumber);
+        Assert.Equal(2, Assert.NotNull(output.Span).Start.Line);
 
         // A captured pair is one written output slot, so it is legal beside a scalar branch.
         Assert.Equal("(1, 2)", Display("F(0) = 1\nF(x) = (1, 2)\n\nF(5)"));
@@ -233,18 +233,18 @@ public class TutorialSemanticContractTests
     {
         // The member `B` of `Obj.B(5)` (line 6, column 5) resolves to Obj's own declaration (line 3, column 12) ...
         var parsed = SourceProvenance.ParseValid(StructuralMember);
-        var member = SemanticModelBuilder.Build(parsed.Parsed).FindResolutionAt(6, 5);
+        var member = SemanticModelBuilder.Build(parsed.Parsed).FindResolutionAt(new SourcePosition(6, 5));
         Assert.NotNull(member);
         Assert.Equal(IdentifierClassification.PropertyReference, member.Classification);
-        Assert.Equal(new SourceSpan(3, 12, 3, 12), member.ResolvedDeclaration!.Span);
+        Assert.Equal(new SourceSpan(3, 12, 3, 13), member.ResolvedDeclaration!.Span);
         Assert.Equal("6", Display(StructuralMember));
 
         // ... whereas a receiver without the member reaches the root `B` (line 1, column 1) through the fallback.
         var fallbackParsed = SourceProvenance.ParseValid(LexicalFallback);
-        var fallback = SemanticModelBuilder.Build(fallbackParsed.Parsed).FindResolutionAt(6, 3);
+        var fallback = SemanticModelBuilder.Build(fallbackParsed.Parsed).FindResolutionAt(new SourcePosition(6, 3));
         Assert.NotNull(fallback);
         Assert.Equal(IdentifierClassification.PropertyReference, fallback.Classification);
-        Assert.Equal(new SourceSpan(1, 1, 1, 1), fallback.ResolvedDeclaration!.Span);
+        Assert.Equal(new SourceSpan(1, 1, 1, 2), fallback.ResolvedDeclaration!.Span);
         Assert.Equal("305", Display(LexicalFallback));
 
         // The fallback injects the receiver as ONE argument; it never spreads a sequence receiver.
@@ -305,7 +305,7 @@ public class TutorialSemanticContractTests
         var parsed = SourceProvenance.ParseAllowingDiagnostics("K(b, a) = b, ~a\nK(1, 2)");
         var diagnostic = Assert.Single(parsed.Diagnostics);
         Assert.Equal(DiagnosticCode.InvalidGraceMarker, diagnostic.Code);
-        Assert.Equal(1, diagnostic.Span.StartLineNumber);
-        Assert.Equal(14, diagnostic.Span.StartColumn);
+        Assert.Equal(1, Assert.NotNull(diagnostic.Span).Start.Line);
+        Assert.Equal(14, Assert.NotNull(diagnostic.Span).Start.Column);
     }
 }

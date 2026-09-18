@@ -169,9 +169,9 @@ public class AlgorithmOwnershipTests
     [Fact]
     public void CaptureLeaf_HoldsItsDeclaration_AndProjectionsReturnIt()
     {
-        var declaration = new ParameterDeclaration("items", new SourceSpan(1, 3, 1, 7), ParameterKind.Collecting)
+        var declaration = new ParameterDeclaration("items", new SourceSpan(1, 3, 1, 8), ParameterKind.Collecting)
         {
-            CollectMarkerSpan = new SourceSpan(1, 2, 1, 2),
+            CollectMarkerSpan = new SourceSpan(1, 2, 1, 3),
         };
         var leaf = new CaptureParameterPattern(declaration);
         Assert.Same(declaration, leaf.Parameter);
@@ -190,7 +190,7 @@ public class AlgorithmOwnershipTests
         Assert.NotEqual(new CaptureParameterPattern("x"), new CaptureParameterPattern("x", Kind: ParameterKind.Collecting));
         Assert.Equal(leaf, leaf with { });
         Assert.Equal(
-            new CaptureParameterPattern("items", new SourceSpan(1, 3, 1, 7), ParameterKind.Collecting) { CollectMarkerSpan = new SourceSpan(1, 2, 1, 2) },
+            new CaptureParameterPattern("items", new SourceSpan(1, 3, 1, 8), ParameterKind.Collecting) { CollectMarkerSpan = new SourceSpan(1, 2, 1, 3) },
             leaf);
 
         // A user algorithm's flat projection returns the held declarations — no copies.

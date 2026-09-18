@@ -380,7 +380,7 @@ public class OutputBundleSplitTests
             var diagnostic = Assert.Single(
                 parsed.Diagnostics,
                 d => d.Message == Parser.CapturedOpenTargetDiagnostic);
-            Assert.Equal(2, diagnostic.Span.StartLineNumber);
+            Assert.Equal(2, Assert.NotNull(diagnostic.Span).Start.Line);
         }
 
         // Prebuilt-AST defense: a capture open target that bypasses the
@@ -449,7 +449,7 @@ public class OutputBundleSplitTests
             Assert.Equal(DiagnosticCode.BadOpenForm, diagnostic.Code);
             Assert.Contains("captured value", diagnostic.Message);
             Assert.Contains("open M", diagnostic.Message);
-            Assert.Equal(new SourceSpan(2, 12, 2, 14), diagnostic.Span);
+            Assert.Equal(new SourceSpan(2, 12, 2, 15), diagnostic.Span);
         }
     }
 

@@ -235,7 +235,7 @@ public class PatternedCallSingleEvaluationTests
         Assert.Contains("call to Fail", observed.Result.Error.ToString(), StringComparison.Ordinal);
         var inner = Innermost(observed.Result.Error);
         Assert.IsType<EvalError.DivByZero>(inner);
-        Assert.Equal(new SourceSpan(1, 8, 1, 12), inner.Span);
+        Assert.Equal(new SourceSpan(1, 8, 1, 13), inner.Span);
     }
 
     [Fact]

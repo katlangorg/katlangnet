@@ -24,20 +24,20 @@ public class UnaryBadAritySpanTests
 
     public static TheoryData<string, string, SourceSpan> FailingUnaryOperands() => new()
     {
-        { "minus multi-item sequence", "-(1, 2)", new SourceSpan(1, 1, 1, 7) },
-        { "not multi-item sequence", "not (1, 2)", new SourceSpan(1, 1, 1, 10) },
-        { "minus empty sequence", "-()", new SourceSpan(1, 1, 1, 3) },
-        { "not empty sequence", "not ()", new SourceSpan(1, 1, 1, 6) },
-        { "minus list", "-[1, 2]", new SourceSpan(1, 1, 1, 7) },
-        { "not list", "not [1, 2]", new SourceSpan(1, 1, 1, 10) },
-        { "grouped invalid operand", "-((1, 2))", new SourceSpan(1, 1, 1, 9) },
-        { "not grouped invalid operand", "not ((1, 2))", new SourceSpan(1, 1, 1, 12) },
-        { "nested unary with inner failure", "-(-(1, 2))", new SourceSpan(1, 2, 1, 10) },
-        { "nested not with inner failure", "not (-(1, 2))", new SourceSpan(1, 5, 1, 13) },
-        { "multiple groups of the failing unary", "not ((-()))", new SourceSpan(1, 5, 1, 11) },
-        { "property operand", "X = (1, 2)\n-X", new SourceSpan(2, 1, 2, 2) },
-        { "operand inside a binary expression", "1 + -(1, 2)", new SourceSpan(1, 5, 1, 11) },
-        { "operand inside a call argument", "F(v) = v\nF(-(1, 2))", new SourceSpan(2, 3, 2, 9) },
+        { "minus multi-item sequence", "-(1, 2)", new SourceSpan(1, 1, 1, 8) },
+        { "not multi-item sequence", "not (1, 2)", new SourceSpan(1, 1, 1, 11) },
+        { "minus empty sequence", "-()", new SourceSpan(1, 1, 1, 4) },
+        { "not empty sequence", "not ()", new SourceSpan(1, 1, 1, 7) },
+        { "minus list", "-[1, 2]", new SourceSpan(1, 1, 1, 8) },
+        { "not list", "not [1, 2]", new SourceSpan(1, 1, 1, 11) },
+        { "grouped invalid operand", "-((1, 2))", new SourceSpan(1, 1, 1, 10) },
+        { "not grouped invalid operand", "not ((1, 2))", new SourceSpan(1, 1, 1, 13) },
+        { "nested unary with inner failure", "-(-(1, 2))", new SourceSpan(1, 2, 1, 11) },
+        { "nested not with inner failure", "not (-(1, 2))", new SourceSpan(1, 5, 1, 14) },
+        { "multiple groups of the failing unary", "not ((-()))", new SourceSpan(1, 5, 1, 12) },
+        { "property operand", "X = (1, 2)\n-X", new SourceSpan(2, 1, 2, 3) },
+        { "operand inside a binary expression", "1 + -(1, 2)", new SourceSpan(1, 5, 1, 12) },
+        { "operand inside a call argument", "F(v) = v\nF(-(1, 2))", new SourceSpan(2, 3, 2, 10) },
     };
 
     [Theory]
@@ -74,12 +74,12 @@ public class UnaryBadAritySpanTests
         var error = Assert.Single(failure.Errors);
         Assert.Equal(KatLangErrorCode.ArityMismatch, error.Code);
         Assert.False(error.IsResourceLimit);
-        Assert.Equal((1, 1, 1, 7), (error.StartLine, error.StartColumn, error.EndLine, error.EndColumn));
+        Assert.Equal(new SourceSpan(1, 1, 1, 8), error.Span);
 
         var notFailure = Assert.IsType<RunResult.EvalFailure>(KatLangEngine.Run("X = ()\nnot X"));
         var notError = Assert.Single(notFailure.Errors);
         Assert.Equal(KatLangErrorCode.ArityMismatch, notError.Code);
-        Assert.Equal((2, 1, 2, 5), (notError.StartLine, notError.StartColumn, notError.EndLine, notError.EndColumn));
+        Assert.Equal(new SourceSpan(2, 1, 2, 6), notError.Span);
     }
 
     [Fact]
@@ -91,11 +91,11 @@ public class UnaryBadAritySpanTests
         // overwrites an operand failure that already carries a span.
         var minus = Evaluator.Run(Program("-(-(1, 2))"));
         Assert.True(minus.IsError);
-        Assert.Equal(new SourceSpan(1, 2, 1, 10), Assert.IsType<EvalError.BadArity>(Innermost(minus.Error)).Span);
+        Assert.Equal(new SourceSpan(1, 2, 1, 11), Assert.IsType<EvalError.BadArity>(Innermost(minus.Error)).Span);
 
         var not = Evaluator.Run(Program("not (-(1, 2))"));
         Assert.True(not.IsError);
-        Assert.Equal(new SourceSpan(1, 5, 1, 13), Assert.IsType<EvalError.BadArity>(Innermost(not.Error)).Span);
+        Assert.Equal(new SourceSpan(1, 5, 1, 14), Assert.IsType<EvalError.BadArity>(Innermost(not.Error)).Span);
     }
 
     [Theory]

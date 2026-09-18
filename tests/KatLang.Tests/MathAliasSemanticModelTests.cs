@@ -21,7 +21,7 @@ public class MathAliasSemanticModelTests
     }
 
     private static IdentifierResolution ResolutionAt(SemanticModel model, int line, int column)
-        => Assert.IsType<IdentifierResolution>(model.FindResolutionAt(line, column));
+        => Assert.IsType<IdentifierResolution>(model.FindResolutionAt(new SourcePosition(line, column)));
 
     private static VisibleSymbol CatalogSymbol(string name)
         => Assert.Single(PreludeCatalog.Symbols, symbol => symbol.Name == name);
@@ -142,7 +142,7 @@ public class MathAliasSemanticModelTests
 
         // Hover metadata carries the descriptor signature; go-to-definition has
         // no source target because the alias is synthetic.
-        var property = Assert.IsType<PropertyInfo>(model.FindPropertyAt(1, 1));
+        var property = Assert.IsType<PropertyInfo>(model.FindPropertyAt(new SourcePosition(1, 1)));
         Assert.Equal(PropertyShape.Builtin, property.Shape);
         Assert.Equal("cos(radians)", property.DisplaySignature);
         Assert.Null(property.Declaration);
@@ -152,7 +152,7 @@ public class MathAliasSemanticModelTests
     public void UnshadowedScope_OffersAliasesInVisibleSymbols()
     {
         var model = BuildModel("Value = 1\nValue");
-        var visible = model.GetVisibleSymbolsAt(2, 1);
+        var visible = model.GetVisibleSymbolsAt(new SourcePosition(2, 1));
 
         foreach (var alias in BuiltinRegistry.MathAliasNames)
         {
@@ -169,7 +169,7 @@ public class MathAliasSemanticModelTests
 
         // Completion offers exactly ONE `sin`: the local property, with its
         // declaration site, not the builtin alias.
-        var visible = model.GetVisibleSymbolsAt(2, 1);
+        var visible = model.GetVisibleSymbolsAt(new SourcePosition(2, 1));
         var symbol = Assert.Single(visible, candidate => candidate.Name == "sin");
         Assert.Equal(IdentifierClassification.PropertyReference, symbol.Classification);
         Assert.NotNull(symbol.Declaration);
@@ -213,7 +213,7 @@ public class MathAliasSemanticModelTests
 
         Assert.Equal(IdentifierClassification.PropertyReference, resolution.Classification);
         Assert.Equal(Assert.Single(model.FindDeclarations("cos")), resolution.ResolvedDeclaration);
-        Assert.Null(model.FindPropertyAt(2, 6)!.AliasTarget);
+        Assert.Null(model.FindPropertyAt(new SourcePosition(2, 6))!.AliasTarget);
     }
 
     // ── Alias target metadata (canonical member identity on the alias) ──────
@@ -297,7 +297,7 @@ public class MathAliasSemanticModelTests
         // Configured host operations currently expose no editor PropertyInfo;
         // in particular, canonical-looking spelling alone cannot fabricate a
         // Math alias target.
-        Assert.Null(model.FindPropertyAt(1, 1));
+        Assert.Null(model.FindPropertyAt(new SourcePosition(1, 1)));
     }
 
     [Fact]
@@ -306,20 +306,20 @@ public class MathAliasSemanticModelTests
         // Direct call, bare reference, and lexical dot fallback all resolve to
         // the prelude alias, so each resolved PropertyInfo carries the target.
         var call = BuildModel("sin(1.23)");
-        Assert.Equal("Math.Sin(radians)", call.FindPropertyAt(1, 1)!.AliasTarget!.DisplaySignature);
+        Assert.Equal("Math.Sin(radians)", call.FindPropertyAt(new SourcePosition(1, 1))!.AliasTarget!.DisplaySignature);
 
         var bare = BuildModel("F = sin");
-        Assert.Equal("Math.Sin(radians)", bare.FindPropertyAt(1, 5)!.AliasTarget!.DisplaySignature);
+        Assert.Equal("Math.Sin(radians)", bare.FindPropertyAt(new SourcePosition(1, 5))!.AliasTarget!.DisplaySignature);
 
         var dotFallback = BuildModel("sin(1.23)\nX = 5\nX.sin");
-        var dotProperty = dotFallback.FindPropertyAt(3, 3)!;
+        var dotProperty = dotFallback.FindPropertyAt(new SourcePosition(3, 3))!;
         Assert.Equal("Math.Sin(radians)", dotProperty.AliasTarget!.DisplaySignature);
         // The dot-preferred presentation variant keeps the target.
         Assert.Equal(PropertyCallStyle.Dot, dotProperty.PreferredCallStyle);
-        Assert.Same(dotFallback.FindPropertyAt(1, 1)!.AliasTarget, dotProperty.AliasTarget);
+        Assert.Same(dotFallback.FindPropertyAt(new SourcePosition(1, 1))!.AliasTarget, dotProperty.AliasTarget);
 
         var constant = BuildModel("pi");
-        Assert.Equal("Math.Pi", constant.FindPropertyAt(1, 1)!.AliasTarget!.DisplaySignature);
+        Assert.Equal("Math.Pi", constant.FindPropertyAt(new SourcePosition(1, 1))!.AliasTarget!.DisplaySignature);
     }
 
     [Fact]
@@ -327,25 +327,25 @@ public class MathAliasSemanticModelTests
     {
         // A user-declared `sin` is an ordinary neutral callable.
         var shadowed = BuildModel("sin(x) = x * 2\nsin(1.23)");
-        Assert.Null(shadowed.FindPropertyAt(2, 1)!.AliasTarget);
+        Assert.Null(shadowed.FindPropertyAt(new SourcePosition(2, 1))!.AliasTarget);
 
         // The canonical structural spelling is not an alias.
         var canonical = BuildModel("Math.Sin(1.23)");
-        Assert.Null(canonical.FindPropertyAt(1, 6)!.AliasTarget);
+        Assert.Null(canonical.FindPropertyAt(new SourcePosition(1, 6))!.AliasTarget);
 
         // Opened canonical members are not aliases either.
         var opened = BuildModel("open Math\nSin(1.23)");
-        Assert.Null(opened.FindPropertyAt(2, 1)!.AliasTarget);
+        Assert.Null(opened.FindPropertyAt(new SourcePosition(2, 1))!.AliasTarget);
 
         // A structural member spelled like an alias wins dot resolution and
         // stays neutral.
         var structural = BuildModel("Obj = { public sin(x) = x }\nObj.sin(1)");
-        Assert.Null(structural.FindPropertyAt(2, 5)!.AliasTarget);
+        Assert.Null(structural.FindPropertyAt(new SourcePosition(2, 5))!.AliasTarget);
 
         // A user callable selected by lexical dot fallback remains the user's
         // symbol; the alias spelling alone never manufactures target metadata.
         var shadowedFallback = BuildModel("sin(x) = x * 2\nX = 5\nX.sin");
-        Assert.Null(shadowedFallback.FindPropertyAt(3, 3)!.AliasTarget);
+        Assert.Null(shadowedFallback.FindPropertyAt(new SourcePosition(3, 3))!.AliasTarget);
 
         // Parameters have no property metadata, so parameter shadowing cannot
         // inherit the prelude alias target either.
@@ -353,7 +353,7 @@ public class MathAliasSemanticModelTests
         Assert.Equal(
             IdentifierClassification.ExplicitParameterReference,
             ResolutionAt(parameter, 1, 15).Classification);
-        Assert.Null(parameter.FindPropertyAt(1, 15));
+        Assert.Null(parameter.FindPropertyAt(new SourcePosition(1, 15)));
     }
 
     [Fact]
@@ -363,7 +363,7 @@ public class MathAliasSemanticModelTests
         // on the evaluator side: bare `sin` under `open Lib` still resolves to
         // the prelude alias, so the resolved property keeps its alias target.
         var model = BuildModel("open Lib\nLib = { public sin(x) = 42 }\nsin(1)");
-        Assert.Equal("Math.Sin(radians)", model.FindPropertyAt(3, 1)!.AliasTarget!.DisplaySignature);
+        Assert.Equal("Math.Sin(radians)", model.FindPropertyAt(new SourcePosition(3, 1))!.AliasTarget!.DisplaySignature);
     }
 
     [Fact]
@@ -371,11 +371,11 @@ public class MathAliasSemanticModelTests
     {
         var bare = BuildModel("e");
         Assert.Equal(IdentifierClassification.ImplicitParameterReference, ResolutionAt(bare, 1, 1).Classification);
-        Assert.Null(bare.FindPropertyAt(1, 1));
+        Assert.Null(bare.FindPropertyAt(new SourcePosition(1, 1)));
 
         var qualified = BuildModel("Math.E");
         Assert.Equal(IdentifierClassification.ImplicitParameterReference, ResolutionAt(qualified, 1, 6).Classification);
-        Assert.Null(qualified.FindPropertyAt(1, 6));
+        Assert.Null(qualified.FindPropertyAt(new SourcePosition(1, 6)));
     }
 
     [Fact]

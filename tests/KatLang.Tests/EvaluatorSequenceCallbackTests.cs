@@ -559,8 +559,8 @@ public class EvaluatorSequenceCallbackTests
             Assert.Fail($"Expected evaluation failure but got: {result.Value}");
 
         var formatted = KatLangError.FromEvalError(result.Error);
-        Assert.Equal(2, formatted.StartLine);
-        Assert.Equal(1, formatted.StartColumn);
+        Assert.Equal(2, Assert.NotNull(formatted.Span).Start.Line);
+        Assert.Equal(1, Assert.NotNull(formatted.Span).Start.Column);
         Assert.Contains("the last argument must be an initial accumulator value", formatted.Message);
         Assert.Contains("still needs 'x' and 'total'", formatted.Message);
         Assert.DoesNotContain("Unknown name: x", formatted.Message);
@@ -579,8 +579,8 @@ public class EvaluatorSequenceCallbackTests
             Assert.Fail($"Expected evaluation failure but got: {result.Value}");
 
         var formatted = KatLangError.FromEvalError(result.Error);
-        Assert.Equal(3, formatted.StartLine);
-        Assert.Equal(1, formatted.StartColumn);
+        Assert.Equal(3, Assert.NotNull(formatted.Span).Start.Line);
+        Assert.Equal(1, Assert.NotNull(formatted.Span).Start.Column);
         Assert.Contains("`reduce` is `reduce(collection, reducer, initial)`", formatted.Message);
         Assert.Contains("'x' and 'total'", formatted.Message);
         Assert.Contains("add an initial accumulator", formatted.Message);
@@ -599,8 +599,8 @@ public class EvaluatorSequenceCallbackTests
             Assert.Fail($"Expected evaluation failure but got: {result.Value}");
 
         var formatted = KatLangError.FromEvalError(result.Error);
-        Assert.Equal(2, formatted.StartLine);
-        Assert.Equal(1, formatted.StartColumn);
+        Assert.Equal(2, Assert.NotNull(formatted.Span).Start.Line);
+        Assert.Equal(1, Assert.NotNull(formatted.Span).Start.Column);
         Assert.Equal(
             "Callable `reduce(collection, reducer, initial)` expects 3 arguments, but was called with 2 arguments.",
             formatted.Message);

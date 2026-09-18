@@ -3,11 +3,11 @@ namespace KatLang.Tests;
 /// <summary>
 /// Exact diagnostic-span regressions for the two lexer diagnostics that carry
 /// a scanned-run span: oversized number literals and unterminated string
-/// literals. The repository convention is inclusive spans — EndColumn is the
-/// final offending source column, not the lexer's live cursor column (which
-/// points one past the last consumed code unit). Tokenization itself must be
-/// unaffected: the placeholder number token and the string token are still
-/// produced with their original positions and lengths.
+/// literals. Spans are half-open: the exclusive end column IS the lexer's live
+/// cursor column (one past the last consumed code unit), so the span slices
+/// exactly the offending text and equals the placeholder token's own span.
+/// Tokenization itself must be unaffected: the placeholder number token and the
+/// string token are still produced with their original positions and lengths.
 /// </summary>
 public class LexerDiagnosticSpanTests
 {
@@ -32,32 +32,31 @@ public class LexerDiagnosticSpanTests
     }
 
     private static void AssertSpan(
-        string source, SourceSpan span,
+        string source, SourceSpan? actual,
         int startLine, int startColumn, int endLine, int endColumn,
         string expectedSlice)
     {
-        Assert.Equal(startLine, span.StartLineNumber);
-        Assert.Equal(startColumn, span.StartColumn);
-        Assert.Equal(endLine, span.EndLineNumber);
-        Assert.Equal(endColumn, span.EndColumn);
+        var span = Assert.NotNull(actual);
+        Assert.Equal(new SourceSpan(startLine, startColumn, endLine, endColumn), span);
 
-        Assert.Equal(span.StartLineNumber, span.EndLineNumber);
-        var line = source.Split('\n')[span.StartLineNumber - 1].TrimEnd('\r');
+        // Half-open: the slice runs from the start column up to (not including) the end column.
+        Assert.Equal(span.Start.Line, span.End.Line);
+        var line = source.Split('\n')[span.Start.Line - 1].TrimEnd('\r');
         Assert.Equal(
             expectedSlice,
-            line.Substring(span.StartColumn - 1, span.EndColumn - span.StartColumn + 1));
+            line.Substring(span.Start.Column - 1, span.End.Column - span.Start.Column));
     }
 
     // ── Number literal is too large ─────────────────────────────────────────
 
     [Fact]
-    public void OversizedNumber_AtColumnOne_EndsAtFinalDigitColumn()
+    public void OversizedNumber_AtColumnOne_EndsJustPastTheFinalDigit()
     {
         var source = OversizedDigits;
         var (tokens, diagnostics) = Lexer.Tokenize(source);
 
         var diagnostic = SingleDiagnostic(diagnostics, NumberTooLargeMessage);
-        AssertSpan(source, diagnostic.Span, 1, 1, 1, 42, OversizedDigits);
+        AssertSpan(source, diagnostic.Span, 1, 1, 1, 43, OversizedDigits);
 
         // Tokenization is preserved: a placeholder zero number token covering
         // the whole literal, then end of file.
@@ -70,13 +69,13 @@ public class LexerDiagnosticSpanTests
     }
 
     [Fact]
-    public void OversizedNumber_AfterPrefixOnSameLine_EndsAtFinalDigitColumn()
+    public void OversizedNumber_AfterPrefixOnSameLine_EndsJustPastTheFinalDigit()
     {
         var source = "X = " + OversizedDigits;
         var (tokens, diagnostics) = Lexer.Tokenize(source);
 
         var diagnostic = SingleDiagnostic(diagnostics, NumberTooLargeMessage);
-        AssertSpan(source, diagnostic.Span, 1, 5, 1, 46, OversizedDigits);
+        AssertSpan(source, diagnostic.Span, 1, 5, 1, 47, OversizedDigits);
 
         Assert.Equal(
             new[] { TokenKind.Identifier, TokenKind.Equals, TokenKind.Number, TokenKind.EndOfFile },
@@ -86,14 +85,15 @@ public class LexerDiagnosticSpanTests
     // ── Unterminated string literal ─────────────────────────────────────────
 
     [Fact]
-    public void UnterminatedString_MidLine_EndsAtFinalConsumedColumn()
+    public void UnterminatedString_MidLine_EndsJustPastTheLastConsumedCodeUnit()
     {
         const string source = "X = 'abc\nY = 2";
         var (tokens, diagnostics) = Lexer.Tokenize(source);
 
         var diagnostic = SingleDiagnostic(diagnostics, UnterminatedStringMessage);
-        // The unterminated token is `'abc`, columns 5..8 on line 1.
-        AssertSpan(source, diagnostic.Span, 1, 5, 1, 8, "'abc");
+        // The unterminated token is `'abc`, columns 5..8 on line 1, so the half-open
+        // span ends at column 9 (the line break is not consumed).
+        AssertSpan(source, diagnostic.Span, 1, 5, 1, 9, "'abc");
 
         // Tokenization is preserved: the string token still carries the
         // scanned value and the second line still tokenizes normally.
@@ -112,7 +112,7 @@ public class LexerDiagnosticSpanTests
     }
 
     [Fact]
-    public void UnterminatedString_LoneQuoteAtEndOfFile_IsOneColumnWide()
+    public void UnterminatedString_LoneQuoteAtEndOfFile_IsOneCodeUnitWide()
     {
         const string source = "'";
         var (tokens, diagnostics) = Lexer.Tokenize(source);
@@ -120,7 +120,7 @@ public class LexerDiagnosticSpanTests
         var diagnostic = SingleDiagnostic(diagnostics, UnterminatedStringMessage);
         // One consumed character: the span must not extend past it (and must
         // not precede the start column either).
-        AssertSpan(source, diagnostic.Span, 1, 1, 1, 1, "'");
+        AssertSpan(source, diagnostic.Span, 1, 1, 1, 2, "'");
 
         Assert.Equal(2, tokens.Count);
         Assert.Equal(TokenKind.StringLiteral, tokens[0].Kind);

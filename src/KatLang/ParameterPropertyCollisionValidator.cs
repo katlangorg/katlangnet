@@ -197,8 +197,9 @@ internal sealed class ParameterPropertyCollisionValidator(
                 continue;
             // The parameter's position is stated only when the document wrote it (an imported
             // parameter has none, and a module-relative coordinate is never rendered).
-            var location = parameterSpan is null ? ""
-                : $" The parameter is declared at line {parameterSpan.StartLineNumber}, column {parameterSpan.StartColumn}.";
+            var location = parameterSpan is { } declared
+                ? $" The parameter is declared at line {declared.Start.Line}, column {declared.Start.Column}."
+                : "";
             var message =
                 $"Property '{property.Name}' conflicts with parameter '{property.Name}' in the same or an enclosing algorithm. Rename one of the declarations.{location}";
             // A written declaration is reported at each of its name occurrences (a clause

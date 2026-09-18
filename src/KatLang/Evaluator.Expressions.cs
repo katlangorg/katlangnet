@@ -350,6 +350,18 @@ public static partial class Evaluator
     ///    algorithm auto-evaluates (thunk semantics), a parameterized one is the
     ///    bare arityMismatch (it needs an explicit call).
     /// </summary>
+    // Frame-size discipline for the two name dispatches of the Eval / EvalCounted spines: the
+    // expression's span (a 20-byte value as SourceSpan?) is read in these small non-inlined
+    // frames, so a Call-recursion level's EvalCounted frame carries no span copy for arms it
+    // did not take (see the parser's leaf-frame helpers for the measured effect).
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private static EvalResult<CountedResult> EvalParamCountedOf(Expr expr, string name, EvalCtx ctx, ValEnv valEnv)
+        => EvalParamCounted(name, expr.Span, ctx, valEnv);
+
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private static EvalResult<CountedResult> EvalResolveCountedOf(Expr expr, string name, EvalCtx ctx, ValEnv valEnv)
+        => EvalResolveCounted(name, expr.Span, ctx, valEnv);
+
     private static EvalResult<CountedResult> EvalParamCounted(
         string name,
         SourceSpan? span,
@@ -486,7 +498,7 @@ public static partial class Evaluator
 
             // Value projection of the canonical counted Param dispatch
             // (dual-view lookup order documented on EvalParamCounted).
-            Expr.Param(var name) => ProjectCountedValue(EvalParamCounted(name, expr.Span, ctx, valEnv)),
+            Expr.Param(var name) => ProjectCountedValue(EvalParamCountedOf(expr, name, ctx, valEnv)),
 
             // Unary and binary spines evaluate iteratively; the machine
             // preserves operand validation, error propagation, and spans
@@ -503,18 +515,18 @@ public static partial class Evaluator
 
             Expr.AlgorithmExpr(var alg) => EvalAlgorithmExprValue(expr, alg, ctx, valEnv),
 
-            Expr.Capture(var captureBody) => WithSpan(
-                PreferExpressionSpan(expr.Span, captureBody), EvalCaptureValue(captureBody, ctx, valEnv)),
+            Expr.Capture(var captureBody) => WithPreferredSpanOf(
+                expr, captureBody, EvalCaptureValue(captureBody, ctx, valEnv)),
 
             // Value projection of the canonical counted Resolve dispatch.
-            Expr.Resolve(var name) => ProjectCountedValue(EvalResolveCounted(name, expr.Span, ctx, valEnv)),
+            Expr.Resolve(var name) => ProjectCountedValue(EvalResolveCountedOf(expr, name, ctx, valEnv)),
 
             // Lean: eval (.dotMember o n fallback mode argsOpt) => withCtx (CtxMsg.dotCall o n) do evalDotCall
             // (the context — which renders the receiver's name — is built only on error).
-            Expr.DotCall dotCallExpr => WithSpan(expr.Span, WithDotCallCtx(dotCallExpr, ctx,
+            Expr.DotCall dotCallExpr => WithSpanOf(expr, WithDotCallCtx(dotCallExpr, ctx,
                 EvalDotCall(dotCallExpr, ctx, valEnv))),
 
-            Expr.Call(var func, var callArgs) => WithSpan(expr.Span,
+            Expr.Call(var func, var callArgs) => WithSpanOf(expr,
                 EvalCallExpr(func, callArgs, ctx, valEnv)),
 
             // The spine machine owns the index-expression span.
@@ -575,7 +587,7 @@ public static partial class Evaluator
         // emission.
         return expr switch
         {
-            Expr.Param(var name) => EvalParamCounted(name, expr.Span, ctx, valEnv),
+            Expr.Param(var name) => EvalParamCountedOf(expr, name, ctx, valEnv),
 
             Expr.SequenceSpread => EvalSequenceSpreadCounted(expr, ctx, valEnv),
 
@@ -590,15 +602,15 @@ public static partial class Evaluator
             // A capture in value position is a value boundary: the body's
             // supply is captured to one canonical value and re-counted as
             // that value's ValueCount.
-            Expr.Capture(var captureBody) => CountValue(WithSpan(
-                PreferExpressionSpan(expr.Span, captureBody), EvalCaptureValue(captureBody, ctx, valEnv))),
+            Expr.Capture(var captureBody) => CountValue(WithPreferredSpanOf(
+                expr, captureBody, EvalCaptureValue(captureBody, ctx, valEnv))),
 
-            Expr.Resolve(var name) => EvalResolveCounted(name, expr.Span, ctx, valEnv),
+            Expr.Resolve(var name) => EvalResolveCountedOf(expr, name, ctx, valEnv),
 
-            Expr.DotCall dotCallExpr => WithSpan(expr.Span, WithDotCallCtx(dotCallExpr, ctx,
+            Expr.DotCall dotCallExpr => WithSpanOf(expr, WithDotCallCtx(dotCallExpr, ctx,
                 EvalDotCallCounted(dotCallExpr, ctx, valEnv))),
 
-            Expr.Call(var func, var callArgs) => WithSpan(expr.Span,
+            Expr.Call(var func, var callArgs) => WithSpanOf(expr,
                 EvalCallCountedExpr(func, callArgs, ctx, valEnv)),
 
             // The spine machine owns the index-expression span.

@@ -12,7 +12,7 @@ public class FrontEndPipelineInvariantTests
     private const string NestingMessage = "Nesting is too deep";
 
     private static (DiagnosticSeverity, string, string) Triple(Diagnostic d)
-        => (d.Severity, d.Message, d.Span is { } s ? $"{s.StartLineNumber},{s.StartColumn},{s.EndLineNumber},{s.EndColumn}" : "-");
+        => (d.Severity, d.Message, d.Span is { } s ? $"{s.Start.Line},{s.Start.Column},{s.End.Line},{s.End.Column}" : "-");
 
     private static List<(DiagnosticSeverity, string, string)> Triples(IEnumerable<Diagnostic> ds)
         => ds.Select(Triple).ToList();

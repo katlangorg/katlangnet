@@ -110,15 +110,15 @@ public class OwnershipConformanceTests
         }
 
         var model = SemanticModelBuilder.Build(parsed.Root);
-        var site = reference.Span!;
-        var resolution = model.FindResolutionAt(site.StartLineNumber, site.StartColumn);
+        var site = Assert.NotNull(reference.Span);
+        var resolution = model.FindResolutionAt(site.Start);
         Assert.NotNull(resolution);
         Assert.Equal(classification, resolution.Classification);
         Assert.Equal(declaration, resolution.ResolvedDeclaration?.Span);
-        var visible = Assert.Single(model.GetVisibleSymbolsAt(site.StartLineNumber, site.StartColumn), symbol => symbol.Name == "v");
+        var visible = Assert.Single(model.GetVisibleSymbolsAt(site.Start), symbol => symbol.Name == "v");
         Assert.Equal(classification, visible.Classification);
         Assert.Equal(declaration, visible.Declaration?.Span);
-        var propertyInfo = model.FindPropertyAt(site.StartLineNumber, site.StartColumn);
+        var propertyInfo = model.FindPropertyAt(site.Start);
         if (kind == "parameter")
         {
             Assert.Null(propertyInfo);

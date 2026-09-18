@@ -62,45 +62,42 @@ public class ParserGraceScanDepthTests
 
     [Theory]
     // Binary: the whole left subtree is scanned before the right operand.
-    [InlineData("F(0) = ~a + ~b", 1, 8, 1, 9)]
-    [InlineData("F(0) = 1 + ~b", 1, 12, 1, 13)]
+    [InlineData("F(0) = ~a + ~b", 1, 8, 1, 10)]
+    [InlineData("F(0) = 1 + ~b", 1, 12, 1, 14)]
     // List literal: items in written order.
-    [InlineData("F(0) = [~a, ~b]", 1, 9, 1, 10)]
+    [InlineData("F(0) = [~a, ~b]", 1, 9, 1, 11)]
     // Call: argument output slots in written order.
-    [InlineData("F(0) = G(~a, ~b)", 1, 10, 1, 11)]
+    [InlineData("F(0) = G(~a, ~b)", 1, 10, 1, 12)]
     // Grouped receivers: a graced name keeps the plain name's CAPTURE boundary
     // (`(~a)` is the capture `(a)` with a marker inside, never an unwrapped name),
     // so the first match is the marked occurrence inside the group. `(~a)(~b)` is
     // then two same-line items — the separator diagnostic joins, the scan order
     // does not change.
-    [InlineData("F(0) = (~a)(~b)", 1, 9, 1, 10)]
+    [InlineData("F(0) = (~a)(~b)", 1, 9, 1, 11)]
     // Dot-call: the receiver target is scanned before the argument outputs.
-    [InlineData("F(0) = (~a).G(~b)", 1, 9, 1, 10)]
+    [InlineData("F(0) = (~a).G(~b)", 1, 9, 1, 11)]
     // Dot-call without arguments: target-only descent.
-    [InlineData("F(0) = (~a).count", 1, 9, 1, 10)]
+    [InlineData("F(0) = (~a).count", 1, 9, 1, 11)]
     // Block: output rows in written order (a multi-row group is a capture, so
     // its rows keep their own spans).
-    [InlineData("F(0) = (~a, ~b)", 1, 9, 1, 10)]
-    [InlineData("F(0) = (1, ~b)", 1, 12, 1, 13)]
+    [InlineData("F(0) = (~a, ~b)", 1, 9, 1, 11)]
+    [InlineData("F(0) = (1, ~b)", 1, 12, 1, 14)]
     // Unary: operand descent.
-    [InlineData("F(0) = -~a", 1, 9, 1, 10)]
+    [InlineData("F(0) = -~a", 1, 9, 1, 11)]
     // Index: the target is scanned before the selector.
-    [InlineData("F(0) = (~a):(~b)", 1, 9, 1, 10)]
-    [InlineData("F(0) = x:(~b)", 1, 11, 1, 12)]
+    [InlineData("F(0) = (~a):(~b)", 1, 9, 1, 11)]
+    [InlineData("F(0) = x:(~b)", 1, 11, 1, 13)]
     // Spread: operand descent.
-    [InlineData("F(0) = (~a)*", 1, 9, 1, 10)]
+    [InlineData("F(0) = (~a)*", 1, 9, 1, 11)]
     // Nested combination across list, binary, call, and block forms.
-    [InlineData("F(0) = [1 + 2, G(3, (4, ~c + ~d))]", 1, 25, 1, 26)]
+    [InlineData("F(0) = [1 + 2, G(3, (4, ~c + ~d))]", 1, 25, 1, 27)]
     // Postfix grace spelling participates in the same source order.
-    [InlineData("F(0) = a~ + b~", 1, 8, 1, 9)]
+    [InlineData("F(0) = a~ + b~", 1, 8, 1, 10)]
     public void GraceScan_FirstMatchSpan_IsTheLeftmostGraceInSourceOrder(
         string source, int startLine, int startColumn, int endLine, int endColumn)
     {
         var diagnostic = AssertSingleGraceDiagnostic(source);
-        Assert.Equal(startLine, diagnostic.Span.StartLineNumber);
-        Assert.Equal(startColumn, diagnostic.Span.StartColumn);
-        Assert.Equal(endLine, diagnostic.Span.EndLineNumber);
-        Assert.Equal(endColumn, diagnostic.Span.EndColumn);
+        Assert.Equal(new SourceSpan(startLine, startColumn, endLine, endColumn), diagnostic.Span);
     }
 
     [Fact]
@@ -115,10 +112,10 @@ public class ParserGraceScanDepthTests
         // One diagnostic per offending branch, in branch order, each anchored on
         // that branch's OWN first grace (never the family-wide first).
         Assert.Equal(2, graceDiagnostics.Count);
-        Assert.Equal(1, graceDiagnostics[0].Span.StartLineNumber);
-        Assert.Equal(8, graceDiagnostics[0].Span.StartColumn);
-        Assert.Equal(2, graceDiagnostics[1].Span.StartLineNumber);
-        Assert.Equal(8, graceDiagnostics[1].Span.StartColumn);
+        Assert.Equal(1, Assert.NotNull(graceDiagnostics[0].Span).Start.Line);
+        Assert.Equal(8, Assert.NotNull(graceDiagnostics[0].Span).Start.Column);
+        Assert.Equal(2, Assert.NotNull(graceDiagnostics[1].Span).Start.Line);
+        Assert.Equal(8, Assert.NotNull(graceDiagnostics[1].Span).Start.Column);
     }
 
     [Fact]
@@ -127,10 +124,7 @@ public class ParserGraceScanDepthTests
         var diagnostic = AssertSingleGraceDiagnostic("F(0) = ~a");
         Assert.Equal("Grace is not allowed in conditional branch bodies for 'F'.", diagnostic.Message);
         Assert.Equal(DiagnosticSeverity.Error, diagnostic.Severity);
-        Assert.Equal(1, diagnostic.Span.StartLineNumber);
-        Assert.Equal(8, diagnostic.Span.StartColumn);
-        Assert.Equal(1, diagnostic.Span.EndLineNumber);
-        Assert.Equal(9, diagnostic.Span.EndColumn);
+        Assert.Equal(new SourceSpan(1, 8, 1, 10), diagnostic.Span);   // `~a`
     }
 
     [Fact]

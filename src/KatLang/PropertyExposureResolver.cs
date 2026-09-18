@@ -703,45 +703,44 @@ internal static class PropertyExposureResolver
             // grace facts for host-built trees.
             Expr.Grace grace => grace with { Inner = RewriteExpr(grace.Inner, memos) },
 
-            Expr.Unary(var op, var operand) => new Expr.Unary(op,
-                RewriteExpr(operand, memos)) { Span = expr.Span },
+            Expr.Unary unary => unary with { Operand = RewriteExpr(unary.Operand, memos) },
 
-            Expr.Binary(var op, var left, var right) => new Expr.Binary(op,
-                RewriteExpr(left, memos),
-                RewriteExpr(right, memos)) { Span = expr.Span },
-
-            Expr.Index(var target, var selector) => new Expr.Index(
-                RewriteExpr(target, memos),
-                RewriteExpr(selector, memos)) { Span = expr.Span },
-
-            Expr.SequenceSpread(var operand) => new Expr.SequenceSpread(
-                RewriteExpr(operand, memos))
+            Expr.Binary binary => binary with
             {
-                Span = expr.Span,
-                SpreadMarkerSpan = ((Expr.SequenceSpread)expr).SpreadMarkerSpan,
+                Left = RewriteExpr(binary.Left, memos),
+                Right = RewriteExpr(binary.Right, memos),
             },
 
-            Expr.SequenceConstruct(var left, var right) => new Expr.SequenceConstruct(
-                RewriteExpr(left, memos),
-                RewriteExpr(right, memos)) { Span = expr.Span },
+            Expr.Index index => index with
+            {
+                Target = RewriteExpr(index.Target, memos),
+                Selector = RewriteExpr(index.Selector, memos),
+            },
 
-            Expr.ListLiteral(var items) => new Expr.ListLiteral(
-                RewriteExprList(items, memos)) { Span = expr.Span },
+            Expr.SequenceSpread spread => spread with { Operand = RewriteExpr(spread.Operand, memos) },
 
-            Expr.AlgorithmExpr(var algorithm) => new Expr.AlgorithmExpr(
-                ProcessSharedNestedAlgorithm(algorithm, memos)) { Span = expr.Span },
+            Expr.SequenceConstruct construct => construct with
+            {
+                Left = RewriteExpr(construct.Left, memos),
+                Right = RewriteExpr(construct.Right, memos),
+            },
+
+            Expr.ListLiteral list => list with { Items = RewriteExprList(list.Items, memos) },
+
+            Expr.AlgorithmExpr block => block with { Algorithm = ProcessSharedNestedAlgorithm(block.Algorithm, memos) },
 
             // A capture owns no names and no properties, so its rows rewrite
             // with the same visible summaries — the exact effect the
             // pre-split transparent wrapper had through ProcessAlgorithm.
-            Expr.Capture(var captureBody) => new Expr.Capture(
-                RewriteExprList(captureBody, memos)) { Span = expr.Span },
+            Expr.Capture capture => capture with { Body = RewriteExprList(capture.Body, memos) },
 
             // Argument bundles own no scope: slots rewrite in the enclosing
             // context, exactly like capture rows.
-            Expr.Call(var function, var args) => new Expr.Call(
-                RewriteExpr(function, memos),
-                RewriteExprList(args, memos)) { Span = expr.Span },
+            Expr.Call call => call with
+            {
+                Function = RewriteExpr(call.Function, memos),
+                Args = RewriteExprList(call.Args, memos),
+            },
 
             Expr.DotCall dotCall => RewriteDotCall(dotCall, memos),
 

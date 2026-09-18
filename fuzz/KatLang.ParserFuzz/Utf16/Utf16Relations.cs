@@ -137,8 +137,8 @@ internal static class Utf16Relations
         var syntax = Parser.ParseSyntax(cr.Source);
         foreach (var diagnostic in syntax.Diagnostics)
         {
-            if (diagnostic.Span is null) continue;
-            if (diagnostic.Span.StartLineNumber != 1 || diagnostic.Span.EndLineNumber != 1)
+            if (diagnostic.Span is not { } span) continue;
+            if (span.Start.Line != 1 || span.End.Line != 1)
                 throw new Utf16InvariantException(
                     $"{LoneCrNotALineBreak}: diagnostic span {SourceSpanValidator.Describe(diagnostic.Span)} leaves " +
                     $"line 1 in a source with no line feed. Message: {Printable(diagnostic.Message)}");
@@ -268,11 +268,7 @@ internal static class Utf16Relations
         {
             var a = left[i];
             var b = right[i];
-            var sameSpan = a.Span is null
-                ? b.Span is null
-                : b.Span is not null
-                  && a.Span.StartLineNumber == b.Span.StartLineNumber && a.Span.StartColumn == b.Span.StartColumn
-                  && a.Span.EndLineNumber == b.Span.EndLineNumber && a.Span.EndColumn == b.Span.EndColumn;
+            var sameSpan = a.Span == b.Span;   // value equality; two absent spans are the same
 
             if (a.Severity != b.Severity
                 || !string.Equals(a.Message, b.Message, StringComparison.Ordinal)

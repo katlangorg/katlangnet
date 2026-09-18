@@ -1510,7 +1510,7 @@ public class FrontEndDagComplexityTests
     [Fact]
     public void Detector_SharedBranchBody_UnderDistinctRegions_ElaboratesIndependently()
     {
-        var sharedBody = EmptyAlgorithm(new Expr.Resolve("x") { Span = new SourceSpan(1, 1, 1, 1) });
+        var sharedBody = EmptyAlgorithm(new Expr.Resolve("x") { Span = new SourceSpan(1, 1, 1, 2) });
         var binds = new Algorithm.Conditional(null, [], [new CondBranch(new Pattern.Bind("x"), sharedBody)]);
         var literal = new Algorithm.Conditional(null, [], [new CondBranch(new Pattern.LitInt(0), sharedBody)]);
         var declaringBlock = new Algorithm.User(
@@ -1845,7 +1845,7 @@ public class FrontEndDagComplexityTests
     public Task SemanticModel_ExpressionDiamond_AnalyzesEachNodeOncePerFrame(int depth)
         => AssertCompletesUnderWallClockGuard(() =>
         {
-            var leaf = new Expr.Resolve("Leaf") { Span = new SourceSpan(2, 1, 2, 4) };
+            var leaf = new Expr.Resolve("Leaf") { Span = new SourceSpan(2, 1, 2, 5) };
             var root = new Algorithm.User(
                 null, [], [],
                 [new Property("Leaf", EmptyAlgorithm(new Expr.Num(1)))],
@@ -1896,9 +1896,9 @@ public class FrontEndDagComplexityTests
     [Fact]
     public void SemanticModel_SharedBody_UnderDistinctBinderTables_IsAnalyzedPerFamily()
     {
-        var body = EmptyAlgorithm(new Expr.Param("x") { Span = new SourceSpan(9, 1, 9, 1) });
+        var body = EmptyAlgorithm(new Expr.Param("x") { Span = new SourceSpan(9, 1, 9, 2) });
         Algorithm.Conditional Family(int line)
-            => new(null, [], [new CondBranch(new Pattern.Bind("x") { NameSpan = new SourceSpan(line, 1, line, 1) }, body)]);
+            => new(null, [], [new CondBranch(new Pattern.Bind("x") { NameSpan = new SourceSpan(line, 1, line, 2) }, body)]);
         var root = new Algorithm.User(
             null, [], [],
             [new Property("Left", Family(1)), new Property("Right", Family(2)), new Property("Value", body)],
@@ -1911,8 +1911,8 @@ public class FrontEndDagComplexityTests
         Assert.Equal(6, observations.SemanticModelAlgorithmVisits);
         var references = model.FindResolutions("x").Where(r => r.Occurrence.Kind == OccurrenceKind.ParameterReference).ToList();
         Assert.Equal(3, references.Count);
-        Assert.Contains(references, r => r.Classification == IdentifierClassification.ConditionalBinderReference && r.ResolvedDeclaration?.Span.StartLineNumber == 1);
-        Assert.Contains(references, r => r.Classification == IdentifierClassification.ConditionalBinderReference && r.ResolvedDeclaration?.Span.StartLineNumber == 2);
+        Assert.Contains(references, r => r.Classification == IdentifierClassification.ConditionalBinderReference && r.ResolvedDeclaration?.Span.Start.Line == 1);
+        Assert.Contains(references, r => r.Classification == IdentifierClassification.ConditionalBinderReference && r.ResolvedDeclaration?.Span.Start.Line == 2);
         Assert.Contains(references, r => r.Classification == IdentifierClassification.Unresolved);
     }
 

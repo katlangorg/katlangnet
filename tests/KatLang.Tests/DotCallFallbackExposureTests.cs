@@ -77,7 +77,7 @@ public class DotCallFallbackExposureTests
         Assert.Equal(DiagnosticCode.IllegalInOpen, diagnostic.Code);
         Assert.Contains("'Make' cannot be opened because it requires arguments (x)", diagnostic.Message, StringComparison.Ordinal);
         // Reported at the open target, never at a later member.
-        Assert.Equal((9, 10), (diagnostic.Span.StartLineNumber, diagnostic.Span.StartColumn));
+        Assert.Equal((9, 10), (Assert.NotNull(diagnostic.Span).Start.Line, Assert.NotNull(diagnostic.Span).Start.Column));
         Assert.IsType<RunResult.ParseFailure>(KatLangEngine.Run(source));
     }
 

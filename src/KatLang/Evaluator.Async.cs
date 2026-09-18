@@ -871,6 +871,10 @@ public static partial class Evaluator
         // or joins the proven-leaf delegation group at the end — so a recursive variant
         // can never silently bypass the async twin family by evaluating its children
         // synchronously.
+        // The Param and Resolve arms read `expr.Span` here rather than through the sync
+        // twin's `EvalParamCountedOf` / `EvalResolveCountedOf` leaf frames: those exist for the
+        // SYNCHRONOUS stack envelope (a span copy per dispatch frame), whereas this state
+        // machine hoists its temporaries; the positioned outcome is identical either way.
         return expr switch
         {
             Expr.Param(var name) => await EvalParamCountedAsync(name, expr.Span, ctx, valEnv).ConfigureAwait(false),
@@ -885,16 +889,16 @@ public static partial class Evaluator
 
             Expr.AlgorithmExpr(var alg) => CountValue(await EvalAlgorithmExprValueAsync(expr, alg, ctx, valEnv).ConfigureAwait(false)),
 
-            Expr.Capture(var captureBody) => CountValue(WithSpan(
-                PreferExpressionSpan(expr.Span, captureBody),
+            Expr.Capture(var captureBody) => CountValue(WithPreferredSpanOf(
+                expr, captureBody,
                 await EvalCaptureValueAsync(captureBody, ctx, valEnv).ConfigureAwait(false))),
 
             Expr.Resolve(var name) => await EvalResolveCountedAsync(name, expr.Span, ctx, valEnv).ConfigureAwait(false),
 
-            Expr.DotCall dotCallExpr => WithSpan(expr.Span, WithDotCallCtx(dotCallExpr, ctx,
+            Expr.DotCall dotCallExpr => WithSpanOf(expr, WithDotCallCtx(dotCallExpr, ctx,
                 await EvalDotCallCountedAsync(dotCallExpr, ctx, valEnv).ConfigureAwait(false))),
 
-            Expr.Call(var func, var callArgs) => WithSpan(expr.Span,
+            Expr.Call(var func, var callArgs) => WithSpanOf(expr,
                 await EvalCallCountedExprAsync(func, callArgs, ctx, valEnv).ConfigureAwait(false)),
 
             Expr.Index => await EvalExpressionSpineCountedAsync(expr, ctx, valEnv).ConfigureAwait(false),
@@ -1309,7 +1313,7 @@ public static partial class Evaluator
             emittedCount += countedR.Value.EmittedCount == 0 ? 1 : countedR.Value.EmittedCount;
         }
 
-        if (ReserveSequenceCapture(reserveCtx, results.Count, FirstSpan(rows)) is { } capturedLimitError)
+        if (ReserveSequenceCaptureAtRows(reserveCtx, results.Count, rows) is { } capturedLimitError)
             return capturedLimitError;
 
         var counted = new CountedResult(CombineOutputSlots(results), emittedCount);
@@ -1695,7 +1699,7 @@ public static partial class Evaluator
         var diagnosticName = CallDiagnosticName.FromExpression(func);
         var calleeR = ResolveAlg(func, ctx);
         if (calleeR.IsError)
-            return new EvalError.WithContext(CtxCall(diagnosticName, ctx), calleeR.Error) { Span = calleeR.Error.Span };
+            return CalleeResolutionFailure(diagnosticName, ctx, calleeR.Error);
 
         return WithCallCtx(
             diagnosticName,
@@ -1900,7 +1904,7 @@ public static partial class Evaluator
         // Charged dynamic invocation boundary; this counted core owns the
         // boundary for both counted evaluation and its plain projection.
         if (ctx.Budget.TryEnterInvocation() is { } limitError)
-            return AtSpanIfMissing(limitError, FirstSpan(args));
+            return AtFirstSpanIfMissing(limitError, args);
 
         try
         {

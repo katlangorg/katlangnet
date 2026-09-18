@@ -316,8 +316,8 @@ internal static class Utf16Executor
         var at = "-";
         foreach (var diagnostic in diagnostics)
         {
-            if (diagnostic.Span is null) continue;
-            var key = (diagnostic.Span.StartLineNumber, diagnostic.Span.StartColumn);
+            if (diagnostic.Span is not { } span) continue;
+            var key = (span.Start.Line, span.Start.Column);
             var next = counts.GetValueOrDefault(key) + 1;
             counts[key] = next;
             if (next > worst)
@@ -344,11 +344,10 @@ internal static class Utf16Executor
         var zeroWidth = false;
         foreach (var diagnostic in syntax.Diagnostics)
         {
-            if (diagnostic.Span is null) continue;
-            maxSpanEndLine = Math.Max(maxSpanEndLine, diagnostic.Span.EndLineNumber);
-            if (diagnostic.Span.EndLineNumber != diagnostic.Span.StartLineNumber) multiline = true;
-            if (diagnostic.Span.EndLineNumber == diagnostic.Span.StartLineNumber
-                && diagnostic.Span.EndColumn < diagnostic.Span.StartColumn + 1) zeroWidth = true;
+            if (diagnostic.Span is not { } span) continue;
+            maxSpanEndLine = Math.Max(maxSpanEndLine, span.End.Line);
+            if (span.End.Line != span.Start.Line) multiline = true;
+            if (span.IsEmpty) zeroWidth = true;   // an insertion point: end of input, a missing token
         }
 
         var (worst, _) = MaxAtOnePosition(syntax.Diagnostics);

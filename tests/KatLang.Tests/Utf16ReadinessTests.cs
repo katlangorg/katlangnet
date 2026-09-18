@@ -199,7 +199,7 @@ public class Utf16ReadinessTests
         // Every one of those diagnostics is at its OWN position: reporting tracks consumption.
         var positions = syntax.Diagnostics
             .Where(d => d.Span is not null)
-            .Select(d => (d.Span!.StartLineNumber, d.Span.StartColumn))
+            .Select(d => (Assert.NotNull(d.Span).Start.Line, Assert.NotNull(d.Span).Start.Column))
             .ToHashSet();
         Assert.Equal(syntax.Diagnostics.Count, positions.Count);
     }
@@ -223,7 +223,7 @@ public class Utf16ReadinessTests
 
             var atOnePosition = syntax.Diagnostics
                 .Where(d => d.Span is not null)
-                .GroupBy(d => (d.Span!.StartLineNumber, d.Span.StartColumn))
+                .GroupBy(d => (Assert.NotNull(d.Span).Start.Line, Assert.NotNull(d.Span).Start.Column))
                 .Select(g => g.Count())
                 .DefaultIfEmpty(0)
                 .Max();
@@ -272,7 +272,7 @@ public class Utf16ReadinessTests
             // Every frontend span is still in range for THIS source, not a previous one.
             var widths = SourceSpanValidator.LineWidths(built.Source);
             foreach (var diagnostic in frontEnd.Diagnostics)
-                Assert.Null(SourceSpanValidator.Validate(diagnostic.Span, widths));
+                Assert.Null(SourceSpanValidator.Validate(Assert.NotNull(diagnostic.Span), widths));
 
             ran++;
         }

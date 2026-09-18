@@ -110,7 +110,7 @@ public class ChainedDotExecutionPathTests
         var parsed = await Parser.ParseAsync(source, options);
         Assert.False(parsed.HasErrors);
         var model = SemanticModelBuilder.Build(parsed);
-        Assert.Equal(IdentifierClassification.DeferredModuleReference, model.FindResolutionAt(3, 8)!.Classification);
+        Assert.Equal(IdentifierClassification.DeferredModuleReference, model.FindResolutionAt(new SourcePosition(3, 8))!.Classification);
         Assert.Equal(0, downloads);
         var result = await Evaluator.RunAsync(new Expr.AlgorithmExpr(parsed.Root));
         Assert.True(result.IsOk, result.IsError ? result.Error.ToString() : "");

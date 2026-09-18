@@ -94,11 +94,8 @@ internal static class LoopDiagnosticParityAssertions
                     $"{access.AccessKind}(r={access.Requests},h={access.Hits},m={access.Misses},s={access.Stores})"),
             ]);
 
-    internal static (int? StartLine, int? StartColumn, int? EndLine, int? EndColumn) Span(EvalError error)
-    {
-        var rendered = KatLangError.FromEvalError(error);
-        return (rendered.StartLine, rendered.StartColumn, rendered.EndLine, rendered.EndColumn);
-    }
+    internal static SourceSpan? Span(EvalError error)
+        => KatLangError.FromEvalError(error).Span;
 
     // ── Structured error-tree normalization ──────────────────────────────────
     //
@@ -140,9 +137,9 @@ internal static class LoopDiagnosticParityAssertions
     }
 
     private static string SpanText(SourceSpan? span)
-        => span is null
-            ? "none"
-            : $"({span.StartLineNumber},{span.StartColumn})-({span.EndLineNumber},{span.EndColumn})";
+        => span is { } located
+            ? $"({located.Start.Line},{located.Start.Column})-({located.End.Line},{located.End.Column})"
+            : "none";
 
     private static string DescribeContext(ErrorContext context)
         => context switch
@@ -334,7 +331,7 @@ public class LoopDiagnosticParityAssertionsTests
             [
                 new ImplicitParameterProvenance(
                     "missing",
-                    new SourceSpan(4, 7, 4, 13),
+                    new SourceSpan(4, 7, 4, 14),
                     suggestion: null),
             ],
         };

@@ -1775,7 +1775,7 @@ public class ParserTests
 
         var diagnostic = Assert.Single(result.Diagnostics);
         Assert.Equal(DiagnosticCode.UnexpectedToken, diagnostic.Code);
-        Assert.Equal(2, diagnostic.Span.StartLineNumber);
+        Assert.Equal(2, Assert.NotNull(diagnostic.Span).Start.Line);
         Assert.Empty(result.Root.Properties);
         Assert.Equal("P", Assert.IsType<Expr.Resolve>(result.Root.Output[0]).Name);
     }
@@ -1841,7 +1841,7 @@ public class ParserTests
         var split = Parser.ParseSyntax("F # comment\n(x) # comment\n= x\nF(4)");
         var diagnostic = Assert.Single(split.Diagnostics);
         Assert.Equal(DiagnosticCode.UnexpectedToken, diagnostic.Code);
-        Assert.Equal(3, diagnostic.Span.StartLineNumber);
+        Assert.Equal(3, Assert.NotNull(diagnostic.Span).Start.Line);
         Assert.Empty(split.Root.Properties);
         Assert.Equal("F", Assert.IsType<Expr.Resolve>(split.Root.Output[0]).Name);
         Assert.IsType<Expr.Capture>(split.Root.Output[1]);
@@ -1896,13 +1896,13 @@ public class ParserTests
         Assert.False(result.HasErrors);
         Assert.Equal(2, result.Root.Output.Count);
         var spread = Assert.IsType<Expr.SequenceSpread>(result.Root.Output[0]);
-        Assert.Equal(new SourceSpan(1, 1, 1, 2), spread.Span);
-        Assert.Equal(new SourceSpan(1, 2, 1, 2), spread.SpreadMarkerSpan);
+        Assert.Equal(new SourceSpan(1, 1, 1, 3), spread.Span);
+        Assert.Equal(new SourceSpan(1, 2, 1, 3), spread.SpreadMarkerSpan);
 
         // The following `B` is the next expression-list slot, positioned after `A*, `.
         var b = Assert.IsType<Expr.Resolve>(result.Root.Output[1]);
         Assert.Equal("B", b.Name);
-        Assert.Equal(5, b.Span!.StartColumn);
+        Assert.Equal(5, Assert.NotNull(b.Span).Start.Column);
 
         // Chained spread nests one node per written star; each layer's span
         // grows to its own star and each spread-marker span is exactly that star.
@@ -1910,11 +1910,11 @@ public class ParserTests
 
         Assert.False(chained.HasErrors);
         var outer = Assert.IsType<Expr.SequenceSpread>(Assert.Single(chained.Root.Output));
-        Assert.Equal(new SourceSpan(1, 1, 1, 3), outer.Span);
-        Assert.Equal(new SourceSpan(1, 3, 1, 3), outer.SpreadMarkerSpan);
+        Assert.Equal(new SourceSpan(1, 1, 1, 4), outer.Span);
+        Assert.Equal(new SourceSpan(1, 3, 1, 4), outer.SpreadMarkerSpan);
         var inner = Assert.IsType<Expr.SequenceSpread>(outer.Operand);
-        Assert.Equal(new SourceSpan(1, 1, 1, 2), inner.Span);
-        Assert.Equal(new SourceSpan(1, 2, 1, 2), inner.SpreadMarkerSpan);
+        Assert.Equal(new SourceSpan(1, 1, 1, 3), inner.Span);
+        Assert.Equal(new SourceSpan(1, 2, 1, 3), inner.SpreadMarkerSpan);
     }
 
     [Fact]
@@ -1973,7 +1973,7 @@ public class ParserTests
 
         var diagnostic = Assert.Single(result.Diagnostics);
         Assert.Equal(DiagnosticCode.UnexpectedToken, diagnostic.Code);
-        Assert.Equal(2, diagnostic.Span.StartLineNumber);
+        Assert.Equal(2, Assert.NotNull(diagnostic.Span).Start.Line);
         Assert.Empty(result.Root.Properties);
         var grace = Assert.IsType<Expr.Grace>(result.Root.Output[0]);
         Assert.Equal("P", Assert.IsType<Expr.Resolve>(grace.Inner).Name);
@@ -3568,7 +3568,7 @@ public class ParserTests
         Assert.Equal(DiagnosticCode.InvalidOpenTargetList, diagnostic.Code);
         Assert.Contains("Expected an open target after ','", diagnostic.Message);
         // The span points at the dangling comma itself (line 1, column 7).
-        Assert.Equal(new SourceSpan(1, 7, 1, 7), diagnostic.Span);
+        Assert.Equal(new SourceSpan(1, 7, 1, 8), diagnostic.Span);
 
         Assert.Equal("A", Assert.IsType<Expr.Resolve>(Assert.Single(result.Root.Opens)).Name);
         Assert.Empty(result.Root.Output);
@@ -3917,10 +3917,7 @@ public class ParserTests
         var diagnostic = Assert.Single(
             result.Diagnostics,
             d => d.Message.Contains("Invalid open form: 'spread' is not allowed in open declarations"));
-        Assert.Equal(1, diagnostic.Span.StartLineNumber);
-        Assert.Equal(6, diagnostic.Span.StartColumn);
-        Assert.Equal(1, diagnostic.Span.EndLineNumber);
-        Assert.Equal(7, diagnostic.Span.EndColumn);
+        Assert.Equal(new SourceSpan(1, 6, 1, 8), diagnostic.Span);   // `A*`
     }
 
     [Fact]
@@ -4499,7 +4496,7 @@ public class ParserTests
         Assert.Equal(
             "Postfix `*` is the spread marker and is not valid in a binding pattern. Write `*items` to declare a collecting binding.",
             error.Message);
-        Assert.Equal(new SourceSpan(1, 9, 1, 14), error.Span); // covers `items*`
+        Assert.Equal(new SourceSpan(1, 9, 1, 15), error.Span); // covers `items*`
 
         // The rejected spelling never becomes a collecting binding.
         var property = Assert.Single(result.Root.Properties);
@@ -4521,8 +4518,8 @@ public class ParserTests
         var capture = Assert.IsType<CaptureParameterPattern>(Assert.Single(user.ParameterPatterns));
         Assert.Equal(ParameterKind.Collecting, capture.Kind);
         Assert.Equal("*items", capture.DisplayName);
-        Assert.Equal(new SourceSpan(1, 10, 1, 14), capture.Span);
-        Assert.Equal(new SourceSpan(1, 9, 1, 9), capture.CollectMarkerSpan);
+        Assert.Equal(new SourceSpan(1, 10, 1, 15), capture.Span);
+        Assert.Equal(new SourceSpan(1, 9, 1, 10), capture.CollectMarkerSpan);
     }
 
     [Fact]
@@ -4537,7 +4534,7 @@ public class ParserTests
         Assert.Equal(
             "The collect marker `*` must be directly attached to its binding name: write `*items`.",
             error.Message);
-        Assert.Equal(new SourceSpan(1, 9, 1, 15), error.Span); // covers `* items`
+        Assert.Equal(new SourceSpan(1, 9, 1, 16), error.Span); // covers `* items`
 
         var property = Assert.Single(result.Root.Properties);
         var user = Assert.IsType<Algorithm.User>(property.Value);
@@ -4557,7 +4554,7 @@ public class ParserTests
         Assert.Equal(
             "A collecting binding uses exactly one collect marker: write `*items`.",
             error.Message);
-        Assert.Equal(new SourceSpan(1, 9, 1, 15), error.Span); // covers `**items`
+        Assert.Equal(new SourceSpan(1, 9, 1, 16), error.Span); // covers `**items`
 
         var property = Assert.Single(result.Root.Properties);
         var user = Assert.IsType<Algorithm.User>(property.Value);
@@ -4602,8 +4599,8 @@ public class ParserTests
         var capture = Assert.IsType<CaptureParameterPattern>(sequence.Items[1]);
         Assert.Equal("middle", capture.Name);
         Assert.Null(capture.Span); // the helper is synthetic; the property declaration owns the name span
-        Assert.Equal(new SourceSpan(1, 8, 1, 8), capture.CollectMarkerSpan);
-        Assert.Equal(new SourceSpan(1, 9, 1, 14), Assert.Single(middle.DeclarationSpans));
+        Assert.Equal(new SourceSpan(1, 8, 1, 9), capture.CollectMarkerSpan);
+        Assert.Equal(new SourceSpan(1, 9, 1, 15), Assert.Single(middle.DeclarationSpans));
     }
 
     [Theory]
@@ -5232,7 +5229,7 @@ public class ParserTests
         var diag = Assert.Single(result.Diagnostics, d =>
             d.Message.Contains("Collecting bindings are only supported in ordinary explicit parameter lists") &&
             d.Message.Contains("F"));
-        Assert.Equal(2, diag.Span.StartLineNumber);
+        Assert.Equal(2, Assert.NotNull(diag.Span).Start.Line);
     }
 
     [Fact]
@@ -5356,7 +5353,7 @@ public class ParserTests
         var result = Parser.ParseSyntax(source);
         Assert.True(result.HasErrors);
         var diag = Assert.Single(result.Diagnostics, d => d.Message.Contains("Grace is not allowed in conditional branch bodies"));
-        Assert.Equal(2, diag.Span.StartLineNumber);
+        Assert.Equal(2, Assert.NotNull(diag.Span).Start.Line);
     }
 
     [Fact]
@@ -5457,7 +5454,7 @@ public class ParserTests
             d.Message.Contains("same top-level pattern arity") &&
             d.Message.Contains("Expense"));
         // Error span should point to the second branch (line 2)
-        Assert.Equal(2, diag.Span.StartLineNumber);
+        Assert.Equal(2, Assert.NotNull(diag.Span).Start.Line);
     }
 
     [Fact]
@@ -5475,7 +5472,7 @@ public class ParserTests
             d.Message.Contains("Expected 1") &&
             d.Message.Contains("arity 2"));
         // Error span should point to the second branch (line 2)
-        Assert.Equal(2, diag.Span.StartLineNumber);
+        Assert.Equal(2, Assert.NotNull(diag.Span).Start.Line);
     }
 
     [Fact]
@@ -5493,7 +5490,7 @@ public class ParserTests
             d.Message.Contains("same top-level pattern arity") &&
             d.Message.Contains("G"));
         // Error span should point to the third branch (line 3)
-        Assert.Equal(3, diag.Span.StartLineNumber);
+        Assert.Equal(3, Assert.NotNull(diag.Span).Start.Line);
     }
 
     // ── Uniform top-level output arity validation ─────────────────────────
@@ -5573,7 +5570,7 @@ public class ParserTests
             d.Message.Contains("same top-level output arity") &&
             d.Message.Contains("Expense"));
         // Error span should point to the second branch (line 2)
-        Assert.Equal(2, diag.Span.StartLineNumber);
+        Assert.Equal(2, Assert.NotNull(diag.Span).Start.Line);
     }
 
     [Fact]
@@ -5591,7 +5588,7 @@ public class ParserTests
             d.Message.Contains("Expected 1") &&
             d.Message.Contains("output arity 2"));
         // Error span should point to the second branch (line 2)
-        Assert.Equal(2, diag.Span.StartLineNumber);
+        Assert.Equal(2, Assert.NotNull(diag.Span).Start.Line);
     }
 
     [Fact]
@@ -5609,7 +5606,7 @@ public class ParserTests
             d.Message.Contains("same top-level output arity") &&
             d.Message.Contains("G"));
         // Error span should point to the third branch (line 3)
-        Assert.Equal(3, diag.Span.StartLineNumber);
+        Assert.Equal(3, Assert.NotNull(diag.Span).Start.Line);
     }
 
     // ── Old `when` syntax no longer recognized ─────────────────────────────
@@ -5814,9 +5811,9 @@ public class ParserTests
         var result = Parser.ParseSyntax(source);
         Assert.True(result.HasErrors);
         var diag = Assert.Single(result.Diagnostics, d => d.Message.Contains("Duplicate branch pattern"));
-        Assert.Equal(2, diag.Span.StartLineNumber);
-        Assert.Equal(1, diag.Span.StartColumn);
-        Assert.Equal(2, diag.Span.EndLineNumber);
+        Assert.Equal(2, Assert.NotNull(diag.Span).Start.Line);
+        Assert.Equal(1, Assert.NotNull(diag.Span).Start.Column);
+        Assert.Equal(2, Assert.NotNull(diag.Span).End.Line);
     }
 
     [Fact]
@@ -5829,9 +5826,9 @@ public class ParserTests
         var result = Parser.ParseSyntax(source);
         Assert.True(result.HasErrors);
         var diag = Assert.Single(result.Diagnostics, d => d.Message.Contains("Duplicate branch pattern"));
-        Assert.Equal(2, diag.Span.StartLineNumber);
-        Assert.Equal(1, diag.Span.StartColumn);
-        Assert.Equal(2, diag.Span.EndLineNumber);
+        Assert.Equal(2, Assert.NotNull(diag.Span).Start.Line);
+        Assert.Equal(1, Assert.NotNull(diag.Span).Start.Column);
+        Assert.Equal(2, Assert.NotNull(diag.Span).End.Line);
     }
 
     [Fact]
@@ -5875,9 +5872,9 @@ public class ParserTests
         var result = Parser.ParseSyntax(source);
         Assert.True(result.HasErrors);
         var diag = Assert.Single(result.Diagnostics, d => d.Message.Contains("Duplicate branch pattern"));
-        Assert.Equal(2, diag.Span.StartLineNumber);
-        Assert.Equal(1, diag.Span.StartColumn);
-        Assert.Equal(2, diag.Span.EndLineNumber);
+        Assert.Equal(2, Assert.NotNull(diag.Span).Start.Line);
+        Assert.Equal(1, Assert.NotNull(diag.Span).Start.Column);
+        Assert.Equal(2, Assert.NotNull(diag.Span).End.Line);
     }
 
     [Fact]

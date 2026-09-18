@@ -85,7 +85,7 @@ public class ImplicitParameterDiagnosticsTests
         // A receiver-member suggestion is spelled with its receiver.
         Assert.Equal("M.Value", note.SuggestedName);
         Assert.NotNull(note.Span);
-        Assert.Equal(2, note.Span!.StartLineNumber);
+        Assert.Equal(2, Assert.NotNull(note.Span).Start.Line);
 
         Assert.Contains("'Valeu'", message, StringComparison.Ordinal);
         Assert.Contains("Did you mean 'M.Value'?", message, StringComparison.Ordinal);
@@ -103,8 +103,8 @@ public class ImplicitParameterDiagnosticsTests
         Assert.Equal("Math.Pi", note.SuggestedName);
         // The occurrence is the member identifier to the right of the dot.
         Assert.NotNull(note.Span);
-        Assert.Equal(1, note.Span!.StartLineNumber);
-        Assert.Equal(6, note.Span.StartColumn);
+        Assert.Equal(1, Assert.NotNull(note.Span).Start.Line);
+        Assert.Equal(6, Assert.NotNull(note.Span).Start.Column);
 
         Assert.Contains("Did you mean 'Math.Pi'?", message, StringComparison.Ordinal);
     }
@@ -173,8 +173,8 @@ public class ImplicitParameterDiagnosticsTests
         Assert.Equal("Valeu", note.Name);
         Assert.Equal("Value", note.SuggestedName);
         Assert.NotNull(note.Span);
-        Assert.Equal(5, note.Span!.StartLineNumber);
-        Assert.Equal(3, note.Span.StartColumn);
+        Assert.Equal(5, Assert.NotNull(note.Span).Start.Line);
+        Assert.Equal(3, Assert.NotNull(note.Span).Start.Column);
 
         Assert.Equal(
             "Property 'Use' expects 1 parameter, but was called with 0 arguments.\n"
@@ -306,8 +306,8 @@ public class ImplicitParameterDiagnosticsTests
             "Identifier 'alfa' is used in an explicitly parameterized algorithm, but it is not declared in the parameter list.",
             diagnostic.Message,
             StringComparison.Ordinal);
-        Assert.Equal(1, diagnostic.Span.StartLineNumber);
-        Assert.Equal(12, diagnostic.Span.StartColumn);
+        Assert.Equal(1, Assert.NotNull(diagnostic.Span).Start.Line);
+        Assert.Equal(12, Assert.NotNull(diagnostic.Span).Start.Column);
         Assert.DoesNotContain("Did you mean", diagnostic.Message, StringComparison.Ordinal);
     }
 
@@ -757,7 +757,7 @@ public class ImplicitParameterDiagnosticsTests
         // side metadata follows clones even though equality ignores it.
         Assert.Same(provenance, (parameter with { }).InferredProvenance);
         Assert.Same(provenance, (pattern with { }).InferredProvenance);
-        Assert.Same(provenance, Assert.Single((enrichedError with { Span = new SourceSpan(1, 1, 1, 1) }).InferredImplicitParameters!));
+        Assert.Same(provenance, Assert.Single((enrichedError with { Span = new SourceSpan(1, 1, 1, 2) }).InferredImplicitParameters!));
 
         var assembly = typeof(ParameterDeclaration).Assembly;
         Assert.False(assembly.GetType("KatLang.ImplicitParameterProvenance", throwOnError: true)!.IsPublic);
@@ -887,8 +887,8 @@ public class ImplicitParameterDiagnosticsTests
         Assert.Equal("Valeu", note.Name);
         Assert.Equal("Value", note.SuggestedName);
         Assert.NotNull(note.Span);
-        Assert.Equal(4, note.Span!.StartLineNumber);
-        Assert.Equal(3, note.Span.StartColumn);
+        Assert.Equal(4, Assert.NotNull(note.Span).Start.Line);
+        Assert.Equal(3, Assert.NotNull(note.Span).Start.Column);
 
         Assert.Equal(
             "Property 'Helper' expects 1 parameter, but was called with 0 arguments.\n"
@@ -922,8 +922,8 @@ public class ImplicitParameterDiagnosticsTests
         var note = SingleNote(error);
         Assert.Equal("xx", note.Name);
         Assert.NotNull(note.Span);
-        Assert.Equal(1, note.Span!.StartLineNumber);
-        Assert.Equal(5, note.Span!.StartColumn);
+        Assert.Equal(1, Assert.NotNull(note.Span).Start.Line);
+        Assert.Equal(5, Assert.NotNull(note.Span).Start.Column);
     }
 
     [Fact]
@@ -935,6 +935,6 @@ public class ImplicitParameterDiagnosticsTests
         var note = SingleNote(error);
         Assert.Equal("xx", note.Name);
         Assert.NotNull(note.Span);
-        Assert.Equal(5, note.Span!.StartColumn);
+        Assert.Equal(5, Assert.NotNull(note.Span).Start.Column);
     }
 }

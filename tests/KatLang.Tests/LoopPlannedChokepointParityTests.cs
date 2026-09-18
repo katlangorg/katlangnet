@@ -244,7 +244,7 @@ public class LoopPlannedChokepointParityTests
         // limit error unspanned, the call boundaries exempt resource limits from their
         // context frames, and the innermost boundary stamps its own call span.
         Assert.Empty(ContextChain(error));
-        Assert.Equal((1, 22, 1, 36), Span(error));
+        Assert.Equal(new SourceSpan(1, 22, 1, 37), Span(error));
     }
 
     [Theory]
@@ -287,7 +287,7 @@ public class LoopPlannedChokepointParityTests
         // Exactly the generic zero-argument access rule: a rejected enter carries the
         // property's declaration span, which the enclosing boundaries then leave alone.
         Assert.Empty(ContextChain(error));
-        Assert.Equal((2, 5, 2, 5), Span(error));
+        Assert.Equal(new SourceSpan(2, 5, 2, 6), Span(error));
     }
 
     [Fact]
@@ -525,7 +525,7 @@ public class LoopPlannedChokepointParityTests
         if (rejected)
         {
             Assert.IsType<EvalError.EvaluationDepthExceeded>(Innermost(generic.Result.Error));
-            Assert.Equal((2, 5, 2, 5), Span(generic.Result.Error));
+            Assert.Equal(new SourceSpan(2, 5, 2, 6), Span(generic.Result.Error));
         }
         else
         {
@@ -736,7 +736,7 @@ public class LoopPlannedChokepointParityTests
 
         var error = AssertSameDepthBoundary(source, peakDepth);
         Assert.Empty(ContextChain(error));
-        Assert.Equal((2, 9, 2, 29), Span(error));
+        Assert.Equal(new SourceSpan(2, 9, 2, 30), Span(error));
     }
 
     [Fact]

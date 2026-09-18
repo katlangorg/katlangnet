@@ -33,18 +33,16 @@ public class ParenthesizedSequenceDeclarationTests
         string expectedSlice)
     {
         Assert.Equal(DiagnosticSeverity.Error, diagnostic.Severity);
-        Assert.Equal(startLine, diagnostic.Span.StartLineNumber);
-        Assert.Equal(startColumn, diagnostic.Span.StartColumn);
-        Assert.Equal(endLine, diagnostic.Span.EndLineNumber);
-        Assert.Equal(endColumn, diagnostic.Span.EndColumn);
-        Assert.Equal(expectedSlice, SourceSlice(source, diagnostic.Span));
+        var span = Assert.NotNull(diagnostic.Span);
+        Assert.Equal(new SourceSpan(startLine, startColumn, endLine, endColumn), span);
+        Assert.Equal(expectedSlice, SourceSlice(source, span));
     }
 
     private static string SourceSlice(string source, SourceSpan span)
     {
-        Assert.Equal(span.StartLineNumber, span.EndLineNumber);
-        var line = source.Split('\n')[span.StartLineNumber - 1].TrimEnd('\r');
-        return line.Substring(span.StartColumn - 1, span.EndColumn - span.StartColumn + 1);
+        Assert.Equal(span.Start.Line, span.End.Line);
+        var line = source.Split('\n')[span.Start.Line - 1].TrimEnd('\r');
+        return line.Substring(span.Start.Column - 1, span.End.Column - span.Start.Column);
     }
 
     private static void AssertRejected(string source, string expectedMessage)
@@ -79,7 +77,7 @@ public class ParenthesizedSequenceDeclarationTests
     {
         const string source = "M = { public P = 5 }\n(open M\nP)";
         var diagnostic = SingleDiagnostic(source, OpenInParenthesesMessage);
-        AssertSpan(source, diagnostic, 2, 2, 2, 7, "open M");
+        AssertSpan(source, diagnostic, 2, 2, 2, 8, "open M");
     }
 
     [Fact]
@@ -87,7 +85,7 @@ public class ParenthesizedSequenceDeclarationTests
     {
         const string source = "M = { public P = 5 }\nN = { public Q = 1 }\n(open M, N\nP + Q)";
         var diagnostic = SingleDiagnostic(source, OpenInParenthesesMessage);
-        AssertSpan(source, diagnostic, 3, 2, 3, 10, "open M, N");
+        AssertSpan(source, diagnostic, 3, 2, 3, 11, "open M, N");
     }
 
     [Fact]
@@ -129,7 +127,7 @@ public class ParenthesizedSequenceDeclarationTests
     {
         const string source = "(\nA = 5\nA + 1\n)";
         var diagnostic = SingleDiagnostic(source, PropertyInParenthesesMessage);
-        AssertSpan(source, diagnostic, 2, 1, 2, 1, "A");
+        AssertSpan(source, diagnostic, 2, 1, 2, 2, "A");
     }
 
     [Fact]
@@ -159,7 +157,7 @@ public class ParenthesizedSequenceDeclarationTests
     {
         const string source = "(\nA(x) = x + 1\nA(5)\n)";
         var diagnostic = SingleDiagnostic(source, PropertyInParenthesesMessage);
-        AssertSpan(source, diagnostic, 2, 1, 2, 1, "A");
+        AssertSpan(source, diagnostic, 2, 1, 2, 2, "A");
     }
 
     [Fact]
@@ -175,7 +173,7 @@ public class ParenthesizedSequenceDeclarationTests
     {
         const string source = "(\nx, *y = 7, 8\nx\n)";
         var diagnostic = SingleDiagnostic(source, PropertyInParenthesesMessage);
-        AssertSpan(source, diagnostic, 2, 1, 2, 5, "x, *y");
+        AssertSpan(source, diagnostic, 2, 1, 2, 6, "x, *y");
     }
 
     [Fact]

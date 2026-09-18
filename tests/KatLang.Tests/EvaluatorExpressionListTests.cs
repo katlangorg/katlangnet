@@ -489,7 +489,7 @@ public class EvaluatorExpressionListTests
         // one repair message; nothing is silently declared.
         var diagnostic = Assert.Single(SourceProvenance.ExpectFrontEndError(source));
         Assert.Equal(DiagnosticCode.UnexpectedToken, diagnostic.Code);
-        Assert.Equal(2, diagnostic.Span.StartLineNumber);
+        Assert.Equal(2, Assert.NotNull(diagnostic.Span).Start.Line);
         Assert.Contains("A declaration head cannot be assembled across a physical newline", diagnostic.Message, StringComparison.Ordinal);
     }
 

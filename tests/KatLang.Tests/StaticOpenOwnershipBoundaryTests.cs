@@ -21,9 +21,9 @@ public class StaticOpenOwnershipBoundaryTests
         Assert.Equal("Lib", Assert.IsType<Expr.Param>(Assert.Single(inner.Opens)).Name);
         var line = farther.Length == 0 ? 4 : 5;
         var model = SemanticModelBuilder.Build(parsed);
-        var resolution = Assert.IsType<IdentifierResolution>(model.FindResolutionAt(line, 14));
+        var resolution = Assert.IsType<IdentifierResolution>(model.FindResolutionAt(new SourcePosition(line, 14)));
         Assert.Equal(IdentifierClassification.ImplicitParameterReference, resolution.Classification);
-        Assert.Null(model.FindPropertyAt(line, 14));
+        Assert.Null(model.FindPropertyAt(new SourcePosition(line, 14)));
         Assert.Null(resolution.ResolvedProperty);
     }
 
@@ -34,9 +34,9 @@ public class StaticOpenOwnershipBoundaryTests
         var parsed = SourceProvenance.ParseValid(source);
         Assert.Equal(["Q", "X"], parsed.Root.Params);
         var model = SemanticModelBuilder.Build(parsed.Parsed);
-        var resolution = Assert.IsType<IdentifierResolution>(model.FindResolutionAt(5, 14));
+        var resolution = Assert.IsType<IdentifierResolution>(model.FindResolutionAt(new SourcePosition(5, 14)));
         Assert.Equal(IdentifierClassification.OpenTarget, resolution.Classification);
-        Assert.Equal(new SourceSpan(3, 5, 3, 5), resolution.ResolvedDeclaration!.Span);
+        Assert.Equal(new SourceSpan(3, 5, 3, 6), resolution.ResolvedDeclaration!.Span);
         Assert.Equal(KatLangErrorCode.UnresolvedImplicitParams,
             Assert.Single(Assert.IsType<RunResult.EvalFailure>(KatLangEngine.Run(source)).Errors).Code);
 
@@ -65,26 +65,26 @@ public class StaticOpenOwnershipBoundaryTests
         var parsed = Parser.Parse(source);
         var error = Assert.Single(parsed.Diagnostics);
         Assert.Equal(DiagnosticCode.OpenTargetIsParameter, error.Code);
-        Assert.Equal(new SourceSpan(3, 10, 3, 13), error.Span);
+        Assert.Equal(new SourceSpan(3, 10, 3, 14), error.Span);
         Assert.Contains("Cannot open 'Root.Sub.Leaf'", error.Message);
         var model = SemanticModelBuilder.Build(parsed);
-        var head = Assert.IsType<IdentifierResolution>(model.FindResolutionAt(3, 13));
+        var head = Assert.IsType<IdentifierResolution>(model.FindResolutionAt(new SourcePosition(3, 13)));
         Assert.Equal(OccurrenceKind.OpenTargetReference, head.Occurrence.Kind);
-        Assert.Equal(new SourceSpan(2, 3, 2, 6), head.ResolvedDeclaration!.Span);
+        Assert.Equal(new SourceSpan(2, 3, 2, 7), head.ResolvedDeclaration!.Span);
         foreach (var column in new[] { 10, 14 })
         {
-            var member = Assert.IsType<IdentifierResolution>(model.FindResolutionAt(4, column));
+            var member = Assert.IsType<IdentifierResolution>(model.FindResolutionAt(new SourcePosition(4, column)));
             Assert.Equal(OccurrenceKind.OpenTargetMemberReference, member.Occurrence.Kind);
             Assert.Equal(IdentifierClassification.Unresolved, member.Classification);
             Assert.Null(member.ResolvedDeclaration);
-            Assert.Null(model.FindPropertyAt(4, column));
+            Assert.Null(model.FindPropertyAt(new SourcePosition(4, column)));
         }
     }
 
     [Fact]
     public void SharedFamilyOpens_AreClassifiedInEachCapturedOwnerContext()
     {
-        var head = new Expr.Resolve("Lib") { Span = new SourceSpan(2, 10, 2, 12) };
+        var head = new Expr.Resolve("Lib") { Span = new SourceSpan(2, 10, 2, 13) };
         var family = new Algorithm.Conditional(null, [head, head],
             [new CondBranch(new Pattern.Bind("n"), new Algorithm.User(null, [], [], [], [new Expr.Num(1)]))]);
         var lib = new Algorithm.User(null, [], [], [new Property("X", new Algorithm.User(null, [], [], [], [new Expr.Num(7)]), true)], []);
@@ -202,7 +202,7 @@ public class StaticOpenOwnershipBoundaryTests
         var parsed = await Parser.ParseAsync(source, options);
         Assert.Equal(DiagnosticCode.OpenTargetIsParameter, Assert.Single(parsed.Diagnostics).Code);
         var model = SemanticModelBuilder.Build(parsed);
-        Assert.Null(model.FindResolutionAt(2, 10));
+        Assert.Null(model.FindResolutionAt(new SourcePosition(2, 10)));
         Assert.IsType<RunResult.ParseFailure>(await KatLangEngine.RunAsync(source, options));
     }
 }

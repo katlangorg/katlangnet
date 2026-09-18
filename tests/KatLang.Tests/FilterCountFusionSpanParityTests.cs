@@ -63,10 +63,7 @@ public class FilterCountFusionSpanParityTests
         string Kind,
         string Message,
         IReadOnlyList<string> ContextChain,
-        int? StartLine,
-        int? StartColumn,
-        int? EndLine,
-        int? EndColumn);
+        SourceSpan? Span);
 
     private static Diagnostic Describe(EvalError error)
     {
@@ -75,10 +72,7 @@ public class FilterCountFusionSpanParityTests
             Innermost(error).GetType().Name,
             rendered.Message,
             ContextChain(error),
-            rendered.StartLine,
-            rendered.StartColumn,
-            rendered.EndLine,
-            rendered.EndColumn);
+            rendered.Span);
     }
 
     private static void AssertSameDiagnostic(Diagnostic generic, Diagnostic optimized)
@@ -86,9 +80,7 @@ public class FilterCountFusionSpanParityTests
         Assert.Equal(generic.Kind, optimized.Kind);
         Assert.Equal(generic.ContextChain, optimized.ContextChain);
         Assert.Equal(generic.Message, optimized.Message);
-        Assert.Equal(
-            (generic.StartLine, generic.StartColumn, generic.EndLine, generic.EndColumn),
-            (optimized.StartLine, optimized.StartColumn, optimized.EndLine, optimized.EndColumn));
+        Assert.Equal(generic.Span, optimized.Span);
     }
 
     /// <summary>
@@ -129,10 +121,7 @@ public class FilterCountFusionSpanParityTests
         var diagnostic = AssertFusionTransparentFailure(source);
 
         Assert.Equal(nameof(EvalError.BadArity), diagnostic.Kind);
-        Assert.Equal(2, diagnostic.StartLine);
-        Assert.Equal(7, diagnostic.StartColumn);
-        Assert.Equal(2, diagnostic.EndLine);
-        Assert.Equal(28, diagnostic.EndColumn);
+        Assert.Equal(new SourceSpan(2, 7, 2, 29), diagnostic.Span);
     }
 
     // ── All three recognized syntax forms x both error classes ──────────────
@@ -172,11 +161,11 @@ public class FilterCountFusionSpanParityTests
         // The failure is attributed to the LAST line's filter expression, and never
         // starts at the enclosing `count(` for a `count(...)`-outermost form.
         var lines = source.Split('\n');
-        Assert.Equal(lines.Length, diagnostic.StartLine);
-        Assert.NotNull(diagnostic.StartColumn);
+        var span = Assert.NotNull(diagnostic.Span);
+        Assert.Equal(lines.Length, span.Start.Line);
         var lastLine = lines[^1];
         var filterStart = lastLine.StartsWith("count(", StringComparison.Ordinal) ? 7 : 1;
-        Assert.Equal(filterStart, diagnostic.StartColumn);
+        Assert.Equal(filterStart, span.Start.Column);
     }
 
     /// <summary>
@@ -197,8 +186,9 @@ public class FilterCountFusionSpanParityTests
         var diagnostic = AssertFusionTransparentFailure(source, expectFusion: false);
 
         Assert.Equal(nameof(EvalError.BadArity), diagnostic.Kind);
-        Assert.Equal(3, diagnostic.StartLine);
-        Assert.Equal(7, diagnostic.StartColumn);
+        var span = Assert.NotNull(diagnostic.Span);
+        Assert.Equal(3, span.Start.Line);
+        Assert.Equal(7, span.Start.Column);
     }
 
     public static TheoryData<string, string, string> SpannedPredicateFailures()
@@ -231,9 +221,10 @@ public class FilterCountFusionSpanParityTests
 
         // The inner `x / 0` operand is on line 1 (`F(x) = x / 0`, columns 8..12), so
         // neither the filter span nor the count span may replace it.
-        Assert.Equal(1, diagnostic.StartLine);
-        Assert.Equal(8, diagnostic.StartColumn);
-        Assert.Equal(1, diagnostic.EndLine);
+        var span = Assert.NotNull(diagnostic.Span);
+        Assert.Equal(1, span.Start.Line);
+        Assert.Equal(8, span.Start.Column);
+        Assert.Equal(1, span.End.Line);
     }
 
     // ── A later outer evaluator layer must not re-span the failure ───────────
@@ -256,10 +247,7 @@ public class FilterCountFusionSpanParityTests
 
         // `Total = count(filter(range(1, 3), F)) + 100`: `count(` starts at column 9,
         // so the elided `filter(...)` starts at column 15 and ends at column 36.
-        Assert.Equal(2, diagnostic.StartLine);
-        Assert.Equal(15, diagnostic.StartColumn);
-        Assert.Equal(2, diagnostic.EndLine);
-        Assert.Equal(36, diagnostic.EndColumn);
+        Assert.Equal(new SourceSpan(2, 15, 2, 37), diagnostic.Span);
     }
 
     // ── Preserved behavior: values, callback calls, fusion eligibility ───────

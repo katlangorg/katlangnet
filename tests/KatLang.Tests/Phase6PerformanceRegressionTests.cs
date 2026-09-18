@@ -22,9 +22,9 @@ public class Phase6PerformanceRegressionTests
             .ToList();
         Assert.Collection(
             duplicates,
-            diagnostic => Assert.Equal((5, 1), (diagnostic.Span.StartLineNumber, diagnostic.Span.StartColumn)),
-            diagnostic => Assert.Equal((6, 1), (diagnostic.Span.StartLineNumber, diagnostic.Span.StartColumn)),
-            diagnostic => Assert.Equal((7, 1), (diagnostic.Span.StartLineNumber, diagnostic.Span.StartColumn)));
+            diagnostic => Assert.Equal((5, 1), (Assert.NotNull(diagnostic.Span).Start.Line, Assert.NotNull(diagnostic.Span).Start.Column)),
+            diagnostic => Assert.Equal((6, 1), (Assert.NotNull(diagnostic.Span).Start.Line, Assert.NotNull(diagnostic.Span).Start.Column)),
+            diagnostic => Assert.Equal((7, 1), (Assert.NotNull(diagnostic.Span).Start.Line, Assert.NotNull(diagnostic.Span).Start.Column)));
 
         Assert.Equal(
             ["A", "a", "$deconstruct$0", "x", "y", "$deconstruct$1", "A", "z", "y", "F", "F"],
