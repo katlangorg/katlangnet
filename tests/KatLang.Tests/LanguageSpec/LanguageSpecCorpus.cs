@@ -1739,7 +1739,7 @@ public static class LanguageSpecCorpus
                 new SpecProbe("Lib = {\n    public Sub = {\n        5\n    }\n}\nF(a, b) = a * 100 + b\nLib.Sub.F(2)", "ok raw=502 n=1"),
             ],
             IncludeInGeneratorPrompt = true,
-            Explanation = "When a receiver has no such member, the dot edge falls back to the extension call with the receiver as the leading argument, and the fallbacks compose along a chain: the number `3` has no structural `A`, so `3.A` is `A(3)`; that result has no `B`, so `3.A.B` is `B(A(3))`, the same as `B(3.A)`. The free-call/dot-call law `receiver.F(args...) = F(receiver, args...)` is untouched wherever structural lookup does not apply.",
+            Explanation = "When a receiver has no such member, the dot edge falls back to the extension call with the receiver as the leading argument, and the fallbacks compose along a chain: the number `3` has no structural `A`, so `3.A` is `A(3)`; that result has no `B`, so `3.A.B` is `B(A(3))`, the same as `B(3.A)`. The free-call/dot-call law `receiver.F(a, b) = F(receiver, a, b)` is untouched wherever structural lookup does not apply.",
         },
         new()
         {

@@ -1,4 +1,5 @@
 using System.Text;
+using System.Text.RegularExpressions;
 
 namespace KatLang.Tests.LanguageSpec;
 
@@ -106,6 +107,11 @@ public class LanguageSpecArtifactsGeneratorPromptTests
         // no ellipsis collecting bindings and no reserved call/property spread form.
         Assert.DoesNotContain("items...", content, StringComparison.Ordinal);
         Assert.DoesNotContain("...items", content, StringComparison.Ordinal);
+        // Any name directly joined to an ellipsis reads as the former binding whatever the
+        // name (a corpus explanation once wrote the dot-call law as `F(args...)`), so the
+        // check is by shape, not by the one spelling `items`.
+        Assert.Empty(Regex.Matches(content, @"[A-Za-z_]\.\.\."));
+        Assert.Empty(Regex.Matches(content, @"\.\.\.[A-Za-z_]"));
         Assert.DoesNotContain("spread(items)", content, StringComparison.Ordinal);
         Assert.DoesNotContain("items.spread", content, StringComparison.Ordinal);
         Assert.DoesNotContain(".spread", content, StringComparison.Ordinal);
