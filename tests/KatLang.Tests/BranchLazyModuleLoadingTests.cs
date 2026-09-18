@@ -1288,12 +1288,12 @@ public class BranchLazyModuleLoadingTests
                 System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!.Invoke(loader, args)!;
 
         using var tokenSource = new CancellationTokenSource();
-        var outer = Enter("EnterMaterializationContext", new List<Diagnostic>(), 7, tokenSource.Token);
+        var outer = Enter("EnterMaterializationContext", new List<Diagnostic>(), 7, null!, tokenSource.Token);
         var outerContext = loader.WalkContext;
         var copied = (IDisposable)System.Runtime.CompilerServices.RuntimeHelpers.GetObjectValue(outer);
         Assert.Throws<OperationCanceledException>((Action)(() =>
         {
-            using var inner = Enter("EnterNestedTraversal", 19);
+            using var inner = Enter("EnterNestedTraversal", 19, new SourceSpan(3, 1, 3, 4));
             var innerContext = loader.WalkContext;
             Assert.Throws<InvalidOperationException>(() => copied.Dispose());
             Assert.Equal(innerContext, loader.WalkContext);
@@ -1302,7 +1302,7 @@ public class BranchLazyModuleLoadingTests
         Assert.Equal(outerContext, loader.WalkContext);
         outer.Dispose();
         Assert.Equal(original, loader.WalkContext);
-        using (Enter("EnterMaterializationContext", new List<Diagnostic>(), 23, tokenSource.Token))
+        using (Enter("EnterMaterializationContext", new List<Diagnostic>(), 23, new SourceSpan(5, 1, 5, 2), tokenSource.Token))
         {
             var later = loader.WalkContext;
             Assert.Throws<InvalidOperationException>(() => copied.Dispose());
@@ -1323,10 +1323,11 @@ public class BranchLazyModuleLoadingTests
     /// </summary>
     private static void AssertWalkContextAtElaborationDefaults(ParseResult parsed, DeferredModuleRegion region)
     {
-        var (sink, nestedTraversalBase, cancellationToken) = region.Loader.WalkContext;
+        var (sink, nestedTraversalBase, cancellationToken, importSite) = region.Loader.WalkContext;
         Assert.Same(parsed.Diagnostics, sink);
         Assert.Equal(0, nestedTraversalBase);
         Assert.Equal(region.Loader.SourceProcessingCancellationToken, cancellationToken);
+        Assert.Null(importSite);
     }
 
     [Fact]

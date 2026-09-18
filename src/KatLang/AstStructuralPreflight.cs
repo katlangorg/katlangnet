@@ -237,13 +237,13 @@ internal static class AstStructuralPreflight
             if (heights.TryGetValue(child, out var childHeight))
             {
                 if (childHeight == OnStack)
-                    return new AstStructuralRejection(AstStructuralViolation.CycleDetected, SpanOf(child));
+                    return new AstStructuralRejection(AstStructuralViolation.CycleDetected, SpanOf(child, frames, frameCount));
 
                 // Completed shared node: the deepest path through THIS occurrence is the
                 // current weighted path plus the memoized weighted height — judged
                 // without re-walking the shared subtree.
                 if (pathWeight + transitionWeight + childHeight > maxDepth)
-                    return new AstStructuralRejection(AstStructuralViolation.DepthExceeded, SpanOf(child));
+                    return new AstStructuralRejection(AstStructuralViolation.DepthExceeded, SpanOf(child, frames, frameCount));
 
                 var childHeightAtParent = transitionWeight + childHeight;
                 if (childHeightAtParent > frame.MaxChildHeight)
@@ -253,7 +253,7 @@ internal static class AstStructuralPreflight
 
             var childWeight = NodeWeight(child, profile);
             if (pathWeight + transitionWeight + childWeight > maxDepth)
-                return new AstStructuralRejection(AstStructuralViolation.DepthExceeded, SpanOf(child));
+                return new AstStructuralRejection(AstStructuralViolation.DepthExceeded, SpanOf(child, frames, frameCount));
 
             heights[child] = OnStack;
             if (frameCount == frames.Length)
@@ -429,13 +429,20 @@ internal static class AstStructuralPreflight
     /// ASTs, so a cycle keeps its own accurate diagnostic instead of being mislabeled
     /// as a depth violation.
     /// </summary>
-    internal static Diagnostic ToParseDiagnostic(AstStructuralRejection rejection, int limit)
+    /// <summary>
+    /// The rejection as a parse diagnostic, positioned at the rejection's span — the
+    /// crossing node's own, or its nearest positioned ancestor — otherwise at
+    /// <paramref name="importSite"/> (the site, in the current document, of the module
+    /// content a spanless tree belongs to; see <c>DeferredModuleRegion.ImportSite</c>), and
+    /// only then at the established sentinel.
+    /// </summary>
+    internal static Diagnostic ToParseDiagnostic(AstStructuralRejection rejection, int limit, SourceSpan? importSite = null)
         => new(
             rejection.Kind == AstStructuralViolation.CycleDetected
                 ? ParseCycleDiagnosticMessage
                 : ParseDepthDiagnosticMessage(limit),
             DiagnosticSeverity.Error,
-            rejection.Span ?? new SourceSpan(1, 1, 1, 1))
+            rejection.Span ?? importSite ?? new SourceSpan(1, 1, 1, 1))
         {
             Code = rejection.Kind == AstStructuralViolation.CycleDetected
                 ? DiagnosticCode.AstCycleDetected
@@ -462,6 +469,28 @@ internal static class AstStructuralPreflight
     }
 
     private static SourceSpan? SpanOf(object node) => (node as Expr)?.Span;
+
+    /// <summary>
+    /// The span a rejection at <paramref name="node"/> is positioned at: the node's own, or
+    /// — when it has none — the nearest enclosing span on the current root-to-node path.
+    /// The one-coordinate-space rule makes this the local demand: a node inside a spliced
+    /// module carries no location (the module is its locationless import view), and the
+    /// nearest positioned ancestor is the load site or an expression of the current
+    /// document that reaches it, never a foreign coordinate.
+    /// </summary>
+    private static SourceSpan? SpanOf(object node, Frame[] frames, int frameCount)
+    {
+        if (SpanOf(node) is { } own)
+            return own;
+
+        for (var index = frameCount - 1; index >= 0; index--)
+        {
+            if (SpanOf(frames[index].Node) is { } enclosing)
+                return enclosing;
+        }
+
+        return null;
+    }
 
     /// <summary>
     /// Enumerates the recursively reachable children of one AST node by index, in a

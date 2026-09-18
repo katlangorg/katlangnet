@@ -55,7 +55,7 @@ namespace KatLang;
 /// the complete pipeline, including an in-memory downloader completing
 /// synchronously exactly as it would here.</para>
 /// </summary>
-internal sealed class ModuleLoader
+internal sealed partial class ModuleLoader
 {
     private readonly Func<string, CancellationToken, ValueTask<string>> _downloadCode;
     private readonly CancellationToken _sourceProcessingCancellationToken;
@@ -249,14 +249,28 @@ internal sealed class ModuleLoader
     /// parallel one), so this stays a plain field across await boundaries.
     /// </summary>
     private int _nestedTraversalBase;
+
+    /// <summary>
+    /// The IMPORT SITE of the module content the walk is currently inside: the span, in
+    /// the CURRENT document, of the load directive through which that content was demanded
+    /// (the outermost one for a chain of nested loads), or null while the walk is over the
+    /// document's own text. Module content carries no source locations of its own (see
+    /// <see cref="ToImportView"/>), so every diagnostic the loader raises for a load written
+    /// INSIDE a module — a failed fetch, a cycle, a policy rejection, a nested parse failure —
+    /// is positioned here, at the site the current document wrote; a load written in the
+    /// document keeps its own span. Part of the swappable walk context: a deferred region
+    /// records the site its body was reached under and its materialization restores it.
+    /// </summary>
+    private SourceSpan? _importSite;
     private StateScopeStack _walkContextScopes;
 
     /// <summary>
-    /// The loader's swappable WALK CONTEXT: the three fields a nested walk temporarily
+    /// The loader's swappable WALK CONTEXT: the four fields a nested walk temporarily
     /// changes — the diagnostics sink (<see cref="_sink"/>), the live traversal base
-    /// (<see cref="_nestedTraversalBase"/>), and the active cancellation token
-    /// (<see cref="_cancellationToken"/>). Constructing the scope captures the current
-    /// values; the entry helper then installs the temporary ones; <see cref="Dispose"/>
+    /// (<see cref="_nestedTraversalBase"/>), the active cancellation token
+    /// (<see cref="_cancellationToken"/>), and the import site (<see cref="_importSite"/>).
+    /// Constructing the scope captures the current values; the entry helper then installs
+    /// the temporary ones; <see cref="Dispose"/>
     /// restores exactly the captured values — always from a <c>using</c>, so restoration
     /// runs on the ordinary return, on a structured rejection, on cancellation, and on a
     /// downloader exception alike, and no field can be left pointing at a finished walk's
@@ -270,6 +284,7 @@ internal sealed class ModuleLoader
         private readonly List<Diagnostic> _sink;
         private readonly int _nestedTraversalBase;
         private readonly CancellationToken _cancellationToken;
+        private readonly SourceSpan? _importSite;
         private readonly StateScopeStack.Ticket _ticket;
 
         /// <summary>Captures <paramref name="loader"/>'s current walk context.</summary>
@@ -279,6 +294,7 @@ internal sealed class ModuleLoader
             _sink = loader._sink;
             _nestedTraversalBase = loader._nestedTraversalBase;
             _cancellationToken = loader._cancellationToken;
+            _importSite = loader._importSite;
             _ticket = loader._walkContextScopes.Enter();
         }
 
@@ -288,6 +304,7 @@ internal sealed class ModuleLoader
                 return;
 
             _loader._walkContextScopes.Exit(_ticket);
+            _loader._importSite = _importSite;
             _loader._cancellationToken = _cancellationToken;
             _loader._nestedTraversalBase = _nestedTraversalBase;
             _loader._sink = _sink;
@@ -298,28 +315,34 @@ internal sealed class ModuleLoader
     /// Enters the walk context of a deferred-region materialization
     /// (<see cref="LoadDeferredRegionAsync"/>): diagnostics go to the materialization's own
     /// list, traversal depth is judged from the base the eager walk recorded for the
-    /// region, and every walk check and the downloader observe the linked token.
+    /// region, loads inside the body are positioned at the import site the eager walk
+    /// recorded for it, and every walk check and the downloader observe the linked token.
     /// </summary>
     private WalkContextScope EnterMaterializationContext(
         List<Diagnostic> sink,
         int nestedTraversalBase,
+        SourceSpan? importSite,
         CancellationToken cancellationToken)
     {
         var scope = new WalkContextScope(this);
         _sink = sink;
         _nestedTraversalBase = nestedTraversalBase;
+        _importSite = importSite;
         _cancellationToken = cancellationToken;
         return scope;
     }
 
     /// <summary>
-    /// Enters the walk context of a fetched nested module's elaboration: only the live
-    /// traversal base changes; the sink and the token stay those of the enclosing walk.
+    /// Enters the walk context of a fetched nested module's elaboration: the live
+    /// traversal base and the import site change (every load written inside the module is
+    /// positioned at the site the current document wrote for it); the sink and the token
+    /// stay those of the enclosing walk.
     /// </summary>
-    private WalkContextScope EnterNestedTraversal(int nestedTraversalBase)
+    private WalkContextScope EnterNestedTraversal(int nestedTraversalBase, SourceSpan? importSite)
     {
         var scope = new WalkContextScope(this);
         _nestedTraversalBase = nestedTraversalBase;
+        _importSite = importSite;
         return scope;
     }
 
@@ -338,10 +361,11 @@ internal sealed class ModuleLoader
 
     /// <summary>
     /// The walk context (<see cref="WalkContextScope"/>) exposed internally for scope-restoration
-    /// regression tests: the sink by identity, the live traversal base, and the active token.
+    /// regression tests: the sink by identity, the live traversal base, the active token, and
+    /// the import site.
     /// </summary>
-    internal (object Sink, int NestedTraversalBase, CancellationToken CancellationToken) WalkContext
-        => (_sink, _nestedTraversalBase, _cancellationToken);
+    internal (object Sink, int NestedTraversalBase, CancellationToken CancellationToken, SourceSpan? ImportSite) WalkContext
+        => (_sink, _nestedTraversalBase, _cancellationToken, _importSite);
 
     /// <summary>
     /// Creates a new ModuleLoader.
@@ -917,7 +941,7 @@ internal sealed class ModuleLoader
             var rawBody = branch.Body.DeferredRegion is null ? branch.Body : branch.Body with { DeferredRegion = null };
             var placeholder = rawBody with
             {
-                DeferredRegion = new DeferredModuleRegion(this, rawBody, context, depth + 1, _nestedTraversalBase),
+                DeferredRegion = new DeferredModuleRegion(this, rawBody, context, depth + 1, _nestedTraversalBase, _importSite),
             };
             DeferredRegionCount++;
             branches.Add(new CondBranch(branch.Pattern, placeholder));
@@ -968,7 +992,7 @@ internal sealed class ModuleLoader
             // Restore the walk context before clearing the walk memos, and before disposing
             // the linked source, preserving the original unwind order.
             using var materialization = EnterMaterializationContext(
-                diagnostics, region.NestedTraversalBase, linkedCancellation.Token);
+                diagnostics, region.NestedTraversalBase, region.ImportSite, linkedCancellation.Token);
             Algorithm loaded;
             try
             {
@@ -990,7 +1014,7 @@ internal sealed class ModuleLoader
                     AstConsumerProfile.FullyRecursive) is { } compositionRejection)
             {
                 ReportSourceProcessingDiagnostic(AstStructuralPreflight.ToParseDiagnostic(
-                    compositionRejection, MaxTraversalDepth));
+                    compositionRejection, MaxTraversalDepth, _importSite));
                 return loaded;
             }
 
@@ -1000,12 +1024,12 @@ internal sealed class ModuleLoader
                     AstConsumerProfile.FullyRecursive) is { } elaborationRejection)
             {
                 _sink.Add(AstStructuralPreflight.ToParseDiagnostic(
-                    elaborationRejection, EvaluationLimits.MaxSupportedAstDepth));
+                    elaborationRejection, EvaluationLimits.MaxSupportedAstDepth, _importSite));
                 return loaded;
             }
 
             if (LoadElaborationGuard.TryFindFirstUnresolvedLoad(loaded, out _))
-                _sink.Add(LoadElaborationGuard.CreatePostElaborationInvariantDiagnostic(loaded));
+                _sink.Add(LoadElaborationGuard.CreatePostElaborationInvariantDiagnostic(loaded, _importSite));
 
             return loaded;
         }
@@ -1304,52 +1328,63 @@ internal sealed class ModuleLoader
 
     // ── load processing ────────────────────────────────────────────────────────────────
 
+    /// <summary>
+    /// Elaborates one load call. <paramref name="span"/> is the call's OWN span — the load
+    /// site in the current document, or null for a load written inside a module (its import
+    /// view carries no locations) or in a spanless host tree — and stays the span of the node
+    /// spliced or substituted in its place, so a cached module view is never stamped with a
+    /// caller position. Every diagnostic is positioned at the SITE: the call's own span when
+    /// the document wrote it, otherwise the import site of the module content it lies in.
+    /// </summary>
     private async ValueTask<Expr> ProcessLoadAsync(OutputBundle args, LoadContext context, SourceSpan? span, int depth)
     {
+        var site = span ?? _importSite;
+
         // 1. Position check: load only allowed in property definitions and open lists
         if (context == LoadContext.RuntimeExpr)
         {
-            ReportError(DiagnosticCode.InvalidLoadDirective, "load not allowed in runtime expression.", span);
+            ReportError(DiagnosticCode.InvalidLoadDirective, "load not allowed in runtime expression.", site);
             return new Expr.Num(0) { Span = span };
         }
 
         // 2. Extract URL: must be exactly 1 argument, must be a string literal
-        var url = ExtractLoadUrl(args, span);
+        var url = ExtractLoadUrl(args, site);
         if (url is null)
             return new Expr.Num(0) { Span = span };
 
         // 3. Domain check
-        if (!IsAllowedUrl(url, span))
+        if (!IsAllowedUrl(url, site))
             return new Expr.Num(0) { Span = span };
 
         // 4. Cycle detection
         var normalized = NormalizeUrl(url);
         if (_inProgress.Contains(normalized))
         {
-            ReportError(DiagnosticCode.LoadCycle, $"load cycle detected: {normalized}", span);
+            ReportError(DiagnosticCode.LoadCycle, $"load cycle detected: {normalized}", site);
             return new Expr.Num(0) { Span = span };
         }
 
         // 5. Cache check — an already-elaborated module splices without re-traversal
         // or re-download, so it charges no cumulative traversal depth and never
-        // suspends.
+        // suspends. The cached instance is ONE caller-independent import view: the
+        // splice stamps only the wrapper node with this site's span.
         if (_cache.TryGetValue(normalized, out var cached))
             return new Expr.AlgorithmExpr(cached) { Span = span };
 
         // 6. Fetch + parse + splice — the loader's one awaiting path.
-        return await FetchAndSpliceAsync(normalized, span, depth).ConfigureAwait(false);
+        return await FetchAndSpliceAsync(normalized, span, site, depth).ConfigureAwait(false);
     }
 
     /// <summary>
     /// Extracts a URL string from load arguments.
     /// Must be exactly one argument that is a string literal.
     /// </summary>
-    private string? ExtractLoadUrl(OutputBundle args, SourceSpan? span)
+    private string? ExtractLoadUrl(OutputBundle args, SourceSpan? site)
     {
         // load must have exactly 1 argument slot (the URL)
         if (args.Count != 1)
         {
-            ReportError(DiagnosticCode.InvalidLoadDirective, "load requires exactly 1 argument (a URL string literal).", span);
+            ReportError(DiagnosticCode.InvalidLoadDirective, "load requires exactly 1 argument (a URL string literal).", site);
             return null;
         }
 
@@ -1360,7 +1395,7 @@ internal sealed class ModuleLoader
             return url;
 
         // Not a literal — could be Resolve("url"), a variable, or any other expression
-        ReportError(DiagnosticCode.InvalidLoadDirective, "load URL must be a literal (non-dynamic).", span);
+        ReportError(DiagnosticCode.InvalidLoadDirective, "load URL must be a literal (non-dynamic).", site);
         return null;
     }
 
@@ -1369,17 +1404,17 @@ internal sealed class ModuleLoader
     /// Transport-level redirects happen, if at all, inside the host downloader and are not
     /// recursively visible to this policy check.
     /// </summary>
-    private bool IsAllowedUrl(string url, SourceSpan? span)
+    private bool IsAllowedUrl(string url, SourceSpan? site)
     {
         if (!Uri.TryCreate(url, UriKind.Absolute, out var uri))
         {
-            ReportError(DiagnosticCode.InvalidLoadUrl, $"load: invalid URL '{url}'.", span);
+            ReportError(DiagnosticCode.InvalidLoadUrl, $"load: invalid URL '{url}'.", site);
             return false;
         }
 
         if (uri.Scheme != "https")
         {
-            ReportError(DiagnosticCode.InvalidLoadUrl, $"load: only HTTPS URLs are allowed (got '{uri.Scheme}').", span);
+            ReportError(DiagnosticCode.InvalidLoadUrl, $"load: only HTTPS URLs are allowed (got '{uri.Scheme}').", site);
             return false;
         }
 
@@ -1402,7 +1437,7 @@ internal sealed class ModuleLoader
                 return true;
         }
 
-        ReportError(DiagnosticCode.InvalidLoadUrl, $"load: domain not allowed: '{host}'.", span);
+        ReportError(DiagnosticCode.InvalidLoadUrl, $"load: domain not allowed: '{host}'.", site);
         return false;
     }
 
@@ -1423,8 +1458,12 @@ internal sealed class ModuleLoader
     /// <see cref="MaxTraversalDepth"/>). An incomplete download suspends HERE — the
     /// method resumes after the await with all validation, budget, and splice steps
     /// continuing exactly once; the downloader is never re-invoked for this fetch.
+    /// <paramref name="span"/> is the load call's own span (the spliced node's span);
+    /// <paramref name="site"/> is where every diagnostic is positioned (see
+    /// <see cref="ProcessLoadAsync"/>) and the import site of everything inside the
+    /// fetched module.
     /// </summary>
-    private async ValueTask<Expr> FetchAndSpliceAsync(string normalizedUrl, SourceSpan? span, int depth)
+    private async ValueTask<Expr> FetchAndSpliceAsync(string normalizedUrl, SourceSpan? span, SourceSpan? site, int depth)
     {
         // Import-depth ceiling: descend one level, or turn a would-be host stack overflow into a
         // structured diagnostic. Only reached on a cache MISS, so it bounds the true chain depth.
@@ -1432,7 +1471,7 @@ internal sealed class ModuleLoader
         if (!_budget.TryEnterModule())
         {
             ReportSourceProcessingDiagnostic(SourceProcessingDiagnostics.ModuleImportDepthExceeded(
-                normalizedUrl, _budget.CurrentDepth + 1, _budget.MaxModuleDepth, span));
+                normalizedUrl, _budget.CurrentDepth + 1, _budget.MaxModuleDepth, site));
             return new Expr.Num(0) { Span = span };
         }
 
@@ -1448,7 +1487,7 @@ internal sealed class ModuleLoader
             if (!_budget.CanReserveModule())
             {
                 ReportSourceProcessingDiagnostic(SourceProcessingDiagnostics.ModuleCountExceeded(
-                    normalizedUrl, _budget.ModuleCount + 1, _budget.MaxModuleCount, span));
+                    normalizedUrl, _budget.ModuleCount + 1, _budget.MaxModuleCount, site));
                 return new Expr.Num(0) { Span = span };
             }
 
@@ -1465,7 +1504,7 @@ internal sealed class ModuleLoader
             if (nestedAllowance < 1 || parseStackDebt > Parser.MaxNestingDepth - MinNestedParseBudget)
             {
                 ReportSourceProcessingDiagnostic(SourceProcessingDiagnostics.ModuleNestingTooDeep(
-                    normalizedUrl, MaxTraversalDepth, span));
+                    normalizedUrl, MaxTraversalDepth, site));
                 return new Expr.Num(0) { Span = span };
             }
 
@@ -1498,13 +1537,13 @@ internal sealed class ModuleLoader
                 // exception while reacting to it. Only a still-active token permits a fetch
                 // diagnostic (including downloader-owned cancellation/timeout exceptions).
                 ThrowIfCancellationRequested();
-                ReportError(DiagnosticCode.LoadFetchFailed, $"load: failed to fetch '{normalizedUrl}': {ex.Message}", span);
+                ReportError(DiagnosticCode.LoadFetchFailed, $"load: failed to fetch '{normalizedUrl}': {ex.Message}", site);
                 return new Expr.Num(0) { Span = span };
             }
 
             if (source is null)
             {
-                ReportError(DiagnosticCode.LoadFetchFailed, $"load: fetch for '{normalizedUrl}' returned no source text.", span);
+                ReportError(DiagnosticCode.LoadFetchFailed, $"load: fetch for '{normalizedUrl}' returned no source text.", site);
                 return new Expr.Num(0) { Span = span };
             }
 
@@ -1513,7 +1552,7 @@ internal sealed class ModuleLoader
             if (!_budget.SourceLengthWithinLimit(source.Length))
             {
                 ReportSourceProcessingDiagnostic(SourceProcessingDiagnostics.ModuleSourceLengthExceeded(
-                    normalizedUrl, source.Length, _budget.MaxSourceLength, span));
+                    normalizedUrl, source.Length, _budget.MaxSourceLength, site));
                 return new Expr.Num(0) { Span = span };
             }
 
@@ -1529,7 +1568,7 @@ internal sealed class ModuleLoader
                     source.Length,
                     requestedTotal,
                     _budget.MaxAggregateSourceLength,
-                    span));
+                    site));
                 return new Expr.Num(0) { Span = span };
             }
 
@@ -1554,14 +1593,14 @@ internal sealed class ModuleLoader
                     ReportError(
                         DiagnosticCode.ModuleNestingTooDeep,
                         BuildLoadedSourceNestingErrorMessage(normalizedUrl),
-                        span);
+                        site);
                 }
                 else
                 {
                     ReportError(
                         DiagnosticCode.InvalidLoadedSource,
                         BuildLoadedSourceParseErrorMessage(normalizedUrl, source),
-                        span);
+                        site);
                 }
 
                 return new Expr.Num(0) { Span = span };
@@ -1569,13 +1608,18 @@ internal sealed class ModuleLoader
 
             // Propagate any non-error diagnostics (with context). The prefix is
             // presentation only; the structured code travels unchanged so the
-            // nested diagnostic keeps its semantic family through the re-wrap.
+            // nested diagnostic keeps its semantic family through the re-wrap. The
+            // diagnostic's own span is positioned in the MODULE's text and never
+            // leaves the loader: like every other module-parse outcome (a parse
+            // error above is one InvalidLoadedSource at the load site) it is reported
+            // at the site the current document wrote, so the parse result of this
+            // document stays in this document's coordinate space.
             foreach (var diag in syntaxResult.Diagnostics)
             {
                 _sink.Add(new Diagnostic(
                     $"[while loading {normalizedUrl}] {diag.Message}",
                     diag.Severity,
-                    diag.Span)
+                    site ?? new SourceSpan(1, 1, 1, 1))
                 {
                     Code = diag.Code,
                 });
@@ -1597,20 +1641,28 @@ internal sealed class ModuleLoader
                     AstConsumerProfile.FullyRecursive) is not null)
             {
                 ReportSourceProcessingDiagnostic(SourceProcessingDiagnostics.ModuleNestingTooDeep(
-                    normalizedUrl, MaxTraversalDepth, span));
+                    normalizedUrl, MaxTraversalDepth, site));
                 return new Expr.Num(0) { Span = span };
             }
 
+            // The source-coordinate boundary: the parsed module's own coordinates end here.
+            // What crosses into this document's result is the module's locationless import
+            // view (see ToImportView), taken once, before the nested loads inside it are
+            // elaborated and before it can enter the cache, so every later splice shares
+            // one caller-independent view.
+            ThrowIfCancellationRequested();
+            var importView = ToImportView(syntaxResult.SyntaxRoot);
+
             // Recursively elaborate any load calls in the fetched module. The fetched
             // tree gets its own load-bearing pre-scan so its load-free subtrees take
-            // the synchronous walk too.
-            ThrowIfCancellationRequested();
+            // the synchronous walk too. Loads written inside the module have no span of
+            // their own: their diagnostics are positioned at THIS load's site.
             var nestedDiagnosticStart = _sink.Count;
-            MarkLoadBearing(syntaxResult.SyntaxRoot);
+            MarkLoadBearing(importView);
             Algorithm elaborated;
-            using (EnterNestedTraversal(traversalBase))
+            using (EnterNestedTraversal(traversalBase, site))
             {
-                elaborated = await RouteAlgorithmAsync(syntaxResult.SyntaxRoot, LoadContext.TopLevel, depth: 1)
+                elaborated = await RouteAlgorithmAsync(importView, LoadContext.TopLevel, depth: 1)
                     .ConfigureAwait(false);
             }
 
@@ -1618,9 +1670,9 @@ internal sealed class ModuleLoader
             // requested during parsing or recursive elaboration before the cache write.
             ThrowIfCancellationRequested();
 
-            // Mark the module root for editor tooling BEFORE caching so cache hits
-            // splice the same marked instance: spans inside the module belong to
-            // the module's source text, not the loading document's.
+            // Mark the module root BEFORE caching so cache hits splice the same marked
+            // instance: the mark is where the front end and the semantic model recognize
+            // an import view (its own content carries no source locations).
             if (elaborated is Algorithm.User moduleRoot)
                 elaborated = moduleRoot with { IsModuleElaborated = true };
             if (!_sink.Skip(nestedDiagnosticStart).Any(static diagnostic => diagnostic.Severity == DiagnosticSeverity.Error))

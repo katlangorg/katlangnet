@@ -1201,7 +1201,8 @@ public sealed class Parser
             else if ((Current.Kind is TokenKind.Identifier or TokenKind.Star)
                 && LookaheadIsBindingPatternAssignment())
             {
-                ParseBindingPatternAssignment(properties, clauseGroups, declaredPropertyNames, declarationsAllowed);
+                ParseBindingPatternAssignment(
+                    properties, clauseGroups, declaredPropertyNames, declarationsAllowed, writtenRowIndex: output.Count);
             }
             // Clause definition: Name(pattern) = body
             else if (Current.Kind == TokenKind.Identifier && LookaheadIsClauseDefinition())
@@ -1834,13 +1835,17 @@ public sealed class Parser
     /// <paramref name="declarationsAllowed"/> is the enclosing body context
     /// (see <see cref="ParseAlgorithmBodyParts"/>): deconstruction declares
     /// properties, so inside a parenthesized body the binding pattern reports
-    /// the property-in-parentheses diagnostic.
+    /// the property-in-parentheses diagnostic. <paramref name="writtenRowIndex"/> is the
+    /// number of output rows the enclosing body has written so far — the structural
+    /// written-order key of the hoisted right-hand side
+    /// (<see cref="Algorithm.User.AssignmentDeconstructionRowIndex"/>).
     /// </summary>
     private void ParseBindingPatternAssignment(
         List<Property> properties,
         Dictionary<string, ClauseGroupBuilder> clauseGroups,
         HashSet<string> declaredPropertyNames,
-        bool declarationsAllowed)
+        bool declarationsAllowed,
+        int writtenRowIndex)
     {
         var targets = new List<BindingTarget>();
         while (true)
@@ -1939,7 +1944,7 @@ public sealed class Parser
             }
         }
 
-        AddDeconstructionProperties(targets, rhsBody, properties, declaredPropertyNames);
+        AddDeconstructionProperties(targets, rhsBody, properties, declaredPropertyNames, writtenRowIndex);
     }
 
     /// <summary>
@@ -1961,14 +1966,18 @@ public sealed class Parser
         IReadOnlyList<BindingTarget> targets,
         Algorithm rhsBody,
         List<Property> properties,
-        HashSet<string> declaredPropertyNames)
+        HashSet<string> declaredPropertyNames,
+        int writtenRowIndex)
     {
         var sourceName = $"$deconstruct${_deconstructionCounter++}";
-        // The hoisted right-hand side is marked so the front end elaborates its rows as rows
-        // of the enclosing body (see Algorithm.User.IsAssignmentDeconstructionSource).
+        // The hoisted right-hand side is marked with its written position so the front end
+        // elaborates its rows as rows of the enclosing body, in written order (see
+        // Algorithm.User.AssignmentDeconstructionRowIndex).
         properties.Add(new Property(
             sourceName,
-            rhsBody is Algorithm.User rhsUser ? rhsUser with { IsAssignmentDeconstructionSource = true } : rhsBody));
+            rhsBody is Algorithm.User rhsUser
+                ? rhsUser with { AssignmentDeconstructionRowIndex = writtenRowIndex }
+                : rhsBody));
         declaredPropertyNames.Add(sourceName);
 
         var captures = targets

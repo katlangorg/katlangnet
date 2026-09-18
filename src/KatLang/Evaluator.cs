@@ -999,10 +999,11 @@ public static partial class Evaluator
         // first output row). When the ONE unresolved parameter is the misspelled
         // member of a dot edge on a statically known receiver, the member token
         // is the precise location the report is about, so the error is positioned
-        // there instead, unless the token belongs to an imported source file.
-        // Diagnostic position only: the structured error, its
+        // there instead. A member token inside imported module content has no span
+        // (an import view carries no source locations), so such a report keeps the
+        // local demand span. Diagnostic position only: the structured error, its
         // context, and every multi-parameter or bare-name report are unchanged.
-        var errorSpan = paramNames.Count == 1 && notes is [{ DotMemberOrigin: not null, CanPositionAtOrigin: true, Span: { } memberSpan }]
+        var errorSpan = paramNames.Count == 1 && notes is [{ DotMemberOrigin: not null, Span: { } memberSpan }]
             ? memberSpan
             : span;
         var inner = new EvalError.UnresolvedImplicitParams(paramNames)

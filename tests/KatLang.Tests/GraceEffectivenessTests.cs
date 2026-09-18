@@ -252,7 +252,9 @@ public class GraceEffectivenessTests
         var error = Assert.Single(failure.Errors);
         Assert.Equal(KatLangErrorCode.InvalidGraceMarker, error.Code);
         Assert.Contains("parameter of an enclosing algorithm", error.Message, StringComparison.Ordinal);
-        Assert.Equal((4, 1, 4, 2), (error.StartLine, error.StartColumn, error.EndLine, error.EndColumn));
+        // The marker sits on the module's line 4, which is no position in this document:
+        // the report is positioned at the import site, the declaring `M` of the branch body.
+        Assert.Equal((2, 10, 2, 10), (error.StartLine, error.StartColumn, error.EndLine, error.EndColumn));
         Assert.Equal(1, fetches);
     }
 

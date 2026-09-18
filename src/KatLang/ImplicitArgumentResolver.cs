@@ -105,10 +105,37 @@ internal static class ImplicitArgumentResolver
     /// SEMANTIC REGION rather than once per path (M4). Run-local: created per resolution,
     /// garbage afterwards — never static, never ambient.
     /// </summary>
-    private sealed class ResolutionRun(ResolutionOrigins? origins = null, bool preserveSignatures = false)
+    private sealed class ResolutionRun(ResolutionOrigins? origins = null, bool preserveSignatures = false, SourceSpan? importSite = null)
     {
         public readonly ResolutionOrigins? Origins = origins;
         public readonly bool PreserveSignatures = preserveSignatures;
+
+        /// <summary>
+        /// The import site of the module content the walk is currently inside (see
+        /// <see cref="KatLang.ImportSite"/>): where a refused strict-value forwarding inside
+        /// imported content — which carries no source location — is positioned. Null over
+        /// the document's own text; a deferred branch run starts from the site its region
+        /// recorded. Walk state only: it decides no rewrite and keys no memo.
+        /// </summary>
+        public SourceSpan? ImportSite = importSite;
+
+        /// <summary>
+        /// Enters the content reached through an import edge: a non-null <paramref name="site"/>
+        /// becomes the current site for the scope's duration (a nested view inherits the
+        /// enclosing site when its own edge carries none); disposal restores the outer site.
+        /// </summary>
+        public ImportSiteScope EnterImportSite(SourceSpan? site)
+        {
+            var saved = ImportSite;
+            if (site is not null)
+                ImportSite = site;
+            return new ImportSiteScope(this, saved);
+        }
+
+        public readonly struct ImportSiteScope(ResolutionRun run, SourceSpan? saved) : IDisposable
+        {
+            public void Dispose() => run.ImportSite = saved;
+        }
 
         public Expr RecordImplicitCall(Expr rewritten, Expr original)
         {
@@ -712,8 +739,12 @@ internal static class ImplicitArgumentResolver
                 // property — and the dependency order above processes every referenced
                 // sibling first, so within an acyclic property graph every reach observes the
                 // same, final signatures.
-                var processedBody = ProcessAlgorithm(
-                    prop.Value, visibleParamMap, isRoot: false, observations, diagnostics, branchContext: null, run);
+                Algorithm processedBody;
+                using (run.EnterImportSite(ImportSite.OfProperty(prop)))
+                {
+                    processedBody = ProcessAlgorithm(
+                        prop.Value, visibleParamMap, isRoot: false, observations, diagnostics, branchContext: null, run);
+                }
 
                 // Update param maps with the processed, potentially augmented signature.
                 var processedSignature = CallableSignature.FromAlgorithm(prop.Name, processedBody);
@@ -959,7 +990,8 @@ internal static class ImplicitArgumentResolver
         List<Diagnostic> diagnostics,
         FrontEndTraversalObservations? observations = null,
         ResolutionOrigins? origins = null,
-        bool preserveSignatures = false)
+        bool preserveSignatures = false,
+        SourceSpan? importSite = null)
         => ProcessAlgorithm(
             detectedBody,
             new Dictionary<string, CallableSignature>(context.ParentParamMap),
@@ -967,7 +999,7 @@ internal static class ImplicitArgumentResolver
             observations,
             diagnostics,
             new ConditionalBranchContext(context.BranchName, context.Pattern),
-            new ResolutionRun(origins, preserveSignatures));
+            new ResolutionRun(origins, preserveSignatures, importSite));
 
     private static Expr ProcessOpenExpr(Expr expr, ResolverWalkMemos memos)
     {
@@ -990,8 +1022,8 @@ internal static class ImplicitArgumentResolver
     {
         return expr switch
         {
-            Expr.AlgorithmExpr(var algorithm) => new Expr.AlgorithmExpr(
-                ProcessSharedNestedAlgorithm(algorithm, new Dictionary<string, CallableSignature>(), memos))
+            Expr.AlgorithmExpr block => new Expr.AlgorithmExpr(
+                ProcessSharedNestedAlgorithm(block.Algorithm, ImportSite.OfBlock(block), new Dictionary<string, CallableSignature>(), memos))
             {
                 Span = expr.Span,
             },
@@ -1244,7 +1276,9 @@ internal static class ImplicitArgumentResolver
         if (missing.Count == 0)
             return;
 
-        var span = reference.Span ?? new SourceSpan(0, 0, 0, 0);
+        // A reference the document wrote is reported at its span; one inside imported
+        // content at the import site.
+        var span = reference.Span ?? memos.Run.ImportSite ?? new SourceSpan(0, 0, 0, 0);
         diagnostics.Add(new Diagnostic(
             FormatBlockedStrictValueForwarding(referenceDisplayName, missing, context.ConditionalBranchName),
             DiagnosticSeverity.Error,
@@ -1748,8 +1782,8 @@ internal static class ImplicitArgumentResolver
 
             Expr.Grace(var inner, _) => RewriteImplicitCalls(inner, paramMap, context, inCallPosition, memos, inStrictValueDemand),
 
-            Expr.AlgorithmExpr(var alg) => new Expr.AlgorithmExpr(
-                ProcessSharedNestedAlgorithm(alg, paramMap, memos)) { Span = expr.Span },
+            Expr.AlgorithmExpr block => new Expr.AlgorithmExpr(
+                ProcessSharedNestedAlgorithm(block.Algorithm, ImportSite.OfBlock(block), paramMap, memos)) { Span = expr.Span },
 
             // Capture rows recurse without lifting at this level, exactly as
             // the pre-split transparent group algorithm's rows did.
@@ -1900,12 +1934,14 @@ internal static class ImplicitArgumentResolver
     /// </summary>
     private static Algorithm ProcessSharedNestedAlgorithm(
         Algorithm alg,
+        SourceSpan? importSite,
         Dictionary<string, CallableSignature> paramMap,
         ResolverWalkMemos memos)
     {
         memos.Algorithms ??= new(ReferenceEqualityComparer.Instance);
         if (!memos.Algorithms.TryGetValue(alg, out var processed))
         {
+            using var site = memos.Run.EnterImportSite(importSite);
             processed = ProcessAlgorithm(
                 alg, paramMap, isRoot: false, memos.Observations, memos.Diagnostics, branchContext: null, memos.Run);
             memos.Algorithms[alg] = processed;
@@ -2025,8 +2061,8 @@ internal static class ImplicitArgumentResolver
     {
         return expr switch
         {
-            Expr.AlgorithmExpr(var alg) => new Expr.AlgorithmExpr(
-                ProcessSharedNestedAlgorithm(alg, paramMap, memos)) { Span = expr.Span },
+            Expr.AlgorithmExpr block => new Expr.AlgorithmExpr(
+                ProcessSharedNestedAlgorithm(block.Algorithm, ImportSite.OfBlock(block), paramMap, memos)) { Span = expr.Span },
             Expr.Capture(var captureBody) => new Expr.Capture(new OutputBundle(
                 captureBody.Select(row => ProcessExprNested(row, paramMap, memos)).ToList()))
             { Span = expr.Span },

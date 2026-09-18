@@ -23,14 +23,21 @@ internal sealed class OpenProviderValidator : AstWalker
 {
     private readonly List<Diagnostic> _diagnostics;
     private readonly Dictionary<ElaboratedPropertyScope, HashSet<object>> _visited = new();
-    private readonly HashSet<SourceSpan> _reported = new(ReferenceEqualityComparer.Instance);
+    // Each open TARGET node is reported once, however many regions reach it (by node
+    // identity, never by span identity: an imported target has no span).
+    private readonly HashSet<Expr> _reported = new(ReferenceEqualityComparer.Instance);
     private readonly OpenPresence _openPresence = new();
     private ElaboratedPropertyScope _scope;
+    // The import site of the module content the walk is inside (see ImportSite): where a
+    // refused imported open target — which has no span of its own — is reported. Starts at
+    // the site a deferred region recorded for its body.
+    private SourceSpan? _importSite;
 
-    private OpenProviderValidator(List<Diagnostic> diagnostics, ElaboratedPropertyScope parentScope)
+    private OpenProviderValidator(List<Diagnostic> diagnostics, ElaboratedPropertyScope parentScope, SourceSpan? importSite)
     {
         _diagnostics = diagnostics;
         _scope = parentScope;
+        _importSite = importSite;
     }
 
     protected override bool VisitsExplicitParameterDeclarations => false;
@@ -46,12 +53,15 @@ internal sealed class OpenProviderValidator : AstWalker
     internal static void Validate(Algorithm root, List<Diagnostic> diagnostics, HostOperations? hostOperations)
     {
         var prelude = hostOperations?.SemanticPreludeAlgorithm ?? BuiltinRegistry.CreateSemanticPreludeAlgorithm();
-        Validate(root, diagnostics, ElaboratedScopeLookup.CreateScope(prelude));
+        Validate(root, diagnostics, ElaboratedScopeLookup.CreateScope(prelude), importSite: null);
     }
 
-    /// <summary>Validates a materialized deferred branch body under the chain recorded at its branch.</summary>
-    internal static void Validate(Algorithm root, List<Diagnostic> diagnostics, ElaboratedPropertyScope parentScope)
-        => new OpenProviderValidator(diagnostics, parentScope).VisitAlgorithm(root);
+    /// <summary>
+    /// Validates a materialized deferred branch body under the chain recorded at its branch,
+    /// starting from the import site the region recorded for the body.
+    /// </summary>
+    internal static void Validate(Algorithm root, List<Diagnostic> diagnostics, ElaboratedPropertyScope parentScope, SourceSpan? importSite = null)
+        => new OpenProviderValidator(diagnostics, parentScope, importSite).VisitAlgorithm(root);
 
     public override void VisitAlgorithm(Algorithm algorithm)
     {
@@ -97,7 +107,14 @@ internal sealed class OpenProviderValidator : AstWalker
         }
     }
 
-    protected override void VisitProperty(Property property) => VisitAlgorithm(property.Value);
+    protected override void VisitProperty(Property property)
+    {
+        var saved = _importSite;
+        if (ImportSite.OfProperty(property) is { } site)
+            _importSite = site;
+        try { VisitAlgorithm(property.Value); }
+        finally { _importSite = saved; }
+    }
 
     // Context matters only where there is an open to validate. A graph-bounded scan
     // prevents the context walk from expanding paths through unrelated shared DAGs.
@@ -149,14 +166,21 @@ internal sealed class OpenProviderValidator : AstWalker
         if (!FirstVisit(expr))
             return;
 
-        base.VisitExpr(expr);
+        var saved = _importSite;
+        if (expr is Expr.AlgorithmExpr block && ImportSite.OfBlock(block) is { } site)
+            _importSite = site;
+        try { base.VisitExpr(expr); }
+        finally { _importSite = saved; }
     }
 
     private void ValidateOpens(IReadOnlyList<Expr> opens)
     {
         foreach (var target in opens)
         {
-            if (target.Span is not { } span)
+            // A target the document wrote is reported at its own span; an imported one at
+            // the import site of the module content it lies in. A spanless target with no
+            // site (a host-built tree) is left to the evaluator's own open resolution.
+            if ((target.Span ?? _importSite) is not { } span)
                 continue;
 
             // The HEAD of a dotted target is checked first: a prelude builtin has no members,
@@ -165,7 +189,7 @@ internal sealed class OpenProviderValidator : AstWalker
             // (the evaluators refuse the same head by kind at open resolution).
             if (DottedHead(target) is { } head
                 && ElaboratedScopeLookup.ResolveOpenTarget(_scope, head) is Algorithm.Builtin
-                && _reported.Add(span))
+                && _reported.Add(target))
             {
                 _diagnostics.Add(new Diagnostic(
                     Evaluator.FormatOpenTargetIsBuiltin(Evaluator.OpenExprName(head)),
@@ -189,7 +213,7 @@ internal sealed class OpenProviderValidator : AstWalker
                 : Evaluator.RequiresArguments(provider)
                     ? Evaluator.FormatOpenTargetRequiresArguments(Evaluator.OpenExprName(target), provider, sourceBacked: true)
                     : null;
-            if (message is null || !_reported.Add(span))
+            if (message is null || !_reported.Add(target))
                 continue;
 
             _diagnostics.Add(new Diagnostic(message, DiagnosticSeverity.Error, span)

@@ -79,32 +79,47 @@ internal enum LexicalFallbackSelection
 internal static class AstHelpers
 {
     /// <summary>
-    /// Output rows and hoisted deconstruction RHS rows in written order. Positionless
-    /// rows retain declaration order after positioned rows. The optional filter applies
-    /// only to output rows, so the resolver's bare-root rule never suppresses an RHS.
+    /// Output rows and hoisted deconstruction RHS rows in written order: each hoisted
+    /// source's rows come before the output row whose index the parser recorded on it
+    /// (<see cref="Algorithm.User.AssignmentDeconstructionRowIndex"/>), sources of one index
+    /// in declaration order. The merge is STRUCTURAL — it never consults source spans,
+    /// which decide nothing about elaboration and which an imported module view does not
+    /// carry — so a module's written order survives its locationless import unchanged.
+    /// The optional filter applies only to output rows, so the resolver's bare-root rule
+    /// never suppresses an RHS.
     /// </summary>
     internal static IReadOnlyList<Expr> WrittenRows(Algorithm algorithm, Func<Expr, bool>? includeOutputRow = null)
     {
-        var output = includeOutputRow is null
-            ? algorithm.Output
-            : (IReadOnlyList<Expr>)algorithm.Output.Where(includeOutputRow).ToList();
-        List<Expr>? merged = null;
+        List<Algorithm.User>? sources = null;
         foreach (var property in algorithm.Properties)
         {
-            if (property.Value is not Algorithm.User { IsAssignmentDeconstructionSource: true } source)
-                continue;
-
-            merged ??= new List<Expr>(output);
-            merged.AddRange(source.Output);
+            if (property.Value is Algorithm.User { IsAssignmentDeconstructionSource: true } source)
+                (sources ??= []).Add(source);
         }
 
-        if (merged is null)
-            return output;
+        var output = algorithm.Output;
+        if (sources is null)
+        {
+            return includeOutputRow is null
+                ? output
+                : output.Where(includeOutputRow).ToList();
+        }
 
-        return merged
-            .OrderBy(static row => row.Span?.StartLineNumber ?? int.MaxValue)
-            .ThenBy(static row => row.Span?.StartColumn ?? int.MaxValue)
-            .ToList();
+        var merged = new List<Expr>();
+        for (var rowIndex = 0; rowIndex <= output.Count; rowIndex++)
+        {
+            foreach (var source in sources)
+            {
+                var writtenBefore = source.AssignmentDeconstructionRowIndex!.Value;
+                if (writtenBefore == rowIndex || (rowIndex == output.Count && writtenBefore > rowIndex))
+                    merged.AddRange(source.Output);
+            }
+
+            if (rowIndex < output.Count && (includeOutputRow is null || includeOutputRow(output[rowIndex])))
+                merged.Add(output[rowIndex]);
+        }
+
+        return merged;
     }
 
     /// <summary>Rewrites each shared hoisted source once in its enclosing row context.</summary>

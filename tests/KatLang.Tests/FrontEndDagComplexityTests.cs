@@ -115,7 +115,7 @@ public class FrontEndDagComplexityTests
     {
         var source = EmptyAlgorithm(BinaryDiamond(DeepDepth, new Expr.Num(1))) with
         {
-            IsAssignmentDeconstructionSource = true,
+            AssignmentDeconstructionRowIndex = 0,
         };
         var root = EmptyAlgorithm() with
         {

@@ -22,12 +22,19 @@ namespace KatLang;
 internal sealed class ParameterPropertyCollisionValidator(
     List<Diagnostic> diagnostics,
     ParameterPropertyCollisionValidator.ParameterBindings? enclosingParameters = null,
-    Algorithm? programRoot = null) : AstWalker
+    Algorithm? programRoot = null,
+    SourceSpan? importSite = null) : AstWalker
 {
     // Validity depends on the names in scope, not the route through a shared DAG. The
-    // first conflicting source reach supplies diagnostic metadata for a shared declaration.
+    // first conflicting source reach supplies diagnostic metadata for a shared declaration,
+    // which is reported once by its declaration NODE (never by span identity: an imported
+    // declaration has no span, and a value-type span could not carry identity).
     private readonly Dictionary<object, HashSet<string>> _visited = new(ReferenceEqualityComparer.Instance);
-    private readonly HashSet<SourceSpan> _reported = new(ReferenceEqualityComparer.Instance);
+    private readonly HashSet<Property> _reported = new(ReferenceEqualityComparer.Instance);
+    // The import site of the module content the walk is inside (see ImportSite): where a
+    // conflicting imported declaration — which has no span of its own — is reported. Starts
+    // at the site a deferred region recorded for its body.
+    private SourceSpan? _importSite = importSite;
     private readonly Dictionary<object, Dictionary<ParameterBindings, ParameterBindings>> _extensions
         = new(ReferenceEqualityComparer.Instance);
     private readonly Dictionary<Pattern, IReadOnlyList<ParameterDeclaration>> _binders = new(ReferenceEqualityComparer.Instance);
@@ -72,11 +79,23 @@ internal sealed class ParameterPropertyCollisionValidator(
 
     public override void VisitExpr(Expr expr)
     {
-        if (FirstVisit(expr))
-            base.VisitExpr(expr);
+        if (!FirstVisit(expr))
+            return;
+        var saved = _importSite;
+        if (expr is Expr.AlgorithmExpr block && ImportSite.OfBlock(block) is { } site)
+            _importSite = site;
+        try { base.VisitExpr(expr); }
+        finally { _importSite = saved; }
     }
 
-    protected override void VisitProperty(Property property) => VisitAlgorithm(property.Value);
+    protected override void VisitProperty(Property property)
+    {
+        var saved = _importSite;
+        if (ImportSite.OfProperty(property) is { } site)
+            _importSite = site;
+        try { VisitAlgorithm(property.Value); }
+        finally { _importSite = saved; }
+    }
 
     protected override void VisitOpenExpression(Expr expr)
     {
@@ -174,20 +193,30 @@ internal sealed class ParameterPropertyCollisionValidator(
         {
             if (!_parameters.Declarations.TryGetValue(property.Name, out var parameterSpan))
                 continue;
-            // Source identity survives rewrites; equal module coordinates are distinct.
-            foreach (var span in property.DeclarationSpans)
+            if (!_reported.Add(property))
+                continue;
+            // The parameter's position is stated only when the document wrote it (an imported
+            // parameter has none, and a module-relative coordinate is never rendered).
+            var location = parameterSpan is null ? ""
+                : $" The parameter is declared at line {parameterSpan.StartLineNumber}, column {parameterSpan.StartColumn}.";
+            var message =
+                $"Property '{property.Name}' conflicts with parameter '{property.Name}' in the same or an enclosing algorithm. Rename one of the declarations.{location}";
+            // A written declaration is reported at each of its name occurrences (a clause
+            // family contributes several); an imported one — no occurrence spans — once, at
+            // the import site. A document-owned synthetic declaration (no spans, no site)
+            // cannot conflict: its name is not an identifier a parameter can carry.
+            if (property.DeclarationSpans.Count > 0)
             {
-                if (!_reported.Add(span))
-                    continue;
-                var location = parameterSpan is null ? ""
-                    : $" The parameter is declared at line {parameterSpan.StartLineNumber}, column {parameterSpan.StartColumn}.";
-                diagnostics.Add(new Diagnostic(
-                    $"Property '{property.Name}' conflicts with parameter '{property.Name}' in the same or an enclosing algorithm. Rename one of the declarations.{location}",
-                    DiagnosticSeverity.Error, span)
-                {
-                    Code = DiagnosticCode.ParameterPropertyCollision,
-                });
+                foreach (var span in property.DeclarationSpans)
+                    diagnostics.Add(CreateCollisionDiagnostic(message, span));
+            }
+            else if (_importSite is { } site)
+            {
+                diagnostics.Add(CreateCollisionDiagnostic(message, site));
             }
         }
     }
+
+    private static Diagnostic CreateCollisionDiagnostic(string message, SourceSpan span)
+        => new(message, DiagnosticSeverity.Error, span) { Code = DiagnosticCode.ParameterPropertyCollision };
 }

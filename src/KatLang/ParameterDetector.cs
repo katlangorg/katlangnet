@@ -115,13 +115,15 @@ internal static class ParameterDetector
         ImplicitArgumentResolver.ResolutionOrigins origins,
         HostOperations? hostOperations = null,
         DeferredBranchContext? branchContext = null,
-        FrontEndTraversalObservations? observations = null)
+        FrontEndTraversalObservations? observations = null,
+        SourceSpan? importSite = null)
     {
         var diagnostics = new List<Diagnostic>();
         var run = new DetectionRun
         {
             ImplicitCallOrigins = origins.ImplicitCalls,
             GraceOrigins = origins.Grace,
+            ImportSite = importSite,
             // A whole-program completion re-enters at the program root; a deferred branch
             // completion re-enters at that branch body, which is a nested (called) owner.
             ProgramRoot = branchContext is null ? root : null,
@@ -230,7 +232,7 @@ internal static class ParameterDetector
         ImplicitParameterOccurrenceRecorder? provenanceRecorder = null;
         if (hasExplicitParameterList)
         {
-            ReportUndeclaredExplicitParameterNames(writtenRows, scope, boundParameters, diagnostics, observations);
+            ReportUndeclaredExplicitParameterNames(writtenRows, scope, boundParameters, diagnostics, run, observations);
         }
         else if (run.ImplicitCallOrigins is null)
         {
@@ -299,6 +301,7 @@ internal static class ParameterDetector
             }
             else if (processedSharedValues is null)
             {
+                using var importSite = run.EnterImportSite(ImportSite.OfProperty(prop));
                 newProperties.Add(prop.WithValue(ProcessAlgorithm(
                     prop.Value,
                     scope,
@@ -311,6 +314,7 @@ internal static class ParameterDetector
             {
                 if (!processedSharedValues.TryGetValue(prop.Value, out var processedBody))
                 {
+                    using var importSite = run.EnterImportSite(ImportSite.OfProperty(prop));
                     processedBody = ProcessAlgorithm(
                         prop.Value,
                         scope,
@@ -488,7 +492,8 @@ internal static class ParameterDetector
         DeferredBranchContext context,
         List<Diagnostic> diagnostics,
         FrontEndTraversalObservations? observations = null,
-        GraceOrigins? graceOrigins = null)
+        GraceOrigins? graceOrigins = null,
+        SourceSpan? importSite = null)
         => ProcessConditionalBranchBody(
             loadedBody,
             context.ParentScope,
@@ -497,7 +502,7 @@ internal static class ParameterDetector
             context.CapturedParameters,
             diagnostics,
             observations,
-            new DetectionRun { GraceOrigins = graceOrigins });
+            new DetectionRun { GraceOrigins = graceOrigins, ImportSite = importSite });
 
     /// <summary>
     /// Records the diagnostic-only origin of each implicit parameter at the
@@ -665,6 +670,34 @@ internal static class ParameterDetector
         /// every other shared node within one diagnostic context.
         /// </summary>
         public Dictionary<BranchBodyRegionKey, BranchBodyRegion>? BranchBodyRegions;
+
+        /// <summary>
+        /// The import site of the module content the walk is currently inside (see
+        /// <see cref="KatLang.ImportSite"/>): where a diagnostic raised against imported content —
+        /// which carries no source location — is positioned. Null over the document's own
+        /// text; a deferred branch run starts from the site its region recorded. Walk state
+        /// only: it decides no rewrite, keys no memo, and is consulted exactly where a
+        /// diagnostic's own span is absent.
+        /// </summary>
+        public SourceSpan? ImportSite;
+
+        /// <summary>
+        /// Enters the content reached through an import edge: a non-null <paramref name="site"/>
+        /// becomes the current site for the scope's duration (a nested view inherits the
+        /// enclosing site when its own edge carries none); disposal restores the outer site.
+        /// </summary>
+        public ImportSiteScope EnterImportSite(SourceSpan? site)
+        {
+            var saved = ImportSite;
+            if (site is not null)
+                ImportSite = site;
+            return new ImportSiteScope(this, saved);
+        }
+
+        public readonly struct ImportSiteScope(DetectionRun run, SourceSpan? saved) : IDisposable
+        {
+            public void Dispose() => run.ImportSite = saved;
+        }
     }
 
     /// <summary>
@@ -1064,7 +1097,7 @@ internal static class ParameterDetector
                             run.OwnershipChanged = true;
                         }
 
-                        diagnostics?.Add(CreateOpenTargetIsParameterDiagnostic(open, headName, head.Span ?? open.Span));
+                        diagnostics?.Add(CreateOpenTargetIsParameterDiagnostic(open, headName, head.Span ?? open.Span ?? run.ImportSite));
                         if (opens.Count > 1)
                             (rewrites ??= new(ReferenceEqualityComparer.Instance))[open] = rewritten;
                     }
@@ -1200,8 +1233,8 @@ internal static class ParameterDetector
             // way so no Grace can survive elaboration in any position.
             Expr.Grace(var gracedTarget, _) => ProcessOpenExpr(gracedTarget, openParentScope, diagnostics, memo),
 
-            Expr.AlgorithmExpr(var algorithm) => new Expr.AlgorithmExpr(
-                ProcessSharedOpenAlgorithm(algorithm, openParentScope, diagnostics, memo)) { Span = expr.Span },
+            Expr.AlgorithmExpr block => new Expr.AlgorithmExpr(
+                ProcessSharedOpenAlgorithm(block.Algorithm, ImportSite.OfBlock(block), openParentScope, diagnostics, memo)) { Span = expr.Span },
 
             // A capture target owns no scope: its rows are processed in the
             // open-target parent scope (the pre-split transparent wrapper
@@ -1262,6 +1295,7 @@ internal static class ParameterDetector
     /// </summary>
     private static Algorithm ProcessSharedOpenAlgorithm(
         Algorithm algorithm,
+        SourceSpan? importSite,
         ElaboratedPropertyScope openParentScope,
         List<Diagnostic>? diagnostics,
         OpenWalkMemo memo)
@@ -1269,6 +1303,7 @@ internal static class ParameterDetector
         memo.OpenAlgorithms ??= new(ReferenceEqualityComparer.Instance);
         if (!memo.OpenAlgorithms.TryGetValue(algorithm, out var processedAlgorithm))
         {
+            using var site = memo.Run.EnterImportSite(importSite);
             processedAlgorithm = ProcessAlgorithm(
                 algorithm, openParentScope, ParameterOwnership.Empty, diagnostics, memo.Observations, memo.Run);
             memo.OpenAlgorithms[algorithm] = processedAlgorithm;
@@ -1402,8 +1437,10 @@ internal static class ParameterDetector
                 new FreeNameWalkMemo(observations));
             foreach (var freeName in freeOrder)
             {
-                // Find the span for the first occurrence of this free identifier
+                // Find the span for the first occurrence of this free identifier; an occurrence
+                // inside imported content has none and is reported at the import site.
                 var span = FindResolveSpan(writtenRows, freeName, new ResolveSpanSearchMemo(observations))
+                    ?? run.ImportSite
                     ?? new SourceSpan(0, 0, 0, 0);
                 (undeclaredNames ??= []).Add((freeName, span));
                 diagnostics.Add(CreateConditionalBranchUndeclaredIdentifierDiagnostic(freeName, branchName, span));
@@ -1436,6 +1473,7 @@ internal static class ParameterDetector
             }
             else if (processedSharedValues is null)
             {
+                using var importSite = run.EnterImportSite(ImportSite.OfProperty(prop));
                 processedProp = ProcessAlgorithm(
                     prop.Value,
                     bodyScope,
@@ -1446,6 +1484,7 @@ internal static class ParameterDetector
             }
             else if (!processedSharedValues.TryGetValue(prop.Value, out processedProp!))
             {
+                using var importSite = run.EnterImportSite(ImportSite.OfProperty(prop));
                 processedProp = ProcessAlgorithm(
                     prop.Value,
                     bodyScope,
@@ -1522,6 +1561,7 @@ internal static class ParameterDetector
         ElaboratedPropertyScope scope,
         ParameterOwnership boundParameters,
         List<Diagnostic>? diagnostics,
+        DetectionRun run,
         FrontEndTraversalObservations? observations = null)
     {
         if (diagnostics is null)
@@ -1538,7 +1578,9 @@ internal static class ParameterDetector
 
         foreach (var freeName in freeOrder)
         {
-            var span = FindResolveSpan(output, freeName, new ResolveSpanSearchMemo(observations));
+            // An occurrence the document wrote is reported at its span; one inside imported
+            // content at the import site.
+            var span = FindResolveSpan(output, freeName, new ResolveSpanSearchMemo(observations)) ?? run.ImportSite;
             diagnostics.Add(new Diagnostic(
                 FormatExplicitParameterUndeclaredIdentifier(freeName),
                 DiagnosticSeverity.Error,
@@ -1980,7 +2022,7 @@ internal static class ParameterDetector
         memo.Diagnostics.Add(new Diagnostic(
             FormatIneffectiveGrace(name, reason),
             DiagnosticSeverity.Error,
-            graceNode.Span ?? gracedCore.Span ?? new SourceSpan(0, 0, 0, 0))
+            graceNode.Span ?? gracedCore.Span ?? memo.Run.ImportSite ?? new SourceSpan(0, 0, 0, 0))
         {
             Code = DiagnosticCode.InvalidGraceMarker,
         });
@@ -2121,8 +2163,8 @@ internal static class ParameterDetector
 
             Expr.DotCall dotCall => RewriteDotCall(dotCall, scope, parameters, memo),
 
-            Expr.AlgorithmExpr(var alg) => new Expr.AlgorithmExpr(
-                RewriteSharedAlgorithm(alg, scope, parameters, memo)) { Span = expr.Span },
+            Expr.AlgorithmExpr block => new Expr.AlgorithmExpr(
+                RewriteSharedAlgorithm(block.Algorithm, ImportSite.OfBlock(block), scope, parameters, memo)) { Span = expr.Span },
 
             // Captures are transparent: rewrite rows in the enclosing param scope.
             Expr.Capture(var captureBody) => new Expr.Capture(
@@ -2271,6 +2313,7 @@ internal static class ParameterDetector
     /// </summary>
     private static Algorithm RewriteSharedAlgorithm(
         Algorithm alg,
+        SourceSpan? importSite,
         ElaboratedPropertyScope scope,
         ParameterOwnership parameters,
         RewriteWalkMemo memo)
@@ -2278,6 +2321,7 @@ internal static class ParameterDetector
         memo.Algorithms ??= new(ReferenceEqualityComparer.Instance);
         if (!memo.Algorithms.TryGetValue(alg, out var processedAlg))
         {
+            using var site = memo.Run.EnterImportSite(importSite);
             processedAlg = ProcessAlgorithm(
                 alg, scope, parameters, memo.Diagnostics, memo.Observations, memo.Run);
             memo.Algorithms[alg] = processedAlg;
@@ -2320,8 +2364,8 @@ internal static class ParameterDetector
         return expr switch
         {
             Expr.Grace(var inner, _) => ProcessExpr(inner, scope, memo),
-            Expr.AlgorithmExpr(var alg) => new Expr.AlgorithmExpr(
-                ProcessSharedTransparentAlgorithm(alg, scope, memo)) { Span = expr.Span },
+            Expr.AlgorithmExpr block => new Expr.AlgorithmExpr(
+                ProcessSharedTransparentAlgorithm(block.Algorithm, ImportSite.OfBlock(block), scope, memo)) { Span = expr.Span },
             Expr.Capture(var captureBody) => new Expr.Capture(new OutputBundle(
                 captureBody.Select(row => ProcessExpr(row, scope, memo)).ToList()))
             { Span = expr.Span },
@@ -2376,12 +2420,14 @@ internal static class ParameterDetector
     /// </summary>
     private static Algorithm ProcessSharedTransparentAlgorithm(
         Algorithm alg,
+        SourceSpan? importSite,
         ElaboratedPropertyScope scope,
         OpenWalkMemo memo)
     {
         memo.TransparentAlgorithms ??= new(ReferenceEqualityComparer.Instance);
         if (!memo.TransparentAlgorithms.TryGetValue(alg, out var processed))
         {
+            using var site = memo.Run.EnterImportSite(importSite);
             processed = ProcessAlgorithm(alg, scope, ParameterOwnership.Empty, diagnostics: null, memo.Observations, memo.Run);
             memo.TransparentAlgorithms[alg] = processed;
         }

@@ -264,8 +264,7 @@ internal static class LoopDiagnosticParityAssertions
             ? "null"
             : $"Provenance[name={Text(provenance.Name)}|span={SpanText(provenance.Span)}"
                 + $"|suggestion={Text(provenance.SuggestedName)}"
-                + $"|dotMemberOrigin={Text(provenance.DotMemberOrigin?.ReceiverDescription)}"
-                + $"|originPosition={provenance.CanPositionAtOrigin}]";
+                + $"|dotMemberOrigin={Text(provenance.DotMemberOrigin?.ReceiverDescription)}]";
 
     /// <summary>
     /// The complete observable diagnostic of an optimization-eligible failing

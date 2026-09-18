@@ -57,7 +57,8 @@ internal sealed class DeferredModuleRegion
         Algorithm rawBody,
         ModuleLoader.LoadContext context,
         int depth,
-        int nestedTraversalBase)
+        int nestedTraversalBase,
+        SourceSpan? importSite)
     {
         if (rawBody.DeferredRegion is not null)
             throw new ArgumentException("A deferred region's raw body is unelaborated source structure and carries no region.", nameof(rawBody));
@@ -67,6 +68,7 @@ internal sealed class DeferredModuleRegion
         Context = context;
         Depth = depth;
         NestedTraversalBase = nestedTraversalBase;
+        ImportSite = importSite;
     }
 
     // A fork: the same occurrence's loader facts and every context recorded so far, with
@@ -78,6 +80,7 @@ internal sealed class DeferredModuleRegion
         Context = source.Context;
         Depth = source.Depth;
         NestedTraversalBase = source.NestedTraversalBase;
+        ImportSite = source.ImportSite;
         Detection = source.Detection;
         Resolution = source.Resolution;
         _validation = source._validation;
@@ -104,6 +107,21 @@ internal sealed class DeferredModuleRegion
 
     /// <summary>The live traversal base at deferral (non-zero when the family sits inside a loaded module).</summary>
     internal int NestedTraversalBase { get; }
+
+    /// <summary>
+    /// The import site the family was reached under (see <c>ModuleLoader._importSite</c>): null
+    /// for a family the current document wrote, otherwise the span, in the current document,
+    /// of the load directive that imported the module the family sits in. Restored as the
+    /// loader's walk context while the region materializes, and the initial import-site
+    /// anchor of every demand-time front-end pass over the loaded body, so a diagnostic raised
+    /// inside module content — which carries no locations of its own — is positioned at the
+    /// site this document wrote rather than at a module-relative coordinate or a sentinel.
+    /// The site is a position in the document the recording loader serves (a loader and its
+    /// module cache belong to ONE parse of ONE document — the pipeline creates a loader per
+    /// document), which is what keeps every span a materialization reports in that
+    /// document's coordinate space even for a family inside a cached module spliced twice.
+    /// </summary>
+    internal SourceSpan? ImportSite { get; }
 
     /// <summary>Installed by parameter detection on its output view of the placeholder (replaced when ownership completion re-detects).</summary>
     internal ParameterDetector.DeferredBranchContext? Detection { get; private init; }
@@ -307,27 +325,31 @@ internal sealed class DeferredModuleRegion
                     var observations = Loader.TraversalObservations;
                     var parameterDiagnosticStart = diagnostics.Count;
                     var origins = new ImplicitArgumentResolver.ResolutionOrigins();
+                    // Every demand-time pass starts from the import site the region recorded:
+                    // a diagnostic raised against module content — which carries no source
+                    // location — is positioned at the site the current document wrote.
                     var detected = ParameterDetector.ElaborateDeferredBranch(
-                        loaded, Detection!, diagnostics, observations, origins.Grace);
+                        loaded, Detection!, diagnostics, observations, origins.Grace, ImportSite);
                     cancellationToken.ThrowIfCancellationRequested();
-                    var resolved = ImplicitArgumentResolver.ElaborateDeferredBranch(detected, Resolution!, diagnostics, observations, origins);
+                    var resolved = ImplicitArgumentResolver.ElaborateDeferredBranch(
+                        detected, Resolution!, diagnostics, observations, origins, importSite: ImportSite);
                     if (origins.HasLiftedParameters)
                     {
                         var completed = ParameterDetector.CompleteOwnership(
-                            resolved, origins, branchContext: Detection!, observations: observations);
+                            resolved, origins, branchContext: Detection!, observations: observations, importSite: ImportSite);
                         if (completed.Changed)
                         {
                             diagnostics.RemoveRange(parameterDiagnosticStart, diagnostics.Count - parameterDiagnosticStart);
                             diagnostics.AddRange(completed.Diagnostics);
                             resolved = ImplicitArgumentResolver.ElaborateDeferredBranch(
-                                completed.Root, Resolution!, diagnostics, observations, preserveSignatures: true);
+                                completed.Root, Resolution!, diagnostics, observations, preserveSignatures: true, importSite: ImportSite);
                         }
                     }
                     cancellationToken.ThrowIfCancellationRequested();
                     if (!HasErrors(diagnostics))
                     {
-                        new ParameterPropertyCollisionValidator(diagnostics, Validation).VisitAlgorithm(resolved);
-                        OpenProviderValidator.Validate(resolved, diagnostics, Exposure!.Scope.PropertyScope);
+                        new ParameterPropertyCollisionValidator(diagnostics, Validation, importSite: ImportSite).VisitAlgorithm(resolved);
+                        OpenProviderValidator.Validate(resolved, diagnostics, Exposure!.Scope.PropertyScope, ImportSite);
                     }
                     if (!HasErrors(diagnostics))
                     {

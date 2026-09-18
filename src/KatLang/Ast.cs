@@ -1741,31 +1741,41 @@ public closed record Algorithm
         }
 
         /// <summary>
-        /// True for the parser-synthesized <c>$deconstruct$N</c> property that hoists an
-        /// assignment deconstruction's right-hand side (<c>x, *y, z = RHS</c>) so it is
-        /// evaluated once and shared by the target helpers. The right-hand side is written
-        /// as an expression of the ENCLOSING body, so the front end elaborates this
-        /// algorithm's output rows as rows of the enclosing algorithm — its free names
-        /// become that algorithm's implicit parameters (read back through the inherited
-        /// value environment) and its sibling references lift in that algorithm's context —
-        /// and the property itself stays a zero-parameter shared source. Not part of the Lean
-        /// model (the elaborated tree is an ordinary zero-parameter property).
+        /// Non-null exactly for the parser-synthesized <c>$deconstruct$N</c> property that
+        /// hoists an assignment deconstruction's right-hand side (<c>x, *y, z = RHS</c>) so it
+        /// is evaluated once and shared by the target helpers: the number of output rows the
+        /// ENCLOSING body had written when the deconstruction was parsed, i.e. the right-hand
+        /// side is written before that body's output row of this index (equal to the row
+        /// count when it follows every row). The right-hand side is written as an expression
+        /// of the enclosing body, so the front end elaborates this algorithm's output rows
+        /// as rows of the enclosing algorithm IN WRITTEN ORDER (<c>AstHelpers.WrittenRows</c>
+        /// merges them by this index — never by source spans, which an imported module view
+        /// does not carry) — its free names become that algorithm's implicit parameters
+        /// (read back through the inherited value environment) and its sibling references
+        /// lift in that algorithm's context — and the property itself stays a zero-parameter
+        /// shared source. Not part of the Lean model (the elaborated tree is an ordinary
+        /// zero-parameter property).
         /// </summary>
-        internal bool IsAssignmentDeconstructionSource { get; init; }
+        internal int? AssignmentDeconstructionRowIndex { get; init; }
+
+        /// <summary>True for the hoisted right-hand side of an assignment deconstruction; see <see cref="AssignmentDeconstructionRowIndex"/>.</summary>
+        internal bool IsAssignmentDeconstructionSource => AssignmentDeconstructionRowIndex is not null;
 
         /// <summary>
-        /// True for a module root spliced into the tree by load elaboration.
-        /// Tooling-only provenance metadata: source spans inside a loaded module
-        /// are positioned in the MODULE's source text, so editor sites derived from
-        /// spans must not treat them as current-document positions. The semantic
-        /// model treats the whole marked subtree — at every nesting depth, modules
-        /// opened by the module included — as module-provided: it emits no scope
-        /// regions, declaration occurrences, reference sites, or classification
-        /// sites for it, and a document reference to one of its members resolves to
-        /// a locationless target. When this algorithm itself is the semantic model's
-        /// root, its source is the current document and only nested imports are
-        /// suppressed. Not part of the Lean model — no observable
-        /// evaluation semantics depend on it.
+        /// True for a module root spliced into the tree by load elaboration — the mark of
+        /// an IMPORT VIEW. The spliced module is LOCATIONLESS (<c>ModuleLoader.ToImportView</c>
+        /// clears every source location of the fetched module's tree, whose spans were
+        /// positioned in the MODULE's text and mean nothing in the loading document), so
+        /// this mark is what the front end and the semantic model recognize an import by:
+        /// a front-end diagnostic raised against imported content is positioned at the
+        /// import site the pass reached the view through (<see cref="ImportSite"/>), and
+        /// the semantic model treats the whole marked subtree — at every nesting depth,
+        /// modules opened by the module included — as module-provided: it emits no scope
+        /// regions, declaration occurrences, reference sites, or classification sites for
+        /// it, and a document reference to one of its members resolves to a locationless
+        /// target. When this algorithm itself is the semantic model's root, its own mark is
+        /// ignored (it still carries no positions) and only nested imports are suppressed.
+        /// Not part of the Lean model — no observable evaluation semantics depend on it.
         /// </summary>
         internal bool IsModuleElaborated { get; init; }
     }

@@ -194,27 +194,33 @@ public class ImplicitParameterProvenanceAttachmentTests
     }
 
     [Fact]
-    public async Task ModuleOriginPositioning_IsForgottenOnTheSharedNote_SoTheLocalDemandKeepsItsSpan()
+    public async Task ModuleOriginPositioning_HasNoModuleSpanOnTheSharedNote_SoTheLocalDemandKeepsItsSpan()
     {
-        // The edge lies inside the imported module: the finalizer marks the shared
-        // note, and the importing document's report — built from the module property's
-        // declarations at the local demand — reads that mark from the same object.
+        // The edge lies inside the imported module, which is its locationless import view:
+        // the promotion's shared note records NO occurrence span (never the module-relative
+        // 1:19-1:25 of the member token), so the importing document's report — built from
+        // the module property's declarations at the local demand — keeps the demand span,
+        // while the receiver-aware wording and suggestion survive on the same object and no
+        // module coordinate is rendered into the message.
         var parsed = await SourceProvenance.ParseValidAsync(
             "open 'https://katlang.org/g24.kat'\nUse + 1",
             new RunOptions { DownloadCode = (_, _) => ValueTask.FromResult("public Use = Math.Ceiling(2.1)") });
         var edge = SingleNotedEdge(parsed.Root);
         var note = edge.InferredFallbackProvenance!;
-        Assert.Equal(new SourceSpan(1, 19, 1, 25), note.Span);
+        Assert.Null(note.Span);
+        Assert.Null(edge.MemberSpan);
         Assert.Equal("Math", note.DotMemberOrigin?.ReceiverDescription);
         Assert.Equal("Math.Ceil", note.SuggestedName);
-        Assert.False(note.CanPositionAtOrigin);
 
         var error = Fail(parsed.Root);
         Assert.Same(note, Assert.Single(Notes(error)));
         Assert.Equal(KatLangErrorCode.ArityMismatch, error.Code);
         Assert.Equal(2, error.Span?.StartLineNumber);
         Assert.Equal(1, error.Span?.StartColumn);
-        Assert.Contains("Did you mean 'Math.Ceil'?", KatLangError.FromEvalError(error).Message, StringComparison.Ordinal);
+        var message = KatLangError.FromEvalError(error).Message;
+        Assert.Contains("Did you mean 'Math.Ceil'?", message, StringComparison.Ordinal);
+        Assert.DoesNotContain("[1:19]", message, StringComparison.Ordinal);
+        Assert.Contains("was inferred from an unresolved name", message, StringComparison.Ordinal);
     }
 
     // ── C. Separate promotions never share a note ───────────────────────────

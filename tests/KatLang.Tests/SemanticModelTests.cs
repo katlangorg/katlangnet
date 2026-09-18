@@ -2243,8 +2243,9 @@ public class SemanticModelTests
             "open 'https://katlang.org/lib.kat'\nTax + 1",
             new Dictionary<string, string> { ["https://katlang.org/lib.kat"] = module });
 
-        // Module spans belong to the module's source text: no region may claim
-        // current-document positions, so only the root scope exists here.
+        // Module nodes carry no positions (the spliced module is its locationless import
+        // view): no region may claim current-document positions, so only the root scope
+        // exists here.
         var root = Assert.Single(model.ScopeVisibilities);
         Assert.Null(root.Span);
 
@@ -2834,8 +2835,9 @@ public class SemanticModelTests
             ["https://katlang.org/lib.kat"] = "public Total = 5\nTotal",
         });
 
-        // The module's own Total reference has exactly the document reference's spelling
-        // AND coordinates. Only the distinct, document-backed occurrence may be emitted.
+        // The module's own Total reference has exactly the document reference's spelling,
+        // and was written at exactly the same coordinates in the module's text; it carries
+        // none here, so only the document-backed occurrence is emitted.
         var reference = Assert.Single(model.IdentifierResolutions);
         Assert.Equal("Total", reference.Occurrence.Name);
         Assert.Equal(OccurrenceKind.ResolveReference, reference.Occurrence.Kind);
@@ -2849,23 +2851,35 @@ public class SemanticModelTests
     }
 
     [Fact]
-    public async Task ModuleProvenance_AnalyzingModuleAsCurrentRootKeepsItsOwnSites()
+    public async Task ModuleProvenance_AModuleIsPositionedOnlyWhenParsedAsTheCurrentDocument()
     {
         const string moduleSource = "open 'https://katlang.org/base.kat'\npublic Total = Base + 1\nTotal";
-        var parsed = await Parser.ParseAsync("open 'https://katlang.org/lib.kat'\nTotal", new RunOptions
+        var options = new RunOptions
         {
             DownloadCode = (url, _) => ValueTask.FromResult(url.EndsWith("/lib.kat", StringComparison.Ordinal)
                 ? moduleSource : "public Base = 4\nHidden = 3"),
-        });
+        };
+        var parsed = await Parser.ParseAsync("open 'https://katlang.org/lib.kat'\nTotal", options);
         Assert.False(parsed.HasErrors);
         Assert.False(Assert.IsType<Algorithm.User>(parsed.Root).IsModuleElaborated);
         var module = Assert.IsType<Algorithm.User>(
             Assert.IsType<Expr.AlgorithmExpr>(Assert.Single(parsed.Root.Opens)).Algorithm);
         Assert.True(module.IsModuleElaborated);
 
-        // Supplying the loaded algorithm itself to Build chooses THAT source as the
-        // current document. Its own mark is ignored, while its nested import still counts.
-        var model = SemanticModelBuilder.Build(module);
+        // The SPLICED module is its locationless import view: supplying it to Build treats it
+        // as the current document (its own mark is ignored) but it carries no positions of
+        // any document, so nothing is a site — no declaration, no occurrence, no region.
+        var viewModel = SemanticModelBuilder.Build(module);
+        Assert.Empty(viewModel.Declarations);
+        Assert.Empty(viewModel.IdentifierOccurrences);
+        Assert.Empty(viewModel.IdentifierResolutions);
+        Assert.Null(Assert.Single(viewModel.ScopeVisibilities).Span);
+        Assert.Null(Assert.Single(viewModel.ScopeVisibilities).Symbols.Single(symbol => symbol.Name == "Total").Declaration);
+
+        // The module's own coordinates exist exactly where it is processed as its own
+        // source: parsing ITS text as the document yields its sites, while what it imports
+        // in turn stays locationless.
+        var model = SemanticModelBuilder.Build(await Parser.ParseAsync(moduleSource, options));
         var total = Assert.Single(model.FindDeclarations("Total"));
         AssertSpan(total.Span, 2, 8, 2, 12);
         var reference = ResolutionAt(model, 3, 1);
@@ -2933,7 +2947,8 @@ public class SemanticModelTests
         var sharedBlock = Assert.IsType<Expr.AlgorithmExpr>(Assert.Single(module.Output));
 
         // The public Build(Algorithm) path accepts shared acyclic graphs. Moving the SAME
-        // imported declaration/reference under another parent does not rebase its source.
+        // imported declaration/reference under another parent gives it no position: the
+        // imported nodes are locationless, so no provenance bookkeeping is needed for them.
         // Alias has a local declaration and a copied algorithm with shared imported
         // body/parameter nodes. F is also installed directly: it must beat BOTH opens.
         var root = parsed.Root with
@@ -2958,8 +2973,8 @@ public class SemanticModelTests
         Assert.Equal(IdentifierClassification.PropertyReference, visible.Classification);
         Assert.Null(visible.Declaration);
         Assert.Equal("F(x)", visible.Property!.DisplaySignature);
-        // The copied block's module-relative extent must not create a local scope over
-        // the document's Local declaration either. This checks extent provenance, not spelling.
+        // The copied block has no extent (its nodes are locationless), so it cannot create a
+        // local scope over the document's Local declaration either.
         Assert.Same(model.ScopeVisibilities[0], model.FindScopeAt(3, 1));
         AssertIdentifierSitesSliceToTheirSpelling(model, source);
         AssertPositionalQueriesReturnOnlyDocumentSites(model, source);
@@ -2980,8 +2995,9 @@ public class SemanticModelTests
         var alias = Assert.Single(parsed.Root.Properties);
         var model = SemanticModelBuilder.Build(parsed.Root with
         {
-            // Copying the family retains shared branch patterns and bodies, whose spans
-            // still belong to the module even though this algorithm has a local owner.
+            // Copying the family retains shared branch patterns and bodies, which carry no
+            // spans at all (the module is its locationless import view) even though this
+            // algorithm has a local owner.
             Properties = [alias with { Value = imported.Value with { } }],
         });
 
@@ -2989,7 +3005,7 @@ public class SemanticModelTests
         Assert.Equal(PropertyShape.Conditional, info.Shape);
         var declaration = Assert.Single(model.FindDeclarations("Alias"));
         Assert.Same(declaration, info.Declaration);
-        Assert.Same(declaration.Span, info.ConditionalBranches[0].HeadSpan);
+        Assert.Equal(declaration.Span, info.ConditionalBranches[0].HeadSpan);
         Assert.Equal("n", info.Signatures[0].Parameters[0].Name);
         Assert.Null(info.Signatures[0].Parameters[0].Span);
         Assert.Same(info, ResolutionAt(model, 3, 1).ResolvedProperty);

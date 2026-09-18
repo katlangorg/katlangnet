@@ -148,7 +148,7 @@ public class ParameterPropertyCollisionTests
             var root = new Algorithm.User(null, [], [], [], new OutputBundle(owners.Select(a => (Expr)new Expr.AlgorithmExpr(a)).ToArray()));
             new ParameterPropertyCollisionValidator(diagnostics).VisitAlgorithm(root);
             var diagnostic = Assert.Single(diagnostics);
-            Assert.Same(span, diagnostic.Span);
+            Assert.Equal(span, diagnostic.Span);
             Assert.Contains("line 1, column 7", diagnostic.Message);
         }
         var isolated = new List<Diagnostic>();
@@ -269,12 +269,17 @@ public class ParameterPropertyCollisionTests
         Assert.Equal(KatLangErrorCode.UnresolvedImplicitParams, Assert.Single(failure.Errors).Code);
 
         // A spliced module is not the program root. Its declarations must still
-        // be checked against real enclosing callable parameters.
+        // be checked against real enclosing callable parameters. The module's `Total`
+        // declaration has no position in THIS document (the spliced module is its
+        // locationless import view — its own 1:8-1:12 is never presented here), so the
+        // report sits at the import site, the declaring `Lib`, and names the parameter's
+        // local position.
         const string callable = "Outer(Total) = {\nLib = load('https://katlang.org/lib.kat')\nLib.Total\n}\nOuter(7)";
         var rejected = await Parser.ParseAsync(callable, options);
         var diagnostic = Assert.Single(rejected.Diagnostics);
         Assert.Equal(DiagnosticCode.ParameterPropertyCollision, diagnostic.Code);
-        Assert.Equal(new SourceSpan(1, 8, 1, 12), diagnostic.Span);
+        Assert.Equal(new SourceSpan(2, 1, 2, 3), diagnostic.Span);
+        Assert.Contains("declared at line 1, column 7", diagnostic.Message, StringComparison.Ordinal);
     }
 
     [Fact]

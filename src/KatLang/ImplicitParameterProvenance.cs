@@ -24,11 +24,11 @@ namespace KatLang;
 /// which is why an independent context can reach an independent verdict.</para>
 ///
 /// <para><b>Mutation.</b> <see cref="Name"/> and <see cref="Span"/> are fixed
-/// at promotion. The receiver-aware half — <see cref="DotMemberOrigin"/>, the
-/// suggestion, and <see cref="CanPositionAtOrigin"/> — is finalized IN PLACE
+/// at promotion. The receiver-aware half — <see cref="DotMemberOrigin"/> and the
+/// suggestion — is finalized IN PLACE
 /// by <see cref="DotMemberProvenanceFinalizer"/>, the one walk that runs after
 /// exposure completion (once per pipeline run; a deferred materialization is
-/// its own run over the notes it minted), through the three named operations
+/// its own run over the notes it minted), through the two named operations
 /// below and nothing else; because the note is shared, the verdict reaches every view
 /// (every lifted caller included) without rewriting any executable node. The
 /// finalizer runs before its tree is published — inside the synchronous front
@@ -52,6 +52,12 @@ internal sealed class ImplicitParameterProvenance
 
     internal string Name { get; }
 
+    /// <summary>
+    /// The first semantic source occurrence of the promoted name, or null when that
+    /// occurrence lies in imported module content — an import view carries no source
+    /// locations (see <see cref="ImportSite"/>) — so a report about the promotion is
+    /// positioned and worded from the current document alone.
+    /// </summary>
     internal SourceSpan? Span { get; }
 
     /// <summary>
@@ -75,15 +81,6 @@ internal sealed class ImplicitParameterProvenance
     /// </summary>
     internal DotMemberFallbackOrigin? DotMemberOrigin { get; private set; }
 
-    /// <summary>
-    /// Whether a single-parameter report may be positioned at
-    /// <see cref="Span"/> (the member token of the dot edge). False once the
-    /// finalizer finds the edge inside a load-elaborated module, whose spans
-    /// belong to the module's source text: the report then keeps the local
-    /// demand span.
-    /// </summary>
-    internal bool CanPositionAtOrigin { get; private set; } = true;
-
     private NameSuggestion? Suggestion { get; set; }
 
     /// <summary>
@@ -99,13 +96,6 @@ internal sealed class ImplicitParameterProvenance
 
     internal void ConfirmDotMemberReceiver(Algorithm receiver)
         => Suggestion = Suggestion?.RestrictToReceiver(receiver);
-
-    /// <summary>
-    /// The edge lies in an imported module: keep the receiver-aware wording and
-    /// suggestion, but never position the importing document's report at the
-    /// module's coordinates.
-    /// </summary>
-    internal void ForgetOriginPosition() => CanPositionAtOrigin = false;
 
     internal static IReadOnlyList<ImplicitParameterProvenance>? CollectFrom(
         IReadOnlyList<ParameterDeclaration> parameters)
@@ -185,37 +175,28 @@ internal sealed class NameSuggestion
 internal sealed class DotMemberProvenanceFinalizer(ElaboratedPropertyScope parentScope) : AstWalker
 {
     private ElaboratedPropertyScope _scope = parentScope;
-    private bool _inModule;
     private readonly Dictionary<ElaboratedPropertyScope, HashSet<object>> _visited = new(ReferenceEqualityComparer.Instance);
-    private readonly Dictionary<ElaboratedPropertyScope, HashSet<object>> _visitedInModules = new(ReferenceEqualityComparer.Instance);
 
     protected override bool VisitsExplicitParameterDeclarations => false;
 
     private bool Enter(object node)
     {
-        var visited = _inModule ? _visitedInModules : _visited;
-        if (!visited.TryGetValue(_scope, out var nodes))
-            visited[_scope] = nodes = new(ReferenceEqualityComparer.Instance);
+        if (!_visited.TryGetValue(_scope, out var nodes))
+            _visited[_scope] = nodes = new(ReferenceEqualityComparer.Instance);
         return nodes.Add(node);
     }
 
     public override void VisitAlgorithm(Algorithm algorithm)
     {
         var previousScope = _scope;
-        var previousModule = _inModule;
-        _inModule |= algorithm is Algorithm.User { IsModuleElaborated: true };
         if (algorithm.DeferredRegion is not null || !Enter(algorithm))
-        {
-            _inModule = previousModule;
             return;
-        }
         // Parameters already have Param identity. A level with no declarations
         // cannot change receiver lookup and need not split the diagnostic region.
         if (algorithm.Properties.Count != 0 || algorithm.Opens.Count != 0)
             _scope = ElaboratedScopeLookup.CreateScope(algorithm, _scope);
         base.VisitAlgorithm(algorithm);
         _scope = previousScope;
-        _inModule = previousModule;
     }
 
     public override void VisitPattern(Pattern pattern) { }
@@ -236,8 +217,6 @@ internal sealed class DotMemberProvenanceFinalizer(ElaboratedPropertyScope paren
             return;
         if (expr is Expr.DotCall { InferredFallbackProvenance: { DotMemberOrigin: not null } note } edge)
         {
-            if (_inModule)
-                note.ForgetOriginPosition();
             var receiver = edge.Target.UnwrapGraceOperand().ResolveStaticStructuralMemberProvider(name =>
             {
                 var hits = ElaboratedScopeLookup.LookupLexicalPropertyMatches(_scope, name);
