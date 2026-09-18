@@ -327,7 +327,7 @@ public class SemanticExplorerLeanArtifactTests
             var rootOutput = internalCase.RootOutput();
             var observation = SemanticExplorerHarness.ObserveAst(internalCase.Id, rootOutput);
             var root = new Algorithm.User(
-                Parent: null, Parameters: [], Opens: [], Properties: [], Output: [rootOutput]);
+                Parent: null, ParameterPatterns: [], Opens: [], Properties: [], Output: [rootOutput]);
             builder.Append($"-- internal__{internalCase.Id}: {internalCase.Description}\n");
             builder.Append($"def case_internal__{internalCase.Id} : Expr :=\n  {LeanAstEncoder.EncodeProgram(root)}\n");
             builder.Append($"#guard obs case_internal__{internalCase.Id} == \"{observation.Neutral}\"\n\n");

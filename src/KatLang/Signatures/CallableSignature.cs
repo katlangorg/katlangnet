@@ -106,10 +106,10 @@ public sealed record CallableSignature
         Algorithm.User algorithm,
         CallableParameterSource? sourceOverride = null)
     {
-        var hasExplicitParameterList = algorithm.ExplicitParameterPatterns.Count > 0;
-        var parameterPatterns = hasExplicitParameterList
-            ? algorithm.ExplicitParameterPatterns
-            : algorithm.ParameterPatterns;
+        // The ONE stored parameter channel is the signature; whether it was WRITTEN (a closed
+        // explicit list) or inferred decides only how its parameters are classified.
+        var hasExplicitParameterList = algorithm.HasExplicitParameterList;
+        var parameterPatterns = algorithm.ParameterPatterns;
         var source = sourceOverride
             ?? (hasExplicitParameterList ? CallableParameterSource.Explicit : CallableParameterSource.Implicit);
         var parameters = CreateParameters(parameterPatterns, source);

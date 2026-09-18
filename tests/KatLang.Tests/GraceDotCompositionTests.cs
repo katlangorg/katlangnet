@@ -1153,19 +1153,19 @@ public class GraceDotCompositionTests
         // stored identity, not the runtime environment, decides.
         var k = new Algorithm.User(
             Parent: null,
-            Parameters: [new ParameterDeclaration("a"), new ParameterDeclaration("t")],
+            ParameterPatterns: [new CaptureParameterPattern("a"), new CaptureParameterPattern("t")],
             Opens: [],
             Properties: [],
             Output: [new Expr.DotCall(new Expr.Param("a"), "t")]);
         var increment = new Algorithm.User(
             Parent: null,
-            Parameters: [new ParameterDeclaration("x")],
+            ParameterPatterns: [new CaptureParameterPattern("x")],
             Opens: [],
             Properties: [],
             Output: [new Expr.Binary(BinaryOp.Add, new Expr.Param("x"), new Expr.Num(1m))]);
         var root = new Algorithm.User(
             Parent: null,
-            Parameters: [],
+            ParameterPatterns: [],
             Opens: [],
             Properties: [new Property("K", k)],
             Output:

@@ -108,7 +108,7 @@ public sealed record SourceSpan(
 /// the RECEIVER that consumes the bundle:
 /// <list type="bullet">
 ///   <item>Algorithm output evaluation preserves per-row emitted-count
-///     semantics (<see cref="Algorithm.Output"/>).</item>
+///     semantics (<see cref="Algorithm.User.Output"/>).</item>
 ///   <item><see cref="Expr.Capture"/> performs canonical sequence capture
 ///     (singleton/empty normalization) over the bundle.</item>
 ///   <item><see cref="Expr.ListLiteral"/> collects the slots as one exact
@@ -193,7 +193,10 @@ public sealed class OutputBundle : IReadOnlyList<Expr>
 /// Algorithm parameter metadata.
 /// Source spans are populated for explicit clause binders that elaborate to an
 /// ordinary <see cref="Algorithm.User"/>. Implicit parameters inferred later by
-/// the front end's parameter-detection pass have no source declaration span.
+/// the front end's parameter-detection pass have no source declaration span; a capture
+/// LIFTED from a callee by implicit-argument resolution is the callee's declaration and
+/// keeps its span, so a span never decides whether an owner's list was written
+/// (<see cref="Algorithm.User.HasExplicitParameterList"/> does).
 /// </summary>
 public enum ParameterKind
 {
@@ -236,11 +239,12 @@ public sealed record ParameterDeclaration(string Name, SourceSpan? Span = null, 
         _ => Name,
     };
 
-    public CaptureParameterPattern ToPattern() => new(Name, Span, Kind)
-    {
-        CollectMarkerSpan = CollectMarkerSpan,
-        InferredProvenance = InferredProvenance,
-    };
+    /// <summary>
+    /// This declaration as a capture leaf (Lean: <c>ParameterPattern.capture</c>). The leaf
+    /// HOLDS this very declaration — no copy, so the pattern and the declaration it came
+    /// from share one provenance note and one identity.
+    /// </summary>
+    public CaptureParameterPattern ToPattern() => new(this);
 }
 
 /// <summary>
@@ -259,15 +263,125 @@ public closed record ParameterPattern
 
     public abstract string DisplayName { get; }
 
+    /// <summary>
+    /// The capture declarations this pattern binds, left to right and depth first
+    /// (Lean: <c>ParameterPattern.captures</c>). A capture leaf yields the declaration it
+    /// holds; a sequence-value pattern yields the flattened captures of its items. Never a
+    /// cache: a host that mutates a retained <see cref="SequenceValueParameterPattern.Items"/>
+    /// list sees the current captures on the next read.
+    /// </summary>
     public abstract IReadOnlyList<ParameterDeclaration> Captures { get; }
 
     public bool ContainsCollectingCapture => Captures.Any(static capture => capture.Kind == ParameterKind.Collecting);
 
+    /// <summary>One capture leaf per declaration (Lean: <c>ParameterPattern.fromParameters</c>).</summary>
     public static IReadOnlyList<ParameterPattern> FromDeclarations(IEnumerable<ParameterDeclaration> parameters)
-        => parameters.Select(static parameter => parameter.ToPattern()).ToList();
+        => parameters.Select(static parameter => (ParameterPattern)parameter.ToPattern()).ToList();
 
+    /// <summary>
+    /// Left-to-right depth-first capture flatten of a pattern list (Lean:
+    /// <c>patterns.flatMap ParameterPattern.captures</c>), returning the declarations the
+    /// capture leaves hold. Walked with an explicit stack that is allocated only when a
+    /// sequence-value pattern is met: parameter patterns are host-constructible to arbitrary
+    /// depth, and this public helper must not recurse on the caller's stack.
+    /// </summary>
     public static IReadOnlyList<ParameterDeclaration> FlattenCaptures(IEnumerable<ParameterPattern> patterns)
-        => patterns.SelectMany(static pattern => pattern.Captures).ToList();
+    {
+        var captures = new List<ParameterDeclaration>();
+        Stack<ParameterPattern>? pending = null;
+        foreach (var pattern in patterns)
+            AppendCaptures(pattern, captures, ref pending);
+        return captures;
+    }
+
+    /// <summary>
+    /// The number of captures a pattern list binds — <c>FlattenCaptures(patterns).Count</c>
+    /// without materializing the list (Lean: <c>(patterns.flatMap captures).length</c>).
+    /// Allocation-free for a flat list of capture leaves; a nested sequence-value pattern is
+    /// walked with an explicit stack like <see cref="FlattenCaptures"/>.
+    /// </summary>
+    internal static int CountCaptures(IReadOnlyList<ParameterPattern> patterns)
+    {
+        var count = 0;
+        Stack<ParameterPattern>? pending = null;
+        for (var index = 0; index < patterns.Count; index++)
+        {
+            switch (patterns[index])
+            {
+                case CaptureParameterPattern:
+                    count++;
+                    break;
+                case SequenceValueParameterPattern group:
+                    pending ??= new Stack<ParameterPattern>();
+                    PushItems(pending, group);
+                    while (pending.Count > 0)
+                    {
+                        switch (pending.Pop())
+                        {
+                            case CaptureParameterPattern:
+                                count++;
+                                break;
+                            case SequenceValueParameterPattern nested:
+                                PushItems(pending, nested);
+                                break;
+                            case var unhandled:
+                                throw UnhandledPattern(unhandled);
+                        }
+                    }
+                    break;
+                case var unhandled:
+                    throw UnhandledPattern(unhandled);
+            }
+        }
+
+        return count;
+    }
+
+    private static void AppendCaptures(
+        ParameterPattern pattern,
+        List<ParameterDeclaration> captures,
+        ref Stack<ParameterPattern>? pending)
+    {
+        switch (pattern)
+        {
+            case CaptureParameterPattern capture:
+                captures.Add(capture.Parameter);
+                return;
+            case SequenceValueParameterPattern group:
+                pending ??= new Stack<ParameterPattern>();
+                PushItems(pending, group);
+                while (pending.Count > 0)
+                {
+                    switch (pending.Pop())
+                    {
+                        case CaptureParameterPattern capture:
+                            captures.Add(capture.Parameter);
+                            break;
+                        case SequenceValueParameterPattern nested:
+                            PushItems(pending, nested);
+                            break;
+                        case var unhandled:
+                            throw UnhandledPattern(unhandled);
+                    }
+                }
+                return;
+            case var unhandled:
+                throw UnhandledPattern(unhandled);
+        }
+    }
+
+    // Items are pushed last-first so the pop order is the written left-to-right order.
+    private static void PushItems(Stack<ParameterPattern> pending, SequenceValueParameterPattern group)
+    {
+        var items = group.Items;
+        for (var index = items.Count - 1; index >= 0; index--)
+            pending.Push(items[index]);
+    }
+
+    // The runtime guard of the statement-form walks above: the hierarchy is closed, so this
+    // is unreachable until a variant is added — and then it fails loudly here.
+    private static InvalidOperationException UnhandledPattern(ParameterPattern pattern)
+        => new($"Unhandled parameter pattern: {pattern.GetType().Name}");
 
     public static bool HasCollectingCaptureAtCurrentLevel(IEnumerable<ParameterPattern> patterns)
         => patterns.Count(static pattern => pattern is CaptureParameterPattern { Kind: ParameterKind.Collecting }) > 0;
@@ -313,13 +427,36 @@ public closed record ParameterPattern
                 && captures.Any(static capture => capture.Kind == ParameterKind.Collecting));
 }
 
-public sealed record CaptureParameterPattern(string Name, SourceSpan? Span = null, ParameterKind Kind = ParameterKind.Normal)
-    : ParameterPattern
+/// <summary>
+/// A capture leaf: binds ONE name (Lean: <c>ParameterPattern.capture : CallableParameter →
+/// ParameterPattern</c>). The leaf HOLDS its <see cref="Parameter"/> declaration — name, span,
+/// kind, collect-marker span, and the diagnostic provenance note — so flattening a pattern
+/// list into declarations (<see cref="ParameterPattern.Captures"/>,
+/// <see cref="Algorithm.User.Parameters"/>) returns the stored declarations instead of
+/// allocating copies, and a user algorithm's flat parameter view is a projection of its
+/// stored patterns with no second parameter channel. Structural equality, hashing, and
+/// printing are those of the held declaration.
+/// </summary>
+public sealed record CaptureParameterPattern(ParameterDeclaration Parameter) : ParameterPattern
 {
-    private readonly RuntimeStateSlot<ImplicitParameterProvenance?> _inferredProvenance;
+    /// <summary>A normal or collecting capture of <paramref name="Name"/>, holding a fresh declaration.</summary>
+    public CaptureParameterPattern(string Name, SourceSpan? Span = null, ParameterKind Kind = ParameterKind.Normal)
+        : this(new ParameterDeclaration(Name, Span, Kind))
+    {
+    }
+
+    public string Name => Parameter.Name;
+
+    public SourceSpan? Span => Parameter.Span;
+
+    public ParameterKind Kind => Parameter.Kind;
 
     /// <summary>Exact span of the source prefix <c>*</c> collect marker, when source-backed.</summary>
-    public SourceSpan? CollectMarkerSpan { get; init; }
+    public SourceSpan? CollectMarkerSpan
+    {
+        get => Parameter.CollectMarkerSpan;
+        init => Parameter = Parameter with { CollectMarkerSpan = value };
+    }
 
     /// <summary>
     /// Diagnostic-only provenance when this capture was inferred from an
@@ -331,20 +468,13 @@ public sealed record CaptureParameterPattern(string Name, SourceSpan? Span = nul
     /// </summary>
     internal ImplicitParameterProvenance? InferredProvenance
     {
-        get => _inferredProvenance.Value;
-        init => _inferredProvenance = new(value);
+        get => Parameter.InferredProvenance;
+        init => Parameter = Parameter with { InferredProvenance = value };
     }
 
-    public override string DisplayName => Kind == ParameterKind.Collecting ? $"*{Name}" : Name;
+    public override string DisplayName => Parameter.DisplayName;
 
-    public override IReadOnlyList<ParameterDeclaration> Captures =>
-    [
-        new(Name, Span, Kind)
-        {
-            CollectMarkerSpan = CollectMarkerSpan,
-            InferredProvenance = InferredProvenance,
-        }
-    ];
+    public override IReadOnlyList<ParameterDeclaration> Captures => [Parameter];
 }
 
 public sealed record SequenceValueParameterPattern(IReadOnlyList<ParameterPattern> Items)
@@ -353,42 +483,11 @@ public sealed record SequenceValueParameterPattern(IReadOnlyList<ParameterPatter
     public override string DisplayName => $"({string.Join(", ", Items.Select(static item => item.DisplayName))})";
 
     /// <summary>
-    /// Left-to-right depth-first capture flatten, walked with an explicit stack:
-    /// parameter patterns are host-constructible to arbitrary depth, and this public
-    /// convenience must not recurse on the caller's stack (a recursive flatten
-    /// overflowed the process on deep host-built patterns). Capture order, duplicate
-    /// names, and the produced declarations are identical to the recursive flatten.
+    /// Left-to-right depth-first capture flatten of <see cref="Items"/>
+    /// (<see cref="ParameterPattern.FlattenCaptures"/>): the declarations the nested capture
+    /// leaves hold, in written order, duplicates included.
     /// </summary>
-    public override IReadOnlyList<ParameterDeclaration> Captures
-    {
-        get
-        {
-            var captures = new List<ParameterDeclaration>();
-            var pending = new Stack<ParameterPattern>();
-            for (var i = Items.Count - 1; i >= 0; i--)
-                pending.Push(Items[i]);
-
-            while (pending.Count > 0)
-            {
-                switch (pending.Pop())
-                {
-                    case CaptureParameterPattern capture:
-                        captures.Add(new ParameterDeclaration(capture.Name, capture.Span, capture.Kind)
-                        {
-                            CollectMarkerSpan = capture.CollectMarkerSpan,
-                            InferredProvenance = capture.InferredProvenance,
-                        });
-                        break;
-                    case SequenceValueParameterPattern group:
-                        for (var i = group.Items.Count - 1; i >= 0; i--)
-                            pending.Push(group.Items[i]);
-                        break;
-                }
-            }
-
-            return captures;
-        }
-    }
+    public override IReadOnlyList<ParameterDeclaration> Captures => FlattenCaptures(Items);
 }
 
 // ── Expressions (Lean: Expr) ────────────────────────────────────────────────
@@ -1179,16 +1278,28 @@ public sealed record Property(
 /// <c>Algorithm.mk</c> (user-defined), <c>Algorithm.builtin</c> (built-in operation),
 /// and <c>Algorithm.conditional</c> (conditional algorithm with pattern branches).
 ///
-/// Virtual properties provide Lean-style accessors that return defaults for Builtin variant
-/// (null/[] as appropriate), matching Lean's Algorithm.parent, Algorithm.parameters, etc.
+/// <para><b>Variant-owned payload.</b> The base type carries NO payload: every stored
+/// fact belongs to the variant that owns it, exactly as each Lean constructor carries its
+/// own fields — <see cref="User"/> owns its parent, parameter patterns, opens, properties,
+/// and output; <see cref="Conditional"/> owns its parent, opens, and branches; a
+/// <see cref="Builtin"/> owns only its identity. Because no payload member exists on the
+/// base, no <c>with</c> expression or object initializer over a base-typed value can give
+/// an algorithm payload its variant does not have (a builtin with properties, a family with
+/// an output, a user algorithm with branches): those states are unrepresentable in Lean's
+/// inductive and are compile-time errors here. Code that holds a base-typed value
+/// pattern-matches to read or update variant payload; the implementation additionally has
+/// INTERNAL total read accessors (<c>AlgorithmAccessors</c>: the Lean <c>parent</c>,
+/// <c>parameterPatterns</c>, <c>parameters</c>, <c>params</c>, <c>opens</c>, <c>props</c>,
+/// <c>output</c>, <c>branches</c> functions), which read and never write.</para>
 ///
-/// A C# <c>closed</c> hierarchy, like the Lean inductive: <see cref="User"/>,
+/// <para>A C# <c>closed</c> hierarchy, like the Lean inductive: <see cref="User"/>,
 /// <see cref="Builtin"/>, and <see cref="Conditional"/> are its only variants, no other
 /// assembly can derive from it, and a switch EXPRESSION naming all three is
 /// compiler-exhaustive with no catch-all arm — the Lean-mirroring dispatches
 /// (<c>withParent</c>, <c>isFunctionShaped</c>, signature and exposure classification,
-/// the <c>WithParams</c> family here) name the variants a case applies to instead of
-/// hiding them under <c>_</c>, so a new variant fails the build there until decided.
+/// the <c>WithParams</c> family here, the internal total accessors) name the variants a
+/// case applies to instead of hiding them under <c>_</c>, so a new variant fails the build
+/// there until decided.</para>
 ///
 /// <para><b>Declaration identity.</b> Every <see cref="User"/> and <see cref="Conditional"/>
 /// CONSTRUCTED with <c>new</c> is one written declaration and carries its own
@@ -1254,101 +1365,19 @@ public closed record Algorithm
     // above (a declaration token's ordinary Equals, dictionaries, and LINQ all retain
     // reference identity).
 
-    /// <summary>Lean: Algorithm.parent. Returns null for Builtin.</summary>
-    public virtual ScopeCtx? Parent { get; init; }
-
-    /// <summary>Lean: Algorithm.parameters. Returns [] for Builtin.</summary>
-    public virtual IReadOnlyList<ParameterDeclaration> Parameters { get; init; } = [];
-
-    /// <summary>Top-level recursive parameter patterns for ordinary call binding.</summary>
-    public virtual IReadOnlyList<ParameterPattern> ParameterPatterns { get; init; } = [];
-
     /// <summary>
-    /// Lean: Algorithm.params. Derived parameter names; returns [] for Builtin.
-    /// A fresh projection of the CURRENT <see cref="Parameters"/> on every read, never a
-    /// cache (see <see cref="ParameterNames"/>): free for a zero-parameter algorithm, one
-    /// array for a parameterized one — so count-only consumers read
-    /// <c>Parameters.Count</c>, which is the same number by construction.
-    /// </summary>
-    public virtual IReadOnlyList<string> Params => ParameterNames(Parameters);
-
-    /// <summary>Lean: Algorithm.opens. Returns [] for Builtin.</summary>
-    public virtual IReadOnlyList<Expr> Opens { get; init; } = [];
-
-    /// <summary>Lean: Algorithm.props. Returns [] for Builtin.</summary>
-    public virtual IReadOnlyList<Property> Properties { get; init; } = [];
-
-    /// <summary>
-    /// The algorithm's output as an <see cref="OutputBundle"/> — ordered
-    /// original written expression rows. The algorithm is the scope-owning
-    /// DEFINITION of this bundle; the bundle itself owns no scope.
-    /// Lean: Algorithm.output. Returns the empty bundle for Builtin and Conditional.
-    /// </summary>
-    public virtual OutputBundle Output { get; init; } = OutputBundle.Empty;
-
-    /// <summary>Lean: Algorithm.branches. Returns [] for non-Conditional algorithms.</summary>
-    public virtual IReadOnlyList<CondBranch> Branches { get; init; } = [];
-
-    /// <summary>
-    /// Source-backed metadata for explicit parameters already represented in
-    /// <see cref="Parameters"/>. This is not an alternate call interface;
-    /// implicit parameters inferred later have no source declaration here.
-    /// </summary>
-    public virtual IReadOnlyList<ParameterDeclaration> ExplicitParameters { get; init; } = [];
-
-    /// <summary>Source-backed explicit top-level parameter patterns.</summary>
-    public virtual IReadOnlyList<ParameterPattern> ExplicitParameterPatterns { get; init; } = [];
-
-    /// <summary>
-    /// Check whether the property list contains duplicate property names.
-    /// Returns the first duplicate name found, or null if all names are unique.
-    /// Lean: Algorithm.findDuplicatePropName.
-    /// </summary>
-    public string? FindDuplicatePropName()
-    {
-        var seen = new HashSet<string>();
-        foreach (var p in Properties)
-        {
-            if (!seen.Add(p.Name))
-                return p.Name;
-        }
-        return null;
-    }
-
-    /// <summary>
-    /// Check whether the branch list contains match-equivalent patterns.
-    /// Returns true if a duplicate is found.
-    /// Lean: Algorithm.hasDuplicateBranchPatterns.
-    /// </summary>
-    public bool HasDuplicateBranchPatterns()
-    {
-        // Single O(branches) pass: a branch duplicates an earlier one exactly when its
-        // pattern fails to enter the match-equivalence set (the ordered branch list is
-        // untouched). This replaces the former O(branches^2) all-pairs scan; the boolean
-        // result is identical because match-equivalence is a genuine equivalence relation,
-        // so one representative per class suffices for membership.
-        var branches = Branches;
-        if (branches.Count < 2)
-            return false;
-
-        var seen = new HashSet<Pattern>(Pattern.MatchEquivalenceComparer);
-        foreach (var branch in branches)
-        {
-            if (!seen.Add(branch.Pattern))
-                return true;
-        }
-        return false;
-    }
-
-    /// <summary>
-    /// Replace the explicit parameter list of a user-defined algorithm.
+    /// Replace the parameter list of a user-defined algorithm by name, keeping the existing
+    /// patterns of names already present and appending fresh captures for new names.
     /// Clause elaboration uses this to preserve ignored binders such as
     /// <c>K(a, b) = a</c>, where <c>b</c> must remain part of the ordinary call
     /// interface even though it is unused in the body.
+    /// Lean: <c>Algorithm.withParams</c> — a TOTAL functional update that is the identity on
+    /// <c>.builtin</c> and <c>.conditional</c>, which have no parameter list (this is the
+    /// modeled behavior, not a fallback).
     /// </summary>
     public Algorithm WithParams(IReadOnlyList<string> parameters) => this switch
     {
-        User user => user.WithParameterPatternList(MergeParameterPatterns(user.ParameterPatterns, parameters)),
+        User user => user with { ParameterPatterns = MergeParameterPatterns(user.ParameterPatterns, parameters) },
         Builtin or Conditional => this,
     };
 
@@ -1364,64 +1393,40 @@ public closed record Algorithm
         IReadOnlyList<string> parameters,
         IReadOnlyDictionary<string, ImplicitParameterProvenance>? inferredProvenance) => this switch
         {
-            User user => user.WithParameterPatternList(
-                MergeParameterPatterns(user.ParameterPatterns, parameters, inferredProvenance)),
+            User user => user with
+            {
+                ParameterPatterns = MergeParameterPatterns(user.ParameterPatterns, parameters, inferredProvenance),
+            },
             Builtin or Conditional => this,
         };
 
-    public Algorithm WithParameters(IReadOnlyList<ParameterDeclaration> parameters) => this switch
-    {
-        User user => user.WithParameterPatternList(ParameterPattern.FromDeclarations(parameters)),
-        Builtin or Conditional => this,
-    };
-
-    public Algorithm WithParameterPatterns(IReadOnlyList<ParameterPattern> parameterPatterns) => this switch
-    {
-        User user => user.WithParameterPatternList(parameterPatterns),
-        Builtin or Conditional => this,
-    };
-
-    internal static IReadOnlyList<ParameterDeclaration> NormalParameters(IEnumerable<string> names)
-        => names.Select(static name => new ParameterDeclaration(name)).ToList();
+    /// <summary>
+    /// Replace a user-defined algorithm's parameter list with one flat capture per
+    /// declaration (Lean: <c>withParameterPatterns (ParameterPattern.fromParameters ps)</c>);
+    /// the identity on <see cref="Builtin"/> and <see cref="Conditional"/>.
+    /// </summary>
+    public Algorithm WithParameters(IReadOnlyList<ParameterDeclaration> parameters)
+        => this switch
+        {
+            User user => user with { ParameterPatterns = ParameterPattern.FromDeclarations(parameters) },
+            Builtin or Conditional => this,
+        };
 
     /// <summary>
-    /// The name projection behind <see cref="Params"/>: exactly the names of
-    /// <paramref name="parameters"/>, in order, duplicates included (Lean:
-    /// <c>Algorithm.params</c>), read from the CURRENT list on every call. It is
-    /// deliberately not cached on the record: a host-built algorithm keeps its
-    /// caller-owned <see cref="Parameters"/> list, and <see cref="Params"/> reads through to
-    /// it (<c>LoopStrategyPreparationTests.HostOwnedCallableMetadata_*</c>), which no stored
-    /// derived copy could honor. The cost is instead kept where the evaluator pays it: a
-    /// zero-parameter algorithm — every evaluator-synthesized wrapper and most written
-    /// properties — returns the shared empty list without allocating, and a parameterized
-    /// one allocates ONE array per read (no LINQ iterator, no list wrapper); consumers that
-    /// need only the count read <c>Parameters.Count</c>, identical by construction.
+    /// Replace a user-defined algorithm's stored parameter patterns — its ONE parameter
+    /// channel, from which <see cref="User.Parameters"/> and <see cref="User.Params"/> are
+    /// derived. Lean: <c>Algorithm.withParameterPatterns</c>, the identity on
+    /// <c>.builtin</c> and <c>.conditional</c>.
     /// </summary>
-    private static IReadOnlyList<string> ParameterNames(IReadOnlyList<ParameterDeclaration> parameters)
+    public Algorithm WithParameterPatterns(IReadOnlyList<ParameterPattern> parameterPatterns) => this switch
     {
-        var count = parameters.Count;
-        if (count == 0)
-            return [];
+        User user => user with { ParameterPatterns = parameterPatterns },
+        Builtin or Conditional => this,
+    };
 
-        var names = new string[count];
-        for (var index = 0; index < names.Length; index++)
-            names[index] = parameters[index].Name;
-        return names;
-    }
-
-    internal static IReadOnlyList<ParameterDeclaration> MergeParameters(
-        IReadOnlyList<ParameterDeclaration> oldParameters,
-        IReadOnlyList<string> newParameterNames)
-    {
-        var existingByName = oldParameters.ToDictionary(
-            static parameter => parameter.Name,
-            StringComparer.Ordinal);
-        return newParameterNames
-            .Select(name => existingByName.TryGetValue(name, out var parameter)
-                ? parameter
-                : new ParameterDeclaration(name))
-            .ToList();
-    }
+    /// <summary>One flat normal capture per name. Lean: <c>Algorithm.normalParameters</c>.</summary>
+    internal static IReadOnlyList<ParameterPattern> NormalParameters(IEnumerable<string> names)
+        => names.Select(static name => (ParameterPattern)new CaptureParameterPattern(name)).ToList();
 
     internal static IReadOnlyList<ParameterPattern> MergeParameterPatterns(
         IReadOnlyList<ParameterPattern> oldPatterns,
@@ -1437,9 +1442,11 @@ public closed record Algorithm
             return merged;
         }
 
-        var existingByName = oldCaptures.ToDictionary(
-            static parameter => parameter.Name,
-            StringComparer.Ordinal);
+        // Lean's parameterForName? selects the first capture of a repeated name.
+        // Host-built patterns can repeat names; total parameter updates must not throw.
+        var existingByName = new Dictionary<string, ParameterDeclaration>(StringComparer.Ordinal);
+        foreach (var parameter in oldCaptures)
+            existingByName.TryAdd(parameter.Name, parameter);
         return newParameterNames
             .Select(name => existingByName.TryGetValue(name, out var parameter)
                 ? (ParameterPattern)parameter.ToPattern()
@@ -1450,12 +1457,12 @@ public closed record Algorithm
     private static CaptureParameterPattern CreateMergedCapture(
         string name,
         IReadOnlyDictionary<string, ImplicitParameterProvenance>? inferredProvenance)
-        => new(name)
+        => new(new ParameterDeclaration(name)
         {
             InferredProvenance = inferredProvenance is not null && inferredProvenance.TryGetValue(name, out var provenance)
                 ? provenance
                 : null,
-        };
+        });
 
     /// <summary>
     /// Elaborate a whole same-name clause family after all of its clauses are
@@ -1471,11 +1478,18 @@ public closed record Algorithm
     {
         if (clauses.Count == 1 && clauses[0].Pattern.TryGetOrdinaryClauseParameterPatterns() is { } explicitParameterPatterns)
         {
-            var explicitParameters = ParameterPattern.FlattenCaptures(explicitParameterPatterns);
-            return clauses[0].Body.WithParameterPatterns(explicitParameterPatterns) with
+            // Lean: `branch.body.withParameterPatterns patterns` — the written head becomes the
+            // body's CLOSED explicit parameter list. The update is total: a body that is not a
+            // user algorithm has no parameter list and is returned as it is (Lean's
+            // withParameterPatterns is the identity on .builtin and .conditional).
+            return clauses[0].Body switch
             {
-                ExplicitParameterPatterns = explicitParameterPatterns,
-                ExplicitParameters = explicitParameters,
+                User body => body with
+                {
+                    ParameterPatterns = explicitParameterPatterns,
+                    HasExplicitParameterList = true,
+                },
+                Builtin or Conditional => clauses[0].Body,
             };
         }
 
@@ -1520,7 +1534,21 @@ public closed record Algorithm
         => ElaborateClauseGroup([new CondBranch(pattern, body)]);
 
     /// <summary>
-    /// User-defined algorithm. Corresponds to <c>Algorithm.mk</c> in the Lean specification.
+    /// User-defined algorithm. Corresponds to <c>Algorithm.mk</c> in the Lean specification
+    /// and owns exactly its fields: <see cref="Parent"/>, <see cref="ParameterPatterns"/>,
+    /// <see cref="Opens"/>, <see cref="Properties"/>, and <see cref="Output"/>.
+    ///
+    /// <para><b>One parameter channel.</b> <see cref="ParameterPatterns"/> is the ONE stored
+    /// parameter representation (Lean's <c>parameterPatterns</c> field). The flat
+    /// declaration list <see cref="Parameters"/> (Lean <c>parameters</c>) and the name list
+    /// <see cref="Params"/> (Lean <c>params</c>) are LIVE projections computed from it on
+    /// every read, never stored: they cannot diverge from the patterns, and a host that
+    /// keeps and later mutates the caller-owned pattern list (or a nested
+    /// <see cref="SequenceValueParameterPattern.Items"/> list) sees the current state through
+    /// every projection and every <c>with</c> copy. Whether that list was WRITTEN as an
+    /// explicit, closed parameter list is the one further fact,
+    /// <see cref="HasExplicitParameterList"/>.</para>
+    ///
     /// Parser elaboration may also predeclare parameters here for recursive
     /// capture/sequence-value clause syntax such as <c>Apply(f) = f(4)</c>,
     /// <c>PairSum((x, y)) = x + y</c>, or
@@ -1530,27 +1558,157 @@ public closed record Algorithm
     {
         public User(
             ScopeCtx? Parent,
-            IReadOnlyList<ParameterDeclaration> Parameters,
+            IReadOnlyList<ParameterPattern> ParameterPatterns,
             IReadOnlyList<Expr> Opens,
             IReadOnlyList<Property> Properties,
             OutputBundle Output)
             : base(new DeclarationIdentity())
         {
             this.Parent = Parent;
-            this.Parameters = Parameters;
-            this.ParameterPatterns = ParameterPattern.FromDeclarations(Parameters);
+            this.ParameterPatterns = ParameterPatterns;
             this.Opens = Opens;
             this.Properties = Properties;
             this.Output = Output;
         }
 
-        public override ScopeCtx? Parent { get; init; }
-        public override IReadOnlyList<ParameterDeclaration> Parameters { get; init; } = [];
-        public override IReadOnlyList<ParameterPattern> ParameterPatterns { get; init; } = [];
-        public override IReadOnlyList<string> Params => ParameterNames(Parameters);
-        public override IReadOnlyList<Expr> Opens { get; init; } = [];
-        public override IReadOnlyList<Property> Properties { get; init; } = [];
-        public override OutputBundle Output { get; init; } = OutputBundle.Empty;
+        /// <summary>Lean: the <c>parent</c> field of <c>Algorithm.mk</c>.</summary>
+        public ScopeCtx? Parent { get; init; }
+
+        /// <summary>
+        /// The stored top-level recursive parameter patterns for ordinary call binding —
+        /// the algorithm's ONE parameter channel (Lean: the <c>parameterPatterns</c> field of
+        /// <c>Algorithm.mk</c>). <see cref="Parameters"/> and <see cref="Params"/> derive from
+        /// it. The list instance is caller-owned and read through on every projection.
+        /// </summary>
+        public IReadOnlyList<ParameterPattern> ParameterPatterns { get; init; }
+
+        /// <summary>
+        /// The flat capture declarations of <see cref="ParameterPatterns"/>, left to right and
+        /// depth first, duplicates included (Lean: <c>Algorithm.parameters a =
+        /// (parameterPatterns a).flatMap ParameterPattern.captures</c>). A fresh projection of
+        /// the CURRENT patterns on every read, never a cache: an empty stored pattern list
+        /// returns the shared empty list; flat captures use one array of stored declarations,
+        /// and nested groups use the iterative flatten. Count-only consumers read
+        /// <see cref="ParameterCount"/> without allocating a flattened projection (flat lists
+        /// allocate nothing; nested groups use an explicit traversal stack).
+        /// </summary>
+        public IReadOnlyList<ParameterDeclaration> Parameters
+        {
+            get
+            {
+                var patterns = ParameterPatterns;
+                var count = patterns.Count;
+                if (count == 0)
+                    return [];
+
+                // Fast path for the overwhelmingly common flat list: one array of the stored
+                // declarations. A nested sequence-value pattern takes the general flatten.
+                var declarations = new ParameterDeclaration[count];
+                for (var index = 0; index < declarations.Length; index++)
+                {
+                    if (patterns[index] is not CaptureParameterPattern capture)
+                        return ParameterPattern.FlattenCaptures(patterns);
+                    declarations[index] = capture.Parameter;
+                }
+
+                return declarations;
+            }
+        }
+
+        /// <summary>
+        /// The parameter names, in order, duplicates included: exactly
+        /// <c>Parameters.Select(parameter => parameter.Name)</c> (Lean: <c>Algorithm.params</c>).
+        /// A fresh projection of the CURRENT <see cref="ParameterPatterns"/> on every read,
+        /// never a cache: a host-built algorithm keeps its caller-owned pattern list and this
+        /// reads through to it (<c>LoopStrategyPreparationTests.HostOwnedCallableMetadata_*</c>),
+        /// which no stored derived copy could honor. The cost stays where the evaluator pays
+        /// it: an empty stored pattern list returns the shared empty list without allocating,
+        /// and a flat capture list allocates one array per read. Nested groups use the
+        /// iterative flatten plus a name array; they do not share the flat allocation bound.
+        /// </summary>
+        public IReadOnlyList<string> Params
+        {
+            get
+            {
+                var patterns = ParameterPatterns;
+                var count = patterns.Count;
+                if (count == 0)
+                    return [];
+
+                var names = new string[count];
+                for (var index = 0; index < names.Length; index++)
+                {
+                    if (patterns[index] is not CaptureParameterPattern capture)
+                        return NamesOf(ParameterPattern.FlattenCaptures(patterns));
+                    names[index] = capture.Parameter.Name;
+                }
+
+                return names;
+            }
+        }
+
+        private static string[] NamesOf(IReadOnlyList<ParameterDeclaration> parameters)
+        {
+            var names = new string[parameters.Count];
+            for (var index = 0; index < names.Length; index++)
+                names[index] = parameters[index].Name;
+            return names;
+        }
+
+        /// <summary>
+        /// <c>Parameters.Count</c> without materializing the projection (Lean:
+        /// <c>(Algorithm.params a).length</c>): the capture count of the CURRENT
+        /// <see cref="ParameterPatterns"/>, allocation-free for a flat pattern list.
+        /// </summary>
+        internal int ParameterCount => ParameterPattern.CountCaptures(ParameterPatterns);
+
+        /// <summary>Lean: the <c>opens</c> field of <c>Algorithm.mk</c>.</summary>
+        public IReadOnlyList<Expr> Opens { get; init; }
+
+        /// <summary>Lean: the <c>properties</c> field of <c>Algorithm.mk</c>.</summary>
+        public IReadOnlyList<Property> Properties { get; init; }
+
+        /// <summary>
+        /// The algorithm's output as an <see cref="OutputBundle"/> — ordered
+        /// original written expression rows. The algorithm is the scope-owning
+        /// DEFINITION of this bundle; the bundle itself owns no scope.
+        /// Lean: the <c>output</c> field of <c>Algorithm.mk</c>.
+        /// </summary>
+        public OutputBundle Output { get; init; }
+
+        /// <summary>
+        /// True when <see cref="ParameterPatterns"/> is a WRITTEN explicit parameter list
+        /// (<c>F(a, (b, c), *rest) = …</c>, or an assignment deconstruction's target helper):
+        /// a CLOSED direct-call interface — the front end lifts no implicit parameter into
+        /// it, reports an unresolved name inside the body as undeclared instead, and
+        /// classifies every capture as an explicit parameter (<see cref="CallableParameterSource.Explicit"/>).
+        /// False for an inferred (implicit) signature, whose captures were promoted from the
+        /// body's unresolved names or lifted from a callee. A lifted declaration can retain
+        /// the callee's source span; explicitness belongs to this owner, not the capture. Set by
+        /// <see cref="ElaborateClauseGroup"/> when a single ordinary clause head becomes the
+        /// body's parameter list. A front-end fact with no Lean counterpart (Lean's tree is
+        /// already elaborated); it replaces the former parallel <c>ExplicitParameters</c> /
+        /// <c>ExplicitParameterPatterns</c> lists, which were always either empty or equal to
+        /// the stored parameter channel.
+        /// </summary>
+        public bool HasExplicitParameterList { get; init; }
+
+        /// <summary>
+        /// Check whether the property list contains duplicate property names.
+        /// Returns the first duplicate name found, or null if all names are unique.
+        /// Lean: Algorithm.findDuplicatePropName (the <c>.mk</c> case; the other
+        /// constructors have no properties).
+        /// </summary>
+        public string? FindDuplicatePropName()
+        {
+            var seen = new HashSet<string>();
+            foreach (var p in Properties)
+            {
+                if (!seen.Add(p.Name))
+                    return p.Name;
+            }
+            return null;
+        }
 
         private readonly object? _assignmentGroup;
         private readonly int _assignmentTargetIndex;
@@ -1610,24 +1768,20 @@ public closed record Algorithm
         /// evaluation semantics depend on it.
         /// </summary>
         internal bool IsModuleElaborated { get; init; }
-
-        internal User WithParameterPatternList(IReadOnlyList<ParameterPattern> parameterPatterns)
-            => this with
-            {
-                ParameterPatterns = parameterPatterns,
-                Parameters = ParameterPattern.FlattenCaptures(parameterPatterns),
-            };
     }
 
     /// <summary>
-    /// Built-in algorithm. Corresponds to <c>Algorithm.builtin</c> in the Lean specification.
-    /// A builtin is not a written declaration and has no <see cref="Declaration"/> token.
+    /// Built-in algorithm. Corresponds to <c>Algorithm.builtin</c> in the Lean specification
+    /// and owns exactly its identity. A builtin is not a written declaration and has no
+    /// <see cref="Declaration"/> token; it has no scope, parameters, properties, or output.
     /// </summary>
     public sealed record Builtin(BuiltinId Id) : Algorithm(declaration: null);
 
     /// <summary>
     /// Conditional algorithm with ordered pattern branches.
-    /// Corresponds to <c>Algorithm.conditional</c> in the Lean specification.
+    /// Corresponds to <c>Algorithm.conditional</c> in the Lean specification and owns
+    /// exactly its fields: <see cref="Parent"/>, <see cref="Opens"/>, and <see cref="Branches"/>
+    /// (a family has no parameter list, properties, or output of its own — its branch bodies do).
     /// At call time, arguments are evaluated and matched against branch patterns
     /// in source order. The first matching branch body is evaluated.
     /// If no branch matches, evaluation fails with <c>NoMatchingBranch</c>.
@@ -1674,9 +1828,40 @@ public closed record Algorithm
             this.Branches = Branches;
         }
 
-        public override ScopeCtx? Parent { get; init; }
-        public override IReadOnlyList<Expr> Opens { get; init; } = [];
-        public override IReadOnlyList<CondBranch> Branches { get; init; } = [];
+        /// <summary>Lean: the <c>parent</c> field of <c>Algorithm.conditional</c>.</summary>
+        public ScopeCtx? Parent { get; init; }
+
+        /// <summary>Lean: the <c>opens</c> field of <c>Algorithm.conditional</c>.</summary>
+        public IReadOnlyList<Expr> Opens { get; init; }
+
+        /// <summary>Lean: the <c>branches</c> field of <c>Algorithm.conditional</c>.</summary>
+        public IReadOnlyList<CondBranch> Branches { get; init; }
+
+        /// <summary>
+        /// Check whether the branch list contains match-equivalent patterns.
+        /// Returns true if a duplicate is found.
+        /// Lean: Algorithm.hasDuplicateBranchPatterns (the <c>.conditional</c> case; the
+        /// other constructors have no branches).
+        /// </summary>
+        public bool HasDuplicateBranchPatterns()
+        {
+            // Single O(branches) pass: a branch duplicates an earlier one exactly when its
+            // pattern fails to enter the match-equivalence set (the ordered branch list is
+            // untouched). This replaces the former O(branches^2) all-pairs scan; the boolean
+            // result is identical because match-equivalence is a genuine equivalence relation,
+            // so one representative per class suffices for membership.
+            var branches = Branches;
+            if (branches.Count < 2)
+                return false;
+
+            var seen = new HashSet<Pattern>(Pattern.MatchEquivalenceComparer);
+            foreach (var branch in branches)
+            {
+                if (!seen.Add(branch.Pattern))
+                    return true;
+            }
+            return false;
+        }
     }
 }
 
@@ -1876,7 +2061,9 @@ internal static class AlgorithmValidation
             // O(N^2). ParameterPatterns is a stored list, so this stays an O(1) count check.
             if (algorithm.ParameterPatterns.Count > 0 && algorithm.Output.Count == 0)
             {
-                var span = algorithm.ExplicitParameters.FirstOrDefault()?.Span;
+                // The diagnostic points at the first WRITTEN parameter; an inferred signature has no
+                // source-backed declaration to point at.
+                var span = algorithm.HasExplicitParameterList ? algorithm.Parameters.FirstOrDefault()?.Span : null;
                 Violations.Add(new PreEvaluationAstViolation.ExplicitParametersWithoutOutput(span));
                 if (stopAfterFirst)
                     return;

@@ -508,7 +508,7 @@ public class EvaluatorHigherOrderTests
     {
         var invalid = new Algorithm.User(
             Parent: null,
-            Parameters: Algorithm.NormalParameters(["x"]),
+            ParameterPatterns: Algorithm.NormalParameters(["x"]),
             Opens: [],
             Properties:
             [
@@ -516,14 +516,14 @@ public class EvaluatorHigherOrderTests
                     "Prop",
                     new Algorithm.User(
                         Parent: null,
-                        Parameters: [],
+                        ParameterPatterns: [],
                         Opens: [],
                         Properties: [],
                         Output: [new Expr.Num(7m)]))
             ],
             Output: [])
         {
-            ExplicitParameters = [new ParameterDeclaration("x", new SourceSpan(1, 6, 1, 6))]
+            HasExplicitParameterList = true,
         };
 
         var result = Evaluator.Run(new Expr.AlgorithmExpr(invalid));
@@ -542,21 +542,21 @@ public class EvaluatorHigherOrderTests
         // structural property named `Output` exactly like any other member.
         var callee = new Algorithm.User(
             Parent: null,
-            Parameters: Algorithm.NormalParameters(["x"]),
+            ParameterPatterns: Algorithm.NormalParameters(["x"]),
             Opens: [],
             Properties: [],
             Output: [new Expr.Binary(BinaryOp.Add, new Expr.Param("x"), new Expr.Num(1m))]);
 
         var container = new Algorithm.User(
             Parent: null,
-            Parameters: [],
+            ParameterPatterns: [],
             Opens: [],
             Properties: [new Property("Output", callee)],
             Output: []);
 
         var root = new Algorithm.User(
             Parent: null,
-            Parameters: [],
+            ParameterPatterns: [],
             Opens: [],
             Properties: [new Property("Algo", container)],
             Output:

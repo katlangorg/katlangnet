@@ -245,7 +245,7 @@ public class PatternedCallSingleEvaluationTests
         Assert.False(parsed.HasErrors);
         var emptyBlock = new Expr.AlgorithmExpr(new Algorithm.User(
             Parent: null,
-            Parameters: [],
+            ParameterPatterns: [],
             Opens: [],
             Properties: [],
             Output: []));
@@ -303,7 +303,7 @@ public class PatternedCallSingleEvaluationTests
         Assert.False(parsed.HasErrors);
         var projectionBlock = new Expr.AlgorithmExpr(new Algorithm.User(
             Parent: null,
-            Parameters: [],
+            ParameterPatterns: [],
             Opens: [],
             Properties: [],
             Output: [new Expr.Index(new Expr.Resolve("S"), new Expr.Num(0))]));

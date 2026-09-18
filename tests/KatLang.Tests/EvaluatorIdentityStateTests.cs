@@ -66,13 +66,12 @@ public class EvaluatorIdentityStateTests
         // Two separately constructed algorithms over the SAME component instances (record
         // equality compares the list members by reference) were equal before the token existed
         // and remain equal, hash alike, and print alike; a copy equals its source.
-        IReadOnlyList<ParameterDeclaration> parameters = [new ParameterDeclaration("x")];
-        var patterns = ParameterPattern.FromDeclarations(parameters);
+        IReadOnlyList<ParameterPattern> patterns = [new CaptureParameterPattern("x")];
         IReadOnlyList<Expr> opens = [];
         IReadOnlyList<Property> properties = [];
         OutputBundle output = [new Expr.Param("x")];
-        var first = new Algorithm.User(null, parameters, opens, properties, output) { ParameterPatterns = patterns };
-        var second = new Algorithm.User(null, parameters, opens, properties, output) { ParameterPatterns = patterns };
+        var first = new Algorithm.User(null, patterns, opens, properties, output);
+        var second = new Algorithm.User(null, patterns, opens, properties, output);
         Assert.NotSame(first.Declaration, second.Declaration);
         Assert.Equal(first, second);
         Assert.Equal(first.GetHashCode(), second.GetHashCode());
@@ -105,7 +104,7 @@ public class EvaluatorIdentityStateTests
     [Fact]
     public void ScopeOwnership_IsExcludedFromScopeEquality()
     {
-        var owner = new Algorithm.User(null, [new ParameterDeclaration("n")], [], [], [new Expr.Param("n")]);
+        var owner = new Algorithm.User(null, [new CaptureParameterPattern("n")], [], [], [new Expr.Param("n")]);
         IReadOnlyList<Expr> opens = [];
         IReadOnlyList<Property> properties = [new Property("P", new Algorithm.User(null, [], [], [], [new Expr.Num(1)]))];
         IReadOnlyList<string> parameters = ["n"];
@@ -253,14 +252,13 @@ public class EvaluatorIdentityStateTests
         // token, and to a copy minting a fresh token.
         var member = new Property("X", new Algorithm.User(null, [], [], [], [new Expr.Param("n")]), true,
             PropertyExposure.LocalOnlyCapturedAncestorParameters) { RequiredAncestorParameters = ["n"] };
-        IReadOnlyList<ParameterDeclaration> parameters = [new ParameterDeclaration("n")];
-        var patterns = ParameterPattern.FromDeclarations(parameters);
+        IReadOnlyList<ParameterPattern> patterns = [new CaptureParameterPattern("n")];
         IReadOnlyList<Expr> opens = [];
         IReadOnlyList<Property> properties = [member];
         OutputBundle output = [new Expr.DotCall(new Expr.Resolve("G"), "X")];
-        var f = new Algorithm.User(null, parameters, opens, properties, output) { ParameterPatterns = patterns };
+        var f = new Algorithm.User(null, patterns, opens, properties, output);
 
-        var constructed = new Algorithm.User(null, parameters, opens, properties, output) { ParameterPatterns = patterns };
+        var constructed = new Algorithm.User(null, patterns, opens, properties, output);
         Assert.Equal(f, constructed);
         var refused = Evaluator.Run(new Expr.AlgorithmExpr(Root(f, constructed)));
         Assert.True(refused.IsError);
@@ -307,7 +305,7 @@ public class EvaluatorIdentityStateTests
     [Fact]
     public void EnterAlgorithmBody_CarriesTheActivatedHeadScope()
     {
-        var body = new Algorithm.User(null, [new ParameterDeclaration("x"), new ParameterDeclaration("f")], [], [],
+        var body = new Algorithm.User(null, [new CaptureParameterPattern("x"), new CaptureParameterPattern("f")], [], [],
             [new Expr.Param("x")]);
         var ctx = Evaluator.EvalCtx.Empty.Push(new Algorithm.User(null, [], [], [], []));
         var callee = new Algorithm.User(null, [], [], [], [new Expr.Num(9)]);
@@ -366,7 +364,7 @@ public class EvaluatorIdentityStateTests
         // scope's owner does through Parent) is neither a cycle nor extra depth to the
         // preflight, which enumerates exactly Parent, Opens, and Properties.
         var parent = new ScopeCtx(null, [], []);
-        var owner = new Algorithm.User(parent, [new ParameterDeclaration("n")], [], [], [new Expr.Param("n")]);
+        var owner = new Algorithm.User(parent, [new CaptureParameterPattern("n")], [], [], [new Expr.Param("n")]);
         var scope = new ScopeCtx(parent, [], [new Property("P", owner)], ["n"])
         {
             Owner = owner,

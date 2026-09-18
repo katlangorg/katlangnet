@@ -10,7 +10,7 @@ namespace KatLang.Tests;
 /// to an earlier one (<see cref="Pattern.IsMatchEquivalent"/> — spelling-independent, but repeated
 /// binder positions must agree). That check was an all-pairs scan: inserting the k-th clause compared
 /// it against all k-1 earlier clauses, so a family of C clauses did O(C^2) exact comparisons both at
-/// parse time (the insert scan) and at evaluation time (<see cref="Algorithm.HasDuplicateBranchPatterns"/>).
+/// parse time (the insert scan) and at evaluation time (<see cref="Algorithm.Conditional.HasDuplicateBranchPatterns"/>).
 /// The correction indexes patterns in a hashed set whose equality IS <c>IsMatchEquivalent</c> and whose
 /// hash is a deterministic structural fingerprint consistent with it, making both checks O(C) while
 /// preserving branch order, the duplicate diagnostics, and their order/spans.

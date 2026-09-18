@@ -63,7 +63,7 @@ public class LiftedParameterOwnershipTests
             "v = 99\nOuter = { Left = v\nRight = v\nNeed(v) = 0\nLeft + Right + Need }\nOther = v\nOuter(7), Other");
         var outerProperty = syntax.Properties.Single(p => p.Name == "Outer");
         var shared = outerProperty.Value.Properties.Single(p => p.Name == "Left").Value;
-        var outer = outerProperty.Value with
+        var outer = Assert.IsType<Algorithm.User>(outerProperty.Value) with
         {
             Properties = outerProperty.Value.Properties.Select(p => p.Name == "Right" ? p.WithValue(shared) : p).ToList(),
         };

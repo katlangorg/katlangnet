@@ -34,7 +34,7 @@ public class AstWalkerTraversalTests
     }
 
     private static Algorithm.User EmptyAlgorithm(params Expr[] output)
-        => new(Parent: null, Parameters: [], Opens: [], Properties: [], Output: output);
+        => new(Parent: null, ParameterPatterns: [], Opens: [], Properties: [], Output: output);
 
     /// <summary>One sample per <see cref="Expr"/> variant, with its expected child visits
     /// in order. Distinct sentinels detect a skipped child replaced by a duplicate visit.</summary>

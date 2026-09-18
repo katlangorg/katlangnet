@@ -72,16 +72,14 @@ public abstract class AstWalker
         // Walkers that need neither explicit-declaration hook can opt out of this
         // per-parameter loop. It matters for wide assignment deconstructions: those elaborate to
         // N synthetic helpers that each carry the full N-capture parameter list, so a walker that
-        // visits every declaration is O(N^2) even when the visit is a no-op.
-        if (VisitsExplicitParameterDeclarations)
+        // visits every declaration is O(N^2) even when the visit is a no-op. The declarations are
+        // read from the stored pattern leaves directly (no flattened list is materialized): an
+        // explicit list's captures ARE its written declarations, and an inferred signature
+        // declares nothing in source.
+        if (VisitsExplicitParameterDeclarations && algorithm.HasExplicitParameterList)
         {
-            foreach (var parameter in algorithm.ExplicitParameters)
-            {
-                TraversalObservations?.RecordWalkerParameterDeclarationVisit();
-                VisitExplicitParameterDeclaration(algorithm, parameter);
-                if (parameter.CollectMarkerSpan is { } collectMarkerSpan)
-                    VisitCollectMarker(collectMarkerSpan);
-            }
+            foreach (var pattern in algorithm.ParameterPatterns)
+                VisitExplicitParameterPattern(algorithm, pattern);
         }
 
         foreach (var open in algorithm.Opens)
@@ -268,6 +266,28 @@ public abstract class AstWalker
     /// </summary>
     protected virtual void VisitExplicitParameterDeclaration(Algorithm algorithm, ParameterDeclaration declaration)
     {
+    }
+
+    // The declarations of one explicit parameter pattern, in written order: a capture leaf is
+    // one declaration; a sequence-value pattern nests. Recursive like the rest of this walker
+    // (see the recursion contract above); the library's own entry points preflight the depth.
+    private void VisitExplicitParameterPattern(Algorithm.User algorithm, ParameterPattern pattern)
+    {
+        switch (pattern)
+        {
+            case CaptureParameterPattern capture:
+                TraversalObservations?.RecordWalkerParameterDeclarationVisit();
+                VisitExplicitParameterDeclaration(algorithm, capture.Parameter);
+                if (capture.CollectMarkerSpan is { } collectMarkerSpan)
+                    VisitCollectMarker(collectMarkerSpan);
+                break;
+            case SequenceValueParameterPattern group:
+                foreach (var item in group.Items)
+                    VisitExplicitParameterPattern(algorithm, item);
+                break;
+            default:
+                throw new InvalidOperationException($"Unhandled parameter pattern: {pattern.GetType().Name}");
+        }
     }
 
     /// <summary>

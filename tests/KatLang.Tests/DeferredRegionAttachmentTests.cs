@@ -69,8 +69,8 @@ public class DeferredRegionAttachmentTests
     private static Algorithm.Conditional FamilyOf(Algorithm root, string name = "F")
         => Assert.IsType<Algorithm.Conditional>(Assert.Single(root.Properties, p => p.Name == name).Value);
 
-    private static Algorithm Placeholder(Algorithm root, string name = "F")
-        => FamilyOf(root, name).Branches[0].Body;
+    private static Algorithm.User Placeholder(Algorithm root, string name = "F")
+        => Assert.IsType<Algorithm.User>(FamilyOf(root, name).Branches[0].Body);
 
     private static DeferredModuleRegion RegionOf(Algorithm body)
     {
@@ -80,22 +80,22 @@ public class DeferredRegionAttachmentTests
     }
 
     /// <summary>The internal stages in the pipeline's order, each returning its output tree.</summary>
-    private static Algorithm Detect(Algorithm tree)
+    private static Algorithm.User Detect(Algorithm tree)
     {
         var (detected, diagnostics) = ParameterDetector.Detect(tree);
         Assert.Empty(diagnostics);
-        return detected;
+        return Assert.IsType<Algorithm.User>(detected);
     }
 
-    private static Algorithm Resolve(Algorithm tree)
+    private static Algorithm.User Resolve(Algorithm tree)
     {
         var diagnostics = new List<Diagnostic>();
         var resolved = ImplicitArgumentResolver.ResolvePrevalidated(tree, diagnostics: diagnostics);
         Assert.Empty(diagnostics);
-        return resolved;
+        return Assert.IsType<Algorithm.User>(resolved);
     }
 
-    private static Algorithm Validate(Algorithm tree)
+    private static Algorithm.User Validate(Algorithm.User tree)
     {
         var diagnostics = new List<Diagnostic>();
         new ParameterPropertyCollisionValidator(diagnostics, programRoot: tree).VisitAlgorithm(tree);
@@ -103,17 +103,17 @@ public class DeferredRegionAttachmentTests
         return tree;
     }
 
-    private static Algorithm Expose(Algorithm tree) => PropertyExposureResolver.Resolve(tree);
+    private static Algorithm.User Expose(Algorithm tree) => Assert.IsType<Algorithm.User>(PropertyExposureResolver.Resolve(tree));
 
-    private static async Task<Algorithm> LoadAsync(Algorithm root, CountingModules modules)
+    private static async Task<Algorithm.User> LoadAsync(Algorithm root, CountingModules modules)
     {
         var diagnostics = new List<Diagnostic>();
         var loaded = await new ModuleLoader(diagnostics, modules.Download).ElaborateAsync(root);
         Assert.Empty(diagnostics);
-        return loaded;
+        return Assert.IsType<Algorithm.User>(loaded);
     }
 
-    private static async Task<Algorithm> ElaborateAsync(Algorithm root, CountingModules modules)
+    private static async Task<Algorithm.User> ElaborateAsync(Algorithm root, CountingModules modules)
         => Expose(Validate(Resolve(Detect(await LoadAsync(root, modules)))));
 
     // ── A. Attachment: ordinary copies are views of the same region ─────────
@@ -390,7 +390,7 @@ public class DeferredRegionAttachmentTests
         var modules = Modules();
         var loaded = await LoadAsync(Root(Family(LoadBearingBody()), 0), modules);
         var loaderRegion = RegionOf(Placeholder(loaded));
-        var stages = new List<(string Name, Algorithm Tree)> { ("loader", loaded) };
+        var stages = new List<(string Name, Algorithm.User Tree)> { ("loader", loaded) };
         stages.Add(("detector", Detect(stages[^1].Tree)));
         stages.Add(("resolver", Resolve(stages[^1].Tree)));
         stages.Add(("validator", Validate(stages[^1].Tree)));

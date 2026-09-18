@@ -85,7 +85,7 @@ internal static partial class LoopOptimizer
         if (property.Value is not Algorithm.User userProperty)
             return new LoopTempPlanTryBuildResult(null, $"unsupported local property kind: {property.Name}");
 
-        if (userProperty.ExplicitParameters.Count != 0)
+        if (userProperty.HasExplicitParameterList)
             return new LoopTempPlanTryBuildResult(null, $"unsupported local property with explicit parameters: {property.Name}");
 
         foreach (var parameterName in userProperty.Params)

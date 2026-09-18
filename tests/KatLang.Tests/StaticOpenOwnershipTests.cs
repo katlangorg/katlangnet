@@ -384,7 +384,7 @@ public class StaticOpenOwnershipTests
                 new Property("Lib", Library("X", Value(7))),
                 new Property("Other", Library("X", Value(8))),
                 new Property("F", new Algorithm.User(
-                    null, [new ParameterDeclaration("Lib")], [new Expr.Param("Lib")], [], [new Expr.Resolve("X")])),
+                    null, [new CaptureParameterPattern("Lib")], [new Expr.Param("Lib")], [], [new Expr.Resolve("X")])),
             ],
             [new Expr.Call(new Expr.Resolve("F"), new OutputBundle([new Expr.Resolve("Other")]))]));
 
@@ -392,7 +392,7 @@ public class StaticOpenOwnershipTests
             [
                 new Property("Root", Library("Sub", Library("X", Value(7)))),
                 new Property("F", new Algorithm.User(
-                    null, [new ParameterDeclaration("Root")],
+                    null, [new CaptureParameterPattern("Root")],
                     [new Expr.DotCall(new Expr.Param("Root"), "Sub")], [], [new Expr.Resolve("X")])),
             ],
             [new Expr.Call(new Expr.Resolve("F"), new OutputBundle([new Expr.Resolve("Root")]))]));

@@ -122,7 +122,7 @@ public class SequenceConstructContainmentTests
     {
         var root = new Algorithm.User(
             Parent: null,
-            Parameters: [],
+            ParameterPatterns: [],
             Opens: [],
             Properties: [],
             Output: [Sc(N(1), N(2))]);
@@ -177,7 +177,7 @@ public class SequenceConstructContainmentTests
     private static Expr E() => new Expr.EmptySequence(0);
 
     private static Expr Blk(params Expr[] outputs) => new Expr.AlgorithmExpr(new Algorithm.User(
-        Parent: null, Parameters: [], Opens: [], Properties: [], Output: outputs));
+        Parent: null, ParameterPatterns: [], Opens: [], Properties: [], Output: outputs));
 
     private static Expr Sc(params Expr[] leaves)
         => leaves.Aggregate((l, r) => new Expr.SequenceConstruct(l, r));
@@ -251,7 +251,7 @@ public class SequenceConstructContainmentTests
     {
         var call = new Expr.Call(Sc(N(1), N(2)), [N(3)]);
         var root = new Expr.AlgorithmExpr(new Algorithm.User(
-            Parent: null, Parameters: [], Opens: [], Properties: [], Output: [call]));
+            Parent: null, ParameterPatterns: [], Opens: [], Properties: [], Output: [call]));
 
         static EvalError Innermost(EvalError error)
         {

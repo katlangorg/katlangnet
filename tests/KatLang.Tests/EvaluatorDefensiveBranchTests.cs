@@ -49,10 +49,10 @@ public class EvaluatorDefensiveBranchTests
         IReadOnlyList<Expr>? opens = null,
         IReadOnlyList<Property>? properties = null,
         OutputBundle? output = null)
-        => new(Parent: null, Parameters: [], Opens: opens ?? [], Properties: properties ?? [], Output: output ?? OutputBundle.Empty);
+        => new(Parent: null, ParameterPatterns: [], Opens: opens ?? [], Properties: properties ?? [], Output: output ?? OutputBundle.Empty);
 
     private static Algorithm.User Value(decimal n)
-        => new(Parent: null, Parameters: [], Opens: [], Properties: [], Output: [new Expr.Num(n)]);
+        => new(Parent: null, ParameterPatterns: [], Opens: [], Properties: [], Output: [new Expr.Num(n)]);
 
     /// <summary>
     /// <c>Expr.Grace</c> is the implicit-argument placeholder (<c>~</c>). The
@@ -154,7 +154,7 @@ public class EvaluatorDefensiveBranchTests
     public void SpreadOfAnOutputlessBlock_ReportsTheSpreadSpecificError()
     {
         var outputless = new Algorithm.User(
-            Parent: null, Parameters: [], Opens: [],
+            Parent: null, ParameterPatterns: [], Opens: [],
             Properties: [new Property("Q", Value(1))], Output: []);
 
         var error = FailsWith(Program(Root(
@@ -232,14 +232,14 @@ public class EvaluatorDefensiveBranchTests
     {
         var wrapper = new Algorithm.User(
             Parent: null,
-            Parameters: Algorithm.NormalParameters(wrapperParameters),
+            ParameterPatterns: Algorithm.NormalParameters(wrapperParameters),
             Opens: [],
             Properties: [],
             Output: [new Expr.NativeCall(nativeName, argNames)]);
         var arguments = callArguments
             ?? wrapperParameters.Select(static (_, index) => (Expr)new Expr.Num(index + 1)).ToArray();
         var call = new Expr.Call(new Expr.Resolve("Wrapper"), new OutputBundle(arguments));
-        var value = new Algorithm.User(Parent: null, Parameters: [], Opens: [], Properties: [], Output: [call]);
+        var value = new Algorithm.User(Parent: null, ParameterPatterns: [], Opens: [], Properties: [], Output: [call]);
         return Program(Root(
             properties: [new Property("Wrapper", wrapper), new Property("Value", value)],
             output: [new Expr.Resolve("Value")]));

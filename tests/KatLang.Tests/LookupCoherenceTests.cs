@@ -692,8 +692,8 @@ public class LookupCoherenceTests
 
     /// <summary>
     /// Paths of every elaborated algorithm that carries <paramref name="name"/>
-    /// as an INFERRED parameter — present in <see cref="Algorithm.Parameters"/>
-    /// but absent from the source-backed <see cref="Algorithm.ExplicitParameters"/>.
+    /// as an INFERRED parameter — a parameter of an algorithm whose list is not a WRITTEN
+    /// one (<see cref="Algorithm.User.HasExplicitParameterList"/> is false).
     /// This is the front end's lookup verdict made structural: the detector only
     /// promotes a name to an implicit parameter when <c>ElaboratedScopeLookup</c>
     /// found no property declaration for it.
@@ -707,7 +707,8 @@ public class LookupCoherenceTests
         static void Walk(Algorithm algorithm, string path, string name, List<string> found)
         {
             var isParameter = algorithm.Parameters.Any(parameter => parameter.Name == name);
-            var isExplicit = algorithm.ExplicitParameters.Any(parameter => parameter.Name == name);
+            // An implicit parameter: one the inferred (not written) signature promoted.
+            var isExplicit = algorithm.HasExplicitParameterList;
             if (isParameter && !isExplicit)
                 found.Add(path);
 

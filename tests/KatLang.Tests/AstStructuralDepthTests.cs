@@ -393,7 +393,7 @@ public class AstStructuralDepthTests
         // any diagnostic formatting) ever touching the unsafe subtree.
         var malformed = new Expr.AlgorithmExpr(new Algorithm.User(
             null,
-            [new ParameterDeclaration("x")],
+            [new CaptureParameterPattern("x")],
             [],
             [new Property("Deep", new Algorithm.User(null, [], [], [], [UnarySpine(10_000)]))],
             []));
@@ -406,7 +406,7 @@ public class AstStructuralDepthTests
     public void Validation_BelowTheStructuralLimit_IsUnchanged()
     {
         var violating = new Expr.AlgorithmExpr(new Algorithm.User(
-            null, [new ParameterDeclaration("x")], [], [], []));
+            null, [new CaptureParameterPattern("x")], [], [], []));
         var error = AssertRejected(violating);
         Assert.IsType<EvalError.ExplicitParametersRequireOutput>(error);
     }
@@ -626,7 +626,7 @@ public class AstStructuralDepthTests
         // cardinality later. Parser trees do not share nodes, so source diagnostics
         // remain occurrence-equivalent.
         var sharedViolation = new Algorithm.User(
-            null, [new ParameterDeclaration("x")], [], [], []);
+            null, [new CaptureParameterPattern("x")], [], [], []);
         var root = new Algorithm.User(
             null,
             [],
@@ -903,65 +903,50 @@ public class AstStructuralDepthTests
         Assert.NotNull(model);
     }
 
-    // ── Inherited base collections are enumerated uniformly on every subtype ────
+    // ── Variant-owned collections are enumerated on the variant that owns them ────
 
     [Fact]
-    public void InheritedCollections_OnBuiltin_AreCountedAtExactBoundaries()
+    public void UserParameterPatterns_AreCountedAtExactBoundaries()
     {
-        // The recursive collections are virtual init properties on the Algorithm
-        // BASE, so a host can place deep values on subtypes whose consumers ignore
-        // them today. The preflight must measure them anyway: a Builtin carrying a
-        // deep Output/Opens/pattern is a future bypass otherwise.
-        foreach (var builtin in new Func<int, Algorithm>[]
-        {
-            depth => new Algorithm.Builtin(BuiltinId.@count) { Output = [UnarySpine(depth)] },
-            depth => new Algorithm.Builtin(BuiltinId.@count) { Opens = [UnarySpine(depth)] },
-            depth => new Algorithm.Builtin(BuiltinId.@count)
-            {
-                Properties = [new Property("P", new Algorithm.User(null, [], [], [], [UnarySpine(depth)]))],
-            },
-        })
-        {
-            // Builtin (1) + spine nodes; Properties adds one more algorithm level.
-            Assert.Null(AstStructuralPreflight.Check(
-                builtin(30), maxDepth: 40, AstConsumerProfile.FullyRecursive));
-            var rejection = AstStructuralPreflight.Check(
-                builtin(60), maxDepth: 40, AstConsumerProfile.FullyRecursive);
-            Assert.NotNull(rejection);
-            Assert.Equal(AstStructuralViolation.DepthExceeded, rejection.Kind);
-        }
-
-        // Exact boundary on the Output shape: root Builtin + N spine nodes.
-        var atLimit = new Algorithm.Builtin(BuiltinId.@count) { Output = [UnarySpine(39)] };
-        Assert.Null(AstStructuralPreflight.Check(atLimit, 40, AstConsumerProfile.FullyRecursive));
-        var beyond = new Algorithm.Builtin(BuiltinId.@count) { Output = [UnarySpine(40)] };
-        Assert.NotNull(AstStructuralPreflight.Check(beyond, 40, AstConsumerProfile.FullyRecursive));
-    }
-
-    [Fact]
-    public void InheritedCollections_OnConditional_AreCountedAtExactBoundaries()
-    {
-        static Algorithm.Conditional WithPatterns(int patternNodes)
+        // The parameter patterns are user-owned payload — the ONE parameter channel — and the
+        // preflight measures them like every other recursive collection: root User (1) + N
+        // pattern nodes. A builtin or a clause family cannot carry patterns, opens, properties,
+        // or an output it does not own any more: the former "inherited base collections"
+        // bypass is a compile-time error (AlgorithmPublicSurfaceTests), so there is nothing
+        // left to measure on them.
+        static Algorithm.User WithPatterns(int patternNodes)
         {
             ParameterPattern pattern = new CaptureParameterPattern("x");
             for (var i = 0; i < patternNodes - 1; i++)
                 pattern = new SequenceValueParameterPattern([pattern]);
-            return new Algorithm.Conditional(
-                null,
-                [],
-                [new CondBranch(new Pattern.Bind("x"), new Algorithm.User(null, [], [], [], [new Expr.Num(1)]))])
-            {
-                ParameterPatterns = [pattern],
-                ExplicitParameterPatterns = [pattern],
-            };
+            return new Algorithm.User(null, [pattern], [], [], [new Expr.Num(1)]);
         }
 
-        // Conditional (1) + pattern spine; the same spine shared by both pattern
-        // lists is memoized, not double-counted and not a false cycle.
         Assert.Null(AstStructuralPreflight.Check(WithPatterns(39), 40, AstConsumerProfile.FullyRecursive));
         var rejection = AstStructuralPreflight.Check(WithPatterns(40), 40, AstConsumerProfile.FullyRecursive);
         Assert.NotNull(rejection);
         Assert.Equal(AstStructuralViolation.DepthExceeded, rejection.Kind);
+
+        // The same shape through the public evaluator gate: as a property value, and as the
+        // body of a clause-family branch (CondBranch is a depth membrane).
+        static Expr Program(int patternNodes) => new Expr.AlgorithmExpr(new Algorithm.User(
+            null, [], [], [new Property("F", WithPatterns(patternNodes))], [new Expr.Num(1)]));
+        AssertAccepted(Program(10));
+        AssertDepthRejected(Program(EvaluationLimits.MaxSupportedAstDepth + 10));
+
+        static Expr FamilyProgram(int patternNodes) => new Expr.AlgorithmExpr(new Algorithm.User(
+            null,
+            [],
+            [],
+            [
+                new Property("F", new Algorithm.Conditional(
+                    null,
+                    [],
+                    [new CondBranch(new Pattern.Bind("x"), WithPatterns(patternNodes))])),
+            ],
+            [new Expr.Num(1)]));
+        AssertAccepted(FamilyProgram(10));
+        AssertDepthRejected(FamilyProgram(EvaluationLimits.MaxSupportedAstDepth + 10));
     }
 
     /// <summary>Alternating Spread(Construct(...)) chain: the ONE join shape whose evaluation recurses.</summary>
@@ -989,37 +974,6 @@ public class AstStructuralDepthTests
         Assert.Equal(
             EvaluationLimits.MaxSupportedAstDepth,
             AssertDepthRejected(AlternatingJoinChain(38)).Limit);
-    }
-
-    [Fact]
-    public void ExplicitParameterPatterns_AreMeasuredOnTheirOwn_AtExactBoundaries()
-    {
-        // ExplicitParameterPatterns with ParameterPatterns EMPTY: the only prior
-        // coverage assigned the SAME spine to both collections, so deleting the
-        // ExplicitParameterPatterns branch from TryGetChild kept every depth test
-        // green — the spine stayed reachable through the sibling collection.
-        static Algorithm WithExplicitOnly(int patternNodes)
-        {
-            ParameterPattern pattern = new CaptureParameterPattern("x");
-            for (var i = 0; i < patternNodes - 1; i++)
-                pattern = new SequenceValueParameterPattern([pattern]);
-            return new Algorithm.User(null, [], [], [], [new Expr.Num(1)]) with
-            {
-                ExplicitParameterPatterns = [pattern],
-            };
-        }
-
-        // Root algorithm (1) + N pattern nodes.
-        Assert.Null(AstStructuralPreflight.Check(WithExplicitOnly(39), 40, AstConsumerProfile.FullyRecursive));
-        var rejection = AstStructuralPreflight.Check(WithExplicitOnly(40), 40, AstConsumerProfile.FullyRecursive);
-        Assert.NotNull(rejection);
-        Assert.Equal(AstStructuralViolation.DepthExceeded, rejection.Kind);
-
-        // The same shape through the public evaluator gate.
-        static Expr Program(int patternNodes) => new Expr.AlgorithmExpr(new Algorithm.User(
-            null, [], [], [new Property("F", WithExplicitOnly(patternNodes))], [new Expr.Num(1)]));
-        AssertAccepted(Program(10));
-        AssertDepthRejected(Program(EvaluationLimits.MaxSupportedAstDepth + 10));
     }
 
     [Fact]
@@ -1058,62 +1012,46 @@ public class AstStructuralDepthTests
     }
 
     [Fact]
-    public void InheritedCollections_CyclesAndSharing_AreJudgedCorrectly()
+    public void OwnedCollections_CyclesAndSharing_AreJudgedCorrectly()
     {
-        // A cycle routed through a Builtin's base-declared Opens is detected.
-        // (Output can no longer carry this cycle: OutputBundle snapshots its
-        // membership at construction, so post-construction list mutation —
-        // the only way to close a cycle through a collection — cannot reach
-        // a bundle. Opens is still an aliasable IReadOnlyList, keeping the
-        // uniform base-surface enumeration itself pinned.)
+        // A cycle routed through a user algorithm's Opens is detected. (Output can no
+        // longer carry this cycle: OutputBundle snapshots its membership at construction,
+        // so post-construction list mutation — the only way to close a cycle through a
+        // collection — cannot reach a bundle. Opens is still an aliasable IReadOnlyList.)
         var opens = new List<Expr>();
-        var cyclicBuiltin = new Algorithm.Builtin(BuiltinId.@count) { Opens = opens };
-        opens.Add(new Expr.AlgorithmExpr(cyclicBuiltin));
+        var cyclic = new Algorithm.User(null, [], opens, [], [new Expr.Num(1)]);
+        opens.Add(new Expr.AlgorithmExpr(cyclic));
         var rejection = AstStructuralPreflight.Check(
-            cyclicBuiltin, EvaluationLimits.MaxSupportedAstDepth, AstConsumerProfile.FullyRecursive);
+            cyclic, EvaluationLimits.MaxSupportedAstDepth, AstConsumerProfile.FullyRecursive);
         Assert.NotNull(rejection);
         Assert.Equal(AstStructuralViolation.CycleDetected, rejection.Kind);
 
-        // A shared subtree reachable through TWO base collections of the same
-        // Builtin is not a cycle, and the walk stays linear (single visit).
+        // A shared subtree reachable through TWO collections of the same algorithm is not
+        // a cycle, and the walk stays linear (single visit).
         var shared = UnarySpine(100);
-        var sharing = new Algorithm.Builtin(BuiltinId.@count)
-        {
-            Opens = [shared],
-            Output = [shared],
-        };
+        var sharing = new Algorithm.User(null, [], [shared], [], [shared]);
         Assert.Null(AstStructuralPreflight.Check(
             sharing, EvaluationLimits.MaxSupportedAstDepth, AstConsumerProfile.FullyRecursive));
     }
 
     [Fact]
-    public void EvaluatorEntryPoints_RejectDeepInheritedCollections()
+    public void EvaluatorEntryPoints_RejectDeepOwnedCollections()
     {
-        // Through the public evaluator gate, not only direct Check calls.
-        var deepBuiltin = new Expr.AlgorithmExpr(new Algorithm.Builtin(BuiltinId.@count)
-        {
-            Output = [UnarySpine(10_000)],
-        });
-        AssertDepthRejected(deepBuiltin);
+        // Through the public evaluator gate, not only direct Check calls: a deep output
+        // spine on a user algorithm, and a deep parameter pattern on a property value.
+        var deepOutput = new Expr.AlgorithmExpr(new Algorithm.User(null, [], [], [], [UnarySpine(10_000)]));
+        AssertDepthRejected(deepOutput);
 
         ParameterPattern pattern = new CaptureParameterPattern("x");
         for (var i = 0; i < 10_000; i++)
             pattern = new SequenceValueParameterPattern([pattern]);
-        var deepConditional = new Expr.AlgorithmExpr(new Algorithm.User(
+        var deepPattern = new Expr.AlgorithmExpr(new Algorithm.User(
             null,
             [],
             [],
-            [
-                new Property("F", new Algorithm.Conditional(
-                    null,
-                    [],
-                    [new CondBranch(new Pattern.Bind("x"), new Algorithm.User(null, [], [], [], [new Expr.Num(1)]))])
-                {
-                    ParameterPatterns = [pattern],
-                }),
-            ],
+            [new Property("F", new Algorithm.User(null, [pattern], [], [], [new Expr.Num(1)]))],
             [new Expr.Num(1)]));
-        AssertDepthRejected(deepConditional);
+        AssertDepthRejected(deepPattern);
     }
 
     // ── Membrane pass-through: Property and CondBranch add no level ─────────────
@@ -1184,8 +1122,10 @@ public class AstStructuralDepthTests
 
         var known = new Dictionary<string, string[]>
         {
-            // Base + subtype-declared recursive properties, by declaring type.
-            [nameof(Algorithm)] = ["Parent", "ParameterPatterns", "Opens", "Properties", "Output", "Branches", "ExplicitParameterPatterns"],
+            // Recursive properties by declaring type. The Algorithm BASE declares none: every
+            // collection is owned by the variant that carries it (September 2026), and the
+            // preflight reads them through the internal total accessors.
+            [nameof(Algorithm)] = [],
             ["User"] = ["Parent", "ParameterPatterns", "Opens", "Properties", "Output"],
             ["Conditional"] = ["Parent", "Opens", "Branches"],
             ["Unary"] = ["Operand"],

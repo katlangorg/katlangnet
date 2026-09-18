@@ -117,7 +117,7 @@ public static class SemanticExplorerHarness
     public static ExplorerObservation ObserveAst(string caseId, Expr rootOutput)
     {
         var root = new Expr.AlgorithmExpr(new Algorithm.User(
-            Parent: null, Parameters: [], Opens: [], Properties: [], Output: [rootOutput]));
+            Parent: null, ParameterPatterns: [], Opens: [], Properties: [], Output: [rootOutput]));
 
         var counted = Evaluator.RunCounted(root);
         var plain = Evaluator.Run(root);

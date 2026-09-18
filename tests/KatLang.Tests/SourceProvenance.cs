@@ -37,7 +37,7 @@ public sealed record SourceProvenance(string Source, ParseResult Parsed)
 
     public bool HasFrontEndErrors => Parsed.HasErrors;
 
-    public Algorithm Root => Parsed.Root;
+    public Algorithm.User Root => Parsed.Root;
 
     /// <summary>
     /// Parses and REQUIRES a clean front end. Any parser or elaboration
@@ -98,7 +98,7 @@ public sealed record SourceProvenance(string Source, ParseResult Parsed)
     /// the tree is used as evidence. Returns the root directly because the raw
     /// boundary has no elaboration stage to expose separately.
     /// </summary>
-    public static Algorithm ParseSyntaxValidRoot(string source)
+    public static Algorithm.User ParseSyntaxValidRoot(string source)
     {
         var parsed = Parser.ParseSyntax(source);
         if (parsed.HasErrors)
@@ -117,7 +117,7 @@ public sealed record SourceProvenance(string Source, ParseResult Parsed)
     /// Raw-syntax root WITHOUT requiring a clean parse — for parser tests whose
     /// subject is malformed input and recovery-tree shape.
     /// </summary>
-    public static Algorithm ParseSyntaxAllowingDiagnosticsRoot(string source)
+    public static Algorithm.User ParseSyntaxAllowingDiagnosticsRoot(string source)
         => Parser.ParseSyntax(source).Root;
 
     /// <summary>Evaluates the elaborated AST (stage 3).</summary>

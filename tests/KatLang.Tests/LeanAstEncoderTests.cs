@@ -30,7 +30,7 @@ public class LeanAstEncoderTests
         var copy = first with { };
         Algorithm fresh = conditional
             ? new Algorithm.Conditional(null, first.Opens, first.Branches)
-            : new Algorithm.User(null, first.Parameters, first.Opens, first.Properties, first.Output);
+            : new Algorithm.User(null, first.ParameterPatterns, first.Opens, first.Properties, first.Output);
         static Expr Pair(Algorithm a, Algorithm b) => new Expr.Capture([new Expr.AlgorithmExpr(a), new Expr.AlgorithmExpr(b)]);
         var body = conditional ? "(.conditional none [] [])" : "(alg [] [] [] [.num 1])";
         var shared = $"(.algorithmExpr (Algorithm.withDeclarationId (some (.shared 0)) {body}))";
@@ -184,13 +184,10 @@ public class LeanAstEncoderTests
     {
         static Algorithm.User AlgorithmWith(params ParameterPattern[] patterns) => new(
             Parent: null,
-            Parameters: ParameterPattern.FlattenCaptures(patterns),
+            ParameterPatterns: patterns,
             Opens: [],
             Properties: [],
-            Output: [new Expr.Num(1)])
-        {
-            ParameterPatterns = patterns,
-        };
+            Output: [new Expr.Num(1)]);
 
         Assert.Equal(
             "(algWithParameterPatterns [.sequenceValue [.capture { name := \"x\" }]] [] [] [.num 1])",
@@ -559,7 +556,7 @@ public class LeanAstEncoderTests
         var value = new Algorithm.User(null, [], [], [], [new Expr.Num(3)]);
         var root = new Algorithm.User(
             Parent: null,
-            Parameters: [],
+            ParameterPatterns: [],
             Opens: [],
             Properties: [new Property("π", value)],
             Output: [new Expr.Resolve("π")]);
@@ -573,7 +570,7 @@ public class LeanAstEncoderTests
         // only if evaluation reaches that validator; encoding itself is faithful.
         var callable = new Algorithm.User(
             Parent: null,
-            Parameters: [new ParameterDeclaration("π")],
+            ParameterPatterns: [new CaptureParameterPattern("π")],
             Opens: [],
             Properties: [],
             Output: [new Expr.Param("π")]);
@@ -588,31 +585,35 @@ public class LeanAstEncoderTests
 
         var parent = new ScopeCtx(Parent: null, Opens: [], Properties: []);
         var wired = new Algorithm.User(
-            Parent: parent, Parameters: [], Opens: [], Properties: [], Output: [new Expr.Num(1)]);
+            Parent: parent, ParameterPatterns: [], Opens: [], Properties: [], Output: [new Expr.Num(1)]);
         var ex = Assert.Throws<NotSupportedException>(() => LeanAstEncoder.EncodeAlgorithm(wired));
         Assert.Contains("Parent", ex.Message);
     }
 
     /// <summary>
-    /// The Lean model derives the flattened parameter list from the pattern
-    /// list, so a host tree whose two channels disagree has NO faithful single
-    /// spelling — encoding either channel alone would assert a different
-    /// program. Refuse, never approximate.
+    /// The Lean model derives the flattened parameter list from the pattern list, and so
+    /// does the C# tree: a user algorithm stores ONE parameter channel
+    /// (<see cref="Algorithm.User.ParameterPatterns"/>), its <c>Parameters</c> are a projection
+    /// of it, and the two channels cannot diverge — the former "channels disagree" refusal
+    /// has no reachable input. The encoder therefore reads the stored patterns alone, and a
+    /// later replacement of the channel (Lean <c>withParameterPatterns</c>) is what it encodes.
     /// </summary>
     [Fact]
-    public void DivergentParameterChannels_AreRefused()
+    public void ParameterChannel_IsEncodedFromTheStoredPatterns()
     {
-        var divergent = new Algorithm.User(
+        var algorithm = new Algorithm.User(
             Parent: null,
-            Parameters: [new ParameterDeclaration("a")],
+            ParameterPatterns: [new CaptureParameterPattern("a")],
             Opens: [],
             Properties: [],
-            Output: [new Expr.Param("a")])
-        {
-            ParameterPatterns = [new CaptureParameterPattern("b")],
-        };
-        var ex = Assert.Throws<NotSupportedException>(() => LeanAstEncoder.EncodeAlgorithm(divergent));
-        Assert.Contains("disagree", ex.Message);
+            Output: [new Expr.Param("a")]);
+        Assert.Equal("(alg [\"a\"] [] [] [.param \"a\"])", LeanAstEncoder.EncodeAlgorithm(algorithm));
+
+        var replaced = algorithm with { ParameterPatterns = [new CaptureParameterPattern("b", Kind: ParameterKind.Collecting)] };
+        Assert.Equal(["b"], replaced.Params);
+        Assert.Equal(
+            "(algWithParameters [{ name := \"b\", kind := .collecting }] [] [] [.param \"a\"])",
+            LeanAstEncoder.EncodeAlgorithm(replaced));
     }
 
     /// <summary>
@@ -649,7 +650,7 @@ public class LeanAstEncoderTests
             [nameof(Expr.DotCall)] = new Expr.DotCall(new Expr.Resolve("x"), "m"),
             [nameof(Expr.Grace)] = new Expr.Grace(new Expr.Resolve("x"), -1),
             [nameof(Expr.AlgorithmExpr)] = new Expr.AlgorithmExpr(
-                new Algorithm.User(Parent: null, Parameters: [], Opens: [], Properties: [], Output: [new Expr.Num(1)])),
+                new Algorithm.User(Parent: null, ParameterPatterns: [], Opens: [], Properties: [], Output: [new Expr.Num(1)])),
             [nameof(Expr.Capture)] = new Expr.Capture(new OutputBundle([new Expr.Num(1)])),
             [nameof(Expr.Call)] = new Expr.Call(new Expr.Resolve("f"), [new Expr.Num(1)]),
             [nameof(Expr.NativeCall)] = new Expr.NativeCall("abs", ["value"]),

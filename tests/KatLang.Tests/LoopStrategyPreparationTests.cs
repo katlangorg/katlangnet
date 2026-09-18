@@ -252,12 +252,12 @@ public class LoopStrategyPreparationTests
     [Fact]
     public void HostOwnedCallableMetadata_IsSnapshottedBeforeCallbackCanMutateItsSourceLists()
     {
-        // Algorithm is a public host-AST boundary. Retaining the constructor lists lets
-        // this callback change Step from flat-one-parameter to patterned-two-capture
-        // between iterations. The loop-invocation snapshot prevents M16 from mixing the
-        // old prepared classification with the newly mutated Params list; the public AST
-        // keeps its established caller-owned collection behavior outside that invocation.
-        var parameters = new List<ParameterDeclaration> { new("state") };
+        // Algorithm is a public host-AST boundary. Retaining the constructor's pattern list —
+        // the ONE parameter channel, from which Parameters and Params derive live — lets this
+        // callback change Step from flat-one-parameter to patterned-two-capture between
+        // iterations. The loop-invocation snapshot prevents M16 from mixing the old prepared
+        // classification with the newly mutated pattern list; the public AST keeps its
+        // established caller-owned collection behavior outside that invocation.
         var patterns = new List<ParameterPattern> { new CaptureParameterPattern("state") };
         var calls = 0;
         var operation = HostOperation.Create("ChangeShape", (_, _) =>
@@ -265,9 +265,6 @@ public class LoopStrategyPreparationTests
             calls++;
             if (calls == 1)
             {
-                parameters.Clear();
-                parameters.Add(new ParameterDeclaration("left"));
-                parameters.Add(new ParameterDeclaration("right"));
                 patterns.Clear();
                 patterns.Add(new SequenceValueParameterPattern(
                     [new CaptureParameterPattern("left"), new CaptureParameterPattern("right")]));
@@ -278,13 +275,10 @@ public class LoopStrategyPreparationTests
         });
         var step = new Algorithm.User(
             Parent: null,
-            Parameters: parameters,
+            ParameterPatterns: patterns,
             Opens: [],
             Properties: [],
-            Output: [new Expr.NativeCall(operation.NativeName, [])])
-        {
-            ParameterPatterns = patterns,
-        };
+            Output: [new Expr.NativeCall(operation.NativeName, [])]);
         var expression = new Expr.Call(
             new Expr.Resolve("repeat"),
             [new Expr.AlgorithmExpr(step), new Expr.Num(2), new Expr.Num(0)]);
@@ -328,7 +322,7 @@ public class LoopStrategyPreparationTests
         });
         var step = new Algorithm.User(
             Parent: null,
-            Parameters: [new ParameterDeclaration("state")],
+            ParameterPatterns: [new CaptureParameterPattern("state")],
             Opens: [],
             Properties: [],
             Output: [new Expr.NativeCall(operation.NativeName, [])])
@@ -672,7 +666,7 @@ public class LoopStrategyPreparationTests
         var operation = HostOperation.Create("SharedState", (_, _) => sharedDag);
         var step = new Algorithm.User(
             Parent: null,
-            Parameters: [new ParameterDeclaration("left"), new ParameterDeclaration("right")],
+            ParameterPatterns: [new CaptureParameterPattern("left"), new CaptureParameterPattern("right")],
             Opens: [],
             Properties: [],
             Output:
@@ -721,7 +715,7 @@ public class LoopStrategyPreparationTests
             "state");
         var step = new Algorithm.User(
             Parent: null,
-            Parameters: [new ParameterDeclaration("state")],
+            ParameterPatterns: [new CaptureParameterPattern("state")],
             Opens: [],
             Properties: [],
             Output: [new Expr.NativeCall(operation.NativeName, ["state"])]);

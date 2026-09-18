@@ -70,7 +70,7 @@ internal sealed class PendingReference : IEquatable<PendingReference>
         => new(Head, Members, candidates, BoundOwners);
 
     public PendingReference BoundBy(Algorithm owner)
-        => owner.Parameters.Count == 0 || BoundOwners.Any(a => ReferenceEquals(a, owner))
+        => owner.ParameterCount == 0 || BoundOwners.Any(a => ReferenceEquals(a, owner))
             ? this : new(Head, Members, Candidates, [.. BoundOwners, owner]);
 
     public bool Equals(PendingReference? other) => other is not null && ContentKey == other.ContentKey;
@@ -355,7 +355,7 @@ internal static class PropertyDependencyGraphBuilder
 
             var stripped = new List<string>(names);
             var rewritten = new List<PendingReference>(PendingReferences.Count);
-            var changed = owner.Parameters.Count > 0;
+            var changed = owner.ParameterCount > 0;
             foreach (var pending in PendingReferences)
             {
                 if (pending.Candidates.Count == 0)

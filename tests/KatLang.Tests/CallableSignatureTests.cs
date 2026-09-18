@@ -107,7 +107,7 @@ public class CallableSignatureTests
         {
             var algorithm = new Algorithm.User(
                 Parent: null,
-                Parameters: [new ParameterDeclaration(parameterName)],
+                ParameterPatterns: [new CaptureParameterPattern(parameterName)],
                 Opens: [],
                 Properties: [],
                 Output: [new Expr.Param(parameterName)]);

@@ -89,7 +89,7 @@ public class OwnershipConformanceTests
             Assert.Same(scopes[ownerIndex], parameterOwner);
             Assert.False(selected.TryGetProperty(out _, out _));
             declaration = decidingOwner.Binder is null
-                ? decidingOwner.Algorithm.ExplicitParameters.SingleOrDefault(p => p.Name == "v")?.Span
+                ? WrittenParameterSpan(decidingOwner.Algorithm, "v")
                 : BinderSpan(decidingOwner.Binder, "v");
             classification = decidingOwner.Binder is not null ? IdentifierClassification.ConditionalBinderReference
                 : declaration is not null ? IdentifierClassification.ExplicitParameterReference
@@ -164,6 +164,14 @@ public class OwnershipConformanceTests
         chain.Reverse();
         return chain;
     }
+
+    // A WRITTEN parameter declares a source span; a lifted (implicit) parameter is a capture
+    // promoted from a callee signature — it may carry that callee's span, but it declares
+    // nothing in this owner, so only an explicit list answers.
+    private static SourceSpan? WrittenParameterSpan(Algorithm owner, string name)
+        => owner is Algorithm.User { HasExplicitParameterList: true } written
+            ? written.Parameters.SingleOrDefault(p => p.Name == name)?.Span
+            : null;
 
     private static SourceSpan? BinderSpan(Pattern pattern, string name) => pattern switch
     {

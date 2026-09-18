@@ -264,7 +264,7 @@ public static partial class Evaluator
         // A `with` view of the branch body: a deferred placeholder's region comes along
         // (Algorithm.DeferredRegion), so demanding the equivalent's output materializes —
         // and shares — the very region the branch carries.
-        return (Algorithm.User)body.WithParameters(Algorithm.NormalParameters(paramNames));
+        return body with { ParameterPatterns = Algorithm.NormalParameters(paramNames) };
     }
 
     /// <summary>
@@ -282,7 +282,7 @@ public static partial class Evaluator
 
         var simple = TryGetFlatBinderUserEquivalent(alg);
         if (simple is not null)
-            return new EvalError.ArityMismatch(simple.Parameters.Count, 0);
+            return new EvalError.ArityMismatch(simple.ParameterCount, 0);
 
         return new EvalError.NoMatchingBranch(name);
     }
@@ -306,7 +306,7 @@ public static partial class Evaluator
 
         var algorithm = new Algorithm.User(
             Parent: null,
-            Parameters: [],
+            ParameterPatterns: [],
             Opens: [],
             Properties: [],
             Output: output);
@@ -729,7 +729,7 @@ public static partial class Evaluator
         {
             if (!region.TryGetMaterialized(out var materialized))
                 throw DeferredModuleRegion.SynchronousSelectionNotSupported();
-            alg = materialized.WithParameters(alg.Parameters) with { Parent = alg.Parent };
+            alg = WithParent(materialized.WithParameterPatterns(alg.ParameterPatterns), alg.Parent);
         }
 
         if (alg is Algorithm.Builtin(var builtin))
@@ -874,7 +874,7 @@ public static partial class Evaluator
             ctx,
             new Algorithm.User(
                 Parent: null,
-                Parameters: [],
+                ParameterPatterns: [],
                 Opens: [],
                 Properties: [],
                 Output: body));

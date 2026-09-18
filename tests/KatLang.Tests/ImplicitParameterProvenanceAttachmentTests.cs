@@ -112,7 +112,7 @@ public class ImplicitParameterProvenanceAttachmentTests
         Assert.Same(note, Assert.Single(pattern.Captures).InferredProvenance);
 
         // Ordinary `with` on every carrier keeps the reference, whatever else changes.
-        Assert.Same(note, (pattern with { Span = null }).InferredProvenance);
+        Assert.Same(note, (pattern with { Parameter = pattern.Parameter with { Span = null } }).InferredProvenance);
         Assert.Same(note, (declaration with { Kind = ParameterKind.Collecting }).InferredProvenance);
         Assert.Same(note, (edge with { Args = OutputBundle.Empty, MemberSpan = null }).InferredFallbackProvenance);
 

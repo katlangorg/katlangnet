@@ -35,7 +35,7 @@ public class ParameterOwnershipTests
     // ── the walk itself, over an explicitly constructed owner chain ──────────
 
     private static Algorithm.User Owner(params Property[] properties)
-        => new(Parent: null, Parameters: [], Opens: [], Properties: [.. properties], Output: OutputBundle.Empty);
+        => new(Parent: null, ParameterPatterns: [], Opens: [], Properties: [.. properties], Output: OutputBundle.Empty);
 
     private static Property Value(string name, int sentinel)
         => new(name, new Algorithm.User(null, [], [], [], [new Expr.Num(sentinel)]));
@@ -190,7 +190,7 @@ public class ParameterOwnershipTests
         // independent detections. Only the binding at Outer changes between runs.
         foreach (var parameter in new[] { "v", "q", "v" })
         {
-            var outer = new Algorithm.User(null, [new ParameterDeclaration(parameter)], [],
+            var outer = new Algorithm.User(null, [new CaptureParameterPattern(parameter)], [],
                 [new Property("Left", shared), new Property("Right", shared), new Property("Nearer", nearer)],
                 [new Expr.Resolve("Left"), new Expr.Resolve("Right"), new Expr.Resolve("Nearer")]);
             var root = Owner(Value("v", 99), new Property("Outer", outer), new Property("Other", shared)) with
@@ -233,7 +233,7 @@ public class ParameterOwnershipTests
         else
             Assert.Empty(parsed.Diagnostics);
 
-        var algorithm = parsed.Root;
+        Algorithm algorithm = parsed.Root;
         foreach (var step in path)
             algorithm = algorithm.Properties.Single(property => property.Name == step).Value;
 

@@ -106,7 +106,7 @@ public class FrontEndDagComplexityTests
     }
 
     private static Algorithm.User EmptyAlgorithm(params Expr[] output)
-        => new(Parent: null, Parameters: [], Opens: [], Properties: [], Output: output);
+        => new(Parent: null, ParameterPatterns: [], Opens: [], Properties: [], Output: output);
 
     [Theory]
     [InlineData(false)]
@@ -458,7 +458,7 @@ public class FrontEndDagComplexityTests
             var sharedValue = EmptyAlgorithm(BinaryDiamond(depth, new Expr.Resolve("b")));
             var branchBody = new Algorithm.User(
                 Parent: null,
-                Parameters: [],
+                ParameterPatterns: [],
                 Opens: [],
                 Properties:
                 [
@@ -764,7 +764,7 @@ public class FrontEndDagComplexityTests
             var observations = new FrontEndTraversalObservations();
             var root = new Algorithm.User(
                 Parent: null,
-                Parameters: [],
+                ParameterPatterns: [],
                 Opens: [],
                 Properties:
                 [
@@ -794,7 +794,7 @@ public class FrontEndDagComplexityTests
         static Algorithm.User TwoPropertyRoot(Expr referencing)
             => new(
                 Parent: null,
-                Parameters: [],
+                ParameterPatterns: [],
                 Opens: [],
                 Properties:
                 [
@@ -835,7 +835,7 @@ public class FrontEndDagComplexityTests
         var sharedReference = new Expr.Binary(BinaryOp.Add, new Expr.Resolve("C"), new Expr.Num(1));
         var root = new Algorithm.User(
             Parent: null,
-            Parameters: [],
+            ParameterPatterns: [],
             Opens: [],
             Properties:
             [
@@ -868,7 +868,7 @@ public class FrontEndDagComplexityTests
         var neutralCall = new Expr.Call(new Expr.Resolve("Neutral"), new OutputBundle([shared]));
         var aValue = new Algorithm.User(
             Parent: null,
-            Parameters: [],
+            ParameterPatterns: [],
             Opens: [],
             Properties: [new Property("B", EmptyAlgorithm(new Expr.Param("p")))],
             Output: new OutputBundle([shared, neutralCall]));
@@ -898,13 +898,13 @@ public class FrontEndDagComplexityTests
         var observations = new FrontEndTraversalObservations();
         var nested = new Algorithm.User(
             Parent: null,
-            Parameters: [],
+            ParameterPatterns: [],
             Opens: [],
             Properties: [new Property("Inner", EmptyAlgorithm(new Expr.Param("p")))],
             Output: new OutputBundle([new Expr.Resolve("Inner")]));
         var root = new Algorithm.User(
             Parent: null,
-            Parameters: [],
+            ParameterPatterns: [],
             Opens: [],
             Properties:
             [
@@ -935,7 +935,7 @@ public class FrontEndDagComplexityTests
         {
             value = new Algorithm.User(
                 Parent: null,
-                Parameters: [],
+                ParameterPatterns: [],
                 Opens: [],
                 Properties: [new Property($"N{level}", value)],
                 Output: new OutputBundle([new Expr.Resolve($"N{level}")]));
@@ -943,7 +943,7 @@ public class FrontEndDagComplexityTests
 
         return new Algorithm.User(
             Parent: null,
-            Parameters: [],
+            ParameterPatterns: [],
             Opens: [],
             Properties: [new Property("Top", value)],
             Output: OutputBundle.Empty);

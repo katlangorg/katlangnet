@@ -120,7 +120,7 @@ public class FrontEndSpanPreservationTests
         OutputBundle? output = null)
         => new(
             Parent: null,
-            Parameters: [],
+            ParameterPatterns: [],
             Opens: opens ?? [],
             Properties: [],
             Output: output ?? OutputBundle.Empty);

@@ -450,7 +450,7 @@ public class BudgetCrossTalkMatrixTests
         var taken = new Expr.DotCall(listed, "take", OutputBundle.From([new Expr.Num(1)]));
         var program = new Algorithm.User(
             Parent: null,
-            Parameters: [],
+            ParameterPatterns: [],
             Opens: [],
             Properties:
             [
@@ -463,7 +463,7 @@ public class BudgetCrossTalkMatrixTests
     private static Expr LongStringProgram(int length)
         => new Expr.AlgorithmExpr(new Algorithm.User(
             Parent: null,
-            Parameters: [],
+            ParameterPatterns: [],
             Opens: [],
             Properties: [new Property("Probe", new Algorithm.User(null, [], [], [], [new Expr.Num(1)]))],
             Output: [new Expr.StringLiteral(new string('x', length))]));
@@ -1357,7 +1357,7 @@ public class BudgetCrossTalkMatrixTests
         var invocation = SequencePipelineInvocation.DotCall(new Expr.DotCall(filter, "count"));
         var sourceEvaluated = false;
         var predicate = new Algorithm.User(
-            null, [new ParameterDeclaration("x")], [], [], [new Expr.Num(1)]);
+            null, [new CaptureParameterPattern("x")], [], [], [new Expr.Num(1)]);
         var services = new SequencePipelineEvaluationServices(
             GetDotCallLexicalBuiltinFallbackReason: (_, _) => null,
             EvaluateDotReceiverIterationItems: _ =>
@@ -1405,7 +1405,7 @@ public class BudgetCrossTalkMatrixTests
             OutputBundle.From([new Expr.Resolve("Predicate")]));
         var invocation = SequencePipelineInvocation.DotCall(new Expr.DotCall(filter, "count"));
         var predicate = new Algorithm.User(
-            null, [new ParameterDeclaration("x")], [], [], [new Expr.Num(1)]);
+            null, [new CaptureParameterPattern("x")], [], [], [new Expr.Num(1)]);
         var services = new SequencePipelineEvaluationServices(
             GetDotCallLexicalBuiltinFallbackReason: (_, _) => null,
             EvaluateDotReceiverIterationItems: _ =>

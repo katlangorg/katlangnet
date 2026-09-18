@@ -33,7 +33,7 @@ internal static class EvaluatorTestSupport
     /// <see cref="SourceProvenance.ParseAllowingDiagnostics"/>.
     /// </para>
     /// </summary>
-    internal static Algorithm ParseValidRoot(string source)
+    internal static Algorithm.User ParseValidRoot(string source)
     {
         var parsed = Parser.Parse(source);
         if (parsed.HasErrors)
@@ -75,14 +75,14 @@ internal static class EvaluatorTestSupport
     /// </summary>
     internal static Algorithm MakeAllPublic(Algorithm alg) => alg switch
     {
-        Algorithm.User => alg with
+        Algorithm.User user => user with
         {
-            Properties = alg.Properties.Select(p =>
+            Properties = user.Properties.Select(p =>
                 new Property(p.Name, MakeAllPublic(p.Value), IsPublic: true, Exposure: p.Exposure)).ToList(),
-            Output = alg.Output.Select(MakeAllPublicExpr).ToList(),
-            Opens = alg.Opens.Select(MakeAllPublicExpr).ToList(),
+            Output = user.Output.Select(MakeAllPublicExpr).ToList(),
+            Opens = user.Opens.Select(MakeAllPublicExpr).ToList(),
         },
-        _ => alg,
+        Algorithm.Conditional or Algorithm.Builtin => alg,
     };
 
     internal static Expr MakeAllPublicExpr(Expr expr) => expr switch

@@ -554,7 +554,7 @@ public class CompletionIdentityDifferentialTests
         IReadOnlyList<Expr>? output = null)
         => new(
             Parent: null,
-            Parameters: [],
+            ParameterPatterns: [],
             Opens: opens ?? [],
             Properties: properties ?? [],
             Output: OutputBundle.From(output ?? []));

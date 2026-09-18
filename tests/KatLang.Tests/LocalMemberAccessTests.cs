@@ -612,7 +612,7 @@ public class LocalMemberAccessTests
         Algorithm Owner(Algorithm provider) => new Algorithm.User(null, [], [],
             [new Property("Provider", provider), new Property("Body", shared)], [new Expr.Num(0)]);
         var zero = new Algorithm.User(null, [], [], [], [new Expr.Num(0)]);
-        var parameterized = new Algorithm.User(null, [new ParameterDeclaration("n")], [], [], [new Expr.Param("n")]);
+        var parameterized = new Algorithm.User(null, [new CaptureParameterPattern("n")], [], [], [new Expr.Param("n")]);
         var root = new Algorithm.User(null, [], [],
             [new Property("A", Owner(zero)), new Property("B", Owner(parameterized))], [new Expr.Num(0)]);
         var diagnostics = new List<Diagnostic>();
@@ -629,8 +629,8 @@ public class LocalMemberAccessTests
             PropertyExposure.LocalOnlyCapturedAncestorParameters) { RequiredAncestorParameters = ["n"] };
         IReadOnlyList<Property> properties = [member];
         OutputBundle output = [new Expr.DotCall(new Expr.Resolve("G"), "X")];
-        var f = new Algorithm.User(null, [new ParameterDeclaration("n")], [], properties, output);
-        var g = new Algorithm.User(null, [new ParameterDeclaration("n")], [], properties, output);
+        var f = new Algorithm.User(null, [new CaptureParameterPattern("n")], [], properties, output);
+        var g = new Algorithm.User(null, [new CaptureParameterPattern("n")], [], properties, output);
         var root = new Algorithm.User(null, [], [], [new Property("F", f), new Property("G", g)],
             [new Expr.Call(new Expr.Resolve("F"), [new Expr.Num(5)])]);
         var result = Evaluator.Run(new Expr.AlgorithmExpr(root));

@@ -533,7 +533,7 @@ public class ClosedListStrictValueDiagnosticTests
             [],
             strictRowFirst ? [strictRow, neutralRow] : [neutralRow, strictRow])
         {
-            ExplicitParameterPatterns = [new CaptureParameterPattern("x")],
+            HasExplicitParameterList = true,
         };
         var root = new Algorithm.User(
             null,
@@ -580,7 +580,7 @@ public class ClosedListStrictValueDiagnosticTests
             [],
             [sharedValue, strictRow])
         {
-            ExplicitParameterPatterns = [new CaptureParameterPattern("x")],
+            HasExplicitParameterList = true,
         };
         var root = new Algorithm.User(
             null,

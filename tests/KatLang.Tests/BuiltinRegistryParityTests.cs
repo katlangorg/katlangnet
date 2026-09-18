@@ -494,7 +494,7 @@ public class BuiltinRegistryParityTests
     {
         var root = new Algorithm.User(
             Parent: null,
-            Parameters: [],
+            ParameterPatterns: [],
             Opens: opens ?? Array.Empty<Expr>(),
             Properties: [],
             Output: [new Expr.Resolve(name)]);

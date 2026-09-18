@@ -358,16 +358,20 @@ public static class SemanticModelBuilder
             // only spanless explicit parameter a ParseResult can hold outside a module
             // subtree is the parser's recovery placeholder for a malformed binding
             // pattern (`F(*) = …`). It is not source-backed, so it declares no symbol:
-            // it must never surface in completion or classify a reference.
+            // it must never surface in completion or classify a reference. Only a WRITTEN
+            // parameter list declares explicit binders; an inferred signature declares none.
+            var writtenParameters = algorithm is Algorithm.User { HasExplicitParameterList: true } written
+                ? written.Parameters
+                : [];
             var explicitParameters = InModuleProvidedSubtree
-                ? algorithm.ExplicitParameters
-                : algorithm.ExplicitParameters.Where(static parameter => parameter.Span is not null).ToList();
+                ? writtenParameters
+                : writtenParameters.Where(static parameter => parameter.Span is not null).ToList();
 
             var explicitParameterNames = new HashSet<string>(
                 explicitParameters.Select(static parameter => parameter.Name),
                 StringComparer.Ordinal);
             var recoveryPlaceholderNames = new HashSet<string>(
-                algorithm.ExplicitParameters
+                writtenParameters
                     .Select(static parameter => parameter.Name)
                     .Where(name => !explicitParameterNames.Contains(name)),
                 StringComparer.Ordinal);
@@ -1706,8 +1710,14 @@ public static class SemanticModelBuilder
                     ExtendCurrentRegion(span);
             }
 
-            foreach (var parameter in algorithm.ExplicitParameters)
-                ExtendCurrentRegion(parameter.Span);
+            // Written parameter declarations anchor the scope region; an inferred signature
+            // has no declaration written in THIS owner. Lifted captures may retain a
+            // callee's span, so the owner-level explicit-list bit is authoritative.
+            if (algorithm is Algorithm.User { HasExplicitParameterList: true } written)
+            {
+                foreach (var parameter in written.Parameters)
+                    ExtendCurrentRegion(parameter.Span);
+            }
 
             if (extraParameters is null)
                 return;
@@ -2181,18 +2191,12 @@ public static class SemanticModelBuilder
 
             if (entersModule)
                 _moduleDepth++;
-            if (inside)
+            if (inside && algorithm is Algorithm.User user && _visitedInside.Add(user.ParameterPatterns))
             {
-                if (_visitedInside.Add(algorithm.ExplicitParameters))
-                {
-                    foreach (var parameter in algorithm.ExplicitParameters)
-                        CollectSpan(parameter.Span);
-                }
-                if (_visitedInside.Add(algorithm.ExplicitParameterPatterns))
-                {
-                    foreach (var pattern in algorithm.ExplicitParameterPatterns)
-                        CollectParameterPatternSpans(pattern);
-                }
+                // The stored pattern list is the one parameter channel: every declaration span a
+                // module algorithm carries (written captures, nested ones included) lives in it.
+                foreach (var pattern in user.ParameterPatterns)
+                    CollectParameterPatternSpans(pattern);
             }
             base.VisitAlgorithm(algorithm);
             if (entersModule)

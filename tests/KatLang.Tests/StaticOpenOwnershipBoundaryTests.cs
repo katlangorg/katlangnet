@@ -88,7 +88,7 @@ public class StaticOpenOwnershipBoundaryTests
         var family = new Algorithm.Conditional(null, [head, head],
             [new CondBranch(new Pattern.Bind("n"), new Algorithm.User(null, [], [], [], [new Expr.Num(1)]))]);
         var lib = new Algorithm.User(null, [], [], [new Property("X", new Algorithm.User(null, [], [], [], [new Expr.Num(7)]), true)], []);
-        var parent = new Algorithm.User(null, [new ParameterDeclaration("Lib")], [], [new Property("Family", family)], [new Expr.Num(1)]);
+        var parent = new Algorithm.User(null, [new CaptureParameterPattern("Lib")], [], [new Property("Family", family)], [new Expr.Num(1)]);
         var root = new Algorithm.User(null, [], [],
             [new Property("Lib", lib), new Property("Outer", parent), new Property("StaticFamily", family)], []);
         var detected = ParameterDetector.Detect(root);

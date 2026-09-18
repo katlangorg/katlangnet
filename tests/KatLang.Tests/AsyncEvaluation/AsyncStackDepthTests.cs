@@ -157,7 +157,7 @@ public class AsyncStackDepthTests
         for (var level = 0; level < (EvaluationLimits.MaxSupportedAstDepth - 1) / 2; level++)
         {
             ast = new Expr.AlgorithmExpr(new Algorithm.User(
-                Parent: null, Parameters: [], Opens: [], Properties: [], Output: [ast]));
+                Parent: null, ParameterPatterns: [], Opens: [], Properties: [], Output: [ast]));
         }
 
         var sync = Evaluator.RunCounted(ast);

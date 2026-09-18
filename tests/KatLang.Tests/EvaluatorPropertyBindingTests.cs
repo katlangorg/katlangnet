@@ -199,7 +199,7 @@ public class EvaluatorPropertyBindingTests
             "Shared",
             new Algorithm.User(
                 Parent: null,
-                Parameters: [],
+                ParameterPatterns: [],
                 Opens: [],
                 Properties: [],
                 Output: [new Expr.Param("x")]),
@@ -209,7 +209,7 @@ public class EvaluatorPropertyBindingTests
             "Caller",
             new Algorithm.User(
                 Parent: null,
-                Parameters: Algorithm.NormalParameters(["x"]),
+                ParameterPatterns: Algorithm.NormalParameters(["x"]),
                 Opens: [],
                 Properties: [shared],
                 Output:
@@ -226,7 +226,7 @@ public class EvaluatorPropertyBindingTests
 
         var root = new Algorithm.User(
             Parent: null,
-            Parameters: [],
+            ParameterPatterns: [],
             Opens: [],
             Properties: [caller],
             Output:
@@ -251,7 +251,7 @@ public class EvaluatorPropertyBindingTests
             "Shared",
             new Algorithm.User(
                 Parent: null,
-                Parameters: [],
+                ParameterPatterns: [],
                 Opens: [],
                 Properties: [],
                 Output: [new Expr.Resolve("Base")]));
@@ -260,7 +260,7 @@ public class EvaluatorPropertyBindingTests
             "Base",
             new Algorithm.User(
                 Parent: null,
-                Parameters: [],
+                ParameterPatterns: [],
                 Opens: [],
                 Properties: [],
                 Output: [new Expr.Num(1)]));
@@ -269,7 +269,7 @@ public class EvaluatorPropertyBindingTests
             "Base",
             new Algorithm.User(
                 Parent: null,
-                Parameters: [],
+                ParameterPatterns: [],
                 Opens: [],
                 Properties: [],
                 Output: [new Expr.Num(2)]),
@@ -279,7 +279,7 @@ public class EvaluatorPropertyBindingTests
             "Lib",
             new Algorithm.User(
                 Parent: null,
-                Parameters: [],
+                ParameterPatterns: [],
                 Opens: [],
                 Properties: [openBaseBinding],
                 Output: []),
@@ -289,7 +289,7 @@ public class EvaluatorPropertyBindingTests
             "StructuralWrapper",
             new Algorithm.User(
                 Parent: null,
-                Parameters: [],
+                ParameterPatterns: [],
                 Opens: [],
                 Properties: [localBaseBinding, sharedClosedBinding],
                 Output:
@@ -304,7 +304,7 @@ public class EvaluatorPropertyBindingTests
             "OpenWrapper",
             new Algorithm.User(
                 Parent: null,
-                Parameters: [],
+                ParameterPatterns: [],
                 Opens: [new Expr.Resolve("Lib")],
                 Properties: [sharedClosedBinding],
                 Output:
@@ -317,7 +317,7 @@ public class EvaluatorPropertyBindingTests
 
         var root = new Algorithm.User(
             Parent: null,
-            Parameters: [],
+            ParameterPatterns: [],
             Opens: [],
             Properties: [libraryBinding, structuralWrapperBinding, openWrapperBinding],
             Output:

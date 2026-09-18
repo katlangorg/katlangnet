@@ -206,11 +206,11 @@ public class EvaluatorSpreadTests
 
         var countedRoot = new Expr.AlgorithmExpr(new Algorithm.User(
             Parent: null,
-            Parameters: [],
+            ParameterPatterns: [],
             Opens: [],
             Properties: [new Property("Values", new Algorithm.User(
                 Parent: null,
-                Parameters: [],
+                ParameterPatterns: [],
                 Opens: [],
                 Properties: [],
                 Output: [deepJoin]))],

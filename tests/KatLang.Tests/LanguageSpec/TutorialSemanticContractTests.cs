@@ -204,7 +204,9 @@ public class TutorialSemanticContractTests
         // Ordinary definition: one clause, no family — an explicit sequence-value parameter pattern.
         var pairSum = PropertyOf(SourceProvenance.ParseValid("PairSum((x, y)) = x + y\nPairSum([2, 3])").Root, "PairSum").Value;
         Assert.Empty(pairSum.Branches);
-        Assert.Single(pairSum.ExplicitParameterPatterns);
+        var pairSumWritten = Assert.IsType<Algorithm.User>(pairSum);
+        Assert.True(pairSumWritten.HasExplicitParameterList);
+        Assert.Single(pairSumWritten.ParameterPatterns);
         Assert.Equal("5\n5", Display("PairSum((x, y)) = x + y\nPairSum((2, 3))\nPairSum([2, 3])"));
         RunFailure("PairSum((x, y)) = x + y\nPairSum([1, 2, 3])", KatLangErrorCode.ArityMismatch);
         RunFailure("PairSum((x, y)) = x + y\nPairSum(7)", KatLangErrorCode.ArityMismatch);

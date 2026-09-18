@@ -819,7 +819,7 @@ public class BudgetConservationTests
         var filter = new Expr.DotCall(
             source, "filter", OutputBundle.From([new Expr.Resolve("Predicate")]));
         var invocation = SequencePipelineInvocation.DotCall(new Expr.DotCall(filter, "count"));
-        var predicate = new Algorithm.User(null, [new ParameterDeclaration("x")], [], [], [new Expr.Num(1)]);
+        var predicate = new Algorithm.User(null, [new CaptureParameterPattern("x")], [], [], [new Expr.Num(1)]);
 
         var services = new SequencePipelineEvaluationServices(
             GetDotCallLexicalBuiltinFallbackReason: (_, _) => null,
@@ -876,7 +876,7 @@ public class BudgetConservationTests
 
     private static SequencePipelineEvaluationServices FaultingRangeServices(Func<Exception> fault)
     {
-        var predicate = new Algorithm.User(null, [new ParameterDeclaration("x")], [], [], [new Expr.Num(1)]);
+        var predicate = new Algorithm.User(null, [new CaptureParameterPattern("x")], [], [], [new Expr.Num(1)]);
         return new SequencePipelineEvaluationServices(
             GetDotCallLexicalBuiltinFallbackReason: (_, _) => null,
             EvaluateDotReceiverIterationItems: _ =>

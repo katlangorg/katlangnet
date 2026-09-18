@@ -221,7 +221,7 @@ public class ConditionalBranchArityValidationTests
         // malformed node comes first in traversal order wins.
         var branchViolation = new Property("A", OutputArityMismatchConditional());
         var explicitParamViolation = new Property(
-            "B", new Algorithm.User(null, [new ParameterDeclaration("p")], [], [], []));
+            "B", new Algorithm.User(null, [new CaptureParameterPattern("p")], [], [], []));
 
         var branchFirst = Evaluator.Run(new Expr.AlgorithmExpr(new Algorithm.User(
             null, [], [], [branchViolation, explicitParamViolation], [new Expr.Num(42)])));
@@ -237,7 +237,7 @@ public class ConditionalBranchArityValidationTests
     public void ConditionalMismatch_PrecedesExplicitParameterViolationInsideFirstBranch()
     {
         var explicitParamViolation = new Algorithm.User(
-            null, [new ParameterDeclaration("p")], [], [], []);
+            null, [new CaptureParameterPattern("p")], [], [], []);
 
         var inputMismatch = new Algorithm.Conditional(
             Parent: null,

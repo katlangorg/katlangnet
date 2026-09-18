@@ -627,7 +627,7 @@ public class ZeroArgPropertyResultCacheTests
             "Shared",
             new Algorithm.User(
                 Parent: null,
-                Parameters: [],
+                ParameterPatterns: [],
                 Opens: [],
                 Properties: [],
                 Output: [new Expr.Resolve("Base")])) ;
@@ -636,7 +636,7 @@ public class ZeroArgPropertyResultCacheTests
             "Base",
             new Algorithm.User(
                 Parent: null,
-                Parameters: [],
+                ParameterPatterns: [],
                 Opens: [],
                 Properties: [],
                 Output: [new Expr.Num(1)]));
@@ -645,7 +645,7 @@ public class ZeroArgPropertyResultCacheTests
             "Base",
             new Algorithm.User(
                 Parent: null,
-                Parameters: [],
+                ParameterPatterns: [],
                 Opens: [],
                 Properties: [],
                 Output: [new Expr.Num(2)]),
@@ -655,7 +655,7 @@ public class ZeroArgPropertyResultCacheTests
             "Lib",
             new Algorithm.User(
                 Parent: null,
-                Parameters: [],
+                ParameterPatterns: [],
                 Opens: [],
                 Properties: [openBaseBinding],
                 Output: []),
@@ -665,7 +665,7 @@ public class ZeroArgPropertyResultCacheTests
             "StructuralWrapper",
             new Algorithm.User(
                 Parent: null,
-                Parameters: [],
+                ParameterPatterns: [],
                 Opens: [],
                 Properties: [localBaseBinding, sharedClosedBinding],
                 Output:
@@ -680,7 +680,7 @@ public class ZeroArgPropertyResultCacheTests
             "OpenWrapper",
             new Algorithm.User(
                 Parent: null,
-                Parameters: [],
+                ParameterPatterns: [],
                 Opens: [new Expr.Resolve("Lib")],
                 Properties: [sharedClosedBinding],
                 Output:
@@ -693,7 +693,7 @@ public class ZeroArgPropertyResultCacheTests
 
         var root = new Algorithm.User(
             Parent: null,
-            Parameters: [],
+            ParameterPatterns: [],
             Opens: [],
             Properties: [libraryBinding, structuralWrapperBinding, openWrapperBinding],
             Output:
@@ -764,7 +764,7 @@ public class ZeroArgPropertyResultCacheTests
             "Shared",
             new Algorithm.User(
                 Parent: null,
-                Parameters: [],
+                ParameterPatterns: [],
                 Opens: [],
                 Properties: [],
                 Output: [new Expr.Resolve("Base")]),
@@ -774,7 +774,7 @@ public class ZeroArgPropertyResultCacheTests
             "Lib1",
             new Algorithm.User(
                 Parent: null,
-                Parameters: [],
+                ParameterPatterns: [],
                 Opens: [],
                 Properties:
                 [
@@ -782,7 +782,7 @@ public class ZeroArgPropertyResultCacheTests
                         "Base",
                         new Algorithm.User(
                             Parent: null,
-                            Parameters: [],
+                            ParameterPatterns: [],
                             Opens: [],
                             Properties: [],
                             Output: [new Expr.Num(1)])),
@@ -795,7 +795,7 @@ public class ZeroArgPropertyResultCacheTests
             "Lib2",
             new Algorithm.User(
                 Parent: null,
-                Parameters: [],
+                ParameterPatterns: [],
                 Opens: [],
                 Properties:
                 [
@@ -803,7 +803,7 @@ public class ZeroArgPropertyResultCacheTests
                         "Base",
                         new Algorithm.User(
                             Parent: null,
-                            Parameters: [],
+                            ParameterPatterns: [],
                             Opens: [],
                             Properties: [],
                             Output: [new Expr.Num(2)])),
@@ -814,7 +814,7 @@ public class ZeroArgPropertyResultCacheTests
 
         var root = new Algorithm.User(
             Parent: null,
-            Parameters: [],
+            ParameterPatterns: [],
             Opens: [],
             Properties: [lib1Binding, lib2Binding],
             Output:
@@ -1018,7 +1018,7 @@ public class ZeroArgPropertyResultCacheTests
     private static Algorithm.User NewAlgorithm()
         => new(
             Parent: null,
-            Parameters: [],
+            ParameterPatterns: [],
             Opens: [],
             Properties: [],
             Output: [new Expr.Num(0)]);

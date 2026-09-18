@@ -1284,7 +1284,7 @@ public class ImplicitArgumentResolverTests
         {
             Properties = scope.Properties
                 .Select(p => p.Name == "Use"
-                    ? p.WithValue(p.Value with
+                    ? p.WithValue(Assert.IsType<Algorithm.User>(p.Value) with
                     {
                         Output = new OutputBundle([
                             shared,
@@ -1330,7 +1330,7 @@ public class ImplicitArgumentResolverTests
         {
             Properties = scope.Properties
                 .Select(p => p.Name is "FixedCaller" or "CollectingCaller"
-                    ? p.WithValue(p.Value with
+                    ? p.WithValue(Assert.IsType<Algorithm.User>(p.Value) with
                     {
                         Output = new OutputBundle([
                             new Expr.DotCall(new Expr.Resolve("Math"), "Abs", new OutputBundle([shared])),
@@ -1458,7 +1458,7 @@ public class ImplicitArgumentResolverTests
         {
             Properties = parsed.Properties
                 .Select(property => property.Name == "Use"
-                    ? property.WithValue(property.Value with
+                    ? property.WithValue(Assert.IsType<Algorithm.User>(property.Value) with
                     {
                         Output = new OutputBundle([
                             new Expr.DotCall(new Expr.Resolve("Math"), "Abs", sharedArgs),

@@ -413,7 +413,7 @@ public sealed class Parser
         // one-above value is enough to reject immediately and avoids signed overflow
         // when an arbitrarily large debt is supplied.
         parser._nestingDepth = Math.Clamp(initialNestingDebt, 0, MaxNestingDepth + 1);
-        Algorithm root;
+        Algorithm.User root;
         try
         {
             parser.GuardNestingDepth();
@@ -930,7 +930,7 @@ public sealed class Parser
     private static Algorithm.User CreateAlgorithm(ParsedAlgorithmBody body)
         => new(
             Parent: null,
-            Parameters: [],
+            ParameterPatterns: [],
             Opens: body.Opens,
             Properties: body.Properties,
             Output: body.Output);
@@ -1972,13 +1972,17 @@ public sealed class Parser
         declaredPropertyNames.Add(sourceName);
 
         var captures = targets
-            .Select(static target => (ParameterPattern)new CaptureParameterPattern(target.Name, Span: null, target.Kind)
-            {
-                CollectMarkerSpan = target.CollectMarkerSpan,
-            })
+            .Select(static target => (ParameterPattern)new CaptureParameterPattern(
+                new ParameterDeclaration(target.Name, Span: null, target.Kind)
+                {
+                    CollectMarkerSpan = target.CollectMarkerSpan,
+                }))
             .ToList();
         var seqPattern = new SequenceValueParameterPattern(captures);
-        var explicitParameters = ParameterPattern.FlattenCaptures([seqPattern]);
+        // Every target helper shares ONE explicit pattern list: the N-capture sequence-value
+        // pattern the written targets form. Parameters/Params derive from it on demand, so
+        // constructing a helper is O(1) in the capture count.
+        IReadOnlyList<ParameterPattern> helperPatterns = [seqPattern];
 
         // One identity token shared by every target helper of this deconstruction. The evaluator
         // keys its run-scoped shared-bind cache on it so the N helpers bind the shared N-capture
@@ -1989,23 +1993,14 @@ public sealed class Parser
         {
             var target = targets[targetIndex];
 
-            // Construct with empty Parameters and assign the shared explicitParameters through the
-            // initializer. Passing them to the constructor would make it eagerly rebuild
-            // ParameterPatterns via FromDeclarations (O(N) in the capture count) only for the
-            // initializer to immediately overwrite it with the shared [seqPattern] — that waste,
-            // repeated for each of the N sibling helpers, is an O(N^2) allocation source. Every
-            // helper shares the same seqPattern and explicitParameters, so this is O(1) per helper.
             var helper = new Algorithm.User(
                 Parent: null,
-                Parameters: [],
+                ParameterPatterns: helperPatterns,
                 Opens: [],
                 Properties: [],
                 Output: [new Expr.Resolve(target.Name)])
             {
-                Parameters = explicitParameters,
-                ParameterPatterns = [seqPattern],
-                ExplicitParameterPatterns = [seqPattern],
-                ExplicitParameters = explicitParameters,
+                HasExplicitParameterList = true,
                 AssignmentDeconstructionTarget = new AssignmentDeconstructionTarget(deconstructionGroup, targetIndex),
             };
 
@@ -2013,7 +2008,7 @@ public sealed class Parser
 
             var propertyBody = new Algorithm.User(
                 Parent: null,
-                Parameters: [],
+                ParameterPatterns: [],
                 Opens: [],
                 Properties: [],
                 Output: [new Expr.Call(new Expr.AlgorithmExpr(helper), args)]);
@@ -2897,7 +2892,7 @@ public sealed class Parser
 
         return new Algorithm.User(
             Parent: null,
-            Parameters: [],
+            ParameterPatterns: [],
             Opens: [],
             Properties: [],
             Output: exprs);

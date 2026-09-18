@@ -233,7 +233,7 @@ public class PublicElaborationSurfaceTests
     {
         var rawFunction = new Algorithm.User(
             Parent: null,
-            Parameters: [new ParameterDeclaration("x")],
+            ParameterPatterns: [new CaptureParameterPattern("x")],
             Opens: [],
             Properties: [],
             Output: [new Expr.Resolve("x")]);
@@ -268,7 +268,10 @@ public class PublicElaborationSurfaceTests
         Assert.False(parsed.HasErrors);
 
         var algo = Assert.Single(parsed.Root.Properties, property => property.Name == "Algo");
-        var prop = Assert.Single(algo.Value.Properties, property => property.Name == "Prop");
+        // A property value is any variant of the closed hierarchy; a consumer narrows to read
+        // variant-owned payload (the root itself is typed Algorithm.User and needs no match).
+        var algoBody = Assert.IsType<Algorithm.User>(algo.Value);
+        var prop = Assert.Single(algoBody.Properties, property => property.Name == "Prop");
         Assert.Equal(PropertyExposure.LocalOnlyCapturedAncestorParameters, prop.Exposure);
     }
 

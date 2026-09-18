@@ -721,14 +721,14 @@ internal sealed class ModuleLoader
                 Branches = DeferOrKeepBranches(conditional, context, depth),
             };
         }
-        else
+        else if (alg is Algorithm.User user)
         {
-            var newOpens = new List<Expr>(alg.Opens.Count);
-            foreach (var open in alg.Opens)
+            var newOpens = new List<Expr>(user.Opens.Count);
+            foreach (var open in user.Opens)
                 newOpens.Add(ProcessExpr(open, LoadContext.OpenList, depth + 1));
 
-            var newProperties = new List<Property>(alg.Properties.Count);
-            foreach (var prop in alg.Properties)
+            var newProperties = new List<Property>(user.Properties.Count);
+            foreach (var prop in user.Properties)
             {
                 var processedValue = ProcessAlgorithm(prop.Value, LoadContext.PropertyDef, depth + 1);
                 // Unwrap only algorithm-valued single-block property bodies. A plain
@@ -738,8 +738,8 @@ internal sealed class ModuleLoader
                 newProperties.Add(prop.WithValue(processedValue));
             }
 
-            var newOutput = new List<Expr>(alg.Output.Count);
-            foreach (var expr in alg.Output)
+            var newOutput = new List<Expr>(user.Output.Count);
+            foreach (var expr in user.Output)
             {
                 // In a property definition or open list body, output is allowed for load
                 // At top-level, output is runtime
@@ -749,12 +749,17 @@ internal sealed class ModuleLoader
                 newOutput.Add(ProcessExpr(expr, outputCtx, depth + 1));
             }
 
-            result = alg with
+            result = user with
             {
                 Opens = newOpens,
                 Properties = newProperties,
                 Output = newOutput,
             };
+        }
+        else
+        {
+            // The closed hierarchy has exactly three variants and the builtin returned above.
+            throw new InvalidOperationException($"Unhandled algorithm variant: {alg.GetType().Name}");
         }
 
         memo[alg] = result;
@@ -776,11 +781,12 @@ internal sealed class ModuleLoader
 
         if (alg is Algorithm.Builtin) return alg;
 
-        if (alg is Algorithm.Conditional)
+        if (alg is not Algorithm.User user)
         {
             // Unreachable by construction: RouteAlgorithmAsync dispatches families to their
-            // own twin. Fail loudly rather than rewrite a family through the ordinary-body
-            // accessors, which are empty for it (the original traversal gap).
+            // own twin (the builtin returned above). Fail loudly rather than rewrite a family
+            // through the ordinary-body accessors, which are empty for it (the original
+            // traversal gap).
             throw new InvalidOperationException(
                 "Internal error: the ordinary-body async module-elaboration walk reached a clause family. " +
                 "Families route through ProcessConditionalAlgorithmAsync.");
@@ -800,12 +806,12 @@ internal sealed class ModuleLoader
 
         TraversalObservations?.RecordLoaderWalkExpansion();
 
-        var newOpens = new List<Expr>(alg.Opens.Count);
-        foreach (var open in alg.Opens)
+        var newOpens = new List<Expr>(user.Opens.Count);
+        foreach (var open in user.Opens)
             newOpens.Add(await RouteExprAsync(open, LoadContext.OpenList, depth + 1).ConfigureAwait(false));
 
-        var newProperties = new List<Property>(alg.Properties.Count);
-        foreach (var prop in alg.Properties)
+        var newProperties = new List<Property>(user.Properties.Count);
+        foreach (var prop in user.Properties)
         {
             var processedValue = await RouteAlgorithmAsync(prop.Value, LoadContext.PropertyDef, depth + 1).ConfigureAwait(false);
             // Unwrap only algorithm-valued single-block property bodies, exactly as in
@@ -814,8 +820,8 @@ internal sealed class ModuleLoader
             newProperties.Add(prop.WithValue(processedValue));
         }
 
-        var newOutput = new List<Expr>(alg.Output.Count);
-        foreach (var expr in alg.Output)
+        var newOutput = new List<Expr>(user.Output.Count);
+        foreach (var expr in user.Output)
         {
             var outputCtx = context is LoadContext.PropertyDef or LoadContext.OpenList
                 ? LoadContext.PropertyDef
@@ -823,7 +829,7 @@ internal sealed class ModuleLoader
             newOutput.Add(await RouteExprAsync(expr, outputCtx, depth + 1).ConfigureAwait(false));
         }
 
-        var result = alg with
+        var result = user with
         {
             Opens = newOpens,
             Properties = newProperties,

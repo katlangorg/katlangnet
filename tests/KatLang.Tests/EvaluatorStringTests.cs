@@ -346,7 +346,7 @@ public class EvaluatorStringTests
         // Unary minus on a string literal should fail
         var strExpr = new Expr.StringLiteral("hello");
         var unaryExpr = new Expr.Unary(UnaryOp.Minus, strExpr);
-        var alg = new Algorithm.User(Parent: null, Parameters: [], Opens: [],
+        var alg = new Algorithm.User(Parent: null, ParameterPatterns: [], Opens: [],
             Properties: [], Output: [unaryExpr]);
         var result = Evaluator.Run(new Expr.AlgorithmExpr(alg));
         Assert.True(result.IsError);

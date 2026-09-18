@@ -23,7 +23,7 @@ namespace KatLang.Tests.AsyncEvaluation;
 public class AsyncExpressionDispatchTests
 {
     private static Algorithm.User EmptyAlgorithm(params Expr[] output)
-        => new(Parent: null, Parameters: [], Opens: [], Properties: [], Output: output);
+        => new(Parent: null, ParameterPatterns: [], Opens: [], Properties: [], Output: output);
 
     private static IReadOnlyDictionary<string, Expr> VariantSamples => ExprVariantCatalog.Samples;
 
@@ -101,7 +101,7 @@ public class AsyncExpressionDispatchTests
         // The catalog's bare NativeCall has an unbound x and fails before computation.
         // Bind a real value so this pin exercises successful native argument demand.
         var wrapper = new Algorithm.User(
-            Parent: null, Parameters: Algorithm.NormalParameters(["x"]), Opens: [], Properties: [],
+            Parent: null, ParameterPatterns: Algorithm.NormalParameters(["x"]), Opens: [], Properties: [],
             Output: [new Expr.NativeCall("Abs", ["x"])]);
         var ast = new Expr.Call(new Expr.AlgorithmExpr(wrapper), [new Expr.Num(-7)]);
         var sync = Evaluator.RunCounted(ast);
@@ -274,7 +274,7 @@ public class AsyncExpressionDispatchTests
     {
         var root = new Algorithm.User(
             Parent: null,
-            Parameters: [],
+            ParameterPatterns: [],
             Opens: [],
             Properties: [new Property("P", EmptyAlgorithm(new Expr.Num(5)))],
             Output: new OutputBundle(

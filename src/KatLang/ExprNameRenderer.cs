@@ -349,7 +349,7 @@ internal static class ExprNameRenderer
                     // A zero-shape scoped block renders the same way over its
                     // output slots. Parameters.Count equals the derived Params.Count by
                     // construction, without materializing the name list.
-                    case Expr.AlgorithmExpr(var algorithm) when algorithm.Parameters.Count == 0
+                    case Expr.AlgorithmExpr(var algorithm) when algorithm.ParameterCount == 0
                         && algorithm.Opens.Count == 0
                         && algorithm.Properties.Count == 0:
                     {

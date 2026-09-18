@@ -61,7 +61,15 @@ internal sealed class LeanAstEncoding
 
     private int DeclarationIdentity(Property property, Algorithm owner)
     {
-        var scopeIdentity = StructuralOwnerIdentity.FromOwner(owner with { Parent = _scope?.Parent });
+        // Lean withParent: the owner as wired under the current scope, narrowed to the variant
+        // that has a parent (a builtin never owns a property, but the switch stays total).
+        Algorithm rewiredOwner = owner switch
+        {
+            Algorithm.User user => user with { Parent = _scope?.Parent },
+            Algorithm.Conditional family => family with { Parent = _scope?.Parent },
+            Algorithm.Builtin => owner,
+        };
+        var scopeIdentity = StructuralOwnerIdentity.FromOwner(rewiredOwner);
         if (!_identities.TryGetValue(scopeIdentity, out var byProperty))
             _identities[scopeIdentity] = byProperty = new(ReferenceEqualityComparer.Instance);
         if (!byProperty.TryGetValue(property, out var identity))
@@ -263,29 +271,14 @@ internal sealed class LeanAstEncoding
     /// <c>algWithParameters [{ name, kind }]</c> once a collecting capture
     /// appears, and <c>algWithParameterPatterns [...]</c> once any
     /// sequence-value pattern appears. The Lean helpers derive the flattened
-    /// parameter list from the patterns, so the C# tree's two channels
-    /// (<see cref="Algorithm.Parameters"/> and
-    /// <see cref="Algorithm.ParameterPatterns"/>) must agree — a host tree
-    /// whose channels diverge has no single faithful Lean spelling and is
-    /// refused rather than approximated.
+    /// parameter list from the patterns exactly as the C# tree does: a user
+    /// algorithm stores ONE channel (<see cref="Algorithm.User.ParameterPatterns"/>)
+    /// and <see cref="Algorithm.User.Parameters"/> is its projection, so the two
+    /// can no longer disagree and the encoder reads the stored patterns alone.
     /// </summary>
     private static (string Constructor, string Parameters) EncodeParameterChannel(Algorithm.User user)
     {
         var patterns = user.ParameterPatterns;
-        var flattened = ParameterPattern.FlattenCaptures(patterns);
-        if (flattened.Count != user.Parameters.Count
-            || flattened.Where((capture, i) =>
-                    !string.Equals(capture.Name, user.Parameters[i].Name, StringComparison.Ordinal)
-                    || capture.Kind != user.Parameters[i].Kind)
-                .Any())
-        {
-            throw new NotSupportedException(
-                $"{nameof(LeanAstEncoder)} cannot encode an algorithm whose Parameters " +
-                $"([{string.Join(", ", user.Parameters.Select(p => p.DisplayName))}]) disagree with the flatten of its " +
-                $"ParameterPatterns ([{string.Join(", ", patterns.Select(p => p.DisplayName))}]); the Lean model derives " +
-                "one from the other, so a divergent host tree has no faithful spelling.");
-        }
-
         if (patterns.Any(static pattern => pattern is not CaptureParameterPattern))
         {
             return ("algWithParameterPatterns", EncodeList(patterns, EncodeParameterPattern));
@@ -312,7 +305,7 @@ internal sealed class LeanAstEncoding
     /// Lean <c>ParameterPattern</c> constructor spelling. Pattern SHAPE is
     /// load-bearing: <c>F((x))</c> is a singleton sequence-value pattern, a
     /// different program from the flat <c>F(x)</c>, and the flattened
-    /// <see cref="Algorithm.Parameters"/> list cannot distinguish them — the
+    /// <see cref="Algorithm.User.Parameters"/> list cannot distinguish them — the
     /// original Track 9 failure mode. Encoding the pattern tree keeps the
     /// distinction. Compiler-exhaustive over the closed ParameterPattern hierarchy:
     /// a new variant fails this build until the encoder covers it.

@@ -446,7 +446,8 @@ public static partial class Evaluator
     private static Algorithm WithParent(Algorithm alg, ScopeCtx? parent) => alg switch
     {
         Algorithm.Builtin => alg,
-        Algorithm.User or Algorithm.Conditional => alg with { Parent = parent },
+        Algorithm.User user => user with { Parent = parent },
+        Algorithm.Conditional family => family with { Parent = parent },
     };
 
     /// <summary>
@@ -513,7 +514,7 @@ public static partial class Evaluator
     /// </summary>
     private static Algorithm ForOpens(ScopeCtx sc)
         => new Algorithm.User(
-            Parent: sc, Parameters: [], Opens: sc.Opens,
+            Parent: sc, ParameterPatterns: [], Opens: sc.Opens,
             Properties: [], Output: []);
 
     /// <summary>Lean: Algorithm.lookupProp (any visibility).</summary>
@@ -676,7 +677,7 @@ public static partial class Evaluator
     /// from (Lean: <c>Algorithm.requiresArguments</c>).
     /// </summary>
     internal static bool RequiresArguments(Algorithm algorithm)
-        => algorithm is Algorithm.Conditional || algorithm.Parameters.Count > 0;
+        => algorithm is Algorithm.Conditional || algorithm.ParameterCount > 0;
 
     private static EvalError OpenTargetRequiresArguments(string targetDescription, Algorithm provider)
         => new EvalError.IllegalInOpen(FormatOpenTargetRequiresArguments(targetDescription, provider));
@@ -700,15 +701,17 @@ public static partial class Evaluator
     /// </summary>
     private static IEnumerable<string> NamedParameters(Algorithm provider, bool sourceBacked)
     {
-        var explicitParameters = provider.ExplicitParameters;
-        if (!sourceBacked || explicitParameters.Count == 0)
+        // Only a WRITTEN (explicit) list can contain the recovery binder: an inferred
+        // signature's captures are promoted names, every one of them nameable.
+        if (!sourceBacked || provider is not Algorithm.User { HasExplicitParameterList: true } written)
             return provider.Params;
 
-        var placeholders = explicitParameters
+        var parameters = written.Parameters;
+        var placeholders = parameters
             .Where(static parameter => parameter.Span is null)
             .Select(static parameter => parameter.Name)
             .ToHashSet(StringComparer.Ordinal);
-        return provider.Params.Where(name => !placeholders.Contains(name));
+        return parameters.Select(static parameter => parameter.Name).Where(name => !placeholders.Contains(name));
     }
 
     /// <summary>
@@ -1019,7 +1022,7 @@ public static partial class Evaluator
     /// mismatch for callees with no inferred parameters.
     /// </summary>
     private static EvalError.ArityMismatch ZeroArgumentDemandArityMismatch(Algorithm callee)
-        => new(callee.Parameters.Count, 0)
+        => new(callee.ParameterCount, 0)
         {
             InferredImplicitParameters = ImplicitParameterProvenance.CollectFrom(callee.Parameters),
         };
@@ -1078,7 +1081,7 @@ public static partial class Evaluator
     {
         if (shape == ZeroArgumentDemandShape.Block)
         {
-            return algorithm.Parameters.Count == 0
+            return algorithm.ParameterCount == 0
                 ? null
                 : MissingImplicitArgumentsError(algorithm, span);
         }
@@ -1086,7 +1089,7 @@ public static partial class Evaluator
         if (name is not null && ConditionalValueAccessError(name, algorithm) is { } conditionalError)
             return conditionalError with { Span = span };
 
-        if (algorithm.Parameters.Count == 0)
+        if (algorithm.ParameterCount == 0)
             return null;
 
         var arity = ZeroArgumentDemandArityMismatch(algorithm);
@@ -2047,7 +2050,7 @@ public static partial class Evaluator
         }
 
         var wrapper = new Algorithm.User(
-            Parent: null, Parameters: [], Opens: [],
+            Parent: null, ParameterPatterns: [], Opens: [],
             Properties: [], Output: [dotCall]);
         return EvalResult<Algorithm>.Ok(WireToCaller(ctx, wrapper));
     }
@@ -2744,7 +2747,7 @@ public static partial class Evaluator
     private static EvalResult<Result> EvalRootProgram(Algorithm alg, SourceSpan? span, EvalCtx ctx)
     {
         var wired = WireToCaller(ctx, alg);
-        if (wired.Parameters.Count == 0)
+        if (wired.ParameterCount == 0)
         {
             var result = EvalProgramOutput(wired, ctx, []);
             if (result.IsError
@@ -2767,7 +2770,7 @@ public static partial class Evaluator
     private static EvalResult<CountedResult> EvalRootProgramCounted(Algorithm alg, SourceSpan? span, EvalCtx ctx)
     {
         var wired = WireToCaller(ctx, alg);
-        if (wired.Parameters.Count == 0)
+        if (wired.ParameterCount == 0)
         {
             var result = EvalProgramOutputCounted(wired, ctx, []);
             if (result.IsError
@@ -2794,7 +2797,7 @@ public static partial class Evaluator
         string topLevelPropertyName)
     {
         var wired = WireToCaller(ctx, alg);
-        if (wired.Parameters.Count != 0)
+        if (wired.ParameterCount != 0)
         {
             var blockSpan = span ?? FirstSpan(wired.Output);
             return MissingImplicitArguments<CountedRootProgramResult>(wired, blockSpan);
@@ -2833,7 +2836,7 @@ public static partial class Evaluator
 
         var resolvedAlgorithm = ChildOf(alg, binding.Value);
         var span = binding.DeclarationSpans.FirstOrDefault();
-        if (resolvedAlgorithm.Parameters.Count != 0)
+        if (resolvedAlgorithm.ParameterCount != 0)
         {
             return WithSpan<CountedResult?>(
                 span,

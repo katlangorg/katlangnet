@@ -53,7 +53,7 @@ public class CacheKeyDifferentialTests
     private static Algorithm.User NewAlgorithm()
         => new(
             Parent: null,
-            Parameters: [],
+            ParameterPatterns: [],
             Opens: [],
             Properties: [],
             Output: [new Expr.Num(0)]);

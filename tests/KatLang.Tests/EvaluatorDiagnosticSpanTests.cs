@@ -72,7 +72,7 @@ public class EvaluatorDiagnosticSpanTests
         bool hasOuterSpan)
     {
         var block = User(
-            parameters: [new ParameterDeclaration("x")],
+            parameters: [new CaptureParameterPattern("x")],
             output: OutputBundle.From([new Expr.Num(1) { Span = InnerSpan }]));
         var expr = new Expr.AlgorithmExpr(block)
         {
@@ -163,11 +163,11 @@ public class EvaluatorDiagnosticSpanTests
     }
 
     private static Algorithm.User User(
-        IReadOnlyList<ParameterDeclaration>? parameters = null,
+        IReadOnlyList<ParameterPattern>? parameters = null,
         OutputBundle? output = null)
         => new(
             Parent: null,
-            Parameters: parameters ?? [],
+            ParameterPatterns: parameters ?? [],
             Opens: [],
             Properties: [],
             Output: output ?? OutputBundle.Empty);

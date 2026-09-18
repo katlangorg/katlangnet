@@ -1076,7 +1076,7 @@ public class ModuleLoaderTests
         // A host copy of the root carries its placeholders — and with them the regions that
         // route the run to the async family — with no marking step.
         Algorithm Program(int literal)
-            => exposed with
+            => Assert.IsType<Algorithm.User>(exposed) with
             {
                 Output = new OutputBundle([new Expr.Call(new Expr.Resolve("F"), new OutputBundle([new Expr.Num(literal)]))]),
             };

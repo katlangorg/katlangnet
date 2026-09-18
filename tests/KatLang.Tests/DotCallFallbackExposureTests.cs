@@ -977,7 +977,7 @@ public class DotCallFallbackExposureTests
         // local-only error at runtime, not a lexical miss, so it is also Never.
         var conditionalBranchBody = new Algorithm.User(
             Parent: null,
-            Parameters: [],
+            ParameterPatterns: [],
             Opens: [],
             Properties: [new Property("t", new Algorithm.User(null, [], [], [], [new Expr.Num(1m)]))],
             Output: [new Expr.Num(0m)]);

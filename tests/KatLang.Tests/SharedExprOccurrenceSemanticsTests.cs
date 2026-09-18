@@ -26,18 +26,18 @@ public class SharedExprOccurrenceSemanticsTests
         params Expr[] output)
         => new(
             Parent: null,
-            Parameters: [],
+            ParameterPatterns: [],
             Opens: [],
             Properties: properties ?? [],
             Output: OutputBundle.TakeOwnership(output));
 
     private static Algorithm.User Body(params Expr[] output)
-        => new(Parent: null, Parameters: [], Opens: [], Properties: [], Output: OutputBundle.TakeOwnership(output));
+        => new(Parent: null, ParameterPatterns: [], Opens: [], Properties: [], Output: OutputBundle.TakeOwnership(output));
 
     private static Algorithm.User Function(string param, Expr body)
         => new(
             Parent: null,
-            Parameters: Algorithm.NormalParameters([param]),
+            ParameterPatterns: Algorithm.NormalParameters([param]),
             Opens: [],
             Properties: [],
             Output: [body]);

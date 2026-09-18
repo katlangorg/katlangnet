@@ -168,7 +168,7 @@ public class BuiltinRuntimeParityTests
         OutputBundle argumentBundle = arguments;
         var root = new Algorithm.User(
             Parent: null,
-            Parameters: [],
+            ParameterPatterns: [],
             Opens: [],
             Properties: [],
             Output: [new Expr.Call(new Expr.AlgorithmExpr(new Algorithm.Builtin(builtinId)), argumentBundle)]);

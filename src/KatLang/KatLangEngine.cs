@@ -101,7 +101,7 @@ public closed record RunResult
 
     /// <summary>Parse and evaluation succeeded.</summary>
     public sealed record Success(
-        Algorithm Root,
+        Algorithm.User Root,
         Result Value,
         IReadOnlyList<Decimal128> Atoms) : RunResult
     {
@@ -143,7 +143,7 @@ public closed record RunResult
 
     /// <summary>Parse and evaluation completed, but the top-level program did not define output.</summary>
     public sealed record NoProgramOutput(
-        Algorithm Root,
+        Algorithm.User Root,
         KatLangError Diagnostic) : RunResult
     {
         public const string DefaultMessage =
@@ -160,7 +160,7 @@ public closed record RunResult
 
     /// <summary>Evaluation failed after a successful parse.</summary>
     public sealed record EvalFailure(
-        Algorithm Root,
+        Algorithm.User Root,
         IReadOnlyList<KatLangError> Errors) : RunResult;
 
     /// <summary>

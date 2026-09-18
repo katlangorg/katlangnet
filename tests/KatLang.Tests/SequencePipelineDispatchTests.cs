@@ -418,7 +418,7 @@ public class SequencePipelineDispatchTests
         var invocation = SequencePipelineInvocation.DotCall(new Expr.DotCall(filter, "count"));
         var predicate = new Algorithm.User(
             Parent: null,
-            Parameters: [new ParameterDeclaration("x")],
+            ParameterPatterns: [new CaptureParameterPattern("x")],
             Opens: [],
             Properties: [],
             Output: [new Expr.Num(1)]);

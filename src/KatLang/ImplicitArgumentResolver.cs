@@ -2,7 +2,7 @@ namespace KatLang;
 
 /// <summary>
 /// Rewrites bare references to algorithms with parameters into explicit <see cref="Expr.Call"/> nodes,
-/// lifting their parameters into the enclosing algorithm's <see cref="Algorithm.Parameters"/> list.
+/// lifting their parameters into the enclosing algorithm's <see cref="Algorithm.User.Parameters"/> list.
 /// Must run after <see cref="ParameterDetector"/>.
 ///
 /// <para><b>Internal by design (v0.8.187):</b> this is ONE stage of the authoritative
@@ -221,7 +221,7 @@ internal static class ImplicitArgumentResolver
     /// body, the blocked strict-value forwarding diagnostics its own output rewrite reported
     /// — the one diagnostic whose wording names the family — as re-issuable templates.
     /// </summary>
-    private sealed record AlgorithmRegion(Algorithm Rewritten, IReadOnlyList<BlockedForwardingTemplate>? DiagnosticTemplates);
+    private sealed record AlgorithmRegion(Algorithm.User Rewritten, IReadOnlyList<BlockedForwardingTemplate>? DiagnosticTemplates);
 
     /// <summary>One blocked strict-value forwarding report, minus the family name that words it.</summary>
     private readonly record struct BlockedForwardingTemplate(
@@ -417,7 +417,7 @@ internal static class ImplicitArgumentResolver
     /// The conditional branch a body belongs to, threaded into
     /// <see cref="ProcessAlgorithm"/> so the body resolves under the CLOSED branch-pattern
     /// rule: its pattern binders are its only inputs, exactly like a written explicit
-    /// parameter list, and its <see cref="Algorithm.Parameters"/> stay empty.
+    /// parameter list, and its <see cref="Algorithm.User.Parameters"/> stay empty.
     /// </summary>
     private sealed record ConditionalBranchContext(string BranchName, Pattern Pattern);
 
@@ -575,23 +575,38 @@ internal static class ImplicitArgumentResolver
         FrontEndTraversalObservations? observations,
         List<Diagnostic>? diagnostics,
         ConditionalBranchContext? branchContext,
+        ResolutionRun run) => alg switch
+        {
+            Algorithm.Builtin => alg,
+
+            Algorithm.Conditional conditional => ProcessConditionalProperty(
+                conditional, "<anonymous>", parentParamMap, observations, diagnostics, run),
+
+            // A synthetic assignment-deconstruction helper (`x, *y, z = RHS`) is a fully-elaborated
+            // leaf: its output is a single bound Param (rewritten by ParameterDetector), it has no
+            // properties or opens, and its explicit N-capture pattern lifts nothing. The general path
+            // would still build an O(N) existing-parameter set and source-binding-kind map per helper —
+            // O(N^2) across a wide deconstruction's N helpers — only to rewrite an output that has no
+            // implicit calls. Returning it unchanged is O(1) and identical.
+            Algorithm.User { AssignmentDeconstructionTarget: not null } => alg,
+
+            Algorithm.User user => ProcessUserAlgorithmRegion(
+                user, parentParamMap, isRoot, observations, diagnostics, branchContext, run),
+        };
+
+    /// <summary>
+    /// The user-algorithm half of <see cref="ProcessAlgorithm"/>: the root is rewritten once
+    /// (nothing shares it), every nested body once per <see cref="AlgorithmRegionKey"/>.
+    /// </summary>
+    private static Algorithm.User ProcessUserAlgorithmRegion(
+        Algorithm.User alg,
+        Dictionary<string, CallableSignature> parentParamMap,
+        bool isRoot,
+        FrontEndTraversalObservations? observations,
+        List<Diagnostic>? diagnostics,
+        ConditionalBranchContext? branchContext,
         ResolutionRun run)
     {
-        if (alg is Algorithm.Builtin)
-            return alg;
-
-        if (alg is Algorithm.Conditional conditional)
-            return ProcessConditionalProperty(conditional, "<anonymous>", parentParamMap, observations, diagnostics, run);
-
-        // A synthetic assignment-deconstruction helper (`x, *y, z = RHS`) is a fully-elaborated
-        // leaf: its output is a single bound Param (rewritten by ParameterDetector), it has no
-        // properties or opens, and its explicit N-capture pattern lifts nothing. The general path
-        // would still build an O(N) existing-parameter set and source-binding-kind map per helper —
-        // O(N^2) across a wide deconstruction's N helpers — only to rewrite an output that has no
-        // implicit calls. Returning it unchanged is O(1) and identical.
-        if (alg is Algorithm.User { AssignmentDeconstructionTarget: not null })
-            return alg;
-
         // The root is processed exactly once and keeps its bare-root rule; nothing shares it.
         if (isRoot)
             return ProcessUserAlgorithm(alg, parentParamMap, isRoot: true, observations, diagnostics, branchContext: null, run, diagnosticTemplates: null);
@@ -623,8 +638,8 @@ internal static class ImplicitArgumentResolver
         return rewritten;
     }
 
-    private static Algorithm ProcessUserAlgorithm(
-        Algorithm alg,
+    private static Algorithm.User ProcessUserAlgorithm(
+        Algorithm.User alg,
         Dictionary<string, CallableSignature> parentParamMap,
         bool isRoot,
         FrontEndTraversalObservations? observations,
@@ -644,12 +659,10 @@ internal static class ImplicitArgumentResolver
         // This pass consumes ONLY the dependency/order channel: the builder's
         // recursive property-summary channel belongs to the exposure resolver
         // and is deliberately never computed here (M17).
-        var dependencyGraph = alg is Algorithm.User userAlgorithm
-            ? PropertyDependencyGraphBuilder.BuildDependencyOrder(
-                userAlgorithm,
-                preludeNameShadowedByCaller: parentParamMap.ContainsKey,
-                observations)
-            : PropertyDependencyGraph.Empty;
+        var dependencyGraph = PropertyDependencyGraphBuilder.BuildDependencyOrder(
+            alg,
+            preludeNameShadowedByCaller: parentParamMap.ContainsKey,
+            observations);
 
         // Visible map = parent + local (local overrides). When there are no local properties —
         // the common leaf case, e.g. every simple property value `A = expr` — nothing overrides
@@ -721,7 +734,7 @@ internal static class ImplicitArgumentResolver
             BranchDiagnosticTemplates = diagnosticTemplates,
         };
 
-        if (alg.ExplicitParameterPatterns.Count > 0 || branchContext is not null)
+        if (alg.HasExplicitParameterList || branchContext is not null)
         {
             // Two CLOSED input specifications share one gate: a written explicit parameter
             // list, and a conditional branch pattern. A branch body's only inputs are its
@@ -829,8 +842,11 @@ internal static class ImplicitArgumentResolver
             newProperties,
             expr => RewriteImplicitCalls(expr, visibleParamMap, liftedContext, inCallPosition: false, walkMemos));
 
-        return alg.WithParameterPatterns(newPatterns) with
+        // Lean: withParameterPatterns on the rewritten body — the lifted list replaces the
+        // stored channel; Parameters/Params follow it.
+        return alg with
         {
+            ParameterPatterns = newPatterns,
             Opens = newOpens,
             Properties = newProperties,
             Output = rewrittenOutput,

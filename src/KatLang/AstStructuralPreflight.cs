@@ -480,13 +480,13 @@ internal static class AstStructuralPreflight
             case Expr expr:
                 return TryGetExprChild(expr, index, out child);
 
-            // ONE uniform case for every algorithm subtype: the recursive collections
-            // are declared as virtual init properties on the Algorithm BASE, so a host
-            // initializer can place deep values in ANY of them on ANY subtype —
-            // including combinations today's consumers ignore (a Builtin's Output, a
-            // Conditional's parameter patterns). Enumerating the base surface uniformly
-            // closes that future bypass without double-counting: each subtype's
-            // overrides ARE the base properties, read once here.
+            // ONE case for every algorithm variant, reading the recursive collections through
+            // the internal Lean-total accessors: each variant contributes exactly the
+            // collections it OWNS (a builtin has none, a family its opens and branches, a user
+            // algorithm its opens, properties, output, and parameter patterns) and the other
+            // variants answer the empty list, so a host initializer can no longer place a deep
+            // value on a variant whose consumers ignore it — that state is a compile error now
+            // — and nothing is enumerated twice.
             case Algorithm algorithm:
             {
                 if (algorithm.Parent is { } parent)
@@ -544,14 +544,6 @@ internal static class AstStructuralPreflight
                 if (index < parameterPatterns.Count)
                 {
                     child = parameterPatterns[index];
-                    return true;
-                }
-
-                index -= parameterPatterns.Count;
-                var explicitPatterns = algorithm.ExplicitParameterPatterns;
-                if (index < explicitPatterns.Count)
-                {
-                    child = explicitPatterns[index];
                     return true;
                 }
 

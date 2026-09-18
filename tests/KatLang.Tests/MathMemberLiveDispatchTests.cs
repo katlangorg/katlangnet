@@ -100,7 +100,7 @@ public class MathMemberLiveDispatchTests
         // produce, so the theory above cannot pass on such a member.
         var wrapper = new Algorithm.User(
             Parent: null,
-            Parameters: [],
+            ParameterPatterns: [],
             Opens: [],
             Properties: [],
             Output: [new Expr.NativeCall("NoSuchNative", [])]);

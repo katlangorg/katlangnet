@@ -140,8 +140,8 @@ public class ParameterPropertyCollisionTests
         var value = new Algorithm.User(null, [], [], [], [new Expr.Num(5)]);
         var body = new Algorithm.User(null, [], [], [new Property("v", value) { DeclarationSpans = [span] }], [new Expr.Num(0)]);
         var shared = new Expr.Capture(new OutputBundle([new Expr.AlgorithmExpr(body)]));
-        var withoutV = new Algorithm.User(null, [new ParameterDeclaration("q")], [], [], [shared]);
-        var withV = new Algorithm.User(null, [new ParameterDeclaration("v", parameterSpan)], [], [], [shared]);
+        var withoutV = new Algorithm.User(null, [new CaptureParameterPattern("q")], [], [], [shared]);
+        var withV = new Algorithm.User(null, [new CaptureParameterPattern("v", parameterSpan)], [], [], [shared]);
         foreach (var owners in new[] { new[] { withoutV, withV }, new[] { withV, withoutV } })
         {
             var diagnostics = new List<Diagnostic>();
@@ -162,7 +162,7 @@ public class ParameterPropertyCollisionTests
     public void SharedCompletedSignature_IsReadOncePerEnclosingContext(int width)
     {
         var parameters = new ObservedParameters(Enumerable.Range(0, width)
-            .Select(i => new ParameterDeclaration($"p{i}")).ToArray());
+            .Select(i => (ParameterPattern)new CaptureParameterPattern($"p{i}")).ToArray());
         var children = Enumerable.Range(0, width).Select(_ => (Expr)new Expr.AlgorithmExpr(
             new Algorithm.User(null, parameters, [], [], [new Expr.Num(0)]))).ToArray();
         parameters.Reads = 0; // Ignore AST construction; observe the validator itself.
@@ -172,12 +172,12 @@ public class ParameterPropertyCollisionTests
         Assert.InRange(parameters.Reads, width, 2 * width);
     }
 
-    private sealed class ObservedParameters(IReadOnlyList<ParameterDeclaration> parameters) : IReadOnlyList<ParameterDeclaration>
+    private sealed class ObservedParameters(IReadOnlyList<ParameterPattern> parameters) : IReadOnlyList<ParameterPattern>
     {
         public int Reads { get; set; }
         public int Count => parameters.Count;
-        public ParameterDeclaration this[int index] { get { Reads++; return parameters[index]; } }
-        public IEnumerator<ParameterDeclaration> GetEnumerator()
+        public ParameterPattern this[int index] { get { Reads++; return parameters[index]; } }
+        public IEnumerator<ParameterPattern> GetEnumerator()
         {
             for (var i = 0; i < Count; i++)
                 yield return this[i];

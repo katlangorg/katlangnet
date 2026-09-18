@@ -318,7 +318,7 @@ public class ConditionalBranchElaborationTests
         Assert.Equal(PropertyExposure.Exported, Assert.Single(leaf.Properties).Exposure);
         Assert.InRange(observations.ExposureRewriteExpansions, 40, 60);
 
-        Algorithm Program(int literal) => exposed with
+        Algorithm Program(int literal) => Assert.IsType<Algorithm.User>(exposed) with
         {
             Output = new OutputBundle([new Expr.Call(new Expr.Resolve("F"), new OutputBundle([new Expr.Num(literal)]))]),
         };
@@ -597,7 +597,7 @@ public class ConditionalBranchElaborationTests
         Assert.Equal(["q"], forward.Params);
         Assert.IsType<Expr.Call>(Assert.Single(forward.Output));
         var call = new Expr.Call(new Expr.Resolve("Branch"), new OutputBundle([new Expr.Num(0)]));
-        var result = Evaluator.RunFlat(new Expr.AlgorithmExpr(resolved with { Output = new OutputBundle([call]) }));
+        var result = Evaluator.RunFlat(new Expr.AlgorithmExpr(Assert.IsType<Algorithm.User>(resolved) with { Output = new OutputBundle([call]) }));
         Assert.False(result.IsError, result.IsError ? result.Error.ToString() : null);
         Assert.Equal([5m], result.Value);
     }

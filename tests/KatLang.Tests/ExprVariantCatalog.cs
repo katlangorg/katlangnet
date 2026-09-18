@@ -66,7 +66,7 @@ internal static class ExprVariantCatalog
             [nameof(Expr.DotCall)] = new Expr.DotCall(new Expr.Capture([leaf, leaf]), "count"),
             [nameof(Expr.Grace)] = new Expr.Grace(leaf, 1),
             [nameof(Expr.AlgorithmExpr)] = new Expr.AlgorithmExpr(
-                new Algorithm.User(Parent: null, Parameters: [], Opens: [], Properties: [], Output: [leaf])),
+                new Algorithm.User(Parent: null, ParameterPatterns: [], Opens: [], Properties: [], Output: [leaf])),
             [nameof(Expr.Capture)] = new Expr.Capture([leaf, leaf]),
             [nameof(Expr.Call)] = new Expr.Call(new Expr.Resolve("F"), new OutputBundle([leaf])),
             [nameof(Expr.NativeCall)] = new Expr.NativeCall("Abs", ["x"]),

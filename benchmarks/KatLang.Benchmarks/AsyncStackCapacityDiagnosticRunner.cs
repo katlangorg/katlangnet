@@ -83,7 +83,7 @@ internal static class AsyncStackCapacityDiagnosticRunner
         for (var level = 0; level < depth; level++)
         {
             expr = new Expr.AlgorithmExpr(new Algorithm.User(
-                Parent: null, Parameters: [], Opens: [], Properties: [], Output: [expr]));
+                Parent: null, ParameterPatterns: [], Opens: [], Properties: [], Output: [expr]));
         }
 
         return expr;

@@ -33,9 +33,14 @@ public sealed record Diagnostic(
 /// <summary>
 /// The result of the public KatLang parser compatibility entry points.
 /// <see cref="Root"/> is the elaborated program produced by the front-end pipeline,
-/// not the raw syntax tree returned by <c>Parser.ParseSyntax</c>.
+/// not the raw syntax tree returned by <c>Parser.ParseSyntax</c>. It is typed
+/// <see cref="Algorithm.User"/> because a program root is ALWAYS a user algorithm: the parser
+/// produces one (a source file is one scope-owning body; the recovery placeholder for an
+/// unparseable or oversized source is an empty one too), and every elaboration pass returns
+/// the variant it was given — so the root's properties, parameters, and output are readable
+/// without a pattern match.
 /// </summary>
-public sealed record ParseResult(Algorithm Root, IReadOnlyList<Diagnostic> Diagnostics)
+public sealed record ParseResult(Algorithm.User Root, IReadOnlyList<Diagnostic> Diagnostics)
 {
     public bool HasErrors => Diagnostics.Any(d => d.Severity == DiagnosticSeverity.Error);
 }

@@ -302,13 +302,9 @@ public static partial class Evaluator
         if (step is not Algorithm.User user)
             return step;
 
-        return user with
-        {
-            Parameters = user.Parameters.ToArray(),
-            ParameterPatterns = SnapshotParameterPatterns(user.ParameterPatterns),
-            ExplicitParameters = user.ExplicitParameters.ToArray(),
-            ExplicitParameterPatterns = SnapshotParameterPatterns(user.ExplicitParameterPatterns),
-        };
+        // The ONE parameter channel is snapshotted; Parameters and Params derive from it, so the
+        // prepared view cannot observe a host mutation of the original pattern lists.
+        return user with { ParameterPatterns = SnapshotParameterPatterns(user.ParameterPatterns) };
     }
 
     /// <summary>
@@ -573,7 +569,7 @@ public static partial class Evaluator
         {
             Algorithm.Builtin => true,
             Algorithm.Conditional => true,
-            Algorithm.User user => user.Parameters.Count > 0 || user.ParameterPatterns.Count > 0,
+            Algorithm.User user => user.ParameterCount > 0 || user.ParameterPatterns.Count > 0,
         };
 
     private static EvalResult<CollectingCapture> CreateCollectingCapture(
@@ -672,7 +668,7 @@ public static partial class Evaluator
         if (expr is Expr.AlgorithmExpr(var algorithm))
         {
             var wired = WireToCaller(ctx, algorithm);
-            if (wired.Parameters.Count == 0)
+            if (wired.ParameterCount == 0)
             {
                 var nestedItemsR = EvalExplicitSequenceValueItems(wired, ctx, valEnv);
                 if (nestedItemsR.IsError) return nestedItemsR.Error;
@@ -1248,7 +1244,7 @@ public static partial class Evaluator
         if (includeExplicitSequenceValueItems && argExpr is Expr.AlgorithmExpr(var algorithm))
         {
             var wired = WireToCaller(ctx, algorithm);
-            if (wired.Parameters.Count == 0)
+            if (wired.ParameterCount == 0)
             {
                 var blockSpan = PreferExpressionSpan(argExpr.Span, wired.Output);
                 var preparedR = WithSpan(blockSpan, EvalAlgOutputPreparedCore(wired, ctx, valEnv));
@@ -1296,7 +1292,7 @@ public static partial class Evaluator
         if (receiver is Expr.AlgorithmExpr(var algorithm))
         {
             var wired = WireToCaller(ctx, algorithm);
-            if (wired.Parameters.Count == 0)
+            if (wired.ParameterCount == 0)
                 return WithSpan(PreferExpressionSpan(receiver.Span, wired.Output), EvalAlgOutputCounted(wired, ctx, valEnv));
         }
 

@@ -50,7 +50,7 @@ public static partial class Evaluator
     /// </summary>
     private static bool IsZeroDeclarationBlockValueSlot(Expr expr) => expr is
         Expr.AlgorithmExpr(var algorithm)
-            && algorithm.Parameters.Count == 0
+            && algorithm.ParameterCount == 0
             && algorithm.Opens.Count == 0
             && algorithm.Properties.Count == 0;
 
@@ -59,7 +59,7 @@ public static partial class Evaluator
             ctx,
             new Algorithm.User(
                 Parent: null,
-                Parameters: [],
+                ParameterPatterns: [],
                 Opens: [],
                 Properties: [],
                 Output: [expr]));
@@ -121,7 +121,7 @@ public static partial class Evaluator
                 // Wrap liftable non-resolvable expressions in a trivial algorithm.
                 // evalAlgOutput will evaluate the expression lazily when needed.
                 var wrapper = new Algorithm.User(
-                    Parent: null, Parameters: [], Opens: [],
+                    Parent: null, ParameterPatterns: [], Opens: [],
                     Properties: [], Output: [argExpr]);
                 result.Add(new ResolvedArgumentAlgorithm(WireToCaller(ctx, wrapper), spreadsSequence) { Source = argExpr });
             }

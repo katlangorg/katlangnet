@@ -8,25 +8,13 @@
 
 public closed record KatLang.Algorithm : System.IEquatable<KatLang.Algorithm>
   ctor     protected Algorithm(KatLang.Algorithm original)
-  property public virtual System.Collections.Generic.IReadOnlyList<KatLang.CondBranch> Branches { get; init; }
   property protected virtual System.Type EqualityContract { get; }
-  property public virtual System.Collections.Generic.IReadOnlyList<KatLang.ParameterPattern> ExplicitParameterPatterns { get; init; }
-  property public virtual System.Collections.Generic.IReadOnlyList<KatLang.ParameterDeclaration> ExplicitParameters { get; init; }
-  property public virtual System.Collections.Generic.IReadOnlyList<KatLang.Expr> Opens { get; init; }
-  property public virtual KatLang.OutputBundle Output { get; init; }
-  property public virtual System.Collections.Generic.IReadOnlyList<KatLang.ParameterPattern> ParameterPatterns { get; init; }
-  property public virtual System.Collections.Generic.IReadOnlyList<KatLang.ParameterDeclaration> Parameters { get; init; }
-  property public virtual System.Collections.Generic.IReadOnlyList<string> Params { get; }
-  property public virtual KatLang.ScopeCtx? Parent { get; init; }
-  property public virtual System.Collections.Generic.IReadOnlyList<KatLang.Property> Properties { get; init; }
   method   public abstract KatLang.Algorithm <Clone>$()
   method   public static KatLang.Algorithm ElaborateClauseDefinition(KatLang.Pattern pattern, KatLang.Algorithm body)
   method   public static KatLang.Algorithm ElaborateClauseGroup(System.Collections.Generic.IReadOnlyList<KatLang.CondBranch> clauses)
   method   public override bool Equals(object? obj)
   method   public virtual bool Equals(KatLang.Algorithm? other)
-  method   public string? FindDuplicatePropName()
   method   public override int GetHashCode()
-  method   public bool HasDuplicateBranchPatterns()
   method   protected virtual bool PrintMembers(System.Text.StringBuilder builder)
   method   public override string ToString()
   method   public KatLang.Algorithm WithParameterPatterns(System.Collections.Generic.IReadOnlyList<KatLang.ParameterPattern> parameterPatterns)
@@ -52,34 +40,37 @@ public sealed record KatLang.Algorithm.Builtin : KatLang.Algorithm, System.IEqua
 
 public sealed record KatLang.Algorithm.Conditional : KatLang.Algorithm, System.IEquatable<KatLang.Algorithm.Conditional>
   ctor     public Conditional(KatLang.ScopeCtx? Parent, System.Collections.Generic.IReadOnlyList<KatLang.Expr> Opens, System.Collections.Generic.IReadOnlyList<KatLang.CondBranch> Branches)
-  property public override System.Collections.Generic.IReadOnlyList<KatLang.CondBranch> Branches { get; init; }
+  property public System.Collections.Generic.IReadOnlyList<KatLang.CondBranch> Branches { get; init; }
   property protected override System.Type EqualityContract { get; }
-  property public override System.Collections.Generic.IReadOnlyList<KatLang.Expr> Opens { get; init; }
-  property public override KatLang.ScopeCtx? Parent { get; init; }
+  property public System.Collections.Generic.IReadOnlyList<KatLang.Expr> Opens { get; init; }
+  property public KatLang.ScopeCtx? Parent { get; init; }
   method   public virtual KatLang.Algorithm.Conditional <Clone>$()
   method   public bool Equals(KatLang.Algorithm.Conditional? other)
   method   public override bool Equals(object? obj)
   method   public sealed override bool Equals(KatLang.Algorithm? other)
   method   public override int GetHashCode()
+  method   public bool HasDuplicateBranchPatterns()
   method   protected override bool PrintMembers(System.Text.StringBuilder builder)
   method   public override string ToString()
   operator public static bool op_Equality(KatLang.Algorithm.Conditional? left, KatLang.Algorithm.Conditional? right)
   operator public static bool op_Inequality(KatLang.Algorithm.Conditional? left, KatLang.Algorithm.Conditional? right)
 
 public sealed record KatLang.Algorithm.User : KatLang.Algorithm, System.IEquatable<KatLang.Algorithm.User>
-  ctor     public User(KatLang.ScopeCtx? Parent, System.Collections.Generic.IReadOnlyList<KatLang.ParameterDeclaration> Parameters, System.Collections.Generic.IReadOnlyList<KatLang.Expr> Opens, System.Collections.Generic.IReadOnlyList<KatLang.Property> Properties, KatLang.OutputBundle Output)
+  ctor     public User(KatLang.ScopeCtx? Parent, System.Collections.Generic.IReadOnlyList<KatLang.ParameterPattern> ParameterPatterns, System.Collections.Generic.IReadOnlyList<KatLang.Expr> Opens, System.Collections.Generic.IReadOnlyList<KatLang.Property> Properties, KatLang.OutputBundle Output)
   property protected override System.Type EqualityContract { get; }
-  property public override System.Collections.Generic.IReadOnlyList<KatLang.Expr> Opens { get; init; }
-  property public override KatLang.OutputBundle Output { get; init; }
-  property public override System.Collections.Generic.IReadOnlyList<KatLang.ParameterPattern> ParameterPatterns { get; init; }
-  property public override System.Collections.Generic.IReadOnlyList<KatLang.ParameterDeclaration> Parameters { get; init; }
-  property public override System.Collections.Generic.IReadOnlyList<string> Params { get; }
-  property public override KatLang.ScopeCtx? Parent { get; init; }
-  property public override System.Collections.Generic.IReadOnlyList<KatLang.Property> Properties { get; init; }
+  property public bool HasExplicitParameterList { get; init; }
+  property public System.Collections.Generic.IReadOnlyList<KatLang.Expr> Opens { get; init; }
+  property public KatLang.OutputBundle Output { get; init; }
+  property public System.Collections.Generic.IReadOnlyList<KatLang.ParameterPattern> ParameterPatterns { get; init; }
+  property public System.Collections.Generic.IReadOnlyList<KatLang.ParameterDeclaration> Parameters { get; }
+  property public System.Collections.Generic.IReadOnlyList<string> Params { get; }
+  property public KatLang.ScopeCtx? Parent { get; init; }
+  property public System.Collections.Generic.IReadOnlyList<KatLang.Property> Properties { get; init; }
   method   public virtual KatLang.Algorithm.User <Clone>$()
   method   public bool Equals(KatLang.Algorithm.User? other)
   method   public override bool Equals(object? obj)
   method   public sealed override bool Equals(KatLang.Algorithm? other)
+  method   public string? FindDuplicatePropName()
   method   public override int GetHashCode()
   method   protected override bool PrintMembers(System.Text.StringBuilder builder)
   method   public override string ToString()
@@ -315,16 +306,18 @@ public sealed record KatLang.CaptureBindingNode : KatLang.CallableBindingNode, S
   operator public static bool op_Inequality(KatLang.CaptureBindingNode? left, KatLang.CaptureBindingNode? right)
 
 public sealed record KatLang.CaptureParameterPattern : KatLang.ParameterPattern, System.IEquatable<KatLang.CaptureParameterPattern>
+  ctor     public CaptureParameterPattern(KatLang.ParameterDeclaration Parameter)
   ctor     public CaptureParameterPattern(string Name, KatLang.SourceSpan? Span = null, KatLang.ParameterKind Kind = KatLang.ParameterKind.Normal)
   property public override System.Collections.Generic.IReadOnlyList<KatLang.ParameterDeclaration> Captures { get; }
   property public KatLang.SourceSpan? CollectMarkerSpan { get; init; }
   property public override string DisplayName { get; }
   property protected override System.Type EqualityContract { get; }
-  property public KatLang.ParameterKind Kind { get; init; }
-  property public string Name { get; init; }
-  property public KatLang.SourceSpan? Span { get; init; }
+  property public KatLang.ParameterKind Kind { get; }
+  property public string Name { get; }
+  property public KatLang.ParameterDeclaration Parameter { get; init; }
+  property public KatLang.SourceSpan? Span { get; }
   method   public virtual KatLang.CaptureParameterPattern <Clone>$()
-  method   public void Deconstruct(out string Name, out KatLang.SourceSpan? Span, out KatLang.ParameterKind Kind)
+  method   public void Deconstruct(out KatLang.ParameterDeclaration Parameter)
   method   public bool Equals(KatLang.CaptureParameterPattern? other)
   method   public override bool Equals(object? obj)
   method   public sealed override bool Equals(KatLang.ParameterPattern? other)
@@ -1641,12 +1634,12 @@ public closed record KatLang.ParameterPattern : System.IEquatable<KatLang.Parame
   operator public static bool op_Inequality(KatLang.ParameterPattern? left, KatLang.ParameterPattern? right)
 
 public sealed record KatLang.ParseResult : System.IEquatable<KatLang.ParseResult>
-  ctor     public ParseResult(KatLang.Algorithm Root, System.Collections.Generic.IReadOnlyList<KatLang.Diagnostic> Diagnostics)
+  ctor     public ParseResult(KatLang.Algorithm.User Root, System.Collections.Generic.IReadOnlyList<KatLang.Diagnostic> Diagnostics)
   property public System.Collections.Generic.IReadOnlyList<KatLang.Diagnostic> Diagnostics { get; init; }
   property public bool HasErrors { get; }
-  property public KatLang.Algorithm Root { get; init; }
+  property public KatLang.Algorithm.User Root { get; init; }
   method   public KatLang.ParseResult <Clone>$()
-  method   public void Deconstruct(out KatLang.Algorithm Root, out System.Collections.Generic.IReadOnlyList<KatLang.Diagnostic> Diagnostics)
+  method   public void Deconstruct(out KatLang.Algorithm.User Root, out System.Collections.Generic.IReadOnlyList<KatLang.Diagnostic> Diagnostics)
   method   public bool Equals(KatLang.ParseResult? other)
   method   public override bool Equals(object? obj)
   method   public override int GetHashCode()
@@ -1941,12 +1934,12 @@ public closed record KatLang.RunResult : System.IEquatable<KatLang.RunResult>
   operator public static bool op_Inequality(KatLang.RunResult? left, KatLang.RunResult? right)
 
 public sealed record KatLang.RunResult.EvalFailure : KatLang.RunResult, System.IEquatable<KatLang.RunResult.EvalFailure>
-  ctor     public EvalFailure(KatLang.Algorithm Root, System.Collections.Generic.IReadOnlyList<KatLang.KatLangError> Errors)
+  ctor     public EvalFailure(KatLang.Algorithm.User Root, System.Collections.Generic.IReadOnlyList<KatLang.KatLangError> Errors)
   property protected override System.Type EqualityContract { get; }
   property public System.Collections.Generic.IReadOnlyList<KatLang.KatLangError> Errors { get; init; }
-  property public KatLang.Algorithm Root { get; init; }
+  property public KatLang.Algorithm.User Root { get; init; }
   method   public virtual KatLang.RunResult.EvalFailure <Clone>$()
-  method   public void Deconstruct(out KatLang.Algorithm Root, out System.Collections.Generic.IReadOnlyList<KatLang.KatLangError> Errors)
+  method   public void Deconstruct(out KatLang.Algorithm.User Root, out System.Collections.Generic.IReadOnlyList<KatLang.KatLangError> Errors)
   method   public bool Equals(KatLang.RunResult.EvalFailure? other)
   method   public override bool Equals(object? obj)
   method   public sealed override bool Equals(KatLang.RunResult? other)
@@ -1958,13 +1951,13 @@ public sealed record KatLang.RunResult.EvalFailure : KatLang.RunResult, System.I
 
 public sealed record KatLang.RunResult.NoProgramOutput : KatLang.RunResult, System.IEquatable<KatLang.RunResult.NoProgramOutput>
   const    public const string DefaultMessage = "No output defined.\nThis program defines properties, but does not specify what to return.\nAdd an output expression, or use `()` if the empty sequence value was intended."
-  ctor     public NoProgramOutput(KatLang.Algorithm Root, KatLang.KatLangError Diagnostic)
+  ctor     public NoProgramOutput(KatLang.Algorithm.User Root, KatLang.KatLangError Diagnostic)
   property public KatLang.KatLangError Diagnostic { get; init; }
   property protected override System.Type EqualityContract { get; }
   property public string Message { get; }
-  property public KatLang.Algorithm Root { get; init; }
+  property public KatLang.Algorithm.User Root { get; init; }
   method   public virtual KatLang.RunResult.NoProgramOutput <Clone>$()
-  method   public void Deconstruct(out KatLang.Algorithm Root, out KatLang.KatLangError Diagnostic)
+  method   public void Deconstruct(out KatLang.Algorithm.User Root, out KatLang.KatLangError Diagnostic)
   method   public bool Equals(KatLang.RunResult.NoProgramOutput? other)
   method   public override bool Equals(object? obj)
   method   public sealed override bool Equals(KatLang.RunResult? other)
@@ -1990,14 +1983,14 @@ public sealed record KatLang.RunResult.ParseFailure : KatLang.RunResult, System.
   operator public static bool op_Inequality(KatLang.RunResult.ParseFailure? left, KatLang.RunResult.ParseFailure? right)
 
 public sealed record KatLang.RunResult.Success : KatLang.RunResult, System.IEquatable<KatLang.RunResult.Success>
-  ctor     public Success(KatLang.Algorithm Root, KatLang.Result Value, System.Collections.Generic.IReadOnlyList<System.Numerics.Decimal128> Atoms)
+  ctor     public Success(KatLang.Algorithm.User Root, KatLang.Result Value, System.Collections.Generic.IReadOnlyList<System.Numerics.Decimal128> Atoms)
   property public System.Collections.Generic.IReadOnlyList<System.Numerics.Decimal128> Atoms { get; init; }
   property protected override System.Type EqualityContract { get; }
   property public System.Collections.Generic.IReadOnlyList<KatLang.Result> OutputRows { get; }
-  property public KatLang.Algorithm Root { get; init; }
+  property public KatLang.Algorithm.User Root { get; init; }
   property public KatLang.Result Value { get; init; }
   method   public virtual KatLang.RunResult.Success <Clone>$()
-  method   public void Deconstruct(out KatLang.Algorithm Root, out KatLang.Result Value, out System.Collections.Generic.IReadOnlyList<System.Numerics.Decimal128> Atoms)
+  method   public void Deconstruct(out KatLang.Algorithm.User Root, out KatLang.Result Value, out System.Collections.Generic.IReadOnlyList<System.Numerics.Decimal128> Atoms)
   method   public bool Equals(KatLang.RunResult.Success? other)
   method   public override bool Equals(object? obj)
   method   public sealed override bool Equals(KatLang.RunResult? other)

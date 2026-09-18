@@ -113,9 +113,9 @@ public class DiagnosticProvenanceTests
     {
         var parsed = SourceProvenance.ParseAllowingDiagnostics("open F\nF(_error_) = _error_\n1");
         Assert.Contains("(_error_)", Assert.Single(parsed.Diagnostics).Message, StringComparison.Ordinal);
-        var provider = new Algorithm.User(null, [new ParameterDeclaration("_error_")], [], [], [new Expr.Num(0)])
+        var provider = new Algorithm.User(null, [new CaptureParameterPattern("_error_")], [], [], [new Expr.Num(0)])
         {
-            ExplicitParameters = [new ParameterDeclaration("_error_")],
+            HasExplicitParameterList = true,
         };
         Assert.Contains("(_error_)", Evaluator.FormatOpenTargetRequiresArguments("F", provider), StringComparison.Ordinal);
     }
@@ -128,9 +128,9 @@ public class DiagnosticProvenanceTests
             new("located") { Span = new SourceSpan(1, 1, 1, 7) },
             new("unlocated"),
         ];
-        var provider = new Algorithm.User(null, parameters, [], [], [new Expr.Num(0)])
+        var provider = new Algorithm.User(null, ParameterPattern.FromDeclarations(parameters), [], [], [new Expr.Num(0)])
         {
-            ExplicitParameters = parameters,
+            HasExplicitParameterList = true,
         };
         Assert.Contains("(located, unlocated)",
             Evaluator.FormatOpenTargetRequiresArguments("F", provider), StringComparison.Ordinal);
@@ -255,7 +255,7 @@ public class DiagnosticProvenanceTests
     public void FlatBinderConditionalValueAccess_IsReachableOnlyFromAPrebuiltAst()
     {
         var body = new Algorithm.User(
-            Parent: null, Parameters: [], Opens: [], Properties: [],
+            Parent: null, ParameterPatterns: [], Opens: [], Properties: [],
             Output: [new Expr.Binary(BinaryOp.Add, new Expr.Param("a"), new Expr.Param("b"))]);
 
         var conditional = new Algorithm.Conditional(
@@ -266,7 +266,7 @@ public class DiagnosticProvenanceTests
                 body)]);
 
         var root = new Algorithm.User(
-            Parent: null, Parameters: [], Opens: [],
+            Parent: null, ParameterPatterns: [], Opens: [],
             Properties: [new Property("F", conditional)],
             Output: [new Expr.Resolve("F")]);
 

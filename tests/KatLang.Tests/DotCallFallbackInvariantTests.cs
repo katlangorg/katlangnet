@@ -52,13 +52,13 @@ public class DotCallFallbackInvariantTests
         // Evaluation of the raw tree resolves the member lexically.
         var root = new Algorithm.User(
             Parent: null,
-            Parameters: [],
+            ParameterPatterns: [],
             Opens: [],
             Properties:
             [
                 new Property("Double", new Algorithm.User(
                     Parent: null,
-                    Parameters: [new ParameterDeclaration("x")],
+                    ParameterPatterns: [new CaptureParameterPattern("x")],
                     Opens: [],
                     Properties: [],
                     Output: [new Expr.Binary(BinaryOp.Mul, new Expr.Param("x"), new Expr.Num(2m))])),
@@ -380,7 +380,7 @@ public class DotCallFallbackInvariantTests
         // position, opens included.
         var hostRoot = new Algorithm.User(
             Parent: null,
-            Parameters: [],
+            ParameterPatterns: [],
             Opens: [new Expr.Grace(new Expr.Resolve("Lib"), -1)],
             Properties: [],
             Output: [new Expr.Num(0m)]);
@@ -399,7 +399,7 @@ public class DotCallFallbackInvariantTests
         var hostRoot = new Algorithm.User(null, [], [], [
             new Property("Use", new Algorithm.User(
                 Parent: null,
-                Parameters: [],
+                ParameterPatterns: [],
                 Opens: [],
                 Properties: [],
                 Output: [new Expr.DotCall(new Expr.Resolve("Data"), "count")])),

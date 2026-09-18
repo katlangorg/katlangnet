@@ -5,7 +5,7 @@ namespace KatLang;
 /// For each algorithm scope, identifiers not matching any local property name
     /// or any property name visible from a parent scope or any opened algorithm are converted from
     /// <see cref="Expr.Resolve"/> to <see cref="Expr.Param"/>, and added to the algorithm's
-    /// <see cref="Algorithm.Parameters"/> list.
+    /// <see cref="Algorithm.User.Parameters"/> list.
 ///
 /// Lean spec anchor: <c>shouldTreatAsImplicitParam</c> — uses the full ownership-first
 /// lookup order (local → parent chain → opens) to determine if a name is an implicit parameter.
@@ -26,7 +26,7 @@ internal static class ParameterDetector
     /// <summary>
     /// Processes a root algorithm, detecting and classifying parameters throughout the tree.
     /// Returns a new AST with correct <see cref="Expr.Param"/> nodes and populated
-    /// <see cref="Algorithm.Parameters"/> lists, along with any diagnostics (e.g. free
+    /// <see cref="Algorithm.User.Parameters"/> lists, along with any diagnostics (e.g. free
     /// identifiers in conditional branch bodies that violate the full-input-specification rule).
     ///
     /// <para><b>Host-AST contract:</b> the root may be a preconstructed (host-built) AST.
@@ -148,34 +148,50 @@ internal static class ParameterDetector
         ParameterOwnership capturedParameters,
         List<Diagnostic>? diagnostics,
         FrontEndTraversalObservations? observations,
+        DetectionRun run) => alg switch
+        {
+            Algorithm.Builtin => alg,
+
+            Algorithm.Conditional conditional => ProcessConditionalProperty(
+                conditional, "<anonymous>", parentScope, capturedParameters, diagnostics, observations, run),
+
+            // A synthetic assignment-deconstruction helper (`x, *y, z = RHS`) is already a
+            // fully-formed elaboration leaf: an explicit N-capture sequence-value pattern, no
+            // opens, no properties, and an output that is exactly the single bound target name.
+            // Its only required elaboration is rewriting that bound Resolve to a Param. Running
+            // it through the general path builds an O(N) param-name set, param-order list,
+            // parameter-ownership map, and MergeParameterPatterns per helper, so a wide
+            // deconstruction is O(N^2) across its N sibling helpers. This leaf path is O(1) in
+            // the capture count and produces the identical elaborated helper.
+            Algorithm.User { AssignmentDeconstructionTarget: not null } deconstructionHelper
+                => RewriteAssignmentDeconstructionHelperOutput(deconstructionHelper),
+
+            Algorithm.User user => ProcessUserAlgorithm(user, parentScope, capturedParameters, diagnostics, observations, run),
+        };
+
+    /// <summary>
+    /// The ordinary-body half of <see cref="ProcessAlgorithm"/>: every read and every rewrite
+    /// below is of USER-owned payload (parameters, opens, properties, output), so the body is
+    /// narrowed to the owning variant and its output is a user algorithm.
+    /// </summary>
+    private static Algorithm.User ProcessUserAlgorithm(
+        Algorithm.User alg,
+        ElaboratedPropertyScope parentScope,
+        ParameterOwnership capturedParameters,
+        List<Diagnostic>? diagnostics,
+        FrontEndTraversalObservations? observations,
         DetectionRun run)
     {
-        if (alg is Algorithm.Builtin)
-            return alg;
-
-        if (alg is Algorithm.Conditional conditional)
-            return ProcessConditionalProperty(
-                conditional, "<anonymous>", parentScope, capturedParameters, diagnostics, observations, run);
-
-        // A synthetic assignment-deconstruction helper (`x, *y, z = RHS`) is already a
-        // fully-formed elaboration leaf: an explicit N-capture sequence-value pattern, no
-        // opens, no properties, and an output that is exactly the single bound target name.
-        // Its only required elaboration is rewriting that bound Resolve to a Param. Running
-        // it through the general path builds an O(N) param-name set, param-order list,
-        // parameter-ownership map, and MergeParameterPatterns per helper, so a wide
-        // deconstruction is O(N^2) across its N sibling helpers. This leaf path is O(1) in
-        // the capture count and produces the identical elaborated helper.
-        if (alg is Algorithm.User { AssignmentDeconstructionTarget: not null } deconstructionHelper)
-            return RewriteAssignmentDeconstructionHelperOutput(deconstructionHelper);
-
         var newOpens = ProcessOpenExprs(alg.Opens, parentScope, diagnostics, observations, run);
         var algWithProcessedOpens = alg with { Opens = newOpens };
         var scope = ElaboratedScopeLookup.CreateScope(algWithProcessedOpens, parentScope);
 
-        var paramNames = new HashSet<string>(alg.Params);
-        var paramOrder = new List<string>(alg.Params);
+        // ONE projection of the written/inferred signature serves every read below.
+        var parameterNames = alg.Params;
+        var paramNames = new HashSet<string>(parameterNames);
+        var paramOrder = new List<string>(parameterNames);
         var graceWeights = new Dictionary<string, int>();
-        var hasExplicitParameterList = alg.ExplicitParameterPatterns.Count > 0;
+        var hasExplicitParameterList = alg.HasExplicitParameterList;
 
         // The program root is never called: its signature (unresolved root names, and names
         // forwarding lifted into it) binds nothing, so this level is recorded as the
@@ -187,7 +203,7 @@ internal static class ParameterDetector
         // inherited ones plus this algorithm's written parameters, all owned by THIS level.
         // Ordinary nested algorithms close over already-known outer params: those rewrite to
         // Expr.Param but must not become new local params.
-        var boundParameters = capturedParameters.Extend(scope, alg.Params, isProgramRoot);
+        var boundParameters = capturedParameters.Extend(scope, parameterNames, isProgramRoot);
 
         // Static-open ownership (F2): the head name of every open target is classified by the
         // SAME owner walk as every other bare-name occurrence, against the bindings established
@@ -203,7 +219,7 @@ internal static class ParameterDetector
             newOpens = ownedOpens;
             algWithProcessedOpens = alg with { Opens = newOpens };
             scope = ElaboratedScopeLookup.CreateScope(algWithProcessedOpens, parentScope);
-            boundParameters = capturedParameters.Extend(scope, alg.Params, isProgramRoot);
+            boundParameters = capturedParameters.Extend(scope, parameterNames, isProgramRoot);
         }
 
         // Every row this body WRITES: its output rows plus each hoisted assignment-
@@ -235,7 +251,7 @@ internal static class ParameterDetector
         // same bindings with exactly the same owners.
         // Collection only adds names; Grace changes their order, not this map's contents.
         // Reuse the established map when no names were inferred, including completion runs.
-        var bodyParameters = paramOrder.Count == alg.Parameters.Count
+        var bodyParameters = paramOrder.Count == parameterNames.Count
             ? boundParameters
             : capturedParameters.Extend(scope, paramOrder, isProgramRoot);
 
@@ -330,8 +346,13 @@ internal static class ParameterDetector
         AstHelpers.RewriteDeconstructionSourceRows(
             alg, newProperties, expr => RewriteParams(expr, scope, bodyParameters, rewriteMemo));
 
+        // Lean: withParams on the processed body — the merged pattern list keeps every written
+        // or earlier-inferred pattern and appends a fresh capture per newly inferred name.
         var parameterized = run.ImplicitCallOrigins is null
-            ? algWithProcessedOpens.WithParams(paramOrder, provenanceRecorder?.Provenance)
+            ? algWithProcessedOpens with
+            {
+                ParameterPatterns = Algorithm.MergeParameterPatterns(alg.ParameterPatterns, paramOrder, provenanceRecorder?.Provenance),
+            }
             : algWithProcessedOpens;
         return parameterized with
         {
@@ -1260,7 +1281,7 @@ internal static class ParameterDetector
     /// Processes a conditional branch body under the full-input-specification rule:
     /// - Pattern binder names are rewritten to <see cref="Expr.Param"/> (resolved via valEnv at runtime).
     /// - No other free identifiers become implicit parameters.
-    /// - The branch body's <see cref="Algorithm.Parameters"/> list is empty.
+    /// - The branch body's <see cref="Algorithm.User.ParameterPatterns"/> list is empty.
     /// - The body's own `open` list is elaborated (branch-owned opens, see
     ///   SEMANTIC-ALIGNMENT.md), and nested algorithms within the body — brace blocks,
     ///   property values, and nested clause families alike — are processed normally.
@@ -1272,7 +1293,7 @@ internal static class ParameterDetector
     /// is reported as a compile-time error.
     /// </summary>
     private static Algorithm ProcessConditionalBranchBody(
-        Algorithm body,
+        Algorithm branchBody,
         ElaboratedPropertyScope parentScope,
         HashSet<string> binderNames,
         string branchName,
@@ -1281,6 +1302,11 @@ internal static class ParameterDetector
         FrontEndTraversalObservations? observations,
         DetectionRun run)
     {
+        // Builtins own no body payload. A host-built Conditional has no user rows, but
+        // DOES own opens: elaborate those under this branch's binder ownership as usual.
+        if (branchBody is Algorithm.Builtin)
+            return branchBody;
+
         // M4: one elaboration per (body, semantic region). A body shared by several families
         // — or a family reached from several parents of a shared host tree — is rewritten once
         // per distinct parent scope, binder set, captured set, and reporting mode; a later
@@ -1293,7 +1319,7 @@ internal static class ParameterDetector
         // parent scope — already in the key by reference identity — determines the owner map.
         // Two contexts that agree on the parent scope instance cannot disagree on owners.
         var regionKey = new BranchBodyRegionKey(
-            body,
+            branchBody,
             parentScope,
             FrontEndRegionKeys.NameSet(binderNames),
             FrontEndRegionKeys.NameSet(capturedParameters.Names),
@@ -1311,8 +1337,13 @@ internal static class ParameterDetector
         // targets are elaborated here — an inline open block's members get their own
         // parameter detection — and the body scope is created over the PROCESSED opens,
         // exactly as ProcessAlgorithm does for ordinary bodies.
-        var newOpens = ProcessOpenExprs(body.Opens, parentScope, diagnostics, observations, run);
-        var bodyWithProcessedOpens = body with { Opens = newOpens };
+        var newOpens = ProcessOpenExprs(branchBody.Opens, parentScope, diagnostics, observations, run);
+        Algorithm bodyWithProcessedOpens = branchBody switch
+        {
+            Algorithm.User user => user with { Opens = newOpens },
+            Algorithm.Conditional conditional => conditional with { Opens = newOpens },
+            Algorithm.Builtin => branchBody,
+        };
         var bodyScope = ElaboratedScopeLookup.CreateScope(bodyWithProcessedOpens, parentScope);
 
         // The branch's pattern binders are owned by the branch BODY level, exactly like an
@@ -1329,9 +1360,22 @@ internal static class ParameterDetector
         if (!ReferenceEquals(ownedOpens, newOpens))
         {
             newOpens = ownedOpens;
-            bodyWithProcessedOpens = body with { Opens = newOpens };
+            bodyWithProcessedOpens = bodyWithProcessedOpens switch
+            {
+                Algorithm.User user => user with { Opens = newOpens },
+                Algorithm.Conditional conditional => conditional with { Opens = newOpens },
+                Algorithm.Builtin => bodyWithProcessedOpens,
+            };
             bodyScope = ElaboratedScopeLookup.CreateScope(bodyWithProcessedOpens, parentScope);
             bodyParameters = capturedParameters.Extend(bodyScope, binderNames);
+        }
+
+        // A Conditional used as the body is still a family value, not a user body.
+        // Preserve its branches; only its legitimately owned opens required processing.
+        if (bodyWithProcessedOpens is not Algorithm.User body)
+        {
+            regions[regionKey] = new BranchBodyRegion(bodyWithProcessedOpens, null);
+            return bodyWithProcessedOpens;
         }
 
         // Every row this branch body WRITES, hoisted deconstruction right-hand sides
@@ -1425,9 +1469,9 @@ internal static class ParameterDetector
         AstHelpers.RewriteDeconstructionSourceRows(
             body, newProperties, expr => RewriteParams(expr, bodyScope, bodyParameters, rewriteMemo));
 
-        var rewritten = bodyWithProcessedOpens with
+        var rewritten = body with
         {
-            Parameters = [],  // No implicit params — bindings come from pattern matching
+            ParameterPatterns = [],  // No implicit params — bindings come from pattern matching
             Properties = newProperties,
             Output = rewrittenOutput,
         };

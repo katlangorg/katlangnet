@@ -28,7 +28,7 @@ internal sealed class ParameterPropertyCollisionValidator(
     // first conflicting source reach supplies diagnostic metadata for a shared declaration.
     private readonly Dictionary<object, HashSet<string>> _visited = new(ReferenceEqualityComparer.Instance);
     private readonly HashSet<SourceSpan> _reported = new(ReferenceEqualityComparer.Instance);
-    private readonly Dictionary<IReadOnlyList<ParameterDeclaration>, Dictionary<ParameterBindings, ParameterBindings>> _extensions
+    private readonly Dictionary<object, Dictionary<ParameterBindings, ParameterBindings>> _extensions
         = new(ReferenceEqualityComparer.Instance);
     private readonly Dictionary<Pattern, IReadOnlyList<ParameterDeclaration>> _binders = new(ReferenceEqualityComparer.Instance);
     private ParameterBindings _parameters = enclosingParameters ?? ParameterBindings.Empty;
@@ -91,7 +91,7 @@ internal sealed class ParameterPropertyCollisionValidator(
     protected override void VisitUserAlgorithm(Algorithm.User algorithm)
     {
         var saved = _parameters;
-        _parameters = Extend(algorithm.Parameters);
+        _parameters = Extend(algorithm.ParameterPatterns);
         try
         {
             if (_parameters.Declarations.Count > 0)
@@ -137,19 +137,30 @@ internal sealed class ParameterPropertyCollisionValidator(
         finally { _parameters = saved; }
     }
 
+    private ParameterBindings Extend(IReadOnlyList<ParameterPattern> parameterPatterns)
+        => parameterPatterns.Count == 0
+            ? _parameters
+            : Extend(parameterPatterns, static patterns => ParameterPattern.FlattenCaptures(patterns));
+
     private ParameterBindings Extend(IReadOnlyList<ParameterDeclaration> parameters)
+        => parameters.Count == 0 ? _parameters : Extend(parameters, static declarations => declarations);
+
+    // Keyed by the STORED list instance: a user algorithm's pattern list (the one parameter
+    // channel; its flat Parameters view is a fresh projection per read, so it can never be the
+    // memo key) or a branch pattern's binder list. Deconstruction helpers can share one wide
+    // pattern list. Extend it once per enclosing context, rather than flatten and scan N
+    // declarations for each of N helpers.
+    private ParameterBindings Extend<TList>(TList signature, Func<TList, IReadOnlyList<ParameterDeclaration>> declarationsOf)
+        where TList : class
     {
-        if (parameters.Count == 0)
-            return _parameters;
-        // Deconstruction helpers can share one wide signature. Extend it once per
-        // enclosing context, rather than scan N declarations for each of N helpers.
-        if (!_extensions.TryGetValue(parameters, out var contexts))
-            _extensions.Add(parameters, contexts = new(ReferenceEqualityComparer.Instance));
+        if (!_extensions.TryGetValue(signature, out var contexts))
+            _extensions.Add(signature, contexts = new(ReferenceEqualityComparer.Instance));
         if (contexts.TryGetValue(_parameters, out var extended))
             return extended;
         var declarations = new Dictionary<string, SourceSpan?>(_parameters.Declarations, StringComparer.Ordinal);
         // First declaration wins within one signature; a nearer signature wins over
         // ancestors. Repeated pattern names therefore retain their first source anchor.
+        var parameters = declarationsOf(signature);
         for (var i = parameters.Count - 1; i >= 0; i--)
             declarations[parameters[i].Name] = parameters[i].Span;
         extended = new(declarations);

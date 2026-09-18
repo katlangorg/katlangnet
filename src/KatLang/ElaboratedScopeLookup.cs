@@ -495,7 +495,7 @@ internal static class ElaboratedScopeLookup
                 // an empty scope keeps recovery lookup stable without
                 // pretending the capture exposes any enclosed identity.
                 return new Algorithm.User(
-                    Parent: null, Parameters: [], Opens: [],
+                    Parent: null, ParameterPatterns: [], Opens: [],
                     Properties: [], Output: OutputBundle.Empty);
 
             default:
@@ -625,7 +625,7 @@ internal static class ElaboratedScopeLookup
     private static Algorithm CreateSyntheticOwner(ScopeCtx scope)
         => new Algorithm.User(
             Parent: null,
-            Parameters: [],
+            ParameterPatterns: [],
             Opens: scope.Opens,
             Properties: scope.Properties,
             Output: []);

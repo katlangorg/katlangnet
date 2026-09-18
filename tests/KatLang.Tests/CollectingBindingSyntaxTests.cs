@@ -31,7 +31,7 @@ public class CollectingBindingSyntaxTests
         Assert.Empty(parse.Diagnostics);
 
         var collect = Assert.Single(parse.Root.Properties, static p => p.Name == "Collect");
-        var parameter = Assert.Single(collect.Value.ExplicitParameters);
+        var parameter = Assert.Single(collect.Value.Parameters);
         Assert.Equal(ParameterKind.Collecting, parameter.Kind);
         Assert.Equal(new SourceSpan(1, 9, 1, 9), parameter.CollectMarkerSpan);
         Assert.Equal(new SourceSpan(1, 10, 1, 14), parameter.Span);
@@ -45,7 +45,7 @@ public class CollectingBindingSyntaxTests
         Assert.Empty(parse.Diagnostics);
 
         var middle = Assert.Single(parse.Root.Properties, static p => p.Name == "Middle");
-        var parameters = middle.Value.ExplicitParameters;
+        var parameters = middle.Value.Parameters;
         Assert.Equal(3, parameters.Count);
         Assert.Equal(ParameterKind.Normal, parameters[0].Kind);
         Assert.Equal(ParameterKind.Collecting, parameters[1].Kind);
@@ -106,7 +106,7 @@ public class CollectingBindingSyntaxTests
     {
         var parse = Parse("F(* items) = items\nF(1)");
         var f = Assert.Single(parse.Root.Properties, static p => p.Name == "F");
-        var parameter = Assert.Single(f.Value.ExplicitParameters);
+        var parameter = Assert.Single(f.Value.Parameters);
         Assert.Equal(ParameterKind.Normal, parameter.Kind);
         Assert.Null(parameter.CollectMarkerSpan);
         AssertNoCollectingBindings(parse.Root);
@@ -210,7 +210,7 @@ public class CollectingBindingSyntaxTests
         Assert.Contains(parse.Diagnostics, static d => d.Message.Contains("Collecting bindings cannot use `~` reordering."));
 
         var f = Assert.Single(parse.Root.Properties, static p => p.Name == "F");
-        var parameter = Assert.Single(f.Value.ExplicitParameters);
+        var parameter = Assert.Single(f.Value.Parameters);
         Assert.Equal(ParameterKind.Collecting, parameter.Kind);
     }
 
@@ -221,7 +221,7 @@ public class CollectingBindingSyntaxTests
         Assert.Contains(parse.Diagnostics, static d => d.Message.Contains("Grace is not allowed in clause-head patterns."));
 
         var f = Assert.Single(parse.Root.Properties, static p => p.Name == "F");
-        var parameter = Assert.Single(f.Value.ExplicitParameters);
+        var parameter = Assert.Single(f.Value.Parameters);
         Assert.Equal(ParameterKind.Collecting, parameter.Kind);
     }
 

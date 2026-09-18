@@ -792,7 +792,7 @@ public class ZeroArgPropertyCacheScopeTests
         {
             var outer = new Algorithm.User(
                 Parent: null,
-                Parameters: [new ParameterDeclaration("x")],
+                ParameterPatterns: [new CaptureParameterPattern("x")],
                 Opens: [],
                 Properties:
                 [
@@ -804,7 +804,7 @@ public class ZeroArgPropertyCacheScopeTests
                 Output: [new Expr.Resolve("P")]);
             var root = new Algorithm.User(
                 Parent: null,
-                Parameters: [],
+                ParameterPatterns: [],
                 Opens: [],
                 Properties: [new Property("Outer", outer)],
                 Output:
@@ -851,7 +851,7 @@ public class ZeroArgPropertyCacheScopeTests
             "Local",
             new Algorithm.User(null, [], [], [], [new Expr.Param("x")]),
             Exposure: PropertyExposure.LocalOnlyCapturedAncestorParameters);
-        var localScope = new Algorithm.User(null, [new ParameterDeclaration("x")], [], [localOnly], [new Expr.Resolve("Local")]);
+        var localScope = new Algorithm.User(null, [new CaptureParameterPattern("x")], [], [localOnly], [new Expr.Resolve("Local")]);
         var valueEnv = new object();
         var algEnv = new object();
         var countedEnv = new object();

@@ -552,7 +552,8 @@ public class SameLineSeparatorTests
         // A nested pattern recovers inside ITS parentheses.
         var nested = Assert.IsType<Algorithm.User>(
             Assert.Single(SourceProvenance.ParseSyntaxAllowingDiagnosticsRoot("F((a b)) = a").Properties).Value);
-        var sequence = Assert.IsType<SequenceValueParameterPattern>(Assert.Single(nested.ExplicitParameterPatterns));
+        var sequence = Assert.IsType<SequenceValueParameterPattern>(Assert.Single(nested.ParameterPatterns));
+        Assert.True(nested.HasExplicitParameterList);
         Assert.Equal(["a", "b"], sequence.Items.Select(static item => Assert.IsType<CaptureParameterPattern>(item).Name));
 
         // The item after a collecting binding recovers as the fixed suffix parameter.

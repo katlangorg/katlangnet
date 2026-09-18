@@ -390,7 +390,7 @@ public class OutputBundleSplitTests
         // unresolved name C forces them.
         var host = new Algorithm.User(
             Parent: null,
-            Parameters: [],
+            ParameterPatterns: [],
             Opens: [new Expr.Capture([new Expr.Resolve("M")])],
             Properties: [new Property("M", new Algorithm.User(null, [], [], [], [new Expr.Num(1)]))],
             Output: [new Expr.Resolve("C")]);

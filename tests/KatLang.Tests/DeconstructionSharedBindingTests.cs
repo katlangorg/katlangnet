@@ -371,7 +371,7 @@ public class DeconstructionSharedBindingTests
         var sharedAlgorithm = parsed.Root.Properties.First(p => p.Name == "Shared").Value;
 
         static Algorithm.User Alg(IReadOnlyList<Property> properties, params Expr[] output)
-            => new(Parent: null, Parameters: [], Opens: [], Properties: properties, Output: [.. output]);
+            => new(Parent: null, ParameterPatterns: [], Opens: [], Properties: properties, Output: [.. output]);
 
         static Property Base(int value)
             => new("Base", Alg([], new Expr.Num(value)));

@@ -591,7 +591,7 @@ public class StarSyntaxTests
         Assert.Empty(parse.Diagnostics);
 
         var collect = Assert.Single(parse.Root.Properties, static p => p.Name == "Collect");
-        var parameter = Assert.Single(collect.Value.ExplicitParameters);
+        var parameter = Assert.Single(collect.Value.Parameters);
         Assert.Equal("items", parameter.Name);
         Assert.Equal(ParameterKind.Collecting, parameter.Kind);
         // `*` sits at line 1, column 9; the name at columns 10..14.
@@ -634,7 +634,7 @@ public class StarSyntaxTests
         // Recovery binds `items` as an ordinary fixed parameter.
         var parse = Parser.Parse("F(* items) = items\nF(1, 2)");
         var f = Assert.Single(parse.Root.Properties, static p => p.Name == "F");
-        var parameter = Assert.Single(f.Value.ExplicitParameters);
+        var parameter = Assert.Single(f.Value.Parameters);
         Assert.Equal(ParameterKind.Normal, parameter.Kind);
         Assert.Null(parameter.CollectMarkerSpan);
     }
@@ -647,7 +647,7 @@ public class StarSyntaxTests
 
         var parse = Parser.Parse("F(**items) = items\nF(1)");
         var f = Assert.Single(parse.Root.Properties, static p => p.Name == "F");
-        var parameter = Assert.Single(f.Value.ExplicitParameters);
+        var parameter = Assert.Single(f.Value.Parameters);
         Assert.Equal(ParameterKind.Normal, parameter.Kind);
     }
 
@@ -730,7 +730,7 @@ public class StarSyntaxTests
 
         var parse = Parser.Parse("F(items*) = items\nF(1)");
         var f = Assert.Single(parse.Root.Properties, static p => p.Name == "F");
-        var parameter = Assert.Single(f.Value.ExplicitParameters);
+        var parameter = Assert.Single(f.Value.Parameters);
         Assert.Equal(ParameterKind.Normal, parameter.Kind);
     }
 

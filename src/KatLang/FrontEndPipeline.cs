@@ -233,7 +233,7 @@ internal static class FrontEndPipeline
         if (LoadElaborationGuard.TryFindFirstUnresolvedLoad(loadElaboratedRoot, out _))
         {
             diagnostics.Add(LoadElaborationGuard.CreatePostElaborationInvariantDiagnostic(loadElaboratedRoot));
-            return new FrontEndResult(loadElaboratedRoot, diagnostics);
+            return new FrontEndResult(ElaboratedUserRoot(loadElaboratedRoot), diagnostics);
         }
 
         return FinalizeElaboration(
@@ -341,17 +341,33 @@ internal static class FrontEndPipeline
         // placeholders the tree carries are what route it there and what make the synchronous
         // entry points reject it (DeferredModuleRegion.RequiresAsyncEvaluation walks the tree
         // itself), so no root has to be marked — and no copy of one can lose a mark.
-        return new FrontEndResult(propertyExposedRoot, diagnostics, canEvaluateAfterLoadErrors, hasDeferredModuleRegions);
+        return new FrontEndResult(ElaboratedUserRoot(propertyExposedRoot), diagnostics, canEvaluateAfterLoadErrors, hasDeferredModuleRegions);
     }
+
+    /// <summary>
+    /// The program root after elaboration, as the <see cref="Algorithm.User"/> it is by
+    /// construction: the parser's root is a user algorithm and every pass (module loading,
+    /// parameter detection, implicit-argument resolution, ownership completion, exposure
+    /// resolution) returns the variant it was given — a builtin as itself, a family as a
+    /// family, a user algorithm as a user algorithm. The passes are total over the hierarchy
+    /// for the NESTED algorithms they rewrite, so their entry points are base-typed and the
+    /// type system states the root invariant here, once, with a fail-loud guard for the
+    /// variant-changing pass that must never exist (pinned by <c>AlgorithmOwnershipTests</c>).
+    /// </summary>
+    private static Algorithm.User ElaboratedUserRoot(Algorithm elaboratedRoot)
+        => elaboratedRoot as Algorithm.User
+            ?? throw new InvalidOperationException(
+                "Internal error: a front-end elaboration pass changed the variant of the program root " +
+                $"to {elaboratedRoot.GetType().Name}.");
 }
 
 /// <summary>
 /// Raw syntax result produced directly by the recursive-descent parser.
 /// No front-end elaboration passes have run yet.
 /// </summary>
-internal sealed record SyntaxParseResult(Algorithm Root, IReadOnlyList<Diagnostic> Diagnostics)
+internal sealed record SyntaxParseResult(Algorithm.User Root, IReadOnlyList<Diagnostic> Diagnostics)
 {
-    public Algorithm SyntaxRoot => Root;
+    public Algorithm.User SyntaxRoot => Root;
 
     public bool HasErrors => Diagnostics.Any(d => d.Severity == DiagnosticSeverity.Error);
 }
@@ -361,7 +377,7 @@ internal sealed record SyntaxParseResult(Algorithm Root, IReadOnlyList<Diagnosti
 /// implicit argument resolution, and property exposure analysis.
 /// </summary>
 internal sealed record FrontEndResult(
-    Algorithm ElaboratedRoot,
+    Algorithm.User ElaboratedRoot,
     IReadOnlyList<Diagnostic> Diagnostics,
     bool CanEvaluateAfterLoadErrors = false,
     bool HasDeferredModuleRegions = false)

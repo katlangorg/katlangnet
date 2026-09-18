@@ -335,7 +335,7 @@ public sealed class HostOperations
                 operation.Name,
                 new Algorithm.User(
                     Parent: null,
-                    Parameters: Algorithm.NormalParameters(operation.ParameterNames),
+                    ParameterPatterns: Algorithm.NormalParameters(operation.ParameterNames),
                     Opens: [],
                     Properties: [],
                     Output: wrapperBody is null ? [] : [wrapperBody(operation)]),

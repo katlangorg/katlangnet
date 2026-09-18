@@ -1243,14 +1243,14 @@ public class Decimal128NumericsTests
     // comparers would see an irreflexive equality.
 
     private static Algorithm.User ClauseBody(Decimal128 value)
-        => new(Parent: null, Parameters: [], Opens: [], Properties: [], Output: [new Expr.Num(value)]);
+        => new(Parent: null, ParameterPatterns: [], Opens: [], Properties: [], Output: [new Expr.Num(value)]);
 
     private static EvalResult<IReadOnlyList<Decimal128>> CallHostBuiltConditional(
         Algorithm.Conditional family, Decimal128 argument)
     {
         var root = new Algorithm.User(
             Parent: null,
-            Parameters: [],
+            ParameterPatterns: [],
             Opens: [],
             Properties: [new Property("F", family, IsPublic: true)],
             Output: [new Expr.Call(new Expr.Resolve("F"), new OutputBundle([new Expr.Num(argument)]))]);

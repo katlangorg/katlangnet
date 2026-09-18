@@ -628,7 +628,7 @@ internal static class BuiltinRegistry
     public static Algorithm.User CreateMathAlgorithm(MathAlgorithmFlavor flavor)
         => new(
             Parent: null,
-            Parameters: [],
+            ParameterPatterns: [],
             Opens: [],
             Properties: MathMemberDescriptors.Select(member => CreateMathProperty(member, flavor)).ToList(),
             Output: []);
@@ -650,19 +650,19 @@ internal static class BuiltinRegistry
         {
             MathAlgorithmFlavor.Runtime when member.Kind == MathMemberKind.Constant => new Algorithm.User(
                 Parent: null,
-                Parameters: Algorithm.NormalParameters(parameterNames),
+                ParameterPatterns: Algorithm.NormalParameters(parameterNames),
                 Opens: [],
                 Properties: [],
                 Output: [new Expr.Num(member.ConstantValue)]),
             MathAlgorithmFlavor.Runtime => new Algorithm.User(
                 Parent: null,
-                Parameters: Algorithm.NormalParameters(parameterNames),
+                ParameterPatterns: Algorithm.NormalParameters(parameterNames),
                 Opens: [],
                 Properties: [],
                 Output: [new Expr.NativeCall(member.Name, parameterNames)]),
             MathAlgorithmFlavor.SignatureOnly => new Algorithm.User(
                 Parent: null,
-                Parameters: Algorithm.NormalParameters(parameterNames),
+                ParameterPatterns: Algorithm.NormalParameters(parameterNames),
                 Opens: [],
                 Properties: [],
                 Output: []),
@@ -671,7 +671,7 @@ internal static class BuiltinRegistry
     }
 
     private static Algorithm.User CreateLoadAlgorithm()
-        => new(Parent: null, Parameters: Algorithm.NormalParameters(LoadParameterNames), Opens: [], Properties: [], Output: []);
+        => new(Parent: null, ParameterPatterns: Algorithm.NormalParameters(LoadParameterNames), Opens: [], Properties: [], Output: []);
 
     private static Algorithm.User CreatePreludeAlgorithm(bool includeLoad, Algorithm.User mathAlgorithm)
     {
@@ -711,7 +711,7 @@ internal static class BuiltinRegistry
             properties.Add(new Property(member.PreludeAlias, canonicalProperty.Value, IsPublic: true));
         }
 
-        return new Algorithm.User(Parent: null, Parameters: [], Opens: [], Properties: properties, Output: []);
+        return new Algorithm.User(Parent: null, ParameterPatterns: [], Opens: [], Properties: properties, Output: []);
     }
 
     private static IReadOnlyList<string> CreateMathParameterNames(MathMemberDescriptor member)

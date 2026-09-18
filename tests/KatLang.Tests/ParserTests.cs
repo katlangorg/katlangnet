@@ -4367,8 +4367,7 @@ public class ParserTests
         Assert.Equal(expectedNames, user.Params);
         Assert.Equal(expectedNames, user.Parameters.Select(parameter => parameter.Name).ToArray());
         Assert.Equal(expectedKinds, user.Parameters.Select(parameter => parameter.Kind).ToArray());
-        Assert.Equal(expectedNames, user.ExplicitParameters.Select(parameter => parameter.Name).ToArray());
-        Assert.Equal(expectedKinds, user.ExplicitParameters.Select(parameter => parameter.Kind).ToArray());
+        Assert.True(user.HasExplicitParameterList);
         if (expectedPatternDisplay is not null)
             Assert.Equal(expectedPatternDisplay, user.ParameterPatterns.Select(parameter => parameter.DisplayName).ToArray());
     }

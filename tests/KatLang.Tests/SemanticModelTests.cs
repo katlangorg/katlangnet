@@ -18,7 +18,9 @@ public class SemanticModelTests
         var parsed = SourceProvenance.ParseAllowingDiagnostics(source);
         Assert.Contains(parsed.Diagnostics, d => d.Code == DiagnosticCode.InvalidCollectMarker);
         var clause = Assert.Single(parsed.Root.Properties, p => p.Name == "F");
-        Assert.Contains(clause.Value.ExplicitParameters, p => p.Span is null);
+        var written = Assert.IsType<Algorithm.User>(clause.Value);
+        Assert.True(written.HasExplicitParameterList);
+        Assert.Contains(written.Parameters, p => p.Span is null);
 
         var model = SemanticModelBuilder.Build(parsed.Parsed);
         Assert.DoesNotContain(model.GetVisibleSymbolsAt(1, 8), s => s.Name == "_error_");

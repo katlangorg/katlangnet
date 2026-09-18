@@ -25,7 +25,7 @@ namespace KatLang.Tests;
 public class FrontEndTraversalTests
 {
     private static Algorithm.User EmptyAlgorithm(params Expr[] output)
-        => new(Parent: null, Parameters: [], Opens: [], Properties: [], Output: output);
+        => new(Parent: null, ParameterPatterns: [], Opens: [], Properties: [], Output: output);
 
     private static IReadOnlyDictionary<string, Expr> VariantSamples => ExprVariantCatalog.Samples;
 
@@ -56,7 +56,7 @@ public class FrontEndTraversalTests
         // sample sits in a property value's output.
         var root = new Algorithm.User(
             Parent: null,
-            Parameters: [],
+            ParameterPatterns: [],
             Opens: [],
             Properties: [new Property("Nested", EmptyAlgorithm(sample))],
             Output: OutputBundle.Empty);
@@ -68,7 +68,7 @@ public class FrontEndTraversalTests
     {
         var root = new Algorithm.User(
             Parent: null,
-            Parameters: [],
+            ParameterPatterns: [],
             Opens: [],
             Properties:
             [
@@ -225,7 +225,7 @@ public class FrontEndTraversalTests
         var boundReference = new Expr.Resolve("R");
         var root = new Algorithm.User(
             Parent: null,
-            Parameters: [],
+            ParameterPatterns: [],
             Opens: [],
             Properties: [new Property("R", EmptyAlgorithm(new Expr.Num(7)))],
             Output: new OutputBundle([boundReference]));
@@ -511,7 +511,7 @@ public class FrontEndTraversalTests
     private static PropertyDependencyGraph BuildSiblingGraph(Expr referencingBody)
         => PropertyDependencyGraphBuilder.BuildDependencyOrder(new Algorithm.User(
             Parent: null,
-            Parameters: [],
+            ParameterPatterns: [],
             Opens: [],
             Properties:
             [
@@ -548,7 +548,7 @@ public class FrontEndTraversalTests
         var embedded = RecursiveEmbeddings[position](new Expr.Param("captured"));
         var root = new Algorithm.User(
             Parent: null,
-            Parameters: [],
+            ParameterPatterns: [],
             Opens: [],
             Properties: [new Property("A", EmptyAlgorithm(embedded))],
             Output: OutputBundle.Empty);
@@ -660,7 +660,7 @@ public class FrontEndTraversalTests
             (url, cancellationToken) => ValueTask.FromResult("public X = 1"));
         var root = new Algorithm.User(
             Parent: null,
-            Parameters: [],
+            ParameterPatterns: [],
             Opens: [],
             Properties: [new Property("Mod", EmptyAlgorithm(EmbedLoad(position)))],
             Output: OutputBundle.Empty);
@@ -748,7 +748,7 @@ public class FrontEndTraversalTests
             });
         var root = new Algorithm.User(
             Parent: null,
-            Parameters: [],
+            ParameterPatterns: [],
             Opens: [],
             Properties: [new Property("Mod", EmbedClauseFamilyLoad(position))],
             Output: OutputBundle.Empty);
