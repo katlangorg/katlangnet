@@ -2343,23 +2343,14 @@ public sealed record KatLang.TextErrorContext : KatLang.ErrorContext, System.IEq
   operator public static bool op_Inequality(KatLang.TextErrorContext? left, KatLang.TextErrorContext? right)
 
 public sealed record KatLang.Token : System.IEquatable<KatLang.Token>
-  ctor     public Token(KatLang.TokenKind Kind, int Position, int Length, int Line, int Column, System.Numerics.Decimal128 NumValue = default, string? StringValue = null)
-  property public int Column { get; init; }
-  property public KatLang.TokenKind Kind { get; init; }
-  property public int Length { get; init; }
-  property public int Line { get; init; }
-  property public System.Numerics.Decimal128 NumValue { get; init; }
-  property public int Position { get; init; }
-  property public string? StringValue { get; init; }
+  property public int Column { get; }
+  property public KatLang.TokenKind Kind { get; }
+  property public int Length { get; }
+  property public int Line { get; }
+  property public System.Numerics.Decimal128 NumValue { get; }
+  property public int Position { get; }
+  property public string? StringValue { get; }
   method   public KatLang.Token <Clone>$()
-  method   public static KatLang.Token Bad(int position, int length, int line, int column)
-  method   public static KatLang.Token Create(KatLang.TokenKind kind, int position, int length, int line, int column)
-  method   public static KatLang.Token CreateComment(string text, int position, int length, int line, int column)
-  method   public static KatLang.Token CreateIdentifier(string name, int position, int length, int line, int column)
-  method   public static KatLang.Token CreateNumber(System.Numerics.Decimal128 value, int position, int length, int line, int column)
-  method   public static KatLang.Token CreateStringLiteral(string value, int position, int length, int line, int column)
-  method   public void Deconstruct(out KatLang.TokenKind Kind, out int Position, out int Length, out int Line, out int Column, out System.Numerics.Decimal128 NumValue, out string? StringValue)
-  method   public static KatLang.Token EndOfFile(int position, int line, int column)
   method   public bool Equals(KatLang.Token? other)
   method   public override bool Equals(object? obj)
   method   public override int GetHashCode()

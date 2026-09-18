@@ -133,6 +133,15 @@ public static class Lexer
         return $"'{char.ConvertFromUtf32(codePoint)}'";
     }
 
+    /// <summary>
+    /// Tokenizes <paramref name="source"/> into its tokens and lexical diagnostics. This is
+    /// the supported way to obtain <see cref="Token"/> values: the list always ends with the
+    /// one <see cref="TokenKind.EndOfFile"/> token, comments are emitted as
+    /// <see cref="TokenKind.Comment"/> tokens (the parser skips them), and an unexpected
+    /// character becomes a <see cref="TokenKind.Bad"/> token beside its diagnostic, so the
+    /// tokens are in source order and every code unit outside whitespace belongs to
+    /// exactly one token, whatever the input.
+    /// </summary>
     public static (IReadOnlyList<Token> Tokens, IReadOnlyList<Diagnostic> Diagnostics) Tokenize(string source)
     {
         var tokens = new List<Token>();
