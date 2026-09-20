@@ -555,7 +555,7 @@ public class AstGraphFuzzTests
         }
 
         var d = new Expr.Resolve("D");
-        Assert.Equal(new Result.Bool(true), Eval(new Expr.Binary(BinaryOp.Eq, d, d)), Result.ValueComparer);
+        Assert.Equal(new Result.Bool(true), Eval(EvaluatorTestSupport.Compare(ComparisonOp.Eq, d, d)), Result.ValueComparer);
         Assert.Equal([2m], Eval(new Expr.DotCall(d, "count")).ToAtoms());
         Assert.Equal(
             [64m],

@@ -293,15 +293,15 @@ def variadicDotReceiverCollectsOneSlot : Bool :=
 -- and to differently-nested lists.
 def collectedSegmentEqualityIsKindExact : Bool :=
   evaluatesToBools (.algorithmExpr (algPrivate [] [] [("Inspect", collectInspectAlg)] [
-    .binary .eq (.call (resolve "Inspect") []) (.listLiteral []),
-    .binary .eq (.call (resolve "Inspect") [.num 7]) (.listLiteral [.num 7]),
-    .binary .eq (.call (resolve "Inspect") [.num 1, .num 2])
+    .compare .eq (.call (resolve "Inspect") []) (.listLiteral []),
+    .compare .eq (.call (resolve "Inspect") [.num 7]) (.listLiteral [.num 7]),
+    .compare .eq (.call (resolve "Inspect") [.num 1, .num 2])
       (.listLiteral [.num 1, .num 2]),
-    .binary .eq (.call (resolve "Inspect") [.listLiteral [.num 1, .num 2]])
+    .compare .eq (.call (resolve "Inspect") [.listLiteral [.num 1, .num 2]])
       (.listLiteral [.listLiteral [.num 1, .num 2]]),
-    .binary .eq (.call (resolve "Inspect") [.listLiteral [.num 1, .num 2]])
+    .compare .eq (.call (resolve "Inspect") [.listLiteral [.num 1, .num 2]])
       (.listLiteral [.num 1, .num 2]),
-    .binary .eq (.call (resolve "Inspect") [.num 1, .num 2])
+    .compare .eq (.call (resolve "Inspect") [.num 1, .num 2])
       (.capture [.num 1, .num 2])
   ])) [true, true, true, true, false, false]
 
@@ -462,10 +462,10 @@ def mixedVariadicMapCallbackBindsRowSlots : Bool :=
 def restOnlyFilterCallbackIsKindSensitive : Bool :=
   let isSingleSeven : Algorithm := algWithParameters
     [{ name := "items", kind := .collecting }] [] []
-    [.binary .eq (.param "items") (.listLiteral [.num 7])]
+    [.compare .eq (.param "items") (.listLiteral [.num 7])]
   let isSingleSevenList : Algorithm := algWithParameters
     [{ name := "items", kind := .collecting }] [] []
-    [.binary .eq (.param "items") (.listLiteral [.listLiteral [.num 7]])]
+    [.compare .eq (.param "items") (.listLiteral [.listLiteral [.num 7]])]
   (match runResult (.algorithmExpr (algPrivate [] [] [("IsSingleSeven", isSingleSeven)]
       [.call (resolve "filter") [.listLiteral [.num 7, .num 8], resolve "IsSingleSeven"]])) with
    | Except.ok (Result.listValue [Result.atom 7]) => true | _ => false) &&
@@ -480,7 +480,7 @@ def restOnlyFilterCallbackIsKindSensitive : Bool :=
 def reducerElementSideVariadicCollects : Bool :=
   let eqTen : Algorithm := algWithParameters
     [{ name := "items", kind := .collecting }, { name := "acc" }] [] []
-    [.binary .eq (.param "items") (.listLiteral [.num 10])]
+    [.compare .eq (.param "items") (.listLiteral [.num 10])]
   let track : Algorithm := algWithParameters
     [{ name := "items", kind := .collecting }, { name := "acc" }] [] []
     [.capture [.sequenceSpread (.param "acc"), .param "items"]]

@@ -29,6 +29,7 @@ public class LeanCoreTestsCompositionTests
         "OutputBundle",
         "NameOwnership",
         "ValueDemand",
+        "ComparisonChains",
     ];
 
     [Fact]

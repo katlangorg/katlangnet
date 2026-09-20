@@ -220,7 +220,7 @@ def recursiveDotCallReduceCollectionAlg : Algorithm :=
     privateLocalProp "rest" (.localCapturedAncestorParams ["values"]) recursiveDotCallRestAlg
   ] [
     .call (resolve "if") [
-      .binary .le (.dotCall (resolve "list") "count" none) (.num 1),
+      .compare .le (.dotCall (resolve "list") "count" none) (.num 1),
       resolve "list",
       .dotCall (resolve "rest") "reduceCollection" none
     ]
@@ -557,7 +557,7 @@ def collectingParameterForwardingCountItemAlg : Algorithm :=
     .dotCall
       (.dotCall (.param "values") "filter" (some [
         .algorithmExpr (alg ["value"] [] [] [
-          .binary .eq (.param "value") (.param "item")
+          .compare .eq (.param "value") (.param "item")
         ])
       ]))
       "count"
@@ -621,7 +621,7 @@ def collectingParameterForwardingModeAlg : Algorithm :=
       "filter"
       (some [
         .algorithmExpr (alg ["candidate"] [] [] [
-          .binary .eq
+          .compare .eq
             (.call (resolve "CountItem") [sequenceSpread (.param "values"), .param "candidate"])
             (resolve "MaxFreq")
         ])
@@ -1513,7 +1513,7 @@ def occurrenceCountAlg19e : Algorithm :=
           .capture [.num 2, .num 30]
         ],
         .algorithmExpr (alg ["item"] [] [] [
-          .binary .eq
+          .compare .eq
             (.index (.param "item") (.num 1))
             (.index (.param "target") (.num 1))
         ])

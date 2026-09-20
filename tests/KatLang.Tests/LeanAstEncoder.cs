@@ -157,6 +157,10 @@ internal sealed class LeanAstEncoding
         Expr.Unary(var op, var operand) => $"(.unary .{EncodeUnaryOp(op)} {Arg(operand)})",
         Expr.Binary(var op, var left, var right) =>
             $"(.binary .{EncodeBinaryOp(op)} {Arg(left)} {Arg(right)})",
+        // A comparison chain encodes as the flat chain it is: the first operand and one
+        // `{ op, operand }` link per written comparison, never nested binaries.
+        Expr.Comparison(var first, var links) =>
+            $"(.comparison {Arg(first)} [{EncodeList(links, EncodeComparisonLink)}])",
         Expr.Index(var target, var selector) => $"(.index {Arg(target)} {Arg(selector)})",
         // INTERNAL node: the parser never produces it, but the internal-node
         // differential cases hand-construct it, and their Lean text is derived
@@ -373,6 +377,21 @@ internal sealed class LeanAstEncoding
         _ => throw new NotSupportedException($"Unhandled exposure '{exposure}'."),
     };
 
+    /// <summary>One chain link as the Lean structure literal <c>{ op := .lt, operand := … }</c>.</summary>
+    private string EncodeComparisonLink(ComparisonLink link)
+        => $"{{ op := .{EncodeComparisonOp(link.Op)}, operand := {Arg(link.Operand)} }}";
+
+    private static string EncodeComparisonOp(ComparisonOp op) => op switch
+    {
+        ComparisonOp.Lt => "lt",
+        ComparisonOp.Gt => "gt",
+        ComparisonOp.Le => "le",
+        ComparisonOp.Ge => "ge",
+        ComparisonOp.Eq => "eq",
+        ComparisonOp.Ne => "ne",
+        _ => throw new NotSupportedException($"Unhandled comparison operator '{op}'."),
+    };
+
     private static string EncodeBinaryOp(BinaryOp op) => op switch
     {
         BinaryOp.Add => "add",
@@ -382,12 +401,6 @@ internal sealed class LeanAstEncoding
         BinaryOp.IDiv => "idiv",
         BinaryOp.Mod => "mod",
         BinaryOp.Pow => "pow",
-        BinaryOp.Lt => "lt",
-        BinaryOp.Gt => "gt",
-        BinaryOp.Le => "le",
-        BinaryOp.Ge => "ge",
-        BinaryOp.Eq => "eq",
-        BinaryOp.Ne => "ne",
         BinaryOp.And => "and",
         BinaryOp.Or => "or",
         BinaryOp.Xor => "xor",

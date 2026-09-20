@@ -41,7 +41,7 @@ def missingOutputRootWithExplicitEmptyOutput : Bool :=
 
 def missingOutputRootValueDoesNotEqualEmpty : Bool :=
   match runResult (.algorithmExpr (algPrivate [] [] [("T", alg [] [] [] [.num 4])] [
-    .binary .eq (.resolve "T") (.emptySequence 0)
+    .compare .eq (.resolve "T") (.emptySequence 0)
   ])) with
   | Except.ok (.bool false) => true
   | _ => false
@@ -231,7 +231,7 @@ def missingOutputBodyExpr : KatLang.Expr :=
 
 def explicitEmptyIsEvenAlg : Algorithm :=
   alg ["x"] [] [] [
-    .binary .eq (.binary .mod (.param "x") (.num 2)) (.num 0)
+    .compare .eq (.binary .mod (.param "x") (.num 2)) (.num 0)
   ]
 
 def explicitEmptyNoOutputContainer : Algorithm :=
@@ -259,25 +259,25 @@ def explicitEmptyCountsAsZero : Bool :=
 
 def explicitEmptyEquality : Bool :=
   match runResult (.algorithmExpr (alg [] [] [] [
-    .binary .eq explicitEmptyExpr explicitEmptyExpr,
-    .binary .ne explicitEmptyExpr explicitEmptyExpr,
-    .binary .eq explicitEmptyExpr explicitEmptyOutputBody,
-    .binary .eq explicitEmptyOutputBody explicitEmptyExpr,
+    .compare .eq explicitEmptyExpr explicitEmptyExpr,
+    .compare .ne explicitEmptyExpr explicitEmptyExpr,
+    .compare .eq explicitEmptyExpr explicitEmptyOutputBody,
+    .compare .eq explicitEmptyOutputBody explicitEmptyExpr,
     -- Collection builtins materialize exact lists, so an all-rejected filter
     -- and an all-skipped skip yield `[]`, which is NOT the empty sequence `()`.
-    .binary .eq
+    .compare .eq
       (.call (.resolve "filter") [
         .sequenceConstruct (.num 1) (.sequenceConstruct (.num 3) (.num 5)),
         .algorithmExpr explicitEmptyIsEvenAlg
       ])
       explicitEmptyExpr,
-    .binary .eq
+    .compare .eq
       explicitEmptyExpr
       (.call (.resolve "filter") [
         .sequenceConstruct (.num 1) (.sequenceConstruct (.num 3) (.num 5)),
         .algorithmExpr explicitEmptyIsEvenAlg
       ]),
-    .binary .eq
+    .compare .eq
       (.dotCall (.num 0) "skip" (some [.num 1]))
       explicitEmptyExpr
   ])) with
@@ -348,7 +348,7 @@ def spreadSiblingsKeepWrittenEmptySlot : Bool :=
 -- (non-counted) evaluation path used for binary operands.
 def spreadSeqLiteralEqualsFlatLiteral : Bool :=
   match runResult (.algorithmExpr (algPrivate [] [] [("P", alg [] [] [] [.num 1, .num 2])] [
-    .binary .eq (.capture [sequenceSpread (.resolve "P"), .num 99])
+    .compare .eq (.capture [sequenceSpread (.resolve "P"), .num 99])
       (.capture [.num 1, .num 2, .num 99])
   ])) with
   | Except.ok (.bool true) => true
@@ -496,9 +496,9 @@ def internalSequenceConstructLoneBuiltinArgBindsLikeGroupedForm : Bool :=
 -- Repeated ordinary parentheses around the empty sequence normalize to `()`.
 def emptyVsNestedEmptyEquality : Bool :=
   match runResult (.algorithmExpr (alg [] [] [] [
-    .binary .eq (.emptySequence 0) (.emptySequence 0),
-    .binary .eq (.emptySequence 0) (.emptySequence 1),
-    .binary .ne (.emptySequence 0) (.emptySequence 1)
+    .compare .eq (.emptySequence 0) (.emptySequence 0),
+    .compare .eq (.emptySequence 0) (.emptySequence 1),
+    .compare .ne (.emptySequence 0) (.emptySequence 1)
   ])) with
   | Except.ok (.sequenceValue [.bool true, .bool true, .bool false]) => true
   | _ => false
@@ -626,7 +626,7 @@ def distinctNestedEmptyInputCanonicalizesToEmptyCollection : Bool :=
 -- stays one exact element (`[(1, 2)]` is a writable KatLang value).
 def filterSingleKeptSequenceValueItemStaysExactElement : Bool :=
   let keepFirstPair : KatLang.Expr := .algorithmExpr (alg ["pair"] [] [] [
-    .binary .eq (.index (.param "pair") (.num 0)) (.num 1)
+    .compare .eq (.index (.param "pair") (.num 0)) (.num 1)
   ])
   match runResult (.call (.resolve "filter") [
         sequenceItems [
@@ -829,15 +829,15 @@ def missingOutputBodyCountStillFails : Bool :=
 
 def missingOutputBodyEqualityStillFails : Bool :=
   let leftMissing :=
-    match runResult (.binary .eq missingOutputBodyExpr explicitEmptyExpr) with
+    match runResult (.compare .eq missingOutputBodyExpr explicitEmptyExpr) with
     | Except.error err => innermostIsMissingOutput err
     | Except.ok _ => false
   let rightMissing :=
-    match runResult (.binary .eq explicitEmptyExpr missingOutputBodyExpr) with
+    match runResult (.compare .eq explicitEmptyExpr missingOutputBodyExpr) with
     | Except.error err => innermostIsMissingOutput err
     | Except.ok _ => false
   let bothMissing :=
-    match runResult (.binary .eq missingOutputBodyExpr missingOutputBodyExpr) with
+    match runResult (.compare .eq missingOutputBodyExpr missingOutputBodyExpr) with
     | Except.error err => innermostIsMissingOutput err
     | Except.ok _ => false
   leftMissing && rightMissing && bothMissing
@@ -853,7 +853,7 @@ def missingOutputContainerPropertyStillFails : Bool :=
     | Except.ok _ => false
   let equalityFails :=
     match runResult (.algorithmExpr (algPrivate [] [] [("Lib", explicitEmptyNoOutputContainer)] [
-      .binary .eq (.resolve "Lib") explicitEmptyExpr
+      .compare .eq (.resolve "Lib") explicitEmptyExpr
     ])) with
     | Except.error err => innermostIsMissingOutput err
     | Except.ok _ => false

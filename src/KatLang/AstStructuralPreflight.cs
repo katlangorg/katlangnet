@@ -38,9 +38,9 @@ internal enum AstConsumerProfile
     /// A <see cref="Expr.DotCall"/>
     /// link weighs THREE units, matching the several large resolution frames each
     /// link consumes at evaluation time. Every other node kind counts one level —
-    /// including the unary/binary/index/list spines that the evaluator itself handles
-    /// iteratively, because the small-framed recursive consumers around evaluation
-    /// (validation walk, optimizer analysis, pattern binding) still traverse them.
+    /// including the unary/binary/comparison-chain/index/list spines that the evaluator
+    /// itself handles iteratively, because the small-framed recursive consumers around
+    /// evaluation (validation walk, optimizer analysis, pattern binding) still traverse them.
     /// </summary>
     EvaluatorIterativeJoinSpines,
 
@@ -270,7 +270,7 @@ internal static class AstStructuralPreflight
     /// evaluator gates the internal sequence-join nodes are zero-weight because their
     /// same-kind spines are iterative; <see cref="TransitionWeight"/> separately charges
     /// the traversed edges that re-enter recursive evaluation. The machine-evaluated
-    /// unary/binary/index/list nodes still cost one unit each so that the small-framed
+    /// unary/binary/comparison-chain/index/list nodes still cost one unit each so that the small-framed
     /// recursive consumers around evaluation — validation walk, planner analysis, pattern
     /// binding — stay bounded too. A dot-call link costs THREE units because each link's
     /// resolution machinery consumes several large frames. Everything else is one level;
@@ -365,13 +365,14 @@ internal static class AstStructuralPreflight
     /// Classifies the node kinds owned by the iterative expression-spine machine.
     ///
     /// <para>Only the operand positions the machine actually drives are inspected. A
-    /// <see cref="Expr.Binary"/>'s or <see cref="Expr.Index"/>'s SECOND operand and a
-    /// list's later elements are siblings on separate paths: the preflight already judges
-    /// each path independently, so a wide-but-shallow expression such as
-    /// <c>1 + f(2) + g(3)</c> pays nothing along its long spine path.</para>
+    /// <see cref="Expr.Binary"/>'s or <see cref="Expr.Index"/>'s SECOND operand, a
+    /// <see cref="Expr.Comparison"/>'s link operands, and a list's later elements are
+    /// siblings on separate paths: the preflight already judges each path independently,
+    /// so a wide-but-shallow expression such as <c>1 + f(2) + g(3)</c> pays nothing along
+    /// its long spine path.</para>
     /// </summary>
     private static bool IsExpressionSpineNode(Expr expr)
-        => expr is Expr.Unary or Expr.Binary or Expr.Index or Expr.ListLiteral;
+        => expr is Expr.Unary or Expr.Binary or Expr.Comparison or Expr.Index or Expr.ListLiteral;
 
     /// <summary>
     /// Cost of ONE re-entry from the iterative join machinery into generic recursive
@@ -642,6 +643,7 @@ internal static class AstStructuralPreflight
         {
             Expr.Unary unary => PickOne(index, unary.Operand, out child),
             Expr.Binary binary => PickTwo(index, binary.Left, binary.Right, out child),
+            Expr.Comparison comparison => PickComparisonChild(index, comparison, out child),
             Expr.Index indexExpr => PickTwo(index, indexExpr.Target, indexExpr.Selector, out child),
             Expr.SequenceConstruct sequenceConstruct => PickTwo(index, sequenceConstruct.Left, sequenceConstruct.Right, out child),
             Expr.SequenceSpread spread => PickOne(index, spread.Operand, out child),
@@ -654,6 +656,26 @@ internal static class AstStructuralPreflight
             Expr.Param or Expr.Num or Expr.StringLiteral or Expr.BoolLiteral or Expr.EmptySequence
                 or Expr.Resolve or Expr.NativeCall => PickNone(out child),
         };
+
+    /// <summary>The first operand, then each link's operand in chain order.</summary>
+    private static bool PickComparisonChild(int index, Expr.Comparison comparison, out object child)
+    {
+        if (index == 0)
+        {
+            child = comparison.First;
+            return true;
+        }
+
+        var links = comparison.Links;
+        if (index - 1 < links.Count)
+        {
+            child = links[index - 1].Operand;
+            return true;
+        }
+
+        child = null!;
+        return false;
+    }
 
     private static bool PickCallChild(int index, Expr.Call call, out object child)
     {

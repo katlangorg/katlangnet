@@ -880,7 +880,7 @@ public static partial class Evaluator
 
             Expr.SequenceConstruct => await EvalSequenceConstructCountedAsync(expr, ctx, valEnv).ConfigureAwait(false),
 
-            Expr.Unary or Expr.Binary or Expr.ListLiteral => await EvalExpressionSpineCountedAsync(expr, ctx, valEnv).ConfigureAwait(false),
+            Expr.Unary or Expr.Binary or Expr.Comparison or Expr.ListLiteral => await EvalExpressionSpineCountedAsync(expr, ctx, valEnv).ConfigureAwait(false),
 
             Expr.EmptySequence(var depth) => CountValue(BuildEmptySequenceValue(depth)),
 
@@ -1064,6 +1064,54 @@ public static partial class Evaluator
                             ? binaryR.Error
                             : EvalResult<CountedResult>.Ok(new CountedResult(
                                 binaryR.Value, binaryR.Value.ValueCount()));
+                        break;
+                    }
+
+                case Expr.Comparison(var first, var links):
+                    {
+                        if (frames[top].Phase == 0)
+                        {
+                            if (!hasPendingChild)
+                            {
+                                requestedChild = first;
+                                break;
+                            }
+
+                            hasPendingChild = false;
+                            frames[top].FirstValue = pendingChild.Value;
+                            frames[top].Phase = 1;
+                            if (links.Count == 0)
+                            {
+                                completed = EvalResult<CountedResult>.Ok(new CountedResult(new Result.Bool(true), 1));
+                                break;
+                            }
+
+                            requestedChild = links[0].Operand;
+                            break;
+                        }
+
+                        hasPendingChild = false;
+                        var link = links[frames[top].Phase - 1];
+                        var previousOperand = frames[top].Phase == 1 ? first : links[frames[top].Phase - 2].Operand;
+                        var linkR = ApplyComparison(
+                            link.Op, previousOperand, link.Operand, frames[top].FirstValue!, pendingChild.Value, frames[top].Node.Span);
+                        if (linkR.IsError)
+                        {
+                            completed = linkR.Error;
+                            break;
+                        }
+
+                        if (!linkR.Value)
+                            frames[top].ComparisonFailed = true;
+                        frames[top].FirstValue = pendingChild.Value;
+                        frames[top].Phase++;
+                        if (frames[top].Phase <= links.Count)
+                        {
+                            requestedChild = links[frames[top].Phase - 1].Operand;
+                            break;
+                        }
+
+                        completed = EvalResult<CountedResult>.Ok(new CountedResult(new Result.Bool(!frames[top].ComparisonFailed), 1));
                         break;
                     }
 

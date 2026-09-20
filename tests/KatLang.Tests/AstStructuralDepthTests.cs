@@ -1130,6 +1130,10 @@ public class AstStructuralDepthTests
             ["Conditional"] = ["Parent", "Opens", "Branches"],
             ["Unary"] = ["Operand"],
             ["Binary"] = ["Left", "Right"],
+            // Links carries the chain's later operands through ComparisonLink.Operand;
+            // both are enumerated by TryGetChild (PickComparisonChild).
+            ["Comparison"] = ["First", "Links"],
+            [nameof(ComparisonLink)] = ["Operand"],
             ["Index"] = ["Target", "Selector"],
             ["SequenceConstruct"] = ["Left", "Right"],
             ["SequenceSpread"] = ["Operand"],
@@ -1155,6 +1159,7 @@ public class AstStructuralDepthTests
         {
             typeof(Expr), typeof(Algorithm), typeof(Pattern), typeof(ParameterPattern),
             typeof(Property), typeof(CondBranch), typeof(ScopeCtx), typeof(OutputBundle),
+            typeof(ComparisonLink),
         };
 
         static bool CarriesAstNodes(Type type, Type[] astBases)
@@ -2162,7 +2167,7 @@ public class AstStructuralDepthProcessTests
                 new Expr.DotCall(
                     JoinChain(deep),
                     "filter",
-                    new OutputBundle([new Expr.Binary(BinaryOp.Gt, new Expr.Param("x"), new Expr.Num(0))])),
+                    new OutputBundle([EvaluatorTestSupport.Compare(ComparisonOp.Gt, new Expr.Param("x"), new Expr.Num(0))])),
                 "count",
                 null);
             var pipelineFirst = Evaluator.Run(pipeline);

@@ -972,7 +972,7 @@ def publicWrapperPrivateHelperKeepsPrivateHelperHidden : Bool :=
 def openedMemberBuiltinIfAlg : Algorithm :=
   alg ["x"] [] [] [
     .call (.resolve "if") [
-      .binary .gt (.param "x") (.num 0),
+      .compare .gt (.param "x") (.num 0),
       .num 1,
       .num 0
     ]

@@ -382,19 +382,39 @@ OrExpr          = XorExpr { "or" XorExpr } ;
 XorExpr         = AndExpr { "xor" AndExpr } ;
 AndExpr         = NotExpr { "and" NotExpr } ;
 NotExpr         = "not" NotExpr
-                | EqualityExpr ;
+                | ComparisonExpr ;
                   (* "not" is a prefix operator BELOW the comparisons and
                      above "and"/"xor"/"or" (comparisons > not > and > xor
                      > or): not x > 3 is not (x > 3), not a == b is
-                     not (a == b), not a and b is (not a) and b, and
-                     not not x nests. Its operand is a NotExpr, so "not"
-                     can never be a bare operand of a tighter operator:
-                     1 + not x, a == not b, 2 ^ not x, and -not x are
-                     diagnosed at the keyword (parenthesize the negation,
-                     (not x)). Parentheses always override: (not x) > 3
-                     compares the negation. *)
-EqualityExpr    = ComparisonExpr { ( "==" | "!=" ) ComparisonExpr } ;
-ComparisonExpr  = AdditiveExpr { ( "<" | ">" | "<=" | ">=" ) AdditiveExpr } ;
+                     not (a == b), not a < b < c negates the whole chain,
+                     not a and b is (not a) and b, and not not x nests.
+                     Its operand is a NotExpr, so "not" can never be a bare
+                     operand of a tighter operator: 1 + not x, a == not b,
+                     2 ^ not x, and -not x are diagnosed at the keyword
+                     (parenthesize the negation, (not x)). Parentheses
+                     always override: (not x) > 3 compares the negation. *)
+ComparisonExpr  = AdditiveExpr { ComparisonOperator AdditiveExpr } ;
+ComparisonOperator
+              = "<" | ">" | "<=" | ">=" | "==" | "!=" ;
+                  (* ONE comparison tier: equality and ordering share one
+                     precedence level, and every comparison operator of a
+                     ComparisonExpr belongs to ONE comparison chain — the
+                     AST node Expr.Comparison (Lean Expr.comparison) with
+                     the first operand and one link per written operator,
+                     never a nested binary tree. The chain compares its
+                     ADJACENT operands: a < b <= c == d != e means a < b,
+                     b <= c, c == d, and d != e, and it is true only when
+                     every adjacent comparison holds (1 != 2 != 1 is true:
+                     adjacent pairs, not "all distinct"). Each operand is
+                     evaluated exactly once, left to right; a false link
+                     does not stop the chain (3 < 2 < true still compares
+                     2 < true and reports that error); an error does.
+                     Parentheses end a chain: (a < b) == c compares the
+                     group's Boolean value, and a < (b == c) orders a
+                     number against a Boolean. A comparison operator
+                     continues a line like any binary operator (a <
+                     newline b), while a comparison-led line never
+                     continues the previous row. *)
 AdditiveExpr    = MultiplicativeExpr { ( "+" | "-" ) MultiplicativeExpr } ;
 MultiplicativeExpr
               = UnaryExpr { ( "*" | "/" | "div" | "mod" ) UnaryExpr } ;

@@ -385,6 +385,14 @@ public static partial class Evaluator
         return EvalResult<Result>.Ok(new Result.Atom(-vR.Value));
     }
 
+    /// <summary>
+    /// Applies ONE binary (arithmetic or logical) operator to two evaluated operand
+    /// values: the SINGLE binary application semantics and error/span policy shared by
+    /// the generic expression-spine machine, its async twin, and the planned loop
+    /// evaluator. Comparisons are NOT binary operators — every comparison is a link of a
+    /// comparison chain and applies through <see cref="ApplyComparison"/>.
+    /// Lean: <c>evalBinaryCounted</c>.
+    /// </summary>
     internal static EvalResult<Result> ApplyBinaryOperator(
         BinaryOp op,
         Expr left,
@@ -393,17 +401,6 @@ public static partial class Evaluator
         Result rightValue,
         SourceSpan? span)
     {
-        // `==` and `!=` compare KatLang values structurally across all value kinds
-        // (numbers, Booleans, strings, sequence values, and lists, recursively).
-        // Different value kinds compare unequal rather than raising a type mismatch
-        // (`true == 1` is false), so equality is total and always yields a Boolean
-        // value. This dedicated path is deliberately separate from the
-        // numeric-scalar-only validation used by arithmetic and ordering operators below.
-        if (op == BinaryOp.Eq)
-            return EvalResult<Result>.Ok(new Result.Bool(ValueEquals(leftValue, rightValue)));
-        if (op == BinaryOp.Ne)
-            return EvalResult<Result>.Ok(new Result.Bool(!ValueEquals(leftValue, rightValue)));
-
         // The logical operators are Boolean-only: both operands were evaluated left to
         // right before this point (the established evaluation order — no short circuit),
         // and each must be a Boolean value; there is no numeric truthiness, so `1 and 2`
@@ -469,11 +466,6 @@ public static partial class Evaluator
         if (op == BinaryOp.Pow)
             return EvalPow(span, x, y);
 
-        // The ordering comparisons take numeric scalar operands only (a Boolean operand was
-        // rejected above: Booleans are not ordered) and yield a Boolean value.
-        if (TryCompareNumeric(op, x, y) is { } comparison)
-            return EvalResult<Result>.Ok(new Result.Bool(comparison));
-
         Decimal128 result = op switch
         {
             BinaryOp.Add => x + y,
@@ -482,8 +474,7 @@ public static partial class Evaluator
             BinaryOp.Div => x / y,
             BinaryOp.IDiv => Decimal128Numerics.IntegerDivide(x, y),
             BinaryOp.Mod => x % y,
-            // Eq/Ne and the logical operators are handled above; the ordering
-            // comparisons by TryCompareNumeric.
+            // The logical operators are handled above and `^` by EvalPow.
             _ => 0,
         };
 
@@ -491,16 +482,77 @@ public static partial class Evaluator
     }
 
     /// <summary>
-    /// The ONE numeric ordering comparison (IEEE: every comparison with a NaN operand is
-    /// false, -0 equals 0), shared by the generic operator and the planned loop arm so
-    /// the two cannot drift; <c>null</c> for a non-ordering operator.
+    /// Applies ONE LINK of a comparison chain — <c>leftValue op rightValue</c>, the two
+    /// ADJACENT operands the link compares — the SINGLE comparison semantics and
+    /// error/span policy shared by the generic expression-spine machine, its async twin,
+    /// and the planned loop evaluator, so evaluation strategies cannot drift. <c>==</c>
+    /// and <c>!=</c> compare KatLang values structurally across all value kinds
+    /// (numbers, Booleans, strings, sequence values, and lists, recursively): different
+    /// kinds compare unequal rather than raising a type mismatch (<c>true == 1</c> is
+    /// false), so equality is total and never fails. The ordering operators reject
+    /// strings and then require numeric scalar operands (a Boolean operand is rejected —
+    /// Booleans are not ordered), each rejection carrying the operand-shape context of
+    /// THIS link (<c>while evaluating `2 &lt; true`</c>, never a nested binary spelling of
+    /// the chain) and the link's span: the hull of its two operands' spans, or the
+    /// chain's own span when an operand is unpositioned. Lean: <c>applyComparison</c>.
     /// </summary>
-    internal static bool? TryCompareNumeric(BinaryOp op, Decimal128 x, Decimal128 y) => op switch
+    internal static EvalResult<bool> ApplyComparison(
+        ComparisonOp op,
+        Expr left,
+        Expr right,
+        Result leftValue,
+        Result rightValue,
+        SourceSpan? chainSpan)
     {
-        BinaryOp.Lt => x < y,
-        BinaryOp.Gt => x > y,
-        BinaryOp.Le => x <= y,
-        BinaryOp.Ge => x >= y,
+        if (op == ComparisonOp.Eq)
+            return EvalResult<bool>.Ok(ValueEquals(leftValue, rightValue));
+        if (op == ComparisonOp.Ne)
+            return EvalResult<bool>.Ok(!ValueEquals(leftValue, rightValue));
+
+        // SYN-01: `()` is an ordinary non-scalar operand here too — it reaches the
+        // string contract and the numeric-scalar validation exactly like `(1, 2)`.
+        if (leftValue is Result.Str && rightValue is Result.Str)
+            return new EvalError.TypeMismatch("Strings only support == and != operators") { Span = ComparisonLinkSpan(left, right, chainSpan) };
+
+        if (leftValue is Result.Str || rightValue is Result.Str)
+            return new EvalError.TypeMismatch("Cannot apply operator to string and non-string operands") { Span = ComparisonLinkSpan(left, right, chainSpan) };
+
+        // The operand-shape context renders the two operand trees — built only on the
+        // error paths that attach it, like the binary operators.
+        var xR = RequireNumericScalarOperand(op, "left", leftValue);
+        if (xR.IsError)
+            return new EvalError.WithContext(ComparisonLinkContext(op, left, right), xR.Error) { Span = ComparisonLinkSpan(left, right, chainSpan) };
+        var yR = RequireNumericScalarOperand(op, "right", rightValue);
+        if (yR.IsError)
+            return new EvalError.WithContext(ComparisonLinkContext(op, left, right), yR.Error) { Span = ComparisonLinkSpan(left, right, chainSpan) };
+
+        // The ordering comparisons take numeric scalar operands only and are IEEE:
+        // every comparison with a NaN operand is false, -0 equals 0.
+        return EvalResult<bool>.Ok(TryCompareNumeric(op, xR.Value, yR.Value)!.Value);
+    }
+
+    /// <summary>
+    /// The span of one comparison link: the hull of its two operands' spans — the
+    /// failing link of <c>1 &lt; 2 &lt; true</c> is located at <c>2 &lt; true</c> — falling
+    /// back to the chain's own span when an operand is unpositioned (host trees).
+    /// </summary>
+    internal static SourceSpan? ComparisonLinkSpan(Expr left, Expr right, SourceSpan? chainSpan)
+        => left.Span is { } leftSpan && right.Span is { } rightSpan
+            ? leftSpan.Union(rightSpan)
+            : chainSpan;
+
+    /// <summary>
+    /// The ONE numeric ordering comparison (IEEE: every comparison with a NaN operand is
+    /// false, -0 equals 0), shared by the generic comparison and the planned loop arm so
+    /// the two cannot drift; <c>null</c> for <c>==</c>/<c>!=</c>, which are structural
+    /// equality (<see cref="ValueEquals"/>), never a numeric comparison.
+    /// </summary>
+    internal static bool? TryCompareNumeric(ComparisonOp op, Decimal128 x, Decimal128 y) => op switch
+    {
+        ComparisonOp.Lt => x < y,
+        ComparisonOp.Gt => x > y,
+        ComparisonOp.Le => x <= y,
+        ComparisonOp.Ge => x >= y,
         _ => null,
     };
 

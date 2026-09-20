@@ -328,6 +328,12 @@ internal static class ImplicitArgumentResolver
                 CollectReferenceNames(right, names, visited, run);
                 break;
 
+            case Expr.Comparison(var first, var links):
+                CollectReferenceNames(first, names, visited, run);
+                foreach (var link in links)
+                    CollectReferenceNames(link.Operand, names, visited, run);
+                break;
+
             case Expr.Unary(_, var operand):
                 CollectReferenceNames(operand, names, visited, run);
                 break;
@@ -1072,7 +1078,7 @@ internal static class ImplicitArgumentResolver
             // validation rejects them (BadOpenForm) — so a host-built one
             // passes through unprocessed like a leaf.
             Expr.Resolve or Expr.Param or Expr.Num or Expr.StringLiteral or Expr.BoolLiteral or Expr.EmptySequence
-                or Expr.NativeCall or Expr.Grace or Expr.Unary or Expr.Binary or Expr.Index => expr,
+                or Expr.NativeCall or Expr.Grace or Expr.Unary or Expr.Binary or Expr.Comparison or Expr.Index => expr,
         };
     }
 
@@ -1579,6 +1585,12 @@ internal static class ImplicitArgumentResolver
                 CollectImplicitDeps(right, paramMap, seen, deps, false, memo);
                 break;
 
+            case Expr.Comparison(var first, var links):
+                CollectImplicitDeps(first, paramMap, seen, deps, false, memo);
+                foreach (var link in links)
+                    CollectImplicitDeps(link.Operand, paramMap, seen, deps, false, memo);
+                break;
+
             case Expr.Unary(_, var operand):
                 CollectImplicitDeps(operand, paramMap, seen, deps, false, memo);
                 break;
@@ -1740,6 +1752,14 @@ internal static class ImplicitArgumentResolver
             {
                 Left = RewriteImplicitCalls(binary.Left, paramMap, context, false, memos, inStrictValueDemand),
                 Right = RewriteImplicitCalls(binary.Right, paramMap, context, false, memos, inStrictValueDemand),
+            },
+
+            Expr.Comparison comparison => comparison with
+            {
+                First = RewriteImplicitCalls(comparison.First, paramMap, context, false, memos, inStrictValueDemand),
+                Links = AstHelpers.RewriteComparisonLinks(
+                    comparison.Links,
+                    operand => RewriteImplicitCalls(operand, paramMap, context, false, memos, inStrictValueDemand)),
             },
 
             Expr.Unary unary => unary with
@@ -2092,6 +2112,11 @@ internal static class ImplicitArgumentResolver
             {
                 Left = ProcessExprNested(binary.Left, paramMap, memos),
                 Right = ProcessExprNested(binary.Right, paramMap, memos),
+            },
+            Expr.Comparison comparison => comparison with
+            {
+                First = ProcessExprNested(comparison.First, paramMap, memos),
+                Links = AstHelpers.RewriteComparisonLinks(comparison.Links, operand => ProcessExprNested(operand, paramMap, memos)),
             },
             Expr.Unary unary => unary with { Operand = ProcessExprNested(unary.Operand, paramMap, memos) },
             Expr.Index index => index with

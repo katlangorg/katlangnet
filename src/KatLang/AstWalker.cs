@@ -176,6 +176,11 @@ public abstract class AstWalker
                 VisitExpr(left);
                 VisitExpr(right);
                 break;
+            case Expr.Comparison(var first, var links):
+                VisitExpr(first);
+                foreach (var link in links)
+                    VisitExpr(link.Operand);
+                break;
             case Expr.Index(var target, var selector):
                 VisitExpr(target);
                 VisitExpr(selector);

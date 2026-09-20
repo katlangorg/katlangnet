@@ -55,6 +55,15 @@ internal closed record LoopExprPlan(Expr Source)
     public sealed record Binary(Expr Source, BinaryOp Op, LoopExprPlan Left, LoopExprPlan Right) : LoopExprPlan(Source);
 
     /// <summary>
+    /// A planned comparison chain: the first operand's plan and one
+    /// <see cref="LoopComparisonLink"/> per written link. Evaluated exactly like the
+    /// generic chain (<c>Evaluator.EvalExpressionSpineCounted</c>'s Comparison case):
+    /// operands once each, left to right, each link compared as soon as its operand is
+    /// available, eager past <c>false</c>, stopped by an error.
+    /// </summary>
+    public sealed record Comparison(Expr Source, LoopExprPlan First, IReadOnlyList<LoopComparisonLink> Links) : LoopExprPlan(Source);
+
+    /// <summary>
     /// A planned <c>if</c> call. <paramref name="Callee"/> is the ORIGINAL callee
     /// expression of <paramref name="Source"/>, retained so the planned evaluation can
     /// reproduce the generic call boundary's diagnostic context and span attribution
@@ -65,6 +74,9 @@ internal closed record LoopExprPlan(Expr Source)
 
     public sealed record Fallback(Expr Source, string Reason) : LoopExprPlan(Source);
 }
+
+/// <summary>One link of a planned comparison chain: the operator and the plan of its operand (not a plan node itself).</summary>
+internal sealed record LoopComparisonLink(ComparisonOp Op, LoopExprPlan Operand);
 
 internal static partial class LoopOptimizer
 {
@@ -211,6 +223,27 @@ internal static partial class LoopOptimizer
 
                 return new LoopExprPlanTryBuildResult(
                     new LoopExprPlan.Binary(expr, op, leftPlan.Plan, rightPlan.Plan),
+                    null);
+            }
+
+            case Expr.Comparison(var first, var links):
+            {
+                var firstPlan = TryBuildLoopExprPlan(first, stateNames, ctx, parentValEnv, tempPlans, memo);
+                if (firstPlan.Plan is null)
+                    return new LoopExprPlanTryBuildResult(null, firstPlan.FallbackReason);
+
+                var linkPlans = new List<LoopComparisonLink>(links.Count);
+                foreach (var link in links)
+                {
+                    var operandPlan = TryBuildLoopExprPlan(link.Operand, stateNames, ctx, parentValEnv, tempPlans, memo);
+                    if (operandPlan.Plan is null)
+                        return new LoopExprPlanTryBuildResult(null, operandPlan.FallbackReason);
+
+                    linkPlans.Add(new LoopComparisonLink(link.Op, operandPlan.Plan));
+                }
+
+                return new LoopExprPlanTryBuildResult(
+                    new LoopExprPlan.Comparison(expr, firstPlan.Plan, linkPlans),
                     null);
             }
 
@@ -575,6 +608,8 @@ internal static partial class LoopOptimizer
 
             LoopExprPlan.Binary binary => EvalLoopBinaryPlan(binary, frame),
 
+            LoopExprPlan.Comparison comparison => EvalLoopComparisonPlan(comparison, frame),
+
             // A planned `if` REPLACES an ordinary `if` call expression, so its
             // failures must carry the same diagnostic boundary the generic call
             // dispatch attaches (`EvalCallExpr`/`EvalCallCountedExpr` inside
@@ -643,6 +678,45 @@ internal static partial class LoopOptimizer
         if (rightR.IsError) return rightR.Error;
         frame.Diagnostics?.RecordPlannedBuiltinOperation();
         return ApplyPlannedBinary(binary.Op, binary.Left.Source, binary.Right.Source, leftR.Value, rightR.Value, binary.Source.Span);
+    }
+
+    /// <summary>
+    /// MIRROR of the generic comparison-chain evaluation (the Comparison case of
+    /// <c>Evaluator.EvalExpressionSpineCounted</c>): the first operand, then link by
+    /// link — evaluate the operand, compare the PREVIOUS operand's value with it (every
+    /// operand evaluated exactly once, one planned operation per link), keep going past a
+    /// false link, stop at the first error before any later operand is evaluated.
+    /// </summary>
+    private static EvalResult<PlannedLoopValue> EvalLoopComparisonPlan(
+        LoopExprPlan.Comparison comparison,
+        LoopRunFrame frame)
+    {
+        if (!RuntimeHelpers.TryEnsureSufficientExecutionStack())
+            return new EvalError.EvaluationStackExhausted();
+
+        var previousR = EvalLoopExprPlan(comparison.First, frame);
+        if (previousR.IsError) return previousR.Error;
+        var previous = previousR.Value;
+        var previousSource = comparison.First.Source;
+        var holds = true;
+        var links = comparison.Links;
+        // Indexed, not enumerated: the planned path runs once per iteration and must not
+        // allocate an enumerator per chain (the temp-call allocation pins are tight).
+        for (var index = 0; index < links.Count; index++)
+        {
+            var link = links[index];
+            var nextR = EvalLoopExprPlan(link.Operand, frame);
+            if (nextR.IsError) return nextR.Error;
+            frame.Diagnostics?.RecordPlannedBuiltinOperation();
+            var linkR = ApplyPlannedComparison(
+                link.Op, previousSource, link.Operand.Source, previous, nextR.Value, comparison.Source.Span);
+            if (linkR.IsError) return linkR.Error;
+            holds &= linkR.Value;
+            previous = nextR.Value;
+            previousSource = link.Operand.Source;
+        }
+
+        return EvalResult<PlannedLoopValue>.Ok(PlannedLoopValue.FromResult(new Result.Bool(holds)));
     }
 
     private static EvalResult<PlannedLoopValue> EvalLoopFallbackPlan(
@@ -741,18 +815,40 @@ internal static partial class LoopOptimizer
         PlannedLoopValue right,
         SourceSpan? span)
     {
-        // `==` and `!=` always delegate to the evaluator's structural equality so the
-        // optimized loop path can never drift back to numeric-only equality, and the
-        // logical operators delegate too (they are Boolean-only: a numeric operand is
-        // the shared value-kind rejection, never a nonzero truth test). The numeric
-        // fast path below is for arithmetic/ordering only.
-        if (op is not (BinaryOp.Eq or BinaryOp.Ne or BinaryOp.And or BinaryOp.Or or BinaryOp.Xor)
+        // The logical operators delegate to the shared operator application (they are
+        // Boolean-only: a numeric operand is the shared value-kind rejection, never a
+        // nonzero truth test). The numeric fast path below is for arithmetic only.
+        if (op is not (BinaryOp.And or BinaryOp.Or or BinaryOp.Xor)
             && left.AsNum() is { } x && right.AsNum() is { } y)
             return ApplyPlannedNumericBinary(op, x, y, span);
 
         var resultR = Evaluator.ApplyBinaryOperator(op, leftExpr, rightExpr, left.ToResult(), right.ToResult(), span);
         if (resultR.IsError) return resultR.Error;
         return EvalResult<PlannedLoopValue>.Ok(PlannedLoopValue.FromResult(resultR.Value));
+    }
+
+    /// <summary>
+    /// One link of a planned comparison chain. `==` and `!=` always delegate to the
+    /// evaluator's structural equality so the optimized loop path can never drift back
+    /// to numeric-only equality; an ORDERING link with two numeric operands takes the
+    /// unboxed fast path through the ONE shared comparison
+    /// (<see cref="Evaluator.TryCompareNumeric"/>), and every other case — string and
+    /// value-kind rejections included, with the link's context and span — delegates to
+    /// the shared <see cref="Evaluator.ApplyComparison"/>.
+    /// </summary>
+    private static EvalResult<bool> ApplyPlannedComparison(
+        ComparisonOp op,
+        Expr leftExpr,
+        Expr rightExpr,
+        PlannedLoopValue left,
+        PlannedLoopValue right,
+        SourceSpan? chainSpan)
+    {
+        if (op is not (ComparisonOp.Eq or ComparisonOp.Ne)
+            && left.AsNum() is { } x && right.AsNum() is { } y)
+            return EvalResult<bool>.Ok(Evaluator.TryCompareNumeric(op, x, y)!.Value);
+
+        return Evaluator.ApplyComparison(op, leftExpr, rightExpr, left.ToResult(), right.ToResult(), chainSpan);
     }
 
     private static EvalResult<PlannedLoopValue> ApplyPlannedNumericBinary(
@@ -779,12 +875,6 @@ internal static partial class LoopOptimizer
             return EvalResult<PlannedLoopValue>.Ok(PlannedLoopValue.FromResult(powR.Value));
         }
 
-        // The ordering comparisons yield a BOOLEAN value through the ONE shared
-        // comparison (Evaluator.TryCompareNumeric), boxed as a Result.Bool: the unboxed
-        // planned representation is numeric only.
-        if (Evaluator.TryCompareNumeric(op, x, y) is { } comparison)
-            return EvalResult<PlannedLoopValue>.Ok(PlannedLoopValue.FromResult(new Result.Bool(comparison)));
-
         Decimal128 result = op switch
         {
             BinaryOp.Add => x + y,
@@ -793,9 +883,10 @@ internal static partial class LoopOptimizer
             BinaryOp.Div => x / y,
             BinaryOp.IDiv => Decimal128Numerics.IntegerDivide(x, y),
             BinaryOp.Mod => x % y,
-            // Eq/Ne and And/Or/Xor are intentionally absent: equality is handled
-            // structurally and the logical operators Boolean-only by
-            // ApplyBinaryOperator in ApplyPlannedBinary, so neither reaches this path.
+            // And/Or/Xor are intentionally absent: the logical operators are
+            // Boolean-only and handled by ApplyBinaryOperator in ApplyPlannedBinary,
+            // so they never reach this path (comparisons are chain links, planned
+            // by ApplyPlannedComparison).
             _ => 0,
         };
 
@@ -836,9 +927,22 @@ internal static partial class LoopOptimizer
         while (pending.Count != 0 && text.Length < maxLength)
         {
             var current = pending.Pop();
-            var part = current is string literal
-                ? literal
-                : DescribeLoopExprPlanNode((LoopExprPlan)current, pending);
+            string part;
+            if (current is ComparisonDiagnosticCursor cursor)
+            {
+                if (cursor.Index == cursor.Links.Count)
+                    continue;
+                var link = cursor.Links[cursor.Index++];
+                pending.Push(cursor);
+                pending.Push(link.Operand);
+                part = $" {LoopComparisonPlanName(link.Op)} ";
+            }
+            else
+            {
+                part = current is string literal
+                    ? literal
+                    : DescribeLoopExprPlanNode((LoopExprPlan)current, pending);
+            }
             var available = maxLength - text.Length;
             text.Append(part.AsSpan(0, Math.Min(part.Length, available)));
             if (part.Length > available || pending.Count != 0 && text.Length == maxLength)
@@ -846,6 +950,14 @@ internal static partial class LoopOptimizer
         }
 
         return text.ToString();
+    }
+
+    // A chain can be arbitrarily wide. Schedule one link at a time so the
+    // output bound also bounds pending storage and reads of the operand list.
+    private sealed class ComparisonDiagnosticCursor(IReadOnlyList<LoopComparisonLink> links)
+    {
+        public readonly IReadOnlyList<LoopComparisonLink> Links = links;
+        public int Index;
     }
 
     /// <summary>
@@ -858,6 +970,7 @@ internal static partial class LoopOptimizer
         {
             LoopExprPlan.Unary unary => QueueOperands(pending, $"{LoopUnaryPlanName(unary.Op)}(", unary.Operand),
             LoopExprPlan.Binary binary => QueueOperands(pending, $"{LoopBinaryPlanName(binary.Op)}(", binary.Left, binary.Right),
+            LoopExprPlan.Comparison comparison => QueueComparisonOperands(pending, comparison),
             LoopExprPlan.If ifPlan => QueueOperands(pending, "If(", ifPlan.Condition, ifPlan.TrueBranch, ifPlan.FalseBranch),
             LoopExprPlan.Constant constant => $"Const({Evaluator.FormatResultForDiagnostic(constant.Value.ToResult())})",
             LoopExprPlan.StringConstant constant => $"StringConst(length={constant.Value.Length})",
@@ -886,6 +999,25 @@ internal static partial class LoopOptimizer
         return head;
     }
 
+    /// <summary>
+    /// Queues a comparison chain. A ONE-link chain — the ordinary comparison — keeps the
+    /// established descriptor spelling of one operation over two operand plans
+    /// (<c>LessThan(a, b)</c>); a longer chain is described as
+    /// <c>Compare(first LessThan x Equal y …)</c>, the chain's operands interleaved with
+    /// its link operator names, so the description shows the flat chain structure that
+    /// is evaluated (never nested comparisons).
+    /// </summary>
+    private static string QueueComparisonOperands(Stack<object> pending, LoopExprPlan.Comparison comparison)
+    {
+        if (comparison.Links.Count == 1)
+            return QueueOperands(pending, $"{LoopComparisonPlanName(comparison.Links[0].Op)}(", comparison.First, comparison.Links[0].Operand);
+
+        pending.Push(")");
+        pending.Push(new ComparisonDiagnosticCursor(comparison.Links));
+        pending.Push(comparison.First);
+        return "Compare(";
+    }
+
     private static string LoopUnaryPlanName(UnaryOp op)
         => op switch
         {
@@ -904,15 +1036,21 @@ internal static partial class LoopOptimizer
             BinaryOp.IDiv => "IntegerDivide",
             BinaryOp.Mod => "Mod",
             BinaryOp.Pow => "Power",
-            BinaryOp.Lt => "LessThan",
-            BinaryOp.Gt => "GreaterThan",
-            BinaryOp.Le => "LessOrEqual",
-            BinaryOp.Ge => "GreaterOrEqual",
-            BinaryOp.Eq => "Equal",
-            BinaryOp.Ne => "NotEqual",
             BinaryOp.And => "And",
             BinaryOp.Or => "Or",
             BinaryOp.Xor => "Xor",
+            _ => op.ToString(),
+        };
+
+    private static string LoopComparisonPlanName(ComparisonOp op)
+        => op switch
+        {
+            ComparisonOp.Lt => "LessThan",
+            ComparisonOp.Gt => "GreaterThan",
+            ComparisonOp.Le => "LessOrEqual",
+            ComparisonOp.Ge => "GreaterOrEqual",
+            ComparisonOp.Eq => "Equal",
+            ComparisonOp.Ne => "NotEqual",
             _ => op.ToString(),
         };
 }

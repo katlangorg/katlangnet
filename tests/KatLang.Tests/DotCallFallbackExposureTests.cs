@@ -1046,6 +1046,7 @@ public class DotCallFallbackExposureTests
             [typeof(Expr.BoolLiteral)] = new Expr.BoolLiteral(true),
             [typeof(Expr.Unary)] = new Expr.Unary(UnaryOp.Minus, leaf),
             [typeof(Expr.Binary)] = new Expr.Binary(BinaryOp.Add, leaf, leaf),
+            [typeof(Expr.Comparison)] = new Expr.Comparison(leaf, [new ComparisonLink(ComparisonOp.Lt, leaf)]),
             [typeof(Expr.Index)] = new Expr.Index(leaf, leaf),
             [typeof(Expr.SequenceConstruct)] = new Expr.SequenceConstruct(leaf, leaf),
             [typeof(Expr.EmptySequence)] = new Expr.EmptySequence(0),

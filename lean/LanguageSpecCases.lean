@@ -14,11 +14,11 @@ This is bounded differential validation over the Lean-guarded partition,
 not a formal verification of the evaluators.
 
 Partition (machine-checked by the `specCaseIds.length` guard below):
-- specification surface cases: 277
+- specification surface cases: 280
 - excluded parse-level cases (Lean has no surface parser): 38
 - excluded C#-only cases (each carries an explicit reason in the corpus): 15
-- Lean-guarded cases: 224
-- probe observations (C#-only by design): 640
+- Lean-guarded cases: 227
+- probe observations (C#-only by design): 664
 - internal-node cases live in the semantic-explorer corpus, not here: see
   lean/SemanticExplorerCases.lean
 
@@ -106,17 +106,17 @@ def case_first_program : Expr :=
 
 -- boolean-values-and-equality [arithmetic]: true \n false \n [true, 1, false, 0] \n true == 1 \n 1 == true \n false != 0 \n 0 != false \n distinct([true, 1, false, 0, true])
 def case_boolean_values_and_equality : Expr :=
-  .algorithmExpr (alg [] [] [] [.boolLiteral true, .boolLiteral false, (.listLiteral [.boolLiteral true, .num 1, .boolLiteral false, .num 0]), (.binary .eq (.boolLiteral true) (.num 1)), (.binary .eq (.num 1) (.boolLiteral true)), (.binary .ne (.boolLiteral false) (.num 0)), (.binary .ne (.num 0) (.boolLiteral false)), (.call (.resolve "distinct") [(.listLiteral [.boolLiteral true, .num 1, .boolLiteral false, .num 0, .boolLiteral true])])])
+  .algorithmExpr (alg [] [] [] [.boolLiteral true, .boolLiteral false, (.listLiteral [.boolLiteral true, .num 1, .boolLiteral false, .num 0]), (.comparison (.boolLiteral true) [{ op := .eq, operand := (.num 1) }]), (.comparison (.num 1) [{ op := .eq, operand := (.boolLiteral true) }]), (.comparison (.boolLiteral false) [{ op := .ne, operand := (.num 0) }]), (.comparison (.num 0) [{ op := .ne, operand := (.boolLiteral false) }]), (.call (.resolve "distinct") [(.listLiteral [.boolLiteral true, .num 1, .boolLiteral false, .num 0, .boolLiteral true])])])
 #guard obs case_boolean_values_and_equality == "ok raw=S[true, false, L[true, 1, false, 0], false, false, true, true, L[true, 1, false, 0]] n=8"
 
 -- boolean-predicates-and-patterns [conditionals]: F(true) = false \n F(false) = true \n F(true) \n F(false) \n range(-2, 2).filter{x >= 0} \n range(-2, 2).map{x >= 0}.contains(true) \n if(not 1 == 1, 10, 20)
 def case_boolean_predicates_and_patterns : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "F" (.conditional none [] [⟨.litBool true, (alg [] [] [] [.boolLiteral false])⟩, ⟨.litBool false, (alg [] [] [] [.boolLiteral true])⟩])] [(.call (.resolve "F") [.boolLiteral true]), (.call (.resolve "F") [.boolLiteral false]), (.dotCall (.call (.resolve "range") [(.unary .minus (.num 2)), .num 2]) "filter" (some [(.algorithmExpr (alg ["x"] [] [] [(.binary .ge (.param "x") (.num 0))]))])), (.dotCall (.dotCall (.call (.resolve "range") [(.unary .minus (.num 2)), .num 2]) "map" (some [(.algorithmExpr (alg ["x"] [] [] [(.binary .ge (.param "x") (.num 0))]))])) "contains" (some [.boolLiteral true])), (.call (.resolve "if") [(.unary .not (.binary .eq (.num 1) (.num 1))), .num 10, .num 20])])
+  .algorithmExpr (alg [] [] [privateProp "F" (.conditional none [] [⟨.litBool true, (alg [] [] [] [.boolLiteral false])⟩, ⟨.litBool false, (alg [] [] [] [.boolLiteral true])⟩])] [(.call (.resolve "F") [.boolLiteral true]), (.call (.resolve "F") [.boolLiteral false]), (.dotCall (.call (.resolve "range") [(.unary .minus (.num 2)), .num 2]) "filter" (some [(.algorithmExpr (alg ["x"] [] [] [(.comparison (.param "x") [{ op := .ge, operand := (.num 0) }])]))])), (.dotCall (.dotCall (.call (.resolve "range") [(.unary .minus (.num 2)), .num 2]) "map" (some [(.algorithmExpr (alg ["x"] [] [] [(.comparison (.param "x") [{ op := .ge, operand := (.num 0) }])]))])) "contains" (some [.boolLiteral true])), (.call (.resolve "if") [(.unary .not (.comparison (.num 1) [{ op := .eq, operand := (.num 1) }])), .num 10, .num 20])])
 #guard obs case_boolean_predicates_and_patterns == "ok raw=S[false, true, L[0, 1, 2], true, 20] n=5"
 
 -- boolean-loop-state-transition [conditionals]: S(x) = if(x == true, 0, true), x != 0 \n S.while(true)
 def case_boolean_loop_state_transition : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "S" (alg ["x"] [] [] [(.call (.resolve "if") [(.binary .eq (.param "x") (.boolLiteral true)), .num 0, .boolLiteral true]), (.binary .ne (.param "x") (.num 0))])] [(.dotCall (.resolve "S") "while" (some [.boolLiteral true]))])
+  .algorithmExpr (alg [] [] [privateProp "S" (alg ["x"] [] [] [(.call (.resolve "if") [(.comparison (.param "x") [{ op := .eq, operand := (.boolLiteral true) }]), .num 0, .boolLiteral true]), (.comparison (.param "x") [{ op := .ne, operand := (.num 0) }])])] [(.dotCall (.resolve "S") "while" (some [.boolLiteral true]))])
 #guard obs case_boolean_loop_state_transition == "ok raw=0 n=1"
 
 -- boolean-predicate-rejects-visible-empty [conditionals]: F(x) = true, () \n range(0, 2).filter(F).count
@@ -131,8 +131,23 @@ def case_power_unary_precedence : Expr :=
 
 -- not-binds-below-comparisons [arithmetic]: not 5 > 3 \n not 2 > 3 \n not 5 == 5 \n not 5 == 4 \n not true == false \n not true == 1
 def case_not_binds_below_comparisons : Expr :=
-  .algorithmExpr (alg [] [] [] [(.unary .not (.binary .gt (.num 5) (.num 3))), (.unary .not (.binary .gt (.num 2) (.num 3))), (.unary .not (.binary .eq (.num 5) (.num 5))), (.unary .not (.binary .eq (.num 5) (.num 4))), (.unary .not (.binary .eq (.boolLiteral true) (.boolLiteral false))), (.unary .not (.binary .eq (.boolLiteral true) (.num 1)))])
+  .algorithmExpr (alg [] [] [] [(.unary .not (.comparison (.num 5) [{ op := .gt, operand := (.num 3) }])), (.unary .not (.comparison (.num 2) [{ op := .gt, operand := (.num 3) }])), (.unary .not (.comparison (.num 5) [{ op := .eq, operand := (.num 5) }])), (.unary .not (.comparison (.num 5) [{ op := .eq, operand := (.num 4) }])), (.unary .not (.comparison (.boolLiteral true) [{ op := .eq, operand := (.boolLiteral false) }])), (.unary .not (.comparison (.boolLiteral true) [{ op := .eq, operand := (.num 1) }]))])
 #guard obs case_not_binds_below_comparisons == "ok raw=S[false, true, false, true, true, true] n=6"
+
+-- comparison-chains-compare-adjacent-pairs [arithmetic]: 1 < 2 < 3 \n 1 < 2 <= 2 == 2 != 3 \n 1 == 1 == 1 \n 1 != 2 != 1 \n 1 != 1 != 1 \n 3 < 2 < 1 \n 1 == 1 < 2 \n 1 < 2 == true
+def case_comparison_chains_compare_adjacent_pairs : Expr :=
+  .algorithmExpr (alg [] [] [] [(.comparison (.num 1) [{ op := .lt, operand := (.num 2) }, { op := .lt, operand := (.num 3) }]), (.comparison (.num 1) [{ op := .lt, operand := (.num 2) }, { op := .le, operand := (.num 2) }, { op := .eq, operand := (.num 2) }, { op := .ne, operand := (.num 3) }]), (.comparison (.num 1) [{ op := .eq, operand := (.num 1) }, { op := .eq, operand := (.num 1) }]), (.comparison (.num 1) [{ op := .ne, operand := (.num 2) }, { op := .ne, operand := (.num 1) }]), (.comparison (.num 1) [{ op := .ne, operand := (.num 1) }, { op := .ne, operand := (.num 1) }]), (.comparison (.num 3) [{ op := .lt, operand := (.num 2) }, { op := .lt, operand := (.num 1) }]), (.comparison (.num 1) [{ op := .eq, operand := (.num 1) }, { op := .lt, operand := (.num 2) }]), (.comparison (.num 1) [{ op := .lt, operand := (.num 2) }, { op := .eq, operand := (.boolLiteral true) }])])
+#guard obs case_comparison_chains_compare_adjacent_pairs == "ok raw=S[true, true, true, true, false, false, true, false] n=8"
+
+-- comparison-chain-boolean-and-arithmetic-operands [arithmetic]: true == true == true \n true != false != true \n true == 1 == false \n true == true == false \n 1 + 1 < 3 == 2 + 0 \n -2 ^ 2 < 0 == true
+def case_comparison_chain_boolean_and_arithmetic_operands : Expr :=
+  .algorithmExpr (alg [] [] [] [(.comparison (.boolLiteral true) [{ op := .eq, operand := (.boolLiteral true) }, { op := .eq, operand := (.boolLiteral true) }]), (.comparison (.boolLiteral true) [{ op := .ne, operand := (.boolLiteral false) }, { op := .ne, operand := (.boolLiteral true) }]), (.comparison (.boolLiteral true) [{ op := .eq, operand := (.num 1) }, { op := .eq, operand := (.boolLiteral false) }]), (.comparison (.boolLiteral true) [{ op := .eq, operand := (.boolLiteral true) }, { op := .eq, operand := (.boolLiteral false) }]), (.comparison (.binary .add (.num 1) (.num 1)) [{ op := .lt, operand := (.num 3) }, { op := .eq, operand := (.binary .add (.num 2) (.num 0)) }]), (.comparison (.unary .minus (.binary .pow (.num 2) (.num 2))) [{ op := .lt, operand := (.num 0) }, { op := .eq, operand := (.boolLiteral true) }])])
+#guard obs case_comparison_chain_boolean_and_arithmetic_operands == "ok raw=S[true, true, false, false, false, false] n=6"
+
+-- comparison-chain-is-eager-after-false [errors]: 3 < 2 < true
+def case_comparison_chain_is_eager_after_false : Expr :=
+  .algorithmExpr (alg [] [] [] [(.comparison (.num 3) [{ op := .lt, operand := (.num 2) }, { op := .lt, operand := (.boolLiteral true) }])])
+#guard obs case_comparison_chain_is_eager_after_false == "err type"
 
 -- integer-division-truncates [arithmetic]: -7 div 2 \n -7 mod 2 \n 7 div 2
 def case_integer_division_truncates : Expr :=
@@ -141,7 +156,7 @@ def case_integer_division_truncates : Expr :=
 
 -- integer-division-exact-quotient [arithmetic]: X = 8999999999999999999999999999999999 \n X div 3 \n X mod 3 \n X == 3 * (X div 3) + (X mod 3) \n Y = 3e32 \n (13 * Y - 1) div Y \n (12 * Y + 1) div Y \n -X div 3 \n X div -3 \n -X div -3 \n 1e34 div 7 \n 1e34 mod 7 \n 1e40 div 1e5
 def case_integer_division_exact_quotient : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "X" (alg [] [] [] [.num 8999999999999999999999999999999999]), privateProp "Y" (alg [] [] [] [.num 300000000000000000000000000000000])] [(.binary .idiv (.resolve "X") (.num 3)), (.binary .mod (.resolve "X") (.num 3)), (.binary .eq (.resolve "X") (.binary .add (.binary .mul (.num 3) (.binary .idiv (.resolve "X") (.num 3))) (.binary .mod (.resolve "X") (.num 3)))), (.binary .idiv (.binary .sub (.binary .mul (.num 13) (.resolve "Y")) (.num 1)) (.resolve "Y")), (.binary .idiv (.binary .add (.binary .mul (.num 12) (.resolve "Y")) (.num 1)) (.resolve "Y")), (.binary .idiv (.unary .minus (.resolve "X")) (.num 3)), (.binary .idiv (.resolve "X") (.unary .minus (.num 3))), (.binary .idiv (.unary .minus (.resolve "X")) (.unary .minus (.num 3))), (.binary .idiv (.num 10000000000000000000000000000000000) (.num 7)), (.binary .mod (.num 10000000000000000000000000000000000) (.num 7)), (.binary .idiv (.num 10000000000000000000000000000000000000000) (.num 100000))])
+  .algorithmExpr (alg [] [] [privateProp "X" (alg [] [] [] [.num 8999999999999999999999999999999999]), privateProp "Y" (alg [] [] [] [.num 300000000000000000000000000000000])] [(.binary .idiv (.resolve "X") (.num 3)), (.binary .mod (.resolve "X") (.num 3)), (.comparison (.resolve "X") [{ op := .eq, operand := (.binary .add (.binary .mul (.num 3) (.binary .idiv (.resolve "X") (.num 3))) (.binary .mod (.resolve "X") (.num 3))) }]), (.binary .idiv (.binary .sub (.binary .mul (.num 13) (.resolve "Y")) (.num 1)) (.resolve "Y")), (.binary .idiv (.binary .add (.binary .mul (.num 12) (.resolve "Y")) (.num 1)) (.resolve "Y")), (.binary .idiv (.unary .minus (.resolve "X")) (.num 3)), (.binary .idiv (.resolve "X") (.unary .minus (.num 3))), (.binary .idiv (.unary .minus (.resolve "X")) (.unary .minus (.num 3))), (.binary .idiv (.num 10000000000000000000000000000000000) (.num 7)), (.binary .mod (.num 10000000000000000000000000000000000) (.num 7)), (.binary .idiv (.num 10000000000000000000000000000000000000000) (.num 100000))])
 #guard obs case_integer_division_exact_quotient == "ok raw=S[2999999999999999999999999999999999, 2, true, 12, 12, -2999999999999999999999999999999999, -2999999999999999999999999999999999, 2999999999999999999999999999999999, 1428571428571428571428571428571428, 4, 100000000000000000000000000000000000] n=11"
 
 -- property-access-and-call [arithmetic]: # Define a property: \n Answer = 42 \n  \n # Property-style access: \n Answer \n  \n # Explicit zero-parameter call: \n Answer()
@@ -181,7 +196,7 @@ def case_singleton_paren_deep : Expr :=
 
 -- empty-eq-family [empty-and-singleton]: () == ()      # true \n () == (())    # true \n () != (())    # false \n count(())     # 0 \n count((()))   # 0
 def case_empty_eq_family : Expr :=
-  .algorithmExpr (alg [] [] [] [(.binary .eq (.emptySequence 0) (.emptySequence 0)), (.binary .eq (.emptySequence 0) (.emptySequence 0)), (.binary .ne (.emptySequence 0) (.emptySequence 0)), (.call (.resolve "count") [(.emptySequence 0)]), (.call (.resolve "count") [(.emptySequence 0)])])
+  .algorithmExpr (alg [] [] [] [(.comparison (.emptySequence 0) [{ op := .eq, operand := (.emptySequence 0) }]), (.comparison (.emptySequence 0) [{ op := .eq, operand := (.emptySequence 0) }]), (.comparison (.emptySequence 0) [{ op := .ne, operand := (.emptySequence 0) }]), (.call (.resolve "count") [(.emptySequence 0)]), (.call (.resolve "count") [(.emptySequence 0)])])
 #guard obs case_empty_eq_family == "ok raw=S[true, true, false, 0, 0] n=5"
 
 -- empty-capture [empty-and-singleton]: A = () \n A
@@ -666,12 +681,12 @@ def case_skip_prefix : Expr :=
 
 -- filter-keeps-matching [collection-builtins]: IsEven = x mod 2 == 0 \n filter((1, 2, 3, 4, 5, 6), IsEven)
 def case_filter_keeps_matching : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "IsEven" (alg ["x"] [] [] [(.binary .eq (.binary .mod (.param "x") (.num 2)) (.num 0))])] [(.call (.resolve "filter") [(.capture [.num 1, .num 2, .num 3, .num 4, .num 5, .num 6]), .resolve "IsEven"])])
+  .algorithmExpr (alg [] [] [privateProp "IsEven" (alg ["x"] [] [] [(.comparison (.binary .mod (.param "x") (.num 2)) [{ op := .eq, operand := (.num 0) }])])] [(.call (.resolve "filter") [(.capture [.num 1, .num 2, .num 3, .num 4, .num 5, .num 6]), .resolve "IsEven"])])
 #guard obs case_filter_keeps_matching == "ok raw=L[2, 4, 6] n=1"
 
 -- filter-single-survivor [collection-builtins]: Big(a) = a > 2 \n filter((1, 2, 3), Big)
 def case_filter_single_survivor : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "Big" (alg ["a"] [] [] [(.binary .gt (.param "a") (.num 2))])] [(.call (.resolve "filter") [(.capture [.num 1, .num 2, .num 3]), .resolve "Big"])])
+  .algorithmExpr (alg [] [] [privateProp "Big" (alg ["a"] [] [] [(.comparison (.param "a") [{ op := .gt, operand := (.num 2) }])])] [(.call (.resolve "filter") [(.capture [.num 1, .num 2, .num 3]), .resolve "Big"])])
 #guard obs case_filter_single_survivor == "ok raw=L[3] n=1"
 
 -- filter-none-empty [collection-builtins]: No(a) = false \n filter((1, 2, 3), No)
@@ -826,7 +841,7 @@ def case_reduce_empty_initial_is_one_value : Expr :=
 
 -- eq-structural-nested [equality-and-indexing]: A = 1, (2, 3) \n B = 1, (2, 3) \n A == B
 def case_eq_structural_nested : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "A" (alg [] [] [] [.num 1, (.capture [.num 2, .num 3])]), privateProp "B" (alg [] [] [] [.num 1, (.capture [.num 2, .num 3])])] [(.binary .eq (.resolve "A") (.resolve "B"))])
+  .algorithmExpr (alg [] [] [privateProp "A" (alg [] [] [] [.num 1, (.capture [.num 2, .num 3])]), privateProp "B" (alg [] [] [] [.num 1, (.capture [.num 2, .num 3])])] [(.comparison (.resolve "A") [{ op := .eq, operand := (.resolve "B") }])])
 #guard obs case_eq_structural_nested == "ok raw=true n=1"
 
 -- index-selects-atom [equality-and-indexing]: Nums = 10, 20, 30, 40, 50 \n  \n # Select the third value (index 2): \n Nums:2
@@ -856,7 +871,7 @@ def case_index_out_of_range : Expr :=
 
 -- index-captured-requality [equality-and-indexing]: x = ((1, 2), (3, 4)) \n y = x:0 \n y == (1, 2)
 def case_index_captured_requality : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [(.capture [.num 1, .num 2]), (.capture [.num 3, .num 4])])]), privateProp "y" (alg [] [] [] [(.index (.resolve "x") (.num 0))])] [(.binary .eq (.resolve "y") (.capture [.num 1, .num 2]))])
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [(.capture [.num 1, .num 2]), (.capture [.num 3, .num 4])])]), privateProp "y" (alg [] [] [] [(.index (.resolve "x") (.num 0))])] [(.comparison (.resolve "y") [{ op := .eq, operand := (.capture [.num 1, .num 2]) }])])
 #guard obs case_index_captured_requality == "ok raw=true n=1"
 
 -- output-rows-interleave-definitions [parser-layout]: A = 3 \n A + B \n B = 2
@@ -966,7 +981,7 @@ def case_unresolved_implicit_parameter : Expr :=
 
 -- string-equality-exact [strings]: 'ab' == 'ab'
 def case_string_equality_exact : Expr :=
-  .algorithmExpr (alg [] [] [] [(.binary .eq (.stringLiteral "ab") (.stringLiteral "ab"))])
+  .algorithmExpr (alg [] [] [] [(.comparison (.stringLiteral "ab") [{ op := .eq, operand := (.stringLiteral "ab") }])])
 #guard obs case_string_equality_exact == "ok raw=true n=1"
 
 -- string-displays-unquoted [strings]: x = 'ab' \n x
@@ -981,12 +996,12 @@ def case_list_literal : Expr :=
 
 -- list-exactness [lists]: [7] == 7 \n [[1, 2]] == [1, 2] \n [[]] == []
 def case_list_exactness : Expr :=
-  .algorithmExpr (alg [] [] [] [(.binary .eq (.listLiteral [.num 7]) (.num 7)), (.binary .eq (.listLiteral [(.listLiteral [.num 1, .num 2])]) (.listLiteral [.num 1, .num 2])), (.binary .eq (.listLiteral [(.listLiteral [])]) (.listLiteral []))])
+  .algorithmExpr (alg [] [] [] [(.comparison (.listLiteral [.num 7]) [{ op := .eq, operand := (.num 7) }]), (.comparison (.listLiteral [(.listLiteral [.num 1, .num 2])]) [{ op := .eq, operand := (.listLiteral [.num 1, .num 2]) }]), (.comparison (.listLiteral [(.listLiteral [])]) [{ op := .eq, operand := (.listLiteral []) }])])
 #guard obs case_list_exactness == "ok raw=S[false, false, false] n=3"
 
 -- list-vs-sequence-kind [lists]: [] == () \n [1, 2] == (1, 2)
 def case_list_vs_sequence_kind : Expr :=
-  .algorithmExpr (alg [] [] [] [(.binary .eq (.listLiteral []) (.emptySequence 0)), (.binary .eq (.listLiteral [.num 1, .num 2]) (.capture [.num 1, .num 2]))])
+  .algorithmExpr (alg [] [] [] [(.comparison (.listLiteral []) [{ op := .eq, operand := (.emptySequence 0) }]), (.comparison (.listLiteral [.num 1, .num 2]) [{ op := .eq, operand := (.capture [.num 1, .num 2]) }])])
 #guard obs case_list_vs_sequence_kind == "ok raw=S[false, false] n=2"
 
 -- list-index-selects-element [lists]: [1, 2, 3]:0
@@ -1011,7 +1026,7 @@ def case_list_index_builtin_results : Expr :=
 
 -- list-redundant-parens-canonicalize [lists]: ([1, 2]) == [1, 2]
 def case_list_redundant_parens_canonicalize : Expr :=
-  .algorithmExpr (alg [] [] [] [(.binary .eq (.listLiteral [.num 1, .num 2]) (.listLiteral [.num 1, .num 2]))])
+  .algorithmExpr (alg [] [] [] [(.comparison (.listLiteral [.num 1, .num 2]) [{ op := .eq, operand := (.listLiteral [.num 1, .num 2]) }])])
 #guard obs case_list_redundant_parens_canonicalize == "ok raw=true n=1"
 
 -- list-spread-capture [lists]: A = [1, 2, 3] \n  \n x = A \n y = (A*) \n  \n x \n y
@@ -1219,7 +1234,7 @@ def case_grace_in_redundant_group_keeps_the_capture_boundary : Expr :=
   .algorithmExpr (alg [] [] [privateProp "F" (alg ["a", "b"] [] [] [(.binary .add (.param "b") (.dotCall (.capture [.param "a"]) "V" none))]), privateProp "V" (alg ["x"] [] [] [(.binary .mul (.param "x") (.num 2))])] [(.call (.resolve "F") [.num 5, .num 1])])
 #guard obs case_grace_in_redundant_group_keeps_the_capture_boundary == "ok raw=11 n=1"
 
--- 224 canonical Lean-guarded specification cases.
+-- 227 canonical Lean-guarded specification cases.
 
 /--
 Machine-checked Lean-guarded partition count: the id list is built by the
@@ -1234,6 +1249,9 @@ def specCaseIds : List String := [
   "boolean-predicate-rejects-visible-empty",
   "power-unary-precedence",
   "not-binds-below-comparisons",
+  "comparison-chains-compare-adjacent-pairs",
+  "comparison-chain-boolean-and-arithmetic-operands",
+  "comparison-chain-is-eager-after-false",
   "integer-division-truncates",
   "integer-division-exact-quotient",
   "property-access-and-call",
@@ -1452,6 +1470,6 @@ def specCaseIds : List String := [
   "ownership-open-head-between-opener-and-settling-level-charges-the-capture",
   "grace-in-redundant-group-keeps-the-capture-boundary"
 ]
-#guard specCaseIds.length == 224
+#guard specCaseIds.length == 227
 
 end LanguageSpecCases

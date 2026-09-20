@@ -72,8 +72,8 @@ def test232 : Bool :=
   let safeReportProjected : Algorithm :=
     let report := .param "report"
     let itemAt (i : Int) := .index report (.num i)
-    let desc (i : Int) := .binary .gt (itemAt i) (itemAt (i + 1))
-    let stepOk (i : Int) := .binary .le (.binary .sub (itemAt i) (itemAt (i + 1))) (.num 3)
+    let desc (i : Int) := .compare .gt (itemAt i) (itemAt (i + 1))
+    let stepOk (i : Int) := .compare .le (.binary .sub (itemAt i) (itemAt (i + 1))) (.num 3)
     let descendingChecks :=
       .binary .and
         (desc 0)
@@ -153,7 +153,7 @@ def test235 : Bool :=
     ]
   let hasThreeItems : Algorithm :=
     alg ["x"] [] [] [
-      .binary .eq
+      .compare .eq
         (.dotCall (.param "x") "count" none)
         (.num 3)
     ]
@@ -355,7 +355,7 @@ private def dotSweepTopLevelItemCountAlg : Algorithm :=
 
 private def dotSweepKeepCountThreeAlg : Algorithm :=
   alg ["x"] [] [] [
-    .binary .eq (.dotCall (.param "x") "count" none) (.num 3)
+    .compare .eq (.dotCall (.param "x") "count" none) (.num 3)
   ]
 
 private def dotSweepAddTopLevelItemCountAlg : Algorithm :=
@@ -367,7 +367,7 @@ private def dotSweepAddOneAlg : Algorithm :=
   alg ["x"] [] [] [.binary .add (.param "x") (.num 1)]
 
 private def dotSweepIsGreaterThanOneAlg : Algorithm :=
-  alg ["x"] [] [] [.binary .gt (.param "x") (.num 1)]
+  alg ["x"] [] [] [.compare .gt (.param "x") (.num 1)]
 
 private def dotSweepAddAlg : Algorithm :=
   alg ["x", "total"] [] [] [.binary .add (.param "x") (.param "total")]

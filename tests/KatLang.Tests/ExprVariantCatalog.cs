@@ -58,6 +58,7 @@ internal static class ExprVariantCatalog
             [nameof(Expr.BoolLiteral)] = new Expr.BoolLiteral(true),
             [nameof(Expr.Unary)] = new Expr.Unary(UnaryOp.Minus, leaf),
             [nameof(Expr.Binary)] = new Expr.Binary(BinaryOp.Add, leaf, leaf),
+            [nameof(Expr.Comparison)] = new Expr.Comparison(leaf, [new ComparisonLink(ComparisonOp.Lt, leaf)]),
             [nameof(Expr.Index)] = new Expr.Index(new Expr.Capture([leaf, leaf]), new Expr.Num(0)),
             [nameof(Expr.SequenceConstruct)] = new Expr.SequenceConstruct(leaf, leaf),
             [nameof(Expr.EmptySequence)] = new Expr.EmptySequence(0),
@@ -165,7 +166,7 @@ public class ExprVariantCatalogTests
             new[]
             {
                 nameof(Expr.AlgorithmExpr), nameof(Expr.Binary), nameof(Expr.Call), nameof(Expr.Capture),
-                nameof(Expr.DotCall), nameof(Expr.Grace), nameof(Expr.Index), nameof(Expr.ListLiteral),
+                nameof(Expr.Comparison), nameof(Expr.DotCall), nameof(Expr.Grace), nameof(Expr.Index), nameof(Expr.ListLiteral),
                 nameof(Expr.SequenceConstruct), nameof(Expr.SequenceSpread), nameof(Expr.Unary),
             },
             ExprVariantCatalog.StructurallyCompositeVariantNames);

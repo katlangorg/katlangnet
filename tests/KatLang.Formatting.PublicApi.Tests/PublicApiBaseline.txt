@@ -107,15 +107,9 @@ public enum KatLang.BinaryOp : int
   IDiv = 4
   Mod = 5
   Pow = 6
-  Lt = 7
-  Gt = 8
-  Le = 9
-  Ge = 10
-  Eq = 11
-  Ne = 12
-  And = 13
-  Or = 14
-  Xor = 15
+  And = 7
+  Or = 8
+  Xor = 9
 
 public enum KatLang.BuiltinId : int
   if = 0
@@ -346,6 +340,27 @@ public sealed record KatLang.CollectingCaptureBindingNode : KatLang.CallableBind
   method   public override string ToString()
   operator public static bool op_Equality(KatLang.CollectingCaptureBindingNode? left, KatLang.CollectingCaptureBindingNode? right)
   operator public static bool op_Inequality(KatLang.CollectingCaptureBindingNode? left, KatLang.CollectingCaptureBindingNode? right)
+
+public sealed record KatLang.ComparisonLink : System.IEquatable<KatLang.ComparisonLink>
+  ctor     public ComparisonLink(KatLang.ComparisonOp Op, KatLang.Expr Operand)
+  property public KatLang.ComparisonOp Op { get; init; }
+  property public KatLang.Expr Operand { get; init; }
+  method   public KatLang.ComparisonLink <Clone>$()
+  method   public void Deconstruct(out KatLang.ComparisonOp Op, out KatLang.Expr Operand)
+  method   public bool Equals(KatLang.ComparisonLink? other)
+  method   public override bool Equals(object? obj)
+  method   public override int GetHashCode()
+  method   public override string ToString()
+  operator public static bool op_Equality(KatLang.ComparisonLink? left, KatLang.ComparisonLink? right)
+  operator public static bool op_Inequality(KatLang.ComparisonLink? left, KatLang.ComparisonLink? right)
+
+public enum KatLang.ComparisonOp : int
+  Lt = 0
+  Gt = 1
+  Le = 2
+  Ge = 3
+  Eq = 4
+  Ne = 5
 
 public sealed record KatLang.CondBranch : System.IEquatable<KatLang.CondBranch>
   ctor     public CondBranch(KatLang.Pattern Pattern, KatLang.Algorithm Body)
@@ -1167,6 +1182,22 @@ public sealed record KatLang.Expr.Capture : KatLang.Expr, System.IEquatable<KatL
   method   public override string ToString()
   operator public static bool op_Equality(KatLang.Expr.Capture? left, KatLang.Expr.Capture? right)
   operator public static bool op_Inequality(KatLang.Expr.Capture? left, KatLang.Expr.Capture? right)
+
+public sealed record KatLang.Expr.Comparison : KatLang.Expr, System.IEquatable<KatLang.Expr.Comparison>
+  ctor     public Comparison(KatLang.Expr First, System.Collections.Generic.IReadOnlyList<KatLang.ComparisonLink> Links)
+  property protected override System.Type EqualityContract { get; }
+  property public KatLang.Expr First { get; init; }
+  property public System.Collections.Generic.IReadOnlyList<KatLang.ComparisonLink> Links { get; init; }
+  method   public virtual KatLang.Expr.Comparison <Clone>$()
+  method   public void Deconstruct(out KatLang.Expr First, out System.Collections.Generic.IReadOnlyList<KatLang.ComparisonLink> Links)
+  method   public bool Equals(KatLang.Expr.Comparison? other)
+  method   public override bool Equals(object? obj)
+  method   public sealed override bool Equals(KatLang.Expr? other)
+  method   public override int GetHashCode()
+  method   protected override bool PrintMembers(System.Text.StringBuilder builder)
+  method   public override string ToString()
+  operator public static bool op_Equality(KatLang.Expr.Comparison? left, KatLang.Expr.Comparison? right)
+  operator public static bool op_Inequality(KatLang.Expr.Comparison? left, KatLang.Expr.Comparison? right)
 
 public sealed record KatLang.Expr.DotCall : KatLang.Expr, System.IEquatable<KatLang.Expr.DotCall>
   ctor     public DotCall(KatLang.Expr Target, string Name, KatLang.OutputBundle? Args = null)

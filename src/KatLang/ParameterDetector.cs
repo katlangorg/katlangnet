@@ -1075,7 +1075,7 @@ internal static class ParameterDetector
                 Expr.AlgorithmExpr or Expr.Capture or Expr.DotCall or Expr.SequenceSpread
                     or Expr.SequenceConstruct or Expr.ListLiteral or Expr.Call or Expr.Num
                     or Expr.StringLiteral or Expr.BoolLiteral or Expr.EmptySequence or Expr.NativeCall
-                    or Expr.Unary or Expr.Binary or Expr.Index or Expr.Grace => null,
+                    or Expr.Unary or Expr.Binary or Expr.Comparison or Expr.Index or Expr.Grace => null,
             };
 
             var rewritten = open;
@@ -1285,7 +1285,7 @@ internal static class ParameterDetector
             // open-form validation rejects them (BadOpenForm) — so a host-built
             // one passes through unprocessed like a leaf.
             Expr.Resolve or Expr.Param or Expr.Num or Expr.StringLiteral or Expr.BoolLiteral or Expr.EmptySequence
-                or Expr.NativeCall or Expr.Unary or Expr.Binary or Expr.Index => expr,
+                or Expr.NativeCall or Expr.Unary or Expr.Binary or Expr.Comparison or Expr.Index => expr,
         };
     }
 
@@ -1747,6 +1747,12 @@ internal static class ParameterDetector
                 CollectFreeParams(right, scope, boundParameters, paramNames, paramOrder, graceWeights, mode, recorder, memo);
                 break;
 
+            case Expr.Comparison(var first, var links):
+                CollectFreeParams(first, scope, boundParameters, paramNames, paramOrder, graceWeights, mode, recorder, memo);
+                foreach (var link in links)
+                    CollectFreeParams(link.Operand, scope, boundParameters, paramNames, paramOrder, graceWeights, mode, recorder, memo);
+                break;
+
             case Expr.Unary(_, var operand):
                 CollectFreeParams(operand, scope, boundParameters, paramNames, paramOrder, graceWeights, mode, recorder, memo);
                 break;
@@ -2143,6 +2149,12 @@ internal static class ParameterDetector
                 Right = RewriteParams(binary.Right, scope, parameters, memo),
             },
 
+            Expr.Comparison comparison => comparison with
+            {
+                First = RewriteParams(comparison.First, scope, parameters, memo),
+                Links = AstHelpers.RewriteComparisonLinks(comparison.Links, operand => RewriteParams(operand, scope, parameters, memo)),
+            },
+
             Expr.Unary unary => unary with { Operand = RewriteParams(unary.Operand, scope, parameters, memo) },
 
             Expr.Index index => index with
@@ -2384,6 +2396,11 @@ internal static class ParameterDetector
                 Left = ProcessExpr(binary.Left, scope, memo),
                 Right = ProcessExpr(binary.Right, scope, memo),
             },
+            Expr.Comparison comparison => comparison with
+            {
+                First = ProcessExpr(comparison.First, scope, memo),
+                Links = AstHelpers.RewriteComparisonLinks(comparison.Links, operand => ProcessExpr(operand, scope, memo)),
+            },
             Expr.Unary unary => unary with { Operand = ProcessExpr(unary.Operand, scope, memo) },
             Expr.Index index => index with
             {
@@ -2470,6 +2487,18 @@ internal static class ParameterDetector
         return null;
     }
 
+    private static SourceSpan? FindResolveSpan(IReadOnlyList<ComparisonLink> links, string name, ResolveSpanSearchMemo memo)
+    {
+        foreach (var link in links)
+        {
+            var span = FindResolveSpan(link.Operand, name, memo);
+            if (span is not null)
+                return span;
+        }
+
+        return null;
+    }
+
     private static SourceSpan? FindResolveSpan(Expr expr, string name, ResolveSpanSearchMemo memo)
     {
         // DAG-safety: a shared subtree proven free of the searched name is skipped through
@@ -2495,6 +2524,7 @@ internal static class ParameterDetector
             Expr.Resolve(var n) when n == name => expr.Span,
             Expr.Grace(var inner, _) => FindResolveSpan(inner, name, memo),
             Expr.Binary(_, var l, var r) => FindResolveSpan(l, name, memo) ?? FindResolveSpan(r, name, memo),
+            Expr.Comparison(var first, var links) => FindResolveSpan(first, name, memo) ?? FindResolveSpan(links, name, memo),
             Expr.Unary(_, var operand) => FindResolveSpan(operand, name, memo),
             Expr.Index(var t, var s) => FindResolveSpan(t, name, memo) ?? FindResolveSpan(s, name, memo),
             Expr.SequenceConstruct(var l, var r) => FindResolveSpan(l, name, memo) ?? FindResolveSpan(r, name, memo),

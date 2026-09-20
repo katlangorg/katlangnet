@@ -148,6 +148,8 @@ internal static class EvaluatorEligibility
                 case Expr.Binary(var op, var l, var r):
                     if (op == BinaryOp.Pow && r is Expr.Num pn && Decimal128.Abs(pn.Value) > MaxPowLiteral) HasLargePow = true;
                     Ex(l); Ex(r); break;
+                case Expr.Comparison(var first, var links):
+                    Ex(first); foreach (var link in links) Ex(link.Operand); break;
                 case Expr.Index(var t, var s): Ex(t); Ex(s); break;
                 case Expr.SequenceSpread(var o): Ex(o); break;
                 case Expr.SequenceConstruct(var l, var r): Ex(l); Ex(r); break;
@@ -218,6 +220,7 @@ internal static class EvaluatorEligibility
                         break;
                     case Expr.Unary(_, var o): Walk(o); break;
                     case Expr.Binary(_, var l, var r): Walk(l); Walk(r); break;
+                    case Expr.Comparison(var first, var links): Walk(first); foreach (var link in links) Walk(link.Operand); break;
                     case Expr.SequenceSpread(var o): Walk(o); break;
                     case Expr.ListLiteral(var items): foreach (var it in items) Walk(it); break;
                     case Expr.AlgorithmExpr(var alg): foreach (var o2 in alg.Output) Walk(o2); break;

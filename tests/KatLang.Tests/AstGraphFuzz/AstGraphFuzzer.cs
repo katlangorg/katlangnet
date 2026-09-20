@@ -25,6 +25,7 @@ public enum GKind
     // Evaluator.EvalExpressionSpineCounted).
     Unary,
     Binary,
+    Comparison,
     Index,
     List,
 
@@ -136,8 +137,15 @@ public static class AstGraphFuzzer
     public static readonly UnaryOp[] UnaryOps = [UnaryOp.Minus, UnaryOp.Not];
 
     public static readonly BinaryOp[] BinaryOps =
-        [BinaryOp.Add, BinaryOp.Sub, BinaryOp.Mul, BinaryOp.Eq, BinaryOp.Lt, BinaryOp.And,
-         BinaryOp.Ne, BinaryOp.Le, BinaryOp.Gt, BinaryOp.Ge, BinaryOp.Or, BinaryOp.Xor];
+        [BinaryOp.Add, BinaryOp.Sub, BinaryOp.Mul, BinaryOp.And, BinaryOp.Or, BinaryOp.Xor];
+
+    /// <summary>
+    /// Link operators of a generated comparison chain (<see cref="GKind.Comparison"/>): a
+    /// two-operand node uses <c>ComparisonOps[aux]</c>, a three-operand chain additionally
+    /// <c>ComparisonOps[aux + 1]</c>, so mixed chains are generated too.
+    /// </summary>
+    public static readonly ComparisonOp[] ComparisonOps =
+        [ComparisonOp.Lt, ComparisonOp.Gt, ComparisonOp.Le, ComparisonOp.Ge, ComparisonOp.Eq, ComparisonOp.Ne];
 
     public static readonly string[] NativeNames = ["sin", "sqrt"];
 
@@ -289,10 +297,11 @@ public static class AstGraphFuzzer
         bool[] graceOperand,
         bool[] containsGrace)
     {
-        var kind = rng.Next(12) switch
+        var kind = rng.Next(13) switch
         {
             0 => GKind.Unary,
             1 or 2 => GKind.Binary,
+            12 => GKind.Comparison,
             3 => GKind.Index,
             4 => GKind.List,
             5 => GKind.Capture,
@@ -323,6 +332,8 @@ public static class AstGraphFuzzer
         {
             GKind.Unary or GKind.Spread or GKind.Grace or GKind.Block => 1,
             GKind.Binary or GKind.Index or GKind.Construct => 2,
+            // A chain of one or two links, so multi-link chains (three operands) are generated.
+            GKind.Comparison => 2 + rng.Next(2),
             GKind.DotCall => 1 + rng.Next(settings.MaxFanOut),
             _ => 1 + rng.Next(settings.MaxFanOut),
         };
@@ -363,6 +374,7 @@ public static class AstGraphFuzzer
         {
             GKind.Unary => rng.Next(UnaryOps.Length),
             GKind.Binary => rng.Next(BinaryOps.Length),
+            GKind.Comparison => rng.Next(ComparisonOps.Length),
             GKind.DotCall => rng.Next(MemberNames.Length),
             GKind.Grace => 1,
             _ => 0,
@@ -483,7 +495,7 @@ public static class AstGraphFuzzer
             {
                 // Value-DAG consumer: AST sharing composed with the shared Result DAG "D".
                 var d = Add(GKind.Resolve, 4);
-                var eq = Add(GKind.Binary, 3, d, d);
+                var eq = Add(GKind.Comparison, 4, d, d); // ComparisonOps[4] is `==`: a one-link chain `D == D`
                 var count = Add(GKind.DotCall, 1, d);
                 Add(GKind.Capture, 0, eq, count, d);
                 break;
@@ -594,6 +606,11 @@ public static class AstGraphFuzzer
             GKind.NativeCall => new Expr.NativeCall(NativeNames[node.Aux], ["x"]),
             GKind.Unary => new Expr.Unary(UnaryOps[node.Aux], Child(0)),
             GKind.Binary => new Expr.Binary(BinaryOps[node.Aux], Child(0), Child(1)),
+            GKind.Comparison => new Expr.Comparison(
+                Child(0),
+                Enumerable.Range(1, node.Children.Length - 1)
+                    .Select(slot => new ComparisonLink(ComparisonOps[(node.Aux + slot - 1) % ComparisonOps.Length], Child(slot)))
+                    .ToList()),
             GKind.Index => new Expr.Index(Child(0), Child(1)),
             GKind.List => new Expr.ListLiteral(new OutputBundle(ChildrenFrom(0))),
             GKind.Capture => new Expr.Capture(new OutputBundle(ChildrenFrom(0))),
@@ -840,8 +857,8 @@ public static class AstGraphFuzzer
                         JoinToRecursiveHandoffs++;
                     }
 
-                    if (node.Kind is GKind.Unary or GKind.Binary or GKind.Index or GKind.List
-                        && childKind is not (GKind.Unary or GKind.Binary or GKind.Index or GKind.List)
+                    if (node.Kind is GKind.Unary or GKind.Binary or GKind.Comparison or GKind.Index or GKind.List
+                        && childKind is not (GKind.Unary or GKind.Binary or GKind.Comparison or GKind.Index or GKind.List)
                         && !nodes[child].Children.IsEmpty)
                     {
                         SpineToNonSpineHandoffs++;

@@ -169,23 +169,25 @@ public class ParserTests
     }
 
     [Fact]
-    public void Parse_LessThan_ReturnsBinaryExpr()
+    public void Parse_LessThan_ReturnsOneLinkComparisonChain()
     {
         var result = Parser.ParseSyntax("1 < 2");
 
         Assert.False(result.HasErrors);
-        var binary = Assert.IsType<Expr.Binary>(result.Root.Output[0]);
-        Assert.Equal(BinaryOp.Lt, binary.Op);
+        var (left, right) = AssertComparison(result.Root.Output[0], ComparisonOp.Lt);
+        AssertNum(left, 1);
+        AssertNum(right, 2);
     }
 
     [Fact]
-    public void Parse_GreaterThan_ReturnsBinaryExpr()
+    public void Parse_GreaterThan_ReturnsOneLinkComparisonChain()
     {
         var result = Parser.ParseSyntax("2 > 1");
 
         Assert.False(result.HasErrors);
-        var binary = Assert.IsType<Expr.Binary>(result.Root.Output[0]);
-        Assert.Equal(BinaryOp.Gt, binary.Op);
+        var (left, right) = AssertComparison(result.Root.Output[0], ComparisonOp.Gt);
+        AssertNum(left, 2);
+        AssertNum(right, 1);
     }
 
     [Fact]
@@ -207,10 +209,10 @@ public class ParserTests
         var result = Parser.ParseSyntax("1 + 2 < 4");
 
         Assert.False(result.HasErrors);
-        var cmp = Assert.IsType<Expr.Binary>(result.Root.Output[0]);
-        Assert.Equal(BinaryOp.Lt, cmp.Op);
-        var add = Assert.IsType<Expr.Binary>(cmp.Left);
+        var (left, right) = AssertComparison(result.Root.Output[0], ComparisonOp.Lt);
+        var add = Assert.IsType<Expr.Binary>(left);
         Assert.Equal(BinaryOp.Add, add.Op);
+        AssertNum(right, 4);
     }
 
     [Fact]
@@ -2717,6 +2719,23 @@ public class ParserTests
         return binary;
     }
 
+    /// <summary>Asserts a ONE-LINK comparison chain <c>left op right</c> and returns its two operands.</summary>
+    private static (Expr Left, Expr Right) AssertComparison(Expr expr, ComparisonOp op)
+    {
+        var chain = Assert.IsType<Expr.Comparison>(expr);
+        var link = Assert.Single(chain.Links);
+        Assert.Equal(op, link.Op);
+        return (chain.First, link.Operand);
+    }
+
+    /// <summary>Asserts a comparison chain with exactly these link operators and returns its operands in chain order.</summary>
+    private static IReadOnlyList<Expr> AssertChain(Expr expr, params ComparisonOp[] ops)
+    {
+        var chain = Assert.IsType<Expr.Comparison>(expr);
+        Assert.Equal(ops, chain.Links.Select(link => link.Op));
+        return [chain.First, .. chain.Links.Select(link => link.Operand)];
+    }
+
     private static Expr AssertUnary(Expr expr, UnaryOp op)
     {
         var unary = Assert.IsType<Expr.Unary>(expr);
@@ -2809,32 +2828,30 @@ public class ParserTests
     // ── `not` precedence: comparisons > not > and > xor > or (Python-style) ────
 
     [Theory]
-    [InlineData("not x > 3", BinaryOp.Gt)]
-    [InlineData("not x < 3", BinaryOp.Lt)]
-    [InlineData("not x >= 3", BinaryOp.Ge)]
-    [InlineData("not x <= 3", BinaryOp.Le)]
-    [InlineData("not x == 3", BinaryOp.Eq)]
-    [InlineData("not x != 3", BinaryOp.Ne)]
-    public void Parse_NotOverAComparison_NegatesTheWholeComparison(string source, BinaryOp op)
+    [InlineData("not x > 3", ComparisonOp.Gt)]
+    [InlineData("not x < 3", ComparisonOp.Lt)]
+    [InlineData("not x >= 3", ComparisonOp.Ge)]
+    [InlineData("not x <= 3", ComparisonOp.Le)]
+    [InlineData("not x == 3", ComparisonOp.Eq)]
+    [InlineData("not x != 3", ComparisonOp.Ne)]
+    public void Parse_NotOverAComparison_NegatesTheWholeComparison(string source, ComparisonOp op)
     {
-        // not x OP 3 = Unary(Not, Binary(OP, x, 3)): comparisons bind tighter than `not`.
-        var comparison = Assert.IsType<Expr.Binary>(AssertUnary(ParseSingleOutput(source), UnaryOp.Not));
-        Assert.Equal(op, comparison.Op);
-        Assert.Equal("x", Assert.IsType<Expr.Resolve>(comparison.Left).Name);
-        AssertNum(comparison.Right, 3);
+        // not x OP 3 = Unary(Not, Comparison(x, [OP 3])): comparisons bind tighter than `not`.
+        var (left, right) = AssertComparison(AssertUnary(ParseSingleOutput(source), UnaryOp.Not), op);
+        Assert.Equal("x", Assert.IsType<Expr.Resolve>(left).Name);
+        AssertNum(right, 3);
     }
 
     [Fact]
     public void Parse_NotOverArithmeticInsideAComparison_NegatesTheWholeComparison()
     {
-        // not x + 1 > y = Unary(Not, Binary(Gt, Binary(Add, x, 1), y))
-        var gt = Assert.IsType<Expr.Binary>(AssertUnary(ParseSingleOutput("not x + 1 > y"), UnaryOp.Not));
-        Assert.Equal(BinaryOp.Gt, gt.Op);
-        var add = Assert.IsType<Expr.Binary>(gt.Left);
+        // not x + 1 > y = Unary(Not, Comparison(Binary(Add, x, 1), [> y]))
+        var (left, right) = AssertComparison(AssertUnary(ParseSingleOutput("not x + 1 > y"), UnaryOp.Not), ComparisonOp.Gt);
+        var add = Assert.IsType<Expr.Binary>(left);
         Assert.Equal(BinaryOp.Add, add.Op);
         Assert.Equal("x", Assert.IsType<Expr.Resolve>(add.Left).Name);
         AssertNum(add.Right, 1);
-        Assert.Equal("y", Assert.IsType<Expr.Resolve>(gt.Right).Name);
+        Assert.Equal("y", Assert.IsType<Expr.Resolve>(right).Name);
     }
 
     [Theory]
@@ -2853,19 +2870,17 @@ public class ParserTests
     [Fact]
     public void Parse_NotOverComparisonThenLogical_GroupsLikePython()
     {
-        // not x > 3 and y = Binary(And, Unary(Not, Binary(Gt, x, 3)), y)
+        // not x > 3 and y = Binary(And, Unary(Not, Comparison(x, [> 3])), y)
         var and = Assert.IsType<Expr.Binary>(ParseSingleOutput("not x > 3 and y"));
         Assert.Equal(BinaryOp.And, and.Op);
-        var gt = Assert.IsType<Expr.Binary>(AssertUnary(and.Left, UnaryOp.Not));
-        Assert.Equal(BinaryOp.Gt, gt.Op);
+        AssertComparison(AssertUnary(and.Left, UnaryOp.Not), ComparisonOp.Gt);
         Assert.Equal("y", Assert.IsType<Expr.Resolve>(and.Right).Name);
 
-        // a and not b > 3 = Binary(And, a, Unary(Not, Binary(Gt, b, 3))): a logical
+        // a and not b > 3 = Binary(And, a, Unary(Not, Comparison(b, [> 3]))): a logical
         // operator's right operand may begin with `not`.
         var rhs = Assert.IsType<Expr.Binary>(ParseSingleOutput("a and not b > 3"));
         Assert.Equal(BinaryOp.And, rhs.Op);
-        var innerGt = Assert.IsType<Expr.Binary>(AssertUnary(rhs.Right, UnaryOp.Not));
-        Assert.Equal(BinaryOp.Gt, innerGt.Op);
+        AssertComparison(AssertUnary(rhs.Right, UnaryOp.Not), ComparisonOp.Gt);
 
         // a or not b xor c = Binary(Or, a, Binary(Xor, Unary(Not, b), c)): the
         // and/xor/or ladder itself is unchanged.
@@ -2879,33 +2894,30 @@ public class ParserTests
     [Fact]
     public void Parse_NestedNot_Nests()
     {
-        // not not x > 3 = Unary(Not, Unary(Not, Binary(Gt, x, 3)))
+        // not not x > 3 = Unary(Not, Unary(Not, Comparison(x, [> 3])))
         var inner = AssertUnary(AssertUnary(ParseSingleOutput("not not x > 3"), UnaryOp.Not), UnaryOp.Not);
-        Assert.Equal(BinaryOp.Gt, Assert.IsType<Expr.Binary>(inner).Op);
+        AssertComparison(inner, ComparisonOp.Gt);
     }
 
     [Fact]
     public void Parse_ExplicitParentheses_OverrideTheNotPrecedence()
     {
-        // (not x) > 3 = Binary(Gt, Unary(Not, x), 3): the written grouping wins.
-        var gt = Assert.IsType<Expr.Binary>(ParseSingleOutput("(not x) > 3"));
-        Assert.Equal(BinaryOp.Gt, gt.Op);
-        Assert.Equal("x", Assert.IsType<Expr.Resolve>(AssertUnary(gt.Left, UnaryOp.Not)).Name);
-        AssertNum(gt.Right, 3);
+        // (not x) > 3 = Comparison(Unary(Not, x), [> 3]): the written grouping wins.
+        var (left, right) = AssertComparison(ParseSingleOutput("(not x) > 3"), ComparisonOp.Gt);
+        Assert.Equal("x", Assert.IsType<Expr.Resolve>(AssertUnary(left, UnaryOp.Not)).Name);
+        AssertNum(right, 3);
 
         // not (x > 3) is the same tree as the bare spelling.
-        var grouped = Assert.IsType<Expr.Binary>(AssertUnary(ParseSingleOutput("not (x > 3)"), UnaryOp.Not));
-        Assert.Equal(BinaryOp.Gt, grouped.Op);
+        AssertComparison(AssertUnary(ParseSingleOutput("not (x > 3)"), UnaryOp.Not), ComparisonOp.Gt);
     }
 
     [Fact]
     public void Parse_NotAndUnaryMinus_KeepTheirOwnTiers()
     {
-        // not -x > 3 = Unary(Not, Binary(Gt, Unary(Minus, x), 3)): minus stays in
+        // not -x > 3 = Unary(Not, Comparison(Unary(Minus, x), [> 3])): minus stays in
         // the unary tier above the multiplicative operators.
-        var gt = Assert.IsType<Expr.Binary>(AssertUnary(ParseSingleOutput("not -x > 3"), UnaryOp.Not));
-        Assert.Equal(BinaryOp.Gt, gt.Op);
-        Assert.Equal("x", Assert.IsType<Expr.Resolve>(AssertUnary(gt.Left, UnaryOp.Minus)).Name);
+        var (left, _) = AssertComparison(AssertUnary(ParseSingleOutput("not -x > 3"), UnaryOp.Not), ComparisonOp.Gt);
+        Assert.Equal("x", Assert.IsType<Expr.Resolve>(AssertUnary(left, UnaryOp.Minus)).Name);
 
         // -x ^ 2 = Unary(Minus, Binary(Pow, x, 2)) and 1 + -x = Binary(Add, 1, Unary(Minus, x))
         // are unchanged: only `not` moved.
@@ -2921,12 +2933,12 @@ public class ParserTests
     {
         var not = Assert.IsType<Expr.Unary>(ParseSingleOutput("not x > 30"));
         Assert.Equal(new SourceSpan(1, 1, 1, 11), not.Span);
-        Assert.Equal(new SourceSpan(1, 5, 1, 11), Assert.IsType<Expr.Binary>(not.Operand).Span);
+        Assert.Equal(new SourceSpan(1, 5, 1, 11), Assert.IsType<Expr.Comparison>(not.Operand).Span);
 
         // The explicit group keeps the negation's span at the written group (F6).
-        var grouped = Assert.IsType<Expr.Binary>(ParseSingleOutput("(not x) > 30"));
+        var grouped = Assert.IsType<Expr.Comparison>(ParseSingleOutput("(not x) > 30"));
         Assert.Equal(new SourceSpan(1, 1, 1, 13), grouped.Span);
-        Assert.Equal(new SourceSpan(1, 1, 1, 8), Assert.IsType<Expr.Unary>(grouped.Left).Span);
+        Assert.Equal(new SourceSpan(1, 1, 1, 8), Assert.IsType<Expr.Unary>(grouped.First).Span);
     }
 
     [Theory]
@@ -2959,12 +2971,12 @@ public class ParserTests
         AssertNum(pow.Left, 2);
         AssertNum(AssertUnary(pow.Right, UnaryOp.Not), 0);
 
-        // 1 + not x > 3 recovers as Binary(Add, 1, Unary(Not, Binary(Gt, x, 3))).
+        // 1 + not x > 3 recovers as Binary(Add, 1, Unary(Not, Comparison(x, [> 3]))).
         var recovered = Parser.ParseSyntax("1 + not x > 3");
         Assert.True(recovered.HasErrors);
         var add = Assert.IsType<Expr.Binary>(Assert.Single(recovered.Root.Output));
         Assert.Equal(BinaryOp.Add, add.Op);
-        Assert.Equal(BinaryOp.Gt, Assert.IsType<Expr.Binary>(AssertUnary(add.Right, UnaryOp.Not)).Op);
+        AssertComparison(AssertUnary(add.Right, UnaryOp.Not), ComparisonOp.Gt);
     }
 
     [Fact]
@@ -2972,17 +2984,16 @@ public class ParserTests
     {
         // A line ending in `not` is incomplete, so the operand continues on the next
         // line and the comparison is still negated as a whole.
-        var gt = Assert.IsType<Expr.Binary>(AssertUnary(ParseSingleOutput("not\nx > 3"), UnaryOp.Not));
-        Assert.Equal(BinaryOp.Gt, gt.Op);
+        AssertComparison(AssertUnary(ParseSingleOutput("not\nx > 3"), UnaryOp.Not), ComparisonOp.Gt);
 
         // A trailing comparison operator continues too: `not x >` newline `3`.
-        var trailing = Assert.IsType<Expr.Binary>(AssertUnary(ParseSingleOutput("not x >\n3"), UnaryOp.Not));
-        AssertNum(trailing.Right, 3);
+        var (_, trailingRight) = AssertComparison(AssertUnary(ParseSingleOutput("not x >\n3"), UnaryOp.Not), ComparisonOp.Gt);
+        AssertNum(trailingRight, 3);
 
         // A trailing `and` continues into a `not` on the next line.
         var and = Assert.IsType<Expr.Binary>(ParseSingleOutput("a and\nnot b > 3"));
         Assert.Equal(BinaryOp.And, and.Op);
-        Assert.Equal(BinaryOp.Gt, Assert.IsType<Expr.Binary>(AssertUnary(and.Right, UnaryOp.Not)).Op);
+        AssertComparison(AssertUnary(and.Right, UnaryOp.Not), ComparisonOp.Gt);
 
         // A `not`-led line after a closed row is a new row, never a continuation.
         Assert.Equal(2, SourceProvenance.ParseValid("x > 3\nnot y").Root.Output.Count);
@@ -3060,40 +3071,16 @@ public class ParserTests
         Assert.True(broken.HasErrors);
     }
 
-    [Fact]
-    public void Parse_LessEqual_ReturnsBinaryExpr()
+    [Theory]
+    [InlineData("1 <= 2", ComparisonOp.Le)]
+    [InlineData("2 >= 1", ComparisonOp.Ge)]
+    [InlineData("1 == 1", ComparisonOp.Eq)]
+    [InlineData("1 != 2", ComparisonOp.Ne)]
+    public void Parse_EveryComparisonOperator_ReturnsOneLinkComparisonChain(string source, ComparisonOp op)
     {
-        var result = Parser.ParseSyntax("1 <= 2");
+        var result = Parser.ParseSyntax(source);
         Assert.False(result.HasErrors);
-        var binary = Assert.IsType<Expr.Binary>(result.Root.Output[0]);
-        Assert.Equal(BinaryOp.Le, binary.Op);
-    }
-
-    [Fact]
-    public void Parse_GreaterEqual_ReturnsBinaryExpr()
-    {
-        var result = Parser.ParseSyntax("2 >= 1");
-        Assert.False(result.HasErrors);
-        var binary = Assert.IsType<Expr.Binary>(result.Root.Output[0]);
-        Assert.Equal(BinaryOp.Ge, binary.Op);
-    }
-
-    [Fact]
-    public void Parse_EqualEqual_ReturnsBinaryExpr()
-    {
-        var result = Parser.ParseSyntax("1 == 1");
-        Assert.False(result.HasErrors);
-        var binary = Assert.IsType<Expr.Binary>(result.Root.Output[0]);
-        Assert.Equal(BinaryOp.Eq, binary.Op);
-    }
-
-    [Fact]
-    public void Parse_NotEqual_ReturnsBinaryExpr()
-    {
-        var result = Parser.ParseSyntax("1 != 2");
-        Assert.False(result.HasErrors);
-        var binary = Assert.IsType<Expr.Binary>(result.Root.Output[0]);
-        Assert.Equal(BinaryOp.Ne, binary.Op);
+        AssertComparison(result.Root.Output[0], op);
     }
 
     [Fact]
@@ -3159,15 +3146,13 @@ public class ParserTests
     [Fact]
     public void Parse_Precedence_ComparisonBeforeLogical()
     {
-        // 1 < 2 and 3 > 1 = (1 < 2) and (3 > 1)
+        // 1 < 2 and 3 > 1 = (1 < 2) and (3 > 1): `and` closes the first chain.
         var result = Parser.ParseSyntax("1 < 2 and 3 > 1");
         Assert.False(result.HasErrors);
         var andExpr = Assert.IsType<Expr.Binary>(result.Root.Output[0]);
         Assert.Equal(BinaryOp.And, andExpr.Op);
-        var lt = Assert.IsType<Expr.Binary>(andExpr.Left);
-        Assert.Equal(BinaryOp.Lt, lt.Op);
-        var gt = Assert.IsType<Expr.Binary>(andExpr.Right);
-        Assert.Equal(BinaryOp.Gt, gt.Op);
+        AssertComparison(andExpr.Left, ComparisonOp.Lt);
+        AssertComparison(andExpr.Right, ComparisonOp.Gt);
     }
 
     [Fact]
@@ -3184,16 +3169,16 @@ public class ParserTests
     }
 
     [Fact]
-    public void Parse_Precedence_EqualityBeforeComparison()
+    public void Parse_Precedence_EqualityAndOrderingShareOneChainableTier()
     {
-        // Note: equality (==) at prec 4, comparison (<) at prec 5
-        // So 1 == 2 < 3 = 1 == (2 < 3)
+        // Equality and ordering are ONE precedence tier, so `1 == 2 < 3` is the
+        // single chain 1 == 2, 2 < 3 — never `1 == (2 < 3)` and never `(1 == 2) < 3`.
         var result = Parser.ParseSyntax("1 == 2 < 3");
         Assert.False(result.HasErrors);
-        var eq = Assert.IsType<Expr.Binary>(result.Root.Output[0]);
-        Assert.Equal(BinaryOp.Eq, eq.Op);
-        var lt = Assert.IsType<Expr.Binary>(eq.Right);
-        Assert.Equal(BinaryOp.Lt, lt.Op);
+        var operands = AssertChain(result.Root.Output[0], ComparisonOp.Eq, ComparisonOp.Lt);
+        AssertNum(operands[0], 1);
+        AssertNum(operands[1], 2);
+        AssertNum(operands[2], 3);
     }
 
     [Fact]

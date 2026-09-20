@@ -286,7 +286,7 @@ The `^` operator raises the left side to the power of the right side.
 
 `2 ^ -2` is `0.25` — no parentheses are needed around a negated exponent (`2 ^ (-2)` means the same). The same rule applies to fractional exponents: `-2 ^ 0.5` negates the positive-base power (`-1.414…`), while `(-2) ^ 0.5` raises the negative base itself (a fractional power of a negative number is `NaN`).
 
-Operator precedence follows standard math rules: `^` binds tightest, then prefix `-`, then `*`, `/`, `div`, `mod`, then `+` and `-`; the comparisons come next, then `not`, and `and`, `xor`, `or` bind loosest. Parentheses override precedence.
+Operator precedence follows standard math rules: `^` binds tightest, then prefix `-`, then `*`, `/`, `div`, `mod`, then `+` and `-`; the six comparison operators come next as one level (see [Chained Comparisons](#chained-comparisons)), then `not`, and `and`, `xor`, `or` bind loosest. Parentheses override precedence.
 
 ```
 2 + 3 * 4
@@ -343,6 +343,38 @@ false
 
 The ordering operators (`<`, `>`, `<=`, `>=`) and the arithmetic operators, by contrast, require numeric scalar operands, and the logical operators require Boolean operands; applying any of them to a sequence value — the empty sequence `()` included — is an error, so a comparison always produces `true` or `false` (see [The Empty Sequence Value](#the-empty-sequence-value)).
 
+### Chained Comparisons
+
+All six comparison operators share one precedence level and **chain**: comparison operators written one after another form a single comparison of each adjacent pair, exactly as in mathematics. `low <= x < high` means `low <= x` and `x < high`, `a < b <= c == d != e` compares `a < b`, `b <= c`, `c == d`, and `d != e`, and the whole chain is `true` only when every adjacent comparison holds. Equality and ordering mix freely, and `!=` compares adjacent pairs like every other operator — `1 != 2 != 1` is `true` (it is `1 != 2` and `2 != 1`, not "all three distinct"). Every operand is evaluated exactly once, left to right: the middle operand of `A() < B() < C()` runs once and its value serves both comparisons.
+
+<!-- spec:comparison-chains-compare-adjacent-pairs -->
+```
+1 < 2 < 3
+1 < 2 <= 2 == 2 != 3
+1 == 1 == 1
+1 != 2 != 1
+1 != 1 != 1
+3 < 2 < 1
+1 == 1 < 2
+1 < 2 == true
+```
+
+**Results:**
+```
+true
+true
+true
+true
+false
+false
+true
+false
+```
+
+The last row shows that a chain never compares a Boolean *result* with the next operand: `1 < 2 == true` compares `2` with `true`, which is `false`. Parentheses end a chain, so `(1 < 2) == true` compares the Boolean value of the group and is `true`, while `1 < (2 == 2)` tries to order `1` against a Boolean and is a type error.
+
+Like `and` and `or`, a chain is eager: a `false` comparison does not stop the later ones, so `3 < 2 < true` still performs `2 < true` and reports that comparison as an error rather than returning `false`. An error, on the other hand, ends the chain at once — the operands after it are not evaluated.
+
 ### Boolean Values
 
 `true` and `false` are KatLang's Boolean values: a value kind of their own, distinct from numbers. They are reserved literals — they cannot be declared, shadowed, or inferred as parameters — and they display as `true` and `false`. There is no conversion between Booleans and numbers in either direction: `1` is not `true`, `0` is not `false`, and an operator or builtin that needs one kind rejects the other with a type error naming the value it was given.
@@ -391,17 +423,22 @@ false
 true
 ```
 
-Because comparisons return Booleans, logical operators compose naturally with them:
+Because comparisons return Booleans, logical operators compose naturally with them (a range test is usually clearest as one chain, `5 < x < 10`, but the two spellings are equivalent for a plain value):
 
 ```
 InRange = x > 5 and x < 10
+Between = 5 < x < 10
 
 InRange(7)
 InRange(3)
+Between(7)
+Between(3)
 ```
 
 **Results:**
 ```
+true
+false
 true
 false
 ```
@@ -4057,7 +4094,7 @@ Rows:0:1
 2
 ```
 
-`Rows:0` selects the stored element `[1, 2]` (one opaque list, count 1), and chaining `:` selects one level at a time, so `Rows:0:1` is `2`. Exact kinds survive selection: `[[1, 2]]:0 == [1, 2]` is `1` while `[[1, 2]]:0 == (1, 2)` is `0`.
+`Rows:0` selects the stored element `[1, 2]` (one opaque list, count 1), and chaining `:` selects one level at a time, so `Rows:0:1` is `2`. Exact kinds survive selection: `[[1, 2]]:0 == [1, 2]` is `true` while `[[1, 2]]:0 == (1, 2)` is `false`.
 
 Collection-producing builtin results are exact lists, so they index directly — no spread-and-recapture step is needed:
 
@@ -4335,7 +4372,7 @@ atoms(7)
 [7]
 ```
 
-`atoms(7)` is the singleton list `[7]`, never the bare `7` (`atoms(7) == [7]` is `1`; `atoms(7) == 7` is `0`), and `atoms((1, 2))` is the exact list `[1, 2]`, never the sequence `(1, 2)`. A no-atom input — `atoms('text')`, `atoms(())`, `atoms([])` — is the visible empty list `[]`. Strings and other non-numeric leaves contribute no atoms: `atoms((1, ['a', 2]))` is `[1, 2]`.
+`atoms(7)` is the singleton list `[7]`, never the bare `7` (`atoms(7) == [7]` is `true`; `atoms(7) == 7` is `false`), and `atoms((1, 2))` is the exact list `[1, 2]`, never the sequence `(1, 2)`. A no-atom input — `atoms('text')`, `atoms(())`, `atoms([])` — is the visible empty list `[]`. Strings and other non-numeric leaves contribute no atoms: `atoms((1, ['a', 2]))` is `[1, 2]`.
 
 List values are traversed exactly like sequence values:
 
@@ -4816,7 +4853,7 @@ Helper = Area / 2   # private: never exported through open or load, still reacha
 
 - **Numeric precision:** KatLang numbers are IEEE 754 Decimal128 — 34 significant decimal digits with a huge exponent range (about ±6144). Results needing more than 34 significant digits round to the nearest representable value, and arithmetic past the representable range saturates to `Infinity`/`-Infinity` rather than erroring.
 - **No hidden rounding of math functions:** trig, logarithm, root, and power results carry full Decimal128 precision and are never snapped toward "nice" values. `Math.Pi` is π rounded to 34 digits, so `Math.Sin(Math.Pi)` is the tiny residual of that rounding (about `-1.158e-34`), not `0` — compare against a tolerance when testing near-zero trig identities. Irrational results such as `Math.Sin(1)` are approximations at 34 digits, correct to roughly the last digit or two. `Math.Acos`/`acos` and `Math.Asin`/`asin` are sensitive to input error near ±1. For `0.9999 < |x| <= 1`, KatLang uses a decimal endpoint reformulation to avoid the tested runtime's accuracy loss (`acos(1 - 1e-30)` previously retained about 9 digits). The logarithm family gets the same treatment near 1: for `0.5 <= x <= 1.5`, `Math.Ln`, `Math.Lg`, and `Math.Log` compute through the runtime's `log(1 + ε)` primitive on the exact difference `x - 1` (the plain logarithm lost roughly one digit per decade of closeness to 1 — `Math.Ln(1 + 1e-33)` kept five correct digits), and a fractional or beyond-`long` exponent on a base within `0.99 <= b <= 1.01` computes `exp(exponent · ln(base))` with the exponent product carried at 80 fixed-point places instead of the runtime power, which inherited the loss (`(1 + 1e-33) ^ 9223372036854775808` came out smaller than the same base to the power `9223372036854775807`); the product is never rounded to Decimal128 before exponentiation, because a power loses about one digit per decade of `|exponent · ln(base)|` when it is (`0.99 ^ 12345.5` computed through a 34-digit product was 123 last-place units off). The logarithm reformulation is an accurate composition of runtime primitives, verified against an independent series oracle, not a correct-rounding guarantee; the near-1 power uses 80-place fixed-point approximations with truncation error propagated through the exponent, checked against an independent binomial-series oracle and separately derived power constants; it has no interval-certified correct-rounding guarantee. A deterministic sweep of 23,080 distinct signed inputs, including every representable gap `n * 1e-34` for `n = 1..999`, observed maximum errors of about 1.526 result ulp for `acos` near +1, 0.504 near −1, and 0.503 for `asin` on either side. These are sample measurements, not universal error bounds or a correct-rounding guarantee; some previously correctly rounded in-band results change by one last-place digit. `acos(-1) == Math.Pi` and `asin(±1)` retains the existing Decimal128 ±π/2 value: both identities involve rounded constants. For finite nonzero bases and integer exponents with magnitude at most 9223372036854775807, successful certified powers (`0.9999999 ^ 10000000`, `2 ^ 113`, `1.1 ^ -34`) round the exact mathematical power once to Decimal128, ties to even. If refinement cannot certify the result within 4096 working digits, evaluation reports a structured error. Fractional and larger finite exponents use the near-one fixed-point approximation when the base is within [0.99, 1.01]. Outside that band, and for non-finite exponents or negative integer powers whose previous positive-power computation overflows, the existing Decimal128.Pow delegation is retained; those approximations are outside the certification guarantee. Exact results retain compatible existing display quanta, including the trailing zeros of `5 ^ -50`.
-- **IEEE special values:** `NaN`, `Infinity`, `-Infinity`, and `-0` are ordinary numeric values (from domain violations like `Math.Sqrt(-1)`, overflow, writing `-0`, or an integer operation whose zero result takes IEEE's sign rules — `-4 mod 2`, `-7 div 8`, and `0 * -1` are all `-0`, which displays and converts to `'-0'` while comparing equal to `0`). Ordering comparisons involving `NaN` are always false, while `==`/`!=` use structural value identity (so `NaN == NaN` is `1`). Dividing by any zero-valued divisor (including `-0` and computed zeros) is still an error, not `Infinity`, and so is raising a zero-valued base to any negative exponent (`0 ^ -1` and `0 ^ -0.5` alike). With `DisplayDecimals` set, the special values keep these same spellings (`NaN`, `Infinity`, `-Infinity`), while a finite signed zero follows the fixed-point rule like any other finite value (`-0` stays `-0`; `-0.0` shows as `-0.00` at two decimals).
+- **IEEE special values:** `NaN`, `Infinity`, `-Infinity`, and `-0` are ordinary numeric values (from domain violations like `Math.Sqrt(-1)`, overflow, writing `-0`, or an integer operation whose zero result takes IEEE's sign rules — `-4 mod 2`, `-7 div 8`, and `0 * -1` are all `-0`, which displays and converts to `'-0'` while comparing equal to `0`). Ordering comparisons involving `NaN` are always false, while `==`/`!=` use structural value identity (so `NaN == NaN` is `true`). Dividing by any zero-valued divisor (including `-0` and computed zeros) is still an error, not `Infinity`, and so is raising a zero-valued base to any negative exponent (`0 ^ -1` and `0 ^ -0.5` alike). With `DisplayDecimals` set, the special values keep these same spellings (`NaN`, `Infinity`, `-Infinity`), while a finite signed zero follows the fixed-point rule like any other finite value (`-0` stays `-0`; `-0.0` shows as `-0.00` at two decimals).
 - **Parameter order surprises:** parameter order is determined by first appearance reading left to right. If your expression reads `b - a`, the first parameter is `b`, not `a`. Use Grace (`~`) to override when needed.
 - **`if` arity:** builtin `if` requires three arguments after spread expansion: `if(cond, a, b)`. There is no two-argument form. A grouped value is one argument, so `if(X)` is invalid when `X = 1, 2, 3`; spread it with `if(X*)` to supply the three slots. The check happens when the call runs, against the callable that [name resolution](#name-resolution) selected — declaring your own `if` shadows the builtin, and a wrong-arity call then reports *your* signature.
 - **Misspelled members on known receivers:** dot syntax is receiver injection — `a.F(x)` is `F(a, x)` when `a` has no structural `F` — and a statically known receiver such as `Math`, a block, or a module gets no special treatment. So `Math.Ceiling(2.1)` is not a "missing member" error: the edge falls back to a lexical `Ceiling`, and since none is visible, `Ceiling` becomes an implicit parameter of the program. The report names the receiver, explains the fallback, and suggests `Math.Ceil`; if a lexical `Ceiling(a, b)` IS visible, the call is the valid fallback `Ceiling(Math, 2.1)` and simply runs (see [Misspelled Members on Known Receivers](#misspelled-members-on-known-receivers)).
@@ -4899,8 +4936,7 @@ Helper = Area / 2   # private: never exported through open or load, still reacha
 | `-` | Arithmetic negation (prefix; between `^` and the multiplicative operators) | |
 | `*`, `/`, `div`, `mod` | Multiplication, division, integer division, modulo | |
 | `+`, `-` | Addition, subtraction | |
-| `<`, `>`, `<=`, `>=` | Ordering comparison, numeric scalar operands only (returns `true` or `false`) | |
-| `==`, `!=` | Structural value equality / inequality across all value kinds (numbers, Booleans, strings, sequence values, and lists — different kinds compare unequal); returns `true` or `false` | |
+| `<`, `>`, `<=`, `>=`, `==`, `!=` | The comparisons: ONE precedence level that chains — `a < b <= c == d` compares each adjacent pair and is `true` only when every pair holds (operands evaluated once each, left to right; a `false` pair never stops the chain, an error does; parentheses end a chain). Ordering takes numeric scalar operands only; `==`/`!=` are structural value equality / inequality across all value kinds (numbers, Booleans, strings, sequence values, and lists — different kinds compare unequal). Returns `true` or `false` | |
 | `not` | Logical negation (prefix; binds less tightly than the comparisons and more tightly than `and`, so `not x > 3` is `not (x > 3)` and `not a and b` is `(not a) and b`; it cannot begin the operand of a tighter operator — write `a == (not b)`, not `a == not b`) | |
 | `and` | Logical and | |
 | `xor` | Logical exclusive or | |

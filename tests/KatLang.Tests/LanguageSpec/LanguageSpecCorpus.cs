@@ -229,6 +229,83 @@ public static class LanguageSpecCorpus
         },
         new()
         {
+            Id = "comparison-chains-compare-adjacent-pairs",
+            Category = "arithmetic",
+            Source = "1 < 2 < 3\n1 < 2 <= 2 == 2 != 3\n1 == 1 == 1\n1 != 2 != 1\n1 != 1 != 1\n3 < 2 < 1\n1 == 1 < 2\n1 < 2 == true",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "true\ntrue\ntrue\ntrue\nfalse\nfalse\ntrue\nfalse",
+            ExpectedRaw = "S[true, true, true, true, false, false, true, false]",
+            ExpectedEmittedCount = 8,
+            Probes =
+            [
+                // Parentheses are expression boundaries: a parenthesized chain is an
+                // ordinary Boolean operand and never merges into the outer chain.
+                new SpecProbe("(1 < 2) == true", "ok raw=true n=1"),
+                new SpecProbe("1 == (1 < 2)", "ok raw=false n=1"),
+                new SpecProbe("(1 < 2) == (3 < 4)", "ok raw=true n=1"),
+                new SpecProbe("(1 < 2 < 3) == true", "ok raw=true n=1"),
+                new SpecProbe("1 == (2 < 3 < 4)", "ok raw=false n=1"),
+                new SpecProbe("1 < (2 == 2)", "err type"),
+                new SpecProbe("(1 == 1) < 2", "err type"),
+                // The surrounding tiers: `not` below the chain, the logical operators below
+                // `not`, arithmetic above the chain.
+                new SpecProbe("not 1 < 2 < 3", "ok raw=false n=1"),
+                new SpecProbe("1 < 2 < 3 and 4 < 5", "ok raw=true n=1"),
+                new SpecProbe("1 + 1 < 3 * 1 <= 4 - 1", "ok raw=true n=1"),
+                new SpecProbe("-2 ^ 2 < -3 < 0", "ok raw=true n=1"),
+                // A middle link that is false makes the chain false; equality and ordering
+                // mix freely on the same operands.
+                new SpecProbe("1 < 3 < 2 < 4", "ok raw=false n=1"),
+                new SpecProbe("1 <= 1 == 1", "ok raw=true n=1"),
+                new SpecProbe("1 < 1 == 1", "ok raw=false n=1"),
+                // Structural equality chains over strings and sequence values.
+                new SpecProbe("'a' == 'a' == 'a'", "ok raw=true n=1"),
+                new SpecProbe("(1, 2) == (1, 2) != (2, 1)", "ok raw=true n=1"),
+                // Booleans are not ordered, in a chain exactly as alone.
+                new SpecProbe("true < false", "err type"),
+                new SpecProbe("1 < 2 < 3 < true", "err type"),
+            ],
+            IncludeInGeneratorPrompt = true,
+            Notes = "The six comparison operators form ONE chainable precedence tier (September 2026): consecutive unparenthesized comparisons are one `Expr.comparison` chain with adjacent-pair links, evaluated incrementally with every operand exactly once. Before this change equality bound looser than ordering, so `1 == 1 < 2` read `1 == (1 < 2)` (false) and `1 < 2 < 3` ordered a Boolean against a number (an error).",
+            Explanation = "All six comparison operators share one precedence tier and CHAIN: `a < b <= c == d != e` compares the adjacent pairs `a < b`, `b <= c`, `c == d`, and `d != e`, and the whole chain is `true` only when every pair holds. Each operand is evaluated once, left to right. `1 != 2 != 1` is `true` (adjacent pairs, not \"all distinct\"), `1 == 1 < 2` is `true`, and `1 < 2 == true` compares `2` with `true` (false). Parentheses break a chain: `(1 < 2) == true` compares the Boolean result of the group.",
+        },
+        new()
+        {
+            Id = "comparison-chain-boolean-and-arithmetic-operands",
+            Category = "arithmetic",
+            Source = "true == true == true\ntrue != false != true\ntrue == 1 == false\ntrue == true == false\n1 + 1 < 3 == 2 + 0\n-2 ^ 2 < 0 == true",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "true\ntrue\nfalse\nfalse\nfalse\nfalse",
+            ExpectedRaw = "S[true, true, false, false, false, false]",
+            ExpectedEmittedCount = 6,
+            Explanation = "Comparisons use adjacent operand values even across Boolean/numeric kinds; arithmetic and power bind inside operands. The Boolean result accumulated by a chain never becomes an operand of its next link.",
+        },
+        new()
+        {
+            Id = "comparison-chain-is-eager-after-false",
+            Category = "errors",
+            Source = "3 < 2 < true",
+            Outcome = SpecOutcome.EvalError,
+            ExpectedErrorCategory = "type",
+            Probes =
+            [
+                // A later operand's own error still surfaces after an earlier false link...
+                new SpecProbe("3 < 2 < 1 / 0", "err div0"),
+                new SpecProbe("1 == 2 == 1 / 0", "err div0"),
+                // ...while an EARLIER operand or link error stops the chain before any later
+                // operand: the earlier failure is the outcome.
+                new SpecProbe("1 / 0 < true < 1", "err div0"),
+                new SpecProbe("1 < true < 1 / 0", "err type"),
+                new SpecProbe("'a' < 'b' < 1 / 0", "err type"),
+                // A later operand that would fail at evaluation is never reached.
+                new SpecProbe("1 < true < (1 / 0)", "err type"),
+            ],
+            IncludeInGeneratorPrompt = true,
+            Notes = "Eager Boolean composition, like `and`/`or`: `false` never short-circuits a chain, so `3 < 2 < true` still compares `2 < true` and reports that link's ordering rejection (`while evaluating `2 < true``). Errors do terminate: an error in an earlier operand or link is the chain's outcome and later operands are not evaluated. Lean `evalComparisonCounted` / C# `EvalExpressionSpineCounted`.",
+            Explanation = "A `false` comparison never stops a chain — like `and` and `or`, comparison chains evaluate eagerly — so `3 < 2 < true` still performs `2 < true`, and that comparison is the error (Booleans are not ordered). Errors do stop a chain: once an operand or a comparison fails, the later operands are not evaluated.",
+        },
+        new()
+        {
             Id = "integer-division-truncates",
             Category = "arithmetic",
             Source = "-7 div 2\n-7 mod 2\n7 div 2",

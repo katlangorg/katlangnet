@@ -2,19 +2,34 @@ using System.Numerics;
 
 namespace KatLang;
 
-// ── Operators (Lean: BinaryOp, UnaryOp) ─────────────────────────────────────
+// ── Operators (Lean: BinaryOp, ComparisonOp, UnaryOp) ───────────────────────
 
 /// <summary>
-/// Binary operators. Arithmetic (<c>Add</c>…<c>Pow</c>) and the ordering comparisons
-/// (<c>Lt</c>…<c>Ge</c>) take numeric scalar operands; the comparisons yield a
-/// <see cref="Result.Bool"/>. <c>Eq</c>/<c>Ne</c> are total structural equality over
-/// every value kind and yield a Boolean. <c>And</c>/<c>Or</c>/<c>Xor</c> take Boolean
-/// operands only and yield a Boolean — there is no numeric truthiness.
+/// Binary operators. Arithmetic (<c>Add</c>…<c>Pow</c>) takes numeric scalar operands
+/// and yields a number. <c>And</c>/<c>Or</c>/<c>Xor</c> take Boolean operands only and
+/// yield a Boolean — there is no numeric truthiness. The six comparison operators are
+/// NOT binary operators: they form the one chainable comparison tier
+/// (<see cref="ComparisonOp"/>, <see cref="Expr.Comparison"/>).
 /// </summary>
-public enum BinaryOp { Add, Sub, Mul, Div, IDiv, Mod, Pow, Lt, Gt, Le, Ge, Eq, Ne, And, Or, Xor }
+public enum BinaryOp { Add, Sub, Mul, Div, IDiv, Mod, Pow, And, Or, Xor }
+
+/// <summary>
+/// The six comparison operators of the ONE comparison precedence tier. The ordering
+/// comparisons (<c>Lt</c>…<c>Ge</c>) take numeric scalar operands; <c>Eq</c>/<c>Ne</c>
+/// are total structural equality over every value kind. Every comparison yields a
+/// <see cref="Result.Bool"/>. Unparenthesized comparisons at one syntactic level form
+/// one <see cref="Expr.Comparison"/> chain. Lean: <c>ComparisonOp</c>.
+/// </summary>
+public enum ComparisonOp { Lt, Gt, Le, Ge, Eq, Ne }
 
 /// <summary><c>Minus</c> negates a number; <c>Not</c> negates a Boolean value.</summary>
 public enum UnaryOp { Minus, Not }
+
+/// <summary>
+/// One link of a comparison chain: the operator that compares the PREVIOUS operand of
+/// the chain with <paramref name="Operand"/>. Lean: <c>ComparisonLink</c>.
+/// </summary>
+public sealed record ComparisonLink(ComparisonOp Op, Expr Operand);
 
 // ── Built-in identifiers (Lean: Builtin) ────────────────────────────────────
 
@@ -532,8 +547,26 @@ public closed record Expr
     /// <summary>Numeric negation or Boolean negation.</summary>
     public sealed record Unary(UnaryOp Op, Expr Operand) : Expr;
 
-    /// <summary>Binary arithmetic or comparison expression.</summary>
+    /// <summary>Binary arithmetic or logical expression (never a comparison — see <see cref="Comparison"/>).</summary>
     public sealed record Binary(BinaryOp Op, Expr Left, Expr Right) : Expr;
+
+    /// <summary>
+    /// A COMPARISON CHAIN: <c>First op1 x1 op2 x2 …</c>, the ONE representation of
+    /// every comparison, whether it has one link (<c>a &lt; b</c>) or many
+    /// (<c>a &lt; b &lt;= c == d != e</c>). Unparenthesized comparison operators at one
+    /// syntactic level form one chain; a parenthesized comparison is an ordinary
+    /// operand (<c>(a &lt; b) == c</c> is a one-link chain whose first operand is a
+    /// chain). Each link compares the PREVIOUS operand with its own — adjacent-pair
+    /// semantics, so <c>1 != 2 != 1</c> is <c>1 != 2</c> and <c>2 != 1</c> — and the
+    /// chain is <c>true</c> iff every link holds. Evaluation is incremental and left to
+    /// right: every operand is evaluated EXACTLY ONCE (the previous operand's VALUE is
+    /// reused, never its expression), each link is compared as soon as its operand is
+    /// available, a <c>false</c> link never stops the chain (KatLang's eager Boolean
+    /// composition, so a later invalid comparison is still reported), and an error
+    /// terminates it (later operands are not evaluated). A host-built chain with no
+    /// links evaluates its first operand and is <c>true</c>. Lean: <c>Expr.comparison</c>.
+    /// </summary>
+    public sealed record Comparison(Expr First, IReadOnlyList<ComparisonLink> Links) : Expr;
 
     /// <summary>Output selection. <c>Index(a, i)</c> selects top-level item <c>i</c> from evaluated output of <c>a</c> and projects that item's content one level.</summary>
     public sealed record Index(Expr Target, Expr Selector) : Expr;

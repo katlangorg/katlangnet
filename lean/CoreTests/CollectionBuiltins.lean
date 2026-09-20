@@ -175,7 +175,7 @@ def spreadBuiltinArgumentsSingleSlotKeepsItemOrder : Bool :=
 
 def isEvenAlg93 : Algorithm :=
   alg ["x"] [] [] [
-    .binary .eq (.binary .mod (.param "x") (.num 2)) (.num 0)
+    .compare .eq (.binary .mod (.param "x") (.num 2)) (.num 0)
   ]
 
 -- Test 93: plain-call sum adds expanded range items
@@ -2158,7 +2158,7 @@ def takeSingleKeptItemDotCount : Bool :=
 
 def takeSingleKeptItemEqualsListLiteral : Bool :=
   match runResult (takeSingleKeptItemProgram
-      (.binary .eq (.resolve "T") (.listLiteral [sequenceItems [.num 1, .num 2]]))) with
+      (.compare .eq (.resolve "T") (.listLiteral [sequenceItems [.num 1, .num 2]]))) with
   | Except.ok (.bool true) => true
   | _ => false
 
@@ -2166,7 +2166,7 @@ def takeSingleKeptItemEqualsListLiteral : Bool :=
 
 def takeSingleKeptItemNotEqualFlatLiteral : Bool :=
   match runResult (takeSingleKeptItemProgram
-      (.binary .eq (.resolve "T") (sequenceItems [.num 1, .num 2]))) with
+      (.compare .eq (.resolve "T") (sequenceItems [.num 1, .num 2]))) with
   | Except.ok (.bool false) => true
   | _ => false
 
@@ -2174,7 +2174,7 @@ def takeSingleKeptItemNotEqualFlatLiteral : Bool :=
 
 def takeSingleKeptItemNotEqualWrappedLiteral : Bool :=
   match runResult (takeSingleKeptItemProgram
-      (.binary .eq (.resolve "T")
+      (.compare .eq (.resolve "T")
         (.capture [sequenceItems [.num 1, .num 2]]))) with
   | Except.ok (.bool false) => true
   | _ => false
@@ -2210,7 +2210,7 @@ def distinctSingleKeptEmptyItemCountsOne : Bool :=
 #guard distinctSingleKeptEmptyItemCountsOne
 
 def distinctSingleKeptEmptyItemNotEqualEmpty : Bool :=
-  match runResult (.binary .eq
+  match runResult (.compare .eq
       (.call (resolve "distinct") [.capture [.emptySequence 0, .emptySequence 0]])
       (.emptySequence 0)) with
   | Except.ok (.bool false) => true
@@ -2869,7 +2869,7 @@ def test217 : Bool :=
 def test218 : Bool :=
   let keepSecondEven : Algorithm :=
     alg ["pair"] [] [] [
-      .binary .eq
+      .compare .eq
         (.binary .mod (.index (.param "pair") (.num 1)) (.num 2))
         (.num 0)
     ]

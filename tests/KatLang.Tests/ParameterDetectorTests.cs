@@ -129,9 +129,9 @@ public class ParameterDetectorTests
         Assert.Single(predicateBlock.Algorithm.Params);
         Assert.Equal("item", predicateBlock.Algorithm.Params[0]);
 
-        var predicate = Assert.IsType<Expr.Binary>(Assert.Single(predicateBlock.Algorithm.Output));
-        var itemParam = Assert.IsType<Expr.Param>(predicate.Left);
-        var targetParam = Assert.IsType<Expr.Param>(predicate.Right);
+        var predicate = Assert.IsType<Expr.Comparison>(Assert.Single(predicateBlock.Algorithm.Output));
+        var itemParam = Assert.IsType<Expr.Param>(predicate.First);
+        var targetParam = Assert.IsType<Expr.Param>(Assert.Single(predicate.Links).Operand);
         Assert.Equal("item", itemParam.Name);
         Assert.Equal("target", targetParam.Name);
     }

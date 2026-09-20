@@ -189,6 +189,8 @@ internal sealed partial class ModuleLoader
                 ? binary
                 : binary with { Left = left, Right = right, Span = null },
 
+            Expr.Comparison comparison => RewriteComparison(comparison),
+
             Expr.Index index => (Rewrite(index.Target), Rewrite(index.Selector)) is var (target, selector)
                 && ReferenceEquals(target, index.Target) && ReferenceEquals(selector, index.Selector) && index.Span is null
                 ? index
@@ -293,6 +295,20 @@ internal sealed partial class ModuleLoader
         /// otherwise; memoized per list instance so a list shared by several owners (the
         /// deconstruction helpers' one pattern list) is rewritten once and stays shared.
         /// </summary>
+        /// <summary>
+        /// A comparison chain keeps its instance when neither its first operand, any link
+        /// operand, nor its own span changes; otherwise the links are rewritten through the
+        /// ONE link rewriter and the node loses its location like every other expression.
+        /// </summary>
+        private Expr RewriteComparison(Expr.Comparison comparison)
+        {
+            var first = Rewrite(comparison.First);
+            var links = AstHelpers.RewriteComparisonLinks(comparison.Links, Rewrite);
+            return ReferenceEquals(first, comparison.First) && ReferenceEquals(links, comparison.Links) && comparison.Span is null
+                ? comparison
+                : comparison with { First = first, Links = links, Span = null };
+        }
+
         private IReadOnlyList<T> RewriteList<T>(IReadOnlyList<T> items, Func<T, T> rewrite)
             where T : class
         {

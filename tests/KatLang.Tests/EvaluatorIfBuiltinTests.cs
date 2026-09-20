@@ -156,7 +156,7 @@ public class EvaluatorIfBuiltinTests
             new Expr.Call(
                 new Expr.Resolve("if"),
                 [
-                    new Expr.Binary(BinaryOp.Lt, new Expr.Num(7), new Expr.Num(6)),
+                    EvaluatorTestSupport.Compare(ComparisonOp.Lt, new Expr.Num(7), new Expr.Num(6)),
                     new Expr.Num(1),
                 ]));
 

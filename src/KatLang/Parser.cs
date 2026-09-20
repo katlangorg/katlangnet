@@ -319,6 +319,25 @@ public sealed class Parser
         if (secondChild is not null)
             childDepth = Math.Max(childDepth, ExpressionChainDepth(secondChild));
 
+        return RegisterExpressionChainDepth(expression, operatorToken, childDepth);
+    }
+
+    /// <summary>
+    /// The chain-depth guard for a comparison chain: one level over the DEEPEST of its
+    /// operands. A chain's operands are siblings (the chain is one flat node however
+    /// many links it has), so a long chain costs one level, exactly like one binary node.
+    /// </summary>
+    private Expr GuardComparisonChainDepth(Expr.Comparison chain, Token operatorToken)
+    {
+        var childDepth = ExpressionChainDepth(chain.First);
+        foreach (var link in chain.Links)
+            childDepth = Math.Max(childDepth, ExpressionChainDepth(link.Operand));
+
+        return RegisterExpressionChainDepth(chain, operatorToken, childDepth);
+    }
+
+    private Expr RegisterExpressionChainDepth(Expr expression, Token operatorToken, int childDepth)
+    {
         var depth = childDepth + 1;
         if (depth > MaxExpressionChainDepth)
         {
@@ -688,12 +707,12 @@ public sealed class Parser
         TokenKind.Colon => new(true, false),
         TokenKind.Tilde => new(true, false),
         // `^` is parsed by ParsePower rather than the binary loop, so it is
-        // absent from GetBinaryOpInfo and needs its own row with exactly the
-        // loop operators' behavior: a trailing `^` continues to a right
+        // absent from BinaryOperatorPrecedence and needs its own row with exactly
+        // the loop operators' behavior: a trailing `^` continues to a right
         // operand on the following line, a `^`-led line never continues the
         // previous line's closed expression.
         TokenKind.Caret => new(true, false),
-        _ when GetBinaryOpInfo(kind).Precedence > 0 => new(true, false),
+        _ when BinaryOperatorPrecedence(kind) > 0 => new(true, false),
         _ => new(false, false),
     };
 
@@ -827,6 +846,11 @@ public sealed class Parser
     /// <summary>A binary node spanning its left operand through the last consumed token.</summary>
     [System.Runtime.CompilerServices.MethodImpl(LeafFrame)]
     private Expr.Binary BinaryFrom(BinaryOp op, Expr lhs, Expr rhs) => new(op, lhs, rhs) { Span = SpanFrom(lhs) };
+
+    /// <summary>A comparison chain spanning its first operand through the last consumed token.</summary>
+    [System.Runtime.CompilerServices.MethodImpl(LeafFrame)]
+    private Expr.Comparison ComparisonFrom(Expr first, IReadOnlyList<ComparisonLink> links)
+        => new(first, links) { Span = SpanFrom(first) };
 
     /// <summary>A unary node spanning its operator token through the last consumed token.</summary>
     [System.Runtime.CompilerServices.MethodImpl(LeafFrame)]
@@ -2560,6 +2584,11 @@ public sealed class Parser
                     pending.Push(right);
                     pending.Push(left);
                     break;
+                case Expr.Comparison(var first, var links):
+                    for (var i = links.Count - 1; i >= 0; i--)
+                        pending.Push(links[i].Operand);
+                    pending.Push(first);
+                    break;
                 case Expr.Unary(_, var operand):
                     pending.Push(operand);
                     break;
@@ -3197,6 +3226,7 @@ public sealed class Parser
         Expr.Param => "param",
         Expr.Unary => "unary",
         Expr.Binary => "binary",
+        Expr.Comparison => "comparison",
         Expr.SequenceConstruct => "sequenceConstruct",
         Expr.SequenceSpread => "spread",
         Expr.ListLiteral => "listLiteral",
@@ -3443,20 +3473,25 @@ public sealed class Parser
     //                     `not x > 3` is `not (x > 3)` and `not a and b` is
     //                     `(not a) and b`. Parsed by the prefix arm of
     //                     ParseExpressionCore: the operand climbs from the
-    //                     equality level, so `not` can never be a bare operand
+    //                     comparison level, so `not` can never be a bare operand
     //                     of a tighter operator — `1 + not x`, `a == not b`,
     //                     and `2 ^ not x` are diagnosed and need `(not …)`.)
-    //   5: == !=         (equality, left-associative)
-    //   6: < > <= >=     (comparison, left-associative)
-    //   7: + -           (additive, left-associative)
-    //   8: * / div mod   (multiplicative, left-associative)
-    //   9: -             (unary prefix minus)
-    //  10: ^             (power, right-associative; parsed by ParsePower, not
+    //   5: < > <= >= == != (the ONE comparison tier: all six operators CHAIN.
+    //                     Consecutive unparenthesized comparison operators at
+    //                     one level form ONE Expr.Comparison node with
+    //                     adjacent-pair semantics — `a < b == c` compares a
+    //                     with b and b with c — never a nested tree, and a
+    //                     parenthesized comparison is an ordinary operand that
+    //                     never merges into the surrounding chain.)
+    //   6: + -           (additive, left-associative)
+    //   7: * / div mod   (multiplicative, left-associative)
+    //   8: -             (unary prefix minus)
+    //   9: ^             (power, right-associative; parsed by ParsePower, not
     //                     the binary loop. Binds tighter than unary minus on
     //                     the LEFT only: the base is postfix-level, while the
     //                     exponent re-enters the unary level — `-2 ^ 2` is
     //                     `-(2 ^ 2)`, `2 ^ -2` stays valid.)
-    //  11: . : call      (postfix)
+    //  10: . : call      (postfix)
 
     private Expr ParseExpression(int minPrecedence = 0)
     {
@@ -3471,11 +3506,17 @@ public sealed class Parser
 
     /// <summary>
     /// The precedence of prefix <c>not</c> inside the binary ladder: above the
-    /// logical operators (<c>and</c> is 3) and below equality (5). A <c>not</c> is
-    /// admitted exactly when the surrounding level asks for at most this
-    /// precedence, and its operand climbs from the equality level up.
+    /// logical operators (<c>and</c> is 3) and below the comparisons (5). A
+    /// <c>not</c> is admitted exactly when the surrounding level asks for at most
+    /// this precedence, and its operand climbs from the comparison level up.
     /// </summary>
     private const int NotPrecedence = 4;
+
+    /// <summary>
+    /// The ONE precedence of all six comparison operators. Consecutive comparison
+    /// operators at this level extend one <see cref="Expr.Comparison"/> chain.
+    /// </summary>
+    private const int ComparisonPrecedence = 5;
 
     private Expr ParseExpressionCore(int minPrecedence = 0)
     {
@@ -3483,12 +3524,13 @@ public sealed class Parser
         if (Current.Kind == TokenKind.KeywordNot && minPrecedence <= NotPrecedence)
         {
             // Prefix `not` at its own tier: the operand is everything that binds
-            // tighter than `not` — a comparison, its arithmetic, a power — so
-            // `not x > 3` is `not (x > 3)`; a following `and`/`xor`/`or` is then
-            // applied to the negation by the loop below. Chains (`not not x`)
-            // re-enter this arm through the operand's own level. A `not` where
-            // the level demands something tighter (`1 + not x`) falls through
-            // to ParseUnary and is diagnosed in ParsePrimary.
+            // tighter than `not` — a comparison chain, its arithmetic, a power —
+            // so `not x > 3` is `not (x > 3)` and `not a < b < c` negates the
+            // whole chain; a following `and`/`xor`/`or` is then applied to the
+            // negation by the loop below. Chains (`not not x`) re-enter this arm
+            // through the operand's own level. A `not` where the level demands
+            // something tighter (`1 + not x`) falls through to ParseUnary and is
+            // diagnosed in ParsePrimary.
             var start = Advance(); // consume 'not'
             lhs = CreateUnaryExpression(start, ParseExpression(NotPrecedence));
         }
@@ -3497,9 +3539,12 @@ public sealed class Parser
             lhs = ParseUnary();
         }
 
+        // The links of the comparison chain being extended at this level, or null
+        // while no chain is open (one reference-sized local: the frame stays lean).
+        List<ComparisonLink>? links = null;
         while (true)
         {
-            var (prec, op) = GetBinaryOpInfo(Current.Kind);
+            var prec = BinaryOperatorPrecedence(Current.Kind);
             if (prec < minPrecedence) break;
             // A binary operator never continues a closed expression across a
             // physical newline (write the operator before the newline to
@@ -3510,10 +3555,31 @@ public sealed class Parser
 
             var operatorToken = Advance(); // consume operator token
 
-            // Every operator in this loop is left-associative (`^` lives in
-            // ParsePower, below the unary level), so the right operand climbs
-            // to the next-higher precedence.
+            // Binary operators in this loop are left-associative; comparisons
+            // accumulate one flat chain. Both parse each right operand above
+            // their own tier. `^` lives in ParsePower below the unary level.
             var rhs = ParseExpression(prec + 1);
+            if (prec == ComparisonPrecedence)
+            {
+                // ONE comparison tier: consecutive comparison operators at this
+                // level extend ONE chain — `a < b == c` compares a with b and b
+                // with c — and never nest, because the right operand climbs from
+                // the additive tier and can never absorb a comparison operator.
+                // The chain closes at the first token that is not a same-line
+                // comparison operator, so a PARENTHESIZED comparison arriving
+                // as `lhs` (`(a < b) == c`) starts a new chain with the group
+                // as its first operand instead of merging into it. Spread
+                // operands are rejected exactly as for binary operators.
+                links = ExtendComparisonChain(links, ref lhs, operatorToken, rhs);
+                if (!IsComparisonOperator(Current.Kind) || !MayContinueClosedExpression(Current.Kind))
+                {
+                    lhs = CreateComparisonExpression(lhs, links, operatorToken);
+                    links = null;
+                }
+
+                continue;
+            }
+
             // CreateBinaryExpression also rejects spread operands: a spread
             // expression is a whole expression-list slot, never a binary
             // operand (`A* + B`, `1 + values*`, and `value* * 2` are errors;
@@ -3522,11 +3588,45 @@ public sealed class Parser
             // `value** next`, and `value**` newline `next`: the second star
             // has a right operand, so it is multiplication whose left
             // operand is a spread.
-            lhs = CreateBinaryExpression(op, lhs, rhs, operatorToken);
+            lhs = CreateBinaryExpression(BinaryOpOf(operatorToken.Kind), lhs, rhs, operatorToken);
         }
 
         return lhs;
     }
+
+    /// <summary>
+    /// Opens (first link) or extends the comparison chain at the current level with
+    /// one more <c>op operand</c> link. Opening the chain rejects a spread FIRST
+    /// operand before the link's operand, so diagnostics stay in written order;
+    /// every link operand is rejected as it is appended. Kept out of
+    /// <see cref="ParseExpressionCore"/> so its temporaries never enlarge that hot
+    /// recursive frame (native stack-margin calibration).
+    /// </summary>
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private List<ComparisonLink> ExtendComparisonChain(
+        List<ComparisonLink>? links,
+        ref Expr first,
+        Token operatorToken,
+        Expr operand)
+    {
+        if (links is null)
+        {
+            first = RejectMisplacedSpreadOperand(first);
+            links = new List<ComparisonLink>(2);
+        }
+
+        links.Add(new ComparisonLink(ComparisonOpOf(operatorToken.Kind), RejectMisplacedSpreadOperand(operand)));
+        return links;
+    }
+
+    /// <summary>
+    /// Closes one comparison chain: constructs the node over its first operand and
+    /// links and applies the chain-depth guard. <paramref name="operatorToken"/> is the
+    /// chain's LAST operator, the position a chain-depth rejection is reported at.
+    /// </summary>
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private Expr CreateComparisonExpression(Expr first, List<ComparisonLink> links, Token operatorToken)
+        => GuardComparisonChainDepth(ComparisonFrom(first, links), operatorToken);
 
     /// <summary>
     /// Builds one binary node: rejects spread operands (with unwrap
@@ -3553,32 +3653,57 @@ public sealed class Parser
         return GuardExpressionChainDepth(binary, operatorToken, lhs, rhs);
     }
 
-    // `^` (TokenKind.Caret) is deliberately absent: power binds tighter than
-    // the prefix-unary tier on the left, so it is parsed by ParsePower between
-    // the unary and postfix levels, never by the precedence-climbing loop. Its
+    // The precedence of every operator token the precedence-climbing loop
+    // handles, or -1. `^` (TokenKind.Caret) is deliberately absent: power binds
+    // tighter than the prefix-unary tier on the left, so it is parsed by
+    // ParsePower between the unary and postfix levels, never by the loop. Its
     // physical-line continuation behavior is kept identical to the loop's
     // binary operators through its own ContinuationPolicy row. `not` is absent
     // as well: it is the prefix tier 4 of this ladder (NotPrecedence), handled
-    // by the prefix arm of ParseExpressionCore, so the equality level and
-    // everything above it are numbered from 5.
-    private static (int Precedence, BinaryOp Op) GetBinaryOpInfo(TokenKind kind) => kind switch
+    // by the prefix arm of ParseExpressionCore, so the comparison level and
+    // everything above it are numbered from 5. All six comparison operators
+    // share ComparisonPrecedence: they are ONE chainable tier, not two.
+    private static int BinaryOperatorPrecedence(TokenKind kind) => kind switch
     {
-        TokenKind.KeywordOr => (1, BinaryOp.Or),
-        TokenKind.KeywordXor => (2, BinaryOp.Xor),
-        TokenKind.KeywordAnd => (3, BinaryOp.And),
-        TokenKind.EqualEqual => (5, BinaryOp.Eq),
-        TokenKind.BangEqual => (5, BinaryOp.Ne),
-        TokenKind.LessThan => (6, BinaryOp.Lt),
-        TokenKind.GreaterThan => (6, BinaryOp.Gt),
-        TokenKind.LessEqual => (6, BinaryOp.Le),
-        TokenKind.GreaterEqual => (6, BinaryOp.Ge),
-        TokenKind.Plus => (7, BinaryOp.Add),
-        TokenKind.Minus => (7, BinaryOp.Sub),
-        TokenKind.Star => (8, BinaryOp.Mul),
-        TokenKind.Slash => (8, BinaryOp.Div),
-        TokenKind.KeywordDiv => (8, BinaryOp.IDiv),
-        TokenKind.KeywordMod => (8, BinaryOp.Mod),
-        _ => (-1, default),
+        TokenKind.KeywordOr => 1,
+        TokenKind.KeywordXor => 2,
+        TokenKind.KeywordAnd => 3,
+        TokenKind.EqualEqual or TokenKind.BangEqual
+            or TokenKind.LessThan or TokenKind.GreaterThan
+            or TokenKind.LessEqual or TokenKind.GreaterEqual => ComparisonPrecedence,
+        TokenKind.Plus or TokenKind.Minus => 6,
+        TokenKind.Star or TokenKind.Slash or TokenKind.KeywordDiv or TokenKind.KeywordMod => 7,
+        _ => -1,
+    };
+
+    private static bool IsComparisonOperator(TokenKind kind)
+        => BinaryOperatorPrecedence(kind) == ComparisonPrecedence;
+
+    /// <summary>The comparison operator a comparison-tier token spells.</summary>
+    private static ComparisonOp ComparisonOpOf(TokenKind kind) => kind switch
+    {
+        TokenKind.EqualEqual => ComparisonOp.Eq,
+        TokenKind.BangEqual => ComparisonOp.Ne,
+        TokenKind.LessThan => ComparisonOp.Lt,
+        TokenKind.GreaterThan => ComparisonOp.Gt,
+        TokenKind.LessEqual => ComparisonOp.Le,
+        TokenKind.GreaterEqual => ComparisonOp.Ge,
+        _ => throw new InvalidOperationException($"Token kind '{kind}' is not a comparison operator."),
+    };
+
+    /// <summary>The binary operator a non-comparison loop token spells.</summary>
+    private static BinaryOp BinaryOpOf(TokenKind kind) => kind switch
+    {
+        TokenKind.KeywordOr => BinaryOp.Or,
+        TokenKind.KeywordXor => BinaryOp.Xor,
+        TokenKind.KeywordAnd => BinaryOp.And,
+        TokenKind.Plus => BinaryOp.Add,
+        TokenKind.Minus => BinaryOp.Sub,
+        TokenKind.Star => BinaryOp.Mul,
+        TokenKind.Slash => BinaryOp.Div,
+        TokenKind.KeywordDiv => BinaryOp.IDiv,
+        TokenKind.KeywordMod => BinaryOp.Mod,
+        _ => throw new InvalidOperationException($"Token kind '{kind}' is not a binary operator of the precedence-climbing loop."),
     };
 
     // ── Unary ───────────────────────────────────────────────────────────────

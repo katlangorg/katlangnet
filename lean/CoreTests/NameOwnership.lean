@@ -604,7 +604,7 @@ def memberTransitiveOwnerBypassesShadow : Bool :=
 def memberSameDeclarationDifferentActivationRefused : Bool :=
   let block := alg [] [] [publicLocalProp "X" (.localCapturedAncestorParams ["n"])
     (alg [] [] [] [.param "n"])] []
-  let h := alg ["f", "n"] [] [] [.call (.resolve "if") [.binary .ne (.param "n") (.num 0),
+  let h := alg ["f", "n"] [] [] [.call (.resolve "if") [.compare .ne (.param "n") (.num 0),
     .call (.resolve "H") [.algorithmExpr block, .num 0], Expr.dotCall (.param "f") "X" none]]
   let initial := alg [] [] [publicProp "X" (alg [] [] [] [.num 0])] []
   let program := algPrivate [] [] [("H", h)] [.call (.resolve "H") [.algorithmExpr initial, .num 5]]
@@ -619,7 +619,7 @@ def memberStaticNestedProviderKeepsAncestorActivation : Bool :=
   let x := publicLocalProp "X" (.localCapturedAncestorParams ["n"]) (alg [] [] [] [.param "n"])
   let lib := alg ["n"] [] [x] [Expr.dotCall (.param "f") "X" none]
   let outer := alg ["f", "k"] [] [privateLocalProp "Lib" (.localCapturedAncestorParams ["f"]) lib]
-    [.call (.resolve "if") [.binary .ne (.param "k") (.num 0), .call (.resolve "Outer") [.resolve "Lib", .num 0],
+    [.call (.resolve "if") [.compare .ne (.param "k") (.num 0), .call (.resolve "Outer") [.resolve "Lib", .num 0],
       .call (.resolve "Lib") [.num 7]]]
   let initial := alg [] [] [publicProp "X" (alg [] [] [] [.num 0])] []
   let program := algPrivate [] [] [("Outer", outer)] [.call (.resolve "Outer") [.algorithmExpr initial, .num 1]]
@@ -641,7 +641,7 @@ def memberClauseFamiliesHaveDistinctActivations : Bool :=
     ⟨.sequenceValue [.bind "n"], alg [] [] [] [Expr.dotCall (.param "f") "X" none]⟩]
   let h := alg ["f", "k"] [] [privateProp "F" f,
     privateLocalProp "G" (.localCapturedAncestorParams ["f"]) g]
-    [.call (.resolve "if") [.binary .ne (.param "k") (.num 0), .call (.resolve "F") [.param "k"], .call (.resolve "G") [.num 7]]]
+    [.call (.resolve "if") [.compare .ne (.param "k") (.num 0), .call (.resolve "F") [.param "k"], .call (.resolve "G") [.num 7]]]
   let initial := alg [] [] [publicProp "X" (alg [] [] [] [.num 0])] []
   let program := algPrivate [] [] [("H", h)] [.call (.resolve "H") [.algorithmExpr initial, .num 5]]
   match runResult (.algorithmExpr program) with

@@ -31,18 +31,28 @@ public static partial class Evaluator
     /// (<see cref="EvalSequenceConstructCounted"/>, <see cref="EvalSequenceSpreadCounted"/>).
     /// </summary>
     private static bool IsExpressionSpineNode(Expr expr)
-        => expr is Expr.Unary or Expr.Binary or Expr.Index or Expr.ListLiteral;
+        => expr is Expr.Unary or Expr.Binary or Expr.Comparison or Expr.Index or Expr.ListLiteral;
 
     /// <summary>One in-progress spine node in <see cref="EvalExpressionSpineCounted"/>.</summary>
     private struct ExpressionSpineFrame(Expr node)
     {
         public readonly Expr Node = node;
 
-        /// <summary>Unary/Binary/Index: completed child count. ListLiteral: next element index.</summary>
+        /// <summary>
+        /// Unary/Binary/Index: completed child count. ListLiteral: next element index.
+        /// Comparison: the index of the operand being evaluated (0 = the first operand,
+        /// k = the operand of link k-1).
+        /// </summary>
         public int Phase;
 
-        /// <summary>Binary left value / Index target value, once evaluated.</summary>
+        /// <summary>
+        /// Binary left value / Index target value / Comparison PREVIOUS operand value
+        /// (the left side of the next link — reused, never re-evaluated), once evaluated.
+        /// </summary>
         public Result? FirstValue;
+
+        /// <summary>Comparison: true once any link has compared false (the chain still runs to its end).</summary>
+        public bool ComparisonFailed;
 
         /// <summary>ListLiteral element accumulator (exact written slots, spread already expanded).</summary>
         public List<Result>? ListItems;
@@ -67,6 +77,13 @@ public static partial class Evaluator
     ///   <see cref="ApplyBinaryOperator"/> — where the empty sequence value is an
     ///   ORDINARY operand, not an identity (SYN-01). Lean: <c>eval</c> binary
     ///   case.</item>
+    ///   <item><b>Comparison</b>: the first operand, then link by link — evaluate the
+    ///   link's operand, compare the PREVIOUS operand's value with it through
+    ///   <see cref="ApplyComparison"/> (every operand evaluated exactly once; the
+    ///   previous VALUE is reused, never its expression), accumulate the verdict, and
+    ///   continue: a <c>false</c> link never stops the chain (eager Boolean composition),
+    ///   an error does (later operands are not evaluated). Lean:
+    ///   <c>evalComparisonCounted</c>.</item>
     ///   <item><b>Index</b>: target then selector; every child or coercion error gains
     ///   the index expression's span when it has none; the selected item re-emits its
     ///   PROJECTED count (<c>S:0</c> re-emits, never re-counts). Lean:
@@ -149,6 +166,61 @@ public static partial class Evaluator
                         ? binaryR.Error
                         : EvalResult<CountedResult>.Ok(new CountedResult(
                             binaryR.Value, binaryR.Value.ValueCount()));
+                    break;
+                }
+
+                case Expr.Comparison(var first, var links):
+                {
+                    if (frame.Phase == 0)
+                    {
+                        if (!hasPendingChild)
+                        {
+                            requestedChild = first;
+                            break;
+                        }
+
+                        hasPendingChild = false;
+                        frame.FirstValue = pendingChild.Value;
+                        frame.Phase = 1;
+                        if (links.Count == 0)
+                        {
+                            // A host-built chain with no links: its one operand was
+                            // evaluated (exactly once, like every operand) and there is
+                            // no comparison to fail.
+                            completed = EvalResult<CountedResult>.Ok(new CountedResult(new Result.Bool(true), 1));
+                            break;
+                        }
+
+                        requestedChild = links[0].Operand;
+                        break;
+                    }
+
+                    // The operand of link (Phase - 1) just arrived: compare the PREVIOUS
+                    // operand's value with it. An error ends the chain here (the
+                    // remaining operands are never evaluated); a false link is recorded
+                    // and the chain continues to its next operand.
+                    hasPendingChild = false;
+                    var link = links[frame.Phase - 1];
+                    var previousOperand = frame.Phase == 1 ? first : links[frame.Phase - 2].Operand;
+                    var linkR = ApplyComparison(
+                        link.Op, previousOperand, link.Operand, frame.FirstValue!, pendingChild.Value, frame.Node.Span);
+                    if (linkR.IsError)
+                    {
+                        completed = linkR.Error;
+                        break;
+                    }
+
+                    if (!linkR.Value)
+                        frame.ComparisonFailed = true;
+                    frame.FirstValue = pendingChild.Value;
+                    frame.Phase++;
+                    if (frame.Phase <= links.Count)
+                    {
+                        requestedChild = links[frame.Phase - 1].Operand;
+                        break;
+                    }
+
+                    completed = EvalResult<CountedResult>.Ok(new CountedResult(new Result.Bool(!frame.ComparisonFailed), 1));
                     break;
                 }
 
@@ -503,10 +575,10 @@ public static partial class Evaluator
             // (dual-view lookup order documented on EvalParamCounted).
             Expr.Param(var name) => ProjectCountedValue(EvalParamCountedOf(expr, name, ctx, valEnv)),
 
-            // Unary and binary spines evaluate iteratively; the machine
-            // preserves operand validation, error propagation, and spans
-            // through the shared unary and binary applications.
-            Expr.Unary or Expr.Binary => ProjectCountedValue(EvalExpressionSpineCounted(expr, ctx, valEnv)),
+            // Unary, binary, and comparison-chain spines evaluate iteratively; the
+            // machine preserves operand validation, error propagation, and spans
+            // through the shared unary, binary, and comparison applications.
+            Expr.Unary or Expr.Binary or Expr.Comparison => ProjectCountedValue(EvalExpressionSpineCounted(expr, ctx, valEnv)),
 
             Expr.SequenceConstruct => ProjectCountedValue(EvalSequenceConstructCounted(expr, ctx, valEnv)),
 
@@ -596,7 +668,7 @@ public static partial class Evaluator
 
             Expr.SequenceConstruct => EvalSequenceConstructCounted(expr, ctx, valEnv),
 
-            Expr.Unary or Expr.Binary or Expr.ListLiteral => EvalExpressionSpineCounted(expr, ctx, valEnv),
+            Expr.Unary or Expr.Binary or Expr.Comparison or Expr.ListLiteral => EvalExpressionSpineCounted(expr, ctx, valEnv),
 
             Expr.EmptySequence(var depth) => CountValue(BuildEmptySequenceValue(depth)),
 

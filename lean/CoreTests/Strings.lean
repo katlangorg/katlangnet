@@ -91,7 +91,7 @@ def test38 : Bool :=
 
 -- Test 39: String equality — same values
 def test39 : Bool :=
-  match runResult (.binary .eq (.stringLiteral "a") (.stringLiteral "a")) with
+  match runResult (.compare .eq (.stringLiteral "a") (.stringLiteral "a")) with
   | Except.ok (.bool true) => true
   | _ => false
 
@@ -99,7 +99,7 @@ def test39 : Bool :=
 
 -- Test 40: String equality — different values
 def test40 : Bool :=
-  match runResult (.binary .eq (.stringLiteral "a") (.stringLiteral "b")) with
+  match runResult (.compare .eq (.stringLiteral "a") (.stringLiteral "b")) with
   | Except.ok (.bool false) => true
   | _ => false
 
@@ -107,7 +107,7 @@ def test40 : Bool :=
 
 -- Test 41: String inequality
 def test41 : Bool :=
-  match runResult (.binary .ne (.stringLiteral "a") (.stringLiteral "b")) with
+  match runResult (.compare .ne (.stringLiteral "a") (.stringLiteral "b")) with
   | Except.ok (.bool true) => true
   | _ => false
 
@@ -115,7 +115,7 @@ def test41 : Bool :=
 
 -- Test 42: String equality is case-sensitive
 def test42 : Bool :=
-  match runResult (.binary .eq (.stringLiteral "Apples") (.stringLiteral "apples")) with
+  match runResult (.compare .eq (.stringLiteral "Apples") (.stringLiteral "apples")) with
   | Except.ok (.bool false) => true
   | _ => false
 
@@ -189,7 +189,7 @@ def seqVal (xs : List Int) : KatLang.Expr :=
 
 -- Test 45c: structurally identical sequence values compare equal.
 def sequenceValueEqualitySameElements : Bool :=
-  match runResult (.binary .eq (seqVal [1, 2]) (seqVal [1, 2])) with
+  match runResult (.compare .eq (seqVal [1, 2]) (seqVal [1, 2])) with
   | Except.ok (.bool true) => true
   | _ => false
 
@@ -197,7 +197,7 @@ def sequenceValueEqualitySameElements : Bool :=
 
 -- Test 45d: sequence values differing in an element compare unequal.
 def sequenceValueEqualityDifferentElement : Bool :=
-  match runResult (.binary .eq (seqVal [1, 2]) (seqVal [1, 3])) with
+  match runResult (.compare .eq (seqVal [1, 2]) (seqVal [1, 3])) with
   | Except.ok (.bool false) => true
   | _ => false
 
@@ -205,7 +205,7 @@ def sequenceValueEqualityDifferentElement : Bool :=
 
 -- Test 45e: sequence values of different lengths compare unequal.
 def sequenceValueEqualityDifferentLength : Bool :=
-  match runResult (.binary .eq (seqVal [1, 2]) (seqVal [1, 2, 3])) with
+  match runResult (.compare .eq (seqVal [1, 2]) (seqVal [1, 2, 3])) with
   | Except.ok (.bool false) => true
   | _ => false
 
@@ -215,7 +215,7 @@ def sequenceValueEqualityDifferentLength : Bool :=
 def nestedSequenceValueEqualityEqual : Bool :=
   let left  := .capture [.num 1, seqVal [2, 3]]
   let right := .capture [.num 1, seqVal [2, 3]]
-  match runResult (.binary .eq left right) with
+  match runResult (.compare .eq left right) with
   | Except.ok (.bool true) => true
   | _ => false
 
@@ -225,7 +225,7 @@ def nestedSequenceValueEqualityEqual : Bool :=
 def nestedSequenceValueEqualityDifferentInner : Bool :=
   let left  := .capture [.num 1, seqVal [2, 3]]
   let right := .capture [.num 1, seqVal [2, 4]]
-  match runResult (.binary .eq left right) with
+  match runResult (.compare .eq left right) with
   | Except.ok (.bool false) => true
   | _ => false
 
@@ -233,7 +233,7 @@ def nestedSequenceValueEqualityDifferentInner : Bool :=
 
 -- Test 45h: equality between different value kinds returns 0, never a type error.
 def numberVsSequenceValueEqualityDifferentKinds : Bool :=
-  match runResult (.binary .eq (.num 1) (seqVal [1, 2])) with
+  match runResult (.compare .eq (.num 1) (seqVal [1, 2])) with
   | Except.ok (.bool false) => true
   | _ => false
 
@@ -241,7 +241,7 @@ def numberVsSequenceValueEqualityDifferentKinds : Bool :=
 
 -- Test 45i: inequality is the negation of structural equality across kinds.
 def numberVsSequenceValueInequalityDifferentKinds : Bool :=
-  match runResult (.binary .ne (.num 1) (seqVal [1, 2])) with
+  match runResult (.compare .ne (.num 1) (seqVal [1, 2])) with
   | Except.ok (.bool true) => true
   | _ => false
 
@@ -249,7 +249,7 @@ def numberVsSequenceValueInequalityDifferentKinds : Bool :=
 
 -- Test 45j: `!=` negates structural equality for equal sequence values.
 def sequenceValueInequalitySameElements : Bool :=
-  match runResult (.binary .ne (seqVal [1, 2]) (seqVal [1, 2])) with
+  match runResult (.compare .ne (seqVal [1, 2]) (seqVal [1, 2])) with
   | Except.ok (.bool false) => true
   | _ => false
 
@@ -258,14 +258,14 @@ def sequenceValueInequalitySameElements : Bool :=
 -- Test 45k: mixed number/string equality returns 0 (different kinds, not a type
 -- mismatch). Contrast with Test 44, where `+` on number/string still type-errors.
 def mixedNumberStringEqualityDifferentKinds : Bool :=
-  match runResult (.binary .eq (.num 1) (.stringLiteral "a")) with
+  match runResult (.compare .eq (.num 1) (.stringLiteral "a")) with
   | Except.ok (.bool false) => true
   | _ => false
 
 #guard mixedNumberStringEqualityDifferentKinds
 
 def mixedNumberStringInequalityDifferentKinds : Bool :=
-  match runResult (.binary .ne (.num 1) (.stringLiteral "a")) with
+  match runResult (.compare .ne (.num 1) (.stringLiteral "a")) with
   | Except.ok (.bool true) => true
   | _ => false
 
@@ -276,7 +276,7 @@ def numericScalarLtLeftSequenceValueMessage : String :=
   "operator `<` expects numeric scalar operands, but the left operand was a sequence value with 2 sequence elements: (1, 2)"
 
 def orderingSequenceValueOperandStillRejected : Bool :=
-  match runResult (.binary .lt (seqVal [1, 2]) (seqVal [1, 2])) with
+  match runResult (.compare .lt (seqVal [1, 2]) (seqVal [1, 2])) with
   | Except.error err =>
       hasContext "while evaluating `(1, 2) < (1, 2)`" err &&
       innermostIsTypeMismatch numericScalarLtLeftSequenceValueMessage err
@@ -303,7 +303,7 @@ def arithmeticSequenceValueOperandStillRejected : Bool :=
 def nestedSequenceValueEqualityDoesNotFlatten : Bool :=
   let left  := .capture [.num 1, seqVal [2, 3]]
   let right := .capture [seqVal [1, 2], .num 3]
-  match runResult (.binary .eq left right) with
+  match runResult (.compare .eq left right) with
   | Except.ok (.bool false) => true
   | _ => false
 
@@ -311,7 +311,7 @@ def nestedSequenceValueEqualityDoesNotFlatten : Bool :=
 
 -- Test 45o: sequence equality is ordered pairwise equality, not set equality.
 def sequenceValueEqualityIsOrderSensitive : Bool :=
-  match runResult (.binary .eq (seqVal [1, 2]) (seqVal [2, 1])) with
+  match runResult (.compare .eq (seqVal [1, 2]) (seqVal [2, 1])) with
   | Except.ok (.bool false) => true
   | _ => false
 
@@ -324,7 +324,7 @@ def emptyPropertyToPropertyEquality : Bool :=
       ("A", alg [] [] [] [.emptySequence 0]),
       ("B", alg [] [] [] [.emptySequence 0])
     ] [
-      .binary .eq (.resolve "A") (.resolve "B")
+      .compare .eq (.resolve "A") (.resolve "B")
     ])) with
   | Except.ok (.bool true) => true
   | _ => false

@@ -316,7 +316,7 @@ public class LeanAstEncoderTests
             EncodeSource("x = [1, 2]\nx:0"));
 
         Assert.Equal(
-            ".algorithmExpr (alg [] [] [] [(.binary .eq (.stringLiteral \"ab\") (.stringLiteral \"ab\"))])",
+            ".algorithmExpr (alg [] [] [] [(.comparison (.stringLiteral \"ab\") [{ op := .eq, operand := (.stringLiteral \"ab\") }])])",
             EncodeSource("'ab' == 'ab'"));
     }
 
@@ -642,6 +642,7 @@ public class LeanAstEncoderTests
             [nameof(Expr.BoolLiteral)] = new Expr.BoolLiteral(true),
             [nameof(Expr.Unary)] = new Expr.Unary(UnaryOp.Minus, new Expr.Num(1)),
             [nameof(Expr.Binary)] = new Expr.Binary(BinaryOp.Add, new Expr.Num(1), new Expr.Num(2)),
+            [nameof(Expr.Comparison)] = new Expr.Comparison(new Expr.Num(1), [new ComparisonLink(ComparisonOp.Lt, new Expr.Num(2))]),
             [nameof(Expr.Index)] = new Expr.Index(new Expr.Resolve("x"), new Expr.Num(0)),
             [nameof(Expr.SequenceConstruct)] = new Expr.SequenceConstruct(new Expr.Num(1), new Expr.Num(2)),
             [nameof(Expr.EmptySequence)] = new Expr.EmptySequence(0),
@@ -742,9 +743,7 @@ public class LeanAstEncoderTests
         {
             [BinaryOp.Add] = "add", [BinaryOp.Sub] = "sub", [BinaryOp.Mul] = "mul",
             [BinaryOp.Div] = "div", [BinaryOp.IDiv] = "idiv", [BinaryOp.Mod] = "mod",
-            [BinaryOp.Pow] = "pow", [BinaryOp.Lt] = "lt", [BinaryOp.Gt] = "gt",
-            [BinaryOp.Le] = "le", [BinaryOp.Ge] = "ge", [BinaryOp.Eq] = "eq",
-            [BinaryOp.Ne] = "ne", [BinaryOp.And] = "and", [BinaryOp.Or] = "or",
+            [BinaryOp.Pow] = "pow", [BinaryOp.And] = "and", [BinaryOp.Or] = "or",
             [BinaryOp.Xor] = "xor",
         };
         Assert.Equal(Enum.GetValues<BinaryOp>(), binaryNames.Keys.OrderBy(v => (int)v));
@@ -754,6 +753,26 @@ public class LeanAstEncoderTests
                 $"(.binary .{leanName} (.num 1) (.num 2))",
                 LeanAstEncoder.EncodeExpr(new Expr.Binary(op, new Expr.Num(1), new Expr.Num(2))));
         }
+
+        // The six comparison operators are chain links, never binary operators: a
+        // one-link chain and a longer mixed chain encode as the flat `.comparison`.
+        var comparisonNames = new Dictionary<ComparisonOp, string>
+        {
+            [ComparisonOp.Lt] = "lt", [ComparisonOp.Gt] = "gt", [ComparisonOp.Le] = "le",
+            [ComparisonOp.Ge] = "ge", [ComparisonOp.Eq] = "eq", [ComparisonOp.Ne] = "ne",
+        };
+        Assert.Equal(Enum.GetValues<ComparisonOp>(), comparisonNames.Keys.OrderBy(v => (int)v));
+        foreach (var (op, leanName) in comparisonNames)
+        {
+            Assert.Equal(
+                $"(.comparison (.num 1) [{{ op := .{leanName}, operand := (.num 2) }}])",
+                LeanAstEncoder.EncodeExpr(EvaluatorTestSupport.Compare(op, new Expr.Num(1), new Expr.Num(2))));
+        }
+
+        Assert.Equal(
+            "(.comparison (.num 1) [{ op := .lt, operand := (.num 2) }, { op := .eq, operand := (.num 2) }, { op := .ne, operand := (.num 3) }])",
+            LeanAstEncoder.EncodeExpr(EvaluatorTestSupport.Chain(
+                new Expr.Num(1), ComparisonOp.Lt, new Expr.Num(2), ComparisonOp.Eq, new Expr.Num(2), ComparisonOp.Ne, new Expr.Num(3))));
 
         var unaryNames = new Dictionary<UnaryOp, string>
         {

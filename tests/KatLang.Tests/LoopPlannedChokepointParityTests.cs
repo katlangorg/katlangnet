@@ -505,8 +505,8 @@ public class LoopPlannedChokepointParityTests
         var step = Assert.IsType<Algorithm.User>(property.Value);
         var output = Assert.IsType<Expr.Binary>(Assert.Single(step.Output));
         var conditional = Assert.IsType<Expr.Call>(output.Right);
-        var equality = Assert.IsType<Expr.Binary>(conditional.Args[0]);
-        var sharedEquality = equality with { Right = equality.Left };
+        var equality = Assert.IsType<Expr.Comparison>(conditional.Args[0]);
+        var sharedEquality = equality with { Links = [Assert.Single(equality.Links) with { Operand = equality.First }] };
         var sharedOutput = output with { Right = conditional with { Args = [sharedEquality, conditional.Args[1], conditional.Args[2]] } };
         var ast = new Expr.AlgorithmExpr(parsed with { Properties = [property with { Value = step with { Output = [sharedOutput] } }] });
 

@@ -98,6 +98,10 @@ internal static class EvaluatorTestSupport
             Args = dotCall.Args is { } dotArgs ? MakeAllPublicArgs(dotArgs) : null,
         },
         Expr.Binary(var op, var l, var r) => new Expr.Binary(op, MakeAllPublicExpr(l), MakeAllPublicExpr(r)) { Span = expr.Span },
+        Expr.Comparison(var first, var links) => new Expr.Comparison(
+            MakeAllPublicExpr(first),
+            links.Select(link => link with { Operand = MakeAllPublicExpr(link.Operand) }).ToList())
+        { Span = expr.Span },
         Expr.Unary(var op, var o) => new Expr.Unary(op, MakeAllPublicExpr(o)) { Span = expr.Span },
         Expr.Index(var t, var s) => new Expr.Index(MakeAllPublicExpr(t), MakeAllPublicExpr(s)) { Span = expr.Span },
         Expr.SequenceConstruct(var l, var r) => new Expr.SequenceConstruct(MakeAllPublicExpr(l), MakeAllPublicExpr(r)) { Span = expr.Span },
@@ -108,6 +112,21 @@ internal static class EvaluatorTestSupport
 
     internal static OutputBundle MakeAllPublicArgs(OutputBundle args)
         => new(args.Select(MakeAllPublicExpr).ToList());
+
+    /// <summary>A hand-built ONE-LINK comparison chain <c>left op right</c> (Lean: <c>Expr.compare</c>).</summary>
+    internal static Expr.Comparison Compare(ComparisonOp op, Expr left, Expr right)
+        => new(left, [new ComparisonLink(op, right)]);
+
+    /// <summary>A hand-built comparison chain <c>first op1 x1 op2 x2 …</c> from alternating operators and operands.</summary>
+    internal static Expr.Comparison Chain(Expr first, params object[] opsAndOperands)
+    {
+        if (opsAndOperands.Length % 2 != 0)
+            throw new ArgumentException("Expected alternating ComparisonOp/Expr pairs.", nameof(opsAndOperands));
+        var links = new List<ComparisonLink>(opsAndOperands.Length / 2);
+        for (var i = 0; i < opsAndOperands.Length; i += 2)
+            links.Add(new ComparisonLink((ComparisonOp)opsAndOperands[i], (Expr)opsAndOperands[i + 1]));
+        return new Expr.Comparison(first, links);
+    }
 
     internal static void AssertEval(string source, params Decimal128[] expected)
     {

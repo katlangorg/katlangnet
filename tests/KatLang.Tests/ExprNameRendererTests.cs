@@ -110,9 +110,9 @@ public class ExprNameRendererTests
         // (comparisons > not > and > xor > or), so a `not` operand keeps parentheses
         // under every tighter operator, on either side, and renders bare under
         // `and`/`xor`/`or` — otherwise `not a == b` would read back as `not (a == b)`.
-        Assert.Equal("((not a) == b)", Open(new Expr.Binary(BinaryOp.Eq, notA, b)));
-        Assert.Equal("(a == (not b))", Open(new Expr.Binary(BinaryOp.Eq, a, notB)));
-        Assert.Equal("((not a) > b)", Open(new Expr.Binary(BinaryOp.Gt, notA, b)));
+        Assert.Equal("((not a) == b)", Open(EvaluatorTestSupport.Compare(ComparisonOp.Eq, notA, b)));
+        Assert.Equal("(a == (not b))", Open(EvaluatorTestSupport.Compare(ComparisonOp.Eq, a, notB)));
+        Assert.Equal("((not a) > b)", Open(EvaluatorTestSupport.Compare(ComparisonOp.Gt, notA, b)));
         Assert.Equal("((not a) + b)", Open(new Expr.Binary(BinaryOp.Add, notA, b)));
         Assert.Equal("(a * (not b))", Open(new Expr.Binary(BinaryOp.Mul, a, notB)));
         Assert.Equal("(a ^ (not b))", Open(new Expr.Binary(BinaryOp.Pow, a, notB)));
@@ -121,15 +121,15 @@ public class ExprNameRendererTests
         Assert.Equal("(not a xor b)", Open(new Expr.Binary(BinaryOp.Xor, notA, b)));
 
         // DiagnosticName mode renders the chain bare with the same operand wrapping.
-        Assert.Equal("(not a) == b", Diag(new Expr.Binary(BinaryOp.Eq, notA, b)));
-        Assert.Equal("a == (not b)", Diag(new Expr.Binary(BinaryOp.Eq, a, notB)));
+        Assert.Equal("(not a) == b", Diag(EvaluatorTestSupport.Compare(ComparisonOp.Eq, notA, b)));
+        Assert.Equal("a == (not b)", Diag(EvaluatorTestSupport.Compare(ComparisonOp.Eq, a, notB)));
         Assert.Equal("not a and b", Diag(new Expr.Binary(BinaryOp.And, notA, b)));
-        Assert.Equal("(not a) == b", ExprNameRenderer.RenderBinaryDiagnosticName(BinaryOp.Eq, notA, b));
+        Assert.Equal("(not a) == b", ExprNameRenderer.RenderComparisonLinkDiagnosticName(ComparisonOp.Eq, notA, b));
 
         // Negating a comparison keeps the established unary-operand wrapping, which
         // reads back as the same tree under this precedence; a `not` under unary
         // minus keeps its parentheses, because bare `-not a` is not an operand at all.
-        Assert.Equal("not ((a > b))", Open(new Expr.Unary(UnaryOp.Not, new Expr.Binary(BinaryOp.Gt, a, b))));
+        Assert.Equal("not ((a > b))", Open(new Expr.Unary(UnaryOp.Not, EvaluatorTestSupport.Compare(ComparisonOp.Gt, a, b))));
         Assert.Equal("-(not a)", Open(new Expr.Unary(UnaryOp.Minus, notA)));
         Assert.Equal("not (not a)", Open(new Expr.Unary(UnaryOp.Not, notA)));
     }
@@ -273,6 +273,92 @@ public class ExprNameRendererTests
 
         // Everything else falls back to the Open spelling.
         Assert.Equal("a.f", Diag(new Expr.DotCall(new Expr.Resolve("a"), "f", null)));
+    }
+
+    [Fact]
+    public void Golden_ComparisonChains_RenderExactly()
+    {
+        var a = new Expr.Resolve("a");
+        var b = new Expr.Resolve("b");
+        var c = new Expr.Resolve("c");
+        var d = new Expr.Resolve("d");
+        var chain = EvaluatorTestSupport.Chain(a, ComparisonOp.Lt, b, ComparisonOp.Le, c, ComparisonOp.Eq, d);
+
+        // A chain renders as the flat chain it is — never nested comparisons — in both
+        // modes; the Open spelling self-parenthesizes like a binary name.
+        Assert.Equal("a < b <= c == d", Diag(chain));
+        Assert.Equal("(a < b <= c == d)", Open(chain));
+
+        // Parentheses that change chain boundaries are preserved: a nested chain is a
+        // parenthesized operand, so the three groupings render distinctly.
+        Assert.Equal("a < b == true", Diag(EvaluatorTestSupport.Chain(a, ComparisonOp.Lt, b, ComparisonOp.Eq, new Expr.BoolLiteral(true))));
+        Assert.Equal("(a < b) == true", Diag(EvaluatorTestSupport.Compare(ComparisonOp.Eq, EvaluatorTestSupport.Compare(ComparisonOp.Lt, a, b), new Expr.BoolLiteral(true))));
+        Assert.Equal("a < (b == true)", Diag(EvaluatorTestSupport.Compare(ComparisonOp.Lt, a, EvaluatorTestSupport.Compare(ComparisonOp.Eq, b, new Expr.BoolLiteral(true)))));
+        Assert.Equal("(a < b) == (c < d)", Diag(EvaluatorTestSupport.Compare(ComparisonOp.Eq, EvaluatorTestSupport.Compare(ComparisonOp.Lt, a, b), EvaluatorTestSupport.Compare(ComparisonOp.Lt, c, d))));
+        Assert.Equal("((a < b) == true)", Open(EvaluatorTestSupport.Compare(ComparisonOp.Eq, EvaluatorTestSupport.Compare(ComparisonOp.Lt, a, b), new Expr.BoolLiteral(true))));
+
+        // Chain operands: `not` and the logical operators keep their parentheses;
+        // arithmetic, powers, prefix minus, and postfix forms read back bare.
+        Assert.Equal("a == (b and c)", Diag(EvaluatorTestSupport.Compare(ComparisonOp.Eq, a, new Expr.Binary(BinaryOp.And, b, c))));
+        Assert.Equal("a + b < c * d", Diag(EvaluatorTestSupport.Compare(ComparisonOp.Lt, new Expr.Binary(BinaryOp.Add, a, b), new Expr.Binary(BinaryOp.Mul, c, d))));
+        Assert.Equal("-a ^ b < c", Diag(EvaluatorTestSupport.Compare(ComparisonOp.Lt, new Expr.Unary(UnaryOp.Minus, new Expr.Binary(BinaryOp.Pow, a, b)), c)));
+        Assert.Equal("a:0 < b.c", Diag(EvaluatorTestSupport.Compare(ComparisonOp.Lt, new Expr.Index(a, new Expr.Num(0)), new Expr.DotCall(b, "c", null))));
+
+        // A chain under a tighter operator, under prefix minus, and under `not`.
+        Assert.Equal("(a < b) + c", Diag(new Expr.Binary(BinaryOp.Add, EvaluatorTestSupport.Compare(ComparisonOp.Lt, a, b), c)));
+        Assert.Equal("(a < b) ^ c", Diag(new Expr.Binary(BinaryOp.Pow, EvaluatorTestSupport.Compare(ComparisonOp.Lt, a, b), c)));
+        Assert.Equal("-(a < b)", Diag(new Expr.Unary(UnaryOp.Minus, EvaluatorTestSupport.Compare(ComparisonOp.Lt, a, b))));
+        Assert.Equal("not a < b < c", Diag(new Expr.Unary(UnaryOp.Not, EvaluatorTestSupport.Chain(a, ComparisonOp.Lt, b, ComparisonOp.Lt, c))));
+        Assert.Equal("a < b and c < d", Diag(new Expr.Binary(BinaryOp.And, EvaluatorTestSupport.Compare(ComparisonOp.Lt, a, b), EvaluatorTestSupport.Compare(ComparisonOp.Lt, c, d))));
+
+        // Postfix positions parenthesize a chain like a binary (Lean twin: the
+        // `postfixTargetName` goldens in CoreTests comparisonChainDiagnosticNames).
+        Assert.Equal("(a < b):0", Open(new Expr.Index(EvaluatorTestSupport.Compare(ComparisonOp.Lt, a, b), new Expr.Num(0))));
+        Assert.Equal("(a < b).count", Diag(new Expr.DotCall(EvaluatorTestSupport.Compare(ComparisonOp.Lt, a, b), "count", null)));
+        Assert.Equal("(a + b)(...)", Diag(new Expr.Call(new Expr.Binary(BinaryOp.Add, a, b), OutputBundle.Empty)));
+        Assert.Equal("a:(b < c)", Open(new Expr.Index(a, EvaluatorTestSupport.Compare(ComparisonOp.Lt, b, c))));
+        Assert.Equal("(a < b)*", Open(new Expr.SequenceSpread(EvaluatorTestSupport.Compare(ComparisonOp.Lt, a, b))));
+
+        // One link's name is exactly its two adjacent operands.
+        Assert.Equal("2 < true", ExprNameRenderer.RenderComparisonLinkDiagnosticName(ComparisonOp.Lt, new Expr.Num(2), new Expr.BoolLiteral(true)));
+        Assert.Equal("(1, 2) < (1, 2)", ExprNameRenderer.RenderComparisonLinkDiagnosticName(
+            ComparisonOp.Lt, new Expr.Capture([new Expr.Num(1), new Expr.Num(2)]), new Expr.Capture([new Expr.Num(1), new Expr.Num(2)])));
+        Assert.Equal("(a < b) == c", ExprNameRenderer.RenderComparisonLinkDiagnosticName(ComparisonOp.Eq, EvaluatorTestSupport.Compare(ComparisonOp.Lt, a, b), c));
+    }
+
+    [Fact]
+    public void Golden_DiagnosticNameMode_IsPrecedenceFaithful()
+    {
+        var a = new Expr.Resolve("a");
+        var b = new Expr.Resolve("b");
+        var c = new Expr.Resolve("c");
+
+        // Operand-shape names keep exactly the parentheses the ladder needs, so the
+        // text reads back as the rendered AST (Lean twin: CoreTests
+        // binaryDiagnosticNamesReadBackFaithfully).
+        Assert.Equal("a + b + c", Diag(new Expr.Binary(BinaryOp.Add, new Expr.Binary(BinaryOp.Add, a, b), c)));
+        Assert.Equal("a - (b - c)", Diag(new Expr.Binary(BinaryOp.Sub, a, new Expr.Binary(BinaryOp.Sub, b, c))));
+        Assert.Equal("(a + b) * c", Diag(new Expr.Binary(BinaryOp.Mul, new Expr.Binary(BinaryOp.Add, a, b), c)));
+        Assert.Equal("a + b * c", Diag(new Expr.Binary(BinaryOp.Add, a, new Expr.Binary(BinaryOp.Mul, b, c))));
+        Assert.Equal("(a ^ b) ^ c", Diag(new Expr.Binary(BinaryOp.Pow, new Expr.Binary(BinaryOp.Pow, a, b), c)));
+        Assert.Equal("a ^ b ^ c", Diag(new Expr.Binary(BinaryOp.Pow, a, new Expr.Binary(BinaryOp.Pow, b, c))));
+        Assert.Equal("(a + b) ^ c", Diag(new Expr.Binary(BinaryOp.Pow, new Expr.Binary(BinaryOp.Add, a, b), c)));
+        Assert.Equal("(a or b) and c", Diag(new Expr.Binary(BinaryOp.And, new Expr.Binary(BinaryOp.Or, a, b), c)));
+        Assert.Equal("a or b and c", Diag(new Expr.Binary(BinaryOp.Or, a, new Expr.Binary(BinaryOp.And, b, c))));
+        Assert.Equal("-(a + b)", Diag(new Expr.Unary(UnaryOp.Minus, new Expr.Binary(BinaryOp.Add, a, b))));
+        Assert.Equal("-a ^ b", Diag(new Expr.Unary(UnaryOp.Minus, new Expr.Binary(BinaryOp.Pow, a, b))));
+        Assert.Equal("-(-a)", Diag(new Expr.Unary(UnaryOp.Minus, new Expr.Unary(UnaryOp.Minus, a))));
+        Assert.Equal("-(not a)", Diag(new Expr.Unary(UnaryOp.Minus, new Expr.Unary(UnaryOp.Not, a))));
+        Assert.Equal("not not a", Diag(new Expr.Unary(UnaryOp.Not, new Expr.Unary(UnaryOp.Not, a))));
+        Assert.Equal("not (a and b)", Diag(new Expr.Unary(UnaryOp.Not, new Expr.Binary(BinaryOp.And, a, b))));
+        Assert.Equal("not a < b", Diag(new Expr.Unary(UnaryOp.Not, EvaluatorTestSupport.Compare(ComparisonOp.Lt, a, b))));
+        Assert.Equal("-a + b", Diag(new Expr.Binary(BinaryOp.Add, new Expr.Unary(UnaryOp.Minus, a), b)));
+        Assert.Equal("-a.f", Diag(new Expr.Unary(UnaryOp.Minus, new Expr.DotCall(a, "f", null))));
+        Assert.Equal("-(1, 2)", Diag(new Expr.Unary(UnaryOp.Minus, new Expr.Capture([new Expr.Num(1), new Expr.Num(2)]))));
+
+        // The Open spelling is untouched: composites self-parenthesize there.
+        Assert.Equal("((a + b) * c)", Open(new Expr.Binary(BinaryOp.Mul, new Expr.Binary(BinaryOp.Add, a, b), c)));
+        Assert.Equal("-((a + b))", Open(new Expr.Unary(UnaryOp.Minus, new Expr.Binary(BinaryOp.Add, a, b))));
     }
 
     [Fact]

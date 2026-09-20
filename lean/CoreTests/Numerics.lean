@@ -15,6 +15,13 @@ def binaryAtomResult? (op : KatLang.BinaryOp) (a b : Int) : Option Int :=
   | Except.ok (.atom value) => some value
   | _ => none
 
+/-- The numeric-atom projection of a one-link comparison chain: always `none`,
+    because a comparison is a Boolean, never a number. -/
+def comparisonAtomResult? (op : KatLang.ComparisonOp) (a b : Int) : Option Int :=
+  match runResult (.compare op (.num a) (.num b)) with
+  | Except.ok (.atom value) => some value
+  | _ => none
+
 -- Division truncates toward zero (Int.tdiv), matching the C# runtime
 -- (`Math.Truncate` for `div`): -7 div 2 = -3, not the Euclidean -4.
 def truncatingDivisionMatchesRuntime : Bool :=
@@ -156,15 +163,39 @@ def rejectsEmptyOperand (op : KatLang.BinaryOp) : Bool :=
    | Except.error err => innermostIsTypeMismatch (emptyOperandMessage op "left") err
    | _ => false)
 
-/-- Every operator except the structural `==`/`!=` pair. -/
+/-- Every binary operator (the structural `==`/`!=` pair is not a binary
+    operator: comparisons are chain links, covered by the ordering list below). -/
 def nonEqualityOperators : List KatLang.BinaryOp :=
-  [.add, .sub, .mul, .div, .idiv, .mod, .pow, .lt, .gt, .le, .ge, .and, .or, .xor]
+  [.add, .sub, .mul, .div, .idiv, .mod, .pow, .and, .or, .xor]
 
 -- Left-empty, right-empty, and both-empty for every non-equality operator.
 def emptyOperandRejectedByEveryScalarOperator : Bool :=
   nonEqualityOperators.all rejectsEmptyOperand
 
 #guard emptyOperandRejectedByEveryScalarOperator
+
+/-- The ordering comparisons — the non-equality links of a comparison chain —
+    share the numeric-scalar operand rule and its message. -/
+def orderingComparisonOperators : List KatLang.ComparisonOp := [.lt, .gt, .le, .ge]
+
+def emptyComparisonOperandMessage (op : KatLang.ComparisonOp) (side : String) : String :=
+  s!"operator `{op.symbol}` expects numeric scalar operands, but the {side} operand was a sequence value with 0 sequence elements: ()"
+
+def rejectsEmptyComparisonOperand (op : KatLang.ComparisonOp) : Bool :=
+  (match runResult (.compare op emptyOperandExpr (.num 10)) with
+   | Except.error err => innermostIsTypeMismatch (emptyComparisonOperandMessage op "left") err
+   | _ => false) &&
+  (match runResult (.compare op (.num 10) emptyOperandExpr) with
+   | Except.error err => innermostIsTypeMismatch (emptyComparisonOperandMessage op "right") err
+   | _ => false) &&
+  (match runResult (.compare op emptyOperandExpr emptyOperandExpr) with
+   | Except.error err => innermostIsTypeMismatch (emptyComparisonOperandMessage op "left") err
+   | _ => false)
+
+def emptyOperandRejectedByEveryOrderingComparison : Bool :=
+  orderingComparisonOperators.all rejectsEmptyComparisonOperand
+
+#guard emptyOperandRejectedByEveryOrderingComparison
 
 -- The four SYN-01 reproductions specifically (plus the mirrored string case):
 -- none of them yields the other operand. `() + 'text'` reaches the unchanged
@@ -173,8 +204,8 @@ def syn01ReproductionsRejected : Bool :=
   (match runResult (.binary .div (.num 10) emptyOperandExpr) with
    | Except.error err => innermostIsTypeMismatch (emptyOperandMessage .div "right") err
    | _ => false) &&
-  (match runResult (.binary .gt emptyOperandExpr (.num 10)) with
-   | Except.error err => innermostIsTypeMismatch (emptyOperandMessage .gt "left") err
+  (match runResult (.compare .gt emptyOperandExpr (.num 10)) with
+   | Except.error err => innermostIsTypeMismatch (emptyComparisonOperandMessage .gt "left") err
    | _ => false) &&
   (match runResult (.binary .and emptyOperandExpr (.num 7)) with
    | Except.error err => innermostIsTypeMismatch (emptyOperandMessage .and "left") err
@@ -200,22 +231,22 @@ def evaluatesTo (e : KatLang.Expr) (expected : Result) : Bool :=
 -- Positive control 1: structural equality is decided BEFORE operand
 -- validation and is unaffected -- `()` compares as an ordinary value.
 def emptyStructuralEqualityUnaffected : Bool :=
-  evaluatesTo (.binary .eq emptyOperandExpr emptyOperandExpr) (.bool true) &&
-  evaluatesTo (.binary .ne emptyOperandExpr emptyOperandExpr) (.bool false) &&
-  evaluatesTo (.binary .eq emptyOperandExpr (.emptySequence 1)) (.bool true) &&
-  evaluatesTo (.binary .ne emptyOperandExpr (.emptySequence 1)) (.bool false) &&
-  evaluatesTo (.binary .eq emptyOperandExpr (.num 0)) (.bool false) &&
-  evaluatesTo (.binary .ne emptyOperandExpr (.capture [.num 1, .num 2])) (.bool true) &&
-  evaluatesTo (.binary .eq emptyOperandExpr (.stringLiteral "text")) (.bool false) &&
-  evaluatesTo (.binary .eq (.listLiteral []) emptyOperandExpr) (.bool false) &&
+  evaluatesTo (.compare .eq emptyOperandExpr emptyOperandExpr) (.bool true) &&
+  evaluatesTo (.compare .ne emptyOperandExpr emptyOperandExpr) (.bool false) &&
+  evaluatesTo (.compare .eq emptyOperandExpr (.emptySequence 1)) (.bool true) &&
+  evaluatesTo (.compare .ne emptyOperandExpr (.emptySequence 1)) (.bool false) &&
+  evaluatesTo (.compare .eq emptyOperandExpr (.num 0)) (.bool false) &&
+  evaluatesTo (.compare .ne emptyOperandExpr (.capture [.num 1, .num 2])) (.bool true) &&
+  evaluatesTo (.compare .eq emptyOperandExpr (.stringLiteral "text")) (.bool false) &&
+  evaluatesTo (.compare .eq (.listLiteral []) emptyOperandExpr) (.bool false) &&
   -- Booleans join the total equality: `() == false` is false, not an error,
   -- and a Boolean never equals the number it would once have encoded.
-  evaluatesTo (.binary .eq emptyOperandExpr (.boolLiteral false)) (.bool false) &&
-  evaluatesTo (.binary .eq (.boolLiteral true) (.num 1)) (.bool false) &&
-  evaluatesTo (.binary .eq (.boolLiteral false) (.num 0)) (.bool false) &&
-  evaluatesTo (.binary .ne (.boolLiteral true) (.num 1)) (.bool true) &&
-  evaluatesTo (.binary .eq (.boolLiteral true) (.boolLiteral true)) (.bool true) &&
-  evaluatesTo (.binary .eq (.boolLiteral true) (.boolLiteral false)) (.bool false)
+  evaluatesTo (.compare .eq emptyOperandExpr (.boolLiteral false)) (.bool false) &&
+  evaluatesTo (.compare .eq (.boolLiteral true) (.num 1)) (.bool false) &&
+  evaluatesTo (.compare .eq (.boolLiteral false) (.num 0)) (.bool false) &&
+  evaluatesTo (.compare .ne (.boolLiteral true) (.num 1)) (.bool true) &&
+  evaluatesTo (.compare .eq (.boolLiteral true) (.boolLiteral true)) (.bool true) &&
+  evaluatesTo (.compare .eq (.boolLiteral true) (.boolLiteral false)) (.bool false)
 
 #guard emptyStructuralEqualityUnaffected
 
@@ -225,9 +256,9 @@ def emptyStructuralEqualityUnaffected : Bool :=
 def ordinaryScalarOperatorsUnaffected : Bool :=
   binaryAtomResult? .add 1 2 == some 3 &&
   binaryAtomResult? .sub 1 2 == some (-1) &&
-  evaluatesToBool (.binary .gt (.num 10) (.num 1)) true &&
-  evaluatesToBool (.binary .gt (.num 1) (.num 10)) false &&
-  evaluatesToBool (.binary .ge (.num 1) (.num 1)) true &&
+  evaluatesToBool (.compare .gt (.num 10) (.num 1)) true &&
+  evaluatesToBool (.compare .gt (.num 1) (.num 10)) false &&
+  evaluatesToBool (.compare .ge (.num 1) (.num 1)) true &&
   evaluatesToBool (.binary .and (.boolLiteral true) (.boolLiteral true)) true &&
   evaluatesToBool (.binary .and (.boolLiteral false) (.boolLiteral true)) false &&
   evaluatesToBool (.binary .or (.boolLiteral false) (.boolLiteral false)) false &&
@@ -236,7 +267,7 @@ def ordinaryScalarOperatorsUnaffected : Bool :=
   evaluatesToBool (.binary .xor (.boolLiteral true) (.boolLiteral true)) false &&
   -- A comparison is never a number, and the logical operators never accept
   -- numbers: there is no `0`/`1` truth encoding left anywhere.
-  binaryAtomResult? .gt 10 1 == none &&
+  comparisonAtomResult? .gt 10 1 == none &&
   binaryAtomResult? .and 1 7 == none &&
   binaryAtomResult? .or 0 0 == none
 
@@ -267,12 +298,12 @@ def logicalOperatorsRejectNonBooleanOperands : Bool :=
        innermostIsTypeMismatch
          "operator `and` expects Boolean operands, but the left operand was a list value with 1 element: [1]" err
    | _ => false) &&
-  (match runResult (.binary .lt (.boolLiteral true) (.boolLiteral false)) with
+  (match runResult (.compare .lt (.boolLiteral true) (.boolLiteral false)) with
    | Except.error err =>
        innermostIsTypeMismatch
          "operator `<` expects numeric scalar operands, but the left operand was a Boolean value: true" err
    | _ => false) &&
-  (match runResult (.binary .gt (.boolLiteral true) (.num 0)) with
+  (match runResult (.compare .gt (.boolLiteral true) (.num 0)) with
    | Except.error err =>
        innermostIsTypeMismatch
          "operator `>` expects numeric scalar operands, but the left operand was a Boolean value: true" err
@@ -349,7 +380,7 @@ def ordinaryUnaryOperatorsUnaffected : Bool :=
   evaluatesTo (.unary .not (.boolLiteral true)) (.bool false) &&
   -- A redundant singleton boundary normalizes away, as for numbers.
   evaluatesTo (.unary .not (.capture [.boolLiteral true])) (.bool false) &&
-  evaluatesTo (.unary .not (.binary .lt (.num 1) (.num 2))) (.bool false)
+  evaluatesTo (.unary .not (.compare .lt (.num 1) (.num 2))) (.bool false)
 
 #guard ordinaryUnaryOperatorsUnaffected
 

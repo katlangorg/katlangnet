@@ -37,7 +37,7 @@ def loopStepAlg : Algorithm := alg ["s"] [] [] [.binary .add (.param "s") (.num 
 
 /-- `Down(s) = s - 1, s != 0` (a `while` step: next state, then the Boolean continue flag). -/
 def whileStepAlg : Algorithm :=
-  alg ["s"] [] [] [.binary .sub (.param "s") (.num 1), .binary .ne (.param "s") (.num 0)]
+  alg ["s"] [] [] [.binary .sub (.param "s") (.num 1), .compare .ne (.param "s") (.num 0)]
 
 /-- `Add(e, a) = e + a` (a reducer: a callback slot). -/
 def reducerAlg : Algorithm := alg ["e", "a"] [] [] [.binary .add (.param "e") (.param "a")]

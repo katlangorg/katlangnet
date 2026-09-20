@@ -11,13 +11,13 @@ open KatLang (Pattern CondBranch)
 --------------------------------------------------------------------------------
 
 def isEvenAlg63 : Algorithm :=
-  alg ["x"] [] [] [.binary .eq (.binary .mod (.param "x") (.num 2)) (.num 0)]
+  alg ["x"] [] [] [.compare .eq (.binary .mod (.param "x") (.num 2)) (.num 0)]
 
 def isPositiveAlg64 : Algorithm :=
-  alg ["x"] [] [] [.binary .gt (.param "x") (.num 0)]
+  alg ["x"] [] [] [.compare .gt (.param "x") (.num 0)]
 
 def isNegativeAlg65 : Algorithm :=
-  alg ["x"] [] [] [.binary .lt (.param "x") (.num 0)]
+  alg ["x"] [] [] [.compare .lt (.param "x") (.num 0)]
 
 def badTruthAlg66 : Algorithm :=
   alg ["x"] [] [] [.stringLiteral "not-a-number"]
@@ -66,7 +66,7 @@ def markThreeSequenceValueAlg66e : Algorithm :=
 def keepPairAlg67 : Algorithm :=
   .conditional none [] [
     ⟨ .sequenceValue [.bind "tag", .bind "value"],
-      alg [] [] [] [.binary .eq (.binary .mod (.param "tag") (.num 2)) (.num 0)] ⟩
+      alg [] [] [] [.compare .eq (.binary .mod (.param "tag") (.num 2)) (.num 0)] ⟩
   ]
 
 def badMultiFalseAlg68 : Algorithm :=
@@ -335,7 +335,7 @@ def test73a : Bool :=
 -- predicate result — `(x > 1)` keeps `2` and `3` exactly like `x > 1`.
 def test73b : Bool :=
   match runResult (.algorithmExpr (algPrivate [] []
-      [("Keep", alg ["x"] [] [] [.capture [.binary .gt (.param "x") (.num 1)]])] [
+      [("Keep", alg ["x"] [] [] [.capture [.compare .gt (.param "x") (.num 1)]])] [
     .call (resolve "filter") [
       .call (resolve "range") [.num 1, .num 3],
       .resolve "Keep"
@@ -461,7 +461,7 @@ def sequenceBoundaryLawAocCountMatchStepAlg : Algorithm :=
       .binary .add
         (.index (resolve "T") (.num 1))
         (.call (resolve "if") [
-          .binary .eq (.param "element") (.dotCall (resolve "T") "first" none),
+          .compare .eq (.param "element") (.dotCall (resolve "T") "first" none),
           .num 1,
           .num 0
         ])
@@ -771,7 +771,7 @@ def test85 : Bool :=
 def factorialMapAlg85a : Algorithm :=
   alg ["n"] [] [] [
     .call (resolve "if") [
-      .binary .eq (.param "n") (.num 0),
+      .compare .eq (.param "n") (.num 0),
       .num 1,
       .binary .mul
         (.call (resolve "Factorial") [

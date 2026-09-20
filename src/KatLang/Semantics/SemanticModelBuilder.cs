@@ -922,6 +922,12 @@ public static class SemanticModelBuilder
                     VisitExpr(right, scope);
                     break;
 
+                case Expr.Comparison(var first, var links):
+                    VisitExpr(first, scope);
+                    foreach (var link in links)
+                        VisitExpr(link.Operand, scope);
+                    break;
+
                 case Expr.Index(var target, var selector):
                     VisitExpr(target, scope);
                     VisitExpr(selector, scope);

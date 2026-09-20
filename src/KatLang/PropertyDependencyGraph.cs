@@ -1342,6 +1342,7 @@ internal static class PropertyDependencyGraphBuilder
 
             Expr.Grace(var inner, _) => Seed(inner),
             Expr.Binary(_, var left, var right) => Seed(left).Absorb(Seed(right)),
+            Expr.Comparison(var first, var links) => links.Aggregate(Seed(first), (seed, link) => seed.Absorb(Seed(link.Operand))),
             Expr.Unary(_, var operand) => Seed(operand),
             Expr.Index(var target, var selector) => Seed(target).Absorb(Seed(selector)),
             Expr.SequenceSpread(var operand) => Seed(operand),
@@ -1656,6 +1657,12 @@ internal static class PropertyDependencyGraphBuilder
             case Expr.Binary(_, var left, var right):
                 CollectSiblingDependencyIndices(left, context, shadow, child);
                 CollectSiblingDependencyIndices(right, context, shadow, child);
+                break;
+
+            case Expr.Comparison(var first, var links):
+                CollectSiblingDependencyIndices(first, context, shadow, child);
+                foreach (var link in links)
+                    CollectSiblingDependencyIndices(link.Operand, context, shadow, child);
                 break;
 
             case Expr.Unary(_, var operand):

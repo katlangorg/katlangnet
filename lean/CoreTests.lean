@@ -21,3 +21,4 @@ import CoreTests.CollectingBindings
 import CoreTests.OutputBundle
 import CoreTests.NameOwnership
 import CoreTests.ValueDemand
+import CoreTests.ComparisonChains

@@ -205,6 +205,12 @@ public class FrontEndSpanPreservationTests
                 foreach (var nested in CompositeNodes(left)) yield return nested;
                 foreach (var nested in CompositeNodes(right)) yield return nested;
                 break;
+            case Expr.Comparison(var first, var links):
+                yield return expr;
+                foreach (var nested in CompositeNodes(first)) yield return nested;
+                foreach (var link in links)
+                    foreach (var nested in CompositeNodes(link.Operand)) yield return nested;
+                break;
             case Expr.Index(var target, var selector):
                 yield return expr;
                 foreach (var nested in CompositeNodes(target)) yield return nested;

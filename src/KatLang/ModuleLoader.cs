@@ -1050,6 +1050,49 @@ internal sealed partial class ModuleLoader
     // The DAG-safety memo check lives INSIDE this frame (see ProcessAlgorithm's note): the
     // switch assigns `result` instead of returning so the memo store shares the one
     // calibrated frame per level.
+    /// <summary>
+    /// The comparison-chain arm of <see cref="ProcessExpr"/>, kept out of that calibrated
+    /// frame: the first operand and every link operand are runtime expressions rewritten
+    /// one level down, the link list keeping its instance when no operand changed.
+    /// </summary>
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private Expr ProcessComparison(Expr.Comparison comparison, int depth)
+    {
+        var first = ProcessExpr(comparison.First, LoadContext.RuntimeExpr, depth + 1);
+        var links = AstHelpers.RewriteComparisonLinks(
+            comparison.Links,
+            operand => ProcessExpr(operand, LoadContext.RuntimeExpr, depth + 1));
+        return comparison with { First = first, Links = links };
+    }
+
+    /// <summary>
+    /// MIRROR OF <see cref="ProcessComparison"/> for the async walk (the link loop awaits,
+    /// so it lives in its own state machine rather than enlarging
+    /// <see cref="ProcessExprAsync"/>'s calibrated frame); like the synchronous helper it
+    /// keeps the link list instance when no operand changed.
+    /// </summary>
+    private async ValueTask<Expr> RouteComparisonAsync(Expr.Comparison comparison, int depth)
+    {
+        var first = await RouteExprAsync(comparison.First, LoadContext.RuntimeExpr, depth + 1).ConfigureAwait(false);
+        List<ComparisonLink>? rewritten = null;
+        var links = comparison.Links;
+        for (var index = 0; index < links.Count; index++)
+        {
+            var link = links[index];
+            var operand = await RouteExprAsync(link.Operand, LoadContext.RuntimeExpr, depth + 1).ConfigureAwait(false);
+            if (rewritten is null && !ReferenceEquals(operand, link.Operand))
+            {
+                rewritten = new List<ComparisonLink>(links.Count);
+                for (var copied = 0; copied < index; copied++)
+                    rewritten.Add(links[copied]);
+            }
+
+            rewritten?.Add(ReferenceEquals(operand, link.Operand) ? link : link with { Operand = operand });
+        }
+
+        return comparison with { First = first, Links = rewritten ?? links };
+    }
+
     private Expr ProcessExpr(Expr expr, LoadContext context, int depth)
     {
         ThrowIfInsufficientStack();
@@ -1111,6 +1154,9 @@ internal sealed partial class ModuleLoader
                 Left = ProcessExpr(binary.Left, LoadContext.RuntimeExpr, depth + 1),
                 Right = ProcessExpr(binary.Right, LoadContext.RuntimeExpr, depth + 1),
             },
+
+            // The link loop lives in its own helper so this calibrated frame keeps its size.
+            Expr.Comparison comparison => ProcessComparison(comparison, depth),
 
             Expr.Unary unary => unary with { Operand = ProcessExpr(unary.Operand, LoadContext.RuntimeExpr, depth + 1) },
 
@@ -1246,6 +1292,12 @@ internal sealed partial class ModuleLoader
                     Left = await RouteExprAsync(binary.Left, LoadContext.RuntimeExpr, depth + 1).ConfigureAwait(false),
                     Right = await RouteExprAsync(binary.Right, LoadContext.RuntimeExpr, depth + 1).ConfigureAwait(false),
                 };
+                break;
+
+            case Expr.Comparison comparison:
+                // The link loop lives in its own twin so this calibrated frame keeps its
+                // size (the loop's list and cursor would otherwise be hoisted here).
+                result = await RouteComparisonAsync(comparison, depth).ConfigureAwait(false);
                 break;
 
             case Expr.Unary unary:

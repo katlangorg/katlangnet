@@ -26,7 +26,7 @@ public class InternalClosedHierarchyTests
     private static readonly IReadOnlyList<(Type Root, string[] Variants)> ClosedHierarchies =
     [
         (typeof(LoopExprPlan),
-            ["Constant", "StringConstant", "StateSlot", "CapturedSlot", "CountedParamSlot", "TempSlot", "TempCall", "Unary", "Binary", "If", "Fallback"]),
+            ["Constant", "StringConstant", "StateSlot", "CapturedSlot", "CountedParamSlot", "TempSlot", "TempCall", "Unary", "Binary", "Comparison", "If", "Fallback"]),
         (typeof(FilterCountSourcePlan), ["Generic", "DirectRange"]),
         (typeof(PreEvaluationAstViolation),
             ["ExplicitParametersWithoutOutput", "ConditionalBranchArityMismatch", "ConditionalBranchOutputArityMismatch"]),

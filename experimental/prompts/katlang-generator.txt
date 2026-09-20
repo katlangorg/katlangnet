@@ -141,8 +141,8 @@ Examples:
     A                    # ()
     A.count              # 0
 
-    () == ()             # 1
-    () == (())           # 1
+    () == ()             # true
+    () == (())           # true
     (()).count           # 0
     count((()))          # 0
 
@@ -152,7 +152,7 @@ Examples:
 
     IsEven = x mod 2 == 0
     filter((1, 3, 5), IsEven) == ()       # 0: filter returns the empty LIST [], and [] != ()
-    filter((1, 3, 5), IsEven) == []       # 1
+    filter((1, 3, 5), IsEven) == []       # true
     filter((1, 3, 5), IsEven).count == 0  # 1: test collection-builtin emptiness with count(...) == 0 or == [], never == ()
 
 Algorithm-level explicit parameters are valid only when the algorithm defines output. If an algorithm is only a container, put callable formulas on its child properties:
@@ -281,6 +281,7 @@ Comparisons:
 - Comparisons return the Boolean values `true` or `false`.
 - `==` and `!=` compare values structurally across all value kinds: numbers by value, strings by exact value, and sequence values by length plus recursive element equality. Different value kinds (e.g. a number and a sequence value) compare unequal rather than erroring.
 - `<`, `>`, `<=`, `>=` and the arithmetic operators require numeric scalar operands.
+- Comparisons CHAIN: `a < b < c` means `a < b` and `b < c` (each adjacent pair, every operand evaluated once), `a < b <= c == d != e` compares the four adjacent pairs, and `1 != 2 != 1` is `true` (adjacent pairs, not "all distinct"). Parentheses end a chain: `(a < b) == true` compares the group's Boolean result. A `false` pair never stops the chain (`3 < 2 < true` still reports the `2 < true` error); an error does.
 
 Logical:
 - `and`, `or`, `xor`, `not`
@@ -291,20 +292,19 @@ Operator precedence, lowest to highest:
 2. `xor`
 3. `and`
 4. prefix `not`
-5. `==`, `!=`
-6. `<`, `>`, `<=`, `>=`
-7. `+`, `-`
-8. `*`, `/`, `div`, `mod`
-9. unary prefix `-`
-10. `^`
-11. postfix `.`, `:`, and call application
+5. the one comparison level: `<`, `>`, `<=`, `>=`, `==`, `!=` (chains)
+6. `+`, `-`
+7. `*`, `/`, `div`, `mod`
+8. unary prefix `-`
+9. `^`
+10. postfix `.`, `:`, and call application
 
 Associativity and precedence warnings:
 - `^` is right-associative: `2 ^ 3 ^ 2` means `2 ^ (3 ^ 2)`, which is `512`.
-- The comparison and equality levels are left-associative.
+- The comparison level chains (see Comparisons above); equality and ordering share it, so `1 == 1 < 2` is `true`.
 - `^` binds tighter than unary minus on the left, so `-2 ^ 2` means `-(2 ^ 2)` (which is `-4`), NOT `(-2) ^ 2`. Likewise `-2 ^ 0.5` negates the positive-base power. Parentheses are required when the negative value is the power BASE: `(-2) ^ 2` is `4`. The exponent side accepts a unary value directly: `2 ^ -2` is `0.25`. To negate a power, writing `-(a ^ b)` is still fine for visual clarity — it is semantically equivalent to `-a ^ b`.
 - `not` binds less tightly than the comparison and equality operators and more tightly than `and`, `xor`, and `or`, so `not x > 0` means `not (x > 0)` and `not a and b` means `(not a) and b`. A `not` cannot begin the operand of a tighter operator: `a == not b`, `1 + not x`, and `2 ^ not x` are parse errors — write `a == (not b)`. A direct comparison such as `x <= 0` or `a != b` is still the clearest spelling of a negated test.
-- Do not chain comparisons. `a < b < c` means `(a < b) < c`, which orders a Boolean against a number — a type error. Write `a < b and b < c` instead.
+- Write range tests as one chain (`low <= x < high`); `a < b and b < c` is equivalent for a plain value but evaluates `b` twice.
 - Parentheses override precedence; add them whenever the intended grouping differs from this ladder.
 
 Numeric literals:
@@ -1044,7 +1044,7 @@ KatLang validity:
 Numeric, operator, and literal correctness:
 - power negation prefers the explicit `-(a ^ b)` for visual clarity (semantically equivalent to `-a ^ b`, since `^` binds tighter than unary minus); a negative power BASE is parenthesized as `(-a) ^ b` — required, because bare `-a ^ b` negates the power;
 - `not` is parenthesized or rewritten as a direct comparison when it must apply to a comparison (`not (x > 0)` or `x <= 0`, never `not x > 0`);
-- no chained comparisons; range tests are written `a < b and b < c`;
+- range tests are written as one comparison chain (`a < b < c`, `low <= x <= high`), never as `a < b and b < c` (which evaluates `b` twice);
 - `/` vs `div` is chosen intentionally (`/` keeps fractions, `div` truncates toward zero);
 - `avg` returns the decimal arithmetic mean and is used freely for fractional means (it equals `sum(x) / count(x)` for numeric values);
 - display-precision requests use a top-level `DisplayDecimals = n`;
@@ -1075,7 +1075,7 @@ Idiomatic structure:
 
 === BEGIN GENERATED: katlang-spec-examples (DO NOT EDIT BY HAND) ===
 
-Verified reference examples (92 of the 277-case canonical language specification,
+Verified reference examples (94 of the 280-case canonical language specification,
 tests/KatLang.Tests/LanguageSpec/LanguageSpecCorpus.cs). Every program and expected
 output below is executed against the KatLang engine and (where representable)
 guarded against the Lean model on every build. Treat these as ground truth for the
@@ -1150,6 +1150,33 @@ Regenerate this block from the repo root with:
     true
     true
     true
+
+[comparison-chains-compare-adjacent-pairs] All six comparison operators share one precedence tier and CHAIN: `a < b <= c == d != e` compares the adjacent pairs `a < b`, `b <= c`, `c == d`, and `d != e`, and the whole chain is `true` only when every pair holds. Each operand is evaluated once, left to right. `1 != 2 != 1` is `true` (adjacent pairs, not "all distinct"), `1 == 1 < 2` is `true`, and `1 < 2 == true` compares `2` with `true` (false). Parentheses break a chain: `(1 < 2) == true` compares the Boolean result of the group.
+
+    1 < 2 < 3
+    1 < 2 <= 2 == 2 != 3
+    1 == 1 == 1
+    1 != 2 != 1
+    1 != 1 != 1
+    3 < 2 < 1
+    1 == 1 < 2
+    1 < 2 == true
+
+  Displays:
+    true
+    true
+    true
+    true
+    false
+    false
+    true
+    false
+
+[comparison-chain-is-eager-after-false] A `false` comparison never stops a chain — like `and` and `or`, comparison chains evaluate eagerly — so `3 < 2 < true` still performs `2 < true`, and that comparison is the error (Booleans are not ordered). Errors do stop a chain: once an operand or a comparison fails, the later operands are not evaluated.
+
+    3 < 2 < true
+
+  Fails with an evaluation error (type).
 
 [output-is-ordinary-property] `Output` and `output` are ordinary identifiers: `Output = 5` defines a regular property named `Output`, and only bare expression rows contribute to algorithm output — a program whose rows are all definitions has no output.
 

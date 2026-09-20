@@ -54,6 +54,8 @@ public class AstWalkerTraversalTests
             { nameof(Expr.StringLiteral), new Expr.StringLiteral("s"), [] },
             { nameof(Expr.Unary), new Expr.Unary(UnaryOp.Minus, leaf), [leaf] },
             { nameof(Expr.Binary), new Expr.Binary(BinaryOp.Add, leaf, second), [leaf, second] },
+            // A chain visits its first operand and then every link operand in chain order.
+            { nameof(Expr.Comparison), new Expr.Comparison(leaf, [new ComparisonLink(ComparisonOp.Lt, second), new ComparisonLink(ComparisonOp.Eq, third)]), [leaf, second, third] },
             { nameof(Expr.Index), new Expr.Index(leaf, second), [leaf, second] },
             { nameof(Expr.SequenceConstruct), new Expr.SequenceConstruct(leaf, second), [leaf, second] },
             { nameof(Expr.EmptySequence), new Expr.EmptySequence(0), [] },

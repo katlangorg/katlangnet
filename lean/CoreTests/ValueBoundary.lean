@@ -223,7 +223,7 @@ def boundarySkipSpreadOpensItems : Bool :=
 #guard boundarySkipSpreadOpensItems
 
 /-- `X.filter(IsBig)` (with `IsBig(x) = x > 1`) is one value; caller-side spread opens it. -/
-def boundaryFilterPredicate : Algorithm := alg ["x"] [] [] [.binary .gt (.param "x") (.num 1)]
+def boundaryFilterPredicate : Algorithm := alg ["x"] [] [] [.compare .gt (.param "x") (.num 1)]
 
 def boundaryFilterIsOneValue : Bool :=
   match runCountedProgram (.algorithmExpr (algPrivate [] [] [("IsBig", boundaryFilterPredicate), ("X", boundary123)]

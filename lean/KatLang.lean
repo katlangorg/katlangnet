@@ -368,9 +368,12 @@ def bindCallableArguments (signature : CallableSignature) (items : List α)
 -- Operators
 --------------------------------------------------------------------------------
 
+/-- The binary operators: arithmetic (numeric scalar operands, numeric result)
+    and the logical operators (Boolean operands, Boolean result). The six
+    comparison operators are NOT binary operators — they are the links of a
+    comparison chain (`ComparisonOp`, `Expr.comparison`). C#: `BinaryOp`. -/
 inductive BinaryOp where
   | add | sub | mul | div | idiv | mod | pow
-  | lt | gt | le | ge | eq | ne
   | and | or | xor
   deriving Repr, BEq, DecidableEq
 
@@ -382,15 +385,26 @@ def BinaryOp.symbol : BinaryOp -> String
   | .idiv => "div"
   | .mod => "mod"
   | .pow => "^"
+  | .and => "and"
+  | .or => "or"
+  | .xor => "xor"
+
+/-- The six comparison operators of the ONE comparison precedence tier. The
+    ordering comparisons `lt`/`gt`/`le`/`ge` take numeric scalar operands;
+    `eq`/`ne` are total structural equality over every value kind. Every
+    comparison yields a Boolean value, and unparenthesized comparisons at one
+    syntactic level form one `Expr.comparison` chain. C#: `ComparisonOp`. -/
+inductive ComparisonOp where
+  | lt | gt | le | ge | eq | ne
+  deriving Repr, BEq, DecidableEq
+
+def ComparisonOp.symbol : ComparisonOp -> String
   | .lt => "<"
   | .gt => ">"
   | .le => "<="
   | .ge => ">="
   | .eq => "=="
   | .ne => "!="
-  | .and => "and"
-  | .or => "or"
-  | .xor => "xor"
 
 inductive UnaryOp where
   | minus | not
@@ -779,7 +793,26 @@ mutual
     --   become implicit parameters. C#: `Expr.BoolLiteral`.
     | boolLiteral : Bool -> Expr
     | unary   : UnaryOp -> Expr -> Expr
+    -- * binary: an arithmetic or logical operator over two operands — never a
+    --   comparison (see `comparison`).
     | binary  : BinaryOp -> Expr -> Expr -> Expr
+    -- * comparison: a COMPARISON CHAIN `first op1 x1 op2 x2 …`, the ONE
+    --   representation of every comparison, with one link (`a < b`) or many
+    --   (`a < b <= c == d != e`). Unparenthesized comparison operators at one
+    --   syntactic level form one chain; a parenthesized comparison is an
+    --   ordinary operand (`(a < b) == c` is a one-link chain whose first
+    --   operand is a chain). Each link compares the PREVIOUS operand with its
+    --   own — adjacent-pair semantics, so `1 != 2 != 1` is `1 != 2` and
+    --   `2 != 1` — and the chain is `true` iff every link holds. Evaluation
+    --   (`evalComparisonCounted`) is incremental and left to right: every
+    --   operand is evaluated EXACTLY ONCE (the previous operand's VALUE is
+    --   reused, never its expression), each link is compared as soon as its
+    --   operand is available, a `false` link never stops the chain (eager
+    --   Boolean composition, so a later invalid comparison is still an error),
+    --   and an error terminates it (later operands are not evaluated). A chain
+    --   with no links evaluates its first operand and is `true`.
+    --   C#: `Expr.Comparison`.
+    | comparison : Expr -> List ComparisonLink -> Expr
     | index   : Expr -> Expr -> Expr
     -- * sequenceConstruct: INTERNAL sequence-join node retained for semantic
     --   AST compatibility (surface spreading is the attached postfix spread marker `expr*`,
@@ -875,6 +908,13 @@ mutual
     -- NOTE: load('url') is surface-only syntax, represented as Call(Resolve("load"), ...)
     -- in the parser and elaborated to algorithmExpr(...) by the load elaboration pass.
     -- It is NOT a core Expr constructor.  See load elaboration section below.
+    deriving Repr
+
+  /-- One link of a comparison chain: the operator that compares the PREVIOUS
+      operand of the chain with `operand`. C#: `ComparisonLink`. -/
+  structure ComparisonLink where
+    op      : ComparisonOp
+    operand : Expr
     deriving Repr
 
   /-- Property definition with visibility metadata. -/
@@ -1022,6 +1062,12 @@ abbrev OutputBundle := List Expr
     constructor. C#: an `Expr.DotCall` with null `LexicalFallback`. -/
 def Expr.dotCall (target : Expr) (name : Ident) (args : Option OutputBundle) : Expr :=
   .dotMember target name (.resolve name) args
+
+/-- Smart constructor for a ONE-LINK comparison chain `left op right` — the
+    hand-built spelling of an ordinary comparison (`a < b` is the chain with
+    first operand `a` and the single link `< b`). C#: `new Expr.Comparison(a, [new ComparisonLink(op, b)])`. -/
+def Expr.compare (op : ComparisonOp) (left right : Expr) : Expr :=
+  .comparison left [{ op := op, operand := right }]
 
 /-- Surface same-name clause-group classification.
   Front-ends must decide ordinary-vs-conditional elaboration only after
@@ -1937,6 +1983,9 @@ mutual
     | .binary _ left right => do
         validateExplicitParamOutputInvariantExpr left
         validateExplicitParamOutputInvariantExpr right
+    | .comparison first links => do
+        validateExplicitParamOutputInvariantExpr first
+        links.forM (fun link => validateExplicitParamOutputInvariantExpr link.operand)
     | .index target selector => do
         validateExplicitParamOutputInvariantExpr target
         validateExplicitParamOutputInvariantExpr selector
@@ -2060,6 +2109,9 @@ mutual
     | .emptySequence depth => .emptySequence depth
     | .unary op e => .unary op (cacheExprShape e)
     | .binary op a b => .binary op (cacheExprShape a) (cacheExprShape b)
+    | .comparison first links =>
+        .comparison (cacheExprShape first)
+          (links.map (fun link => { link with operand := cacheExprShape link.operand }))
     | .index a b => .index (cacheExprShape a) (cacheExprShape b)
     | .sequenceConstruct a b => .sequenceConstruct (cacheExprShape a) (cacheExprShape b)
     | .sequenceSpread e => .sequenceSpread (cacheExprShape e)
@@ -2266,11 +2318,20 @@ def operandDescription : Result -> String
   | .atom value => s!"numeric value {value}"
   | .listValue items => s!"a list value with {items.length} element{if items.length = 1 then "" else "s"}: {resultDiagnosticString (.listValue items)}"
 
-def requireNumericScalarOperand (op : BinaryOp) (side : String) (value : Result) : EvalM Int :=
+/-- The numeric-scalar operand rule of the arithmetic operators and the ordering
+    comparisons, keyed by the operator's spelling. C#: `Evaluator.RequireNumericScalarOperand`. -/
+def requireNumericScalarOperandOf (operatorSymbol : String) (side : String) (value : Result) : EvalM Int :=
   match Result.asInt? value with
   | some number => pure number
   | none => .error (Error.typeMismatch
-      s!"operator `{op.symbol}` expects numeric scalar operands, but the {side} operand was {operandDescription value}")
+      s!"operator `{operatorSymbol}` expects numeric scalar operands, but the {side} operand was {operandDescription value}")
+
+def requireNumericScalarOperand (op : BinaryOp) (side : String) (value : Result) : EvalM Int :=
+  requireNumericScalarOperandOf op.symbol side value
+
+/-- The ordering comparisons share the arithmetic operators' numeric-scalar operand rule. -/
+def requireNumericComparisonOperand (op : ComparisonOp) (side : String) (value : Result) : EvalM Int :=
+  requireNumericScalarOperandOf op.symbol side value
 
 /-- The logical operators `and` / `or` / `xor` require a Boolean value on
     BOTH sides: there is no numeric truthiness, so a number, string, sequence
@@ -3027,6 +3088,7 @@ def Expr.kind : Expr -> String
   | .boolLiteral _ => "boolLiteral"
   | .unary _ _    => "unary"
   | .binary _ _ _ => "binary"
+  | .comparison _ _ => "comparison"
   | .index _ _    => "index"
   | .sequenceConstruct _ _ => "sequenceConstruct"
   | .emptySequence _ => "emptySequence"
@@ -3053,6 +3115,8 @@ def emptySequenceText (depth : Nat) : String :=
 def indexTargetNeedsParens : Expr -> Bool
   | .unary _ _    => true
   | .binary _ _ _ => true
+  | .comparison _ _ => true
+  | .num v       => decide (v < 0)
   | _             => false
 
 /-- The index selector is a primary in source syntax, so any form that would
@@ -3064,6 +3128,7 @@ def indexTargetNeedsParens : Expr -> Bool
 def indexSelectorNeedsParens : Expr -> Bool
   | .unary _ _      => true
   | .binary _ _ _   => true
+  | .comparison _ _ => true
   | .call _ _       => true
   | .dotMember _ _ _ _ => true
   | .index _ _      => true
@@ -3071,38 +3136,87 @@ def indexSelectorNeedsParens : Expr -> Bool
   | .num v          => decide (v < 0)
   | _               => false
 
-/-- `^` binds tighter than prefix unary on the LEFT (the base), so a unary
-  base — and a literal that renders with a leading minus — must keep its
-  parentheses: bare `-a ^ b` reads back as `-(a ^ b)`. The exponent side
-  re-enters the unary level in source syntax, so this never applies to the
-  right operand (`a ^ -b` renders bare and reads back with the same AST).
-  C#: `ExprNameRenderer.PowerBaseNeedsParens`. -/
-def powerBaseNeedsParens : Expr -> Bool
-  | .unary _ _ => true
-  | .num v     => decide (v < 0)
-  | _          => false
+/-- Precedence tiers of the diagnostic-name renderer — the ONE parenthesization
+  rule: a rendered name must read back as the AST it was rendered from, so an
+  operand is parenthesized exactly when it binds LOOSER than the position it is
+  written in. The tiers mirror the surface parser's ladder (loosest to
+  tightest): `or` < `xor` < `and` < prefix `not` < the one comparison tier
+  (`< > <= >= == !=`) < additive < multiplicative < prefix `-` < `^` < postfix.
+  C#: `ExprNameRenderer.BindingTier` and the slot tiers below. -/
+def orTier : Nat := 1
+def xorTier : Nat := 2
+def andTier : Nat := 3
+def notTier : Nat := 4
+def comparisonTier : Nat := 5
+def additiveTier : Nat := 6
+def multiplicativeTier : Nat := 7
+def unaryMinusTier : Nat := 8
+def powerTier : Nat := 9
+def postfixTier : Nat := 10
+def atomTier : Nat := 11
 
-/-- `not` sits BELOW the comparisons and above `and`/`xor`/`or` in source
-  syntax (comparisons > not > and > xor > or, September 2026), so a `not`
-  operand of any tighter-binding operator must keep its parentheses: bare
-  `not a == b` reads back as `not (a == b)`, and bare `1 + not x` is not an
-  operand at all. Only the logical operators take a bare `not` operand.
-  C#: `ExprNameRenderer.NotOperandNeedsParens`. -/
-def notOperandNeedsParens (op : BinaryOp) : Expr -> Bool
-  | .unary .not _ =>
-      match op with
-      | .and | .or | .xor => false
-      | _ => true
-  | _ => false
+def binaryOperatorTier : BinaryOp -> Nat
+  | .or => orTier
+  | .xor => xorTier
+  | .and => andTier
+  | .add | .sub => additiveTier
+  | .mul | .div | .idiv | .mod => multiplicativeTier
+  | .pow => powerTier
 
-/-- The operand of a prefix `not` that would rebind if rendered bare: a logical
-  binary (`not (a and b)` is not `(not a) and b`). Comparisons, arithmetic, and
-  powers bind tighter than `not`, so they read back correctly bare. -/
-def notOperandBindsLooser : Expr -> Bool
-  | .binary .and _ _ => true
-  | .binary .or _ _  => true
-  | .binary .xor _ _ => true
-  | _                => false
+/-- How tightly an expression binds when rendered bare. Prefix forms take their
+  operator's tier (a negative literal renders with a leading minus, so it reads
+  back as a prefix minus); postfix forms and the self-delimiting spellings
+  (leaves, captures, lists, blocks, the parenthesized internal join) never
+  rebind. C#: `ExprNameRenderer.BindingTier`. -/
+def bindingTier : Expr -> Nat
+  | .binary op _ _ => binaryOperatorTier op
+  | .comparison _ [] => atomTier
+  | .comparison _ _ => comparisonTier
+  | .unary .not _ => notTier
+  | .unary .minus _ => unaryMinusTier
+  | .num v => if v < 0 then unaryMinusTier else atomTier
+  | .index _ _ | .dotMember _ _ _ _ | .call _ _ | .sequenceSpread _ => postfixTier
+  | _ => atomTier
+
+/-- The tier a binary operator's LEFT operand is written at: the operator's own
+  tier for the left-associative operators (an equal-tier left operand reads back
+  unchanged), the postfix tier for `^`, whose base is postfix-level — a unary
+  base or a negative literal must keep its parentheses, or `-a ^ b` would read
+  back as `-(a ^ b)`, and `(a ^ b) ^ c` would read back right-associated.
+  C#: `ExprNameRenderer.LeftOperandTier`. -/
+def leftOperandTier (op : BinaryOp) : Nat :=
+  match op with
+  | .pow => postfixTier
+  | _ => binaryOperatorTier op
+
+/-- The tier a binary operator's RIGHT operand is written at: one above the
+  operator for the left-associative operators (`a - (b - c)` keeps its
+  parentheses), the unary tier for `^`, whose exponent re-enters the unary
+  level (`a ^ -b` and `a ^ b ^ c` read back with the same AST).
+  C#: `ExprNameRenderer.RightOperandTier`. -/
+def rightOperandTier (op : BinaryOp) : Nat :=
+  match op with
+  | .pow => unaryMinusTier
+  | _ => binaryOperatorTier op + 1
+
+/-- A chain operand is written at the additive tier: a nested chain (`(a < b) == c`
+  is not the chain `a < b == c`), a `not`, and the logical operators keep their
+  parentheses; arithmetic, powers, prefix minus, and postfix forms read back bare.
+  C#: `ExprNameRenderer.PushComparisonOperand`. -/
+def comparisonOperandTier : Nat := additiveTier
+
+/-- The tier a prefix operator's operand is written at: a `not` operand keeps its
+  parentheses only when it binds looser than `not` (`not (a and b)`; a comparison
+  chain reads back bare — `not a < b` IS `not (a < b)`), a minus operand when it
+  binds no tighter than the prefix tier itself (`-(a + b)`, `-(a < b)`, `-(not a)`,
+  `-(-a)`; a power reads back bare — `-a ^ b` IS `-(a ^ b)`).
+  C#: `ExprNameRenderer.PushDiagnosticUnaryOperand`. -/
+def unaryOperandTier : UnaryOp -> Nat
+  | .not => notTier
+  | .minus => unaryMinusTier + 1
+
+def parenthesizeWhenLooser (slotTier : Nat) (operand : Expr) (name : String) : String :=
+  if bindingTier operand < slotTier then "(" ++ name ++ ")" else name
 
 /-- This MINIMAL renderer models only structural reference forms; every other
   kind (`.num`, `.param`, `.binary`, ...) renders as the `(kind)` fallback, so
@@ -3143,42 +3257,44 @@ def openExprName (e : Expr) : String :=
   | .emptySequence depth => emptySequenceText depth
   | _ => s!"({Expr.kind e})"            -- * informative fallback using constructor kind
 
+/-- The diagnostic expression name (C#: `ExprNameMode.DiagnosticName`). Operators
+  render bare, and every operand keeps parentheses exactly where the precedence
+  ladder needs them (`bindingTier` against the slot tiers above), so the text
+  reads back as the AST it was rendered from — nested binaries, comparison
+  chains, and prefix operators included. -/
 partial def exprDiagnosticName : Expr -> String
   | .param name => name
   | .num value => toString value
   | .stringLiteral value => "'" ++ value ++ "'"
   | .boolLiteral value => Result.boolText value
-  -- Under power-over-unary precedence, a bare minus operand reads back
-  -- correctly even over a power (`-a ^ b` IS `-(a ^ b)`); binary operands of
-  -- OTHER operators keep this renderer's established bare convention (see the
-  -- index comment below for how it diverges from C# on nested operands). A
-  -- `not` under `-` keeps parentheses: bare `-not x` is not an operand at all.
-  | .unary .minus operand =>
-      let operandName := exprDiagnosticName operand
-      "-" ++ (match operand with
-              | .unary .not _ => "(" ++ operandName ++ ")"
-              | _ => operandName)
-  -- `not` binds below the comparisons, so a comparison, arithmetic, or power
-  -- operand reads back bare (`not x > 3` IS `not (x > 3)`); only a logical
-  -- binary operand rebinds and keeps parentheses (`not (a and b)`).
-  | .unary .not operand =>
-      let operandName := exprDiagnosticName operand
-      "not " ++ (if notOperandBindsLooser operand then "(" ++ operandName ++ ")" else operandName)
-  -- The LEFT operand of `^` is postfix-level in source syntax, so a unary or
-  -- negative-literal base must keep parentheses (`(-a) ^ b`), or the bare
-  -- text would read back as `-(a ^ b)`; a `not` operand of any operator
-  -- tighter than `not` keeps parentheses on either side (`(not a) == b`,
-  -- `a == (not b)`). C#: `PushBinaryLeftOperand` / `PushBinaryRightOperand`.
+  -- A prefix operator's operand is parenthesized when it binds looser than the
+  -- operator's slot (`unaryOperandTier`): `-(a + b)`, `-(not a)`, `-(-a)`,
+  -- `not (a and b)`; `-a ^ b` and `not a < b` read back bare with the same AST.
+  | .unary op operand =>
+      let operandName := parenthesizeWhenLooser (unaryOperandTier op) operand (exprDiagnosticName operand)
+      (match op with
+       | .minus => "-"
+       | .not => "not ") ++ operandName
+  -- A binary node's operands are written at `leftOperandTier` / `rightOperandTier`:
+  -- a rebinding power base (`(-a) ^ b`, `(a + b) ^ b`), a `not` under a tighter
+  -- operator (`(not a) + b`, `a * (not b)`), a looser binary (`(a + b) * c`),
+  -- a right operand of equal tier (`a - (b - c)`), and a comparison chain under
+  -- an arithmetic operator (`(a < b) + c`) keep their parentheses; `a + b + c`,
+  -- `-a + b`, `a ^ -b`, and `a ^ b ^ c` read back bare.
+  -- C#: `PushBinaryLeftOperand` / `PushBinaryRightOperand`.
   | .binary op left right =>
-      let leftName := exprDiagnosticName left
-      let rightName := exprDiagnosticName right
-      let baseName :=
-        match op with
-        | .pow => if powerBaseNeedsParens left then "(" ++ leftName ++ ")" else leftName
-        | _ => if notOperandNeedsParens op left then "(" ++ leftName ++ ")" else leftName
-      let operandName :=
-        if notOperandNeedsParens op right then "(" ++ rightName ++ ")" else rightName
-      baseName ++ " " ++ op.symbol ++ " " ++ operandName
+      let leftName := parenthesizeWhenLooser (leftOperandTier op) left (exprDiagnosticName left)
+      let rightName := parenthesizeWhenLooser (rightOperandTier op) right (exprDiagnosticName right)
+      leftName ++ " " ++ op.symbol ++ " " ++ rightName
+  -- A comparison chain renders as the flat chain it is — `a < b <= c == d` —
+  -- never as nested binary comparisons. Each operand is written at
+  -- `comparisonOperandTier`, so a nested (parenthesized) chain, a `not`, and a
+  -- logical operator keep their parentheses: `(a < b) == c` is not `a < b == c`.
+  -- C#: `PushComparisonChain`.
+  | .comparison _ [] => "<comparison with no links>"
+  | .comparison first links =>
+      comparisonOperandName first
+        ++ String.join (links.map (fun link => " " ++ link.op.symbol ++ " " ++ comparisonOperandName link.operand))
   -- Source-faithful postfix indexing `target:selector`; operands that would
   -- rebind under the real precedence are parenthesized. This renderer prints
   -- binary bare, so a binary index operand is parenthesized here; C# reaches
@@ -3200,26 +3316,77 @@ partial def exprDiagnosticName : Expr -> String
   -- Postfix spread binds to the completed operand. Unary and binary operands
   -- need parentheses so the diagnostic text reads back with the same AST.
   | .sequenceSpread operand =>
-      let operandName := exprDiagnosticName operand
-      (match operand with
-       | .unary _ _ | .binary _ _ _ => "(" ++ operandName ++ ")"
-       | _ => operandName) ++ "*"
+      parenthesizeWhenLooser postfixTier operand (exprDiagnosticName operand) ++ "*"
   -- Exact list literal `[a, b, c]`.
   | .listLiteral items => "[" ++ String.intercalate ", " (items.map exprDiagnosticName) ++ "]"
   | .resolve name => name
   | .algorithmExpr algorithm => "(" ++ String.intercalate ", " ((Algorithm.output algorithm).map exprDiagnosticName) ++ ")"
   | .capture rows => "(" ++ String.intercalate ", " (rows.map exprDiagnosticName) ++ ")"
-  | .call fn _ => exprDiagnosticName fn ++ "(...)"
+  -- Postfix targets keep every grouping boundary that would rebind: binary and
+  -- comparison nodes, unary operators, and negative numeric literals alike.
+  -- C#: PushOperand at PostfixTier (Open already groups binary/comparison nodes).
+  | .call fn _ => postfixTargetName fn ++ "(...)"
   | .dotMember target name _ none =>
-      exprDiagnosticName target ++ "." ++ name
+      postfixTargetName target ++ "." ++ name
   | .dotMember target name _ (some _) =>
-      exprDiagnosticName target ++ "." ++ name ++ "(...)"
+      postfixTargetName target ++ "." ++ name ++ "(...)"
+where
+  /-- One operand of a comparison chain, parenthesized when it binds looser than
+      `comparisonOperandTier`. -/
+  comparisonOperandName (operand : Expr) : String :=
+    parenthesizeWhenLooser comparisonOperandTier operand (exprDiagnosticName operand)
+  /-- The target of a call or dot edge is written at the postfix tier. -/
+  postfixTargetName (target : Expr) : String :=
+    parenthesizeWhenLooser postfixTier target (exprDiagnosticName target)
 
 /-- The binary operand-shape name `left op right` — delegates to the `.binary`
   arm of `exprDiagnosticName` so the two can never disagree (in particular on
   power-base parenthesization). C#: `ExprNameRenderer.RenderBinaryDiagnosticName`. -/
 def binaryExprDiagnosticName (op : BinaryOp) (left right : Expr) : String :=
   exprDiagnosticName (.binary op left right)
+
+/-- The operand-shape name of ONE link of a comparison chain — `left op right`,
+  the two ADJACENT operands the link compares — so the failing link of
+  `1 < 2 < true` reads `2 < true`, never a nested spelling of the whole chain.
+  Delegates to the `.comparison` arm so the two can never disagree.
+  C#: `ExprNameRenderer.RenderComparisonLinkDiagnosticName`. -/
+def comparisonLinkDiagnosticName (op : ComparisonOp) (left right : Expr) : String :=
+  exprDiagnosticName (.comparison left [{ op := op, operand := right }])
+
+/-- Apply ONE LINK of a comparison chain — `leftValue op rightValue`, the two
+    ADJACENT operands the link compares — the single comparison semantics shared
+    by every chain evaluation. `eq`/`ne` compare KatLang values structurally
+    across all value kinds (`resultValueEq`): different kinds compare unequal
+    rather than raising a type mismatch (`true == 1` is `false`), so equality is
+    total and never fails. The ordering comparisons reject strings and then
+    require numeric scalar operands (a Boolean operand is rejected — Booleans
+    are NOT ordered; the empty sequence value `()` is an ordinary non-scalar
+    operand, SYN-01), each rejection carrying the operand-shape context of THIS
+    link (`while evaluating `2 < true``), never a spelling of the whole chain.
+    C#: `Evaluator.ApplyComparison`. -/
+def applyComparison (op : ComparisonOp) (leftExpr rightExpr : Expr) (lr rr : Result) : EvalM Bool :=
+  match op with
+  | .eq => pure (resultValueEq lr rr)
+  | .ne => pure (!(resultValueEq lr rr))
+  | _ =>
+    match lr, rr with
+    -- Non-equality operators are not defined on strings (they fail here rather
+    -- than via expectInt so the diagnostic names the string operands).
+    | .str _, .str _ => .error (Error.typeMismatch "Strings only support == and != operators")
+    -- Mixed string/number or string/sequence value: fail for any ordering operator.
+    | .str _, _ => .error (Error.typeMismatch "Cannot apply operator to string and non-string operands")
+    | _, .str _ => .error (Error.typeMismatch "Cannot apply operator to string and non-string operands")
+    | _, _ => do
+      let linkContext := s!"while evaluating `{comparisonLinkDiagnosticName op leftExpr rightExpr}`"
+      let x <- withCtx linkContext (requireNumericComparisonOperand op "left" lr)
+      let y <- withCtx linkContext (requireNumericComparisonOperand op "right" rr)
+      pure (match op with
+            | .lt => decide (x < y)
+            | .gt => decide (x > y)
+            | .le => decide (x <= y)
+            | .ge => decide (x >= y)
+            | .eq => decide (x = y)
+            | .ne => x != y)
 
 namespace CtxMsg
   def openMsg (k : String)              := s!"while resolving open: {k}"
@@ -4308,6 +4475,7 @@ def resolveAlg (e : Expr) (ctx : EvalCtx) : EvalM Algorithm :=
   | .listLiteral _ => .error (Error.notAnAlgorithm "list literal")
   | .unary _ _ => .error (Error.notAnAlgorithm "unary expression")
   | .binary _ _ _ => .error (Error.notAnAlgorithm "binary expression")
+  | .comparison _ _ => .error (Error.notAnAlgorithm "comparison expression")
   | .index _ _ => .error (Error.notAnAlgorithm "index expression")
   | .call _ _ => .error (Error.notAnAlgorithm "call expression")
   | .stringLiteral _ => .error (Error.notAnAlgorithm "string literal")
@@ -6212,31 +6380,23 @@ mutual
           let v <- expectInt r
           pure (Result.atom (-v), 1)
 
-  /-- Evaluate a binary operator expression as one counted value. Both operands
-      are read at their value boundaries. `==`/`!=` compare KatLang values
-      structurally across all value kinds; strings reject the non-equality
-      operators; everything else follows the numeric-scalar core. The empty
-      sequence value `()` is an ORDINARY operand here — it has no numeric
-      scalar value, so it is rejected by the same operand validation as any
-      other non-scalar value (SYN-01). Empty NEUTRALITY belongs to the arity
-      algebra's supply operations (capture/collect/spread), never to scalar
-      operators. Owned here so `eval` (the value projection) never carries
-      independent operator semantics.
+  /-- Evaluate a binary (arithmetic or logical) operator expression as one
+      counted value. Both operands are read at their value boundaries; strings
+      reject every binary operator; everything else follows the numeric-scalar
+      core or the Boolean-only logical rule. Comparisons are NOT binary
+      operators — every comparison is a link of a comparison chain
+      (`evalComparisonCounted`). The empty sequence value `()` is an ORDINARY
+      operand here — it has no numeric scalar value, so it is rejected by the
+      same operand validation as any other non-scalar value (SYN-01). Empty
+      NEUTRALITY belongs to the arity algebra's supply operations
+      (capture/collect/spread), never to scalar operators. Owned here so `eval`
+      (the value projection) never carries independent operator semantics.
       C#: the binary case of `EvalExpressionSpineCounted` / `ApplyBinaryOperator`. -/
   partial def evalBinaryCounted (op : BinaryOp) (a b : Expr) (ctx : EvalCtx) (env : ValEnv)
       : EvalM CountedResult := do
     let lr <- eval a ctx env
     let rr <- eval b ctx env
     match op with
-    -- `==` and `!=` compare KatLang values structurally across all value kinds
-    -- (numbers, Booleans, strings, sequence values, and lists, recursively).
-    -- Different value kinds compare unequal rather than raising a type
-    -- mismatch (`true == 1` is `false`), so equality is total and always
-    -- yields a Boolean value. This dedicated path is separate from the
-    -- numeric-scalar-only validation used by the arithmetic and ordering
-    -- operators below.
-    | .eq => pure (Result.bool (resultValueEq lr rr), 1)
-    | .ne => pure (Result.bool (!(resultValueEq lr rr)), 1)
     -- The logical operators are Boolean-only: both operands are evaluated
     -- left to right before the operator applies (the established evaluation
     -- order — no short circuit), and each must be a Boolean value. There is
@@ -6276,9 +6436,8 @@ mutual
           pure (value, Result.valueCount value)
         else
           let value : Result :=
-            -- `.eq`/`.ne` and the logical operators are handled above; their
-            -- arms below keep the match exhaustive over BinaryOp and are
-            -- unreachable here.
+            -- The logical operators are handled above; their arm below keeps
+            -- the match exhaustive over BinaryOp and is unreachable here.
             match op with
             | .add  => .atom (x + y)
             | .sub  => .atom (x - y)
@@ -6291,17 +6450,36 @@ mutual
             | .idiv => .atom (x.tdiv y)
             | .mod  => .atom (x.tmod y)
             | .pow  => .atom (intPow x y.toNat)
-            -- The ordering comparisons take numeric scalar operands only (a
-            -- Boolean operand is rejected above: Booleans are not ordered)
-            -- and yield a Boolean value.
-            | .lt   => .bool (decide (x < y))
-            | .gt   => .bool (decide (x > y))
-            | .le   => .bool (decide (x <= y))
-            | .ge   => .bool (decide (x >= y))
-            | .eq   => .bool (decide (x = y))
-            | .ne   => .bool (x != y)
             | .and | .or | .xor => .bool false
           pure (value, 1)
+
+  /-- Evaluate a COMPARISON CHAIN `first op1 x1 op2 x2 …` as one counted Boolean
+      value — incrementally, left to right: the first operand, then link by
+      link, evaluating the link's operand and comparing the PREVIOUS operand's
+      value with it (`applyComparison`). Every operand is evaluated EXACTLY ONCE
+      (the previous VALUE is carried forward, never its expression), a `false`
+      link never stops the chain (KatLang's eager Boolean composition: a later
+      invalid comparison is still reported), and an error terminates it before
+      any later operand is evaluated. The chain is `true` iff every link held; a
+      chain with no links evaluates its first operand and is `true`.
+      C#: the Comparison case of `EvalExpressionSpineCounted` /
+      `EvalExpressionSpineCountedAsync` and `LoopOptimizer.EvalLoopComparisonPlan`. -/
+  partial def evalComparisonCounted (first : Expr) (links : List ComparisonLink) (ctx : EvalCtx) (env : ValEnv)
+      : EvalM CountedResult := do
+    let firstValue <- eval first ctx env
+    evalComparisonLinksCounted first firstValue true links ctx env
+
+  /-- The link loop of `evalComparisonCounted`: `previous` is the value of
+      `previousExpr` (the left side of the next link) and `holds` the verdict of
+      the links compared so far. -/
+  partial def evalComparisonLinksCounted (previousExpr : Expr) (previous : Result) (holds : Bool)
+      (links : List ComparisonLink) (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult :=
+    match links with
+    | [] => pure (Result.bool holds, 1)
+    | link :: rest => do
+        let next <- eval link.operand ctx env
+        let linkHolds <- applyComparison link.op previousExpr link.operand previous next
+        evalComparisonLinksCounted link.operand next (holds && linkHolds) rest ctx env
 
   /-- Evaluate an expression together with the number of top-level values it
       emits at the current algorithm boundary — the CANONICAL expression
@@ -6390,6 +6568,8 @@ mutual
         evalUnaryCounted op operand ctx env
     | .binary op a b =>
         evalBinaryCounted op a b ctx env
+    | .comparison first links =>
+        evalComparisonCounted first links ctx env
 
   /-- User-defined call evaluation with plain Result output.
       This is the Result projection of `evalUserCallCounted`: the counted twin
@@ -6910,6 +7090,10 @@ mutual
     | .emptySequence n => pure (.emptySequence n)
     | .unary op e => return .unary op (<- identifyPropertyExpr e)
     | .binary op a b => return .binary op (<- identifyPropertyExpr a) (<- identifyPropertyExpr b)
+    | .comparison first links =>
+        return .comparison (<- identifyPropertyExpr first)
+          (<- links.mapM (fun link => do
+            return { link with operand := (<- identifyPropertyExpr link.operand) }))
     | .index a b => return .index (<- identifyPropertyExpr a) (<- identifyPropertyExpr b)
     | .sequenceConstruct a b => return .sequenceConstruct (<- identifyPropertyExpr a) (<- identifyPropertyExpr b)
     | .sequenceSpread e => return .sequenceSpread (<- identifyPropertyExpr e)
@@ -7108,6 +7292,7 @@ partial def postElabInvariant : Expr -> Bool
   | .boolLiteral _   => true
   | .unary _ e       => postElabInvariant e
   | .binary _ a b    => postElabInvariant a && postElabInvariant b
+  | .comparison first links => postElabInvariant first && links.all (fun link => postElabInvariant link.operand)
   | .index a b       => postElabInvariant a && postElabInvariant b
   | .sequenceConstruct a b  => postElabInvariant a && postElabInvariant b
   | .sequenceSpread a       => postElabInvariant a

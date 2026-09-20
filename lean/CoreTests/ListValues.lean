@@ -153,8 +153,8 @@ def ifSelects (cond : KatLang.Expr) (expected : Int) : Bool :=
 #guard ifSelects (.boolLiteral true) 10
 #guard ifSelects (.boolLiteral false) 20
 #guard ifSelects (.capture [.boolLiteral true]) 10
-#guard ifSelects (.binary .lt (.num 1) (.num 2)) 10
-#guard ifSelects (.binary .eq (.num 1) (.num 2)) 20
+#guard ifSelects (.compare .lt (.num 1) (.num 2)) 10
+#guard ifSelects (.compare .eq (.num 1) (.num 2)) 20
 #guard ifSelects (.unary .not (.boolLiteral true)) 20
 #guard ifSelects (.call (.resolve "contains") [.listLiteral [.num 1, .num 2], .num 2]) 10
 
@@ -189,10 +189,10 @@ def listExactnessPreserved : Bool :=
 -- sequence value or the lone item it contains.
 def listEqualityIsKindExact : Bool :=
   evaluatesToBools (.algorithmExpr (alg [] [] [] [
-    .binary .eq (.listLiteral [.num 1, .num 2]) (.listLiteral [.num 1, .num 2]),
-    .binary .eq (.listLiteral []) (.emptySequence 0),
-    .binary .eq (.listLiteral [.num 7]) (.num 7),
-    .binary .eq (.listLiteral [.num 1, .num 2]) (.capture [.num 1, .num 2])]))
+    .compare .eq (.listLiteral [.num 1, .num 2]) (.listLiteral [.num 1, .num 2]),
+    .compare .eq (.listLiteral []) (.emptySequence 0),
+    .compare .eq (.listLiteral [.num 7]) (.num 7),
+    .compare .eq (.listLiteral [.num 1, .num 2]) (.capture [.num 1, .num 2])]))
     [true, false, false, false]
 
 #guard listEqualityIsKindExact
@@ -604,11 +604,11 @@ def powerBaseDiagnosticNameParenthesizesRebindingBases : Bool :=
 -- (bare `-not a` is not an operand at all). C# twin:
 -- `ExprNameRendererTests.Golden_NotOperandParenthesization_RendersExactly`.
 def notOperandDiagnosticNameParenthesizesRebindingOperands : Bool :=
-  (KatLang.exprDiagnosticName (.binary .eq (.unary .not (.resolve "a")) (.resolve "b"))
+  (KatLang.exprDiagnosticName (.compare .eq (.unary .not (.resolve "a")) (.resolve "b"))
     == "(not a) == b") &&
-  (KatLang.exprDiagnosticName (.binary .eq (.resolve "a") (.unary .not (.resolve "b")))
+  (KatLang.exprDiagnosticName (.compare .eq (.resolve "a") (.unary .not (.resolve "b")))
     == "a == (not b)") &&
-  (KatLang.exprDiagnosticName (.binary .gt (.unary .not (.resolve "a")) (.resolve "b"))
+  (KatLang.exprDiagnosticName (.compare .gt (.unary .not (.resolve "a")) (.resolve "b"))
     == "(not a) > b") &&
   (KatLang.exprDiagnosticName (.binary .add (.unary .not (.resolve "a")) (.resolve "b"))
     == "(not a) + b") &&
@@ -622,7 +622,7 @@ def notOperandDiagnosticNameParenthesizesRebindingOperands : Bool :=
     == "a or not b") &&
   (KatLang.exprDiagnosticName (.binary .xor (.unary .not (.resolve "a")) (.resolve "b"))
     == "not a xor b") &&
-  (KatLang.exprDiagnosticName (.unary .not (.binary .gt (.resolve "a") (.resolve "b")))
+  (KatLang.exprDiagnosticName (.unary .not (.compare .gt (.resolve "a") (.resolve "b")))
     == "not a > b") &&
   (KatLang.exprDiagnosticName (.unary .not (.binary .and (.resolve "a") (.resolve "b")))
     == "not (a and b)") &&
@@ -630,7 +630,7 @@ def notOperandDiagnosticNameParenthesizesRebindingOperands : Bool :=
     == "-(not a)") &&
   (KatLang.exprDiagnosticName (.unary .not (.unary .not (.resolve "a")))
     == "not not a") &&
-  (KatLang.binaryExprDiagnosticName .eq (.unary .not (.resolve "a")) (.resolve "b")
+  (KatLang.comparisonLinkDiagnosticName .eq (.unary .not (.resolve "a")) (.resolve "b")
     == "(not a) == b")
 
 #guard notOperandDiagnosticNameParenthesizesRebindingOperands

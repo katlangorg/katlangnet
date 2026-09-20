@@ -3,11 +3,12 @@ namespace KatLang;
 /// <summary>
 /// The rendering mode for one expression position inside a diagnostic name.
 /// Modes reproduce the established context-sensitive parenthesization rules:
-/// <see cref="Open"/> is the base spelling; the operand/target/selector modes wrap
-/// forms whose bare rendering would rebind in source syntax; and
-/// <see cref="DiagnosticName"/> is the operand-shape spelling used by binary
-/// operand-shape contexts (bare top-level binary chains, zero-shape blocks and the
-/// internal sequence joins rendered as one sequence value).
+/// <see cref="Open"/> is the base spelling (every binary and comparison-chain name
+/// self-parenthesizes); the operand/target/selector modes wrap forms whose bare
+/// rendering would rebind in source syntax; and <see cref="DiagnosticName"/> is the
+/// operand-shape spelling used by operand-shape contexts (the "while evaluating
+/// `…`" frames): operators render bare and every operand keeps exactly the
+/// parentheses the precedence ladder needs.
 /// </summary>
 internal enum ExprNameMode
 {
@@ -15,9 +16,12 @@ internal enum ExprNameMode
     Open,
 
     /// <summary>
-    /// Operand-shape spelling: a bare top-level binary chain, a zero-shape block as
-    /// <c>(out1, out2, ...)</c>, and the internal sequence join as one sequence
-    /// value; everything else falls back to <see cref="Open"/>.
+    /// Operand-shape spelling (Lean: <c>exprDiagnosticName</c>): a binary node, a
+    /// comparison chain, and a prefix operator render bare at the top with their
+    /// operands parenthesized by the precedence-tier rule (<c>(a + b) * c</c>,
+    /// <c>a &lt; b &lt;= c</c>, <c>(a &lt; b) == c</c>, <c>-(a + b)</c>), a zero-shape
+    /// block renders as <c>(out1, out2, ...)</c>, and the internal sequence join as one
+    /// sequence value; everything else falls back to <see cref="Open"/>.
     /// </summary>
     DiagnosticName,
 
@@ -107,6 +111,7 @@ internal static class ExprNameRenderer
         public readonly string? Text;
         public readonly Expr? Node;
         public readonly IReadOnlyList<Expr>? Items;
+        public readonly IReadOnlyList<ComparisonLink>? Links;
         public readonly int ItemIndex;
         public readonly ExprNameMode Mode;
 
@@ -115,6 +120,7 @@ internal static class ExprNameRenderer
             Text = text;
             Node = null;
             Items = null;
+            Links = null;
             ItemIndex = 0;
             Mode = default;
         }
@@ -124,6 +130,7 @@ internal static class ExprNameRenderer
             Text = null;
             Node = node;
             Items = null;
+            Links = null;
             ItemIndex = 0;
             Mode = mode;
         }
@@ -133,7 +140,19 @@ internal static class ExprNameRenderer
             Text = null;
             Node = null;
             Items = items;
+            Links = null;
             ItemIndex = itemIndex;
+            Mode = mode;
+        }
+
+        /// <summary>A comparison-chain link cursor: the link at <paramref name="linkIndex"/> is rendered next.</summary>
+        public Piece(IReadOnlyList<ComparisonLink> links, int linkIndex, ExprNameMode mode)
+        {
+            Text = null;
+            Node = null;
+            Items = null;
+            Links = links;
+            ItemIndex = linkIndex;
             Mode = mode;
         }
     }
@@ -168,18 +187,100 @@ internal static class ExprNameRenderer
     }
 
     /// <summary>
-    /// True when <paramref name="expr"/> in POWER-BASE position would rebind if
-    /// rendered bare: `^` binds tighter than prefix unary on the left, so a
-    /// unary base — and a literal whose text renders with a leading minus
-    /// (including -0 and -Infinity; NaN renders unsigned) — must keep its
-    /// parentheses, or `-a ^ b` would read back as `-(a ^ b)`. The exponent
-    /// side is the unary level, so this never applies to right operands.
-    /// Lean: <c>powerBaseNeedsParens</c>.
+    /// Renders ONE link of a comparison chain in operand shape — <c>left op right</c>,
+    /// the two ADJACENT operands the link compares, in
+    /// <see cref="ExprNameMode.DiagnosticName"/> with no outer parentheses — so the
+    /// failing link of <c>1 &lt; 2 &lt; true</c> reads <c>2 &lt; true</c>, never a
+    /// nested spelling of the whole chain. Lean: <c>comparisonLinkDiagnosticName</c>.
     /// </summary>
-    private static bool PowerBaseNeedsParens(Expr expr)
-        => expr is Expr.Unary
-            || (expr is Expr.Num numLiteral
-                && NumericLiteralRendersWithLeadingMinus(numLiteral.Value));
+    internal static string RenderComparisonLinkDiagnosticName(ComparisonOp op, Expr left, Expr right)
+    {
+        var pending = new Stack<Piece>();
+        PushComparisonOperand(pending, right, ExprNameMode.DiagnosticName);
+        pending.Push(new Piece(SpacedComparisonOpText(op)));
+        PushComparisonOperand(pending, left, ExprNameMode.DiagnosticName);
+        return Drain(pending);
+    }
+
+    // ── Precedence tiers (the ONE parenthesization rule) ─────────────────────
+    //
+    // A rendered name must read back as the AST it was rendered from, so an
+    // operand is parenthesized exactly when it binds LOOSER than the position it
+    // is written in. The tiers mirror the parser's ladder (Parser.cs, "Precedence
+    // levels"); Lean: `bindingTier` and the slot tiers of `exprDiagnosticName`.
+
+    private const int OrTier = 1;
+    private const int XorTier = 2;
+    private const int AndTier = 3;
+    private const int NotTier = 4;
+    private const int ComparisonTier = 5;
+    private const int AdditiveTier = 6;
+    private const int MultiplicativeTier = 7;
+    private const int UnaryMinusTier = 8;
+    private const int PowerTier = 9;
+    private const int PostfixTier = 10;
+    private const int AtomTier = 11;
+
+    private static int BinaryOperatorTier(BinaryOp op) => op switch
+    {
+        BinaryOp.Or => OrTier,
+        BinaryOp.Xor => XorTier,
+        BinaryOp.And => AndTier,
+        BinaryOp.Add or BinaryOp.Sub => AdditiveTier,
+        BinaryOp.Mul or BinaryOp.Div or BinaryOp.IDiv or BinaryOp.Mod => MultiplicativeTier,
+        BinaryOp.Pow => PowerTier,
+        _ => AtomTier,
+    };
+
+    /// <summary>
+    /// How tightly <paramref name="expr"/> binds when rendered bare. Prefix forms
+    /// take their operator's tier (a literal whose text begins with a minus —
+    /// including -0 and -Infinity, never NaN — reads back as a prefix minus);
+    /// postfix forms and the self-delimiting spellings (leaves, captures, lists,
+    /// blocks, the parenthesized internal join) never rebind. Lean: <c>bindingTier</c>.
+    /// </summary>
+    private static int BindingTier(Expr expr) => expr switch
+    {
+        Expr.Binary binary => BinaryOperatorTier(binary.Op),
+        Expr.Comparison { Links.Count: 0 } => AtomTier,
+        Expr.Comparison => ComparisonTier,
+        Expr.Unary { Op: UnaryOp.Not } => NotTier,
+        Expr.Unary => UnaryMinusTier,
+        Expr.Num numLiteral when NumericLiteralRendersWithLeadingMinus(numLiteral.Value) => UnaryMinusTier,
+        Expr.Index or Expr.DotCall or Expr.Call or Expr.SequenceSpread or Expr.Grace => PostfixTier,
+        _ => AtomTier,
+    };
+
+    /// <summary>
+    /// The binding tier of <paramref name="expr"/> as rendered in <paramref name="mode"/>:
+    /// in <see cref="ExprNameMode.Open"/> a binary or comparison node prints inside its
+    /// own parentheses, so it is self-delimiting there and only the prefix forms can
+    /// rebind; in <see cref="ExprNameMode.DiagnosticName"/> every operand prints bare
+    /// and is judged by its real tier.
+    /// </summary>
+    private static int BindingTier(Expr expr, ExprNameMode mode)
+        => mode == ExprNameMode.Open && expr is Expr.Binary or Expr.Comparison
+            ? AtomTier
+            : BindingTier(expr);
+
+    /// <summary>
+    /// The tier a binary operator's LEFT operand is written at: the operator's own
+    /// tier for the left-associative operators (an equal-tier left operand reads back
+    /// unchanged), the postfix tier for `^`, whose base is postfix-level — a unary base
+    /// or a leading-minus literal must keep its parentheses, or `-a ^ b` would read back
+    /// as `-(a ^ b)`, and `(a ^ b) ^ c` would read back right-associated.
+    /// </summary>
+    private static int LeftOperandTier(BinaryOp op)
+        => op == BinaryOp.Pow ? PostfixTier : BinaryOperatorTier(op);
+
+    /// <summary>
+    /// The tier a binary operator's RIGHT operand is written at: one above the operator
+    /// for the left-associative operators (`a - (b - c)` keeps its parentheses), the
+    /// unary tier for `^`, whose exponent re-enters the unary level (`a ^ -b` and
+    /// `a ^ b ^ c` read back with the same AST).
+    /// </summary>
+    private static int RightOperandTier(BinaryOp op)
+        => op == BinaryOp.Pow ? UnaryMinusTier : BinaryOperatorTier(op) + 1;
 
     /// <summary>
     /// True exactly when Decimal128's invariant diagnostic text begins with a
@@ -192,58 +293,82 @@ internal static class ExprNameRenderer
         => !System.Numerics.Decimal128.IsNaN(value)
             && System.Numerics.Decimal128.IsNegative(value);
 
-    /// <summary>
-    /// True when <paramref name="operand"/> is a prefix <c>not</c> in an operand
-    /// position of an operator that binds tighter than <c>not</c>. In source syntax
-    /// <c>not</c> sits below the comparisons and above the logical operators
-    /// (comparisons &gt; not &gt; and &gt; xor &gt; or), so a bare <c>not a == b</c>
-    /// would read back as <c>not (a == b)</c>, and a bare <c>1 + not x</c> is not an
-    /// operand at all; only <c>and</c>/<c>xor</c>/<c>or</c> take a bare <c>not</c>
-    /// operand. Lean: <c>notOperandNeedsParens</c>.
-    /// </summary>
-    private static bool NotOperandNeedsParens(BinaryOp op, Expr operand)
-        => operand is Expr.Unary { Op: UnaryOp.Not }
-            && op is not (BinaryOp.And or BinaryOp.Or or BinaryOp.Xor);
+    /// <summary>Pushes <paramref name="operand"/> in <paramref name="mode"/>, parenthesized iff it binds looser than <paramref name="slotTier"/>.</summary>
+    private static void PushOperand(Stack<Piece> pending, Expr operand, int slotTier, ExprNameMode mode)
+    {
+        if (BindingTier(operand, mode) < slotTier)
+        {
+            pending.Push(new Piece(")"));
+            pending.Push(new Piece(operand, mode));
+            pending.Push(new Piece("("));
+            return;
+        }
+
+        pending.Push(new Piece(operand, mode));
+    }
 
     /// <summary>
-    /// Pushes a binary node's LEFT operand in <paramref name="mode"/>, adding
-    /// explicit parentheses first when the operator is `^` and the operand
-    /// would rebind as a bare power base (<see cref="PowerBaseNeedsParens"/>),
-    /// or when the operand is a `not` under a tighter-binding operator
-    /// (<see cref="NotOperandNeedsParens"/>). The child keeps its surrounding
-    /// mode so capture/block spellings are unchanged inside the added parentheses.
+    /// Pushes a binary node's LEFT operand in <paramref name="mode"/>, parenthesized
+    /// when it binds looser than <see cref="LeftOperandTier"/> — a rebinding power
+    /// base, a `not` under a tighter operator, a looser binary or a comparison chain
+    /// under an arithmetic operator. The child keeps its surrounding mode so
+    /// capture/block spellings are unchanged inside the added parentheses.
     /// </summary>
     private static void PushBinaryLeftOperand(Stack<Piece> pending, BinaryOp op, Expr left, ExprNameMode mode)
-    {
-        if ((op is BinaryOp.Pow && PowerBaseNeedsParens(left)) || NotOperandNeedsParens(op, left))
-        {
-            pending.Push(new Piece(")"));
-            pending.Push(new Piece(left, mode));
-            pending.Push(new Piece("("));
-            return;
-        }
+        => PushOperand(pending, left, LeftOperandTier(op), mode);
 
-        pending.Push(new Piece(left, mode));
+    /// <summary>
+    /// Pushes a binary node's RIGHT operand in <paramref name="mode"/>, parenthesized
+    /// when it binds looser than <see cref="RightOperandTier"/>; a unary minus
+    /// exponent or operand stays bare, as its tier allows.
+    /// </summary>
+    private static void PushBinaryRightOperand(Stack<Piece> pending, BinaryOp op, Expr right, ExprNameMode mode)
+        => PushOperand(pending, right, RightOperandTier(op), mode);
+
+    /// <summary>
+    /// Pushes one operand of a comparison chain in <paramref name="mode"/>. A chain
+    /// operand is written at the additive tier: a nested chain (`(a &lt; b) == c` is
+    /// not the chain `a &lt; b == c`), a `not`, and the logical operators keep their
+    /// parentheses; arithmetic, powers, prefix minus, and postfix forms read back bare.
+    /// </summary>
+    private static void PushComparisonOperand(Stack<Piece> pending, Expr operand, ExprNameMode mode)
+        => PushOperand(pending, operand, AdditiveTier, mode);
+
+    /// <summary>
+    /// Pushes a whole comparison chain — <c>first op1 x1 op2 x2 …</c> — with every
+    /// operand in <paramref name="mode"/> under the comparison-operand rule. The links
+    /// are scheduled through a CURSOR (one link at a time, like a wide list's items),
+    /// so a host-built chain with an enormous link list never fills the pending stack
+    /// before the renderer's bounds are checked.
+    /// </summary>
+    private static void PushComparisonChain(Stack<Piece> pending, Expr first, IReadOnlyList<ComparisonLink> links, ExprNameMode mode)
+    {
+        pending.Push(new Piece(links, 0, mode));
+        PushComparisonOperand(pending, first, mode);
+    }
+
+    /// <summary>Schedules the link at <paramref name="index"/>: its operator text, then its operand, then the cursor for the next link.</summary>
+    private static void PushComparisonLink(Stack<Piece> pending, IReadOnlyList<ComparisonLink> links, int index, ExprNameMode mode)
+    {
+        pending.Push(new Piece(links, index + 1, mode));
+        PushComparisonOperand(pending, links[index].Operand, mode);
+        pending.Push(new Piece(SpacedComparisonOpText(links[index].Op)));
     }
 
     /// <summary>
-    /// Pushes a binary node's RIGHT operand in <paramref name="mode"/>, adding
-    /// explicit parentheses first when the operand is a `not` under a
-    /// tighter-binding operator (<see cref="NotOperandNeedsParens"/>); a unary
-    /// minus exponent or operand stays bare, as its tier allows.
+    /// Pushes a prefix operator's operand in <see cref="ExprNameMode.DiagnosticName"/>:
+    /// a `not` operand keeps its parentheses only when it binds looser than `not` (a
+    /// logical binary: `not (a and b)`; a comparison chain reads back bare, `not a &lt; b`
+    /// IS `not (a &lt; b)`), a minus operand when it binds no tighter than the prefix
+    /// tier itself (`-(a + b)`, `-(a &lt; b)`, `-(not a)`, `-(-a)`; a power reads back
+    /// bare, `-a ^ b` IS `-(a ^ b)`).
     /// </summary>
-    private static void PushBinaryRightOperand(Stack<Piece> pending, BinaryOp op, Expr right, ExprNameMode mode)
-    {
-        if (NotOperandNeedsParens(op, right))
-        {
-            pending.Push(new Piece(")"));
-            pending.Push(new Piece(right, mode));
-            pending.Push(new Piece("("));
-            return;
-        }
-
-        pending.Push(new Piece(right, mode));
-    }
+    private static void PushDiagnosticUnaryOperand(Stack<Piece> pending, UnaryOp op, Expr operand)
+        => PushOperand(
+            pending,
+            operand,
+            op == UnaryOp.Not ? NotTier : UnaryMinusTier + 1,
+            ExprNameMode.DiagnosticName);
 
     private static string CapLeafName(string name)
     {
@@ -283,6 +408,16 @@ internal static class ExprNameRenderer
                 pending.Push(new Piece(items[piece.ItemIndex], piece.Mode));
                 if (piece.ItemIndex > 0)
                     pending.Push(new Piece(", "));
+                continue;
+            }
+
+            if (piece.Links is { } links)
+            {
+                // Schedule exactly one chain link, for the same reason as one list item.
+                if (piece.ItemIndex >= links.Count)
+                    continue;
+
+                PushComparisonLink(pending, links, piece.ItemIndex, piece.Mode);
                 continue;
             }
 
@@ -361,6 +496,12 @@ internal static class ExprNameRenderer
     /// </summary>
     private static bool Expand(System.Text.StringBuilder builder, Stack<Piece> pending, Expr node, ExprNameMode mode)
     {
+        // A host-only vacuous chain evaluates its operand but returns true. It
+        // has no source spelling: printing just its operand would name a
+        // different expression (e.g. 7 instead of a Boolean-producing chain).
+        if (node is Expr.Comparison { Links.Count: 0 })
+            return Append(builder, "<comparison with no links>");
+
         // Mode-specific wrapping decisions first; every mode then shares the base
         // Open spelling below for whatever it did not wrap or special-case.
         switch (mode)
@@ -393,14 +534,29 @@ internal static class ExprNameRenderer
                         return true;
                     }
 
-                    // A top-level binary chain renders bare, without the outer
-                    // parentheses the Open spelling adds. A rebinding power
-                    // base or a `not` operand under a tighter operator still
-                    // gets parentheses (PushBinaryLeftOperand / PushBinaryRightOperand).
+                    // A top-level binary renders bare, without the outer
+                    // parentheses the Open spelling adds; its operands render
+                    // bare too and keep parentheses exactly where the precedence
+                    // ladder needs them (PushBinaryLeftOperand /
+                    // PushBinaryRightOperand), so the text reads back as this tree.
                     case Expr.Binary(var op, var left, var right):
                         PushBinaryRightOperand(pending, op, right, ExprNameMode.DiagnosticName);
                         pending.Push(new Piece(SpacedBinaryOpText(op)));
                         PushBinaryLeftOperand(pending, op, left, ExprNameMode.DiagnosticName);
+                        return true;
+
+                    // A comparison chain renders as the flat chain it is —
+                    // `a < b <= c == d` — never as nested binary comparisons; a
+                    // parenthesized nested chain keeps its parentheses.
+                    case Expr.Comparison(var first, var links):
+                        PushComparisonChain(pending, first, links, ExprNameMode.DiagnosticName);
+                        return true;
+
+                    // A prefix operator renders its operand bare unless the
+                    // operand binds looser than the operator (PushDiagnosticUnaryOperand).
+                    case Expr.Unary(var unaryOp, var unaryOperand):
+                        PushDiagnosticUnaryOperand(pending, unaryOp, unaryOperand);
+                        pending.Push(new Piece(unaryOp == UnaryOp.Minus ? "-" : "not "));
                         return true;
 
                     // The internal SequenceConstruct join renders as one sequence
@@ -427,7 +583,7 @@ internal static class ExprNameRenderer
 
             case ExprNameMode.SpreadOperand:
             case ExprNameMode.IndexTarget:
-                if (node is Expr.Unary)
+                if (BindingTier(node, ExprNameMode.Open) < PostfixTier)
                     return PushParenthesized(pending, node);
                 break;
 
@@ -486,6 +642,15 @@ internal static class ExprNameRenderer
                 pending.Push(new Piece("("));
                 return true;
 
+            // Comparison-chain open names self-parenthesize like binary names,
+            // rendering the whole chain flat (`(a < b == c)`); a `not` operand
+            // keeps its own parentheses (PushComparisonOperand).
+            case Expr.Comparison(var first, var links):
+                pending.Push(new Piece(")"));
+                PushComparisonChain(pending, first, links, ExprNameMode.Open);
+                pending.Push(new Piece("("));
+                return true;
+
             // Diagnostic expression names use KatLang source syntax: indexing is
             // postfix `target:selector`, never `target[selector]` (`[...]` is exact
             // list literal syntax, so bracket text would read back as a list
@@ -501,12 +666,12 @@ internal static class ExprNameRenderer
                     pending.Push(new Piece("(...)"));
                 pending.Push(new Piece(name));
                 pending.Push(new Piece("."));
-                pending.Push(new Piece(target, ExprNameMode.Open));
+                PushOperand(pending, target, PostfixTier, ExprNameMode.Open);
                 return true;
 
             case Expr.Call(var function, _):
                 pending.Push(new Piece("(...)"));
-                pending.Push(new Piece(function, ExprNameMode.Open));
+                PushOperand(pending, function, PostfixTier, ExprNameMode.Open);
                 return true;
 
             case Expr.Grace(var inner, var weight):
@@ -592,15 +757,21 @@ internal static class ExprNameRenderer
         BinaryOp.IDiv => "div",
         BinaryOp.Mod => "mod",
         BinaryOp.Pow => "^",
-        BinaryOp.Lt => "<",
-        BinaryOp.Gt => ">",
-        BinaryOp.Le => "<=",
-        BinaryOp.Ge => ">=",
-        BinaryOp.Eq => "==",
-        BinaryOp.Ne => "!=",
         BinaryOp.And => "and",
         BinaryOp.Or => "or",
         BinaryOp.Xor => "xor",
+        _ => "?",
+    };
+
+    /// <summary>Bare source spelling of a comparison operator for diagnostics. Lean: <c>ComparisonOp.symbol</c>.</summary>
+    internal static string ComparisonOpText(ComparisonOp op) => op switch
+    {
+        ComparisonOp.Lt => "<",
+        ComparisonOp.Gt => ">",
+        ComparisonOp.Le => "<=",
+        ComparisonOp.Ge => ">=",
+        ComparisonOp.Eq => "==",
+        ComparisonOp.Ne => "!=",
         _ => "?",
     };
 
@@ -613,15 +784,20 @@ internal static class ExprNameRenderer
         BinaryOp.IDiv => " div ",
         BinaryOp.Mod => " mod ",
         BinaryOp.Pow => " ^ ",
-        BinaryOp.Lt => " < ",
-        BinaryOp.Gt => " > ",
-        BinaryOp.Le => " <= ",
-        BinaryOp.Ge => " >= ",
-        BinaryOp.Eq => " == ",
-        BinaryOp.Ne => " != ",
         BinaryOp.And => " and ",
         BinaryOp.Or => " or ",
         BinaryOp.Xor => " xor ",
+        _ => " ? ",
+    };
+
+    private static string SpacedComparisonOpText(ComparisonOp op) => op switch
+    {
+        ComparisonOp.Lt => " < ",
+        ComparisonOp.Gt => " > ",
+        ComparisonOp.Le => " <= ",
+        ComparisonOp.Ge => " >= ",
+        ComparisonOp.Eq => " == ",
+        ComparisonOp.Ne => " != ",
         _ => " ? ",
     };
 }

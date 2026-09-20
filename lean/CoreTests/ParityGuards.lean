@@ -248,7 +248,7 @@ def builtinProbeCachedPropArg : Algorithm :=
     (the continuation flag is a Boolean, never the numeric state). -/
 def builtinProbeDecrementStepArg : Algorithm :=
   alg ["x"] [] [] [.binary .sub (.param "x") (.num 1),
-    .binary .gt (.binary .sub (.param "x") (.num 1)) (.num 0)]
+    .compare .gt (.binary .sub (.param "x") (.num 1)) (.num 0)]
 
 /-- `repeat` step `x + 1`. -/
 def builtinProbeIncrementStepArg : Algorithm :=
@@ -439,7 +439,7 @@ def dotCallParitySingletonSequenceValueAlg : Algorithm := .conditional none [] [
 def dotCallParityProg : Algorithm :=
   algPrivate [] [] [
     ("Double", alg ["x"] [] [] [.binary .mul (.param "x") (.num 2)]),
-    ("KeepPositive", alg ["x"] [] [] [.binary .gt (.param "x") (.num 0)]),
+    ("KeepPositive", alg ["x"] [] [] [.compare .gt (.param "x") (.num 0)]),
     ("Add", alg ["item", "acc"] [] [] [.binary .add (.param "item") (.param "acc")]),
     ("NItems", receiverSymmetryNItemsAlg),
     ("BeforeLastCount", receiverSymmetryBeforeLastCountAlg),
@@ -758,24 +758,24 @@ def evalProjectionProbes : List (String × KatLang.Expr × Bool) :=
     ("unary-not-number-rejected", .unary .not (.num 0), false),
     ("binary-and-booleans", .binary .and (.boolLiteral true) (.boolLiteral false), true),
     ("binary-and-numbers-rejected", .binary .and (.num 1) (.num 1), false),
-    ("binary-lt-booleans-rejected", .binary .lt (.boolLiteral false) (.boolLiteral true), false),
-    ("binary-eq-bool-number", .binary .eq (.boolLiteral true) (.num 1), true),
+    ("binary-lt-booleans-rejected", .compare .lt (.boolLiteral false) (.boolLiteral true), false),
+    ("binary-eq-bool-number", .compare .eq (.boolLiteral true) (.num 1), true),
     ("unary-minus-empty-rejected", .unary .minus (.emptySequence 0), false),
     ("unary-not-empty-rejected", .unary .not (.emptySequence 0), false),
     ("unary-string-rejected", .unary .minus (.stringLiteral "s"), false),
     ("binary-add", .binary .add (.num 2) (.num 3), true),
-    ("binary-eq-mixed-kinds", .binary .eq (.num 1) (.stringLiteral "1"), true),
-    ("binary-ne-strings", .binary .ne (.stringLiteral "a") (.stringLiteral "b"), true),
+    ("binary-eq-mixed-kinds", .compare .eq (.num 1) (.stringLiteral "1"), true),
+    ("binary-ne-strings", .compare .ne (.stringLiteral "a") (.stringLiteral "b"), true),
     -- SYN-01: `()` is an ordinary non-scalar operand for the non-equality
     -- operators, so both sides and the both-empty case are operand errors.
     ("binary-empty-left-rejected", .binary .add (.emptySequence 0) (.num 5), false),
     ("binary-empty-right-rejected", .binary .add (.num 5) (.emptySequence 0), false),
     ("binary-both-empty-rejected", .binary .add (.emptySequence 0) (.emptySequence 0), false),
-    ("binary-empty-order-rejected", .binary .gt (.emptySequence 0) (.num 10), false),
+    ("binary-empty-order-rejected", .compare .gt (.emptySequence 0) (.num 10), false),
     ("binary-empty-logical-rejected", .binary .and (.emptySequence 0) (.num 7), false),
     ("binary-empty-string-rejected", .binary .add (.emptySequence 0) (.stringLiteral "text"), false),
     ("binary-string-op-rejected", .binary .add (.stringLiteral "a") (.stringLiteral "b"), false),
-    ("binary-mixed-string-rejected", .binary .lt (.num 1) (.stringLiteral "b"), false),
+    ("binary-mixed-string-rejected", .compare .lt (.num 1) (.stringLiteral "b"), false),
     ("binary-div-by-zero", .binary .div (.num 1) (.num 0), false),
     ("binary-negative-pow-exact", .binary .pow (.num (-1)) (.num (-2)), true),
     -- The Int-valued Lean core rejects fractional reciprocals explicitly

@@ -79,6 +79,35 @@ internal enum LexicalFallbackSelection
 internal static class AstHelpers
 {
     /// <summary>
+    /// Rewrites every link operand of a comparison chain through <paramref name="rewriteOperand"/>,
+    /// keeping each link's operator: the ONE shape every rewriting front-end pass uses for
+    /// <see cref="Expr.Comparison.Links"/>, so a pass can never drop or reorder a link.
+    /// Returns the SAME list instance when no operand changed, so identity-preserving
+    /// passes keep their sharing.
+    /// </summary>
+    internal static IReadOnlyList<ComparisonLink> RewriteComparisonLinks(
+        IReadOnlyList<ComparisonLink> links,
+        Func<Expr, Expr> rewriteOperand)
+    {
+        List<ComparisonLink>? rewritten = null;
+        for (var index = 0; index < links.Count; index++)
+        {
+            var link = links[index];
+            var operand = rewriteOperand(link.Operand);
+            if (rewritten is null && !ReferenceEquals(operand, link.Operand))
+            {
+                rewritten = new List<ComparisonLink>(links.Count);
+                for (var copied = 0; copied < index; copied++)
+                    rewritten.Add(links[copied]);
+            }
+
+            rewritten?.Add(ReferenceEquals(operand, link.Operand) ? link : link with { Operand = operand });
+        }
+
+        return rewritten ?? links;
+    }
+
+    /// <summary>
     /// Output rows and hoisted deconstruction RHS rows in written order: each hoisted
     /// source's rows come before the output row whose index the parser recorded on it
     /// (<see cref="Algorithm.User.AssignmentDeconstructionRowIndex"/>), sources of one index
@@ -357,6 +386,7 @@ internal static class AstHelpers
                 or Expr.BoolLiteral
                 or Expr.Unary
                 or Expr.Binary
+                or Expr.Comparison
                 or Expr.Index
                 or Expr.SequenceConstruct
                 or Expr.EmptySequence

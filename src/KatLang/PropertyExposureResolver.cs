@@ -711,6 +711,12 @@ internal static class PropertyExposureResolver
                 Right = RewriteExpr(binary.Right, memos),
             },
 
+            Expr.Comparison comparison => comparison with
+            {
+                First = RewriteExpr(comparison.First, memos),
+                Links = AstHelpers.RewriteComparisonLinks(comparison.Links, operand => RewriteExpr(operand, memos)),
+            },
+
             Expr.Index index => index with
             {
                 Target = RewriteExpr(index.Target, memos),

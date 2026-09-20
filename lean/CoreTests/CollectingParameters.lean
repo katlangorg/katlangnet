@@ -925,7 +925,7 @@ def loopVariadicAppendNextAlg : Algorithm :=
 
 def loopVariadicContinueFlagExpr : KatLang.Expr :=
   .call (resolve "if") [
-    .binary .lt loopVariadicNextExpr (.num 6),
+    .compare .lt loopVariadicNextExpr (.num 6),
     .boolLiteral true,
     .boolLiteral false
   ]
@@ -1103,7 +1103,7 @@ def loopBoundaryPairWhileStepAlg : Algorithm :=
   alg ["a", "b"] [] [] [
     .binary .add (.param "a") (.num 1),
     .binary .add (.param "b") (.num 10),
-    .binary .lt (.param "a") (.num 2)
+    .compare .lt (.param "a") (.num 2)
   ]
 
 def loopBoundarySequenceValueRepeatStepAlg : Algorithm :=

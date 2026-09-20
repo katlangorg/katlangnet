@@ -75,13 +75,26 @@ public class ParserExpressionChainDepthTests
             BinaryChain("+", Parser.MaxExpressionChainDepth + 1));
 
     [Theory]
-    [InlineData("<")]
-    [InlineData("==")]
     [InlineData("and")]
     [InlineData("or")]
-    public void ComparisonEqualityAndLogicalChains_AboveLimit_ReturnStructuredError(string op)
+    public void LogicalChains_AboveLimit_ReturnStructuredError(string op)
         => AssertControlledChainFailure(
             BinaryChain(op, Parser.MaxExpressionChainDepth + 1));
+
+    [Theory]
+    [InlineData("<")]
+    [InlineData("==")]
+    public void ComparisonChains_AboveTheFormerLimit_ParseAsOneFlatChain(string op)
+    {
+        // A run of comparison operators is ONE flat Expr.Comparison node (September
+        // 2026), not a left-deep tree: it costs one chain level however many links it
+        // has, so the guard that bounds nested operator trees never applies to it.
+        var operatorCount = Parser.MaxExpressionChainDepth + 1;
+        var result = Parser.Parse(BinaryChain(op, operatorCount));
+        Assert.False(result.HasErrors);
+        var chain = Assert.IsType<Expr.Comparison>(Assert.Single(result.Root.Output));
+        Assert.Equal(operatorCount, chain.Links.Count);
+    }
 
     [Fact]
     public void DotCallChain_AboveLimit_ReturnsStructuredError()
@@ -256,8 +269,6 @@ public class ParserExpressionChainDepthTests
         var sources = new[]
         {
             BinaryChain("+", 5_000),
-            BinaryChain("<", 5_000),
-            BinaryChain("==", 5_000),
             BinaryChain("and", 5_000),
             MultilineTrailingOperatorChain("+", 5_000),
             DotCallChain(5_000),
@@ -266,6 +277,18 @@ public class ParserExpressionChainDepthTests
         };
 
         Assert.All(sources, source => AssertControlledChainFailure(source));
+
+        // A comparison chain is flat (one node, one link per operator), so an extreme
+        // one is not deep: it parses, elaborates, and EVALUATES without any recursive
+        // consumer growing with the link count — in this fresh process as well.
+        foreach (var (op, display) in new[] { ("<", "false"), ("==", "true") })
+        {
+            var chain = BinaryChain(op, 5_000);
+            var parsed = Parser.Parse(chain);
+            Assert.False(parsed.HasErrors);
+            Assert.Equal(5_000, Assert.IsType<Expr.Comparison>(Assert.Single(parsed.Root.Output)).Links.Count);
+            Assert.Equal(display, Assert.IsType<RunResult.Success>(KatLangEngine.Run(chain)).ToDisplayString());
+        }
 
         static void AssertControlledNestingFailure(string source)
         {

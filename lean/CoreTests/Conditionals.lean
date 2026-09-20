@@ -119,7 +119,7 @@ def test23 : Bool :=
 -- Test 24: 2-arg if in multiplication is rejected
 def test24 : Bool :=
   match runResult (.binary .mul (.num 10) (.call (resolve "if") [
-    .binary .lt (.num 7) (.num 6),
+    .compare .lt (.num 7) (.num 6),
     .num 1
   ])) with
   | Except.error _ => true
@@ -127,7 +127,7 @@ def test24 : Bool :=
 
 #guard test24
 #eval runResult (.binary .mul (.num 10) (.call (resolve "if") [
-  .binary .lt (.num 7) (.num 6),
+  .compare .lt (.num 7) (.num 6),
   .num 1
 ]))
 
@@ -422,7 +422,7 @@ def test31 : Bool :=
 -- Test 31a: a comparison is the ordinary way to write a condition, and the
 -- Boolean it yields selects the branch — if(3 > 2, 7, 9) → [7]
 def test31a : Bool :=
-  match runFlat (.call (resolve "if") [.binary .gt (.num 3) (.num 2), .num 7, .num 9]) with
+  match runFlat (.call (resolve "if") [.compare .gt (.num 3) (.num 2), .num 7, .num 9]) with
   | Except.ok [7] => true
   | _ => false
 

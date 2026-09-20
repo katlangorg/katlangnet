@@ -753,6 +753,7 @@ public static partial class Evaluator
         Expr.BoolLiteral => "boolLiteral",
         Expr.Unary => "unary",
         Expr.Binary => "binary",
+        Expr.Comparison => "comparison",
         Expr.Index => "index",
         Expr.SequenceConstruct => "sequenceConstruct",
         Expr.EmptySequence => "emptySequence",
@@ -855,10 +856,11 @@ public static partial class Evaluator
     }
 
     /// <summary>
-    /// Operand-shape spelling for binary operand-shape contexts (bare top-level
-    /// binary chains, zero-shape blocks and internal sequence joins rendered as one
-    /// written sequence value). Iterative and output-bounded like
-    /// <see cref="OpenExprName"/>.
+    /// Operand-shape spelling for operand-shape contexts: operators render bare at the
+    /// top with precedence-faithful operand parentheses (binary nodes, comparison
+    /// chains, prefix operators), zero-shape blocks and internal sequence joins render
+    /// as one written sequence value. Iterative and output-bounded like
+    /// <see cref="OpenExprName"/>. Lean: <c>exprDiagnosticName</c>.
     /// </summary>
     private static string ExprDiagnosticName(Expr expr)
         => ExprNameRenderer.Render(expr, ExprNameMode.DiagnosticName);
@@ -868,6 +870,15 @@ public static partial class Evaluator
 
     private static string BinaryOperandContext(BinaryOp op, Expr left, Expr right)
         => $"while evaluating `{BinaryExprDiagnosticName(op, left, right)}`";
+
+    /// <summary>
+    /// The operand-shape context of ONE adjacent comparison of a chain — the two
+    /// operands the link actually compares, never the whole chain and never a nested
+    /// binary spelling: the failing link of <c>1 &lt; 2 &lt; true</c> is reported as
+    /// <c>while evaluating `2 &lt; true`</c>. Lean: <c>comparisonLinkDiagnosticName</c>.
+    /// </summary>
+    private static string ComparisonLinkContext(ComparisonOp op, Expr left, Expr right)
+        => $"while evaluating `{ExprNameRenderer.RenderComparisonLinkDiagnosticName(op, left, right)}`";
 
     // ── Error context helpers ──────────────────────────────────────────────
 
@@ -1555,11 +1566,18 @@ public static partial class Evaluator
         => Result.ValueComparer.Equals(left, right);
 
     private static EvalResult<Decimal128> RequireNumericScalarOperand(BinaryOp op, string side, Result value)
+        => RequireNumericScalarOperand(ExprNameRenderer.BinaryOpText(op), side, value);
+
+    /// <summary>The ordering comparisons share the arithmetic operators' numeric-scalar operand rule and message.</summary>
+    private static EvalResult<Decimal128> RequireNumericScalarOperand(ComparisonOp op, string side, Result value)
+        => RequireNumericScalarOperand(ExprNameRenderer.ComparisonOpText(op), side, value);
+
+    private static EvalResult<Decimal128> RequireNumericScalarOperand(string operatorName, string side, Result value)
     {
         var number = value.AsNum();
         return number is not null
             ? EvalResult<Decimal128>.Ok(number.Value)
-            : new EvalError.TypeMismatch(NumericScalarOperandMessage(ExprNameRenderer.BinaryOpText(op), side, value));
+            : new EvalError.TypeMismatch(NumericScalarOperandMessage(operatorName, side, value));
     }
 
     private static string NumericScalarOperandMessage(string operatorName, string side, Result value)
@@ -2077,6 +2095,7 @@ public static partial class Evaluator
             Expr.ListLiteral => new EvalError.NotAnAlgorithm("list literal") { Span = expr.Span },
             Expr.Unary => new EvalError.NotAnAlgorithm("unary expression") { Span = expr.Span },
             Expr.Binary => new EvalError.NotAnAlgorithm("binary expression") { Span = expr.Span },
+            Expr.Comparison => new EvalError.NotAnAlgorithm("comparison expression") { Span = expr.Span },
             Expr.Index => new EvalError.NotAnAlgorithm("index expression") { Span = expr.Span },
             Expr.Call => new EvalError.NotAnAlgorithm("call expression") { Span = expr.Span },
             Expr.NativeCall => new EvalError.NotAnAlgorithm("native call") { Span = expr.Span },

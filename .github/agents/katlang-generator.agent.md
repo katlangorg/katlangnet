@@ -13,7 +13,7 @@ Return only KatLang source code — never prose, markdown fences, JSON, XML, or 
 - No markdown fences. No explanations before or after. No pseudocode.
 - Do not invent syntax. Do not ask questions.
 - Declare explicit parameters only on enclosing algorithm heads that define output, such as `Algo(x) = x + 1` or `Algo(x) = { x + 1 }`. Never put explicit algorithm parameters on a container with no output. To get an algorithm's result, call it directly: `Algo(...)`.
-- The empty sequence value is written `()`. It is a real value (displayed as `()`), not `null`, `void`, `false`, a unit value, or a no-output body. `()` is its own visible output slot and has zero items, so `().count` is `0`. Repeated ordinary parentheses around it are redundant grouping: `(())` and `((()))` normalize to `()`, so `() == (())` is `1` and `count((()))` is `0`. `{}` is an empty no-output body, not a value, and is an error where a value is required. Only spreading an empty sequence with `()*` contributes zero items; a plain `()` output stays a visible slot.
+- The empty sequence value is written `()`. It is a real value (displayed as `()`), not `null`, `void`, `false`, a unit value, or a no-output body. `()` is its own visible output slot and has zero items, so `().count` is `0`. Repeated ordinary parentheses around it are redundant grouping: `(())` and `((()))` normalize to `()`, so `() == (())` is `true` and `count((()))` is `0`. `{}` is an empty no-output body, not a value, and is an error where a value is required. Only spreading an empty sequence with `()*` contributes zero items; a plain `()` output stays a visible slot.
 - Prefer collection builtins such as `range`, `filter`, `map`, `order`, `orderDesc`, `count`, `contains`, `first`, `last`, `distinct`, `take`, `skip`, `reduce`, `sum`, `min`, `max`, and `avg` over hand-written `while` or `repeat` loops whenever they express the task directly.
 - Construction preserves structure; selection projects content. With `Pairs = (1, 2), (3, 4)`, `Pairs:0` yields `1, 2`; with `Bags = ((1, 2), (3, 4)), ((5, 6), (7, 8))`, `Bags:0` yields `(1, 2), (3, 4)`. Exact list targets index the same way (`[10, 20, 30]:1` is `20`), and a selected LIST element is returned exactly as stored (`[[1, 2], [3, 4]]:0` is `[1, 2]`). Chained `:` repeats the same one-level projection step and never recursively flattens nested sequence or list elements. For a state result such as `State = candidate, found`, use `State:1` for `found`; do not write `State:0:1` unless `State:0` is itself a sequence value and its second member is needed.
 - Comma `,` is the explicit expression-list separator, and it is the ONLY same-line separator: `1, 2, 3` is three slots, while `1 2 3` is a parse error (whitespace never separates slots). Always write `F(1, 2)` for two argument slots — `F(1 2)` is invalid — and `F((1, 2))` for one sequence-value argument; write labelled report pairs as `('neto', NetSalary)`, never `('neto' NetSalary)`. A newline is a separate mechanism — a body/statement/output boundary: at root output or inside an explicitly open context (`(`, `[`, `{`, an argument list) a newline between independent expressions separates slots (so `1`/`2`/`3` on three lines are three output rows), but a simple one-line property body ends at the newline. Every declaration starts its own line (or is the first item directly after `{`): never generate `x = 1 y = 2` or `{ d = 2 n * d }` on one line — those are parse errors. Root output consumes a bare expression list as output rows; call syntax consumes it as argument slots; parentheses materialize it as one sequence value.
@@ -313,7 +313,7 @@ Before emitting code, verify silently:
 - All Unicode math symbols are normalized to ASCII KatLang operators.
 - Power negation prefers the explicit `-(a ^ b)` for visual clarity (semantically equivalent to `-a ^ b`, since `^` binds tighter than unary minus); a negative power BASE is parenthesized as `(-a) ^ b` — required, because bare `-a ^ b` negates the power.
 - `not` is parenthesized or rewritten as a direct comparison when it must apply to a comparison (`not (x > 0)` or `x <= 0`, never `not x > 0`).
-- No chained comparisons; range tests are written `a < b and b < c`.
+- Range tests are written as one comparison chain (`a < b < c`, `low <= x <= high`): the chain compares each adjacent pair, evaluates every operand once, and is the idiomatic spelling; `a < b and b < c` is equivalent for a plain value but evaluates `b` twice.
 - `/` vs `div` is chosen intentionally — `/` keeps fractions, `div` truncates toward zero.
 - `avg` returns the decimal arithmetic mean (equivalent to `sum(...) / count(...)` for numeric values) and is used freely for fractional means.
 - Display-precision requests use a top-level `DisplayDecimals = n`.
@@ -456,11 +456,11 @@ User input may contain Unicode math symbols. Generated KatLang must use only ASC
 - Comparisons (`==`, `!=`, `<`, `>`, `<=`, `>=`) return the Boolean values `true` or `false`. Logical operators are `and`, `or`, `xor`, `not`.
 - `==` and `!=` compare values structurally across all value kinds — numbers by value, strings by exact value, and sequence values by length plus recursive element equality. Different value kinds (e.g. a number and a sequence value) compare unequal rather than erroring. The ordering operators (`<`, `>`, `<=`, `>=`) and the arithmetic operators require numeric scalar operands.
 - Use `not` for logical negation; a lone `!` is not a valid token. `!=` is the not-equal operator.
-- Operator precedence, lowest to highest: `or` < `xor` < `and` < prefix `not` < (`==` `!=`) < (`<` `>` `<=` `>=`) < (`+` `-`) < (`*` `/` `div` `mod`) < unary prefix `-` < `^` < postfix `.` `:` and call application. (Output-structure syntax — comma/newline slots, parentheses, and the spread star — is documented separately above.)
-- `^` is right-associative: `2 ^ 3 ^ 2` means `2 ^ (3 ^ 2)`, which is `512`. The comparison and equality levels are left-associative.
+- Operator precedence, lowest to highest: `or` < `xor` < `and` < prefix `not` < the one comparison level (`<` `>` `<=` `>=` `==` `!=`) < (`+` `-`) < (`*` `/` `div` `mod`) < unary prefix `-` < `^` < postfix `.` `:` and call application. (Output-structure syntax — comma/newline slots, parentheses, and the spread star — is documented separately above.)
+- `^` is right-associative: `2 ^ 3 ^ 2` means `2 ^ (3 ^ 2)`, which is `512`. The comparison level is neither left- nor right-associative: it CHAINS (next bullet).
 - `^` binds tighter than unary minus on the left, so `-2 ^ 2` means `-(2 ^ 2)` (which is `-4`), NOT `(-2) ^ 2`. Likewise `-2 ^ 0.5` negates the positive-base power. Parentheses are required when the negative value is the power BASE: `(-2) ^ 2` is `4`. The exponent side accepts a unary value directly: `2 ^ -2` is `0.25`. To negate a power, generating `-(a ^ b)` is still fine for visual clarity — it is semantically equivalent to `-a ^ b`.
 - `not` binds less tightly than the comparison and equality operators and more tightly than `and`/`xor`/`or`, so `not x > 0` means `not (x > 0)` and `not a and b` means `(not a) and b`. A `not` cannot begin the operand of a tighter operator: `a == not b`, `1 + not x`, and `2 ^ not x` are parse errors — write `a == (not b)`. A direct comparison such as `x <= 0` or `a != b` is still the clearest spelling of a negated test.
-- Do not chain comparisons: `a < b < c` means `(a < b) < c`, which orders a Boolean against a number — a type error. Generate `a < b and b < c`.
+- Comparisons chain: `a < b < c` means `a < b` and `b < c` (each adjacent pair, every operand evaluated once), `a < b <= c == d != e` compares the four adjacent pairs, and `1 != 2 != 1` is `true` (adjacent pairs, not "all distinct"). Equality and ordering share the one level, so `1 == 1 < 2` is `true`. Parentheses end a chain: `(a < b) == true` compares the group's Boolean result, and `a < (b == c)` orders a number against a Boolean — a type error. A `false` pair never stops the chain (`3 < 2 < true` still reports the `2 < true` error); an error does. Generate range tests as chains (`low <= x < high`).
 - Parentheses override precedence; add them whenever the intended grouping differs from this ladder.
 - Numeric literals: integers and decimals (`42`, `3.14`, `0.5`); a decimal needs digits on both sides of the dot (`0.5` not `.5`, `5.0` not `5.`); digit separators are allowed between digits (`1_000_000`); scientific notation uses a lowercase `e` (`1e6`, `1.5e-3`), and uppercase `E` is not valid.
 
@@ -473,7 +473,7 @@ KatLang string literals are first-class runtime values written with single quote
 - Passed as algorithm arguments: `Price('apples')`
 - Stored in properties: `Name = 'KatLang'`
 - Returned as outputs: `Grade('B')` → `'good'`
-- Compared for equality: `'a' == 'a'` → `1`, `'a' != 'b'` → `1`
+- Compared for equality: `'a' == 'a'` → `true`, `'a' != 'b'` → `true`
 - Used in conditional algorithm branch patterns (exact match)
 
 ### Constraints
@@ -1547,7 +1547,7 @@ Without trailing output, `Order` has no direct result — use `Order.Total(25, 4
 
 === BEGIN GENERATED: katlang-spec-examples (DO NOT EDIT BY HAND) ===
 
-Verified reference examples (92 of the 277-case canonical language specification,
+Verified reference examples (94 of the 280-case canonical language specification,
 tests/KatLang.Tests/LanguageSpec/LanguageSpecCorpus.cs). Every program and expected
 output below is executed against the KatLang engine and (where representable)
 guarded against the Lean model on every build. Treat these as ground truth for the
@@ -1622,6 +1622,33 @@ Regenerate this block from the repo root with:
     true
     true
     true
+
+[comparison-chains-compare-adjacent-pairs] All six comparison operators share one precedence tier and CHAIN: `a < b <= c == d != e` compares the adjacent pairs `a < b`, `b <= c`, `c == d`, and `d != e`, and the whole chain is `true` only when every pair holds. Each operand is evaluated once, left to right. `1 != 2 != 1` is `true` (adjacent pairs, not "all distinct"), `1 == 1 < 2` is `true`, and `1 < 2 == true` compares `2` with `true` (false). Parentheses break a chain: `(1 < 2) == true` compares the Boolean result of the group.
+
+    1 < 2 < 3
+    1 < 2 <= 2 == 2 != 3
+    1 == 1 == 1
+    1 != 2 != 1
+    1 != 1 != 1
+    3 < 2 < 1
+    1 == 1 < 2
+    1 < 2 == true
+
+  Displays:
+    true
+    true
+    true
+    true
+    false
+    false
+    true
+    false
+
+[comparison-chain-is-eager-after-false] A `false` comparison never stops a chain — like `and` and `or`, comparison chains evaluate eagerly — so `3 < 2 < true` still performs `2 < true`, and that comparison is the error (Booleans are not ordered). Errors do stop a chain: once an operand or a comparison fails, the later operands are not evaluated.
+
+    3 < 2 < true
+
+  Fails with an evaluation error (type).
 
 [output-is-ordinary-property] `Output` and `output` are ordinary identifiers: `Output = 5` defines a regular property named `Output`, and only bare expression rows contribute to algorithm output — a program whose rows are all definitions has no output.
 
