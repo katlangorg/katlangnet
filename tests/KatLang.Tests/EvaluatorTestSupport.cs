@@ -136,6 +136,49 @@ internal static class EvaluatorTestSupport
 
     internal static Result Atom(decimal value) => new Result.Atom(value);
 
+    internal static Result Bool(bool value) => new Result.Bool(value);
+
+    /// <summary>
+    /// STRICT-SOURCE: the program's whole result must be exactly the Boolean value
+    /// <paramref name="expected"/> — never the number 1 or 0. Boolean results have no
+    /// numeric projection, so they are asserted through the structured value.
+    /// </summary>
+    internal static void AssertEvalBool(string source, bool expected)
+    {
+        var result = EvalFull(source);
+        if (result.IsError)
+            Assert.Fail($"Expected success but got error: {result.Error}");
+        Assert.True(
+            Result.ValueComparer.Equals(Bool(expected), result.Value),
+            $"Expected the Boolean value {(expected ? "true" : "false")} but got: {result.Value}");
+    }
+
+    /// <summary>
+    /// STRICT-SOURCE: the program's output rows must be exactly the Boolean values
+    /// <paramref name="expected"/>, in order (one row is the lone Boolean).
+    /// </summary>
+    /// <summary>Asserts the program's output items exactly, for mixed value kinds (numbers, Booleans, strings, structures).</summary>
+    internal static void AssertEvalResults(string source, params Result[] expected)
+    {
+        var result = EvalFull(source);
+        if (result.IsError)
+            Assert.Fail($"Expected success but got error: {result.Error}");
+        Assert.Equal(Result.FromItems(expected), result.Value, Result.ValueComparer);
+    }
+
+    internal static void AssertEvalBools(string source, params bool[] expected)
+    {
+        var result = EvalFull(source);
+        if (result.IsError)
+            Assert.Fail($"Expected success but got error: {result.Error}");
+        Result expectedValue = expected.Length == 1
+            ? Bool(expected[0])
+            : new Result.SequenceValue(expected.Select(Bool));
+        Assert.True(
+            Result.ValueComparer.Equals(expectedValue, result.Value),
+            $"Expected the Boolean rows [{string.Join(", ", expected.Select(b => b ? "true" : "false"))}] but got: {result.Value}");
+    }
+
     internal static Result SequenceValue(params Result[] items) => new Result.SequenceValue(items);
 
     internal static Result ListValue(params Result[] items) => new Result.ListValue(items);

@@ -127,7 +127,7 @@ public class WrittenSlotReificationTests
         // `(S:0, 5)` supplies TWO written items to the sequence-value pattern:
         // the reified pair and the atom — so `F((x, y))` binds x = (1, 2).
         AssertEvaluates(
-            PairSource + "F((x, y)) = (x == (1, 2)) + y\nF((S:0, 5))",
+            PairSource + "F((x, y)) = if(x == (1, 2), 1, 0) + y\nF((S:0, 5))",
             Atom(6));
 
         // With an explicit spread the same written group supplies three items.

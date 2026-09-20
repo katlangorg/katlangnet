@@ -14,6 +14,9 @@ public class ListValueTests
 
     private static void AssertAtoms(string source, params Decimal128[] expected) => Assert.Equal(expected, Atoms(source));
 
+    // Boolean results have no numeric projection: they are asserted through display text.
+    private static void AssertBool(string source, bool expected) => Assert.Equal(expected ? "true" : "false", Display(source));
+
     private static bool Fails(string source) => KatLangEngine.Run(source).IsFailure;
 
     private static void AssertArityFailure(string source, string signatureDisplay)
@@ -154,27 +157,27 @@ public class ListValueTests
     // ── Exactness and equality ───────────────────────────────────────────────
 
     [Theory]
-    [InlineData("[7] == 7", 0)]
-    [InlineData("[7] != 7", 1)]
-    [InlineData("[[1, 2]] == [1, 2]", 0)]
-    [InlineData("[[]] == []", 0)]
-    [InlineData("[] == ()", 0)]
-    [InlineData("[] != ()", 1)]
-    [InlineData("[1, 2] == (1, 2)", 0)]
-    [InlineData("[[1, 2]] == ((1, 2))", 0)]
-    [InlineData("[1, 2] == [1, 2]", 1)]
-    [InlineData("[[1], [2, 3]] == [[1], [2, 3]]", 1)]
-    [InlineData("[1, [2]] == [1, 2]", 0)]
-    [InlineData("[1, [2]] != [1, 2]", 1)]
-    [InlineData("[] == []", 1)]
-    [InlineData("['a', 'b'] == ['a', 'b']", 1)]
-    [InlineData("['a'] == 'a'", 0)]
-    public void ListEquality_IsStructuralAndKindExact(string source, decimal expected)
-        => AssertAtoms(source, expected);
+    [InlineData("[7] == 7", false)]
+    [InlineData("[7] != 7", true)]
+    [InlineData("[[1, 2]] == [1, 2]", false)]
+    [InlineData("[[]] == []", false)]
+    [InlineData("[] == ()", false)]
+    [InlineData("[] != ()", true)]
+    [InlineData("[1, 2] == (1, 2)", false)]
+    [InlineData("[[1, 2]] == ((1, 2))", false)]
+    [InlineData("[1, 2] == [1, 2]", true)]
+    [InlineData("[[1], [2, 3]] == [[1], [2, 3]]", true)]
+    [InlineData("[1, [2]] == [1, 2]", false)]
+    [InlineData("[1, [2]] != [1, 2]", true)]
+    [InlineData("[] == []", true)]
+    [InlineData("['a', 'b'] == ['a', 'b']", true)]
+    [InlineData("['a'] == 'a'", false)]
+    public void ListEquality_IsStructuralAndKindExact(string source, bool expected)
+        => AssertBool(source, expected);
 
     [Fact]
     public void RedundantSequenceBoundary_AroundList_StillCanonicalizes()
-        => AssertAtoms("([1, 2]) == [1, 2]", 1);
+        => AssertBool("([1, 2]) == [1, 2]", true);
 
     [Fact]
     public void RedundantSequenceBoundary_AroundList_YieldsTheListValue()
@@ -627,7 +630,7 @@ public class ListValueTests
         // list of the same items, so they compare equal.
         AssertDisplay("head, *rest = [1, 2, 3]\nrest", "[2, 3]");
         AssertDisplay("skip([1, 2, 3], 1)", "[2, 3]");
-        AssertAtoms("head, *rest = [1, 2, 3]\nrest == skip([1, 2, 3], 1)", 1);
+        AssertBool("head, *rest = [1, 2, 3]\nrest == skip([1, 2, 3], 1)", true);
     }
 
     // ── Collection-producing builtins return one exact list value ────────────
@@ -748,12 +751,12 @@ public class ListValueTests
     [Theory]
     [MemberData(nameof(DottedEquivalenceComparisons))]
     public void DottedBuiltin_SequenceReceiver_AgreesWithDirectForm(string comparison)
-        => AssertAtoms($"P = x > 1\nD = x * 2\nAdd = x + total\nS = 3, 1, 2\n{comparison}", 1);
+        => AssertBool($"P = x > 1\nD = x * 2\nAdd = x + total\nS = 3, 1, 2\n{comparison}", true);
 
     [Theory]
     [MemberData(nameof(DottedEquivalenceComparisons))]
     public void DottedBuiltin_ListReceiver_AgreesWithDirectForm(string comparison)
-        => AssertAtoms($"P = x > 1\nD = x * 2\nAdd = x + total\nS = [3, 1, 2]\n{comparison}", 1);
+        => AssertBool($"P = x > 1\nD = x * 2\nAdd = x + total\nS = [3, 1, 2]\n{comparison}", true);
 
     // ── Indexing `:` selects one immediate list element ──────────────────────
 
@@ -774,7 +777,7 @@ public class ListValueTests
     [InlineData(1)]
     [InlineData(2)]
     public void Indexing_ListTarget_AgreesWithSequenceTarget(int index)
-        => AssertAtoms($"((1, 2, 3):{index}) == ([1, 2, 3]:{index})", 1);
+        => AssertBool($"((1, 2, 3):{index}) == ([1, 2, 3]:{index})", true);
 
     [Fact]
     public void Indexing_BoundListProperty_SelectsElement()
@@ -827,14 +830,14 @@ public class ListValueTests
     }
 
     [Theory]
-    [InlineData("[[1, 2]]:0 == [1, 2]", 1)]
-    [InlineData("[(1, 2)]:0 == (1, 2)", 1)]
-    [InlineData("[[1, 2]]:0 == (1, 2)", 0)]
-    [InlineData("[(1, 2)]:0 == [1, 2]", 0)]
-    [InlineData("[[]]:0 == []", 1)]
-    [InlineData("[[]]:0 == ()", 0)]
-    public void Indexing_SelectedElement_PreservesExactValueKind(string source, decimal expected)
-        => AssertAtoms(source, expected);
+    [InlineData("[[1, 2]]:0 == [1, 2]", true)]
+    [InlineData("[(1, 2)]:0 == (1, 2)", true)]
+    [InlineData("[[1, 2]]:0 == (1, 2)", false)]
+    [InlineData("[(1, 2)]:0 == [1, 2]", false)]
+    [InlineData("[[]]:0 == []", true)]
+    [InlineData("[[]]:0 == ()", false)]
+    public void Indexing_SelectedElement_PreservesExactValueKind(string source, bool expected)
+        => AssertBool(source, expected);
 
     [Theory]
     [InlineData("take([1, 2, 3], 1):0", 1)]
@@ -866,7 +869,7 @@ public class ListValueTests
 
     [Fact]
     public void Indexing_BuiltinResult_AgreesWithAssignedProperty()
-        => AssertAtoms("A = range(1, 3)\n(A:0) == (range(1, 3):0)", 1);
+        => AssertBool("A = range(1, 3)\n(A:0) == (range(1, 3):0)", true);
 
     [Fact]
     public void Indexing_SelectsOneElement_WhileSpreadOpensAll()

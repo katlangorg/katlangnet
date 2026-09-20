@@ -40,10 +40,10 @@ def missingOutputRootWithExplicitEmptyOutput : Bool :=
 #guard missingOutputRootWithExplicitEmptyOutput
 
 def missingOutputRootValueDoesNotEqualEmpty : Bool :=
-  match runFlat (.algorithmExpr (algPrivate [] [] [("T", alg [] [] [] [.num 4])] [
+  match runResult (.algorithmExpr (algPrivate [] [] [("T", alg [] [] [] [.num 4])] [
     .binary .eq (.resolve "T") (.emptySequence 0)
   ])) with
-  | Except.ok [0] => true
+  | Except.ok (.bool false) => true
   | _ => false
 
 #guard missingOutputRootValueDoesNotEqualEmpty
@@ -258,7 +258,7 @@ def explicitEmptyCountsAsZero : Bool :=
 #guard explicitEmptyCountsAsZero
 
 def explicitEmptyEquality : Bool :=
-  match runFlat (.algorithmExpr (alg [] [] [] [
+  match runResult (.algorithmExpr (alg [] [] [] [
     .binary .eq explicitEmptyExpr explicitEmptyExpr,
     .binary .ne explicitEmptyExpr explicitEmptyExpr,
     .binary .eq explicitEmptyExpr explicitEmptyOutputBody,
@@ -281,7 +281,8 @@ def explicitEmptyEquality : Bool :=
       (.dotCall (.num 0) "skip" (some [.num 1]))
       explicitEmptyExpr
   ])) with
-  | Except.ok [1, 0, 1, 1, 0, 0, 0] => true
+  | Except.ok (.sequenceValue [.bool true, .bool false, .bool true, .bool true,
+      .bool false, .bool false, .bool false]) => true
   | _ => false
 
 #guard explicitEmptyEquality
@@ -346,11 +347,11 @@ def spreadSiblingsKeepWrittenEmptySlot : Bool :=
 -- Structural equality observes the spliced value through the plain
 -- (non-counted) evaluation path used for binary operands.
 def spreadSeqLiteralEqualsFlatLiteral : Bool :=
-  match runFlat (.algorithmExpr (algPrivate [] [] [("P", alg [] [] [] [.num 1, .num 2])] [
+  match runResult (.algorithmExpr (algPrivate [] [] [("P", alg [] [] [] [.num 1, .num 2])] [
     .binary .eq (.capture [sequenceSpread (.resolve "P"), .num 99])
       (.capture [.num 1, .num 2, .num 99])
   ])) with
-  | Except.ok [1] => true
+  | Except.ok (.bool true) => true
   | _ => false
 
 #guard spreadSeqLiteralEqualsFlatLiteral
@@ -494,12 +495,12 @@ def internalSequenceConstructLoneBuiltinArgBindsLikeGroupedForm : Bool :=
 
 -- Repeated ordinary parentheses around the empty sequence normalize to `()`.
 def emptyVsNestedEmptyEquality : Bool :=
-  match runFlat (.algorithmExpr (alg [] [] [] [
+  match runResult (.algorithmExpr (alg [] [] [] [
     .binary .eq (.emptySequence 0) (.emptySequence 0),
     .binary .eq (.emptySequence 0) (.emptySequence 1),
     .binary .ne (.emptySequence 0) (.emptySequence 1)
   ])) with
-  | Except.ok [1, 1, 0] => true
+  | Except.ok (.sequenceValue [.bool true, .bool true, .bool false]) => true
   | _ => false
 
 #guard emptyVsNestedEmptyEquality
@@ -580,7 +581,7 @@ def mixedOutputSpreadOfEmptyContributesNoSlot : Bool :=
 
 -- Redundant empty nesting is not a surface way to construct a one-item
 -- collection containing `()`; collection builtins see it as the empty collection.
-def collectionBuiltinAlwaysTrue : KatLang.Expr := .algorithmExpr (alg ["x"] [] [] [.num 1])
+def collectionBuiltinAlwaysTrue : KatLang.Expr := .algorithmExpr (alg ["x"] [] [] [.boolLiteral true])
 
 def filterNestedEmptyInputCanonicalizesToEmptyCollection : Bool :=
   match runResult (.call (.resolve "filter") [.emptySequence 1, collectionBuiltinAlwaysTrue]) with
@@ -683,7 +684,7 @@ def deeplyNestedSpreadExpr (depth : Nat) : KatLang.Expr :=
 def deepNestedSequenceSpreadIsStackSafe : Bool :=
   match KatLang.runEvalM (KatLang.evalCounted (deeplyNestedSpreadExpr 8192)
       { callStack := [KatLang.preludeAlg], algEnv := [] } []) with
-  | Except.ok (value, count) => KatLang.Result.atoms value == [1] && count == 1
+  | Except.ok (value, count) => KatLang.Result.hostAtoms value == [1] && count == 1
   | _ => false
 
 #guard deepNestedSequenceSpreadIsStackSafe

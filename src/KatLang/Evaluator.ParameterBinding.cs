@@ -41,6 +41,7 @@ public static partial class Evaluator
     {
         Result.Atom(var n) => [new Result.Atom(n)],
         Result.Str _ => [r],
+        Result.Bool _ => [r],
         Result.SequenceValue(var items) => items,
         Result.ListValue _ => [r],
     };

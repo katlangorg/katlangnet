@@ -75,7 +75,7 @@ public class EvaluatorStringTests
             A = 123
             A.string == '123'
             """;
-        AssertEval(source, 1);
+        AssertEvalBool(source, true);
     }
 
     [Fact]
@@ -184,32 +184,32 @@ public class EvaluatorStringTests
     [Fact]
     public void Eval_String_EqualityTrue()
     {
-        AssertEval("'a' == 'a'", 1);
+        AssertEvalBool("'a' == 'a'", true);
     }
 
     [Fact]
     public void Eval_String_EqualityFalse()
     {
-        AssertEval("'a' == 'b'", 0);
+        AssertEvalBool("'a' == 'b'", false);
     }
 
     [Fact]
     public void Eval_String_EqualityCaseSensitive()
     {
         // 'Apples' != 'apples' — exact, case-sensitive comparison
-        AssertEval("'Apples' == 'apples'", 0);
+        AssertEvalBool("'Apples' == 'apples'", false);
     }
 
     [Fact]
     public void Eval_String_Inequality()
     {
-        AssertEval("'a' != 'b'", 1);
+        AssertEvalBool("'a' != 'b'", true);
     }
 
     [Fact]
     public void Eval_String_InequalitySame()
     {
-        AssertEval("'a' != 'a'", 0);
+        AssertEvalBool("'a' != 'a'", false);
     }
 
     [Fact]
@@ -367,14 +367,14 @@ public class EvaluatorStringTests
     public void Eval_String_MixedEquality_DifferentKinds_ReturnsZero()
     {
         // `==` compares values structurally; a number and a string are different
-        // value kinds, so they compare unequal (0) rather than raising a type
+        // value kinds, so they compare unequal (`false`) rather than raising a type
         // mismatch. Arithmetic/ordering on mixed string operands still fails.
-        AssertEval("1 == 'a'", 0);
+        AssertEvalBool("1 == 'a'", false);
     }
 
     [Fact]
     public void Eval_String_MixedInequality_DifferentKinds_ReturnsOne()
-        => AssertEval("1 != 'a'", 1);
+        => AssertEvalBool("1 != 'a'", true);
 
     [Fact]
     public void Eval_String_SinFails()

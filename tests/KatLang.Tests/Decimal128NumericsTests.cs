@@ -56,6 +56,24 @@ public class Decimal128NumericsTests
         return result.Value[0];
     }
 
+    private static bool EvalBool(string source)
+    {
+        var result = Evaluator.Run(new Expr.AlgorithmExpr(ParseValidRoot(source)));
+        if (result.IsError)
+            Assert.Fail($"Expected success but got error: {result.Error}");
+        return Assert.IsType<Result.Bool>(result.Value).Value;
+    }
+
+    private static void AssertNumberIsNotATruthValue(string source, string described)
+    {
+        // There is no numeric truthiness: `if` requires a Boolean condition and names
+        // the number it was given instead.
+        var failure = Assert.IsType<RunResult.EvalFailure>(KatLangEngine.Run(source));
+        var error = Assert.Single(failure.Errors);
+        Assert.Equal(KatLangErrorCode.TypeMismatch, error.Code);
+        Assert.Contains($"if condition must be a Boolean value (true or false), but was numeric value {described}", error.Message);
+    }
+
     private static EvalError EvalError(string source)
     {
         var result = Eval(source);
@@ -329,7 +347,7 @@ public class Decimal128NumericsTests
     [Fact]
     public void DecimalFractions_AddExactly()
         // The classic binary-floating-point failure: exact in decimal arithmetic.
-        => Assert.Equal(Decimal128.One, EvalSingle("0.1 + 0.2 == 0.3"));
+        => Assert.True(EvalBool("0.1 + 0.2 == 0.3"));
 
     [Fact]
     public void Division_IsCorrectlyRoundedTo34Digits()
@@ -358,7 +376,7 @@ public class Decimal128NumericsTests
             N("3333333333333333333333333333333332"),
             EvalSingle($"{dividend} mod {divisor}"));
         // x == y * (x div y) + (x mod y), exactly (every intermediate has 34 digits).
-        Assert.Equal(N("1"), EvalSingle($"X = {dividend}\nY = {divisor}\nX == Y * (X div Y) + (X mod Y)"));
+        Assert.True(EvalBool($"X = {dividend}\nY = {divisor}\nX == Y * (X div Y) + (X mod Y)"));
     }
 
     [Fact]
@@ -537,10 +555,10 @@ public class Decimal128NumericsTests
     [Fact]
     public void NaN_OrderingComparisons_AreAllFalse()
     {
-        Assert.Equal(Decimal128.Zero, EvalSingle("Math.Sqrt(-1) < 1"));
-        Assert.Equal(Decimal128.Zero, EvalSingle("Math.Sqrt(-1) > 1"));
-        Assert.Equal(Decimal128.Zero, EvalSingle("Math.Sqrt(-1) <= 1"));
-        Assert.Equal(Decimal128.Zero, EvalSingle("Math.Sqrt(-1) >= 1"));
+        Assert.False(EvalBool("Math.Sqrt(-1) < 1"));
+        Assert.False(EvalBool("Math.Sqrt(-1) > 1"));
+        Assert.False(EvalBool("Math.Sqrt(-1) <= 1"));
+        Assert.False(EvalBool("Math.Sqrt(-1) >= 1"));
     }
 
     [Fact]
@@ -550,18 +568,17 @@ public class Decimal128NumericsTests
         // sequences), so it stays a reflexive equivalence relation: NaN is the
         // same value as NaN, exactly like .NET's Equals/collection semantics.
         // The IEEE `NaN != NaN` convention lives in the ordering operators above.
-        Assert.Equal(Decimal128.One, EvalSingle("Math.Sqrt(-1) == Math.Sqrt(-1)"));
-        Assert.Equal(Decimal128.Zero, EvalSingle("Math.Sqrt(-1) != Math.Sqrt(-1)"));
-        Assert.Equal(Decimal128.One, EvalSingle("contains((1, Math.Sqrt(-1)), Math.Sqrt(-1))"));
+        Assert.True(EvalBool("Math.Sqrt(-1) == Math.Sqrt(-1)"));
+        Assert.False(EvalBool("Math.Sqrt(-1) != Math.Sqrt(-1)"));
+        Assert.True(EvalBool("contains((1, Math.Sqrt(-1)), Math.Sqrt(-1))"));
         Assert.Equal("[NaN]", Assert.IsType<RunResult.Success>(
             KatLangEngine.Run("distinct((Math.Sqrt(-1), Math.Sqrt(-1)))")).ToDisplayString());
     }
 
     [Fact]
-    public void NaN_IsTruthy_LikeEveryNonZeroNumber()
-        // The truth rule is "zero is false, any other numeric atom is true";
-        // NaN is not zero.
-        => Assert.Equal(Decimal128.One, EvalSingle("if(Math.Sqrt(-1), 1, 2)"));
+    public void NaN_IsNotATruthValue()
+        // NaN is a number like any other here: numbers have no truth value.
+        => AssertNumberIsNotATruthValue("if(Math.Sqrt(-1), 1, 2)", "NaN");
 
     [Fact]
     public void MinMax_PropagateNaN()
@@ -608,16 +625,17 @@ public class Decimal128NumericsTests
     [Fact]
     public void NegativeZero_EqualsZero_ButDisplaysItsSign()
     {
-        Assert.Equal(Decimal128.One, EvalSingle("-0 == 0"));
-        Assert.Equal(Decimal128.Zero, EvalSingle("-0 < 0"));
+        Assert.True(EvalBool("-0 == 0"));
+        Assert.False(EvalBool("-0 < 0"));
         Assert.Equal("-0", Assert.IsType<RunResult.Success>(KatLangEngine.Run("-0")).ToDisplayString());
         Assert.Equal("0", Assert.IsType<RunResult.Success>(KatLangEngine.Run("-0 + 0")).ToDisplayString());
     }
 
     [Fact]
-    public void NegativeZero_IsFalsy_AndHasSignZero()
+    public void NegativeZero_IsNotATruthValue_AndHasSignZero()
     {
-        Assert.Equal(N("2"), EvalSingle("if(-0, 1, 2)"));
+        AssertNumberIsNotATruthValue("if(-0, 1, 2)", "-0");
+        AssertNumberIsNotATruthValue("if(0, 1, 2)", "0");
         Assert.Equal(Decimal128.Zero, EvalSingle("Math.Sign(-0)"));
     }
 

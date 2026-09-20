@@ -4,8 +4,16 @@ namespace KatLang;
 
 // ── Operators (Lean: BinaryOp, UnaryOp) ─────────────────────────────────────
 
+/// <summary>
+/// Binary operators. Arithmetic (<c>Add</c>…<c>Pow</c>) and the ordering comparisons
+/// (<c>Lt</c>…<c>Ge</c>) take numeric scalar operands; the comparisons yield a
+/// <see cref="Result.Bool"/>. <c>Eq</c>/<c>Ne</c> are total structural equality over
+/// every value kind and yield a Boolean. <c>And</c>/<c>Or</c>/<c>Xor</c> take Boolean
+/// operands only and yield a Boolean — there is no numeric truthiness.
+/// </summary>
 public enum BinaryOp { Add, Sub, Mul, Div, IDiv, Mod, Pow, Lt, Gt, Le, Ge, Eq, Ne, And, Or, Xor }
 
+/// <summary><c>Minus</c> negates a number; <c>Not</c> negates a Boolean value.</summary>
 public enum UnaryOp { Minus, Not }
 
 // ── Built-in identifiers (Lean: Builtin) ────────────────────────────────────
@@ -25,10 +33,11 @@ public enum UnaryOp { Minus, Not }
 /// <c>atoms(value)</c> recursively collects numeric atoms depth-first, left to
 /// right, through both sequence and exact-list boundaries (strings and other
 /// non-numeric leaves contribute no atoms) and materializes them as one
-/// list value; it does not use the post-binding collection view and
-/// it does not define truthiness — truth testing stays list-opaque.
+/// list value; it does not use the post-binding collection view, and Boolean
+/// values are not atoms either.
 /// <c>filter(collection, predicate)</c> keeps the original top-level sequence
-/// items whose predicate returns exactly one atomic numeric truth value after
+/// items whose predicate returns the Boolean value <c>true</c> (a number,
+/// string, sequence, or list predicate result is a value-kind error) after
 /// seeing each callback item through the same one-level projection rule as
 /// <c>S:i</c>, then materializes the kept items as one exact list value.
 /// <c>map(collection, mapper)</c> maps top-level sequence items left to right;
@@ -38,9 +47,9 @@ public enum UnaryOp { Minus, Not }
 /// elements of one list result.
 /// <c>count(collection)</c> counts the top-level sequence items exposed by direct
 /// sequence consumption; sequence-value top-level elements still count as one element.
-/// <c>contains(collection, item)</c> returns <c>1</c> when any top-level sequence
+/// <c>contains(collection, item)</c> returns <c>true</c> when any top-level sequence
 /// item equals <c>item</c> under ordinary KatLang value equality, otherwise
-/// <c>0</c>; sequence values compare as sequence values and are not searched
+/// <c>false</c>; sequence values compare as sequence values and are not searched
 /// recursively.
 /// <c>order(collection)</c> sorts top-level numeric sequence items in ascending
 /// order into one exact list value; duplicates are preserved, sequence/list
@@ -512,7 +521,15 @@ public closed record Expr
     /// Also used for compile-time directives (e.g. load URLs) which are eliminated by elaboration.</summary>
     public sealed record StringLiteral(string Value) : Expr;
 
-    /// <summary>Unary expression (currently only minus).</summary>
+    /// <summary>
+    /// The reserved Boolean literal <c>true</c> / <c>false</c>. Evaluates to
+    /// <see cref="Result.Bool"/>. The literals are lexer keywords, never identifiers, so
+    /// they can be neither declared nor shadowed and never become implicit parameters.
+    /// Lean: <c>Expr.boolLiteral</c>.
+    /// </summary>
+    public sealed record BoolLiteral(bool Value) : Expr;
+
+    /// <summary>Numeric negation or Boolean negation.</summary>
     public sealed record Unary(UnaryOp Op, Expr Operand) : Expr;
 
     /// <summary>Binary arithmetic or comparison expression.</summary>
@@ -776,9 +793,10 @@ public closed record Expr
 /// families and literal/mixed heads elaborate as <see cref="Algorithm.Conditional"/>.
 ///
 /// A C# <c>closed</c> hierarchy, like the Lean inductive: <see cref="Bind"/>,
-/// <see cref="LitInt"/>, <see cref="LitString"/>, and <see cref="SequenceValue"/> are
-/// its only variants, no other assembly can derive from it, and a switch EXPRESSION
-/// naming all four is compiler-exhaustive with no catch-all arm — the evaluator's
+/// <see cref="LitInt"/>, <see cref="LitString"/>, <see cref="LitBool"/>, and
+/// <see cref="SequenceValue"/> are its only variants, no other assembly can derive from
+/// it, and a switch EXPRESSION naming all five is compiler-exhaustive with no catch-all
+/// arm — the evaluator's
 /// pattern matchers are written that way, so a new pattern kind fails the build
 /// there until decided; statement-form pattern walks need separate coverage review.
 /// </summary>
@@ -804,6 +822,13 @@ public closed record Pattern
 
     /// <summary>Matches only <c>Result.Str(s)</c> where s equals <see cref="Value"/> (exact string equality).</summary>
     public sealed record LitString(string Value) : Pattern;
+
+    /// <summary>
+    /// Matches only <c>Result.Bool(b)</c> where b equals <see cref="Value"/> — the reserved
+    /// literals <c>true</c> / <c>false</c> in a clause head. A Boolean is never a number, so
+    /// <c>F(1)</c> and <c>F(true)</c> are different clauses. Lean: <c>Pattern.litBool</c>.
+    /// </summary>
+    public sealed record LitBool(bool Value) : Pattern;
 
     /// <summary>Matches <c>Result.SequenceValue(items)</c> with same arity, each sub-pattern matching.</summary>
     public sealed record SequenceValue(IReadOnlyList<Pattern> Items) : Pattern;
@@ -1032,6 +1057,9 @@ public closed record Pattern
                 case (LitString leftString, LitString rightString):
                     return string.Equals(leftString.Value, rightString.Value, StringComparison.Ordinal);
 
+                case (LitBool leftBool, LitBool rightBool):
+                    return leftBool.Value == rightBool.Value;
+
                 case (SequenceValue leftGroup, SequenceValue rightGroup):
                     if (leftGroup.Items.Count != rightGroup.Items.Count)
                         return false;
@@ -1147,6 +1175,10 @@ public closed record Pattern
                         Mix((uint)litString.Value.Length);
                         foreach (var ch in litString.Value)
                             Mix(ch);
+                        break;
+                    case LitBool litBool:
+                        Mix(5);
+                        Mix(litBool.Value ? 1u : 0u);
                         break;
                     case SequenceValue sequence:
                         Mix(4);

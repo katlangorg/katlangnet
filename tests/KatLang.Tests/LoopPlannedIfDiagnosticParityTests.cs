@@ -129,15 +129,15 @@ public class LoopPlannedIfDiagnosticParityTests
     }
 
     [Fact]
-    public void PlannedIf_InvalidTruthCondition_KeepsBadArityUnspannedInBothStructuredTrees()
+    public void PlannedIf_NonBooleanCondition_KeepsTypeMismatchUnspannedInBothStructuredTrees()
     {
-        // The `if` truth-value rejection is the one planned failure the plan RAISES
+        // The `if` condition-kind rejection is the one planned failure the plan RAISES
         // itself rather than propagates. The generic builtin returns an UNSPANNED
-        // BadArity and lets the surrounding call boundary stamp only the context
-        // wrappers, so the planned path must not pre-stamp the innermost error:
-        // EvalError.WithContext.Inner.Span is public state, and a spanned innermost
-        // BadArity is an observable structured-tree divergence even when the rendered
-        // message and outermost span agree.
+        // TypeMismatch ("if condition must be a Boolean value") and lets the surrounding
+        // call boundary stamp only the context wrappers, so the planned path must not
+        // pre-stamp the innermost error: EvalError.WithContext.Inner.Span is public
+        // state, and a spanned innermost TypeMismatch is an observable structured-tree
+        // divergence even when the rendered message and outermost span agree.
         var source = """
             S(n) = if('x', n + 1, n)
             repeat(S, 5, 1)
@@ -160,11 +160,12 @@ public class LoopPlannedIfDiagnosticParityTests
         var generic = Run(source, enableLoopOptimization: false);
         Assert.True(generic.IsError);
 
-        // Complete structured trees are equal, and the innermost BadArity is
+        // Complete structured trees are equal, and the innermost TypeMismatch is
         // unspanned on BOTH paths.
         Assert.Equal(DescribeErrorTree(generic.Error), DescribeErrorTree(optimized.Error));
-        var genericInnermost = Assert.IsType<EvalError.BadArity>(Innermost(generic.Error));
-        var optimizedInnermost = Assert.IsType<EvalError.BadArity>(Innermost(optimized.Error));
+        var genericInnermost = Assert.IsType<EvalError.TypeMismatch>(Innermost(generic.Error));
+        var optimizedInnermost = Assert.IsType<EvalError.TypeMismatch>(Innermost(optimized.Error));
+        Assert.Equal("if condition must be a Boolean value (true or false), but was a string: 'x'", genericInnermost.Message);
         Assert.Null(genericInnermost.Span);
         Assert.Null(optimizedInnermost.Span);
 
@@ -183,7 +184,7 @@ public class LoopPlannedIfDiagnosticParityTests
         // The inner planned `if` is the operand of the outer planned `if`'s false
         // branch, so the generic composition attaches TWO `if` frames.
         var source = """
-            S(n) = if(n < 3, n + 1, if(1, 1 / 0, 0))
+            S(n) = if(n < 3, n + 1, if(true, 1 / 0, 0))
             repeat(S, 5, 1)
             """;
 

@@ -120,7 +120,7 @@ public class FilterCountFusionSpanParityTests
 
         var diagnostic = AssertFusionTransparentFailure(source);
 
-        Assert.Equal(nameof(EvalError.BadArity), diagnostic.Kind);
+        Assert.Equal(nameof(EvalError.TypeMismatch), diagnostic.Kind);
         Assert.Equal(new SourceSpan(2, 7, 2, 29), diagnostic.Span);
     }
 
@@ -134,7 +134,7 @@ public class FilterCountFusionSpanParityTests
     {
         var data = new TheoryData<string, string, string>();
 
-        // A predicate emitting two values is a span-less callback BadArity.
+        // A predicate emitting two values is a span-less Boolean-required TypeMismatch.
         const string badPredicate = "F(x) = x, x + 1";
 
         data.Add("dot-filter-dot-count", "direct range", $"{badPredicate}\nrange(1, 3).filter(F).count");
@@ -156,7 +156,7 @@ public class FilterCountFusionSpanParityTests
 
         var diagnostic = AssertFusionTransparentFailure(source);
 
-        Assert.Equal(nameof(EvalError.BadArity), diagnostic.Kind);
+        Assert.Equal(nameof(EvalError.TypeMismatch), diagnostic.Kind);
 
         // The failure is attributed to the LAST line's filter expression, and never
         // starts at the enclosing `count(` for a `count(...)`-outermost form.
@@ -185,7 +185,7 @@ public class FilterCountFusionSpanParityTests
 
         var diagnostic = AssertFusionTransparentFailure(source, expectFusion: false);
 
-        Assert.Equal(nameof(EvalError.BadArity), diagnostic.Kind);
+        Assert.Equal(nameof(EvalError.TypeMismatch), diagnostic.Kind);
         var span = Assert.NotNull(diagnostic.Span);
         Assert.Equal(3, span.Start.Line);
         Assert.Equal(7, span.Start.Column);
@@ -243,7 +243,7 @@ public class FilterCountFusionSpanParityTests
 
         var diagnostic = AssertFusionTransparentFailure(source);
 
-        Assert.Equal(nameof(EvalError.BadArity), diagnostic.Kind);
+        Assert.Equal(nameof(EvalError.TypeMismatch), diagnostic.Kind);
 
         // `Total = count(filter(range(1, 3), F)) + 100`: `count(` starts at column 9,
         // so the elided `filter(...)` starts at column 15 and ends at column 36.

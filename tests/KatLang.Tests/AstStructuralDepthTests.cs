@@ -1400,7 +1400,7 @@ public class AstStructuralDepthTests
         // turns "a new variant was added" into a failing test here, so their child
         // enumeration cannot silently fall behind.
         string[] knownAlgorithm = ["User", "Builtin", "Conditional"];
-        string[] knownPattern = ["Bind", "LitInt", "LitString", "SequenceValue"];
+        string[] knownPattern = ["Bind", "LitBool", "LitInt", "LitString", "SequenceValue"];
         string[] knownParameterPattern = ["CaptureParameterPattern", "SequenceValueParameterPattern"];
 
         AssertVariants(typeof(Algorithm), knownAlgorithm);
@@ -1742,7 +1742,7 @@ public class AstStructuralDepthProcessTests
             (string Preamble, string Prefix, string Suffix)[] builtinShapes =
             [
                 ("", "sum(", ")"),
-                ("", "if(1, ", ", 0)"),
+                ("", "if(true, ", ", 0)"),
                 ("", "take(", ", 1)"),
                 ("Id(x) = x\n", "map(", ", Id)"),
             ];

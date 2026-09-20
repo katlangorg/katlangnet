@@ -519,10 +519,10 @@ def builtinContainsTakesCollectionAndItem : Bool :=
     | Except.error err => innermostIsArityMismatch 2 4 err
     | _ => false
   let grouped :=
-    match runFlat (.algorithmExpr (alg [] [] [] [
+    match runResult (.algorithmExpr (alg [] [] [] [
       .call (resolve "contains") [.capture [.num 1, .num 2, .num 3], .num 2]
     ])) with
-    | Except.ok [1] => true
+    | Except.ok (.bool true) => true
     | _ => false
   inlineErrs && grouped
 
@@ -610,48 +610,49 @@ def test110 : Bool :=
 
 #guard test110
 
--- Test 110a: plain-call contains searches expanded range items
+-- Test 110a: plain-call contains searches expanded range items; the result
+-- is the Boolean value `true` (never the number 1)
 def test110a : Bool :=
-  match runFlat (.algorithmExpr (alg [] [] [] [
+  match runResult (.algorithmExpr (alg [] [] [] [
     .call (resolve "contains") [
       .call (resolve "range") [.num 1, .num 5],
       .num 3
     ]
   ])) with
-  | Except.ok [1] => true
+  | Except.ok (.bool true) => true
   | _ => false
 
 #guard test110a
 
--- Test 110b: contains returns zero when no top-level item matches
+-- Test 110b: contains returns `false` when no top-level item matches
 def test110b : Bool :=
-  match runFlat (.algorithmExpr (alg [] [] [] [
+  match runResult (.algorithmExpr (alg [] [] [] [
     .call (resolve "contains") [
       .call (resolve "range") [.num 1, .num 5],
       .num 9
     ]
   ])) with
-  | Except.ok [0] => true
+  | Except.ok (.bool false) => true
   | _ => false
 
 #guard test110b
 
 -- Test 110c: dot-call contains matches plain-call receiver semantics
 def test110c : Bool :=
-  match runFlat (.algorithmExpr (alg [] [] [] [
+  match runResult (.algorithmExpr (alg [] [] [] [
     .dotCall
       (.call (resolve "range") [.num 1, .num 5])
       "contains"
       (some [.num 4])
   ])) with
-  | Except.ok [1] => true
+  | Except.ok (.bool true) => true
   | _ => false
 
 #guard test110c
 
 -- Test 110d: contains compares sequence-value top-level elements structurally
 def test110d : Bool :=
-  match runFlat (.algorithmExpr (alg [] [] [] [
+  match runResult (.algorithmExpr (alg [] [] [] [
     .call (resolve "contains") [
       sequenceItems [
         .capture [.num 1, .num 2],
@@ -660,10 +661,22 @@ def test110d : Bool :=
       .capture [.num 1, .num 2]
     ]
   ])) with
-  | Except.ok [1] => true
+  | Except.ok (.bool true) => true
   | _ => false
 
 #guard test110d
+
+-- Test 110d': Booleans are ordinary collection items under total equality:
+-- `contains((true, 1), true)` finds the Boolean, `contains((1, 0), true)`
+-- does not (a Boolean never equals a number).
+def test110dBooleanItems : Bool :=
+  evaluatesToBools (.algorithmExpr (alg [] [] [] [
+    .call (resolve "contains") [.capture [.boolLiteral true, .num 1], .boolLiteral true],
+    .call (resolve "contains") [.capture [.num 1, .num 0], .boolLiteral true],
+    .call (resolve "contains") [.listLiteral [.boolLiteral false], .num 0]
+  ])) [true, false, false]
+
+#guard test110dBooleanItems
 
 -- Test 110e: contains searches top-level items only, not nested sequence elements
 def test110e : Bool :=
@@ -672,13 +685,13 @@ def test110e : Bool :=
     .capture [.num 3, .num 4]
   ]
   let nestedCollection := sequenceItems [sequenceValuePairs, .num 0]
-  match runFlat (.algorithmExpr (alg [] [] [] [
+  match runResult (.algorithmExpr (alg [] [] [] [
     .call (resolve "contains") [
       nestedCollection,
       .capture [.num 1, .num 2]
     ]
   ])) with
-  | Except.ok [0] => true
+  | Except.ok (.bool false) => true
   | _ => false
 
 #guard test110e
@@ -699,8 +712,8 @@ def containsProjectionRoot110f : Algorithm :=
   ]
 
 def test110f : Bool :=
-  match runFlat (.algorithmExpr containsProjectionRoot110f) with
-  | Except.ok [1, 1] => true
+  match runResult (.algorithmExpr containsProjectionRoot110f) with
+  | Except.ok (.sequenceValue [.bool true, .bool true]) => true
   | _ => false
 
 #guard test110f
@@ -708,7 +721,7 @@ def test110f : Bool :=
 -- Test 110g: contains's item argument stays outside the collection — a
 -- multi-output helper bound to `item` is compared as one grouped value.
 def test110g : Bool :=
-  match runFlat (.algorithmExpr (algPrivate [] [] [
+  match runResult (.algorithmExpr (algPrivate [] [] [
     ("Item", alg [] [] [] [.num 1, .num 2])
   ] [
     .call (resolve "contains") [
@@ -716,7 +729,7 @@ def test110g : Bool :=
       .resolve "Item"
     ]
   ])) with
-  | Except.ok [0] => true
+  | Except.ok (.bool false) => true
   | _ => false
 
 #guard test110g
@@ -1428,14 +1441,16 @@ def test151n : Bool :=
 
 #guard test151n
 
+-- The clause family returns Booleans, so mapping it yields one exact list of
+-- Boolean values (no numeric projection: pinned through the structured result).
 def test151o : Bool :=
-  match runFlat (.algorithmExpr (algPrivate [] [] [("MarkThreeSequenceValue", markThreeSequenceValueAlg66e)] [
+  match runResult (.algorithmExpr (algPrivate [] [] [("MarkThreeSequenceValue", markThreeSequenceValueAlg66e)] [
     .call (resolve "map") [
       sequenceItems [.num 1, sequenceSpread (.call (resolve "range") [.num 2, .num 4])],
       .resolve "MarkThreeSequenceValue"
     ]
   ])) with
-  | Except.ok [0, 0, 0, 0] => true
+  | Except.ok (.listValue [.bool false, .bool false, .bool false, .bool false]) => true
   | _ => false
 
 #guard test151o
@@ -1443,13 +1458,13 @@ def test151o : Bool :=
 -- SequenceValue source `map((1, range(2, 4)*), MarkThreeSequenceValue)`: spread
 -- contributes inside the single grouped value, opened by the collection view.
 def test151ob : Bool :=
-  match runFlat (.algorithmExpr (algPrivate [] [] [("MarkThreeSequenceValue", markThreeSequenceValueAlg66e)] [
+  match runResult (.algorithmExpr (algPrivate [] [] [("MarkThreeSequenceValue", markThreeSequenceValueAlg66e)] [
     .call (resolve "map") [
       sequenceItems [.num 1, sequenceSpread (.call (resolve "range") [.num 2, .num 4])],
       .resolve "MarkThreeSequenceValue"
     ]
   ])) with
-  | Except.ok [0, 0, 0, 0] => true
+  | Except.ok (.listValue [.bool false, .bool false, .bool false, .bool false]) => true
   | _ => false
 
 #guard test151ob
@@ -2144,7 +2159,7 @@ def takeSingleKeptItemDotCount : Bool :=
 def takeSingleKeptItemEqualsListLiteral : Bool :=
   match runResult (takeSingleKeptItemProgram
       (.binary .eq (.resolve "T") (.listLiteral [sequenceItems [.num 1, .num 2]]))) with
-  | Except.ok (.atom 1) => true
+  | Except.ok (.bool true) => true
   | _ => false
 
 #guard takeSingleKeptItemEqualsListLiteral
@@ -2152,7 +2167,7 @@ def takeSingleKeptItemEqualsListLiteral : Bool :=
 def takeSingleKeptItemNotEqualFlatLiteral : Bool :=
   match runResult (takeSingleKeptItemProgram
       (.binary .eq (.resolve "T") (sequenceItems [.num 1, .num 2]))) with
-  | Except.ok (.atom 0) => true
+  | Except.ok (.bool false) => true
   | _ => false
 
 #guard takeSingleKeptItemNotEqualFlatLiteral
@@ -2161,7 +2176,7 @@ def takeSingleKeptItemNotEqualWrappedLiteral : Bool :=
   match runResult (takeSingleKeptItemProgram
       (.binary .eq (.resolve "T")
         (.capture [sequenceItems [.num 1, .num 2]]))) with
-  | Except.ok (.atom 0) => true
+  | Except.ok (.bool false) => true
   | _ => false
 
 #guard takeSingleKeptItemNotEqualWrappedLiteral
@@ -2198,7 +2213,7 @@ def distinctSingleKeptEmptyItemNotEqualEmpty : Bool :=
   match runResult (.binary .eq
       (.call (resolve "distinct") [.capture [.emptySequence 0, .emptySequence 0]])
       (.emptySequence 0)) with
-  | Except.ok (.atom 0) => true
+  | Except.ok (.bool false) => true
   | _ => false
 
 #guard distinctSingleKeptEmptyItemNotEqualEmpty

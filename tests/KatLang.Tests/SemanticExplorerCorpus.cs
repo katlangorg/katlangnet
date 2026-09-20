@@ -15,6 +15,8 @@ public abstract record ExplorerValue
     /// <summary>An integer atom literal.</summary>
     public sealed record Num(int Value) : ExplorerValue;
 
+    public sealed record Bool(bool Value) : ExplorerValue;
+
     /// <summary>The empty sequence value literal <c>()</c>.</summary>
     public sealed record Empty : ExplorerValue;
 
@@ -30,6 +32,7 @@ public abstract record ExplorerValue
     public string Source => this switch
     {
         Num n => n.Value.ToString(System.Globalization.CultureInfo.InvariantCulture),
+        Bool b => b.Value ? "true" : "false",
         Empty => "()",
         Seq s => "(" + string.Join(", ", s.Items.Select(i => i.Source)) + ")",
         Wrap w => "(" + w.Inner.Source + ")",
@@ -109,6 +112,14 @@ public static class SemanticExplorerCorpus
         ("e", E),                              // ()
         ("n0", N(0)),                          // 0
         ("n1", N(1)),                          // 1
+        ("bt", new ExplorerValue.Bool(true)),
+        ("bf", new ExplorerValue.Bool(false)),
+        ("pbt", W(new ExplorerValue.Bool(true))),
+        ("pbt_e", S(new ExplorerValue.Bool(true), E)),
+        ("pbt_1", S(new ExplorerValue.Bool(true), N(1))),
+        ("lbt", L(new ExplorerValue.Bool(true))),
+        ("lbt_bf", L(new ExplorerValue.Bool(true), new ExplorerValue.Bool(false))),
+        ("lpbt_1", L(S(new ExplorerValue.Bool(true), N(1)))),
         ("p1", W(N(1))),                       // (1)
         ("p12", S(N(1), N(2))),                // (1, 2)
         ("p123", S(N(1), N(2), N(3))),         // (1, 2, 3)
@@ -246,7 +257,7 @@ public static class SemanticExplorerCorpus
         new("mapId",
             v => $"M(a) = a\nmap({v.Source}, M)"),
         new("filterKeep",
-            v => $"T(a) = 1\nfilter({v.Source}, T)"),
+            v => $"T(a) = true\nfilter({v.Source}, T)"),
         new("atoms",
             v => $"atoms({v.Source})"),
         new("takeCapture",
@@ -315,7 +326,7 @@ public static class SemanticExplorerCorpus
         Special("takeEmpties", "take((), (), 2)"),
         Special("filterOneSurvivor", "Big(a) = a > 2\nfilter((1, 2, 3), Big)"),
         Special("filterOneSurvivorCount", "Big(a) = a > 2\ncount(filter((1, 2, 3), Big))"),
-        Special("filterZeroSurvivors", "No(a) = 0\nfilter((1, 2, 3), No)"),
+        Special("filterZeroSurvivors", "No(a) = false\nfilter((1, 2, 3), No)"),
         Special("mapPairSwap", "Swap(a, b) = b, a\nmap(((1, 2), (3, 4)), Swap)"),
         Special("mapPairSwapOk", "Swap(a, b) = (b, a)\nmap(((1, 2), (3, 4)), Swap)"),
         Special("mapToOne", "M(a) = a\nmap((7), M)"),
@@ -363,7 +374,7 @@ public static class SemanticExplorerCorpus
         Special("eqSpreadSeqLiteral", "P = (1, 2)\n(P*, 99) == (1, 2, 99)"),
         Special("loopSpreadHistoryFlat",
             "Step((*history), previous) = (history*, previous + 1), previous + 1\nStep.repeat(2, (1, 2), 2):0"),
-        Special("ifBranchSeq", "if(1, (1, 2), 3)"),
+        Special("ifBranchSeq", "if(true, (1, 2), 3)"),
         Special("divZero", "1 / 0"),
         Special("negativeResult", "0 - 1"),
         Special("strEq", "'ab' == 'ab'"),
@@ -582,14 +593,14 @@ public static class SemanticExplorerCorpus
         // body, pinned on both sides of the differential — the unselected slot is
         // never demanded, a zero-parameter algorithm is a value, and callback
         // slots are untouched.
-        Special("ifSelectedParameterizedBranchIsArity", "Inc(x) = x + 1\nif(1, Inc, 0)"),
-        Special("ifSelectedParameterizedFalseBranchIsArity", "Inc(x) = x + 1\nif(0, 0, Inc)"),
+        Special("ifSelectedParameterizedBranchIsArity", "Inc(x) = x + 1\nif(true, Inc, 0)"),
+        Special("ifSelectedParameterizedFalseBranchIsArity", "Inc(x) = x + 1\nif(false, 0, Inc)"),
         Special("ifParameterizedConditionIsArity", "Inc(x) = x + 1\nif(Inc, 1, 0)"),
-        Special("ifUnselectedParameterizedBranchStaysLazy", "Inc(x) = x + 1\nif(0, Inc, 7)"),
-        Special("ifZeroParameterBranchIsValue", "A = 7\nif(1, A, 0)"),
-        Special("ifParameterIgnoringBodyStillArity", "K(x) = 5\nif(1, K, 0)"),
-        Special("ifCollectingCallableSlotIsArity", "Collect(*xs) = xs\nif(1, Collect, 0)"),
-        Special("ifAlgorithmChannelParameterSlotIsArity", "Inc(x) = x + 1\nApply(g) = if(1, g, 0)\nApply(Inc)"),
+        Special("ifUnselectedParameterizedBranchStaysLazy", "Inc(x) = x + 1\nif(false, Inc, 7)"),
+        Special("ifZeroParameterBranchIsValue", "A = 7\nif(true, A, 0)"),
+        Special("ifParameterIgnoringBodyStillArity", "K(x) = 5\nif(true, K, 0)"),
+        Special("ifCollectingCallableSlotIsArity", "Collect(*xs) = xs\nif(true, Collect, 0)"),
+        Special("ifAlgorithmChannelParameterSlotIsArity", "Inc(x) = x + 1\nApply(g) = if(true, g, 0)\nApply(Inc)"),
         Special("repeatInitialParameterizedSlotIsArity", "Inc(x) = x + 1\nStep(s) = s + 1\nrepeat(Step, 1, Inc)"),
         Special("repeatCountParameterizedSlotIsArity", "Inc(x) = x + 1\nStep(s) = s + 1\nrepeat(Step, Inc, 0)"),
         Special("whileInitialParameterizedSlotIsArity", "Inc(x) = x + 1\nDown(s) = s - 1, s\nwhile(Down, Inc)"),

@@ -171,9 +171,9 @@ def ifDotCallOverArityCarriesExpectedThree : Bool :=
 #eval runResult ifDotCallOverArityProgram
 
 -- Exactly three assembled arguments through the same dot-call surface still
--- dispatch: `A.if(20, 30)` is `if(A, 20, 30)` = `if(1, 20, 30)` → 20.
+-- dispatch: `A.if(20, 30)` is `if(A, 20, 30)` = `if(true, 20, 30)` → 20.
 def ifDotCallExactArityStillDispatches : Bool :=
-  match runFlat (.algorithmExpr (algPrivate [] [] [("A", alg [] [] [] [.num 1])] [
+  match runFlat (.algorithmExpr (algPrivate [] [] [("A", alg [] [] [] [.boolLiteral true])] [
     .dotCall (resolve "A") "if" (some [.num 20, .num 30])
   ])) with
   | Except.ok [20] => true
@@ -184,12 +184,12 @@ def ifDotCallExactArityStillDispatches : Bool :=
 -- Test 25: Spread of an internal constructed sequence `(1, if(0, 2, 9), 3)*` with a
 -- 3-arg if that selects the else branch → [1, 9, 3]
 def test25 : Bool :=
-  match runFlat (sequenceSpread (.sequenceConstruct (.sequenceConstruct (.num 1) (.call (resolve "if") [.num 0, .num 2, .num 9])) (.num 3))) with
+  match runFlat (sequenceSpread (.sequenceConstruct (.sequenceConstruct (.num 1) (.call (resolve "if") [.boolLiteral false, .num 2, .num 9])) (.num 3))) with
   | Except.ok [1, 9, 3] => true
   | _ => false
 
 #guard test25
-#eval runFlat (sequenceSpread (.sequenceConstruct (.sequenceConstruct (.num 1) (.call (resolve "if") [.num 0, .num 2, .num 9])) (.num 3)))
+#eval runFlat (sequenceSpread (.sequenceConstruct (.sequenceConstruct (.num 1) (.call (resolve "if") [.boolLiteral false, .num 2, .num 9])) (.num 3)))
 
 -- Internal sequence `(1, 2, 3, 4)*`: spread over the constructed sequence value.
 def sequenceSpread1234 : KatLang.Expr :=
@@ -361,11 +361,11 @@ def test25j : Bool :=
 #guard test25j
 
 -- Test 26: Nested 3-arg if uses the selected inner branch
--- if(1, if(1, 5, 6), 9) → [5]
+-- if(true, if(true, 5, 6), 9) → [5]
 def test26 : Bool :=
   match runFlat (.call (resolve "if") [
-    .num 1,
-    .call (resolve "if") [.num 1, .num 5, .num 6],
+    .boolLiteral true,
+    .call (resolve "if") [.boolLiteral true, .num 5, .num 6],
     .num 9
   ]) with
   | Except.ok [5] => true
@@ -374,11 +374,11 @@ def test26 : Bool :=
 #guard test26
 
 -- Test 27: Nested 3-arg if uses the outer else branch
--- if(0, if(1, 5, 6), 9) → [9]
+-- if(false, if(true, 5, 6), 9) → [9]
 def test27 : Bool :=
   match runFlat (.call (resolve "if") [
-    .num 0,
-    .call (resolve "if") [.num 1, .num 5, .num 6],
+    .boolLiteral false,
+    .call (resolve "if") [.boolLiteral true, .num 5, .num 6],
     .num 9
   ]) with
   | Except.ok [9] => true
@@ -386,39 +386,47 @@ def test27 : Bool :=
 
 #guard test27
 
--- Test 28: 3-arg if still works — if(1, 10, 20) → [10]
+-- Test 28: 3-arg if still works — if(true, 10, 20) → [10]
 def test28 : Bool :=
-  match runFlat (.call (resolve "if") [.num 1, .num 10, .num 20]) with
+  match runFlat (.call (resolve "if") [.boolLiteral true, .num 10, .num 20]) with
   | Except.ok [10] => true
   | _ => false
 
 #guard test28
 
--- Test 29: 3-arg if false → if(0, 10, 20) → [20]
+-- Test 29: 3-arg if false → if(false, 10, 20) → [20]
 def test29 : Bool :=
-  match runFlat (.call (resolve "if") [.num 0, .num 10, .num 20]) with
+  match runFlat (.call (resolve "if") [.boolLiteral false, .num 10, .num 20]) with
   | Except.ok [20] => true
   | _ => false
 
 #guard test29
 
--- Test 30: 3-arg if with non-zero condition → true
--- if(42, 7, 9) → [7]
+-- Test 30: a nonzero number is NOT a true condition — numbers have no truth
+-- value, so if(42, 7, 9) is the value-kind error naming the condition
 def test30 : Bool :=
-  match runFlat (.call (resolve "if") [.num 42, .num 7, .num 9]) with
-  | Except.ok [7] => true
+  match runResult (.call (resolve "if") [.num 42, .num 7, .num 9]) with
+  | Except.error err => innermostIsBooleanRequired "if condition" "numeric value 42" err
   | _ => false
 
 #guard test30
 
--- Test 31: 3-arg if with negative condition → true
--- if(-1, 7, 9) → [7]
+-- Test 31: a negative number is not a condition either — if(-1, 7, 9) rejects
 def test31 : Bool :=
-  match runFlat (.call (resolve "if") [.num (-1), .num 7, .num 9]) with
-  | Except.ok [7] => true
+  match runResult (.call (resolve "if") [.num (-1), .num 7, .num 9]) with
+  | Except.error err => innermostIsBooleanRequired "if condition" "numeric value -1" err
   | _ => false
 
 #guard test31
+
+-- Test 31a: a comparison is the ordinary way to write a condition, and the
+-- Boolean it yields selects the branch — if(3 > 2, 7, 9) → [7]
+def test31a : Bool :=
+  match runFlat (.call (resolve "if") [.binary .gt (.num 3) (.num 2), .num 7, .num 9]) with
+  | Except.ok [7] => true
+  | _ => false
+
+#guard test31a
 
 --------------------------------------------------------------------------------
 -- Conditional algorithms in value position fail like no-arg dot-call access

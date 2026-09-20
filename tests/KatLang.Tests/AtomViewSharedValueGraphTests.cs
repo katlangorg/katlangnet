@@ -6,26 +6,24 @@ using KatLang.Tests.AsyncEvaluation;
 namespace KatLang.Tests;
 
 /// <summary>
-/// Truth testing and the bounded atom collectors over SHARED value graphs, the atom-view siblings
-/// of the equality/hash walks (<see cref="SharedValueGraphComplexityTests"/>) and the
+/// The bounded atom collectors over SHARED value graphs, the atom-view siblings of the
+/// equality/hash walks (<see cref="SharedValueGraphComplexityTests"/>) and the
 /// <see cref="Result.Normalize"/> rebuild (<see cref="NormalizeSharedValueGraphTests"/>). A value
 /// is a DAG, not a tree — <c>W = (x, x)</c> applied n times reaches n distinct sequence nodes
 /// through 2^n root-to-leaf paths — and the atom views flatten one atom per PATH, so any of them
 /// whose WORK is per-path is exponential on values an ordinary in-budget loop builds, while no
 /// evaluation step budget bounds it: the blow-up happens inside ONE value-level operation.
 ///
-/// <para>Two different fixes are pinned here. <see cref="Result.TruthValue"/> needs only the FIRST
-/// flattened atom, so it searches for it and skips sequence nodes already searched through another
-/// shared reference: node-bounded outright. <c>Result.TryLanguageAtoms</c> and
-/// <c>Result.TryToHostAtoms</c> must keep collecting atoms per path (their contract, bounded by
-/// <c>maxItems</c>), so they memoize only structures proven to contribute NO atoms — the nodes
-/// whose revisits the atom bound can never stop.</para>
+/// <para><c>Result.TryLanguageAtoms</c> and <c>Result.TryToHostAtoms</c> must keep collecting
+/// atoms per path (their contract, bounded by <c>maxItems</c>), so they memoize only structures
+/// proven to contribute NO atoms — the nodes whose revisits the atom bound can never stop. (The
+/// former first-atom truth search no longer exists: truth is Boolean-only, decided by
+/// <see cref="Result.AsBool"/> without any traversal, so there is nothing left to bound there.)</para>
 ///
 /// <para>Work counts are exact and deterministic, measured through the passive operation-scoped
 /// <see cref="ValueTraversalObservations"/>; timing is deliberately not a pass/fail signal.
-/// Semantics are checked against the unchanged materializing <see cref="Result.ToAtoms"/> view
-/// (the pre-fix truth implementation read its first element) and against
-/// <see cref="NaiveAtoms"/>, a test-only recursive replica of the path-expanding collection.</para>
+/// Semantics are checked against <see cref="NaiveAtoms"/>, a test-only recursive replica of the
+/// path-expanding collection.</para>
 /// </summary>
 public class AtomViewSharedValueGraphTests
 {
@@ -74,17 +72,6 @@ public class AtomViewSharedValueGraphTests
         for (var i = 0; i < depth; i++)
             node = i % 2 == 0 ? Seq(node, node) : List(node, node);
         return node;
-    }
-
-    /// <summary>
-    /// The pre-fix truth implementation: materialize the whole (per-path) sequence-only
-    /// flattening, then read its first element. <see cref="Result.ToAtoms"/> is unchanged, so
-    /// this IS the semantic oracle for the first-atom search. Only ever applied to small values.
-    /// </summary>
-    private static bool? OracleTruth(Result value)
-    {
-        var atoms = value.ToAtoms();
-        return atoms.Count == 0 ? null : atoms[0] != 0;
     }
 
     /// <summary>
@@ -158,183 +145,6 @@ public class AtomViewSharedValueGraphTests
             SharedMixedDag(5, Seq(Atom(0), Atom(1))),
             Seq(SharedSeqDag(3, Str("s")), SharedListDag(3, Str("t")), Atom(0), Atom(1)),
         ];
-    }
-
-    // ── Truth search: each distinct sequence node is searched at most once ───────────────────
-
-    [Theory]
-    [InlineData(ShallowDepth)]
-    [InlineData(DeepDepth)]
-    public void Truth_SharedAtomDag_FindsTheFirstAtomInDistinctNodeWork(int depth)
-    {
-        var observations = Observations();
-
-        Assert.Equal(true, SharedSeqDag(depth, Atom(1)).TruthValueObserved(observations));
-
-        // The search descends the leftmost spine only: depth sequence nodes, then the atom.
-        // The materializing walk flattened 2^depth atoms first.
-        Assert.Equal(depth, observations.TruthSearchStructureExpansionCount);
-    }
-
-    [Theory]
-    [InlineData(ShallowDepth)]
-    [InlineData(DeepDepth)]
-    public void Truth_AtomlessSharedDag_IsDecidedInDistinctNodeWork(int depth)
-    {
-        var observations = Observations();
-
-        // No atom anywhere: the whole graph must be searched, but each of the depth distinct
-        // sequence nodes only once — the second shared reference of every level is skipped.
-        Assert.Null(SharedSeqDag(depth, Str("s")).TruthValueObserved(observations));
-        Assert.Equal(depth, observations.TruthSearchStructureExpansionCount);
-    }
-
-    [Fact]
-    public void Truth_WorkGrowsLinearlyWithGraphDepth()
-    {
-        var shallow = Observations();
-        var deep = Observations();
-
-        Assert.Null(SharedSeqDag(ShallowDepth, Str("s")).TruthValueObserved(shallow));
-        Assert.Null(SharedSeqDag(DeepDepth, Str("s")).TruthValueObserved(deep));
-
-        // Twenty more levels cost twenty more searches, not 2^20 times as many.
-        Assert.Equal(
-            DeepDepth - ShallowDepth,
-            deep.TruthSearchStructureExpansionCount - shallow.TruthSearchStructureExpansionCount);
-    }
-
-    [Theory]
-    [InlineData(ShallowDepth)]
-    [InlineData(DeepDepth)]
-    public void Truth_SharedDag_FirstFlattenedAtomDecides(int depth)
-    {
-        var observations = Observations();
-
-        // The leaf's first atom is 0 and its second is 1, so the graph's 2^depth later atoms all
-        // disagree with the verdict: only the FIRST flattened atom may decide.
-        Assert.Equal(false, SharedSeqDag(depth, Seq(Atom(0), Atom(1))).TruthValueObserved(observations));
-        Assert.Equal(depth + 1, observations.TruthSearchStructureExpansionCount);
-    }
-
-    [Fact]
-    public void Truth_SharedAtomlessPrefix_IsSearchedOnceAndSkippedAfter()
-    {
-        var observations = Observations();
-        var atomless = SharedSeqDag(DeepDepth, Str("s"));
-
-        // The deciding atom sits AFTER two references to the atomless graph: the first reference
-        // costs one full distinct-node search, the second is skipped outright.
-        Assert.Equal(false, Seq(atomless, atomless, Atom(0), Atom(1)).TruthValueObserved(observations));
-        Assert.Equal(DeepDepth + 1, observations.TruthSearchStructureExpansionCount);
-    }
-
-    // ── Truth search: memo-key discipline ────────────────────────────────────────────────────
-
-    [Fact]
-    public void Truth_ValueEqualButDistinctAtomlessNodes_AreSearchedSeparately()
-    {
-        // Two children that are VALUE-EQUAL but share no reference. A searched-set keyed by
-        // KatLang value equality (or its structural hash) would skip the second one; reference
-        // identity searches both.
-        var left = Seq(Str("s"));
-        var right = Seq(Str("s"));
-        Assert.True(Result.ValueComparer.Equals(left, right));
-        Assert.False(ReferenceEquals(left, right));
-
-        var observations = Observations();
-        Assert.Equal(true, Seq(left, right, Atom(1)).TruthValueObserved(observations));
-        Assert.Equal(3, observations.TruthSearchStructureExpansionCount);
-    }
-
-    [Fact]
-    public void Truth_DefaultEqualRecordClones_AreDistinctSearchEntries()
-    {
-        // A record clone is a distinct Result that shares the read-only wrapper, so it is
-        // default-record-equal: a plain HashSet<Result> (generated record equality) would merge
-        // the two and skip the clone. Deterministically catches removal of the explicit
-        // ReferenceEqualityComparer.
-        var left = Assert.IsType<Result.SequenceValue>(Seq(Str("s")));
-        var right = left with { };
-        Assert.NotSame(left, right);
-        Assert.True(left.Equals(right));
-
-        var observations = Observations();
-        Assert.Equal(true, Seq(left, right, Atom(1)).TruthValueObserved(observations));
-        Assert.Equal(3, observations.TruthSearchStructureExpansionCount);
-    }
-
-    [Fact]
-    public void Truth_SameReferenceIsSkippedNotResearched()
-    {
-        var shared = Seq(Str("s"), Seq(Str("t")));
-
-        var observations = Observations();
-        Assert.Equal(true, Seq(shared, shared, shared, Atom(1)).TruthValueObserved(observations));
-
-        // Root + the shared node + its inner sequence, once each; the two later references skip.
-        Assert.Equal(3, observations.TruthSearchStructureExpansionCount);
-    }
-
-    // ── Truth semantics against the materializing oracle ─────────────────────────────────────
-
-    [Fact]
-    public void Truth_MatchesTheMaterializingFlattening_AcrossEveryValueShape()
-    {
-        foreach (var value in Corpus())
-            Assert.Equal(OracleTruth(value), value.TruthValue());
-    }
-
-    [Fact]
-    public void Truth_EmptyAndAtomlessShapes_HaveNoTruthValue()
-    {
-        Assert.Null(Seq().TruthValue());
-        Assert.Null(Seq(Seq(), Seq(Seq())).TruthValue());
-        Assert.Null(Str("1").TruthValue());
-        Assert.Null(List(Atom(1)).TruthValue());
-        Assert.Null(Seq(Str("x"), List(Atom(1))).TruthValue());
-        Assert.Null(SharedSeqDag(4, List(Atom(1))).TruthValue());
-    }
-
-    [Fact]
-    public void Truth_FirstFlattenedAtomDecides_LaterAtomsAreIrrelevant()
-    {
-        // Empties, strings, and opaque lists before the first atom are passed over in order;
-        // the atoms after it never matter.
-        var falseFirst = Seq(Seq(), Str("s"), List(Atom(9)), Seq(Seq(Atom(0))), Atom(1));
-        Assert.Equal(false, falseFirst.TruthValue());
-        Assert.Equal(OracleTruth(falseFirst), falseFirst.TruthValue());
-
-        var trueFirst = Seq(Seq(), Str("s"), List(Atom(9)), Seq(Seq(Atom(1))), Atom(0));
-        Assert.Equal(true, trueFirst.TruthValue());
-        Assert.Equal(OracleTruth(trueFirst), trueFirst.TruthValue());
-    }
-
-    [Fact]
-    public void Truth_SpecialAtomValues_FollowTheOrderingOperator()
-    {
-        // The verdict uses the IEEE ordering operator `!= 0`, exactly like the materializing
-        // implementation did: NaN != 0 is true, and negative zero equals zero.
-        var nan = new Result.Atom(Decimal128.NaN);
-        var negativeZero = new Result.Atom(Decimal128.NegativeZero);
-
-        Assert.Equal(true, nan.TruthValue());
-        Assert.Equal(OracleTruth(nan), nan.TruthValue());
-        Assert.Equal(false, negativeZero.TruthValue());
-        Assert.Equal(OracleTruth(negativeZero), negativeZero.TruthValue());
-        Assert.Equal(false, Seq(negativeZero, Atom(1)).TruthValue());
-    }
-
-    [Fact]
-    public void Truth_DeepAtomlessSequenceChain_RemainsIterative()
-    {
-        Result value = Str("leaf");
-        for (var i = 0; i < DeepTraversalDepth; i++)
-            value = Seq(value, Str("tail"));
-
-        var observations = Observations();
-        Assert.Null(value.TruthValueObserved(observations));
-        Assert.Equal(DeepTraversalDepth, observations.TruthSearchStructureExpansionCount);
     }
 
     // ── Collectors: atomless shared subgraphs are visited by node, not by path ───────────────
@@ -572,8 +382,8 @@ public class AtomViewSharedValueGraphTests
 
     /// <summary>
     /// The sequence doubling DAG built by an ordinary in-budget loop — the SEQUENCE sibling of
-    /// the <c>Wrap = [x, x]</c> recipe the other shared-graph suites use, because truth testing
-    /// opens sequence boundaries only: <c>Wrap</c> stores its ONE bound argument in both slots of
+    /// the <c>Wrap = [x, x]</c> recipe the other shared-graph suites use, because the value operations
+    /// exercised here open sequence boundaries: <c>Wrap</c> stores its ONE bound argument in both slots of
     /// one written group, so each step adds one sequence node reachable through twice as many
     /// paths.
     /// </summary>
@@ -645,31 +455,30 @@ public class AtomViewSharedValueGraphTests
     }
 
     [Fact]
-    public void IfOnSharedAtomDag_IsTrue()
-        // The H2 repro: before the first-atom search, deciding this condition materialized 2^40
-        // atoms inside one uncancellable, unbudgeted value operation.
-        => AssertEval(SeqDagProgram("if(D, 1, 0)"), 1);
+    public void IfOnSharedDag_IsRejectedAsNonBooleanWithoutTraversingTheGraph()
+        // The H2 repro shape: a 2^40-atom DAG in the condition slot. There is no truth
+        // search any more — a sequence value is not a Boolean — so the rejection is decided
+        // from the value's kind alone, and the operand description that names the value is
+        // produced by the bounded diagnostic renderer, never by a path walk.
+        => AssertEvalError<EvalError.TypeMismatch>(SeqDagProgram("if(D, 1, 0)"));
 
     [Fact]
-    public void IfOnSharedZeroLeafDag_IsFalse()
-        => AssertEval(SeqDagProgram("if(D, 1, 0)", leaf: "0"), 0);
-
-    [Fact]
-    public void IfOnSharedDag_FirstFlattenedAtomDecides()
-        // Every level doubles a (0, 1) leaf, so all 2^40 later atoms disagree with the verdict.
-        => AssertEval(SeqDagProgram("if(D, 1, 0)", leaf: "(0, 1)"), 0);
-
-    [Fact]
-    public void IfOnAtomlessSharedDag_FailsFastWithBadArity()
-        // No atom anywhere: the condition has no truth value, and deciding THAT must also be
+    public void IfOnAtomlessSharedDag_IsRejectedTheSameWay()
+        // No atom anywhere: the kind rule does not care, and deciding it is still
         // distinct-node work, not path work.
-        => AssertEvalError<EvalError.BadArity>(SeqDagProgram("if(D, 1, 0)", leaf: "'s'"));
+        => AssertEvalError<EvalError.TypeMismatch>(SeqDagProgram("if(D, 1, 0)", leaf: "'s'"));
+
+    [Fact]
+    public void IfOnSharedDagEquality_IsTrue()
+        // A Boolean condition OVER the DAG: structural equality is DAG-bounded, so the
+        // condition is decided without materializing the 2^40 atoms.
+        => AssertEval(SeqDagProgram("if(D == D, 1, 0)"), 1);
 
     [Fact]
     public async Task IfOnSharedDag_AsyncTwinAgrees()
     {
         var expr = new Expr.AlgorithmExpr(
-            SourceProvenance.ParseValid(SeqDagProgram("if(D, 1, 0)")).Root);
+            SourceProvenance.ParseValid(SeqDagProgram("if(D == D, 1, 0)")).Root);
 
         // An async-capable cache is the routing signal for the actual async twin family. The
         // public no-configuration RunFlatAsync overload intentionally takes the synchronous fast
@@ -682,11 +491,11 @@ public class AtomViewSharedValueGraphTests
     }
 
     [Fact]
-    public void IfOnSharedDag_OptimizedLoopPlanUsesTheFirstAtomSearch()
+    public void IfOnSharedDag_OptimizedLoopPlansTheBooleanCondition()
     {
         var source = SeqDagProgram("""
             Outer(d) = {
-                Step(n) = if(d, n + 1, n)
+                Step(n) = if(d == d, n + 1, n)
                 Step.repeat(1, 0)
             }
             Outer(D)
@@ -717,7 +526,7 @@ public class AtomViewSharedValueGraphTests
             plan.Expressions,
             expression => expression.Role == "output" && expression.Index == 0);
         Assert.Equal(
-            "If(CapturedSlot(d), Add(StateSlot(n), Const(1)), StateSlot(n))",
+            "If(Equal(CapturedSlot(d), CapturedSlot(d)), Add(StateSlot(n), Const(1)), StateSlot(n))",
             output.PlanSummary);
 
         var generic = Evaluator.Run(

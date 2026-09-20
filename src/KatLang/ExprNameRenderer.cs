@@ -161,7 +161,7 @@ internal static class ExprNameRenderer
     internal static string RenderBinaryDiagnosticName(BinaryOp op, Expr left, Expr right)
     {
         var pending = new Stack<Piece>();
-        pending.Push(new Piece(right, ExprNameMode.DiagnosticName));
+        PushBinaryRightOperand(pending, op, right, ExprNameMode.DiagnosticName);
         pending.Push(new Piece(SpacedBinaryOpText(op)));
         PushBinaryLeftOperand(pending, op, left, ExprNameMode.DiagnosticName);
         return Drain(pending);
@@ -193,15 +193,29 @@ internal static class ExprNameRenderer
             && System.Numerics.Decimal128.IsNegative(value);
 
     /// <summary>
+    /// True when <paramref name="operand"/> is a prefix <c>not</c> in an operand
+    /// position of an operator that binds tighter than <c>not</c>. In source syntax
+    /// <c>not</c> sits below the comparisons and above the logical operators
+    /// (comparisons &gt; not &gt; and &gt; xor &gt; or), so a bare <c>not a == b</c>
+    /// would read back as <c>not (a == b)</c>, and a bare <c>1 + not x</c> is not an
+    /// operand at all; only <c>and</c>/<c>xor</c>/<c>or</c> take a bare <c>not</c>
+    /// operand. Lean: <c>notOperandNeedsParens</c>.
+    /// </summary>
+    private static bool NotOperandNeedsParens(BinaryOp op, Expr operand)
+        => operand is Expr.Unary { Op: UnaryOp.Not }
+            && op is not (BinaryOp.And or BinaryOp.Or or BinaryOp.Xor);
+
+    /// <summary>
     /// Pushes a binary node's LEFT operand in <paramref name="mode"/>, adding
     /// explicit parentheses first when the operator is `^` and the operand
-    /// would rebind as a bare power base (<see cref="PowerBaseNeedsParens"/>).
-    /// The child keeps its surrounding mode so capture/block spellings are
-    /// unchanged inside the added parentheses.
+    /// would rebind as a bare power base (<see cref="PowerBaseNeedsParens"/>),
+    /// or when the operand is a `not` under a tighter-binding operator
+    /// (<see cref="NotOperandNeedsParens"/>). The child keeps its surrounding
+    /// mode so capture/block spellings are unchanged inside the added parentheses.
     /// </summary>
     private static void PushBinaryLeftOperand(Stack<Piece> pending, BinaryOp op, Expr left, ExprNameMode mode)
     {
-        if (op is BinaryOp.Pow && PowerBaseNeedsParens(left))
+        if ((op is BinaryOp.Pow && PowerBaseNeedsParens(left)) || NotOperandNeedsParens(op, left))
         {
             pending.Push(new Piece(")"));
             pending.Push(new Piece(left, mode));
@@ -210,6 +224,25 @@ internal static class ExprNameRenderer
         }
 
         pending.Push(new Piece(left, mode));
+    }
+
+    /// <summary>
+    /// Pushes a binary node's RIGHT operand in <paramref name="mode"/>, adding
+    /// explicit parentheses first when the operand is a `not` under a
+    /// tighter-binding operator (<see cref="NotOperandNeedsParens"/>); a unary
+    /// minus exponent or operand stays bare, as its tier allows.
+    /// </summary>
+    private static void PushBinaryRightOperand(Stack<Piece> pending, BinaryOp op, Expr right, ExprNameMode mode)
+    {
+        if (NotOperandNeedsParens(op, right))
+        {
+            pending.Push(new Piece(")"));
+            pending.Push(new Piece(right, mode));
+            pending.Push(new Piece("("));
+            return;
+        }
+
+        pending.Push(new Piece(right, mode));
     }
 
     private static string CapLeafName(string name)
@@ -362,9 +395,10 @@ internal static class ExprNameRenderer
 
                     // A top-level binary chain renders bare, without the outer
                     // parentheses the Open spelling adds. A rebinding power
-                    // base still gets parentheses (PushBinaryLeftOperand).
+                    // base or a `not` operand under a tighter operator still
+                    // gets parentheses (PushBinaryLeftOperand / PushBinaryRightOperand).
                     case Expr.Binary(var op, var left, var right):
-                        pending.Push(new Piece(right, ExprNameMode.DiagnosticName));
+                        PushBinaryRightOperand(pending, op, right, ExprNameMode.DiagnosticName);
                         pending.Push(new Piece(SpacedBinaryOpText(op)));
                         PushBinaryLeftOperand(pending, op, left, ExprNameMode.DiagnosticName);
                         return true;
@@ -383,7 +417,7 @@ internal static class ExprNameRenderer
                 break;
 
             case ExprNameMode.UnaryOperand:
-                if (node is not (Expr.Param or Expr.Resolve or Expr.Num or Expr.StringLiteral
+                if (node is not (Expr.Param or Expr.Resolve or Expr.Num or Expr.StringLiteral or Expr.BoolLiteral
                     or Expr.DotCall or Expr.Index))
                 {
                     return PushParenthesized(pending, node);
@@ -423,6 +457,8 @@ internal static class ExprNameRenderer
                 return Append(builder, Rendering.ValueTextRenderer.FormatNumberInvariant(value));
             case Expr.StringLiteral(var value):
                 return Append(builder, "'") && Append(builder, value) && Append(builder, "'");
+            case Expr.BoolLiteral(var value):
+                return Append(builder, Rendering.ValueTextRenderer.FormatBool(value));
 
             case Expr.Unary(var op, var operand):
                 switch (op)
@@ -439,11 +475,12 @@ internal static class ExprNameRenderer
                         return Append(builder, $"({Evaluator.ExprKind(node)})");
                 }
 
-            // Binary open names self-parenthesize; a rebinding power base
-            // additionally keeps its own parentheses (PushBinaryLeftOperand).
+            // Binary open names self-parenthesize; a rebinding power base or a
+            // `not` operand under a tighter operator additionally keeps its own
+            // parentheses (PushBinaryLeftOperand / PushBinaryRightOperand).
             case Expr.Binary(var op, var left, var right):
                 pending.Push(new Piece(")"));
-                pending.Push(new Piece(right, ExprNameMode.Open));
+                PushBinaryRightOperand(pending, op, right, ExprNameMode.Open);
                 pending.Push(new Piece(SpacedBinaryOpText(op)));
                 PushBinaryLeftOperand(pending, op, left, ExprNameMode.Open);
                 pending.Push(new Piece("("));

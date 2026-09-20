@@ -33,6 +33,11 @@ public enum TokenKind
     KeywordNot,
     KeywordPublic,
     KeywordOpen,
+    // The reserved Boolean literals. They are keywords, not identifiers, so
+    // `true` and `false` can never name a property, parameter, or open target
+    // and never become implicit parameters; the token kind carries the value.
+    KeywordTrue,
+    KeywordFalse,
 
     // Delimiters
     LParen,

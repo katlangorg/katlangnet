@@ -989,6 +989,7 @@ mutual
   theorem normalize_idempotent : ∀ r : Result, r.normalize.normalize = r.normalize
     | .atom _ => by simp [Result.normalize]
     | .str _ => by simp [Result.normalize]
+    | .bool _ => by simp [Result.normalize]
     | .sequenceValue rs => by
         have hl := normalize_map_idempotent rs
         cases h : rs.map Result.normalize with
@@ -1034,6 +1035,7 @@ mutual
   def orphanFreeResult : Result -> Bool
     | .atom _ => true
     | .str _ => true
+    | .bool _ => true
     | .sequenceValue rs => rs.length != 1 && orphanFreeResultList rs
     -- Exact lists carry NO singleton-orphan rule: `[x]` is literal-writable,
     -- so only the elements are checked (a sequence orphan nested inside a
@@ -1048,6 +1050,7 @@ end
 
 example : orphanFreeResult (Result.atom 5) = true := by decide
 example : orphanFreeResult (Result.str "s") = true := by decide
+example : orphanFreeResult (Result.bool true) = true := by decide
 example : orphanFreeResult (Result.sequenceValue []) = true := by decide
 example : orphanFreeResult (Result.sequenceValue [Result.atom 1]) = false := by decide
 example : orphanFreeResult
@@ -1068,6 +1071,7 @@ mutual
   theorem orphanFree_normalize : ∀ r : Result, orphanFreeResult r.normalize = true
     | .atom _ => by simp [Result.normalize, orphanFreeResult]
     | .str _ => by simp [Result.normalize, orphanFreeResult]
+    | .bool _ => by simp [Result.normalize, orphanFreeResult]
     | .sequenceValue rs => by
         have hl := orphanFreeList_map_normalize rs
         cases h : rs.map Result.normalize with
@@ -1140,6 +1144,10 @@ theorem capture_toItems_of_canonical (r : Result) (h : r.normalize = r) :
       show captureForArityLaw [Result.str s] = Result.str s
       rw [capture_singleton]
       exact h
+  | bool b =>
+      show captureForArityLaw [Result.bool b] = Result.bool b
+      rw [capture_singleton]
+      exact h
   | sequenceValue rs =>
       rw [toItems_sequenceValue]
       exact h
@@ -1163,6 +1171,10 @@ theorem capture_spreadItems_of_canonical_non_list (r : Result)
       exact h
   | str s =>
       show captureForArityLaw [Result.str s] = Result.str s
+      rw [capture_singleton]
+      exact h
+  | bool b =>
+      show captureForArityLaw [Result.bool b] = Result.bool b
       rw [capture_singleton]
       exact h
   | sequenceValue rs =>
@@ -1257,6 +1269,7 @@ which is a visible exact value — emits exactly 1. -/
 theorem valueCount_le_one : ∀ r : Result, r.valueCount ≤ 1
   | .atom _ => Nat.le_refl 1
   | .str _ => Nat.le_refl 1
+  | .bool _ => Nat.le_refl 1
   | .sequenceValue [] => Nat.zero_le 1
   | .sequenceValue (_ :: _) => Nat.le_refl 1
   | .listValue _ => Nat.le_refl 1
@@ -1279,9 +1292,8 @@ gathered depth-first, left to right, through BOTH sequence and exact list
 boundaries; strings contribute no atoms. The builtin materializes the
 collection as ONE list via `makeCollectionListResult`, so the
 result kind never depends on the input kind or on the collected count. Truth
-testing (`truthValue?`) reads the separate sequence-only `Result.atoms` view,
-so lists still have no truth value — the traversal laws here can never leak
-into `if`.
+is Boolean-only (`Result.asBool?` reads no atom view at all), so lists still
+have no truth value — the traversal laws here can never leak into `if`.
 -/
 
 /-- The atoms builtin's observable materialization in closed form: what the
@@ -1290,7 +1302,7 @@ argument value. -/
 def atomsBuiltinResultForLaw (r : Result) : CountedResult :=
   makeCollectionListResult ((Result.languageAtoms r).map Result.atom)
 
--- `languageAtoms` (like `Result.atoms`/`hostAtoms`) recurses through
+-- `languageAtoms` (like `Result.hostAtoms`) recurses through
 -- `List.flatMap`, so it compiles via well-founded recursion and its
 -- equations are established by `simp` rather than `rfl`.
 
@@ -1300,6 +1312,11 @@ theorem atoms_number (n : Int) :
 
 theorem atoms_string (s : String) :
     Result.languageAtoms (Result.str s) = [] := by
+  simp [Result.languageAtoms]
+
+/-- Booleans are not numeric atoms: `atoms(true)` is `[]`. -/
+theorem atoms_bool (b : Bool) :
+    Result.languageAtoms (Result.bool b) = [] := by
   simp [Result.languageAtoms]
 
 /-- Sequence traversal is concatenation of element traversals, which is
@@ -1384,6 +1401,10 @@ theorem hostAtoms_str (s : String) :
     Result.hostAtoms (Result.str s) = [] := by
   simp [Result.hostAtoms]
 
+theorem hostAtoms_bool (b : Bool) :
+    Result.hostAtoms (Result.bool b) = [] := by
+  simp [Result.hostAtoms]
+
 theorem hostAtoms_sequence (rs : List Result) :
     Result.hostAtoms (Result.sequenceValue rs) = rs.flatMap Result.hostAtoms := by
   simp [Result.hostAtoms]
@@ -1403,6 +1424,7 @@ mutual
       Result.languageAtoms r = Result.hostAtoms r
     | .atom n => by rw [atoms_number, hostAtoms_atom]
     | .str s => by rw [atoms_string, hostAtoms_str]
+    | .bool b => by rw [atoms_bool, hostAtoms_bool]
     | .sequenceValue rs => by
         rw [atoms_sequence, hostAtoms_sequence]
         exact languageAtomsList_eq_hostAtomsList rs
@@ -1420,21 +1442,34 @@ mutual
   termination_by rs => sizeOf rs
 end
 
-/-- Truth testing stays list-opaque: a list value never has a truth value,
-whatever its contents. `atoms` traversing lists introduces no list
-truthiness because `truthValue?` reads `Result.atoms`, not
-`Result.languageAtoms`. -/
-theorem truthValue_list_none (rs : List Result) :
-    Result.truthValue? (Result.listValue rs) = none := by
-  simp [Result.truthValue?, Result.atoms]
+/-- Truth is Boolean-only: a list value never has a truth value, whatever its
+contents. `atoms` traversing lists can introduce no list truthiness because
+the Boolean view `asBool?` reads no atom view at all. -/
+theorem asBool_list_none (rs : List Result) :
+    Result.asBool? (Result.listValue rs) = none := rfl
 
-/-- Truth flattening skips list elements inside sequence conditions: a
-leading list element never changes the truth value of the rest, exactly as
-before the atoms change. -/
-theorem truthValue_skips_leading_list_element (xs rs : List Result) :
-    Result.truthValue? (Result.sequenceValue (Result.listValue xs :: rs))
-      = Result.truthValue? (Result.sequenceValue rs) := by
-  have h : Result.atoms (Result.sequenceValue (Result.listValue xs :: rs))
-      = Result.atoms (Result.sequenceValue rs) := by
-    simp [Result.atoms]
-  simp [Result.truthValue?, h]
+/-- Numbers have no truth value either: there is no `0`/nonzero convention
+anywhere in the model. -/
+theorem asBool_atom_none (n : Int) : Result.asBool? (Result.atom n) = none := rfl
+
+/-- Strings have no truth value. -/
+theorem asBool_str_none (s : String) : Result.asBool? (Result.str s) = none := rfl
+
+/-- A Boolean value is its own truth value. -/
+theorem asBool_bool (b : Bool) : Result.asBool? (Result.bool b) = some b := rfl
+
+/-- A redundant singleton sequence boundary normalizes away before the Boolean
+view is taken, exactly as `asInt?` treats a parenthesized number. -/
+theorem asBool_singleton_sequence (b : Bool) :
+    Result.asBool? (Result.sequenceValue [Result.bool b]) = some b := by
+  simp [Result.asBool?, Result.normalize]
+
+/-- A multi-item sequence value is never a Boolean, whatever its first item:
+the Boolean view performs no flattening. -/
+theorem asBool_pair_none (a b : Result) :
+    Result.asBool? (Result.sequenceValue [a, b]) = none := by
+  simp [Result.asBool?, Result.normalize]
+
+/-- Booleans are not numbers: the numeric view of a Boolean value is empty,
+so no arithmetic or ordering operator can ever read one as `0`/`1`. -/
+theorem asInt_bool_none (b : Bool) : Result.asInt? (Result.bool b) = none := rfl

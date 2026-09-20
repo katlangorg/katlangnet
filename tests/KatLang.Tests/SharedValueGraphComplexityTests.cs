@@ -387,15 +387,15 @@ public class SharedValueGraphComplexityTests
 
     [Fact]
     public void SharedGraphEqualityOperators()
-        => AssertEval(DagProgram("A == B, A == C, A != B, A != C"), 1, 0, 0, 1);
+        => EvaluatorTestSupport.AssertEvalBools(DagProgram("A == B, A == C, A != B, A != C"), true, false, false, true);
 
     [Fact]
     public void SharedGraphContains()
     {
         // The searched item is compared against a structurally equal graph, so the scan cannot
         // short-circuit on a shape mismatch — it performs the full deep comparison.
-        AssertEval(DagProgram("contains((A, 5), B)"), 1);
-        AssertEval(DagProgram("contains((A, 5), C)"), 0);
+        EvaluatorTestSupport.AssertEvalBool(DagProgram("contains((A, 5), B)"), true);
+        EvaluatorTestSupport.AssertEvalBool(DagProgram("contains((A, 5), C)"), false);
     }
 
     [Fact]

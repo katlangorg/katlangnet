@@ -255,7 +255,7 @@ X == 3 * (X div 3) + (X mod 3)
 3000000000000000000000000000000000
 2999999999999999999999999999999999
 2
-1
+true
 ```
 
 If the mathematical truncated integer is not representable and IEEE division remains finite, `div` drops its lower decimal digits, keeping the leading 34 digits toward zero. Its magnitude therefore never exceeds the true quotient's magnitude, for either sign: `1e40 div 7` is `1428571428571428571428571428571428000000`, while `1e40 / 7` rounds to `1428571428571428571428571428571429000000`. The exact `div`/`mod` identity is not promised for such a shortened quotient. IEEE overflow still produces signed infinity; NaN, infinity operands, signed zero, and division-by-zero errors keep their ordinary rules.
@@ -286,7 +286,7 @@ The `^` operator raises the left side to the power of the right side.
 
 `2 ^ -2` is `0.25` — no parentheses are needed around a negated exponent (`2 ^ (-2)` means the same). The same rule applies to fractional exponents: `-2 ^ 0.5` negates the positive-base power (`-1.414…`), while `(-2) ^ 0.5` raises the negative base itself (a fractional power of a negative number is `NaN`).
 
-Operator precedence follows standard math rules: `^` binds tightest, then prefix `-` and `not`, then `*`, `/`, `div`, `mod`, then `+` and `-`. Parentheses override precedence.
+Operator precedence follows standard math rules: `^` binds tightest, then prefix `-`, then `*`, `/`, `div`, `mod`, then `+` and `-`; the comparisons come next, then `not`, and `and`, `xor`, `or` bind loosest. Parentheses override precedence.
 
 ```
 2 + 3 * 4
@@ -301,7 +301,7 @@ Operator precedence follows standard math rules: `^` binds tightest, then prefix
 
 ### Comparison Operators
 
-Comparisons produce `1` for true and `0` for false.
+Comparisons produce the Boolean values `true` and `false`.
 
 ```
 3 > 1
@@ -314,12 +314,12 @@ Comparisons produce `1` for true and `0` for false.
 
 **Results:**
 ```
-1
-0
-1
-1
-1
-1
+true
+false
+true
+true
+true
+true
 ```
 
 `==` and `!=` compare KatLang values structurally, so they also work on sequence values, not just numbers and strings. Two sequence values are equal when they have the same length and their elements are structurally equal (recursively). Values of different kinds — for example a number and a sequence value — compare unequal rather than reporting an error:
@@ -336,41 +336,62 @@ A == C
 
 **Results:**
 ```
-1
-0
-0
+true
+false
+false
 ```
 
-The ordering operators (`<`, `>`, `<=`, `>=`), the arithmetic operators, and the logical operators, by contrast, require numeric scalar operands; applying them to a sequence value — the empty sequence `()` included — is an error, so a comparison always produces `1` or `0` (see [The Empty Sequence Value](#the-empty-sequence-value)).
+The ordering operators (`<`, `>`, `<=`, `>=`) and the arithmetic operators, by contrast, require numeric scalar operands, and the logical operators require Boolean operands; applying any of them to a sequence value — the empty sequence `()` included — is an error, so a comparison always produces `true` or `false` (see [The Empty Sequence Value](#the-empty-sequence-value)).
 
-### Logical Operators
+### Boolean Values
 
-KatLang has `and`, `or`, `xor`, and `not` for combining boolean values (where any non-zero value is truthy and `0` is false).
+`true` and `false` are KatLang's Boolean values: a value kind of their own, distinct from numbers. They are reserved literals — they cannot be declared, shadowed, or inferred as parameters — and they display as `true` and `false`. There is no conversion between Booleans and numbers in either direction: `1` is not `true`, `0` is not `false`, and an operator or builtin that needs one kind rejects the other with a type error naming the value it was given.
 
 ```
-1 and 1
-1 and 0
-0 or 1
-0 or 0
-1 xor 1
-1 xor 0
-not 1
-not 0
+true
+not false
+true == 1
+true != 1
 ```
 
 **Results:**
 ```
-1
-0
-1
-0
-0
-1
-0
-1
+true
+true
+false
+true
 ```
 
-Because comparisons return `1` or `0`, logical operators compose naturally with them:
+Equality is total across value kinds, so `true == 1` is simply `false`. Booleans have no ordering (`true < false` is a type error) and no arithmetic (`true + 1` is a type error).
+
+### Logical Operators
+
+KatLang has `and`, `or`, `xor`, and `not` for combining Boolean values. Both operands of a binary logical operator are evaluated, left to right, before the operator is applied — there is no short-circuit — and each operand must be a Boolean: `1 and 0` is a type error, never a truth test of the numbers.
+
+```
+true and true
+true and false
+false or true
+false or false
+true xor true
+true xor false
+not true
+not false
+```
+
+**Results:**
+```
+true
+false
+true
+false
+false
+true
+false
+true
+```
+
+Because comparisons return Booleans, logical operators compose naturally with them:
 
 ```
 InRange = x > 5 and x < 10
@@ -381,8 +402,30 @@ InRange(3)
 
 **Results:**
 ```
-1
-0
+true
+false
+```
+
+`not` binds less tightly than the comparisons and more tightly than `and`, `xor`, and `or` (comparisons > `not` > `and` > `xor` > `or`), so `not x > 3` negates the whole comparison — it is `not (x > 3)` — and `not a and b` is `(not a) and b`. Parentheses override the rule: `(not x) > 3` compares the negation itself, a type error for a numeric `x`. Because `not` binds so loosely, it can begin only a whole expression or an operand of a logical operator: `a == not b` and `2 ^ not x` are parse errors — write `a == (not b)` and `2 ^ (not x)`.
+
+<!-- spec:not-binds-below-comparisons -->
+```
+not 5 > 3
+not 2 > 3
+not 5 == 5
+not 5 == 4
+not true == false
+not true == 1
+```
+
+**Results:**
+```
+false
+true
+false
+true
+true
+true
 ```
 
 ### Math Constants and Functions
@@ -471,7 +514,7 @@ Math.Log(100, 10)
 katlang eval "Math.RandomInt(1, 7), Math.Random(0, 1)" --seed 42
 ```
 
-A seed reproduces a *stream*, not individual calls: both random operations, in every spelling, draw from one stream in evaluation order, so the values a call receives depend on which random calls executed before it. The ordinary evaluation rules decide that — arguments evaluate left to right and exactly once, only the selected branch of `if` runs, a zero-parameter property read as a value (`A`, `A.sum`, `F(A)`) is drawn once and reused while an explicit `A()` and every builtin value slot that demands the algorithm directly (`sum(A)`, `if(1, A, 0)`, `A.string` — see [Zero-Parameter Property Caching](#zero-parameter-property-caching)) draw again, callbacks draw in sequence order, and the output rows draw before a `DisplayDecimals` property is evaluated. Removing an earlier random call therefore generally changes the later values. Unseeded evaluation stays nondeterministic, and KatLang randomness is not cryptographically secure.
+A seed reproduces a *stream*, not individual calls: both random operations, in every spelling, draw from one stream in evaluation order, so the values a call receives depend on which random calls executed before it. The ordinary evaluation rules decide that — arguments evaluate left to right and exactly once, only the selected branch of `if` runs, a zero-parameter property read as a value (`A`, `A.sum`, `F(A)`) is drawn once and reused while an explicit `A()` and every builtin value slot that demands the algorithm directly (`sum(A)`, `if(true, A, 0)`, `A.string` — see [Zero-Parameter Property Caching](#zero-parameter-property-caching)) draw again, callbacks draw in sequence order, and the output rows draw before a `DisplayDecimals` property is evaluated. Removing an earlier random call therefore generally changes the later values. Unseeded evaluation stays nondeterministic, and KatLang randomness is not cryptographically secure.
 
 ### Lowercase Math Aliases
 
@@ -1022,7 +1065,7 @@ Host-backed properties follow the same rule. Every independent evaluation starts
 
 A recursive read entered before any result is stored still evaluates the body. The first successful completion supplies the cache entry; reads already in progress finish with their own results and do not replace it.
 
-The guarantee concerns property-value reads: a bare `A` in value position, `(A)`, `A + 0`, a user call argument `F(A)`, and the receiver of a dotted collection builtin (`A.sum`, `A.count`) all read A's cached value. Passing a name as an ALGORITHM argument follows the receiving callable's rules instead, and every builtin VALUE slot demands the algorithm directly rather than reading the property: `if(1, A, 0)`, the direct-call collection arguments `sum(A)`, `count(A)`, `take(A, n)`, `first(A)`, `atoms(A)`, `range(A, A)`, a loop's initial state and `repeat` count, the `reduce` initial accumulator, and the `.string` receiver (`A.string`) each evaluate A's body again and neither read nor store its entry, while `if(1, (A), 0)`, `sum((A))`, and `(A).string` capture the property read and use A's cache. Where a property draws randomness or calls a host operation this is observable — `A.sum` reuses A's draw, `sum(A)` draws again — so read such a property through its cached spellings.
+The guarantee concerns property-value reads: a bare `A` in value position, `(A)`, `A + 0`, a user call argument `F(A)`, and the receiver of a dotted collection builtin (`A.sum`, `A.count`) all read A's cached value. Passing a name as an ALGORITHM argument follows the receiving callable's rules instead, and every builtin VALUE slot demands the algorithm directly rather than reading the property: `if(true, A, 0)`, the direct-call collection arguments `sum(A)`, `count(A)`, `take(A, n)`, `first(A)`, `atoms(A)`, `range(A, A)`, a loop's initial state and `repeat` count, the `reduce` initial accumulator, and the `.string` receiver (`A.string`) each evaluate A's body again and neither read nor store its entry, while `if(true, (A), 0)`, `sum((A))`, and `(A).string` capture the property read and use A's cache. Where a property draws randomness or calls a host operation this is observable — `A.sum` reuses A's draw, `sum(A)` draws again — so read such a property through its cached spellings.
 
 A property body may produce several items, but property-style access is a value boundary: the caller observes them as one sequence value. Caller-site spread (`value*`) turns that value back into separate output rows:
 
@@ -1157,9 +1200,9 @@ They stay equal after parsing, assignment, display, and equality:
 
 <!-- spec:empty-eq-family -->
 ```
-() == ()      # 1
-() == (())    # 1
-() != (())    # 0
+() == ()      # true
+() == (())    # true
+() != (())    # false
 count(())     # 0
 count((()))   # 0
 ```
@@ -1193,11 +1236,11 @@ A = ()
 A == ()
 ```
 
-**Result:** `1`
+**Result:** `true`
 
 #### `()` is a value, not an operator identity
 
-`()` is an ordinary operand. It carries no numeric scalar value, so the arithmetic, ordering, and logical operators reject it exactly as they reject any other non-scalar operand — on either side, and whichever operand is empty:
+`()` is an ordinary operand. It carries neither a numeric scalar value nor a Boolean value, so the arithmetic and ordering operators reject it exactly as they reject any other non-scalar operand, and the logical operators reject it as a non-Boolean operand — on either side, and whichever operand is empty:
 
 <!-- spec:empty-sequence-is-not-an-operator-identity -->
 ```
@@ -1206,9 +1249,9 @@ A == ()
 
 **Result:** error
 
-`() > 10`, `() and 7`, `1 + ()`, and `() + 'text'` are errors for the same reason. An operator never returns the other operand, so an unexpectedly empty divisor or comparand fails loudly instead of yielding an apparently valid result.
+`() > 10`, `() and true`, `1 + ()`, and `() + 'text'` are errors for the same reason. An operator never returns the other operand, so an unexpectedly empty divisor or comparand fails loudly instead of yielding an apparently valid result.
 
-Unary `-()` and `not ()` are errors too. They use the same numeric conversion that rejects nonempty sequence and list operands, with no special rule for `()`.
+Unary `-()` and `not ()` are errors too: `-` uses the same numeric conversion that rejects nonempty sequence and list operands, and `not` requires a Boolean operand — with no special rule for `()` in either case.
 
 Equality is different by design: `==` and `!=` compare values structurally across every value kind, so they take `()` as a first-class operand and keep working.
 
@@ -1219,8 +1262,8 @@ Equality is different by design: `==` and `!=` compare values structurally acros
 
 **Results:**
 ```
-1
-0
+true
+false
 ```
 
 Do not confuse the empty sequence **value** with an empty item **supply**. The value `()` is one thing you can store, compare, count, and pass as an argument. A supply is the temporary item stream that comma slots, output rows, and the spread marker feed into a receiver, and an *empty supply* is genuinely neutral there — `Empty*` contributes no items to the surrounding slots. That neutrality is a fact about supplies alone; it gives operators no passthrough rule.
@@ -1282,8 +1325,8 @@ count(filter((1, 3, 5), IsEven))
 
 **Results:**
 ```
-1
-0
+true
+false
 0
 ```
 
@@ -1809,7 +1852,7 @@ count(7)
 
 **Result:** `8`
 
-Resolution never considers how many arguments the call supplies. It selects exactly one callable, and only then checks that callable's signature, so KatLang has no overloading by argument count: a user `if(x)` replaces builtin `if` completely, and `if(1, 2, 3)` reports an arity error against `if(x)` instead of quietly falling back to `if(condition, whenTrue, whenFalse)`. A parameter shadows the prelude the same way, which is what lets you pass a callable in under a builtin's name:
+Resolution never considers how many arguments the call supplies. It selects exactly one callable, and only then checks that callable's signature, so KatLang has no overloading by argument count: a user `if(x)` replaces builtin `if` completely, and `if(true, 2, 3)` reports an arity error against `if(x)` instead of quietly falling back to `if(condition, whenTrue, whenFalse)`. A parameter shadows the prelude the same way, which is what lets you pass a callable in under a builtin's name:
 
 ```
 Apply(if, x) = if(x)
@@ -1861,9 +1904,9 @@ Strings support `==` and `!=`. Two strings are equal if they have identical cont
 
 **Results:**
 ```
-1
-0
-1
+true
+false
+true
 ```
 
 Arithmetic operators (`+`, `-`, `*`, etc.) are not defined for strings.
@@ -2384,7 +2427,7 @@ First appearance gives `(a, b, c)`; the two units on `c` move it two positions e
 
 Like every builtin, `if` is an ordinary prelude binding: it is found by the usual [name resolution](#name-resolution), a nearer property or parameter shadows it, and its arity is checked when the call runs — against whichever callable resolution selected. What is special about `if` is only its invocation.
 
-The condition is numeric: `0` is false and any nonzero number is true.
+The condition must be a Boolean value: `true` selects `whenTrue` and `false` selects `whenFalse`. A number, string, sequence value, or list in the condition slot is a type error — there is no numeric truthiness, so write a comparison such as `x != 0` where another language would test a number.
 
 Examples:
 
@@ -2421,12 +2464,12 @@ DivBy3(10)
 
 For multi-case dispatch based on patterns, see [Conditional Algorithms](#conditional-algorithms).
 
-`if(condition, whenTrue, whenFalse)` evaluates only the selected branch and returns that branch as **one value**. This is just the general [call value boundary](#calls-return-one-value) applied to `if`: if the selected branch is a multi-output property such as `X = 1, 2, 3`, the `if` result is the grouped sequence value `(1, 2, 3)` — the same single value you observe by referencing `X` directly. Use a caller-site spread, for example `if(1, X, X)*`, to contribute its items as separate output slots:
+`if(condition, whenTrue, whenFalse)` evaluates only the selected branch and returns that branch as **one value**. This is just the general [call value boundary](#calls-return-one-value) applied to `if`: if the selected branch is a multi-output property such as `X = 1, 2, 3`, the `if` result is the grouped sequence value `(1, 2, 3)` — the same single value you observe by referencing `X` directly. Use a caller-site spread, for example `if(true, X, X)*`, to contribute its items as separate output slots:
 
 ```
 X = 1, 2, 3
-if(1, X, X)
-if(1, X, X)*
+if(true, X, X)
+if(true, X, X)*
 ```
 
 **Results:**
@@ -2438,10 +2481,10 @@ if(1, X, X)*
 3
 ```
 
-Explicit spread also works in **call-argument position**. Spreading a three-item value into the call opens it across the three argument slots, so `if(X*)` is equivalent to `if(1, 2, 3)` and selects the `whenTrue` branch:
+Explicit spread also works in **call-argument position**. Spreading a three-item value into the call opens it across the three argument slots, so `if(X*)` is equivalent to `if(true, 2, 3)` and selects the `whenTrue` branch:
 
 ```
-X = 1, 2, 3
+X = true, 2, 3
 if(X*)
 ```
 
@@ -2459,7 +2502,7 @@ Because `if` is reached by ordinary resolution, it also composes by ordinary rul
 <!-- spec:if-composition-forms-agree -->
 
 ```
-Cond = 1
+Cond = true
 Branches = (10, 20)
 Apply3(f, a, b, c) = f(a, b, c)
 
@@ -2486,8 +2529,8 @@ Evaluating only the selected branch belongs to the builtin **identity**, not to 
 ```
 Boom = 1 / 0
 
-if(1, 10, Boom)
-0.if(Boom, 20)
+if(true, 10, Boom)
+false.if(Boom, 20)
 ```
 
 **Results:**
@@ -2496,9 +2539,9 @@ if(1, 10, Boom)
 20
 ```
 
-Two things do *not* follow from it. Shadow the name and the laziness goes with it — `if(a, b, c) = b + c` is an ordinary algorithm, so it binds every argument eagerly and `if(1, 10, Boom)` then fails. And spread is not laziness: `if(1, Risky*)` has to build `Risky` before there are any argument slots to fill, so a failing row inside it fails first. That is the ordinary [value-then-supply](#value-and-supply-at-a-glance) order, not an exception for `if`.
+Two things do *not* follow from it. Shadow the name and the laziness goes with it — `if(a, b, c) = b + c` is an ordinary algorithm, so it binds every argument eagerly and `if(true, 10, Boom)` then fails. And spread is not laziness: `if(true, Risky*)` has to build `Risky` before there are any argument slots to fill, so a failing row inside it fails first. That is the ordinary [value-then-supply](#value-and-supply-at-a-glance) order, not an exception for `if`.
 
-A higher-order wrapper also binds its own arguments before invoking the received callable. Thus `Apply3(if, 1, Tick(10), Tick(20))` would run both host callbacks before builtin `if` chooses. To give the builtin the branch expressions directly, write `Apply(f) = f(1, Tick(10), Tick(20))` and call `Apply(if)`; only `Tick(10)` runs. Naming a failing argument as a property can preserve its algorithm binding after an attempted value evaluation fails, so a successful wrapper call alone does not prove that the caller skipped that evaluation.
+A higher-order wrapper also binds its own arguments before invoking the received callable. Thus `Apply3(if, true, Tick(10), Tick(20))` would run both host callbacks before builtin `if` chooses. To give the builtin the branch expressions directly, write `Apply(f) = f(true, Tick(10), Tick(20))` and call `Apply(if)`; only `Tick(10)` runs. Naming a failing argument as a property can preserve its algorithm binding after an attempted value evaluation fails, so a successful wrapper call alone does not prove that the caller skipped that evaluation.
 
 #### A selected branch is an ordinary value demand
 
@@ -2507,7 +2550,7 @@ The selected branch follows the same zero-argument signature check as a bare pro
 <!-- spec:lazy-slot-demand-is-the-ordinary-zero-argument-demand -->
 ```
 Inc(x) = x + 1
-if(1, Inc, 0)
+if(true, Inc, 0)
 ```
 
 **Result:** error — `Inc` expects 1 parameter, but the selected branch demands it with 0 arguments; the report names `Inc` at its reference, exactly as writing `Inc` alone would.
@@ -2516,12 +2559,12 @@ Only the selected branch is demanded, so the same name in the branch that is not
 
 ```
 Inc(x) = x + 1
-if(0, Inc, 7)
+if(false, Inc, 7)
 ```
 
 **Result:** `7`
 
-The same rule applies to every builtin value slot — the `if` condition, a loop's initial state and `repeat` count, `atoms`, `range`, collection arguments and fixed value controls, and the `.string` receiver — while callback slots (`map`, `filter`, `reduce` steps, loop steps) supply arguments and are unaffected. `reduce`'s initial accumulator is also a value demand and keeps its dedicated hint when arguments are missing. Call the algorithm, as in `if(1, Inc(4), 0)`, when you mean its result.
+The same rule applies to every builtin value slot — the `if` condition, a loop's initial state and `repeat` count, `atoms`, `range`, collection arguments and fixed value controls, and the `.string` receiver — while callback slots (`map`, `filter`, `reduce` steps, loop steps) supply arguments and are unaffected. `reduce`'s initial accumulator is also a value demand and keeps its dedicated hint when arguments are missing. Call the algorithm, as in `if(true, Inc(4), 0)`, when you mean its result.
 
 ---
 
@@ -2587,7 +2630,7 @@ sum(range(1, 3))
 
 ### Selection: `filter`
 
-`filter(collection, predicate)` walks the bound collection's items from left to right and keeps only the top-level elements whose predicate result is exactly one atomic numeric value.
+`filter(collection, predicate)` walks the bound collection's items from left to right and keeps only the top-level elements whose predicate result is the Boolean `true`.
 
 Both call styles are supported: `filter(collection, predicate)` and `collection.filter(predicate)`.
 
@@ -2596,8 +2639,8 @@ Both call styles are supported: `filter(collection, predicate)` and `collection.
 - The predicate's current item behaves like `S:i` for the traversed sequence `S`
 - Sequence-value current items therefore expose their immediate members to the predicate, but `filter` still keeps or discards the original top-level element
 - Nested sequence values stay intact; the callback view is one-level only
-- Predicate result must be exactly one atomic numeric value: `0` rejects, nonzero keeps
-- Sequence-valued, multi-output, empty, or string predicate results are errors
+- Predicate result must be a Boolean value: `true` keeps, `false` rejects
+- Numeric, sequence-valued, list-valued, multi-output, empty, or string predicate results are type errors — there is no numeric truthiness
 
 ```
 IsEven = x mod 2 == 0
@@ -2636,8 +2679,8 @@ X.filter(IsBig)*
 3
 ```
 
-If every predicate result is `0`, `filter` returns the empty list `[]` (never `()`).
-Predicate results such as `0, 999`, `(1, 0)`, or `x.string` are invalid because `filter` does not derive truth from sequence-valued, list-valued, or multi-output results.
+If every predicate result is `false`, `filter` returns the empty list `[]` (never `()`).
+Predicate results such as `1`, `0, 999`, `(true, false)`, or `x.string` are invalid because `filter` does not derive truth from numbers, sequence values, lists, or multi-output results.
 The same callback rule applies everywhere, and parentheses shape the collection argument. `filter((1, 2), predicate)` and a helper `Values = (1, 2)` followed by `filter(Values, predicate)` each call `predicate` once for each item in that sequence value, and a lone list value is opened the same way, so `filter([1, 2], predicate)` also calls `predicate` once per element. Calls such as `filter(range(1, 5), predicate)` (the range result is a list, opened as the bound collection), `P = range(1, 5)` followed by `filter(P, predicate)`, and `filter((range(1, 5)*, 8), predicate)` call `predicate` once per immediate item. The collection must stay one argument: `filter(1, 3, 5, IsEven)` and `filter(range(1, 5)*, 8, predicate)` are arity errors because `filter(collection, predicate)` expects exactly 2 arguments.
 
 ### Mapping: `map`
@@ -2858,12 +2901,12 @@ Data = (7, 6, 4, 2, 1), (1, 2, 3, 4, 5)
 
 ### Membership: `contains`
 
-`contains(collection, item)` returns `1` when any top-level item of the bound collection equals `item`, otherwise `0`.
+`contains(collection, item)` returns `true` when any top-level item of the bound collection equals `item`, otherwise `false`.
 
 - Comparison uses ordinary KatLang value equality
 - Atoms compare by numeric value, strings by exact string value, and sequence values structurally by sequence elements
 - Search is top-level only; nested sequence elements are not searched recursively
-- Empty collections return `0`
+- Empty collections return `false`
 
 Both call styles are supported: `contains(collection, item)` and `collection.contains(item)`.
 
@@ -2878,15 +2921,15 @@ Pairs.contains((1, 2))
 
 **Results:**
 ```
-1
+true
 
-0
+false
 
-1
+true
 ```
 
-`contains(range(1, 5), 9)` returns `0` because no top-level item equals `9`.
-`contains(((1, 2), (3, 4)), (1, 2))` returns `1` after the outer collection value is opened one level — a lone list value opens the same way, so `contains([1, 2, 3], 2)` returns `1` (and the `range` examples above already search a list collection). KatLang still does not recurse beyond the immediate top-level items. Selection projects one level first, so with `Data = (7, 6, 4, 2, 1), (1, 2, 3, 4, 5)`, `(Data:0).contains(4)` and `contains(Data:0, 4)` both return `1`. Spreading the collection is an arity error instead: `contains((Data:0)*, 4)` supplies the five projected items plus `4` as six ordinary arguments, but `contains(collection, item)` expects 2.
+`contains(range(1, 5), 9)` returns `false` because no top-level item equals `9`.
+`contains(((1, 2), (3, 4)), (1, 2))` returns `true` after the outer collection value is opened one level — a lone list value opens the same way, so `contains([1, 2, 3], 2)` returns `true` (and the `range` examples above already search a list collection). KatLang still does not recurse beyond the immediate top-level items. Selection projects one level first, so with `Data = (7, 6, 4, 2, 1), (1, 2, 3, 4, 5)`, `(Data:0).contains(4)` and `contains(Data:0, 4)` both return `true`. Spreading the collection is an arity error instead: `contains((Data:0)*, 4)` supplies the five projected items plus `4` as six ordinary arguments, but `contains(collection, item)` expects 2.
 
 ### First Element: `first`
 
@@ -3301,9 +3344,9 @@ Fact.repeat(5, 1, 1) : 1
 
 **How it works:**
 
-1. The step algorithm's **last output** is the continuation flag: non-zero means continue, `0` means stop.
+1. The step algorithm's **last output** is the continuation flag, a Boolean: `true` means continue, `false` means stop. A number (or any other non-Boolean value) in the flag position is a type error.
 2. All outputs except the last form the working state, passed as input to the next iteration.
-3. **Pre-check semantics:** the loop returns the state from the last iteration where the flag was non-zero. The iteration that produces flag `0` is never committed.
+3. **Pre-check semantics:** the loop returns the state from the last iteration where the flag was `true`. The iteration that produces flag `false` is never committed.
 
 ```
 # Step: decrement x, continue while x > 1
@@ -3314,7 +3357,7 @@ Step.while(5)
 
 **Result:** `1`
 
-When `Step` runs with `x = 1`, it would produce `(0, 0)` — the flag is `0`, so this result is discarded and the loop returns `1` from the previous iteration.
+When `Step` runs with `x = 1`, it would produce `(0, false)` — the flag is `false`, so this result is discarded and the loop returns `1` from the previous iteration.
 
 Multi-output state works the same way — only the last output is the continue-flag:
 
@@ -3953,12 +3996,12 @@ A list literal always evaluates to exactly ONE list value. Its elements use the 
 
 **Results:**
 ```
-0
-0
-0
+false
+false
+false
 ```
 
-`[]` is the empty list, `[7]` is a singleton list (it never collapses to `7`), and `[[7]]` is a singleton list containing another singleton list. List equality is structural and recursive: `[1, 2] == [1, 2]` is `1`, and `[1, [2]] == [1, 2]` is `0`.
+`[]` is the empty list, `[7]` is a singleton list (it never collapses to `7`), and `[[7]]` is a singleton list containing another singleton list. List equality is structural and recursive: `[1, 2] == [1, 2]` is `true`, and `[1, [2]] == [1, 2]` is `false`.
 
 Lists are observably immutable: assigning a list to another name shares the same value, and no operation modifies a list in place.
 
@@ -3974,8 +4017,8 @@ Lists and sequence values are **different value kinds** — equal elements never
 
 **Results:**
 ```
-0
-0
+false
+false
 ```
 
 The conceptual split:
@@ -3993,9 +4036,9 @@ Ordinary parentheses stay a redundant SEQUENCE grouping even around lists:
 ([1, 2]) == [1, 2]
 ```
 
-**Result:** `1`
+**Result:** `true`
 
-Neither empty collection is an operator identity: `[] > 1` and `() > 1` are both type errors, because neither value is a numeric scalar. They still differ as values — `[] == ()` is `0` — and they differ at the supply boundary: `F([])` passes one empty-list argument while `F([]*)` supplies zero arguments.
+Neither empty collection is an operator identity: `[] > 1` and `() > 1` are both type errors, because neither value is a numeric scalar. They still differ as values — `[] == ()` is `false` — and they differ at the supply boundary: `F([])` passes one empty-list argument while `F([]*)` supplies zero arguments.
 
 ### Indexing Lists
 
@@ -4242,7 +4285,7 @@ rest == A.skip(1)
 ```
 1
 [2, 3]
-1
+true
 ```
 
 `x = (A.take(1)*)` spreads the one-element list `[1]` and CAPTURES the single item through sequence normalization (`x = 1`), while the collecting binding COLLECTS the remaining items as the exact list `[2, 3]` — equal to `A.skip(1)`. The rule of thumb is the operation triple: **ordinary value capture applies sequence normalization (`capture`), collecting binding collects an exact list (`collect`), and the spread marker spreads one boundary (`spread`).**
@@ -4330,7 +4373,7 @@ Because the result is an ordinary exact list, it composes directly with every co
 [2, 3]
 ```
 
-The call boundary is unchanged: `atoms(value)` takes exactly one argument, an unspread list is one argument, `atoms(1, 2)` is an arity error, and `atoms([1, 2]*)` spreads two ordinary arguments — also an arity error (regroup with `atoms(([1, 2]*))` if you need to pass spread items as one value). Only explicit caller-site spread turns the result into an item supply: `atoms(A)*` contributes the collected atoms to the surrounding items. Finally, `atoms` does not define truthiness — its result is a list like any other, so `if(atoms((1, 2)), a, b)` is invalid, and truth testing still ignores list values entirely.
+The call boundary is unchanged: `atoms(value)` takes exactly one argument, an unspread list is one argument, `atoms(1, 2)` is an arity error, and `atoms([1, 2]*)` spreads two ordinary arguments — also an arity error (regroup with `atoms(([1, 2]*))` if you need to pass spread items as one value). Only explicit caller-site spread turns the result into an item supply: `atoms(A)*` contributes the collected atoms to the surrounding items. Finally, `atoms` returns a list, so `if(atoms((1, 2)), a, b)` is invalid: a condition requires a Boolean value and rejects lists rather than searching their contents.
 
 ### Opening One Level vs. Flattening
 
@@ -4521,8 +4564,8 @@ Step((*history), previous) = history.count + previous
 Branches can combine literal matches with variable bindings to create dispatch tables:
 
 ```
-Else(1, a, b) = a
-Else(0, a, b) = b
+Else(true, a, b) = a
+Else(false, a, b) = b
 
 Else(5 < 6, 2, 3)
 Else(7 < 6, 2, 3)
@@ -4534,7 +4577,7 @@ Else(7 < 6, 2, 3)
 3
 ```
 
-The first argument is matched against `1` or `0`; the remaining arguments are bound to `a` and `b`.
+The first argument is matched against the Boolean literals `true` or `false` (a comparison produces exactly those values); the remaining arguments are bound to `a` and `b`.
 
 ### String Patterns
 
@@ -4852,13 +4895,13 @@ Helper = Area / 2   # private: never exported through open or load, still reacha
 
 | Operator | Description | Precedence |
 |---|---|---|
-| `^` | Power (right-associative; binds tighter than the prefix operators on the left, so `-2 ^ 2` is `-(2 ^ 2)` and a negative base needs parentheses: `(-2) ^ 2`. The exponent side accepts a prefix operator directly: `2 ^ -2`) | Highest |
-| `not` | Logical negation (prefix; between `^` and the multiplicative operators) | |
+| `^` | Power (right-associative; binds tighter than prefix `-` on the left, so `-2 ^ 2` is `-(2 ^ 2)` and a negative base needs parentheses: `(-2) ^ 2`. The exponent side accepts prefix `-` directly: `2 ^ -2`) | Highest |
 | `-` | Arithmetic negation (prefix; between `^` and the multiplicative operators) | |
 | `*`, `/`, `div`, `mod` | Multiplication, division, integer division, modulo | |
 | `+`, `-` | Addition, subtraction | |
-| `<`, `>`, `<=`, `>=` | Ordering comparison, numeric scalar operands only (returns 1 or 0) | |
-| `==`, `!=` | Structural value equality / inequality across all value kinds (numbers, strings, sequence values, and lists — different kinds compare unequal); returns 1 or 0 | |
+| `<`, `>`, `<=`, `>=` | Ordering comparison, numeric scalar operands only (returns `true` or `false`) | |
+| `==`, `!=` | Structural value equality / inequality across all value kinds (numbers, Booleans, strings, sequence values, and lists — different kinds compare unequal); returns `true` or `false` | |
+| `not` | Logical negation (prefix; binds less tightly than the comparisons and more tightly than `and`, so `not x > 3` is `not (x > 3)` and `not a and b` is `(not a) and b`; it cannot begin the operand of a tighter operator — write `a == (not b)`, not `a == not b`) | |
 | `and` | Logical and | |
 | `xor` | Logical exclusive or | |
 | `or` | Logical or | Lowest |
@@ -4884,12 +4927,12 @@ A collecting step parameter follows the same collection rule as every other coll
 | `while` | `step.while(init1, init2, …)` or `while(step, init1, init2, …)` |
 | `repeat` | `step.repeat(n, init1, init2, …)` or `repeat(step, n, init1, init2, …)` |
 | `range` | `range(start, stop)` — inclusive integers ascending or descending, materialized as one list value |
-| `filter` | `filter(collection, predicate)` or `collection.filter(predicate)` — keep top-level elements whose predicate result is truthy (non-zero); the predicate must return exactly one atomic numeric value, the callback item behaves like `S:i`, and the kept elements are returned unchanged as one list value (`[]` when nothing is kept) |
+| `filter` | `filter(collection, predicate)` or `collection.filter(predicate)` — keep top-level elements whose predicate result is `true`; the predicate must return a Boolean value, the callback item behaves like `S:i`, and the kept elements are returned unchanged as one list value (`[]` when nothing is kept) |
 | `map` | `map(collection, mapper)` or `collection.map(mapper)` — transform top-level elements left to right; the callback item behaves like `S:i`, the mapper must return exactly one mapped element, and the mapped elements are returned as one list value |
 | `order` | `order(collection)` or `collection.order` — eagerly sort top-level numeric elements ascending into one list value; duplicates are preserved and sequence-valued/string/list elements are invalid |
 | `orderDesc` | `orderDesc(collection)` or `collection.orderDesc` — eagerly sort top-level numeric elements descending into one list value; duplicates are preserved and sequence-valued/string/list elements are invalid |
 | `count` | `count(collection)` or `collection.count` — denotational top-level value count after evaluation, without flattening sequence values or lists |
-| `contains` | `contains(collection, item)` or `collection.contains(item)` — return `1` when any extracted top-level element equals `item` under ordinary KatLang value semantics, otherwise `0`; sequence values stay intact and search is top-level only |
+| `contains` | `contains(collection, item)` or `collection.contains(item)` — return `true` when any extracted top-level element equals `item` under ordinary KatLang value semantics, otherwise `false`; sequence values stay intact and search is top-level only |
 | `first` | `first(collection)` or `collection.first` — return the first top-level element unchanged; sequence values stay intact and the sequence must be non-empty |
 | `last` | `last(collection)` or `collection.last` — return the last top-level element unchanged; sequence values stay intact and the sequence must be non-empty |
 | `distinct` | `distinct(collection)` or `collection.distinct` — remove later duplicate top-level elements while preserving first-occurrence order; sequence values stay intact, duplicate detection follows KatLang value semantics, and the kept elements are returned as one list value (a single survivor is the one-element list `[item]`) |

@@ -33,8 +33,7 @@ namespace KatLang;
 /// expands each ordered <c>(left, right)</c> reference pair at most once,
 /// structural hashing computes each node's hash at most once, the
 /// <see cref="Normalize"/> rebuild computes each node's normal form at most
-/// once, the <see cref="TruthValue"/> first-atom search descends each sequence
-/// node at most once, and the bounded atom collectors
+/// once, and the bounded atom collectors
 /// (<see cref="TryLanguageAtoms"/>, <see cref="TryToHostAtoms"/>) skip every
 /// structure node a completed descent has proven to contribute no atoms. The
 /// collectors' atom OUTPUT stays per-path by contract, bounded by their
@@ -54,9 +53,10 @@ namespace KatLang;
 /// parents.</para>
 ///
 /// <para>A C# <c>closed</c> hierarchy, like the Lean inductive: <see cref="Atom"/>,
-/// <see cref="Str"/>, <see cref="SequenceValue"/>, and <see cref="ListValue"/> are
-/// its only variants, no other assembly can derive from it, and a switch EXPRESSION
-/// naming all four is compiler-exhaustive with no catch-all arm — the value views
+/// <see cref="Str"/>, <see cref="Bool"/>, <see cref="SequenceValue"/>, and
+/// <see cref="ListValue"/> are its only variants, no other assembly can derive from it,
+/// and a switch EXPRESSION naming all five is compiler-exhaustive with no catch-all arm
+/// — the value views
 /// here (<see cref="ToItems"/>, <see cref="AsNum"/>) and the evaluator's
 /// Lean-modeled projections are written that way, so a new variant fails the build
 /// there until it is decided. Iterative statement-form walks (equality, hashing,
@@ -95,6 +95,19 @@ public closed record Result
 
     /// <summary>A first-class string value. Lean: Result.str.</summary>
     public sealed record Str(string Value) : Result;
+
+    /// <summary>
+    /// A first-class Boolean value, <c>true</c> or <c>false</c>. It is a scalar value kind
+    /// of its own: never a number (no implicit conversion in either direction —
+    /// <c>true == 1</c> is <c>false</c> and <c>true + 1</c> is an operand error), never
+    /// ordered, and the ONLY kind with a truth value. Produced by the Boolean literals,
+    /// every comparison operator, the logical operators, and <c>contains</c>; consumed
+    /// wherever a condition or predicate is required (<c>if</c>, <c>filter</c>, the
+    /// <c>while</c> continuation flag, <c>not</c>, <c>and</c>, <c>or</c>, <c>xor</c>)
+    /// through <see cref="AsBool"/>. Displayed as lowercase <c>true</c> / <c>false</c>.
+    /// Lean: <c>Result.bool</c>.
+    /// </summary>
+    public sealed record Bool(bool Value) : Result;
 
     /// <summary>
     /// A sequence value containing ordered child results.
@@ -358,77 +371,15 @@ public closed record Result
     }
 
     /// <summary>
-    /// Truth-testing numeric flattening: the list of numeric atoms reachable
-    /// through SEQUENCE boundaries only. Strings are silently omitted, and
-    /// list values are opaque (omitted like strings), so lists never gain a
-    /// truth value. <see cref="TruthValue"/> follows this view but reads only
-    /// its FIRST atom through the memoized <see cref="FirstFlattenedAtom"/>
-    /// search instead of materializing this collection, whose size is one atom
-    /// per PATH and therefore exponential on shared sequence DAGs. This
-    /// materializing whole-collection form is NOT the <c>atoms</c> builtin's
-    /// collector — that is <see cref="LanguageAtoms"/>, which also opens list
-    /// boundaries.
-    /// Lean: Result.atoms.
-    /// </summary>
-    public IReadOnlyList<Decimal128> ToAtoms()
-    {
-        if (this is Atom(var single))
-            return [single];
-        if (this is not SequenceValue(var rootItems))
-            return [];
-
-        // Indexed continuation frames (see the depth note on the class): the
-        // collected list is the required output; traversal storage is one
-        // suspended frame per open sequence level.
-        var collected = new List<Decimal128>();
-        var suspended = new Stack<(IReadOnlyList<Result> Items, int Next)>();
-        var items = rootItems;
-        var next = 0;
-
-        while (true)
-        {
-            if (next >= items.Count)
-            {
-                if (suspended.Count == 0) return collected;
-                (items, next) = suspended.Pop();
-                continue;
-            }
-
-            var child = items[next];
-            next++;
-
-            switch (child)
-            {
-                case Atom(var n):
-                    collected.Add(n);
-                    break;
-                case SequenceValue(var childItems):
-                    if (childItems.Count > 0)
-                    {
-                        // Tail descent: a parent with no children left to
-                        // visit has no continuation worth suspending.
-                        if (next < items.Count)
-                            suspended.Push((items, next));
-                        (items, next) = (childItems, 0);
-                    }
-
-                    break;
-                default:
-                    break; // strings and opaque list values contribute no atoms
-            }
-        }
-    }
-
-    /// <summary>
     /// Language-level atom collection for the <c>atoms</c> builtin:
     /// recursively collect numeric atoms depth-first, left-to-right, through
-    /// BOTH sequence and exact list boundaries. Strings and any other
-    /// non-numeric leaves contribute no atoms. The builtin materializes this
-    /// collection as ONE list value.
-    /// Deliberately separate from <see cref="ToAtoms"/> (truth testing stays
-    /// list-opaque) and <see cref="ToHostAtoms"/> (host projection returns
-    /// host numbers), so none of the three contracts can drift through
-    /// shared code.
+    /// BOTH sequence and exact list boundaries. Strings, Boolean values, and
+    /// any other non-numeric leaves contribute no atoms. The builtin
+    /// materializes this collection as ONE list value.
+    /// Deliberately separate from <see cref="ToHostAtoms"/> (host projection
+    /// returns host numbers), so the two contracts cannot drift through
+    /// shared code. Neither is a truth view: only <see cref="AsBool"/> decides
+    /// a condition.
     /// Lean: <c>Result.languageAtoms</c>.
     /// </summary>
     public IReadOnlyList<Decimal128> LanguageAtoms()
@@ -555,14 +506,14 @@ public closed record Result
 
     /// <summary>
     /// Host-boundary numeric flattening used by <c>Evaluator.RunFlat</c> and
-    /// <c>KatLangEngine.EvaluateToAtoms</c>: like <see cref="ToAtoms"/>, but
-    /// also opens exact list boundaries so collection-builtin results surface
-    /// their numeric contents to embedding hosts. This is a host projection,
-    /// not language semantics: truth testing keeps lists opaque
-    /// (<see cref="ToAtoms"/>), the <c>atoms</c> builtin collects through its
-    /// own separate collector (<see cref="LanguageAtoms"/>) and returns one
-    /// exact list value rather than host numbers, and no in-language
-    /// conversion between lists and sequences is implied.
+    /// <c>KatLangEngine.EvaluateToAtoms</c>: the numeric atoms reachable
+    /// through sequence AND exact list boundaries, so collection-builtin
+    /// results surface their numeric contents to embedding hosts. This is a
+    /// host projection, not language semantics: the <c>atoms</c> builtin
+    /// collects through its own separate collector (<see cref="LanguageAtoms"/>)
+    /// and returns one exact list value rather than host numbers, and no
+    /// in-language conversion between lists and sequences is implied. Strings
+    /// and Boolean values have no numeric projection and are omitted.
     /// Lean: <c>Result.hostAtoms</c>.
     /// </summary>
     public IReadOnlyList<Decimal128> ToHostAtoms()
@@ -691,7 +642,7 @@ public closed record Result
 
     /// <summary>
     /// Count emitted top-level values when this result is already in hand.
-    /// Empty results emit 0. Any non-empty atomic, string, or sequence value
+    /// Empty results emit 0. Any numeric, Boolean, string, or non-empty sequence value
     /// counts as one value. List values ALWAYS count as one visible value,
     /// including the empty list <c>[]</c> — only the empty SEQUENCE value
     /// <c>()</c> is the invisible-able empty result.
@@ -709,111 +660,26 @@ public closed record Result
     }
 
     /// <summary>
-    /// KatLang truth testing used by builtins like <c>if</c>.
-    /// Zero is false, any other numeric atom is true.
-    /// Returns null when there is no numeric atom to truth-test.
-    /// This follows the generic flattened-atoms convention; stricter builtins
-    /// such as <c>filter</c> should use <c>SingleAtomicTruthValue()</c>.
-    /// Only the FIRST atom of the <see cref="ToAtoms"/> flattening decides the
-    /// verdict, so this searches for that atom (<see cref="FirstFlattenedAtom"/>)
-    /// instead of materializing the whole per-path collection — on a shared
-    /// sequence DAG the collection is exponential while the search is bounded
-    /// by the distinct sequence nodes (see the DAG note on the class).
-    /// Lean: <c>Result.truthValue?</c>.
+    /// The Boolean view of a value, for every consumer that REQUIRES a condition or
+    /// predicate (<c>if</c>, <c>filter</c>, the <c>while</c> continuation flag,
+    /// <c>not</c>, <c>and</c>, <c>or</c>, <c>xor</c>). Only a <see cref="Bool"/> qualifies;
+    /// a redundant singleton sequence boundary normalizes away exactly as
+    /// <see cref="AsNum"/> does for numbers (<c>(true)</c> is <c>true</c>). Numbers have
+    /// NO truth value — there is no <c>0</c>/nonzero convention — and neither do strings,
+    /// multi-item sequence values, the empty sequence value, or lists; the consumer reports
+    /// a <c>null</c> as the value-kind error naming its role.
+    /// Lean: <c>Result.asBool?</c>.
     /// </summary>
-    public bool? TruthValue()
-        => FirstFlattenedAtom(observations: null) is { } first ? first != 0 : null;
-
-    /// <summary>
-    /// <see cref="TruthValue"/> with a passive observer recording the structural work the
-    /// first-atom search performs. The observer changes neither the verdict, the memoization,
-    /// nor the traversal order, and belongs to one measured operation. Used only by the
-    /// shared-value-graph complexity regressions.
-    /// </summary>
-    internal bool? TruthValueObserved(ValueTraversalObservations observations)
-        => FirstFlattenedAtom(observations) is { } first ? first != 0 : null;
-
-    /// <summary>
-    /// First-atom search over the <see cref="ToAtoms"/> view: the identical traversal —
-    /// depth-first, left-to-right, through non-empty SEQUENCE boundaries only, with strings
-    /// and list values opaque — except that it RETURNS at the first atom instead of
-    /// collecting them all. A sequence node this search has already descended is recorded in
-    /// a lazily allocated reference-identity set and skipped at every later shared
-    /// occurrence: the earlier descent completed without returning, so the node contains no
-    /// atom at all, let alone the first one. That keeps the search O(distinct reachable
-    /// sequence nodes) on shared DAGs, never O(paths); reference identity, not value
-    /// equality, keys the set (see the DAG note on the class). Marking on descent is
-    /// equivalent to marking on completion here because every constructible value is acyclic
-    /// — a node can never be re-encountered while its own descent is still open.
-    /// </summary>
-    private Decimal128? FirstFlattenedAtom(ValueTraversalObservations? observations)
-    {
-        if (this is Atom(var single))
-            return single;
-        if (this is not SequenceValue(var rootItems))
-            return null;
-
-        observations?.RecordTruthSearchStructureExpansion();
-
-        // Indexed continuation frames (see the depth note on the class): the search carries
-        // no collected output, so traversal storage is one suspended frame per open sequence
-        // level plus the lazily allocated searched-node set.
-        var suspended = new Stack<(IReadOnlyList<Result> Items, int Next)>();
-        HashSet<Result>? searched = null;
-        var items = rootItems;
-        var next = 0;
-
-        while (true)
-        {
-            if (next >= items.Count)
-            {
-                if (suspended.Count == 0) return null;
-                (items, next) = suspended.Pop();
-                continue;
-            }
-
-            var child = items[next];
-            next++;
-
-            switch (child)
-            {
-                case Atom(var n):
-                    return n;
-                case SequenceValue(var childItems):
-                    if (childItems.Count > 0)
-                    {
-                        searched ??= new HashSet<Result>(ReferenceEqualityComparer.Instance);
-                        if (!searched.Add(child))
-                            break; // already searched through a shared reference: no atom inside
-
-                        observations?.RecordTruthSearchStructureExpansion();
-
-                        // Tail descent: a parent with no children left to
-                        // visit has no continuation worth suspending.
-                        if (next < items.Count)
-                            suspended.Push((items, next));
-                        (items, next) = (childItems, 0);
-                    }
-
-                    break;
-                default:
-                    break; // strings and opaque list values contribute no atoms
-            }
-        }
-    }
-
-    /// <summary>
-    /// Strict truth testing for <c>filter</c> predicates.
-    /// Accepts exactly one atomic numeric value: <c>0</c> is false and any
-    /// other atomic number is true. Sequence values, multi-output values, strings, and
-    /// empty results are rejected.
-    /// Lean: <c>Result.singleAtomicTruthValue?</c>.
-    /// </summary>
-    public bool? SingleAtomicTruthValue()
+    public bool? AsBool()
     {
         return this switch
         {
-            Atom(var n) => n != 0,
+            Bool(var b) => b,
+            SequenceValue => Normalize() switch
+            {
+                Bool(var b) => b,
+                _ => null,
+            },
             _ => null,
         };
     }
@@ -821,7 +687,7 @@ public closed record Result
     /// <summary>
     /// Strict numeric extraction for numeric collection builtins such as
     /// <c>min</c>, <c>max</c>, <c>sum</c>, and <c>avg</c>.
-    /// Accepts exactly one atomic numeric value and rejects sequence values and strings.
+    /// Accepts exactly one numeric atom and rejects all other value kinds.
     /// Lean: <c>Result.singleAtomicNumber?</c>.
     /// </summary>
     public Decimal128? SingleAtomicNumber()
@@ -845,6 +711,7 @@ public closed record Result
         {
             Atom(var n) => n,
             Str _ => null,
+            Bool _ => null, // Booleans are not numbers: no implicit conversion
             SequenceValue(var items) => Normalize() switch
             {
                 Atom(var n) => n,
@@ -856,7 +723,7 @@ public closed record Result
 
     /// <summary>
     /// Extract top-level items from a result.
-    /// Atom/string -> singleton list; sequence value -> its items.
+    /// Number/Boolean/string -> singleton list; sequence value -> its items.
     /// A list value stays OPAQUE here: it is one item, so non-spread consumers
     /// (boundary re-counting, call binding) treat a list as a single exact
     /// value. Only the spread marker (<see cref="SpreadItems"/>), deconstruction
@@ -870,7 +737,7 @@ public closed record Result
     {
         return this switch
         {
-            Atom or Str => [this],
+            Atom or Str or Bool => [this],
             SequenceValue(var items) => items,
             ListValue _ => [this],
         };
@@ -880,7 +747,7 @@ public closed record Result
     /// Item view used by the spread expression (<c>expr*</c>): spread opens
     /// exactly ONE structure boundary.
     /// Sequence values and exact list values open to their immediate items;
-    /// atoms and strings supply themselves as one item.
+    /// numbers, Booleans, and strings supply themselves as one item.
     /// Lean: <c>Result.spreadItems</c>.
     /// </summary>
     public IReadOnlyList<Result> SpreadItems()
@@ -895,7 +762,7 @@ public closed record Result
     /// <summary>
     /// Deconstruction-openable structure view shared by the sequence-value
     /// parameter pattern binders: a received sequence value or exact list
-    /// value opens to its immediate items; atoms and strings are not openable
+    /// value opens to its immediate items; numbers, Booleans, and strings are not openable
     /// (the binders apply their own scalar one-item fallback). Call-argument
     /// argument binding never uses this view — a list argument stays one
     /// argument.
@@ -1012,6 +879,7 @@ public closed record Result
         private const int StrTag = 1;
         private const int SequenceTag = 2;
         private const int ListTag = 3;
+        private const int BoolTag = 4;
 
         /// <summary>
         /// Placeholder stored for a structure node while its own hash is still being folded, and
@@ -1048,6 +916,11 @@ public closed record Result
 
                 case (Str(var leftValue), Str(var rightValue)):
                     return StringComparer.Ordinal.Equals(leftValue, rightValue);
+
+                // Booleans compare by value and never equal a number, a string, or a
+                // structure: equality is total over every kind, so `true == 1` is false.
+                case (Bool(var leftValue), Bool(var rightValue)):
+                    return leftValue == rightValue;
 
                 case (SequenceValue(var left), SequenceValue(var right)):
                     if (left.Count != right.Count) return false;
@@ -1118,6 +991,10 @@ public closed record Result
 
                     case (Str(var leftValue), Str(var rightValue)):
                         if (!StringComparer.Ordinal.Equals(leftValue, rightValue)) return false;
+                        continue;
+
+                    case (Bool(var leftValue), Bool(var rightValue)):
+                        if (leftValue != rightValue) return false;
                         continue;
 
                     case (SequenceValue(var childLeftItems), SequenceValue(var childRightItems)):
@@ -1234,6 +1111,11 @@ public closed record Result
                         accumulator.Add(text, StringComparer.Ordinal);
                         continue;
 
+                    case Bool(var flag):
+                        accumulator.Add(BoolTag);
+                        accumulator.Add(flag);
+                        continue;
+
                     case SequenceValue(var sequenceItems):
                         (childTag, childItems) = (SequenceTag, sequenceItems);
                         break;
@@ -1291,6 +1173,12 @@ public closed record Result
                 case Str(var text):
                     leaf.Add(StrTag);
                     leaf.Add(text, StringComparer.Ordinal);
+                    hash = leaf.ToHashCode();
+                    return true;
+
+                case Bool(var flag):
+                    leaf.Add(BoolTag);
+                    leaf.Add(flag);
                     hash = leaf.ToHashCode();
                     return true;
 

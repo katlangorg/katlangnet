@@ -406,8 +406,8 @@ def zeroArgLocalOnlyAlgorithmArgumentReads : Bool :=
     privateLocalProp "A" (.localCapturedAncestorParams ["x"]) (alg [] [] [
       privateLocalProp "P" (.localCapturedAncestorParams ["x"]) (alg [] [] [] [.param "x"])
     ] [.resolve "P"])
-  ] [.call (.resolve "if") [.num 1, .resolve "A", .num 0],
-     .call (.resolve "if") [.num 1, .resolve "A", .num 0]])]
+  ] [.call (.resolve "if") [.boolLiteral true, .resolve "A", .num 0],
+     .call (.resolve "if") [.boolLiteral true, .resolve "A", .num 0]])]
     [.call (.resolve "Outer") [.num 1]]
   match KatLang.runResultWithState (.algorithmExpr root) with
   | .ok (_, state) =>

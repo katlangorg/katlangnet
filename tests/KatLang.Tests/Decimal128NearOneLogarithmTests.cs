@@ -157,7 +157,7 @@ public class Decimal128NearOneLogarithmTests
         // larger exponent is never smaller.
         var success = Assert.IsType<RunResult.Success>(KatLangEngine.Run(
             "B = 1.000000000000000000000000000000001\nB ^ 9223372036854775807 <= B ^ 9223372036854775808"));
-        Assert.Equal(Decimal128.One, Assert.Single(success.Atoms));
+        Assert.Equal("true", success.ToDisplayString());
     }
 
     [Fact]

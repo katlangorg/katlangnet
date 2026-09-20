@@ -19,11 +19,12 @@ internal static class LeanObsTemplate
     /// </summary>
     public const string SharedDefinitions = """
         /-- Neutral raw-structure encoding shared with the C# harness:
-            atom -> `1`, string -> `'x'`, sequence -> `S[a, b]`, empty -> `S[]`,
-            exact list -> `L[a, b]`. -/
+            atom -> `1`, string -> `'x'`, Boolean -> `true` / `false`,
+            sequence -> `S[a, b]`, empty -> `S[]`, exact list -> `L[a, b]`. -/
         partial def neutral : Result -> String
           | .atom n => toString n
           | .str s => "'" ++ s ++ "'"
+          | .bool b => Result.boolText b
           | .sequenceValue rs => "S[" ++ String.intercalate ", " (rs.map neutral) ++ "]"
           | .listValue rs => "L[" ++ String.intercalate ", " (rs.map neutral) ++ "]"
 

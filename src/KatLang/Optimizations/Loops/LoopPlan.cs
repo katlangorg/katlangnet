@@ -47,6 +47,13 @@ internal readonly record struct PlannedLoopValue(
 
     public Decimal128? AsNum()
         => HasNumericValue ? NumericValue : Value?.AsNum();
+
+    /// <summary>
+    /// The Boolean view (<see cref="Result.AsBool"/>): the unboxed numeric representation
+    /// never holds a Boolean, so only a boxed <see cref="Result.Bool"/> qualifies.
+    /// </summary>
+    public bool? AsBool()
+        => HasNumericValue ? null : Value?.AsBool();
 }
 
 internal sealed class LoopValueEnvironment : ValEnv, IValueEnvironmentCacheIdentityProvider

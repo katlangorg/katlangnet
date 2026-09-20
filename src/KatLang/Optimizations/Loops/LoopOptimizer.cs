@@ -97,22 +97,23 @@ internal static partial class LoopOptimizer
                 }
 
                 var (nextStateSlots, continueValue) = splitR.Value;
-                result = continueValue == 0
-                    ? frame.CurrentStateResult()
-                    : genericContinuation(nextStateSlots);
+                result = continueValue
+                    ? genericContinuation(nextStateSlots)
+                    : frame.CurrentStateResult();
                 return true;
             }
 
-            var contR = continuationR.Value.AsNum() is { } cont
-                ? EvalResult<Decimal128>.Ok(cont)
-                : Evaluator.ExpectInt(continuationR.Value.ToResult());
-            if (contR.IsError)
+            // MIRROR of Evaluator.SplitContSlots' flag rule: the continuation must be a
+            // Boolean value (never a truth test of a number), with the same message.
+            var cont = continuationR.Value.AsBool();
+            if (cont is null)
             {
-                result = contR.Error;
+                result = new EvalError.TypeMismatch(
+                    Evaluator.BooleanRequiredMessage(Evaluator.WhileContinuationFlagRole, continuationR.Value.ToResult()));
                 return true;
             }
 
-            if (contR.Value == 0)
+            if (!cont.Value)
             {
                 result = frame.CurrentStateResult();
                 return true;

@@ -345,9 +345,9 @@ public class SemanticExplorerTests
         }
 
         // Structural equality is reflexive and construction-path independent.
-        ExpectAtom(findings, "EqualityInstability", Obs("eqSelf", valueId), 1);
-        ExpectAtom(findings, "EqualityInstability", Obs("neqSelf", valueId), 0);
-        ExpectAtom(findings, "EqualityInstability", Obs("eqIdentity", valueId), 1);
+        ExpectBool(findings, "EqualityInstability", Obs("eqSelf", valueId), true);
+        ExpectBool(findings, "EqualityInstability", Obs("neqSelf", valueId), false);
+        ExpectBool(findings, "EqualityInstability", Obs("eqIdentity", valueId), true);
 
         // Spread opens exactly one layer: item count and recombined value.
         // For sequences the re-captured value is the captured value itself;
@@ -448,12 +448,12 @@ public class SemanticExplorerTests
         }
 
         // The identity map callback `M(a) = a` binds each supply item through
-        // ordinary counted callback projection: an atom or exact list item is
+        // ordinary counted callback projection: a scalar or exact list item is
         // one bound value and maps to itself, while a sequence-valued item
         // projects to a different count and fails the strict single-element
         // transform contract (empty `()` items project zero values).
         var mapId = Obs("mapId", valueId);
-        var mapIdBindsOneValuePerItem = builtinSupply.All(static i => i is Result.Atom or Result.ListValue);
+        var mapIdBindsOneValuePerItem = builtinSupply.All(static i => i is Result.Atom or Result.Bool or Result.Str or Result.ListValue);
         if (mapIdBindsOneValuePerItem)
         {
             ExpectExactList(findings, mapId, builtinSupply);
@@ -467,8 +467,8 @@ public class SemanticExplorerTests
 
         // `atoms` recursively collects numeric atoms through BOTH sequence
         // and exact list boundaries (depth-first, left-to-right) and
-        // materializes them as ONE list. Truth testing stays
-        // list-opaque and is pinned separately. The expectation uses an
+        // materializes them as ONE list. Predicate consumers require a Boolean
+        // and reject lists, as pinned separately. The expectation uses an
         // independent local traversal so the sweep checks the runtime
         // collector rather than restating it.
         var atoms = Obs("atoms", valueId);
@@ -552,6 +552,17 @@ public class SemanticExplorerTests
         {
             findings.Add(new Finding(
                 category, observation.CaseId, $"expected {expected}, observed {observation.Neutral}"));
+        }
+    }
+
+    /// <summary>The Boolean twin of <see cref="ExpectAtom"/>: comparisons yield `true`/`false`, never 1/0.</summary>
+    private static void ExpectBool(List<Finding> findings, string category, ExplorerObservation observation, bool expected)
+    {
+        var rendered = expected ? "true" : "false";
+        if (observation.Outcome != "ok" || observation.Raw != rendered)
+        {
+            findings.Add(new Finding(
+                category, observation.CaseId, $"expected {rendered}, observed {observation.Neutral}"));
         }
     }
 
@@ -707,7 +718,7 @@ public class SemanticExplorerTests
         // SYN-01: `()` carries no numeric scalar value, so an ordering operator
         // rejects it instead of passing the other operand through.
         { "() > 1", "err type" },
-        { "() == (())", "ok raw=1 n=1" },
+        { "() == (())", "ok raw=true n=1" },
         { "x = (1, 2)\n(x*, 99)", "ok raw=S[1, 2, 99] n=1" },
         { "(1*, (), 2*)", "ok raw=S[1, S[], 2] n=1" },
         { "A = (1, 2)\nA*, 99", "ok raw=S[1, 2, 99] n=3" },

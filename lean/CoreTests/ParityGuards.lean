@@ -64,18 +64,18 @@ def builtinProbeValueArgs (count : Nat) : List Algorithm :=
 /-- Valid `map` transform: identity. -/
 def builtinProbeMapperArg : Algorithm := alg ["x"] [] [] [.param "x"]
 
-/-- Valid `filter` predicate: keep everything. -/
-def builtinProbePredicateArg : Algorithm := alg ["x"] [] [] [.num 1]
+/-- Valid `filter` predicate: keep everything (a predicate returns a Boolean). -/
+def builtinProbePredicateArg : Algorithm := alg ["x"] [] [] [.boolLiteral true]
 
 /-- Valid `reduce` step: numeric addition. -/
 def builtinProbeReducerArg : Algorithm :=
   alg ["a", "b"] [] [] [.binary .add (.param "a") (.param "b")]
 
-/-- Loop step whose single output slot is a `0` continuation flag, so accepted
-    `while` counts terminate after one step probe and accepted `repeat` counts
-    pair it with repeat count `0`. -/
+/-- Loop step whose single output slot is a `false` continuation flag, so
+    accepted `while` counts terminate after one step probe and accepted
+    `repeat` counts pair it with repeat count `0`. -/
 def builtinProbeLoopStepArg (paramCount : Nat) : Algorithm :=
-  alg ((List.range paramCount).map (fun i => s!"s{i}")) [] [] [.num 0]
+  alg ((List.range paramCount).map (fun i => s!"s{i}")) [] [] [.boolLiteral false]
 
 /-- Builtin-shaped dummy argument lists: suffix arguments (callbacks, counts,
     searched values) sit in their declared trailing positions, loop steps lead,
@@ -84,6 +84,10 @@ def builtinProbeLoopStepArg (paramCount : Nat) : Algorithm :=
     must be rejected before any argument is interpreted. -/
 def builtinProbeArgsFor (b : KatLang.Builtin) (argCount : Nat) : List Algorithm :=
   match b with
+  | .ifBuiltin =>
+      -- The condition slot leads and must hold a Boolean value.
+      if argCount == 0 then []
+      else alg [] [] [] [.boolLiteral true] :: builtinProbeValueArgs (argCount - 1)
   | .mapBuiltin =>
       if argCount == 0 then []
       else builtinProbeValueArgs (argCount - 1) ++ [builtinProbeMapperArg]
@@ -221,6 +225,10 @@ def builtinsFailingProjectionParity : List String :=
 -- through the counted/non-counted output cores, cache-writing property
 -- access, loops that actually iterate, and per-builtin domain failures.
 
+/-- Boolean condition argument (`true` / `false`): `if` requires a Boolean
+    value, so the projection probes supply one — never a number. -/
+def builtinProbeBoolArg (b : Bool) : Algorithm := alg [] [] [] [.boolLiteral b]
+
 /-- Branch emitting two top-level outputs. -/
 def builtinProbeMultiOutputArg : Algorithm := alg [] [] [] [.num 1, .num 2]
 
@@ -236,9 +244,11 @@ def builtinProbeEmptyOutputArg : Algorithm := alg [] [] [] []
 def builtinProbeCachedPropArg : Algorithm :=
   algPrivate [] [] [("P", alg [] [] [] [.num 7])] [.resolve "P", .resolve "P"]
 
-/-- `while` step `(x - 1, x - 1)`: iterates until the state reaches zero. -/
+/-- `while` step `(x - 1, x - 1 > 0)`: iterates until the state reaches zero
+    (the continuation flag is a Boolean, never the numeric state). -/
 def builtinProbeDecrementStepArg : Algorithm :=
-  alg ["x"] [] [] [.binary .sub (.param "x") (.num 1), .binary .sub (.param "x") (.num 1)]
+  alg ["x"] [] [] [.binary .sub (.param "x") (.num 1),
+    .binary .gt (.binary .sub (.param "x") (.num 1)) (.num 0)]
 
 /-- `repeat` step `x + 1`. -/
 def builtinProbeIncrementStepArg : Algorithm :=
@@ -250,17 +260,20 @@ def builtinProbeIncrementStepArg : Algorithm :=
 def builtinProjectionExplicitCases
     : List (String × KatLang.Builtin × List Algorithm × BuiltinApplyOutcome) :=
   [ ("if/multi-output-branch", .ifBuiltin,
-      [builtinProbeValueArg 1, builtinProbeMultiOutputArg, builtinProbeValueArg 9], .succeeded),
+      [builtinProbeBoolArg true, builtinProbeMultiOutputArg, builtinProbeValueArg 9], .succeeded),
     ("if/sequenceValue-else-branch", .ifBuiltin,
-      [builtinProbeValueArg 0, builtinProbeValueArg 9, builtinProbeSequenceValueOutputArg], .succeeded),
+      [builtinProbeBoolArg false, builtinProbeValueArg 9, builtinProbeSequenceValueOutputArg], .succeeded),
     ("if/cached-property-branch", .ifBuiltin,
-      [builtinProbeValueArg 1, builtinProbeCachedPropArg, builtinProbeValueArg 9], .succeeded),
+      [builtinProbeBoolArg true, builtinProbeCachedPropArg, builtinProbeValueArg 9], .succeeded),
     ("if/missing-output-branch", .ifBuiltin,
-      [builtinProbeValueArg 1, builtinProbeEmptyOutputArg, builtinProbeValueArg 9], .failedOtherwise),
-    -- `truthValue?` flattens the condition and reads its first numeric atom,
-    -- so a sequence-value condition is truthy; only atom-free conditions are invalid.
-    ("if/sequenceValue-condition-truthy", .ifBuiltin,
-      [builtinProbeSequenceValueOutputArg, builtinProbeValueArg 1, builtinProbeValueArg 2], .succeeded),
+      [builtinProbeBoolArg true, builtinProbeEmptyOutputArg, builtinProbeValueArg 9], .failedOtherwise),
+    -- The condition must be a Boolean VALUE: a sequence value, a number, and
+    -- the empty sequence are all rejected — there is no flattening and no
+    -- numeric truth.
+    ("if/sequenceValue-condition-rejected", .ifBuiltin,
+      [builtinProbeSequenceValueOutputArg, builtinProbeValueArg 1, builtinProbeValueArg 2], .failedOtherwise),
+    ("if/numeric-condition-rejected", .ifBuiltin,
+      [builtinProbeValueArg 1, builtinProbeValueArg 1, builtinProbeValueArg 2], .failedOtherwise),
     ("if/atom-free-condition", .ifBuiltin,
       [alg [] [] [] [.emptySequence 0], builtinProbeValueArg 1, builtinProbeValueArg 2],
       .failedOtherwise),
@@ -304,43 +317,43 @@ def ifBranchThreeOutputsAlt : Algorithm := alg [] [] [] [.num 10, .num 20, .num 
 def ifBranchSequenceValue : Algorithm :=
   alg [] [] [] [.capture [.num 1, .num 2, .num 3]]
 
-/-- Run counted `if` with an integer condition and two branch algorithms. -/
-def ifCountedResult (cond : Int) (t e : Algorithm) : Except KatLang.Error KatLang.CountedResult :=
+/-- Run counted `if` with a Boolean condition and two branch algorithms. -/
+def ifCountedResult (cond : Bool) (t e : Algorithm) : Except KatLang.Error KatLang.CountedResult :=
   match (KatLang.applyBuiltinCounted .ifBuiltin
-      (builtinProbeArgs [builtinProbeValueArg cond, t, e]) builtinProbeCtx []).run KatLang.EvalState.empty with
+      (builtinProbeArgs [builtinProbeBoolArg cond, t, e]) builtinProbeCtx []).run KatLang.EvalState.empty with
   | .ok (counted, _) => .ok counted
   | .error err => .error err
 
 def ifCountedCollapsesMultiOutputTrueBranch : Bool :=
-  match ifCountedResult 1 ifBranchThreeOutputs ifBranchThreeOutputs with
+  match ifCountedResult true ifBranchThreeOutputs ifBranchThreeOutputs with
   | .ok (Result.sequenceValue [Result.atom 1, Result.atom 2, Result.atom 3], 1) => true
   | _ => false
 
 #guard ifCountedCollapsesMultiOutputTrueBranch
 
 def ifCountedCollapsesMultiOutputFalseBranch : Bool :=
-  match ifCountedResult 0 ifBranchThreeOutputs ifBranchThreeOutputs with
+  match ifCountedResult false ifBranchThreeOutputs ifBranchThreeOutputs with
   | .ok (Result.sequenceValue [Result.atom 1, Result.atom 2, Result.atom 3], 1) => true
   | _ => false
 
 #guard ifCountedCollapsesMultiOutputFalseBranch
 
 def ifCountedDistinctBranchesTrueSelectsThen : Bool :=
-  match ifCountedResult 1 ifBranchThreeOutputs ifBranchThreeOutputsAlt with
+  match ifCountedResult true ifBranchThreeOutputs ifBranchThreeOutputsAlt with
   | .ok (Result.sequenceValue [Result.atom 1, Result.atom 2, Result.atom 3], 1) => true
   | _ => false
 
 #guard ifCountedDistinctBranchesTrueSelectsThen
 
 def ifCountedDistinctBranchesFalseSelectsElse : Bool :=
-  match ifCountedResult 0 ifBranchThreeOutputs ifBranchThreeOutputsAlt with
+  match ifCountedResult false ifBranchThreeOutputs ifBranchThreeOutputsAlt with
   | .ok (Result.sequenceValue [Result.atom 10, Result.atom 20, Result.atom 30], 1) => true
   | _ => false
 
 #guard ifCountedDistinctBranchesFalseSelectsElse
 
 def ifCountedParenthesizedBranchStaysOneValue : Bool :=
-  match ifCountedResult 1 ifBranchSequenceValue ifBranchSequenceValue with
+  match ifCountedResult true ifBranchSequenceValue ifBranchSequenceValue with
   | .ok (Result.sequenceValue [Result.atom 1, Result.atom 2, Result.atom 3], 1) => true
   | _ => false
 
@@ -353,13 +366,19 @@ def ifCountedParenthesizedBranchStaysOneValue : Bool :=
 -- parser is the only layer that gated `if` arity statically; the shared
 -- evaluator already expands spread before applying counted `if`, via
 -- `applyBuiltinCountedResolved -> expandSequenceSpreadBuiltinArguments`. So a
--- spread of `1, 2, 3` opens into the three argument slots and selects `whenTrue`
--- (2) as one value, matching the user wrapper `MyIF(a, b, c) = if(a, b, c)`.
--- This guard witnesses that no Lean evaluator change was needed for #131.
+-- spread of `true, 2, 3` opens into the three argument slots and selects
+-- `whenTrue` (2) as one value, matching the user wrapper
+-- `MyIF(a, b, c) = if(a, b, c)`. This guard witnesses that no Lean evaluator
+-- change was needed for #131.
+
+/-- Three-output property `X = true, 2, 3`: a Boolean condition followed by
+    the two branch values. -/
+def ifSpreadSourceThreeOutputs : Algorithm :=
+  alg [] [] [] [.boolLiteral true, .num 2, .num 3]
 
 /-- One spread argument whose value opens to three top-level items (`X*`). -/
 def ifSpreadThreeItemsArg : KatLang.ResolvedArgumentAlgorithm :=
-  { algorithm := ifBranchThreeOutputs, spreadsSequence := true }
+  { algorithm := ifSpreadSourceThreeOutputs, spreadsSequence := true }
 
 /-- Run counted `if` through the resolved, spread-aware builtin entry point. -/
 def ifCountedResolvedResult (args : List KatLang.ResolvedArgumentAlgorithm)
@@ -377,10 +396,10 @@ def ifSpreadArgumentOpensIntoThreeArguments : Bool :=
 #guard ifSpreadArgumentOpensIntoThreeArguments
 
 -- The same holds when the spread operand is an already-grouped (count-1) value
--- `(1, 2, 3)*`: the spread supplies its items, so the argument still expands to
--- three slots. This mirrors the C# engine test for `TrueResult = (1, 2, 3)`.
+-- `(true, 2, 3)*`: the spread supplies its items, so the argument still expands
+-- to three slots. This mirrors the C# engine test for `TrueResult = (true, 2, 3)`.
 def ifSpreadGroupedOperandArg : KatLang.ResolvedArgumentAlgorithm :=
-  { algorithm := alg [] [] [] [.sequenceSpread (.algorithmExpr ifBranchThreeOutputs)],
+  { algorithm := alg [] [] [] [.sequenceSpread (.algorithmExpr ifSpreadSourceThreeOutputs)],
     spreadsSequence := true }
 
 def ifSpreadGroupedOperandOpensIntoThreeArguments : Bool :=
@@ -451,6 +470,9 @@ structure DotCallParityCase where
   argsOpt : Option (List KatLang.Expr) := none
   expected : BuiltinApplyOutcome := .succeeded
   expectedAtoms : Option (List Int) := none
+  -- Exact expected value for results the host atom view cannot show (a
+  -- Boolean has no numeric projection).
+  expectedValue : Option Result := none
   -- Elaborated dot-edge fact; the default mirrors the `Expr.dotCall` sugar
   -- (`.resolve name` fallback).
   fallback? : Option KatLang.Expr := none
@@ -486,7 +508,12 @@ def dotCallParityCaseHolds (c : DotCallParityCase) : Bool :=
     | some expected, .ok (value, _) => Result.hostAtoms value == expected
     | some _, .error _ => false
     | none, _ => true
-  parity && outcome == c.expected && atomsMatch
+  let valueMatch :=
+    match c.expectedValue, plain with
+    | some expected, .ok (value, _) => value == expected
+    | some _, .error _ => false
+    | none, _ => true
+  parity && outcome == c.expected && atomsMatch && valueMatch
 
 def dotCallParityCases : List DotCallParityCase :=
   [ -- A: ordinary lexical user-defined dot-call, receiver injected as one
@@ -536,8 +563,9 @@ def dotCallParityCases : List DotCallParityCase :=
       argsOpt := dotCallArgs [.num 2], expectedAtoms := some [1, 2] },
     { label := "I/builtin-skip-suffix", target := dotCallParityData123, name := "skip",
       argsOpt := dotCallArgs [.num 1], expectedAtoms := some [2, 3] },
+    -- `contains` yields a Boolean value (no numeric projection), pinned exactly.
     { label := "I/builtin-contains-suffix", target := dotCallParityData123, name := "contains",
-      argsOpt := dotCallArgs [.num 2], expectedAtoms := some [1] },
+      argsOpt := dotCallArgs [.num 2], expectedValue := some (Result.bool true) },
     -- J: sequence builtin dot-calls with user callbacks.
     { label := "J/builtin-map-callback", target := dotCallParityData123, name := "map",
       argsOpt := dotCallArgs [resolve "Double"], expectedAtoms := some [2, 4, 6] },
@@ -725,7 +753,13 @@ def evalProjectionProbes : List (String × KatLang.Expr × Bool) :=
   [ ("num", .num 42, true),
     ("string", .stringLiteral "text", true),
     ("unary-minus", .unary .minus (.num 7), true),
-    ("unary-not-zero", .unary .not (.num 0), true),
+    ("bool-literal", .boolLiteral true, true),
+    ("unary-not-false", .unary .not (.boolLiteral false), true),
+    ("unary-not-number-rejected", .unary .not (.num 0), false),
+    ("binary-and-booleans", .binary .and (.boolLiteral true) (.boolLiteral false), true),
+    ("binary-and-numbers-rejected", .binary .and (.num 1) (.num 1), false),
+    ("binary-lt-booleans-rejected", .binary .lt (.boolLiteral false) (.boolLiteral true), false),
+    ("binary-eq-bool-number", .binary .eq (.boolLiteral true) (.num 1), true),
     ("unary-minus-empty-rejected", .unary .minus (.emptySequence 0), false),
     ("unary-not-empty-rejected", .unary .not (.emptySequence 0), false),
     ("unary-string-rejected", .unary .minus (.stringLiteral "s"), false),

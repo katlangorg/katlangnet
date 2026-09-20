@@ -545,7 +545,7 @@ public class OperationalMetamorphicTests
         var errors = new EvalError[]
         {
             RunError("f(0) = 0\nf(n) = f(n - 1)\nf(50)", new EvaluationLimits { MaxDepth = 8 }),
-            RunError("Step = x, 1\nStep.while(0)", new EvaluationLimits { MaxSteps = 25 }),
+            RunError("Step = x, true\nStep.while(0)", new EvaluationLimits { MaxSteps = 25 }),
             RunError("range(1, 6)", new EvaluationLimits { MaxCollectionItems = 5 }),
             RunError("[1, 2]", new EvaluationLimits { MaxMaterializedItems = 1 }),
             RunError("'abcdef'", new EvaluationLimits { MaxStringLength = 5 }),

@@ -724,7 +724,7 @@ public class LexerTests
         // from the lexer must be reviewed here (and in KatLang.ebnf, whose
         // ReservedWord production EbnfLexicalSyncTests pins against
         // Lexer.KeywordNames).
-        string[] expected = ["div", "mod", "and", "or", "xor", "not", "public", "open"];
+        string[] expected = ["div", "mod", "and", "or", "xor", "not", "public", "open", "true", "false"];
         Assert.Equal(expected, Lexer.KeywordNames);
 
         foreach (var keyword in expected)

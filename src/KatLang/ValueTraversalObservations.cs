@@ -62,21 +62,6 @@ internal sealed class ValueTraversalObservations
         => NormalizeStructureExpansionCount = checked(NormalizeStructureExpansionCount + 1);
 
     /// <summary>
-    /// Number of sequence NODES descended into across the <see cref="Result.TruthValue"/>
-    /// first-atom searches this observer measured: the top-level sequence of each search, plus
-    /// every nested NON-EMPTY sequence value descended into. Leaves, empty sequences, strings, and
-    /// opaque list values record nothing, and a sequence reached again through a second shared
-    /// reference is skipped as already searched, so for ONE search this stays bounded by the
-    /// number of distinct reachable sequence nodes — never the number of expanded tree paths. The
-    /// searched-node set lives for exactly one search, so testing the same value twice observes
-    /// twice the count.
-    /// </summary>
-    public long TruthSearchStructureExpansionCount { get; private set; }
-
-    internal void RecordTruthSearchStructureExpansion()
-        => TruthSearchStructureExpansionCount = checked(TruthSearchStructureExpansionCount + 1);
-
-    /// <summary>
     /// Number of structure NODES descended into across the <c>Result.TryLanguageAtoms</c>
     /// collections this observer measured: the top-level structure of each collection, plus every
     /// nested NON-EMPTY sequence or list value descended into. Leaves and empty structures record

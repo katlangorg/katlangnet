@@ -153,6 +153,7 @@ PatternAtom        = BindingIdentifier             (* fixed bind *)
                                                       targeted error in a binding pattern. *)
                    | [ "-" ] NumberLiteral         (* litInt    *)
                    | StringLiteral                 (* litString *)
+                   | BooleanLiteral                (* litBool: matches only the Boolean value *)
                    | "(" Pattern ")" ;             (* sequence-value pattern; always structural, even for singletons *)
 
 OutputLine      = OutputBundle ;
@@ -212,8 +213,11 @@ SequenceAtom          = Expression ;
                         THE STAR RULE (SYN-07B, layout-independent): the next
                         significant token after the star decides, never
                         whitespace and never the physical newline. When an
-                        expression-start token follows (identifier, number,
-                        string, "(", "[", "{", "-", "not", "~") — on the same
+                        operand-start token follows (identifier, number,
+                        string, "(", "[", "{", "-", "~"; "not" starts an
+                        expression but never a multiplication operand, since
+                        it binds below the comparisons, so a star followed by
+                        "not" is the spread marker) — on the same
                         line or on a later one — the star is infix
                         MULTIPLICATION: `a*b`, `a* b`, `a *b`, `a * b`,
                         `a*` newline `b`, and `a *` newline `b` all multiply.
@@ -376,7 +380,19 @@ Expression      = OrExpr ;
                      comments never relax this boundary. *)
 OrExpr          = XorExpr { "or" XorExpr } ;
 XorExpr         = AndExpr { "xor" AndExpr } ;
-AndExpr         = EqualityExpr { "and" EqualityExpr } ;
+AndExpr         = NotExpr { "and" NotExpr } ;
+NotExpr         = "not" NotExpr
+                | EqualityExpr ;
+                  (* "not" is a prefix operator BELOW the comparisons and
+                     above "and"/"xor"/"or" (comparisons > not > and > xor
+                     > or): not x > 3 is not (x > 3), not a == b is
+                     not (a == b), not a and b is (not a) and b, and
+                     not not x nests. Its operand is a NotExpr, so "not"
+                     can never be a bare operand of a tighter operator:
+                     1 + not x, a == not b, 2 ^ not x, and -not x are
+                     diagnosed at the keyword (parenthesize the negation,
+                     (not x)). Parentheses always override: (not x) > 3
+                     compares the negation. *)
 EqualityExpr    = ComparisonExpr { ( "==" | "!=" ) ComparisonExpr } ;
 ComparisonExpr  = AdditiveExpr { ( "<" | ">" | "<=" | ">=" ) AdditiveExpr } ;
 AdditiveExpr    = MultiplicativeExpr { ( "+" | "-" ) MultiplicativeExpr } ;
@@ -391,11 +407,12 @@ MultiplicativeExpr
                      See SpreadExpression. *)
 
 UnaryExpr       = "-" UnaryExpr
-                | "not" UnaryExpr
                 | PowerExpr ;
+                  (* Unary minus is the only prefix operator of this tier;
+                     "not" lives in NotExpr, below the comparisons. *)
 
 PowerExpr       = PostfixExpr [ "^" UnaryExpr ] ;
-                  (* "^" binds tighter than the prefix unary operators on the
+                  (* "^" binds tighter than prefix "-" on the
                      LEFT only: the base is a PostfixExpr, so -2 ^ 2 parses
                      as -(2 ^ 2) and a negative base needs parentheses,
                      (-2) ^ 2. The exponent re-enters UnaryExpr, so unary
@@ -543,6 +560,7 @@ ParenArgs       = "(" ExpressionAlgorithm ")" ;
 
 Primary         = NumberLiteral
                 | StringLiteral
+                | BooleanLiteral
                 | GraceIdentifier
                 | ParenBundleExpr
                 | BraceAlgorithmExpr
@@ -665,11 +683,20 @@ IdentifierStart = "_" | UnicodeLetter ;
 IdentifierPart  = "_" | UnicodeLetter | UnicodeDigit ;
 UnicodeLetter   = ? a UTF-16 code unit in Unicode category Lu, Ll, Lt, Lm, or Lo (System.Char.IsLetter) ? ;
 UnicodeDigit    = ? a UTF-16 code unit in Unicode category Nd (System.Char.IsDigit) ? ;
-ReservedWord    = "div" | "mod" | "and" | "or" | "xor" | "not" | "public" | "open" ;
+ReservedWord    = "div" | "mod" | "and" | "or" | "xor" | "not" | "public" | "open"
+                | "true" | "false" ;
                   (* The complete reserved-word list; each spelling is a
                      distinct keyword token, never an Identifier. Reservation
-                     is exact and case-sensitive: "Open", "Div", and "NOT" are
-                     ordinary identifiers. *)
+                     is exact and case-sensitive: "Open", "Div", "NOT", and
+                     "True" are ordinary identifiers. "true" and "false" are the
+                     Boolean literals (BooleanLiteral): being reserved, they can
+                     never name a property, parameter, or open target, so they
+                     cannot be redefined or shadowed. *)
+BooleanLiteral  = "true" | "false" ;
+                  (* The two Boolean values, a scalar value kind of their own:
+                     not numbers (no conversion in either direction), not
+                     ordered, and the only values with a truth value. Displayed
+                     as lowercase `true` / `false`. *)
 StringLiteral   = /'([^'\r\n])*'/ ;
 Comment         = /#[^\r\n]*/ ;
                   (* a "#" outside a string literal starts a comment that runs

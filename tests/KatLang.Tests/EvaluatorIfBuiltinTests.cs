@@ -13,19 +13,22 @@ public class EvaluatorIfBuiltinTests
 
     [Fact]
     public void Eval_If_TrueCondition_ReturnsThenBranch()
-        => AssertEval("if(1, (10), (20))", 10);
+        => AssertEval("if(true, (10), (20))", 10);
 
     [Fact]
     public void Eval_If_FalseCondition_ReturnsElseBranch()
-        => AssertEval("if(0, (10), (20))", 20);
+        => AssertEval("if(false, (10), (20))", 20);
 
-    [Fact]
-    public void Eval_If_NonZeroCondition_ReturnsThenBranch()
-        => AssertEval("if(5, (10), (20))", 10);
-
-    [Fact]
-    public void Eval_If_NegativeCondition_ReturnsThenBranch()
-        => AssertEval("if(-1, (10), (20))", 10);
+    // A number is not a truth value: `if` requires a Boolean condition and rejects every
+    // number, non-zero and zero alike, naming the value it was given.
+    [Theory]
+    [InlineData("if(5, (10), (20))", "numeric value 5")]
+    [InlineData("if(-1, (10), (20))", "numeric value -1")]
+    [InlineData("if(0, (10), (20))", "numeric value 0")]
+    [InlineData("if('yes', (10), (20))", "a string: 'yes'")]
+    [InlineData("if((true, true), (10), (20))", "a sequence value with 2 sequence elements: (true, true)")]
+    public void Eval_If_NonBooleanCondition_IsRejected(string source, string described)
+        => AssertEvalFailsWithTypeMismatch(source, $"if condition must be a Boolean value (true or false), but was {described}");
 
     [Fact]
     public void Eval_If_WithExpressions()
@@ -33,40 +36,40 @@ public class EvaluatorIfBuiltinTests
 
     [Fact]
     public void Eval_If_MultipleOutputs()
-        => AssertEval("if(1, (1, 2), (3, 4))", 1, 2);
+        => AssertEval("if(true, (1, 2), (3, 4))", 1, 2);
 
     // Issue #130: a selected branch that is a multi-output property such as
     // `X = 1, 2, 3` is observed as one grouped sequence value (emitted count 1),
     // exactly like value-position property access — not three separate outputs.
     [Theory]
-    [InlineData("X = 1, 2, 3\nif(1, X, X)")]
-    [InlineData("X = 1, 2, 3\nif(0, X, X)")]
+    [InlineData("X = 1, 2, 3\nif(true, X, X)")]
+    [InlineData("X = 1, 2, 3\nif(false, X, X)")]
     public void Eval_If_MultiOutputBranchProperty_CollapsesToOneSequenceValue(string source)
         => AssertEvalCounted(source, 1, ResultFromAtoms(1, 2, 3));
 
     [Fact]
     public void Eval_If_DistinctMultiOutputBranches_TrueSelectsThenAsOneValue()
-        => AssertEvalCounted("X = 1, 2, 3\nY = 10, 20, 30\nif(1, X, Y)", 1, ResultFromAtoms(1, 2, 3));
+        => AssertEvalCounted("X = 1, 2, 3\nY = 10, 20, 30\nif(true, X, Y)", 1, ResultFromAtoms(1, 2, 3));
 
     [Fact]
     public void Eval_If_DistinctMultiOutputBranches_FalseSelectsElseAsOneValue()
-        => AssertEvalCounted("X = 1, 2, 3\nY = 10, 20, 30\nif(0, X, Y)", 1, ResultFromAtoms(10, 20, 30));
+        => AssertEvalCounted("X = 1, 2, 3\nY = 10, 20, 30\nif(false, X, Y)", 1, ResultFromAtoms(10, 20, 30));
 
     [Fact]
     public void Eval_If_ParenthesizedBranchProperty_StaysOneSequenceValue()
-        => AssertEvalCounted("X = (1, 2, 3)\nif(1, X, X)", 1, ResultFromAtoms(1, 2, 3));
+        => AssertEvalCounted("X = (1, 2, 3)\nif(true, X, X)", 1, ResultFromAtoms(1, 2, 3));
 
     [Fact]
     public void Eval_If_SpreadResult_OpensSelectedBranchIntoItems()
-        => AssertEvalCounted("X = 1, 2, 3\nif(1, X, X)*", 3, ResultFromAtoms(1, 2, 3));
+        => AssertEvalCounted("X = 1, 2, 3\nif(true, X, X)*", 3, ResultFromAtoms(1, 2, 3));
 
     // Issue #131: an explicit spread argument opens its value into the three `if`
-    // call-argument slots, so `if(X*)` with `X = 1, 2, 3` is equivalent to
-    // `if(1, 2, 3)` and selects the `whenTrue` branch (2) as one value.
+    // call-argument slots, so `if(X*)` with `X = true, 2, 3` is equivalent to
+    // `if(true, 2, 3)` and selects the `whenTrue` branch (2) as one value.
     [Theory]
-    [InlineData("TrueResult = 1, 2, 3\nif(TrueResult*)")]
-    [InlineData("TrueResult = (1, 2, 3)\nif(TrueResult*)")]
-    [InlineData("Pair = 2, 3\nif(1, Pair*)")]
+    [InlineData("TrueResult = true, 2, 3\nif(TrueResult*)")]
+    [InlineData("TrueResult = (true, 2, 3)\nif(TrueResult*)")]
+    [InlineData("Pair = 2, 3\nif(true, Pair*)")]
     public void Eval_If_SpreadArgument_OpensIntoThreeArguments(string source)
         => AssertEvalCounted(source, 1, Atom(2));
 
@@ -74,8 +77,8 @@ public class EvaluatorIfBuiltinTests
     [Fact]
     public void Eval_If_SpreadArgument_MatchesUserWrapper()
     {
-        var direct = EvalFull("TrueResult = 1, 2, 3\nif(TrueResult*)");
-        var wrapped = EvalFull("TrueResult = 1, 2, 3\nMyIF(a, b, c) = if(a, b, c)\nMyIF(TrueResult*)");
+        var direct = EvalFull("TrueResult = true, 2, 3\nif(TrueResult*)");
+        var wrapped = EvalFull("TrueResult = true, 2, 3\nMyIF(a, b, c) = if(a, b, c)\nMyIF(TrueResult*)");
         Assert.False(direct.IsError);
         Assert.False(wrapped.IsError);
         Assert.True(Result.ValueComparer.Equals(direct.Value, wrapped.Value));
@@ -91,9 +94,9 @@ public class EvaluatorIfBuiltinTests
     // The fix changes counted/display provenance only; the selected branch value
     // is unchanged, so operations that consume the value still open it as before.
     [Theory]
-    [InlineData("X = 1, 2, 3\ncount(if(1, X, X))", 3)]
-    [InlineData("X = 1, 2, 3\nsum(if(1, X, X))", 6)]
-    [InlineData("X = 1, 2, 3\nfirst(if(1, X, X))", 1)]
+    [InlineData("X = 1, 2, 3\ncount(if(true, X, X))", 3)]
+    [InlineData("X = 1, 2, 3\nsum(if(true, X, X))", 6)]
+    [InlineData("X = 1, 2, 3\nfirst(if(true, X, X))", 1)]
     public void Eval_If_MultiOutputBranchProperty_ValueIsInvariant(string source, int expected)
         => AssertEval(source, expected);
 

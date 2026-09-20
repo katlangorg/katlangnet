@@ -35,7 +35,7 @@ public class WideValueRobustnessTests
 
     [Fact]
     public void WideListEquality()
-        => AssertEval($"range(1, {Wide}) == range(1, {Wide}), range(1, {Wide}) == range(0, {Wide - 1})", 1, 0);
+        => EvaluatorTestSupport.AssertEvalBools($"range(1, {Wide}) == range(1, {Wide}), range(1, {Wide}) == range(0, {Wide - 1})", true, false);
 
     [Fact]
     public void WideDistinct()
@@ -43,7 +43,7 @@ public class WideValueRobustnessTests
 
     [Fact]
     public void WideContains()
-        => AssertEval($"contains((range(1, {Wide}), 5), range(1, {Wide}))", 1);
+        => EvaluatorTestSupport.AssertEvalBool($"contains((range(1, {Wide}), 5), range(1, {Wide}))", true);
 
     [Fact]
     public void WideAtomsBuiltin()

@@ -21,7 +21,7 @@ def test228 : Bool :=
 
 def test229 : Bool :=
   let sequenceValueRange := .capture [.num 1, .num 2, .num 3, .num 4, .num 5]
-  match runFlat (.algorithmExpr (alg [] [] [] [
+  match runResult (.algorithmExpr (alg [] [] [] [
     .call (resolve "contains") [
       sequenceItems [.num 3, .num 4, sequenceSpread (.call (resolve "range") [.num 1, .num 5]), .num 7],
       .num 5
@@ -31,7 +31,7 @@ def test229 : Bool :=
       sequenceValueRange
     ]
   ])) with
-  | Except.ok [1, 0] => true
+  | Except.ok (.sequenceValue [.bool true, .bool false]) => true
   | _ => false
 
 #guard test229
@@ -393,7 +393,7 @@ def sequenceBuiltinDotCallCountSweep : Bool :=
 
 def sequenceBuiltinDotCallContainsSweep : Bool :=
   let data0 := .index (resolve "Data") (.num 0)
-  match runFlat (.algorithmExpr (algPrivate [] [] [
+  match runResult (.algorithmExpr (algPrivate [] [] [
     ("Values", dotSweepAtomsAlg [1, 2, 3]),
     ("SequenceValue", dotSweepSequenceValueAlg [1, 2, 3]),
     ("Data", dotSweepPairAlg [3, 1, 2] [9, 8, 7])
@@ -405,7 +405,7 @@ def sequenceBuiltinDotCallContainsSweep : Bool :=
     .dotCall data0 "contains" (some [.num 2]),
     .call (resolve "contains") [data0, .num 2]
   ])) with
-  | Except.ok [1, 1, 1, 0, 1, 1] => true
+  | Except.ok (.sequenceValue [.bool true, .bool true, .bool true, .bool false, .bool true, .bool true]) => true
   | _ => false
 
 #guard sequenceBuiltinDotCallContainsSweep
@@ -658,8 +658,9 @@ def sequenceBuiltinDotCallInlineReceiverSweep : Bool :=
     ("IsLarge", dotSweepIsGreaterThanOneAlg),
     ("Add", dotSweepAddAlg)
   ] [
+    -- (`contains` yields a Boolean, invisible to the flat numeric view; the
+    -- inline-receiver form is pinned by `sequenceBuiltinDotCallContainsSweep`.)
     .dotCall (dotSweepSequenceValueExpr [1, 2, 3]) "count" none,
-    .dotCall (dotSweepSequenceValueExpr [1, 2, 3]) "contains" (some [.num 2]),
     .dotCall (dotSweepSequenceValueExpr [3, 1, 2]) "order" none,
     .dotCall (dotSweepSequenceValueExpr [5, 6, 7]) "first" none,
     .dotCall (dotSweepSequenceValueExpr [5, 6, 7]) "last" none,
@@ -674,7 +675,7 @@ def sequenceBuiltinDotCallInlineReceiverSweep : Bool :=
     .dotCall (dotSweepSequenceValueExpr [1, 2, 3, 4]) "filter" (some [resolve "IsLarge"]),
     .dotCall (dotSweepSequenceValueExpr [1, 2, 3]) "reduce" (some [resolve "Add", .num 0])
   ])) with
-  | Except.ok [3, 1, 1, 2, 3, 5, 7, 1, 2, 3, 1, 2, 2, 3, 4, 10, 11, 7, 2, 3, 4, 2, 3, 4, 6] => true
+  | Except.ok [3, 1, 2, 3, 5, 7, 1, 2, 3, 1, 2, 2, 3, 4, 10, 11, 7, 2, 3, 4, 2, 3, 4, 6] => true
   | _ => false
 
 #guard sequenceBuiltinDotCallInlineReceiverSweep

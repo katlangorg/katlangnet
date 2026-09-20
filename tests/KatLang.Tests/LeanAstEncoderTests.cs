@@ -639,6 +639,7 @@ public class LeanAstEncoderTests
             [nameof(Expr.Param)] = new Expr.Param("a"),
             [nameof(Expr.Num)] = new Expr.Num(1),
             [nameof(Expr.StringLiteral)] = new Expr.StringLiteral("s"),
+            [nameof(Expr.BoolLiteral)] = new Expr.BoolLiteral(true),
             [nameof(Expr.Unary)] = new Expr.Unary(UnaryOp.Minus, new Expr.Num(1)),
             [nameof(Expr.Binary)] = new Expr.Binary(BinaryOp.Add, new Expr.Num(1), new Expr.Num(2)),
             [nameof(Expr.Index)] = new Expr.Index(new Expr.Resolve("x"), new Expr.Num(0)),
@@ -713,6 +714,7 @@ public class LeanAstEncoderTests
         var patterns = new Dictionary<string, (Pattern Value, string Expected)>(StringComparer.Ordinal)
         {
             [nameof(Pattern.Bind)] = (new Pattern.Bind("x"), ".bind \"x\""),
+            [nameof(Pattern.LitBool)] = (new Pattern.LitBool(true), ".litBool true"),
             [nameof(Pattern.LitInt)] = (new Pattern.LitInt(7), ".litInt 7"),
             [nameof(Pattern.LitString)] = (new Pattern.LitString("s"), ".litString \"s\""),
             [nameof(Pattern.SequenceValue)] = (

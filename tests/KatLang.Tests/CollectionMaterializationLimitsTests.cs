@@ -307,7 +307,7 @@ public class CollectionMaterializationLimitsTests
         // strategies. The planned loop used to compile `T()` to its memoized per-iteration
         // slot and stopped at 2000, so a configured MaxMaterializedStringChars between the
         // two decided the verdict by execution strategy.
-        const string source = "Step = {\n    T = 'xxxxxxxxxx'\n    n + (T() == T())\n}\nStep.repeat(200, 0)";
+        const string source = "Step = {\n    T = 'xxxxxxxxxx'\n    n + if(T() == T(), 1, 0)\n}\nStep.repeat(200, 0)";
 
         foreach (var optimized in new[] { false, true })
         {
@@ -336,7 +336,7 @@ public class CollectionMaterializationLimitsTests
         Assert.Equal(0, snapshot.GenericExpressionEvaluationsInsideOptimizedLoops);
         var plan = Assert.Single(snapshot.LoopPlans);
         var output = Assert.Single(plan.Expressions);
-        Assert.Equal("Add(StateSlot(n), Equal(TempCall(T), TempCall(T)))", output.PlanSummary);
+        Assert.Equal("Add(StateSlot(n), If(Equal(TempCall(T), TempCall(T)), Const(1), Const(0)))", output.PlanSummary);
     }
 
     [Fact]
@@ -531,7 +531,7 @@ public class CollectionMaterializationLimitsTests
         Assert.IsType<EvalError.EvaluationDepthExceeded>(
             ErrorOf("f(0) = 0\nf(n) = f(n - 1)\nf(40)", new EvaluationLimits { MaxDepth = 8 }));
         Assert.IsType<EvalError.EvaluationStepLimitExceeded>(
-            ErrorOf("Step = x, 1\nStep.while(0)", new EvaluationLimits { MaxSteps = 500 }));
+            ErrorOf("Step = x, true\nStep.while(0)", new EvaluationLimits { MaxSteps = 500 }));
     }
 
     [Fact]

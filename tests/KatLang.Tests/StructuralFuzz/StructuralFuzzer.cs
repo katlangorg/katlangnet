@@ -196,7 +196,7 @@ public static class StructuralCorpus
                             [new MExpr.Ref(local)]));
                     }
 
-                    var ifExpr = new MExpr.If(new MExpr.Atom(cond), Branch(thenSentinel, "loc"), Branch(elseSentinel, "loc"));
+                    var ifExpr = new MExpr.If(new MExpr.Bool(condTrue), Branch(thenSentinel, "loc"), Branch(elseSentinel, "loc"));
 
                     MScope root;
                     switch (placement)
@@ -652,7 +652,7 @@ public static class StructuralCorpus
                 new(new MPattern.Binder(binder),
                     new MExpr.Group([
                         new MExpr.Ref(binder),
-                        new MExpr.If(new MExpr.Atom(1m), new MExpr.Atom(thenS), new MExpr.Atom(elseS)),
+                        new MExpr.If(new MExpr.Bool(true), new MExpr.Atom(thenS), new MExpr.Atom(elseS)),
                     ])),
             };
             cases.Add(GeneratedCase.Create(
@@ -698,7 +698,7 @@ public static class StructuralCorpus
                 [new MExpr.Ref(elseLocal)]));
             cases.Add(GeneratedCase.Create(
                 "exh/mix/branch-isolation-tripwire",
-                b.Finish(new MScope([], [new MExpr.If(new MExpr.Atom(2m), thenBrace, elseBrace)])),
+                b.Finish(new MScope([], [new MExpr.If(new MExpr.Bool(true), thenBrace, elseBrace)])),
                 "if", "brace", "runtimeTripwire"));
         }
 
@@ -825,7 +825,7 @@ public static class StructuralCorpus
         var rowCount = 1 + rng.Next(3);
         for (var i = 0; i < rowCount; i++)
         {
-            switch (rng.Next(5))
+            switch (rng.Next(6))
             {
                 case 0:
                     rootRows.Add(new MExpr.Ref(rootValues[rng.Next(rootValues.Count)]));
@@ -836,12 +836,12 @@ public static class StructuralCorpus
                 case 2:
                 {
                     features.Add("if");
-                    var cond = (Decimal128)rng.Next(3);
+                    var cond = rng.Next(3) != 0;
                     var thenS = b.NextSentinel();
                     var elseS = b.NextSentinel();
-                    b.ExpectContains(cond != 0m ? thenS : elseS);
-                    b.ExpectAbsent(cond != 0m ? elseS : thenS);
-                    rootRows.Add(new MExpr.If(new MExpr.Atom(cond), new MExpr.Atom(thenS), new MExpr.Atom(elseS)));
+                    b.ExpectContains(cond ? thenS : elseS);
+                    b.ExpectAbsent(cond ? elseS : thenS);
+                    rootRows.Add(new MExpr.If(new MExpr.Bool(cond), new MExpr.Atom(thenS), new MExpr.Atom(elseS)));
                     break;
                 }
 
@@ -855,6 +855,11 @@ public static class StructuralCorpus
                         [new MExpr.Ref(inner)])));
                     break;
                 }
+
+                case 5:
+                    features.Add("booleanValue");
+                    rootRows.Add(new MExpr.Bool(rng.Chance(50)));
+                    break;
 
                 default:
                 {

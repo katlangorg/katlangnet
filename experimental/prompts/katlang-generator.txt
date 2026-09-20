@@ -66,10 +66,10 @@ KatLang is expression-oriented. Everything is an algorithm. A bare number is an 
 
 There are no statements, variables, classes, dictionaries, `let`, `var`, `return`, `for`, `foreach`, `lambda`, `fn`, `def`, `class`, `match`, or `=>`. KatLang's own collections are sequence values `(1, 2, 3)` and lists `[1, 2, 3]`; do not import foreign array idioms (no `A[0]` indexing, no mutation, no `.push`/`.append`).
 
-Use numeric truth:
-- `0` is false.
-- Any nonzero number is true.
-- Do not generate `true` or `false`.
+Use Boolean truth:
+- `true` and `false` are the Boolean values; comparisons and `and`/`or`/`xor`/`not` produce and consume them.
+- Numbers are never truth values: `if(1, a, b)`, `1 and 0`, and `not 0` are type errors. Write a comparison such as `x != 0` instead.
+- Booleans have no arithmetic and no ordering; `true == 1` is `false`.
 
 Property definitions:
     Name = expression
@@ -251,7 +251,7 @@ Do not invent unsupported display forms. None of these exist:
 - PascalCase for properties and algorithms: `CircleArea`, `Total`, `Step`.
 - Lowercase/camelCase for implicit parameters: `price`, `radius`, `itemCount`.
 - Single-letter names are fine for conventional math or physics notation.
-- Avoid shadowing builtin/prelude names with parameters, binders, or helper placeholders. No name is hard-reserved at the parser level; the builtin/prelude names below are syntactically shadowable, but shadowing them is unsafe because it can break lookup, collection pipelines, or intended builtin calls. Do not generate code that shadows them.
+- Avoid shadowing builtin/prelude names with parameters, binders, or helper placeholders. Builtin callable names are not reserved (the Boolean literals `true` and `false` are reserved); the builtin/prelude names below are syntactically shadowable, but shadowing them is unsafe because it can break lookup, collection pipelines, or intended builtin calls. Do not generate code that shadows them.
 
 Avoid shadowing these parameter or helper names:
 `if`, `while`, `repeat`, `range`, `filter`, `map`, `count`, `contains`, `first`, `last`, `distinct`, `take`, `skip`, `min`, `max`, `sum`, `avg`, `reduce`, `order`, `orderDesc`, `atoms`, `load`, `Math`, and the lowercase Math aliases `pi`, `exp`, `abs`, `ceil`, `floor`, `round`, `sign`, `sqrt`, `ln`, `lg`, `sin`, `asin`, `cos`, `acos`, `tan`, `atan`, `atan2`, `pow`, `log`, `random`, `randomInt`. (`e` is an ORDINARY identifier — there is no `Math.E` constant and no `e` binding; Euler's number is `exp(1)` / `Math.Exp(1)`.)
@@ -278,7 +278,7 @@ Arithmetic:
 
 Comparisons:
 - `==`, `!=`, `<`, `<=`, `>`, `>=`
-- Comparisons return `1` or `0`.
+- Comparisons return the Boolean values `true` or `false`.
 - `==` and `!=` compare values structurally across all value kinds: numbers by value, strings by exact value, and sequence values by length plus recursive element equality. Different value kinds (e.g. a number and a sequence value) compare unequal rather than erroring.
 - `<`, `>`, `<=`, `>=` and the arithmetic operators require numeric scalar operands.
 
@@ -290,20 +290,21 @@ Operator precedence, lowest to highest:
 1. `or`
 2. `xor`
 3. `and`
-4. `==`, `!=`
-5. `<`, `>`, `<=`, `>=`
-6. `+`, `-`
-7. `*`, `/`, `div`, `mod`
-8. unary prefix `-` and `not`
-9. `^`
-10. postfix `.`, `:`, and call application
+4. prefix `not`
+5. `==`, `!=`
+6. `<`, `>`, `<=`, `>=`
+7. `+`, `-`
+8. `*`, `/`, `div`, `mod`
+9. unary prefix `-`
+10. `^`
+11. postfix `.`, `:`, and call application
 
 Associativity and precedence warnings:
 - `^` is right-associative: `2 ^ 3 ^ 2` means `2 ^ (3 ^ 2)`, which is `512`.
 - The comparison and equality levels are left-associative.
 - `^` binds tighter than unary minus on the left, so `-2 ^ 2` means `-(2 ^ 2)` (which is `-4`), NOT `(-2) ^ 2`. Likewise `-2 ^ 0.5` negates the positive-base power. Parentheses are required when the negative value is the power BASE: `(-2) ^ 2` is `4`. The exponent side accepts a unary value directly: `2 ^ -2` is `0.25`. To negate a power, writing `-(a ^ b)` is still fine for visual clarity — it is semantically equivalent to `-a ^ b`.
-- `not` binds tighter than comparison, equality, and the logical operators, so `not x > 0` means `(not x) > 0`. Prefer `not (x > 0)`, or rewrite as a direct comparison such as `x <= 0` or `a != b`.
-- Do not chain comparisons. `a < b < c` means `(a < b) < c` (comparisons yield `1`/`0`, so the second comparison runs against `1` or `0`). Write `a < b and b < c` instead.
+- `not` binds less tightly than the comparison and equality operators and more tightly than `and`, `xor`, and `or`, so `not x > 0` means `not (x > 0)` and `not a and b` means `(not a) and b`. A `not` cannot begin the operand of a tighter operator: `a == not b`, `1 + not x`, and `2 ^ not x` are parse errors — write `a == (not b)`. A direct comparison such as `x <= 0` or `a != b` is still the clearest spelling of a negated test.
+- Do not chain comparisons. `a < b < c` means `(a < b) < c`, which orders a Boolean against a number — a type error. Write `a < b and b < c` instead.
 - Parentheses override precedence; add them whenever the intended grouping differs from this ladder.
 
 Numeric literals:
@@ -546,12 +547,12 @@ Only numeric values support `.string`, and it takes no arguments (`a.string(1)` 
 Builtin `if` requires three arguments (after explicit spread expansion):
     if(condition, whenTrue, whenFalse)
 
-Condition is numeric. Use `0` for false and nonzero for true.
+The condition must be a Boolean (`true`/`false`, typically a comparison). A numeric condition is a type error.
 
 Builtin `if` has no two-argument form. For conditional numeric contribution, use an explicit neutral else value:
     10 + if(x > 0, 5, 0)
 
-Normally generate the three arguments directly. Explicit spread in call-argument position is valid only when the spread value supplies exactly three values: `if(X*)` with `X = 1, 2, 3` opens into the three slots and equals `if(1, 2, 3)`. A non-spread `if(X)` is one argument and is invalid. Builtin names are ordinary prelude bindings, not reserved words: declaring `if`, `count`, or `sum` yourself SHADOWS the builtin completely (resolution ignores arity, so there is no fallback to the builtin at a different argument count). Do not reuse a builtin name for a property or parameter unless shadowing is the intent.
+Normally generate the three arguments directly. Explicit spread in call-argument position is valid only when the spread value supplies exactly three values: `if(X*)` with `X = true, 2, 3` opens into the three slots and equals `if(true, 2, 3)`. A non-spread `if(X)` is one argument and is invalid. Builtin names are ordinary prelude bindings, not reserved words: declaring `if`, `count`, or `sum` yourself SHADOWS the builtin completely (resolution ignores arity, so there is no fallback to the builtin at a different argument count). Do not reuse a builtin name for a property or parameter unless shadowing is the intent.
 
 For conditional inclusion over sequences, prefer `filter`.
 
@@ -728,9 +729,9 @@ Callbacks:
 - `map(collection, mapper)` or `collection.map(mapper)`
 - `reduce(collection, reducer, initial)` or `collection.reduce(reducer, initial)`
 
-`filter` predicate must return exactly one atomic numeric truth value (a collection-builtin result is a list, not an atom, so it is invalid as a predicate result).
+`filter` predicate must return a Boolean value (`true` keeps, `false` rejects); a number, a string, a list (including any collection-builtin result), a sequence value, or a multi-output result is a type error.
 `map` mapper must return exactly one mapped element; one sequence value or one exact list value is allowed.
-Callback items are projected one level, like selecting an item from a top-level sequence; a list item arrives as one opaque list argument. `filter` keeps the original item when the predicate returns nonzero; `map` replaces each item with the mapper output (exactly one element, where one sequence or list value is allowed) and returns the mapped items as one exact list value. Avoid over-wrapping when a simple projected callback parameter is clearer. Callbacks with a collecting parameter collect exact lists like ordinary calls: a single-collecting-parameter map/filter callback keeps each element as ONE collected slot (`[7].map(Collect)` binds `items = [7]`, giving `[[7]]`; `[(1, 2)].map(Collect)` gives `[[(1, 2)]]`), while a multi-parameter flat callback opens a lone sequence element into row slots first and then collects the middle (`[(1, 2, 3, 4)].map(F)` with `F(first, *middle, last)` binds `middle = [2, 3]`, agreeing with `F((first, *middle, last))`). Reduce supplies element and accumulator slots, so `R(*items) = items` collects `[element, accumulator]`, while a reducer collecting parameter before a fixed accumulator observes `[element]`.
+Callback items are projected one level, like selecting an item from a top-level sequence; a list item arrives as one opaque list argument. `filter` keeps the original item when the predicate returns `true`; `map` replaces each item with the mapper output (exactly one element, where one sequence or list value is allowed) and returns the mapped items as one exact list value. Avoid over-wrapping when a simple projected callback parameter is clearer. Callbacks with a collecting parameter collect exact lists like ordinary calls: a single-collecting-parameter map/filter callback keeps each element as ONE collected slot (`[7].map(Collect)` binds `items = [7]`, giving `[[7]]`; `[(1, 2)].map(Collect)` gives `[[(1, 2)]]`), while a multi-parameter flat callback opens a lone sequence element into row slots first and then collects the middle (`[(1, 2, 3, 4)].map(F)` with `F(first, *middle, last)` binds `middle = [2, 3]`, agreeing with `F((first, *middle, last))`). Reduce supplies element and accumulator slots, so `R(*items) = items` collects `[element, accumulator]`, while a reducer collecting parameter before a fixed accumulator observes `[element]`.
 
 `reduce(collection, reducer, initial)` is a left fold called conceptually as `reducer(element, accumulator)`. It takes exactly three arguments — the initial accumulator is required, so `reduce((1, 2, 3), Add)` is a two-argument arity error. The dotted `collection.reduce(Add)` form recognizes a visibly parameterized reducer and adds a targeted missing-initial hint; the plain form remains an ordinary arity error. Every reducer invocation must emit exactly one next accumulator value: a sequence-value result such as `(a, b)` is one accumulator value, but a bare multi-output result such as `a, b` is invalid as a reducer result. Accumulator binding follows the reducer's parameter pattern: a normal parameter receives one structural accumulator value, while a top-level collecting accumulator parameter binds the current accumulator's top-level slots. Preserve a sequence-value accumulator state intentionally with sequence-valued output. When the accumulator is a sequence-value state such as `(n, found)` or `(sum, count)`, select the final fields directly with `:0` and `:1`; do not write `reduce(...):0:1` unless the first accumulator field is itself a sequence value and you really need its second member.
 
@@ -1033,7 +1034,7 @@ Executable result:
 
 KatLang validity:
 - no invented syntax or functions;
-- numeric truth only; no `true` or `false`;
+- Boolean truth only: `true`/`false` values, never numeric truth;
 - no builtin names shadowed;
 - the empty sequence value `()` is used correctly; `{}` is not used as if it were a value;
 - Unicode math is normalized to ASCII;
@@ -1074,7 +1075,7 @@ Idiomatic structure:
 
 === BEGIN GENERATED: katlang-spec-examples (DO NOT EDIT BY HAND) ===
 
-Verified reference examples (88 of the 271-case canonical language specification,
+Verified reference examples (92 of the 277-case canonical language specification,
 tests/KatLang.Tests/LanguageSpec/LanguageSpecCorpus.cs). Every program and expected
 output below is executed against the KatLang engine and (where representable)
 guarded against the Lean model on every build. Treat these as ground truth for the
@@ -1084,7 +1085,45 @@ Regenerate this block from the repo root with:
   $env:KATLANG_REGENERATE_LANGUAGE_SPEC = "1"
   dotnet test .\KatLang.slnx --filter LanguageSpecArtifacts
 
-[power-unary-precedence] `^` binds tighter than prefix `-`/`not` on the left, so `-2 ^ 2` negates the power: `-(2 ^ 2)`. Parenthesize the base to raise a negative value: `(-2) ^ 2`. The exponent side accepts a unary value directly (`2 ^ -2` is `0.25`), and `^` chains group from the right.
+[boolean-values-and-equality] Booleans are a distinct scalar kind. Equality is total and symmetric across kinds, with no Boolean/number conversion; lists, sequences, and distinct preserve that distinction.
+
+    true
+    false
+    [true, 1, false, 0]
+    true == 1
+    1 == true
+    false != 0
+    0 != false
+    distinct([true, 1, false, 0, true])
+
+  Displays:
+    true
+    false
+    [true, 1, false, 0]
+    false
+    false
+    true
+    true
+    [true, 1, false, 0]
+
+[boolean-predicates-and-patterns] Comparisons and contains produce Booleans. Predicate consumers require them, and true/false in clause heads are literal patterns, never parameter names.
+
+    F(true) = false
+    F(false) = true
+    F(true)
+    F(false)
+    range(-2, 2).filter{x >= 0}
+    range(-2, 2).map{x >= 0}.contains(true)
+    if(not 1 == 1, 10, 20)
+
+  Displays:
+    false
+    true
+    [0, 1, 2]
+    true
+    20
+
+[power-unary-precedence] `^` binds tighter than prefix `-` on the left (and than `not`, which sits below the comparisons altogether), so `-2 ^ 2` negates the power: `-(2 ^ 2)`. Parenthesize the base to raise a negative value: `(-2) ^ 2`. The exponent side accepts a unary value directly (`2 ^ -2` is `0.25`), and `^` chains group from the right.
 
     -2 ^ 2
     (-2) ^ 2
@@ -1094,6 +1133,23 @@ Regenerate this block from the repo root with:
     -4
     4
     512
+
+[not-binds-below-comparisons] Comparisons bind tighter than `not`, and `not` binds tighter than `and`, `xor`, and `or` (comparisons > not > and > xor > or), so `not x > 3` negates the whole comparison — it is `not (x > 3)` — and `not a and b` is `(not a) and b`. Parentheses override the rule: `(not x) > 3` compares the negation itself, a type error for a numeric `x`. A `not` can only begin an operand of a logical operator or a whole expression; `1 + not x` and `2 ^ not x` are parse errors, so parenthesize the negation there.
+
+    not 5 > 3
+    not 2 > 3
+    not 5 == 5
+    not 5 == 4
+    not true == false
+    not true == 1
+
+  Displays:
+    false
+    true
+    false
+    true
+    true
+    true
 
 [output-is-ordinary-property] `Output` and `output` are ordinary identifiers: `Output = 5` defines a regular property named `Output`, and only bare expression rows contribute to algorithm output — a program whose rows are all definitions has no output.
 
@@ -1125,6 +1181,12 @@ Regenerate this block from the repo root with:
 
   Displays:
     (2, 4, 6)
+
+[not-cannot-be-a-tighter-operand] `not` binds below the comparisons (comparisons > not > and > xor > or), so it can begin only a whole expression or an operand of `and`, `xor`, or `or`. Where a comparison, arithmetic, power, or prefix-minus operand is required — `2 ^ not x`, `1 + not x`, `a == not b`, `-not x` — the parser reports the `not` and asks for parentheses: `2 ^ (not x)`, `a == (not b)`.
+
+    2 ^ not false
+
+  Rejected by the parser: "Unexpected 'not' ..."
 
 [same-line-slots-need-comma] Whitespace never separates slots: two slots on one physical line need an explicit comma (`1, 2, 3`), while a newline separates rows where the context permits (`1` newline `2` newline `3`). `1 2 3` reports the separator diagnostic once per missing comma, at the second item.
 
@@ -1709,9 +1771,9 @@ Regenerate this block from the repo root with:
     [[]] == []
 
   Displays:
-    0
-    0
-    0
+    false
+    false
+    false
 
 [list-vs-sequence-kind] Lists and sequence values are different value kinds: equal elements never make a list equal a sequence, and `[]` is not `()`.
 
@@ -1719,8 +1781,8 @@ Regenerate this block from the repo root with:
     [1, 2] == (1, 2)
 
   Displays:
-    0
-    0
+    false
+    false
 
 [list-index-selects-element] `:` selects one immediate element from an exact list by zero-based position, exactly like sequence selection.
 
@@ -1932,13 +1994,13 @@ Regenerate this block from the repo root with:
 
     if(x) = x + 1
 
-    if(1, 2, 3)
+    if(true, 2, 3)
 
   Fails with an evaluation error (arity).
 
 [if-composition-forms-agree] Builtin `if` composes through the ordinary callable rules and nothing else: a dot-call injects the receiver as the leading argument, a spread supplies argument slots, and a higher-order parameter carries the resolved callable. All five spellings assemble the same three-argument supply, so they select the same branch.
 
-    Cond = 1
+    Cond = true
     Branches = (10, 20)
     Apply3(f, a, b, c) = f(a, b, c)
 
@@ -1959,8 +2021,8 @@ Regenerate this block from the repo root with:
 
     Boom = 1 / 0
 
-    if(1, 10, Boom)
-    0.if(Boom, 20)
+    if(true, 10, Boom)
+    false.if(Boom, 20)
 
   Displays:
     10
@@ -1969,7 +2031,7 @@ Regenerate this block from the repo root with:
 [lazy-slot-demand-is-the-ordinary-zero-argument-demand] The selected branch is demanded exactly like a bare property reference: `Inc` still needs its `x`, so the ordinary zero-argument arity error is reported at the reference and `Inc`'s body is never entered — the same report writing `Inc` alone produces. Only the selected slot is demanded, so a parameterized algorithm in the unselected branch is harmless, and an explicit call (`Inc(4)`) is an ordinary value.
 
     Inc(x) = x + 1
-    if(1, Inc, 0)
+    if(true, Inc, 0)
 
   Fails with an evaluation error (arity).
 

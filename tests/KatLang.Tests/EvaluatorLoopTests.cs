@@ -225,7 +225,7 @@ public class EvaluatorLoopTests
     public void Eval_OptimizedLoop_VariadicStep_RejectedAtEligibilityGate()
     {
         var source = """
-            Step(*values) = values, 0
+            Step(*values) = values, false
             Step.while(1, 2, 3)
             """;
 
@@ -244,7 +244,7 @@ public class EvaluatorLoopTests
     public void Eval_OptimizedLoop_SequenceValuePatternStep_RejectedAtEligibilityGate()
     {
         var source = """
-            Step((x, y)) = x + 1, y + 1, 0
+            Step((x, y)) = x + 1, y + 1, false
             Step.while((1, 2))
             """;
 
@@ -520,7 +520,7 @@ public class EvaluatorLoopTests
             IsSquareFree(100)
             """;
 
-        AssertEvalLoopModes(source, 0);
+        AssertEvalResultLoopModes(source, new Result.Bool(false));
 
         var (result, stats) = EvalFullWithLoopDiagnostics(source);
         if (result.IsError)
@@ -591,7 +591,7 @@ public class EvaluatorLoopTests
 
         if (result.IsError)
             Assert.Fail($"Expected success but got error: {result.Error}");
-        Assert.Equal([0m], result.Value.ToAtoms());
+        Assert.Equal(new Result.Bool(false), result.Value, Result.ValueComparer);
 
         var plan = AssertSingleLoopPlan(stats, "IsSquareFree.Step.while");
         Assert.Equal("while", plan.Kind);
@@ -648,11 +648,14 @@ public class EvaluatorLoopTests
 
     [Fact]
     public void Eval_While_CountDown()
-        => AssertEval("while({x - 1, x - 1}, (3))", 1);
+        => AssertEval("while({x - 1, x - 1 > 0}, (3))", 1);
 
     [Fact]
     public void Eval_While_SingleOutputStep_UsesGenericSingletonSemantics()
-        => AssertEvalLoopModes("while({x - 1}, 3)", 1);
+        // One output is both the continuation flag and the next state, so it must be a
+        // Boolean: `not x` toggles false -> true (continue) -> false (stop), and the loop
+        // returns the state before the stopping iteration.
+        => AssertEvalResultLoopModes("while({not x}, false)", new Result.Bool(true));
 
     [Fact]
     public void Eval_While_GcdDotCall_ProjectsFinalState()
@@ -720,7 +723,7 @@ public class EvaluatorLoopTests
         var (_, optimizedError) = AssertEvalFailsInBothLoopModes("while({x + 1, 'keep'}, 0)");
         var error = Innermost(optimizedError);
         var typeMismatch = Assert.IsType<EvalError.TypeMismatch>(error);
-        Assert.Contains("Expected a number", typeMismatch.Message, StringComparison.Ordinal);
+        Assert.Contains("must be a Boolean value", typeMismatch.Message, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -750,7 +753,7 @@ public class EvaluatorLoopTests
 
     [Fact]
     public void Eval_While_ImmediateExit()
-        => AssertEval("while({x, 0}, (5))", 5);
+        => AssertEval("while({x, false}, (5))", 5);
 
     [Fact]
     public void Eval_While_DotCall_SumMultiplesOf3Or5()
@@ -851,7 +854,7 @@ public class EvaluatorLoopTests
     public void Eval_While_DotCall_SingleInit_StillWorks()
     {
         var source = """
-            Step = x - 1, x - 1
+            Step = x - 1, x - 1 > 0
             Step.while(3)
             """;
         AssertEval(source, 1);
@@ -869,7 +872,7 @@ public class EvaluatorLoopTests
 
     [Fact]
     public void Eval_While_DirectCall_SingleInit_StillWorks()
-        => AssertEval("while({x - 1, x - 1}, 3)", 1);
+        => AssertEval("while({x - 1, x - 1 > 0}, 3)", 1);
 
     [Fact]
     public void Eval_Repeat_DirectCall_SingleInit_StillWorks()
@@ -1318,7 +1321,7 @@ public class EvaluatorLoopTests
     {
         var source = """
             Pred(item) = {
-                Step = if(1, k + 1, item), k <= 1
+                Step = if(true, k + 1, item), k <= 1
                 Step.while(0):0 > 0
             }
 
@@ -1395,7 +1398,7 @@ public class EvaluatorLoopTests
     {
         var source = """
             Outer(pair) = {
-                Step = x + (pair == pair)
+                Step = x + if(pair == pair, 1, 0)
                 Step.repeat(5, 0)
             }
             Outer((1, 2))
@@ -1420,7 +1423,7 @@ public class EvaluatorLoopTests
         var output = AssertLoopExpression(plan, "output", 0);
         Assert.True(output.Planned);
         Assert.Equal(
-            "Add(StateSlot(x), Equal(CapturedSlot(pair), CapturedSlot(pair)))",
+            "Add(StateSlot(x), If(Equal(CapturedSlot(pair), CapturedSlot(pair)), Const(1), Const(0)))",
             output.PlanSummary);
         Assert.Null(output.FallbackReason);
     }
@@ -1637,12 +1640,12 @@ public class EvaluatorLoopTests
         // fails (Eval_VariadicLoopStep_ReportsMinimumStateArity*), 2 bind an
         // empty segment, 3 a singleton, 4+ a multi-item segment. Mirrors the Lean
         // guard variadicLoopStepEmptyMiddleBindsEmptyList.
-        AssertEvalLoopModes(
+        AssertEvalResultLoopModes(
             """
             Step(first, *middle, last) = first, (middle == []), middle.count, last
             Step.repeat(1, 10, 20)
             """,
-            10, 1, 0, 20);
+            Result.FromItems([new Result.Atom(10), new Result.Bool(true), new Result.Atom(0), new Result.Atom(20)]));
     }
 
     [Fact]
@@ -1683,11 +1686,11 @@ public class EvaluatorLoopTests
     {
         // A while continuation expression emitting more than one value changes
         // which generic slot is the continuation flag; the optimizer must
-        // defer to generic semantics (state (1, 0) means the last item, 0,
+        // defer to generic semantics (state (1, false) means the last item, false,
         // stops the loop and the pre-iteration state is returned).
         AssertEvalLoopModes(
             """
-            S = (1, 0), (2, 2)
+            S = (1, false), (2, 2)
             while({a + 1, S:0}, 9)
             """,
             9);
@@ -1703,17 +1706,17 @@ public class EvaluatorLoopTests
             "repeat({if(a == 0, (), ())*, b}, 1, 0, 9)",
             ResultFromAtoms(9));
 
-        // A spread-empty continuation leaves the preceding numeric output as
-        // the generic continuation slot; zero stops and returns the old state.
+        // A spread-empty continuation leaves the preceding Boolean output as
+        // the generic continuation slot; false stops and returns the old state.
         AssertEvalResultLoopModes(
-            "while({a + 1, if(a == -1, (), ())*}, -1)",
+            "while({a == 0, if(a == -1, (), ())*}, -1)",
             ResultFromAtoms(-1));
 
         // Non-spread `()` is a visible output slot, so it is an invalid
         // continuation value in both modes rather than disappearing.
         var (generic, optimized) = AssertEvalFailsInBothLoopModes("while({a + 1, ()}, 0)");
-        Assert.IsType<EvalError.BadArity>(Innermost(generic));
-        Assert.IsType<EvalError.BadArity>(Innermost(optimized));
+        Assert.IsType<EvalError.TypeMismatch>(Innermost(generic));
+        Assert.IsType<EvalError.TypeMismatch>(Innermost(optimized));
         Assert.Equal(
             KatLangError.FromEvalError(generic).Message,
             KatLangError.FromEvalError(optimized).Message);
@@ -1809,7 +1812,7 @@ public class EvaluatorLoopTests
     {
         AssertEvalResultLoopModes(
             """
-            AppendWhile(*history) = (history*, history.atoms.last + 1), if(history.atoms.last + 1 < 6, 1, 0)
+            AppendWhile(*history) = (history*, history.atoms.last + 1), history.atoms.last + 1 < 6
             AppendWhile.while(1, 2, 4)
             """,
             ResultFromAtoms(1, 2, 4, 5));

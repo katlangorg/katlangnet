@@ -17,6 +17,9 @@ public class AtomsBuiltinTests
 
     private static void AssertAtoms(string source, params Decimal128[] expected) => Assert.Equal(expected, Atoms(source));
 
+    // Boolean results have no numeric projection: they are asserted through display text.
+    private static void AssertBool(string source, bool expected) => Assert.Equal(expected ? "true" : "false", Assert.IsType<RunResult.Success>(KatLangEngine.Run(source)).ToDisplayString());
+
     private static bool Fails(string source) => KatLangEngine.Run(source).IsFailure;
 
     private static string Display(string source)
@@ -157,25 +160,25 @@ public class AtomsBuiltinTests
     // ── Exact result kind (equality probes) ──────────────────────────────────
 
     [Theory]
-    [InlineData("atoms(7) == [7]", 1)]
-    [InlineData("atoms(7) == 7", 0)]
-    [InlineData("atoms((1, 2)) == [1, 2]", 1)]
-    [InlineData("atoms((1, 2)) == (1, 2)", 0)]
-    [InlineData("atoms(()) == []", 1)]
-    [InlineData("atoms(()) == ()", 0)]
-    [InlineData("atoms('text') == []", 1)]
-    [InlineData("atoms([1, 2]) == [1, 2]", 1)]
-    public void Atoms_ResultKind_IsExactList(string source, decimal expected)
-        => AssertAtoms(source, expected);
+    [InlineData("atoms(7) == [7]", true)]
+    [InlineData("atoms(7) == 7", false)]
+    [InlineData("atoms((1, 2)) == [1, 2]", true)]
+    [InlineData("atoms((1, 2)) == (1, 2)", false)]
+    [InlineData("atoms(()) == []", true)]
+    [InlineData("atoms(()) == ()", false)]
+    [InlineData("atoms('text') == []", true)]
+    [InlineData("atoms([1, 2]) == [1, 2]", true)]
+    public void Atoms_ResultKind_IsExactList(string source, bool expected)
+        => AssertBool(source, expected);
 
     // ── Dotted and ordinary calls agree ──────────────────────────────────────
 
     [Theory]
-    [InlineData("[1, [2, 3]].atoms == atoms([1, [2, 3]])", 1)]
-    [InlineData("(1, [2, 3]).atoms == atoms((1, [2, 3]))", 1)]
-    [InlineData("7 .atoms == atoms(7)", 1)]
-    public void Atoms_DottedAndOrdinaryCallsAgree(string source, decimal expected)
-        => AssertAtoms(source, expected);
+    [InlineData("[1, [2, 3]].atoms == atoms([1, [2, 3]])", true)]
+    [InlineData("(1, [2, 3]).atoms == atoms((1, [2, 3]))", true)]
+    [InlineData("7 .atoms == atoms(7)", true)]
+    public void Atoms_DottedAndOrdinaryCallsAgree(string source, bool expected)
+        => AssertBool(source, expected);
 
     [Fact]
     public void Atoms_DottedListReceiver_Flattens()
@@ -225,15 +228,15 @@ public class AtomsBuiltinTests
         => AssertAtoms(source, expected);
 
     [Theory]
-    [InlineData("contains((1, [2]), atoms(2))", 1)]
-    [InlineData("contains((1, 2), atoms(2))", 0)]
-    [InlineData("contains(([1], [2]), atoms(1))", 1)]
-    public void Atoms_ResultIsAListInValueEqualityConsumers(string source, decimal expected)
+    [InlineData("contains((1, [2]), atoms(2))", true)]
+    [InlineData("contains((1, 2), atoms(2))", false)]
+    [InlineData("contains(([1], [2]), atoms(1))", true)]
+    public void Atoms_ResultIsAListInValueEqualityConsumers(string source, bool expected)
         // The singleton result stays a list, so membership compares it as a
         // list value: atoms(2) equals the element [2], never the atom 2.
         // (Under the old canonical-sequence result atoms(2) collapsed to the
         // bare atom 2 — an intended result-kind-driven flip.)
-        => AssertAtoms(source, expected);
+        => AssertBool(source, expected);
 
     // ── Composition with list indexing ───────────────────────────────────────
 

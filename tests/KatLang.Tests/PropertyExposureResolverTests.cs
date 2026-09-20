@@ -492,7 +492,7 @@ public class PropertyExposureResolverTests
     {
         foreach (var row in new[] { "Q", "(Q)", "((Q))", "Id(Q)", "Id(Id(Q))", "Zero.Add2(Id(Q))", "{ Q }", "Id({ Q })", "[Q]:0", "Q*" })
         foreach (var captures in new[] { false, true })
-        foreach (var declarations in new[] { "Q = VALUE", "Q = R\n R = VALUE", "R = VALUE\n Q = R", "Q = if(0, R, VALUE)\n R = (Q)" })
+        foreach (var declarations in new[] { "Q = VALUE", "Q = R\n R = VALUE", "R = VALUE\n Q = R", "Q = if(false, R, VALUE)\n R = (Q)" })
             yield return [row, declarations.Replace("VALUE", captures ? "p + 1" : "7", StringComparison.Ordinal), captures];
     }
 

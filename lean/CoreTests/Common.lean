@@ -154,6 +154,30 @@ def expectInnermostArityMismatch (expected actual : Nat) (result : Except Error 
   | Except.error err => innermostIsArityMismatch expected actual err
   | _ => false
 
+/-- `runResult e` produced exactly the Boolean value `expected`. Booleans are
+    not numeric atoms, so `runFlat` (a host numeric projection) never shows
+    them — comparison, logical, and `contains` results are pinned through the
+    structured result instead. -/
+def evaluatesToBool (e : KatLang.Expr) (expected : Bool) : Bool :=
+  match runResult e with
+  | Except.ok (.bool value) => value == expected
+  | _ => false
+
+/-- `runResult e` produced exactly the Boolean values `expected`: a lone
+    Boolean for one value, otherwise the sequence value of the output rows. -/
+def evaluatesToBools (e : KatLang.Expr) (expected : List Bool) : Bool :=
+  match runResult e with
+  | Except.ok (.bool value) => expected == [value]
+  | Except.ok (.sequenceValue items) => items == expected.map Result.bool
+  | _ => false
+
+/-- The innermost error is the ONE Boolean-requirement rejection
+    (`booleanRequiredMessage`) for `role`, whose supplied value the message
+    describes as `description`. -/
+def innermostIsBooleanRequired (role description : String) : Error -> Bool :=
+  innermostIsTypeMismatch
+    s!"{role} must be a Boolean value (true or false), but was {description}"
+
 /-- Evaluate a whole program counted, mirroring `runResultM` but preserving the
     root emitted count, so a boundary returning one value shows count 1 while the
     root output list still shows its slot count. -/

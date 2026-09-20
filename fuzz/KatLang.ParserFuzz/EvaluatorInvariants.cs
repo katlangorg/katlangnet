@@ -291,6 +291,7 @@ internal static class EvaluatorInvariants
             {
                 case Result.Atom a: sb.Append('A').Append(a.Value.ToString(CultureInfo.InvariantCulture)); break;
                 case Result.Str s: sb.Append("S{").Append(s.Value).Append('}'); break;
+                case Result.Bool b: sb.Append(b.Value ? "B{true}" : "B{false}"); break;
                 case Result.SequenceValue sv:
                     sb.Append('(');
                     for (int i = 0; i < sv.Items.Count; i++) { if (i > 0) sb.Append(','); Append(sv.Items[i]); }
@@ -301,7 +302,7 @@ internal static class EvaluatorInvariants
                     for (int i = 0; i < lv.Items.Count; i++) { if (i > 0) sb.Append(','); Append(lv.Items[i]); }
                     sb.Append(']');
                     break;
-                default: sb.Append('?').Append(v.GetType().Name); break;
+                default: throw new InvalidOperationException($"Unhandled result variant {v.GetType().Name}.");
             }
         }
     }

@@ -49,6 +49,31 @@ public class AstGraphFuzzTests
             ? int.Parse(text)
             : null;
 
+    [Fact]
+    public void Generator_GraceMarkersAndOperandsHaveOneExpandedOccurrence()
+    {
+        // Case 353 used to share an ANCESTOR of Grace, bypassing the direct-marker
+        // guard. Cloning then duplicated a node-scoped diagnostic and invalidated
+        // the diagnostic-multiplicity oracle. Check the generator domain itself.
+        for (var caseIndex = 0; caseIndex < 1000; caseIndex++)
+        {
+            var graph = AstGraphFuzzer.Generate(DefaultSeed, caseIndex);
+            var occurrences = new int[graph.Nodes.Length];
+            occurrences[^1] = 1;
+            for (var node = graph.Nodes.Length - 1; node >= 0; node--)
+                foreach (var child in graph.Nodes[node].Children)
+                    occurrences[child] = Math.Min(2, occurrences[child] + occurrences[node]);
+
+            for (var node = 0; node < graph.Nodes.Length; node++)
+            {
+                if (graph.Nodes[node].Kind != GKind.Grace || occurrences[node] == 0)
+                    continue;
+                Assert.True(occurrences[node] == 1 && occurrences[graph.Nodes[node].Children[0]] == 1,
+                    $"Grace sharing violates the clone oracle's domain: {graph}");
+            }
+        }
+    }
+
     // ── the per-case oracle ─────────────────────────────────────────────────
 
     /// <summary>
@@ -530,7 +555,7 @@ public class AstGraphFuzzTests
         }
 
         var d = new Expr.Resolve("D");
-        Assert.Equal([1m], Eval(new Expr.Binary(BinaryOp.Eq, d, d)).ToAtoms());
+        Assert.Equal(new Result.Bool(true), Eval(new Expr.Binary(BinaryOp.Eq, d, d)), Result.ValueComparer);
         Assert.Equal([2m], Eval(new Expr.DotCall(d, "count")).ToAtoms());
         Assert.Equal(
             [64m],

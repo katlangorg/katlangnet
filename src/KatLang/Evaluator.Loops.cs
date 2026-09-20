@@ -354,19 +354,35 @@ public static partial class Evaluator
     /// </summary>
     internal static EvalResult<Result> ApplyUnaryOperator(UnaryOp op, Result operandValue, SourceSpan? span)
     {
+        // `not` is the Boolean negation and REQUIRES a Boolean operand: a number has no
+        // truth value, so every non-Boolean operand kind is the one value-kind error
+        // naming the operand. Lean: evalUnaryCounted's `.not` arm.
+        if (op == UnaryOp.Not)
+        {
+            var flag = operandValue.AsBool();
+            return flag is not null
+                ? EvalResult<Result>.Ok(new Result.Bool(!flag.Value))
+                : new EvalError.TypeMismatch(
+                    $"operator `not` expects a Boolean operand, but the operand was {DescribeOperand(operandValue)}")
+                { Span = span };
+        }
+
         if (operandValue is Result.Str)
             return new EvalError.TypeMismatch("Unary operator is not supported for strings") { Span = span };
+
+        // `-` is numeric negation: a Boolean operand is a value-kind error, every other
+        // non-numeric operand keeps the numeric-conversion failure of ExpectInt.
+        if (operandValue is Result.Bool)
+        {
+            return new EvalError.TypeMismatch(
+                $"operator `-` expects a numeric scalar operand, but the operand was {DescribeOperand(operandValue)}")
+            { Span = span };
+        }
 
         var vR = ExpectInt(operandValue);
         if (vR.IsError) return AtSpanIfMissing(vR.Error, span);
 
-        var value = op switch
-        {
-            UnaryOp.Minus => -vR.Value,
-            UnaryOp.Not => vR.Value == 0 ? Decimal128.One : Decimal128.Zero,
-            _ => Decimal128.Zero,
-        };
-        return EvalResult<Result>.Ok(new Result.Atom(value));
+        return EvalResult<Result>.Ok(new Result.Atom(-vR.Value));
     }
 
     internal static EvalResult<Result> ApplyBinaryOperator(
@@ -378,14 +394,37 @@ public static partial class Evaluator
         SourceSpan? span)
     {
         // `==` and `!=` compare KatLang values structurally across all value kinds
-        // (numbers, strings, and sequence values, recursively). Different value
-        // kinds compare unequal rather than raising a type mismatch. This dedicated
-        // path is deliberately separate from the numeric-scalar-only validation used
-        // by arithmetic and ordering operators below.
+        // (numbers, Booleans, strings, sequence values, and lists, recursively).
+        // Different value kinds compare unequal rather than raising a type mismatch
+        // (`true == 1` is false), so equality is total and always yields a Boolean
+        // value. This dedicated path is deliberately separate from the
+        // numeric-scalar-only validation used by arithmetic and ordering operators below.
         if (op == BinaryOp.Eq)
-            return EvalResult<Result>.Ok(new Result.Atom(ValueEquals(leftValue, rightValue) ? 1 : 0));
+            return EvalResult<Result>.Ok(new Result.Bool(ValueEquals(leftValue, rightValue)));
         if (op == BinaryOp.Ne)
-            return EvalResult<Result>.Ok(new Result.Atom(ValueEquals(leftValue, rightValue) ? 0 : 1));
+            return EvalResult<Result>.Ok(new Result.Bool(!ValueEquals(leftValue, rightValue)));
+
+        // The logical operators are Boolean-only: both operands were evaluated left to
+        // right before this point (the established evaluation order — no short circuit),
+        // and each must be a Boolean value; there is no numeric truthiness, so `1 and 2`
+        // is a value-kind error. Lean: evalBinaryCounted's `.and | .or | .xor` arm.
+        if (op is BinaryOp.And or BinaryOp.Or or BinaryOp.Xor)
+        {
+            var leftFlagR = RequireBooleanOperand(op, "left", leftValue);
+            if (leftFlagR.IsError)
+                return new EvalError.WithContext(BinaryOperandContext(op, left, right), leftFlagR.Error) { Span = span };
+            var rightFlagR = RequireBooleanOperand(op, "right", rightValue);
+            if (rightFlagR.IsError)
+                return new EvalError.WithContext(BinaryOperandContext(op, left, right), rightFlagR.Error) { Span = span };
+            bool a = leftFlagR.Value, b = rightFlagR.Value;
+            var flag = op switch
+            {
+                BinaryOp.And => a && b,
+                BinaryOp.Or => a || b,
+                _ => a != b,
+            };
+            return EvalResult<Result>.Ok(new Result.Bool(flag));
+        }
 
         // SYN-01: the empty sequence value is NOT an identity for scalar operators.
         // `()` is an ordinary operand here — it carries no numeric scalar value, so
@@ -430,6 +469,11 @@ public static partial class Evaluator
         if (op == BinaryOp.Pow)
             return EvalPow(span, x, y);
 
+        // The ordering comparisons take numeric scalar operands only (a Boolean operand was
+        // rejected above: Booleans are not ordered) and yield a Boolean value.
+        if (TryCompareNumeric(op, x, y) is { } comparison)
+            return EvalResult<Result>.Ok(new Result.Bool(comparison));
+
         Decimal128 result = op switch
         {
             BinaryOp.Add => x + y,
@@ -438,20 +482,27 @@ public static partial class Evaluator
             BinaryOp.Div => x / y,
             BinaryOp.IDiv => Decimal128Numerics.IntegerDivide(x, y),
             BinaryOp.Mod => x % y,
-            BinaryOp.Lt => x < y ? 1 : 0,
-            BinaryOp.Gt => x > y ? 1 : 0,
-            BinaryOp.Le => x <= y ? 1 : 0,
-            BinaryOp.Ge => x >= y ? 1 : 0,
-            BinaryOp.Eq => x == y ? 1 : 0,
-            BinaryOp.Ne => x != y ? 1 : 0,
-            BinaryOp.And => x != 0 && y != 0 ? 1 : 0,
-            BinaryOp.Or => x != 0 || y != 0 ? 1 : 0,
-            BinaryOp.Xor => (x != 0) != (y != 0) ? 1 : 0,
+            // Eq/Ne and the logical operators are handled above; the ordering
+            // comparisons by TryCompareNumeric.
             _ => 0,
         };
 
         return EvalResult<Result>.Ok(new Result.Atom(result));
     }
+
+    /// <summary>
+    /// The ONE numeric ordering comparison (IEEE: every comparison with a NaN operand is
+    /// false, -0 equals 0), shared by the generic operator and the planned loop arm so
+    /// the two cannot drift; <c>null</c> for a non-ordering operator.
+    /// </summary>
+    internal static bool? TryCompareNumeric(BinaryOp op, Decimal128 x, Decimal128 y) => op switch
+    {
+        BinaryOp.Lt => x < y,
+        BinaryOp.Gt => x > y,
+        BinaryOp.Le => x <= y,
+        BinaryOp.Ge => x >= y,
+        _ => null,
+    };
 
     /// <summary>Evaluate an expression and coerce to a number.
     /// Lean: expectInt over eval (the model has no dedicated wrapper).</summary>
@@ -505,7 +556,15 @@ public static partial class Evaluator
             preserveSequenceSpreadExpressionBoundaries: prepared.PreserveSequenceSpreadExpressionBoundaries);
     }
 
-    internal static EvalResult<(IReadOnlyList<Result> NextStateSlots, Decimal128 Continue)> SplitContSlots(
+    /// <summary>
+    /// Split a loop step output into next state slots and the continuation flag. The
+    /// step's LAST output is the flag and must be a Boolean value (<c>true</c> continues,
+    /// <c>false</c> stops); a number, string, sequence, or list there is a value-kind
+    /// error, never a truth test. A single-output step keeps the established shape — its
+    /// one slot is both the next state and the flag — so it must be Boolean too.
+    /// Lean: <c>splitContSlots</c>.
+    /// </summary>
+    internal static EvalResult<(IReadOnlyList<Result> NextStateSlots, bool Continue)> SplitContSlots(
         IReadOnlyList<Result> outputSlots)
     {
         if (outputSlots.Count == 0)
@@ -513,15 +572,17 @@ public static partial class Evaluator
 
         if (outputSlots.Count == 1)
         {
-            if (outputSlots[0] is Result.Atom(var number))
-                return EvalResult<(IReadOnlyList<Result>, Decimal128)>.Ok((outputSlots, number));
-
-            return new EvalError.BadArity();
+            var flag = outputSlots[0].AsBool();
+            return flag is not null
+                ? EvalResult<(IReadOnlyList<Result>, bool)>.Ok((outputSlots, flag.Value))
+                : new EvalError.TypeMismatch(BooleanRequiredMessage(WhileContinuationFlagRole, outputSlots[0]));
         }
 
-        var contR = ExpectInt(outputSlots[^1]);
-        if (contR.IsError) return contR.Error;
-        return EvalResult<(IReadOnlyList<Result>, Decimal128)>.Ok((outputSlots.Take(outputSlots.Count - 1).ToList(), contR.Value));
+        var last = outputSlots[^1];
+        var cont = last.AsBool();
+        if (cont is null)
+            return new EvalError.TypeMismatch(BooleanRequiredMessage(WhileContinuationFlagRole, last));
+        return EvalResult<(IReadOnlyList<Result>, bool)>.Ok((outputSlots.Take(outputSlots.Count - 1).ToList(), cont.Value));
     }
 
     // ── Builtins ─────────────────────────────────────────────────────────────
@@ -553,7 +614,7 @@ public static partial class Evaluator
             return WhileLoopGenericCounted(step, initialStateSlots, ctx, valEnv);
         }
 
-        if (initialStateSlots.Any(static slot => slot is not Result.Atom))
+        if (initialStateSlots.Any(static slot => slot is not (Result.Atom or Result.Bool)))
         {
             ctx.LoopDiagnostics?.RecordOptimizedLoopFallback("non-scalar loop state slot");
             return WhileLoopGenericCounted(step, initialStateSlots, ctx, valEnv);
@@ -591,7 +652,7 @@ public static partial class Evaluator
             var splitR = SplitContSlots(outputSlotsR.Value);
             if (splitR.IsError) return splitR.Error;
             var (nextStateSlots, cont) = splitR.Value;
-            if (cont == 0) return MakeCheckedLoopStateResult(ctx, stateSlots);
+            if (!cont) return MakeCheckedLoopStateResult(ctx, stateSlots);
             stateSlots = nextStateSlots.ToList();
         }
     }
@@ -620,7 +681,7 @@ public static partial class Evaluator
             return RepeatLoopGenericCounted(step, count, initialStateSlots, ctx, valEnv);
         }
 
-        if (initialStateSlots.Any(static slot => slot is not Result.Atom))
+        if (initialStateSlots.Any(static slot => slot is not (Result.Atom or Result.Bool)))
         {
             ctx.LoopDiagnostics?.RecordOptimizedLoopFallback("non-scalar loop state slot");
             return RepeatLoopGenericCounted(step, count, initialStateSlots, ctx, valEnv);

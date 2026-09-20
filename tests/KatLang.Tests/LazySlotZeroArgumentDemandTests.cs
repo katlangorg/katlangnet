@@ -13,7 +13,7 @@ namespace KatLang.Tests;
 /// <para>Before the fix the lazy slots (<c>if</c> condition and branches,
 /// <c>while</c>/<c>repeat</c> initial state, the <c>repeat</c> count, <c>atoms</c>,
 /// <c>range</c>, the <c>.string</c> receiver) evaluated a resolved parameterized
-/// algorithm's body directly, so <c>if(1, Inc, 0)</c> with <c>Inc(x) = x + 1</c>
+/// algorithm's body directly, so <c>if(true, Inc, 0)</c> with <c>Inc(x) = x + 1</c>
 /// reported <c>Unknown name: x</c> from inside <c>Inc</c> — and a body that never
 /// read its parameter (<c>K(x) = 5</c>) silently ran. The rule closes that back
 /// door: the decision is the effective signature's, made at the demand boundary
@@ -80,8 +80,8 @@ public class LazySlotZeroArgumentDemandTests
     // ── 1. The selected branch is an ordinary zero-argument value demand ──────
 
     [Theory]
-    [InlineData("if(1, Inc, 0)", 7)]
-    [InlineData("if(0, 0, Inc)", 10)]
+    [InlineData("if(true, Inc, 0)", 10)]
+    [InlineData("if(false, 0, Inc)", 14)]
     [InlineData("if(Inc, 1, 0)", 4)]
     public void SelectedIfSlot_ParameterizedProperty_IsTheOrdinaryZeroArgumentArityError(string row, int column)
         => AssertPropertyZeroArgumentDemand(Inc + row, "Inc", expectedParameters: 1, line: 2, column: column);
@@ -93,7 +93,7 @@ public class LazySlotZeroArgumentDemandTests
         // are those of `Inc` written as an output row (only the enclosing call
         // context differs).
         var bare = FailingError(Inc + "Inc");
-        var slot = FailingError(Inc + "if(1, Inc, 0)");
+        var slot = FailingError(Inc + "if(true, Inc, 0)");
 
         Assert.Equal(DescribeErrorTree(Innermost(bare)), DescribeErrorTree(Innermost(slot)));
         Assert.Equal(
@@ -106,8 +106,8 @@ public class LazySlotZeroArgumentDemandTests
     // ── 2. The unselected branch stays lazy ──────────────────────────────────
 
     [Theory]
-    [InlineData("if(0, Inc, 7)")]
-    [InlineData("if(1, 7, Inc)")]
+    [InlineData("if(false, Inc, 7)")]
+    [InlineData("if(true, 7, Inc)")]
     public void UnselectedIfSlot_ParameterizedProperty_IsNeverDemanded(string row)
         => AssertEvaluatesTo(new Result.Atom(7), Inc + row);
 
@@ -118,9 +118,9 @@ public class LazySlotZeroArgumentDemandTests
         // evaluated — the run's operational counters
         // equal those of the same program with a literal in that slot.
         var (parameterized, parameterizedBudget) = Evaluator.RunCountedObserved(
-            Program(Inc + "if(0, Inc, 7)"), enableOptimizations: false);
+            Program(Inc + "if(false, Inc, 7)"), enableOptimizations: false);
         var (literal, literalBudget) = Evaluator.RunCountedObserved(
-            Program(Inc + "if(0, 5, 7)"), enableOptimizations: false);
+            Program(Inc + "if(false, 5, 7)"), enableOptimizations: false);
 
         Assert.False(parameterized.IsError);
         Assert.False(literal.IsError);
@@ -133,7 +133,7 @@ public class LazySlotZeroArgumentDemandTests
 
     [Fact]
     public void ZeroParameterProperty_IsAnOrdinaryLazyValue()
-        => AssertEvaluatesTo(new Result.Atom(7), "A = 7\nif(1, A, 0)");
+        => AssertEvaluatesTo(new Result.Atom(7), "A = 7\nif(true, A, 0)");
 
     [Fact]
     public void ZeroParameterPropertyCapturingAnEnclosingBinding_IsNotMistakenForAMissingArgument()
@@ -142,7 +142,7 @@ public class LazySlotZeroArgumentDemandTests
         // parameter of its own, so it is a value in the selected slot.
         var source = """
             Outer(v) = { Inner = v + 1
-             if(1, Inner, 0) }
+             if(true, Inner, 0) }
             Outer(7)
             """;
         AssertEvaluatesTo(new Result.Atom(8), source);
@@ -151,8 +151,8 @@ public class LazySlotZeroArgumentDemandTests
     [Fact]
     public void ExplicitCallsInASlot_AreValues()
     {
-        AssertEvaluatesTo(new Result.Atom(5), Inc + "if(1, Inc(4), 0)");
-        AssertEvaluatesTo(List(), "Collect(*xs) = xs\nif(1, Collect(), 0)");
+        AssertEvaluatesTo(new Result.Atom(5), Inc + "if(true, Inc(4), 0)");
+        AssertEvaluatesTo(List(), "Collect(*xs) = xs\nif(true, Collect(), 0)");
     }
 
     // ── 4. A body failure of a zero-parameter algorithm stays a body failure ─
@@ -160,8 +160,8 @@ public class LazySlotZeroArgumentDemandTests
     [Fact]
     public void ZeroParameterBodyFailure_IsStillTheBodyFailure()
     {
-        Assert.IsType<EvalError.DivByZero>(Innermost(FailingError("Boom = 1 / 0\nif(1, Boom, 0)")));
-        Assert.IsType<EvalError.MissingOutput>(Innermost(FailingError("Empty = { P = 1 }\nif(1, Empty, 0)")));
+        Assert.IsType<EvalError.DivByZero>(Innermost(FailingError("Boom = 1 / 0\nif(true, Boom, 0)")));
+        Assert.IsType<EvalError.MissingOutput>(Innermost(FailingError("Empty = { P = 1 }\nif(true, Empty, 0)")));
     }
 
     [Fact]
@@ -173,12 +173,12 @@ public class LazySlotZeroArgumentDemandTests
         // provenance note pointing at the unresolved identifier, exactly as the
         // bare reference `A` does — never `Unknown name: Missing` from inside A.
         var arity = AssertPropertyZeroArgumentDemand(
-            "A = Missing + 1\nif(1, A, 0)", "A", expectedParameters: 1, line: 2, column: 7);
+            "A = Missing + 1\nif(true, A, 0)", "A", expectedParameters: 1, line: 2, column: 10);
         var provenance = Assert.Single(arity.InferredImplicitParameters!);
         Assert.Equal("Missing", provenance.Name);
         Assert.NotNull(provenance.Span);
 
-        var rendered = KatLangError.FromEvalError(FailingError("A = Missing + 1\nif(1, A, 0)"));
+        var rendered = KatLangError.FromEvalError(FailingError("A = Missing + 1\nif(true, A, 0)"));
         Assert.Contains("An implicit parameter 'Missing' was inferred at [1:5].", rendered.Message);
     }
 
@@ -194,7 +194,7 @@ public class LazySlotZeroArgumentDemandTests
         // `Inc()` is a CALL with zero arguments: its arity error carries the callee
         // signature and renders through the callable message — a different
         // operation from demanding `Inc` as a value.
-        var error = FailingError(Inc + "if(1, Inc(), 0)");
+        var error = FailingError(Inc + "if(true, Inc(), 0)");
         var arity = Assert.IsType<EvalError.ArityMismatch>(Innermost(error));
         Assert.Equal("Inc", arity.Signature?.Name);
         Assert.DoesNotContain("while evaluating property Inc", ContextChain(error));
@@ -206,7 +206,7 @@ public class LazySlotZeroArgumentDemandTests
     {
         // A builtin algorithm declares no parameters of its own, so the demand law
         // passes it through to its established value-position rejection.
-        var error = FailingError("if(1, count, 0)");
+        var error = FailingError("if(true, count, 0)");
         var arity = Assert.IsType<EvalError.ArityMismatch>(Innermost(error));
         Assert.Equal("count", arity.Signature?.Name);
     }
@@ -216,7 +216,7 @@ public class LazySlotZeroArgumentDemandTests
     [Theory]
     [InlineData("Step(s) = s + 1\nrepeat(Step, 1, Inc)", 3, 17)]
     [InlineData("Step(s) = s + 1\nrepeat(Step, Inc, 0)", 3, 14)]
-    [InlineData("Down(s) = s - 1, s\nwhile(Down, Inc)", 3, 13)]
+    [InlineData("Down(s) = s - 1, s > 0\nwhile(Down, Inc)", 3, 13)]
     [InlineData("atoms(Inc)", 2, 7)]
     [InlineData("range(1, Inc)", 2, 10)]
     [InlineData("Inc.string", 2, 1)]
@@ -249,7 +249,7 @@ public class LazySlotZeroArgumentDemandTests
     {
         AssertEvaluatesTo(new Result.Atom(1), "A = 0\nStep(s) = s + 1\nrepeat(Step, 1, A)");
         AssertEvaluatesTo(new Result.Atom(2), "A = 2\nStep(s) = s + 1\nrepeat(Step, A, 0)");
-        AssertEvaluatesTo(new Result.Atom(0), "A = 3\nDown(s) = s - 1, s\nwhile(Down, A)");
+        AssertEvaluatesTo(new Result.Atom(0), "A = 3\nDown(s) = s - 1, s > 0\nwhile(Down, A)");
         AssertEvaluatesTo(List(new Result.Atom(7)), "A = 7\natoms(A)");
         AssertEvaluatesTo(List(new Result.Atom(1), new Result.Atom(2), new Result.Atom(3)), "A = 3\nrange(1, A)");
         AssertEvaluatesTo(new Result.Str("7"), "A = 7\nA.string");
@@ -261,7 +261,7 @@ public class LazySlotZeroArgumentDemandTests
     public void CallbackSlots_SupplyArguments_AndNeverConsultTheLaw()
     {
         AssertEvaluatesTo(new Result.Atom(2), Inc + "repeat(Inc, 2, 0)");
-        AssertEvaluatesTo(new Result.Atom(0), "Down(s) = s - 1, s\nwhile(Down, 3)");
+        AssertEvaluatesTo(new Result.Atom(0), "Down(s) = s - 1, s > 0\nwhile(Down, 3)");
         AssertEvaluatesTo(List(new Result.Atom(2), new Result.Atom(3)), Inc + "map([1, 2], Inc)");
         AssertEvaluatesTo(List(new Result.Atom(2), new Result.Atom(3)), "IsBig(n) = n > 1\nfilter([1, 2, 3], IsBig)");
         AssertEvaluatesTo(new Result.Atom(3), "Add(e, a) = e + a\nreduce([1, 2], Add, 0)");
@@ -289,8 +289,8 @@ public class LazySlotZeroArgumentDemandTests
     }
 
     [Theory]
-    [InlineData("if(1, K, 0)")]
-    [InlineData("if(0, 0, K)")]
+    [InlineData("if(true, K, 0)")]
+    [InlineData("if(false, 0, K)")]
     [InlineData("if(K, 1, 0)")]
     [InlineData("repeat(Step, 1, K)")]
     [InlineData("repeat(Step, K, 0)")]
@@ -372,13 +372,13 @@ public class LazySlotZeroArgumentDemandTests
     {
         // The decision is the signature's: before the fix `K`'s body ran and the
         // program produced 5.
-        AssertPropertyZeroArgumentDemand("K(x) = 5\nif(1, K, 0)", "K", expectedParameters: 1, line: 2, column: 7);
+        AssertPropertyZeroArgumentDemand("K(x) = 5\nif(true, K, 0)", "K", expectedParameters: 1, line: 2, column: 10);
     }
 
     [Fact]
     public void InferredParameter_CountsLikeAnExplicitOne()
     {
-        var arity = AssertPropertyZeroArgumentDemand("A = q + 1\nif(1, A, 0)", "A", expectedParameters: 1, line: 2, column: 7);
+        var arity = AssertPropertyZeroArgumentDemand("A = q + 1\nif(true, A, 0)", "A", expectedParameters: 1, line: 2, column: 10);
         Assert.Equal("q", Assert.Single(arity.InferredImplicitParameters!).Name);
     }
 
@@ -387,23 +387,23 @@ public class LazySlotZeroArgumentDemandTests
     {
         // `Use = Need` lifts Need's implicit `v` into Use's signature, so Use is
         // parameterized even though it declares nothing itself.
-        AssertPropertyZeroArgumentDemand("Need = v\nUse = Need\nif(1, Use, 0)", "Use", expectedParameters: 1, line: 3, column: 7);
+        AssertPropertyZeroArgumentDemand("Need = v\nUse = Need\nif(true, Use, 0)", "Use", expectedParameters: 1, line: 3, column: 10);
     }
 
     [Fact]
     public void CollectingParameter_CountsLikeAnExplicitOne()
-        => AssertPropertyZeroArgumentDemand("Collect(*xs) = xs\nif(1, Collect, 0)", "Collect", expectedParameters: 1, line: 2, column: 7);
+        => AssertPropertyZeroArgumentDemand("Collect(*xs) = xs\nif(true, Collect, 0)", "Collect", expectedParameters: 1, line: 2, column: 10);
 
     [Fact]
     public void TwoParameters_ReportBothExpected()
-        => AssertPropertyZeroArgumentDemand("Add(a, b) = a + b\nif(1, Add, 0)", "Add", expectedParameters: 2, line: 2, column: 7);
+        => AssertPropertyZeroArgumentDemand("Add(a, b) = a + b\nif(true, Add, 0)", "Add", expectedParameters: 2, line: 2, column: 10);
 
     [Fact]
     public void ClauseFamily_CannotBeAccessedAsAValue()
     {
         // A conditional cannot select a branch without arguments: the demand law's
         // conditional rule names the family (never the generic "conditional").
-        var error = FailingError("F(0) = 10\nF(x) = x + 1\nif(1, F, 0)");
+        var error = FailingError("F(0) = 10\nF(x) = x + 1\nif(true, F, 0)");
         var branch = Assert.IsType<EvalError.NoMatchingBranch>(Innermost(error));
         Assert.Equal("F", branch.AlgorithmName);
     }
@@ -414,8 +414,8 @@ public class LazySlotZeroArgumentDemandTests
         // `Apply(Inc)` binds `g` only on the algorithm channel; demanding it in the
         // slot is the same bare arity mismatch as reading `g` in value position —
         // no property context, and never the callee's own `x`. The span is the
-        // `g` reference inside `if(1, g, 0)`.
-        var error = FailingError(Inc + "Apply(g) = if(1, g, 0)\nApply(Inc)");
+        // `g` reference inside `if(true, g, 0)`.
+        var error = FailingError(Inc + "Apply(g) = if(true, g, 0)\nApply(Inc)");
         var arity = Assert.IsType<EvalError.ArityMismatch>(Innermost(error));
         Assert.Equal(1, arity.Expected);
         Assert.Equal(0, arity.Actual);
@@ -425,7 +425,7 @@ public class LazySlotZeroArgumentDemandTests
         Assert.Contains("Expected 1 parameter, but was called with 0 arguments.", rendered.Message);
         Assert.DoesNotContain("Unknown name", rendered.Message);
         Assert.Equal(2, Assert.NotNull(rendered.Span).Start.Line);
-        Assert.Equal(18, Assert.NotNull(rendered.Span).Start.Column);
+        Assert.Equal(21, Assert.NotNull(rendered.Span).Start.Column);
     }
 
     [Fact]
@@ -434,7 +434,7 @@ public class LazySlotZeroArgumentDemandTests
         // A brace block in the slot is judged like a block in value position: its
         // inferred `x` cannot be supplied by anyone, so the report is the
         // unresolved-implicit-parameters diagnostic, not `Unknown name: x`.
-        var error = FailingError("if(1, {x + 1}, 0)");
+        var error = FailingError("if(true, {x + 1}, 0)");
         var unresolved = Assert.IsType<EvalError.UnresolvedImplicitParams>(Innermost(error));
         Assert.Equal(["x"], unresolved.ParamNames);
         Assert.DoesNotContain("Unknown name", KatLangError.FromEvalError(error).Message);
@@ -462,21 +462,21 @@ public class LazySlotZeroArgumentDemandTests
     public static TheoryData<string> ParityMatrix() =>
         new()
         {
-            Inc + "if(1, Inc, 0)",
-            Inc + "if(0, 0, Inc)",
-            Inc + "if(0, Inc, 7)",
+            Inc + "if(true, Inc, 0)",
+            Inc + "if(false, 0, Inc)",
+            Inc + "if(false, Inc, 7)",
             Inc + "if(Inc, 1, 0)",
-            "A = 7\nif(1, A, 0)",
-            "K(x) = 5\nif(1, K, 0)",
-            "A = q + 1\nif(1, A, 0)",
-            "Collect(*xs) = xs\nif(1, Collect, 0)",
-            "Collect(*xs) = xs\nif(1, Collect(), 0)",
-            "F(0) = 10\nF(x) = x + 1\nif(1, F, 0)",
-            Inc + "Apply(g) = if(1, g, 0)\nApply(Inc)",
-            "if(1, {x + 1}, 0)",
+            "A = 7\nif(true, A, 0)",
+            "K(x) = 5\nif(true, K, 0)",
+            "A = q + 1\nif(true, A, 0)",
+            "Collect(*xs) = xs\nif(true, Collect, 0)",
+            "Collect(*xs) = xs\nif(true, Collect(), 0)",
+            "F(0) = 10\nF(x) = x + 1\nif(true, F, 0)",
+            Inc + "Apply(g) = if(true, g, 0)\nApply(Inc)",
+            "if(true, {x + 1}, 0)",
             Inc + "Step(s) = s + 1\nrepeat(Step, 1, Inc)",
             Inc + "Step(s) = s + 1\nrepeat(Step, Inc, 0)",
-            Inc + "Down(s) = s - 1, s\nwhile(Down, Inc)",
+            Inc + "Down(s) = s - 1, s > 0\nwhile(Down, Inc)",
             Inc + "atoms(Inc)",
             Inc + "range(1, Inc)",
             Inc + "Inc.string",
@@ -491,7 +491,7 @@ public class LazySlotZeroArgumentDemandTests
             "F(0) = 10\nF(x) = x + 1\nAdd(e, a) = e + a\nreduce([], Add, F)",
             Inc + "repeat(Inc, 2, 0)",
             Inc + "map([1, 2], Inc)",
-            "Outer(v) = { Inner = v + 1\n if(1, Inner, 0) }\nOuter(7)",
+            "Outer(v) = { Inner = v + 1\n if(true, Inner, 0) }\nOuter(7)",
         };
 
     [Theory]

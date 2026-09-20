@@ -179,13 +179,13 @@ public class EvaluationLimitsTests
     [InlineData("A = count(A)\nA")]
     [InlineData("A = A.count\nA")]
     [InlineData("A = range(1, A)\nA.count")]
-    [InlineData("A = if(1, A, 0)\nA")]
+    [InlineData("A = if(true, A, 0)\nA")]
     [InlineData("A = if(A, 1, 0)\nA")]
     [InlineData("A = take([1, 2, 3], A)\nA")]
     [InlineData("A = [1, 2].take(A)\nA")]
     [InlineData("A = sum([A])\nA")]
     [InlineData("Add(a, b) = a + b\nA = [1, 2].reduce(Add, A)\nA")]
-    [InlineData("Step = x, 0\nA = Step.while(A)\nA")]
+    [InlineData("Step = x, false\nA = Step.while(A)\nA")]
     [InlineData("Inc = x + 1\nA = Inc.repeat(A, 0)\nA")]
     [InlineData("A = B.count\nB = A.count\nA")]
     public void BuiltinArgumentRecursion_ReturnsAStructuredResourceError(string source)
@@ -543,7 +543,7 @@ public class EvaluationLimitsTests
     [Fact]
     public void StepLimitError_PublicDisplayIsStable()
     {
-        var display = Run("Step = x, 1\nStep.while(0)", Steps(25)).ToDisplayString();
+        var display = Run("Step = x, true\nStep.while(0)", Steps(25)).ToDisplayString();
         Assert.Contains("Evaluation step limit of 25 was exceeded", display);
     }
 
@@ -742,7 +742,7 @@ public class EvaluationLimitsTests
     [Fact]
     public void InfiniteWhile_TerminatesWithStepLimitError()
         => Assert.IsType<EvalError.EvaluationStepLimitExceeded>(
-            ErrorOf("Step = x, 1\nStep.while(0)", Steps(500)));
+            ErrorOf("Step = x, true\nStep.while(0)", Steps(500)));
 
     [Fact]
     public void FiniteWhile_WithSufficientBudget_Succeeds()

@@ -50,6 +50,7 @@ public class AstWalkerTraversalTests
         {
             { nameof(Expr.Param), new Expr.Param("p"), [] },
             { nameof(Expr.Num), leaf, [] },
+            { nameof(Expr.BoolLiteral), new Expr.BoolLiteral(true), [] },
             { nameof(Expr.StringLiteral), new Expr.StringLiteral("s"), [] },
             { nameof(Expr.Unary), new Expr.Unary(UnaryOp.Minus, leaf), [leaf] },
             { nameof(Expr.Binary), new Expr.Binary(BinaryOp.Add, leaf, second), [leaf, second] },
@@ -108,7 +109,7 @@ public class AstWalkerTraversalTests
             F(a) = -a + 1
             G(*items) = items.count
             H((x, y)) = [x, y]:0
-            F(7), G(1, 2), H((3, 4)), 'text', (), A.X, X, if(1, 2, 3), Math.Abs(-1)
+            F(7), G(1, 2), H((3, 4)), 'text', (), A.X, X, if(true, 2, 3), Math.Abs(-1)
             """);
         Assert.False(
             parsed.HasErrors,

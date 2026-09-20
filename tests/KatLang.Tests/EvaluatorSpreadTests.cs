@@ -380,7 +380,7 @@ public class EvaluatorSpreadTests
             Result = Next(10, 0)*, 10 > 5
             Result
             """;
-        AssertEval(source, 9, 1, 1);
+        AssertEvalResults(source, new Result.Atom(9), new Result.Atom(1), new Result.Bool(true));
     }
 
     // F. Nested algorithm with spread

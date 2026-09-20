@@ -350,24 +350,24 @@ public class SequenceSpreadTests
             Qmean(Vector)
             """);
 
-        AssertEval(
+        EvaluatorTestSupport.AssertEvalBool(
             """
             Vector = range(1, 10)
             Qmean(*args) = Math.Sqrt(args.map{x * x}.sum / args.count)
             Qmean(Vector*) == Math.Sqrt(385 / 10)
             """,
-            1m);
+            true);
     }
 
     [Fact]
     public void SingleVariadic_QmeanSpreadDotCallMatchesSpreadCall()
-        => AssertEval(
+        => EvaluatorTestSupport.AssertEvalBool(
             """
             Vector = range(1, 10)
             Qmean(*args) = Math.Sqrt(args.map{x * x}.sum / args.count)
             (Vector*).Qmean() == Qmean(Vector*)
             """,
-            1m);
+            true);
 
     [Fact]
     public void SingleVariadic_MultiOutputPropertyIsOneCollectedItem()

@@ -190,7 +190,7 @@ public class TokenTests
     private const string EveryKindSource =
         "# heading\n"
         + "A(x) = x ^ 2 + 1 - 3 * 4 / 5\n"
-        + "B = 'text' <= 2 and not (3 >= 4) or 5 != 6 xor 7 == 8 < 9 > 0\n"
+        + "B = 'text' <= 2 and not (3 >= 4) or 5 != 6 xor 7 == 8 < 9 > 0 == true != false\n"
         + "public C = [10 div 3, 10 mod 3]; {open Math}, B:1, A~.t\n"
         + "@ \U0001F600 D = 1.5e3\n";
 
@@ -237,7 +237,7 @@ public class TokenTests
             Assert.Equal(EveryKindSource.Substring(t.Position + 1, t.Length - 1), t.StringValue));
 
         // Keywords carry no text: their spelling is the source slice.
-        var keywords = tokens.Where(t => t.Kind is >= TokenKind.KeywordDiv and <= TokenKind.KeywordOpen).ToList();
+        var keywords = tokens.Where(t => t.Kind is >= TokenKind.KeywordDiv and <= TokenKind.KeywordFalse).ToList();
         Assert.Equal(Lexer.KeywordNames.Count, keywords.Select(t => t.Kind).Distinct().Count());
         Assert.All(keywords, t => Assert.Contains(EveryKindSource.Substring(t.Position, t.Length), Lexer.KeywordNames));
     }

@@ -18,6 +18,7 @@ namespace KatLang.Tests;
 public class CollectingBindingTests
 {
     private static Result Atom(decimal value) => new Result.Atom(value);
+    private static Result Bool(bool value) => new Result.Bool(value);
 
     private static Result.ListValue List(params Result[] items) => new(items);
 
@@ -109,9 +110,9 @@ public class CollectingBindingTests
     [Fact]
     public void DeconstructionCollectingBinding_EmptySegmentStaysDistinctFromEmptyStructureElement()
     {
-        AssertCollects("first, *rest = 1, []\nrest == []", Atom(0));
-        AssertCollects("first, *rest = 1, ()\nrest == []", Atom(0));
-        AssertCollects("first, *rest = 1\nrest == []", Atom(1));
+        AssertCollects("first, *rest = 1, []\nrest == []", Bool(false));
+        AssertCollects("first, *rest = 1, ()\nrest == []", Bool(false));
+        AssertCollects("first, *rest = 1\nrest == []", Bool(true));
     }
 
     // ── Deconstruction implicit opening matches explicit spread ─────────────
@@ -429,7 +430,7 @@ public class CollectingBindingTests
         // items = [element], never the bare scalar element.
         AssertCollects(
             "R(*items, acc) = items == [10]\nreduce([10], R, 99)",
-            Atom(1));
+            Bool(true));
         AssertCollects(
             "R(*items, acc) = (acc*, items)\nreduce((10, 20), R, ())",
             Seq(Atom(10), List(Atom(20))));
@@ -528,30 +529,30 @@ public class CollectingBindingTests
         // immutable list), not just the flattened atoms.
         AssertCollects(
             "Step(n, *middle, last) = n + 10, (middle == [(20, 30)]), last, n < 2\nStep.while(1, (20, 30), 40)",
-            Seq(Atom(11), Atom(1), Atom(40)));
+            Seq(Atom(11), Bool(true), Atom(40)));
 
         // Empty collected segment: `[]`, never `()` and never an arity error.
         AssertCollects(
             "Step(n, *middle, last) = n + 10, (middle == []), last, n < 2\nStep.while(1, 40)",
-            Seq(Atom(11), Atom(1), Atom(40)));
+            Seq(Atom(11), Bool(true), Atom(40)));
 
         // Multi-item collected segment.
         AssertCollects(
             "Step(n, *middle, last) = n + 10, (middle == [7, 8]), last, n < 2\nStep.while(1, 7, 8, 40)",
-            Seq(Atom(11), Atom(1), Atom(40)));
+            Seq(Atom(11), Bool(true), Atom(40)));
     }
 
     // ── Equality ────────────────────────────────────────────────────────────
 
     [Theory]
-    [InlineData("Inspect() == []", 1)]
-    [InlineData("Inspect(7) == [7]", 1)]
-    [InlineData("Inspect(1, 2) == [1, 2]", 1)]
-    [InlineData("Inspect([1, 2]) == [[1, 2]]", 1)]
-    [InlineData("Inspect([1, 2]) == [1, 2]", 0)]
-    [InlineData("Inspect(1, 2) == (1, 2)", 0)]
-    public void CollectedSegment_EqualityIsKindExact(string comparison, decimal expected)
-        => AssertCollects("Inspect(*items) = items\n" + comparison, Atom(expected));
+    [InlineData("Inspect() == []", true)]
+    [InlineData("Inspect(7) == [7]", true)]
+    [InlineData("Inspect(1, 2) == [1, 2]", true)]
+    [InlineData("Inspect([1, 2]) == [[1, 2]]", true)]
+    [InlineData("Inspect([1, 2]) == [1, 2]", false)]
+    [InlineData("Inspect(1, 2) == (1, 2)", false)]
+    public void CollectedSegment_EqualityIsKindExact(string comparison, bool expected)
+        => AssertCollects("Inspect(*items) = items\n" + comparison, Bool(expected));
 
     // ── Collection composition ──────────────────────────────────────────────
 
@@ -564,7 +565,7 @@ public class CollectingBindingTests
         AssertCollects("skip([[1, 2], [3, 4]], 1)", List(List(Atom(3), Atom(4))));
         AssertCollects(
             "first, *rest = [1, 2, 3]\nrest == skip([1, 2, 3], 1)",
-            Atom(1));
+            Bool(true));
     }
 
     // ── Ordinary capture stays canonical (capture vs collect) ───────────────

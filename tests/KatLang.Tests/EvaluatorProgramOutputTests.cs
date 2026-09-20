@@ -58,7 +58,7 @@ public class EvaluatorProgramOutputTests
 
     [Fact]
     public void Eval_PropertyValue_DoesNotCompareEqualToEmptySequence()
-        => AssertEval("T = 4\nT == ()", 0);
+        => AssertEvalBool("T = 4\nT == ()", false);
 
     [Fact]
     public void Eval_MultiplePropertyDefinitionsWithoutOutput_HasNoDefinedOutput()
@@ -88,27 +88,27 @@ public class EvaluatorProgramOutputTests
     [Fact]
     public void Eval_EmptySequence_Equality()
     {
-        AssertEval("() == ()", 1);
-        AssertEval("() != ()", 0);
-        AssertEval("() == (())", 1);
-        AssertEval("() != (())", 0);
-        AssertEval("(()) == (())", 1);
-        AssertEval("A = ()\nA == ()", 1);
+        AssertEvalBool("() == ()", true);
+        AssertEvalBool("() != ()", false);
+        AssertEvalBool("() == (())", true);
+        AssertEvalBool("() != (())", false);
+        AssertEvalBool("(()) == (())", true);
+        AssertEvalBool("A = ()\nA == ()", true);
         // Collection-builtin results are exact lists: the empty list [] is NOT
         // equal to the empty sequence ().
-        AssertEval(
+        AssertEvalBool(
             """
             IsEven = x mod 2 == 0
             filter((1, 3, 5), IsEven) == ()
             """,
-            0);
-        AssertEval(
+            false);
+        AssertEvalBool(
             """
             IsEven = x mod 2 == 0
             () == filter((1, 3, 5), IsEven)
             """,
-            0);
-        AssertEval("(0).skip(1) == ()", 0);
+            false);
+        AssertEvalBool("(0).skip(1) == ()", false);
     }
 
     [Fact]
@@ -140,7 +140,7 @@ public class EvaluatorProgramOutputTests
         AssertEvalEmptyOutput("()");
         AssertEval("().count", 0);
         AssertEval("D = ()\nD.count", 0);
-        AssertEval("D = ()\nD == ()", 1);
+        AssertEvalBool("D = ()\nD == ()", true);
     }
 
     [Fact]
@@ -157,7 +157,7 @@ public class EvaluatorProgramOutputTests
         // `()` stored in a property is a real value: returning it directly yields `()`,
         // and it compares equal to `()`.
         AssertEvalEmptyOutput("A = ()\nA");
-        AssertEval("A = ()\nA == ()", 1);
+        AssertEvalBool("A = ()\nA == ()", true);
 
         // `{}` stored in a property is no-output: forcing it (directly, or as an operand
         // of `==`) fails with missing-output before any value or equality is produced.

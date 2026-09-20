@@ -582,7 +582,7 @@ internal static class AstStructuralPreflight
 
             case Pattern.SequenceValue sequenceValue:
                 return PickFromList(index, sequenceValue.Items, out child);
-            case Pattern.Bind or Pattern.LitInt or Pattern.LitString:
+            case Pattern.Bind or Pattern.LitInt or Pattern.LitString or Pattern.LitBool:
                 child = null!;
                 return false;
 
@@ -651,7 +651,7 @@ internal static class AstStructuralPreflight
             Expr.Call call => PickCallChild(index, call, out child),
             Expr.DotCall dotCall => PickDotCallChild(index, dotCall, out child),
             Expr.ListLiteral listLiteral => PickFromList(index, listLiteral.Items, out child),
-            Expr.Param or Expr.Num or Expr.StringLiteral or Expr.EmptySequence
+            Expr.Param or Expr.Num or Expr.StringLiteral or Expr.BoolLiteral or Expr.EmptySequence
                 or Expr.Resolve or Expr.NativeCall => PickNone(out child),
         };
 

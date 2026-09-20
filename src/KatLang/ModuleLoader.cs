@@ -1156,7 +1156,7 @@ internal sealed partial class ModuleLoader
             Expr.Grace grace => grace with { Inner = ProcessExpr(grace.Inner, context, depth + 1) },
 
             // Leaf nodes — no transformation needed
-            Expr.Resolve or Expr.Param or Expr.Num or Expr.StringLiteral or Expr.EmptySequence or Expr.NativeCall => expr,
+            Expr.Resolve or Expr.Param or Expr.Num or Expr.StringLiteral or Expr.BoolLiteral or Expr.EmptySequence or Expr.NativeCall => expr,
         };
 
         if (memo is not null)
@@ -1318,6 +1318,7 @@ internal sealed partial class ModuleLoader
             case Expr.Param:
             case Expr.Num:
             case Expr.StringLiteral:
+            case Expr.BoolLiteral:
             case Expr.EmptySequence:
             case Expr.NativeCall:
                 result = expr;

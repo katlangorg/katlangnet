@@ -16,7 +16,7 @@ public class EvaluatorSequenceCallbackTests
             Assert.Fail($"Expected evaluation failure but got: {result.Value}");
 
         var formatted = KatLangError.FromEvalError(result.Error).Message;
-        Assert.Contains("filter predicate must return exactly one atomic numeric value", formatted);
+        Assert.Contains("filter predicate result must be a Boolean value (true or false), but was", formatted);
 
         var error = result.Error;
         var contexts = new List<string>();
@@ -26,8 +26,11 @@ public class EvaluatorSequenceCallbackTests
             error = wc.Inner;
         }
 
-        Assert.Contains(contexts, context => context.Contains("filter predicate must return exactly one atomic numeric value"));
-        Assert.IsType<EvalError.BadArity>(error);
+        // The Boolean-required rejection is raised by `filter` itself, so the per-item
+        // predicate frame is absent and the call frame is the innermost context.
+        Assert.Contains(contexts, context => context.Contains("while evaluating call to filter"));
+        var mismatch = Assert.IsType<EvalError.TypeMismatch>(error);
+        Assert.Contains("filter predicate result must be a Boolean value (true or false), but was", mismatch.Message);
     }
 
     private static void AssertReduceStepShapeFails(string source)
@@ -137,8 +140,8 @@ public class EvaluatorSequenceCallbackTests
     public void Eval_Filter_RangeArgument_IteratesEmittedItemsForPredicate()
     {
         var source = """
-            KeepWholeRange((a, b, c, d, e)) = 1
-            KeepWholeRange(x) = 0
+            KeepWholeRange((a, b, c, d, e)) = true
+            KeepWholeRange(x) = false
             filter(range(1, 5), KeepWholeRange)
             """;
 
@@ -149,8 +152,8 @@ public class EvaluatorSequenceCallbackTests
     public void Eval_Filter_DirectCallMixedArgs_ExpandsRangeTopLevelItemsForPredicate()
     {
         var source = """
-            KeepWideRange((a, b, c, d)) = 1
-            KeepWideRange(x) = 0
+            KeepWideRange((a, b, c, d)) = true
+            KeepWideRange(x) = false
             filter(((1, 2), range(3, 6)*), KeepWideRange)
             """;
 
@@ -844,7 +847,7 @@ public class EvaluatorSequenceCallbackTests
 
         AssertEvalSequenceModes(
             """
-            IsSingleSeven(*values) = values == [7]
+            IsSingleSeven(*values) = if(values == [7], 1, 0)
             map((7, 8), IsSingleSeven)
             """,
             1, 0);
@@ -887,7 +890,7 @@ public class EvaluatorSequenceCallbackTests
         // Kind-sensitive form: the step observes the collected list [element].
         AssertEvalSequenceModes(
             """
-            Step(*values, acc) = acc + (values == [3])
+            Step(*values, acc) = acc + if(values == [3], 1, 0)
             reduce((1, 2, 3), Step, 0)
             """,
             1);
@@ -968,7 +971,7 @@ public class EvaluatorSequenceCallbackTests
     {
         var result = EvalFull(
             """
-            Keep(0) = 1
+            Keep(0) = true
             filter(1, Keep)
             """);
 
@@ -1024,8 +1027,8 @@ public class EvaluatorSequenceCallbackTests
     public void Eval_Callback_ConditionalPredicate_UsesConditionalCallbackPath()
     {
         var source = """
-            Keep(0) = 0
-            Keep(x) = 1
+            Keep(0) = false
+            Keep(x) = true
             filter((0, 1, 2), Keep)
             """;
 

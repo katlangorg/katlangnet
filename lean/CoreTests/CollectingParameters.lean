@@ -926,8 +926,8 @@ def loopVariadicAppendNextAlg : Algorithm :=
 def loopVariadicContinueFlagExpr : KatLang.Expr :=
   .call (resolve "if") [
     .binary .lt loopVariadicNextExpr (.num 6),
-    .num 1,
-    .num 0
+    .boolLiteral true,
+    .boolLiteral false
   ]
 
 def loopVariadicWhileAppendNextAlg : Algorithm :=
@@ -964,13 +964,19 @@ def variadicLoopStepRepeatTwoIterationsKeepsExpandedState : Bool :=
 
 #guard variadicLoopStepRepeatTwoIterationsKeepsExpandedState
 
+-- The step's ONE output row is the joined sequence `(1, 2, 4, 5, true)`, so
+-- the loop sees a single output slot that is not a Boolean continuation flag:
+-- the Boolean-requirement error names that slot (a value-kind error, never a
+-- truth test of the slot's contents).
 def variadicLoopStepWhileUsesExpandedState : Bool :=
   match runResult (.algorithmExpr (algPrivate [] [] [("Step", loopVariadicWhileAppendNextAlg)] [
     .dotCall (resolve "Step") "while" (some [
       sequenceItems [.num 1, .num 2, .num 4]
     ])
   ])) with
-  | Except.error err => innermostIsBadArity err
+  | Except.error err =>
+      innermostIsBooleanRequired "while continuation flag (the step's last output)"
+        "a sequence value with 5 sequence elements: (1, 2, 4, 5, true)" err
   | _ => false
 
 #guard variadicLoopStepWhileUsesExpandedState
@@ -1108,7 +1114,7 @@ def loopBoundarySequenceValueRepeatStepAlg : Algorithm :=
 def loopBoundarySequenceValueWhileStepAlg : Algorithm :=
   alg ["x"] [] [] [
     .capture [.param "x", .binary .add (.param "x") (.num 1)],
-    .num 0
+    .boolLiteral false
   ]
 
 def sequenceBuiltinDotCallRepeatReceiverTakeUsesFinalStateSlots : Bool :=

@@ -218,7 +218,7 @@ public class EvaluatorSequencePipelineTests
     public void Eval_SequencePipelineS1_FilterCount_NoMatches()
     {
         var source = """
-            Never(x) = 0
+            Never(x) = false
             range(1, 10).filter(Never).count
             """;
 
@@ -229,7 +229,7 @@ public class EvaluatorSequencePipelineTests
     public void Eval_SequencePipelineS1_FilterCount_AllMatches()
     {
         var source = """
-            Always(x) = 1
+            Always(x) = true
             range(1, 10).filter(Always).count
             """;
 

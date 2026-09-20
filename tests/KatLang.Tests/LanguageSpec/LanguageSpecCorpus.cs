@@ -113,6 +113,50 @@ public static class LanguageSpecCorpus
         },
         new()
         {
+            Id = "boolean-values-and-equality",
+            Category = "arithmetic",
+            Source = "true\nfalse\n[true, 1, false, 0]\ntrue == 1\n1 == true\nfalse != 0\n0 != false\ndistinct([true, 1, false, 0, true])",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "true\nfalse\n[true, 1, false, 0]\nfalse\nfalse\ntrue\ntrue\n[true, 1, false, 0]",
+            ExpectedRaw = "S[true, false, L[true, 1, false, 0], false, false, true, true, L[true, 1, false, 0]]",
+            ExpectedEmittedCount = 8,
+            IncludeInGeneratorPrompt = true,
+            Explanation = "Booleans are a distinct scalar kind. Equality is total and symmetric across kinds, with no Boolean/number conversion; lists, sequences, and distinct preserve that distinction.",
+        },
+        new()
+        {
+            Id = "boolean-predicates-and-patterns",
+            Category = "conditionals",
+            Source = "F(true) = false\nF(false) = true\nF(true)\nF(false)\nrange(-2, 2).filter{x >= 0}\nrange(-2, 2).map{x >= 0}.contains(true)\nif(not 1 == 1, 10, 20)",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "false\ntrue\n[0, 1, 2]\ntrue\n20",
+            ExpectedRaw = "S[false, true, L[0, 1, 2], true, 20]",
+            ExpectedEmittedCount = 5,
+            IncludeInGeneratorPrompt = true,
+            Explanation = "Comparisons and contains produce Booleans. Predicate consumers require them, and true/false in clause heads are literal patterns, never parameter names.",
+        },
+        new()
+        {
+            Id = "boolean-loop-state-transition",
+            Category = "conditionals",
+            Source = "S(x) = if(x == true, 0, true), x != 0\nS.while(true)",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "0",
+            ExpectedRaw = "0",
+            ExpectedEmittedCount = 1,
+            Explanation = "Loop state may change value kind. The continuation is Boolean, and a false continuation returns the current state without committing the proposed next state.",
+        },
+        new()
+        {
+            Id = "boolean-predicate-rejects-visible-empty",
+            Category = "conditionals",
+            Source = "F(x) = true, ()\nrange(0, 2).filter(F).count",
+            Outcome = SpecOutcome.EvalError,
+            ExpectedErrorCategory = "type",
+            Explanation = "A predicate must return one Boolean value. A Boolean beside a visible empty output is a sequence, and cannot be searched or flattened for a truth value.",
+        },
+        new()
+        {
             Id = "power-unary-precedence",
             Category = "arithmetic",
             Source = "-2 ^ 2\n(-2) ^ 2\n2 ^ 3 ^ 2",
@@ -134,12 +178,54 @@ public static class LanguageSpecCorpus
                 // whole tail it introduces.
                 new SpecProbe("-2 ^ 3 ^ 2", "ok raw=-512 n=1"),
                 new SpecProbe("2 ^ -2 ^ 2", "ok raw=0.0625 n=1"),
-                // `not` shares the prefix-unary tier.
-                new SpecProbe("not 0 ^ 0", "ok raw=0 n=1"),
-                new SpecProbe("2 ^ not 0", "ok raw=2 n=1"),
+                // `not` binds below `^` as well: `not 0 ^ 0` is `not (0 ^ 0)`, and
+                // the Boolean-operand rejection it reports names the exponentiation
+                // result (`1`), never the base `0` a `(not 0) ^ 0` parse would reject.
+                new SpecProbe("not 0 ^ 0", "err type"),
+                // A parenthesized Boolean exponent is rejected by `^` itself; the bare
+                // `2 ^ not false` is a parse error, because `not` — below the
+                // comparisons — can never be an operand of `^` (see
+                // not-binds-below-comparisons).
+                new SpecProbe("2 ^ (not false)", "err type"),
             ],
             IncludeInGeneratorPrompt = true,
-            Explanation = "`^` binds tighter than prefix `-`/`not` on the left, so `-2 ^ 2` negates the power: `-(2 ^ 2)`. Parenthesize the base to raise a negative value: `(-2) ^ 2`. The exponent side accepts a unary value directly (`2 ^ -2` is `0.25`), and `^` chains group from the right.",
+            Explanation = "`^` binds tighter than prefix `-` on the left (and than `not`, which sits below the comparisons altogether), so `-2 ^ 2` negates the power: `-(2 ^ 2)`. Parenthesize the base to raise a negative value: `(-2) ^ 2`. The exponent side accepts a unary value directly (`2 ^ -2` is `0.25`), and `^` chains group from the right.",
+        },
+        new()
+        {
+            Id = "not-binds-below-comparisons",
+            Category = "arithmetic",
+            Source = "not 5 > 3\nnot 2 > 3\nnot 5 == 5\nnot 5 == 4\nnot true == false\nnot true == 1",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "false\ntrue\nfalse\ntrue\ntrue\ntrue",
+            ExpectedRaw = "S[false, true, false, true, true, true]",
+            ExpectedEmittedCount = 6,
+            Probes =
+            [
+                // Every comparison operator is negated as a whole.
+                new SpecProbe("not 5 < 3", "ok raw=true n=1"),
+                new SpecProbe("not 3 <= 3", "ok raw=false n=1"),
+                new SpecProbe("not 2 >= 3", "ok raw=true n=1"),
+                new SpecProbe("not 5 != 4", "ok raw=false n=1"),
+                // Arithmetic and powers inside the comparison bind tighter still.
+                new SpecProbe("not 1 + 1 > 3", "ok raw=true n=1"),
+                new SpecProbe("not 2 ^ 3 > 7", "ok raw=false n=1"),
+                // `not` binds tighter than `and`/`xor`/`or`: `not A and B` is
+                // `(not A) and B` (`not (A and B)` would be true here), and
+                // `not A or B` is `(not A) or B` (`not (A or B)` would be false).
+                new SpecProbe("A = false\nB = false\nnot A and B", "ok raw=false n=1"),
+                new SpecProbe("A = true\nB = true\nnot A or B", "ok raw=true n=1"),
+                new SpecProbe("not 1 > 2 and 2 > 1", "ok raw=true n=1"),
+                // Nested negation.
+                new SpecProbe("not not 5 > 3", "ok raw=true n=1"),
+                // Explicit parentheses keep the other grouping: the negation itself is
+                // compared, which is a type error against a number.
+                new SpecProbe("(not true) == false", "ok raw=true n=1"),
+                new SpecProbe("(not true) > 3", "err type"),
+                new SpecProbe("(not 5) > 3", "err type"),
+            ],
+            IncludeInGeneratorPrompt = true,
+            Explanation = "Comparisons bind tighter than `not`, and `not` binds tighter than `and`, `xor`, and `or` (comparisons > not > and > xor > or), so `not x > 3` negates the whole comparison — it is `not (x > 3)` — and `not a and b` is `(not a) and b`. Parentheses override the rule: `(not x) > 3` compares the negation itself, a type error for a numeric `x`. A `not` can only begin an operand of a logical operator or a whole expression; `1 + not x` and `2 ^ not x` are parse errors, so parenthesize the negation there.",
         },
         new()
         {
@@ -169,8 +255,8 @@ public static class LanguageSpecCorpus
             Category = "arithmetic",
             Source = "X = 8999999999999999999999999999999999\nX div 3\nX mod 3\nX == 3 * (X div 3) + (X mod 3)\nY = 3e32\n(13 * Y - 1) div Y\n(12 * Y + 1) div Y\n-X div 3\nX div -3\n-X div -3\n1e34 div 7\n1e34 mod 7\n1e40 div 1e5",
             Outcome = SpecOutcome.Evaluates,
-            ExpectedDisplay = "2999999999999999999999999999999999\n2\n1\n12\n12\n-2999999999999999999999999999999999\n-2999999999999999999999999999999999\n2999999999999999999999999999999999\n1428571428571428571428571428571428\n4\n100000000000000000000000000000000000",
-            ExpectedRaw = "S[2999999999999999999999999999999999, 2, 1, 12, 12, -2999999999999999999999999999999999, -2999999999999999999999999999999999, 2999999999999999999999999999999999, 1428571428571428571428571428571428, 4, 100000000000000000000000000000000000]",
+            ExpectedDisplay = "2999999999999999999999999999999999\n2\ntrue\n12\n12\n-2999999999999999999999999999999999\n-2999999999999999999999999999999999\n2999999999999999999999999999999999\n1428571428571428571428571428571428\n4\n100000000000000000000000000000000000",
+            ExpectedRaw = "S[2999999999999999999999999999999999, 2, true, 12, 12, -2999999999999999999999999999999999, -2999999999999999999999999999999999, 2999999999999999999999999999999999, 1428571428571428571428571428571428, 4, 100000000000000000000000000000000000]",
             ExpectedEmittedCount = 11,
             Probes =
             [
@@ -216,7 +302,7 @@ public static class LanguageSpecCorpus
                 new SpecProbe("-2e40 div 3", "ok raw=-6666666666666666666666666666666666000000 n=1"),
                 // The quotient rounds toward zero and the product rounds monotonically,
                 // so (x div y) * y never exceeds x.
-                new SpecProbe("X = 1e40\n(X div 7) * 7 <= X", "ok raw=1 n=1"),
+                new SpecProbe("X = 1e40\n(X div 7) * 7 <= X", "ok raw=true n=1"),
                 // A representable sparse quotient beyond the boundary stays exact.
                 new SpecProbe("9999999999999999999999999999999999e10 div 3", "ok raw=33333333333333333333333333333333330000000000 n=1"),
                 // Beyond the finite range the quotient overflows to a signed infinity
@@ -282,7 +368,7 @@ public static class LanguageSpecCorpus
             Probes =
             [
                 new SpecProbe("count((()))", "ok raw=0 n=1"),
-                new SpecProbe("() == (())", "ok raw=1 n=1"),
+                new SpecProbe("() == (())", "ok raw=true n=1"),
             ],
             Explanation = "Redundant parentheses around `()` are one written grouping level that normalizes away: `(())` is the same value as `()`.",
         },
@@ -308,7 +394,7 @@ public static class LanguageSpecCorpus
             ExpectedEmittedCount = 1,
             Probes =
             [
-                new SpecProbe("(7) == 7", "ok raw=1 n=1"),
+                new SpecProbe("(7) == 7", "ok raw=true n=1"),
                 new SpecProbe("count((7))", "ok raw=1 n=1"),
             ],
             Explanation = "Parentheses around one value are transparent grouping, not a one-item sequence: `(7)` is the atom `7`.",
@@ -328,10 +414,10 @@ public static class LanguageSpecCorpus
         {
             Id = "empty-eq-family",
             Category = "empty-and-singleton",
-            Source = "() == ()      # 1\n() == (())    # 1\n() != (())    # 0\ncount(())     # 0\ncount((()))   # 0",
+            Source = "() == ()      # true\n() == (())    # true\n() != (())    # false\ncount(())     # 0\ncount((()))   # 0",
             Outcome = SpecOutcome.Evaluates,
-            ExpectedDisplay = "1\n1\n0\n0\n0",
-            ExpectedRaw = "S[1, 1, 0, 0, 0]",
+            ExpectedDisplay = "true\ntrue\nfalse\n0\n0",
+            ExpectedRaw = "S[true, true, false, 0, 0]",
             ExpectedEmittedCount = 5,
             Explanation = "Equality is structural on canonical values, so `()` and `(())` are the same value, and both count zero items.",
         },
@@ -347,7 +433,7 @@ public static class LanguageSpecCorpus
             Probes =
             [
                 new SpecProbe("A = ()\nA.count", "ok raw=0 n=1"),
-                new SpecProbe("A = ()\nA == ()", "ok raw=1 n=1"),
+                new SpecProbe("A = ()\nA == ()", "ok raw=true n=1"),
                 new SpecProbe("A = ()\nA:0", "err index"),
             ],
             Explanation = "`()` stores and reloads like any value: it displays as `()`, counts zero items, equals `()`, and has no item to index.",
@@ -377,6 +463,18 @@ public static class LanguageSpecCorpus
             ExpectedEmittedCount = 1,
             IncludeInGeneratorPrompt = true,
             Explanation = "Parentheses materialize an expression list as one sequence value occupying one output slot.",
+        },
+        new()
+        {
+            Id = "not-cannot-be-a-tighter-operand",
+            Category = "parser-layout",
+            Source = "2 ^ not false",
+            Outcome = SpecOutcome.ParseError,
+            ExpectedParseDiagnosticFragment = "Unexpected 'not'",
+            ExpectedDiagnosticCode = DiagnosticCode.UnexpectedToken,
+            IncludeInGeneratorPrompt = true,
+            Notes = "Source-level precedence diagnostic (see not-binds-below-comparisons); no elaborated Lean program exists. Recovery parses the negation as if parenthesized, so later diagnostics see the tree of `2 ^ (not false)`.",
+            Explanation = "`not` binds below the comparisons (comparisons > not > and > xor > or), so it can begin only a whole expression or an operand of `and`, `xor`, or `or`. Where a comparison, arithmetic, power, or prefix-minus operand is required — `2 ^ not x`, `1 + not x`, `a == not b`, `-not x` — the parser reports the `not` and asks for parentheses: `2 ^ (not x)`, `a == (not b)`.",
         },
         new()
         {
@@ -450,7 +548,7 @@ public static class LanguageSpecCorpus
             [
                 new SpecProbe("A = 1, 2, 3\ncount(A)", "ok raw=3 n=1"),
                 new SpecProbe("A = 1, 2, 3\nA.count", "ok raw=3 n=1"),
-                new SpecProbe("A = 1, 2, 3\nA == (1, 2, 3)", "ok raw=1 n=1"),
+                new SpecProbe("A = 1, 2, 3\nA == (1, 2, 3)", "ok raw=true n=1"),
                 new SpecProbe("A = 1, 2, 3\nA:0", "ok raw=1 n=1"),
             ],
             IncludeInGeneratorPrompt = true,
@@ -833,7 +931,7 @@ public static class LanguageSpecCorpus
             [
                 new SpecProbe("x, *rest = 1\nrest.count", "ok raw=0 n=1"),
                 new SpecProbe("x, *rest = 1\nrest*, x", "ok raw=1 n=1"),
-                new SpecProbe("x, *rest = 1\nrest == []", "ok raw=1 n=1"),
+                new SpecProbe("x, *rest = 1\nrest == []", "ok raw=true n=1"),
             ],
             Explanation = "A collecting binding that collects zero items binds the exact empty list `[]`, one visible output slot; spreading it contributes zero items.",
         },
@@ -960,8 +1058,8 @@ public static class LanguageSpecCorpus
             Probes =
             [
                 new SpecProbe("F(*x) = x\ncount(F(1, 2, 3))", "ok raw=3 n=1"),
-                new SpecProbe("F(*x) = x\nF(1, 2, 3) == [1, 2, 3]", "ok raw=1 n=1"),
-                new SpecProbe("F(*x) = x\nF(1, 2, 3) == (1, 2, 3)", "ok raw=0 n=1"),
+                new SpecProbe("F(*x) = x\nF(1, 2, 3) == [1, 2, 3]", "ok raw=true n=1"),
+                new SpecProbe("F(*x) = x\nF(1, 2, 3) == (1, 2, 3)", "ok raw=false n=1"),
                 new SpecProbe("F(*x) = x\nF()", "ok raw=L[] n=1"),
                 new SpecProbe("F(*x) = x\nF(7)", "ok raw=L[7] n=1"),
                 new SpecProbe("F(*x) = x\nF(F(1, 2))", "ok raw=L[L[1, 2]] n=1"),
@@ -1336,7 +1434,7 @@ public static class LanguageSpecCorpus
             ExpectedEmittedCount = 1,
             Probes =
             [
-                new SpecProbe("((1, 2)) == (1, 2)", "ok raw=1 n=1"),
+                new SpecProbe("((1, 2)) == (1, 2)", "ok raw=true n=1"),
                 new SpecProbe("count(((1, 2)))", "ok raw=2 n=1"),
             ],
             Explanation = "`((1, 2))` is not a one-item wrapper around a pair — redundant unary sequence structure normalizes to the pair itself. Orphan wrappers are not writable KatLang values.",
@@ -1354,7 +1452,7 @@ public static class LanguageSpecCorpus
             [
                 new SpecProbe("count(((1, 2), (3, 4)))", "ok raw=2 n=1"),
                 new SpecProbe("x = ((1, 2), (3, 4))\nx:0", "ok raw=S[1, 2] n=2"),
-                new SpecProbe("x = ((1, 2), (3, 4))\nx == ((1, 2), (3, 4))", "ok raw=1 n=1"),
+                new SpecProbe("x = ((1, 2), (3, 4))\nx == ((1, 2), (3, 4))", "ok raw=true n=1"),
             ],
             Explanation = "Non-unary nested structure is never flattened: a pair of pairs keeps both boundaries.",
         },
@@ -1677,13 +1775,13 @@ public static class LanguageSpecCorpus
                 // Inside the owner (the nested `Apply` is written inside Outer) the same access is valid.
                 new SpecProbe("Outer(n) = {\n    Inner = { public X = n }\n    Apply(f) = f.X\n    Apply(Inner)\n}\nOuter(5)", "ok raw=5 n=1"),
                 // Neither another activation nor another same-binder family supplies the owner.
-                new SpecProbe("Outer(n) = {\n Mid(n) = { public X = n\n 0 }\n P = if(0, Mid.X, 10)\n Read = Outer.P\n Read\n}\nOuter(5)", "err localOnlyProperty"),
-                new SpecProbe("Outer(m) = {\n Mid(n) = { public X = n\n 0 }\n P = if(0, Mid.X, 10)\n Read = Outer.P\n Read\n}\nOuter(5)", "err localOnlyProperty"),
+                new SpecProbe("Outer(n) = {\n Mid(n) = { public X = n\n 0 }\n P = if(false, Mid.X, 10)\n Read = Outer.P\n Read\n}\nOuter(5)", "err localOnlyProperty"),
+                new SpecProbe("Outer(m) = {\n Mid(n) = { public X = n\n 0 }\n P = if(false, Mid.X, 10)\n Read = Outer.P\n Read\n}\nOuter(5)", "err localOnlyProperty"),
                 new SpecProbe("Outer(n) = {\n Mid(n) = { public X = n\n Read = Outer.Mid.X\n Read }\n Mid(7)\n}\nOuter(5)", "ok raw=7 n=1"),
                 new SpecProbe("Outer(m) = {\n public Mid(n) = { public Lib = { public X = n }\n Read = { open Outer.Mid.Lib\n X }\n Read }\n Mid(7)\n}\nOuter(5)", "ok raw=7 n=1"),
-                new SpecProbe("H(f, n) = if(n, H({ public X = n }, 0), f.X)\nH({ public X = 0 }, 5)", "err localOnlyProperty"),
-                new SpecProbe("Outer(f, k) = {\n Lib(n) = { public X = n\n f.X }\n if(k, Outer(Lib, 0), Lib(7))\n}\nOuter({ public X = 0 }, 1)", "err localOnlyProperty"),
-                new SpecProbe("H(f, k) = {\n F(0) = 0\n F(n) = H({ public X = n }, 0)\n G(0) = 0\n G(n) = f.X\n if(k, F(k), G(7))\n}\nH({ public X = 0 }, 5)", "err localOnlyProperty"),
+                new SpecProbe("H(f, n) = if(n != 0, H({ public X = n }, 0), f.X)\nH({ public X = 0 }, 5)", "err localOnlyProperty"),
+                new SpecProbe("Outer(f, k) = {\n Lib(n) = { public X = n\n f.X }\n if(k != 0, Outer(Lib, 0), Lib(7))\n}\nOuter({ public X = 0 }, 1)", "err localOnlyProperty"),
+                new SpecProbe("H(f, k) = {\n F(0) = 0\n F(n) = H({ public X = n }, 0)\n G(0) = 0\n G(n) = f.X\n if(k != 0, F(k), G(7))\n}\nH({ public X = 0 }, 5)", "err localOnlyProperty"),
                 new SpecProbe("Outer(n) = {\n Q = n\n Mid(n) = { public X = Q + n\n X }\n Mid.X\n}\nOuter(5)", "err localOnlyProperty"),
             ],
             IncludeInGeneratorPrompt = true,
@@ -1908,8 +2006,8 @@ public static class LanguageSpecCorpus
                 new SpecProbe("I(a) = a\nI(take((1, 2, 3), 2))", "ok raw=L[1, 2] n=1"),
                 new SpecProbe("G(*a) = a\nG(take((1, 2, 3), 2))", "ok raw=L[L[1, 2]] n=1"),
                 new SpecProbe("G(*a) = a\nG(take((1, 2, 3), 2)*)", "ok raw=L[1, 2] n=1"),
-                new SpecProbe("take((1, 2, 3), 2) == (1, 2)", "ok raw=0 n=1"),
-                new SpecProbe("take((1, 2, 3), 2) == [1, 2]", "ok raw=1 n=1"),
+                new SpecProbe("take((1, 2, 3), 2) == (1, 2)", "ok raw=false n=1"),
+                new SpecProbe("take((1, 2, 3), 2) == [1, 2]", "ok raw=true n=1"),
                 new SpecProbe("count(take((1, 2, 3), 2))", "ok raw=2 n=1"),
             ],
             Explanation = "A collection builtin's exact list result re-enters receivers by the ordinary rules: capture and fixed parameters observe the same list value, a collecting binding collects it as one element (`[[1, 2]]`) unless the caller spreads it, count opens its one list boundary, and the list never equals a sequence value.",
@@ -1948,7 +2046,7 @@ public static class LanguageSpecCorpus
             Probes =
             [
                 new SpecProbe("count(take(((1, 2), (3, 4)), 1))", "ok raw=1 n=1"),
-                new SpecProbe("take(((1, 2), (3, 4)), 1) == (1, 2)", "ok raw=0 n=1"),
+                new SpecProbe("take(((1, 2), (3, 4)), 1) == (1, 2)", "ok raw=false n=1"),
                 new SpecProbe("take(((1, 2), (3, 4)), 1)*", "ok raw=S[1, 2] n=1"),
             ],
             IncludeInGeneratorPrompt = true,
@@ -1990,7 +2088,7 @@ public static class LanguageSpecCorpus
             ExpectedDisplay = "[2, 4, 6]",
             ExpectedRaw = "L[2, 4, 6]",
             ExpectedEmittedCount = 1,
-            Explanation = "`filter` keeps items whose predicate result is one nonzero atomic value, returning one exact list value.",
+            Explanation = "`filter` requires one Boolean predicate result and keeps items for which it is `true`, returning one exact list value.",
         },
         new()
         {
@@ -2007,15 +2105,15 @@ public static class LanguageSpecCorpus
         {
             Id = "filter-none-empty",
             Category = "collection-builtins",
-            Source = "No(a) = 0\nfilter((1, 2, 3), No)",
+            Source = "No(a) = false\nfilter((1, 2, 3), No)",
             Outcome = SpecOutcome.Evaluates,
             ExpectedDisplay = "[]",
             ExpectedRaw = "L[]",
             ExpectedEmittedCount = 1,
             Probes =
             [
-                new SpecProbe("No(a) = 0\nfilter((1, 2, 3), No) == ()", "ok raw=0 n=1"),
-                new SpecProbe("No(a) = 0\nfilter((1, 2, 3), No) == []", "ok raw=1 n=1"),
+                new SpecProbe("No(a) = false\nfilter((1, 2, 3), No) == ()", "ok raw=false n=1"),
+                new SpecProbe("No(a) = false\nfilter((1, 2, 3), No) == []", "ok raw=true n=1"),
             ],
             Explanation = "Zero survivors form the empty list `[]`, which is one visible value and never equals the empty sequence value `()`.",
         },
@@ -2067,7 +2165,7 @@ public static class LanguageSpecCorpus
                 new SpecProbe("Collect(*items) = items\n[()].map(Collect)", "ok raw=L[L[S[]]] n=1"),
                 new SpecProbe("Collect(*items) = items\nmap((7, 8), Collect)", "ok raw=L[L[7], L[8]] n=1"),
                 new SpecProbe("IsSingleSeven(*items) = items == [7]\n[7, 8].filter(IsSingleSeven)", "ok raw=L[7] n=1"),
-                new SpecProbe("R(*items, acc) = items == [10]\nreduce([10], R, 99)", "ok raw=1 n=1"),
+                new SpecProbe("R(*items, acc) = items == [10]\nreduce([10], R, 99)", "ok raw=true n=1"),
                 new SpecProbe("R(*items) = items\nreduce([10], R, 99)", "ok raw=L[10, 99] n=1"),
             ],
             IncludeInGeneratorPrompt = true,
@@ -2275,12 +2373,12 @@ public static class LanguageSpecCorpus
             IncludeInGeneratorPrompt = true,
             Probes =
             [
-                new SpecProbe("atoms(7) == [7]", "ok raw=1 n=1"),
-                new SpecProbe("atoms(7) == 7", "ok raw=0 n=1"),
-                new SpecProbe("atoms((1, 2)) == [1, 2]", "ok raw=1 n=1"),
-                new SpecProbe("atoms((1, 2)) == (1, 2)", "ok raw=0 n=1"),
-                new SpecProbe("atoms(()) == []", "ok raw=1 n=1"),
-                new SpecProbe("atoms(()) == ()", "ok raw=0 n=1"),
+                new SpecProbe("atoms(7) == [7]", "ok raw=true n=1"),
+                new SpecProbe("atoms(7) == 7", "ok raw=false n=1"),
+                new SpecProbe("atoms((1, 2)) == [1, 2]", "ok raw=true n=1"),
+                new SpecProbe("atoms((1, 2)) == (1, 2)", "ok raw=false n=1"),
+                new SpecProbe("atoms(()) == []", "ok raw=true n=1"),
+                new SpecProbe("atoms(()) == ()", "ok raw=false n=1"),
                 new SpecProbe("atoms('text')", "ok raw=L[] n=1"),
             ],
             Explanation = "`atoms` always returns one list, whatever the input kind or atom count: a lone number yields the singleton list `[7]` (never the bare `7`), a no-atom input yields `[]`, and the result is list-exact, never a sequence.",
@@ -2300,7 +2398,7 @@ public static class LanguageSpecCorpus
                 new SpecProbe("atoms(1, 2)", "err arity"),
                 new SpecProbe("atoms([1, 2]*)", "err arity"),
                 new SpecProbe("atoms(([1, 2]*))", "ok raw=L[1, 2] n=1"),
-                new SpecProbe("[1, [2, 3]].atoms == atoms([1, [2, 3]])", "ok raw=1 n=1"),
+                new SpecProbe("[1, [2, 3]].atoms == atoms([1, [2, 3]])", "ok raw=true n=1"),
             ],
             Explanation = "`atoms` traverses exact list boundaries just like sequence boundaries. The call boundary is unchanged: `atoms(value)` takes exactly one argument, an unspread list is one argument, and spreading a multi-element list into the call is an ordinary arity error.",
         },
@@ -2342,19 +2440,23 @@ public static class LanguageSpecCorpus
         {
             Id = "atoms-no-truthiness",
             Category = "collection-builtins",
-            Source = "if((1, [2]), 10, 20)",
-            Outcome = SpecOutcome.Evaluates,
-            ExpectedDisplay = "10",
-            ExpectedRaw = "10",
-            ExpectedEmittedCount = 1,
+            Source = "if(atoms((1, [2])), 10, 20)",
+            Outcome = SpecOutcome.EvalError,
+            ExpectedErrorCategory = "type",
             Probes =
             [
-                new SpecProbe("if([1], 10, 20)", "err arity"),
-                new SpecProbe("if([], 10, 20)", "err arity"),
-                new SpecProbe("if(atoms((1, 2)), 10, 20)", "err arity"),
-                new SpecProbe("if(([1], 0), 10, 20)", "ok raw=20 n=1"),
+                // Every non-Boolean condition is the same value-kind rejection: a list,
+                // a sequence value, and a number alike.
+                new SpecProbe("if([1], 10, 20)", "err type"),
+                new SpecProbe("if([], 10, 20)", "err type"),
+                new SpecProbe("if((1, [2]), 10, 20)", "err type"),
+                new SpecProbe("if(([1], 0), 10, 20)", "err type"),
+                new SpecProbe("if(1, 10, 20)", "err type"),
+                // A truth test over atoms is written as a comparison, which yields a Boolean.
+                new SpecProbe("if(atoms((1, [2])) == [1, 2], 10, 20)", "ok raw=10 n=1"),
+                new SpecProbe("if(atoms(()).count > 0, 10, 20)", "ok raw=20 n=1"),
             ],
-            Explanation = "`atoms` does not define truthiness: truth testing still flattens through sequence boundaries only, so list values contribute no atoms — a list condition (including an `atoms` result) stays invalid, and list elements inside a sequence condition are skipped.",
+            Explanation = "`atoms` does not define truthiness, and neither does any other value: an `if` condition must be a Boolean value, so a list (an `atoms` result included), a sequence value, or a number in the condition slot is a value-kind error rather than a truth test. A truth test over atoms is a comparison, which yields the Boolean the condition needs.",
         },
         new()
         {
@@ -2413,14 +2515,14 @@ public static class LanguageSpecCorpus
         {
             Id = "if-value-boundary",
             Category = "collection-builtins",
-            Source = "X = 1, 2, 3\nif(1, X, X)",
+            Source = "X = 1, 2, 3\nif(true, X, X)",
             Outcome = SpecOutcome.Evaluates,
             ExpectedDisplay = "(1, 2, 3)",
             ExpectedRaw = "S[1, 2, 3]",
             ExpectedEmittedCount = 1,
             Probes =
             [
-                new SpecProbe("X = 1, 2, 3\nif(1, X, X)*", "ok raw=S[1, 2, 3] n=3"),
+                new SpecProbe("X = 1, 2, 3\nif(true, X, X)*", "ok raw=S[1, 2, 3] n=3"),
             ],
             Explanation = "`if` is a value boundary like every builtin: the selected branch is one value, turned back into an item supply only by caller-site spread.",
         },
@@ -2489,13 +2591,13 @@ public static class LanguageSpecCorpus
             Category = "equality-and-indexing",
             Source = "A = 1, (2, 3)\nB = 1, (2, 3)\nA == B",
             Outcome = SpecOutcome.Evaluates,
-            ExpectedDisplay = "1",
-            ExpectedRaw = "1",
+            ExpectedDisplay = "true",
+            ExpectedRaw = "true",
             ExpectedEmittedCount = 1,
             Probes =
             [
-                new SpecProbe("A = 1, (2, 3)\nC = 1, (2, 4)\nA == C", "ok raw=0 n=1"),
-                new SpecProbe("1 == (1, 2)", "ok raw=0 n=1"),
+                new SpecProbe("A = 1, (2, 3)\nC = 1, (2, 4)\nA == C", "ok raw=false n=1"),
+                new SpecProbe("1 == (1, 2)", "ok raw=false n=1"),
             ],
             Explanation = "Equality is structural over the whole canonical value, including nested sequence boundaries.",
         },
@@ -2564,8 +2666,8 @@ public static class LanguageSpecCorpus
             Category = "equality-and-indexing",
             Source = "x = ((1, 2), (3, 4))\ny = x:0\ny == (1, 2)",
             Outcome = SpecOutcome.Evaluates,
-            ExpectedDisplay = "1",
-            ExpectedRaw = "1",
+            ExpectedDisplay = "true",
+            ExpectedRaw = "true",
             ExpectedEmittedCount = 1,
             Explanation = "A captured projection re-materializes as the canonical selected value and compares structurally equal to the written literal.",
         },
@@ -2931,7 +3033,7 @@ public static class LanguageSpecCorpus
                 // fourth. Each returned the OTHER operand before this rule — the
                 // source was `10`, and these were `10`, `7`, and `text`.
                 new SpecProbe("() > 10", "err type"),
-                new SpecProbe("() and 7", "err type"),
+                new SpecProbe("() and true", "err type"),
                 new SpecProbe("() + 'text'", "err type"),
                 // Left-empty and right-empty across the operator families.
                 new SpecProbe("() + 1", "err type"),
@@ -2949,31 +3051,32 @@ public static class LanguageSpecCorpus
                 new SpecProbe("1 < ()", "err type"),
                 new SpecProbe("() >= 1", "err type"),
                 new SpecProbe("1 >= ()", "err type"),
-                new SpecProbe("() or 0", "err type"),
-                new SpecProbe("0 or ()", "err type"),
-                new SpecProbe("() xor 1", "err type"),
+                new SpecProbe("() or false", "err type"),
+                new SpecProbe("false or ()", "err type"),
+                new SpecProbe("() xor true", "err type"),
                 new SpecProbe("() + ()", "err type"),
                 // Redundant parentheses normalize to `()` and change nothing.
                 new SpecProbe("(()) + 1", "err type"),
                 // A NAMED empty operand takes the same path as the literal.
                 new SpecProbe("A = ()\nA / 2", "err type"),
-                // Unary scalar operators use their existing numeric conversion
-                // (arity category), with no empty-sequence bypass either.
+                // Unary minus uses its existing numeric conversion (arity category), and
+                // unary `not` its Boolean-operand rule (type category), with no
+                // empty-sequence bypass either.
                 new SpecProbe("-()", "err arity"),
-                new SpecProbe("not ()", "err arity"),
+                new SpecProbe("not ()", "err type"),
                 new SpecProbe("-(1, 2)", "err arity"),
-                new SpecProbe("not (1, 2)", "err arity"),
+                new SpecProbe("not (1, 2)", "err type"),
                 new SpecProbe("-[1, 2]", "err arity"),
-                new SpecProbe("not [1, 2]", "err arity"),
+                new SpecProbe("not [1, 2]", "err type"),
                 new SpecProbe("-7", "ok raw=-7 n=1"),
-                new SpecProbe("not 0", "ok raw=1 n=1"),
-                new SpecProbe("not 7", "ok raw=0 n=1"),
+                new SpecProbe("not false", "ok raw=true n=1"),
+                new SpecProbe("not true", "ok raw=false n=1"),
                 // Positive controls: equality stays total over empty operands, and
-                // ordinary comparisons still produce the numeric boolean.
-                new SpecProbe("() == ()", "ok raw=1 n=1"),
-                new SpecProbe("() != (1, 2)", "ok raw=1 n=1"),
-                new SpecProbe("10 > 1", "ok raw=1 n=1"),
-                new SpecProbe("1 > 10", "ok raw=0 n=1"),
+                // ordinary comparisons still produce a Boolean value.
+                new SpecProbe("() == ()", "ok raw=true n=1"),
+                new SpecProbe("() != (1, 2)", "ok raw=true n=1"),
+                new SpecProbe("10 > 1", "ok raw=true n=1"),
+                new SpecProbe("1 > 10", "ok raw=false n=1"),
                 // Positive control: empty SUPPLY neutrality is a different rule and
                 // is unchanged — the spread of `()` still contributes no items.
                 new SpecProbe("Empty = ()\nEmpty*, 7", "ok raw=7 n=1"),
@@ -3043,8 +3146,8 @@ public static class LanguageSpecCorpus
             Category = "strings",
             Source = "'ab' == 'ab'",
             Outcome = SpecOutcome.Evaluates,
-            ExpectedDisplay = "1",
-            ExpectedRaw = "1",
+            ExpectedDisplay = "true",
+            ExpectedRaw = "true",
             ExpectedEmittedCount = 1,
             Probes =
             [
@@ -3090,14 +3193,14 @@ public static class LanguageSpecCorpus
             Category = "lists",
             Source = "[7] == 7\n[[1, 2]] == [1, 2]\n[[]] == []",
             Outcome = SpecOutcome.Evaluates,
-            ExpectedDisplay = "0\n0\n0",
-            ExpectedRaw = "S[0, 0, 0]",
+            ExpectedDisplay = "false\nfalse\nfalse",
+            ExpectedRaw = "S[false, false, false]",
             ExpectedEmittedCount = 3,
             Probes =
             [
-                new SpecProbe("[1, 2] == [1, 2]", "ok raw=1 n=1"),
-                new SpecProbe("[[1], [2, 3]] == [[1], [2, 3]]", "ok raw=1 n=1"),
-                new SpecProbe("[1, [2]] == [1, 2]", "ok raw=0 n=1"),
+                new SpecProbe("[1, 2] == [1, 2]", "ok raw=true n=1"),
+                new SpecProbe("[[1], [2, 3]] == [[1], [2, 3]]", "ok raw=true n=1"),
+                new SpecProbe("[1, [2]] == [1, 2]", "ok raw=false n=1"),
             ],
             IncludeInGeneratorPrompt = true,
             Explanation = "Lists preserve exact cardinality and nesting: `[7]` is not `7`, `[[1, 2]]` is not `[1, 2]`, `[[]]` is not `[]`; equality is structural and recursive.",
@@ -3108,8 +3211,8 @@ public static class LanguageSpecCorpus
             Category = "lists",
             Source = "[] == ()\n[1, 2] == (1, 2)",
             Outcome = SpecOutcome.Evaluates,
-            ExpectedDisplay = "0\n0",
-            ExpectedRaw = "S[0, 0]",
+            ExpectedDisplay = "false\nfalse",
+            ExpectedRaw = "S[false, false]",
             ExpectedEmittedCount = 2,
             IncludeInGeneratorPrompt = true,
             Explanation = "Lists and sequence values are different value kinds: equal elements never make a list equal a sequence, and `[]` is not `()`.",
@@ -3127,7 +3230,7 @@ public static class LanguageSpecCorpus
             [
                 new SpecProbe("[1, 2, 3]:2", "ok raw=3 n=1"),
                 new SpecProbe("[7]:0", "ok raw=7 n=1"),
-                new SpecProbe("((1, 2, 3):1) == ([1, 2, 3]:1)", "ok raw=1 n=1"),
+                new SpecProbe("((1, 2, 3):1) == ([1, 2, 3]:1)", "ok raw=true n=1"),
             ],
             IncludeInGeneratorPrompt = true,
             Explanation = "`:` selects one immediate element from an exact list by zero-based position, exactly like sequence selection.",
@@ -3143,8 +3246,8 @@ public static class LanguageSpecCorpus
             ExpectedEmittedCount = 2,
             Probes =
             [
-                new SpecProbe("[[1, 2]]:0 == [1, 2]", "ok raw=1 n=1"),
-                new SpecProbe("[[1, 2]]:0 == (1, 2)", "ok raw=0 n=1"),
+                new SpecProbe("[[1, 2]]:0 == [1, 2]", "ok raw=true n=1"),
+                new SpecProbe("[[1, 2]]:0 == (1, 2)", "ok raw=false n=1"),
                 new SpecProbe("[(1, 2), (3, 4)]:0", "ok raw=S[1, 2] n=2"),
             ],
             IncludeInGeneratorPrompt = true,
@@ -3189,8 +3292,8 @@ public static class LanguageSpecCorpus
             Category = "lists",
             Source = "([1, 2]) == [1, 2]",
             Outcome = SpecOutcome.Evaluates,
-            ExpectedDisplay = "1",
-            ExpectedRaw = "1",
+            ExpectedDisplay = "true",
+            ExpectedRaw = "true",
             ExpectedEmittedCount = 1,
             Probes =
             [
@@ -3260,7 +3363,7 @@ public static class LanguageSpecCorpus
             Probes =
             [
                 new SpecProbe("S = ((1, 2), (3, 4))\nz = (S:0, 5)\nz", "ok raw=S[S[1, 2], 5] n=1"),
-                new SpecProbe("S = ((1, 2), (3, 4))\nF((x, y)) = (x == (1, 2)) + y\nF((S:0, 5))", "ok raw=6 n=1"),
+                new SpecProbe("S = ((1, 2), (3, 4))\nF((x, y)) = if(x == (1, 2), 1, 0) + y\nF((S:0, 5))", "ok raw=6 n=1"),
                 new SpecProbe("S = ((1, 2), (3, 4))\nF((x, y, z)) = x + y + z\nF((S:0*, 5))", "ok raw=8 n=1"),
             ],
             Explanation = "A non-spread expression occupying one written slot contributes exactly ONE persistent value: `S:0` is a two-item projection, but as a list element it is the pair `(1, 2)` — matching capture, call arguments, and every other written-slot receiver. Only an explicit spread `(S:0)*` opens the projected value into the surrounding slots.",
@@ -3343,8 +3446,8 @@ public static class LanguageSpecCorpus
             ExpectedEmittedCount = 2,
             Probes =
             [
-                new SpecProbe("x, *rest = [1]\nrest == []", "ok raw=1 n=1"),
-                new SpecProbe("x, *rest = [1]\nrest == ()", "ok raw=0 n=1"),
+                new SpecProbe("x, *rest = [1]\nrest == []", "ok raw=true n=1"),
+                new SpecProbe("x, *rest = [1]\nrest == ()", "ok raw=false n=1"),
                 new SpecProbe("x, *rest = [1, 2]\nrest", "ok raw=L[2] n=1"),
                 new SpecProbe("x, *rest = [[1, 2, 3]]\nx", "ok raw=L[1, 2, 3] n=1"),
                 new SpecProbe("x, *rest = 1, [2, 3], 4\nrest", "ok raw=L[L[2, 3], 4] n=1"),
@@ -3352,7 +3455,7 @@ public static class LanguageSpecCorpus
                 new SpecProbe("Rows = [[1, 2], [3, 4]]\nfirst, *rest = Rows\nrest", "ok raw=L[L[3, 4]] n=1"),
                 new SpecProbe("Rows = [[1, 2], [3, 4]]\nfirst, *rest = Rows\nrest.count", "ok raw=1 n=1"),
                 new SpecProbe("skip([1, 2, 3], 1)", "ok raw=L[2, 3] n=1"),
-                new SpecProbe("x, *rest = [1, 2, 3]\nrest == skip([1, 2, 3], 1)", "ok raw=1 n=1"),
+                new SpecProbe("x, *rest = [1, 2, 3]\nrest == skip([1, 2, 3], 1)", "ok raw=true n=1"),
             ],
             IncludeInGeneratorPrompt = true,
             Explanation = "A collecting binding COLLECTS the item slots assigned to it into one list: `rest` from `x, *rest = [1, 2, 3]` is `[2, 3]`, the empty segment is `[]`, a singleton segment is `[item]` (a one-row segment of `[[1, 2], [3, 4]]` stays `[[3, 4]]`, count 1), and the result agrees with collection builtins — `rest == skip([1, 2, 3], 1)`.",
@@ -3392,7 +3495,7 @@ public static class LanguageSpecCorpus
                 new SpecProbe("count(([], []))", "ok raw=2 n=1"),
                 new SpecProbe("count([1, [2], 3])", "ok raw=3 n=1"),
                 new SpecProbe("take([1, 2, 3], 1)", "ok raw=L[1] n=1"),
-                new SpecProbe("contains([1, 2, 3], 2)", "ok raw=1 n=1"),
+                new SpecProbe("contains([1, 2, 3], 2)", "ok raw=true n=1"),
             ],
             IncludeInGeneratorPrompt = true,
             Explanation = "A list is ONE collection argument: `count([1, 2, 3])` and `A.count` count three items through the post-binding one-level collection view. The view is never recursive — a grouped pair of lists counts its two opaque list items (`count(([], []))` is 2), and a nested list stays one item. Spread supplies ordinary argument slots, so `count([1, 2, 3]*)` and the bare two-argument `count([], [])` are arity errors; re-group a spread (`sum(([1, 2, 3]*))`) to pass its items as one collection.",
@@ -3433,13 +3536,13 @@ public static class LanguageSpecCorpus
             [
                 // The classic binary-floating-point failure is exact in decimal
                 // arithmetic.
-                new SpecProbe("0.1 + 0.2 == 0.3", "ok raw=1 n=1"),
+                new SpecProbe("0.1 + 0.2 == 0.3", "ok raw=true n=1"),
                 // Ordinary arithmetic keeps its IEEE quantum; literals keep the
                 // quantum they were written with.
                 new SpecProbe("2.50 * 4", "ok raw=10.00 n=1"),
                 new SpecProbe("1.50", "ok raw=1.50 n=1"),
             ],
-            Explanation = "Numbers are IEEE 754 Decimal128, so decimal fractions are exact (`0.1 + 0.2 == 0.3` is `1`) and ordinary arithmetic exposes the Decimal128-selected result quantum without canonicalizing it: `0.5 + 0.5` displays `1.0`, not `1`. Quantum affects display, not structural numeric equality; formatting never re-rounds the computed value.",
+            Explanation = "Numbers are IEEE 754 Decimal128, so decimal fractions are exact (`0.1 + 0.2 == 0.3` is `true`) and ordinary arithmetic exposes the Decimal128-selected result quantum without canonicalizing it: `0.5 + 0.5` displays `1.0`, not `1`. Quantum affects display, not structural numeric equality; formatting never re-rounds the computed value.",
         },
         new()
         {
@@ -3464,8 +3567,8 @@ public static class LanguageSpecCorpus
             Category = "arithmetic",
             Source = "N = (-2) ^ 0.5\nN == (-3) ^ 0.5\nN < 1\nN <= 1\nN > 1\nN >= 1",
             Outcome = SpecOutcome.Evaluates,
-            ExpectedDisplay = "1\n0\n0\n0\n0",
-            ExpectedRaw = "S[1, 0, 0, 0, 0]",
+            ExpectedDisplay = "true\nfalse\nfalse\nfalse\nfalse",
+            ExpectedRaw = "S[true, false, false, false, false]",
             ExpectedEmittedCount = 5,
             LeanExclusionReason = "NaN is a Decimal128 runtime value with no counterpart in the Lean Int numeric model; the equality-vs-ordering split (structural `==` treats NaN as one value, ordering comparisons follow IEEE and are false) is Decimal128-specific by construction.",
             Probes =
@@ -3473,9 +3576,9 @@ public static class LanguageSpecCorpus
                 // Structural side: two INDEPENDENTLY computed NaN atoms are one
                 // value (a same-property spelling like `N == N` would compare
                 // the cached result against itself and never reach the atom
-                // rule), so != is 0 and the collection consumers agree with ==.
-                new SpecProbe("N = (-2) ^ 0.5\nN != (-3) ^ 0.5", "ok raw=0 n=1"),
-                new SpecProbe("N = (-2) ^ 0.5\ncontains((1, N), (-3) ^ 0.5)", "ok raw=1 n=1"),
+                // rule), so != is false and the collection consumers agree with ==.
+                new SpecProbe("N = (-2) ^ 0.5\nN != (-3) ^ 0.5", "ok raw=false n=1"),
+                new SpecProbe("N = (-2) ^ 0.5\ncontains((1, N), (-3) ^ 0.5)", "ok raw=true n=1"),
                 new SpecProbe("N = (-2) ^ 0.5\ndistinct((N, (-3) ^ 0.5))", "ok raw=L[NaN] n=1"),
                 // `order`/`orderDesc` use Decimal128's TOTAL order (NaN sorts
                 // before every other value ascending), a third, deliberate
@@ -3485,12 +3588,12 @@ public static class LanguageSpecCorpus
                 // `min` canonically represents the NaN-propagating min/max
                 // family; Decimal128NumericsTests pins `max` independently.
                 new SpecProbe("N = (-2) ^ 0.5\nmin((3, N, 1))", "ok raw=NaN n=1"),
-                // Truth testing: zero is false, every other atom — NaN
-                // included — is true.
-                new SpecProbe("N = (-2) ^ 0.5\nif(N, 1, 2)", "ok raw=1 n=1"),
+                // NaN is a number like any other: numbers have no truth value, so an `if`
+                // over it is the value-kind rejection, never a truth test.
+                new SpecProbe("N = (-2) ^ 0.5\nif(N, 1, 2)", "err type"),
             ],
             Notes = "`(-2) ^ 0.5` produces NaN through the operator surface alone (a fractional power of a negative base), keeping this case independent of the separately excluded Math-native surface. The equality, `contains`, and `distinct` rows deliberately compare SEPARATELY computed NaN values so each consumer reaches the structural atom rule instead of succeeding through the zero-arg property cache's reference identity.",
-            Explanation = "NaN splits by operation: structural `==`/`!=` (also `contains`/`distinct`) treat NaN as ONE value, so two independently computed NaN results compare equal; the ordering operators follow IEEE, so every `<`/`>`/`<=`/`>=` involving NaN is `0`; and `order`/`orderDesc` sort by the total order, where NaN comes before every other value ascending. `min`/`max` propagate NaN, and NaN is truthy like every non-zero number.",
+            Explanation = "NaN splits by operation: structural `==`/`!=` (also `contains`/`distinct`) treat NaN as ONE value, so two independently computed NaN results compare equal; the ordering operators follow IEEE, so every `<`/`>`/`<=`/`>=` involving NaN is `false`; and `order`/`orderDesc` sort by the total order, where NaN comes before every other value ascending. `min`/`max` propagate NaN. Like every number, NaN is rejected in a Boolean predicate position.",
         },
         new()
         {
@@ -3509,7 +3612,7 @@ public static class LanguageSpecCorpus
                 // Infinity - Infinity is NaN, never an error.
                 new SpecProbe("9e6144 * 10 - 9e6144 * 10", "ok raw=NaN n=1"),
                 // An infinity participates in IEEE ordering as the extreme.
-                new SpecProbe("9e6144 * 10 > 9e6144", "ok raw=1 n=1"),
+                new SpecProbe("9e6144 * 10 > 9e6144", "ok raw=true n=1"),
             ],
             Explanation = "Arithmetic past Decimal128's finite range (about ±1e6145) produces `Infinity`/`-Infinity` instead of erroring or clamping to a finite boundary, and the infinities then behave by IEEE rules: `Infinity - Infinity` is `NaN`, and an infinity compares beyond every finite value.",
         },
@@ -3527,13 +3630,13 @@ public static class LanguageSpecCorpus
             [
                 // One structural value: the sign never separates the zeros for
                 // == or the hashed consumers, and IEEE ordering agrees.
-                new SpecProbe("-0 == 0", "ok raw=1 n=1"),
+                new SpecProbe("-0 == 0", "ok raw=true n=1"),
                 new SpecProbe("distinct((-0, 0))", "ok raw=L[-0] n=1"),
                 // Zero-VALUED divisors keep the Lean-modeled error: signed zero
                 // does NOT adopt the IEEE 1/-0 = -Infinity convention.
                 new SpecProbe("1 / -0", "err div0"),
             ],
-            Notes = "The canonical case keeps the representative signed-zero boundary: construction/display, structural equality (including the hashed `distinct` consumer), and the shared zero-divisor rule. Decimal128NumericsTests retains the denser relational, arithmetic-sign, and truthiness matrix.",
+            Notes = "The canonical case keeps the representative signed-zero boundary: construction/display, structural equality (including the hashed `distinct` consumer), and the shared zero-divisor rule. Decimal128NumericsTests retains the denser relational, arithmetic-sign, and Boolean-predicate rejection matrix.",
             Explanation = "`-0` (unary minus on zero — literals are unsigned) is an observable Decimal128 value: it displays with its sign while comparing structurally equal to `0`, and it remains a zero-valued divisor (`1 / -0` is the ordinary division-by-zero error, not `-Infinity`).",
         },
         new()
@@ -3600,7 +3703,7 @@ public static class LanguageSpecCorpus
             [
                 new SpecProbe("[1, -2].map(abs)", "ok raw=L[1, 2] n=1"),
                 new SpecProbe("[1, -2].map(Math.Abs)", "ok raw=L[1, 2] n=1"),
-                new SpecProbe("G(radians) = [0, 1].map(sin)\nG(0.5) == [sin(0), sin(1)]", "ok raw=1 n=1"),
+                new SpecProbe("G(radians) = [0, 1].map(sin)\nG(0.5) == [sin(0), sin(1)]", "ok raw=true n=1"),
                 new SpecProbe("abs(-2)", "ok raw=2 n=1"),
                 new SpecProbe("F(x, y) = reduce([2, 3], pow, 1)\nF(100, 200)", "ok raw=9 n=1"),
             ],
@@ -4151,7 +4254,7 @@ public static class LanguageSpecCorpus
                 new SpecProbe("Apply(if, x) = if(x)\nInc(x) = x + 1\nApply(Inc, 7)", "ok raw=8 n=1"),
                 new SpecProbe("F(count) = count + 1\nF(4)", "ok raw=5 n=1"),
                 // Nothing nearer: the same spellings resolve the builtin.
-                new SpecProbe("if(1, 10, 20)", "ok raw=10 n=1"),
+                new SpecProbe("if(true, 10, 20)", "ok raw=10 n=1"),
                 new SpecProbe("count((1, 2, 3))", "ok raw=3 n=1"),
             ],
             IncludeInGeneratorPrompt = true,
@@ -4161,7 +4264,7 @@ public static class LanguageSpecCorpus
         {
             Id = "no-arity-based-callable-selection",
             Category = "name-resolution",
-            Source = "if(x) = x + 1\n\nif(1, 2, 3)",
+            Source = "if(x) = x + 1\n\nif(true, 2, 3)",
             Outcome = SpecOutcome.EvalError,
             ExpectedErrorCategory = "arity",
             Probes =
@@ -4173,7 +4276,7 @@ public static class LanguageSpecCorpus
                 // The same for another builtin.
                 new SpecProbe("count(x) = x + 1\ncount(1, 2)", "err arity"),
                 // And with nothing shadowing it, the builtin's own arity applies.
-                new SpecProbe("if(1, 2)", "err arity"),
+                new SpecProbe("if(true, 2)", "err arity"),
             ],
             IncludeInGeneratorPrompt = true,
             Explanation = "KatLang never overloads by argument count. Lexical resolution selects exactly one callable, the argument supply is assembled, and only then is that callable's signature validated — so a user `if(x)` shadows builtin `if` COMPLETELY and a three-argument call fails against `if(x)` instead of falling back to the builtin.",
@@ -4182,7 +4285,7 @@ public static class LanguageSpecCorpus
         {
             Id = "if-composition-forms-agree",
             Category = "conditionals",
-            Source = "Cond = 1\nBranches = (10, 20)\nApply3(f, a, b, c) = f(a, b, c)\n\nif(Cond, 10, 20)\nCond.if(10, 20)\nif(Cond, Branches*)\nCond.if(Branches*)\nApply3(if, Cond, 10, 20)",
+            Source = "Cond = true\nBranches = (10, 20)\nApply3(f, a, b, c) = f(a, b, c)\n\nif(Cond, 10, 20)\nCond.if(10, 20)\nif(Cond, Branches*)\nCond.if(Branches*)\nApply3(if, Cond, 10, 20)",
             Outcome = SpecOutcome.Evaluates,
             ExpectedDisplay = "10\n10\n10\n10\n10",
             ExpectedRaw = "S[10, 10, 10, 10, 10]",
@@ -4194,7 +4297,7 @@ public static class LanguageSpecCorpus
         {
             Id = "if-arity-is-uniform-across-spellings",
             Category = "conditionals",
-            Source = "if(1, 2)",
+            Source = "if(true, 2)",
             Outcome = SpecOutcome.EvalError,
             ExpectedErrorCategory = "arity",
             Probes =
@@ -4203,16 +4306,16 @@ public static class LanguageSpecCorpus
                 // at the same boundary, against the same resolved signature.
                 new SpecProbe("if()", "err arity"),
                 new SpecProbe("if(1)", "err arity"),
-                new SpecProbe("if(1, 2, 3, 4)", "err arity"),
+                new SpecProbe("if(true, 2, 3, 4)", "err arity"),
                 new SpecProbe("if((1, 2)*)", "err arity"),
                 new SpecProbe("if((1, 2, 3, 4)*)", "err arity"),
-                new SpecProbe("1.if(2)", "err arity"),
-                new SpecProbe("1.if(2, 3, 4)", "err arity"),
+                new SpecProbe("true.if(2)", "err arity"),
+                new SpecProbe("true.if(2, 3, 4)", "err arity"),
                 new SpecProbe("Apply2(f, a, b) = f(a, b)\nApply2(if, 1, 2)", "err arity"),
                 // ...and every spelling that assembles exactly three succeeds.
-                new SpecProbe("if((1, 10, 20)*)", "ok raw=10 n=1"),
-                new SpecProbe("if(1, (10, 20)*)", "ok raw=10 n=1"),
-                new SpecProbe("1.if((10, 20)*)", "ok raw=10 n=1"),
+                new SpecProbe("if((true, 10, 20)*)", "ok raw=10 n=1"),
+                new SpecProbe("if(true, (10, 20)*)", "ok raw=10 n=1"),
+                new SpecProbe("true.if((10, 20)*)", "ok raw=10 n=1"),
             ],
             Explanation = "`if(condition, whenTrue, whenFalse)` is one fixed signature checked once, after receiver injection and spread expansion have produced the argument supply. A wrong count is therefore an ordinary evaluation-time arity mismatch, identical whichever spelling built the supply — never a rule attached to how the call was written.",
         },
@@ -4220,7 +4323,7 @@ public static class LanguageSpecCorpus
         {
             Id = "if-laziness-follows-the-resolved-identity",
             Category = "conditionals",
-            Source = "Boom = 1 / 0\n\nif(1, 10, Boom)\n0.if(Boom, 20)",
+            Source = "Boom = 1 / 0\n\nif(true, 10, Boom)\nfalse.if(Boom, 20)",
             Outcome = SpecOutcome.Evaluates,
             ExpectedDisplay = "10\n20",
             ExpectedRaw = "S[10, 20]",
@@ -4229,16 +4332,16 @@ public static class LanguageSpecCorpus
             [
                 // The wrapper can retain a failed value's algorithm binding; builtin if
                 // leaves that binding unused (success does not prove no eager attempt).
-                new SpecProbe("Boom = 1 / 0\nApply3(f, a, b, c) = f(a, b, c)\nApply3(if, 1, 10, Boom)", "ok raw=10 n=1"),
+                new SpecProbe("Boom = 1 / 0\nApply3(f, a, b, c) = f(a, b, c)\nApply3(if, true, 10, Boom)", "ok raw=10 n=1"),
                 // The builtin still demands the selected binding.
-                new SpecProbe("Boom = 1 / 0\nApply3(f, a, b, c) = f(a, b, c)\nApply3(if, 1, Boom, 20)", "err div0"),
+                new SpecProbe("Boom = 1 / 0\nApply3(f, a, b, c) = f(a, b, c)\nApply3(if, true, Boom, 20)", "err div0"),
                 // Shadow the builtin and the laziness goes with it: an ordinary user call
                 // binds every argument eagerly.
-                new SpecProbe("if(a, b, c) = b + c\nBoom = 1 / 0\nif(1, 10, Boom)", "err div0"),
+                new SpecProbe("if(a, b, c) = b + c\nBoom = 1 / 0\nif(true, 10, Boom)", "err div0"),
                 // Spread is NOT laziness: building the value evaluates its rows before any
                 // argument slot exists, exactly as it does for a user-defined callable.
-                new SpecProbe("Risky = (10, 1 / 0)\nif(1, Risky*)", "err div0"),
-                new SpecProbe("Risky = (10, 1 / 0)\nMyIf(a, b, c) = if(a, b, c)\nMyIf(1, Risky*)", "err div0"),
+                new SpecProbe("Risky = (10, 1 / 0)\nif(true, Risky*)", "err div0"),
+                new SpecProbe("Risky = (10, 1 / 0)\nMyIf(a, b, c) = if(a, b, c)\nMyIf(true, Risky*)", "err div0"),
             ],
             IncludeInGeneratorPrompt = true,
             Explanation = "The one intrinsic thing about `if` is its invocation: evaluate the condition, then only the selected branch. That belongs to the resolved builtin — shadow the name and an ordinary eager user call takes over — and it is not a promise about arguments the CALLER already evaluated, so building a value before spreading it follows the ordinary expression-to-value-to-supply rule.",
@@ -4247,35 +4350,35 @@ public static class LanguageSpecCorpus
         {
             Id = "lazy-slot-demand-is-the-ordinary-zero-argument-demand",
             Category = "conditionals",
-            Source = "Inc(x) = x + 1\nif(1, Inc, 0)",
+            Source = "Inc(x) = x + 1\nif(true, Inc, 0)",
             Outcome = SpecOutcome.EvalError,
             ExpectedErrorCategory = "arity",
             Probes =
             [
                 // The false branch and the condition are the same demand.
-                new SpecProbe("Inc(x) = x + 1\nif(0, 0, Inc)", "err arity"),
+                new SpecProbe("Inc(x) = x + 1\nif(false, 0, Inc)", "err arity"),
                 new SpecProbe("Inc(x) = x + 1\nif(Inc, 1, 0)", "err arity"),
                 // An unselected slot is never demanded: laziness is untouched.
-                new SpecProbe("Inc(x) = x + 1\nif(0, Inc, 7)", "ok raw=7 n=1"),
-                new SpecProbe("Inc(x) = x + 1\nif(1, 7, Inc)", "ok raw=7 n=1"),
+                new SpecProbe("Inc(x) = x + 1\nif(false, Inc, 7)", "ok raw=7 n=1"),
+                new SpecProbe("Inc(x) = x + 1\nif(true, 7, Inc)", "ok raw=7 n=1"),
                 // A zero-parameter algorithm is an ordinary value, even one that captures an enclosing binding.
-                new SpecProbe("A = 7\nif(1, A, 0)", "ok raw=7 n=1"),
-                new SpecProbe("Outer(v) = { Inner = v + 1\n if(1, Inner, 0) }\nOuter(7)", "ok raw=8 n=1"),
+                new SpecProbe("A = 7\nif(true, A, 0)", "ok raw=7 n=1"),
+                new SpecProbe("Outer(v) = { Inner = v + 1\n if(true, Inner, 0) }\nOuter(7)", "ok raw=8 n=1"),
                 // The decision is the signature's, not the body's: K never reads x.
-                new SpecProbe("K(x) = 5\nif(1, K, 0)", "err arity"),
+                new SpecProbe("K(x) = 5\nif(true, K, 0)", "err arity"),
                 // An explicit call is a value; an explicit zero-argument call is the ordinary call arity error.
-                new SpecProbe("Inc(x) = x + 1\nif(1, Inc(4), 0)", "ok raw=5 n=1"),
-                new SpecProbe("Inc(x) = x + 1\nif(1, Inc(), 0)", "err arity"),
+                new SpecProbe("Inc(x) = x + 1\nif(true, Inc(4), 0)", "ok raw=5 n=1"),
+                new SpecProbe("Inc(x) = x + 1\nif(true, Inc(), 0)", "err arity"),
                 // Inferred and collecting parameters count exactly like explicit ones.
-                new SpecProbe("A = q + 1\nif(1, A, 0)", "err arity"),
-                new SpecProbe("Collect(*xs) = xs\nif(1, Collect, 0)", "err arity"),
-                new SpecProbe("Collect(*xs) = xs\nif(1, Collect(), 0)", "ok raw=L[] n=1"),
+                new SpecProbe("A = q + 1\nif(true, A, 0)", "err arity"),
+                new SpecProbe("Collect(*xs) = xs\nif(true, Collect, 0)", "err arity"),
+                new SpecProbe("Collect(*xs) = xs\nif(true, Collect(), 0)", "ok raw=L[] n=1"),
                 // A clause family cannot be accessed as a value at all.
-                new SpecProbe("F(0) = 10\nF(x) = x + 1\nif(1, F, 0)", "err branch"),
+                new SpecProbe("F(0) = 10\nF(x) = x + 1\nif(true, F, 0)", "err branch"),
                 // A parameter bound only on the callable channel is the same demand.
-                new SpecProbe("Inc(x) = x + 1\nApply(g) = if(1, g, 0)\nApply(Inc)", "err arity"),
+                new SpecProbe("Inc(x) = x + 1\nApply(g) = if(true, g, 0)\nApply(Inc)", "err arity"),
                 // A zero-parameter branch that fails still reports its own failure.
-                new SpecProbe("Boom = 1 / 0\nif(1, Boom, 0)", "err div0"),
+                new SpecProbe("Boom = 1 / 0\nif(true, Boom, 0)", "err div0"),
             ],
             IncludeInGeneratorPrompt = true,
             Explanation = "The selected branch is demanded exactly like a bare property reference: `Inc` still needs its `x`, so the ordinary zero-argument arity error is reported at the reference and `Inc`'s body is never entered — the same report writing `Inc` alone produces. Only the selected slot is demanded, so a parameterized algorithm in the unselected branch is harmless, and an explicit call (`Inc(4)`) is an ordinary value.",
@@ -4356,7 +4459,7 @@ public static class LanguageSpecCorpus
         {
             Id = "if-spread-builds-values-before-branch-selection",
             Category = "conditionals",
-            Source = "Risky = (10, 1 / 0)\nif(1, Risky*)",
+            Source = "Risky = (10, 1 / 0)\nif(true, Risky*)",
             Outcome = SpecOutcome.EvalError,
             ExpectedErrorCategory = "div0",
             Explanation = "Spread evaluates its operand before supplying argument slots, so the failing row is evaluated before builtin if can select a branch.",

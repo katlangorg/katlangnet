@@ -19,7 +19,7 @@ namespace KatLang;
 /// (<see cref="RunOptions.EvaluationCancellationToken"/> or the token passed to the
 /// evaluator entry point). It must return a non-null <see cref="Result"/>; construct
 /// values with the public constructors (<see cref="Result.Atom"/>,
-/// <see cref="Result.Str"/>, <see cref="Result.SequenceValue"/>,
+/// <see cref="Result.Str"/>, <see cref="Result.Bool"/>, <see cref="Result.SequenceValue"/>,
 /// <see cref="Result.ListValue"/>). A successful return value is normalized into
 /// KatLang's canonical <see cref="Result"/> representation (<see cref="Result.Normalize"/> —
 /// redundant unary sequence structure collapses; strings remain unchanged, and an exact

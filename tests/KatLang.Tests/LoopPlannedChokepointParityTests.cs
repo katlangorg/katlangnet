@@ -117,32 +117,32 @@ public class LoopPlannedChokepointParityTests
     // argument channel, and across iterations alike — and the four-unit string is
     // materialized ONCE per run wherever `W` is reached at all (the third column is the
     // run total, not a per-iteration amount).
-    [InlineData("if(1, 1, 2)", 1, 0, 1)]
-    [InlineData("if(0, 1, 2)", 2, 0, 1)]
-    [InlineData("if(C, 1, 2)", 1, 0, 1)]
-    [InlineData("if(C + 0, 1, 2)", 1, 0, 2)]
-    [InlineData("if(C(), 1, 2)", 1, 0, 2)]
-    [InlineData("if(D, 1, 2)", 1, 0, 2)]
-    [InlineData("if(D(), 1, 2)", 1, 0, 3)]
-    [InlineData("if(A, 1, 2)", 1, 4, 2)]
-    [InlineData("if(A(), 1, 2)", 1, 4, 3)]
-    [InlineData("if(1, A, A())", 1, 4, 2)]
-    [InlineData("if(0, A, A())", 1, 4, 3)]
-    [InlineData("if(0, A(), A)", 1, 4, 2)]
-    [InlineData("if(1, if(0, A(), A), B())", 1, 4, 3)]
-    [InlineData("(W == W) + if(1, A, 0) + (W == W)", 3, 4, 2)]
-    [InlineData("(W == W) + if(1, A(), 0) + (W == W)", 3, 4, 3)]
-    [InlineData("A + A() + A", 3, 4, 2)]
-    [InlineData("A() + A + A()", 3, 4, 2)]
-    [InlineData("A + if(1, B, 0)", 3, 4, 3)]
-    [InlineData("B() + B()", 4, 4, 3)]
-    [InlineData("B + B", 4, 4, 3)]
-    [InlineData("if(0, 1 / 0, C)", 1, 0, 1)]
-    [InlineData("if(1, C, B() / 0)", 1, 0, 1)]
+    [InlineData("if(true, 1, 2)", 1, 0, 1)]
+    [InlineData("if(false, 1, 2)", 2, 0, 1)]
+    [InlineData("if(C == 1, 1, 2)", 1, 0, 2)]
+    [InlineData("if(C + 0 == 1, 1, 2)", 1, 0, 2)]
+    [InlineData("if(C() == 1, 1, 2)", 1, 0, 2)]
+    [InlineData("if(D == 1, 1, 2)", 1, 0, 3)]
+    [InlineData("if(D() == 1, 1, 2)", 1, 0, 3)]
+    [InlineData("if(A == 1, 1, 2)", 1, 4, 4)]
+    [InlineData("if(A() == 1, 1, 2)", 1, 4, 4)]
+    [InlineData("if(true, A, A())", 1, 4, 3)]
+    [InlineData("if(false, A, A())", 1, 4, 4)]
+    [InlineData("if(false, A(), A)", 1, 4, 3)]
+    [InlineData("if(true, if(false, A(), A), B())", 1, 4, 4)]
+    [InlineData("if(W == W, 1, 0) + if(true, A, 0) + if(W == W, 1, 0)", 3, 4, 3)]
+    [InlineData("if(W == W, 1, 0) + if(true, A(), 0) + if(W == W, 1, 0)", 3, 4, 4)]
+    [InlineData("A + A() + A", 3, 4, 3)]
+    [InlineData("A() + A + A()", 3, 4, 3)]
+    [InlineData("A + if(true, B, 0)", 3, 4, 4)]
+    [InlineData("B() + B()", 4, 4, 4)]
+    [InlineData("B + B", 4, 4, 4)]
+    [InlineData("if(false, 1 / 0, C)", 1, 0, 1)]
+    [InlineData("if(true, C, B() / 0)", 1, 0, 1)]
     public async Task PlannedArgumentAndMemoMatrix_MatchesAllBoundariesAndAsyncTwin(
         string expression, int increment, int materializedChars, int peakDepth)
     {
-        var source = "Step = {\n    W = 'aaaa'\n    C = 1\n    D = C\n    A = W == W\n    B = A + A()\n    n + "
+        var source = "Step = {\n    W = 'aaaa'\n    C = 1\n    D = C\n    A = if(W == W, 1, 0)\n    B = A + A()\n    n + "
             + expression + "\n}\nStep.repeat(3, 0)";
         var generic = Observe(source, optimized: false);
         var optimized = Observe(source, optimized: true);
@@ -248,16 +248,18 @@ public class LoopPlannedChokepointParityTests
     }
 
     [Theory]
-    [InlineData("literal condition", "Step = n + if(1, 1, 2)\nStep.repeat(5, 0)", 5)]
-    [InlineData("parameter condition", "Step = n + if(n, 1, 2)\nStep.repeat(5, 0)", 6)]
-    [InlineData("string branches", "Step = n + (if(1, 'a', 'bb') == 'a')\nStep.repeat(5, 0)", 5)]
-    public void PlannedIf_EveryArgumentShape_ChargesOneLevelLikeGeneric(string shape, string source, decimal expected)
+    [InlineData("literal condition", "Step = n + if(true, 1, 2)\nStep.repeat(5, 0)", 5, 1)]
+    [InlineData("parameter condition", "Step = n + if(n != 0, 1, 2)\nStep.repeat(5, 0)", 6, 1)]
+    [InlineData("string branches", "Step = n + if(if(true, 'a', 'bb') == 'a', 1, 0)\nStep.repeat(5, 0)", 5, 2)]
+    public void PlannedIf_EveryArgumentShape_ChargesOneLevelLikeGeneric(string shape, string source, decimal expected, int expectedPeakDepth)
     {
         // Literals, parameters, and strings are wrapped in value thunks by the generic
-        // argument resolution and evaluated under the level like any other argument.
+        // argument resolution and evaluated under the level like any other argument; the
+        // string row nests the comparison inside a second `if` (a Boolean is not a number
+        // to add), which is one more argument level on both strategies.
         Assert.False(string.IsNullOrEmpty(shape));
         var (_, peakDepth) = AssertSameSuccessAndPeakDepth(source, expected);
-        Assert.Equal(1, peakDepth);
+        Assert.Equal(expectedPeakDepth, peakDepth);
     }
 
     // ── K3-02: bare zero-parameter temp reads ─────────────────────────────────
@@ -297,7 +299,7 @@ public class LoopPlannedChokepointParityTests
         // bare read after the first from ONE run-wide entry — across the two reads of an
         // iteration and across iterations alike — and the four-unit string is
         // materialized once per run; the planned strategy reads the same run entry.
-        const string source = "Step = {\n    W = if(1, 'aaaa', 'bb')\n    n + (W == W)\n}\nStep.repeat(40, 0)";
+        const string source = "Step = {\n    W = if(true, 'aaaa', 'bb')\n    n + if(W == W, 1, 0)\n}\nStep.repeat(40, 0)";
 
         var generic = Observe(source, optimized: false);
         var optimized = Observe(source, optimized: true);
@@ -318,7 +320,7 @@ public class LoopPlannedChokepointParityTests
         // from the first (same iteration environment), so the four-unit string is
         // materialized once per iteration; the planned per-iteration memo does the same.
         const string source =
-            "G(k) = {\n    Step = {\n        W = if(k, 'aaaa', 'bb')\n        n + (W == W)\n    }\n    Step.repeat(40, 0)\n}\nG(1)";
+            "G(k) = {\n    Step = {\n        W = if(k > 0, 'aaaa', 'bb')\n        n + if(W == W, 1, 0)\n    }\n    Step.repeat(40, 0)\n}\nG(1)";
 
         var generic = Observe(source, optimized: false);
         var optimized = Observe(source, optimized: true);
@@ -341,7 +343,7 @@ public class LoopPlannedChokepointParityTests
         // exported `W` has ONE run-wide entry. The direct branch materializes 4 units on
         // every iteration (160 over 40 iterations); the very first bare read materializes
         // another 4 once, and every other bare read of the run hits — 164 units.
-        const string source = "Step = {\n    W = if(1, 'aaaa', 'bb')\n    n + (if(1, W, 0) == W) + (W == W)\n}\nStep.repeat(40, 0)";
+        const string source = "Step = {\n    W = if(true, 'aaaa', 'bb')\n    n + if(if(true, W, 0) == W, 1, 0) + if(W == W, 1, 0)\n}\nStep.repeat(40, 0)";
 
         var generic = Observe(source, optimized: false);
         var optimized = Observe(source, optimized: true);
@@ -350,10 +352,10 @@ public class LoopPlannedChokepointParityTests
         Assert.Equal(80m, Atom(optimized.Result));
         Assert.Equal(164, generic.Budget.MaterializedStringChars);
         Assert.Equal(164, optimized.Budget.MaterializedStringChars);
-        Assert.Equal(2, generic.Budget.PeakDepth);
-        Assert.Equal(2, optimized.Budget.PeakDepth);
+        Assert.Equal(3, generic.Budget.PeakDepth);
+        Assert.Equal(3, optimized.Budget.PeakDepth);
         var plan = AssertWhollyPlanned(optimized.Loop);
-        Assert.Contains("If(Const(1), TempSlot(W), Const(0))", OutputSummary(plan), StringComparison.Ordinal);
+        Assert.Contains("If(Const(true), TempSlot(W), Const(0))", OutputSummary(plan), StringComparison.Ordinal);
     }
 
     [Fact]
@@ -382,8 +384,9 @@ public class LoopPlannedChokepointParityTests
         // Two calls per iteration materialize the ten-unit string twice — 4000 units over
         // 200 iterations on BOTH strategies (the planned loop used to memoize the first
         // call's value and stop at 2000). The call is a dynamic invocation: one depth
-        // level beneath the loop, the same as the repeat's own argument level.
-        const string source = "Step = {\n    T = 'xxxxxxxxxx'\n    n + (T() == T())\n}\nStep.repeat(200, 0)";
+        // level beneath the loop, and the `if` that turns the comparison into a number
+        // adds the argument level it charges on both strategies.
+        const string source = "Step = {\n    T = 'xxxxxxxxxx'\n    n + if(T() == T(), 1, 0)\n}\nStep.repeat(200, 0)";
 
         var generic = Observe(source, optimized: false);
         var optimized = Observe(source, optimized: true);
@@ -392,10 +395,10 @@ public class LoopPlannedChokepointParityTests
         Assert.Equal(200m, Atom(optimized.Result));
         Assert.Equal(4000, generic.Budget.MaterializedStringChars);
         Assert.Equal(4000, optimized.Budget.MaterializedStringChars);
-        Assert.Equal(1, generic.Budget.PeakDepth);
-        Assert.Equal(1, optimized.Budget.PeakDepth);
+        Assert.Equal(2, generic.Budget.PeakDepth);
+        Assert.Equal(2, optimized.Budget.PeakDepth);
         var plan = AssertWhollyPlanned(optimized.Loop);
-        Assert.Equal("Add(StateSlot(n), Equal(TempCall(T), TempCall(T)))", OutputSummary(plan));
+        Assert.Equal("Add(StateSlot(n), If(Equal(TempCall(T), TempCall(T)), Const(1), Const(0)))", OutputSummary(plan));
         await AssertThreeWayParity(source, new EvaluationLimits { MaxMaterializedStringChars = 3999 }, whollyPlanned: true);
         await AssertThreeWayParity(source, new EvaluationLimits { MaxMaterializedStringChars = 4000 }, whollyPlanned: true);
     }
@@ -405,22 +408,30 @@ public class LoopPlannedChokepointParityTests
     {
         // `A` and `Next` read `x`, which the step never binds itself, so both become
         // parameterized properties and every reference is the forwarding call `A(x)` /
-        // `Next(x)` — a user call on the generic side. Two `A(x)` calls per iteration
-        // therefore materialize the selected branch twice: 36 iterations with x > 3 (two
-        // four-unit strings) and 4 with x <= 3 (two two-unit strings) — 304 units.
-        const string source = "Step = {\n    A = if(x > 3, 'aaaa', 'bb')\n    Next = x + 1\n    (A == A) + Next - 1\n}\nStep.repeat(40, 0)";
+        // `Next(x)` — a user call on the generic side. The two `A(x)` calls sit in the
+        // while continuation (a comparison is a Boolean, so it feeds the flag rather than
+        // the numeric state) and materialize the selected branch twice per iteration: the
+        // step runs 41 times (x = 0..40; the last, stopping iteration is not committed),
+        // 37 with x > 3 (two four-unit strings) and 4 with x <= 3 (two two-unit strings)
+        // — 312 units.
+        const string source = "Step = {\n    A = if(x > 3, 'aaaa', 'bb')\n    Next = x + 1\n    Next, (A == A) and Next <= 40\n}\nStep.while(0)";
 
         var generic = Observe(source, optimized: false);
         var optimized = Observe(source, optimized: true);
 
         Assert.Equal(40m, Atom(generic.Result));
         Assert.Equal(40m, Atom(optimized.Result));
-        Assert.Equal(304, generic.Budget.MaterializedStringChars);
-        Assert.Equal(304, optimized.Budget.MaterializedStringChars);
+        Assert.Equal(312, generic.Budget.MaterializedStringChars);
+        Assert.Equal(312, optimized.Budget.MaterializedStringChars);
         Assert.Equal(2, generic.Budget.PeakDepth);
         Assert.Equal(2, optimized.Budget.PeakDepth);
         var plan = AssertWhollyPlanned(optimized.Loop);
-        Assert.Equal("Subtract(Add(Equal(TempCall(A), TempCall(A)), TempCall(Next)), Const(1))", OutputSummary(plan));
+        Assert.Equal("TempCall(Next)", OutputSummary(plan));
+        var continuation = Assert.Single(plan.Expressions, e => e.Role == "continuation");
+        Assert.True(continuation.Planned, continuation.FallbackReason);
+        Assert.Equal(
+            "And(Equal(TempCall(A), TempCall(A)), LessOrEqual(TempCall(Next), Const(40)))",
+            continuation.PlanSummary);
     }
 
     [Fact]
@@ -439,7 +450,7 @@ public class LoopPlannedChokepointParityTests
     [InlineData(true)]
     public async Task MixedPlannedAndFallbackRows_ShareThePropertyMemo(bool fallbackFirst)
     {
-        var rows = fallbackFirst ? "m + count((T, T))\n    n + (T == T)" : "n + (T == T)\n    m + count((T, T))";
+        var rows = fallbackFirst ? "m + count((T, T))\n    n + if(T == T, 1, 0)" : "n + if(T == T, 1, 0)\n    m + count((T, T))";
         var source = "Step(n, m, p) = {\n    T = 'xxxx'\n    " + rows + "\n    p + 1\n}\nStep.repeat(3, 0, 0, 0)";
 
         var generic = Observe(source, optimized: false);
@@ -463,14 +474,14 @@ public class LoopPlannedChokepointParityTests
     [Fact]
     public void SharedUnselectedBranch_PlanningIsBoundedByDistinctNodes()
     {
-        var parsed = SourceProvenance.ParseValid("Step = n + if(1, 1, 0)\nStep.repeat(1, 0)").Root;
+        var parsed = SourceProvenance.ParseValid("Step = n + if(true, 1, 0)\nStep.repeat(1, 0)").Root;
         var property = Assert.Single(parsed.Properties);
         var step = Assert.IsType<Algorithm.User>(property.Value);
         Expr shared = new Expr.Num(0);
         for (var depth = 0; depth < 18; depth++)
             shared = new Expr.Binary(BinaryOp.Add, shared, shared);
 
-        var body = new Expr.Call(new Expr.Resolve("if"), [new Expr.Num(1), new Expr.Param("n"), shared]);
+        var body = new Expr.Call(new Expr.Resolve("if"), [new Expr.BoolLiteral(true), new Expr.Param("n"), shared]);
         var ast = new Expr.AlgorithmExpr(parsed with { Properties = [property with { Value = step with { Output = [body] } }] });
         var generic = Evaluator.RunCountedObserved(ast, enableOptimizations: false);
         Assert.Equal(0m, Atom(generic.Result));
@@ -489,13 +500,14 @@ public class LoopPlannedChokepointParityTests
     [Fact]
     public void SharedCallNode_StillExecutesFreshAtEveryOccurrence()
     {
-        var parsed = SourceProvenance.ParseValid("Step = {\n    T = 'aaaa'\n    n + (T() == T())\n}\nStep.repeat(3, 0)").Root;
+        var parsed = SourceProvenance.ParseValid("Step = {\n    T = 'aaaa'\n    n + if(T() == T(), 1, 0)\n}\nStep.repeat(3, 0)").Root;
         var property = Assert.Single(parsed.Properties);
         var step = Assert.IsType<Algorithm.User>(property.Value);
         var output = Assert.IsType<Expr.Binary>(Assert.Single(step.Output));
-        var equality = Assert.IsType<Expr.Binary>(output.Right);
+        var conditional = Assert.IsType<Expr.Call>(output.Right);
+        var equality = Assert.IsType<Expr.Binary>(conditional.Args[0]);
         var sharedEquality = equality with { Right = equality.Left };
-        var sharedOutput = output with { Right = sharedEquality };
+        var sharedOutput = output with { Right = conditional with { Args = [sharedEquality, conditional.Args[1], conditional.Args[2]] } };
         var ast = new Expr.AlgorithmExpr(parsed with { Properties = [property with { Value = step with { Output = [sharedOutput] } }] });
 
         foreach (var optimized in new[] { false, true })
@@ -575,7 +587,7 @@ public class LoopPlannedChokepointParityTests
     [Fact]
     public async Task IncreasingStringTempSizes_ChargeAllFreshMaterialization()
     {
-        const string source = "Step(n) = {\n    T = if(n < 2, 'a', 'aaaa')\n    n + (T() == T())\n}\nStep.repeat(4, 0)";
+        const string source = "Step(n) = {\n    T = if(n < 2, 'a', 'aaaa')\n    n + if(T() == T(), 1, 0)\n}\nStep.repeat(4, 0)";
         var generic = Observe(source, optimized: false);
         var optimized = Observe(source, optimized: true);
         Assert.Equal(4m, Atom(generic.Result));
@@ -589,7 +601,7 @@ public class LoopPlannedChokepointParityTests
     [Fact]
     public async Task LaterTempFailure_PreservesFullErrorAndCounters()
     {
-        const string source = "Step(n) = {\n    W = 'aaaa'\n    T = if(n < 2, W, 1 / 0)\n    n + (T == T())\n}\nStep.repeat(4, 0)";
+        const string source = "Step(n) = {\n    W = 'aaaa'\n    T = if(n < 2, W, 1 / 0)\n    n + if(T == T(), 1, 0)\n}\nStep.repeat(4, 0)";
         var generic = Observe(source, optimized: false);
         Assert.IsType<EvalError.DivByZero>(Innermost(generic.Result.Error));
         await AssertThreeWayParity(source, new EvaluationLimits(), whollyPlanned: true);
@@ -601,7 +613,7 @@ public class LoopPlannedChokepointParityTests
     public async Task NestedLoops_PreserveTempMemoAndAsyncAccounting(string nested)
     {
         var inner = nested.Contains("while", StringComparison.Ordinal) ? "n + 1, n < 3" : "n + 1";
-        var source = "Inner = " + inner + "\nStep(n) = {\n    T = 7\n    " + nested + " + if(T, 1, 0)\n}\nStep.repeat(3, 0)";
+        var source = "Inner = " + inner + "\nStep(n) = {\n    T = 7\n    " + nested + " + if(T == 7, 1, 0)\n}\nStep.repeat(3, 0)";
         var optimized = Observe(source, optimized: true);
         Assert.False(optimized.Result.IsError);
         Assert.True(optimized.Loop.OptimizedLoopHits > 1);
@@ -616,7 +628,7 @@ public class LoopPlannedChokepointParityTests
         var parsed = await Parser.ParseAsync("open 'https://example.test/step'\nStep.repeat(3, 0)", new RunOptions
         {
             AllowedHosts = ["example.test"],
-            DownloadCode = (_, _) => ValueTask.FromResult("public Step = {\n    T = 'aaaa'\n    n + (T() == T())\n}"),
+            DownloadCode = (_, _) => ValueTask.FromResult("public Step = {\n    T = 'aaaa'\n    n + if(T() == T(), 1, 0)\n}"),
         });
         Assert.False(parsed.HasErrors, string.Join("\n", parsed.Diagnostics));
         var ast = new Expr.AlgorithmExpr(parsed.Root);
@@ -650,7 +662,7 @@ public class LoopPlannedChokepointParityTests
         var declarations = string.Join("\n", Enumerable.Range(0, 2000).Select(index => $"T{index} = 1"));
         long Measure(int iterations)
         {
-            var ast = Program("Step = {\n" + declarations + "\nn + (T0 == T1())\n}\nStep.repeat(" + iterations + ", 0)");
+            var ast = Program("Step = {\n" + declarations + "\nn + if(T0 == T1(), 1, 0)\n}\nStep.repeat(" + iterations + ", 0)");
             var diagnostics = new LoopOptimizationDiagnostics();
             var before = GC.GetAllocatedBytesForCurrentThread();
             var observed = Evaluator.RunCountedObserved(ast, enableOptimizations: true, loopDiagnostics: diagnostics);
@@ -678,7 +690,7 @@ public class LoopPlannedChokepointParityTests
         // each call; see TempCall_LocalOnlyTempReadInsideTheCall_MissesLikeAFreshCallEnvironment.)
         // `n` walks 0, 1, 3, 7, ... (2^20 - 1).
         const string source =
-            "Step = {\n    T = 'xxxxxxxxxx'\n    A = x + (T == T)\n    (T == T) + A + A - 2 + (T == T) - 1\n}\nStep.repeat(20, 0)";
+            "Step = {\n    T = 'xxxxxxxxxx'\n    A = x + if(T == T, 1, 0)\n    if(T == T, 1, 0) + A + A - 2 + if(T == T, 1, 0) - 1\n}\nStep.repeat(20, 0)";
 
         var generic = Observe(source, optimized: false);
         var optimized = Observe(source, optimized: true);
@@ -687,8 +699,8 @@ public class LoopPlannedChokepointParityTests
         Assert.Equal(1_048_575m, Atom(optimized.Result));
         Assert.Equal(10, generic.Budget.MaterializedStringChars);
         Assert.Equal(10, optimized.Budget.MaterializedStringChars);
-        Assert.Equal(2, generic.Budget.PeakDepth);
-        Assert.Equal(2, optimized.Budget.PeakDepth);
+        Assert.Equal(3, generic.Budget.PeakDepth);
+        Assert.Equal(3, optimized.Budget.PeakDepth);
         var plan = AssertWhollyPlanned(optimized.Loop);
         Assert.Contains("TempCall(A)", OutputSummary(plan), StringComparison.Ordinal);
         Assert.Contains("TempSlot(T)", OutputSummary(plan), StringComparison.Ordinal);
@@ -707,7 +719,7 @@ public class LoopPlannedChokepointParityTests
         // with its per-iteration memo suspended for the call's duration. `x` walks 0, 1,
         // 3, 7, ... (2^20 - 1).
         const string source =
-            "G(k) = {\n    Step = {\n        T = if(k < 0, 'y', 'xxxxxxxxxx')\n        A = x + (T == T)\n        (T == T) + A + A - 2 + (T == T) - 1\n    }\n    Step.repeat(20, 0)\n}\nG(1)";
+            "G(k) = {\n    Step = {\n        T = if(k < 0, 'y', 'xxxxxxxxxx')\n        A = x + if(T == T, 1, 0)\n        if(T == T, 1, 0) + A + A - 2 + if(T == T, 1, 0) - 1\n    }\n    Step.repeat(20, 0)\n}\nG(1)";
 
         var generic = Observe(source, optimized: false);
         var optimized = Observe(source, optimized: true);

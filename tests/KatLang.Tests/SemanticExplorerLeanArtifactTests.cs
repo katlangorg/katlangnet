@@ -50,7 +50,7 @@ public class SemanticExplorerLeanArtifactTests
                 case ExplorerValue.Wrap(var inner):
                     InspectExplorerValue(inner, path + ".Inner");
                     break;
-                case ExplorerValue.Empty or ExplorerValue.Num:
+                case ExplorerValue.Empty or ExplorerValue.Num or ExplorerValue.Bool:
                     break;
                 default:
                     throw new InvalidOperationException(

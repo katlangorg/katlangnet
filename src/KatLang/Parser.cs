@@ -589,6 +589,8 @@ public sealed class Parser
         TokenKind.KeywordNot => "'not'",
         TokenKind.KeywordPublic => "'public'",
         TokenKind.KeywordOpen => "'open'",
+        TokenKind.KeywordTrue => "'true'",
+        TokenKind.KeywordFalse => "'false'",
         TokenKind.LParen => "'('",
         TokenKind.RParen => "')'",
         TokenKind.LBrace => "'{'",
@@ -799,6 +801,10 @@ public sealed class Parser
 
     [System.Runtime.CompilerServices.MethodImpl(LeafFrame)]
     private static Expr.StringLiteral StringLiteralAt(Token token) => new(token.StringValue ?? "") { Span = token.Span };
+
+    /// <summary>The Boolean literal node of a <c>true</c> / <c>false</c> keyword token; the kind carries the value.</summary>
+    [System.Runtime.CompilerServices.MethodImpl(LeafFrame)]
+    private static Expr.BoolLiteral BoolLiteralAt(Token token) => new(token.Kind == TokenKind.KeywordTrue) { Span = token.Span };
 
     [System.Runtime.CompilerServices.MethodImpl(LeafFrame)]
     private static Expr.Resolve ResolveAt(Token token) => new(token.StringValue!) { Span = token.Span };
@@ -1279,6 +1285,14 @@ public sealed class Parser
             else if (Current.Kind == TokenKind.KeywordPublic && LookaheadIsPublicClauseDefinition())
             {
                 ParseClauseDefinition(isPublic: true);
+            }
+            // The reserved Boolean literals in declaration-head position — `true = 1`,
+            // `false(x) = x`, `public true = 1` — are keywords, never names, so they
+            // can be neither declared nor shadowed. Report that intent precisely at
+            // the literal instead of the stray-'=' cascade, then skip the whole head.
+            else if (IsReservedLiteralDeclarationHead())
+            {
+                ReportReservedLiteralDeclaration();
             }
             // Check for property definition: Identifier '='
             else if (Current.Kind == TokenKind.Identifier && LookaheadIsEquals())
@@ -2405,6 +2419,49 @@ public sealed class Parser
         => LookaheadIsParenEqualsAfterName(_pos);
 
     /// <summary>
+    /// Whether the current row begins with a reserved Boolean literal written as a
+    /// declaration head — <c>true =</c>, <c>false(pattern) =</c>, optionally after
+    /// <c>public</c> — under the ordinary declaration-head line rule
+    /// (<see cref="IsHeadToken"/>). The literals are keywords, never names, so such a
+    /// head can never be a declaration; recognizing it lets the parser name the
+    /// mistake instead of reporting a stray <c>'='</c>.
+    /// </summary>
+    private bool IsReservedLiteralDeclarationHead()
+    {
+        var index = _pos;
+        if (_tokens[index].Kind == TokenKind.KeywordPublic)
+        {
+            index = NextSignificantIndex(index + 1);
+            if (!IsHeadToken(index, Current.Line))
+                return false;
+        }
+
+        return _tokens[index].Kind is TokenKind.KeywordTrue or TokenKind.KeywordFalse
+            && (LookaheadIsEqualsFrom(index) || LookaheadIsParenEqualsAfterName(index));
+    }
+
+    /// <summary>
+    /// Reports a reserved Boolean literal used as a declaration name AT the literal, then
+    /// skips the malformed head (the literal, any clause pattern list, and its '=') so the
+    /// body after '=' parses as an ordinary output row; the diagnosed head owns the
+    /// boundary before that row.
+    /// </summary>
+    private void ReportReservedLiteralDeclaration()
+    {
+        if (Current.Kind == TokenKind.KeywordPublic)
+            Advance(); // the modifier is not the mistake; the literal is
+        var spelling = Current.Kind == TokenKind.KeywordTrue ? "true" : "false";
+        ReportError(
+            DiagnosticCode.UnexpectedToken,
+            $"'{spelling}' is the reserved Boolean literal, not a name: it cannot be declared as a property, clause, or parameter, and it cannot be shadowed.");
+        while (Current.Kind is not (TokenKind.Equals or TokenKind.EndOfFile))
+            Advance();
+        if (Current.Kind == TokenKind.Equals)
+            Advance();
+        OwnSameLineItem(Current);
+    }
+
+    /// <summary>
     /// Checks if 'public' is followed by Identifier '(' ... ')' '=' (the name
     /// on the modifier's physical line, then the ordinary clause-head rule).
     /// Used to detect public clause definitions.
@@ -2537,7 +2594,7 @@ public sealed class Parser
                 case Expr.Capture(var body):
                     PushInReverse(pending, body);
                     break;
-                case Expr.Resolve or Expr.Param or Expr.Num or Expr.StringLiteral
+                case Expr.Resolve or Expr.Param or Expr.Num or Expr.StringLiteral or Expr.BoolLiteral
                     or Expr.EmptySequence or Expr.NativeCall:
                     break;
                 // Closed hierarchies do not make switch statements exhaustive. Keep
@@ -2688,6 +2745,8 @@ public sealed class Parser
         or TokenKind.Number
         or TokenKind.Minus      // negative literal
         or TokenKind.StringLiteral
+        or TokenKind.KeywordTrue   // Boolean literal pattern
+        or TokenKind.KeywordFalse
         or TokenKind.Identifier
         or TokenKind.LParen => true, // nested sequence-value pattern
         _ => false,
@@ -2873,6 +2932,15 @@ public sealed class Parser
                 {
                     var token = Advance();
                     return new Pattern.LitString(token.StringValue ?? "");
+                }
+
+            case TokenKind.KeywordTrue:
+            case TokenKind.KeywordFalse:
+                {
+                    // The reserved Boolean literals are literal patterns, never binders:
+                    // `F(true) = …` matches the Boolean value `true` only.
+                    var token = Advance();
+                    return new Pattern.LitBool(token.Kind == TokenKind.KeywordTrue);
                 }
 
             case TokenKind.Identifier:
@@ -3125,6 +3193,7 @@ public sealed class Parser
     {
         Expr.Num => "num",
         Expr.StringLiteral => "stringLiteral",
+        Expr.BoolLiteral => "boolLiteral",
         Expr.Param => "param",
         Expr.Unary => "unary",
         Expr.Binary => "binary",
@@ -3329,6 +3398,8 @@ public sealed class Parser
     {
         TokenKind.Number
         or TokenKind.StringLiteral
+        or TokenKind.KeywordTrue
+        or TokenKind.KeywordFalse
         or TokenKind.Identifier
         or TokenKind.Minus
         or TokenKind.KeywordNot
@@ -3348,12 +3419,17 @@ public sealed class Parser
     // Star disambiguation needs the narrower set of tokens that can actually
     // begin a star's right operand. `open` is included above because the
     // algorithm parser recognizes it as a declaration starter, but ParsePrimary
-    // always rejects it in expression position. This is the ONE classifier for
-    // "a star could take this as its operand": it decides spread-marker versus
-    // multiplication in IsPostfixSpreadMarkerStar, and it decides whether the
-    // misplaced-prefix-star recovery in ParsePrimary has an operand to resume on.
+    // always rejects it in expression position. `not` is included above because
+    // it starts an expression, but only at its own tier BELOW the comparisons
+    // (NotPrecedence), so it can never begin a multiplication's right operand:
+    // a star followed by `not` — on the same line or the next — is the spread
+    // marker, exactly like a star followed by a declaration head. This is the
+    // ONE classifier for "a star could take this as its operand": it decides
+    // spread-marker versus multiplication in IsPostfixSpreadMarkerStar, and it
+    // decides whether the misplaced-prefix-star recovery in ParsePrimary has an
+    // operand to resume on.
     private static bool CanStartMultiplicationOperand(TokenKind kind)
-        => CanStartExpression(kind) && kind != TokenKind.KeywordOpen;
+        => CanStartExpression(kind) && kind is not (TokenKind.KeywordOpen or TokenKind.KeywordNot);
 
     // ── Expression parsing (precedence climbing) ────────────────────────────
     //
@@ -3361,17 +3437,26 @@ public sealed class Parser
     //   1: or            (logical or, left-associative)
     //   2: xor           (logical xor, left-associative)
     //   3: and           (logical and, left-associative)
-    //   4: == !=         (equality, left-associative)
-    //   5: < > <= >=     (comparison, left-associative)
-    //   6: + -           (additive, left-associative)
-    //   7: * / div mod   (multiplicative, left-associative)
-    //   8: - not         (unary prefix)
-    //   9: ^             (power, right-associative; parsed by ParsePower, not
-    //                     the binary loop. Binds tighter than the prefix tier
-    //                     on the LEFT only: the base is postfix-level, while
-    //                     the exponent re-enters the unary level — `-2 ^ 2`
-    //                     is `-(2 ^ 2)`, `2 ^ -2` stays valid.)
-    //  10: . : call      (postfix)
+    //   4: not           (prefix; the ONE prefix operator inside the binary
+    //                     ladder. Comparisons bind tighter than `not`, and
+    //                     `not` binds tighter than `and`/`xor`/`or`, so
+    //                     `not x > 3` is `not (x > 3)` and `not a and b` is
+    //                     `(not a) and b`. Parsed by the prefix arm of
+    //                     ParseExpressionCore: the operand climbs from the
+    //                     equality level, so `not` can never be a bare operand
+    //                     of a tighter operator — `1 + not x`, `a == not b`,
+    //                     and `2 ^ not x` are diagnosed and need `(not …)`.)
+    //   5: == !=         (equality, left-associative)
+    //   6: < > <= >=     (comparison, left-associative)
+    //   7: + -           (additive, left-associative)
+    //   8: * / div mod   (multiplicative, left-associative)
+    //   9: -             (unary prefix minus)
+    //  10: ^             (power, right-associative; parsed by ParsePower, not
+    //                     the binary loop. Binds tighter than unary minus on
+    //                     the LEFT only: the base is postfix-level, while the
+    //                     exponent re-enters the unary level — `-2 ^ 2` is
+    //                     `-(2 ^ 2)`, `2 ^ -2` stays valid.)
+    //  11: . : call      (postfix)
 
     private Expr ParseExpression(int minPrecedence = 0)
     {
@@ -3384,9 +3469,33 @@ public sealed class Parser
         return ParseExpressionCore(minPrecedence);
     }
 
+    /// <summary>
+    /// The precedence of prefix <c>not</c> inside the binary ladder: above the
+    /// logical operators (<c>and</c> is 3) and below equality (5). A <c>not</c> is
+    /// admitted exactly when the surrounding level asks for at most this
+    /// precedence, and its operand climbs from the equality level up.
+    /// </summary>
+    private const int NotPrecedence = 4;
+
     private Expr ParseExpressionCore(int minPrecedence = 0)
     {
-        var lhs = ParseUnary();
+        Expr lhs;
+        if (Current.Kind == TokenKind.KeywordNot && minPrecedence <= NotPrecedence)
+        {
+            // Prefix `not` at its own tier: the operand is everything that binds
+            // tighter than `not` — a comparison, its arithmetic, a power — so
+            // `not x > 3` is `not (x > 3)`; a following `and`/`xor`/`or` is then
+            // applied to the negation by the loop below. Chains (`not not x`)
+            // re-enter this arm through the operand's own level. A `not` where
+            // the level demands something tighter (`1 + not x`) falls through
+            // to ParseUnary and is diagnosed in ParsePrimary.
+            var start = Advance(); // consume 'not'
+            lhs = CreateUnaryExpression(start, ParseExpression(NotPrecedence));
+        }
+        else
+        {
+            lhs = ParseUnary();
+        }
 
         while (true)
         {
@@ -3448,24 +3557,27 @@ public sealed class Parser
     // the prefix-unary tier on the left, so it is parsed by ParsePower between
     // the unary and postfix levels, never by the precedence-climbing loop. Its
     // physical-line continuation behavior is kept identical to the loop's
-    // binary operators through its own ContinuationPolicy row.
+    // binary operators through its own ContinuationPolicy row. `not` is absent
+    // as well: it is the prefix tier 4 of this ladder (NotPrecedence), handled
+    // by the prefix arm of ParseExpressionCore, so the equality level and
+    // everything above it are numbered from 5.
     private static (int Precedence, BinaryOp Op) GetBinaryOpInfo(TokenKind kind) => kind switch
     {
         TokenKind.KeywordOr => (1, BinaryOp.Or),
         TokenKind.KeywordXor => (2, BinaryOp.Xor),
         TokenKind.KeywordAnd => (3, BinaryOp.And),
-        TokenKind.EqualEqual => (4, BinaryOp.Eq),
-        TokenKind.BangEqual => (4, BinaryOp.Ne),
-        TokenKind.LessThan => (5, BinaryOp.Lt),
-        TokenKind.GreaterThan => (5, BinaryOp.Gt),
-        TokenKind.LessEqual => (5, BinaryOp.Le),
-        TokenKind.GreaterEqual => (5, BinaryOp.Ge),
-        TokenKind.Plus => (6, BinaryOp.Add),
-        TokenKind.Minus => (6, BinaryOp.Sub),
-        TokenKind.Star => (7, BinaryOp.Mul),
-        TokenKind.Slash => (7, BinaryOp.Div),
-        TokenKind.KeywordDiv => (7, BinaryOp.IDiv),
-        TokenKind.KeywordMod => (7, BinaryOp.Mod),
+        TokenKind.EqualEqual => (5, BinaryOp.Eq),
+        TokenKind.BangEqual => (5, BinaryOp.Ne),
+        TokenKind.LessThan => (6, BinaryOp.Lt),
+        TokenKind.GreaterThan => (6, BinaryOp.Gt),
+        TokenKind.LessEqual => (6, BinaryOp.Le),
+        TokenKind.GreaterEqual => (6, BinaryOp.Ge),
+        TokenKind.Plus => (7, BinaryOp.Add),
+        TokenKind.Minus => (7, BinaryOp.Sub),
+        TokenKind.Star => (8, BinaryOp.Mul),
+        TokenKind.Slash => (8, BinaryOp.Div),
+        TokenKind.KeywordDiv => (8, BinaryOp.IDiv),
+        TokenKind.KeywordMod => (8, BinaryOp.Mod),
         _ => (-1, default),
     };
 
@@ -3473,14 +3585,16 @@ public sealed class Parser
 
     private Expr ParseUnary()
     {
-        // Recursion chokepoint for ALL expression nesting: ParseExpression always
-        // enters through ParseUnary, `-`/`not` chains self-recurse here, and the
-        // right-associative `^` exponent re-enters here from ParsePower while
-        // this frame's charge is still live — that held charge is what bounds
-        // power chains (one live unit per `^` level; see ParsePower).
+        // Recursion chokepoint for ALL expression nesting: every non-`not`
+        // expression level enters through ParseUnary, `-` chains self-recurse
+        // here, and the right-associative `^` exponent re-enters here from
+        // ParsePower while this frame's charge is still live — that held
+        // charge is what bounds power chains (one live unit per `^` level; see
+        // ParsePower). A `not` chain charges the same one unit per level
+        // through ParseExpression's prefix arm instead.
         using var level = EnterNestingLevel();
 
-        if (Current.Kind is TokenKind.Minus or TokenKind.KeywordNot)
+        if (Current.Kind == TokenKind.Minus)
         {
             // CreateUnaryExpression also rejects spread operands
             // (`-values*` is an error; spread the whole expression
@@ -3488,9 +3602,12 @@ public sealed class Parser
             //
             // The operand recursion re-enters the whole unary level,
             // whose non-prefix arm is ParsePower — so `^` binds tighter
-            // than the prefix tier on the left (`-2 ^ 2` is `-(2 ^ 2)`;
-            // write `(-2) ^ 2` to raise the negated base).
-            var start = Advance(); // consume '-' / 'not'
+            // than unary minus on the left (`-2 ^ 2` is `-(2 ^ 2)`;
+            // write `(-2) ^ 2` to raise the negated base). `not` is NOT a
+            // unary-tier operator: it is tier 4 of the binary ladder
+            // (ParseExpressionCore), below the comparisons, so a `not`
+            // reaching this level is diagnosed by ParsePrimary.
+            var start = Advance(); // consume '-'
             return CreateUnaryExpression(start, ParseUnary());
         }
         return ParsePower();
@@ -3517,7 +3634,7 @@ public sealed class Parser
     /// <c>^ exponent</c>. Grammar: <c>PowerExpr = PostfixExpr [ "^" UnaryExpr ]</c>.
     ///
     /// <para>The layer sits BETWEEN the unary and postfix levels so that `^`
-    /// binds tighter than prefix `-`/`not` on the LEFT only: the base is
+    /// binds tighter than prefix `-` on the LEFT only: the base is
     /// postfix-level (`-2 ^ 2` parses in ParseUnary as `-(2 ^ 2)`; write
     /// `(-2) ^ 2` to raise the negated base), while the exponent re-enters
     /// <see cref="ParseUnary"/>, keeping unary exponents valid (`2 ^ -2`) and
@@ -3692,8 +3809,10 @@ public sealed class Parser
     /// the slot boundary stops at. The star is the spread marker when
     /// the surrounding syntax closes the expression before any operand could
     /// follow: a closing delimiter, a comma, end of input, a token that
-    /// cannot start an expression, or a declaration head. Comments after the
-    /// star are invisible, exactly like every other line-sensitive decision.
+    /// cannot start an expression, a `not` (which starts an expression only
+    /// below the comparisons and so never a multiplication operand), or a
+    /// declaration head. Comments after the star are invisible, exactly like
+    /// every other line-sensitive decision.
     /// Attachment is a SEPARATE, later check: once a star is classified as a
     /// spread marker, <see cref="ParseSpreadMarkerContinuation"/> requires it
     /// to be directly attached to the expression it spreads and reports a
@@ -4057,6 +4176,13 @@ public sealed class Parser
                     return StringLiteralAt(token);
                 }
 
+            case TokenKind.KeywordTrue:
+            case TokenKind.KeywordFalse:
+                {
+                    var token = Advance();
+                    return BoolLiteralAt(token);
+                }
+
             case TokenKind.Identifier:
                 {
                     var token = Advance();
@@ -4166,6 +4292,21 @@ public sealed class Parser
                     return ListLiteralFrom(items, start);
                 }
 
+            case TokenKind.KeywordNot:
+                {
+                    // A `not` reaching primary position was written where the
+                    // surrounding operator demands an operand tighter than the
+                    // `not` tier (`1 + not x`, `a == not b`, `2 ^ not x`,
+                    // `-not x`). Report the precedence rule AT the keyword, then
+                    // recover by parsing the negation as if it were parenthesized
+                    // — the tree the writer meant — so the rest of the row and
+                    // later declarations keep parsing.
+                    var token = Current;
+                    ReportErrorAt(DiagnosticCode.UnexpectedToken, MisplacedNotDiagnostic, token);
+                    Advance(); // consume 'not'
+                    return CreateUnaryExpression(token, ParseExpression(NotPrecedence));
+                }
+
             case TokenKind.KeywordOpen:
                 {
                     var token = Current;
@@ -4265,6 +4406,16 @@ public sealed class Parser
     /// its own physical line precedes (the declaration-head line rule, see
     /// <see cref="IsHeadToken"/>).
     /// </summary>
+    /// <summary>
+    /// The precedence explanation for a `not` written where the surrounding operator
+    /// demands a tighter operand (`1 + not x`, `a == not b`, `2 ^ not x`, `-not x`):
+    /// `not` sits below the comparisons (comparisons > not > and > xor > or), so it can
+    /// only begin an operand of `and`/`xor`/`or` or a whole expression. Reported AT the
+    /// keyword; the negation is then parsed as if parenthesized (see ParsePrimary).
+    /// </summary>
+    private const string MisplacedNotDiagnostic =
+        "Unexpected 'not'. `not` binds less tightly than the comparison, arithmetic, and power operators (comparisons > not > and > xor > or), so it cannot begin an operand here. Parenthesize the negation, as in `2 ^ (not x)` or `a == (not b)`.";
+
     private const string StrayEqualsDiagnostic =
         "Unexpected '='. A declaration head cannot be assembled across a physical newline. Keep `Name =` together, or keep a clause head's name and '(' together and its closing ')' and '=' together. A pattern list inside already-open parentheses and the body after '=' may span lines; deconstruction targets and '=' must share a line.";
 

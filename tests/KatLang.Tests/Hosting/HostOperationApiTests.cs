@@ -493,7 +493,7 @@ public class HostOperationApiTests
                     {
                         counter.Increment();
                         var value = ((Result.Atom)args[0]).Value;
-                        return Atom(value % 2 == 0 ? 1 : 0);
+                        return new Result.Bool(value % 2 == 0);
                     },
                     "x")),
         };

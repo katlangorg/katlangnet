@@ -767,13 +767,10 @@ public static partial class Evaluator
         {
             var valR = await LookupNativeArgumentAsync(ctx, valEnv, argNames[i]).ConfigureAwait(false);
             if (valR.IsError) return valR.Error;
-            var val = valR.Value;
-            var num = val.AsNum();
-            if (num is null)
-                return val is Result.Str
-                    ? new EvalError.TypeMismatch("Expected a number, got a string")
-                    : new EvalError.BadArity();
-            args[i] = num.Value;
+            // MIRROR of CollectMathNativeArguments: the ONE numeric coercion.
+            var numR = ExpectInt(valR.Value);
+            if (numR.IsError) return numR.Error;
+            args[i] = numR.Value;
         }
 
         return EvalResult<Decimal128[]>.Ok(args);
@@ -935,7 +932,7 @@ public static partial class Evaluator
             // scale. Grace is the illegal-in-eval catch-all (a structured
             // error, no child evaluation). Keep this classification in
             // lock-step with EvalCounted.
-            Expr.Num or Expr.StringLiteral or Expr.Grace => CountValue(EvalLeafUncharged(expr, ctx)),
+            Expr.Num or Expr.StringLiteral or Expr.BoolLiteral or Expr.Grace => CountValue(EvalLeafUncharged(expr, ctx)),
         };
     }
 
@@ -2285,8 +2282,9 @@ public static partial class Evaluator
                 {
                     var condR = await EvalResolvedArgumentValueAsync(args[0], ctx, valEnv).ConfigureAwait(false);
                     if (condR.IsError) return condR.Error;
-                    var truth = condR.Value.TruthValue();
-                    if (truth is null) return new EvalError.BadArity();
+                    var truth = condR.Value.AsBool();
+                    if (truth is null)
+                        return new EvalError.TypeMismatch(BooleanRequiredMessage("if condition", condR.Value));
 
                     // The selected branch is one value boundary — see the synchronous twin.
                     var branchR = truth.Value
@@ -3055,13 +3053,10 @@ public static partial class Evaluator
         if (predicateR.IsError)
             return predicateR.Error;
 
-        var truth = predicateR.Value.SingleAtomicTruthValue();
+        // MIRROR of EvalFilterPredicateTruth: the predicate must return a Boolean value.
+        var truth = predicateR.Value.AsBool();
         if (truth is null)
-        {
-            return new EvalError.WithContext(
-                "filter predicate must return exactly one atomic numeric value",
-                new EvalError.BadArity());
-        }
+            return new EvalError.TypeMismatch(BooleanRequiredMessage("filter predicate result", predicateR.Value));
 
         return EvalResult<bool>.Ok(truth.Value);
     }
@@ -3129,7 +3124,7 @@ public static partial class Evaluator
             var splitR = SplitContSlots(outputSlotsR.Value);
             if (splitR.IsError) return splitR.Error;
             var (nextStateSlots, cont) = splitR.Value;
-            if (cont == 0) return MakeCheckedLoopStateResult(ctx, stateSlots);
+            if (!cont) return MakeCheckedLoopStateResult(ctx, stateSlots);
             stateSlots = nextStateSlots.ToList();
         }
     }

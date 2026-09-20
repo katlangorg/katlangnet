@@ -129,7 +129,7 @@ internal sealed partial class ModuleLoader
                 Pattern.Bind bind => bind.NameSpan is null && bind.CollectMarkerSpan is null
                     ? bind
                     : bind with { NameSpan = null, CollectMarkerSpan = null },
-                Pattern.LitInt or Pattern.LitString => pattern,
+                Pattern.LitInt or Pattern.LitString or Pattern.LitBool => pattern,
                 Pattern.SequenceValue sequence => RewriteList(sequence.Items, RewritePattern) is var items
                     && ReferenceEquals(items, sequence.Items)
                     ? sequence
@@ -176,7 +176,7 @@ internal sealed partial class ModuleLoader
         private Expr RewriteCore(Expr expr) => expr switch
         {
             // Childless leaves: only their own span can carry a location.
-            Expr.Param or Expr.Num or Expr.StringLiteral or Expr.EmptySequence or Expr.Resolve or Expr.NativeCall
+            Expr.Param or Expr.Num or Expr.StringLiteral or Expr.BoolLiteral or Expr.EmptySequence or Expr.Resolve or Expr.NativeCall
                 => expr.Span is null ? expr : expr with { Span = null },
 
             Expr.Unary unary => Rewrite(unary.Operand) is var operand

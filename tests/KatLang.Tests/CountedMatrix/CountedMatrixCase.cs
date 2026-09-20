@@ -106,7 +106,7 @@ public enum CountedConsumer
 
     /// <summary>Higher-order callback contracts: map/reduce callbacks must emit
     /// exactly one value (Lean <c>expectSingleValueWith</c>); filter predicates one
-    /// atomic truth value; flat multi-parameter callbacks open sequence rows while
+    /// Boolean value; flat multi-parameter callbacks open sequence rows while
     /// list elements stay opaque; collecting callbacks keep the element as one slot.</summary>
     CallbackContract,
 
@@ -117,7 +117,7 @@ public enum CountedConsumer
     LoopStateSlots,
 
     /// <summary>The `if` builtin: the chosen branch is observed at a value boundary
-    /// (`Result.valueCount` re-count); the condition needs exactly one atomic truth
+    /// (`Result.valueCount` re-count); the condition needs exactly one Boolean
     /// value; spread arguments expand before the builtin arity check.</summary>
     IfBoundary,
 
@@ -127,7 +127,7 @@ public enum CountedConsumer
     ListLiteralSlots,
 
     /// <summary>Scalar operator operand positions: value boundaries whose operands
-    /// must carry a numeric scalar value for the non-equality operators. Producer
+    /// must carry a numeric scalar for arithmetic/ordering, or a Boolean for logic. Producer
     /// cardinality never grants an exemption — a zero-output producer's `()` is
     /// rejected like any other non-scalar operand (SYN-01).</summary>
     OperatorOperandBoundary,
@@ -261,7 +261,7 @@ public sealed record CountedMatrixCase
 
     /// <summary>
     /// Structural cardinality skeleton of a result: atom → <c>#</c>, string →
-    /// <c>$</c>, sequence → <c>S[...]</c>, list → <c>L[...]</c>. Erasing atom and
+    /// <c>$</c>, Boolean → <c>B</c>, sequence → <c>S[...]</c>, list → <c>L[...]</c>. Erasing atom and
     /// string content keeps the assertion counted-only (slot counts and nesting
     /// boundaries) while staying precise about structure kind at every level.
     /// </summary>
@@ -269,8 +269,8 @@ public sealed record CountedMatrixCase
     {
         Result.Atom => "#",
         Result.Str => "$",
+        Result.Bool => "B",
         Result.SequenceValue g => "S[" + string.Join(", ", g.Items.Select(ShapeOf)) + "]",
         Result.ListValue l => "L[" + string.Join(", ", l.Items.Select(ShapeOf)) + "]",
-        _ => "?",
     };
 }

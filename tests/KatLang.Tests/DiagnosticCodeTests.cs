@@ -206,9 +206,9 @@ public class DiagnosticCodeTests
     [Theory]
     [InlineData("if()")]
     [InlineData("if(1)")]
-    [InlineData("if(1, 2)")]
-    [InlineData("if(1, 2, 3, 4)")]
-    [InlineData("if(x) = x + 1\nif(1, 2, 3)")]
+    [InlineData("if(true, 2)")]
+    [InlineData("if(true, 2, 3, 4)")]
+    [InlineData("if(x) = x + 1\nif(true, 2, 3)")]
     [InlineData("count(1, 2, 3)")]
     public void NoFrontEndPath_ProducesTheParseTimeArityCode(string source)
     {

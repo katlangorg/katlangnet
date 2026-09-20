@@ -207,7 +207,7 @@ public class ChainedDotStructuralPrecedenceTests
 
     [Theory]
     [InlineData("Q(x) = x * 10\n[1, 2, 3].count.Q", "30")]
-    [InlineData("Q(x) = x > 3\nMath.Pi.Q", "1")]
+    [InlineData("Q(x) = x > 3\nMath.Pi.Q", "true")]
     [InlineData("Q(x) = x + 1\n'ab'.count.Q", "2")]
     [InlineData("Q(x) = x + 1\n(1, 2).count.Q", "3")]
     public void ValueReceivers_KeepFallingBackAlongTheChain(string source, string expected)

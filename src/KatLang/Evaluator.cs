@@ -750,6 +750,7 @@ public static partial class Evaluator
         Expr.Param => "param",
         Expr.Num => "num",
         Expr.StringLiteral => "stringLiteral",
+        Expr.BoolLiteral => "boolLiteral",
         Expr.Unary => "unary",
         Expr.Binary => "binary",
         Expr.Index => "index",
@@ -1528,11 +1529,13 @@ public static partial class Evaluator
             : ChildOf(globalScope, alg);
     }
 
-    /// <summary>Coerce a Result to a number, or raise TypeMismatch for strings, BadArity otherwise. Lean: expectInt.</summary>
+    /// <summary>Coerce a Result to a number, or raise TypeMismatch for strings and Boolean values, BadArity otherwise. Lean: expectInt.</summary>
     internal static EvalResult<Decimal128> ExpectInt(Result r)
     {
         if (r is Result.Str)
             return new EvalError.TypeMismatch("Expected a number, got a string");
+        if (r is Result.Bool)
+            return new EvalError.TypeMismatch("Expected a number, got a Boolean value");
         var v = r.AsNum();
         return v is not null
             ? EvalResult<Decimal128>.Ok(v.Value)
@@ -1560,12 +1563,46 @@ public static partial class Evaluator
     }
 
     private static string NumericScalarOperandMessage(string operatorName, string side, Result value)
-        => $"operator `{operatorName}` expects numeric scalar operands, but the {side} operand was {DescribeNumericScalarOperand(value)}";
+        => $"operator `{operatorName}` expects numeric scalar operands, but the {side} operand was {DescribeOperand(value)}";
 
-    private static string DescribeNumericScalarOperand(Result value) => value switch
+    /// <summary>
+    /// The logical operators <c>and</c> / <c>or</c> / <c>xor</c> require a Boolean value on
+    /// BOTH sides: there is no numeric truthiness, so a number, string, sequence value, or
+    /// list operand is a value-kind error naming the operand. Lean: <c>requireBooleanOperand</c>.
+    /// </summary>
+    private static EvalResult<bool> RequireBooleanOperand(BinaryOp op, string side, Result value)
+    {
+        var flag = value.AsBool();
+        return flag is not null
+            ? EvalResult<bool>.Ok(flag.Value)
+            : new EvalError.TypeMismatch(BooleanOperandMessage(ExprNameRenderer.BinaryOpText(op), side, value));
+    }
+
+    private static string BooleanOperandMessage(string operatorName, string side, Result value)
+        => $"operator `{operatorName}` expects Boolean operands, but the {side} operand was {DescribeOperand(value)}";
+
+    /// <summary>
+    /// The ONE message for every position that REQUIRES a Boolean value — an <c>if</c>
+    /// condition, a <c>filter</c> predicate result, a <c>while</c> continuation flag: it names
+    /// the role and the value kind actually supplied, so a number in a predicate position is
+    /// reported as the value-kind mismatch it is, never as an arity or numeric error.
+    /// Lean: <c>booleanRequiredMessage</c>.
+    /// </summary>
+    internal static string BooleanRequiredMessage(string role, Result value)
+        => $"{role} must be a Boolean value (true or false), but was {DescribeOperand(value)}";
+
+    /// <summary>The role text of the <c>while</c> continuation flag in <see cref="BooleanRequiredMessage"/>.</summary>
+    internal const string WhileContinuationFlagRole = "while continuation flag (the step's last output)";
+
+    /// <summary>
+    /// How a diagnostic names one value that failed an operand, condition, or predicate
+    /// requirement: the value KIND first, then the value itself. Lean: <c>operandDescription</c>.
+    /// </summary>
+    internal static string DescribeOperand(Result value) => value switch
     {
         Result.SequenceValue(var items) => $"a sequence value with {items.Count} {Pluralize(items.Count, "sequence element")}: {FormatResultForDiagnostic(value)}",
         Result.Str => $"a string: {FormatResultForDiagnostic(value)}",
+        Result.Bool(var flag) => $"a Boolean value: {Rendering.ValueTextRenderer.FormatBool(flag)}",
         Result.Atom(var number) => $"numeric value {Rendering.ValueTextRenderer.FormatNumberInvariant(number)}",
         Result.ListValue(var items) => $"a list value with {items.Count} {Pluralize(items.Count, "element")}: {FormatResultForDiagnostic(value)}",
     };
@@ -2045,6 +2082,7 @@ public static partial class Evaluator
             Expr.NativeCall => new EvalError.NotAnAlgorithm("native call") { Span = expr.Span },
             Expr.Grace => new EvalError.NotAnAlgorithm("grace expression") { Span = expr.Span },
             Expr.StringLiteral => new EvalError.NotAnAlgorithm("string literal") { Span = expr.Span },
+            Expr.BoolLiteral => new EvalError.NotAnAlgorithm("Boolean literal") { Span = expr.Span },
         };
     }
 
@@ -2882,6 +2920,7 @@ public static partial class Evaluator
     /// Run evaluation and flatten to atoms at the host boundary: exact list
     /// boundaries are opened (<see cref="Result.ToHostAtoms"/>) so
     /// collection-builtin results surface their numeric contents.
+    /// Booleans and strings are omitted; use <see cref="Run(Expr)"/> for the complete value.
     /// Lean: runFlat → EvalM (List Int).
     /// </summary>
     public static EvalResult<IReadOnlyList<Decimal128>> RunFlat(Expr expr)

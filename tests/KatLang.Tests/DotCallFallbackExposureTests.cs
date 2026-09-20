@@ -1043,6 +1043,7 @@ public class DotCallFallbackExposureTests
             [typeof(Expr.Param)] = new Expr.Param("x"),
             [typeof(Expr.Num)] = leaf,
             [typeof(Expr.StringLiteral)] = new Expr.StringLiteral("x"),
+            [typeof(Expr.BoolLiteral)] = new Expr.BoolLiteral(true),
             [typeof(Expr.Unary)] = new Expr.Unary(UnaryOp.Minus, leaf),
             [typeof(Expr.Binary)] = new Expr.Binary(BinaryOp.Add, leaf, leaf),
             [typeof(Expr.Index)] = new Expr.Index(leaf, leaf),

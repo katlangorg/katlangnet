@@ -354,6 +354,7 @@ internal static class AstHelpers
                 or Expr.DotCall
                 or Expr.Num
                 or Expr.StringLiteral
+                or Expr.BoolLiteral
                 or Expr.Unary
                 or Expr.Binary
                 or Expr.Index

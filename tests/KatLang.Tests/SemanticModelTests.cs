@@ -3277,7 +3277,7 @@ public class SemanticModelTests
         Assert.Equal("value.string", signature.DisplayText);
 
         Assert.Equal(
-            ["div", "mod", "and", "or", "xor", "not", "public", "open"],
+            ["div", "mod", "and", "or", "xor", "not", "public", "open", "true", "false"],
             PreludeCatalog.KeywordNames);
     }
 

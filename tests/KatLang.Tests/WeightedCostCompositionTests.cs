@@ -77,7 +77,7 @@ public class WeightedCostCompositionTests
     //                                 of a scalar is a one-item collection, so sum(1) == 1
     //   AlgorithmExpr {x}             scope-owning algorithm expression (1 + Algorithm 1)
     //   DotCall       x.count         receiver injection -> count(x) == 1, NO written args
-    //   ArgsDotCall   x.contains(1)   receiver injection -> contains(x, 1) == 1, WITH args
+    //   ArgsDotCall   x.pow(1)        receiver injection -> pow(x, 1) == 1, WITH args
     //   Alternation   (x, ())*        spread-of-construct: the one join shape that recurses
     //
     // Join (SequenceConstruct, weight ZERO) is deliberately NOT in this table: a zero-cost
@@ -102,7 +102,7 @@ public class WeightedCostCompositionTests
         new("DotCall", 3, inner => new Expr.DotCall(inner, "count", null));
 
     internal static readonly WeightedMechanism ArgsDotCall =
-        new("ArgsDotCall", 4, inner => new Expr.DotCall(inner, "contains", [new Expr.Num(1)]));
+        new("ArgsDotCall", 4, inner => new Expr.DotCall(inner, "pow", [new Expr.Num(1)]));
 
     internal static readonly WeightedMechanism Alternation =
         new("Alternation", 8, inner =>

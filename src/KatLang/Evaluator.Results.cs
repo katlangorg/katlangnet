@@ -29,6 +29,7 @@ public static partial class Evaluator
         {
             case Result.Atom:
             case Result.Str:
+            case Result.Bool:
             case Result.ListValue:
                 into.Add(r);
                 break;
@@ -184,6 +185,7 @@ public static partial class Evaluator
     {
         Result.Atom(var n) => new Expr.Num(n),
         Result.Str(var s) => new Expr.StringLiteral(s),
+        Result.Bool(var b) => new Expr.BoolLiteral(b),
         // Repeated ordinary parentheses around the empty sequence are redundant
         // surface structure, so any empty-sequence chain reifies as `()`.
         Result.SequenceValue when IsEmptySequenceChain(result)

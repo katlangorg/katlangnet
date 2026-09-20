@@ -117,7 +117,7 @@ public class SameLineSeparatorTests
     [InlineData("{ 1 2 }", "1:5")]
     [InlineData("F(a, b) = a + b\nF(1 2)", "2:5")]
     [InlineData("F(a, b) = a + b\nF(1 -2 3)", "2:8")]
-    [InlineData("if(1, 2 3)", "1:9")]
+    [InlineData("if(true, 2 3)", "1:12")]
     [InlineData("2(3)", "1:2")]
     [InlineData("2 (3)", "1:3")]
     [InlineData("(1 + 2) (3)", "1:9")]
@@ -746,6 +746,8 @@ public class SameLineSeparatorTests
             [TokenKind.KeywordNot] = ("not", false),
             [TokenKind.KeywordPublic] = ("public", false),
             [TokenKind.KeywordOpen] = ("open", false),
+            [TokenKind.KeywordTrue] = ("true", true),
+            [TokenKind.KeywordFalse] = ("false", true),
             [TokenKind.RParen] = (")", false),
             [TokenKind.LBrace] = ("{", false),
             [TokenKind.RBrace] = ("}", false),

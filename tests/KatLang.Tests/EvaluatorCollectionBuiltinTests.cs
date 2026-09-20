@@ -331,9 +331,9 @@ public class EvaluatorCollectionBuiltinTests
         AssertEvalCounted("T = take(((1, 2), (3, 4)), 1)\nT", 1, ListValue(SequenceValue(Atom(1), Atom(2))));
         AssertEval("T = take(((1, 2), (3, 4)), 1)\ncount(T)", 1);
         AssertEval("T = take(((1, 2), (3, 4)), 1)\nT.count", 1);
-        AssertEval("T = take(((1, 2), (3, 4)), 1)\nT == (1, 2)", 0);
-        AssertEval("T = take(((1, 2), (3, 4)), 1)\nT == ((1, 2))", 0);
-        AssertEval("T = take(((1, 2), (3, 4)), 1)\nT == [(1, 2)]", 1);
+        AssertEvalBool("T = take(((1, 2), (3, 4)), 1)\nT == (1, 2)", false);
+        AssertEvalBool("T = take(((1, 2), (3, 4)), 1)\nT == ((1, 2))", false);
+        AssertEvalBool("T = take(((1, 2), (3, 4)), 1)\nT == [(1, 2)]", true);
         AssertEvalCounted("T = take(((1, 2), (3, 4)), 1)\nT:0", 2, SequenceValue(Atom(1), Atom(2)));
     }
 
@@ -345,7 +345,7 @@ public class EvaluatorCollectionBuiltinTests
         // [()] (one element, count 1) and is NOT equal to the empty sequence `()`.
         AssertEvalCounted("distinct(((), ()))", 1, ListValue(SequenceValue()));
         AssertEval("count(distinct(((), ())))", 1);
-        AssertEval("distinct(((), ())) == ()", 0);
+        AssertEvalBool("distinct(((), ())) == ()", false);
 
         // The old bare two-argument form over-supplies the fixed
         // distinct(collection) signature.
@@ -437,31 +437,31 @@ public class EvaluatorCollectionBuiltinTests
 
     [Fact]
     public void Eval_Contains_OrdinaryBuiltinCall_SearchesExpandedRangeTopLevelItems()
-        => AssertEval("contains(range(1, 5), 3)", 1);
+        => AssertEvalBool("contains(range(1, 5), 3)", true);
 
     [Fact]
     public void Eval_Contains_OrdinaryBuiltinCall_DoesNotTreatRangeAsOneSequenceValue()
-        => AssertEval("contains(range(1, 5), (1, 2, 3, 4, 5))", 0);
+        => AssertEvalBool("contains(range(1, 5), (1, 2, 3, 4, 5))", false);
 
     [Fact]
     public void Eval_Contains_DotCall_MatchesPlainCallReceiverSemantics()
-        => AssertEval("range(1, 5).contains(4)", 1);
+        => AssertEvalBool("range(1, 5).contains(4)", true);
 
     [Fact]
     public void Eval_Contains_DirectCallMixedArgs_SearchesExpandedRangeTopLevelItems()
-        => AssertEval("contains((3, 4, range(1, 5)*, 7), 5)", 1);
+        => AssertEvalBool("contains((3, 4, range(1, 5)*, 7), 5)", true);
 
     [Fact]
     public void Eval_Contains_DirectCallMixedArgs_DoesNotMatchExpandedRangeAsSequenceValue()
-        => AssertEval("contains((3, 4, range(1, 5)*, 7), (1, 2, 3, 4, 5))", 0);
+        => AssertEvalBool("contains((3, 4, range(1, 5)*, 7), (1, 2, 3, 4, 5))", false);
 
     [Fact]
     public void Eval_Contains_SequenceValueItem_UsesOrdinaryValueEquality()
-        => AssertEval("contains((1, 2), 1)", 1);
+        => AssertEvalBool("contains((1, 2), 1)", true);
 
     [Fact]
     public void Eval_Contains_DoesNotSearchInsideNestedSequenceValueMembers()
-        => AssertEval("contains(((1, 2), (3, 4)), (1, 2))", 1);
+        => AssertEvalBool("contains(((1, 2), (3, 4)), (1, 2))", true);
 
     [Fact]
     public void Eval_Contains_ProjectedSelection_PlainAndDotCallAgree()
@@ -472,7 +472,7 @@ public class EvaluatorCollectionBuiltinTests
             (Data:0).contains(4)
             """;
 
-        AssertEval(source, 1, 1);
+        AssertEvalBools(source, true, true);
     }
 
     [Fact]
@@ -483,7 +483,7 @@ public class EvaluatorCollectionBuiltinTests
             contains((1, 2), Item)
             """;
 
-        AssertEval(source, 0);
+        AssertEvalBool(source, false);
     }
 
     [Fact]
@@ -493,7 +493,7 @@ public class EvaluatorCollectionBuiltinTests
         // an ordinary arity error. Searching nothing is spelled with an
         // explicit empty collection argument and finds nothing.
         AssertEvalFailsWithArityMismatch("contains(1)", expected: 2, actual: 1);
-        AssertEval("contains((), 2)", 0m);
+        AssertEvalBool("contains((), 2)", false);
     }
 
     // ── First/last builtins ────────────────────────────────────────────────

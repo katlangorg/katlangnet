@@ -92,7 +92,7 @@ public class BuiltinControlArgumentTotalityTests
         // The fused filter/count pipeline enumerates the range through its own call
         // site; both paths share the enumeration helper and must agree exactly in
         // both directions at the decimal boundaries.
-        const string predicate = "P(x) = 1\n";
+        const string predicate = "P(x) = true\n";
         Assert.Equal([3m], FlatValues($"{predicate}range({DecMaxMinusTwo}, {DecMax}).filter(P).count"));
         Assert.Equal([3m], FlatValues($"{predicate}count(filter(range({DecMaxMinusTwo}, {DecMax}), P))"));
         Assert.Equal([3m], FlatValues($"{predicate}range(0 - {DecMaxMinusTwo}, 0 - {DecMax}).filter(P).count"));

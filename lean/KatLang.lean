@@ -595,6 +595,9 @@ def builtinArityError (b : Builtin) (actual : Nat) : Error :=
     call time.
     - `bind x`: matches any Result and binds it to name `x`
     - `litInt n`: matches only `Result.atom n`
+    - `litBool b`: matches only `Result.bool b` (the reserved literals `true` /
+      `false` in a clause head; a Boolean is never a number, so `F(1)` and
+      `F(true)` are different clauses)
     - `sequenceValue ps`: matches `Result.sequenceValue rs` with same arity, each sub-pattern
       matching; a singleton sequence-value pattern also matches a non-sequence-value
       result because normalization collapses singleton sequence values
@@ -622,6 +625,7 @@ inductive Pattern where
   | bind      : Ident -> Pattern
   | litInt    : Int -> Pattern
   | litString : String -> Pattern    -- matches only Result.str s (exact string equality)
+  | litBool   : Bool -> Pattern      -- matches only Result.bool b (C#: Pattern.LitBool)
   | sequenceValue     : List Pattern -> Pattern
   deriving Repr, BEq
 
@@ -631,6 +635,7 @@ namespace Pattern
     | .bind x      => [x]
     | .litInt _    => []
     | .litString _ => []
+    | .litBool _   => []
     | .sequenceValue ps    => ps.flatMap boundNames
 
   /-- Compute the top-level arity of a pattern.
@@ -700,7 +705,7 @@ namespace Pattern
   /-- Check whether two patterns are match-equivalent. Binder spelling is
       irrelevant, but repeated-name equality positions must agree:
       - `bind _` ≡ `bind _` (any binder matches everything)
-      - `litInt m` ≡ `litInt n` iff `m = n`
+      - `litInt m` ≡ `litInt n` iff `m = n` (likewise `litString`, `litBool`)
       - `sequenceValue ps` ≡ `sequenceValue qs` iff same length and pairwise match-equivalent
 
       Used to detect duplicate branch patterns in conditional algorithms.
@@ -731,6 +736,8 @@ namespace Pattern
         if m = n then some pairs else none
     | .litString s, .litString t, pairs =>
         if s = t then some pairs else none
+    | .litBool b, .litBool c, pairs =>
+        if b = c then some pairs else none
     | .sequenceValue ps, .sequenceValue qs, pairs =>
         if ps.length != qs.length then
           none
@@ -766,6 +773,11 @@ mutual
     | param   : Ident -> Expr
     | num     : Int -> Expr
     | stringLiteral : String -> Expr  -- * string literal: first-class value (evaluates to Result.str)
+    -- * boolLiteral: the reserved Boolean literals `true` / `false`
+    --   (evaluates to Result.bool). They are lexer keywords, never
+    --   identifiers, so they can be neither declared nor shadowed and never
+    --   become implicit parameters. C#: `Expr.BoolLiteral`.
+    | boolLiteral : Bool -> Expr
     | unary   : UnaryOp -> Expr -> Expr
     | binary  : BinaryOp -> Expr -> Expr -> Expr
     | index   : Expr -> Expr -> Expr
@@ -1041,6 +1053,14 @@ inductive ClauseGroupDefinitionKind where
 inductive Result where
   | atom  : Int -> Result
   | str   : String -> Result     -- first-class string value (exact equality, no ordering/coercion)
+  -- Boolean value `true` / `false`: a first-class scalar value kind that is
+  -- NOT a number (no implicit conversion in either direction). Produced by
+  -- the Boolean literals, every comparison operator, the logical operators,
+  -- and `contains`; consumed wherever a condition or predicate is required
+  -- (`if`, `filter`, the `while` continuation flag, `not`/`and`/`or`/`xor`).
+  -- Equality is total across kinds (`bool true == atom 1` is false); there
+  -- is no ordering on Booleans. C#: `Result.Bool`.
+  | bool  : Bool -> Result
   | sequenceValue : List Result -> Result
   -- List value `[a, b, c]`. Unlike sequence values, list
   -- structure is never singleton-normalized: `listValue [r]` and `r` are
@@ -1053,6 +1073,7 @@ namespace Result
   def normalize : Result -> Result
     | atom n => atom n
     | str s  => str s
+    | bool b => bool b
     | sequenceValue rs =>
         let rs' := rs.map normalize
         match rs' with
@@ -1063,72 +1084,60 @@ namespace Result
     -- itself — `[7]` stays `[7]`, never `7`.
     | listValue rs => listValue (rs.map normalize)
 
-  /-- Truth-testing numeric flattening: the numeric atoms reachable through
-      SEQUENCE boundaries only. This view backs `truthValue?` and is NOT the
-      `atoms` builtin's collector — that is `languageAtoms`, which also opens
-      list boundaries. Keeping the two separate means the builtin's traversal
-      can never leak into truth testing: lists have no truth value.
-      C#: `Result.ToAtoms`. -/
-  def atoms : Result -> List Int
-    | atom n    => [n]
-    | str _     => []       -- strings are not numeric; silently omitted from atom lists
-    | sequenceValue rs => rs.flatMap atoms
-    | listValue _ => []     -- lists are opaque to truth testing, like strings
-
   /-- Language-level atom collection for the `atoms` builtin: recursively
       collect numeric atoms depth-first, left-to-right, through BOTH sequence
       and exact list boundaries. Strings and other non-numeric leaves
       contribute no atoms. The builtin materializes this collection as ONE
       list value (`makeCollectionListResult`).
-      Deliberately separate from `Result.atoms` (truth testing stays
-      list-opaque) and `Result.hostAtoms` (host projection), so none of the
-      three contracts can drift through shared code.
+      Deliberately separate from `Result.hostAtoms` (host projection), so the
+      two contracts cannot drift through shared code. Boolean values are not
+      numeric atoms and contribute nothing, like strings.
       C#: `Result.LanguageAtoms`. -/
   def languageAtoms : Result -> List Int
     | atom n    => [n]
     | str _     => []
+    | bool _    => []
     | sequenceValue rs => rs.flatMap languageAtoms
     | listValue rs => rs.flatMap languageAtoms
 
-  /-- Host-boundary numeric flattening used by `runFlat`: like `Result.atoms`,
-      but also opens exact list boundaries so collection-builtin results
-      surface their numeric contents at the embedding boundary. This is a host
-      projection, not language semantics: truth testing keeps lists opaque
-      (`Result.atoms`), the `atoms` builtin collects through its own separate
-      collector (`Result.languageAtoms`) and returns one exact list value
-      rather than a host atom list, and no in-language conversion between
-      lists and sequences is implied.
+  /-- Host-boundary numeric flattening used by `runFlat`: the numeric atoms
+      reachable through sequence AND exact list boundaries, so collection-
+      builtin results surface their numeric contents at the embedding
+      boundary. This is a host projection, not language semantics: the
+      `atoms` builtin collects through its own separate collector
+      (`Result.languageAtoms`) and returns one exact list value rather than a
+      host atom list, and no in-language conversion between lists and
+      sequences is implied. Strings and Boolean values have no numeric
+      projection and are omitted.
       C#: `Result.ToHostAtoms`. -/
   def hostAtoms : Result -> List Int
     | atom n    => [n]
     | str _     => []
+    | bool _    => []
     | sequenceValue rs => rs.flatMap hostAtoms
     | listValue rs => rs.flatMap hostAtoms
 
-  /-- KatLang truth testing used by builtins like `if`.
-      Zero is false, any other numeric atom is true.
-      Results with no numeric atoms are invalid for truth testing.
+  /-- Canonical text of a Boolean value: lowercase `true` / `false`, the same
+      spelling as the literals. C#: `ValueTextRenderer.FormatBool`. -/
+  def boolText : Bool -> String
+    | true => "true"
+    | false => "false"
 
-      This intentionally follows the current builtin convention based on the
-      first numeric atom of the flattened result. Builtins with stricter
-      contracts, such as `filter`, should use a dedicated helper instead. -/
-  def truthValue? (r : Result) : Option Bool :=
-    match atoms r with
-    | 0::_ => some false
-    | _::_ => some true
-    | _    => none
-
-  /-- Strict truth testing for `filter` predicates.
-      Accepts exactly one atomic numeric result: `0` is false and any other
-      atom is true.
-
-      Sequence values, multi-output results, empty results, and strings are all
-      rejected. This is intentionally stricter than `truthValue?`, because
-      `filter` must not derive truth from flattened atoms. -/
-  def singleAtomicTruthValue? : Result -> Option Bool
-    | atom 0 => some false
-    | atom _ => some true
-    | _      => none
+  /-- Boolean view of a value, for every consumer that REQUIRES a condition or
+      predicate (`if`, `filter`, the `while` continuation flag, `not`, `and`,
+      `or`, `xor`). Only a Boolean value qualifies; a redundant singleton
+      sequence boundary normalizes away exactly as `asInt?` does for numbers
+      (`(true)` is `true`). Numbers have NO truth value — there is no
+      `0`/nonzero convention — and neither do strings, multi-item sequence
+      values, the empty sequence value, or lists.
+      C#: `Result.AsBool`. -/
+  def asBool? : Result -> Option Bool
+    | bool b => some b
+    | sequenceValue rs =>
+        match normalize (sequenceValue rs) with
+        | bool b => some b
+        | _      => none
+    | _ => none
 
     /-- Strict numeric extraction for numeric collection builtins such as `min`,
       `max`, `sum`, and `avg`.
@@ -1143,6 +1152,7 @@ namespace Result
   def asInt? : Result -> Option Int
     | atom n => some n
     | str _  => none
+    | bool _ => none   -- Booleans are not numbers: no implicit conversion
     | sequenceValue rs =>
         match normalize (sequenceValue rs) with
         | atom n => some n
@@ -1161,6 +1171,7 @@ namespace Result
   def toItems : Result -> List Result
     | atom n   => [atom n]
     | str s    => [str s]
+    | bool b   => [bool b]
     | sequenceValue rs => rs
     | listValue rs => [listValue rs]
 
@@ -1919,6 +1930,7 @@ mutual
     | .param _ => pure ()
     | .num _ => pure ()
     | .stringLiteral _ => pure ()
+    | .boolLiteral _ => pure ()
     | .resolve _ => pure ()
     | .unary _ operand =>
         validateExplicitParamOutputInvariantExpr operand
@@ -2044,6 +2056,7 @@ mutual
     | .resolve n => .resolve n
     | .num n => .num n
     | .stringLiteral text => .stringLiteral text
+    | .boolLiteral b => .boolLiteral b
     | .emptySequence depth => .emptySequence depth
     | .unary op e => .unary op (cacheExprShape e)
     | .binary op a b => .binary op (cacheExprShape a) (cacheExprShape b)
@@ -2231,6 +2244,7 @@ def resultToString (r : Result) : EvalM Result :=
 def expectInt (r : Result) : EvalM Int :=
   match r with
   | .str _ => .error (Error.typeMismatch "Expected a number, got a string")
+  | .bool _ => .error (Error.typeMismatch "Expected a number, got a Boolean value")
   | _ => match Result.asInt? r with
     | some n => pure n
     | none   => .error Error.badArity
@@ -2238,12 +2252,17 @@ def expectInt (r : Result) : EvalM Int :=
 partial def resultDiagnosticString : Result -> String
   | .atom value => toString value
   | .str value => "'" ++ value ++ "'"
+  | .bool value => Result.boolText value
   | .sequenceValue items => "(" ++ String.intercalate ", " (items.map resultDiagnosticString) ++ ")"
   | .listValue items => "[" ++ String.intercalate ", " (items.map resultDiagnosticString) ++ "]"
 
-def numericScalarOperandDescription : Result -> String
+/-- How a diagnostic names one value that failed an operand, condition, or
+    predicate requirement: the value KIND first, then the value itself.
+    C#: `Evaluator.DescribeOperand`. -/
+def operandDescription : Result -> String
   | .sequenceValue items => s!"a sequence value with {items.length} sequence element{if items.length = 1 then "" else "s"}: {resultDiagnosticString (.sequenceValue items)}"
   | .str value => "a string: '" ++ value ++ "'"
+  | .bool value => s!"a Boolean value: {Result.boolText value}"
   | .atom value => s!"numeric value {value}"
   | .listValue items => s!"a list value with {items.length} element{if items.length = 1 then "" else "s"}: {resultDiagnosticString (.listValue items)}"
 
@@ -2251,7 +2270,25 @@ def requireNumericScalarOperand (op : BinaryOp) (side : String) (value : Result)
   match Result.asInt? value with
   | some number => pure number
   | none => .error (Error.typeMismatch
-      s!"operator `{op.symbol}` expects numeric scalar operands, but the {side} operand was {numericScalarOperandDescription value}")
+      s!"operator `{op.symbol}` expects numeric scalar operands, but the {side} operand was {operandDescription value}")
+
+/-- The logical operators `and` / `or` / `xor` require a Boolean value on
+    BOTH sides: there is no numeric truthiness, so a number, string, sequence
+    value, or list operand is a value-kind error naming the operand.
+    C#: `Evaluator.RequireBooleanOperand`. -/
+def requireBooleanOperand (op : BinaryOp) (side : String) (value : Result) : EvalM Bool :=
+  match Result.asBool? value with
+  | some b => pure b
+  | none => .error (Error.typeMismatch
+      s!"operator `{op.symbol}` expects Boolean operands, but the {side} operand was {operandDescription value}")
+
+/-- The ONE message for every position that REQUIRES a Boolean value — an
+    `if` condition, a `filter` predicate result, a `while` continuation flag:
+    it names the role and the value kind actually supplied, so a number in a
+    predicate position is reported as the value-kind mismatch it is, never as
+    an arity or numeric error. C#: `Evaluator.BooleanRequiredMessage`. -/
+def booleanRequiredMessage (role : String) (value : Result) : String :=
+  s!"{role} must be a Boolean value (true or false), but was {operandDescription value}"
 
 /-- Structural KatLang value equality used by `==` and `!=`.
     Numbers compare by value, strings by exact value, and sequence values by
@@ -2353,6 +2390,7 @@ def unpackArgs (r : Result) : List Result :=
   match r with
   | .atom _ => [r]
   | .str _  => [r]
+  | .bool _ => [r]
   | .sequenceValue rs => rs
   | .listValue _ => [r]
 
@@ -2524,6 +2562,7 @@ def isEmptySequenceChain : Result -> Bool
 def resultToExpr : Result -> Expr
   | .atom n => .num n
   | .str s => .stringLiteral s
+  | .bool b => .boolLiteral b
   | .sequenceValue rs =>
       if isEmptySequenceChain (.sequenceValue rs) then
         .emptySequence 0
@@ -2856,6 +2895,7 @@ def bindCountedCallbackParameterPatternList (patterns : List ParameterPattern)
 def describeSequenceItem : Result -> String
   | .atom n => s!"numeric value {n}"
   | .str s => s!"string value {repr s}"
+  | .bool b => s!"Boolean value {Result.boolText b}"
   | .sequenceValue [] => "empty sequence value"
   | .sequenceValue _ => "sequence value"
   | .listValue [] => "empty list value"
@@ -2984,6 +3024,7 @@ def Expr.kind : Expr -> String
   | .param _      => "param"
   | .num _        => "num"
   | .stringLiteral _ => "stringLiteral"
+  | .boolLiteral _ => "boolLiteral"
   | .unary _ _    => "unary"
   | .binary _ _ _ => "binary"
   | .index _ _    => "index"
@@ -3041,6 +3082,28 @@ def powerBaseNeedsParens : Expr -> Bool
   | .num v     => decide (v < 0)
   | _          => false
 
+/-- `not` sits BELOW the comparisons and above `and`/`xor`/`or` in source
+  syntax (comparisons > not > and > xor > or, September 2026), so a `not`
+  operand of any tighter-binding operator must keep its parentheses: bare
+  `not a == b` reads back as `not (a == b)`, and bare `1 + not x` is not an
+  operand at all. Only the logical operators take a bare `not` operand.
+  C#: `ExprNameRenderer.NotOperandNeedsParens`. -/
+def notOperandNeedsParens (op : BinaryOp) : Expr -> Bool
+  | .unary .not _ =>
+      match op with
+      | .and | .or | .xor => false
+      | _ => true
+  | _ => false
+
+/-- The operand of a prefix `not` that would rebind if rendered bare: a logical
+  binary (`not (a and b)` is not `(not a) and b`). Comparisons, arithmetic, and
+  powers bind tighter than `not`, so they read back correctly bare. -/
+def notOperandBindsLooser : Expr -> Bool
+  | .binary .and _ _ => true
+  | .binary .or _ _  => true
+  | .binary .xor _ _ => true
+  | _                => false
+
 /-- This MINIMAL renderer models only structural reference forms; every other
   kind (`.num`, `.param`, `.binary`, ...) renders as the `(kind)` fallback, so
   C#'s merged `OpenExprName` prints more detail for them. That gap is
@@ -3084,22 +3147,38 @@ partial def exprDiagnosticName : Expr -> String
   | .param name => name
   | .num value => toString value
   | .stringLiteral value => "'" ++ value ++ "'"
-  -- Under power-over-unary precedence, a bare unary operand reads back
+  | .boolLiteral value => Result.boolText value
+  -- Under power-over-unary precedence, a bare minus operand reads back
   -- correctly even over a power (`-a ^ b` IS `-(a ^ b)`); binary operands of
   -- OTHER operators keep this renderer's established bare convention (see the
-  -- index comment below for how it diverges from C# on nested operands).
-  | .unary .minus operand => "-" ++ exprDiagnosticName operand
-  | .unary .not operand => "not " ++ exprDiagnosticName operand
+  -- index comment below for how it diverges from C# on nested operands). A
+  -- `not` under `-` keeps parentheses: bare `-not x` is not an operand at all.
+  | .unary .minus operand =>
+      let operandName := exprDiagnosticName operand
+      "-" ++ (match operand with
+              | .unary .not _ => "(" ++ operandName ++ ")"
+              | _ => operandName)
+  -- `not` binds below the comparisons, so a comparison, arithmetic, or power
+  -- operand reads back bare (`not x > 3` IS `not (x > 3)`); only a logical
+  -- binary operand rebinds and keeps parentheses (`not (a and b)`).
+  | .unary .not operand =>
+      let operandName := exprDiagnosticName operand
+      "not " ++ (if notOperandBindsLooser operand then "(" ++ operandName ++ ")" else operandName)
   -- The LEFT operand of `^` is postfix-level in source syntax, so a unary or
   -- negative-literal base must keep parentheses (`(-a) ^ b`), or the bare
-  -- text would read back as `-(a ^ b)`. C#: `PushBinaryLeftOperand`.
+  -- text would read back as `-(a ^ b)`; a `not` operand of any operator
+  -- tighter than `not` keeps parentheses on either side (`(not a) == b`,
+  -- `a == (not b)`). C#: `PushBinaryLeftOperand` / `PushBinaryRightOperand`.
   | .binary op left right =>
       let leftName := exprDiagnosticName left
+      let rightName := exprDiagnosticName right
       let baseName :=
         match op with
         | .pow => if powerBaseNeedsParens left then "(" ++ leftName ++ ")" else leftName
-        | _ => leftName
-      baseName ++ " " ++ op.symbol ++ " " ++ exprDiagnosticName right
+        | _ => if notOperandNeedsParens op left then "(" ++ leftName ++ ")" else leftName
+      let operandName :=
+        if notOperandNeedsParens op right then "(" ++ rightName ++ ")" else rightName
+      baseName ++ " " ++ op.symbol ++ " " ++ operandName
   -- Source-faithful postfix indexing `target:selector`; operands that would
   -- rebind under the real precedence are parenthesized. This renderer prints
   -- binary bare, so a binary index operand is parenthesized here; C# reaches
@@ -3227,7 +3306,7 @@ def patternSequenceValueMembers? (patternCount : Nat) (r : Result) : Option (Lis
 
 /-- Match a pattern against a Result, returning accumulated bindings on success.
     - `bind x` matches any Result, binding x → r
-    - `litInt n` matches only `Result.atom n`
+    - `litInt n` matches only `Result.atom n`; `litBool b` only `Result.bool b`
     - `sequenceValue ps` matches `Result.sequenceValue rs` with same length, recursively;
       a singleton sequence-value pattern also matches a non-sequence-value result because
       normalization collapses singleton sequence values (`patternSequenceValueMembers?`)
@@ -3249,6 +3328,10 @@ partial def matchPatternInto (p : Pattern) (r : Result) (env : ValEnv)
       match r with
       | .str v => if v = s then some env else none
       | _      => none
+  | .litBool b =>
+      match r with
+      | .bool v => if v = b then some env else none
+      | _       => none
   | .sequenceValue ps  =>
       match patternSequenceValueMembers? ps.length r with
       | none => none
@@ -3313,6 +3396,10 @@ partial def matchCountedPatternInto (p : Pattern) (arg : CountedResult)
   | .litString s =>
       match arg.fst with
       | .str v => if v = s then some env else none
+      | _ => none
+  | .litBool b =>
+      match arg.fst with
+      | .bool v => if v = b then some env else none
       | _ => none
   | .sequenceValue ps =>
       match patternSequenceValueMembers? ps.length arg.fst with
@@ -3422,19 +3509,27 @@ def bindLoopStepValueEnv (parameters : List CallableParameter)
 def loopStateResult (stateSlots : List Result) : Result :=
   Result.normalize (.sequenceValue stateSlots)
 
-/-- Split a loop step output into next state slots and continuation flag. -/
-def splitContSlots (outputSlots : List Result) : EvalM (List Result × Int) := do
+/-- Split a loop step output into next state slots and the continuation flag.
+    The step's LAST output is the flag and must be a Boolean value (`true`
+    continues, `false` stops); a number, string, sequence, or list there is a
+    value-kind error, never a truth test. A single-output step keeps the
+    established shape — its one slot is both the next state and the flag — so
+    it must be Boolean too. C#: `Evaluator.SplitContSlots`. -/
+def splitContSlots (outputSlots : List Result) : EvalM (List Result × Bool) := do
   match outputSlots with
   | [] => .error Error.badArity
   | [slot] =>
-    match slot with
-    | .atom n => pure ([slot], n)
-    | _ => .error Error.badArity
+    match Result.asBool? slot with
+    | some c => pure ([slot], c)
+    | none => .error (Error.typeMismatch
+        (booleanRequiredMessage "while continuation flag (the step's last output)" slot))
   | _ =>
     match outputSlots.getLast? with
     | some last =>
-      let c <- expectInt last
-      pure (outputSlots.dropLast, c)
+      match Result.asBool? last with
+      | some c => pure (outputSlots.dropLast, c)
+      | none => .error (Error.typeMismatch
+          (booleanRequiredMessage "while continuation flag (the step's last output)" last))
     | none => .error Error.badArity
 
 /-- Higher-order callbacks keep the collected item value shape for pattern
@@ -3717,10 +3812,12 @@ def evalCountCounted (items : List Result) : EvalM CountedResult := do
     suffix item using ordinary KatLang value equality.
 
     Search is top-level only: sequence values compare as sequence values and are
-    not recursively flattened or inspected. Empty collections return `0`. -/
+    not recursively flattened or inspected. The result is a Boolean value:
+    `true` when some item equals `item`, otherwise `false` (so an empty
+    collection yields `false`). -/
 def evalContainsCounted (items : List Result) (searched : Result) : EvalM CountedResult := do
   let found := items.any (fun item => item == searched)
-  pure (Result.atom (if found then 1 else 0), 1)
+  pure (Result.bool found, 1)
 
 /-- Evaluate `distinct(collection)`.
     `distinct` removes later duplicate top-level items while preserving the
@@ -4214,6 +4311,7 @@ def resolveAlg (e : Expr) (ctx : EvalCtx) : EvalM Algorithm :=
   | .index _ _ => .error (Error.notAnAlgorithm "index expression")
   | .call _ _ => .error (Error.notAnAlgorithm "call expression")
   | .stringLiteral _ => .error (Error.notAnAlgorithm "string literal")
+  | .boolLiteral _ => .error (Error.notAnAlgorithm "Boolean literal")
 
 /-- Resolve a dot edge's RECEIVER in algorithm position — the structural half
     of the ordinary DotCall law applied at EVERY level of a chain.
@@ -5113,16 +5211,18 @@ mutual
           | .error err =>
               .error err
           | .ok pr =>
-              match Result.singleAtomicTruthValue? pr with
+              -- The predicate must return a Boolean value; a numeric result
+              -- (`filter{x}` over numbers) is a value-kind error, never a
+              -- nonzero truth test.
+              match Result.asBool? pr with
               | some true => do
                   let kept <- filterLoop (index + 1) rest
                   pure (item.fst :: kept)
               | some false =>
                   filterLoop (index + 1) rest
               | none =>
-                  .error (Error.withContext
-                    "filter predicate must return exactly one atomic numeric value"
-                    Error.badArity)
+                  .error (Error.typeMismatch
+                    (booleanRequiredMessage "filter predicate result" pr))
     let kept <- filterLoop 0 items
     pure (makeCollectionListResult kept)
 
@@ -5263,14 +5363,16 @@ mutual
             -- count 1, not three separate outputs; explicit spread opens it.
             -- Unlike `while`/`repeat`, which preserve multi-slot loop state, `if`
             -- re-counts the chosen branch value via `Result.valueCount`.
-            match Result.truthValue? cr with
+            -- The condition must be a Boolean value: `if(1, a, b)` is a
+            -- value-kind error, not a truth test.
+            match Result.asBool? cr with
             | some false => do
                 let r <- evalArgumentValueCounted e ctx env
                 pure (r.fst, Result.valueCount r.fst)
             | some true => do
                 let r <- evalArgumentValueCounted t ctx env
                 pure (r.fst, Result.valueCount r.fst)
-            | none => .error Error.badArity
+            | none => .error (Error.typeMismatch (booleanRequiredMessage "if condition" cr))
 
         | .whileBuiltin, step :: initAlgs => do
             if initAlgs.isEmpty then
@@ -5280,7 +5382,9 @@ mutual
             let rec loop (stateSlots : List Result) : EvalM (List Result) := do
               let outputSlots <- runStepSlots step.algorithm ctx env stateSlots
               let (nextSlots, cont) <- splitContSlots outputSlots
-              if cont = 0 then pure stateSlots else loop nextSlots
+              -- `false` stops (the current state is returned; the producing
+              -- iteration's next state is never committed), `true` continues.
+              if cont then loop nextSlots else pure stateSlots
             let finalSlots <- loop initialSlots
             let final := loopStateResult finalSlots
             pure (final, finalSlots.length)
@@ -5307,7 +5411,7 @@ mutual
             let r <- evalArgumentValue a ctx env
             -- `atoms` materializes a collection: one list of
             -- the recursively collected numeric atoms (sequence AND list
-            -- boundaries open; truth testing stays list-opaque).
+            -- boundaries open; strings and Boolean values contribute none).
             pure (makeCollectionListResult ((Result.languageAtoms r).map Result.atom))
 
         | .rangeBuiltin, [startAlg, stopAlg] => do
@@ -6081,22 +6185,32 @@ mutual
     loop (sequenceConstructLeaves e) []
 
   /-- Evaluate a unary operator expression as one counted value. The operand is
-      read at its value boundary; strings are rejected, and any other operand
-      must be a numeric scalar. The empty sequence value follows the same
-      validation as other non-scalar values (SYN-01). Owned here so `eval`
-      (the value projection) never carries independent operator semantics. C#: the unary case of
-      `EvalExpressionSpineCounted`. -/
+      read at its value boundary. `not` is the Boolean negation and REQUIRES a
+      Boolean operand (a number has no truth value); `-` is numeric negation
+      and rejects a Boolean operand as a value-kind error, keeping the
+      established string rejection and the numeric-conversion failure for
+      every other non-numeric operand — the empty sequence value follows the
+      same validation as other non-scalar values (SYN-01). Owned here so
+      `eval` (the value projection) never carries independent operator
+      semantics. C#: `Evaluator.ApplyUnaryOperator`, reached from the unary
+      case of `EvalExpressionSpineCounted`. -/
   partial def evalUnaryCounted (op : UnaryOp) (operand : Expr) (ctx : EvalCtx) (env : ValEnv)
       : EvalM CountedResult := do
     let r <- eval operand ctx env
-    match r with
-    | .str _ => .error (Error.typeMismatch "Unary operator is not supported for strings")
-    | _ => do
-      let v <- expectInt r
-      pure (Result.atom <|
-        match op with
-        | .minus => -v
-        | .not   => if v = 0 then 1 else 0, 1)
+    match op with
+    | .not =>
+        match Result.asBool? r with
+        | some b => pure (Result.bool (!b), 1)
+        | none => .error (Error.typeMismatch
+            s!"operator `not` expects a Boolean operand, but the operand was {operandDescription r}")
+    | .minus =>
+        match r with
+        | .str _ => .error (Error.typeMismatch "Unary operator is not supported for strings")
+        | .bool _ => .error (Error.typeMismatch
+            s!"operator `-` expects a numeric scalar operand, but the operand was {operandDescription r}")
+        | _ => do
+          let v <- expectInt r
+          pure (Result.atom (-v), 1)
 
   /-- Evaluate a binary operator expression as one counted value. Both operands
       are read at their value boundaries. `==`/`!=` compare KatLang values
@@ -6115,12 +6229,28 @@ mutual
     let rr <- eval b ctx env
     match op with
     -- `==` and `!=` compare KatLang values structurally across all value kinds
-    -- (numbers, strings, and sequence values, recursively). Different value
-    -- kinds compare unequal rather than raising a type mismatch. This dedicated
-    -- path is separate from the numeric-scalar-only validation used by the
-    -- arithmetic and ordering operators below.
-    | .eq => pure (Result.atom (if resultValueEq lr rr then 1 else 0), 1)
-    | .ne => pure (Result.atom (if resultValueEq lr rr then 0 else 1), 1)
+    -- (numbers, Booleans, strings, sequence values, and lists, recursively).
+    -- Different value kinds compare unequal rather than raising a type
+    -- mismatch (`true == 1` is `false`), so equality is total and always
+    -- yields a Boolean value. This dedicated path is separate from the
+    -- numeric-scalar-only validation used by the arithmetic and ordering
+    -- operators below.
+    | .eq => pure (Result.bool (resultValueEq lr rr), 1)
+    | .ne => pure (Result.bool (!(resultValueEq lr rr)), 1)
+    -- The logical operators are Boolean-only: both operands are evaluated
+    -- left to right before the operator applies (the established evaluation
+    -- order — no short circuit), and each must be a Boolean value. There is
+    -- no numeric truthiness, so `1 and 2` is a value-kind error.
+    | .and | .or | .xor => do
+        let binaryContext := s!"while evaluating `{binaryExprDiagnosticName op a b}`"
+        let x <- withCtx binaryContext (requireBooleanOperand op "left" lr)
+        let y <- withCtx binaryContext (requireBooleanOperand op "right" rr)
+        let value : Bool :=
+          match op with
+          | .and => x && y
+          | .or  => x || y
+          | _    => x != y
+        pure (Result.bool value, 1)
     | _ =>
       -- SYN-01: the empty sequence value is NOT an identity for scalar
       -- operators. `()` carries no numeric scalar value, so it falls through to
@@ -6145,30 +6275,33 @@ mutual
           let value <- negativeIntPow x y
           pure (value, Result.valueCount value)
         else
-          pure (Result.atom <|
-            -- `.eq`/`.ne` are handled structurally above; the arms below keep the
-            -- numeric match exhaustive over BinaryOp and are unreachable here.
+          let value : Result :=
+            -- `.eq`/`.ne` and the logical operators are handled above; their
+            -- arms below keep the match exhaustive over BinaryOp and are
+            -- unreachable here.
             match op with
-            | .add  => x + y
-            | .sub  => x - y
-            | .mul  => x * y
+            | .add  => .atom (x + y)
+            | .sub  => .atom (x - y)
+            | .mul  => .atom (x * y)
             -- Division and modulo truncate toward zero (Int.tdiv / Int.tmod),
             -- matching the C# reference: `-7 div 2 = -3` and `-7 mod 2 = -1`.
             -- `/` on non-divisible operands additionally truncates the exact
             -- decimal quotient as part of the integer-core limitation.
-            | .div  => x.tdiv y
-            | .idiv => x.tdiv y
-            | .mod  => x.tmod y
-            | .pow  => intPow x y.toNat
-            | .lt   => if x < y then 1 else 0
-            | .gt   => if x > y then 1 else 0
-            | .le   => if x <= y then 1 else 0
-            | .ge   => if x >= y then 1 else 0
-            | .eq   => if x = y then 1 else 0
-            | .ne   => if x != y then 1 else 0
-            | .and  => if x != 0 then (if y != 0 then 1 else 0) else 0
-            | .or   => if x != 0 then 1 else (if y != 0 then 1 else 0)
-            | .xor  => if x != 0 then (if y = 0 then 1 else 0) else (if y != 0 then 1 else 0), 1)
+            | .div  => .atom (x.tdiv y)
+            | .idiv => .atom (x.tdiv y)
+            | .mod  => .atom (x.tmod y)
+            | .pow  => .atom (intPow x y.toNat)
+            -- The ordering comparisons take numeric scalar operands only (a
+            -- Boolean operand is rejected above: Booleans are not ordered)
+            -- and yield a Boolean value.
+            | .lt   => .bool (decide (x < y))
+            | .gt   => .bool (decide (x > y))
+            | .le   => .bool (decide (x <= y))
+            | .ge   => .bool (decide (x >= y))
+            | .eq   => .bool (decide (x = y))
+            | .ne   => .bool (x != y)
+            | .and | .or | .xor => .bool false
+          pure (value, 1)
 
   /-- Evaluate an expression together with the number of top-level values it
       emits at the current algorithm boundary — the CANONICAL expression
@@ -6252,6 +6385,7 @@ mutual
         evalCallCountedExpr f args ctx env
     | .num n => pure (Result.atom n, 1)
     | .stringLiteral s => pure (Result.str s, 1)
+    | .boolLiteral b => pure (Result.bool b, 1)
     | .unary op operand =>
         evalUnaryCounted op operand ctx env
     | .binary op a b =>
@@ -6771,6 +6905,7 @@ mutual
     | .param n => pure (.param n)
     | .num n => pure (.num n)
     | .stringLiteral s => pure (.stringLiteral s)
+    | .boolLiteral b => pure (.boolLiteral b)
     | .resolve n => pure (.resolve n)
     | .emptySequence n => pure (.emptySequence n)
     | .unary op e => return .unary op (<- identifyPropertyExpr e)
@@ -6970,6 +7105,7 @@ mutual
     An AST satisfying this predicate is ready for semantic evaluation. -/
 partial def postElabInvariant : Expr -> Bool
   | .stringLiteral _ => true
+  | .boolLiteral _   => true
   | .unary _ e       => postElabInvariant e
   | .binary _ a b    => postElabInvariant a && postElabInvariant b
   | .index a b       => postElabInvariant a && postElabInvariant b

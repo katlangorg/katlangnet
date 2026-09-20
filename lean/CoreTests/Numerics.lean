@@ -130,13 +130,26 @@ def fractionalReciprocalExponentIsExplicitError : Bool :=
 def emptyOperandExpr : KatLang.Expr := .emptySequence 0
 
 def emptyOperandMessage (op : KatLang.BinaryOp) (side : String) : String :=
-  s!"operator `{op.symbol}` expects numeric scalar operands, but the {side} operand was a sequence value with 0 sequence elements: ()"
+  match op with
+  -- The logical operators require Boolean operands; every other non-equality
+  -- operator requires numeric scalars. `()` satisfies neither.
+  | .and | .or | .xor =>
+      s!"operator `{op.symbol}` expects Boolean operands, but the {side} operand was a sequence value with 0 sequence elements: ()"
+  | _ =>
+      s!"operator `{op.symbol}` expects numeric scalar operands, but the {side} operand was a sequence value with 0 sequence elements: ()"
+
+/-- A valid other operand for `op`, so that the EMPTY operand is the one
+    rejected: a Boolean for the logical operators, a number otherwise. -/
+def validOperandFor (op : KatLang.BinaryOp) : KatLang.Expr :=
+  match op with
+  | .and | .or | .xor => .boolLiteral true
+  | _ => .num 10
 
 def rejectsEmptyOperand (op : KatLang.BinaryOp) : Bool :=
-  (match runResult (.binary op emptyOperandExpr (.num 10)) with
+  (match runResult (.binary op emptyOperandExpr (validOperandFor op)) with
    | Except.error err => innermostIsTypeMismatch (emptyOperandMessage op "left") err
    | _ => false) &&
-  (match runResult (.binary op (.num 10) emptyOperandExpr) with
+  (match runResult (.binary op (validOperandFor op) emptyOperandExpr) with
    | Except.error err => innermostIsTypeMismatch (emptyOperandMessage op "right") err
    | _ => false) &&
   (match runResult (.binary op emptyOperandExpr emptyOperandExpr) with
@@ -187,45 +200,144 @@ def evaluatesTo (e : KatLang.Expr) (expected : Result) : Bool :=
 -- Positive control 1: structural equality is decided BEFORE operand
 -- validation and is unaffected -- `()` compares as an ordinary value.
 def emptyStructuralEqualityUnaffected : Bool :=
-  evaluatesTo (.binary .eq emptyOperandExpr emptyOperandExpr) (.atom 1) &&
-  evaluatesTo (.binary .ne emptyOperandExpr emptyOperandExpr) (.atom 0) &&
-  evaluatesTo (.binary .eq emptyOperandExpr (.emptySequence 1)) (.atom 1) &&
-  evaluatesTo (.binary .ne emptyOperandExpr (.emptySequence 1)) (.atom 0) &&
-  evaluatesTo (.binary .eq emptyOperandExpr (.num 0)) (.atom 0) &&
-  evaluatesTo (.binary .ne emptyOperandExpr (.capture [.num 1, .num 2])) (.atom 1) &&
-  evaluatesTo (.binary .eq emptyOperandExpr (.stringLiteral "text")) (.atom 0) &&
-  evaluatesTo (.binary .eq (.listLiteral []) emptyOperandExpr) (.atom 0)
+  evaluatesTo (.binary .eq emptyOperandExpr emptyOperandExpr) (.bool true) &&
+  evaluatesTo (.binary .ne emptyOperandExpr emptyOperandExpr) (.bool false) &&
+  evaluatesTo (.binary .eq emptyOperandExpr (.emptySequence 1)) (.bool true) &&
+  evaluatesTo (.binary .ne emptyOperandExpr (.emptySequence 1)) (.bool false) &&
+  evaluatesTo (.binary .eq emptyOperandExpr (.num 0)) (.bool false) &&
+  evaluatesTo (.binary .ne emptyOperandExpr (.capture [.num 1, .num 2])) (.bool true) &&
+  evaluatesTo (.binary .eq emptyOperandExpr (.stringLiteral "text")) (.bool false) &&
+  evaluatesTo (.binary .eq (.listLiteral []) emptyOperandExpr) (.bool false) &&
+  -- Booleans join the total equality: `() == false` is false, not an error,
+  -- and a Boolean never equals the number it would once have encoded.
+  evaluatesTo (.binary .eq emptyOperandExpr (.boolLiteral false)) (.bool false) &&
+  evaluatesTo (.binary .eq (.boolLiteral true) (.num 1)) (.bool false) &&
+  evaluatesTo (.binary .eq (.boolLiteral false) (.num 0)) (.bool false) &&
+  evaluatesTo (.binary .ne (.boolLiteral true) (.num 1)) (.bool true) &&
+  evaluatesTo (.binary .eq (.boolLiteral true) (.boolLiteral true)) (.bool true) &&
+  evaluatesTo (.binary .eq (.boolLiteral true) (.boolLiteral false)) (.bool false)
 
 #guard emptyStructuralEqualityUnaffected
 
--- Positive control 2: ordinary scalar operators still compute, and the
--- ordering operators still return the numeric boolean representation rather
--- than one of their operands.
+-- Positive control 2: ordinary scalar operators still compute, the ordering
+-- operators return BOOLEAN values (never a numeric representation and never
+-- one of their operands), and the logical operators combine Boolean operands.
 def ordinaryScalarOperatorsUnaffected : Bool :=
   binaryAtomResult? .add 1 2 == some 3 &&
   binaryAtomResult? .sub 1 2 == some (-1) &&
-  binaryAtomResult? .gt 10 1 == some 1 &&
-  binaryAtomResult? .gt 1 10 == some 0 &&
-  binaryAtomResult? .ge 1 1 == some 1 &&
-  binaryAtomResult? .and 1 7 == some 1 &&
-  binaryAtomResult? .and 0 7 == some 0 &&
-  binaryAtomResult? .or 0 0 == some 0
+  evaluatesToBool (.binary .gt (.num 10) (.num 1)) true &&
+  evaluatesToBool (.binary .gt (.num 1) (.num 10)) false &&
+  evaluatesToBool (.binary .ge (.num 1) (.num 1)) true &&
+  evaluatesToBool (.binary .and (.boolLiteral true) (.boolLiteral true)) true &&
+  evaluatesToBool (.binary .and (.boolLiteral false) (.boolLiteral true)) false &&
+  evaluatesToBool (.binary .or (.boolLiteral false) (.boolLiteral false)) false &&
+  evaluatesToBool (.binary .or (.boolLiteral false) (.boolLiteral true)) true &&
+  evaluatesToBool (.binary .xor (.boolLiteral true) (.boolLiteral false)) true &&
+  evaluatesToBool (.binary .xor (.boolLiteral true) (.boolLiteral true)) false &&
+  -- A comparison is never a number, and the logical operators never accept
+  -- numbers: there is no `0`/`1` truth encoding left anywhere.
+  binaryAtomResult? .gt 10 1 == none &&
+  binaryAtomResult? .and 1 7 == none &&
+  binaryAtomResult? .or 0 0 == none
 
 #guard ordinaryScalarOperatorsUnaffected
 
--- Unary operators use the existing expectInt validation: every unsupported
--- sequence/list value is badArity, including `()`; strings keep typeMismatch.
+/-- The logical operators reject every non-Boolean operand with the ONE
+    Boolean-operand message naming the operand; the ordering operators reject
+    Boolean operands (Booleans are not ordered) with the numeric-scalar message. -/
+def logicalOperatorsRejectNonBooleanOperands : Bool :=
+  (match runResult (.binary .and (.num 1) (.num 2)) with
+   | Except.error err =>
+       hasContext "while evaluating `1 and 2`" err &&
+       innermostIsTypeMismatch
+         "operator `and` expects Boolean operands, but the left operand was numeric value 1" err
+   | _ => false) &&
+  (match runResult (.binary .or (.boolLiteral true) (.num 0)) with
+   | Except.error err =>
+       innermostIsTypeMismatch
+         "operator `or` expects Boolean operands, but the right operand was numeric value 0" err
+   | _ => false) &&
+  (match runResult (.binary .xor (.stringLiteral "a") (.boolLiteral true)) with
+   | Except.error err =>
+       innermostIsTypeMismatch
+         "operator `xor` expects Boolean operands, but the left operand was a string: 'a'" err
+   | _ => false) &&
+  (match runResult (.binary .and (.listLiteral [.num 1]) (.boolLiteral true)) with
+   | Except.error err =>
+       innermostIsTypeMismatch
+         "operator `and` expects Boolean operands, but the left operand was a list value with 1 element: [1]" err
+   | _ => false) &&
+  (match runResult (.binary .lt (.boolLiteral true) (.boolLiteral false)) with
+   | Except.error err =>
+       innermostIsTypeMismatch
+         "operator `<` expects numeric scalar operands, but the left operand was a Boolean value: true" err
+   | _ => false) &&
+  (match runResult (.binary .gt (.boolLiteral true) (.num 0)) with
+   | Except.error err =>
+       innermostIsTypeMismatch
+         "operator `>` expects numeric scalar operands, but the left operand was a Boolean value: true" err
+   | _ => false) &&
+  (match runResult (.binary .add (.boolLiteral true) (.num 1)) with
+   | Except.error err =>
+       innermostIsTypeMismatch
+         "operator `+` expects numeric scalar operands, but the left operand was a Boolean value: true" err
+   | _ => false) &&
+  (match runResult (.binary .mul (.num 10) (.boolLiteral false)) with
+   | Except.error err =>
+       innermostIsTypeMismatch
+         "operator `*` expects numeric scalar operands, but the right operand was a Boolean value: false" err
+   | _ => false)
+
+#guard logicalOperatorsRejectNonBooleanOperands
+
+/-- Both logical operands are evaluated left to right before the operator
+    applies (no short circuit): a rejected RIGHT operand is reported even when
+    the left operand alone would decide the result. -/
+def logicalOperatorsEvaluateBothOperands : Bool :=
+  (match runResult (.binary .or (.boolLiteral true) (.num 1)) with
+   | Except.error err =>
+       innermostIsTypeMismatch
+         "operator `or` expects Boolean operands, but the right operand was numeric value 1" err
+   | _ => false) &&
+  (match runResult (.binary .and (.boolLiteral false) (.binary .div (.num 1) (.num 0))) with
+   | Except.error err => innermostIsDivByZero err
+   | _ => false)
+
+#guard logicalOperatorsEvaluateBothOperands
+
+-- Unary `-` uses the existing expectInt validation: every unsupported
+-- sequence/list value is badArity, including `()`; strings keep typeMismatch;
+-- a Boolean operand is a value-kind error. Unary `not` REQUIRES a Boolean:
+-- every other operand kind — numbers included — is the one typeMismatch
+-- naming the operand.
 def unaryNonScalarOperandsRejected : Bool :=
-  ([KatLang.UnaryOp.minus, .not]).all fun op =>
-    ([emptyOperandExpr, .emptySequence 2, .capture [.num 1, .num 2],
-      .listLiteral [], .listLiteral [.num 1], .listLiteral [.num 1, .num 2]]).all
-      (fun operand => match runResult (.unary op operand) with
-       | Except.error err => innermostIsBadArity err
-       | _ => false) &&
-    (match runResult (.unary op (.stringLiteral "text")) with
+  ([emptyOperandExpr, .emptySequence 2, .capture [.num 1, .num 2],
+    .listLiteral [], .listLiteral [.num 1], .listLiteral [.num 1, .num 2]]).all
+    (fun operand => match runResult (.unary .minus operand) with
+     | Except.error err => innermostIsBadArity err
+     | _ => false) &&
+  (match runResult (.unary .minus (.stringLiteral "text")) with
+   | Except.error err =>
+       innermostIsTypeMismatch "Unary operator is not supported for strings" err
+   | _ => false) &&
+  (match runResult (.unary .minus (.boolLiteral true)) with
+   | Except.error err =>
+       innermostIsTypeMismatch
+         "operator `-` expects a numeric scalar operand, but the operand was a Boolean value: true" err
+   | _ => false) &&
+  (([(emptyOperandExpr, "a sequence value with 0 sequence elements: ()"),
+     (.capture [.num 1, .num 2], "a sequence value with 2 sequence elements: (1, 2)"),
+     (.listLiteral [], "a list value with 0 elements: []"),
+     (.listLiteral [.num 1], "a list value with 1 element: [1]"),
+     (.stringLiteral "text", "a string: 'text'"),
+     (.num 0, "numeric value 0"),
+     (.num 7, "numeric value 7"),
+     (.num (-7), "numeric value -7")] : List (KatLang.Expr × String)).all
+    (fun (operand, description) => match runResult (.unary .not operand) with
      | Except.error err =>
-         innermostIsTypeMismatch "Unary operator is not supported for strings" err
-     | _ => false)
+         innermostIsTypeMismatch
+           s!"operator `not` expects a Boolean operand, but the operand was {description}" err
+     | _ => false))
 
 #guard unaryNonScalarOperandsRejected
 
@@ -233,9 +345,11 @@ def ordinaryUnaryOperatorsUnaffected : Bool :=
   evaluatesTo (.unary .minus (.num 7)) (.atom (-7)) &&
   evaluatesTo (.unary .minus (.num (-7))) (.atom 7) &&
   evaluatesTo (.unary .minus (.num 0)) (.atom 0) &&
-  evaluatesTo (.unary .not (.num 0)) (.atom 1) &&
-  evaluatesTo (.unary .not (.num 7)) (.atom 0) &&
-  evaluatesTo (.unary .not (.num (-7))) (.atom 0)
+  evaluatesTo (.unary .not (.boolLiteral false)) (.bool true) &&
+  evaluatesTo (.unary .not (.boolLiteral true)) (.bool false) &&
+  -- A redundant singleton boundary normalizes away, as for numbers.
+  evaluatesTo (.unary .not (.capture [.boolLiteral true])) (.bool false) &&
+  evaluatesTo (.unary .not (.binary .lt (.num 1) (.num 2))) (.bool false)
 
 #guard ordinaryUnaryOperatorsUnaffected
 

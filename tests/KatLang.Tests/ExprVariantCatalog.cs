@@ -55,6 +55,7 @@ internal static class ExprVariantCatalog
             [nameof(Expr.Param)] = new Expr.Param("p"),
             [nameof(Expr.Num)] = leaf,
             [nameof(Expr.StringLiteral)] = new Expr.StringLiteral("s"),
+            [nameof(Expr.BoolLiteral)] = new Expr.BoolLiteral(true),
             [nameof(Expr.Unary)] = new Expr.Unary(UnaryOp.Minus, leaf),
             [nameof(Expr.Binary)] = new Expr.Binary(BinaryOp.Add, leaf, leaf),
             [nameof(Expr.Index)] = new Expr.Index(new Expr.Capture([leaf, leaf]), new Expr.Num(0)),

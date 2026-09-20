@@ -814,6 +814,7 @@ public static partial class Evaluator
     {
         Result.Atom(var n) => $"numeric value {Rendering.ValueTextRenderer.FormatNumberInvariant(n)}",
         Result.Str(var s) => $"string value {Rendering.DiagnosticValueRenderer.RenderDoubleQuotedString(s)}",
+        Result.Bool(var b) => $"Boolean value {Rendering.ValueTextRenderer.FormatBool(b)}",
         Result.SequenceValue(var items) when items.Count == 0 => "empty sequence value",
         Result.SequenceValue => "sequence value",
         Result.ListValue(var items) when items.Count == 0 => "empty list value",
@@ -920,7 +921,7 @@ public static partial class Evaluator
     }
 
     /// <summary>
-    /// Evaluate a filter predicate with the same callback and truthiness rules
+    /// Evaluate a filter predicate with the same callback and Boolean-result rule
     /// used by generic <c>filter</c>; sequence optimizers call this to avoid
     /// duplicating callback semantics.
     /// </summary>
@@ -939,13 +940,11 @@ public static partial class Evaluator
         if (predicateR.IsError)
             return predicateR.Error;
 
-        var truth = predicateR.Value.SingleAtomicTruthValue();
+        // The predicate must return a Boolean value; a numeric result (`filter{x}` over
+        // numbers) is a value-kind error, never a nonzero truth test. Lean: evalFilterCounted.
+        var truth = predicateR.Value.AsBool();
         if (truth is null)
-        {
-            return new EvalError.WithContext(
-                "filter predicate must return exactly one atomic numeric value",
-                new EvalError.BadArity());
-        }
+            return new EvalError.TypeMismatch(BooleanRequiredMessage("filter predicate result", predicateR.Value));
 
         return EvalResult<bool>.Ok(truth.Value);
     }
@@ -1322,7 +1321,8 @@ public static partial class Evaluator
     /// <summary>
     /// Evaluate <c>contains(collection, item)</c> by checking whether any
     /// extracted top-level item equals the searched suffix item under ordinary
-    /// KatLang value semantics.
+    /// KatLang value semantics. The result is a Boolean value (<c>true</c> when
+    /// some item equals the searched item, otherwise <c>false</c>).
     /// Search is top-level only: sequence values compare structurally as single
     /// items and are not searched recursively.
     /// </summary>
@@ -1330,7 +1330,7 @@ public static partial class Evaluator
         IReadOnlyList<Result> items,
         Result searchedItem)
         => EvalResult<CountedResult>.Ok(new CountedResult(
-            new Result.Atom(items.Any(item => Result.ValueComparer.Equals(item, searchedItem)) ? 1 : 0),
+            new Result.Bool(items.Any(item => Result.ValueComparer.Equals(item, searchedItem))),
             1));
 
     /// <summary>
@@ -1972,8 +1972,11 @@ public static partial class Evaluator
                 {
                     var condR = EvalResolvedArgument(args[0], ctx, valEnv);
                     if (condR.IsError) return condR.Error;
-                    var truth = condR.Value.TruthValue();
-                    if (truth is null) return new EvalError.BadArity();
+                    // The condition must be a Boolean value: `if(1, a, b)` is a
+                    // value-kind error, not a truth test. Lean: the `.ifBuiltin` arm.
+                    var truth = condR.Value.AsBool();
+                    if (truth is null)
+                        return new EvalError.TypeMismatch(BooleanRequiredMessage("if condition", condR.Value));
 
                     // The selected branch is one argument expression, so `if` observes
                     // it as a single value boundary — exactly like value-position
@@ -2026,7 +2029,7 @@ public static partial class Evaluator
                     if (atomsR.IsError) return atomsR.Error;
                     // `atoms` materializes a collection: one list
                     // of the recursively collected numeric atoms (sequence AND
-                    // list boundaries open; truth testing stays list-opaque).
+                    // list boundaries open; strings and Booleans contribute no atoms).
                     return MakeLanguageAtomsResult(ctx, atomsR.Value);
                 }
 

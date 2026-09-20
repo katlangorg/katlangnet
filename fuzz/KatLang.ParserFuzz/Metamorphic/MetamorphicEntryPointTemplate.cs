@@ -87,6 +87,9 @@ internal static class MetamorphicEntryPointTemplate
         new("resource-failure-depth", $"{F}(0) = 0\n{F}(n) = {F}(n - 1)\n{F}(200)"),
         new("no-program-output", $"{A} = 1"),
         new("parse-failure", "1 ; 2", Parses: false),
+        new("boolean-success", "true"),
+        new("boolean-structure", "[true, (false, 1)]"),
+        new("boolean-type-error", "if(1, true, false)"),
     ];
 
     internal static int SourceCount => Sources.Length;

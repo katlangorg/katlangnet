@@ -146,6 +146,7 @@ internal sealed class LeanAstEncoding
     {
         Expr.Num(var value) => $".num {EncodeNumber(value)}",
         Expr.StringLiteral(var value) => $".stringLiteral {Quote(value)}",
+        Expr.BoolLiteral(var value) => $".boolLiteral {EncodeBool(value)}",
         Expr.EmptySequence(var depth) => EncodeEmptySequence(depth),
         Expr.Resolve(var name) => $".resolve {Quote(name)}",
         Expr.Param(var name) => $".param {Quote(name)}",
@@ -357,8 +358,12 @@ internal sealed class LeanAstEncoding
         Pattern.Bind(var name) => $".bind {Quote(name)}",
         Pattern.LitInt(var value) => $".litInt {EncodeNumber(value)}",
         Pattern.LitString(var value) => $".litString {Quote(value)}",
+        Pattern.LitBool(var value) => $".litBool {EncodeBool(value)}",
         Pattern.SequenceValue(var items) => $".sequenceValue [{EncodeList(items, EncodePattern)}]",
     };
+
+    /// <summary>Lean's `Bool` literals are spelled exactly like KatLang's.</summary>
+    private static string EncodeBool(bool value) => value ? "true" : "false";
 
     private static string EncodeExposure(PropertyExposure exposure, IReadOnlyList<string> requiredAncestorParameters) => exposure switch
     {

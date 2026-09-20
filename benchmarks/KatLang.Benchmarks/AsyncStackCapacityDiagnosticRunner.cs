@@ -61,9 +61,9 @@ internal static class AsyncStackCapacityDiagnosticRunner
     private static IEnumerable<(string Label, Func<int, Expr> Source, int Cap)> CallShapes()
     {
         yield return ("plain-clause", n => ParsedAst($"F(0) = 0\nF(n) = F(n - 1)\nF({n})"), 127);
-        yield return ("through-if", n => ParsedAst($"F(n) = if(n, F(n - 1), 0)\nF({n})"), 127);
-        yield return ("dotted", n => ParsedAst($"Lib = {{public F(n) = if(n, Lib.F(n - 1), 0)}}\nLib.F({n})"), 127);
-        yield return ("collection-callback", n => ParsedAst($"F(n) = if(n, [n - 1].map(F).first, 0)\nF({n})"), 127);
+        yield return ("through-if", n => ParsedAst($"F(n) = if(n > 0, F(n - 1), 0)\nF({n})"), 127);
+        yield return ("dotted", n => ParsedAst($"Lib = {{public F(n) = if(n > 0, Lib.F(n - 1), 0)}}\nLib.F({n})"), 127);
+        yield return ("collection-callback", n => ParsedAst($"F(n) = if(n > 0, [n - 1].map(F).first, 0)\nF({n})"), 127);
     }
 
     private static Expr ParsedAst(string source)

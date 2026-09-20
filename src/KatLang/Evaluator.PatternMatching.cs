@@ -37,6 +37,9 @@ public static partial class Evaluator
             Pattern.LitInt(var n) => result is Result.Atom(var v) && v.Equals(n),
             Pattern.LitString(var s) => result is Result.Str(var sv)
                 && string.Equals(sv, s, StringComparison.Ordinal),
+            // A Boolean literal pattern matches only a Boolean value (never the number
+            // it would once have encoded).
+            Pattern.LitBool(var b) => result is Result.Bool(var bv) && bv == b,
             Pattern.SequenceValue(var items) => MatchSequenceValuePattern(items, result, bindings),
         };
 
@@ -146,6 +149,7 @@ public static partial class Evaluator
             Pattern.LitInt(var n) => result.Value is Result.Atom(var v) && v.Equals(n),
             Pattern.LitString(var s) => result.Value is Result.Str(var sv)
                 && string.Equals(sv, s, StringComparison.Ordinal),
+            Pattern.LitBool(var b) => result.Value is Result.Bool(var bv) && bv == b,
             Pattern.SequenceValue(var items) => MatchCountedSequenceValuePattern(items, result, bindings),
         };
 

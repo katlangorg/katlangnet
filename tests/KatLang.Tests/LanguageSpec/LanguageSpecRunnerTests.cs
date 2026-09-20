@@ -277,6 +277,9 @@ public class LanguageSpecRunnerTests
             // recovery are front-end rejections, parse-level by construction.
             "open-builtin-target-rejected",
             "owed-closer-recovery-keeps-later-declarations",
+            // `not` below the comparisons (September 2026): a `not` where a tighter
+            // operand is required is a parser precedence diagnostic.
+            "not-cannot-be-a-tighter-operand",
         ];
         string[] expectedModelDivergences =
         [

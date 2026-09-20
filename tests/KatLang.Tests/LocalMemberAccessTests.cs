@@ -24,7 +24,7 @@ public class LocalMemberAccessTests
     [InlineData("m")]
     public async Task NavigatedOpenCapture_PreservesOwnerAndCallBoundary(string outerParameter)
     {
-        var source = $"Outer({outerParameter}) = {{\n Mid(n) = {{ public Lib = {{ public X = n }}\n 0 }}\n P = if(0, {{ open Mid.Lib\n X }}, 10)\n Read = Outer.P\n Read\n}}\nOuter(5)";
+        var source = $"Outer({outerParameter}) = {{\n Mid(n) = {{ public Lib = {{ public X = n }}\n 0 }}\n P = if(false, {{ open Mid.Lib\n X }}, 10)\n Read = Outer.P\n Read\n}}\nOuter(5)";
         RunFailure(source, KatLangErrorCode.LocalOnlyProperty);
         await AssertSyncAndAsyncAgree(source);
         var inside = $"Outer({outerParameter}) = {{\n public Mid(n) = {{ public Lib = {{ public X = n }}\n Read = {{ open Outer.Mid.Lib\n X }}\n Read }}\n Mid(7)\n}}\nOuter(5)";
@@ -37,7 +37,7 @@ public class LocalMemberAccessTests
     [InlineData("m")]
     public async Task NavigatedCapture_CannotBeReownedByAnUnusedSameNamedParameter(string outerParameter)
     {
-        var source = $"Outer({outerParameter}) = {{\n Mid(n) = {{ public X = n\n 0 }}\n P = if(0, Mid.X, 10)\n Read = Outer.P\n Read\n}}\nOuter(5)";
+        var source = $"Outer({outerParameter}) = {{\n Mid(n) = {{ public X = n\n 0 }}\n P = if(false, Mid.X, 10)\n Read = Outer.P\n Read\n}}\nOuter(5)";
         var p = NestedProperty(SourceProvenance.ParseValid(source).Root, "Outer", "P");
         Assert.Equal([new CapturedParameterRequirement("n", -1)], p.CaptureRequirements);
         RunFailure(source, KatLangErrorCode.LocalOnlyProperty);
@@ -126,8 +126,8 @@ public class LocalMemberAccessTests
     }
 
     [Theory]
-    [InlineData("H(f, k) = {\n F(0) = 0\n F(n) = H({ public X = n }, 0)\n G(0) = 0\n G(n) = f.X\n if(k, F(k), G(7))\n}\nH({ public X = 0 }, 5)")]
-    [InlineData("H(f, n) = if(n, H({ public X = n }, 0), f.X)\nH({ public X = 0 }, 5)")]
+    [InlineData("H(f, k) = {\n F(0) = 0\n F(n) = H({ public X = n }, 0)\n G(0) = 0\n G(n) = f.X\n if(k != 0, F(k), G(7))\n}\nH({ public X = 0 }, 5)")]
+    [InlineData("H(f, n) = if(n != 0, H({ public X = n }, 0), f.X)\nH({ public X = 0 }, 5)")]
     public async Task CapturedProvider_CannotEnterAnotherOwnerActivation(string source)
     {
         RunFailure(source, KatLangErrorCode.LocalOnlyProperty);
@@ -334,7 +334,7 @@ public class LocalMemberAccessTests
     [Fact]
     public async Task StaticNestedProvider_KeepsItsCapturedAncestorActivation()
     {
-        const string source = "Outer(f, k) = {\n    Lib(n) = {\n        public X = n\n        f.X\n    }\n    if(k, Outer(Lib, 0), Lib(7))\n}\nOuter({ public X = 0 }, 1)";
+        const string source = "Outer(f, k) = {\n    Lib(n) = {\n        public X = n\n        f.X\n    }\n    if(k != 0, Outer(Lib, 0), Lib(7))\n}\nOuter({ public X = 0 }, 1)";
         RunFailure(source, KatLangErrorCode.LocalOnlyProperty);
         await AssertSyncAndAsyncAgree(source);
     }

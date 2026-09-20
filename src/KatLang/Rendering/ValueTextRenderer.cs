@@ -45,6 +45,8 @@ internal static class ValueTextRenderer
                 return sink.Append(FormatAtom(atom.Value, displayOptions));
             case Result.Str str:
                 return stringPolicy.Append(str.Value, sink);
+            case Result.Bool flag:
+                return sink.Append(FormatBool(flag.Value));
             case Result.SequenceValue sequence:
                 if (!sink.Append("(")) return false;
                 items = sequence.Items;
@@ -84,6 +86,9 @@ internal static class ValueTextRenderer
                 case Result.Str str:
                     if (!stringPolicy.Append(str.Value, sink)) return false;
                     break;
+                case Result.Bool flag:
+                    if (!sink.Append(FormatBool(flag.Value))) return false;
+                    break;
                 case Result.SequenceValue sequence:
                     if (!sink.Append("(")) return false;
                     suspended.Push((items, next, close));
@@ -99,6 +104,13 @@ internal static class ValueTextRenderer
             }
         }
     }
+
+    /// <summary>
+    /// The canonical text of a Boolean value: lowercase <c>true</c> / <c>false</c>, the
+    /// same spelling as the literals, wherever the language shows one (display, the
+    /// diagnostic fragments, and the neutral spec encoding). Lean: <c>Result.boolText</c>.
+    /// </summary>
+    internal static string FormatBool(bool value) => value ? "true" : "false";
 
     /// <summary>
     /// Formats one numeric atom for display. Formatting is presentation only —

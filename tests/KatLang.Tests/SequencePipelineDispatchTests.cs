@@ -421,7 +421,7 @@ public class SequencePipelineDispatchTests
             ParameterPatterns: [new CaptureParameterPattern("x")],
             Opens: [],
             Properties: [],
-            Output: [new Expr.Num(1)]);
+            Output: [new Expr.BoolLiteral(true)]);
         var budget = EvaluationBudget.Create(null);
         var ctx = Evaluator.EvalCtx.Empty with { Budget = budget };
         var callbacks = new List<string>();

@@ -391,7 +391,7 @@ public class IntegerDivisionContractTests
         // product rounds from ...003.5 to ...004, then +1.5 rounds to ...006.
         Assert.Equal(BigInteger.Parse(x) * 10, BigInteger.Parse(y.Replace(".", "")) * 3 + 15);
         Assert.Equal("1000000000000000000000000000000006", Display($"X = {x}\nY = {y}\nY * (X div Y) + (X mod Y)"));
-        Assert.Equal("0", Display($"X = {x}\nY = {y}\nX == Y * (X div Y) + (X mod Y)"));
+        Assert.Equal("false", Display($"X = {x}\nY = {y}\nX == Y * (X div Y) + (X mod Y)"));
     }
 
     // ── The review's reproductions, both sides of the boundary, every sign ──
@@ -439,9 +439,9 @@ public class IntegerDivisionContractTests
         Assert.Equal(expectedRemainder, Display($"{x} mod {y}"));
         // x == y * (x div y) + (x mod y), evaluated in KatLang: every intermediate
         // here is an exact 34-digit value, so the identity is observable in-language.
-        Assert.Equal("1", Display($"X = {x}\nY = {y}\nX == Y * (X div Y) + (X mod Y)"));
+        Assert.Equal("true", Display($"X = {x}\nY = {y}\nX == Y * (X div Y) + (X mod Y)"));
         // Truncation is toward zero: the quotient never exceeds the true quotient in magnitude.
-        Assert.Equal("1", Display($"X = {x}\nY = {y}\nQ = X div Y\nR = X / Y\nif(Q < 0, Q >= R, Q <= R)"));
+        Assert.Equal("true", Display($"X = {x}\nY = {y}\nQ = X div Y\nR = X / Y\nif(Q < 0, Q >= R, Q <= R)"));
     }
 
     [Theory]
@@ -512,9 +512,9 @@ public class IntegerDivisionContractTests
         // Because div rounds toward zero and multiplication rounds monotonically,
         // (x div y) * y can never exceed x — the property the review's identity
         // reduces to once the quotient is no longer representable.
-        Assert.Equal("1", Display("X = 1e40\n(X div 7) * 7 <= X"));
-        Assert.Equal("1", Display("X = 2e40\n(X div 3) * 3 <= X"));
-        Assert.Equal("1", Display("X = -2e40\n(X div 3) * 3 >= X"));
+        Assert.Equal("true", Display("X = 1e40\n(X div 7) * 7 <= X"));
+        Assert.Equal("true", Display("X = 2e40\n(X div 3) * 3 <= X"));
+        Assert.Equal("true", Display("X = -2e40\n(X div 3) * 3 >= X"));
     }
 
     // ── Special values and the zero-divisor error are unchanged ────────────

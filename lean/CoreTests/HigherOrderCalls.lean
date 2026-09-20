@@ -1549,22 +1549,22 @@ def test19e : Bool :=
 -- Test 20: 3-arg if true → produce then-branch value
 -- if(1, 5, 6) → [5]
 def test20 : Bool :=
-  match runFlat (.call (resolve "if") [.num 1, .num 5, .num 6]) with
+  match runFlat (.call (resolve "if") [.boolLiteral true, .num 5, .num 6]) with
   | Except.ok [5] => true
   | _ => false
 
 #guard test20
-#eval runFlat (.call (resolve "if") [.num 1, .num 5, .num 6])
+#eval runFlat (.call (resolve "if") [.boolLiteral true, .num 5, .num 6])
 
 -- Test 21: 3-arg if false → produce else-branch value
 -- if(0, 5, 6) → [6]
 def test21 : Bool :=
-  match runFlat (.call (resolve "if") [.num 0, .num 5, .num 6]) with
+  match runFlat (.call (resolve "if") [.boolLiteral false, .num 5, .num 6]) with
   | Except.ok [6] => true
   | _ => false
 
 #guard test21
-#eval runFlat (.call (resolve "if") [.num 0, .num 5, .num 6])
+#eval runFlat (.call (resolve "if") [.boolLiteral false, .num 5, .num 6])
 
 --------------------------------------------------------------------------------
 -- Algorithm-channel parameter binding shadows the caller's value environment

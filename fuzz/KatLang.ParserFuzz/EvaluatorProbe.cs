@@ -44,7 +44,7 @@ internal static class EvaluatorProbe
         new("rec_cb_finite",  "recursion", n => $"F(0) = 0\nF(n) = [n - 1].map(F).first\nF({n})", 1_000_000, false),
         new("rec_dot_finite", "recursion", n => $"f(0) = 0\nf(n) = (n - 1).f\nf({n})", 1_000_000, false),
         // ── loops ────────────────────────────────────────────────────────────
-        new("while_infinite", "loop", _ => "Step = x, 1\nStep.while(0)", 1, true),
+        new("while_infinite", "loop", _ => "Step = x, true\nStep.while(0)", 1, true),
         new("while_finite",   "loop", n => $"Step = x - 1, x > 1\nStep.while({n})", 10_000_000, false),
         new("repeat_count",   "loop", n => $"Inc = x + 1\nInc.repeat({n}, 0)", 10_000_000, false),
         new("while_multislot","loop", n => $"Step = a + 1, b + a, a < {n}\nStep.while(0, 0)", 10_000_000, false),

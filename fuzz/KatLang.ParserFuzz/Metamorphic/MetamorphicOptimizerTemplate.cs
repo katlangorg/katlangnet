@@ -101,6 +101,10 @@ internal static class MetamorphicOptimizerTemplate
         new("while-multi-slot-state", $"{Loop} = n - 1, total + n, n > 1\n{Loop}.while(8, 0):1", Planned),
         new("repeat-conditional-body",
             $"{Loop} = x + if(x > 3, 2, 1)\n{Loop}.repeat(7, 0)", Planned),
+        new("repeat-boolean-state", $"{Loop}(b) = not b\n{Loop}.repeat(7, false)", Planned),
+        new("while-boolean-state-transition",
+            $"{Loop}(x) = if(x == true, 0, true), x != 0\n{Loop}.while(true)", Planned),
+        new("repeat-boolean-equality", $"{Loop}(b) = b == 1\n{Loop}.repeat(3, true)", Planned),
 
         // ── Loops: the loop optimizer FALLING BACK on a non-scalar state slot ──
         new("repeat-list-state", $"{Loop} = xs\n{Loop}.repeat(3, [1, 2])", FellBack),

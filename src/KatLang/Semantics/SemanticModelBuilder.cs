@@ -988,6 +988,7 @@ public static class SemanticModelBuilder
                 case Expr.NativeCall:
                 case Expr.Num:
                 case Expr.StringLiteral:
+                case Expr.BoolLiteral:
                 case Expr.EmptySequence:
                     break;
                 // Closed hierarchies do not make switch statements exhaustive. A new

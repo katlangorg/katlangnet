@@ -152,7 +152,7 @@ public class RangeBoundCanonicalizationTests
         }
 
         // Structural equality was never the problem and still holds.
-        Assert.Equal(new[] { Decimal128.One }, Atoms("range(1.0, 3) == range(1, 3)"));
+        Assert.Equal("true", Display("range(1.0, 3) == range(1, 3)"));
     }
 
     // ── The optimizer's direct range iteration shares the seam ───────────────
@@ -221,7 +221,7 @@ public class RangeBoundCanonicalizationTests
             ($"R = {range}\nR.filter(Keep).count", false),
         })
         {
-            var source = $"Keep(x) = Observe(x)\n{pipeline}";
+            var source = $"Keep(x) = Observe(x) == 1\n{pipeline}";
             var parsed = Parser.Parse(source, new RunOptions { HostOperations = operations });
             Assert.False(parsed.HasErrors, string.Join("\n", parsed.Diagnostics));
             var ast = new Expr.AlgorithmExpr(parsed.Root);
@@ -380,7 +380,7 @@ public class RangeBoundCanonicalizationTests
     [Fact]
     public async Task FilteringAllRangeElements_StillProducesAnEmptyList()
     {
-        const string source = "Keep(x) = 0\nrange(-0.0, 2.0).filter(Keep)";
+        const string source = "Keep(x) = false\nrange(-0.0, 2.0).filter(Keep)";
         var result = EvalFull(source);
         Assert.False(result.IsError);
         Assert.Empty(Assert.IsType<Result.ListValue>(result.Value).Items);

@@ -292,7 +292,7 @@ def variadicDotReceiverCollectsOneSlot : Bool :=
 -- Equality: collected results are exact list values, unequal to sequence values
 -- and to differently-nested lists.
 def collectedSegmentEqualityIsKindExact : Bool :=
-  expectFlat (runFlat (.algorithmExpr (algPrivate [] [] [("Inspect", collectInspectAlg)] [
+  evaluatesToBools (.algorithmExpr (algPrivate [] [] [("Inspect", collectInspectAlg)] [
     .binary .eq (.call (resolve "Inspect") []) (.listLiteral []),
     .binary .eq (.call (resolve "Inspect") [.num 7]) (.listLiteral [.num 7]),
     .binary .eq (.call (resolve "Inspect") [.num 1, .num 2])
@@ -303,7 +303,7 @@ def collectedSegmentEqualityIsKindExact : Bool :=
       (.listLiteral [.num 1, .num 2]),
     .binary .eq (.call (resolve "Inspect") [.num 1, .num 2])
       (.capture [.num 1, .num 2])
-  ]))) [1, 1, 1, 1, 0, 0]
+  ])) [true, true, true, true, false, false]
 
 #guard collectedSegmentEqualityIsKindExact
 
@@ -484,10 +484,10 @@ def reducerElementSideVariadicCollects : Bool :=
   let track : Algorithm := algWithParameters
     [{ name := "items", kind := .collecting }, { name := "acc" }] [] []
     [.capture [.sequenceSpread (.param "acc"), .param "items"]]
-  -- reduce([10], R, 99) => 1: the single step observes items = [10], not 10.
+  -- reduce([10], R, 99) => true: the single step observes items = [10], not 10.
   (match runResult (.algorithmExpr (algPrivate [] [] [("R", eqTen)]
       [.call (resolve "reduce") [.listLiteral [.num 10], resolve "R", .num 99]])) with
-   | Except.ok (Result.atom 1) => true | _ => false) &&
+   | Except.ok (Result.bool true) => true | _ => false) &&
   -- reduce((10, 20), R, ()) with R(*items, acc) = (acc*, items)
   -- => (10, [20]): each step appends the collected [element].
   (match runResult (.algorithmExpr (algPrivate [] [] [("R", track)]

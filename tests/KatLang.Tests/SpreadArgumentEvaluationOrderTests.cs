@@ -206,9 +206,9 @@ public class SpreadArgumentEvaluationOrderTests
     {
         // `if` reads its expanded slots positionally, so a mis-ordered expansion would
         // pick the wrong branch rather than merely reorder a list.
-        AssertSingleAtom("Cond = 1\nThen = 7\nElse = 9\nif(Cond*, Then*, Else*)", 7m);
-        AssertSingleAtom("Cond = 0\nThen = 7\nElse = 9\nif(Cond*, Then*, Else*)", 9m);
-        AssertSingleAtom("Cond = 1\nThen = 7\nElse = 9\nif(Cond*, Else*, Then*)", 9m);
+        AssertSingleAtom("Cond = true\nThen = 7\nElse = 9\nif(Cond*, Then*, Else*)", 7m);
+        AssertSingleAtom("Cond = false\nThen = 7\nElse = 9\nif(Cond*, Then*, Else*)", 9m);
+        AssertSingleAtom("Cond = true\nThen = 7\nElse = 9\nif(Cond*, Else*, Then*)", 9m);
     }
 
     private static void AssertSingleAtom(string source, decimal expected)

@@ -454,6 +454,9 @@ public static partial class Evaluator
             case Expr.StringLiteral(var s):
                 return MakeStringResult(ctx, s, expr.Span);
 
+            case Expr.BoolLiteral(var b):
+                return EvalResult<Result>.Ok(new Result.Bool(b));
+
             case Expr.Grace:
                 return new EvalError.IllegalInEval(ExprKind(expr)) { Span = expr.Span };
 
@@ -494,7 +497,7 @@ public static partial class Evaluator
 
         return expr switch
         {
-            Expr.Num or Expr.StringLiteral => EvalLeafUncharged(expr, ctx),
+            Expr.Num or Expr.StringLiteral or Expr.BoolLiteral => EvalLeafUncharged(expr, ctx),
 
             // Value projection of the canonical counted Param dispatch
             // (dual-view lookup order documented on EvalParamCounted).
@@ -625,7 +628,7 @@ public static partial class Evaluator
 
             // PROVEN LEAVES — the only kinds the async twin may delegate to the
             // synchronous leaf core: none evaluates a child expression.
-            Expr.Num or Expr.StringLiteral or Expr.Grace => CountValue(EvalLeafUncharged(expr, ctx)),
+            Expr.Num or Expr.StringLiteral or Expr.BoolLiteral or Expr.Grace => CountValue(EvalLeafUncharged(expr, ctx)),
         };
     }
 
@@ -672,13 +675,11 @@ public static partial class Evaluator
         {
             var valR = LookupNativeArgument(ctx, valEnv, argNames[i]);
             if (valR.IsError) return valR.Error;
-            var val = valR.Value;
-            var num = val.AsNum();
-            if (num is null)
-                return val is Result.Str
-                    ? new EvalError.TypeMismatch("Expected a number, got a string")
-                    : new EvalError.BadArity();
-            args[i] = num.Value;
+            // The ONE numeric coercion (strings and Booleans are value-kind
+            // errors, other non-numeric shapes BadArity), shared with the twin.
+            var numR = ExpectInt(valR.Value);
+            if (numR.IsError) return numR.Error;
+            args[i] = numR.Value;
         }
 
         return EvalResult<Decimal128[]>.Ok(args);

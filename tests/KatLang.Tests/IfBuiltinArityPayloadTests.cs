@@ -81,13 +81,13 @@ public class IfBuiltinArityPayloadTests
     [Fact]
     public void DotCallExactArity_StillDispatchesAndKeepsBranchLaziness()
     {
-        // `A.if(20, 30)` is `if(A, 20, 30)` = `if(1, 20, 30)` → 20.
-        var dispatched = Evaluator.RunFlat(Program("A = 1\nA.if(20, 30)"));
+        // `A.if(20, 30)` is `if(A, 20, 30)` = `if(true, 20, 30)` → 20.
+        var dispatched = Evaluator.RunFlat(Program("A = true\nA.if(20, 30)"));
         Assert.False(dispatched.IsError);
         Assert.Equal([20m], dispatched.Value);
 
         // The unselected branch stays lazy: `1 / 0` in the else slot never runs.
-        var lazyElse = Evaluator.RunFlat(Program("A = 1\nA.if(20, 1 / 0)"));
+        var lazyElse = Evaluator.RunFlat(Program("A = true\nA.if(20, 1 / 0)"));
         Assert.False(lazyElse.IsError);
         Assert.Equal([20m], lazyElse.Value);
     }
@@ -101,8 +101,8 @@ public class IfBuiltinArityPayloadTests
     [Theory]
     [InlineData("if()", 0)]
     [InlineData("if(1)", 1)]
-    [InlineData("if(1, 2)", 2)]
-    [InlineData("if(1, 2, 3, 4)", 4)]
+    [InlineData("if(true, 2)", 2)]
+    [InlineData("if(true, 2, 3, 4)", 4)]
     public void DirectCall_CarriesTheSamePayload(string source, int expectedActual)
         => AssertIfArityPayload(source, expectedActual, "while evaluating call to if");
 }

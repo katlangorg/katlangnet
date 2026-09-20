@@ -1372,7 +1372,7 @@ internal static class PropertyDependencyGraphBuilder
             // Intentional leaves with no name occurrences: literals, the empty
             // sequence, and native-call bodies (whose argument names are
             // parameter references by construction).
-            Expr.Num or Expr.StringLiteral or Expr.EmptySequence or Expr.NativeCall => new SummarySeed(),
+            Expr.Num or Expr.StringLiteral or Expr.BoolLiteral or Expr.EmptySequence or Expr.NativeCall => new SummarySeed(),
         };
     }
 
@@ -1721,6 +1721,7 @@ internal static class PropertyDependencyGraphBuilder
             case Expr.Num:
             case Expr.Param:
             case Expr.StringLiteral:
+            case Expr.BoolLiteral:
             case Expr.EmptySequence:
             case Expr.NativeCall:
                 break;

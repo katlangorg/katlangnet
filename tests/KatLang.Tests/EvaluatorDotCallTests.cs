@@ -515,7 +515,7 @@ public class EvaluatorDotCallTests
     public void Eval_SequenceReceiverBoundary_WhileReceiverCountsFinalStateSlots()
         => AssertEvalLoopModes(
             """
-            Step(a, b) = a + 1, b + 1, 0
+            Step(a, b) = a + 1, b + 1, false
             Step.while(1, 2).count
             """,
             2);
@@ -524,7 +524,7 @@ public class EvaluatorDotCallTests
     public void Eval_SequenceReceiverBoundary_WhileSequenceValueStateSlotCountsOneItem()
         => AssertEvalLoopModes(
             """
-            Step(x) = (x, x + 1), 0
+            Step(x) = (x, x + 1), false
             Step.while(1).count
             """,
             1);
@@ -654,7 +654,7 @@ public class EvaluatorDotCallTests
 
     [Fact]
     public void Eval_SequenceBuiltinDotCall_Contains_ExplicitReceiverSweep()
-        => AssertEval(
+        => AssertEvalBools(
             """
             Values = 1, 2, 3
             SequenceValue = (1, 2, 3)
@@ -666,12 +666,12 @@ public class EvaluatorDotCallTests
             (Data:0).contains(2)
             contains(Data:0, 2)
             """,
-            1,
-            1,
-            1,
-            0,
-            1,
-            1);
+            true,
+            true,
+            true,
+            false,
+            true,
+            true);
 
     [Fact]
     public void Eval_SequenceBuiltinDotCall_OrderAndOrderDesc_ProjectionSweep()
@@ -882,7 +882,7 @@ public class EvaluatorDotCallTests
             AddOne = x + 1
             IsLarge = x > 1
             (1, 2, 3).count
-            (1, 2, 3).contains(2)
+            if((1, 2, 3).contains(2), 1, 0)
             (3, 1, 2).order
             (5, 6, 7).first
             (5, 6, 7).last

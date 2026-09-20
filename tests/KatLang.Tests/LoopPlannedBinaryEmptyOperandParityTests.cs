@@ -38,8 +38,24 @@ public class LoopPlannedBinaryEmptyOperandParityTests
             yield return [op, plan, side, position];
     }
 
+    private static bool IsLogical(string op) => op is "and" or "or" or "xor";
+
+    /// <summary>
+    /// The written binary. Arithmetic and ordering pair the captured operand with the
+    /// numeric state slot; the logical operators require Boolean operands on BOTH sides
+    /// (there is no numeric truthiness), so they pair it with the literal `true`: the
+    /// only way the captured side is the one validated when it sits on the right.
+    /// </summary>
     private static string BinaryText(string op, string side)
-        => side == "left" ? $"value {op} x" : $"x {op} value";
+    {
+        var other = IsLogical(op) ? "true" : "x";
+        return side == "left" ? $"value {op} {other}" : $"{other} {op} value";
+    }
+
+    private static string ExpectedOperandMessage(string op, string side, string description)
+        => IsLogical(op)
+            ? $"operator `{op}` expects Boolean operands, but the {side} operand was {description}"
+            : $"operator `{op}` expects numeric scalar operands, but the {side} operand was {description}";
 
     /// <summary>
     /// The loop starts NUMERIC (state 0), so it is admitted by the optimizer, and the
@@ -52,7 +68,7 @@ public class LoopPlannedBinaryEmptyOperandParityTests
         var binary = BinaryText(op, side);
         var continuation = position == "while-continuation";
         var step = continuation ? $"x, {binary}" : binary;
-        if (position == "while-output") step += ", 1";
+        if (position == "while-output") step += ", true";
         var call = position == "repeat" ? "repeat(S, 1, 0)" : "while(S, 0)";
         return $$"""
             Use(value) = {
@@ -63,8 +79,11 @@ public class LoopPlannedBinaryEmptyOperandParityTests
             """;
     }
 
-    private static string PlanSummary(string plan, string side)
-        => side == "left" ? $"{plan}(CapturedSlot(value), StateSlot(x))" : $"{plan}(StateSlot(x), CapturedSlot(value))";
+    private static string PlanSummary(string op, string plan, string side)
+    {
+        var other = IsLogical(op) ? "Const(true)" : "StateSlot(x)";
+        return side == "left" ? $"{plan}(CapturedSlot(value), {other})" : $"{plan}({other}, CapturedSlot(value))";
+    }
 
     /// <summary>
     /// Proves the optimized run genuinely applied the PLANNED binary: the loop is
@@ -120,7 +139,7 @@ public class LoopPlannedBinaryEmptyOperandParityTests
 
         var innermost = Assert.IsType<EvalError.TypeMismatch>(Innermost(error));
         Assert.Equal(
-            $"operator `{op}` expects numeric scalar operands, but the {side} operand was a sequence value with 0 sequence elements: ()",
+            ExpectedOperandMessage(op, side, "a sequence value with 0 sequence elements: ()"),
             innermost.Message);
         Assert.Equal($"while evaluating `{binaryText}`", ContextChain(error)[^1]);
 
@@ -148,7 +167,7 @@ public class LoopPlannedBinaryEmptyOperandParityTests
             position == "repeat" ? "Use.S.repeat" : "Use.S.while",
             continuation ? "continuation" : "output",
             continuation ? null : 0,
-            PlanSummary(plan, side));
+            PlanSummary(op, plan, side));
         Assert.Equal(1, loop.LoopIterations);
         Assert.Equal(1, loop.PlannedBuiltinOperations);
         Assert.Equal(0, loop.PlannedExpressionFallbacks);
@@ -176,9 +195,9 @@ public class LoopPlannedBinaryEmptyOperandParityTests
     // ── Controls: equality and ordinary scalar results on the planned path ──
 
     [Theory]
-    [InlineData("==", 0)]
-    [InlineData("!=", 1)]
-    public void PlannedBinary_StructuralEquality_StillAcceptsTheCapturedEmptyValue(string op, int expected)
+    [InlineData("==", false)]
+    [InlineData("!=", true)]
+    public void PlannedBinary_StructuralEquality_StillAcceptsTheCapturedEmptyValue(string op, bool expected)
     {
         // `==`/`!=` are decided structurally BEFORE operand validation on both
         // strategies, so a captured `()` compares as an ordinary value (unequal to 0).
@@ -188,8 +207,8 @@ public class LoopPlannedBinaryEmptyOperandParityTests
         var (optimized, loop) = RunCountedObserved(source, enableLoopOptimization: true);
         Assert.False(generic.IsError, $"Expected generic success but got: {(generic.IsError ? generic.Error : null)}");
         Assert.False(optimized.IsError, $"Expected optimized success but got: {(optimized.IsError ? optimized.Error : null)}");
-        Assert.Equal(new Result.Atom(expected), generic.Value.Value, Result.ValueComparer);
-        Assert.Equal(new Result.Atom(expected), optimized.Value.Value, Result.ValueComparer);
+        Assert.Equal(new Result.Bool(expected), generic.Value.Value, Result.ValueComparer);
+        Assert.Equal(new Result.Bool(expected), optimized.Value.Value, Result.ValueComparer);
         Assert.Equal(generic.Value.EmittedCount, optimized.Value.EmittedCount);
 
         Assert.Equal(1, loop.OptimizedLoopHits);
@@ -200,11 +219,10 @@ public class LoopPlannedBinaryEmptyOperandParityTests
     }
 
     [Theory]
-    [InlineData("+", "Add", 3)]
-    [InlineData("*", "Multiply", 0)]
-    [InlineData(">", "GreaterThan", 0)]
-    [InlineData("or", "Or", 1)]
-    public void PlannedBinary_CapturedNumericOperand_StillComputesInBothModes(string op, string plan, int expected)
+    [InlineData("+", "Add", "3")]
+    [InlineData("*", "Multiply", "0")]
+    [InlineData(">", "GreaterThan", "false")]
+    public void PlannedBinary_CapturedNumericOperand_StillComputesInBothModes(string op, string plan, string expected)
     {
         var source = Source(op, "right", "repeat", "3");
 
@@ -212,11 +230,35 @@ public class LoopPlannedBinaryEmptyOperandParityTests
         var (optimized, loop) = RunCountedObserved(source, enableLoopOptimization: true);
         Assert.False(generic.IsError, $"Expected generic success but got: {(generic.IsError ? generic.Error : null)}");
         Assert.False(optimized.IsError, $"Expected optimized success but got: {(optimized.IsError ? optimized.Error : null)}");
-        Assert.Equal(new Result.Atom(expected), generic.Value.Value, Result.ValueComparer);
-        Assert.Equal(new Result.Atom(expected), optimized.Value.Value, Result.ValueComparer);
+        Assert.Equal(expected, Evaluator.FormatResultForDiagnostic(generic.Value.Value));
+        Assert.Equal(expected, Evaluator.FormatResultForDiagnostic(optimized.Value.Value));
         Assert.Equal(generic.Value.EmittedCount, optimized.Value.EmittedCount);
 
-        AssertPlannedBinarySlot(loop, "Use.S.repeat", "output", 0, PlanSummary(plan, "right"));
+        AssertPlannedBinarySlot(loop, "Use.S.repeat", "output", 0, PlanSummary(op, plan, "right"));
+        Assert.Equal(1, loop.PlannedBuiltinOperations);
+        Assert.Equal(0, loop.PlannedExpressionFallbacks);
+    }
+
+    [Theory]
+    [InlineData("and", "And", true, true)]
+    [InlineData("and", "And", false, false)]
+    [InlineData("or", "Or", false, true)]
+    [InlineData("xor", "Xor", true, false)]
+    public void PlannedBinary_CapturedBooleanOperand_StillComputesLogicallyInBothModes(string op, string plan, bool operand, bool expected)
+    {
+        // The logical operators are Boolean-only on the planned path too: `true op value`
+        // over a captured Boolean is applied by the shared operator and yields a Boolean.
+        var source = Source(op, "right", "repeat", operand ? "true" : "false");
+
+        var (generic, _) = RunCountedObserved(source, enableLoopOptimization: false);
+        var (optimized, loop) = RunCountedObserved(source, enableLoopOptimization: true);
+        Assert.False(generic.IsError, $"Expected generic success but got: {(generic.IsError ? generic.Error : null)}");
+        Assert.False(optimized.IsError, $"Expected optimized success but got: {(optimized.IsError ? optimized.Error : null)}");
+        Assert.Equal(new Result.Bool(expected), generic.Value.Value, Result.ValueComparer);
+        Assert.Equal(new Result.Bool(expected), optimized.Value.Value, Result.ValueComparer);
+        Assert.Equal(generic.Value.EmittedCount, optimized.Value.EmittedCount);
+
+        AssertPlannedBinarySlot(loop, "Use.S.repeat", "output", 0, PlanSummary(op, plan, "right"));
         Assert.Equal(1, loop.PlannedBuiltinOperations);
         Assert.Equal(0, loop.PlannedExpressionFallbacks);
     }

@@ -134,22 +134,22 @@ public class KatLangEngineTests
     {
         // Issue #130: `if` returns the selected branch as one value boundary, so a
         // multi-output property branch displays as a single grouped sequence row.
-        AssertDisplay("X = 1, 2, 3\nif(1, X, X)", "(1, 2, 3)");
-        AssertDisplay("X = 1, 2, 3\nif(0, X, X)", "(1, 2, 3)");
+        AssertDisplay("X = 1, 2, 3\nif(true, X, X)", "(1, 2, 3)");
+        AssertDisplay("X = 1, 2, 3\nif(false, X, X)", "(1, 2, 3)");
         // Explicit spread opens it back into separate rows.
-        AssertDisplay("X = 1, 2, 3\nif(1, X, X)*", "1\n2\n3");
+        AssertDisplay("X = 1, 2, 3\nif(true, X, X)*", "1\n2\n3");
     }
 
     [Fact]
     public void Run_IfSpreadArgument_OpensIntoThreeArguments()
     {
         // Issue #131: explicit spread in call-argument position supplies the value's items
-        // into the three `if` argument slots, so `if(X*)` ≡ `if(1, 2, 3)` → 2.
-        AssertDisplay("TrueResult = 1, 2, 3\nif(TrueResult*)", "2");
-        AssertDisplay("TrueResult = (1, 2, 3)\nif(TrueResult*)", "2");
-        AssertDisplay("Pair = 2, 3\nif(1, Pair*)", "2");
+        // into the three `if` argument slots, so `if(X*)` ≡ `if(true, 2, 3)` → 2.
+        AssertDisplay("TrueResult = true, 2, 3\nif(TrueResult*)", "2");
+        AssertDisplay("TrueResult = (true, 2, 3)\nif(TrueResult*)", "2");
+        AssertDisplay("Pair = 2, 3\nif(true, Pair*)", "2");
         // Direct builtin `if` now matches the user-defined wrapper.
-        AssertDisplay("TrueResult = 1, 2, 3\nMyIF(a, b, c) = if(a, b, c)\nMyIF(TrueResult*)", "2");
+        AssertDisplay("TrueResult = true, 2, 3\nMyIF(a, b, c) = if(a, b, c)\nMyIF(TrueResult*)", "2");
     }
 
     [Fact]

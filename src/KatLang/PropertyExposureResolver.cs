@@ -746,7 +746,7 @@ internal static class PropertyExposureResolver
 
             // Intentional leaves: no nested algorithm to reach, so the
             // expression keeps its exact shape and metadata.
-            Expr.Resolve or Expr.Param or Expr.Num or Expr.StringLiteral
+            Expr.Resolve or Expr.Param or Expr.Num or Expr.StringLiteral or Expr.BoolLiteral
                 or Expr.EmptySequence or Expr.NativeCall => expr,
         };
     }

@@ -863,9 +863,12 @@ public class NormalizeSharedValueGraphTests
         var expr = new Expr.AlgorithmExpr(
             SourceProvenance.ParseValid(DagProgram("B = A:0\nB == A:0, B != A:0, distinct((B, A:0)).count")).Root);
 
-        var plain = Evaluator.RunFlat(expr);
+        var plain = Evaluator.Run(expr);
         if (plain.IsError)
             Assert.Fail($"Expected success but got error: {plain.Error}");
-        Assert.Equal([1m, 0m, 1m], plain.Value);
+        Assert.Equal(
+            Result.FromItems([new Result.Bool(true), new Result.Bool(false), new Result.Atom(1)]),
+            plain.Value,
+            Result.ValueComparer);
     }
 }

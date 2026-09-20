@@ -427,7 +427,7 @@ internal static class StructuredLayoutRenderer
             {
                 // Block-item strings are pre-checked safe tokens, so leaves
                 // always occupy exactly one line.
-                Result.Atom or Result.Str => true,
+                Result.Atom or Result.Str or Result.Bool => true,
                 Result.SequenceValue { Items.Count: >= 2 } sequence
                     => CanSpaceJoinTokens(sequence.Items, 0)
                         || (!RequiresStructuredLayout(item, asChild: true) && FitsInline(item, 0, 0)),
@@ -480,6 +480,9 @@ internal static class StructuredLayoutRenderer
                 {
                     case Result.Atom(var number):
                         tokenLength = ValueTextRenderer.FormatAtom(number, _displayOptions).Length;
+                        break;
+                    case Result.Bool(var flag):
+                        tokenLength = ValueTextRenderer.FormatBool(flag).Length;
                         break;
                     case Result.Str(var text):
                         // Raw content length is a lower bound under every
@@ -558,7 +561,7 @@ internal static class StructuredLayoutRenderer
             if (items.Count < 2 || items.Count % 2 != 0) return false;
             for (var i = 0; i < items.Count; i += 2)
             {
-                if (items[i] is not Result.Str || items[i + 1] is not (Result.Atom or Result.Str))
+                if (items[i] is not Result.Str || items[i + 1] is not (Result.Atom or Result.Str or Result.Bool))
                 {
                     if (items.Count >= PredicateCacheThreshold)
                         TryCache(_structuralPairRunCache, items, false);
@@ -585,6 +588,9 @@ internal static class StructuredLayoutRenderer
                 case Result.Atom(var number):
                     var atomLength = ValueTextRenderer.FormatAtom(number, _displayOptions).Length;
                     return atomLength <= maxLength ? atomLength : null;
+                case Result.Bool(var flag):
+                    var flagLength = ValueTextRenderer.FormatBool(flag).Length;
+                    return flagLength <= maxLength ? flagLength : null;
                 case Result.Str(var text):
                     if (text.Length > maxLength) return null;
                     if (!_strings.IsTokenSafe(text)) return null;
@@ -678,6 +684,7 @@ internal static class StructuredLayoutRenderer
                 var valueLength = items[i + 1] switch
                 {
                     Result.Atom(var number) => ValueTextRenderer.FormatAtom(number, _displayOptions).Length,
+                    Result.Bool(var flag) => ValueTextRenderer.FormatBool(flag).Length,
                     Result.Str(var text) when !ContainsLineBreak(text)
                         && fixedLength + labelLength + text.Length <= _width
                         => _strings.TokenLength(text),

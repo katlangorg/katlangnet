@@ -16,6 +16,7 @@ public enum GKind
     // Leaves.
     Num,
     Str,
+    Bool,
     Empty,
     Resolve,
     NativeCall,
@@ -135,7 +136,8 @@ public static class AstGraphFuzzer
     public static readonly UnaryOp[] UnaryOps = [UnaryOp.Minus, UnaryOp.Not];
 
     public static readonly BinaryOp[] BinaryOps =
-        [BinaryOp.Add, BinaryOp.Sub, BinaryOp.Mul, BinaryOp.Eq, BinaryOp.Lt, BinaryOp.And];
+        [BinaryOp.Add, BinaryOp.Sub, BinaryOp.Mul, BinaryOp.Eq, BinaryOp.Lt, BinaryOp.And,
+         BinaryOp.Ne, BinaryOp.Le, BinaryOp.Gt, BinaryOp.Ge, BinaryOp.Or, BinaryOp.Xor];
 
     public static readonly string[] NativeNames = ["sin", "sqrt"];
 
@@ -205,6 +207,9 @@ public static class AstGraphFuzzer
         var count = settings.MinNodes + rng.Next(settings.MaxNodes - settings.MinNodes + 1);
         var nodes = ImmutableArray.CreateBuilder<GNode>(count);
         var sizes = new long[count];
+        var hasParent = new bool[count];
+        var graceOperand = new bool[count];
+        var containsGrace = new bool[count];
         for (var i = 0; i < count; i++)
         {
             if (i == 0 || rng.Chance(settings.LeafPercent))
@@ -214,8 +219,9 @@ public static class AstGraphFuzzer
                 continue;
             }
 
-            var node = RandomInterior(ref rng, i, settings, sizes);
+            var node = RandomInterior(ref rng, i, settings, sizes, nodes, hasParent, graceOperand, containsGrace);
             nodes.Add(node);
+            containsGrace[i] = node.Kind == GKind.Grace || node.Children.Any(child => containsGrace[child]);
             long total = 1;
             foreach (var child in node.Children)
                 total += sizes[child];
@@ -229,7 +235,13 @@ public static class AstGraphFuzzer
             var span = Math.Min(3, count - 1);
             var children = ImmutableArray.CreateBuilder<int>(span);
             for (var k = 0; k < span; k++)
-                children.Add(rng.Next(count - 1));
+            {
+                var child = rng.Next(count - 1);
+                if (WouldShareGrace(containsGrace, hasParent, child) || graceOperand[child])
+                    child = 0;
+                hasParent[child] = true;
+                children.Add(child);
+            }
             nodes[count - 1] = new GNode(GKind.Capture, 0, children.ToImmutable());
         }
 
@@ -237,16 +249,45 @@ public static class AstGraphFuzzer
     }
 
     private static GNode RandomLeaf(ref Rng rng)
-        => rng.Next(10) switch
+        => rng.Next(11) switch
         {
             0 or 1 or 2 or 3 => new GNode(GKind.Num, rng.Next(Numbers.Length), []),
             4 => new GNode(GKind.Str, rng.Next(Strings.Length), []),
-            5 => new GNode(GKind.Empty, 0, []),
-            6 => new GNode(GKind.NativeCall, rng.Next(NativeNames.Length), []),
+            // The Boolean literals: the only condition kind `if` accepts, and the only
+            // operand kind `not`/`and`/`or`/`xor` accept, so the generated graphs reach
+            // both the Boolean-required successes and the value-kind rejections.
+            5 => new GNode(GKind.Bool, rng.Next(2), []),
+            6 => new GNode(GKind.Empty, 0, []),
+            7 => new GNode(GKind.NativeCall, rng.Next(NativeNames.Length), []),
             _ => new GNode(GKind.Resolve, rng.Next(ResolveNames.Length), []),
         };
 
-    private static GNode RandomInterior(ref Rng rng, int id, GeneratorSettings settings, long[] sizes)
+    /// <summary>
+    /// A Grace marker and its operand are never shared by reference. The front end reports
+    /// an ineffective marker once per marker NODE and records marker origins per OPERAND
+    /// node (<c>ParameterDetector.ReportIneffectiveGrace</c> / <c>GraceOrigins</c>), so a
+    /// marker reachable from two parents, or two markers over one shared operand, would
+    /// elaborate differently from the clone, where every occurrence is its own node and
+    /// reports once. That is a documented property of markers, not a sharing defect, so
+    /// the generator keeps each marker and its operand single-occurrence in the expanded
+    /// tree: a second edge to ANY subtree containing a marker (or to its operand) is
+    /// redirected to leaf 0, exactly like the occurrence-budget fallback. Leaf 0 is never
+    /// a marker operand, so that fallback cannot itself share an operand. A marker whose
+    /// candidate operand is already shared or is leaf 0 degrades to a Block. Ordinary
+    /// subgraphs remain freely shared, and the oracle still compares diagnostic multiplicity.
+    /// </summary>
+    private static bool WouldShareGrace(bool[] containsGrace, bool[] hasParent, int child)
+        => containsGrace[child] && hasParent[child];
+
+    private static GNode RandomInterior(
+        ref Rng rng,
+        int id,
+        GeneratorSettings settings,
+        long[] sizes,
+        ImmutableArray<GNode>.Builder nodes,
+        bool[] hasParent,
+        bool[] graceOperand,
+        bool[] containsGrace)
     {
         var kind = rng.Next(12) switch
         {
@@ -261,6 +302,22 @@ public static class AstGraphFuzzer
             10 => GKind.Spread,
             _ => rng.Chance(25) ? GKind.Grace : GKind.Block,
         };
+
+        if (kind == GKind.Grace)
+        {
+            // The marker's operand is the immediately preceding node, and only when nothing
+            // else already points at it; otherwise the marker degrades to a Block so the
+            // operand never becomes shared through the marker.
+            var operand = id - 1;
+            if (operand == 0 || hasParent[operand] || graceOperand[operand] || nodes[operand].Kind == GKind.Grace)
+                kind = GKind.Block;
+            else
+            {
+                hasParent[operand] = true;
+                graceOperand[operand] = true;
+                return new GNode(GKind.Grace, 1, [operand]);
+            }
+        }
 
         var arity = kind switch
         {
@@ -293,8 +350,11 @@ public static class AstGraphFuzzer
             // construction: an over-budget pick falls back to the always-present leaf 0.
             if (accumulated + sizes[child] > MaxExpandedOccurrencesPerNode)
                 child = 0;
+            if (WouldShareGrace(containsGrace, hasParent, child) || graceOperand[child])
+                child = 0;
 
             accumulated += sizes[child];
+            hasParent[child] = true;
             children.Add(child);
             previous = child;
         }
@@ -319,7 +379,7 @@ public static class AstGraphFuzzer
     /// </summary>
     private static GraphCase GenerateFamilyCase(ulong seed, int caseIndex, ref Rng rng)
     {
-        var family = rng.Next(8);
+        var family = rng.Next(9);
         var b = ImmutableArray.CreateBuilder<GNode>();
 
         int Add(GKind kind, int aux, params int[] children)
@@ -402,6 +462,20 @@ public static class AstGraphFuzzer
                 var dot = Add(GKind.DotCall, 1, shared, shared);
                 var block = Add(GKind.Block, 0, shared);
                 Add(GKind.Capture, 0, dot, block);
+                break;
+            }
+
+            case 7:
+            {
+                // Spread-over-construct alternations, several per case: the recursive join
+                // shape is guaranteed here rather than left to the free generator's draw.
+                var a = Add(GKind.Num, 1);
+                var pair = Add(GKind.Construct, 0, a, Add(GKind.Num, 2));
+                var spreadPair = Add(GKind.Spread, 0, pair);
+                var outer = Add(GKind.Construct, 0, spreadPair, pair);
+                var spreadOuter = Add(GKind.Spread, 0, outer);
+                var triple = Add(GKind.Construct, 0, spreadOuter, spreadPair, a);
+                Add(GKind.Capture, 0, Add(GKind.Spread, 0, triple), spreadOuter);
                 break;
             }
 
@@ -514,6 +588,7 @@ public static class AstGraphFuzzer
         {
             GKind.Num => new Expr.Num(Numbers[node.Aux]),
             GKind.Str => new Expr.StringLiteral(Strings[node.Aux]),
+            GKind.Bool => new Expr.BoolLiteral(node.Aux % 2 == 1),
             GKind.Empty => new Expr.EmptySequence(0),
             GKind.Resolve => new Expr.Resolve(ResolveNames[node.Aux]),
             GKind.NativeCall => new Expr.NativeCall(NativeNames[node.Aux], ["x"]),

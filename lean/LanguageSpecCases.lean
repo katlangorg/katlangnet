@@ -14,11 +14,11 @@ This is bounded differential validation over the Lean-guarded partition,
 not a formal verification of the evaluators.
 
 Partition (machine-checked by the `specCaseIds.length` guard below):
-- specification surface cases: 271
-- excluded parse-level cases (Lean has no surface parser): 37
+- specification surface cases: 277
+- excluded parse-level cases (Lean has no surface parser): 38
 - excluded C#-only cases (each carries an explicit reason in the corpus): 15
-- Lean-guarded cases: 219
-- probe observations (C#-only by design): 624
+- Lean-guarded cases: 224
+- probe observations (C#-only by design): 640
 - internal-node cases live in the semantic-explorer corpus, not here: see
   lean/SemanticExplorerCases.lean
 
@@ -31,11 +31,12 @@ namespace LanguageSpecCases
 open KatLang
 
 /-- Neutral raw-structure encoding shared with the C# harness:
-    atom -> `1`, string -> `'x'`, sequence -> `S[a, b]`, empty -> `S[]`,
-    exact list -> `L[a, b]`. -/
+    atom -> `1`, string -> `'x'`, Boolean -> `true` / `false`,
+    sequence -> `S[a, b]`, empty -> `S[]`, exact list -> `L[a, b]`. -/
 partial def neutral : Result -> String
   | .atom n => toString n
   | .str s => "'" ++ s ++ "'"
+  | .bool b => Result.boolText b
   | .sequenceValue rs => "S[" ++ String.intercalate ", " (rs.map neutral) ++ "]"
   | .listValue rs => "L[" ++ String.intercalate ", " (rs.map neutral) ++ "]"
 
@@ -103,10 +104,35 @@ def case_first_program : Expr :=
   .algorithmExpr (alg [] [] [] [(.binary .add (.num 2) (.binary .mul (.num 3) (.num 4)))])
 #guard obs case_first_program == "ok raw=14 n=1"
 
+-- boolean-values-and-equality [arithmetic]: true \n false \n [true, 1, false, 0] \n true == 1 \n 1 == true \n false != 0 \n 0 != false \n distinct([true, 1, false, 0, true])
+def case_boolean_values_and_equality : Expr :=
+  .algorithmExpr (alg [] [] [] [.boolLiteral true, .boolLiteral false, (.listLiteral [.boolLiteral true, .num 1, .boolLiteral false, .num 0]), (.binary .eq (.boolLiteral true) (.num 1)), (.binary .eq (.num 1) (.boolLiteral true)), (.binary .ne (.boolLiteral false) (.num 0)), (.binary .ne (.num 0) (.boolLiteral false)), (.call (.resolve "distinct") [(.listLiteral [.boolLiteral true, .num 1, .boolLiteral false, .num 0, .boolLiteral true])])])
+#guard obs case_boolean_values_and_equality == "ok raw=S[true, false, L[true, 1, false, 0], false, false, true, true, L[true, 1, false, 0]] n=8"
+
+-- boolean-predicates-and-patterns [conditionals]: F(true) = false \n F(false) = true \n F(true) \n F(false) \n range(-2, 2).filter{x >= 0} \n range(-2, 2).map{x >= 0}.contains(true) \n if(not 1 == 1, 10, 20)
+def case_boolean_predicates_and_patterns : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (.conditional none [] [⟨.litBool true, (alg [] [] [] [.boolLiteral false])⟩, ⟨.litBool false, (alg [] [] [] [.boolLiteral true])⟩])] [(.call (.resolve "F") [.boolLiteral true]), (.call (.resolve "F") [.boolLiteral false]), (.dotCall (.call (.resolve "range") [(.unary .minus (.num 2)), .num 2]) "filter" (some [(.algorithmExpr (alg ["x"] [] [] [(.binary .ge (.param "x") (.num 0))]))])), (.dotCall (.dotCall (.call (.resolve "range") [(.unary .minus (.num 2)), .num 2]) "map" (some [(.algorithmExpr (alg ["x"] [] [] [(.binary .ge (.param "x") (.num 0))]))])) "contains" (some [.boolLiteral true])), (.call (.resolve "if") [(.unary .not (.binary .eq (.num 1) (.num 1))), .num 10, .num 20])])
+#guard obs case_boolean_predicates_and_patterns == "ok raw=S[false, true, L[0, 1, 2], true, 20] n=5"
+
+-- boolean-loop-state-transition [conditionals]: S(x) = if(x == true, 0, true), x != 0 \n S.while(true)
+def case_boolean_loop_state_transition : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "S" (alg ["x"] [] [] [(.call (.resolve "if") [(.binary .eq (.param "x") (.boolLiteral true)), .num 0, .boolLiteral true]), (.binary .ne (.param "x") (.num 0))])] [(.dotCall (.resolve "S") "while" (some [.boolLiteral true]))])
+#guard obs case_boolean_loop_state_transition == "ok raw=0 n=1"
+
+-- boolean-predicate-rejects-visible-empty [conditionals]: F(x) = true, () \n range(0, 2).filter(F).count
+def case_boolean_predicate_rejects_visible_empty : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["x"] [] [] [.boolLiteral true, (.emptySequence 0)])] [(.dotCall (.dotCall (.call (.resolve "range") [.num 0, .num 2]) "filter" (some [.resolve "F"])) "count" none)])
+#guard obs case_boolean_predicate_rejects_visible_empty == "err type"
+
 -- power-unary-precedence [arithmetic]: -2 ^ 2 \n (-2) ^ 2 \n 2 ^ 3 ^ 2
 def case_power_unary_precedence : Expr :=
   .algorithmExpr (alg [] [] [] [(.unary .minus (.binary .pow (.num 2) (.num 2))), (.binary .pow (.unary .minus (.num 2)) (.num 2)), (.binary .pow (.num 2) (.binary .pow (.num 3) (.num 2)))])
 #guard obs case_power_unary_precedence == "ok raw=S[-4, 4, 512] n=3"
+
+-- not-binds-below-comparisons [arithmetic]: not 5 > 3 \n not 2 > 3 \n not 5 == 5 \n not 5 == 4 \n not true == false \n not true == 1
+def case_not_binds_below_comparisons : Expr :=
+  .algorithmExpr (alg [] [] [] [(.unary .not (.binary .gt (.num 5) (.num 3))), (.unary .not (.binary .gt (.num 2) (.num 3))), (.unary .not (.binary .eq (.num 5) (.num 5))), (.unary .not (.binary .eq (.num 5) (.num 4))), (.unary .not (.binary .eq (.boolLiteral true) (.boolLiteral false))), (.unary .not (.binary .eq (.boolLiteral true) (.num 1)))])
+#guard obs case_not_binds_below_comparisons == "ok raw=S[false, true, false, true, true, true] n=6"
 
 -- integer-division-truncates [arithmetic]: -7 div 2 \n -7 mod 2 \n 7 div 2
 def case_integer_division_truncates : Expr :=
@@ -116,7 +142,7 @@ def case_integer_division_truncates : Expr :=
 -- integer-division-exact-quotient [arithmetic]: X = 8999999999999999999999999999999999 \n X div 3 \n X mod 3 \n X == 3 * (X div 3) + (X mod 3) \n Y = 3e32 \n (13 * Y - 1) div Y \n (12 * Y + 1) div Y \n -X div 3 \n X div -3 \n -X div -3 \n 1e34 div 7 \n 1e34 mod 7 \n 1e40 div 1e5
 def case_integer_division_exact_quotient : Expr :=
   .algorithmExpr (alg [] [] [privateProp "X" (alg [] [] [] [.num 8999999999999999999999999999999999]), privateProp "Y" (alg [] [] [] [.num 300000000000000000000000000000000])] [(.binary .idiv (.resolve "X") (.num 3)), (.binary .mod (.resolve "X") (.num 3)), (.binary .eq (.resolve "X") (.binary .add (.binary .mul (.num 3) (.binary .idiv (.resolve "X") (.num 3))) (.binary .mod (.resolve "X") (.num 3)))), (.binary .idiv (.binary .sub (.binary .mul (.num 13) (.resolve "Y")) (.num 1)) (.resolve "Y")), (.binary .idiv (.binary .add (.binary .mul (.num 12) (.resolve "Y")) (.num 1)) (.resolve "Y")), (.binary .idiv (.unary .minus (.resolve "X")) (.num 3)), (.binary .idiv (.resolve "X") (.unary .minus (.num 3))), (.binary .idiv (.unary .minus (.resolve "X")) (.unary .minus (.num 3))), (.binary .idiv (.num 10000000000000000000000000000000000) (.num 7)), (.binary .mod (.num 10000000000000000000000000000000000) (.num 7)), (.binary .idiv (.num 10000000000000000000000000000000000000000) (.num 100000))])
-#guard obs case_integer_division_exact_quotient == "ok raw=S[2999999999999999999999999999999999, 2, 1, 12, 12, -2999999999999999999999999999999999, -2999999999999999999999999999999999, 2999999999999999999999999999999999, 1428571428571428571428571428571428, 4, 100000000000000000000000000000000000] n=11"
+#guard obs case_integer_division_exact_quotient == "ok raw=S[2999999999999999999999999999999999, 2, true, 12, 12, -2999999999999999999999999999999999, -2999999999999999999999999999999999, 2999999999999999999999999999999999, 1428571428571428571428571428571428, 4, 100000000000000000000000000000000000] n=11"
 
 -- property-access-and-call [arithmetic]: # Define a property: \n Answer = 42 \n  \n # Property-style access: \n Answer \n  \n # Explicit zero-parameter call: \n Answer()
 def case_property_access_and_call : Expr :=
@@ -153,10 +179,10 @@ def case_singleton_paren_deep : Expr :=
   .algorithmExpr (alg [] [] [] [.num 7])
 #guard obs case_singleton_paren_deep == "ok raw=7 n=1"
 
--- empty-eq-family [empty-and-singleton]: () == ()      # 1 \n () == (())    # 1 \n () != (())    # 0 \n count(())     # 0 \n count((()))   # 0
+-- empty-eq-family [empty-and-singleton]: () == ()      # true \n () == (())    # true \n () != (())    # false \n count(())     # 0 \n count((()))   # 0
 def case_empty_eq_family : Expr :=
   .algorithmExpr (alg [] [] [] [(.binary .eq (.emptySequence 0) (.emptySequence 0)), (.binary .eq (.emptySequence 0) (.emptySequence 0)), (.binary .ne (.emptySequence 0) (.emptySequence 0)), (.call (.resolve "count") [(.emptySequence 0)]), (.call (.resolve "count") [(.emptySequence 0)])])
-#guard obs case_empty_eq_family == "ok raw=S[1, 1, 0, 0, 0] n=5"
+#guard obs case_empty_eq_family == "ok raw=S[true, true, false, 0, 0] n=5"
 
 -- empty-capture [empty-and-singleton]: A = () \n A
 def case_empty_capture : Expr :=
@@ -648,9 +674,9 @@ def case_filter_single_survivor : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Big" (alg ["a"] [] [] [(.binary .gt (.param "a") (.num 2))])] [(.call (.resolve "filter") [(.capture [.num 1, .num 2, .num 3]), .resolve "Big"])])
 #guard obs case_filter_single_survivor == "ok raw=L[3] n=1"
 
--- filter-none-empty [collection-builtins]: No(a) = 0 \n filter((1, 2, 3), No)
+-- filter-none-empty [collection-builtins]: No(a) = false \n filter((1, 2, 3), No)
 def case_filter_none_empty : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "No" (alg ["a"] [] [] [.num 0])] [(.call (.resolve "filter") [(.capture [.num 1, .num 2, .num 3]), .resolve "No"])])
+  .algorithmExpr (alg [] [] [privateProp "No" (alg ["a"] [] [] [.boolLiteral false])] [(.call (.resolve "filter") [(.capture [.num 1, .num 2, .num 3]), .resolve "No"])])
 #guard obs case_filter_none_empty == "ok raw=L[] n=1"
 
 -- map-transforms-items [collection-builtins]: Double = x * 2 \n map((1, 2, 3), Double)
@@ -753,10 +779,10 @@ def case_atoms_list_composition : Expr :=
   .algorithmExpr (alg [] [] [] [(.dotCall (.dotCall (.listLiteral [.num 1, .num 2, .num 3]) "skip" (some [.num 1])) "atoms" none)])
 #guard obs case_atoms_list_composition == "ok raw=L[2, 3] n=1"
 
--- atoms-no-truthiness [collection-builtins]: if((1, [2]), 10, 20)
+-- atoms-no-truthiness [collection-builtins]: if(atoms((1, [2])), 10, 20)
 def case_atoms_no_truthiness : Expr :=
-  .algorithmExpr (alg [] [] [] [(.call (.resolve "if") [(.capture [.num 1, (.listLiteral [.num 2])]), .num 10, .num 20])])
-#guard obs case_atoms_no_truthiness == "ok raw=10 n=1"
+  .algorithmExpr (alg [] [] [] [(.call (.resolve "if") [(.call (.resolve "atoms") [(.capture [.num 1, (.listLiteral [.num 2])])]), .num 10, .num 20])])
+#guard obs case_atoms_no_truthiness == "err type"
 
 -- sum-of-range-collection [collection-builtins]: sum(range(1, 3))
 def case_sum_of_range_collection : Expr :=
@@ -778,9 +804,9 @@ def case_count_dotcount_agree : Expr :=
   .algorithmExpr (alg [] [] [privateProp "T" (alg [] [] [] [(.capture [.num 1, .num 2, .num 3])]), privateProp "A" (alg [] [] [] [.num 1, .num 2, .num 3])] [(.dotCall (.resolve "T") "count" none), (.dotCall (.resolve "A") "count" none), (.call (.resolve "count") [.resolve "A"])])
 #guard obs case_count_dotcount_agree == "ok raw=S[3, 3, 3] n=3"
 
--- if-value-boundary [collection-builtins]: X = 1, 2, 3 \n if(1, X, X)
+-- if-value-boundary [collection-builtins]: X = 1, 2, 3 \n if(true, X, X)
 def case_if_value_boundary : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "X" (alg [] [] [] [.num 1, .num 2, .num 3])] [(.call (.resolve "if") [.num 1, .resolve "X", .resolve "X"])])
+  .algorithmExpr (alg [] [] [privateProp "X" (alg [] [] [] [.num 1, .num 2, .num 3])] [(.call (.resolve "if") [.boolLiteral true, .resolve "X", .resolve "X"])])
 #guard obs case_if_value_boundary == "ok raw=S[1, 2, 3] n=1"
 
 -- builtin-fixed-collection-arity [collection-builtins]: count((1, 2, 3))
@@ -801,7 +827,7 @@ def case_reduce_empty_initial_is_one_value : Expr :=
 -- eq-structural-nested [equality-and-indexing]: A = 1, (2, 3) \n B = 1, (2, 3) \n A == B
 def case_eq_structural_nested : Expr :=
   .algorithmExpr (alg [] [] [privateProp "A" (alg [] [] [] [.num 1, (.capture [.num 2, .num 3])]), privateProp "B" (alg [] [] [] [.num 1, (.capture [.num 2, .num 3])])] [(.binary .eq (.resolve "A") (.resolve "B"))])
-#guard obs case_eq_structural_nested == "ok raw=1 n=1"
+#guard obs case_eq_structural_nested == "ok raw=true n=1"
 
 -- index-selects-atom [equality-and-indexing]: Nums = 10, 20, 30, 40, 50 \n  \n # Select the third value (index 2): \n Nums:2
 def case_index_selects_atom : Expr :=
@@ -831,7 +857,7 @@ def case_index_out_of_range : Expr :=
 -- index-captured-requality [equality-and-indexing]: x = ((1, 2), (3, 4)) \n y = x:0 \n y == (1, 2)
 def case_index_captured_requality : Expr :=
   .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [(.capture [.num 1, .num 2]), (.capture [.num 3, .num 4])])]), privateProp "y" (alg [] [] [] [(.index (.resolve "x") (.num 0))])] [(.binary .eq (.resolve "y") (.capture [.num 1, .num 2]))])
-#guard obs case_index_captured_requality == "ok raw=1 n=1"
+#guard obs case_index_captured_requality == "ok raw=true n=1"
 
 -- output-rows-interleave-definitions [parser-layout]: A = 3 \n A + B \n B = 2
 def case_output_rows_interleave_definitions : Expr :=
@@ -941,7 +967,7 @@ def case_unresolved_implicit_parameter : Expr :=
 -- string-equality-exact [strings]: 'ab' == 'ab'
 def case_string_equality_exact : Expr :=
   .algorithmExpr (alg [] [] [] [(.binary .eq (.stringLiteral "ab") (.stringLiteral "ab"))])
-#guard obs case_string_equality_exact == "ok raw=1 n=1"
+#guard obs case_string_equality_exact == "ok raw=true n=1"
 
 -- string-displays-unquoted [strings]: x = 'ab' \n x
 def case_string_displays_unquoted : Expr :=
@@ -956,12 +982,12 @@ def case_list_literal : Expr :=
 -- list-exactness [lists]: [7] == 7 \n [[1, 2]] == [1, 2] \n [[]] == []
 def case_list_exactness : Expr :=
   .algorithmExpr (alg [] [] [] [(.binary .eq (.listLiteral [.num 7]) (.num 7)), (.binary .eq (.listLiteral [(.listLiteral [.num 1, .num 2])]) (.listLiteral [.num 1, .num 2])), (.binary .eq (.listLiteral [(.listLiteral [])]) (.listLiteral []))])
-#guard obs case_list_exactness == "ok raw=S[0, 0, 0] n=3"
+#guard obs case_list_exactness == "ok raw=S[false, false, false] n=3"
 
 -- list-vs-sequence-kind [lists]: [] == () \n [1, 2] == (1, 2)
 def case_list_vs_sequence_kind : Expr :=
   .algorithmExpr (alg [] [] [] [(.binary .eq (.listLiteral []) (.emptySequence 0)), (.binary .eq (.listLiteral [.num 1, .num 2]) (.capture [.num 1, .num 2]))])
-#guard obs case_list_vs_sequence_kind == "ok raw=S[0, 0] n=2"
+#guard obs case_list_vs_sequence_kind == "ok raw=S[false, false] n=2"
 
 -- list-index-selects-element [lists]: [1, 2, 3]:0
 def case_list_index_selects_element : Expr :=
@@ -986,7 +1012,7 @@ def case_list_index_builtin_results : Expr :=
 -- list-redundant-parens-canonicalize [lists]: ([1, 2]) == [1, 2]
 def case_list_redundant_parens_canonicalize : Expr :=
   .algorithmExpr (alg [] [] [] [(.binary .eq (.listLiteral [.num 1, .num 2]) (.listLiteral [.num 1, .num 2]))])
-#guard obs case_list_redundant_parens_canonicalize == "ok raw=1 n=1"
+#guard obs case_list_redundant_parens_canonicalize == "ok raw=true n=1"
 
 -- list-spread-capture [lists]: A = [1, 2, 3] \n  \n x = A \n y = (A*) \n  \n x \n y
 def case_list_spread_capture : Expr :=
@@ -1123,29 +1149,29 @@ def case_builtin_callable_is_an_ordinary_prelude_binding : Expr :=
   .algorithmExpr (alg [] [] [privateProp "if" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))])] [(.call (.resolve "if") [.num 7]), (.dotCall (.num 7) "if" none), (.call (.resolve "if") [(.sequenceSpread (.num 7))])])
 #guard obs case_builtin_callable_is_an_ordinary_prelude_binding == "ok raw=S[8, 8, 8] n=3"
 
--- no-arity-based-callable-selection [name-resolution]: if(x) = x + 1 \n  \n if(1, 2, 3)
+-- no-arity-based-callable-selection [name-resolution]: if(x) = x + 1 \n  \n if(true, 2, 3)
 def case_no_arity_based_callable_selection : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "if" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))])] [(.call (.resolve "if") [.num 1, .num 2, .num 3])])
+  .algorithmExpr (alg [] [] [privateProp "if" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))])] [(.call (.resolve "if") [.boolLiteral true, .num 2, .num 3])])
 #guard obs case_no_arity_based_callable_selection == "err arity"
 
--- if-composition-forms-agree [conditionals]: Cond = 1 \n Branches = (10, 20) \n Apply3(f, a, b, c) = f(a, b, c) \n  \n if(Cond, 10, 20) \n Cond.if(10, 20) \n if(Cond, Branches*) \n Cond.if(Branches*) \n Apply3(if, Cond, 10, 20)
+-- if-composition-forms-agree [conditionals]: Cond = true \n Branches = (10, 20) \n Apply3(f, a, b, c) = f(a, b, c) \n  \n if(Cond, 10, 20) \n Cond.if(10, 20) \n if(Cond, Branches*) \n Cond.if(Branches*) \n Apply3(if, Cond, 10, 20)
 def case_if_composition_forms_agree : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "Cond" (alg [] [] [] [.num 1]), privateProp "Branches" (alg [] [] [] [(.capture [.num 10, .num 20])]), privateProp "Apply3" (alg ["f", "a", "b", "c"] [] [] [(.call (.param "f") [.param "a", .param "b", .param "c"])])] [(.call (.resolve "if") [.resolve "Cond", .num 10, .num 20]), (.dotCall (.resolve "Cond") "if" (some [.num 10, .num 20])), (.call (.resolve "if") [.resolve "Cond", (.sequenceSpread (.resolve "Branches"))]), (.dotCall (.resolve "Cond") "if" (some [(.sequenceSpread (.resolve "Branches"))])), (.call (.resolve "Apply3") [.resolve "if", .resolve "Cond", .num 10, .num 20])])
+  .algorithmExpr (alg [] [] [privateProp "Cond" (alg [] [] [] [.boolLiteral true]), privateProp "Branches" (alg [] [] [] [(.capture [.num 10, .num 20])]), privateProp "Apply3" (alg ["f", "a", "b", "c"] [] [] [(.call (.param "f") [.param "a", .param "b", .param "c"])])] [(.call (.resolve "if") [.resolve "Cond", .num 10, .num 20]), (.dotCall (.resolve "Cond") "if" (some [.num 10, .num 20])), (.call (.resolve "if") [.resolve "Cond", (.sequenceSpread (.resolve "Branches"))]), (.dotCall (.resolve "Cond") "if" (some [(.sequenceSpread (.resolve "Branches"))])), (.call (.resolve "Apply3") [.resolve "if", .resolve "Cond", .num 10, .num 20])])
 #guard obs case_if_composition_forms_agree == "ok raw=S[10, 10, 10, 10, 10] n=5"
 
--- if-arity-is-uniform-across-spellings [conditionals]: if(1, 2)
+-- if-arity-is-uniform-across-spellings [conditionals]: if(true, 2)
 def case_if_arity_is_uniform_across_spellings : Expr :=
-  .algorithmExpr (alg [] [] [] [(.call (.resolve "if") [.num 1, .num 2])])
+  .algorithmExpr (alg [] [] [] [(.call (.resolve "if") [.boolLiteral true, .num 2])])
 #guard obs case_if_arity_is_uniform_across_spellings == "err arity"
 
--- if-laziness-follows-the-resolved-identity [conditionals]: Boom = 1 / 0 \n  \n if(1, 10, Boom) \n 0.if(Boom, 20)
+-- if-laziness-follows-the-resolved-identity [conditionals]: Boom = 1 / 0 \n  \n if(true, 10, Boom) \n false.if(Boom, 20)
 def case_if_laziness_follows_the_resolved_identity : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "Boom" (alg [] [] [] [(.binary .div (.num 1) (.num 0))])] [(.call (.resolve "if") [.num 1, .num 10, .resolve "Boom"]), (.dotCall (.num 0) "if" (some [.resolve "Boom", .num 20]))])
+  .algorithmExpr (alg [] [] [privateProp "Boom" (alg [] [] [] [(.binary .div (.num 1) (.num 0))])] [(.call (.resolve "if") [.boolLiteral true, .num 10, .resolve "Boom"]), (.dotCall (.boolLiteral false) "if" (some [.resolve "Boom", .num 20]))])
 #guard obs case_if_laziness_follows_the_resolved_identity == "ok raw=S[10, 20] n=2"
 
--- lazy-slot-demand-is-the-ordinary-zero-argument-demand [conditionals]: Inc(x) = x + 1 \n if(1, Inc, 0)
+-- lazy-slot-demand-is-the-ordinary-zero-argument-demand [conditionals]: Inc(x) = x + 1 \n if(true, Inc, 0)
 def case_lazy_slot_demand_is_the_ordinary_zero_argument_demand : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))])] [(.call (.resolve "if") [.num 1, .resolve "Inc", .num 0])])
+  .algorithmExpr (alg [] [] [privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))])] [(.call (.resolve "if") [.boolLiteral true, .resolve "Inc", .num 0])])
 #guard obs case_lazy_slot_demand_is_the_ordinary_zero_argument_demand == "err arity"
 
 -- lazy-slot-demand-covers-every-builtin-value-slot [collection-builtins]: Inc(x) = x + 1 \n Step(s) = s + 1 \n repeat(Step, 1, Inc)
@@ -1168,9 +1194,9 @@ def case_parameter_named_if_carries_the_supplied_callable : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Apply" (alg ["if", "x"] [] [{ (privateLocalProp "Inner" (.localCapturedAncestorParams ["if", "x"]) (alg [] [] [] [(.call (.param "if") [.param "x"])])) with requiredOwnerDepths := some [("if", some 0), ("x", some 0)] }] [.resolve "Inner"]), privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))])] [(.call (.resolve "Apply") [.resolve "Inc", .num 7])])
 #guard obs case_parameter_named_if_carries_the_supplied_callable == "ok raw=8 n=1"
 
--- if-spread-builds-values-before-branch-selection [conditionals]: Risky = (10, 1 / 0) \n if(1, Risky*)
+-- if-spread-builds-values-before-branch-selection [conditionals]: Risky = (10, 1 / 0) \n if(true, Risky*)
 def case_if_spread_builds_values_before_branch_selection : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "Risky" (alg [] [] [] [(.capture [.num 10, (.binary .div (.num 1) (.num 0))])])] [(.call (.resolve "if") [.num 1, (.sequenceSpread (.resolve "Risky"))])])
+  .algorithmExpr (alg [] [] [privateProp "Risky" (alg [] [] [] [(.capture [.num 10, (.binary .div (.num 1) (.num 0))])])] [(.call (.resolve "if") [.boolLiteral true, (.sequenceSpread (.resolve "Risky"))])])
 #guard obs case_if_spread_builds_values_before_branch_selection == "err div0"
 
 -- dot-string-intrinsic-rejects-arguments [strings]: A = 42 \n A.string(1)
@@ -1193,7 +1219,7 @@ def case_grace_in_redundant_group_keeps_the_capture_boundary : Expr :=
   .algorithmExpr (alg [] [] [privateProp "F" (alg ["a", "b"] [] [] [(.binary .add (.param "b") (.dotCall (.capture [.param "a"]) "V" none))]), privateProp "V" (alg ["x"] [] [] [(.binary .mul (.param "x") (.num 2))])] [(.call (.resolve "F") [.num 5, .num 1])])
 #guard obs case_grace_in_redundant_group_keeps_the_capture_boundary == "ok raw=11 n=1"
 
--- 219 canonical Lean-guarded specification cases.
+-- 224 canonical Lean-guarded specification cases.
 
 /--
 Machine-checked Lean-guarded partition count: the id list is built by the
@@ -1202,7 +1228,12 @@ independently from the corpus partition, so a generation bug fails `lake build`.
 -/
 def specCaseIds : List String := [
   "first-program",
+  "boolean-values-and-equality",
+  "boolean-predicates-and-patterns",
+  "boolean-loop-state-transition",
+  "boolean-predicate-rejects-visible-empty",
   "power-unary-precedence",
+  "not-binds-below-comparisons",
   "integer-division-truncates",
   "integer-division-exact-quotient",
   "property-access-and-call",
@@ -1421,6 +1452,6 @@ def specCaseIds : List String := [
   "ownership-open-head-between-opener-and-settling-level-charges-the-capture",
   "grace-in-redundant-group-keeps-the-capture-boundary"
 ]
-#guard specCaseIds.length == 219
+#guard specCaseIds.length == 224
 
 end LanguageSpecCases

@@ -176,9 +176,9 @@ public static class StructuralShrinker
         // if-targets alive; the reduced program simply has one fewer).
         foreach (var ifNode in ModelRewriter.CollectExprs<MExpr.If>(program.Root))
         {
-            if (ifNode.Cond is MExpr.Atom cond)
+            if (ifNode.Cond is MExpr.Bool cond)
             {
-                var selected = cond.Value != 0m ? ifNode.Then : ifNode.Else;
+                var selected = cond.Value ? ifNode.Then : ifNode.Else;
                 yield return program with { Root = ModelRewriter.ReplaceExpr(program.Root, ifNode, selected) };
             }
         }

@@ -177,6 +177,6 @@ public class OwnershipConformanceTests
     {
         Pattern.Bind bind => bind.Name == name ? bind.NameSpan : null,
         Pattern.SequenceValue group => group.Items.Select(child => BinderSpan(child, name)).FirstOrDefault(span => span is not null),
-        Pattern.LitInt or Pattern.LitString => null,
+        Pattern.LitInt or Pattern.LitString or Pattern.LitBool => null,
     };
 }

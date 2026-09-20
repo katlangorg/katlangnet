@@ -48,28 +48,28 @@ public class BuiltinCallableIdentityTests
     /// dot-call, and invocation through a higher-order parameter.
     /// </summary>
     [Theory]
-    [InlineData("if(1, 10, 20)")]
-    [InlineData("1.if(10, 20)")]
-    [InlineData("if((1, 10, 20)*)")]
-    [InlineData("if(1, (10, 20)*)")]
-    [InlineData("1.if((10, 20)*)")]
-    [InlineData("Args = (1, 10, 20)\nif(Args*)")]
-    [InlineData("Branches = (10, 20)\nif(1, Branches*)")]
-    [InlineData("Branches = (10, 20)\n1.if(Branches*)")]
-    [InlineData("Cond = 1\nBranches = (10, 20)\nCond.if(Branches*)")]
-    [InlineData("Apply3(f, a, b, c) = f(a, b, c)\nApply3(if, 1, 10, 20)")]
-    [InlineData("Args = (1, 10, 20)\nApply3(f, a, b, c) = f(a, b, c)\nApply3(if, Args*)")]
-    [InlineData("Apply(f) = f(1, 10, 20)\nApply(if)")]
-    [InlineData("MyIf(a, b, c) = if(a, b, c)\nMyIf(1, 10, 20)")]
+    [InlineData("if(true, 10, 20)")]
+    [InlineData("true.if(10, 20)")]
+    [InlineData("if((true, 10, 20)*)")]
+    [InlineData("if(true, (10, 20)*)")]
+    [InlineData("true.if((10, 20)*)")]
+    [InlineData("Args = (true, 10, 20)\nif(Args*)")]
+    [InlineData("Branches = (10, 20)\nif(true, Branches*)")]
+    [InlineData("Branches = (10, 20)\ntrue.if(Branches*)")]
+    [InlineData("Cond = true\nBranches = (10, 20)\nCond.if(Branches*)")]
+    [InlineData("Apply3(f, a, b, c) = f(a, b, c)\nApply3(if, true, 10, 20)")]
+    [InlineData("Args = (true, 10, 20)\nApply3(f, a, b, c) = f(a, b, c)\nApply3(if, Args*)")]
+    [InlineData("Apply(f) = f(true, 10, 20)\nApply(if)")]
+    [InlineData("MyIf(a, b, c) = if(a, b, c)\nMyIf(true, 10, 20)")]
     public void BuiltinIf_EveryThreeArgumentSpelling_SelectsTheTrueBranch(string source)
         => AssertEval(source, 10);
 
     [Theory]
-    [InlineData("if(0, 10, 20)")]
-    [InlineData("0.if(10, 20)")]
-    [InlineData("Args = (0, 10, 20)\nif(Args*)")]
-    [InlineData("Branches = (10, 20)\n0.if(Branches*)")]
-    [InlineData("Apply3(f, a, b, c) = f(a, b, c)\nApply3(if, 0, 10, 20)")]
+    [InlineData("if(false, 10, 20)")]
+    [InlineData("false.if(10, 20)")]
+    [InlineData("Args = (false, 10, 20)\nif(Args*)")]
+    [InlineData("Branches = (10, 20)\nfalse.if(Branches*)")]
+    [InlineData("Apply3(f, a, b, c) = f(a, b, c)\nApply3(if, false, 10, 20)")]
     public void BuiltinIf_EveryThreeArgumentSpelling_SelectsTheFalseBranchAlike(string source)
         => AssertEval(source, 20);
 
@@ -78,10 +78,10 @@ public class BuiltinCallableIdentityTests
     /// computed at run time and still lands in the ordinary three slots.
     /// </summary>
     [Theory]
-    [InlineData("Args = range(1, 3)\nif(Args*)", 2)]
-    [InlineData("Pick(n) = (n, 10, 20)\nif(Pick(1)*)", 10)]
-    [InlineData("Pick(n) = (n, 10, 20)\nif(Pick(0)*)", 20)]
-    [InlineData("Tail(n) = (n, n * 2)\nif(1, Tail(10)*)", 10)]
+    [InlineData("Args = (range(1, 3).count > 0, range(2, 3)*)\nif(Args*)", 2)]
+    [InlineData("Pick(n) = (n > 0, 10, 20)\nif(Pick(1)*)", 10)]
+    [InlineData("Pick(n) = (n > 0, 10, 20)\nif(Pick(0)*)", 20)]
+    [InlineData("Tail(n) = (n, n * 2)\nif(true, Tail(10)*)", 10)]
     public void BuiltinIf_DynamicallyProducedSupplies_BindTheSameWay(string source, int expected)
         => AssertEval(source, expected);
 
@@ -107,11 +107,11 @@ public class BuiltinCallableIdentityTests
     /// The diagnostic names the signature lexical resolution actually selected.
     /// </summary>
     [Theory]
-    [InlineData("if(1, 2, 3)")]
-    [InlineData("1.if(2, 3)")]
+    [InlineData("if(true, 2, 3)")]
+    [InlineData("true.if(2, 3)")]
     [InlineData("if((1, 2, 3)*)")]
     [InlineData("(1, 2, 3)*.if")]
-    [InlineData("Apply(if) = if(1, 2, 3)\nApply(if)")]
+    [InlineData("Apply(if) = if(true, 2, 3)\nApply(if)")]
     public void UserIf_WrongArityCall_DoesNotFallBackToTheBuiltin(string call)
     {
         var arity = AssertEvalFailsWithArityMismatch(
@@ -150,8 +150,8 @@ public class BuiltinCallableIdentityTests
     [Fact]
     public void UserIf_IsNotLazy_BecauseLazinessBelongsToTheBuiltinIdentity()
     {
-        AssertEval("Boom = 1 / 0\nif(1, 10, Boom)", 10);
-        AssertDivisionByZero("if(a, b, c) = b + c\nBoom = 1 / 0\nif(1, 10, Boom)");
+        AssertEval("Boom = 1 / 0\nif(true, 10, Boom)", 10);
+        AssertDivisionByZero("if(a, b, c) = b + c\nBoom = 1 / 0\nif(true, 10, Boom)");
     }
 
     // ── D. Parameter shadowing ──────────────────────────────────────────────
@@ -165,10 +165,10 @@ public class BuiltinCallableIdentityTests
     [Theory]
     [InlineData("Apply(if, x) = if(x)\nInc(x) = x + 1\nApply(Inc, 7)", 8)]
     [InlineData("Apply(if, x) = { Inner = if(x)\n  Inner }\nInc(x) = x + 1\nApply(Inc, 7)", 8)]
-    [InlineData("Apply(if, x) = if(x)\nInc(x) = x + 1\nApply(Inc, 7) + if(1, 0, 100)", 8)]
+    [InlineData("Apply(if, x) = if(x)\nInc(x) = x + 1\nApply(Inc, 7) + if(true, 0, 100)", 8)]
     [InlineData("Apply(if, x) = x.if\nInc(x) = x + 1\nApply(Inc, 7)", 8)]
     [InlineData("Apply(if, x) = if(x*)\nInc(x) = x + 1\nApply(Inc, 7)", 8)]
-    [InlineData("Outer = { if(x) = x + 1\n Inner = if(7)\n Inner }\nOuter + if(1, 10, 20)", 18)]
+    [InlineData("Outer = { if(x) = x + 1\n Inner = if(7)\n Inner }\nOuter + if(true, 10, 20)", 18)]
     [InlineData("Obj = { if(x) = x + 1 }\nObj.if(7)", 8)]
     [InlineData("F(count) = count + 1\nF(4)", 5)]
     public void AParameter_ShadowsThePreludeBinding(string source, int expected)
@@ -185,7 +185,7 @@ public class BuiltinCallableIdentityTests
     public void AShadowingParameter_IsTheOnlyCandidate()
     {
         var arity = AssertEvalFailsWithArityMismatch(
-            "Apply(if) = if(1, 2, 3)\nInc(x) = x + 1\nApply(Inc)", expected: 1, actual: 3);
+            "Apply(if) = if(true, 2, 3)\nInc(x) = x + 1\nApply(Inc)", expected: 1, actual: 3);
 
         Assert.Equal(
             "Callable `if(x)` expects 1 argument, but was called with 3 arguments.",
@@ -203,9 +203,9 @@ public class BuiltinCallableIdentityTests
     [Fact]
     public void HigherOrder_CarriesTheResolvedIdentity()
     {
-        const string caller = "Apply3(f, a, b, c) = f(a, b, c)\nApply3(if, 1, 10, 20)";
+        const string caller = "Apply3(f, a, b, c) = f(a, b, c)\nApply3(if, true, 10, 20)";
         AssertEval(caller, 10);
-        AssertEval("if(a, b, c) = a + b + c\n" + caller, 31);
+        AssertEval("if(a, b, c) = b + c\n" + caller, 30);
     }
 
     // ── F/H. One arity contract, validated at ONE boundary ──────────────────
@@ -221,18 +221,18 @@ public class BuiltinCallableIdentityTests
     // Direct written slots — these were the parser-gated forms before SYN-05.
     [InlineData("if()", 0)]
     [InlineData("if(1)", 1)]
-    [InlineData("if(1, 2)", 2)]
-    [InlineData("if(1, 2, 3, 4)", 4)]
+    [InlineData("if(true, 2)", 2)]
+    [InlineData("if(true, 2, 3, 4)", 4)]
     // Explicit spread, literal and via a property.
     [InlineData("if(()*)", 0)]
     [InlineData("if((1, 2)*)", 2)]
     [InlineData("if((1, 2, 3, 4)*)", 4)]
     [InlineData("Two = 1, 2\nif(Two*)", 2)]
     [InlineData("Four = 1, 2, 3, 4\nif(Four*)", 4)]
-    [InlineData("Pair = 2, 3\nif(1, 2, Pair*)", 4)]
+    [InlineData("Pair = 2, 3\nif(true, 2, Pair*)", 4)]
     // Dot-call: the injected receiver counts as one argument.
-    [InlineData("1.if(2)", 2)]
-    [InlineData("1.if(2, 3, 4)", 4)]
+    [InlineData("true.if(2)", 2)]
+    [InlineData("true.if(2, 3, 4)", 4)]
     [InlineData("Pair = 2, 3\n1.if(2, Pair*)", 4)]
     [InlineData("A = 1\nA.if(2)", 2)]
     // Through a higher-order parameter.
@@ -265,11 +265,11 @@ public class BuiltinCallableIdentityTests
     /// raw-spelling gate bought.
     /// </summary>
     [Theory]
-    [InlineData("Unused = if(1, 2)\n7")]
+    [InlineData("Unused = if(true, 2)\n7")]
     [InlineData("Unused = count(1, 2, 3)\n7")]
     [InlineData("Unused = range(1)\n7")]
-    [InlineData("if(1, 7, if(1, 2))")]
-    [InlineData("0.if(if(1, 2), 7)")]
+    [InlineData("if(true, 7, if(true, 2))")]
+    [InlineData("false.if(if(true, 2), 7)")]
     public void MalformedBuiltinCall_InAnUnevaluatedProperty_IsInert(string source)
     {
         var parsed = Parser.Parse(source);
@@ -283,14 +283,14 @@ public class BuiltinCallableIdentityTests
     /// boundary instead of duplicated ahead of it.
     /// </summary>
     [Theory]
-    [InlineData("if(1, 2)", 1, 1, 1, 9)]
+    [InlineData("if(true, 2)", 1, 1, 1, 12)]
     [InlineData("if()", 1, 1, 1, 5)]
-    [InlineData("if(1, 2, 3, 4)", 1, 1, 1, 15)]
-    [InlineData("P = if(1, 2)\nP", 1, 5, 1, 13)]
-    [InlineData("X = 1\nif(1, 2)\nX", 2, 1, 2, 9)]
-    [InlineData("X = 1\nif(1, 2)\nLongIdentifierHere = 3\nLongIdentifierHere", 2, 1, 2, 9)]
+    [InlineData("if(true, 2, 3, 4)", 1, 1, 1, 18)]
+    [InlineData("P = if(true, 2)\nP", 1, 5, 1, 16)]
+    [InlineData("X = 1\nif(true, 2)\nX", 2, 1, 2, 12)]
+    [InlineData("X = 1\nif(true, 2)\nLongIdentifierHere = 3\nLongIdentifierHere", 2, 1, 2, 12)]
     [InlineData("if(\n  1,\n  2\n)", 1, 1, 4, 2)]
-    [InlineData("1.if(2)", 1, 1, 1, 8)]
+    [InlineData("true.if(2)", 1, 1, 1, 11)]
     [InlineData("if((1, 2)*)", 1, 1, 1, 12)]
     public void ArityDiagnostic_SpansTheWholeCall(
         string source, int startLine, int startColumn, int endLine, int endColumn)
@@ -310,26 +310,26 @@ public class BuiltinCallableIdentityTests
     /// success alone does not prove non-execution. Callback tests below observe that.
     /// </summary>
     [Theory]
-    [InlineData("if(1, 10, 1 / 0)", 10)]
-    [InlineData("if(0, 1 / 0, 20)", 20)]
-    [InlineData("1.if(10, 1 / 0)", 10)]
-    [InlineData("0.if(1 / 0, 20)", 20)]
-    [InlineData("Boom = 1 / 0\nif(1, 10, Boom)", 10)]
-    [InlineData("Boom = 1 / 0\n0.if(Boom, 20)", 20)]
-    [InlineData("Boom = 1 / 0\nMyIf(a, b, c) = if(a, b, c)\nMyIf(1, 10, Boom)", 10)]
-    [InlineData("Boom = 1 / 0\nApply3(f, a, b, c) = f(a, b, c)\nApply3(if, 1, 10, Boom)", 10)]
-    [InlineData("Boom = 1 / 0\nApply3(f, a, b, c) = f(a, b, c)\nApply3(if, 0, Boom, 20)", 20)]
-    [InlineData("Boom = 1 / 0\nApply(f) = f(1, 10, Boom)\nApply(if)", 10)]
+    [InlineData("if(true, 10, 1 / 0)", 10)]
+    [InlineData("if(false, 1 / 0, 20)", 20)]
+    [InlineData("true.if(10, 1 / 0)", 10)]
+    [InlineData("false.if(1 / 0, 20)", 20)]
+    [InlineData("Boom = 1 / 0\nif(true, 10, Boom)", 10)]
+    [InlineData("Boom = 1 / 0\nfalse.if(Boom, 20)", 20)]
+    [InlineData("Boom = 1 / 0\nMyIf(a, b, c) = if(a, b, c)\nMyIf(true, 10, Boom)", 10)]
+    [InlineData("Boom = 1 / 0\nApply3(f, a, b, c) = f(a, b, c)\nApply3(if, true, 10, Boom)", 10)]
+    [InlineData("Boom = 1 / 0\nApply3(f, a, b, c) = f(a, b, c)\nApply3(if, false, Boom, 20)", 20)]
+    [InlineData("Boom = 1 / 0\nApply(f) = f(true, 10, Boom)\nApply(if)", 10)]
     public void BuiltinIf_DoesNotDemandTheUnselectedBranch(string source, int expected)
         => AssertEval(source, expected);
 
     /// <summary>The other direction: the SELECTED branch genuinely is demanded.</summary>
     [Theory]
-    [InlineData("if(1, 1 / 0, 20)")]
-    [InlineData("if(0, 10, 1 / 0)")]
-    [InlineData("1.if(1 / 0, 20)")]
-    [InlineData("Boom = 1 / 0\nif(1, Boom, 20)")]
-    [InlineData("Boom = 1 / 0\nApply3(f, a, b, c) = f(a, b, c)\nApply3(if, 1, Boom, 20)")]
+    [InlineData("if(true, 1 / 0, 20)")]
+    [InlineData("if(false, 10, 1 / 0)")]
+    [InlineData("true.if(1 / 0, 20)")]
+    [InlineData("Boom = 1 / 0\nif(true, Boom, 20)")]
+    [InlineData("Boom = 1 / 0\nApply3(f, a, b, c) = f(a, b, c)\nApply3(if, true, Boom, 20)")]
     public void TheSelectedBranch_IsDemanded(string source)
         => AssertDivisionByZero(source);
 
@@ -343,10 +343,10 @@ public class BuiltinCallableIdentityTests
     /// behaves identically.
     /// </summary>
     [Theory]
-    [InlineData("Risky = (10, 1 / 0)\nif(1, Risky*)")]
-    [InlineData("Risky = (10, 1 / 0)\n1.if(Risky*)")]
-    [InlineData("Risky = (1, 10, 1 / 0)\nif(Risky*)")]
-    [InlineData("Risky = (10, 1 / 0)\nMyIf(a, b, c) = if(a, b, c)\nMyIf(1, Risky*)")]
+    [InlineData("Risky = (10, 1 / 0)\nif(true, Risky*)")]
+    [InlineData("Risky = (10, 1 / 0)\ntrue.if(Risky*)")]
+    [InlineData("Risky = (true, 10, 1 / 0)\nif(Risky*)")]
+    [InlineData("Risky = (10, 1 / 0)\nMyIf(a, b, c) = if(a, b, c)\nMyIf(true, Risky*)")]
     [InlineData("Risky = (10, 1 / 0)\nPick3(a, b, c) = b\nPick3(1, Risky*)")]
     public void ConstructingAValueBeforeSpreadingIt_IsNotLazy(string source)
         => AssertDivisionByZero(source);
@@ -367,13 +367,13 @@ public class BuiltinCallableIdentityTests
     [Fact]
     public void HigherOrderCallerArgumentBinding_IsEagerLikeAnyUserCall()
     {
-        AssertDivisionByZero("Apply3(f, a, b, c) = f(a, b, c)\nApply3(if, 1, 10, 1 / 0)");
+        AssertDivisionByZero("Apply3(f, a, b, c) = f(a, b, c)\nApply3(if, true, 10, 1 / 0)");
         AssertDivisionByZero("Pick3(a, b, c) = b\nPick3(1, 10, 1 / 0)");
 
         // A named property also supplies an algorithm binding when its eager value
         // evaluation fails. The builtin can leave that binding unused; this success
         // does not mean the caller never attempted to evaluate Boom.
-        AssertEval("Boom = 1 / 0\nApply3(f, a, b, c) = f(a, b, c)\nApply3(if, 1, 10, Boom)", 10);
+        AssertEval("Boom = 1 / 0\nApply3(f, a, b, c) = f(a, b, c)\nApply3(if, true, 10, Boom)", 10);
     }
 
     /// <summary>
@@ -412,14 +412,14 @@ public class BuiltinCallableIdentityTests
     /// branch is proven never to run and the selected one to run exactly once.
     /// </summary>
     [Theory]
-    [InlineData("if(1, Tick(10), Tick(20))", 10)]
-    [InlineData("if(0, Tick(10), Tick(20))", 20)]
-    [InlineData("1.if(Tick(10), Tick(20))", 10)]
-    [InlineData("0.if(Tick(10), Tick(20))", 20)]
-    [InlineData("Apply(f) = f(1, Tick(10), Tick(20))\nApply(if)", 10)]
-    [InlineData("Apply(f) = f(0, Tick(10), Tick(20))\nApply(if)", 20)]
-    [InlineData("Apply(if) = 1.if(Tick(10), Tick(20))\nApply(if)", 10)]
-    [InlineData("Apply(if) = 0.if(Tick(10), Tick(20))\nApply(if)", 20)]
+    [InlineData("if(true, Tick(10), Tick(20))", 10)]
+    [InlineData("if(false, Tick(10), Tick(20))", 20)]
+    [InlineData("true.if(Tick(10), Tick(20))", 10)]
+    [InlineData("false.if(Tick(10), Tick(20))", 20)]
+    [InlineData("Apply(f) = f(true, Tick(10), Tick(20))\nApply(if)", 10)]
+    [InlineData("Apply(f) = f(false, Tick(10), Tick(20))\nApply(if)", 20)]
+    [InlineData("Apply(if) = true.if(Tick(10), Tick(20))\nApply(if)", 10)]
+    [InlineData("Apply(if) = false.if(Tick(10), Tick(20))\nApply(if)", 20)]
     public void OnlyTheSelectedBranch_RunsItsHostCallback(string source, int expected)
         => Assert.Equal([(Decimal128)expected], RunRecordingTicks(source, expected));
 
@@ -431,16 +431,16 @@ public class BuiltinCallableIdentityTests
     /// the branch EXPRESSIONS, not of the name <c>if</c> appearing somewhere below.
     /// </summary>
     [Theory]
-    [InlineData("Apply3(f, a, b, c) = f(a, b, c)\nApply3(if, 1, Tick(10), Tick(20))", 10)]
-    [InlineData("MyIf(a, b, c) = if(a, b, c)\nMyIf(1, Tick(10), Tick(20))", 10)]
-    [InlineData("A = Tick(10)\nB = Tick(20)\nApply3(f, a, b, c) = f(a, b, c)\nApply3(if, 1, A, B)", 10)]
+    [InlineData("Apply3(f, a, b, c) = f(a, b, c)\nApply3(if, true, Tick(10), Tick(20))", 10)]
+    [InlineData("MyIf(a, b, c) = if(a, b, c)\nMyIf(true, Tick(10), Tick(20))", 10)]
+    [InlineData("A = Tick(10)\nB = Tick(20)\nApply3(f, a, b, c) = f(a, b, c)\nApply3(if, true, A, B)", 10)]
     public void AUserCallBetweenTheBranchesAndIf_EvaluatesBoth(string source, int expected)
         => Assert.Equal([(Decimal128)10, (Decimal128)20], RunRecordingTicks(source, expected));
 
     [Theory]
-    [InlineData("if(1, (Tick(10), Tick(20))*)")]
-    [InlineData("1.if((Tick(10), Tick(20))*)")]
-    [InlineData("Branches = Tick(10), Tick(20)\nif(1, Branches*)")]
+    [InlineData("if(true, (Tick(10), Tick(20))*)")]
+    [InlineData("true.if((Tick(10), Tick(20))*)")]
+    [InlineData("Branches = Tick(10), Tick(20)\nif(true, Branches*)")]
     public void SpreadConstructsBothBranchValues_ExactlyOnce(string source)
         => Assert.Equal([(Decimal128)10, (Decimal128)20], RunRecordingTicks(source, 10));
 
@@ -454,7 +454,7 @@ public class BuiltinCallableIdentityTests
     public void AShadowingUserIf_EvaluatesBothBranches()
         => Assert.Equal(
             [(Decimal128)10, (Decimal128)20],
-            RunRecordingTicks("if(a, b, c) = b\nif(1, Tick(10), Tick(20))", 10));
+            RunRecordingTicks("if(a, b, c) = b\nif(true, Tick(10), Tick(20))", 10));
 
     // ── Cross-path parity ───────────────────────────────────────────────────
 
@@ -465,9 +465,9 @@ public class BuiltinCallableIdentityTests
     /// </summary>
     [Theory]
     [InlineData("Step(n, acc) = n - 1, acc + if(n mod 2 == 0, n, 0), n > 1\nStep.while(10, 0):1", 30)]
-    [InlineData("Step(n, acc) = n - 1, acc + n.if(1, 0), n > 1\nStep.while(5, 0):1", 4)]
+    [InlineData("Step(n, acc) = n - 1, acc + (n > 1).if(1, 0), n > 1\nStep.while(5, 0):1", 4)]
     [InlineData("Step(n, acc) = n - 1, acc + if(n > 3, n, 1)\nStep.repeat(5, 5, 0):1", 12)]
-    [InlineData("Args = (1, 10, 20)\nStep(n, acc) = n - 1, acc + if(Args*), n > 1\nStep.while(3, 0):1", 20)]
+    [InlineData("Args = (true, 10, 20)\nStep(n, acc) = n - 1, acc + if(Args*), n > 1\nStep.while(3, 0):1", 20)]
     // A user `if` in the step body: planning must NOT treat the spelling as the
     // intrinsic conditional. Builtin `if(n, 1, 0)` would add 1 per iteration;
     // the user callable adds n + 1 + 0.
@@ -501,18 +501,18 @@ public class BuiltinCallableIdentityTests
     /// need not access the cache; deterministic suspension is tested separately.
     /// </summary>
     [Theory]
-    [InlineData("if(1, 10, 20)")]
-    [InlineData("1.if(10, 20)")]
-    [InlineData("Args = (1, 10, 20)\nif(Args*)")]
-    [InlineData("Branches = (10, 20)\n1.if(Branches*)")]
-    [InlineData("Apply3(f, a, b, c) = f(a, b, c)\nApply3(if, 1, 10, 20)")]
-    [InlineData("Boom = 1 / 0\nif(1, 10, Boom)")]
-    [InlineData("Boom = 1 / 0\nApply3(f, a, b, c) = f(a, b, c)\nApply3(if, 1, 10, Boom)")]
-    [InlineData("if(1, 2)")]
-    [InlineData("1.if(2, 3, 4)")]
-    [InlineData("Risky = (10, 1 / 0)\nif(1, Risky*)")]
+    [InlineData("if(true, 10, 20)")]
+    [InlineData("true.if(10, 20)")]
+    [InlineData("Args = (true, 10, 20)\nif(Args*)")]
+    [InlineData("Branches = (10, 20)\ntrue.if(Branches*)")]
+    [InlineData("Apply3(f, a, b, c) = f(a, b, c)\nApply3(if, true, 10, 20)")]
+    [InlineData("Boom = 1 / 0\nif(true, 10, Boom)")]
+    [InlineData("Boom = 1 / 0\nApply3(f, a, b, c) = f(a, b, c)\nApply3(if, true, 10, Boom)")]
+    [InlineData("if(true, 2)")]
+    [InlineData("true.if(2, 3, 4)")]
+    [InlineData("Risky = (10, 1 / 0)\nif(true, Risky*)")]
     [InlineData("if(x) = x + 1\nif(7)")]
-    [InlineData("if(x) = x + 1\nif(1, 2, 3)")]
+    [InlineData("if(x) = x + 1\nif(true, 2, 3)")]
     [InlineData("if(a, b, c) = a + b + c\nApply3(f, a, b, c) = f(a, b, c)\nApply3(if, 1, 10, 20)")]
     [InlineData("Apply(if, x) = if(x)\nInc(x) = x + 1\nApply(Inc, 7)")]
     public async Task AsyncTwin_MatchesTheSynchronousOutcome(string source)
@@ -559,23 +559,23 @@ public class BuiltinCallableIdentityTests
     /// compare complete structured payloads and spans with the synchronous oracle.
     /// </summary>
     [Theory]
-    [InlineData("if(Tick(1), Tick(10), Tick(20))", "ok raw=10 n=1", 1, 10)]
-    [InlineData("if(Tick(0), Tick(10), Tick(20))", "ok raw=20 n=1", 0, 20)]
-    [InlineData("Tick(1).if(Tick(10), Tick(20))", "ok raw=10 n=1", 1, 10)]
-    [InlineData("Tick(0).if(Tick(10), Tick(20))", "ok raw=20 n=1", 0, 20)]
-    [InlineData("Apply(f) = f(Tick(1), Tick(10), Tick(20))\nApply(if)", "ok raw=10 n=1", 1, 10)]
-    [InlineData("Apply(if) = Tick(0).if(Tick(10), Tick(20))\nApply(if)", "ok raw=20 n=1", 0, 20)]
+    [InlineData("if(Tick(1) == 1, Tick(10), Tick(20))", "ok raw=10 n=1", 1, 10)]
+    [InlineData("if(Tick(0) == 1, Tick(10), Tick(20))", "ok raw=20 n=1", 0, 20)]
+    [InlineData("(Tick(1) == 1).if(Tick(10), Tick(20))", "ok raw=10 n=1", 1, 10)]
+    [InlineData("(Tick(0) == 1).if(Tick(10), Tick(20))", "ok raw=20 n=1", 0, 20)]
+    [InlineData("Apply(f) = f(Tick(1) == 1, Tick(10), Tick(20))\nApply(if)", "ok raw=10 n=1", 1, 10)]
+    [InlineData("Apply(if) = (Tick(0) == 1).if(Tick(10), Tick(20))\nApply(if)", "ok raw=20 n=1", 0, 20)]
     [InlineData("if(a, b, c) = a + b + c\nif(Tick(1), Tick(10), Tick(20))", "ok raw=31 n=1", 1, 10, 20)]
-    [InlineData("if((Tick(1), Tick(10), Tick(20))*)", "ok raw=10 n=1", 1, 10, 20)]
-    [InlineData("Branches = Tick(10), Tick(20)\n0.if(Branches*)", "ok raw=20 n=1", 10, 20)]
-    [InlineData("Apply(f, *args) = f(args*)\nApply(if, Tick(1), Tick(10), Tick(20))", "ok raw=10 n=1", 1, 10, 20)]
-    [InlineData("if(Tick(1), 1 / 0, 20)", "err div0", 1)]
-    [InlineData("Tick(0).if(10, 1 / 0)", "err div0", 0)]
+    [InlineData("if((Tick(1) == 1, Tick(10), Tick(20))*)", "ok raw=10 n=1", 1, 10, 20)]
+    [InlineData("Branches = Tick(10), Tick(20)\nfalse.if(Branches*)", "ok raw=20 n=1", 10, 20)]
+    [InlineData("Apply(f, *args) = f(args*)\nApply(if, Tick(1) == 1, Tick(10), Tick(20))", "ok raw=10 n=1", 1, 10, 20)]
+    [InlineData("if(Tick(1) == 1, 1 / 0, 20)", "err div0", 1)]
+    [InlineData("(Tick(0) == 1).if(10, 1 / 0)", "err div0", 0)]
     [InlineData("if((Tick(1), 2)*)", "err arity", 1)]
-    [InlineData("1.if((Tick(2), 3, 4)*)", "err arity", 2)]
+    [InlineData("true.if((Tick(2), 3, 4)*)", "err arity", 2)]
     [InlineData("Apply(f, *args) = f(args*)\nApply(if, Tick(1), 2)", "err arity", 1)]
     [InlineData("if(x) = x + 1\nif((Tick(1), 2, 3)*)", "err arity", 1)]
-    [InlineData("Risky = Tick(10), 1 / 0\nif(1, Risky*)", "err div0", 10)]
+    [InlineData("Risky = Tick(10), 1 / 0\nif(true, Risky*)", "err div0", 10)]
     public async Task SuspendedInvocation_PreservesIdentityEffectsAndDiagnostics(
         string source, string expectedOutcome, params int[] expectedTicks)
     {
@@ -628,10 +628,10 @@ public class BuiltinCallableIdentityTests
     /// value-boundary re-counting of the selected branch.
     /// </summary>
     [Theory]
-    [InlineData("X = 1, 2, 3\nif(1, X, X)", 1)]
-    [InlineData("X = 1, 2, 3\n1.if(X, X)", 1)]
-    [InlineData("X = 1, 2, 3\nif(1, X, X)*", 3)]
-    [InlineData("X = 1, 2, 3\nApply3(f, a, b, c) = f(a, b, c)\nApply3(if, 1, X, X)", 1)]
+    [InlineData("X = 1, 2, 3\nif(true, X, X)", 1)]
+    [InlineData("X = 1, 2, 3\ntrue.if(X, X)", 1)]
+    [InlineData("X = 1, 2, 3\nif(true, X, X)*", 3)]
+    [InlineData("X = 1, 2, 3\nApply3(f, a, b, c) = f(a, b, c)\nApply3(if, true, X, X)", 1)]
     [InlineData("if(x) = x\nX = 1, 2, 3\nif(X)", 1)]
     public void CountedAndPlain_Agree(string source, int expectedEmittedCount)
     {
@@ -700,7 +700,7 @@ public class BuiltinCallableIdentityTests
     [Fact]
     public void SemanticModel_ResolvesAnUnshadowedIf_ToThePreludeMember()
     {
-        var model = SemanticModelBuilder.Build(SourceProvenance.ParseValid("if(1, 10, 20)").Parsed);
+        var model = SemanticModelBuilder.Build(SourceProvenance.ParseValid("if(true, 10, 20)").Parsed);
 
         var reference = Assert.IsType<IdentifierResolution>(model.FindResolutionAt(new SourcePosition(1, 1)));
         Assert.Equal(IdentifierClassification.Builtin, reference.Classification);

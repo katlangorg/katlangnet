@@ -73,8 +73,9 @@ all sibling boundaries including `()` items. This exact materialization is not
 canonical arity capture. `atoms` joined this family in the issue #136
 follow-up: it recursively collects numeric atoms through both sequence and
 list boundaries via the dedicated `languageAtoms` collector and materializes
-them as one exact list, while truth testing keeps reading the sequence-only
-`Result.atoms` view (lists still have no truth value).
+them as one exact list. (Since first-class Booleans — September 2026 — truth
+is not read from any atom view at all: only a Boolean value is a condition,
+`Result.asBool?`, so lists, numbers, and strings alike have no truth value.)
 
 **Spread.** `expr.spread` opens exactly one layer via `spreadItems`: `().spread` and
 `[].spread` contribute zero items, an atom spreads to itself, a sequence or list
@@ -109,7 +110,7 @@ caching cannot change observable counts or structure (validated).
 
 Neutral encoding: `S[...]` = sequence value (raw structure), `n` = emitted
 count at the observed boundary, `E:x` = typed error. Full per-cell data for
-all 1,584 surface cases is in the machine-readable report
+all 2,016 surface cases is in the machine-readable report
 (`SemanticExplorerReport.json`, written next to the test assembly on every
 run) and pinned per-case in `lean/SemanticExplorerCases.lean`. The matrix
 below is the required-values digest; Lean/C# agreement is per the generated
@@ -152,11 +153,11 @@ observable count at root; notes):
 | `x:0` (item = pair) | — | projected item content | `max(1, k)` | supply at root; 1 value everywhere else |
 | `x:0` (item = `()`) | — | `S[]` | 1 | projection count 0, root bump to 1 row |
 | `x:9` / `x:-1` | — | `E:index` / parse error | — | negative selector rejected at parse (C#) |
-| `==` / `!=` | 2 values | `1`/`0` | 1 | structural, reflexive, path-independent |
+| `==` / `!=` | 2 values | `true`/`false` | 1 | structural, reflexive, path-independent |
 | re-entry `I(x)`, `P = R` | 1 | unchanged | 1 | validated across double re-entry |
 | `take/skip/filter/distinct/order/map` | items | exact list of survivors/results | 1 | zero -> `[]`; one -> `[item]`; never singleton-erased |
 | `range` | — | exact integer list | 1 | inclusive ascending/descending span |
-| `atoms` | — | exact list of collected atoms | 1 | recursive flattener through sequence AND list boundaries; truth testing stays list-opaque |
+| `atoms` | — | exact list of collected atoms | 1 | recursive flattener through sequence AND list boundaries; Booleans and strings contribute no atoms, and no atom view is a truth view |
 
 ## 3. Answers to the architectural questions
 
@@ -288,7 +289,7 @@ reconstructable as a program).
 ## 5. Lean/C# differential results
 
 The generated artifact pins every Lean-representable corpus case
-(**1,551 surface cases** as of this update — the surface corpus minus its 33
+(**1,975 surface cases** as of this update — the surface corpus minus its 41
 parse-level cases such as `(3,)`, `x:-1`, `A.spread == A.spread`, `1 ; 2`, and `open count, Lib`, which
 are C#-only typed outcomes since Lean has no surface parser — plus **14**
 direct internal-node cases; see §5.1 for the full accounting). Encoding
@@ -338,12 +339,12 @@ parse-level set) is enforced by
 
 | Suite / artifact | Exact count | Included | Excluded | Source of truth |
 |---|---:|---|---|---|
-| Surface corpus (= C# semantic report surface section) | 1,584 | 1,404 template cases (54 receiver templates x 26 values) + 180 specials; outcomes 1,343 ok / 208 err / 33 parse-error | internal-node cases; anchor pins | `SemanticExplorerCorpus.AllCases()`; report `partition.surfaceCases` |
-| Lean-representable surface differential | 1,551 | the 1,584 above minus the 33 parse-level cases (26 `indexNeg__*` + seven deliberate parse-error specials, the builtin open target `open count, Lib` among them since the final audit of September 2026) | parse-level cases (Lean has no surface parser) | report `partition.leanRepresentable`; artifact header/footer |
+| Surface corpus (= C# semantic report surface section) | 2,016 | 1,836 template cases (54 receiver templates x 34 values) + 180 specials; outcomes 1,722 ok / 253 err / 41 parse-error | internal-node cases; anchor pins | `SemanticExplorerCorpus.AllCases()`; report `partition.surfaceCases` |
+| Lean-representable surface differential | 1,975 | the 2,016 above minus the 41 parse-level cases (34 `indexNeg__*` + seven deliberate parse-error specials, the builtin open target `open count, Lib` among them since the final audit of September 2026) | parse-level cases (Lean has no surface parser) | report `partition.leanRepresentable`; artifact header/footer |
 | Internal `SequenceConstruct` corpus | 14 | direct-AST `internal__sc_*` cases | everything source-driven | `SemanticExplorerCorpus.InternalNodeCases()`; report `partition.internalNodeCases` |
-| Generated Lean case guards | 1,565 | 1,551 surface + 14 internal-node (one `#guard` per case), plus two partition-count guards | nothing (header states the split) | `SemanticExplorerCases.lean` header/footer |
+| Generated Lean case guards | 1,989 | 1,975 surface + 14 internal-node (one `#guard` per case), plus two partition-count guards | nothing (header states the split) | `SemanticExplorerCases.lean` header/footer |
 | C# semantic report internal-node section | 14 | id, relation, internal + surface observations per case | — | report `internalNodeCases` |
-| Parser/elaboration reachability sweep | 1,584 attempted, 1,551 scanned | every corpus source that parses (post-`FrontEndPipeline` ASTs) | the 33 deliberate parse-error cases (skipped) | `EntireSemanticExplorerCorpus_ParsesWithoutSequenceConstruct` |
+| Parser/elaboration reachability sweep | 2,016 attempted, 1,975 scanned | every corpus source that parses (post-`FrontEndPipeline` ASTs) | the 41 deliberate parse-error cases (skipped) | `EntireSemanticExplorerCorpus_ParsesWithoutSequenceConstruct` |
 | Containment test invocations | 42 | parser theories, corpus sweep, AST-family pins, visitor-preservation facts, direct-node pins, difference facts, and the call-function `NotAnAlgorithm` payload pin | explorer/anchor tests (counted separately) | `dotnet test --filter FullyQualifiedName~SequenceConstructContainmentTests` |
 | Explorer-related test invocations | 44 | 37 explorer/anchor pins + four artifact freshness/comparability/partition/accounting facts + three cross-harness/containment/formatting guards matched by the filter | — | `dotnet test --filter FullyQualifiedName~SemanticExplorer` |
 | Full .NET solution | 6,338 (6,330 main-suite + 8 formatting public-API invocations, as of this audit; the suite grows — the live run is authoritative) | everything incl. all of the above | — | `dotnet test .\KatLang.slnx -p:UseSharedCompilation=false` |
@@ -366,8 +367,8 @@ open-target dedup, inline blocks, dotted paths, ownership-first shadowing,
 nested-scope leakage, builtin collision, and structural dot access to a private
 member, none of which had ANY case in either generated artifact before); the
 generated header, partition guards, JSON report, and table above now agree on
-1,584 surface cases, 33 parse-level exclusions, 1,551 Lean-representable
-surface cases, and 14 internal-node cases.
+2,016 surface cases, 41 parse-level exclusions, 1,975 Lean-representable
+surface cases, and 14 internal-node cases. The September 2026 Boolean review added eight scalar/nested Boolean value forms crossed with all 54 receiver templates.
 
 Corpus fidelity note (M11, August 2026): NO corpus Lean program is
 hand-transcribed any more. `LeanAstEncoder` prints the Lean constructor form of

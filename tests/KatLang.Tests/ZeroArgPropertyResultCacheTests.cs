@@ -721,7 +721,7 @@ public class ZeroArgPropertyResultCacheTests
             """;
         var whileSource = """
             Tick = 42
-            S = ((1, 0), (2, 2))
+            S = ((1, false), (2, 2))
             while({a + Tick, S:0}, 9)
             """;
 

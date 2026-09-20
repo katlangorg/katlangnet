@@ -492,7 +492,7 @@ public class BudgetCrossTalkMatrixTests
         // The fusion-eligible shape whose strategy the unrelated flags select, with a
         // predicate deep enough that the two strategies' depth accounting is decisive.
         Source("FusedFilterCountDeepPredicate",
-            $"Probe = 1\n{CountDown}P(x) = f(6) + 1\nrange(1, 3).filter(P).count",
+            $"Probe = 1\n{CountDown}P(x) = f(6) + 1 > 0\nrange(1, 3).filter(P).count",
             MaxDepthDim, MaxStepsDim, MaxCollectionItemsDim),
 
         // Same shape, but the depth lives in the fused RANGE BOUNDS rather than the predicate.
@@ -579,7 +579,7 @@ public class BudgetCrossTalkMatrixTests
         // A STRING temp as a direct `if` argument (the property's own algorithm on the
         // argument channel materializes the string fresh) compared against its fresh call.
         Source("PlannedStringTempIfLoop",
-            "Probe = 1\nStep = {\n    T = 'aaaa'\n    n + (if(1, T, 'b') == T())\n}\nf(0) = Step.repeat(100, 0)\nf(k) = f(k - 1)\nf(12)",
+            "Probe = 1\nStep = {\n    T = 'aaaa'\n    n + (if(true, T, 'b') == T())\n}\nf(0) = Step.repeat(100, 0)\nf(k) = f(k - 1)\nf(12)",
             MaxDepthDim, MaxStepsDim, MaxStringLengthDim, MaxMaterializedStringCharsDim),
 
         // Multi-slot state: a temp called in BOTH next-state outputs, one of them inside
@@ -1242,7 +1242,7 @@ public class BudgetCrossTalkMatrixTests
         string pipeline,
         int minimumFusionHits)
     {
-        var source = $"{CountDown}P(x) = f(6) + 1\nD = f(6) + 1\nA = (1, 2, 3)\nE = ()\nSrc = (f(6) + 1, 2, 3)\n{pipeline}";
+        var source = $"{CountDown}P(x) = f(6) + 1 > 0\nD = f(6) + 1\nA = (1, 2, 3)\nE = ()\nSrc = (f(6) + 1, 2, 3)\n{pipeline}";
         AssertSameExactDepthBoundary(source, minimumFusionHits);
     }
 
@@ -1252,15 +1252,15 @@ public class BudgetCrossTalkMatrixTests
         string[] sources =
         [
             // optimized/optimized versus generic/generic
-            "P(x) = 1\nInner(x) = range(1, x).filter(P).count > 0\nrange(1, 3).filter(Inner).count",
+            "P(x) = true\nInner(x) = range(1, x).filter(P).count > 0\nrange(1, 3).filter(Inner).count",
 
             // optimized/generic versus generic/generic: the inner plain composition
             // has a non-range source and deliberately falls back.
-            "P(x) = 1\nA = (1, 2, 3)\nInner(x) = count(filter(A, P)) > 0\nrange(1, 3).filter(Inner).count",
+            "P(x) = true\nA = (1, 2, 3)\nInner(x) = count(filter(A, P)) > 0\nrange(1, 3).filter(Inner).count",
 
             // generic/optimized versus generic/generic: the outer plain composition
             // has a non-range source while each callback's direct range still fuses.
-            "P(x) = 1\nInner(x) = range(1, x).filter(P).count > 0\nA = (1, 2, 3)\ncount(filter(A, Inner))",
+            "P(x) = true\nInner(x) = range(1, x).filter(P).count > 0\nA = (1, 2, 3)\ncount(filter(A, Inner))",
         ];
 
         foreach (var source in sources)
@@ -1272,9 +1272,9 @@ public class BudgetCrossTalkMatrixTests
     {
         string[] sources =
         [
-            "Bad = 1 / 0\nP(x) = 1\nrange(Bad, 3).filter(P).count",
-            "Bad = 1 / 0\nP(x) = 1\nrange(1, Bad).filter(P).count",
-            "P(x) = 1\nrange('bad', 3).filter(P).count",
+            "Bad = 1 / 0\nP(x) = true\nrange(Bad, 3).filter(P).count",
+            "Bad = 1 / 0\nP(x) = true\nrange(1, Bad).filter(P).count",
+            "P(x) = true\nrange('bad', 3).filter(P).count",
             "P(x) = 1 / 0\nrange(1, 3).filter(P).count",
         ];
 
@@ -1459,7 +1459,7 @@ public class BudgetCrossTalkMatrixTests
     [InlineData("E.filter(D).count")]
     public void ConfiguredStringLimit_DoesNotChangeDepthVerdict_OfAFusedSequencePipeline(string pipeline)
     {
-        var ast = FromSource($"{CountDown}P(x) = f(6) + 1\nD = f(6) + 1\nE = ()\n{pipeline}");
+        var ast = FromSource($"{CountDown}P(x) = f(6) + 1 > 0\nD = f(6) + 1\nE = ()\n{pipeline}");
 
         // The program creates no language string, so every string budget is non-binding.
         var (_, unlimitedBudget) = Evaluator.RunCountedObserved(ast);

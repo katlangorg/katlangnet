@@ -13,8 +13,8 @@ open KatLang (Pattern CondBranch)
 -- numeric atoms: sequence AND list boundaries open depth-first, left to right;
 -- strings contribute no atoms; the result kind never depends on the input
 -- kind, and the emitted count is always 1 (including the empty result `[]`).
--- Truth testing stays list-opaque (`Result.atoms`), so none of these guards
--- changes any `if` outcome — see the truth-value non-regression guards below.
+-- Truth is Boolean-only (`Result.asBool?` reads no atom view), so none of
+-- these guards changes any `if` outcome — see the Boolean condition guards below.
 
 def atomsCallOn (argBody : List KatLang.Expr) : KatLang.Expr :=
   .algorithmExpr (algPrivate [] [] [] [.call (.resolve "atoms") argBody])
@@ -96,78 +96,67 @@ def atomsComposesWithListProducingBuiltins : Bool :=
 
 #guard atomsComposesWithListProducingBuiltins
 
--- The three atom views stay distinct on a list-bearing value: language
--- collection opens lists, truth flattening does not, host flattening agrees
--- with language collection on numeric content.
+-- The two atom views agree on a list-bearing value (language collection and
+-- host flattening both open lists); neither is a truth view — only a Boolean
+-- value has a truth value, so `asBool?` is `none` here.
 def atomViewSeparationValue : Result :=
   Result.listValue [Result.atom 1, Result.sequenceValue [Result.atom 2], Result.str "s"]
 
 #guard Result.languageAtoms atomViewSeparationValue == [1, 2]
-#guard Result.atoms atomViewSeparationValue == []
 #guard Result.hostAtoms atomViewSeparationValue == [1, 2]
-#guard Result.truthValue? atomViewSeparationValue == none
+#guard Result.asBool? atomViewSeparationValue == none
+-- Booleans are not numeric atoms: every atom view drops them.
+#guard Result.languageAtoms (Result.sequenceValue [Result.bool true, Result.atom 3]) == [3]
+#guard Result.hostAtoms (Result.listValue [Result.bool false, Result.atom 3]) == [3]
 
 --------------------------------------------------------------------------------
--- truth-value non-regression guards (atoms/#136 must not change truthiness)
+-- Boolean condition guards: `if` requires a Boolean value, never a truth test
 --------------------------------------------------------------------------------
--- `truthValue?` still reads the sequence-only `Result.atoms` view: lists have
--- no truth value, and list elements inside sequence conditions are skipped.
+-- Lists, numbers, strings, and sequence values have no truth value; only
+-- `true` / `false` (possibly under a redundant singleton boundary) select a
+-- branch. Every rejection is the ONE value-kind error naming the condition
+-- (`booleanRequiredMessage`), never an arity or numeric error.
 
 def truthIfCall (cond : KatLang.Expr) : KatLang.Expr :=
   .call (.resolve "if") [cond, .num 10, .num 20]
 
-def ifListConditionStillInvalid : Bool :=
-  match runFlat (truthIfCall (.listLiteral [.num 1])) with
-  | Except.error err => innermostIsBadArity err
+def ifConditionRejected (cond : KatLang.Expr) (description : String) : Bool :=
+  match runFlat (truthIfCall cond) with
+  | Except.error err => innermostIsBooleanRequired "if condition" description err
   | _ => false
 
-#guard ifListConditionStillInvalid
+#guard ifConditionRejected (.listLiteral [.num 1]) "a list value with 1 element: [1]"
+#guard ifConditionRejected (.listLiteral []) "a list value with 0 elements: []"
+#guard ifConditionRejected (.listLiteral [.num 0]) "a list value with 1 element: [0]"
+#guard ifConditionRejected (.listLiteral [.listLiteral [.num 1]]) "a list value with 1 element: [[1]]"
+-- Numbers have NO truth value: neither `1` nor `0` selects a branch.
+#guard ifConditionRejected (.num 1) "numeric value 1"
+#guard ifConditionRejected (.num 0) "numeric value 0"
+#guard ifConditionRejected (.stringLiteral "x") "a string: 'x'"
+-- A sequence value is not a Boolean, whatever its first item — no flattening.
+#guard ifConditionRejected (.capture [.num 1, .listLiteral [.num 2]])
+  "a sequence value with 2 sequence elements: (1, [2])"
+#guard ifConditionRejected (.capture [.boolLiteral true, .boolLiteral false])
+  "a sequence value with 2 sequence elements: (true, false)"
+#guard ifConditionRejected (.emptySequence 0) "a sequence value with 0 sequence elements: ()"
+-- if(atoms((1, 2)), 10, 20) is invalid: the atoms result is a list like any other.
+#guard ifConditionRejected (.call (.resolve "atoms") [.capture [.num 1, .num 2]])
+  "a list value with 2 elements: [1, 2]"
 
-def ifEmptyListConditionStillInvalid : Bool :=
-  match runFlat (truthIfCall (.listLiteral [])) with
-  | Except.error err => innermostIsBadArity err
+-- Boolean conditions select the branch; a redundant singleton sequence
+-- boundary normalizes away exactly as it does for numbers.
+def ifSelects (cond : KatLang.Expr) (expected : Int) : Bool :=
+  match runFlat (truthIfCall cond) with
+  | Except.ok [value] => value == expected
   | _ => false
 
-#guard ifEmptyListConditionStillInvalid
-
-def ifZeroListConditionStillInvalid : Bool :=
-  match runFlat (truthIfCall (.listLiteral [.num 0])) with
-  | Except.error err => innermostIsBadArity err
-  | _ => false
-
-#guard ifZeroListConditionStillInvalid
-
-def ifNestedListConditionStillInvalid : Bool :=
-  match runFlat (truthIfCall (.listLiteral [.listLiteral [.num 1]])) with
-  | Except.error err => innermostIsBadArity err
-  | _ => false
-
-#guard ifNestedListConditionStillInvalid
-
--- if((1, [2]), 10, 20) → 10: the list element is skipped, first atom 1 decides
-def ifMixedConditionReadsFirstNumericAtom : Bool :=
-  match runFlat (truthIfCall (.capture [.num 1, .listLiteral [.num 2]])) with
-  | Except.ok [10] => true
-  | _ => false
-
-#guard ifMixedConditionReadsFirstNumericAtom
-
--- if(([1], 0), 10, 20) → 20: the leading list is skipped, first atom 0 decides
-def ifMixedConditionSkipsLeadingListElement : Bool :=
-  match runFlat (truthIfCall (.capture [.listLiteral [.num 1], .num 0])) with
-  | Except.ok [20] => true
-  | _ => false
-
-#guard ifMixedConditionSkipsLeadingListElement
-
--- if(atoms((1, 2)), 10, 20) is invalid: the atoms result is a list like any
--- other, so `atoms` introduces no list truthiness.
-def ifAtomsResultConditionInvalid : Bool :=
-  match runFlat (truthIfCall (.call (.resolve "atoms") [.capture [.num 1, .num 2]])) with
-  | Except.error err => innermostIsBadArity err
-  | _ => false
-
-#guard ifAtomsResultConditionInvalid
+#guard ifSelects (.boolLiteral true) 10
+#guard ifSelects (.boolLiteral false) 20
+#guard ifSelects (.capture [.boolLiteral true]) 10
+#guard ifSelects (.binary .lt (.num 1) (.num 2)) 10
+#guard ifSelects (.binary .eq (.num 1) (.num 2)) 20
+#guard ifSelects (.unary .not (.boolLiteral true)) 20
+#guard ifSelects (.call (.resolve "contains") [.listLiteral [.num 1, .num 2], .num 2]) 10
 
 --------------------------------------------------------------------------------
 -- List values (`[]` syntax)
@@ -199,12 +188,12 @@ def listExactnessPreserved : Bool :=
 -- Equality is structural, recursive, and kind-exact: a list never equals a
 -- sequence value or the lone item it contains.
 def listEqualityIsKindExact : Bool :=
-  expectFlat (runFlat (.algorithmExpr (alg [] [] [] [
+  evaluatesToBools (.algorithmExpr (alg [] [] [] [
     .binary .eq (.listLiteral [.num 1, .num 2]) (.listLiteral [.num 1, .num 2]),
     .binary .eq (.listLiteral []) (.emptySequence 0),
     .binary .eq (.listLiteral [.num 7]) (.num 7),
-    .binary .eq (.listLiteral [.num 1, .num 2]) (.capture [.num 1, .num 2])])))
-    [1, 0, 0, 0]
+    .binary .eq (.listLiteral [.num 1, .num 2]) (.capture [.num 1, .num 2])]))
+    [true, false, false, false]
 
 #guard listEqualityIsKindExact
 
@@ -606,6 +595,45 @@ def powerBaseDiagnosticNameParenthesizesRebindingBases : Bool :=
     == "-a + b")
 
 #guard powerBaseDiagnosticNameParenthesizesRebindingBases
+
+-- Under `not`-below-comparisons precedence (comparisons > not > and > xor >
+-- or), a `not` operand of any tighter operator keeps parentheses on either
+-- side, a `not` operand of a logical operator renders bare, a negated
+-- comparison renders bare (it reads back as the same tree), a negated logical
+-- binary keeps parentheses, and a `not` under prefix `-` keeps parentheses
+-- (bare `-not a` is not an operand at all). C# twin:
+-- `ExprNameRendererTests.Golden_NotOperandParenthesization_RendersExactly`.
+def notOperandDiagnosticNameParenthesizesRebindingOperands : Bool :=
+  (KatLang.exprDiagnosticName (.binary .eq (.unary .not (.resolve "a")) (.resolve "b"))
+    == "(not a) == b") &&
+  (KatLang.exprDiagnosticName (.binary .eq (.resolve "a") (.unary .not (.resolve "b")))
+    == "a == (not b)") &&
+  (KatLang.exprDiagnosticName (.binary .gt (.unary .not (.resolve "a")) (.resolve "b"))
+    == "(not a) > b") &&
+  (KatLang.exprDiagnosticName (.binary .add (.unary .not (.resolve "a")) (.resolve "b"))
+    == "(not a) + b") &&
+  (KatLang.exprDiagnosticName (.binary .mul (.resolve "a") (.unary .not (.resolve "b")))
+    == "a * (not b)") &&
+  (KatLang.exprDiagnosticName (.binary .pow (.resolve "a") (.unary .not (.resolve "b")))
+    == "a ^ (not b)") &&
+  (KatLang.exprDiagnosticName (.binary .and (.unary .not (.resolve "a")) (.resolve "b"))
+    == "not a and b") &&
+  (KatLang.exprDiagnosticName (.binary .or (.resolve "a") (.unary .not (.resolve "b")))
+    == "a or not b") &&
+  (KatLang.exprDiagnosticName (.binary .xor (.unary .not (.resolve "a")) (.resolve "b"))
+    == "not a xor b") &&
+  (KatLang.exprDiagnosticName (.unary .not (.binary .gt (.resolve "a") (.resolve "b")))
+    == "not a > b") &&
+  (KatLang.exprDiagnosticName (.unary .not (.binary .and (.resolve "a") (.resolve "b")))
+    == "not (a and b)") &&
+  (KatLang.exprDiagnosticName (.unary .minus (.unary .not (.resolve "a")))
+    == "-(not a)") &&
+  (KatLang.exprDiagnosticName (.unary .not (.unary .not (.resolve "a")))
+    == "not not a") &&
+  (KatLang.binaryExprDiagnosticName .eq (.unary .not (.resolve "a")) (.resolve "b")
+    == "(not a) == b")
+
+#guard notOperandDiagnosticNameParenthesizesRebindingOperands
 
 -- `openExprName` renders an index with source-faithful `:` rather than falling
 -- back to the generic `(index)` kind word. Leaf kinds this minimal renderer

@@ -483,7 +483,7 @@ public class MetamorphicPhase2FamilyTests
             var evaluated = Evaluator.RunCounted(new Expr.AlgorithmExpr(parsed.Root));
             Assert.False(evaluated.IsError, shape.Source);
             Assert.True(
-                evaluated.Value.Value is Result.Atom or Result.Str or Result.SequenceValue or Result.ListValue,
+                evaluated.Value.Value is Result.Atom or Result.Bool or Result.Str or Result.SequenceValue or Result.ListValue,
                 $"receiver '{shape.Id}' is not a plain value");
         }
     }

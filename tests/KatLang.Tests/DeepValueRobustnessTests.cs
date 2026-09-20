@@ -44,29 +44,29 @@ public class DeepValueRobustnessTests
 
     [Fact]
     public void DeepListEqualityIsTrue()
-        => AssertEval(DeepListProgram("A == B"), 1);
+        => EvaluatorTestSupport.AssertEvalBool(DeepListProgram("A == B"), true);
 
     [Fact]
     public void DeepListEqualityIsFalseAtTheLeaf()
-        => AssertEval(DeepListProgram("A == C"), 0);
+        => EvaluatorTestSupport.AssertEvalBool(DeepListProgram("A == C"), false);
 
     [Fact]
     public void DeepListEqualityIsFalseOnDepthMismatch()
-        => AssertEval(DeepListProgram("A == B", depthB: LanguageDepth - 1), 0);
+        => EvaluatorTestSupport.AssertEvalBool(DeepListProgram("A == B", depthB: LanguageDepth - 1), false);
 
     [Fact]
     public void DeepListInequalityOperator()
-        => AssertEval(DeepListProgram("A != B, A != C"), 0, 1);
+        => EvaluatorTestSupport.AssertEvalBools(DeepListProgram("A != B, A != C"), false, true);
 
     [Fact]
     public void DeepSequenceEquality()
-        => AssertEval($"""
+        => EvaluatorTestSupport.AssertEvalBools($"""
             Wrap = (x, 7)
             A = Wrap.repeat({LanguageDepth}, 0)
             B = Wrap.repeat({LanguageDepth}, 0)
             C = Wrap.repeat({LanguageDepth}, 1)
             A == B, A == C
-            """, 1, 0);
+            """, true, false);
 
     [Fact]
     public void DeepDistinct()
@@ -74,7 +74,7 @@ public class DeepValueRobustnessTests
 
     [Fact]
     public void DeepContains()
-        => AssertEval(DeepListProgram("contains((A, 5), B), contains((A, 5), C)"), 1, 0);
+        => EvaluatorTestSupport.AssertEvalBools(DeepListProgram("contains((A, 5), B), contains((A, 5), C)"), true, false);
 
     [Fact]
     public void DeepAtomsBuiltin()

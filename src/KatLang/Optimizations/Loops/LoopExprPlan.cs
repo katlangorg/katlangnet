@@ -148,6 +148,11 @@ internal static partial class LoopOptimizer
                     new LoopExprPlan.StringConstant(expr, value),
                     null);
 
+            case Expr.BoolLiteral(var value):
+                return new LoopExprPlanTryBuildResult(
+                    new LoopExprPlan.Constant(expr, PlannedLoopValue.FromResult(new Result.Bool(value))),
+                    null);
+
             case Expr.Param(var name):
             {
                 for (var i = 0; i < stateNames.Count; i++)
@@ -663,15 +668,16 @@ internal static partial class LoopOptimizer
         if (conditionR.IsError) return conditionR.Error;
         frame.Diagnostics?.RecordPlannedBuiltinOperation();
 
-        var truth = PlannedTruthValue(conditionR.Value);
+        var truth = conditionR.Value.AsBool();
         if (truth is null)
         {
-            // UNSPANNED, exactly like the generic `if` builtin's truth-value
-            // rejection: the surrounding call boundary stamps only the context
-            // wrappers (AtSpanIfMissing), and the innermost error's span is public
-            // structured state, so pre-stamping it here would be an observable
+            // UNSPANNED, exactly like the generic `if` builtin's Boolean-requirement
+            // rejection (same message): the surrounding call boundary stamps only the
+            // context wrappers (AtSpanIfMissing), and the innermost error's span is
+            // public structured state, so pre-stamping it here would be an observable
             // divergence from the generic error tree.
-            return new EvalError.BadArity();
+            return new EvalError.TypeMismatch(
+                Evaluator.BooleanRequiredMessage("if condition", conditionR.Value.ToResult()));
         }
 
         return EvalLoopIfArgument(truth.Value ? ifPlan.TrueBranch : ifPlan.FalseBranch, frame);
@@ -708,32 +714,19 @@ internal static partial class LoopOptimizer
         }
     }
 
-    private static bool? PlannedTruthValue(PlannedLoopValue value)
-        => value.HasNumericValue
-            ? value.NumericValue != 0
-            : value.ToResult().TruthValue();
-
     private static EvalResult<PlannedLoopValue> ApplyPlannedUnary(
         UnaryOp op,
         PlannedLoopValue operand,
         SourceSpan? span)
     {
-        // MIRROR of Evaluator.ApplyUnaryOperator's numeric arm: a numeric operand
-        // stays in the unboxed planned representation. Every other operand kind —
-        // the string rejection and the numeric-conversion failure, both stamped
-        // with the unary expression's span — delegates to the shared operator
-        // application so the planned strategy cannot drift from the generic
-        // error/span policy.
-        if (operand.AsNum() is { } value)
-        {
-            var unaryResult = op switch
-            {
-                UnaryOp.Minus => -value,
-                UnaryOp.Not => value == 0 ? Decimal128.One : Decimal128.Zero,
-                _ => Decimal128.Zero,
-            };
-            return EvalResult<PlannedLoopValue>.Ok(PlannedLoopValue.FromNumeric(unaryResult));
-        }
+        // MIRROR of Evaluator.ApplyUnaryOperator's numeric negation arm: a numeric
+        // operand of `-` stays in the unboxed planned representation. Every other
+        // case — `not` (Boolean-only), the string and Boolean rejections, and the
+        // numeric-conversion failure, all stamped with the unary expression's span —
+        // delegates to the shared operator application so the planned strategy
+        // cannot drift from the generic error/span policy.
+        if (op == UnaryOp.Minus && operand.AsNum() is { } value)
+            return EvalResult<PlannedLoopValue>.Ok(PlannedLoopValue.FromNumeric(-value));
 
         var resultR = Evaluator.ApplyUnaryOperator(op, operand.ToResult(), span);
         if (resultR.IsError) return resultR.Error;
@@ -749,11 +742,11 @@ internal static partial class LoopOptimizer
         SourceSpan? span)
     {
         // `==` and `!=` always delegate to the evaluator's structural equality so the
-        // optimized loop path can never drift back to numeric-only equality. Numeric
-        // atoms still compare by value through that path (ApplyBinaryOperator reduces
-        // Atom == Atom to a numeric comparison), and non-numeric operands already fell
-        // through here. The numeric fast path below is for arithmetic/ordering only.
-        if (op is not (BinaryOp.Eq or BinaryOp.Ne)
+        // optimized loop path can never drift back to numeric-only equality, and the
+        // logical operators delegate too (they are Boolean-only: a numeric operand is
+        // the shared value-kind rejection, never a nonzero truth test). The numeric
+        // fast path below is for arithmetic/ordering only.
+        if (op is not (BinaryOp.Eq or BinaryOp.Ne or BinaryOp.And or BinaryOp.Or or BinaryOp.Xor)
             && left.AsNum() is { } x && right.AsNum() is { } y)
             return ApplyPlannedNumericBinary(op, x, y, span);
 
@@ -786,6 +779,12 @@ internal static partial class LoopOptimizer
             return EvalResult<PlannedLoopValue>.Ok(PlannedLoopValue.FromResult(powR.Value));
         }
 
+        // The ordering comparisons yield a BOOLEAN value through the ONE shared
+        // comparison (Evaluator.TryCompareNumeric), boxed as a Result.Bool: the unboxed
+        // planned representation is numeric only.
+        if (Evaluator.TryCompareNumeric(op, x, y) is { } comparison)
+            return EvalResult<PlannedLoopValue>.Ok(PlannedLoopValue.FromResult(new Result.Bool(comparison)));
+
         Decimal128 result = op switch
         {
             BinaryOp.Add => x + y,
@@ -794,15 +793,9 @@ internal static partial class LoopOptimizer
             BinaryOp.Div => x / y,
             BinaryOp.IDiv => Decimal128Numerics.IntegerDivide(x, y),
             BinaryOp.Mod => x % y,
-            BinaryOp.Lt => x < y ? 1 : 0,
-            BinaryOp.Gt => x > y ? 1 : 0,
-            BinaryOp.Le => x <= y ? 1 : 0,
-            BinaryOp.Ge => x >= y ? 1 : 0,
-            // Eq/Ne are intentionally absent: equality is handled structurally by
-            // ApplyBinaryOperator in ApplyPlannedBinary and never reaches this path.
-            BinaryOp.And => x != 0 && y != 0 ? 1 : 0,
-            BinaryOp.Or => x != 0 || y != 0 ? 1 : 0,
-            BinaryOp.Xor => (x != 0) != (y != 0) ? 1 : 0,
+            // Eq/Ne and And/Or/Xor are intentionally absent: equality is handled
+            // structurally and the logical operators Boolean-only by
+            // ApplyBinaryOperator in ApplyPlannedBinary, so neither reaches this path.
             _ => 0,
         };
 

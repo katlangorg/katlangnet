@@ -14,7 +14,7 @@ internal static class MetamorphicValue
 {
     /// <summary>
     /// Neutral structural encoding, deliberately distinct from display syntax so that
-    /// atoms, strings, sequences, exact lists, the empty sequence, the empty list, nesting,
+    /// atoms, Booleans, strings, sequences, exact lists, the empty sequence, the empty list, nesting,
     /// and order all stay distinguishable: <c>1</c>, <c>'x'</c>, <c>S[a, b]</c>, <c>S[]</c>,
     /// <c>L[a, b]</c>, <c>L[]</c>. This is the same encoding the repository's semantic
     /// explorer uses (<c>SemanticExplorerHarness.Neutral</c>), pinned by a mirror test.
@@ -45,6 +45,9 @@ internal static class MetamorphicValue
                 case Result.Str str:
                     text.Append('\'').Append(str.Value).Append('\'');
                     break;
+                case Result.Bool flag:
+                    text.Append(flag.Value ? "true" : "false");
+                    break;
                 case Result.SequenceValue sequence:
                     PushStructure("S[", sequence.Items);
                     break;
@@ -52,8 +55,7 @@ internal static class MetamorphicValue
                     PushStructure("L[", list.Items);
                     break;
                 default:
-                    text.Append('?');
-                    break;
+                    throw new InvalidOperationException($"Unhandled result variant {next.GetType().Name}.");
             }
         }
 

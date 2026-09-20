@@ -61,6 +61,7 @@ internal static class FrontEndRegionKeys
 
                 case Pattern.LitInt:
                 case Pattern.LitString:
+                case Pattern.LitBool:
                     break;
 
                 default:

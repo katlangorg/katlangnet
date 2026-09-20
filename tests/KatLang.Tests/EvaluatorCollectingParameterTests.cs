@@ -448,13 +448,13 @@ public class EvaluatorCollectingParameterTests
     [Fact]
     public void Eval_SequenceValueParameterBinding_ParenthesizedScalarPropertyItemComparesEqualToScalar()
     {
-        AssertEval(
+        AssertEvalBool(
             """
             A = 5
             F((x, y)) = x == 5
             F(((A), 6))
             """,
-            1);
+            true);
     }
 
     [Fact]
@@ -575,14 +575,14 @@ public class EvaluatorCollectingParameterTests
         // the stored canonical value, binds x = 1, and every observation —
         // display, count, .count, equality against both writable spellings,
         // and navigation — agrees on the scalar 1.
-        AssertEval(
+        AssertEvalResults(
             """
             Wrap((x, y)) = x
             A = ((1, 2))
             R = Wrap(A)
             R, count(R), R.count, R == (1, 2), R == ((1, 2)), R:0
             """,
-            1, 1, 1, 0, 0, 1);
+            new Result.Atom(1), new Result.Atom(1), new Result.Atom(1), new Result.Bool(false), new Result.Bool(false), new Result.Atom(1));
     }
 
     [Fact]
@@ -607,13 +607,13 @@ public class EvaluatorCollectingParameterTests
 
         // count, .count, equality against both writable literal spellings, and
         // navigation all agree with the canonical (1, 2).
-        AssertEval(
+        AssertEvalResults(
             """
             IdSeq((x)) = x
             R = IdSeq(((1, 2)))
             R, count(R), R.count, R == (1, 2), R == ((1, 2)), R:0
             """,
-            1, 2, 2, 2, 1, 1, 1);
+            ResultFromAtoms(1, 2), new Result.Atom(2), new Result.Atom(2), new Result.Bool(true), new Result.Bool(true), new Result.Atom(1));
     }
 
     [Fact]
@@ -622,12 +622,12 @@ public class EvaluatorCollectingParameterTests
         // The shallow combiner never drops empty-sequence siblings: ((), ())
         // writes two items, so (x, y) binds both empties positionally and x is
         // the real empty sequence value.
-        AssertEval(
+        AssertEvalBools(
             """
             F((x, y)) = x == (), y == ()
             F(((), ()))
             """,
-            1, 1);
+            true, true);
 
         var result = EvalFull(
             """

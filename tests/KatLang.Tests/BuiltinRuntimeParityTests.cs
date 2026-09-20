@@ -101,19 +101,25 @@ public class BuiltinRuntimeParityTests
     [Fact]
     public void Eval_Filter_CollectionBuiltinAsPredicate_RejectsListResult()
     {
-        // A collection-producing builtin returns one exact LIST per item, and
-        // lists have no truth value, so the strict predicate contract rejects it.
+        // A collection-producing builtin returns one exact LIST per item, and a list is
+        // not a Boolean value, so the predicate contract rejects it naming the list.
         var error = AssertEvalFails("filter((0, 1, 2), distinct)", out var message);
 
-        Assert.Contains("filter predicate must return exactly one atomic numeric value", message, StringComparison.Ordinal);
-        Assert.IsType<EvalError.BadArity>(Innermost(error));
+        Assert.Contains("filter predicate result must be a Boolean value (true or false), but was a list value with 1 element: [0]", message, StringComparison.Ordinal);
+        Assert.IsType<EvalError.TypeMismatch>(Innermost(error));
     }
 
     [Fact]
-    public void Eval_Filter_ScalarBuiltinAsPredicate_AppliesPerItem()
-        // sum(item) is one atomic numeric value per item, so the predicate
-        // keeps the truthy items: filter((0, 1, 2), sum) = [1, 2].
-        => AssertEval("filter((0, 1, 2), sum)", 1, 2);
+    public void Eval_Filter_ScalarBuiltinAsPredicate_IsAppliedPerItemAndItsNumberIsRejected()
+    {
+        // sum(item) is applied to the first item and yields the NUMBER 0, which is not a
+        // truth value: the predicate contract rejects it naming that number, so a scalar
+        // builtin can never stand in for a Boolean predicate.
+        var error = AssertEvalFails("filter((0, 1, 2), sum)", out var message);
+
+        Assert.Contains("filter predicate result must be a Boolean value (true or false), but was numeric value 0", message, StringComparison.Ordinal);
+        Assert.IsType<EvalError.TypeMismatch>(Innermost(error));
+    }
 
     [Theory]
     [MemberData(nameof(FixedBuiltinArityDiagnosticCases))]

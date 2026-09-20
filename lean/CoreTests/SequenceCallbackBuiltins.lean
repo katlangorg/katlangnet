@@ -23,7 +23,12 @@ def badTruthAlg66 : Algorithm :=
   alg ["x"] [] [] [.stringLiteral "not-a-number"]
 
 def alwaysFalseAlg66a : Algorithm :=
-  alg ["x"] [] [] [.num 0]
+  alg ["x"] [] [] [.boolLiteral false]
+
+-- A predicate that returns a NUMBER is not a predicate: `filter{x}` over
+-- numbers is the Boolean-requirement error, never a nonzero truth test.
+def numericResultAlg66f : Algorithm :=
+  alg ["x"] [] [] [.param "x"]
 
 def keepTenSequenceValueAlg66b : Algorithm :=
   .conditional none [] [
@@ -33,29 +38,29 @@ def keepTenSequenceValueAlg66b : Algorithm :=
           .bind "f", .bind "g", .bind "h", .bind "i", .bind "j"
         ]
       ],
-      alg [] [] [] [.num 1] ⟩,
-    ⟨ .bind "x", alg [] [] [] [.num 0] ⟩
+      alg [] [] [] [.boolLiteral true] ⟩,
+    ⟨ .bind "x", alg [] [] [] [.boolLiteral false] ⟩
   ]
 
 def keepFourSequenceValueAlg66c : Algorithm :=
   .conditional none [] [
     ⟨ .sequenceValue [.sequenceValue [.bind "a", .bind "b", .bind "c", .bind "d"]],
-      alg [] [] [] [.num 1] ⟩,
-    ⟨ .bind "x", alg [] [] [] [.num 0] ⟩
+      alg [] [] [] [.boolLiteral true] ⟩,
+    ⟨ .bind "x", alg [] [] [] [.boolLiteral false] ⟩
   ]
 
 def rejectFourSequenceValueAlg66d : Algorithm :=
   .conditional none [] [
     ⟨ .sequenceValue [.sequenceValue [.bind "a", .bind "b", .bind "c", .bind "d"]],
-      alg [] [] [] [.num 0] ⟩,
-    ⟨ .bind "x", alg [] [] [] [.num 1] ⟩
+      alg [] [] [] [.boolLiteral false] ⟩,
+    ⟨ .bind "x", alg [] [] [] [.boolLiteral true] ⟩
   ]
 
 def markThreeSequenceValueAlg66e : Algorithm :=
   .conditional none [] [
     ⟨ .sequenceValue [.sequenceValue [.bind "a", .bind "b", .bind "c"]],
-      alg [] [] [] [.num 1] ⟩,
-    ⟨ .bind "x", alg [] [] [] [.num 0] ⟩
+      alg [] [] [] [.boolLiteral true] ⟩,
+    ⟨ .bind "x", alg [] [] [] [.boolLiteral false] ⟩
   ]
 
 def keepPairAlg67 : Algorithm :=
@@ -273,71 +278,73 @@ def test68 : Bool :=
 
 #guard test68
 
--- Test 69: multi-output predicate starting with 0 is rejected
-def test69 : Bool :=
-  match runResult (.algorithmExpr (algPrivate [] [] [("Bad", badMultiFalseAlg68)] [
+-- Every non-Boolean predicate result is the ONE Boolean-requirement error
+-- naming the result (`booleanRequiredMessage "filter predicate result"`),
+-- raised inside the per-item filter context.
+def filterPredicateRejected (predicate : Algorithm) (description : String) : Bool :=
+  match runResult (.algorithmExpr (algPrivate [] [] [("Bad", predicate)] [
     .call (resolve "filter") [
       .call (resolve "range") [.num 1, .num 3],
       .resolve "Bad"
     ]
   ])) with
-  | Except.error err => hasContext "filter predicate must return exactly one atomic numeric value" err && innermostIsBadArity err
+  | Except.error err =>
+      hasContext "while evaluating call to filter" err &&
+      innermostIsBooleanRequired "filter predicate result" description err
   | _ => false
+
+-- Test 69: multi-output predicate starting with 0 is rejected
+def test69 : Bool :=
+  filterPredicateRejected badMultiFalseAlg68 "a sequence value with 2 sequence elements: (0, 999)"
 
 #guard test69
 
 -- Test 70: multi-output predicate starting with nonzero is also rejected
 def test70 : Bool :=
-  match runResult (.algorithmExpr (algPrivate [] [] [("Bad", badMultiTrueAlg69)] [
-    .call (resolve "filter") [
-      .call (resolve "range") [.num 1, .num 3],
-      .resolve "Bad"
-    ]
-  ])) with
-  | Except.error err => hasContext "filter predicate must return exactly one atomic numeric value" err && innermostIsBadArity err
-  | _ => false
+  filterPredicateRejected badMultiTrueAlg69 "a sequence value with 2 sequence elements: (5, 0)"
 
 #guard test70
 
 -- Test 71: sequenceValue predicate result is rejected
 def test71 : Bool :=
-  match runResult (.algorithmExpr (algPrivate [] [] [("Bad", badSequenceValueAlg70)] [
-    .call (resolve "filter") [
-      .call (resolve "range") [.num 1, .num 3],
-      .resolve "Bad"
-    ]
-  ])) with
-  | Except.error err => hasContext "filter predicate must return exactly one atomic numeric value" err && innermostIsBadArity err
-  | _ => false
+  filterPredicateRejected badSequenceValueAlg70 "a sequence value with 2 sequence elements: (1, 0)"
 
 #guard test71
 
 -- Test 72: exact-list predicate result is rejected (a collection builtin used
--- as a filter predicate returns a list, never an atomic numeric value)
+-- as a filter predicate returns a list, never a Boolean value)
 def test72 : Bool :=
-  match runResult (.algorithmExpr (algPrivate [] [] [("Bad", listTruthAlg71)] [
-    .call (resolve "filter") [
-      .call (resolve "range") [.num 1, .num 3],
-      .resolve "Bad"
-    ]
-  ])) with
-  | Except.error err => hasContext "filter predicate must return exactly one atomic numeric value" err && innermostIsBadArity err
-  | _ => false
+  filterPredicateRejected listTruthAlg71 "a list value with 0 elements: []"
 
 #guard test72
 
 -- Test 73: string predicate result is rejected
 def test73 : Bool :=
-  match runResult (.algorithmExpr (algPrivate [] [] [("BadTruth", badTruthAlg66)] [
-    .call (resolve "filter") [
-      .call (resolve "range") [.num 1, .num 3],
-      .resolve "BadTruth"
-    ]
-  ])) with
-  | Except.error err => hasContext "filter predicate must return exactly one atomic numeric value" err && innermostIsBadArity err
-  | _ => false
+  filterPredicateRejected badTruthAlg66 "a string: 'not-a-number'"
 
 #guard test73
+
+-- Test 73a: a NUMERIC predicate result is rejected too — `filter{x}` over
+-- numbers has no nonzero-keeps reading; the first item `1` is reported.
+def test73a : Bool :=
+  filterPredicateRejected numericResultAlg66f "numeric value 1"
+
+#guard test73a
+
+-- Test 73b: a Boolean under a redundant singleton boundary is a valid
+-- predicate result — `(x > 1)` keeps `2` and `3` exactly like `x > 1`.
+def test73b : Bool :=
+  match runResult (.algorithmExpr (algPrivate [] []
+      [("Keep", alg ["x"] [] [] [.capture [.binary .gt (.param "x") (.num 1)]])] [
+    .call (resolve "filter") [
+      .call (resolve "range") [.num 1, .num 3],
+      .resolve "Keep"
+    ]
+  ])) with
+  | Except.ok (.listValue [.atom 2, .atom 3]) => true
+  | _ => false
+
+#guard test73b
 
 -- Test 74: builtin arity mismatch still follows normal conventions
 def test74 : Bool :=

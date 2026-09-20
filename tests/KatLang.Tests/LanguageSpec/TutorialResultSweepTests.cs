@@ -54,7 +54,7 @@ public class TutorialResultSweepTests
                     "**Result:** error — `Total` does not resolve at the root (write `open Lib` or `Lib.Total`); `Lib`'s own `Total` is not the problem and is not blamed.",
                     KatLangErrorCode.UnresolvedImplicitParams),
                 new(
-                    "Inc(x) = x + 1\nif(1, Inc, 0)",
+                    "Inc(x) = x + 1\nif(true, Inc, 0)",
                     "**Result:** error — `Inc` expects 1 parameter, but the selected branch demands it with 0 arguments; the report names `Inc` at its reference, exactly as writing `Inc` alone would.",
                     KatLangErrorCode.ArityMismatch),
                 new(

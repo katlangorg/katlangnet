@@ -102,27 +102,27 @@ public class EvaluatorOperatorTests
 
     [Fact]
     public void Eval_LessThan_True_Returns1()
-        => AssertEval("3 < 5", 1);
+        => AssertEvalBool("3 < 5", true);
 
     [Fact]
     public void Eval_LessThan_False_Returns0()
-        => AssertEval("5 < 3", 0);
+        => AssertEvalBool("5 < 3", false);
 
     [Fact]
     public void Eval_LessThan_Equal_Returns0()
-        => AssertEval("3 < 3", 0);
+        => AssertEvalBool("3 < 3", false);
 
     [Fact]
     public void Eval_GreaterThan_True_Returns1()
-        => AssertEval("5 > 3", 1);
+        => AssertEvalBool("5 > 3", true);
 
     [Fact]
     public void Eval_GreaterThan_False_Returns0()
-        => AssertEval("3 > 5", 0);
+        => AssertEvalBool("3 > 5", false);
 
     [Fact]
     public void Eval_GreaterThan_Equal_Returns0()
-        => AssertEval("3 > 3", 0);
+        => AssertEvalBool("3 > 3", false);
 
     [Fact]
     public void Eval_Division()
@@ -152,7 +152,10 @@ public class EvaluatorOperatorTests
 
     [Fact]
     public void Eval_IntegerDivision_SmallQuotientNearAnIntegerBoundary_TruncatesExactly()
-        => AssertEvalLoopModes("Y = 3e32\n(13 * Y - 1) div Y\n(12 * Y + 1) div Y\n(13 * Y - 1) mod Y == Y - 1", 12, 12, 1);
+        {
+        AssertEvalLoopModes("Y = 3e32\n(13 * Y - 1) div Y\n(12 * Y + 1) div Y", 12, 12);
+        AssertEvalBool("Y = 3e32\n(13 * Y - 1) mod Y == Y - 1", true);
+    }
 
     [Fact]
     public void Eval_DivisionByZero_Fails()
@@ -212,35 +215,35 @@ public class EvaluatorOperatorTests
 
     [Fact]
     public void Eval_LessEqual_True()
-        => AssertEval("3 <= 3", 1);
+        => AssertEvalBool("3 <= 3", true);
 
     [Fact]
     public void Eval_LessEqual_False()
-        => AssertEval("4 <= 3", 0);
+        => AssertEvalBool("4 <= 3", false);
 
     [Fact]
     public void Eval_GreaterEqual_True()
-        => AssertEval("3 >= 3", 1);
+        => AssertEvalBool("3 >= 3", true);
 
     [Fact]
     public void Eval_GreaterEqual_False()
-        => AssertEval("2 >= 3", 0);
+        => AssertEvalBool("2 >= 3", false);
 
     [Fact]
     public void Eval_Equal_True()
-        => AssertEval("5 == 5", 1);
+        => AssertEvalBool("5 == 5", true);
 
     [Fact]
     public void Eval_Equal_False()
-        => AssertEval("5 == 6", 0);
+        => AssertEvalBool("5 == 6", false);
 
     [Fact]
     public void Eval_NotEqual_True()
-        => AssertEval("5 != 6", 1);
+        => AssertEvalBool("5 != 6", true);
 
     [Fact]
     public void Eval_NotEqual_False()
-        => AssertEval("5 != 5", 0);
+        => AssertEvalBool("5 != 5", false);
 
     // ── Structural value equality (==, !=) ───────────────────────────────────
     // `==` and `!=` compare KatLang values structurally across all value kinds:
@@ -251,98 +254,98 @@ public class EvaluatorOperatorTests
 
     [Fact]
     public void Eval_Equal_SequenceValue_SameReference_ReturnsOne()
-        => AssertEval(
+        => AssertEvalBool(
             """
             A = 1, 2
             A == A
             """,
-            1);
+            true);
 
     [Fact]
     public void Eval_Equal_IndependentSequences_StructurallyEqual_ReturnsOne()
-        => AssertEval(
+        => AssertEvalBool(
             """
             A = 1, 2
             B = 1, 2
             A == B
             """,
-            1);
+            true);
 
     [Fact]
     public void Eval_Equal_Sequences_DifferentElement_ReturnsZero()
-        => AssertEval(
+        => AssertEvalBool(
             """
             A = 1, 2
             B = 1, 3
             A == B
             """,
-            0);
+            false);
 
     [Fact]
     public void Eval_Equal_Sequences_DifferentLength_ReturnsZero()
-        => AssertEval(
+        => AssertEvalBool(
             """
             A = 1, 2
             B = 1, 2, 3
             A == B
             """,
-            0);
+            false);
 
     [Fact]
     public void Eval_Equal_NestedSequences_StructurallyEqual_ReturnsOne()
-        => AssertEval(
+        => AssertEvalBool(
             """
             A = 1, (2, 3)
             B = 1, (2, 3)
             A == B
             """,
-            1);
+            true);
 
     [Fact]
     public void Eval_Equal_NestedSequences_DifferentInnerElement_ReturnsZero()
-        => AssertEval(
+        => AssertEvalBool(
             """
             A = 1, (2, 3)
             B = 1, (2, 4)
             A == B
             """,
-            0);
+            false);
 
     [Fact]
     public void Eval_Equal_NumberVsSequence_DifferentKinds_ReturnsZero()
-        => AssertEval("1 == (1, 2)", 0);
+        => AssertEvalBool("1 == (1, 2)", false);
 
     [Fact]
     public void Eval_NotEqual_NumberVsSequence_DifferentKinds_ReturnsOne()
-        => AssertEval("1 != (1, 2)", 1);
+        => AssertEvalBool("1 != (1, 2)", true);
 
     [Fact]
     public void Eval_NotEqual_SequenceValue_SameReference_ReturnsZero()
-        => AssertEval(
+        => AssertEvalBool(
             """
             A = 1, 2
             A != A
             """,
-            0);
+            false);
 
     [Fact]
     public void Eval_NotEqual_Sequences_DifferentElement_ReturnsOne()
-        => AssertEval(
+        => AssertEvalBool(
             """
             A = 1, 2
             B = 1, 3
             A != B
             """,
-            1);
+            true);
 
     [Fact]
     public void Eval_Equal_GroupedSpread_ComparesAsSingleSequenceValue_ReturnsOne()
-        => AssertEval(
+        => AssertEvalBool(
             """
             A = 1, 2
             (A*) == A
             """,
-            1);
+            true);
 
     // Spread item supplies must not be silently vectorized by equality. A spread
     // `A*` cannot be a binary operand: `A* == A*` is a targeted misplaced-spread
@@ -389,92 +392,92 @@ public class EvaluatorOperatorTests
     // even though both flatten to the same atoms they are structurally unequal.
     [Fact]
     public void Eval_Equal_NestedShapesDiffer_NotFlattened_ReturnsZero()
-        => AssertEval("(1, (2, 3)) == ((1, 2), 3)", 0);
+        => AssertEvalBool("(1, (2, 3)) == ((1, 2), 3)", false);
 
     // Sequence equality is ordered pairwise structural equality, not set equality.
     [Fact]
     public void Eval_Equal_DifferentOrder_IsOrderSensitive_ReturnsZero()
-        => AssertEval("(1, 2) == (2, 1)", 0);
+        => AssertEvalBool("(1, 2) == (2, 1)", false);
 
     // Empty sequence equality is stable across independently bound properties:
     // two distinct properties each bound to `()` compare equal.
     [Fact]
     public void Eval_Equal_EmptyPropertiesAcrossBindings_ReturnsOne()
-        => AssertEval(
+        => AssertEvalBool(
             """
             A = ()
             B = ()
             A == B
             """,
-            1);
+            true);
 
     [Fact]
     public void Eval_NotEqual_EmptyPropertiesAcrossBindings_ReturnsZero()
-        => AssertEval(
+        => AssertEvalBool(
             """
             A = ()
             B = ()
             A != B
             """,
-            0);
+            false);
 
     // Display formatting must not affect equality: equality compares numeric values,
     // so 1.2 and 1.20 are equal regardless of rendered decimal scale. The leading
     // DisplayDecimals directive (a display-only setting) does not change this.
     [Fact]
     public void Eval_Equal_DecimalScaleDoesNotAffectValueEquality_ReturnsOne()
-        => AssertEval(
+        => AssertEvalBool(
             """
             DisplayDecimals = 0
             1.2 == 1.20
             """,
-            1);
+            true);
 
     // â”€â”€ Logical operators â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     [Fact]
     public void Eval_And_TrueTrue()
-        => AssertEval("1 and 1", 1);
+        => AssertEvalBool("true and true", true);
 
     [Fact]
     public void Eval_And_TrueFalse()
-        => AssertEval("1 and 0", 0);
+        => AssertEvalBool("true and false", false);
 
     [Fact]
     public void Eval_And_FalseFalse()
-        => AssertEval("0 and 0", 0);
+        => AssertEvalBool("false and false", false);
 
     [Fact]
     public void Eval_Or_TrueFalse()
-        => AssertEval("1 or 0", 1);
+        => AssertEvalBool("true or false", true);
 
     [Fact]
     public void Eval_Or_FalseFalse()
-        => AssertEval("0 or 0", 0);
+        => AssertEvalBool("false or false", false);
 
     [Fact]
     public void Eval_Xor_TrueFalse()
-        => AssertEval("1 xor 0", 1);
+        => AssertEvalBool("true xor false", true);
 
     [Fact]
     public void Eval_Xor_TrueTrue()
-        => AssertEval("1 xor 1", 0);
+        => AssertEvalBool("true xor true", false);
 
     [Fact]
     public void Eval_Xor_FalseFalse()
-        => AssertEval("0 xor 0", 0);
+        => AssertEvalBool("false xor false", false);
 
     [Fact]
     public void Eval_Not_Zero()
-        => AssertEval("not 0", 1);
+        => AssertEvalBool("not false", true);
 
     [Fact]
     public void Eval_Not_NonZero()
-        => AssertEval("not 5", 0);
+        => AssertEvalBool("not true", false);
 
     [Fact]
     public void Eval_Not_DoubleNegation()
-        => AssertEval("not not 1", 1);
+        => AssertEvalBool("not not true", true);
 
     // â”€â”€ Operator combinations â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
@@ -549,10 +552,14 @@ public class EvaluatorOperatorTests
         AssertEval("-2 ^ 3 ^ 2", -512);
         AssertEval("2 ^ -2 ^ 2", 0.0625m);
 
-        // `not` sits in the same prefix-unary tier: `not 0 ^ 0` is
-        // `not (0 ^ 0)`, and a `not` exponent stays valid.
-        AssertEval("not 0 ^ 0", 0);
-        AssertEval("2 ^ not 0", 2);
+        // `not` binds below `^` (and below every comparison): `not 0 ^ 0` is `not (0 ^ 0)` — a
+        // Boolean operator applied to the NUMBER 1, so it is the Boolean-operand rejection
+        // (never a re-association); `not 0 ^ 0 == 1` negates the whole comparison; and a
+        // parenthesized Boolean exponent is the numeric-scalar rejection of `^` (the bare
+        // `2 ^ not false` is a parse error: `not` cannot be an operand of `^`).
+        AssertEvalFailsWithTypeMismatch("not 0 ^ 0", "operator `not` expects a Boolean operand, but the operand was numeric value 1");
+        AssertEvalBool("not 0 ^ 0 == 1", false);
+        AssertEvalFailsWithTypeMismatch("2 ^ (not false)", "operator `^` expects numeric scalar operands, but the right operand was a Boolean value: true");
     }
 
     [Fact]
@@ -569,7 +576,7 @@ public class EvaluatorOperatorTests
     [Fact]
     public void Eval_Pow_FractionalExponent_MatchesMathPowNormalization()
     {
-        AssertEval("0.0000000000000001 ^ 1.5 == Math.Pow(0.0000000000000001, 1.5)", 1);
+        AssertEvalBool("0.0000000000000001 ^ 1.5 == Math.Pow(0.0000000000000001, 1.5)", true);
     }
 
     [Theory]

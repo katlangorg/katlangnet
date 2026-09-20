@@ -8,7 +8,7 @@ namespace KatLang.Tests;
 /// the budget chokepoints. Before the depth-charged argument-evaluation chokepoint
 /// (<c>EvaluationBudget.TryEnterArgumentEvaluation</c>), a zero-parameter property
 /// reaching itself through a builtin argument (<c>A = count(A)</c>,
-/// <c>A = range(1, A)</c>, <c>A = if(1, A, 0)</c>, a loop's initial state or count)
+/// <c>A = range(1, A)</c>, <c>A = if(true, A, 0)</c>, a loop's initial state or count)
 /// terminated the whole process with an uncatchable
 /// <see cref="StackOverflowException"/>. An in-process test cannot observe that
 /// failure mode safely, so a child process runs the worst spellings, asserts the
@@ -89,7 +89,7 @@ public class EvaluationLimitsProcessTests
 
         var chain80 = "Step(x) = x" + string.Concat(Enumerable.Repeat(" + 1", 80));
         var chain200 = "Step(x) = x" + string.Concat(Enumerable.Repeat(" + 1", 200));
-        var nestedIfs = "Step(x) = " + string.Concat(Enumerable.Repeat("if(x + 1, ", 126)) + "x + 1"
+        var nestedIfs = "Step(x) = " + string.Concat(Enumerable.Repeat("if(x + 1 > 0, ", 126)) + "x + 1"
             + string.Concat(Enumerable.Repeat(", 0)", 126));
 
         // A guard that simply refuses every plan must not satisfy the safety test.
@@ -162,11 +162,11 @@ public class EvaluationLimitsProcessTests
         {
             "A = count(A)\nA",
             "A = range(1, A)\nA.count",
-            "A = if(1, A, 0)\nA",
+            "A = if(true, A, 0)\nA",
             "A = take([1, 2, 3], A)\nA",
             "A = [1, 2].take(A)\nA",
             "Add(a, b) = a + b\nA = [1, 2].reduce(Add, A)\nA",
-            "Step = x, 0\nA = Step.while(A)\nA",
+            "Step = x, false\nA = Step.while(A)\nA",
             "Inc = x + 1\nA = Inc.repeat(A, 0)\nA",
         })
         {

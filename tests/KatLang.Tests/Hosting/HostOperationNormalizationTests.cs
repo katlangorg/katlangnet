@@ -185,7 +185,7 @@ public class HostOperationNormalizationTests
         };
 
         var success = Assert.IsType<RunResult.Success>(KatLangEngine.Run("Data == 1", options));
-        Assert.Equal("1", success.ToDisplayString());
+        Assert.Equal("true", success.ToDisplayString());
     }
 
     [Fact]

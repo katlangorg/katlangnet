@@ -413,7 +413,7 @@ public class SequenceValueImmutabilityTests
     [InlineData("(1, 2)", "(1, 2)")]
     [InlineData("((1, 2))", "(1, 2)")]
     [InlineData("((1, 2), 3)", "((1, 2), 3)")]
-    [InlineData("(1, 2) == (1, 2)", "1")]
+    [InlineData("(1, 2) == (1, 2)", "true")]
     [InlineData("A = 1, 2, 3\nx = A\nx", "(1, 2, 3)")]
     [InlineData("F(x) = x\nA = 1, 2, 3\nF(A)", "(1, 2, 3)")]
     [InlineData("F(a, b, c) = a + b + c\nA = 1, 2, 3\nF(A*)", "6")]

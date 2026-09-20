@@ -142,7 +142,7 @@ internal sealed class ParameterPropertyCollisionValidator(
                         for (var i = group.Items.Count - 1; i >= 0; i--)
                             pending.Push(group.Items[i]);
                         break;
-                    case Pattern.LitInt or Pattern.LitString:
+                    case Pattern.LitInt or Pattern.LitString or Pattern.LitBool:
                         break;
                     default:
                         throw new InvalidOperationException($"Unhandled pattern: {current.GetType().Name}");

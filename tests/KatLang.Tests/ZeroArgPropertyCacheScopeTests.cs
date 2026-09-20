@@ -363,8 +363,8 @@ public class ZeroArgPropertyCacheScopeTests
     [InlineData("B()", "100,100", 1)]
     [InlineData("B(), B()", "100,100,100,100", 1)]
     [InlineData("B, B(), B", "100,100,100,100,100,100", 1)]
-    [InlineData("if(1, A, 0), A", "100,200", 2)]
-    [InlineData("if(1, (A), 0), A", "100,100", 1)]
+    [InlineData("if(true, A, 0), A", "100,200", 2)]
+    [InlineData("if(true, (A), 0), A", "100,100", 1)]
     public Task ExplicitCallMatrix_ExactHostCountsAcrossExecutionPaths(string output, string expected, int calls)
         => AssertHostCounterPaths("A = Data()\nB = A, A\n" + output, expected, calls);
 
@@ -482,7 +482,7 @@ public class ZeroArgPropertyCacheScopeTests
     [InlineData("Step(n) = {\n P = Data() + n\n P + P - n\n}\nStep.repeat(3, 0)", "1200", 3)]
     [InlineData("Outer(x) = {\n P = Data() + x\n Q = P + P\n Q(), Q()\n}\nOuter(1)", "202,402", 2)]
     [InlineData("Outer(x) = {\n P = Data() + x\n Q = P + P\n P, Q, P\n}\nOuter(1)", "101,202,101", 1)]
-    [InlineData("Outer(x) = {\n A = {\n P = Data() + x\n P\n }\n if(1, A, 0), if(1, A, 0)\n}\nOuter(1)", "101,101", 1)]
+    [InlineData("Outer(x) = {\n A = {\n P = Data() + x\n P\n }\n if(true, A, 0), if(true, A, 0)\n}\nOuter(1)", "101,101", 1)]
     public Task LocalOnlyHostValues_RespectEveryBindingBoundary(string source, string expected, int calls)
         => AssertHostCounterPaths(source, expected, calls);
 
@@ -534,7 +534,7 @@ public class ZeroArgPropertyCacheScopeTests
         // A zero-parameter Math member is an exported prelude property: one evaluation
         // serves every activation.
         var (constant, constantResult) = Run("F(x) = Math.Pi + x\nF(1) - 1 == F(2) - 2");
-        Assert.Equal([1m], Atoms(constantResult));
+        Assert.Equal(new Result.Bool(true), constantResult.Value, Result.ValueComparer);
         Assert.Equal(1, constant.EvaluationsOf("Pi"));
     }
 
@@ -605,7 +605,7 @@ public class ZeroArgPropertyCacheScopeTests
         // twenty iterations — because each iteration and each call ran in fresh
         // environments). `n` still walks 0, 1, 3, 7, ... (2^20 - 1).
         const string source =
-            "Step = {\n    T = 'xxxxxxxxxx'\n    A = x + (T == T)\n    (T == T) + A + A - 2 + (T == T) - 1\n}\nStep.repeat(20, 0)";
+            "Step = {\n    T = 'xxxxxxxxxx'\n    A = x + if(T == T, 1, 0)\n    if(T == T, 1, 0) + A + A - 2 + if(T == T, 1, 0) - 1\n}\nStep.repeat(20, 0)";
         var expr = Program(source);
 
         var genericCache = new CountingCache();

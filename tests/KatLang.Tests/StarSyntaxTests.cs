@@ -148,7 +148,7 @@ public class StarSyntaxTests
     // `~b` moves `b` first); Grace on a bound property would be the
     // ineffective-Grace error instead (GraceEffectivenessTests).
     [InlineData("K = a*\n~b\nK(3, 2)", "6")]
-    [InlineData("a = 2\nb = 0\na*\nnot b", "2")]
+    [InlineData("a = 2\nb = false\na*\nif(not b, 1, 0)", "2")]
     [InlineData("a = 2\na*\n3", "6")]
     public void OperandLikeTokensOnTheNextLine_AreMultiplicationOperands(string source, string expected)
     {
@@ -399,7 +399,11 @@ public class StarSyntaxTests
         // collecting deconstruction `*r = 1, 2` — is the one row form that
         // cannot follow on the same line at all: a same-line star is always an
         // operator or a marker of the expression before it, so that form
-        // starts its own line by the ordinary '*'-led-line rule.)
+        // starts its own line by the ordinary '*'-led-line rule.) `not B` is a
+        // row form like a declaration head: `not` binds below the comparisons,
+        // so it never begins a multiplication operand — the star is the spread
+        // marker, the same-line `not B` is an unseparated item (SYN-07A), and
+        // the next-line `not B` is the following row.
         const string preamble = "A = 4\nB = 6\n";
         foreach (var follower in new[] { "B", "6", "'x'", "(B)", "[B]", "{B}", "-B", "not B", "~B", "B = 1", "F(x) = x", "x, y = 1, 2", "open B", "public B = 1" })
         {
@@ -415,7 +419,7 @@ public class StarSyntaxTests
             // declaration head after the spread row is reported, the next-line
             // one is not, and every other diagnostic agrees.
             var declarationHead = follower is "B = 1" or "F(x) = x"
-                or "x, y = 1, 2" or "open B" or "public B = 1";
+                or "x, y = 1, 2" or "open B" or "public B = 1" or "not B";
             Assert.Equal(declarationHead ? 1 : 0,
                 sameLine.Diagnostics.Count(static d => d.Code == DiagnosticCode.UnseparatedSameLineItem));
             Assert.All(sameLine.Diagnostics.Where(static d => d.Code == DiagnosticCode.UnseparatedSameLineItem),
@@ -432,17 +436,34 @@ public class StarSyntaxTests
     [InlineData("a = 2\na* (3)", "6")]
     [InlineData("a = 2\na*(3)", "6")]
     // Every remaining token that can begin a same-line right operand must also
-    // keep the star infix: identifier, number, `{` block, `~` grace, and the
-    // `not` unary. If any of these were missing from the expression-start test
+    // keep the star infix: identifier, number, `{` block, `~` grace, and a call
+    // wrapping a `not`. If any of these were missing from the operand-start test
     // the star would silently become a spread marker instead.
     [InlineData("a = 2\nb = 3\na* b", "6")]
     [InlineData("a = 2\na* 3", "6")]
     [InlineData("a = 2\na* {3}", "6")]
     [InlineData("K = a* ~b\nK(3, 2)", "6")]
-    [InlineData("a = 2\nb = 0\na* not b", "2")]
+    [InlineData("a = 2\nb = false\na* if(not b, 1, 0)", "2")]
     public void OperandLikeTokensAfterStar_AreMultiplication(string source, string expected)
     {
         Assert.Equal(expected, Display(source));
+    }
+
+    [Fact]
+    public void NotAfterAStar_IsNeverAMultiplicationOperand()
+    {
+        // `not` binds below the comparisons, so it cannot begin a multiplication's
+        // right operand: the star is the spread marker and `not b` is the next row
+        // (the spread row shows the spread items, the negation row shows `true`).
+        Assert.Equal("2\ntrue", Display("a = 2\nb = false\na*\nnot b"));
+
+        // On the same line the second item needs the ordinary comma (SYN-07A); the
+        // star decision itself is identical.
+        var sameLine = Parser.ParseSyntax("a = 2\nb = false\na* not b");
+        Assert.Contains(sameLine.Diagnostics, static d => d.Code == DiagnosticCode.UnseparatedSameLineItem);
+        Assert.Equal(2, sameLine.Root.Output.Count);
+        Assert.IsType<Expr.SequenceSpread>(sameLine.Root.Output[0]);
+        Assert.IsType<Expr.Unary>(sameLine.Root.Output[1]);
     }
 
     [Fact]

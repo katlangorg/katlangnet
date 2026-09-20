@@ -149,6 +149,7 @@ public abstract class AstWalker
                 break;
             case Pattern.LitInt:
             case Pattern.LitString:
+            case Pattern.LitBool:
                 break;
         }
     }
@@ -230,6 +231,7 @@ public abstract class AstWalker
             case Expr.NativeCall:
             case Expr.Num:
             case Expr.StringLiteral:
+            case Expr.BoolLiteral:
             case Expr.EmptySequence:
                 break;
 

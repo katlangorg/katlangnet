@@ -121,7 +121,7 @@ public class EvaluatorErrorDiagnosticTests
 
     [Theory]
     [InlineData("NoOut = { X = 1 }\nsum(NoOut)", "sum")]
-    [InlineData("NoOut = { X = 1 }\nif(1, NoOut, 2)", "if")]
+    [InlineData("NoOut = { X = 1 }\nif(true, NoOut, 2)", "if")]
     [InlineData("NoOut = { X = 1 }\ncount(NoOut)", "count")]
     public void Eval_MissingOutput_OfANamedArgumentDemandedByABuiltinValueSlot_BlamesTheProperty(string source, string callee)
     {
@@ -148,7 +148,7 @@ public class EvaluatorErrorDiagnosticTests
     [Theory]
     [InlineData("NoOut = { X = 1 }\nF(a) = sum(a)\nF(NoOut)")]
     [InlineData("NoOut = { X = 1 }\nF(a) = count(a)\nF(NoOut)")]
-    [InlineData("NoOut = { X = 1 }\nF(a) = if(1, a, 0)\nF(NoOut)")]
+    [InlineData("NoOut = { X = 1 }\nF(a) = if(true, a, 0)\nF(NoOut)")]
     [InlineData("NoOut = { X = 1 }\nStep(acc, x) = acc + x\nF(a) = reduce((1, 2), Step, a)\nF(NoOut)")]
     [InlineData("NoOut = { X = 1 }\nF(a) = a.string\nF(NoOut)")]
     [InlineData("NoOut = { X = 1 }\nF(a) = a.string()\nF(NoOut)")]

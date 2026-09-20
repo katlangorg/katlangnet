@@ -520,7 +520,7 @@ public class LoopStrategyPreparationTests
         // The CONTINUATION emits zero values at k == 3; the handover branch assembles
         // the same slots the generic evaluator would have produced, and the shared
         // continuation split reports the identical structured error.
-        const string source = "Empty = ()\nStep = k + 1, if(k < 3, 1, Empty)\nStep.while(0)";
+        const string source = "Empty = ()\nStep = k + 1, if(k < 3, true, Empty)\nStep.while(0)";
 
         var observations = new EvaluationObservations();
         var (result, _, diagnostics) = RunOptimized(source, observations);

@@ -85,9 +85,9 @@ public class AsyncStackDepthTests
     public static TheoryData<string, string> HeaviestRecursionShapes() => new()
     {
         { "plain-clause", "F(0) = 0\nF(n) = F(n - 1)\nF(500)" },
-        { "through-if", "F(n) = if(n, F(n - 1), 0)\nF(500)" },
-        { "dotted", "Lib = {public F(n) = if(n, Lib.F(n - 1), 0)}\nLib.F(500)" },
-        { "collection-callback", "F(n) = if(n, [n - 1].map(F).first, 0)\nF(500)" },
+        { "through-if", "F(n) = if(n > 0, F(n - 1), 0)\nF(500)" },
+        { "dotted", "Lib = {public F(n) = if(n > 0, Lib.F(n - 1), 0)}\nLib.F(500)" },
+        { "collection-callback", "F(n) = if(n > 0, [n - 1].map(F).first, 0)\nF(500)" },
     };
 
     [Theory]

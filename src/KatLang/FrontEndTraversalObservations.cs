@@ -314,6 +314,6 @@ internal sealed class FrontEndTraversalObservations
 internal static class AstTraversalDagSafety
 {
     internal static bool HasTraversableExprChildren(Expr expr)
-        => expr is not (Expr.Num or Expr.StringLiteral or Expr.EmptySequence
+        => expr is not (Expr.Num or Expr.StringLiteral or Expr.BoolLiteral or Expr.EmptySequence
             or Expr.NativeCall or Expr.Param or Expr.Resolve);
 }

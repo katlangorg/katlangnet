@@ -121,14 +121,16 @@ internal static class FrontEndFingerprint
             case Pattern.LitString s:
                 sb.Append("LStr{").Append(s.Value).Append('}');
                 break;
+            case Pattern.LitBool b:
+                sb.Append(b.Value ? "LBool{true}" : "LBool{false}");
+                break;
             case Pattern.SequenceValue sv:
                 sb.Append("PSeq[");
                 foreach (var it in sv.Items) Pattern(sb, it);
                 sb.Append(']');
                 break;
             default:
-                sb.Append("Pat?").Append(p.GetType().Name);
-                break;
+                throw new InvalidOperationException($"Unhandled pattern variant {p.GetType().Name}.");
         }
     }
 
@@ -140,6 +142,7 @@ internal static class FrontEndFingerprint
             case Expr.Param p: sb.Append("Param{").Append(p.Name).Append('}'); break;
             case Expr.Num n: sb.Append("Num{").Append(n.Value.ToString(CultureInfo.InvariantCulture)).Append('}'); break;
             case Expr.StringLiteral s: sb.Append("Str{").Append(s.Value).Append('}'); break;
+            case Expr.BoolLiteral b: sb.Append(b.Value ? "Bool{true}" : "Bool{false}"); break;
             case Expr.Resolve r: sb.Append("Res{").Append(r.Name).Append('}'); break;
             case Expr.Unary(var op, var o): sb.Append("Un{").Append(op).Append("}("); Expr(sb, o); sb.Append(')'); break;
             case Expr.Binary(var op, var l, var r): sb.Append("Bin{").Append(op).Append("}("); Expr(sb, l); sb.Append(','); Expr(sb, r); sb.Append(')'); break;
@@ -180,8 +183,7 @@ internal static class FrontEndFingerprint
                 sb.Append(')');
                 break;
             default:
-                sb.Append("Expr?").Append(e.GetType().Name);
-                break;
+                throw new InvalidOperationException($"Unhandled expression variant {e.GetType().Name}.");
         }
     }
 }

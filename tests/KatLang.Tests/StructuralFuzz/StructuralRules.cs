@@ -201,7 +201,7 @@ internal static class ModelRewriter
 
         return expr switch
         {
-            MExpr.Atom or MExpr.Ref or MExpr.IndexErr => expr,
+            MExpr.Atom or MExpr.Bool or MExpr.Ref or MExpr.IndexErr => expr,
             MExpr.Add a => new MExpr.Add(MapExpr(a.Left, exprMap, scopeMap), MapExpr(a.Right, exprMap, scopeMap)),
             MExpr.Group g => new MExpr.Group(g.Items.Select(i => MapExpr(i, exprMap, scopeMap)).ToList()),
             MExpr.Spread s => new MExpr.Spread(MapExpr(s.Operand, exprMap, scopeMap)),
@@ -389,10 +389,10 @@ public static class StructuralTransforms
         var tripwireCounter = 0;
         foreach (var ifNode in ModelRewriter.CollectExprs<MExpr.If>(program.Root))
         {
-            if (ifNode.Cond is not MExpr.Atom cond)
+            if (ifNode.Cond is not MExpr.Bool cond)
                 continue;
 
-            var condTrue = cond.Value != 0m;
+            var condTrue = cond.Value;
             var dead = condTrue ? ifNode.Else : ifNode.Then;
             var selected = condTrue ? ifNode.Then : ifNode.Else;
 
@@ -409,14 +409,14 @@ public static class StructuralTransforms
 
             candidates.Add(new TransformCandidate(
                 condTrue ? StructuralRule.KnownTrueDeadBranchMutation : StructuralRule.KnownFalseDeadBranchMutation,
-                $"condition literal {cond.Value} is known {(condTrue ? "TRUE" : "FALSE")} (first-flattened-atom rule); "
+                $"condition literal {(cond.Value ? "true" : "false")} is known {(condTrue ? "TRUE" : "FALSE")} (Boolean literal); "
                 + $"the {(condTrue ? "else" : "then")} branch is never evaluated (lazy if) — replaced with {tripwire.GetType().Name}",
                 program with { Root = ModelRewriter.ReplaceExpr(program.Root, ifNode, mutated) },
                 new ExpectedRelation.Equivalent()));
 
             candidates.Add(new TransformCandidate(
                 StructuralRule.KnownConditionReduction,
-                $"if(literal {cond.Value}, T, E) reduced to the selected branch: the literal condition is inert and "
+                $"if(literal {(cond.Value ? "true" : "false")}, T, E) reduced to the selected branch: the literal condition is inert and "
                 + "`if` re-counts the selected branch at the same value boundary",
                 program with { Root = ModelRewriter.ReplaceExpr(program.Root, ifNode, selected) },
                 new ExpectedRelation.Equivalent()));

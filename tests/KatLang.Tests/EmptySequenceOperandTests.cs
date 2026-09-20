@@ -1,4 +1,5 @@
 using System.Numerics;
+using static KatLang.Tests.LoopDiagnosticParityAssertions;
 
 namespace KatLang.Tests;
 
@@ -7,9 +8,10 @@ namespace KatLang.Tests;
 /// operators, never an identity that erases or bypasses the operator.
 ///
 /// <para><c>Evaluator.ApplyBinaryOperator</c> (Lean: <c>evalBinaryCounted</c>) checks,
-/// in this order: structural <c>==</c>/<c>!=</c>; string rejection (string/string, then
-/// string/non-string); numeric-scalar validation; divisor and exponent rules; operator
-/// dispatch. <c>()</c> takes part in none of those as a special case — it carries no
+/// in this order: structural <c>==</c>/<c>!=</c>; the Boolean-operand rule of the
+/// logical operators; string rejection (string/string, then string/non-string);
+/// numeric-scalar validation; divisor and exponent rules; operator dispatch. <c>()</c>
+/// takes part in none of those as a special case — it carries neither a Boolean nor a
 /// numeric scalar value, so every non-equality operator rejects it through the same
 /// <see cref="EvalError.TypeMismatch"/> path that already rejected <c>(1, 2)</c> and
 /// <c>[]</c>, on either side and for both operands empty. The controls below pin what
@@ -17,9 +19,11 @@ namespace KatLang.Tests;
 /// the string contract, ordinary arithmetic/ordering/logical results, and the empty
 /// <em>supply</em> neutrality of capture/collect/spread.</para>
 ///
-/// <para>Unary operators retain their existing numeric-conversion validation:
-/// unsupported sequence/list operands, including <c>()</c>, raise
-/// <see cref="EvalError.BadArity"/>; strings retain their TypeMismatch.</para>
+/// <para>Unary minus retains its numeric-conversion validation: unsupported
+/// sequence/list operands, including <c>()</c>, raise <see cref="EvalError.BadArity"/>;
+/// strings retain their TypeMismatch. Unary <c>not</c> requires a Boolean operand, so
+/// every non-Boolean operand — <c>()</c> included — is the Boolean-operand
+/// <see cref="EvalError.TypeMismatch"/>.</para>
 ///
 /// <para>Before this change the binary empty-operand cases SUCCEEDED and
 /// returned the other operand (<c>10 / ()</c> was <c>10</c>, <c>() &gt; 10</c> was
@@ -58,15 +62,35 @@ public class EmptySequenceOperandTests
     private static void AssertAtom(Decimal128 expected, string source)
         => Assert.Equal(expected, Assert.IsType<Result.Atom>(Value(source)).Value);
 
+    private static void AssertBool(bool expected, string source)
+        => Assert.Equal(expected, Assert.IsType<Result.Bool>(Value(source)).Value);
+
     /// <summary>
-    /// Asserts the SYN-01 rejection: the program fails with the numeric-scalar
-    /// operand diagnostic naming the given side and the empty sequence value.
-    /// Naming the side rules out a fix that only handles one operand position.
+    /// The logical operators validate BOOLEAN operands (there is no numeric truthiness);
+    /// every other non-equality operator validates numeric scalars.
     /// </summary>
-    private static void AssertEmptyOperandRejected(string source, string side)
+    private static bool IsLogical(string op) => op is "and" or "or" or "xor";
+
+    /// <summary>
+    /// A valid operand for the other side of <paramref name="op"/>, so that only the
+    /// empty side is ever blamed: the logical operators validate the left operand first
+    /// and would blame a number there before looking at the empty right operand.
+    /// </summary>
+    private static string ValidOperandFor(string op) => IsLogical(op) ? "true" : "1";
+
+    private static string OperandRule(string op)
+        => IsLogical(op) ? "expects Boolean operands" : "expects numeric scalar operands";
+
+    /// <summary>
+    /// Asserts the SYN-01 rejection: the program fails with the operator's operand
+    /// diagnostic (Boolean operands for the logical operators, numeric scalars for the
+    /// rest) naming the given side and the empty sequence value. Naming the side rules
+    /// out a fix that only handles one operand position.
+    /// </summary>
+    private static void AssertEmptyOperandRejected(string op, string source, string side)
     {
         var message = TypeMismatchOf(source).Message;
-        Assert.Contains("expects numeric scalar operands", message);
+        Assert.Contains($"operator `{op}` {OperandRule(op)}", message);
         Assert.Contains($"the {side} operand was a sequence value with 0 sequence elements: ()", message);
     }
 
@@ -79,15 +103,15 @@ public class EmptySequenceOperandTests
 
     [Fact]
     public void DivisionByEmpty_IsRejected_NotTheDividend()
-        => AssertEmptyOperandRejected("10 / ()", "right");
+        => AssertEmptyOperandRejected("/", "10 / ()", "right");
 
     [Fact]
     public void OrderingWithEmptyLeft_IsRejected_NotTheOtherOperand()
-        => AssertEmptyOperandRejected("() > 10", "left");
+        => AssertEmptyOperandRejected(">", "() > 10", "left");
 
     [Fact]
     public void LogicalAndWithEmptyLeft_IsRejected_NotTheOtherOperand()
-        => AssertEmptyOperandRejected("() and 7", "left");
+        => AssertEmptyOperandRejected("and", "() and true", "left");
 
     [Fact]
     public void EmptyPlusString_IsRejected_NotTheString()
@@ -104,16 +128,31 @@ public class EmptySequenceOperandTests
     [MemberData(nameof(NonEqualityOperators))]
     public void EmptyOperand_IsRejectedByEveryNonEqualityOperator(string op)
     {
-        AssertEmptyOperandRejected($"() {op} 1", "left");
-        AssertEmptyOperandRejected($"1 {op} ()", "right");
+        var other = ValidOperandFor(op);
+        AssertEmptyOperandRejected(op, $"() {op} {other}", "left");
+        AssertEmptyOperandRejected(op, $"{other} {op} ()", "right");
         // Both empty: the left operand is validated first, so it is the one blamed.
-        AssertEmptyOperandRejected($"() {op} ()", "left");
+        AssertEmptyOperandRejected(op, $"() {op} ()", "left");
     }
 
     [Theory]
     [MemberData(nameof(NonEqualityOperators))]
-    public void EmptyOperand_AgainstAString_KeepsTheStringContract(string op)
+    public void EmptyOperand_AgainstAString_IsAnErrorEitherWay(string op)
     {
+        if (IsLogical(op))
+        {
+            // The logical operators validate Boolean operands before anything else, so
+            // they blame whichever side is validated first — the string on the left, or
+            // the empty value on the left. Never a passthrough.
+            Assert.Contains(
+                $"operator `{op}` expects Boolean operands, but the left operand was a string: 'a'",
+                TypeMismatchOf($"'a' {op} ()").Message);
+            Assert.Contains(
+                $"operator `{op}` expects Boolean operands, but the left operand was a sequence value with 0 sequence elements: ()",
+                TypeMismatchOf($"() {op} 'a'").Message);
+            return;
+        }
+
         // The string arm is reached BEFORE numeric-scalar validation, so a string
         // paired with `()` reports the string/non-string contract rather than the
         // empty-operand message. Either way it is an error, never a passthrough.
@@ -127,21 +166,22 @@ public class EmptySequenceOperandTests
     {
         // `(())` and `((()))` normalize to `()`; normalization must not
         // reintroduce a passthrough at a different arity depth.
-        AssertEmptyOperandRejected($"(()) {op} 1", "left");
-        AssertEmptyOperandRejected($"1 {op} ((()))", "right");
+        var other = ValidOperandFor(op);
+        AssertEmptyOperandRejected(op, $"(()) {op} {other}", "left");
+        AssertEmptyOperandRejected(op, $"{other} {op} ((()))", "right");
     }
 
     [Fact]
     public void EmptyProperty_AsOperand_IsRejected()
         // A NAMED empty operand takes the same path as the literal: the defect was
         // never about the literal spelling.
-        => AssertEmptyOperandRejected("A = ()\nA / 2", "left");
+        => AssertEmptyOperandRejected("/", "A = ()\nA / 2", "left");
 
     [Fact]
     public void EmptyOperand_FromASpreadCapture_IsRejected()
         // `A*` over an empty list captures `()`; the captured value is an ordinary
         // operand and is rejected like any other.
-        => AssertEmptyOperandRejected("A = []\nB = { A* }\nB + 1", "left");
+        => AssertEmptyOperandRejected("+", "A = []\nB = { A* }\nB + 1", "left");
 
     // ── Controls: the string contract is intact everywhere else ─────────────
 
@@ -149,6 +189,18 @@ public class EmptySequenceOperandTests
     [MemberData(nameof(NonEqualityOperators))]
     public void StringWithNonEmptyOperand_StaysRejected(string op)
     {
+        if (IsLogical(op))
+        {
+            // The logical operators blame the first non-Boolean operand whatever its
+            // kind — a string, a number, or a list — with the one Boolean-operand rule.
+            Assert.Contains("expects Boolean operands, but the left operand was a string: 'a'", TypeMismatchOf($"'a' {op} 1").Message);
+            Assert.Contains("expects Boolean operands, but the left operand was numeric value 1", TypeMismatchOf($"1 {op} 'a'").Message);
+            Assert.Contains("expects Boolean operands, but the left operand was a string: 'a'", TypeMismatchOf($"'a' {op} 'b'").Message);
+            Assert.Contains("expects Boolean operands, but the left operand was a string: 'a'", TypeMismatchOf($"'a' {op} []").Message);
+            Assert.Contains("expects Boolean operands, but the left operand was a list value with 0 elements: []", TypeMismatchOf($"[] {op} 'a'").Message);
+            return;
+        }
+
         // Unchanged by SYN-01: the same operators reject a string operand against a
         // number, another string, or an empty LIST, with the same structured error.
         Assert.Contains("string and non-string", TypeMismatchOf($"'a' {op} 1").Message);
@@ -164,46 +216,76 @@ public class EmptySequenceOperandTests
     public void EqualityOperators_CompareEmptyStructurally()
     {
         // `==`/`!=` are total over all value kinds and are decided BEFORE operand
-        // validation, so they keep working with empty sequence operands.
-        AssertAtom(Decimal128.One, "() == ()");
-        AssertAtom(Decimal128.Zero, "() != ()");
-        AssertAtom(Decimal128.One, "() == (())");
-        AssertAtom(Decimal128.Zero, "() != (())");
-        AssertAtom(Decimal128.One, "() != (1)");
-        AssertAtom(Decimal128.One, "() != (1, 2)");
-        AssertAtom(Decimal128.Zero, "() == 0");
-        AssertAtom(Decimal128.Zero, "() == []");
-        AssertAtom(Decimal128.Zero, "'a' == ()");
-        AssertAtom(Decimal128.One, "'a' != ()");
-        AssertAtom(Decimal128.Zero, "() == 'a'");
-        AssertAtom(Decimal128.One, "() != 'a'");
-        AssertAtom(Decimal128.One, "A = ()\nB = ()\nA == B");
+        // validation, so they keep working with empty sequence operands — and they
+        // yield Boolean values, never numbers.
+        AssertBool(true, "() == ()");
+        AssertBool(false, "() != ()");
+        AssertBool(true, "() == (())");
+        AssertBool(false, "() != (())");
+        AssertBool(true, "() != (1)");
+        AssertBool(true, "() != (1, 2)");
+        AssertBool(false, "() == 0");
+        AssertBool(false, "() == []");
+        AssertBool(false, "() == false");
+        AssertBool(false, "'a' == ()");
+        AssertBool(true, "'a' != ()");
+        AssertBool(false, "() == 'a'");
+        AssertBool(true, "() != 'a'");
+        AssertBool(true, "A = ()\nB = ()\nA == B");
     }
 
     // ── Controls: ordinary operator behavior is untouched ───────────────────
 
-    [Theory]
-    [InlineData("-")]
-    [InlineData("not ")]
-    public void UnaryNonScalarOperands_UseTheSameExistingValidation(string op)
+    [Fact]
+    public void UnaryMinus_NonScalarOperands_UseTheSameExistingValidation()
     {
         foreach (var operand in new[] { "()", "(())", "(1, 2)", "[]", "[1]", "[1, 2]" })
         {
-            var source = op + operand;
+            var source = "-" + operand;
             var ast = new Expr.AlgorithmExpr(SourceProvenance.ParseValid(source).Root);
             var plain = Evaluator.Run(ast);
             var counted = Evaluator.RunCountedObserved(ast).Result;
             Assert.True(plain.IsError, $"`{source}` must reject the non-scalar operand");
             Assert.True(counted.IsError);
-            Assert.IsType<EvalError.BadArity>(LoopDiagnosticParityAssertions.Innermost(plain.Error));
+            Assert.IsType<EvalError.BadArity>(Innermost(plain.Error));
             // The BadArity is located at the whole unary expression (F5).
-            Assert.Equal(new SourceSpan(1, 1, 1, source.Length + 1), LoopDiagnosticParityAssertions.Innermost(plain.Error).Span);
-            Assert.Equal(
-                LoopDiagnosticParityAssertions.DescribeErrorTree(plain.Error),
-                LoopDiagnosticParityAssertions.DescribeErrorTree(counted.Error));
+            Assert.Equal(new SourceSpan(1, 1, 1, source.Length + 1), Innermost(plain.Error).Span);
+            Assert.Equal(DescribeErrorTree(plain.Error), DescribeErrorTree(counted.Error));
         }
 
-        Assert.Equal("Unary operator is not supported for strings", TypeMismatchOf(op + "'text'").Message);
+        Assert.Equal("Unary operator is not supported for strings", TypeMismatchOf("-'text'").Message);
+    }
+
+    [Fact]
+    public void UnaryNot_NonBooleanOperands_AreTheBooleanOperandRejection()
+    {
+        // `not` is Boolean negation: a sequence value (empty or not), a list, a string,
+        // and a number are all rejected by the ONE Boolean-operand rule, located at the
+        // whole unary expression (F5) — there is no numeric truthiness to fall back on.
+        foreach (var (operand, description) in new[]
+        {
+            ("()", "a sequence value with 0 sequence elements: ()"),
+            ("(())", "a sequence value with 0 sequence elements: ()"),
+            ("(1, 2)", "a sequence value with 2 sequence elements: (1, 2)"),
+            ("[]", "a list value with 0 elements: []"),
+            ("[1]", "a list value with 1 element: [1]"),
+            ("[1, 2]", "a list value with 2 elements: [1, 2]"),
+            ("'text'", "a string: 'text'"),
+            ("0", "numeric value 0"),
+            ("7", "numeric value 7"),
+        })
+        {
+            var source = "not " + operand;
+            var ast = new Expr.AlgorithmExpr(SourceProvenance.ParseValid(source).Root);
+            var plain = Evaluator.Run(ast);
+            var counted = Evaluator.RunCountedObserved(ast).Result;
+            Assert.True(plain.IsError, $"`{source}` must reject the non-Boolean operand");
+            Assert.True(counted.IsError);
+            var innermost = Assert.IsType<EvalError.TypeMismatch>(Innermost(plain.Error));
+            Assert.Equal($"operator `not` expects a Boolean operand, but the operand was {description}", innermost.Message);
+            Assert.Equal(new SourceSpan(1, 1, 1, source.Length + 1), innermost.Span);
+            Assert.Equal(DescribeErrorTree(plain.Error), DescribeErrorTree(counted.Error));
+        }
     }
 
     [Theory]
@@ -216,7 +298,16 @@ public class EmptySequenceOperandTests
             var ast = new Expr.AlgorithmExpr(SourceProvenance.ParseValid($"{definition}\n{op}Empty").Root);
             var result = Evaluator.Run(ast);
             Assert.True(result.IsError);
-            Assert.IsType<EvalError.BadArity>(LoopDiagnosticParityAssertions.Innermost(result.Error));
+            var innermost = Innermost(result.Error);
+            if (op == "-")
+            {
+                Assert.IsType<EvalError.BadArity>(innermost);
+            }
+            else
+            {
+                var mismatch = Assert.IsType<EvalError.TypeMismatch>(innermost);
+                Assert.Contains("operator `not` expects a Boolean operand", mismatch.Message);
+            }
         }
     }
 
@@ -231,7 +322,7 @@ public class EmptySequenceOperandTests
         var source = unary.Replace("()", "(1 / 0)");
         var result = Evaluator.Run(new Expr.AlgorithmExpr(SourceProvenance.ParseValid(source).Root));
         Assert.True(result.IsError);
-        var error = Assert.IsType<EvalError.DivByZero>(LoopDiagnosticParityAssertions.Innermost(result.Error));
+        var error = Assert.IsType<EvalError.DivByZero>(Innermost(result.Error));
         var start = source.IndexOf('(') + 1;
         Assert.Equal(new SourceSpan(1, start, 1, start + 7), error.Span);   // `(1 / 0)` is seven code units
     }
@@ -242,9 +333,9 @@ public class EmptySequenceOperandTests
         AssertAtom(-7, "-7");
         AssertAtom(7, "- -7");
         AssertAtom(0, "-0");
-        AssertAtom(1, "not 0");
-        AssertAtom(0, "not 7");
-        AssertAtom(0, "not -7");
+        AssertBool(true, "not false");
+        AssertBool(false, "not true");
+        AssertBool(true, "not (1 > 2)");
     }
 
     [Fact]
@@ -260,34 +351,39 @@ public class EmptySequenceOperandTests
     }
 
     [Fact]
-    public void OrdinaryComparisons_StillProduceNumericBooleans()
+    public void OrdinaryComparisons_StillProduceBooleans()
     {
-        // The ordering operators return 1/0 — never one of their operands.
-        AssertAtom(Decimal128.One, "10 > 1");
-        AssertAtom(Decimal128.Zero, "1 > 10");
-        AssertAtom(Decimal128.One, "1 < 10");
-        AssertAtom(Decimal128.One, "1 <= 1");
-        AssertAtom(Decimal128.One, "1 >= 1");
-        AssertAtom(Decimal128.Zero, "1 >= 2");
+        // The ordering operators return Boolean values — never one of their operands.
+        AssertBool(true, "10 > 1");
+        AssertBool(false, "1 > 10");
+        AssertBool(true, "1 < 10");
+        AssertBool(true, "1 <= 1");
+        AssertBool(true, "1 >= 1");
+        AssertBool(false, "1 >= 2");
     }
 
     [Fact]
     public void OrdinaryLogicalOperators_KeepTheirSemantics()
     {
-        AssertAtom(Decimal128.One, "1 and 7");
-        AssertAtom(Decimal128.Zero, "0 and 7");
-        AssertAtom(Decimal128.One, "0 or 7");
-        AssertAtom(Decimal128.Zero, "0 or 0");
-        AssertAtom(Decimal128.One, "1 xor 0");
-        AssertAtom(Decimal128.Zero, "1 xor 1");
+        AssertBool(true, "true and true");
+        AssertBool(false, "false and true");
+        AssertBool(true, "false or true");
+        AssertBool(false, "false or false");
+        AssertBool(true, "true xor false");
+        AssertBool(false, "true xor true");
+
+        // Numbers are not truth values: `1 and 7` is the Boolean-operand rejection.
+        Assert.Contains(
+            "operator `and` expects Boolean operands, but the left operand was numeric value 1",
+            TypeMismatchOf("1 and 7").Message);
     }
 
     [Fact]
     public void StringsThatWereNeverEmptyRelated_AreUnaffected()
     {
         AssertString("ab", "'ab'");
-        AssertAtom(Decimal128.One, "'ab' == 'ab'");
-        AssertAtom(Decimal128.Zero, "'ab' != 'ab'");
+        AssertBool(true, "'ab' == 'ab'");
+        AssertBool(false, "'ab' != 'ab'");
     }
 
     // ── Controls: empty SUPPLY neutrality is unchanged ──────────────────────
@@ -325,7 +421,7 @@ public class EmptySequenceOperandTests
         // `[]` stays the collecting-binding result and stays DISTINCT from `()`.
         AssertEmptyList(Value("x, *rest = 1\nrest"));
         AssertEmptyList(Value("F(*items) = items\nF()"));
-        AssertAtom(Decimal128.Zero, "F(*items) = items\nF() == ()");
+        AssertBool(false, "F(*items) = items\nF() == ()");
     }
 
     // ── The canonical SYN-01 programs verbatim, with their public diagnostic ──
@@ -345,10 +441,10 @@ public class EmptySequenceOperandTests
             { "() / 10", "left" },
             { "() > 10", "left" },
             { "10 > ()", "right" },
-            { "() and 7", "left" },
-            { "7 and ()", "right" },
-            { "() or 7", "left" },
-            { "7 or ()", "right" },
+            { "() and true", "left" },
+            { "true and ()", "right" },
+            { "() or true", "left" },
+            { "true or ()", "right" },
         };
 
     [Theory]
@@ -387,11 +483,13 @@ public class EmptySequenceOperandTests
     [InlineData("3 + [1, 2]", "right", "a list value with 2 elements: [1, 2]")]
     [InlineData("[] + 3", "left", "a list value with 0 elements: []")]
     [InlineData("() + 3", "left", "a sequence value with 0 sequence elements: ()")]
+    [InlineData("true + 3", "left", "a Boolean value: true")]
     public void NonScalarOperands_AreRejectedByTheSameOperandRule(string source, string side, string description)
     {
-        // A multi-item sequence value, an exact list (empty or not), and the empty
-        // sequence value all fail the same numeric-scalar validation with the same
-        // structured error; the message differs only in how it describes the value.
+        // A multi-item sequence value, an exact list (empty or not), the empty
+        // sequence value, and a Boolean all fail the same numeric-scalar validation
+        // with the same structured error; the message differs only in how it
+        // describes the value.
         var rendered = KatLangError.FromEvalError(ErrorOf(source));
 
         Assert.Equal(KatLangErrorCode.TypeMismatch, rendered.Code);
@@ -420,10 +518,11 @@ public class EmptySequenceOperandTests
     [Theory]
     [InlineData("F(a) = a / 2\nF(())", "while evaluating call to F", "a / 2", "left")]
     [InlineData("F(a) = 2 / a\nF(())", "while evaluating call to F", "2 / a", "right")]
-    [InlineData("if(1, () + 1, 0)", "while evaluating call to if", "() + 1", "left")]
+    [InlineData("if(true, () + 1, 0)", "while evaluating call to if", "() + 1", "left")]
     [InlineData("M(a) = a + 1\nmap(((), 2), M)", "while evaluating call to map", "a + 1", "left")]
     [InlineData("S(x) = x - 1\nrepeat(S, 2, ())", "while evaluating call to repeat", "x - 1", "left")]
     [InlineData("A = ()\nB = A > 0\nB", "while evaluating `A > 0`", "A > 0", "left")]
+    [InlineData("A = ()\nB = A and true\nB", "while evaluating `A and true`", "A and true", "left")]
     public void EmptyOperand_InNestedContexts_IsRejectedWithContextualBlame(
         string source, string outermostContext, string binaryText, string side)
     {
@@ -431,19 +530,17 @@ public class EmptySequenceOperandTests
         // selected `if` branch, a callback, a loop step, a property body — and the
         // ordinary contextual diagnostics wrap it rather than being lost.
         var error = ErrorOf(source);
-        var chain = LoopDiagnosticParityAssertions.ContextChain(error);
+        var chain = ContextChain(error);
 
         Assert.Equal(outermostContext, chain[0]);
         Assert.Equal($"while evaluating `{binaryText}`", chain[^1]);
-        var innermost = Assert.IsType<EvalError.TypeMismatch>(LoopDiagnosticParityAssertions.Innermost(error));
+        var innermost = Assert.IsType<EvalError.TypeMismatch>(Innermost(error));
         Assert.Contains($"the {side} operand was a sequence value with 0 sequence elements: ()", innermost.Message);
 
         // Plain and counted evaluation report the identical structured tree.
         var counted = Evaluator.RunCountedObserved(new Expr.AlgorithmExpr(SourceProvenance.ParseValid(source).Root)).Result;
         Assert.True(counted.IsError);
-        Assert.Equal(
-            LoopDiagnosticParityAssertions.DescribeErrorTree(error),
-            LoopDiagnosticParityAssertions.DescribeErrorTree(counted.Error));
+        Assert.Equal(DescribeErrorTree(error), DescribeErrorTree(counted.Error));
     }
 
     // `Result`'s record equality is not KatLang value equality (two distinct

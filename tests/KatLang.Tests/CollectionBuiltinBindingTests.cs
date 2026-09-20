@@ -16,6 +16,9 @@ public class CollectionBuiltinBindingTests
     private static Decimal128[] Atoms(string source)
         => KatLangEngine.EvaluateToAtoms(source).ToArray();
 
+    private static void AssertBool(string source, bool expected)
+        => EvaluatorTestSupport.AssertEvalBool(source, expected);
+
     private static void AssertAtoms(string source, params Decimal128[] expected)
         => Assert.Equal(expected, Atoms(source));
 
@@ -143,12 +146,12 @@ public class CollectionBuiltinBindingTests
     public void Contains_TakesCollectionAndItemPositionally()
     {
         AssertArityError("contains(1, 2, 3, 2)", "contains(collection, item)");
-        AssertAtoms("contains((1, 2, 3), 2)", 1);
-        AssertAtoms("Data = 1, 2, 3\ncontains(Data, 2)", 1);
+        AssertBool("contains((1, 2, 3), 2)", true);
+        AssertBool("Data = 1, 2, 3\ncontains(Data, 2)", true);
         // Spreading the stored collection supplies its items as ordinary
         // argument slots, overflowing the two-argument signature.
         AssertArityError("Data = 1, 2, 3\ncontains(Data*, 2)", "contains(collection, item)");
-        AssertAtoms("contains((1, 2, 3), 9)", 0);
+        AssertBool("contains((1, 2, 3), 9)", false);
     }
 
     [Fact]

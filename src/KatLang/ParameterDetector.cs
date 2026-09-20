@@ -1074,7 +1074,7 @@ internal static class ParameterDetector
                 // open-form validation reject the illegal ones with their own diagnostics.
                 Expr.AlgorithmExpr or Expr.Capture or Expr.DotCall or Expr.SequenceSpread
                     or Expr.SequenceConstruct or Expr.ListLiteral or Expr.Call or Expr.Num
-                    or Expr.StringLiteral or Expr.EmptySequence or Expr.NativeCall
+                    or Expr.StringLiteral or Expr.BoolLiteral or Expr.EmptySequence or Expr.NativeCall
                     or Expr.Unary or Expr.Binary or Expr.Index or Expr.Grace => null,
             };
 
@@ -1284,7 +1284,7 @@ internal static class ParameterDetector
             // operator forms are never valid open targets — the evaluator's
             // open-form validation rejects them (BadOpenForm) — so a host-built
             // one passes through unprocessed like a leaf.
-            Expr.Resolve or Expr.Param or Expr.Num or Expr.StringLiteral or Expr.EmptySequence
+            Expr.Resolve or Expr.Param or Expr.Num or Expr.StringLiteral or Expr.BoolLiteral or Expr.EmptySequence
                 or Expr.NativeCall or Expr.Unary or Expr.Binary or Expr.Index => expr,
         };
     }
@@ -1847,6 +1847,7 @@ internal static class ParameterDetector
             case Expr.Num:
             case Expr.Param:
             case Expr.StringLiteral:
+            case Expr.BoolLiteral:
             case Expr.EmptySequence:
             case Expr.NativeCall:
                 break;
@@ -2178,7 +2179,7 @@ internal static class ParameterDetector
             // Intentional leaves: a Resolve that failed the guarded parameter
             // test above stays an ordinary lexical reference, and the
             // remaining leaves contain no parameter references to rewrite.
-            Expr.Resolve or Expr.Param or Expr.Num or Expr.StringLiteral
+            Expr.Resolve or Expr.Param or Expr.Num or Expr.StringLiteral or Expr.BoolLiteral
                 or Expr.EmptySequence or Expr.NativeCall => expr,
         };
     }
@@ -2411,7 +2412,7 @@ internal static class ParameterDetector
             // Intentional leaves: bare references and literals rewrite nothing
             // in a transparent context (parameter classification happened in
             // the owning algorithm's collection walk).
-            Expr.Resolve or Expr.Param or Expr.Num or Expr.StringLiteral
+            Expr.Resolve or Expr.Param or Expr.Num or Expr.StringLiteral or Expr.BoolLiteral
                 or Expr.EmptySequence or Expr.NativeCall => expr,
         };
     }
@@ -2507,7 +2508,7 @@ internal static class ParameterDetector
             // Intentional misses: a Resolve spelling a different name (the
             // guarded arm above is the hit case) and leaves that contain no
             // written Resolve occurrence.
-            Expr.Resolve or Expr.Param or Expr.Num or Expr.StringLiteral
+            Expr.Resolve or Expr.Param or Expr.Num or Expr.StringLiteral or Expr.BoolLiteral
                 or Expr.EmptySequence or Expr.NativeCall => null,
         };
     }

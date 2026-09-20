@@ -156,6 +156,9 @@ internal static class MetamorphicTables
         new("sequenceOfLists", "([1, 2], [3, 4])", 2),
         new("stringList", "['ab', 'cd']", 2),
         new("rangeCall", "range(1, 4)", 4),
+        new("boolean", "true", 1),
+        new("booleanList", "[true, false]", 2),
+        new("mixedBooleanList", "[true, 1, false, 0]", 4),
     ];
 
     /// <summary>Callback INPUT rows for Group D. Non-scalar shapes come first: they are the ones

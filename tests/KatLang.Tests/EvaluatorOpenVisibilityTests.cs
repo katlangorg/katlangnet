@@ -221,7 +221,7 @@ public class EvaluatorOpenVisibilityTests
             Opened = Test(35)
             Direct == Opened
             """;
-        AssertEval(source, 1);
+        AssertEvalBool(source, true);
     }
 
     [Fact]

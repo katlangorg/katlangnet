@@ -99,6 +99,42 @@ public class ExprNameRendererTests
     }
 
     [Fact]
+    public void Golden_NotOperandParenthesization_RendersExactly()
+    {
+        var a = new Expr.Resolve("a");
+        var b = new Expr.Resolve("b");
+        var notA = new Expr.Unary(UnaryOp.Not, a);
+        var notB = new Expr.Unary(UnaryOp.Not, b);
+
+        // `not` binds below the comparisons and above the logical operators
+        // (comparisons > not > and > xor > or), so a `not` operand keeps parentheses
+        // under every tighter operator, on either side, and renders bare under
+        // `and`/`xor`/`or` — otherwise `not a == b` would read back as `not (a == b)`.
+        Assert.Equal("((not a) == b)", Open(new Expr.Binary(BinaryOp.Eq, notA, b)));
+        Assert.Equal("(a == (not b))", Open(new Expr.Binary(BinaryOp.Eq, a, notB)));
+        Assert.Equal("((not a) > b)", Open(new Expr.Binary(BinaryOp.Gt, notA, b)));
+        Assert.Equal("((not a) + b)", Open(new Expr.Binary(BinaryOp.Add, notA, b)));
+        Assert.Equal("(a * (not b))", Open(new Expr.Binary(BinaryOp.Mul, a, notB)));
+        Assert.Equal("(a ^ (not b))", Open(new Expr.Binary(BinaryOp.Pow, a, notB)));
+        Assert.Equal("(not a and b)", Open(new Expr.Binary(BinaryOp.And, notA, b)));
+        Assert.Equal("(a or not b)", Open(new Expr.Binary(BinaryOp.Or, a, notB)));
+        Assert.Equal("(not a xor b)", Open(new Expr.Binary(BinaryOp.Xor, notA, b)));
+
+        // DiagnosticName mode renders the chain bare with the same operand wrapping.
+        Assert.Equal("(not a) == b", Diag(new Expr.Binary(BinaryOp.Eq, notA, b)));
+        Assert.Equal("a == (not b)", Diag(new Expr.Binary(BinaryOp.Eq, a, notB)));
+        Assert.Equal("not a and b", Diag(new Expr.Binary(BinaryOp.And, notA, b)));
+        Assert.Equal("(not a) == b", ExprNameRenderer.RenderBinaryDiagnosticName(BinaryOp.Eq, notA, b));
+
+        // Negating a comparison keeps the established unary-operand wrapping, which
+        // reads back as the same tree under this precedence; a `not` under unary
+        // minus keeps its parentheses, because bare `-not a` is not an operand at all.
+        Assert.Equal("not ((a > b))", Open(new Expr.Unary(UnaryOp.Not, new Expr.Binary(BinaryOp.Gt, a, b))));
+        Assert.Equal("-(not a)", Open(new Expr.Unary(UnaryOp.Minus, notA)));
+        Assert.Equal("not (not a)", Open(new Expr.Unary(UnaryOp.Not, notA)));
+    }
+
+    [Fact]
     public void Golden_PowerBaseParenthesization_RendersExactly()
     {
         var a = new Expr.Resolve("a");

@@ -25,6 +25,10 @@ public abstract record MExpr
 {
     public sealed record Atom(Decimal128 Value) : MExpr;
 
+    /// <summary>The Boolean literal <c>true</c> / <c>false</c>: the only condition kind
+    /// an <see cref="If"/> accepts (numbers have no truth value).</summary>
+    public sealed record Bool(bool Value) : MExpr;
+
     /// <summary>Reference to a declaration/binder by SYMBOL, not by name.</summary>
     public sealed record Ref(Sym Target) : MExpr;
 
@@ -42,11 +46,11 @@ public abstract record MExpr
 
     public sealed record Call(Sym Callee, IReadOnlyList<MExpr> Args) : MExpr;
 
-    /// <summary>Builtin <c>if(cond, then, else)</c>. Conditions are literal
-    /// atoms in generated programs, so truth is known by construction
-    /// (first-flattened-atom rule: atom 0 is false, non-zero true) and the
-    /// unselected branch is provably dead (Lean evaluates only the selected
-    /// branch argument — <c>applyBuiltinCounted .ifBuiltin</c>).</summary>
+    /// <summary>Builtin <c>if(cond, then, else)</c>. Conditions are Boolean
+    /// literals (<see cref="Bool"/>) in generated programs, so truth is known by
+    /// construction — a number is never a condition — and the unselected branch
+    /// is provably dead (Lean evaluates only the selected branch argument —
+    /// <c>applyBuiltinCounted .ifBuiltin</c>).</summary>
     public sealed record If(MExpr Cond, MExpr Then, MExpr Else) : MExpr;
 
     /// <summary>Brace algorithm <c>{ decls… rows… }</c> — the sole nested
@@ -271,6 +275,7 @@ public sealed class ScopeGraph
         switch (expr)
         {
             case MExpr.Atom:
+            case MExpr.Bool:
             case MExpr.IndexErr:
                 return;
             case MExpr.Ref r:
@@ -576,6 +581,9 @@ public static class StructuralRenderer
         {
             case MExpr.Atom a:
                 sb.Append(FormatAtom(a.Value));
+                return;
+            case MExpr.Bool flag:
+                sb.Append(flag.Value ? "true" : "false");
                 return;
             case MExpr.Ref r:
                 sb.Append(names[r.Target]);

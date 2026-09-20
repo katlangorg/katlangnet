@@ -211,7 +211,7 @@ public class EvaluatorIdentityStateTests
         // G's activation, cannot be read there — the required owner is F's family activation,
         // which is not on G's lexical chain. Sensitive to: a family scope created without its
         // own activation, or an activation compared by anything but reference.
-        const string source = "H(f, k) = {\n  F(0) = 0\n  F(n) = H({ public X = n }, 0)\n  G(0) = 0\n  G(n) = f.X\n  if(k, F(k), G(7))\n}\nH({ public X = 0 }, 5)";
+        const string source = "H(f, k) = {\n  F(0) = 0\n  F(n) = H({ public X = n }, 0)\n  G(0) = 0\n  G(n) = f.X\n  if(k != 0, F(k), G(7))\n}\nH({ public X = 0 }, 5)";
         var result = await Run(source, path);
         Assert.True(result.IsError);
         Assert.Equal(KatLangErrorCode.LocalOnlyProperty, KatLangError.FromEvalError(result.Error).Code);
@@ -229,7 +229,7 @@ public class EvaluatorIdentityStateTests
         // reference, so the access is refused; the same-activation read (the control) works.
         // Sensitive to: an activation compared by presence or by declaration instead of by
         // reference (CompatibleActivations).
-        const string transfer = "H(f, n) = {\n  Made = { public X = n }\n  Read(g) = g.X\n  if(n, H(Made, 0), Read(f))\n}\nH({ public X = 0 }, 5)";
+        const string transfer = "H(f, n) = {\n  Made = { public X = n }\n  Read(g) = g.X\n  if(n != 0, H(Made, 0), Read(f))\n}\nH({ public X = 0 }, 5)";
         var refused = await Run(transfer, path);
         Assert.True(refused.IsError);
         Assert.Equal(KatLangErrorCode.LocalOnlyProperty, KatLangError.FromEvalError(refused.Error).Code);

@@ -1122,6 +1122,21 @@ public sealed record KatLang.Expr.Binary : KatLang.Expr, System.IEquatable<KatLa
   operator public static bool op_Equality(KatLang.Expr.Binary? left, KatLang.Expr.Binary? right)
   operator public static bool op_Inequality(KatLang.Expr.Binary? left, KatLang.Expr.Binary? right)
 
+public sealed record KatLang.Expr.BoolLiteral : KatLang.Expr, System.IEquatable<KatLang.Expr.BoolLiteral>
+  ctor     public BoolLiteral(bool Value)
+  property protected override System.Type EqualityContract { get; }
+  property public bool Value { get; init; }
+  method   public virtual KatLang.Expr.BoolLiteral <Clone>$()
+  method   public void Deconstruct(out bool Value)
+  method   public bool Equals(KatLang.Expr.BoolLiteral? other)
+  method   public override bool Equals(object? obj)
+  method   public sealed override bool Equals(KatLang.Expr? other)
+  method   public override int GetHashCode()
+  method   protected override bool PrintMembers(System.Text.StringBuilder builder)
+  method   public override string ToString()
+  operator public static bool op_Equality(KatLang.Expr.BoolLiteral? left, KatLang.Expr.BoolLiteral? right)
+  operator public static bool op_Inequality(KatLang.Expr.BoolLiteral? left, KatLang.Expr.BoolLiteral? right)
+
 public sealed record KatLang.Expr.Call : KatLang.Expr, System.IEquatable<KatLang.Expr.Call>
   ctor     public Call(KatLang.Expr Function, KatLang.OutputBundle Args)
   property public KatLang.OutputBundle Args { get; init; }
@@ -1683,6 +1698,21 @@ public sealed record KatLang.Pattern.Bind : KatLang.Pattern, System.IEquatable<K
   operator public static bool op_Equality(KatLang.Pattern.Bind? left, KatLang.Pattern.Bind? right)
   operator public static bool op_Inequality(KatLang.Pattern.Bind? left, KatLang.Pattern.Bind? right)
 
+public sealed record KatLang.Pattern.LitBool : KatLang.Pattern, System.IEquatable<KatLang.Pattern.LitBool>
+  ctor     public LitBool(bool Value)
+  property protected override System.Type EqualityContract { get; }
+  property public bool Value { get; init; }
+  method   public virtual KatLang.Pattern.LitBool <Clone>$()
+  method   public void Deconstruct(out bool Value)
+  method   public bool Equals(KatLang.Pattern.LitBool? other)
+  method   public override bool Equals(object? obj)
+  method   public sealed override bool Equals(KatLang.Pattern? other)
+  method   public override int GetHashCode()
+  method   protected override bool PrintMembers(System.Text.StringBuilder builder)
+  method   public override string ToString()
+  operator public static bool op_Equality(KatLang.Pattern.LitBool? left, KatLang.Pattern.LitBool? right)
+  operator public static bool op_Inequality(KatLang.Pattern.LitBool? left, KatLang.Pattern.LitBool? right)
+
 public sealed record KatLang.Pattern.LitInt : KatLang.Pattern, System.IEquatable<KatLang.Pattern.LitInt>
   ctor     public LitInt(System.Numerics.Decimal128 Value)
   property protected override System.Type EqualityContract { get; }
@@ -1817,6 +1847,7 @@ public closed record KatLang.Result : System.IEquatable<KatLang.Result>
   property protected virtual System.Type EqualityContract { get; }
   property public static System.Collections.Generic.IEqualityComparer<KatLang.Result> ValueComparer { get; }
   method   public abstract KatLang.Result <Clone>$()
+  method   public bool? AsBool()
   method   public int? AsIndex()
   method   public System.Numerics.Decimal128? AsNum()
   method   public override bool Equals(object? obj)
@@ -1830,14 +1861,11 @@ public closed record KatLang.Result : System.IEquatable<KatLang.Result>
   method   public (KatLang.Result Value, int EmittedCount) ProjectIteratedContent()
   method   public (KatLang.Result Value, int EmittedCount)? SelectProjected(int i)
   method   public System.Numerics.Decimal128? SingleAtomicNumber()
-  method   public bool? SingleAtomicTruthValue()
   method   public System.Collections.Generic.IReadOnlyList<KatLang.Result> SpreadItems()
   method   public System.Collections.Generic.IReadOnlyList<KatLang.Result>? StructureItems()
-  method   public System.Collections.Generic.IReadOnlyList<System.Numerics.Decimal128> ToAtoms()
   method   public System.Collections.Generic.IReadOnlyList<System.Numerics.Decimal128> ToHostAtoms()
   method   public System.Collections.Generic.IReadOnlyList<KatLang.Result> ToItems()
   method   public override string ToString()
-  method   public bool? TruthValue()
   method   public int ValueCount()
   operator public static bool op_Equality(KatLang.Result? left, KatLang.Result? right)
   operator public static bool op_Inequality(KatLang.Result? left, KatLang.Result? right)
@@ -1856,6 +1884,21 @@ public sealed record KatLang.Result.Atom : KatLang.Result, System.IEquatable<Kat
   method   public override string ToString()
   operator public static bool op_Equality(KatLang.Result.Atom? left, KatLang.Result.Atom? right)
   operator public static bool op_Inequality(KatLang.Result.Atom? left, KatLang.Result.Atom? right)
+
+public sealed record KatLang.Result.Bool : KatLang.Result, System.IEquatable<KatLang.Result.Bool>
+  ctor     public Bool(bool Value)
+  property protected override System.Type EqualityContract { get; }
+  property public bool Value { get; init; }
+  method   public virtual KatLang.Result.Bool <Clone>$()
+  method   public void Deconstruct(out bool Value)
+  method   public bool Equals(KatLang.Result.Bool? other)
+  method   public override bool Equals(object? obj)
+  method   public sealed override bool Equals(KatLang.Result? other)
+  method   public override int GetHashCode()
+  method   protected override bool PrintMembers(System.Text.StringBuilder builder)
+  method   public override string ToString()
+  operator public static bool op_Equality(KatLang.Result.Bool? left, KatLang.Result.Bool? right)
+  operator public static bool op_Inequality(KatLang.Result.Bool? left, KatLang.Result.Bool? right)
 
 public sealed record KatLang.Result.ListValue : KatLang.Result, System.IEquatable<KatLang.Result.ListValue>
   ctor     public ListValue(System.Collections.Generic.IEnumerable<KatLang.Result> items)
@@ -2399,21 +2442,23 @@ public enum KatLang.TokenKind : int
   KeywordNot = 19
   KeywordPublic = 20
   KeywordOpen = 21
-  LParen = 22
-  RParen = 23
-  LBrace = 24
-  RBrace = 25
-  LBracket = 26
-  RBracket = 27
-  Comma = 28
-  Semicolon = 29
-  Equals = 30
-  Colon = 31
-  Dot = 32
-  Tilde = 33
-  Comment = 34
-  EndOfFile = 35
-  Bad = 36
+  KeywordTrue = 22
+  KeywordFalse = 23
+  LParen = 24
+  RParen = 25
+  LBrace = 26
+  RBrace = 27
+  LBracket = 28
+  RBracket = 29
+  Comma = 30
+  Semicolon = 31
+  Equals = 32
+  Colon = 33
+  Dot = 34
+  Tilde = 35
+  Comment = 36
+  EndOfFile = 37
+  Bad = 38
 
 public enum KatLang.UnaryOp : int
   Minus = 0

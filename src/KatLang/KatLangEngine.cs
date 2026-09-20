@@ -100,6 +100,9 @@ public closed record RunResult
     public bool IsFailure => this is ParseFailure or EvalFailure;
 
     /// <summary>Parse and evaluation succeeded.</summary>
+    /// <param name="Root">The elaborated program.</param>
+    /// <param name="Value">The complete structured result, including Booleans and strings.</param>
+    /// <param name="Atoms">Lossy numeric projection through sequences and lists; Booleans and strings are omitted.</param>
     public sealed record Success(
         Algorithm.User Root,
         Result Value,
@@ -555,7 +558,9 @@ public static class KatLangEngine
     }
 
     /// <summary>
-    /// Parse and evaluate, returning the flat list of atoms on success.
+    /// Parse and evaluate, returning the flat list of numeric atoms on success.
+    /// This is a lossy projection: strings, Booleans, and structure boundaries are omitted.
+    /// Use <see cref="Run(string, RunOptions?)"/> to retain the complete value.
     /// Throws <see cref="KatLangException"/> on parse or evaluation failure.
     /// </summary>
     /// <exception cref="OperationCanceledException">
@@ -600,7 +605,7 @@ public static class KatLangEngine
     /// <summary>
     /// Parse and evaluate, returning atoms joined by spaces as a display string.
     /// Returns error text on failure instead of throwing.
-    /// <para>This is a lossy convenience: success drops strings and structure boundaries,
+    /// <para>This is a lossy convenience: success drops strings, Booleans, and structure boundaries,
     /// and the returned text does not distinguish display overflow from ordinary output.
     /// It is not the canonical <see cref="RunResult.RenderDisplay"/> text projection and
     /// its atom-only rendering may fit where canonical display overflows.

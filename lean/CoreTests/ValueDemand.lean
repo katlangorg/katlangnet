@@ -35,9 +35,9 @@ def collectingAlg : Algorithm :=
 /-- `Step(s) = s + 1` (a loop step: a callback slot). -/
 def loopStepAlg : Algorithm := alg ["s"] [] [] [.binary .add (.param "s") (.num 1)]
 
-/-- `Down(s) = s - 1, s` (a `while` step: next state, then the continue flag). -/
+/-- `Down(s) = s - 1, s != 0` (a `while` step: next state, then the Boolean continue flag). -/
 def whileStepAlg : Algorithm :=
-  alg ["s"] [] [] [.binary .sub (.param "s") (.num 1), .param "s"]
+  alg ["s"] [] [] [.binary .sub (.param "s") (.num 1), .binary .ne (.param "s") (.num 0)]
 
 /-- `Add(e, a) = e + a` (a reducer: a callback slot). -/
 def reducerAlg : Algorithm := alg ["e", "a"] [] [] [.binary .add (.param "e") (.param "a")]
@@ -45,9 +45,9 @@ def reducerAlg : Algorithm := alg ["e", "a"] [] [] [.binary .add (.param "e") (.
 /-- `A = 7`. -/
 def sevenAlg : Algorithm := alg [] [] [] [.num 7]
 
-/-- `ApplyInIf(g) = if(1, g, 0)`: the slot names an algorithm-channel parameter. -/
+/-- `ApplyInIf(g) = if(true, g, 0)`: the slot names an algorithm-channel parameter. -/
 def applyInIfAlg : Algorithm :=
-  alg ["g"] [] [] [.call (resolve "if") [.num 1, param "g", .num 0]]
+  alg ["g"] [] [] [.call (resolve "if") [.boolLiteral true, param "g", .num 0]]
 
 /-- `Lib = { Sub(x) = x }`: a navigated structural member. -/
 def libWithParameterizedMember : Algorithm :=
@@ -81,38 +81,38 @@ def flatOk (out : List KatLang.Expr) (expected : List Int) : Bool :=
   expectFlat (runFlat (valueDemandRoot out)) expected
 
 -- `if(1, Inc, 0)`: the selected true branch.
-#guard rejectsAsPropertyArity [.call (resolve "if") [.num 1, resolve "Inc", .num 0]]
+#guard rejectsAsPropertyArity [.call (resolve "if") [.boolLiteral true, resolve "Inc", .num 0]]
 
 -- `if(0, 0, Inc)`: the selected false branch.
-#guard rejectsAsPropertyArity [.call (resolve "if") [.num 0, .num 0, resolve "Inc"]]
+#guard rejectsAsPropertyArity [.call (resolve "if") [.boolLiteral false, .num 0, resolve "Inc"]]
 
 -- `if(Inc, 1, 0)`: the condition slot.
 #guard rejectsAsPropertyArity [.call (resolve "if") [resolve "Inc", .num 1, .num 0]]
 
 -- `if(0, Inc, 7)` / `if(1, 7, Inc)`: the unselected slot is never demanded.
-#guard flatOk [.call (resolve "if") [.num 0, resolve "Inc", .num 7]] [7]
-#guard flatOk [.call (resolve "if") [.num 1, .num 7, resolve "Inc"]] [7]
+#guard flatOk [.call (resolve "if") [.boolLiteral false, resolve "Inc", .num 7]] [7]
+#guard flatOk [.call (resolve "if") [.boolLiteral true, .num 7, resolve "Inc"]] [7]
 
 -- `if(1, A, 0)`: a zero-parameter algorithm is an ordinary value.
-#guard flatOk [.call (resolve "if") [.num 1, resolve "A", .num 0]] [7]
+#guard flatOk [.call (resolve "if") [.boolLiteral true, resolve "A", .num 0]] [7]
 
 -- `if(1, K, 0)`: the decision is the signature's, not the body's — `K(x) = 5`
 -- would succeed if entered, and is rejected all the same.
-#guard rejectsAsPropertyArityOf "K" [.call (resolve "if") [.num 1, resolve "K", .num 0]]
+#guard rejectsAsPropertyArityOf "K" [.call (resolve "if") [.boolLiteral true, resolve "K", .num 0]]
 
 -- `if(1, Inc(4), 0)`: an explicit call is a value.
-#guard flatOk [.call (resolve "if") [.num 1, .call (resolve "Inc") [.num 4], .num 0]] [5]
+#guard flatOk [.call (resolve "if") [.boolLiteral true, .call (resolve "Inc") [.num 4], .num 0]] [5]
 
 -- `if(1, Collect, 0)` versus `if(1, Collect(), 0)`: a collecting callable still
 -- has a parameter, so it is not a zero-argument value; the explicit empty call is.
 def collectingSlotRejects : Bool :=
-  match runResult (valueDemandRoot [.call (resolve "if") [.num 1, resolve "Collect", .num 0]]) with
+  match runResult (valueDemandRoot [.call (resolve "if") [.boolLiteral true, resolve "Collect", .num 0]]) with
   | Except.error err => innermostIsArityMismatch 1 0 err && hasContext "while evaluating property Collect" err
   | _ => false
 #guard collectingSlotRejects
 
 def collectingExplicitCallIsValue : Bool :=
-  match runResult (valueDemandRoot [.call (resolve "if") [.num 1, .call (resolve "Collect") [], .num 0]]) with
+  match runResult (valueDemandRoot [.call (resolve "if") [.boolLiteral true, .call (resolve "Collect") [], .num 0]]) with
   | Except.ok (Result.listValue []) => true
   | _ => false
 #guard collectingExplicitCallIsValue
@@ -132,7 +132,7 @@ def parameterSlotRejectsBare : Bool :=
 -- brace block reports `unresolvedImplicitParams`, as it does in value position.
 def blockSlotReportsUnresolvedImplicitParams : Bool :=
   match runResult (valueDemandRoot [.call (resolve "if")
-      [.num 1, .algorithmExpr (alg ["x"] [] [] [.binary .add (.param "x") (.num 1)]), .num 0]]) with
+      [.boolLiteral true, .algorithmExpr (alg ["x"] [] [] [.binary .add (.param "x") (.num 1)]), .num 0]]) with
   | Except.error err => innermostIsUnresolvedImplicitParams ["x"] err
   | _ => false
 #guard blockSlotReportsUnresolvedImplicitParams

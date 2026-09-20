@@ -16,6 +16,9 @@ public class DeconstructionBindingTests
     private static Decimal128[] Atoms(string source)
         => KatLangEngine.EvaluateToAtoms(source).ToArray();
 
+    private static void AssertBool(string source, bool expected)
+        => EvaluatorTestSupport.AssertEvalBool(source, expected);
+
     private static void AssertAtoms(string source, params Decimal128[] expected)
         => Assert.Equal(expected, Atoms(source));
 
@@ -270,8 +273,8 @@ public class DeconstructionBindingTests
     public void Assignment_SingleCollectingBinding_CollectsEntireSupplyAsExactList()
     {
         AssertAtoms("*all = 1, 2, 3\nall", 1, 2, 3);
-        AssertAtoms("*all = 1\nall == [1]", 1);
-        AssertAtoms("*all = ()\nall == []", 1);
+        AssertBool("*all = 1\nall == [1]", true);
+        AssertBool("*all = ()\nall == []", true);
     }
 
     [Theory]
@@ -760,8 +763,8 @@ public class DeconstructionBindingTests
         // `(A)` inside a written sequence value is one grouping level around a
         // single already-evaluated item, so both binding forms receive the
         // scalar 5 — never a literal-unwritable orphan `(5)`.
-        AssertAtoms("A = 5\nx, y = ((A), 6)\nx == 5", 1);
-        AssertAtoms("A = 5\nF((x, y)) = x == 5\nF(((A), 6))", 1);
+        AssertBool("A = 5\nx, y = ((A), 6)\nx == 5", true);
+        AssertBool("A = 5\nF((x, y)) = x == 5\nF(((A), 6))", true);
     }
 
     [Fact]

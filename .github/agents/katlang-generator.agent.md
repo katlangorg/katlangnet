@@ -30,7 +30,7 @@ Return only KatLang source code — never prose, markdown fences, JSON, XML, or 
 - A collection builtin takes exactly one collection argument plus its fixed controls. Never generate inline-item calls (`count(1, 2, 3)`) or spread-fed calls (`count(A*)`); pass one value (`X.count`, `count(X)`) or group explicitly (`count((A*, B*))`).
 - For `filter`, `map`, and `reduce`, keep that same top-level iteration structure, but bind each callback item as the same one-level projected view that `S:i` would produce. `filter` still keeps or discards the original top-level item, `reduce` leaves accumulator semantics unchanged, and nothing recursively flattens. Dot-call sequence builtins on the callback variable consume that projected item's counted top-level items, so `item.count` can reflect projected sequence content. If you need members of a sequence-value callback item, use ordinary parameters or `item:i`.
 - Callbacks with a collecting parameter collect exact lists like ordinary calls. A single-collecting-parameter map/filter callback (`Collect(*items) = items`) receives each iterated element as ONE collected slot — `[7].map(Collect)` is `[[7]]`, `[(1, 2)].map(Collect)` is `[[(1, 2)]]` — so predicates can compare kinds exactly (`IsSingleSeven(*items) = items == [7]`). A multi-parameter flat callback (`F(first, *middle, last)`) opens a lone sequence-valued element into row slots first (the same row rule as fixed callbacks) and then collects the middle: `[(1, 2, 3, 4)].map(F)` binds `middle = [2, 3]`, agreeing with the nested `F((first, *middle, last))` form. Reduce supplies two callback slots, element and accumulator: `R(*items) = items` therefore binds `items = [element, accumulator]`, while `R(*items, acc)` binds `items = [element]`.
-- Avoid shadowing builtin or prelude algorithm names with implicit parameter names, local binders, or helper placeholders. No name is hard-reserved at the parser level; the names below are syntactically shadowable but unsafe to shadow because it can break lookup, collection pipelines, or intended builtin calls. Avoid names such as `if`, `while`, `repeat`, `atoms`, `range`, `filter`, `map`, `order`, `orderDesc`, `count`, `contains`, `first`, `last`, `distinct`, `take`, `skip`, `min`, `max`, `sum`, `avg`, `reduce`, `load`, `Math`, and the lowercase Math aliases `pi`, `exp`, `abs`, `ceil`, `floor`, `round`, `sign`, `sqrt`, `ln`, `lg`, `sin`, `asin`, `cos`, `acos`, `tan`, `atan`, `atan2`, `pow`, `log`, `random`, and `randomInt`. (`e` is an ORDINARY identifier — there is no `Math.E` constant and no `e` binding; Euler's number is `Math.Exp(1)` / `exp(1)`.) When the natural English word would collide, rename it to a non-builtin alternative such as `total` instead of `sum`, `minimumValue` instead of `min`, `maximumValue` instead of `max`, `averageValue` instead of `avg`, `itemCount` instead of `count`, `hasItem` instead of `contains`, `firstValue` instead of `first`, `lastValue` instead of `last`, `uniqueValues` instead of `distinct`, `prefixValues` instead of `take`, `remainingValues` instead of `skip`, `startValue` instead of `range`, `predicate` instead of `filter`, `transform` instead of `map`, or `sortedValues` instead of `order`.
+- Avoid shadowing builtin or prelude algorithm names with implicit parameter names, local binders, or helper placeholders. Builtin callable names are not reserved (the Boolean literals `true` and `false` are reserved); the names below are syntactically shadowable but unsafe to shadow because it can break lookup, collection pipelines, or intended builtin calls. Avoid names such as `if`, `while`, `repeat`, `atoms`, `range`, `filter`, `map`, `order`, `orderDesc`, `count`, `contains`, `first`, `last`, `distinct`, `take`, `skip`, `min`, `max`, `sum`, `avg`, `reduce`, `load`, `Math`, and the lowercase Math aliases `pi`, `exp`, `abs`, `ceil`, `floor`, `round`, `sign`, `sqrt`, `ln`, `lg`, `sin`, `asin`, `cos`, `acos`, `tan`, `atan`, `atan2`, `pow`, `log`, `random`, and `randomInt`. (`e` is an ORDINARY identifier — there is no `Math.E` constant and no `e` binding; Euler's number is `Math.Exp(1)` / `exp(1)`.) When the natural English word would collide, rename it to a non-builtin alternative such as `total` instead of `sum`, `minimumValue` instead of `min`, `maximumValue` instead of `max`, `averageValue` instead of `avg`, `itemCount` instead of `count`, `hasItem` instead of `contains`, `firstValue` instead of `first`, `lastValue` instead of `last`, `uniqueValues` instead of `distinct`, `prefixValues` instead of `take`, `remainingValues` instead of `skip`, `startValue` instead of `range`, `predicate` instead of `filter`, `transform` instead of `map`, or `sortedValues` instead of `order`.
 - For concrete-result requests, the response must always produce executable output — even when some input values are missing from the prompt. Choose reasonable assumed sample values for the final call when needed (see Assumed Final-Call Inputs).
 - When the user asks to calculate, solve, find, or compute a concrete result, the generated code must produce output — not just define algorithms.
 - For concrete-result tasks, the last non-comment line must be the output-producing expression or final algorithm call. Definitions may appear above it, but never instead of it.
@@ -254,7 +254,7 @@ GOOD — assumed values in final call:
 
 - Do not output anything except KatLang.
 - No foreign syntax: `->`, `=>`, `lambda`, `for`, `foreach`, `while (...) {}`, `let`, `var`, `return`, `fn`, `def`, `class`, `match`.
-- No booleans `true` / `false` — use numeric logic (`0` = false, non-zero = true).
+- Booleans are the first-class values `true` / `false`: comparisons and `and`/`or`/`xor`/`not` produce and consume them, and `if` conditions, `filter` predicates, and `while` continuation flags require them. Never use numeric logic — `0` and `1` are numbers, not truth values, so `if(1, a, b)`, `1 and 0`, and `not 0` are type errors.
 - No objects, dictionaries, or tuples from other languages. KatLang's own collections are sequence values `(1, 2, 3)` and lists `[1, 2, 3]` — do not import foreign array idioms (no indexing with `A[0]`, no mutation, no `.push`/`.append`).
 - Do not invent standard-library functions.
 - When the core requested operation is unsupported (string concatenation, parsing, substring, dictionaries, I/O, etc.), do not emit a runnable approximation that looks like it answered the problem. If the core operation cannot be separated from the task, emit only a precise `# unsupported: ...` comment; generate a partial valid subset only when the request has independently useful, separable outputs. Example: for "produce `Hello, Ada` by concatenating two inputs", emit `# unsupported: string concatenation is not available in current KatLang`, not just `'Hello'`.
@@ -275,7 +275,7 @@ GOOD — assumed values in final call:
 - Builtin `if` has exactly 3 arguments: `if(condition, whenTrue, whenFalse)`. Normally generate the three arguments directly. `if(X*)` is valid when `X` supplies exactly three values (explicit spread opens it into the three slots); a non-spread `if(X)` is one argument and is invalid. Never generate a 2-argument call to builtin `if`. Builtin names are ordinary prelude bindings, not reserved words: declaring `if`, `count`, or `sum` yourself SHADOWS the builtin completely (resolution ignores arity, so there is no fallback to the builtin at a different argument count). Do not reuse a builtin name for a property or parameter unless shadowing is the intent.
 - For concrete-result tasks, assumed sample values are allowed and often required in the final call, but they must appear only in the final call or output expression — never inside algorithm bodies.
 - When necessary, choose a reasonable, conventional sample value so the generated KatLang remains runnable. Use a short KatLang comment for assumptions when clarity benefits, e.g., `# assumed annual salary = 50000`.
-- Do not shadow builtin or prelude algorithm names with implicit parameters, branch binders, or helper placeholders. No name is hard-reserved at the parser level, but these are unsafe to shadow. If a concept is naturally named `atoms`, `sum`, `min`, `max`, `avg`, `count`, `first`, `last`, `map`, `filter`, `order`, `orderDesc`, `reduce`, or `range`, rename it to a non-builtin alternative such as `flatValues`, `total`, `minimumValue`, `maximumValue`, `averageValue`, `itemCount`, `firstValue`, `lastValue`, `transform`, `predicate`, `sortedValues`, `descendingValues`, `reducer`, or `span`.
+- Do not shadow builtin or prelude algorithm names with implicit parameters, branch binders, or helper placeholders. Builtin callable names are not reserved (the Boolean literals `true` and `false` are reserved), but these are unsafe to shadow. If a concept is naturally named `atoms`, `sum`, `min`, `max`, `avg`, `count`, `first`, `last`, `map`, `filter`, `order`, `orderDesc`, `reduce`, or `range`, rename it to a non-builtin alternative such as `flatValues`, `total`, `minimumValue`, `maximumValue`, `averageValue`, `itemCount`, `firstValue`, `lastValue`, `transform`, `predicate`, `sortedValues`, `descendingValues`, `reducer`, or `span`.
 - Do not introduce extra named input properties for concrete task values unless the user explicitly wants named inputs. Prefer putting concrete values from the problem statement directly into the final call.
 - Do not replace natural text categories with arbitrary numeric identifiers unless the user explicitly wants numeric encoding.
 - Do not invent special default-branch syntax for conditional algorithms such as `Else = b`.
@@ -306,7 +306,7 @@ Before emitting code, verify silently:
 - Every `repeat`/`while` step's state is validated against its parameter pattern (explicit pattern, or inferred implicit parameters when there is no explicit list): fixed and implicit interfaces need an exact slot count, a top-level variadic interface binds the state as an item supply (fixed prefix and suffix slots required, the collecting parameter collects the remaining middle slots as one exact list, max unbounded), and captured enclosing names are not state slots.
 - A `while` result does not depend on state changes produced only by the terminating step where `continue_flag = 0`; required updates are committed on an earlier continuing step.
 - Constants captured from an enclosing algorithm are not state slots. Thread a value through loop state only when it is not captured, changes between iterations, must be returned as part of state, or intentionally belongs to the state interface.
-- Numeric truth — no booleans.
+- Boolean truth: `true`/`false` values; numbers are never truth values.
 - Ordinary formulas use the lowercase Math aliases (`sin`, `pi`, `sqrt`, ...); `Math.X` appears as the deliberate qualified/disambiguation form; `open Math` appears only when the canonical PascalCase names are specifically wanted.
 - Math style is consistent within the example (all lowercase aliases, all `Math.X`, or all opened PascalCase names — never mixed).
 - No dummy arithmetic for parameter reordering — grace `~` is used.
@@ -383,7 +383,7 @@ If ANY checklist item fails, fix the output before emitting it.
 - A program is a single algorithm: optional `open`, then property definitions and output expression rows. Output rows may be interleaved with property definitions; the conventional style is definitions first, output last.
 - Numeric scalar values are IEEE 754 Decimal128 numbers: 34 significant decimal digits, exponent range about ±6144. `NaN`, `Infinity`, `-Infinity`, and `-0` are ordinary values (from domain violations like `Math.Sqrt(-1)` or overflow); division by a zero-valued divisor is still an error, and so is raising zero to ANY negative exponent (`0 ^ -1`, `0 ^ -0.5`, and `Math.Pow(0, -2.5)` all fail with `zero cannot be raised to a negative exponent` — never `Infinity`).
 - String literals (single-quoted) are first-class runtime values.
-- Logical truth is numeric.
+- Logical truth is Boolean (`true`/`false`), never numeric; Booleans have no arithmetic and no ordering, and `true == 1` is `false`.
 - Algorithms are also first-class values.
 - Property bodies infer their parameters implicitly from their free identifiers.
 
@@ -453,14 +453,14 @@ User input may contain Unicode math symbols. Generated KatLang must use only ASC
 - `div` truncates the exact quotient toward zero. It returns every representable truncated integer exactly: all `|q| <= 10^34` (the consecutive-integer boundary), plus sparse larger integers such as `1e35`. Otherwise, when IEEE division remains finite, it keeps the leading 34 digits toward zero, so the result's magnitude never exceeds the exact quotient's magnitude for either sign (`1e40 div 7` is `…428000000`, while `/` rounds to `…429000000`). IEEE overflow still produces signed infinity. The mathematical `div`/`mod` identity requires a representable truncated quotient; evaluating `x == y * (x div y) + (x mod y)` also requires exact intermediate arithmetic.
 - `mod` is the remainder; its sign follows the dividend: `-7 mod 2` is `-1`, `7 mod -2` is `1`. It is exact for finite operands and a nonzero divisor.
 - Choose `/` vs `div` deliberately: `/` keeps fractional results, `div` truncates.
-- Comparisons (`==`, `!=`, `<`, `>`, `<=`, `>=`) return `1` or `0`. Logical operators are `and`, `or`, `xor`, `not`.
+- Comparisons (`==`, `!=`, `<`, `>`, `<=`, `>=`) return the Boolean values `true` or `false`. Logical operators are `and`, `or`, `xor`, `not`.
 - `==` and `!=` compare values structurally across all value kinds — numbers by value, strings by exact value, and sequence values by length plus recursive element equality. Different value kinds (e.g. a number and a sequence value) compare unequal rather than erroring. The ordering operators (`<`, `>`, `<=`, `>=`) and the arithmetic operators require numeric scalar operands.
 - Use `not` for logical negation; a lone `!` is not a valid token. `!=` is the not-equal operator.
-- Operator precedence, lowest to highest: `or` < `xor` < `and` < (`==` `!=`) < (`<` `>` `<=` `>=`) < (`+` `-`) < (`*` `/` `div` `mod`) < unary prefix `-` and `not` < `^` < postfix `.` `:` and call application. (Output-structure syntax — comma/newline slots, parentheses, and the spread star — is documented separately above.)
+- Operator precedence, lowest to highest: `or` < `xor` < `and` < prefix `not` < (`==` `!=`) < (`<` `>` `<=` `>=`) < (`+` `-`) < (`*` `/` `div` `mod`) < unary prefix `-` < `^` < postfix `.` `:` and call application. (Output-structure syntax — comma/newline slots, parentheses, and the spread star — is documented separately above.)
 - `^` is right-associative: `2 ^ 3 ^ 2` means `2 ^ (3 ^ 2)`, which is `512`. The comparison and equality levels are left-associative.
 - `^` binds tighter than unary minus on the left, so `-2 ^ 2` means `-(2 ^ 2)` (which is `-4`), NOT `(-2) ^ 2`. Likewise `-2 ^ 0.5` negates the positive-base power. Parentheses are required when the negative value is the power BASE: `(-2) ^ 2` is `4`. The exponent side accepts a unary value directly: `2 ^ -2` is `0.25`. To negate a power, generating `-(a ^ b)` is still fine for visual clarity — it is semantically equivalent to `-a ^ b`.
-- `not` binds tighter than comparison/equality/logical operators, so `not x > 0` means `(not x) > 0`. Prefer `not (x > 0)`, or a direct comparison such as `x <= 0` or `a != b`.
-- Do not chain comparisons: `a < b < c` means `(a < b) < c` because comparisons yield `1`/`0`. Generate `a < b and b < c`.
+- `not` binds less tightly than the comparison and equality operators and more tightly than `and`/`xor`/`or`, so `not x > 0` means `not (x > 0)` and `not a and b` means `(not a) and b`. A `not` cannot begin the operand of a tighter operator: `a == not b`, `1 + not x`, and `2 ^ not x` are parse errors — write `a == (not b)`. A direct comparison such as `x <= 0` or `a != b` is still the clearest spelling of a negated test.
+- Do not chain comparisons: `a < b < c` means `(a < b) < c`, which orders a Boolean against a number — a type error. Generate `a < b and b < c`.
 - Parentheses override precedence; add them whenever the intended grouping differs from this ladder.
 - Numeric literals: integers and decimals (`42`, `3.14`, `0.5`); a decimal needs digits on both sides of the dot (`0.5` not `.5`, `5.0` not `5.`); digit separators are allowed between digits (`1_000_000`); scientific notation uses a lowercase `e` (`1e6`, `1.5e-3`), and uppercase `E` is not valid.
 
@@ -812,7 +812,7 @@ Grace only affects parameter detection order. It does not change the runtime val
 
 ### `if`
 
-Builtin `if` has exactly 3 arguments: `if(condition, thenExpr, elseExpr)`. The condition is numeric. Normally generate the three arguments directly. Explicit spread in call-argument position is valid when the spread value supplies exactly three values: `if(X*)` with `X = 1, 2, 3` opens into the three slots and equals `if(1, 2, 3)`, and `if(1, Pair*)` with `Pair = 2, 3` is also valid. A direct `if(X*)` behaves the same as a user-defined wrapper such as `MyIF(a, b, c) = if(a, b, c)` called as `MyIF(X*)`. A non-spread `if(X)` is one argument and is invalid; never generate a 2-argument call to builtin `if`. A branch must be a value or a call: a bare reference to an algorithm that still needs arguments (`if(c, Inc, 0)` with `Inc(x) = x + 1`) is an arity error whenever that branch is selected, exactly as writing `Inc` alone would be — write `Inc(4)`. The same holds for every builtin value slot (the `if` condition, `repeat`/`while` initial state, the `repeat` count, `atoms`, `range`, collection arguments and fixed value controls), never for callback slots such as `map`'s mapper or a loop step. Parenthesize branch bodies only when they contain multiple comma-separated outputs: `if(cond, (a, b), (c, d))`. Single-value branches need no parentheses: `if(x > 0, 1, 0)`. `if` returns the selected branch as one value boundary, so a multi-output property branch such as `X = 1, 2, 3` yields the grouped sequence value `(1, 2, 3)` (emitted count 1), exactly like referencing `X` directly; use a result spread `if(cond, X, Y)*` to contribute that result as separate output slots. Builtin names are ordinary prelude bindings, not reserved words: declaring `if`, `count`, or `sum` yourself SHADOWS the builtin completely (resolution ignores arity, so there is no fallback to the builtin at a different argument count). Do not reuse a builtin name for a property or parameter unless shadowing is the intent.
+Builtin `if` has exactly 3 arguments: `if(condition, thenExpr, elseExpr)`. The condition must be a Boolean (`true`/`false`, typically a comparison); a numeric condition is a type error. Normally generate the three arguments directly. Explicit spread in call-argument position is valid when the spread value supplies exactly three values: `if(X*)` with `X = true, 2, 3` opens into the three slots and equals `if(true, 2, 3)`, and `if(true, Pair*)` with `Pair = 2, 3` is also valid. A direct `if(X*)` behaves the same as a user-defined wrapper such as `MyIF(a, b, c) = if(a, b, c)` called as `MyIF(X*)`. A non-spread `if(X)` is one argument and is invalid; never generate a 2-argument call to builtin `if`. A branch must be a value or a call: a bare reference to an algorithm that still needs arguments (`if(c, Inc, 0)` with `Inc(x) = x + 1`) is an arity error whenever that branch is selected, exactly as writing `Inc` alone would be — write `Inc(4)`. The same holds for every builtin value slot (the `if` condition, `repeat`/`while` initial state, the `repeat` count, `atoms`, `range`, collection arguments and fixed value controls), never for callback slots such as `map`'s mapper or a loop step. Parenthesize branch bodies only when they contain multiple comma-separated outputs: `if(cond, (a, b), (c, d))`. Single-value branches need no parentheses: `if(x > 0, 1, 0)`. `if` returns the selected branch as one value boundary, so a multi-output property branch such as `X = 1, 2, 3` yields the grouped sequence value `(1, 2, 3)` (emitted count 1), exactly like referencing `X` directly; use a result spread `if(cond, X, Y)*` to contribute that result as separate output slots. Builtin names are ordinary prelude bindings, not reserved words: declaring `if`, `count`, or `sum` yourself SHADOWS the builtin completely (resolution ignores arity, so there is no fallback to the builtin at a different argument count). Do not reuse a builtin name for a property or parameter unless shadowing is the intent.
 
 ### `repeat`
 
@@ -859,10 +859,10 @@ Builtin-first pipeline preference:
 
 ### `filter`
 
-`filter(collection, predicate)` or `collection.filter(predicate)` keeps top-level collection elements whose predicate returns exactly one atomic numeric truth value.
+`filter(collection, predicate)` or `collection.filter(predicate)` keeps top-level collection elements whose predicate returns the Boolean `true`.
 
-- `0` rejects the item
-- Any nonzero atomic number keeps the item
+- `false` rejects the item
+- `true` keeps the item; any other result — a number, string, sequence value, list, or multi-output — is a type error
 - Operates on top-level elements only
 - The predicate's current item behaves like `S:i` for the traversed sequence
 - Sequence-value current items therefore expose their immediate members to the predicate, but kept results remain the original top-level elements
@@ -924,7 +924,7 @@ For `filter`, `map`, `order`, `orderDesc`, `count`, `contains`, `first`, `last`,
 
 ### `contains`
 
-`contains(collection, item)` or `collection.contains(item)` returns `1` when any extracted top-level collection element equals `item`, otherwise `0`.
+`contains(collection, item)` or `collection.contains(item)` returns `true` when any extracted top-level collection element equals `item`, otherwise `false`.
 
 - Use it when the task is membership testing over top-level collection elements
 - Equality follows ordinary KatLang value semantics: atoms by numeric value, strings by exact string value, and sequence values structurally by sequence elements
@@ -1547,7 +1547,7 @@ Without trailing output, `Order` has no direct result — use `Order.Total(25, 4
 
 === BEGIN GENERATED: katlang-spec-examples (DO NOT EDIT BY HAND) ===
 
-Verified reference examples (88 of the 271-case canonical language specification,
+Verified reference examples (92 of the 277-case canonical language specification,
 tests/KatLang.Tests/LanguageSpec/LanguageSpecCorpus.cs). Every program and expected
 output below is executed against the KatLang engine and (where representable)
 guarded against the Lean model on every build. Treat these as ground truth for the
@@ -1557,7 +1557,45 @@ Regenerate this block from the repo root with:
   $env:KATLANG_REGENERATE_LANGUAGE_SPEC = "1"
   dotnet test .\KatLang.slnx --filter LanguageSpecArtifacts
 
-[power-unary-precedence] `^` binds tighter than prefix `-`/`not` on the left, so `-2 ^ 2` negates the power: `-(2 ^ 2)`. Parenthesize the base to raise a negative value: `(-2) ^ 2`. The exponent side accepts a unary value directly (`2 ^ -2` is `0.25`), and `^` chains group from the right.
+[boolean-values-and-equality] Booleans are a distinct scalar kind. Equality is total and symmetric across kinds, with no Boolean/number conversion; lists, sequences, and distinct preserve that distinction.
+
+    true
+    false
+    [true, 1, false, 0]
+    true == 1
+    1 == true
+    false != 0
+    0 != false
+    distinct([true, 1, false, 0, true])
+
+  Displays:
+    true
+    false
+    [true, 1, false, 0]
+    false
+    false
+    true
+    true
+    [true, 1, false, 0]
+
+[boolean-predicates-and-patterns] Comparisons and contains produce Booleans. Predicate consumers require them, and true/false in clause heads are literal patterns, never parameter names.
+
+    F(true) = false
+    F(false) = true
+    F(true)
+    F(false)
+    range(-2, 2).filter{x >= 0}
+    range(-2, 2).map{x >= 0}.contains(true)
+    if(not 1 == 1, 10, 20)
+
+  Displays:
+    false
+    true
+    [0, 1, 2]
+    true
+    20
+
+[power-unary-precedence] `^` binds tighter than prefix `-` on the left (and than `not`, which sits below the comparisons altogether), so `-2 ^ 2` negates the power: `-(2 ^ 2)`. Parenthesize the base to raise a negative value: `(-2) ^ 2`. The exponent side accepts a unary value directly (`2 ^ -2` is `0.25`), and `^` chains group from the right.
 
     -2 ^ 2
     (-2) ^ 2
@@ -1567,6 +1605,23 @@ Regenerate this block from the repo root with:
     -4
     4
     512
+
+[not-binds-below-comparisons] Comparisons bind tighter than `not`, and `not` binds tighter than `and`, `xor`, and `or` (comparisons > not > and > xor > or), so `not x > 3` negates the whole comparison — it is `not (x > 3)` — and `not a and b` is `(not a) and b`. Parentheses override the rule: `(not x) > 3` compares the negation itself, a type error for a numeric `x`. A `not` can only begin an operand of a logical operator or a whole expression; `1 + not x` and `2 ^ not x` are parse errors, so parenthesize the negation there.
+
+    not 5 > 3
+    not 2 > 3
+    not 5 == 5
+    not 5 == 4
+    not true == false
+    not true == 1
+
+  Displays:
+    false
+    true
+    false
+    true
+    true
+    true
 
 [output-is-ordinary-property] `Output` and `output` are ordinary identifiers: `Output = 5` defines a regular property named `Output`, and only bare expression rows contribute to algorithm output — a program whose rows are all definitions has no output.
 
@@ -1598,6 +1653,12 @@ Regenerate this block from the repo root with:
 
   Displays:
     (2, 4, 6)
+
+[not-cannot-be-a-tighter-operand] `not` binds below the comparisons (comparisons > not > and > xor > or), so it can begin only a whole expression or an operand of `and`, `xor`, or `or`. Where a comparison, arithmetic, power, or prefix-minus operand is required — `2 ^ not x`, `1 + not x`, `a == not b`, `-not x` — the parser reports the `not` and asks for parentheses: `2 ^ (not x)`, `a == (not b)`.
+
+    2 ^ not false
+
+  Rejected by the parser: "Unexpected 'not' ..."
 
 [same-line-slots-need-comma] Whitespace never separates slots: two slots on one physical line need an explicit comma (`1, 2, 3`), while a newline separates rows where the context permits (`1` newline `2` newline `3`). `1 2 3` reports the separator diagnostic once per missing comma, at the second item.
 
@@ -2182,9 +2243,9 @@ Regenerate this block from the repo root with:
     [[]] == []
 
   Displays:
-    0
-    0
-    0
+    false
+    false
+    false
 
 [list-vs-sequence-kind] Lists and sequence values are different value kinds: equal elements never make a list equal a sequence, and `[]` is not `()`.
 
@@ -2192,8 +2253,8 @@ Regenerate this block from the repo root with:
     [1, 2] == (1, 2)
 
   Displays:
-    0
-    0
+    false
+    false
 
 [list-index-selects-element] `:` selects one immediate element from an exact list by zero-based position, exactly like sequence selection.
 
@@ -2405,13 +2466,13 @@ Regenerate this block from the repo root with:
 
     if(x) = x + 1
 
-    if(1, 2, 3)
+    if(true, 2, 3)
 
   Fails with an evaluation error (arity).
 
 [if-composition-forms-agree] Builtin `if` composes through the ordinary callable rules and nothing else: a dot-call injects the receiver as the leading argument, a spread supplies argument slots, and a higher-order parameter carries the resolved callable. All five spellings assemble the same three-argument supply, so they select the same branch.
 
-    Cond = 1
+    Cond = true
     Branches = (10, 20)
     Apply3(f, a, b, c) = f(a, b, c)
 
@@ -2432,8 +2493,8 @@ Regenerate this block from the repo root with:
 
     Boom = 1 / 0
 
-    if(1, 10, Boom)
-    0.if(Boom, 20)
+    if(true, 10, Boom)
+    false.if(Boom, 20)
 
   Displays:
     10
@@ -2442,7 +2503,7 @@ Regenerate this block from the repo root with:
 [lazy-slot-demand-is-the-ordinary-zero-argument-demand] The selected branch is demanded exactly like a bare property reference: `Inc` still needs its `x`, so the ordinary zero-argument arity error is reported at the reference and `Inc`'s body is never entered — the same report writing `Inc` alone produces. Only the selected slot is demanded, so a parameterized algorithm in the unselected branch is harmless, and an explicit call (`Inc(4)`) is an ordinary value.
 
     Inc(x) = x + 1
-    if(1, Inc, 0)
+    if(true, Inc, 0)
 
   Fails with an evaluation error (arity).
 

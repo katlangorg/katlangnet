@@ -535,6 +535,10 @@ public class MetamorphicFuzzHarnessTests
             new Result.Atom(0m),
             new Result.Atom(-12.5m),
             new Result.Str("abc"),
+            new Result.Bool(true),
+            new Result.Bool(false),
+            new Result.SequenceValue([new Result.Bool(true), new Result.Bool(false)]),
+            new Result.ListValue([new Result.Bool(false), new Result.Atom(0m)]),
             new Result.SequenceValue([]),
             new Result.SequenceValue([new Result.Atom(1m), new Result.Atom(2m)]),
             new Result.ListValue([]),
@@ -544,6 +548,10 @@ public class MetamorphicFuzzHarnessTests
 
         foreach (var value in values)
             Assert.Equal(SemanticExplorerHarness.Neutral(value), MetamorphicValue.Neutral(value));
+
+        Assert.NotNull(MetamorphicComparator.Compare(SampleCase(),
+            Ok(MetamorphicValue.Neutral(new Result.Bool(true)), 1, 5, 0),
+            Ok(MetamorphicValue.Neutral(new Result.Bool(false)), 1, 5, 0)));
 
         // Order and nesting stay distinguishable.
         Assert.NotEqual(

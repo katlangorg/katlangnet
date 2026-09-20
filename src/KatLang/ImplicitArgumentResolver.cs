@@ -380,6 +380,7 @@ internal static class ImplicitArgumentResolver
             case Expr.Param:
             case Expr.Num:
             case Expr.StringLiteral:
+            case Expr.BoolLiteral:
             case Expr.EmptySequence:
             case Expr.NativeCall:
                 break;
@@ -1070,7 +1071,7 @@ internal static class ImplicitArgumentResolver
             // forms are never valid open targets — the evaluator's open-form
             // validation rejects them (BadOpenForm) — so a host-built one
             // passes through unprocessed like a leaf.
-            Expr.Resolve or Expr.Param or Expr.Num or Expr.StringLiteral or Expr.EmptySequence
+            Expr.Resolve or Expr.Param or Expr.Num or Expr.StringLiteral or Expr.BoolLiteral or Expr.EmptySequence
                 or Expr.NativeCall or Expr.Grace or Expr.Unary or Expr.Binary or Expr.Index => expr,
         };
     }
@@ -1398,6 +1399,7 @@ internal static class ImplicitArgumentResolver
 
             case Pattern.LitInt:
             case Pattern.LitString:
+            case Pattern.LitBool:
                 parameterPattern = null;
                 return false;
 
@@ -1631,6 +1633,7 @@ internal static class ImplicitArgumentResolver
             case Expr.Num:
             case Expr.Param:
             case Expr.StringLiteral:
+            case Expr.BoolLiteral:
             case Expr.EmptySequence:
             case Expr.NativeCall:
                 break;
@@ -1804,7 +1807,7 @@ internal static class ImplicitArgumentResolver
             // Intentional leaves: nothing to lift or rewrite. (A Param is an
             // already-elaborated parameter reference; the Resolve arm above
             // handled every liftable name shape.)
-            Expr.Num or Expr.Param or Expr.StringLiteral or Expr.EmptySequence or Expr.NativeCall => expr,
+            Expr.Num or Expr.Param or Expr.StringLiteral or Expr.BoolLiteral or Expr.EmptySequence or Expr.NativeCall => expr,
         };
     }
 
@@ -2117,7 +2120,7 @@ internal static class ImplicitArgumentResolver
             // contexts (no lifting at this level, so higher-order references
             // such as Apply(Increment) survive), and literals carry nothing to
             // process.
-            Expr.Resolve or Expr.Param or Expr.Num or Expr.StringLiteral
+            Expr.Resolve or Expr.Param or Expr.Num or Expr.StringLiteral or Expr.BoolLiteral
                 or Expr.EmptySequence or Expr.NativeCall => expr,
         };
     }

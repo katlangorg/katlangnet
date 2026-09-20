@@ -22,6 +22,8 @@ public static class Lexer
         ("not", TokenKind.KeywordNot),
         ("public", TokenKind.KeywordPublic),
         ("open", TokenKind.KeywordOpen),
+        ("true", TokenKind.KeywordTrue),
+        ("false", TokenKind.KeywordFalse),
     ];
 
     private static readonly IReadOnlyDictionary<string, TokenKind> Keywords =

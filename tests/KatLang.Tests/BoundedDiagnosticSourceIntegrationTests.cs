@@ -196,7 +196,7 @@ public class BoundedDiagnosticSourceIntegrationTests
         // message nothing would ever read.
         var items = string.Join(", ", Enumerable.Repeat("A", 50));
         var observed = ObserveCounted(
-            DagProgram($"Keep(v) = 1\n[{items}].filter(Keep).count", depth: 18),
+            DagProgram($"Keep(v) = true\n[{items}].filter(Keep).count", depth: 18),
             enableOptimizations);
 
         Assert.False(observed.Result.IsError);
@@ -209,7 +209,7 @@ public class BoundedDiagnosticSourceIntegrationTests
     [InlineData(true)]
     public void OnlyTheFailingFilterItemConstructsOneDiagnostic(bool enableOptimizations)
     {
-        var source = "BadOnFive(x) = if(x == 5, 1 / 0, 1)\nrange(1, 10).filter(BadOnFive).count";
+        var source = "BadOnFive(x) = if(x == 5, 1 / 0 > 0, true)\nrange(1, 10).filter(BadOnFive).count";
         var observed = ObserveCounted(source, enableOptimizations);
 
         Assert.True(observed.Result.IsError);
