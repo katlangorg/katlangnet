@@ -375,7 +375,11 @@ public static partial class Evaluator
     /// as <see cref="BindCountedCallbackParams"/> does for fixed-only flat
     /// callees. The resulting slots then bind through the shared
     /// prefix/collecting/suffix binder, so the collecting parameter COLLECTS its allocated
-    /// slots as one list. Lean:
+    /// slots as one list under the collector supply-boundary law
+    /// (<see cref="CollectorSupply"/>): a whole callback argument is a written
+    /// slot (a lone sequence item on a single-collecting callee opens one level —
+    /// <c>((1, 2), (3, 4)).map(Coll)</c> is <c>[[1, 2], [3, 4]]</c>), while
+    /// row-unpacked slots are final items. Lean:
     /// <c>bindCountedCallbackParameterPatternList</c>.
     /// </summary>
     private static EvalResult<CountedParameterPatternBindings> BindCountedCallbackParameterPatternList(
@@ -383,14 +387,19 @@ public static partial class Evaluator
         IReadOnlyList<CountedResult> args,
         EvalCtx ctx)
     {
-        var slots = args;
+        IReadOnlyList<CountedPatternInput> slots;
         if (args.Count > 0 && args.Count < patterns.Count)
         {
-            var expanded = new List<CountedResult>(patterns.Count);
+            var expanded = new List<CountedPatternInput>(patterns.Count);
             for (var index = 0; index < args.Count - 1; index++)
-                expanded.Add(args[index]);
-            expanded.AddRange(UnpackCountedArg(args[^1]));
+                expanded.Add(new CountedPatternInput(args[index], SupplyOrigin.WrittenSlot));
+            foreach (var slot in UnpackCountedArg(args[^1]))
+                expanded.Add(new CountedPatternInput(slot, SupplyOrigin.FinalItem));
             slots = expanded;
+        }
+        else
+        {
+            slots = WrittenCallbackInputs(args);
         }
 
         return BindCountedParameterPatternList(
@@ -398,6 +407,30 @@ public static partial class Evaluator
             slots,
             ctx,
             static (required, actual) => new EvalError.ArityMismatch(required, actual));
+    }
+
+    /// <summary>
+    /// One counted binder input (the callback binding path): the counted value plus
+    /// its <see cref="SupplyOrigin"/>. Lean: <c>CountedPatternInput</c>.
+    /// </summary>
+    private readonly record struct CountedPatternInput(CountedResult Counted, SupplyOrigin Origin);
+
+    /// <summary>Whole callback arguments are written slots (Lean: `origin := .writtenSlot`).</summary>
+    private static IReadOnlyList<CountedPatternInput> WrittenCallbackInputs(IReadOnlyList<CountedResult> args)
+    {
+        var inputs = new CountedPatternInput[args.Count];
+        for (var index = 0; index < args.Count; index++)
+            inputs[index] = new CountedPatternInput(args[index], SupplyOrigin.WrittenSlot);
+        return inputs;
+    }
+
+    /// <summary>Already-opened slots (a reducer's accumulator state) are final items (Lean: `origin := .finalItem`).</summary>
+    private static IReadOnlyList<CountedPatternInput> FinalCallbackInputs(IReadOnlyList<CountedResult> args)
+    {
+        var inputs = new CountedPatternInput[args.Count];
+        for (var index = 0; index < args.Count; index++)
+            inputs[index] = new CountedPatternInput(args[index], SupplyOrigin.FinalItem);
+        return inputs;
     }
 
     private static EvalResult<CountedParameterPatternBindings> BindCountedParameterPattern(
@@ -429,8 +462,13 @@ public static partial class Evaluator
                     if (items is null)
                         return new EvalError.BadArity();
 
+                    // Pattern-opened items are FINAL supply items: a nested
+                    // collecting binding collects them exactly (one boundary
+                    // opened, never two).
                     var nestedInputs = items
-                        .Select(static item => new CountedResult(item, item.ValueCount()))
+                        .Select(static item => new CountedPatternInput(
+                            new CountedResult(item, item.ValueCount()),
+                            SupplyOrigin.FinalItem))
                         .ToList();
                     return BindCountedParameterPatternList(
                         group.Items,
@@ -446,7 +484,7 @@ public static partial class Evaluator
 
     private static EvalResult<CountedParameterPatternBindings> BindCountedParameterPatternList(
         IReadOnlyList<ParameterPattern> patterns,
-        IReadOnlyList<CountedResult> inputs,
+        IReadOnlyList<CountedPatternInput> inputs,
         EvalCtx ctx,
         Func<int, int, EvalError> arityMismatch)
     {
@@ -484,7 +522,7 @@ public static partial class Evaluator
 
         EvalResult<bool> BindOne(int patternIndex, int inputIndex)
         {
-            var boundR = BindCountedParameterPattern(patterns[patternIndex], inputs[inputIndex], ctx);
+            var boundR = BindCountedParameterPattern(patterns[patternIndex], inputs[inputIndex].Counted, ctx);
             if (boundR.IsError) return boundR.Error;
 
             return AddBindings(boundR.Value);
@@ -523,14 +561,20 @@ public static partial class Evaluator
         }
 
         var collectingCapture = (CaptureParameterPattern)patterns[collectingIndex];
-        var capturedValues = inputs
-            .Skip(collectingIndex)
-            .Take(suffixInputStart - collectingIndex)
-            .Select(static input => input.Value)
-            .ToList();
-        // Collecting binding COLLECTS: the assigned supply becomes one exact
-        // immutable list value, emitted count 1 (a list is one visible value).
-        var capturedResultR = CollectSegment(ctx, capturedValues, collectingCapture.Span);
+        var segmentCount = suffixInputStart - collectingIndex;
+        var capturedValues = new List<Result>(segmentCount);
+        var capturedOrigins = new List<SupplyOrigin>(segmentCount);
+        for (var inputIndex = collectingIndex; inputIndex < suffixInputStart; inputIndex++)
+        {
+            capturedValues.Add(inputs[inputIndex].Counted.Value);
+            capturedOrigins.Add(inputs[inputIndex].Origin);
+        }
+
+        // Collecting binding COLLECTS the collector supply of its allocated
+        // segment (CollectorSupply: exact, except that one lone written sequence
+        // slot opens one level) as one exact immutable list value, emitted
+        // count 1 (a list is one visible value).
+        var capturedResultR = CollectSegment(ctx, CollectorSupply(capturedValues, capturedOrigins), collectingCapture.Span);
         if (capturedResultR.IsError) return capturedResultR.Error;
         var capturedResult = capturedResultR.Value;
         var captured = new CountedResult(capturedResult, 1);
@@ -629,9 +673,11 @@ public static partial class Evaluator
 
                     if (UsesPatternBinding(callee))
                     {
+                        // Whole callback arguments are written slots; the
+                        // sequence-value patterns open them and their items are final.
                         var countedPatternEnvR = BindCountedParameterPatternList(
                             callee.ParameterPatterns,
-                            args,
+                            WrittenCallbackInputs(args),
                             ctx,
                             (required, actual) => new EvalError.ArityMismatch(required, actual));
                         if (countedPatternEnvR.IsError)

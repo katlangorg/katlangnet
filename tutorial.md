@@ -989,7 +989,7 @@ Empty()
 
 **Result:** `()`
 
-A returned `()` stays visible wherever an ordinary, non-spread slot receives it — an output row or a call argument keeps it as one item, and only a spread (`E()*`) would contribute nothing:
+A returned `()` stays visible wherever an ordinary, non-spread slot receives it — an output row or a call argument keeps it as one item, and only a spread (`E()*`) would contribute nothing (the one place a written `()` supplies zero items without a spread is a collecting parameter whose entire segment it is — the [collector rule](#collecting-explicit-parameters)):
 
 ```
 E = ()
@@ -1029,7 +1029,7 @@ X.order*
 
 Three things are intentionally **not** value boundaries and keep emitting multiple top-level items: root program output (`1, 2, 3` still shows three rows), explicit caller-site spread (`value*`), and the multi-slot loop state of `while`/`repeat` — a step's several output slots become the next iteration's separate state slots, and the finished loop hands its final slots to the surrounding context the same way (`Step.repeat(1, 0, 0)` with `Step = a + 1, b + 1` shows two root rows, while `R = Step.repeat(1, 0, 0)` captures them as the one value `(1, 1)`). Scalar/reduction builtins (`count`, `sum`, `avg`, `min`, `max`, `contains`, `first`, `last`, `reduce`) already return one value and are unchanged. A `map`/`reduce` callback must still return exactly one element; a multi-output callback body is an error, not a silently-grouped value.
 
-What a call returns is a separate question from how a dot-call receiver is handed to the callee's parameters, and the answer there is the same kind of rule: **dot-call passes a value**. In an ordinary lexical dot call the receiver is one ordinary leading argument — `R.F(args)` is exactly `F(R, args)` — so a fixed parameter binds it whole, a collecting parameter collects it as one item, and only the spread marker (`R*.F(args)`, which is `F(R*, args)`) opens it (see [Dotted Receivers and Collecting Parameters](#dotted-receivers-and-collecting-parameters)). The value boundary described here is about what the call itself produces.
+What a call returns is a separate question from how a dot-call receiver is handed to the callee's parameters, and the answer there is the same kind of rule: **dot-call passes a value**. In an ordinary lexical dot call the receiver is one ordinary leading argument — `R.F(args)` is exactly `F(R, args)` — so a fixed parameter binds it whole and a collecting parameter binds it exactly as it would bind the written argument (a lone sequence-valued receiver opens one level by the collector rule, a list stays exact), while the spread marker (`R*.F(args)`, which is `F(R*, args)`) hands over its items as final slots (see [Dotted Receivers and Collecting Parameters](#dotted-receivers-and-collecting-parameters)). The value boundary described here is about what the call itself produces.
 
 ### Zero-Parameter Property Caching
 
@@ -1431,16 +1431,18 @@ Pairs = (1, 2), (3, 4)
 first(Pairs).Coll
 Pairs:0.Coll
 (Pairs:0)*.Coll
+Pairs:0.Coll(3)
 ```
 
 **Results:**
 ```
-[(1, 2)]
-[(1, 2)]
 [1, 2]
+[1, 2]
+[1, 2]
+[(1, 2), 3]
 ```
 
-The selected pair is one value, shown as one row, exactly as `first(Pairs)` or a property `X = Pairs:0` would show it. It stays one value at every receiver — `(Pairs:0).count` is `2` because `count` opens its one bound collection argument, and `G(Pairs:0)` passes one argument. To open the selected pair into separate items, spread it: `(Pairs:0)*` (or `Pairs:0*`) emits the rows `1` and `2`.
+Selection chooses a value; later collector behavior depends only on that value and how it entered the call supply, not on selection provenance. The selected pair is one value, shown as one row, exactly as `first(Pairs)` or a property `X = Pairs:0` would show it, and it is one argument at every receiver — `(Pairs:0).count` is `2` because `count` opens its one bound collection argument, and `G(Pairs:0)` passes one argument. A [collecting parameter](#collecting-explicit-parameters) then treats that one written argument exactly as it treats `Coll((1, 2))`: a lone sequence value that is the collector's whole supply opens one level, so `Pairs:0.Coll` is `[1, 2]`, while beside another argument the selected pair is collected exactly (`Pairs:0.Coll(3)` is `[(1, 2), 3]`). To hand the selected pair's items to any call as separate slots, spread it: `(Pairs:0)*` (or `Pairs:0*`) emits the rows `1` and `2`.
 
 <!-- spec:index-nested-stays-intact -->
 ```
@@ -1551,7 +1553,7 @@ Scale(1, 2, 3, 10)
 
 Both item-supplying call forms agree: `factor` binds `10` from the back, `*values` collects the three front slots as `values = [1, 2, 3]`, the body's `map` call materializes the mapped items as the one list value `[10, 20, 30]`, and the call boundary returns that single value unchanged (see [Calls Return One Value](#calls-return-one-value)). Caller-site spread such as `Scale(Arg*, 10)*` opens the result into the flat items `10`, `20`, `30`.
 
-An UNSPREAD structured argument is one collected slot, not an item supply: `Scale(Arg, 10)` (and the dotted `Arg.Scale(10)`, which is the same call) binds `values = [Arg]` — a one-element list holding the whole sequence — so the numeric `map` callback fails on the sequence element. To supply a property's items, spread them: `Scale(Arg*, 10)`, or the fluent `Arg*.Scale(10)`, which is `Scale(Arg*, 10)`. A written group receiver is one value like any other receiver (`(1, 2, 3).Scale(10)` binds `values = [(1, 2, 3)]`; `(1, 2, 3)*.Scale(10)` binds `values = [1, 2, 3]` — see [Dotted Receivers and Collecting Parameters](#dotted-receivers-and-collecting-parameters)). A lone collecting parameter such as `Helper(*values)` is the degenerate lone-collecting-binding case of the same item-supply binding (see [Collecting Explicit Parameters](#collecting-explicit-parameters)).
+An UNSPREAD structured argument is one written slot, not an item supply — but the collecting parameter reads the segment left to it after the fixed positions are allocated by the **collector supply-boundary rule**: `factor` takes `10` first, and if the remaining segment is one lone non-spread sequence value, that sequence provides the collector's whole supply, opening exactly one level. So `Scale(Arg, 10)` (and the dotted `Arg.Scale(10)`, which is the same call) binds `values = [1, 2, 3]` and maps to `[10, 20, 30]` like the spread forms, and a written group receiver behaves the same (`(1, 2, 3).Scale(10)` binds `values = [1, 2, 3]`). Lists remain exact — `Scale([1, 2, 3], 10)` binds `values = [[1, 2, 3]]`, so the numeric `map` callback fails on the list element, while `Scale([1, 2, 3]*, 10)` maps the items — and several remaining slots are collected exactly (`Scale(Arg, 4, 10)` binds `values = [(1, 2, 3), 4]`). Spreading is still the explicit way to hand over items: `Scale(Arg*, 10)`, or the fluent `Arg*.Scale(10)`, which is `Scale(Arg*, 10)` (see [Dotted Receivers and Collecting Parameters](#dotted-receivers-and-collecting-parameters)). A lone collecting parameter such as `Helper(*values)` is the degenerate lone-collecting-binding case of the same item-supply binding (see [Collecting Explicit Parameters](#collecting-explicit-parameters)).
 
 **Resolution rule:** KatLang first checks whether the property name exists as a structural property of the target algorithm. If found, it calls that property. If not found, it falls back to the same callable resolution a plain call would use, with the receiver as the leading argument. The rule applies at every level of a chained dot expression: a receiver that is itself an argumentless dot access such as `Lib.Sub` is navigated to `Sub`'s algorithm first, so `Lib.Sub.Q` reads `Sub`'s own `Q` whenever `Sub` has one (see [Chained Dot Access](#chained-dot-access)).
 
@@ -2087,7 +2089,7 @@ source context, and for host evaluation budgets; parentheses never cause an argu
 Nested parentheses still contribute one grouped written item, and only an explicit postfix spread
 contributes the evaluated value's immediate items.
 
-A top-level collecting parameter (`*name`) instead consumes an **item supply**: it COLLECTS the supplied argument slots as one [list](#lists). Zero slots collect `[]`, one slot collects `[item]` (never erased to the item), and many slots collect `[item1, item2, ...]`. A callable with a collecting parameter can therefore accept a variable number of argument items — it is variadic in that sense. A lone collecting parameter is the degenerate case — it collects the whole supply:
+A top-level collecting parameter (`*name`) instead consumes an **item supply**: it COLLECTS the argument slots allocated to it as one [list](#lists). Zero slots collect `[]`, one scalar or list slot collects `[item]` (never erased to the item), and many slots collect `[item1, item2, ...]`. A callable with a collecting parameter can therefore accept a variable number of argument items — it is variadic in that sense. The one refinement is the **collector supply-boundary rule**: a collecting parameter consumes its allocated argument supply; multiple supplied items are collected exactly; if its entire segment is one lone non-spread sequence value, that sequence may provide the collector's whole supply, opening exactly one level; lists remain exact; and items already produced by explicit spread are final supplied items. A lone collecting parameter is the simplest case — its segment is the whole supply:
 
 <!-- spec:variadic-grouped-and-spread -->
 ```
@@ -2105,7 +2107,7 @@ G(1, 2, 3, 4, 5)
 15
 ```
 
-Both forms supply five numeric argument slots, collected as `x = [1, 2, 3, 4, 5]`; `x.sum` opens the bound list and adds its elements. An UNSPREAD structure is one argument slot: `G(A)` and `G((1, 2, 3, 4, 5))` each supply one sequence-valued slot, so `x = [A]` — a one-element list holding the whole sequence — and the numeric `sum` element constraint rejects it. Supplying a value's items is always the explicit spread `A*`; there is no implicit opening at calls. An empty call `G()` collects `x = []`, and `G(*x) = x.count` reports `1` for `G(A)` and `5` for `G(A*)`.
+Both forms supply five numeric argument slots, collected as `x = [1, 2, 3, 4, 5]`; `x.sum` opens the bound list and adds its elements. An UNSPREAD structure is one argument slot: `G(A)` and `G((1, 2, 3, 4, 5))` each supply ONE sequence-valued slot. Because that lone non-spread sequence value is the collector's entire segment, it provides the collector's whole supply, opening exactly one level — `x = [1, 2, 3, 4, 5]` again, so `G(A)` is also `15` and `G(*x) = x.count` reports `5` for `G(A)` as for `G(A*)`. The opening is one level and never recursive: `G(((1, 2), 3))` collects `[(1, 2), 3]`. Beside another argument the sequence is collected exactly — `G(*x) = x.count` reports `2` for `G(A, 0)`, with `x = [(1, 2, 3, 4, 5), 0]`. Lists remain exact: `G([1, 2, 3, 4, 5])` collects `x = [[1, 2, 3, 4, 5]]`, which the numeric `sum` element constraint rejects, while the explicit spread `G([1, 2, 3, 4, 5]*)` sums to `15`. Items already produced by explicit spread are final supplied items: `G([(1, 2)]*)` collects `[(1, 2)]`, the spread-produced pair kept exact. An empty call `G()` collects `x = []`.
 
 The collect marker and the spread marker have opposite meanings and are never interchangeable — they match the semantic directions `collect : Supply → ListValue` and `spread : Value → Supply`. Prefix `*name` in a binding position is a **collecting binding**: it collects its matched items into an exact list, and when it appears in a parameter list it is called a **collecting parameter**. Postfix `value*` is instead a **spread expression** that contributes the operand's items to the surrounding item supply. Both markers must be directly attached to what they modify: `*items` is a collecting binding while `* items` is an error, and `value*` is a spread while `value *` is an error. Which of the three meanings a star has is decided by position, never by spacing: a `*` followed by a valid right operand — on the same line or on the next — is always the multiplication operator, however it is spaced, and a `*` that nothing can follow (a comma, a closing delimiter, the end of the program, or a definition comes next) is the spread marker — which must then be attached. Whitespace therefore never turns one valid operation into another; it only separates the valid `value*` from the rejected `value *`.
 
@@ -2146,29 +2148,34 @@ Forward([1, 2])
 
 `Forward(1, 2)` collects `[1, 2]`, the spread re-supplies `1` and `2`, and `Target` re-collects the same list — the round trip is exact, including for the empty call (`Forward()` is `[]`) and structured arguments (`Forward([1, 2])` collects the list as one element and forwards it as one element). The [fluent supply chain](#spread-with-the-postfix-star) writes the same forwarding left to right: `Forward(*items) = items*.Target` is exactly equivalent to `Forward(*items) = Target(items*)` — the spread items become the arguments of the lexical call `Target(...)`. Passing the collected list WITHOUT spread passes one list argument: with `TargetOne(item) = item`, `ForwardAsOne(*items) = TargetOne(items)` gives `ForwardAsOne(1, 2)` → `[1, 2]` — the whole collected list bound to the fixed parameter. The same works for feeding collection builtins: `Qmean(*args) = args.sum / args.count` divides the sum of the collected list by its element count, so `Qmean(2, 4, 6)` is `4`.
 
-Ordinary (non-collecting) parameters bind the receiver value itself, while a collecting parameter collects the receiver as ONE list element (dot-call passes a value: `Arg.CollectMany` is `CollectMany(Arg)`) — the two shapes are observably different:
+Ordinary (non-collecting) parameters bind the receiver value itself, while a collecting parameter applies the collector rule to the receiver — dot-call passes a value: `Arg.CollectMany` is `CollectMany(Arg)`, one written argument. For a sequence-valued receiver the two shapes agree on the count; for a list they are observably different:
 
 ```
 Arg = 1, 2, 3
+ArgList = [1, 2, 3]
 
 Collect(list) = list
 CollectMany(*list) = list
 
 Arg.Collect.count
 Arg.CollectMany.count
+ArgList.Collect.count
+ArgList.CollectMany.count
 ```
 
 **Results:**
 ```
 3
+3
+3
 1
 ```
 
-`Arg.Collect` binds `list = (1, 2, 3)`, so `count` opens the sequence (3 items); `Arg.CollectMany` binds `list = [(1, 2, 3)]` — the receiver is the one written argument of `CollectMany(Arg)` — so its count is 1. To supply the stored items instead, spread them: the fluent `Arg*.CollectMany.count` is `CollectMany(Arg*).count`, `3`. Parentheses around the spread capture it back into one value, so `(Arg*).CollectMany.count` is `1` again, exactly like `CollectMany((Arg*))`.
+`Arg.Collect` binds `list = (1, 2, 3)`, so `count` opens the sequence (3 items); `Arg.CollectMany` binds `list = [1, 2, 3]` — the receiver is the one written argument of `CollectMany(Arg)`, a lone sequence value that provides the collector's whole supply — so its count is also 3. `ArgList.Collect` binds the list itself (`count` opens it: 3), while `ArgList.CollectMany` collects `[[1, 2, 3]]` — lists remain exact — so its count is 1. Spreading the receiver supplies its items as final slots: the fluent `ArgList*.CollectMany.count` is `CollectMany(ArgList*).count`, `3`. Parentheses around a spread capture it back into one written value: `(Arg*).CollectMany.count` is `3`, exactly like `CollectMany((Arg*))`, because the captured sequence `(1, 2, 3)` opens again at the lone collector.
 
 #### Dotted Receivers and Collecting Parameters
 
-**Dot-call passes a value. Spread opens a value.** For the extension-call fallback, `R.F(args)` is exactly `F(R, args)`: the receiver is one ordinary leading argument whatever it is — a property, a written group, a brace block, a list, a call result, a selection — so a collecting parameter collects it as ONE item. To hand the receiver's items to the collector, spread the receiver: `R*.F(args)` is `F(R*, args)`. This is what makes dotted aggregates read naturally:
+**Dot-call passes a value. Spread opens a value.** For the extension-call fallback, `R.F(args)` is exactly `F(R, args)`: the receiver is one ordinary leading argument whatever it is — a property, a written group, a brace block, a list, a call result, a selection — so its item count never satisfies arity and a fixed parameter binds it whole. Dot-call is ordinary receiver injection; the collector rule explains fluent collection behavior: a collecting parameter binds the receiver exactly as it would bind the written argument, so a lone sequence-valued receiver that is the collector's whole segment opens one level, a list stays exact, and the spread `R*.F(args)` — `F(R*, args)` — hands over the receiver's items as final slots. This is what makes dotted aggregates read naturally in both spellings:
 
 <!-- spec:dot-receiver-passes-a-value -->
 ```
@@ -2176,15 +2183,17 @@ Mean(*Vector) = Vector.sum / Vector.count
 
 Mean(1, 2, 3)
 (1, 2, 3)*.Mean
+(1, 2, 3).Mean
 ```
 
 **Results:**
 ```
 2
 2
+2
 ```
 
-`(1, 2, 3)*.Mean` spreads the written group into the three argument slots of `Mean(1, 2, 3)` (`Vector = [1, 2, 3]`). Without the star, `(1, 2, 3).Mean` is `Mean((1, 2, 3))`: the group is one sequence value, the collector collects `Vector = [(1, 2, 3)]`, and the numeric `sum` fails on the sequence element. The receiver is always ONE argument for arity and for fixed parameters: with `F(first, *middle, last)`, `(1, 2).F(9)` binds `first = (1, 2)` whole, `(1, 2).F` is an arity error — the receiver's item count never satisfies fixed-parameter arity — and `(1, 2)*.F` binds `first = 1`, `last = 2`. An extra written boundary changes nothing (`((1, 2)).CollectMany` collects `[(1, 2)]`, like `(1, 2).CollectMany`), the empty receiver is one visible empty value (`().CollectMany` collects `[()]`, exactly like `CollectMany(())`), and exact lists stay opaque (`[1, 2].CollectMany` collects `[[1, 2]]`; `[1, 2]*.CollectMany` collects `[1, 2]`). The [graced source](#grace-with-dot-calls) `S~.Mean` is the same ordinary dot edge with frontend-only Grace on `S`, so it keeps the same one-argument receiver rule (a written group is not a valid postfix-Grace operand).
+`(1, 2, 3)*.Mean` spreads the written group into the three argument slots of `Mean(1, 2, 3)` (`Vector = [1, 2, 3]`). Without the star, `(1, 2, 3).Mean` is `Mean((1, 2, 3))`: the group is one written sequence value, and since it is the lone collector's whole segment it opens one level to the same `Vector = [1, 2, 3]`. A list receiver never opens: `[1, 2, 3].Mean` collects `Vector = [[1, 2, 3]]` and the numeric `sum` fails on the list element, while `[1, 2, 3]*.Mean` is `2`. The receiver is always ONE argument for arity and for fixed parameters: with `F(first, *middle, last)`, `(1, 2).F(9)` binds `first = (1, 2)` whole, `(1, 2).F` is an arity error — the receiver's item count never satisfies fixed-parameter arity — and `(1, 2)*.F` binds `first = 1`, `last = 2`. An extra written boundary changes nothing (`((1, 2)).CollectMany` collects `[1, 2]`, like `(1, 2).CollectMany`), a receiver beside another written argument is collected exactly (`(1, 2).CollectMany(3)` collects `[(1, 2), 3]`), the empty receiver is one argument whose lone empty sequence opens to nothing (`().CollectMany` collects `[]`, exactly like `CollectMany(())`), and exact lists stay opaque (`[1, 2].CollectMany` collects `[[1, 2]]`; `[1, 2]*.CollectMany` collects `[1, 2]`; `[(1, 2)]*.CollectMany` collects `[(1, 2)]`, the spread-produced pair being a final item). The [graced source](#grace-with-dot-calls) `S~.Mean` is the same ordinary dot edge with frontend-only Grace on `S`, so it keeps the same one-argument receiver rule (a written group is not a valid postfix-Grace operand).
 
 Because the receiver is an ordinary argument, its origin never matters — a property holding `()` is passed exactly like the literal:
 
@@ -2195,18 +2204,20 @@ CollectMany(*items) = items
 E.CollectMany
 CollectMany(E)
 E*.CollectMany
+E.CollectMany(1)
 ```
 
 **Results:**
 ```
-[()]
-[()]
 []
+[]
+[]
+[(), 1]
 ```
 
-`E` returns the value `()` at every ordinary boundary — `E.count` is `0`, and `(1, E(), 2)` keeps it as a visible item. `E.CollectMany` and `CollectMany(E)` are the same call, and a written argument holding `()` is one visible item, so both collect `items = [()]`; only the spread `E*.CollectMany` (that is, `CollectMany(E*)`) opens the empty value into zero slots, `items = []`. A fixed parameter binds the value — `Collect(list) = list` gives `E.Collect` the value `()` — and a collection builtin's fixed `collection` parameter binds it too (`E.count` is `count(E)`, which is `0`). A property's value count of zero is a fact about the value boundary, never a missing argument.
+`E` returns the value `()` at every ordinary boundary — `E.count` is `0`, and `(1, E(), 2)` keeps it as a visible item. `E.CollectMany` and `CollectMany(E)` are the same call: a written argument holding `()` is one visible slot (arity is satisfied — `Collect(list) = list` gives `E.Collect` the value `()`), and as the lone collector's whole supply the empty sequence opens to zero items, `items = []`, exactly as the spread `E*.CollectMany` (that is, `CollectMany(E*)`) supplies zero slots. Beside another argument the `()` stays a visible collected item: `E.CollectMany(1)` collects `[(), 1]`. A collection builtin's fixed `collection` parameter binds the value too (`E.count` is `count(E)`, which is `0`). A property's value count of zero is a fact about the value boundary, never a missing argument.
 
-A parameter list may contain fixed and collecting parameters. When a parameter list has two or more parameters and one of them is a collecting parameter, the collecting parameter may appear at the front, middle, or end. Fixed parameters before it bind from the front, fixed parameters after it bind from the back, and the collecting parameter collects the remaining middle slots (possibly zero) as one list. The supplied items are the call argument slots: a bare argument supplies one slot (a stored sequence value is one slot, not opened), and only an explicit spread opens a sequence value into separate slots:
+A parameter list may contain fixed and collecting parameters. When a parameter list has two or more parameters and one of them is a collecting parameter, the collecting parameter may appear at the front, middle, or end. Fixed parameters before it bind from the front, fixed parameters after it bind from the back — a bare argument supplies one slot, a stored sequence value included, and only an explicit spread opens a sequence value into separate slots — and the collecting parameter then consumes the remaining middle segment by the collector rule: several remaining slots are collected exactly, and a lone remaining non-spread sequence value opens one level:
 
 <!-- spec:mixed-front-back-family -->
 ```
@@ -2226,12 +2237,12 @@ Last(Arg, 3)
 **Results:**
 ```
 1
-[(2, 3)]
-[(1, 2)]
+[2, 3]
+[1, 2]
 3
 ```
 
-A collected segment of one grouped value is the one-element list holding it — `Tail(1, (2, 3))` collects `rest = [(2, 3)]`, never the bare pair — so one remaining structured item stays distinguishable from the item's own elements.
+`Head(1, (2, 3))` binds `first = 1`, and `Last(Arg, 3)` binds `last = 3` from the back. `Tail(1, (2, 3))` leaves the lone written pair as the collector's whole segment, so `rest` opens it one level: `[2, 3]`; `Init((1, 2), 3)` allocates `last = 3` first and then opens the lone remaining pair: `init = [1, 2]`. Two or more remaining slots are collected exactly — `Tail(1, (2, 3), 4)` collects `[(2, 3), 4]` — so a structured item beside other items stays distinguishable from its own elements, and a lone remaining list never opens (`Init([1, 2], 3)` collects `[[1, 2]]`).
 
 A parameter list with two or more captures and one collecting parameter matches the supplied item supply prefix/collecting/suffix. With `F(x, *y, z) = x + y.sum + z` and `A = 1, 2, 3, 4, 5`, `F(A)` supplies one argument and fails because `x` and `z` need two fixed arguments. `F(A*)` and `F(1, 2, 3, 4, 5)` bind `x = 1`, `y = [2, 3, 4]`, `z = 5` and return `15`; `F(1, 2)` binds `x = 1`, `y = []`, `z = 2` (the collecting parameter collects zero items) and returns `3`.
 
@@ -2350,13 +2361,13 @@ CountSequenceValue((1, 2, 3))
 ```
 0
 3
-1
+3
 3
 ```
 
-In `CountValues`, top-level `*values` collects the call's argument slots: `CountValues()` collects the empty supply `[]` (count `0`), `CountValues(1, 2, 3)` collects the three slots as `values = [1, 2, 3]` (count `3`), and `CountValues((1, 2, 3))` supplies ONE sequence-valued argument, collected as `values = [(1, 2, 3)]` (count `1`). In `CountSequenceValue`, the outer sequence-value pattern consumes one parent-level argument slot, opens it, and `*values` collects that sequence value's immediate contents (count `3`). The builtin `count(collection)` has no collecting parameter: it is an ordinary fixed-arity callable that takes exactly one collection argument, so with `Values = 1, 2, 3`, `count(Values)` is `3` while `count(1, 2, 3)` and `count(Values*)` are arity errors (see [Counting: `count`](#counting-count)); fixed-only user calls likewise preserve their exact call shape.
+In `CountValues`, top-level `*values` collects the call's argument slots: `CountValues()` collects the empty supply `[]` (count `0`), `CountValues(1, 2, 3)` collects the three slots as `values = [1, 2, 3]` (count `3`), and `CountValues((1, 2, 3))` supplies ONE sequence-valued argument — the lone collector's whole segment, which the collector rule opens one level to `values = [1, 2, 3]` (count `3`). The two forms differ where the grouped value is not the collector's whole segment: `CountValues((1, 2, 3), 4)` collects two slots (count `2`) while `CountSequenceValue((1, 2, 3), 4)` is an arity error, and `CountValues([1, 2, 3])` keeps the list as one collected item (count `1`) while `CountSequenceValue([1, 2, 3])` opens it (count `3`). In `CountSequenceValue`, the outer sequence-value pattern consumes one parent-level argument slot, opens it, and `*values` collects that structure's immediate contents. The builtin `count(collection)` has no collecting parameter: it is an ordinary fixed-arity callable that takes exactly one collection argument, so with `Values = 1, 2, 3`, `count(Values)` is `3` while `count(1, 2, 3)` and `count(Values*)` are arity errors (see [Counting: `count`](#counting-count)); fixed-only user calls likewise preserve their exact call shape.
 
-A pattern-shaped callee consumes written grouping levels at the call site. A bare reference supplies the stored value for the pattern to open, while ONE extra written level of parentheses leaves a single grouped item — which the collecting parameter collects exactly. Levels beyond that stay redundant ([sequence normalization](#sequence-normalization) removes unary sequence structure during value construction), and a nested pattern consumes matching written depth:
+A pattern-shaped callee consumes written grouping levels at the call site. A bare reference supplies the stored value for the pattern to open, while ONE extra written level of parentheses leaves a single grouped item — which the nested collecting parameter collects exactly, because the items a pattern opens are final supplied items and are never reopened. Levels beyond that stay redundant ([sequence normalization](#sequence-normalization) removes unary sequence structure during value construction), and a nested pattern consumes matching written depth:
 
 ```
 Inner = (1, 2, 3)
@@ -2801,7 +2812,7 @@ F(5)
 
 **Result:** `[1, 2]`
 
-Callbacks with a collecting parameter collect exactly like ordinary calls. A callback whose only parameter is a collecting parameter receives each iterated element as ONE collected slot, so `items` is the one-element list `[element]`, whatever the element's kind:
+Callbacks with a collecting parameter collect exactly like ordinary calls: each iterated element is ONE written argument of the callback call, so the collector rule applies to it. A callback whose only parameter is a collecting parameter therefore keeps a scalar or a list element as the one-element list `[element]`, while a sequence-valued element — the lone collector's whole supply — opens exactly one level:
 
 <!-- spec:callback-variadic-collects -->
 ```
@@ -2815,11 +2826,11 @@ Collect(*items) = items
 **Results:**
 ```
 [[7]]
-[[(1, 2)]]
+[[1, 2]]
 [[[1, 2]]]
 ```
 
-A multi-parameter flat callback instead opens a lone sequence-valued element into row slots first (the same row rule fixed callbacks use), and the shared front/collecting/back allocation then collects the middle: with `F(first, *middle, last) = middle` and `Rows = [(1, 2, 3, 4)]`, `Rows.map(F)` is `[[2, 3]]` — exactly what the nested pattern form `F((first, *middle, last))` produces on sequence rows. Exact-list elements stay opaque in flat binding (a lone `[1, 2]` element is ONE argument, so a two-parameter flat callback arity-errors); use the nested pattern form `F((x, y))`, which opens sequence AND list rows. The same collection rule reaches `filter` predicates (`IsSingleSeven(*items) = items == [7]` keeps `7` out of `[7, 8]`). Reduce supplies two callback slots, element and accumulator, so a reducer whose only parameter is a collecting parameter, `R(*items)`, collects `items = [element, accumulator]`; with `R(*items, acc)`, the collecting parameter before the fixed accumulator instead collects only `[element]`.
+A `()` element opens to `[]` and a nested element opens one level only (`[((1, 2), 3)].map(Collect)` is `[[(1, 2), 3]]`). A multi-parameter flat callback instead opens a lone sequence-valued element into row slots first (the same row rule fixed callbacks use), and the shared front/collecting/back allocation then collects the middle: with `F(first, *middle, last) = middle` and `Rows = [(1, 2, 3, 4)]`, `Rows.map(F)` is `[[2, 3]]` — exactly what the nested pattern form `F((first, *middle, last))` produces on sequence rows. Those row slots are final supplied items, so a nested pair among them stays one collected item (`[(1, (2, 3), 4)].map(F)` is `[[(2, 3)]]`). Exact-list elements stay opaque in flat binding (a lone `[1, 2]` element is ONE argument, so a two-parameter flat callback arity-errors); use the nested pattern form `F((x, y))`, which opens sequence AND list rows. The same collection rule reaches `filter` predicates (`IsSingleSeven(*items) = items == [7]` keeps `7` out of `[7, 8]`; `IsPair(*items) = items.count == 2` keeps the pairs of `((1, 2), 3, (4, 5), [6, 7])` — two of them). Reduce supplies two callback slots, element and accumulator, so a reducer whose only parameter is a collecting parameter, `R(*items)`, collects `items = [element, accumulator]`; with `R(*items, acc)`, the collecting parameter before the fixed accumulator receives one written element slot: a sequence element opens one level (`reduce([(1, 2)], R, 99)` with `R(*items, acc) = items` returns `[1, 2]`), while a scalar or list element stays `[element]`, and a collecting parameter on the accumulator side (`Acc(x, *acc)`) collects the accumulator's own one-level slots exactly — those slots are established supply, not written arguments, so `reduce([9], Acc, ((1, 2), 3))` is `[(1, 2), 3]`.
 
 Multi-clause conditional algorithms used as callbacks match the selected element as ONE argument and get no flat-callback row expansion: a flat two-parameter mapper `F(x, y)` works over pair rows, but adding a second clause (making the family conditional) flips the same `Rows.map(F)` to `No matching branch`, because each clause now matches against the single selected element. Write nested sequence-value clause heads — `F((0, y)) = ...`, `F((x, y)) = ...` — when a clause family should destructure rows.
 
@@ -4000,7 +4011,7 @@ Every form below is decided purely syntactically; the receiver of the supply dec
 | `A*.F` | Supply `A*`'s items to `F` — exactly `F(A*)` |
 | `A*.F*` | Call `F(A*)`, then spread `F`'s one result value |
 | `A**.F` | Repeated (capture-law) spread supplies the arguments — exactly `F(A**)` |
-| `(A*).F` | Capture the spread supply as one sequence value, then dot-call `F` on that one value — exactly `F((A*))` |
+| `(A*).F` | Capture the spread supply as one sequence value, then dot-call `F` on that one written value — exactly `F((A*))` (a collecting `F` then applies the [collector rule](#collecting-explicit-parameters) to it: a captured multi-item supply is a lone sequence value and opens one level) |
 | `A*:0` | Invalid — selection cannot be applied directly to an item supply (targeted parse error) |
 | `(A*):0` | Capture the spread supply into one sequence value, then select from it |
 

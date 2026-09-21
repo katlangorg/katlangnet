@@ -114,11 +114,20 @@ theorem builtinCollectionItems_atom (n : Int) :
 private theorem collectValues_valueInputs (xs : List Result) :
     bindParameterPatternList.collectValues
       (xs.map (fun value => { value? := some value : ParameterPatternInput }))
-      = pure xs := by
+      = pure (xs.map (fun value => (value, SupplyOrigin.finalItem))) := by
   induction xs with
   | nil => rfl
   | cons x xs ih =>
       simp [bindParameterPatternList.collectValues, ih]
+
+/-- Final items never fuse with the collector boundary: a segment of final items
+is collected exactly, whatever its length or the values it holds. -/
+theorem collectorSupply_final_items (xs : List Result) :
+    collectorSupply (xs.map (fun value => (value, SupplyOrigin.finalItem))) = xs := by
+  match xs with
+  | [] => rfl
+  | [x] => cases x <;> rfl
+  | _ :: _ :: _ => simp [collectorSupply, Function.comp_def]
 
 private theorem drop_length_valueInputs (xs : List Result) :
     List.drop xs.length
@@ -276,7 +285,7 @@ theorem bindParameterPatternList_single_collecting_binds_collect
               countedParamEnv := [("x", (Result.listValue xs, 1))],
               algEnv := [] } := by
   simp [bindParameterPatternList, bindParameterPatternList.findCollecting,
-    bindPairs_nil_nil, collectValues_valueInputs, drop_length_valueInputs, take_length_valueInputs,
+    bindPairs_nil_nil, collectValues_valueInputs, collectorSupply_final_items, drop_length_valueInputs, take_length_valueInputs,
     runEvalM, mergeEqualValEnv, mergeEqualCountedParamEnv,
     mergePatternAlgEnv, lookupAssoc, CountedParamEnv.lookup, ValEnv.lookup, collectSegment]
   rfl
@@ -401,7 +410,7 @@ theorem bindParameterPatternList_trailing_collecting_binds_collect
               algEnv := [] } := by
   simp [bindParameterPatternList, bindParameterPatternList.findCollecting,
     bindParameterPatternList.bindPairs, bindParameterPattern,
-    bindPairs_nil_nil, collectValues_valueInputs,
+    bindPairs_nil_nil, collectValues_valueInputs, collectorSupply_final_items,
     take_length_valueInputs, drop_length_valueInputs,
     runEvalM, mergeEqualValEnv, mergeEqualCountedParamEnv,
     mergePatternAlgEnv, lookupAssoc, CountedParamEnv.lookup, ValEnv.lookup,
@@ -423,7 +432,7 @@ theorem bindParameterPatternList_leading_collecting_binds_collect
               algEnv := [] } := by
   simp [bindParameterPatternList, bindParameterPatternList.findCollecting,
     bindParameterPatternList.bindPairs, bindParameterPattern,
-    bindPairs_nil_nil, collectValues_valueInputs,
+    bindPairs_nil_nil, collectValues_valueInputs, collectorSupply_final_items,
     runEvalM, mergeEqualValEnv, mergeEqualCountedParamEnv,
     mergePatternAlgEnv, lookupAssoc, CountedParamEnv.lookup, ValEnv.lookup,
     collectSegment]
@@ -445,7 +454,7 @@ theorem bindParameterPatternList_middle_collecting_binds_collect
   have hlen : ¬ (mid.length + 1 + 1 < 2) := by omega
   simp [bindParameterPatternList, bindParameterPatternList.findCollecting,
     bindParameterPatternList.bindPairs, bindParameterPattern,
-    bindPairs_nil_nil, collectValues_valueInputs,
+    bindPairs_nil_nil, collectValues_valueInputs, collectorSupply_final_items,
     runEvalM, mergeEqualValEnv, mergeEqualCountedParamEnv,
     mergePatternAlgEnv, lookupAssoc, CountedParamEnv.lookup, ValEnv.lookup,
     collectSegment, hlen]
@@ -462,13 +471,16 @@ call uses. There is no receiver-specific assembly, no receiver supply, and no
 callee inspection: the receiver is one written slot, so the ordinary
 written-slot laws apply to it unchanged —
 
-- a written non-spread slot reifies to ONE value (`()` included), so a
-  collecting parameter collects the receiver as one item;
+- a written non-spread slot reifies to ONE value (`()` included) marked
+  `.writtenSlot`, so a collecting parameter binds the receiver through the
+  collector supply-boundary law exactly as it binds the written argument
+  (a lone sequence-valued receiver opens one level, a list stays one item —
+  `dot_call_uses_same_collector_binding_as_plain_call`);
 - the receiver is ONE input for arity checking and fixed prefix/suffix
   allocation (its item count never satisfies arity);
 - a FIXED parameter binds the receiver's one value;
-- only the spread marker opens a receiver: `R*.F(args)` is the ordinary
-  spread slot of `F(R*, args)`.
+- the spread marker opens a receiver into FINAL items: `R*.F(args)` is the
+  ordinary spread slot of `F(R*, args)`.
 -/
 
 /-- `receiver.F(args)` assembles exactly the argument bundle of the written
@@ -488,21 +500,23 @@ theorem spread_dot_receiver_is_ordinary_spread_argument (operand : Expr) (args :
     prepareLexicalDotCallArgs (.sequenceSpread operand) (some args)
       = .sequenceSpread operand :: args := rfl
 
-private theorem collectValues_single (v : Result) :
-    bindParameterPatternList.collectValues [{ value? := some v : ParameterPatternInput }]
-      = pure [v] := by
+private theorem collectValues_single (v : Result) (o : SupplyOrigin) :
+    bindParameterPatternList.collectValues [{ value? := some v, origin := o : ParameterPatternInput }]
+      = pure [(v, o)] := by
   simp [bindParameterPatternList.collectValues]
 
-/-- A collecting parameter collects the receiver slot as ONE item whatever the
-receiver's value — a sequence, a list, or `()` alike (`().Gather` collects
-`[()]`, exactly like the written `Gather(())`). -/
-theorem dot_receiver_slot_reifies_to_one_value (v : Result) :
+/-- The receiver is one WRITTEN slot, so a collecting parameter collects it
+through the collector supply-boundary law like any written argument: a scalar
+or a list is one item, a lone sequence value opens one level
+(`(1, 2).Gather` is `Gather((1, 2))`, `[1, 2]`; `().Gather` is `[]`;
+`[1, 2].Gather` is `[[1, 2]]`). -/
+theorem dot_receiver_slot_is_a_written_slot (v : Result) :
     runEvalM (bindParameterPatternList
       [.capture { name := "x", kind := .collecting }]
-      [{ value? := some v : ParameterPatternInput }]
+      [{ value? := some v, origin := .writtenSlot : ParameterPatternInput }]
       false)
-      = .ok { argEnv := [("x", collectSegment [v])],
-              countedParamEnv := [("x", (collectSegment [v], 1))],
+      = .ok { argEnv := [("x", collectSegment (collectorSupply [(v, .writtenSlot)]))],
+              countedParamEnv := [("x", (collectSegment (collectorSupply [(v, .writtenSlot)]), 1))],
               algEnv := [] } := by
   simp [bindParameterPatternList, bindParameterPatternList.findCollecting,
     bindPairs_nil_nil, collectValues_single,
@@ -511,16 +525,17 @@ theorem dot_receiver_slot_reifies_to_one_value (v : Result) :
   rfl
 
 /-- With an extra written argument, the fixed suffix binds from the back and
-the collector collects the receiver slot as its one item. -/
-theorem dot_receiver_with_suffix_is_one_collected_item (v y : Result) :
+the collector's segment is the receiver slot alone — collected through the
+same law (a lone sequence receiver opens; a list or scalar is one item). -/
+theorem dot_receiver_with_suffix_is_the_collector_segment (v y : Result) :
     runEvalM (bindParameterPatternList
       [.capture { name := "r", kind := .collecting },
        .capture { name := "z", kind := .normal }]
-      [{ value? := some v : ParameterPatternInput },
-       { value? := some y : ParameterPatternInput }]
+      [{ value? := some v, origin := .writtenSlot : ParameterPatternInput },
+       { value? := some y, origin := .writtenSlot : ParameterPatternInput }]
       false)
-      = .ok { argEnv := [("r", collectSegment [v]), ("z", y)],
-              countedParamEnv := [("r", (collectSegment [v], 1))],
+      = .ok { argEnv := [("r", collectSegment (collectorSupply [(v, .writtenSlot)])), ("z", y)],
+              countedParamEnv := [("r", (collectSegment (collectorSupply [(v, .writtenSlot)]), 1))],
               algEnv := [] } := by
   simp [bindParameterPatternList, bindParameterPatternList.findCollecting,
     bindParameterPatternList.bindPairs, bindParameterPattern,
@@ -535,7 +550,7 @@ theorem dot_receiver_fixed_binds_value (v : Result) :
     runEvalM (bindParameterPatternList
       [.capture { name := "r", kind := .collecting },
        .capture { name := "z", kind := .normal }]
-      [{ value? := some v : ParameterPatternInput }]
+      [{ value? := some v, origin := .writtenSlot : ParameterPatternInput }]
       false)
       = .ok { argEnv := [("r", collectSegment []), ("z", v)],
               countedParamEnv := [("r", (collectSegment [], 1))],
@@ -555,10 +570,203 @@ theorem dot_receiver_count_never_satisfies_arity (v : Result) :
       [.capture { name := "a", kind := .normal },
        .capture { name := "r", kind := .collecting },
        .capture { name := "z", kind := .normal }]
-      [{ value? := some v : ParameterPatternInput }]
+      [{ value? := some v, origin := .writtenSlot : ParameterPatternInput }]
       false)
       = .error (Error.arityMismatch 2 1) := by
   simp [bindParameterPatternList, bindParameterPatternList.findCollecting, runEvalM]
+  rfl
+
+/-
+## Collector supply-boundary laws (September 2026)
+
+A collecting parameter consumes the segment the binder allocated to it (after
+fixed prefix/suffix allocation) through `collectorSupply`: several supplied
+items are collected exactly; ONE lone non-spread sequence value
+(`SupplyOrigin.writtenSlot`) may stand for the collector's whole supply, so its
+immediate items are consumed — exactly one level; lists are exact; items an
+opening already produced (`SupplyOrigin.finalItem`: explicit spread, callback
+row slots, pattern items, loop state, reducer accumulator slots) are final.
+The laws below are stated over `collectorSupply` itself and over the real
+binder `bindParameterPatternList`, so they pin the rule at the layer that
+owns it — collector binding, never dot-call, selection, or grouping.
+-/
+
+/-- Several supplied items are collected exactly as supplied, whatever their
+origins and values (`Coll((1, 2), 3)` is `[(1, 2), 3]`). -/
+theorem collector_many_items_are_exact (x y : Result) (ox oy : SupplyOrigin) (rest : List (Result × SupplyOrigin)) :
+    collectorSupply ((x, ox) :: (y, oy) :: rest) = x :: y :: rest.map Prod.fst := by
+  simp [collectorSupply]
+
+/-- A lone scalar (a number, string, or Boolean) is one collected item. -/
+theorem collector_lone_scalar_is_exact (n : Int) (o : SupplyOrigin) :
+    collectorSupply [(.atom n, o)] = [.atom n] := by
+  cases o <;> rfl
+
+/-- A lone non-spread sequence value opens exactly one level: its immediate
+items are the collector's supply (`Coll((1, 2))` is `[1, 2]`). -/
+theorem collector_lone_sequence_opens_once (items : List Result) :
+    collectorSupply [(.sequenceValue items, .writtenSlot)] = items := rfl
+
+/-- The empty sequence follows the same rule, never an emptiness special case:
+`Coll(())` is `[]` because `()` has no items. -/
+theorem collector_lone_empty_sequence_is_empty_supply :
+    collectorSupply [(.sequenceValue [], .writtenSlot)] = [] := rfl
+
+/-- Lists are exact values and never open here (`Coll([1, 2])` is `[[1, 2]]`,
+`Coll([])` is `[[]]`), whatever the slot's origin. -/
+theorem collector_lone_list_is_exact (items : List Result) (o : SupplyOrigin) :
+    collectorSupply [(.listValue items, o)] = [.listValue items] := by
+  cases o <;> rfl
+
+/-- An item that explicit spread (or any other opening) already produced is
+final: it is collected unchanged even as the lone item (`Coll([(1, 2)]*)` is
+`[(1, 2)]`, `Coll([()]*)` is `[()]`). -/
+theorem collector_explicit_spread_item_is_final (v : Result) :
+    collectorSupply [(v, .finalItem)] = [v] := by
+  cases v <;> rfl
+
+/-- The opening is not recursive: a sequence-valued item of the opened lone
+sequence stays one item (`Coll(((1, 2), 3))` is `[(1, 2), 3]`, and
+`Coll(((), 3))` is `[(), 3]`). -/
+theorem collector_opening_is_non_recursive (inner rest : List Result) :
+    collectorSupply [(.sequenceValue (.sequenceValue inner :: rest), .writtenSlot)]
+      = .sequenceValue inner :: rest := rfl
+
+/-- The collector supply depends only on the segment's values and origins —
+never on where a value came from: two written slots holding equal values
+(a literal, a property read, a call result, an `if` branch, `A:0`, `first(A)`)
+yield the same supply. -/
+theorem selection_origin_does_not_change_collector_binding (v w : Result) (h : v = w) :
+    collectorSupply [(v, .writtenSlot)] = collectorSupply [(w, .writtenSlot)] := by
+  subst h; rfl
+
+/-- `R.F(args)` and `F(R, args)` hand the binder the SAME bundle, so the
+collector rule cannot distinguish the two spellings: dot-call is ordinary
+receiver injection, and fluent collection behaviour is the collector's. -/
+theorem dot_call_uses_same_collector_binding_as_plain_call (receiver : Expr) (args : OutputBundle) :
+    prepareLexicalDotCallArgs receiver (some args) = receiver :: args := rfl
+
+/-- Through the real binder: a lone written sequence slot binds the collector to
+its items. -/
+theorem collector_binder_lone_written_sequence_binds_items (items : List Result) :
+    runEvalM (bindParameterPatternList
+      [.capture { name := "x", kind := .collecting }]
+      [{ value? := some (.sequenceValue items), origin := .writtenSlot : ParameterPatternInput }]
+      false)
+      = .ok { argEnv := [("x", collectSegment items)],
+              countedParamEnv := [("x", (collectSegment items, 1))],
+              algEnv := [] } := by
+  simp [bindParameterPatternList, bindParameterPatternList.findCollecting,
+    bindPairs_nil_nil, collectValues_single, collectorSupply,
+    runEvalM, mergeEqualValEnv, mergeEqualCountedParamEnv,
+    mergePatternAlgEnv, lookupAssoc, CountedParamEnv.lookup, ValEnv.lookup, collectSegment]
+  rfl
+
+/-- Through the real binder: the same lone sequence as a FINAL item (explicit
+spread, a pattern item, loop state) is one collected item. -/
+theorem collector_binder_lone_final_sequence_is_exact (items : List Result) :
+    runEvalM (bindParameterPatternList
+      [.capture { name := "x", kind := .collecting }]
+      [{ value? := some (.sequenceValue items), origin := .finalItem : ParameterPatternInput }]
+      false)
+      = .ok { argEnv := [("x", collectSegment [.sequenceValue items])],
+              countedParamEnv := [("x", (collectSegment [.sequenceValue items], 1))],
+              algEnv := [] } := by
+  simp [bindParameterPatternList, bindParameterPatternList.findCollecting,
+    bindPairs_nil_nil, collectValues_single, collectorSupply,
+    runEvalM, mergeEqualValEnv, mergeEqualCountedParamEnv,
+    mergePatternAlgEnv, lookupAssoc, CountedParamEnv.lookup, ValEnv.lookup, collectSegment]
+  rfl
+
+/-- Through the real binder: two written slots are collected exactly even when
+the first is a sequence (`Coll((1, 2), 3)` is `[(1, 2), 3]`). -/
+theorem collector_binder_two_written_items_are_exact (items : List Result) (y : Result) :
+    runEvalM (bindParameterPatternList
+      [.capture { name := "x", kind := .collecting }]
+      [{ value? := some (.sequenceValue items), origin := .writtenSlot : ParameterPatternInput },
+       { value? := some y, origin := .writtenSlot : ParameterPatternInput }]
+      false)
+      = .ok { argEnv := [("x", collectSegment [.sequenceValue items, y])],
+              countedParamEnv := [("x", (collectSegment [.sequenceValue items, y], 1))],
+              algEnv := [] } := by
+  simp [bindParameterPatternList, bindParameterPatternList.findCollecting,
+    bindPairs_nil_nil, bindParameterPatternList.collectValues, collectorSupply,
+    runEvalM, mergeEqualValEnv, mergeEqualCountedParamEnv,
+    mergePatternAlgEnv, lookupAssoc, CountedParamEnv.lookup, ValEnv.lookup, collectSegment]
+  rfl
+
+/-- Through the real binder, AFTER allocation: `F(*xs, z)` with `F((1, 2), 3)`
+gives the suffix `3` and leaves the collector exactly one written sequence
+slot, which opens — `xs = [1, 2]`. -/
+theorem collector_binder_opens_after_suffix_allocation (items : List Result) (y : Result) :
+    runEvalM (bindParameterPatternList
+      [.capture { name := "r", kind := .collecting },
+       .capture { name := "z", kind := .normal }]
+      [{ value? := some (.sequenceValue items), origin := .writtenSlot : ParameterPatternInput },
+       { value? := some y, origin := .writtenSlot : ParameterPatternInput }]
+      false)
+      = .ok { argEnv := [("r", collectSegment items), ("z", y)],
+              countedParamEnv := [("r", (collectSegment items, 1))],
+              algEnv := [] } := by
+  simp [bindParameterPatternList, bindParameterPatternList.findCollecting,
+    bindParameterPatternList.bindPairs, bindParameterPattern,
+    bindPairs_nil_nil, collectValues_single, collectorSupply,
+    runEvalM, mergeEqualValEnv, mergeEqualCountedParamEnv,
+    mergePatternAlgEnv, lookupAssoc, CountedParamEnv.lookup, ValEnv.lookup, collectSegment]
+  rfl
+
+/-- Through the real binder, AFTER allocation: `F(*xs, z)` with `F((1, 2), 3, 4)`
+gives the suffix `4` and a two-item collector segment, collected exactly —
+`xs = [(1, 2), 3]`. -/
+theorem collector_binder_multi_item_segment_after_suffix_is_exact (items : List Result) (y z : Result) :
+    runEvalM (bindParameterPatternList
+      [.capture { name := "r", kind := .collecting },
+       .capture { name := "z", kind := .normal }]
+      [{ value? := some (.sequenceValue items), origin := .writtenSlot : ParameterPatternInput },
+       { value? := some y, origin := .writtenSlot : ParameterPatternInput },
+       { value? := some z, origin := .writtenSlot : ParameterPatternInput }]
+      false)
+      = .ok { argEnv := [("r", collectSegment [.sequenceValue items, y]), ("z", z)],
+              countedParamEnv := [("r", (collectSegment [.sequenceValue items, y], 1))],
+              algEnv := [] } := by
+  simp [bindParameterPatternList, bindParameterPatternList.findCollecting,
+    bindParameterPatternList.bindPairs, bindParameterPattern,
+    bindPairs_nil_nil, bindParameterPatternList.collectValues, collectorSupply,
+    runEvalM, mergeEqualValEnv, mergeEqualCountedParamEnv,
+    mergePatternAlgEnv, lookupAssoc, CountedParamEnv.lookup, ValEnv.lookup, collectSegment]
+  rfl
+
+/-- Explicit-spread provenance survives allocation: `F([(1, 2)]*, 3)` leaves the
+collector one FINAL item, collected unchanged — `xs = [(1, 2)]`. -/
+theorem collector_binder_final_lone_item_after_suffix_is_exact (items : List Result) (y : Result) :
+    runEvalM (bindParameterPatternList
+      [.capture { name := "r", kind := .collecting },
+       .capture { name := "z", kind := .normal }]
+      [{ value? := some (.sequenceValue items), origin := .finalItem : ParameterPatternInput },
+       { value? := some y, origin := .writtenSlot : ParameterPatternInput }]
+      false)
+      = .ok { argEnv := [("r", collectSegment [.sequenceValue items]), ("z", y)],
+              countedParamEnv := [("r", (collectSegment [.sequenceValue items], 1))],
+              algEnv := [] } := by
+  simp [bindParameterPatternList, bindParameterPatternList.findCollecting,
+    bindParameterPatternList.bindPairs, bindParameterPattern,
+    bindPairs_nil_nil, collectValues_single, collectorSupply,
+    runEvalM, mergeEqualValEnv, mergeEqualCountedParamEnv,
+    mergePatternAlgEnv, lookupAssoc, CountedParamEnv.lookup, ValEnv.lookup, collectSegment]
+  rfl
+
+/-- A FIXED parameter never inherits the collector opening: `Id((1, 2))` binds
+the sequence whole. -/
+theorem collector_fixed_parameter_binds_value_unchanged (items : List Result) :
+    runEvalM (bindParameterPatternList
+      [.capture { name := "x", kind := .normal }]
+      [{ value? := some (.sequenceValue items), origin := .writtenSlot : ParameterPatternInput }]
+      false)
+      = .ok { argEnv := [("x", .sequenceValue items)], countedParamEnv := [], algEnv := [] } := by
+  simp [bindParameterPatternList, bindParameterPatternList.findCollecting,
+    bindParameterPatternList.bindPairs, bindParameterPattern,
+    runEvalM, mergeEqualValEnv, mergeEqualCountedParamEnv,
+    mergePatternAlgEnv]
   rfl
 
 /-
@@ -593,20 +801,21 @@ theorem call_fixed_single_sequence_rejected :
   simp [bindParameterPatternList, bindParameterPatternList.findCollecting, runEvalM]
   rfl
 
-/-- `G(A)` mixed fixed/variadic call: one supplied item, so `first` receives the whole
-stored sequence value and `rest` collects the empty list `[]` — calls never
-implicitly open. -/
+/-- `G(A)` mixed fixed/variadic call: one supplied item, so fixed allocation
+gives `first` the whole stored sequence value and `rest` collects the empty
+segment `[]` — the collector rule applies only to the segment left AFTER
+fixed allocation, and a slot allocated to a fixed parameter never opens. -/
 theorem call_variadic_single_sequence_preserved :
     runEvalM (bindParameterPatternList
         [.capture { name := "first", kind := .normal }, .capture { name := "rest", kind := .collecting }]
-        [{ value? := some (Result.sequenceValue [Result.atom 1, Result.atom 2]) }]
+        [{ value? := some (Result.sequenceValue [Result.atom 1, Result.atom 2]), origin := .writtenSlot }]
         true)
       = .ok { argEnv := [("first", Result.sequenceValue [Result.atom 1, Result.atom 2]),
                          ("rest", Result.listValue [])],
               countedParamEnv := [("rest", (Result.listValue [], 1))],
               algEnv := [] } := by
   simp [bindParameterPatternList, bindParameterPatternList.findCollecting,
-    bindParameterPatternList.bindPairs, bindParameterPatternList.collectValues,
+    bindParameterPatternList.bindPairs, bindParameterPatternList.collectValues, collectorSupply,
     bindParameterPattern, runEvalM, mergeEqualValEnv, mergeEqualCountedParamEnv,
     mergePatternAlgEnv, lookupAssoc, CountedParamEnv.lookup, ValEnv.lookup,
     collectSegment]
@@ -644,7 +853,7 @@ theorem deconstruct_collecting_single_sequence_opens :
               countedParamEnv := [("rest", (Result.listValue [Result.atom 2, Result.atom 3], 1))],
               algEnv := [] } := by
   simp [bindParameterPatternList, bindParameterPatternList.findCollecting,
-    bindParameterPatternList.bindPairs, bindParameterPatternList.collectValues,
+    bindParameterPatternList.bindPairs, bindParameterPatternList.collectValues, collectorSupply,
     bindParameterPattern, runEvalM, Result.structureItems?, mergeEqualValEnv,
     mergeEqualCountedParamEnv, mergePatternAlgEnv, lookupAssoc,
     CountedParamEnv.lookup, ValEnv.lookup, collectSegment]
@@ -930,19 +1139,19 @@ theorem call_fixed_single_list_rejected :
   rfl
 
 /-- `G(A)` mixed fixed/variadic call with a stored LIST `A`: `first` receives the
-whole list value and `rest` collects the empty list `[]` — calls never
-implicitly open. -/
+whole list value and `rest` collects the empty list `[]` — lists never open
+implicitly. -/
 theorem call_variadic_single_list_preserved :
     runEvalM (bindParameterPatternList
         [.capture { name := "first", kind := .normal }, .capture { name := "rest", kind := .collecting }]
-        [{ value? := some (Result.listValue [Result.atom 1, Result.atom 2]) }]
+        [{ value? := some (Result.listValue [Result.atom 1, Result.atom 2]), origin := .writtenSlot }]
         true)
       = .ok { argEnv := [("first", Result.listValue [Result.atom 1, Result.atom 2]),
                          ("rest", Result.listValue [])],
               countedParamEnv := [("rest", (Result.listValue [], 1))],
               algEnv := [] } := by
   simp [bindParameterPatternList, bindParameterPatternList.findCollecting,
-    bindParameterPatternList.bindPairs, bindParameterPatternList.collectValues,
+    bindParameterPatternList.bindPairs, bindParameterPatternList.collectValues, collectorSupply,
     bindParameterPattern, runEvalM, mergeEqualValEnv, mergeEqualCountedParamEnv,
     mergePatternAlgEnv, lookupAssoc, CountedParamEnv.lookup, ValEnv.lookup,
     collectSegment]
@@ -981,7 +1190,7 @@ theorem deconstruct_collecting_single_list_opens :
               countedParamEnv := [("rest", (Result.listValue [Result.atom 2, Result.atom 3], 1))],
               algEnv := [] } := by
   simp [bindParameterPatternList, bindParameterPatternList.findCollecting,
-    bindParameterPatternList.bindPairs, bindParameterPatternList.collectValues,
+    bindParameterPatternList.bindPairs, bindParameterPatternList.collectValues, collectorSupply,
     bindParameterPattern, runEvalM, Result.structureItems?, mergeEqualValEnv,
     mergeEqualCountedParamEnv, mergePatternAlgEnv, lookupAssoc,
     CountedParamEnv.lookup, ValEnv.lookup, collectSegment]
@@ -995,7 +1204,7 @@ argument. -/
 theorem lone_collecting_list_call_and_deconstruct_differ :
     runEvalM (bindParameterPatternList
         [.capture { name := "rest", kind := .collecting }]
-        [{ value? := some (Result.listValue [Result.atom 1, Result.atom 2]) }]
+        [{ value? := some (Result.listValue [Result.atom 1, Result.atom 2]), origin := .writtenSlot }]
         true)
       = .ok { argEnv := [("rest", Result.listValue [Result.listValue [Result.atom 1, Result.atom 2]])],
               countedParamEnv := [("rest", (Result.listValue [Result.listValue [Result.atom 1, Result.atom 2]], 1))],
@@ -1009,32 +1218,30 @@ theorem lone_collecting_list_call_and_deconstruct_differ :
               algEnv := [] } := by
   constructor
   · simp [bindParameterPatternList, bindParameterPatternList.findCollecting,
-      bindParameterPatternList.bindPairs, bindParameterPatternList.collectValues,
+      bindParameterPatternList.bindPairs, bindParameterPatternList.collectValues, collectorSupply,
       runEvalM, mergeEqualValEnv, mergeEqualCountedParamEnv,
       mergePatternAlgEnv, lookupAssoc, CountedParamEnv.lookup, ValEnv.lookup,
       collectSegment]
     rfl
   · simp [bindParameterPatternList, bindParameterPatternList.findCollecting,
-      bindParameterPatternList.bindPairs, bindParameterPatternList.collectValues,
+      bindParameterPatternList.bindPairs, bindParameterPatternList.collectValues, collectorSupply,
       bindParameterPattern, runEvalM, Result.structureItems?, mergeEqualValEnv,
       mergeEqualCountedParamEnv, mergePatternAlgEnv, lookupAssoc,
       CountedParamEnv.lookup, ValEnv.lookup, collectSegment]
     rfl
 
-/-- The single-collecting grouped/spread COINCIDENCE is gone: `F(A)` with a stored
-sequence `A` collects the one grouped argument (`items = [(1, 2)]`), while
-`F(A*)` collects the spread items (`items = [1, 2]`). The old claim that a
-single collecting parameter receives the same canonical value for both calls is
-obsolete under exact list collection — supplying one grouped argument and
-supplying its items are observably different calls. -/
-theorem lone_collecting_seq_call_grouped_and_spread_differ :
+/-- The single-collecting grouped/spread coincidence holds for a lone SEQUENCE
+argument by the collector supply-boundary law: `F(A)` with a stored sequence
+`A = (1, 2)` collects `[1, 2]` — the lone written sequence slot opens one level
+— exactly as `F(A*)` collects the spread items. (A lone LIST argument stays
+different: see `lone_collecting_list_call_grouped_and_spread_differ`.) -/
+theorem lone_collecting_seq_call_grouped_and_spread_agree :
     runEvalM (bindParameterPatternList
         [.capture { name := "rest", kind := .collecting }]
-        [{ value? := some (Result.sequenceValue [Result.atom 1, Result.atom 2]) }]
+        [{ value? := some (Result.sequenceValue [Result.atom 1, Result.atom 2]), origin := .writtenSlot }]
         true)
-      = .ok { argEnv := [("rest", Result.listValue [Result.sequenceValue [Result.atom 1, Result.atom 2]])],
-              countedParamEnv :=
-                [("rest", (Result.listValue [Result.sequenceValue [Result.atom 1, Result.atom 2]], 1))],
+      = .ok { argEnv := [("rest", Result.listValue [Result.atom 1, Result.atom 2])],
+              countedParamEnv := [("rest", (Result.listValue [Result.atom 1, Result.atom 2], 1))],
               algEnv := [] }
     ∧ runEvalM (bindParameterPatternList
         [.capture { name := "rest", kind := .collecting }]
@@ -1046,16 +1253,51 @@ theorem lone_collecting_seq_call_grouped_and_spread_differ :
               algEnv := [] } := by
   constructor
   · simp [bindParameterPatternList, bindParameterPatternList.findCollecting,
-      bindParameterPatternList.bindPairs, bindParameterPatternList.collectValues,
+      bindParameterPatternList.bindPairs, bindParameterPatternList.collectValues, collectorSupply,
       runEvalM, mergeEqualValEnv, mergeEqualCountedParamEnv,
       mergePatternAlgEnv, lookupAssoc, CountedParamEnv.lookup, ValEnv.lookup,
       collectSegment]
     rfl
   · simp [bindParameterPatternList, bindParameterPatternList.findCollecting,
-      bindParameterPatternList.bindPairs, bindParameterPatternList.collectValues,
+      bindParameterPatternList.bindPairs, bindParameterPatternList.collectValues, collectorSupply,
       runEvalM, mergeEqualValEnv, mergeEqualCountedParamEnv,
       mergePatternAlgEnv, lookupAssoc, CountedParamEnv.lookup, ValEnv.lookup,
       collectSegment, Result.spreadItems, Result.toItems]
+    rfl
+
+/-- A lone LIST argument keeps the grouped/spread distinction: `F(A)` with a
+stored list `A = [1, 2]` collects the one exact list (`rest = [[1, 2]]`) — lists
+never open implicitly — while `F(A*)` collects the spread items
+(`rest = [1, 2]`). -/
+theorem lone_collecting_list_call_grouped_and_spread_differ :
+    runEvalM (bindParameterPatternList
+        [.capture { name := "rest", kind := .collecting }]
+        [{ value? := some (Result.listValue [Result.atom 1, Result.atom 2]), origin := .writtenSlot }]
+        true)
+      = .ok { argEnv := [("rest", Result.listValue [Result.listValue [Result.atom 1, Result.atom 2]])],
+              countedParamEnv :=
+                [("rest", (Result.listValue [Result.listValue [Result.atom 1, Result.atom 2]], 1))],
+              algEnv := [] }
+    ∧ runEvalM (bindParameterPatternList
+        [.capture { name := "rest", kind := .collecting }]
+        ((Result.listValue [Result.atom 1, Result.atom 2]).spreadItems.map
+          (fun value => { value? := some value : ParameterPatternInput }))
+        true)
+      = .ok { argEnv := [("rest", Result.listValue [Result.atom 1, Result.atom 2])],
+              countedParamEnv := [("rest", (Result.listValue [Result.atom 1, Result.atom 2], 1))],
+              algEnv := [] } := by
+  constructor
+  · simp [bindParameterPatternList, bindParameterPatternList.findCollecting,
+      bindParameterPatternList.bindPairs, bindParameterPatternList.collectValues, collectorSupply,
+      runEvalM, mergeEqualValEnv, mergeEqualCountedParamEnv,
+      mergePatternAlgEnv, lookupAssoc, CountedParamEnv.lookup, ValEnv.lookup,
+      collectSegment]
+    rfl
+  · simp [bindParameterPatternList, bindParameterPatternList.findCollecting,
+      bindParameterPatternList.bindPairs, bindParameterPatternList.collectValues, collectorSupply,
+      runEvalM, mergeEqualValEnv, mergeEqualCountedParamEnv,
+      mergePatternAlgEnv, lookupAssoc, CountedParamEnv.lookup, ValEnv.lookup,
+      collectSegment, Result.spreadItems]
     rfl
 
 /-

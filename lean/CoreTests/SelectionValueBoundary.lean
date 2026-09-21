@@ -16,8 +16,12 @@ open KatLang (resolve param num)
 -- collecting dotted receiver — the ordinary leading argument, since dot-call
 -- passes a value — a loop-step output row, the map/reduce single-element
 -- checks, a callback parameter) sees exactly what it would see for a property
--- holding the same value. Only the spread marker `*` OPENS a selected
--- sequence or list — one boundary, per the ordinary spread law.
+-- holding the same value. A selection passed unspread is ONE written slot,
+-- so a collector applies the collector supply-boundary law to it exactly as
+-- to `Coll(V)`: a lone selected SEQUENCE value opens one level, a selected
+-- list, scalar, or a value beside another slot is collected exactly. The
+-- spread marker `*` OPENS a selected sequence or list — one boundary, per
+-- the ordinary spread law.
 --
 -- Lean: `Result.select?` + the `.index` arm of `evalCounted`,
 -- `evalFirstCounted`/`evalLastCounted`, `countedSequenceCallbackItem`; laws in
@@ -48,15 +52,18 @@ def selectionReduceItemAlg : Algorithm :=
   alg ["x", "acc"] [] [] [.param "x"]
 
 /-- The semantic table of the rule: (selected value, `selection.Coll`,
-    `selection*.Coll`). `()` and `[]` are deliberately distinct rows: an
+    `selection*.Coll`). `selection.Coll` is `Coll(selection)`, one written
+    slot at a lone collector, so the collector supply-boundary law decides
+    the middle column: a selected SEQUENCE value opens one level (`()` to
+    nothing, `(1, 2)` to `[1, 2]`, `((1, 2), 3)` to `[(1, 2), 3]` — never
+    recursively), while a selected list, string, number, or Boolean is one
+    exact collected item. `()` and `[]` are deliberately distinct rows: an
     empty SEQUENCE value emits zero values at a value boundary (so it spreads
-    to nothing) while an empty LIST is one exact value; both are ONE collected
-    item when passed unspread, because dot-call passes a value (`().Coll` is
-    `[()]`, exactly like the written argument `Coll(())`) and only the spread
-    marker opens a receiver. -/
+    to nothing and opens to nothing) while an empty LIST is one exact value
+    (`[].Coll` is `[[]]`, `[]*.Coll` is `[]`). -/
 def selectionTable : List (KatLang.Expr × Result × Result) :=
   [ (.emptySequence 0,
-      .listValue [.sequenceValue []],
+      .listValue [],
       .listValue []),
     (.num 1,
       .listValue [.atom 1],
@@ -68,7 +75,7 @@ def selectionTable : List (KatLang.Expr × Result × Result) :=
       .listValue [.bool true],
       .listValue [.bool true]),
     (.capture [.num 1, .num 2],
-      .listValue [.sequenceValue [.atom 1, .atom 2]],
+      .listValue [.atom 1, .atom 2],
       .listValue [.atom 1, .atom 2]),
     (.listLiteral [],
       .listValue [.listValue []],
@@ -83,14 +90,22 @@ def selectionTable : List (KatLang.Expr × Result × Result) :=
       .listValue [.listValue [.sequenceValue [.atom 1, .atom 2]]],
       .listValue [.sequenceValue [.atom 1, .atom 2]]),
     (.capture [.capture [.num 1, .num 2], .num 3],
-      .listValue [.sequenceValue [.sequenceValue [.atom 1, .atom 2], .atom 3]],
+      .listValue [.sequenceValue [.atom 1, .atom 2], .atom 3],
       .listValue [.sequenceValue [.atom 1, .atom 2], .atom 3]),
     (.capture [.listLiteral [.num 1, .num 2], .num 3],
-      .listValue [.sequenceValue [.listValue [.atom 1, .atom 2], .atom 3]],
+      .listValue [.listValue [.atom 1, .atom 2], .atom 3],
       .listValue [.listValue [.atom 1, .atom 2], .atom 3]),
     (.capture [.emptySequence 0, .num 3],
-      .listValue [.sequenceValue [.sequenceValue [], .atom 3]],
+      .listValue [.sequenceValue [], .atom 3],
       .listValue [.sequenceValue [], .atom 3]) ]
+
+/-- What a lone collector binds for ONE written slot holding `value`: the
+    items of a sequence value, otherwise the value itself (the collector
+    supply-boundary law, `collectorSupply`). -/
+def loneCollectorOfWrittenValue (value : Result) : Result :=
+  match value with
+  | .sequenceValue items => .listValue items
+  | other => .listValue [other]
 
 /-- Every selection spelling of the SAME element: the collection definition that
     places the element where the spelling selects it, and the selection. -/
@@ -123,13 +138,14 @@ def sameOutcome {A : Type} [BEq A] : Except Error A -> Except Error A -> Bool
   | Except.error e, Except.error f => reprStr e == reprStr f
   | _, _ => false
 
--- Through the collecting dotted receiver: `selection.Coll` keeps the selected
--- value whole (ONE collected item — a selected `()` and a selected `[]`
--- alike), and it is exactly the written call `Coll(selection)` (dot-call
--- passes a value), which passes the same one slot as `Coll(V)` on a property
--- holding the same value; `selection*.Coll` / `Coll(selection*)` open exactly
--- one boundary, while the CAPTURE of the spread `(selection*).Coll` is one
--- value again.
+-- Through the collecting dotted receiver: `selection.Coll` is exactly the
+-- written call `Coll(selection)` (dot-call passes a value), which passes the
+-- same one written slot as `Coll(V)` on a property holding the same value —
+-- so all three bind through the collector supply-boundary law (the table's
+-- middle column); `selection*.Coll` / `Coll(selection*)` open exactly one
+-- boundary into final items, while the CAPTURE of the spread
+-- `(selection*).Coll` is one written value again, bound by the same law
+-- (a re-captured sequence opens, a re-captured scalar is one item).
 def everySelectionFormKeepsTheSelectedValueWholeAndSpreadOpensIt : Bool :=
   selectionTable.all fun (selected, expectedColl, expectedSpreadColl) =>
     (selectionForms selected).all fun (collection, selection) =>
@@ -147,11 +163,28 @@ def everySelectionFormKeepsTheSelectedValueWholeAndSpreadOpensIt : Bool :=
         (runSelectionProgram collection [] (.call (resolve "Coll") [.sequenceSpread selection])) &&
       (match expectedSpreadColl with
        | .listValue items =>
-           resultIs (.listValue [Result.normalize (Result.sequenceValue items)])
+           resultIs (loneCollectorOfWrittenValue (Result.normalize (Result.sequenceValue items)))
              (runSelectionProgram collection [] (.dotCall (.capture [.sequenceSpread selection]) "Coll" none))
        | _ => false)
 
 #guard everySelectionFormKeepsTheSelectedValueWholeAndSpreadOpensIt
+
+-- Beside a second written slot the selected value is collected EXACTLY,
+-- whatever it is: `Coll(selection, 9)` is `[V, 9]` for every row of the
+-- table (a selected `()` stays one visible item there), and the dotted
+-- spelling `selection.Coll(9)` is the same call.
+def selectionBesideAnotherSlotIsCollectedExactly : Bool :=
+  selectionTable.all fun (selected, _, _) =>
+    let literal := runResult (.algorithmExpr (alg [] [] [] [.listLiteral [selected, .num 9]]))
+    (selectionForms selected).all fun (collection, selection) =>
+      sameOutcome
+        (runSelectionProgram collection [] (.call (resolve "Coll") [selection, .num 9]))
+        literal &&
+      sameOutcome
+        (runSelectionProgram collection [] (.dotCall selection "Coll" (some [.num 9])))
+        literal
+
+#guard selectionBesideAnotherSlotIsCollectedExactly
 
 -- Origin independence: storing the selection (`X = selection`) or passing it
 -- through another ordinary value boundary (a call) changes nothing.
@@ -244,9 +277,11 @@ def mapTransformAndReduceStepSeeTheSelectionAsOneValue : Bool :=
 #guard mapTransformAndReduceStepSeeTheSelectionAsOneValue
 
 -- A higher-order callback item is a selected value with the same boundary:
--- inside the callback it is ONE value on every count-sensitive path (the
--- collecting dotted receiver `x.Coll` — i.e. `Coll(x)` — a bare `x` output
--- row, the single-element checks), and only an explicit spread `(x)*` opens it.
+-- inside the callback it is ONE value on every count-sensitive path (a bare
+-- `x` output row, the single-element checks), the collecting dotted receiver
+-- `x.Coll` — i.e. `Coll(x)`, one written slot — binds through the collector
+-- supply-boundary law exactly like `Coll(V)` (the table's middle column),
+-- and an explicit spread `(x)*` opens it into final items.
 def callbackItemIsASelectedValueWithTheSameBoundary : Bool :=
   selectionTable.all fun (selected, expectedColl, expectedSpreadColl) =>
     let collection := alg [] [] [] [.capture [selected, .num 9]]   -- A = (V, 9)
@@ -276,12 +311,13 @@ def callbackItemIsASelectedValueWithTheSameBoundary : Bool :=
 #guard callbackItemIsASelectedValueWithTheSameBoundary
 
 -- The motivating examples: `()` selected from a sequence, read from a
--- property, returned by a call, or chosen by `if` is simply `()` — ONE
--- collected item when passed (dot-call passes a value: `().Coll` is `[()]`
--- like the written `Coll(())`) and zero items when spread — and no route
--- preserves "one element was selected" or turns the value-boundary count 0
--- into a missing argument; `[]` selected through any route stays one exact
--- list item.
+-- property, returned by a call, or chosen by `if` is simply `()` — as the
+-- lone written slot of a collector it opens to ZERO collected items
+-- (dot-call passes a value: `().Coll` is `Coll(())` is `[]`, exactly like
+-- the spread), beside another slot it is ONE visible collected item
+-- (`Coll((), 1)` is `[(), 1]`) — and no route preserves "one element was
+-- selected" or turns the value-boundary count 0 into a missing argument;
+-- `[]` selected through any route stays one exact list item.
 def emptySelectedThroughAnyRouteIsPlainEmpty : Bool :=
   let props := [("Coll", selectionCollAlg),
                 ("A", alg [] [] [] [.capture [.emptySequence 0, .num 1]]),
@@ -292,6 +328,7 @@ def emptySelectedThroughAnyRouteIsPlainEmpty : Bool :=
   let run (out : KatLang.Expr) := runResult (.algorithmExpr (algPrivate [] [] props [out]))
   let coll (receiver : KatLang.Expr) := run (.dotCall receiver "Coll" none)
   let written (argument : KatLang.Expr) := run (.call (resolve "Coll") [argument])
+  let beside (argument : KatLang.Expr) := run (.call (resolve "Coll") [argument, .num 1])
   [ coll (.index (resolve "A") (.num 0)),
     coll (.call (resolve "first") [resolve "A"]),
     coll (.index (resolve "B") (.num 1)),
@@ -304,7 +341,13 @@ def emptySelectedThroughAnyRouteIsPlainEmpty : Bool :=
     written (.call (resolve "first") [resolve "A"]),
     written (resolve "E"),
     written (.call (resolve "Fz") [.num 1]),
-    written (.emptySequence 0) ].all (resultIs (.listValue [.sequenceValue []])) &&
+    written (.emptySequence 0) ].all (resultIs (.listValue [])) &&
+  [ beside (.index (resolve "A") (.num 0)),
+    beside (.call (resolve "first") [resolve "A"]),
+    beside (resolve "E"),
+    beside (.call (resolve "Fz") [.num 1]),
+    beside (.call (resolve "if") [.boolLiteral true, .emptySequence 0, .num 1]),
+    beside (.emptySequence 0) ].all (resultIs (.listValue [.sequenceValue [], .atom 1])) &&
   [ written (.sequenceSpread (.index (resolve "A") (.num 0))),
     written (.sequenceSpread (.call (resolve "first") [resolve "A"])),
     written (.sequenceSpread (resolve "E")),

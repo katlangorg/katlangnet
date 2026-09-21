@@ -257,16 +257,21 @@ public class TutorialSemanticContractTests
     public void DottedReceiver_IsTheWrittenArgument_AndOnlyTheSpreadMarkerOpensIt()
     {
         // The headline example: the spread receiver supplies the items of `Mean(1, 2, 3)`,
-        // while the unspread group is ONE sequence value that the numeric sum rejects.
+        // and the unspread group is ONE written sequence value that — being the lone
+        // collector's whole segment — opens one level (the collector supply-boundary law).
+        // A list receiver never opens: the numeric sum rejects the list element.
         const string mean = "Mean(*Vector) = Vector.sum / Vector.count\n";
-        Assert.Equal("2\n2", Display(mean + "Mean(1, 2, 3)\n(1, 2, 3)*.Mean"));
-        RunFailure(mean + "(1, 2, 3).Mean", KatLangErrorCode.ArityMismatch);
+        Assert.Equal("2\n2\n2", Display(mean + "Mean(1, 2, 3)\n(1, 2, 3)*.Mean\n(1, 2, 3).Mean"));
+        RunFailure(mean + "[1, 2, 3].Mean", KatLangErrorCode.ArityMismatch);
+        Assert.Equal("2", Display(mean + "[1, 2, 3]*.Mean"));
 
         // The receiver's origin never matters, `()` included: the dotted spelling and the
-        // written call collect the same one item, and only the spread supplies nothing.
+        // written call are the same call — one written slot whose lone `()` opens to
+        // nothing, like the spread — while beside another argument the `()` is one item.
         const string collect = "E = ()\nCollectMany(*items) = items\n";
-        Assert.Equal("[()]\n[()]\n[]", Display(collect + "E.CollectMany\nCollectMany(E)\nE*.CollectMany"));
-        Assert.Equal("[()]", Display(collect + "().CollectMany"));
+        Assert.Equal("[]\n[]\n[]\n[(), 1]",
+            Display(collect + "E.CollectMany\nCollectMany(E)\nE*.CollectMany\nE.CollectMany(1)"));
+        Assert.Equal("[]", Display(collect + "().CollectMany"));
         Assert.Equal("()", Display("E = ()\nCollect(list) = list\nE.Collect"));
         Assert.Equal("0", Display("E = ()\nE.count"));
 
@@ -275,10 +280,19 @@ public class TutorialSemanticContractTests
         RunFailure("F(first, *middle, last) = first\n(1, 2).F", KatLangErrorCode.ArityMismatch);
         Assert.Equal("1", Display("F(first, *middle, last) = first\n(1, 2)*.F"));
 
-        // Parentheses around a spread capture it back into one value.
-        Assert.Equal("1\n3\n1", Display(
+        // Written and spread sequence receivers coincide at a lone collector; a captured
+        // spread is a written slot again. A LIST receiver keeps the grouped/spread contrast.
+        Assert.Equal("3\n3\n3", Display(
             "Arg = 1, 2, 3\nCollectMany(*list) = list\n"
             + "Arg.CollectMany.count\nArg*.CollectMany.count\n(Arg*).CollectMany.count"));
+        Assert.Equal("3\n1\n3\n3", Display(
+            "ArgList = [1, 2, 3]\nCollect(list) = list\nCollectMany(*list) = list\n"
+            + "ArgList.Collect.count\nArgList.CollectMany.count\nArgList*.CollectMany.count\n(ArgList*).CollectMany.count"));
+
+        // Beside another written argument the receiver is collected exactly, and a
+        // spread-produced item is final even when it is the lone item.
+        Assert.Equal("[(1, 2), 3]\n[(1, 2)]", Display(
+            "CollectMany(*items) = items\n(1, 2).CollectMany(3)\n[(1, 2)]*.CollectMany"));
     }
 
     // ── "Calls Return One Value": the boundary, its two edge cases, and the consumers that are not boundaries ──

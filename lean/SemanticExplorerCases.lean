@@ -1286,7 +1286,7 @@ def case_fixedSpread__pl1 : Expr :=
 -- collecting__e: F(*a) = a \n F(())
 def case_collecting__e : Expr :=
   .algorithmExpr (alg [] [] [privateProp "F" (algWithParameters [{ name := "a", kind := .collecting }] [] [] [.param "a"])] [(.call (.resolve "F") [(.emptySequence 0)])])
-#guard obs case_collecting__e == "ok raw=L[S[]] n=1"
+#guard obs case_collecting__e == "ok raw=L[] n=1"
 
 -- collecting__n0: F(*a) = a \n F(0)
 def case_collecting__n0 : Expr :=
@@ -1316,12 +1316,12 @@ def case_collecting__pbt : Expr :=
 -- collecting__pbt_e: F(*a) = a \n F((true, ()))
 def case_collecting__pbt_e : Expr :=
   .algorithmExpr (alg [] [] [privateProp "F" (algWithParameters [{ name := "a", kind := .collecting }] [] [] [.param "a"])] [(.call (.resolve "F") [(.capture [.boolLiteral true, (.emptySequence 0)])])])
-#guard obs case_collecting__pbt_e == "ok raw=L[S[true, S[]]] n=1"
+#guard obs case_collecting__pbt_e == "ok raw=L[true, S[]] n=1"
 
 -- collecting__pbt_1: F(*a) = a \n F((true, 1))
 def case_collecting__pbt_1 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "F" (algWithParameters [{ name := "a", kind := .collecting }] [] [] [.param "a"])] [(.call (.resolve "F") [(.capture [.boolLiteral true, .num 1])])])
-#guard obs case_collecting__pbt_1 == "ok raw=L[S[true, 1]] n=1"
+#guard obs case_collecting__pbt_1 == "ok raw=L[true, 1] n=1"
 
 -- collecting__lbt: F(*a) = a \n F([true])
 def case_collecting__lbt : Expr :=
@@ -1346,57 +1346,57 @@ def case_collecting__p1 : Expr :=
 -- collecting__p12: F(*a) = a \n F((1, 2))
 def case_collecting__p12 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "F" (algWithParameters [{ name := "a", kind := .collecting }] [] [] [.param "a"])] [(.call (.resolve "F") [(.capture [.num 1, .num 2])])])
-#guard obs case_collecting__p12 == "ok raw=L[S[1, 2]] n=1"
+#guard obs case_collecting__p12 == "ok raw=L[1, 2] n=1"
 
 -- collecting__p123: F(*a) = a \n F((1, 2, 3))
 def case_collecting__p123 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "F" (algWithParameters [{ name := "a", kind := .collecting }] [] [] [.param "a"])] [(.call (.resolve "F") [(.capture [.num 1, .num 2, .num 3])])])
-#guard obs case_collecting__p123 == "ok raw=L[S[1, 2, 3]] n=1"
+#guard obs case_collecting__p123 == "ok raw=L[1, 2, 3] n=1"
 
 -- collecting__pee: F(*a) = a \n F(((), ()))
 def case_collecting__pee : Expr :=
   .algorithmExpr (alg [] [] [privateProp "F" (algWithParameters [{ name := "a", kind := .collecting }] [] [] [.param "a"])] [(.call (.resolve "F") [(.capture [(.emptySequence 0), (.emptySequence 0)])])])
-#guard obs case_collecting__pee == "ok raw=L[S[S[], S[]]] n=1"
+#guard obs case_collecting__pee == "ok raw=L[S[], S[]] n=1"
 
 -- collecting__pe1: F(*a) = a \n F(((), 1))
 def case_collecting__pe1 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "F" (algWithParameters [{ name := "a", kind := .collecting }] [] [] [.param "a"])] [(.call (.resolve "F") [(.capture [(.emptySequence 0), .num 1])])])
-#guard obs case_collecting__pe1 == "ok raw=L[S[S[], 1]] n=1"
+#guard obs case_collecting__pe1 == "ok raw=L[S[], 1] n=1"
 
 -- collecting__p1e: F(*a) = a \n F((1, ()))
 def case_collecting__p1e : Expr :=
   .algorithmExpr (alg [] [] [privateProp "F" (algWithParameters [{ name := "a", kind := .collecting }] [] [] [.param "a"])] [(.call (.resolve "F") [(.capture [.num 1, (.emptySequence 0)])])])
-#guard obs case_collecting__p1e == "ok raw=L[S[1, S[]]] n=1"
+#guard obs case_collecting__p1e == "ok raw=L[1, S[]] n=1"
 
 -- collecting__p12_3: F(*a) = a \n F(((1, 2), 3))
 def case_collecting__p12_3 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "F" (algWithParameters [{ name := "a", kind := .collecting }] [] [] [.param "a"])] [(.call (.resolve "F") [(.capture [(.capture [.num 1, .num 2]), .num 3])])])
-#guard obs case_collecting__p12_3 == "ok raw=L[S[S[1, 2], 3]] n=1"
+#guard obs case_collecting__p12_3 == "ok raw=L[S[1, 2], 3] n=1"
 
 -- collecting__p12_34: F(*a) = a \n F(((1, 2), (3, 4)))
 def case_collecting__p12_34 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "F" (algWithParameters [{ name := "a", kind := .collecting }] [] [] [.param "a"])] [(.call (.resolve "F") [(.capture [(.capture [.num 1, .num 2]), (.capture [.num 3, .num 4])])])])
-#guard obs case_collecting__p12_34 == "ok raw=L[S[S[1, 2], S[3, 4]]] n=1"
+#guard obs case_collecting__p12_34 == "ok raw=L[S[1, 2], S[3, 4]] n=1"
 
 -- collecting__pe_12: F(*a) = a \n F(((), (1, 2)))
 def case_collecting__pe_12 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "F" (algWithParameters [{ name := "a", kind := .collecting }] [] [] [.param "a"])] [(.call (.resolve "F") [(.capture [(.emptySequence 0), (.capture [.num 1, .num 2])])])])
-#guard obs case_collecting__pe_12 == "ok raw=L[S[S[], S[1, 2]]] n=1"
+#guard obs case_collecting__pe_12 == "ok raw=L[S[], S[1, 2]] n=1"
 
 -- collecting__ppe1_2: F(*a) = a \n F((((), 1), 2))
 def case_collecting__ppe1_2 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "F" (algWithParameters [{ name := "a", kind := .collecting }] [] [] [.param "a"])] [(.call (.resolve "F") [(.capture [(.capture [(.emptySequence 0), .num 1]), .num 2])])])
-#guard obs case_collecting__ppe1_2 == "ok raw=L[S[S[S[], 1], 2]] n=1"
+#guard obs case_collecting__ppe1_2 == "ok raw=L[S[S[], 1], 2] n=1"
 
 -- collecting__p12_e: F(*a) = a \n F(((1, 2), ()))
 def case_collecting__p12_e : Expr :=
   .algorithmExpr (alg [] [] [privateProp "F" (algWithParameters [{ name := "a", kind := .collecting }] [] [] [.param "a"])] [(.call (.resolve "F") [(.capture [(.capture [.num 1, .num 2]), (.emptySequence 0)])])])
-#guard obs case_collecting__p12_e == "ok raw=L[S[S[1, 2], S[]]] n=1"
+#guard obs case_collecting__p12_e == "ok raw=L[S[1, 2], S[]] n=1"
 
 -- collecting__ppe: F(*a) = a \n F((()))
 def case_collecting__ppe : Expr :=
   .algorithmExpr (alg [] [] [privateProp "F" (algWithParameters [{ name := "a", kind := .collecting }] [] [] [.param "a"])] [(.call (.resolve "F") [(.emptySequence 0)])])
-#guard obs case_collecting__ppe == "ok raw=L[S[]] n=1"
+#guard obs case_collecting__ppe == "ok raw=L[] n=1"
 
 -- collecting__pp1: F(*a) = a \n F(((1)))
 def case_collecting__pp1 : Expr :=
@@ -1406,7 +1406,7 @@ def case_collecting__pp1 : Expr :=
 -- collecting__ppp12: F(*a) = a \n F((((1, 2))))
 def case_collecting__ppp12 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "F" (algWithParameters [{ name := "a", kind := .collecting }] [] [] [.param "a"])] [(.call (.resolve "F") [(.capture [(.capture [(.capture [.num 1, .num 2])])])])])
-#guard obs case_collecting__ppp12 == "ok raw=L[S[1, 2]] n=1"
+#guard obs case_collecting__ppp12 == "ok raw=L[1, 2] n=1"
 
 -- collecting__le: F(*a) = a \n F([])
 def case_collecting__le : Expr :=
@@ -1446,7 +1446,7 @@ def case_collecting__l_p12 : Expr :=
 -- collecting__p_l12: F(*a) = a \n F(([1, 2], 3))
 def case_collecting__p_l12 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "F" (algWithParameters [{ name := "a", kind := .collecting }] [] [] [.param "a"])] [(.call (.resolve "F") [(.capture [(.listLiteral [.num 1, .num 2]), .num 3])])])
-#guard obs case_collecting__p_l12 == "ok raw=L[S[L[1, 2], 3]] n=1"
+#guard obs case_collecting__p_l12 == "ok raw=L[L[1, 2], 3] n=1"
 
 -- collecting__pl1: F(*a) = a \n F(([1]))
 def case_collecting__pl1 : Expr :=
@@ -1626,7 +1626,7 @@ def case_collectingSpread__pl1 : Expr :=
 -- collectingViaProp__e: F(*a) = a \n x = () \n F(x)
 def case_collectingViaProp__e : Expr :=
   .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.emptySequence 0)]), privateProp "F" (algWithParameters [{ name := "a", kind := .collecting }] [] [] [.param "a"])] [(.call (.resolve "F") [.resolve "x"])])
-#guard obs case_collectingViaProp__e == "ok raw=L[S[]] n=1"
+#guard obs case_collectingViaProp__e == "ok raw=L[] n=1"
 
 -- collectingViaProp__n0: F(*a) = a \n x = 0 \n F(x)
 def case_collectingViaProp__n0 : Expr :=
@@ -1656,12 +1656,12 @@ def case_collectingViaProp__pbt : Expr :=
 -- collectingViaProp__pbt_e: F(*a) = a \n x = (true, ()) \n F(x)
 def case_collectingViaProp__pbt_e : Expr :=
   .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [.boolLiteral true, (.emptySequence 0)])]), privateProp "F" (algWithParameters [{ name := "a", kind := .collecting }] [] [] [.param "a"])] [(.call (.resolve "F") [.resolve "x"])])
-#guard obs case_collectingViaProp__pbt_e == "ok raw=L[S[true, S[]]] n=1"
+#guard obs case_collectingViaProp__pbt_e == "ok raw=L[true, S[]] n=1"
 
 -- collectingViaProp__pbt_1: F(*a) = a \n x = (true, 1) \n F(x)
 def case_collectingViaProp__pbt_1 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [.boolLiteral true, .num 1])]), privateProp "F" (algWithParameters [{ name := "a", kind := .collecting }] [] [] [.param "a"])] [(.call (.resolve "F") [.resolve "x"])])
-#guard obs case_collectingViaProp__pbt_1 == "ok raw=L[S[true, 1]] n=1"
+#guard obs case_collectingViaProp__pbt_1 == "ok raw=L[true, 1] n=1"
 
 -- collectingViaProp__lbt: F(*a) = a \n x = [true] \n F(x)
 def case_collectingViaProp__lbt : Expr :=
@@ -1686,57 +1686,57 @@ def case_collectingViaProp__p1 : Expr :=
 -- collectingViaProp__p12: F(*a) = a \n x = (1, 2) \n F(x)
 def case_collectingViaProp__p12 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [.num 1, .num 2])]), privateProp "F" (algWithParameters [{ name := "a", kind := .collecting }] [] [] [.param "a"])] [(.call (.resolve "F") [.resolve "x"])])
-#guard obs case_collectingViaProp__p12 == "ok raw=L[S[1, 2]] n=1"
+#guard obs case_collectingViaProp__p12 == "ok raw=L[1, 2] n=1"
 
 -- collectingViaProp__p123: F(*a) = a \n x = (1, 2, 3) \n F(x)
 def case_collectingViaProp__p123 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [.num 1, .num 2, .num 3])]), privateProp "F" (algWithParameters [{ name := "a", kind := .collecting }] [] [] [.param "a"])] [(.call (.resolve "F") [.resolve "x"])])
-#guard obs case_collectingViaProp__p123 == "ok raw=L[S[1, 2, 3]] n=1"
+#guard obs case_collectingViaProp__p123 == "ok raw=L[1, 2, 3] n=1"
 
 -- collectingViaProp__pee: F(*a) = a \n x = ((), ()) \n F(x)
 def case_collectingViaProp__pee : Expr :=
   .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [(.emptySequence 0), (.emptySequence 0)])]), privateProp "F" (algWithParameters [{ name := "a", kind := .collecting }] [] [] [.param "a"])] [(.call (.resolve "F") [.resolve "x"])])
-#guard obs case_collectingViaProp__pee == "ok raw=L[S[S[], S[]]] n=1"
+#guard obs case_collectingViaProp__pee == "ok raw=L[S[], S[]] n=1"
 
 -- collectingViaProp__pe1: F(*a) = a \n x = ((), 1) \n F(x)
 def case_collectingViaProp__pe1 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [(.emptySequence 0), .num 1])]), privateProp "F" (algWithParameters [{ name := "a", kind := .collecting }] [] [] [.param "a"])] [(.call (.resolve "F") [.resolve "x"])])
-#guard obs case_collectingViaProp__pe1 == "ok raw=L[S[S[], 1]] n=1"
+#guard obs case_collectingViaProp__pe1 == "ok raw=L[S[], 1] n=1"
 
 -- collectingViaProp__p1e: F(*a) = a \n x = (1, ()) \n F(x)
 def case_collectingViaProp__p1e : Expr :=
   .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [.num 1, (.emptySequence 0)])]), privateProp "F" (algWithParameters [{ name := "a", kind := .collecting }] [] [] [.param "a"])] [(.call (.resolve "F") [.resolve "x"])])
-#guard obs case_collectingViaProp__p1e == "ok raw=L[S[1, S[]]] n=1"
+#guard obs case_collectingViaProp__p1e == "ok raw=L[1, S[]] n=1"
 
 -- collectingViaProp__p12_3: F(*a) = a \n x = ((1, 2), 3) \n F(x)
 def case_collectingViaProp__p12_3 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [(.capture [.num 1, .num 2]), .num 3])]), privateProp "F" (algWithParameters [{ name := "a", kind := .collecting }] [] [] [.param "a"])] [(.call (.resolve "F") [.resolve "x"])])
-#guard obs case_collectingViaProp__p12_3 == "ok raw=L[S[S[1, 2], 3]] n=1"
+#guard obs case_collectingViaProp__p12_3 == "ok raw=L[S[1, 2], 3] n=1"
 
 -- collectingViaProp__p12_34: F(*a) = a \n x = ((1, 2), (3, 4)) \n F(x)
 def case_collectingViaProp__p12_34 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [(.capture [.num 1, .num 2]), (.capture [.num 3, .num 4])])]), privateProp "F" (algWithParameters [{ name := "a", kind := .collecting }] [] [] [.param "a"])] [(.call (.resolve "F") [.resolve "x"])])
-#guard obs case_collectingViaProp__p12_34 == "ok raw=L[S[S[1, 2], S[3, 4]]] n=1"
+#guard obs case_collectingViaProp__p12_34 == "ok raw=L[S[1, 2], S[3, 4]] n=1"
 
 -- collectingViaProp__pe_12: F(*a) = a \n x = ((), (1, 2)) \n F(x)
 def case_collectingViaProp__pe_12 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [(.emptySequence 0), (.capture [.num 1, .num 2])])]), privateProp "F" (algWithParameters [{ name := "a", kind := .collecting }] [] [] [.param "a"])] [(.call (.resolve "F") [.resolve "x"])])
-#guard obs case_collectingViaProp__pe_12 == "ok raw=L[S[S[], S[1, 2]]] n=1"
+#guard obs case_collectingViaProp__pe_12 == "ok raw=L[S[], S[1, 2]] n=1"
 
 -- collectingViaProp__ppe1_2: F(*a) = a \n x = (((), 1), 2) \n F(x)
 def case_collectingViaProp__ppe1_2 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [(.capture [(.emptySequence 0), .num 1]), .num 2])]), privateProp "F" (algWithParameters [{ name := "a", kind := .collecting }] [] [] [.param "a"])] [(.call (.resolve "F") [.resolve "x"])])
-#guard obs case_collectingViaProp__ppe1_2 == "ok raw=L[S[S[S[], 1], 2]] n=1"
+#guard obs case_collectingViaProp__ppe1_2 == "ok raw=L[S[S[], 1], 2] n=1"
 
 -- collectingViaProp__p12_e: F(*a) = a \n x = ((1, 2), ()) \n F(x)
 def case_collectingViaProp__p12_e : Expr :=
   .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [(.capture [.num 1, .num 2]), (.emptySequence 0)])]), privateProp "F" (algWithParameters [{ name := "a", kind := .collecting }] [] [] [.param "a"])] [(.call (.resolve "F") [.resolve "x"])])
-#guard obs case_collectingViaProp__p12_e == "ok raw=L[S[S[1, 2], S[]]] n=1"
+#guard obs case_collectingViaProp__p12_e == "ok raw=L[S[1, 2], S[]] n=1"
 
 -- collectingViaProp__ppe: F(*a) = a \n x = (()) \n F(x)
 def case_collectingViaProp__ppe : Expr :=
   .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.emptySequence 0)]), privateProp "F" (algWithParameters [{ name := "a", kind := .collecting }] [] [] [.param "a"])] [(.call (.resolve "F") [.resolve "x"])])
-#guard obs case_collectingViaProp__ppe == "ok raw=L[S[]] n=1"
+#guard obs case_collectingViaProp__ppe == "ok raw=L[] n=1"
 
 -- collectingViaProp__pp1: F(*a) = a \n x = ((1)) \n F(x)
 def case_collectingViaProp__pp1 : Expr :=
@@ -1746,7 +1746,7 @@ def case_collectingViaProp__pp1 : Expr :=
 -- collectingViaProp__ppp12: F(*a) = a \n x = (((1, 2))) \n F(x)
 def case_collectingViaProp__ppp12 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [(.capture [(.capture [.num 1, .num 2])])])]), privateProp "F" (algWithParameters [{ name := "a", kind := .collecting }] [] [] [.param "a"])] [(.call (.resolve "F") [.resolve "x"])])
-#guard obs case_collectingViaProp__ppp12 == "ok raw=L[S[1, 2]] n=1"
+#guard obs case_collectingViaProp__ppp12 == "ok raw=L[1, 2] n=1"
 
 -- collectingViaProp__le: F(*a) = a \n x = [] \n F(x)
 def case_collectingViaProp__le : Expr :=
@@ -1786,7 +1786,7 @@ def case_collectingViaProp__l_p12 : Expr :=
 -- collectingViaProp__p_l12: F(*a) = a \n x = ([1, 2], 3) \n F(x)
 def case_collectingViaProp__p_l12 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [(.listLiteral [.num 1, .num 2]), .num 3])]), privateProp "F" (algWithParameters [{ name := "a", kind := .collecting }] [] [] [.param "a"])] [(.call (.resolve "F") [.resolve "x"])])
-#guard obs case_collectingViaProp__p_l12 == "ok raw=L[S[L[1, 2], 3]] n=1"
+#guard obs case_collectingViaProp__p_l12 == "ok raw=L[L[1, 2], 3] n=1"
 
 -- collectingViaProp__pl1: F(*a) = a \n x = ([1]) \n F(x)
 def case_collectingViaProp__pl1 : Expr :=
@@ -1796,7 +1796,7 @@ def case_collectingViaProp__pl1 : Expr :=
 -- dotCollectingViaProp__e: F(*a) = a \n x = () \n x.F
 def case_dotCollectingViaProp__e : Expr :=
   .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.emptySequence 0)]), privateProp "F" (algWithParameters [{ name := "a", kind := .collecting }] [] [] [.param "a"])] [(.dotCall (.resolve "x") "F" none)])
-#guard obs case_dotCollectingViaProp__e == "ok raw=L[S[]] n=1"
+#guard obs case_dotCollectingViaProp__e == "ok raw=L[] n=1"
 
 -- dotCollectingViaProp__n0: F(*a) = a \n x = 0 \n x.F
 def case_dotCollectingViaProp__n0 : Expr :=
@@ -1826,12 +1826,12 @@ def case_dotCollectingViaProp__pbt : Expr :=
 -- dotCollectingViaProp__pbt_e: F(*a) = a \n x = (true, ()) \n x.F
 def case_dotCollectingViaProp__pbt_e : Expr :=
   .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [.boolLiteral true, (.emptySequence 0)])]), privateProp "F" (algWithParameters [{ name := "a", kind := .collecting }] [] [] [.param "a"])] [(.dotCall (.resolve "x") "F" none)])
-#guard obs case_dotCollectingViaProp__pbt_e == "ok raw=L[S[true, S[]]] n=1"
+#guard obs case_dotCollectingViaProp__pbt_e == "ok raw=L[true, S[]] n=1"
 
 -- dotCollectingViaProp__pbt_1: F(*a) = a \n x = (true, 1) \n x.F
 def case_dotCollectingViaProp__pbt_1 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [.boolLiteral true, .num 1])]), privateProp "F" (algWithParameters [{ name := "a", kind := .collecting }] [] [] [.param "a"])] [(.dotCall (.resolve "x") "F" none)])
-#guard obs case_dotCollectingViaProp__pbt_1 == "ok raw=L[S[true, 1]] n=1"
+#guard obs case_dotCollectingViaProp__pbt_1 == "ok raw=L[true, 1] n=1"
 
 -- dotCollectingViaProp__lbt: F(*a) = a \n x = [true] \n x.F
 def case_dotCollectingViaProp__lbt : Expr :=
@@ -1856,57 +1856,57 @@ def case_dotCollectingViaProp__p1 : Expr :=
 -- dotCollectingViaProp__p12: F(*a) = a \n x = (1, 2) \n x.F
 def case_dotCollectingViaProp__p12 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [.num 1, .num 2])]), privateProp "F" (algWithParameters [{ name := "a", kind := .collecting }] [] [] [.param "a"])] [(.dotCall (.resolve "x") "F" none)])
-#guard obs case_dotCollectingViaProp__p12 == "ok raw=L[S[1, 2]] n=1"
+#guard obs case_dotCollectingViaProp__p12 == "ok raw=L[1, 2] n=1"
 
 -- dotCollectingViaProp__p123: F(*a) = a \n x = (1, 2, 3) \n x.F
 def case_dotCollectingViaProp__p123 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [.num 1, .num 2, .num 3])]), privateProp "F" (algWithParameters [{ name := "a", kind := .collecting }] [] [] [.param "a"])] [(.dotCall (.resolve "x") "F" none)])
-#guard obs case_dotCollectingViaProp__p123 == "ok raw=L[S[1, 2, 3]] n=1"
+#guard obs case_dotCollectingViaProp__p123 == "ok raw=L[1, 2, 3] n=1"
 
 -- dotCollectingViaProp__pee: F(*a) = a \n x = ((), ()) \n x.F
 def case_dotCollectingViaProp__pee : Expr :=
   .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [(.emptySequence 0), (.emptySequence 0)])]), privateProp "F" (algWithParameters [{ name := "a", kind := .collecting }] [] [] [.param "a"])] [(.dotCall (.resolve "x") "F" none)])
-#guard obs case_dotCollectingViaProp__pee == "ok raw=L[S[S[], S[]]] n=1"
+#guard obs case_dotCollectingViaProp__pee == "ok raw=L[S[], S[]] n=1"
 
 -- dotCollectingViaProp__pe1: F(*a) = a \n x = ((), 1) \n x.F
 def case_dotCollectingViaProp__pe1 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [(.emptySequence 0), .num 1])]), privateProp "F" (algWithParameters [{ name := "a", kind := .collecting }] [] [] [.param "a"])] [(.dotCall (.resolve "x") "F" none)])
-#guard obs case_dotCollectingViaProp__pe1 == "ok raw=L[S[S[], 1]] n=1"
+#guard obs case_dotCollectingViaProp__pe1 == "ok raw=L[S[], 1] n=1"
 
 -- dotCollectingViaProp__p1e: F(*a) = a \n x = (1, ()) \n x.F
 def case_dotCollectingViaProp__p1e : Expr :=
   .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [.num 1, (.emptySequence 0)])]), privateProp "F" (algWithParameters [{ name := "a", kind := .collecting }] [] [] [.param "a"])] [(.dotCall (.resolve "x") "F" none)])
-#guard obs case_dotCollectingViaProp__p1e == "ok raw=L[S[1, S[]]] n=1"
+#guard obs case_dotCollectingViaProp__p1e == "ok raw=L[1, S[]] n=1"
 
 -- dotCollectingViaProp__p12_3: F(*a) = a \n x = ((1, 2), 3) \n x.F
 def case_dotCollectingViaProp__p12_3 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [(.capture [.num 1, .num 2]), .num 3])]), privateProp "F" (algWithParameters [{ name := "a", kind := .collecting }] [] [] [.param "a"])] [(.dotCall (.resolve "x") "F" none)])
-#guard obs case_dotCollectingViaProp__p12_3 == "ok raw=L[S[S[1, 2], 3]] n=1"
+#guard obs case_dotCollectingViaProp__p12_3 == "ok raw=L[S[1, 2], 3] n=1"
 
 -- dotCollectingViaProp__p12_34: F(*a) = a \n x = ((1, 2), (3, 4)) \n x.F
 def case_dotCollectingViaProp__p12_34 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [(.capture [.num 1, .num 2]), (.capture [.num 3, .num 4])])]), privateProp "F" (algWithParameters [{ name := "a", kind := .collecting }] [] [] [.param "a"])] [(.dotCall (.resolve "x") "F" none)])
-#guard obs case_dotCollectingViaProp__p12_34 == "ok raw=L[S[S[1, 2], S[3, 4]]] n=1"
+#guard obs case_dotCollectingViaProp__p12_34 == "ok raw=L[S[1, 2], S[3, 4]] n=1"
 
 -- dotCollectingViaProp__pe_12: F(*a) = a \n x = ((), (1, 2)) \n x.F
 def case_dotCollectingViaProp__pe_12 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [(.emptySequence 0), (.capture [.num 1, .num 2])])]), privateProp "F" (algWithParameters [{ name := "a", kind := .collecting }] [] [] [.param "a"])] [(.dotCall (.resolve "x") "F" none)])
-#guard obs case_dotCollectingViaProp__pe_12 == "ok raw=L[S[S[], S[1, 2]]] n=1"
+#guard obs case_dotCollectingViaProp__pe_12 == "ok raw=L[S[], S[1, 2]] n=1"
 
 -- dotCollectingViaProp__ppe1_2: F(*a) = a \n x = (((), 1), 2) \n x.F
 def case_dotCollectingViaProp__ppe1_2 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [(.capture [(.emptySequence 0), .num 1]), .num 2])]), privateProp "F" (algWithParameters [{ name := "a", kind := .collecting }] [] [] [.param "a"])] [(.dotCall (.resolve "x") "F" none)])
-#guard obs case_dotCollectingViaProp__ppe1_2 == "ok raw=L[S[S[S[], 1], 2]] n=1"
+#guard obs case_dotCollectingViaProp__ppe1_2 == "ok raw=L[S[S[], 1], 2] n=1"
 
 -- dotCollectingViaProp__p12_e: F(*a) = a \n x = ((1, 2), ()) \n x.F
 def case_dotCollectingViaProp__p12_e : Expr :=
   .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [(.capture [.num 1, .num 2]), (.emptySequence 0)])]), privateProp "F" (algWithParameters [{ name := "a", kind := .collecting }] [] [] [.param "a"])] [(.dotCall (.resolve "x") "F" none)])
-#guard obs case_dotCollectingViaProp__p12_e == "ok raw=L[S[S[1, 2], S[]]] n=1"
+#guard obs case_dotCollectingViaProp__p12_e == "ok raw=L[S[1, 2], S[]] n=1"
 
 -- dotCollectingViaProp__ppe: F(*a) = a \n x = (()) \n x.F
 def case_dotCollectingViaProp__ppe : Expr :=
   .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.emptySequence 0)]), privateProp "F" (algWithParameters [{ name := "a", kind := .collecting }] [] [] [.param "a"])] [(.dotCall (.resolve "x") "F" none)])
-#guard obs case_dotCollectingViaProp__ppe == "ok raw=L[S[]] n=1"
+#guard obs case_dotCollectingViaProp__ppe == "ok raw=L[] n=1"
 
 -- dotCollectingViaProp__pp1: F(*a) = a \n x = ((1)) \n x.F
 def case_dotCollectingViaProp__pp1 : Expr :=
@@ -1916,7 +1916,7 @@ def case_dotCollectingViaProp__pp1 : Expr :=
 -- dotCollectingViaProp__ppp12: F(*a) = a \n x = (((1, 2))) \n x.F
 def case_dotCollectingViaProp__ppp12 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [(.capture [(.capture [.num 1, .num 2])])])]), privateProp "F" (algWithParameters [{ name := "a", kind := .collecting }] [] [] [.param "a"])] [(.dotCall (.resolve "x") "F" none)])
-#guard obs case_dotCollectingViaProp__ppp12 == "ok raw=L[S[1, 2]] n=1"
+#guard obs case_dotCollectingViaProp__ppp12 == "ok raw=L[1, 2] n=1"
 
 -- dotCollectingViaProp__le: F(*a) = a \n x = [] \n x.F
 def case_dotCollectingViaProp__le : Expr :=
@@ -1956,7 +1956,7 @@ def case_dotCollectingViaProp__l_p12 : Expr :=
 -- dotCollectingViaProp__p_l12: F(*a) = a \n x = ([1, 2], 3) \n x.F
 def case_dotCollectingViaProp__p_l12 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [(.listLiteral [.num 1, .num 2]), .num 3])]), privateProp "F" (algWithParameters [{ name := "a", kind := .collecting }] [] [] [.param "a"])] [(.dotCall (.resolve "x") "F" none)])
-#guard obs case_dotCollectingViaProp__p_l12 == "ok raw=L[S[L[1, 2], 3]] n=1"
+#guard obs case_dotCollectingViaProp__p_l12 == "ok raw=L[L[1, 2], 3] n=1"
 
 -- dotCollectingViaProp__pl1: F(*a) = a \n x = ([1]) \n x.F
 def case_dotCollectingViaProp__pl1 : Expr :=
@@ -1966,7 +1966,7 @@ def case_dotCollectingViaProp__pl1 : Expr :=
 -- literalDotCollecting__e: F(*a) = a \n (()).F
 def case_literalDotCollecting__e : Expr :=
   .algorithmExpr (alg [] [] [privateProp "F" (algWithParameters [{ name := "a", kind := .collecting }] [] [] [.param "a"])] [(.dotCall (.emptySequence 0) "F" none)])
-#guard obs case_literalDotCollecting__e == "ok raw=L[S[]] n=1"
+#guard obs case_literalDotCollecting__e == "ok raw=L[] n=1"
 
 -- literalDotCollecting__n0: F(*a) = a \n (0).F
 def case_literalDotCollecting__n0 : Expr :=
@@ -1996,12 +1996,12 @@ def case_literalDotCollecting__pbt : Expr :=
 -- literalDotCollecting__pbt_e: F(*a) = a \n ((true, ())).F
 def case_literalDotCollecting__pbt_e : Expr :=
   .algorithmExpr (alg [] [] [privateProp "F" (algWithParameters [{ name := "a", kind := .collecting }] [] [] [.param "a"])] [(.dotCall (.capture [(.capture [.boolLiteral true, (.emptySequence 0)])]) "F" none)])
-#guard obs case_literalDotCollecting__pbt_e == "ok raw=L[S[true, S[]]] n=1"
+#guard obs case_literalDotCollecting__pbt_e == "ok raw=L[true, S[]] n=1"
 
 -- literalDotCollecting__pbt_1: F(*a) = a \n ((true, 1)).F
 def case_literalDotCollecting__pbt_1 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "F" (algWithParameters [{ name := "a", kind := .collecting }] [] [] [.param "a"])] [(.dotCall (.capture [(.capture [.boolLiteral true, .num 1])]) "F" none)])
-#guard obs case_literalDotCollecting__pbt_1 == "ok raw=L[S[true, 1]] n=1"
+#guard obs case_literalDotCollecting__pbt_1 == "ok raw=L[true, 1] n=1"
 
 -- literalDotCollecting__lbt: F(*a) = a \n ([true]).F
 def case_literalDotCollecting__lbt : Expr :=
@@ -2026,57 +2026,57 @@ def case_literalDotCollecting__p1 : Expr :=
 -- literalDotCollecting__p12: F(*a) = a \n ((1, 2)).F
 def case_literalDotCollecting__p12 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "F" (algWithParameters [{ name := "a", kind := .collecting }] [] [] [.param "a"])] [(.dotCall (.capture [(.capture [.num 1, .num 2])]) "F" none)])
-#guard obs case_literalDotCollecting__p12 == "ok raw=L[S[1, 2]] n=1"
+#guard obs case_literalDotCollecting__p12 == "ok raw=L[1, 2] n=1"
 
 -- literalDotCollecting__p123: F(*a) = a \n ((1, 2, 3)).F
 def case_literalDotCollecting__p123 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "F" (algWithParameters [{ name := "a", kind := .collecting }] [] [] [.param "a"])] [(.dotCall (.capture [(.capture [.num 1, .num 2, .num 3])]) "F" none)])
-#guard obs case_literalDotCollecting__p123 == "ok raw=L[S[1, 2, 3]] n=1"
+#guard obs case_literalDotCollecting__p123 == "ok raw=L[1, 2, 3] n=1"
 
 -- literalDotCollecting__pee: F(*a) = a \n (((), ())).F
 def case_literalDotCollecting__pee : Expr :=
   .algorithmExpr (alg [] [] [privateProp "F" (algWithParameters [{ name := "a", kind := .collecting }] [] [] [.param "a"])] [(.dotCall (.capture [(.capture [(.emptySequence 0), (.emptySequence 0)])]) "F" none)])
-#guard obs case_literalDotCollecting__pee == "ok raw=L[S[S[], S[]]] n=1"
+#guard obs case_literalDotCollecting__pee == "ok raw=L[S[], S[]] n=1"
 
 -- literalDotCollecting__pe1: F(*a) = a \n (((), 1)).F
 def case_literalDotCollecting__pe1 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "F" (algWithParameters [{ name := "a", kind := .collecting }] [] [] [.param "a"])] [(.dotCall (.capture [(.capture [(.emptySequence 0), .num 1])]) "F" none)])
-#guard obs case_literalDotCollecting__pe1 == "ok raw=L[S[S[], 1]] n=1"
+#guard obs case_literalDotCollecting__pe1 == "ok raw=L[S[], 1] n=1"
 
 -- literalDotCollecting__p1e: F(*a) = a \n ((1, ())).F
 def case_literalDotCollecting__p1e : Expr :=
   .algorithmExpr (alg [] [] [privateProp "F" (algWithParameters [{ name := "a", kind := .collecting }] [] [] [.param "a"])] [(.dotCall (.capture [(.capture [.num 1, (.emptySequence 0)])]) "F" none)])
-#guard obs case_literalDotCollecting__p1e == "ok raw=L[S[1, S[]]] n=1"
+#guard obs case_literalDotCollecting__p1e == "ok raw=L[1, S[]] n=1"
 
 -- literalDotCollecting__p12_3: F(*a) = a \n (((1, 2), 3)).F
 def case_literalDotCollecting__p12_3 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "F" (algWithParameters [{ name := "a", kind := .collecting }] [] [] [.param "a"])] [(.dotCall (.capture [(.capture [(.capture [.num 1, .num 2]), .num 3])]) "F" none)])
-#guard obs case_literalDotCollecting__p12_3 == "ok raw=L[S[S[1, 2], 3]] n=1"
+#guard obs case_literalDotCollecting__p12_3 == "ok raw=L[S[1, 2], 3] n=1"
 
 -- literalDotCollecting__p12_34: F(*a) = a \n (((1, 2), (3, 4))).F
 def case_literalDotCollecting__p12_34 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "F" (algWithParameters [{ name := "a", kind := .collecting }] [] [] [.param "a"])] [(.dotCall (.capture [(.capture [(.capture [.num 1, .num 2]), (.capture [.num 3, .num 4])])]) "F" none)])
-#guard obs case_literalDotCollecting__p12_34 == "ok raw=L[S[S[1, 2], S[3, 4]]] n=1"
+#guard obs case_literalDotCollecting__p12_34 == "ok raw=L[S[1, 2], S[3, 4]] n=1"
 
 -- literalDotCollecting__pe_12: F(*a) = a \n (((), (1, 2))).F
 def case_literalDotCollecting__pe_12 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "F" (algWithParameters [{ name := "a", kind := .collecting }] [] [] [.param "a"])] [(.dotCall (.capture [(.capture [(.emptySequence 0), (.capture [.num 1, .num 2])])]) "F" none)])
-#guard obs case_literalDotCollecting__pe_12 == "ok raw=L[S[S[], S[1, 2]]] n=1"
+#guard obs case_literalDotCollecting__pe_12 == "ok raw=L[S[], S[1, 2]] n=1"
 
 -- literalDotCollecting__ppe1_2: F(*a) = a \n ((((), 1), 2)).F
 def case_literalDotCollecting__ppe1_2 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "F" (algWithParameters [{ name := "a", kind := .collecting }] [] [] [.param "a"])] [(.dotCall (.capture [(.capture [(.capture [(.emptySequence 0), .num 1]), .num 2])]) "F" none)])
-#guard obs case_literalDotCollecting__ppe1_2 == "ok raw=L[S[S[S[], 1], 2]] n=1"
+#guard obs case_literalDotCollecting__ppe1_2 == "ok raw=L[S[S[], 1], 2] n=1"
 
 -- literalDotCollecting__p12_e: F(*a) = a \n (((1, 2), ())).F
 def case_literalDotCollecting__p12_e : Expr :=
   .algorithmExpr (alg [] [] [privateProp "F" (algWithParameters [{ name := "a", kind := .collecting }] [] [] [.param "a"])] [(.dotCall (.capture [(.capture [(.capture [.num 1, .num 2]), (.emptySequence 0)])]) "F" none)])
-#guard obs case_literalDotCollecting__p12_e == "ok raw=L[S[S[1, 2], S[]]] n=1"
+#guard obs case_literalDotCollecting__p12_e == "ok raw=L[S[1, 2], S[]] n=1"
 
 -- literalDotCollecting__ppe: F(*a) = a \n ((())).F
 def case_literalDotCollecting__ppe : Expr :=
   .algorithmExpr (alg [] [] [privateProp "F" (algWithParameters [{ name := "a", kind := .collecting }] [] [] [.param "a"])] [(.dotCall (.emptySequence 0) "F" none)])
-#guard obs case_literalDotCollecting__ppe == "ok raw=L[S[]] n=1"
+#guard obs case_literalDotCollecting__ppe == "ok raw=L[] n=1"
 
 -- literalDotCollecting__pp1: F(*a) = a \n (((1))).F
 def case_literalDotCollecting__pp1 : Expr :=
@@ -2086,7 +2086,7 @@ def case_literalDotCollecting__pp1 : Expr :=
 -- literalDotCollecting__ppp12: F(*a) = a \n ((((1, 2)))).F
 def case_literalDotCollecting__ppp12 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "F" (algWithParameters [{ name := "a", kind := .collecting }] [] [] [.param "a"])] [(.dotCall (.capture [(.capture [(.capture [(.capture [.num 1, .num 2])])])]) "F" none)])
-#guard obs case_literalDotCollecting__ppp12 == "ok raw=L[S[1, 2]] n=1"
+#guard obs case_literalDotCollecting__ppp12 == "ok raw=L[1, 2] n=1"
 
 -- literalDotCollecting__le: F(*a) = a \n ([]).F
 def case_literalDotCollecting__le : Expr :=
@@ -2126,7 +2126,7 @@ def case_literalDotCollecting__l_p12 : Expr :=
 -- literalDotCollecting__p_l12: F(*a) = a \n (([1, 2], 3)).F
 def case_literalDotCollecting__p_l12 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "F" (algWithParameters [{ name := "a", kind := .collecting }] [] [] [.param "a"])] [(.dotCall (.capture [(.capture [(.listLiteral [.num 1, .num 2]), .num 3])]) "F" none)])
-#guard obs case_literalDotCollecting__p_l12 == "ok raw=L[S[L[1, 2], 3]] n=1"
+#guard obs case_literalDotCollecting__p_l12 == "ok raw=L[L[1, 2], 3] n=1"
 
 -- literalDotCollecting__pl1: F(*a) = a \n (([1])).F
 def case_literalDotCollecting__pl1 : Expr :=

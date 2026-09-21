@@ -2467,19 +2467,43 @@ def bindAlgParams (ps : List Ident) (algs : List (Option Algorithm)) : AlgEnv :=
     | some alg => (p, alg) :: bindAlgParams ps' as'
     | none     => bindAlgParams ps' as'
 
+/-- How one binder input entered the argument supply — the ONE assembly fact
+    the COLLECTOR SUPPLY-BOUNDARY LAW reads (September 2026):
+
+    - `writtenSlot`: one non-spread argument slot — a written argument, the
+      extension dot-call receiver (`R.F(args)` is `F(R, args)`), or a whole
+      callback item. Such a slot is one value; when it is a collecting
+      parameter's ENTIRE allocated segment and holds a sequence value, that
+      sequence may fuse with the collector's own supply boundary
+      (`collectorSupply`).
+    - `finalItem`: an item that a boundary opening already produced — an
+      explicit spread item, a callback row slot, a sequence-value pattern
+      item, a loop-state slot, a reducer accumulator slot. Final items are
+      collected exactly; nothing reopens them.
+
+    This is slot provenance, never result provenance: it records how a slot
+    was WRITTEN, not where its value came from, so `Coll((1, 2))` and
+    `Coll([(1, 2)]*)` differ while every origin of a `(1, 2)` value agrees.
+    C#: `SupplyOrigin`. -/
+inductive SupplyOrigin where
+  | writtenSlot
+  | finalItem
+  deriving Repr, BEq, DecidableEq
+
 /-- One call argument slot prepared for parameter binding: its value view
     (`value?`), its algorithm view where resolvable, a retained value error,
-    and — for patterned callees — the written item view of a group. Every
-    slot is exactly ONE argument whatever spelling supplied it: a written
-    argument, an explicit spread item, or an extension dot-call receiver
-    (DOT-CALL PASSES A VALUE, September 2026: `R.F(args)` assembles exactly
-    the slots of `F(R, args)`; no slot carries a raw supply of its own).
-    C#: `ParameterPatternInput` (via `VariadicCallItem`). -/
+    its supply origin, and — for patterned callees — the written item view of
+    a group. Every slot is exactly ONE argument whatever spelling supplied it:
+    a written argument, an explicit spread item, or an extension dot-call
+    receiver (DOT-CALL PASSES A VALUE, September 2026: `R.F(args)` assembles
+    exactly the slots of `F(R, args)`; no slot carries a raw supply of its
+    own). C#: `ParameterPatternInput` (via `VariadicCallItem`). -/
 structure VariadicItem where
   value? : Option Result := none
   algorithm? : Option Algorithm := none
   error? : Option Error := none
   explicitItems? : Option (List Result) := none
+  origin : SupplyOrigin := .finalItem
   deriving Repr
 
 structure FlatFixedCallSlot where
@@ -2501,6 +2525,16 @@ structure ParameterPatternInput where
   algorithm? : Option Algorithm := none
   error? : Option Error := none
   explicitSequenceValueItems? : Option (List Result) := none
+  /-- Supply origin (`SupplyOrigin`); `finalItem` unless call assembly
+      records a non-spread written slot. -/
+  origin : SupplyOrigin := .finalItem
+  deriving Repr
+
+/-- One counted binder input (the callback binding path): the counted value
+    plus its supply origin. C#: `CountedPatternInput`. -/
+structure CountedPatternInput where
+  counted : CountedResult
+  origin : SupplyOrigin := .finalItem
   deriving Repr
 
 structure ParameterPatternBindings where
@@ -2528,7 +2562,8 @@ def variadicItemToPatternInput (item : VariadicItem) : ParameterPatternInput :=
   { value? := item.value?,
     algorithm? := item.algorithm?,
     error? := item.error?,
-    explicitSequenceValueItems? := item.explicitItems? }
+    explicitSequenceValueItems? := item.explicitItems?,
+    origin := item.origin }
 
 /-- Compatibility fallback for manually constructed core conditionals.
   Surface clause elaboration should already route eligible single-branch
@@ -2706,8 +2741,10 @@ def Algorithm.isFunctionShaped : Algorithm -> Bool
     Every collecting binding — deconstruction collecting bindings, single collecting parameters,
     and mixed prefix/collecting/suffix parameter lists — binds its assigned middle
     supply through this single helper, after the receiver-specific supply
-    preparation (call binding preserves argument slots; deconstruction may
-    open one lone sequence or list). The round trip
+    preparation (a call applies the collector supply-boundary law
+    `collectorSupply` to the collector's allocated segment: a lone written
+    sequence slot opens one level, everything else is the slots as supplied;
+    deconstruction may open one lone sequence or list). The round trip
     `Result.spreadItems (collectSegment xs) = xs` makes collecting-parameter forwarding
     ordinary list spread: `Forward(*items) = Target(items*)` re-supplies
     exactly the collected items with no hidden raw-supply metadata. A collecting
@@ -2715,6 +2752,34 @@ def Algorithm.isFunctionShaped : Algorithm -> Bool
     `[]`). C#: `CollectSegment` (inside `CreateCollectingCapture`). -/
 def collectSegment (items : List Result) : Result :=
   Result.listValue items
+
+/-- COLLECTOR SUPPLY-BOUNDARY LAW (September 2026). The supply a collecting
+    parameter collects from the segment the binder allocated to it — AFTER
+    fixed prefix/suffix allocation, on that segment alone:
+
+    - several supplied items are collected exactly as supplied
+      (`Coll((1, 2), 3)` is `[(1, 2), 3]`);
+    - ONE lone non-spread sequence value (`.writtenSlot`) may stand for the
+      collector's whole supply: its immediate items are the supply, exactly
+      one level (`Coll((1, 2))` is `[1, 2]`, `Coll(((1, 2), 3))` is
+      `[(1, 2), 3]`, `Coll(())` is `[]` — the same rule, no emptiness case);
+    - lists are exact values and never open here (`Coll([1, 2])` is
+      `[[1, 2]]`, `Coll([])` is `[[]]`);
+    - a `.finalItem` — produced by explicit spread, callback row unpacking,
+      sequence-value pattern opening, loop state, or a reducer accumulator —
+      is collected unchanged even when it is the lone item
+      (`Coll([(1, 2)]*)` is `[(1, 2)]`, `Coll([()]*)` is `[()]`).
+
+    Fixed parameters bind their allocated values unchanged (`Id((1, 2))` is
+    `(1, 2)`); dot-call is ordinary receiver injection, so `(1, 2).Coll` is
+    `Coll((1, 2))` by this rule and not by any receiver rule; selection chooses
+    a value, so `Coll(A:0)` depends only on the selected value and on the slot
+    being written non-spread. Laws: `collector_*` in `KatLangArityLaws.lean`.
+    C#: `CollectorSupply`. -/
+def collectorSupply (segment : List (Result × SupplyOrigin)) : List Result :=
+  match segment with
+  | [(.sequenceValue items, .writtenSlot)] => items
+  | _ => segment.map Prod.fst
 
 /-- Re-count a counted result at a public property/call/builtin RESULT boundary.
 
@@ -2859,11 +2924,14 @@ partial def bindCountedParameterPattern (pattern : ParameterPattern) (input : Co
       match sequenceValueItems? with
       | none => .error Error.badArity
       | some sequenceValueItems =>
-          let nestedInputs := sequenceValueItems.map (fun value => (value, Result.valueCount value))
+          -- Pattern-opened items are FINAL supply items: a nested collecting
+          -- binding collects them exactly (one boundary opened, never two).
+          let nestedInputs := sequenceValueItems.map (fun value =>
+            { counted := (value, Result.valueCount value) : CountedPatternInput })
           bindCountedParameterPatternList items nestedInputs
 
 partial def bindCountedParameterPatternList (patterns : List ParameterPattern)
-  (inputs : List CountedResult) : EvalM CountedParameterPatternBindings := do
+  (inputs : List CountedPatternInput) : EvalM CountedParameterPatternBindings := do
   let rec findCollecting : List ParameterPattern -> Nat -> Option (Nat × CallableParameter)
     | [], _ => none
     | (.capture parameter) :: rest, index =>
@@ -2875,10 +2943,10 @@ partial def bindCountedParameterPatternList (patterns : List ParameterPattern)
       : EvalM CountedParameterPatternBindings := do
     let countedParamEnv <- mergeEqualCountedParamEnv left.countedParamEnv right.countedParamEnv
     pure { countedParamEnv := countedParamEnv }
-  let rec bindPairs : List ParameterPattern -> List CountedResult -> EvalM CountedParameterPatternBindings
+  let rec bindPairs : List ParameterPattern -> List CountedPatternInput -> EvalM CountedParameterPatternBindings
     | [], [] => pure {}
     | pattern :: patterns', input :: inputs' => do
-        let current <- bindCountedParameterPattern pattern input
+        let current <- bindCountedParameterPattern pattern input.counted
         let rest <- bindPairs patterns' inputs'
         merge current rest
     | _, _ => .error (Error.arityMismatch patterns.length inputs.length)
@@ -2901,10 +2969,12 @@ partial def bindCountedParameterPatternList (patterns : List ParameterPattern)
         let capturedInputs := (inputs.drop collectingIndex).take (inputs.length - suffixCount - collectingIndex)
         let prefixBindings <- bindPairs prefixPatterns prefixInputs
         let suffixBindings <- bindPairs suffixPatterns suffixInputs
-        let capturedValues := capturedInputs.map Prod.fst
-        -- Collecting binding COLLECTS: the assigned supply becomes one exact
-        -- immutable list value, emitted count 1 (a list is one visible value).
-        let captured := collectSegment capturedValues
+        -- Collecting binding COLLECTS the collector supply of its allocated
+        -- segment (`collectorSupply`: exact, except that one lone written
+        -- sequence slot opens one level) as one exact immutable list value,
+        -- emitted count 1 (a list is one visible value).
+        let segment := capturedInputs.map (fun input => (input.counted.fst, input.origin))
+        let captured := collectSegment (collectorSupply segment)
         let capturedBinding := (collectingParameter.name, (captured, 1))
         let collectingBindings : CountedParameterPatternBindings :=
           { countedParamEnv := [capturedBinding] }
@@ -2919,17 +2989,25 @@ partial def bindCountedParameterPatternList (patterns : List ParameterPattern)
     (a lone sequence element into row slots; exact lists stay opaque), exactly
     as `bindCountedCallbackParams` does for fixed-only flat callees. The resulting
     slots then bind through the shared prefix/collecting/suffix binder, so the collecting
-    parameter COLLECTS its allocated slots as one list.
+    parameter COLLECTS its allocated slots as one list under the collector
+    supply-boundary law: a whole callback argument is a written slot (a lone
+    sequence item on a single-collecting callee opens one level —
+    `((1, 2), (3, 4)).map(Coll)` is `[[1, 2], [3, 4]]`), while row-unpacked
+    slots are final items.
     C#: `BindCountedCallbackParameterPatternList`. -/
 def bindCountedCallbackParameterPatternList (patterns : List ParameterPattern)
     (args : List CountedResult) : EvalM CountedParameterPatternBindings :=
+  let written (arg : CountedResult) : CountedPatternInput :=
+    { counted := arg, origin := .writtenSlot }
+  let final (arg : CountedResult) : CountedPatternInput :=
+    { counted := arg, origin := .finalItem }
   let slots :=
     if args.length != 0 && args.length < patterns.length then
       match args.getLast? with
-      | some last => args.dropLast ++ unpackCountedArg last
-      | none => args
+      | some last => args.dropLast.map written ++ (unpackCountedArg last).map final
+      | none => args.map written
     else
-      args
+      args.map written
   bindCountedParameterPatternList patterns slots
 
 def describeSequenceItem : Result -> String
@@ -4711,18 +4789,18 @@ mutual
           let capturedInputs := (inputs.drop collectingIndex).take (inputs.length - suffixCount - collectingIndex)
           let prefixBindings <- bindPairs prefixPatterns prefixInputs
           let suffixBindings <- bindPairs suffixPatterns suffixInputs
-          let rec collectValues : List ParameterPatternInput -> EvalM (List Result)
+          let rec collectValues : List ParameterPatternInput -> EvalM (List (Result × SupplyOrigin))
             | [] => pure []
             | input :: rest =>
                 match input.value? with
                 | some value => do
                     let values <- collectValues rest
                     -- Every slot allocated to the flat top-level collecting
-                    -- position contributes its ONE reified value — a written
-                    -- argument, an explicit spread item, and an extension
-                    -- dot-call receiver alike (dot-call passes a value; only
-                    -- the spread marker opens one). Nothing is opened here.
-                    pure (value :: values)
+                    -- position contributes its ONE reified value together with
+                    -- its supply origin; `collectorSupply` below decides, on
+                    -- the whole allocated segment, whether a lone written
+                    -- sequence slot fuses with the collector's boundary.
+                    pure ((value, input.origin) :: values)
                 | none =>
                     -- A collecting binding collects VALUES. A callable-shaped
                     -- argument (builtin, clause family, or parameterized
@@ -4742,10 +4820,12 @@ mutual
                         else
                           .error (input.error?.getD Error.badArity)
                     | none => .error (input.error?.getD Error.badArity)
-          let capturedValues <- collectValues capturedInputs
-          -- Collecting binding COLLECTS: the assigned supply becomes one exact
-          -- immutable list value, emitted count 1 (a list is one visible value).
-          let captured := collectSegment capturedValues
+          let segment <- collectValues capturedInputs
+          -- Collecting binding COLLECTS the collector supply of its allocated
+          -- segment (`collectorSupply`: exact, except that one lone written
+          -- sequence slot opens one level) as one exact immutable list value,
+          -- emitted count 1 (a list is one visible value).
+          let captured := collectSegment (collectorSupply segment)
           let collectingBindings : ParameterPatternBindings :=
             { argEnv := [(collectingParameter.name, captured)],
               countedParamEnv := [(collectingParameter.name, (captured, 1))],
@@ -5132,7 +5212,10 @@ mutual
           .error Error.missingOutput
         else do
           if Algorithm.requiresPatternBinding callee then do
-            let bindings <- bindCountedParameterPatternList (Algorithm.parameterPatterns callee) args
+            -- Whole callback arguments are written slots; the sequence-value
+            -- patterns open them and their items are final.
+            let inputs := args.map (fun arg => { counted := arg, origin := .writtenSlot : CountedPatternInput })
+            let bindings <- bindCountedParameterPatternList (Algorithm.parameterPatterns callee) inputs
             let names := bindings.countedParamEnv.map Prod.fst
             let newCtx <- ctx.bindParameters names [] bindings.countedParamEnv
             evalAlgOutputCounted callee newCtx env
@@ -5178,7 +5261,11 @@ mutual
         if output.isEmpty then
           .error Error.missingOutput
         else do
-          let bindings <- bindCountedParameterPatternList patterns args
+          -- Accumulator state slots are already the opened accumulator
+          -- (`Result.toItems`), so every slot here is a FINAL item: the
+          -- collector collects the presented slots exactly, like loop state.
+          let inputs := args.map (fun arg => { counted := arg : CountedPatternInput })
+          let bindings <- bindCountedParameterPatternList patterns inputs
           let names := bindings.countedParamEnv.map Prod.fst
           let newCtx <- ctx.bindParameters names [] bindings.countedParamEnv
           evalAlgOutputCounted callee newCtx env
@@ -5685,13 +5772,16 @@ mutual
     let rec appendCounted (counted : CountedResult) (maybeAlg : Option Algorithm) (expand : Bool)
         (explicitItems : Option (List Result)) (acc : List VariadicItem) : List VariadicItem :=
       if expand then
+        -- Explicit spread produces FINAL supply items (`SupplyOrigin.finalItem`).
         let expanded := (countedTopLevelValues counted).map (fun value =>
           { value? := some value : VariadicItem })
         expanded.reverse ++ acc
       else
+        -- A non-spread slot is ONE written slot (`SupplyOrigin.writtenSlot`).
         { value? := some counted.fst,
           algorithm? := maybeAlg,
-          explicitItems? := explicitItems : VariadicItem } :: acc
+          explicitItems? := explicitItems,
+          origin := .writtenSlot : VariadicItem } :: acc
     let shouldExpand (e : Expr) : Bool :=
       match e with
       | .sequenceSpread _ => true
@@ -5707,7 +5797,7 @@ mutual
               (appendCounted prepared.counted ma expand prepared.explicitItems? acc)
           | .error err =>
             match ma with
-            | some alg => loop es mas ({ algorithm? := some alg, error? := some err : VariadicItem } :: acc)
+            | some alg => loop es mas ({ algorithm? := some alg, error? := some err, origin := .writtenSlot : VariadicItem } :: acc)
             | none => .error err
       | e :: es, [], acc => do
           let expand := shouldExpand e

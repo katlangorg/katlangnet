@@ -155,22 +155,40 @@ def variadicCaptureCollectsExactList : Bool :=
    | _ => false) &&
   (match runCollectInspect [.sequenceSpread (.listLiteral [.num 1, .num 2])] with
    | Except.ok (Result.listValue [Result.atom 1, Result.atom 2]) => true | _ => false) &&
-  -- Inspect((1, 2)) => [(1, 2)]; Inspect((1, 2)*) => [1, 2]
+  -- Inspect((1, 2)) => [1, 2]: the lone written sequence slot is the whole
+  -- collector segment and opens one level (the collector supply-boundary
+  -- law); Inspect((1, 2)*) => [1, 2] supplies the same two final items.
   (match runCollectInspect [.capture [.num 1, .num 2]] with
-   | Except.ok (Result.listValue [Result.sequenceValue [Result.atom 1, Result.atom 2]]) => true
+   | Except.ok (Result.listValue [Result.atom 1, Result.atom 2]) => true
    | _ => false) &&
   (match runCollectInspect [.sequenceSpread (.capture [.num 1, .num 2])] with
-   | Except.ok (Result.listValue [Result.atom 1, Result.atom 2]) => true | _ => false)
+   | Except.ok (Result.listValue [Result.atom 1, Result.atom 2]) => true | _ => false) &&
+  -- Inspect((1, 2), 3) => [(1, 2), 3]: beside another slot the sequence value
+  -- is collected exactly; Inspect(((1, 2), 3)) => [(1, 2), 3]: opening is one
+  -- level, never recursive.
+  (match runCollectInspect [.capture [.num 1, .num 2], .num 3] with
+   | Except.ok (Result.listValue [Result.sequenceValue [Result.atom 1, Result.atom 2], Result.atom 3]) =>
+       true
+   | _ => false) &&
+  (match runCollectInspect [.capture [.capture [.num 1, .num 2], .num 3]] with
+   | Except.ok (Result.listValue [Result.sequenceValue [Result.atom 1, Result.atom 2], Result.atom 3]) =>
+       true
+   | _ => false)
 
 #guard variadicCaptureCollectsExactList
 
--- Empty-structure arguments: an unspread `()` or `[]` is ONE visible argument
--- slot (`Inspect(())` collects `[()]`, `Inspect([])` collects `[[]]`), while
--- the spreads contribute zero items (`Inspect(()*)` and `Inspect([]*)`
--- both collect `[]`) — zero-item-spread neutrality at the collect boundary.
+-- Empty-structure arguments: an unspread `()` is ONE written slot, and as the
+-- lone collector's whole segment the empty sequence value opens to zero items
+-- (`Inspect(())` collects `[]`), while beside another slot it is one visible
+-- collected item (`Inspect((), 3)` collects `[(), 3]`); an unspread `[]` is
+-- an exact list and never opens (`Inspect([])` collects `[[]]`); the spreads
+-- contribute zero items (`Inspect(()*)` and `Inspect([]*)` both collect `[]`)
+-- — zero-item-spread neutrality at the collect boundary.
 def variadicCaptureEmptyStructureArguments : Bool :=
   (match runCollectInspect [.emptySequence 0] with
-   | Except.ok (Result.listValue [Result.sequenceValue []]) => true | _ => false) &&
+   | Except.ok (Result.listValue []) => true | _ => false) &&
+  (match runCollectInspect [.emptySequence 0, .num 3] with
+   | Except.ok (Result.listValue [Result.sequenceValue [], Result.atom 3]) => true | _ => false) &&
   (match runCollectInspect [.sequenceSpread (.emptySequence 0)] with
    | Except.ok (Result.listValue []) => true | _ => false) &&
   (match runCollectInspect [.listLiteral []] with
@@ -181,10 +199,13 @@ def variadicCaptureEmptyStructureArguments : Bool :=
 #guard variadicCaptureEmptyStructureArguments
 
 -- Middle collecting parameter, direct user call: `Middle(first, *middle, last) = middle`.
--- A grouped middle argument stays ONE collected slot with its boundary
--- (`Middle(10, (20, 30), 40)` collects `[(20, 30)]`), while the explicit
--- spread supplies the operand's items (`Middle(10, (20, 30)*, 40)` collects
--- `[20, 30]`).
+-- The fixed prefix and suffix are allocated first; the segment left to the
+-- collector decides. A lone grouped middle argument is one written sequence
+-- slot that IS the whole segment, so it opens one level
+-- (`Middle(10, (20, 30), 40)` collects `[20, 30]`, exactly like the explicit
+-- spread `Middle(10, (20, 30)*, 40)`), while a grouped argument beside another
+-- middle slot is collected exactly (`Middle(10, (20, 30), 35, 40)` collects
+-- `[(20, 30), 35]`).
 def collectMiddleAlg : Algorithm :=
   algWithParameters
     [{ name := "first" }, { name := "middle", kind := .collecting }, { name := "last" }]
@@ -197,12 +218,16 @@ def runCollectMiddle (args : List KatLang.Expr) : Except KatLang.Error Result :=
 def middleVariadicGroupedAndSpreadDirectCall : Bool :=
   (match runCollectMiddle
       [.num 10, .capture [.num 20, .num 30], .num 40] with
-   | Except.ok (Result.listValue [Result.sequenceValue [Result.atom 20, Result.atom 30]]) =>
-       true
+   | Except.ok (Result.listValue [Result.atom 20, Result.atom 30]) => true
    | _ => false) &&
   (match runCollectMiddle
       [.num 10, .sequenceSpread (.capture [.num 20, .num 30]), .num 40] with
-   | Except.ok (Result.listValue [Result.atom 20, Result.atom 30]) => true | _ => false)
+   | Except.ok (Result.listValue [Result.atom 20, Result.atom 30]) => true | _ => false) &&
+  (match runCollectMiddle
+      [.num 10, .capture [.num 20, .num 30], .num 35, .num 40] with
+   | Except.ok (Result.listValue [Result.sequenceValue [Result.atom 20, Result.atom 30], Result.atom 35]) =>
+       true
+   | _ => false)
 
 #guard middleVariadicGroupedAndSpreadDirectCall
 
@@ -250,35 +275,45 @@ def variadicForwardAsOnePassesWholeList : Bool :=
 
 #guard variadicForwardAsOnePassesWholeList
 
--- Receiver distinction: the call receiver preserves argument boundaries
--- (`Inspect(A)` is one collected element), while explicit spread supplies the
--- items — for lists and sequence values alike.
+-- Receiver distinction: the call receiver keeps a LIST argument exact
+-- (`Inspect(A)` is one collected element, `Inspect(A*)` supplies its items),
+-- while a lone SEQUENCE argument is the collector's whole segment and opens
+-- one level, so `Inspect(B)` and `Inspect(B*)` coincide. Beside a second
+-- slot the sequence is collected exactly (`Inspect(B, 0)` is `[(1, 2, 3), 0]`
+-- while `Inspect(B*, 0)` is `[1, 2, 3, 0]`).
 def variadicReceiverDistinctionObservable : Bool :=
-  let inspect (arg : KatLang.Expr) : Except KatLang.Error Result :=
+  let inspect (args : List KatLang.Expr) : Except KatLang.Error Result :=
     runResult (.algorithmExpr (algPrivate [] []
       [("Inspect", collectInspectAlg),
        ("A", alg [] [] [] [.listLiteral [.num 1, .num 2, .num 3]]),
        ("B", alg [] [] [] [.capture [.num 1, .num 2, .num 3]])]
-      [.call (resolve "Inspect") [arg]]))
-  (match inspect (resolve "A") with
+      [.call (resolve "Inspect") args]))
+  (match inspect [resolve "A"] with
    | Except.ok (Result.listValue [Result.listValue [Result.atom 1, Result.atom 2, Result.atom 3]]) =>
        true
    | _ => false) &&
-  (match inspect (sequenceSpread (resolve "A")) with
+  (match inspect [sequenceSpread (resolve "A")] with
    | Except.ok (Result.listValue [Result.atom 1, Result.atom 2, Result.atom 3]) => true
    | _ => false) &&
-  (match inspect (resolve "B") with
-   | Except.ok (Result.listValue [Result.sequenceValue [Result.atom 1, Result.atom 2, Result.atom 3]]) =>
+  (match inspect [resolve "B"] with
+   | Except.ok (Result.listValue [Result.atom 1, Result.atom 2, Result.atom 3]) => true
+   | _ => false) &&
+  (match inspect [sequenceSpread (resolve "B")] with
+   | Except.ok (Result.listValue [Result.atom 1, Result.atom 2, Result.atom 3]) => true
+   | _ => false) &&
+  (match inspect [resolve "B", .num 0] with
+   | Except.ok (Result.listValue [Result.sequenceValue [Result.atom 1, Result.atom 2, Result.atom 3], Result.atom 0]) =>
        true
    | _ => false) &&
-  (match inspect (sequenceSpread (resolve "B")) with
-   | Except.ok (Result.listValue [Result.atom 1, Result.atom 2, Result.atom 3]) => true
+  (match inspect [sequenceSpread (resolve "B"), .num 0] with
+   | Except.ok (Result.listValue [Result.atom 1, Result.atom 2, Result.atom 3, Result.atom 0]) => true
    | _ => false)
 
 #guard variadicReceiverDistinctionObservable
 
 -- Dotted receiver injection: `A.Inspect` is `Inspect(A)` — the receiver is one
--- captured argument slot, so the collected list is `[[1, 2]]`.
+-- written argument slot, and a LIST never opens at the collector, so the
+-- collected list is `[[1, 2]]`.
 def variadicDotReceiverCollectsOneSlot : Bool :=
   match runResult (.algorithmExpr (algPrivate [] []
     [("Inspect", collectInspectAlg),
@@ -385,9 +420,12 @@ def restOnlyMapCallbackCollectsOneElementSlot : Bool :=
 
 #guard restOnlyMapCallbackCollectsOneElementSlot
 
--- Structured elements stay one collected slot, preserving their exact kind:
--- [[1, 2]].map(Collect) => [[[1, 2]]]; [(1, 2)].map(Collect) => [[(1, 2)]];
--- [[]].map(Collect) => [[[]]]; [()].map(Collect) => [[()]].
+-- A whole callback item is ONE written slot of the callback call, so the
+-- collector supply-boundary law applies exactly as for a written call: a LIST
+-- element stays one exact collected item ([[1, 2]].map(Collect) =>
+-- [[[1, 2]]]; [[]].map(Collect) => [[[]]]), while a SEQUENCE element is the
+-- lone collector's whole segment and opens one level ([(1, 2)].map(Collect)
+-- => [[1, 2]]; [()].map(Collect) => [[]]).
 def restOnlyMapCallbackPreservesElementKind : Bool :=
   (match runCallbackMap [("Collect", callbackCollectAlg)]
       (.listLiteral [.listLiteral [.num 1, .num 2]]) "Collect" with
@@ -396,7 +434,7 @@ def restOnlyMapCallbackPreservesElementKind : Bool :=
    | _ => false) &&
   (match runCallbackMap [("Collect", callbackCollectAlg)]
       (.listLiteral [.capture [.num 1, .num 2]]) "Collect" with
-   | Except.ok (Result.listValue [Result.listValue [Result.sequenceValue [Result.atom 1, Result.atom 2]]]) =>
+   | Except.ok (Result.listValue [Result.listValue [Result.atom 1, Result.atom 2]]) =>
        true
    | _ => false) &&
   (match runCallbackMap [("Collect", callbackCollectAlg)]
@@ -405,7 +443,7 @@ def restOnlyMapCallbackPreservesElementKind : Bool :=
    | _ => false) &&
   (match runCallbackMap [("Collect", callbackCollectAlg)]
       (.listLiteral [.emptySequence 1]) "Collect" with
-   | Except.ok (Result.listValue [Result.listValue [Result.sequenceValue []]]) => true
+   | Except.ok (Result.listValue [Result.listValue []]) => true
    | _ => false)
 
 #guard restOnlyMapCallbackPreservesElementKind
@@ -514,11 +552,13 @@ def restOnlyReducerCollectsElementAndAccumulatorSlots : Bool :=
 #guard restOnlyReducerCollectsElementAndAccumulatorSlots
 
 -- Explicit-argument semantics behind implicit forwarding elaboration: an
--- ordinary parameter passed UNSPREAD into a variadic callee stays one
--- argument boundary (`Use(items) = Target(items)`), while a collecting parameter
--- forwarded WITH spread re-supplies its collected items
--- (`Use(*items) = Target(items*)`). The front-end resolver synthesizes
--- exactly these two elaborated forms from the source binding kind.
+-- ordinary parameter passed UNSPREAD into a variadic callee is one written
+-- argument slot (`Use(items) = Target(items)`) — exact for a list or a
+-- scalar, and opened one level when it is a sequence value that is the lone
+-- collector's whole segment — while a collecting parameter forwarded WITH
+-- spread re-supplies its collected items (`Use(*items) = Target(items*)`).
+-- The front-end resolver synthesizes exactly these two elaborated forms from
+-- the source binding kind.
 def forwardingElaborationKindsObservable : Bool :=
   let useOrdinary : Algorithm := alg ["items"] [] [] [
     .call (resolve "Target") [.param "items"]
@@ -527,12 +567,12 @@ def forwardingElaborationKindsObservable : Bool :=
     runResult (.algorithmExpr (algPrivate [] []
       [("Target", collectTargetAlg), ("Use", useAlg)]
       [.call (resolve "Use") args]))
-  -- Use(items) = Target(items): Use([1, 2]) => [[1, 2]]; Use((1, 2)) => [(1, 2)].
+  -- Use(items) = Target(items): Use([1, 2]) => [[1, 2]]; Use((1, 2)) => [1, 2].
   (match run useOrdinary [.listLiteral [.num 1, .num 2]] with
    | Except.ok (Result.listValue [Result.listValue [Result.atom 1, Result.atom 2]]) => true
    | _ => false) &&
   (match run useOrdinary [.capture [.num 1, .num 2]] with
-   | Except.ok (Result.listValue [Result.sequenceValue [Result.atom 1, Result.atom 2]]) => true
+   | Except.ok (Result.listValue [Result.atom 1, Result.atom 2]) => true
    | _ => false) &&
   (match run useOrdinary [.num 7] with
    | Except.ok (Result.listValue [Result.atom 7]) => true | _ => false) &&

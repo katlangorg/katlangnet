@@ -82,6 +82,36 @@ public static class ArityDifferentialMatrix
     private static IReadOnlyList<OracleVal> ArgSupply(ValueShape shape, SpreadMultiplicity m) =>
         m == SpreadMultiplicity.Zero ? [shape.Value] : SpreadSupply(shape.Value, (int)m);
 
+    /// <summary>
+    /// The same supply with its slot provenance: a written V is ONE written
+    /// slot; V* / V** supply final items (CoreArityAlgebra.CallSupply).
+    /// </summary>
+    private static IReadOnlyList<OracleSlot> ArgCallSupply(ValueShape shape, SpreadMultiplicity m) =>
+        m == SpreadMultiplicity.Zero ? Written([shape.Value]) : Final(SpreadSupply(shape.Value, (int)m));
+
+    /// <summary>What a single collecting parameter binds for the given call supply (bindArgs [*items]).</summary>
+    private static OracleVal CollectArgs(IReadOnlyList<OracleSlot> callSupply) => Collect(CollectorSupply(callSupply));
+
+    /// <summary>True when the collector supply-boundary law rewrites this call supply (a lone written sequence slot).</summary>
+    private static bool OpensAtCollector(IReadOnlyList<OracleSlot> callSupply) => LoneWrittenSeq(callSupply) is not null;
+
+    /// <summary>The law a single-collecting call names: the supply law when spread, the collector law when the lone written sequence opens, exact collection otherwise.</summary>
+    private static ReceiverLaw CollectLaw(IReadOnlyList<OracleSlot> callSupply, SpreadMultiplicity m)
+    {
+        if (m == SpreadMultiplicity.Zero)
+            return OpensAtCollector(callSupply)
+                ? ReceiverLaw.COLLECTOR_LONE_WRITTEN_SEQUENCE_OPENS_ONE_LEVEL
+                : ReceiverLaw.COLLECT_PRESERVES_EXACT_SUPPLY;
+        if (callSupply is [{ Value: OracleVal.SeqVal }])
+            return ReceiverLaw.COLLECTOR_EXPLICIT_SPREAD_ITEM_IS_FINAL;
+        return SupplyLaw(m, ReceiverLaw.COLLECT_PRESERVES_EXACT_SUPPLY);
+    }
+
+    private static string CollectTrace(IReadOnlyList<OracleSlot> callSupply) =>
+        OpensAtCollector(callSupply)
+            ? $"collector segment is ONE written sequence slot {callSupply[0].Value.Neutral}: collectorSupply opens it one level -> {SupplyNeutral(CollectorSupply(callSupply))}"
+            : $"collector segment [{string.Join(", ", callSupply)}] is collected exactly (values {SupplyNeutral(Values(callSupply))})";
+
     private static string SupplyNeutral(IReadOnlyList<OracleVal> supply) =>
         $"[{string.Join(", ", supply.Select(v => v.Neutral))}]";
 
@@ -205,13 +235,19 @@ public static class ArityDifferentialMatrix
         var arg = ArgText(m);
         var baseTrace = SupplyTrace(shape, m);
 
-        // T1: single collecting parameter — the exact-supply observation window.
-        var collected = Collect(supply);
+        // T1: single collecting parameter — the collector supply-boundary
+        // observation window: a written V is one written slot (a lone written
+        // sequence opens one level), V* / V** supply final items (collected
+        // exactly, a lone final sequence included).
+        var callSupply = ArgCallSupply(shape, m);
+        var collected = CollectArgs(callSupply);
         b.Add("call-collect", ReceiverKind.DirectCall, BindingForm.Collect, shape, m,
             $"V = {shape.Literal}\n{GatherDef}\nGather({arg})",
-            SupplyLaw(m, ReceiverLaw.COLLECT_PRESERVES_EXACT_SUPPLY),
+            CollectLaw(callSupply, m),
             Ok(collected, 1),
-            baseTrace.Append($"bindArgs [*items] -> items = collect(supply) = {collected.Neutral}; call result is one value (n=1)"));
+            baseTrace
+                .Append(CollectTrace(callSupply))
+                .Append($"bindArgs [*items] -> items = collect(collectorSupply(segment)) = {collected.Neutral}; call result is one value (n=1)"));
 
         // T2: fixed unary — written boundaries and ordinary arity after spreading.
         if (supply.Count == 1)
@@ -252,8 +288,13 @@ public static class ArityDifferentialMatrix
                 baseTrace.Append($"slots = supply ++ [9] ({pairSlots.Length} slots) vs 2 fixed parameters -> arity mismatch"));
         }
 
-        // T4: mixed fixed/collecting/fixed — exact middle-segment allocation.
-        var midCollected = Collect(supply);
+        // T4: mixed fixed/collecting/fixed — the fixed prefix and suffix are
+        // allocated first; the collector law then reads exactly the middle
+        // segment (a lone written sequence there opens one level).
+        var midSupply = Written([OracleVal.Atom(0)]).Concat(callSupply).Concat(Written([OracleVal.Atom(9)])).ToArray();
+        var midEnv = BindArgs([OraclePat.Fixed("first"), OraclePat.Collect("mid"), OraclePat.Fixed("last")], midSupply)
+            ?? throw new InvalidOperationException("Mid3(0, V, 9) always satisfies its two fixed positions.");
+        var midCollected = midEnv[1].Value;
         var midResult = OracleVal.List(OracleVal.Atom(0), midCollected, OracleVal.Atom(9));
         b.Add("call-mixed-collecting", ReceiverKind.DirectCall, BindingForm.Collect, shape, m,
             $"V = {shape.Literal}\n{Mid3Def}\nMid3(0, {arg}, 9)",
@@ -261,7 +302,9 @@ public static class ArityDifferentialMatrix
                 ? ReceiverLaw.REPEATED_SPREAD_CAPTURE_COMPOSITION
                 : ReceiverLaw.COLLECT_SEGMENT_ALLOCATION,
             Ok(midResult, 1),
-            baseTrace.Append($"bindPats [first, *mid, last] over [0] ++ supply ++ [9] -> mid = collect(supply) = {midCollected.Neutral}"));
+            baseTrace
+                .Append($"bindArgs [first, *mid, last] over [0·w] ++ {string.Join(", ", callSupply)} ++ [9·w]: first = 0, last = 9 allocated first")
+                .Append($"middle segment: {CollectTrace(callSupply)}; mid = {midCollected.Neutral}"));
 
         // T1b: the SAME value spread twice into one surrounding supply —
         // provenance independence of collection (each marker contributes its
@@ -297,7 +340,7 @@ public static class ArityDifferentialMatrix
         // T25: spread of a call RESULT — the one-value result boundary re-opened.
         if (m != SpreadMultiplicity.Zero)
         {
-            var callValue = Collect([shape.Value]); // Gather(V) collects the one grouped argument
+            var callValue = CollectArgs(Written([shape.Value])); // Gather(V): one written slot at the lone collector
             var rowSupply = SpreadSupply(callValue, (int)m);
             var rowValue = Capture(rowSupply);
             b.Add("call-result-spread", ReceiverKind.DirectCall, BindingForm.Spread, shape, m,
@@ -308,7 +351,7 @@ public static class ArityDifferentialMatrix
                 Ok(rowValue, rowSupply.Count),
                 new[]
                 {
-                    $"Gather(V) = collect([V]) = {callValue.Neutral} (call result: ONE value boundary)",
+                    $"Gather(V) = collect(collectorSupply([V·w])) = {callValue.Neutral} (call result: ONE value boundary)",
                     $"spread chain over the call result -> supply {SupplyNeutral(rowSupply)}",
                     $"root spread row emits the supply: raw {rowValue.Neutral}, n={rowSupply.Count}",
                 },
@@ -325,17 +368,19 @@ public static class ArityDifferentialMatrix
         if (m == SpreadMultiplicity.Zero)
         {
             // T9: dotted zero-arg on a collecting callee — dot-call passes a
-            // value: `V.Gather` is `Gather(V)`, so the collector collects the
-            // one stored value, `()` included (a written non-spread slot is one
-            // argument value).
-            var collected = Collect([shape.Value]);
+            // value: `V.Gather` is `Gather(V)`, one written slot at the lone
+            // collector, so the collector supply-boundary law decides exactly
+            // as for the written call (a stored sequence opens one level, `()`
+            // to nothing; a stored list stays one item).
+            var receiverSupply = Written([shape.Value]);
+            var collected = CollectArgs(receiverSupply);
             b.Add("dot-collect", ReceiverKind.DottedCall, BindingForm.Collect, shape, m,
                 $"V = {shape.Literal}\n{GatherDef}\nV.Gather",
                 ReceiverLaw.DOTTED_CALL_EQUALS_DIRECT_REWRITE,
                 Ok(collected, 1),
-                baseTrace.Append(
-                    $"V.Gather = Gather(V): the receiver is ONE written slot holding {shape.Value.Neutral}; "
-                    + $"collect([V]) = {collected.Neutral}"));
+                baseTrace
+                    .Append($"V.Gather = Gather(V): the receiver is ONE written slot holding {shape.Value.Neutral}")
+                    .Append($"{CollectTrace(receiverSupply)}; collect -> {collected.Neutral}"));
 
             // T12: dotted fixed-arity with an extra argument.
             var pair = OracleVal.List(shape.Value, OracleVal.Atom(9));
@@ -374,19 +419,22 @@ public static class ArityDifferentialMatrix
 
         // T11b: grouped spread receiver on a collecting callee — the capture
         // is ONE value and dot-call passes a value, so `(V*).Gather` is
-        // `Gather((V*))`: the collector collects the captured sequence as one
-        // item. Only the fluent form (T10) supplies the items; no callee
-        // inspection and no spelling recognition is involved.
-        var groupedCollected = Collect([captured]);
+        // `Gather((V*))`: one WRITTEN slot at the lone collector, to which the
+        // collector supply-boundary law applies (a captured multi-item supply
+        // is a sequence value and opens one level; a captured lone list stays
+        // one item). The fluent form (T10) supplies FINAL items instead; no
+        // callee inspection and no spelling recognition is involved.
+        var groupedSupply = Written([captured]);
+        var groupedCollected = CollectArgs(groupedSupply);
         b.Add("dot-grouped-collecting", ReceiverKind.DottedCall, BindingForm.Collect, shape, m,
             $"V = {shape.Literal}\n{GatherDef}\n(V{stars}).Gather",
             ReceiverLaw.GROUPED_SPREAD_RECEIVER_CAPTURES,
             Ok(groupedCollected, 1),
             baseTrace
                 .Append($"(V{stars}) captures the supply as ONE value {captured.Neutral}")
-                .Append($"(V{stars}).Gather = Gather((V{stars})): collect([{captured.Neutral}]) = {groupedCollected.Neutral}"),
-            notes: "Dot-call passes a value: a capture receiver is one collected item; "
-                + "the fluent spread receiver is the item-supplying spelling.");
+                .Append($"(V{stars}).Gather = Gather((V{stars})): {CollectTrace(groupedSupply)}; collect -> {groupedCollected.Neutral}"),
+            notes: "Dot-call passes a value: a capture receiver is one written slot, bound by the collector law; "
+                + "the fluent spread receiver supplies final items.");
     }
 
     /// <summary>
@@ -394,7 +442,9 @@ public static class ArityDifferentialMatrix
     /// passes a value, observed from every side: an inline group, a nested
     /// group, an exact-list literal, and the empty group are each ONE written
     /// slot (one argument value), a fixed prefix/suffix parameter binds that
-    /// value whole, and a collecting parameter collects it as one item.
+    /// value whole, and a collecting parameter binds it through the collector
+    /// supply-boundary law (a written group is a sequence value that opens one
+    /// level when it is the collector's whole segment; a list stays one item).
     /// </summary>
     private static void AddDotWrittenReceiverCases(Builder b, ValueShape shape)
     {
@@ -403,10 +453,12 @@ public static class ArityDifferentialMatrix
         // T13a: inline group receiver — the group is one captured sequence
         // value (each non-spread written row is one row of the capture, the
         // visible-empty row rule included), and `(V, 9).Gather` is
-        // `Gather((V, 9))`: the collector collects that one value.
+        // `Gather((V, 9))`: one written sequence slot that is the lone
+        // collector's whole segment, so it opens one level to `[V, 9]`.
         var inlineSupply = new[] { shape.Value, OracleVal.Atom(9) };
         var innerCaptured = Capture(inlineSupply);
-        var inlineCollected = Collect([innerCaptured]);
+        var inlineReceiverSupply = Written([innerCaptured]);
+        var inlineCollected = CollectArgs(inlineReceiverSupply);
         b.Add("dot-inline-collect", ReceiverKind.DottedCall, BindingForm.Collect, shape, m,
             $"V = {shape.Literal}\n{GatherDef}\n(V, 9).Gather",
             ReceiverLaw.DOTTED_CALL_EQUALS_DIRECT_REWRITE,
@@ -414,7 +466,7 @@ public static class ArityDifferentialMatrix
             [
                 $"V = {shape.Value.Neutral} (stored canonical value)",
                 $"inline receiver (V, 9): rows {SupplyNeutral(inlineSupply)} capture to ONE value {innerCaptured.Neutral}",
-                $"(V, 9).Gather = Gather((V, 9)): collect([{innerCaptured.Neutral}]) = {inlineCollected.Neutral}",
+                $"(V, 9).Gather = Gather((V, 9)): {CollectTrace(inlineReceiverSupply)}; collect -> {inlineCollected.Neutral}",
             ]);
 
         // T13b: nested group receiver — redundant grouping around one written
@@ -426,7 +478,7 @@ public static class ArityDifferentialMatrix
             Ok(inlineCollected, 1),
             [
                 $"inner group (V, 9) is ONE value {innerCaptured.Neutral}; the outer singleton capture is that value",
-                $"((V, 9)).Gather = Gather(((V, 9))): collect([{innerCaptured.Neutral}]) = {inlineCollected.Neutral}",
+                $"((V, 9)).Gather = Gather(((V, 9))): the same written sequence slot opens one level -> {inlineCollected.Neutral}",
             ]);
 
         // T13c: exact-list literal receiver — a list is one opaque value (only
@@ -456,8 +508,9 @@ public static class ArityDifferentialMatrix
 
         // T13e/T13f: suffix allocation from the back — with only the receiver
         // slot, the fixed suffix binds the receiver's captured value; with one
-        // extra argument, the suffix takes the extra and the collector
-        // collects the receiver as ONE item.
+        // extra argument, the suffix takes the extra FIRST and the segment
+        // left to the collector is the receiver's written sequence value,
+        // which opens one level.
         var suffixWhole = OracleVal.List(OracleVal.List(), innerCaptured);
         b.Add("dot-written-suffix-whole", ReceiverKind.DottedCall, BindingForm.Capture, shape, m,
             $"V = {shape.Literal}\n{Suffix2Def}\n(V, 9).Suffix2",
@@ -468,29 +521,34 @@ public static class ArityDifferentialMatrix
                 $"init collects the empty middle segment -> {suffixWhole.Neutral}",
             ]);
 
-        var suffixCollected = OracleVal.List(inlineCollected, OracleVal.Atom(5));
+        var suffixEnv = BindArgs([OraclePat.Collect("init"), OraclePat.Fixed("last")],
+                Written([innerCaptured, OracleVal.Atom(5)]))
+            ?? throw new InvalidOperationException("Suffix2((V, 9), 5) always satisfies its fixed suffix.");
+        var suffixCollected = OracleVal.List(suffixEnv[0].Value, suffixEnv[1].Value);
         b.Add("dot-written-suffix-collected", ReceiverKind.DottedCall, BindingForm.Collect, shape, m,
             $"V = {shape.Literal}\n{Suffix2Def}\n(V, 9).Suffix2(5)",
             ReceiverLaw.DOTTED_CALL_EQUALS_DIRECT_REWRITE,
             Ok(suffixCollected, 1),
             [
-                $"(V, 9).Suffix2(5) = Suffix2((V, 9), 5): slots [{innerCaptured.Neutral}, 5]; suffix last = 5 from the back",
-                $"init collects the one remaining slot: collect([{innerCaptured.Neutral}]) = {inlineCollected.Neutral} -> {suffixCollected.Neutral}",
+                $"(V, 9).Suffix2(5) = Suffix2((V, 9), 5): slots [{innerCaptured.Neutral}·w, 5·w]; suffix last = 5 from the back",
+                $"init's segment is the one written sequence slot {innerCaptured.Neutral}: it opens one level -> init = {suffixEnv[0].Value.Neutral} -> {suffixCollected.Neutral}",
             ]);
 
         // T13g: the empty written group receiver is ONE written slot holding
-        // `()` — a visible empty value, never a missing argument (pinned once,
-        // on the empty-seq shape — the source has no V occurrence).
+        // `()` — never a missing argument (arity is satisfied by the slot) —
+        // and as the lone collector's whole segment the empty sequence opens
+        // to zero collected items (pinned once, on the empty-seq shape — the
+        // source has no V occurrence).
         if (shape.Id == "empty-seq")
         {
-            var emptyCollected = Collect([OracleVal.Seq()]);
+            var emptyCollected = CollectArgs(Written([OracleVal.Seq()]));
             b.Add("dot-empty-collect", ReceiverKind.DottedCall, BindingForm.Collect, shape, m,
                 $"V = {shape.Literal}\n{GatherDef}\n().Gather",
                 ReceiverLaw.DOTTED_CALL_EQUALS_DIRECT_REWRITE,
                 Ok(emptyCollected, 1),
                 [
                     "() receiver: value S[], one written slot (valueCount 0 is a value-boundary count, not a slot count)",
-                    $"().Gather = Gather(()): collect([S[]]) = {emptyCollected.Neutral}",
+                    $"().Gather = Gather(()): collectorSupply([S[]·w]) = [] (the lone written sequence opens one level) -> {emptyCollected.Neutral}",
                 ]);
         }
     }
@@ -640,13 +698,16 @@ public static class ArityDifferentialMatrix
                 Ok(mappedUnary, 1),
                 baseTrace.Append($"unary callback binds the element whole -> mapped [x] = {OracleVal.List(shape.Value).Neutral}; map materializes {mappedUnary.Neutral}"));
 
-            // T16: single-collecting callback — element collected as one slot.
-            var mappedCollecting = OracleVal.List(OracleVal.List(shape.Value));
+            // T16: single-collecting callback — the whole element is ONE
+            // written slot of the callback call, bound by the collector law.
+            var elementSupply = Written([shape.Value]);
+            var elementCollected = CollectArgs(elementSupply);
+            var mappedCollecting = OracleVal.List(elementCollected);
             b.Add("cb-map-collecting", ReceiverKind.Callback, BindingForm.Collect, shape, m,
                 $"GatherCb(*items) = items\n[{shape.Literal}].map(GatherCb)",
-                ReceiverLaw.CALLBACK_COLLECTING_COLLECTS_ONE_SLOT,
+                ReceiverLaw.CALLBACK_ITEM_IS_A_WRITTEN_SLOT,
                 Ok(mappedCollecting, 1),
-                baseTrace.Append($"collecting callback collects the element as ONE slot: items = {OracleVal.List(shape.Value).Neutral}"));
+                baseTrace.Append($"the element is one written slot: {CollectTrace(elementSupply)}; items = {elementCollected.Neutral}"));
 
             // T17: flat binary callback — sequence rows open, everything else arity-errors.
             var rowItems = shape.Value is OracleVal.SeqVal seq ? seq.Items : null;
@@ -983,15 +1044,16 @@ public static class ArityDifferentialMatrix
             foreach (var m in AllMults)
             {
                 var supply = ArgSupply(shape, m);
+                var callSupply = ArgCallSupply(shape, m);
                 var arg = ArgText(m);
                 var trace = SupplyTrace(shape, m);
 
                 // R1a: direct vs dotted, collecting callee. Dot-call passes a
-                // value: `V.Gather` is `Gather(V)` (the stored `()` is one
-                // collected item in BOTH spellings) and `V*.Gather` is
+                // value: `V.Gather` is `Gather(V)` (one written slot, bound by
+                // the collector law in BOTH spellings) and `V*.Gather` is
                 // `Gather(V*)`, so the two spellings always coincide.
                 var dotted = m == SpreadMultiplicity.Zero ? "V.Gather" : $"V{new string('*', (int)m)}.Gather";
-                var collected = Ok(Collect(supply), 1);
+                var collected = Ok(CollectArgs(callSupply), 1);
                 cases.Add(new RelationalCase
                 {
                     Id = $"adr-direct-vs-dotted-collect--{shape.Id}--s{(int)m}",
@@ -1007,7 +1069,7 @@ public static class ArityDifferentialMatrix
                     ExpectedLeft = collected,
                     ExpectedRight = collected,
                     AlgebraTrace = trace
-                        .Append($"{dotted} assembles the slots of Gather({arg}): collect(supply) = {Collect(supply).Neutral} in both spellings")
+                        .Append($"{dotted} assembles the slots of Gather({arg}): {CollectTrace(callSupply)}; collect = {CollectArgs(callSupply).Neutral} in both spellings")
                         .ToArray(),
                 });
 
@@ -1045,7 +1107,9 @@ public static class ArityDifferentialMatrix
                     PrimaryLaw = ReceiverLaw.COLLECT_SPREAD_ROUND_TRIP,
                     ExpectedLeft = collected,
                     ExpectedRight = collected,
-                    AlgebraTrace = trace.Append("items(collect(xs)) = xs, so forwarding re-supplies exactly the collected slots").ToArray(),
+                    AlgebraTrace = trace
+                        .Append("items(collect(xs)) = xs and spread-produced items are final, so forwarding re-supplies exactly the collected list — whatever the collector law bound on the way in")
+                        .ToArray(),
                 });
             }
 
@@ -1093,7 +1157,15 @@ public static class ArityDifferentialMatrix
                 },
             });
 
-            // R3: an explicit spread equals writing the value's items as literal slots.
+            // R3: an explicit spread supplies FINAL items; writing the value's
+            // items as literal slots supplies WRITTEN slots. The two coincide
+            // except when the item view is exactly one sequence value, where
+            // the written literal opens one level at the collector and the
+            // spread item stays exact (collector_explicit_spread_item_is_final).
+            var literalSupply = Written(once);
+            var literalCollected = Ok(CollectArgs(literalSupply), 1);
+            var spreadCollected = Ok(Collect(once), 1);
+            var literalAgrees = literalCollected.Neutral == spreadCollected.Neutral;
             cases.Add(new RelationalCase
             {
                 Id = $"adr-spread-vs-literal-items--{shape.Id}--s1",
@@ -1102,15 +1174,21 @@ public static class ArityDifferentialMatrix
                 Multiplicity = SpreadMultiplicity.One,
                 LeftSource = $"V = {shape.Literal}\n{GatherDef}\nGather(V*)",
                 RightSource = $"{GatherDef}\nGather({string.Join(", ", Items(shape.Value).Select(LiteralOf))})",
-                ExpectAgreement = true,
-                PrimaryLaw = ReceiverLaw.SPREAD_CONTRIBUTES_ITEMS,
-                ExpectedLeft = Ok(Collect(once), 1),
-                ExpectedRight = Ok(Collect(once), 1),
-                AlgebraTrace = new[] { $"items(V) = {SupplyNeutral(once)}, each item supplied as one written slot" },
+                ExpectAgreement = literalAgrees,
+                PrimaryLaw = literalAgrees
+                    ? ReceiverLaw.SPREAD_CONTRIBUTES_ITEMS
+                    : ReceiverLaw.COLLECTOR_EXPLICIT_SPREAD_ITEM_IS_FINAL,
+                ExpectedLeft = spreadCollected,
+                ExpectedRight = literalCollected,
+                AlgebraTrace = new[]
+                {
+                    $"items(V) = {SupplyNeutral(once)} supplied as final items: collected exactly -> {Collect(once).Neutral}",
+                    $"the same items written as literal slots: {CollectTrace(literalSupply)} -> {CollectArgs(literalSupply).Neutral}",
+                },
             });
 
             // R4: bare deconstruction binds exactly what a call binds on the item view.
-            var itemViewEnv = BindArgs([OraclePat.Fixed("x"), OraclePat.Fixed("y")], once);
+            var itemViewEnv = BindArgs([OraclePat.Fixed("x"), OraclePat.Fixed("y")], Final(once));
             var itemViewExpected = itemViewEnv is null
                 ? Err(Arity)
                 : Ok(OracleVal.List(itemViewEnv[0].Value, itemViewEnv[1].Value), 1);
@@ -1161,15 +1239,19 @@ public static class ArityDifferentialMatrix
             // passes a value, so `(V*).F` is `F((V*))` for every callee.
             var itemsOnce = Items(shape.Value);
             var capturedOnce = Capture(itemsOnce);
+            var groupedSupply = Written([capturedOnce]);
             var fluentResult = Ok(Collect(itemsOnce), 1);
-            var groupedResult = Ok(Collect([capturedOnce]), 1);
+            var groupedResult = Ok(CollectArgs(groupedSupply), 1);
 
             // R7a: the grouped and fluent spread receivers are DIFFERENT
             // receivers on a collecting callee: the fluent form supplies the
-            // spread items as argument slots, while the grouped form captures
-            // them into ONE value that the collector collects as one item.
-            // They coincide exactly on singleton supplies (the capture of one
-            // item is the item).
+            // spread items as FINAL slots, while the grouped form captures
+            // them into ONE written value bound by the collector law. Under
+            // that law a captured multi-item supply is a sequence value that
+            // opens one level, so the two coincide for most shapes; they
+            // differ exactly when the capture is a lone structured item that
+            // singleton capture exposed (`[(1, 2)]`: the grouped receiver
+            // opens the pair, the spread item stays final).
             cases.Add(new RelationalCase
             {
                 Id = $"adr-grouped-vs-fluent-collecting--{shape.Id}--s1",
@@ -1184,8 +1266,8 @@ public static class ArityDifferentialMatrix
                 ExpectedRight = fluentResult,
                 AlgebraTrace = new[]
                 {
-                    $"(V*) captures the supply {SupplyNeutral(itemsOnce)} as ONE value {capturedOnce.Neutral}; (V*).Gather = Gather((V*)) = {groupedResult.Neutral}",
-                    $"V*.Gather lowers to Gather(V*): the items as ordinary argument slots — {fluentResult.Neutral}",
+                    $"(V*) captures the supply {SupplyNeutral(itemsOnce)} as ONE written value {capturedOnce.Neutral}; (V*).Gather = Gather((V*)): {CollectTrace(groupedSupply)} -> {groupedResult.Neutral}",
+                    $"V*.Gather lowers to Gather(V*): the items as final argument slots, collected exactly — {fluentResult.Neutral}",
                 },
             });
 
@@ -1205,15 +1287,16 @@ public static class ArityDifferentialMatrix
                 ExpectedRight = groupedResult,
                 AlgebraTrace = new[]
                 {
-                    $"the receiver is the written argument slot: both reify (V*) to ONE value {capturedOnce.Neutral}",
-                    $"collect([{capturedOnce.Neutral}]) = {groupedResult.Neutral} in both spellings",
+                    $"the receiver is the written argument slot: both reify (V*) to ONE written value {capturedOnce.Neutral}",
+                    $"{CollectTrace(groupedSupply)} -> {groupedResult.Neutral} in both spellings",
                 },
             });
 
             // R7c: origin independence — a STORED capture of the same supply
-            // is the same value, so the stored receiver and the written group
-            // receiver collect the same one item (`()` included: a stored
-            // empty sequence is one written slot, not zero).
+            // is the same value in the same kind of slot (one written slot),
+            // so the stored receiver and the written group receiver bind the
+            // same collector supply (`()` included: a stored empty sequence
+            // is one written slot that opens to nothing, not a missing slot).
             cases.Add(new RelationalCase
             {
                 Id = $"adr-grouped-receiver-vs-stored-capture--{shape.Id}--s1",
@@ -1228,8 +1311,8 @@ public static class ArityDifferentialMatrix
                 ExpectedRight = groupedResult,
                 AlgebraTrace = new[]
                 {
-                    $"X stores the capture {capturedOnce.Neutral}; X.Gather = Gather(X) collects [{capturedOnce.Neutral}]",
-                    $"the written group receiver is the same value — origin never decides: both {groupedResult.Neutral}",
+                    $"X stores the capture {capturedOnce.Neutral}; X.Gather = Gather(X): {CollectTrace(groupedSupply)}",
+                    $"the written group receiver is the same value in the same written slot — result provenance never decides: both {groupedResult.Neutral}",
                 },
             });
 

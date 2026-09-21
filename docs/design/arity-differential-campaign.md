@@ -9,7 +9,7 @@ Everything lives in `tests/KatLang.Tests/ArityDifferential/`:
 
 | File | Role |
 |---|---|
-| `AlgebraOracle.cs` | Test-only executable oracle: `OracleVal` (atom/seq/list) plus `items`, `normalize`, `capture`, `collect`, `structureItems?`, `openLoneStructure`, `bindPats`/`bindArgs`/`bindDeconstruct`, the repeated-spread composition, `valueCount`, and the root-row rule. Each member's doc comment names its Lean anchor. References nothing from `src/KatLang`. |
+| `AlgebraOracle.cs` | Test-only executable oracle: `OracleVal` (atom/seq/list) plus `items`, `normalize`, `capture`, `collect`, `structureItems?`, `openLoneStructure`, the origin-tagged call supply (`OracleSlot` / `OracleOrigin`, `written` / `final` / `values`), `loneWrittenSeq?` / `collectorSupply` / `fuseCollectorSegment` (the collector supply-boundary law), `bindPats`/`bindArgs`/`bindDeconstruct`, the repeated-spread composition, `valueCount`, and the root-row rule. Each member's doc comment names its Lean anchor. References nothing from `src/KatLang`. |
 | `ArityDifferentialModel.cs` | The dimensions (`ReceiverKind`, `BindingForm`, `SpreadMultiplicity`), the `ReceiverLaw` taxonomy with Lean references, and the case records. |
 | `ArityDifferentialMatrix.cs` | The deterministic generator: value-shape catalog, receiver templates, relational families, diagnostic matrix, and the exclusion ledger that accounts for every theoretical cell. |
 | `ArityDifferentialTests.cs` | The xunit runner: per-case theories, relational checks, diagnostics, receiver-once budget probes, oracle self-checks, determinism check, coverage accounting, and the `ArityDifferentialReport.json` side-car. |
@@ -55,7 +55,9 @@ Everything lives in `tests/KatLang.Tests/ArityDifferential/`:
 | `StructureItems` | `CoreArityAlgebra.structureItems?` = `Result.structureItems?` |
 | `OpenLoneStructure` | `CoreArityAlgebra.openLoneStructure` |
 | `IsLoneStructure` | `CoreArityAlgebra.loneStructure` |
-| `BindPats` / `BindArgs` / `BindDeconstruct` | `CoreArityAlgebra.bindPats` / `bindArgs` / `bindDeconstruct` (`bindPats_collect_exact` allocation) |
+| `OracleOrigin` / `Written` / `Final` / `Values` | `CoreArityAlgebra.Origin` / `written` / `final` / `values` (full model: `SupplyOrigin` on `ParameterPatternInput`, marked by `collectVariadicCallItems`) |
+| `LoneWrittenSeq` / `CollectorSupply` / `FuseCollectorSegment` | `CoreArityAlgebra.loneWrittenSeq?` / `collectorSupply` / `fuseCollectorSegment` (full model: `KatLang.lean collectorSupply` inside the pattern binders) |
+| `BindPats` / `BindArgs` / `BindDeconstruct` | `CoreArityAlgebra.bindPats` / `bindArgs = bindPats ∘ fuseCollectorSegment` / `bindDeconstruct = bindPats ∘ openLoneStructure` (`bindPats_collect_exact` allocation) |
 | `SpreadSupply(v, stars)` | first star `items`, each further star `items ∘ capture` — `repeated_spread_cardinality`; evaluator: `evalSequenceSpreadCounted` |
 | `ValueCount` | `Result.valueCount` (`valueCount_le_one`, `valueCount_empty_list`) |
 | `RootNonSpreadRow` | `evalAlgOutputCountedCore`'s non-spread slot rule (a non-spread row is one visible slot even when empty) |
@@ -116,6 +118,32 @@ of the plain algebra:
    > `dot-written-suffix-whole` / `dot-written-suffix-collected` /
    > `dot-empty-collect`. See `SEMANTIC-ALIGNMENT.md` "Dot-call passes a
    > value" and the `KatLangArityLaws` `dot_receiver_*` bridge laws.
+   >
+   > **Refined (September 2026, the collector supply-boundary law).** The
+   > dotted equivalence is untouched, but what a COLLECTING callee binds for
+   > its lone written sequence slot changed: the oracle's call supply now
+   > carries slot provenance (`OracleSlot` = value × `OracleOrigin`;
+   > `Written` for a non-spread written slot, `Final` for an explicit-spread
+   > item), and `BindArgs` is `BindPats ∘ FuseCollectorSegment` — the
+   > segment allocated to the collector after fixed prefix/suffix allocation
+   > opens exactly one level when it is ONE written sequence value
+   > (`CollectorSupply`), and is otherwise collected exactly (laws
+   > **`COLLECTOR_LONE_WRITTEN_SEQUENCE_OPENS_ONE_LEVEL`** and
+   > **`COLLECTOR_EXPLICIT_SPREAD_ITEM_IS_FINAL`**;
+   > `CALLBACK_COLLECTING_COLLECTS_ONE_SLOT` became
+   > **`CALLBACK_ITEM_IS_A_WRITTEN_SLOT`**, since a whole callback item is a
+   > written slot). Consequences in the matrix: `Gather(V)` / `V.Gather` /
+   > `(V, 9).Gather` / `().Gather` / `[V].map(GatherCb)` open a lone written
+   > sequence value one level (`().Gather` is `[]` like `Gather(())`; lists
+   > stay `[V]`), `Mid3(0, V, 9)` and `Suffix2((V, 9), 5)` open the lone
+   > sequence left after fixed allocation, `(V*).Gather` is the written
+   > capture `Gather((V*))` and now COINCIDES with the fluent `V*.Gather`
+   > for every shape except the lone structured item `[(1, 2)]` (whose
+   > singleton capture exposes a pair that opens, while the final spread
+   > item stays exact), and `spread-vs-literal-items` agrees except when the
+   > item view is exactly one sequence value (the literal slot is written,
+   > the spread item final). Loop init and state slots are unchanged (final
+   > items: `Snap.repeat(1, V)` still collects `[V]`).
 2. **Loop init arity floor** — `repeat`/`while` require at least one initial
    state slot, so a zero-item spread in init position (`Snap.repeat(1, ()*)`)
    is an ordinary arity rejection after spreading.

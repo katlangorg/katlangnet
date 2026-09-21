@@ -333,27 +333,35 @@ public class CallableBindingPlanParityTests
 
         // Runtime receiver law (outside the plan): dot-call passes a value, so
         // the receiver is the ONE ordinary leading argument — an inline group
-        // and the capture of a spread are each one collected item — and only
-        // the fluent spread supplies the items as slots. No callee-shape
-        // inspection is involved.
+        // and the capture of a spread are each one written slot, which the
+        // lone collector opens one level by the collector supply-boundary law
+        // (a list receiver stays one item) — and the fluent spread supplies
+        // the items as final slots. No callee-shape inspection is involved:
+        // the plan describes the layout, the runtime binder applies the law.
         AssertEval(
             """
             Collect(*list) = list.count
             (10, 20, 30).Collect
             """,
-            1);
+            3);
         AssertEval(
             """
             Collect(*list) = list.count
             ((10, 20, 30)*).Collect
             """,
-            1);
+            3);
         AssertEval(
             """
             Collect(*list) = list.count
             (10, 20, 30)*.Collect
             """,
             3);
+        AssertEval(
+            """
+            Collect(*list) = list.count
+            [10, 20, 30].Collect
+            """,
+            1);
     }
 
     [Fact]
@@ -394,20 +402,58 @@ public class CallableBindingPlanParityTests
     [Fact]
     public void FlatVariadicPrefixMiddleSuffix_UserCallAndLoopStepPreserveSameObservableLayout()
     {
-        // The grouped middle argument/state slot is one collected item in both
-        // contexts, so middle.count is 1 for the user call and the loop step.
+        // The same prefix/collecting/suffix layout allocates identically in both
+        // contexts: two middle slots collect as two items, and a lone LIST slot
+        // stays one exact item, for the user call and the loop step alike.
         AssertUserCallAndLoopStepParity(
             userSource:
             """
             Shape(first, *middle, last) = first, middle.count, last
-            Shape(10, (20, 30), 40)
+            Shape(10, 20, 30, 40)
             """,
             loopSource:
             """
             Step(first, *middle, last) = first, middle.count, last
-            Step.repeat(1, 10, (20, 30), 40)
+            Step.repeat(1, 10, 20, 30, 40)
+            """,
+            expected: ResultFromAtoms(10, 2, 40));
+        AssertUserCallAndLoopStepParity(
+            userSource:
+            """
+            Shape(first, *middle, last) = first, middle.count, last
+            Shape(10, [20, 30], 40)
+            """,
+            loopSource:
+            """
+            Step(first, *middle, last) = first, middle.count, last
+            Step.repeat(1, 10, [20, 30], 40)
             """,
             expected: ResultFromAtoms(10, 1, 40));
+    }
+
+    [Fact]
+    public void FlatVariadicPrefixMiddleSuffix_LoneSequenceMiddleIsWrittenForTheCallAndFinalForTheLoopStep()
+    {
+        // Context-specific runtime input construction: the user call's grouped
+        // middle argument is a WRITTEN slot, so the collector supply-boundary law
+        // opens the lone sequence one level (middle.count 2), while a loop step is
+        // never called with written arguments — its state slots are established
+        // supply (FINAL items), so the same lone sequence stays one collected item
+        // (middle.count 1) in the generic and the optimized loop alike.
+        var userResult = EvalResult(
+            """
+            Shape(first, *middle, last) = first, middle.count, last
+            Shape(10, (20, 30), 40)
+            """,
+            enableLoopOptimization: false);
+        AssertResult(ResultFromAtoms(10, 2, 40), userResult);
+
+        const string loopSource = """
+            Step(first, *middle, last) = first, middle.count, last
+            Step.repeat(1, 10, (20, 30), 40)
+            """;
+        AssertResult(ResultFromAtoms(10, 1, 40), EvalResult(loopSource, enableLoopOptimization: false));
+        AssertResult(ResultFromAtoms(10, 1, 40), EvalResult(loopSource, enableLoopOptimization: true));
     }
 
     [Fact]

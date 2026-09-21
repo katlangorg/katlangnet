@@ -775,35 +775,29 @@ def sequenceSpreadAfterSequenceConstructMatchesSequenceValueForm : Bool :=
 
 #guard sequenceSpreadAfterSequenceConstructMatchesSequenceValueForm
 
--- Single-collecting `X(*values)` collects the supplied argument slots as one exact
--- list: the explicit-spread form `X((1, b)*)` supplies two items
--- (`values = [1, (2, 3)]`, count 2), while the constructed sequence-value form
--- `X((1, b))` supplies ONE grouped argument (`values = [(1, (2, 3))]`,
--- count 1). Exact segment collection removed the old grouped/spread coincidence.
+-- Single-collecting `X(*values)` collects the segment allocated to the
+-- collector: the explicit-spread form `X((1, b)*)` supplies two final items
+-- (`values = [1, (2, 3)]`, count 2), and the constructed sequence-value form
+-- `X((1, b))` supplies ONE written sequence slot that is the collector's
+-- whole segment, so the collector supply-boundary law opens it one level to
+-- the same `values = [1, (2, 3)]` (count 2). Beside a second slot the grouped
+-- value is collected exactly: `X((1, b), 0)` counts 2 (`[(1, (2, 3)), 0]`)
+-- while `X((1, b)*, 0)` counts 3.
 def sequenceSpreadAfterSequenceConstructMatchesConstructedSequenceValue : Bool :=
   let countValues := algWithParameters [{ name := "values", kind := .collecting }] [] [] [
     .dotCall (.param "values") "count" none
   ]
   let multiB := alg [] [] [] [.num 2, .num 3]
-  let explicitSpreadForm := algPrivate [] [] [("b", multiB), ("X", countValues)] [
-    .call (.resolve "X") [
-      sequenceSpread (.sequenceConstruct (.num 1) (.resolve "b"))
-    ]
-  ]
-  let constructedArgForm := algPrivate [] [] [("b", multiB), ("X", countValues)] [
-    .call (.resolve "X") [
-      .sequenceConstruct (.num 1) (.resolve "b")
-    ]
-  ]
-  let explicitSpreadOk :=
-    match runFlat (.algorithmExpr explicitSpreadForm) with
-    | Except.ok [2] => true
+  let countOf (args : List KatLang.Expr) (expected : Int) : Bool :=
+    match runFlat (.algorithmExpr (algPrivate [] [] [("b", multiB), ("X", countValues)] [
+      .call (.resolve "X") args
+    ])) with
+    | Except.ok [n] => n == expected
     | _ => false
-  let constructedArgOk :=
-    match runFlat (.algorithmExpr constructedArgForm) with
-    | Except.ok [1] => true
-    | _ => false
-  explicitSpreadOk && constructedArgOk
+  countOf [sequenceSpread (.sequenceConstruct (.num 1) (.resolve "b"))] 2 &&
+  countOf [.sequenceConstruct (.num 1) (.resolve "b")] 2 &&
+  countOf [.sequenceConstruct (.num 1) (.resolve "b"), .num 0] 2 &&
+  countOf [sequenceSpread (.sequenceConstruct (.num 1) (.resolve "b")), .num 0] 3
 
 #guard sequenceSpreadAfterSequenceConstructMatchesConstructedSequenceValue
 

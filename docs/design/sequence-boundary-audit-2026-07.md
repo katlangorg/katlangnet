@@ -292,7 +292,13 @@ GONE — collecting bindings collect exact immutable lists, so `F(V)` and `F(V.s
 always differ, and the receiver contrast is now proven by
 `receivers_never_agree_on_lone_seq` / `lone_collecting_disagrees_on_lone_list` in
 `CoreArityAlgebraProofs.lean` plus the collect bridge laws in
-`KatLangArityLaws.lean`. The correction pass additionally routed flat
+`KatLangArityLaws.lean`. Refined again in September 2026 by the collector
+supply-boundary law: for a stored SEQUENCE `V` the lone collecting call `F(V)`
+opens the written value one level and coincides with `F(V*)` once more
+(`variadic_collect_written_seq_eq_spread`, `receivers_agree_on_lone_seq_lone_collecting`),
+while lists stay exact (`variadic_collect_distinguishes_spread_list`,
+`receivers_never_same_on_lone_list`) — see `AGENTS.md` and
+`docs/design/language-rules/sequences-lists-and-calls.md` § Collecting parameters. The correction pass additionally routed flat
 callbacks with a top-level variadic parameter through the shared prefix/collecting/suffix binder,
 so `[7].map(Collect)` collects `items = [7]`.)*
 

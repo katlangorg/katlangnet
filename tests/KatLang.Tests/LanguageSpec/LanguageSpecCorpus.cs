@@ -855,18 +855,21 @@ public static class LanguageSpecCorpus
         {
             Id = "variadic-empty-arg-vs-spread",
             Category = "empty-visible-vs-spread",
-            Source = "F(*a) = a.count\nF(())",
+            Source = "F(*a) = a.count\nF((), ())",
             Outcome = SpecOutcome.Evaluates,
-            ExpectedDisplay = "1",
-            ExpectedRaw = "1",
+            ExpectedDisplay = "2",
+            ExpectedRaw = "2",
             ExpectedEmittedCount = 1,
             Probes =
             [
-                new SpecProbe("F(*a) = a.count\nF((), ())", "ok raw=2 n=1"),
+                new SpecProbe("F(*a) = a.count\nF(())", "ok raw=0 n=1"),
                 new SpecProbe("F(*a) = a.count\nF()", "ok raw=0 n=1"),
                 new SpecProbe("F(*a) = a.count\nF(()*)", "ok raw=0 n=1"),
+                new SpecProbe("F(*a) = a.count\nF(()*, (), 1)", "ok raw=2 n=1"),
+                new SpecProbe("One(a) = 1\nOne(())", "ok raw=1 n=1"),
+                new SpecProbe("One(a) = 1\nOne(()*)", "err arity"),
             ],
-            Explanation = "A non-spread `()` is one visible argument slot, so the collecting parameter collects `[()]` (count 1); the empty call collects `[]` (count 0), and only spreading `()` contributes zero slots.",
+            Explanation = "A non-spread `()` is one visible argument slot: `One(())` binds it and `F((), ())` collects two items. When that lone written `()` is a collecting parameter's whole segment, the collector supply-boundary law opens it one level to zero items (`F(())` is 0, like the empty call), while only spreading `()` contributes zero SLOTS (`One(()*)` is an arity error; `F(()*, (), 1)` collects the visible `()` beside `1`).",
         },
         new()
         {
@@ -1104,12 +1107,15 @@ public static class LanguageSpecCorpus
             ExpectedEmittedCount = 2,
             Probes =
             [
-                new SpecProbe("A = 1, 2, 3, 4, 5\nG(*x) = x.sum\nG(A)", "err arity"),
-                new SpecProbe("G(*x) = x.sum\nG((1, 2, 3, 4, 5))", "err arity"),
-                new SpecProbe("A = 1, 2, 3, 4, 5\nG(*x) = x.count\nG(A)", "ok raw=1 n=1"),
+                new SpecProbe("A = 1, 2, 3, 4, 5\nG(*x) = x.sum\nG(A)", "ok raw=15 n=1"),
+                new SpecProbe("G(*x) = x.sum\nG((1, 2, 3, 4, 5))", "ok raw=15 n=1"),
+                new SpecProbe("A = 1, 2, 3, 4, 5\nG(*x) = x.count\nG(A)", "ok raw=5 n=1"),
+                new SpecProbe("A = 1, 2, 3, 4, 5\nG(*x) = x.count\nG(A, 0)", "ok raw=2 n=1"),
+                new SpecProbe("G(*x) = x.sum\nG([1, 2, 3, 4, 5])", "err arity"),
+                new SpecProbe("G(*x) = x.sum\nG([1, 2, 3, 4, 5]*)", "ok raw=15 n=1"),
             ],
             IncludeInGeneratorPrompt = true,
-            Explanation = "A collecting parameter collects the supplied argument slots as one exact list. `G(A*)` and `G(1, 2, 3, 4, 5)` supply five numeric slots (sum 15), while the grouped calls `G(A)` and `G((1, 2, 3, 4, 5))` supply ONE sequence-valued slot — `x = [A]` — so the numeric `sum` element constraint rejects it. Supplying items is always explicit spread.",
+            Explanation = "A collecting parameter consumes the argument segment allocated to it. `G(A*)` and `G(1, 2, 3, 4, 5)` supply five numeric slots (sum 15). The grouped calls `G(A)` and `G((1, 2, 3, 4, 5))` supply ONE written sequence-valued slot; because that lone non-spread sequence is the collector's entire segment, it provides the collector's whole supply, opening exactly one level (sum 15, count 5 — the collector supply-boundary law). Beside another slot the sequence is collected exactly (`G(A, 0)` counts 2), and a LIST never opens without an explicit spread (`G([1, 2, 3, 4, 5])` is the numeric element rejection; `G([1, 2, 3, 4, 5]*)` sums to 15).",
         },
         new()
         {
@@ -1168,8 +1174,8 @@ public static class LanguageSpecCorpus
             Category = "variadic-calls",
             Source = "Target(*items) = items\nUse(items) = Target\nUseVariadic(*items) = Target\n\nUse([1, 2])\nUse((1, 2))\nUseVariadic(1, 2)",
             Outcome = SpecOutcome.Evaluates,
-            ExpectedDisplay = "[[1, 2]]\n[(1, 2)]\n[1, 2]",
-            ExpectedRaw = "S[L[L[1, 2]], L[S[1, 2]], L[1, 2]]",
+            ExpectedDisplay = "[[1, 2]]\n[1, 2]\n[1, 2]",
+            ExpectedRaw = "S[L[L[1, 2]], L[1, 2], L[1, 2]]",
             ExpectedEmittedCount = 3,
             Probes =
             [
@@ -1180,7 +1186,7 @@ public static class LanguageSpecCorpus
                 new SpecProbe("Target(*a) = a\nUse((a, b)) = Target\nUse(([1, 2], 5))", "ok raw=L[L[1, 2]] n=1"),
             ],
             IncludeInGeneratorPrompt = true,
-            Explanation = "Implicit forwarding decides spread from the SOURCE binding kind, never from the destination parameter kind: an ordinary caller parameter is passed as ONE argument even into a collecting destination (`Use(items) = Target` elaborates to `Target(items)`, so the list stays one collected slot), while a caller collecting parameter legitimately forwards as spread (`UseVariadic(*items) = Target` elaborates to `Target(items*)`).",
+            Explanation = "Implicit forwarding decides spread from the SOURCE binding kind, never from the destination parameter kind: an ordinary caller parameter is passed as ONE written argument even into a collecting destination (`Use(items) = Target` elaborates to `Target(items)`, so a list stays one collected slot, while a sequence value — the lone collector's whole segment — opens one level by the collector supply-boundary law), and a caller collecting parameter legitimately forwards as spread (`UseVariadic(*items) = Target` elaborates to `Target(items*)`).",
         },
         new()
         {
@@ -1193,49 +1199,58 @@ public static class LanguageSpecCorpus
             ExpectedEmittedCount = 2,
             Probes =
             [
-                new SpecProbe("Inspect(*items) = items\nB = (1, 2, 3)\nInspect(B)", "ok raw=L[S[1, 2, 3]] n=1"),
+                new SpecProbe("Inspect(*items) = items\nB = (1, 2, 3)\nInspect(B)", "ok raw=L[1, 2, 3] n=1"),
                 new SpecProbe("Inspect(*items) = items\nB = (1, 2, 3)\nInspect(B*)", "ok raw=L[1, 2, 3] n=1"),
+                new SpecProbe("Inspect(*items) = items\nB = (1, 2, 3)\nInspect(B, 0)", "ok raw=L[S[1, 2, 3], 0] n=1"),
                 new SpecProbe("Inspect(*items) = items\nA = [1, 2]\nA.Inspect", "ok raw=L[L[1, 2]] n=1"),
                 new SpecProbe("CountArgs(*items) = items.count\nCountArgs([10, 20])", "ok raw=1 n=1"),
                 new SpecProbe("CountArgs(*items) = items.count\nCountArgs([10, 20]*)", "ok raw=2 n=1"),
-                new SpecProbe("CountArgs(*items) = items.count\nCountArgs((10, 20))", "ok raw=1 n=1"),
+                new SpecProbe("CountArgs(*items) = items.count\nCountArgs((10, 20))", "ok raw=2 n=1"),
                 new SpecProbe("CountArgs(*items) = items.count\nCountArgs((10, 20)*)", "ok raw=2 n=1"),
+                new SpecProbe("CountArgs(*items) = items.count\nCountArgs((10, 20), 30)", "ok raw=2 n=1"),
             ],
             IncludeInGeneratorPrompt = true,
-            Explanation = "An unspread structure is one argument slot — `Inspect(A)` collects `[A]` (count 1) for lists and sequence values alike, and the dotted receiver `A.Inspect` is exactly that written argument (dot-call passes a value: `A.Inspect` is `Inspect(A)`) — while explicit spread supplies the immediate items (`Inspect(A*)` collects `[1, 2, 3]`, count 3, and the fluent `A*.Inspect` is `Inspect(A*)`). A written group receiver is one value too: see `dot-receiver-passes-a-value`.",
+            Explanation = "An unspread structure is one argument slot. A LIST stays exact: `Inspect(A)` collects `[A]` (count 1), and the dotted receiver `A.Inspect` is exactly that written argument (dot-call passes a value: `A.Inspect` is `Inspect(A)`), while explicit spread supplies the immediate items (`Inspect(A*)` collects `[1, 2, 3]`, count 3, and the fluent `A*.Inspect` is `Inspect(A*)`). A lone SEQUENCE argument is the collector's whole segment and opens one level (`Inspect(B)` and `Inspect(B*)` both collect `[1, 2, 3]`), but beside another slot it is collected exactly (`Inspect(B, 0)` is `[(1, 2, 3), 0]`). See `dot-receiver-passes-a-value` for written group receivers.",
         },
         new()
         {
             Id = "dot-receiver-passes-a-value",
             Category = "variadic-calls",
-            Source = "Mean(*Vector) = Vector.sum / Vector.count\n\nMean(1, 2, 3)\n(1, 2, 3)*.Mean",
+            Source = "Mean(*Vector) = Vector.sum / Vector.count\n\nMean(1, 2, 3)\n(1, 2, 3)*.Mean\n(1, 2, 3).Mean",
             Outcome = SpecOutcome.Evaluates,
-            ExpectedDisplay = "2\n2",
-            ExpectedRaw = "S[2, 2]",
-            ExpectedEmittedCount = 2,
+            ExpectedDisplay = "2\n2\n2",
+            ExpectedRaw = "S[2, 2, 2]",
+            ExpectedEmittedCount = 3,
             Probes =
             [
                 new SpecProbe("Mean(*Vector) = Vector.sum / Vector.count\nMean(1, 2, 2.718)", "ok raw=1.906 n=1"),
                 new SpecProbe("Mean(*Vector) = Vector.sum / Vector.count\n(1, 2, 2.718)*.Mean", "ok raw=1.906 n=1"),
-                new SpecProbe("Collect(*items) = items\n(1, 2).Collect", "ok raw=L[S[1, 2]] n=1"),
-                new SpecProbe("Collect(*items) = items\nCollect((1, 2))", "ok raw=L[S[1, 2]] n=1"),
+                new SpecProbe("Mean(*Vector) = Vector.sum / Vector.count\n(1, 2, 2.718).Mean", "ok raw=1.906 n=1"),
+                new SpecProbe("Mean(*Vector) = Vector.sum / Vector.count\n[1, 2, 3].Mean", "err arity"),
+                new SpecProbe("Collect(*items) = items\n(1, 2).Collect", "ok raw=L[1, 2] n=1"),
+                new SpecProbe("Collect(*items) = items\nCollect((1, 2))", "ok raw=L[1, 2] n=1"),
                 new SpecProbe("Collect(*items) = items\n(1, 2)*.Collect", "ok raw=L[1, 2] n=1"),
-                new SpecProbe("Collect(*items) = items\n((1, 2)).Collect", "ok raw=L[S[1, 2]] n=1"),
-                new SpecProbe("Collect(*items) = items\n().Collect", "ok raw=L[S[]] n=1"),
+                new SpecProbe("Collect(*items) = items\n((1, 2)).Collect", "ok raw=L[1, 2] n=1"),
+                new SpecProbe("Collect(*items) = items\n(1, 2).Collect(3)", "ok raw=L[S[1, 2], 3] n=1"),
+                new SpecProbe("Collect(*items) = items\n((1, 2), 3).Collect", "ok raw=L[S[1, 2], 3] n=1"),
+                new SpecProbe("Collect(*items) = items\n().Collect", "ok raw=L[] n=1"),
+                new SpecProbe("Collect(*items) = items\n().Collect(3)", "ok raw=L[S[], 3] n=1"),
                 new SpecProbe("Collect(*items) = items\n()*.Collect", "ok raw=L[] n=1"),
                 new SpecProbe("Collect(*items) = items\n[1, 2].Collect", "ok raw=L[L[1, 2]] n=1"),
                 new SpecProbe("Collect(*items) = items\n[1, 2]*.Collect", "ok raw=L[1, 2] n=1"),
-                new SpecProbe("Collect(*items) = items\n{1, 2}.Collect", "ok raw=L[S[1, 2]] n=1"),
-                new SpecProbe("Collect(*items) = items\nA = (1, 2)\n(A*).Collect", "ok raw=L[S[1, 2]] n=1"),
-                new SpecProbe("Scale(*values, factor) = values, factor\n(1, 2, 3).Scale(10)", "ok raw=S[L[S[1, 2, 3]], 10] n=1"),
+                new SpecProbe("Collect(*items) = items\n[(1, 2)]*.Collect", "ok raw=L[S[1, 2]] n=1"),
+                new SpecProbe("Collect(*items) = items\n{1, 2}.Collect", "ok raw=L[1, 2] n=1"),
+                new SpecProbe("Collect(*items) = items\nA = (1, 2)\n(A*).Collect", "ok raw=L[1, 2] n=1"),
+                new SpecProbe("Scale(*values, factor) = values, factor\n(1, 2, 3).Scale(10)", "ok raw=S[L[1, 2, 3], 10] n=1"),
                 new SpecProbe("Scale(*values, factor) = values, factor\n(1, 2, 3)*.Scale(10)", "ok raw=S[L[1, 2, 3], 10] n=1"),
+                new SpecProbe("Scale(*values, factor) = values, factor\n[1, 2, 3].Scale(10)", "ok raw=S[L[L[1, 2, 3]], 10] n=1"),
                 new SpecProbe("F(first, *middle, last) = first\n(1, 2).F", "err arity"),
                 new SpecProbe("F(first, *middle, last) = first\n(1, 2)*.F", "ok raw=1 n=1"),
                 new SpecProbe("F(*middle, last) = middle, last\n(1, 2).F", "ok raw=S[L[], S[1, 2]] n=1"),
                 new SpecProbe("F(*middle, last) = middle, last\n(1, 2)*.F", "ok raw=S[L[1], 2] n=1"),
             ],
             IncludeInGeneratorPrompt = true,
-            Explanation = "Dot-call passes a value: for extension-call fallback, `R.F(args)` is exactly `F(R, args)` — the receiver is ONE ordinary leading argument whatever it is (a written group, a brace block, a list, a property, a call result, a selection, a capture of a spread), so its item count never satisfies arity, a fixed parameter binds it whole, and a collecting parameter collects it as one item (`(1, 2).Collect` is `[(1, 2)]`, `().Collect` is `[()]`, `[1, 2].Collect` is `[[1, 2]]`). Only the spread marker opens a receiver: `R*.F(args)` is `F(R*, args)`, so `(1, 2, 3)*.Mean` averages the three items and `(1, 2)*.Collect` collects `[1, 2]`.",
+            Explanation = "Dot-call passes a value: for extension-call fallback, `R.F(args)` is exactly `F(R, args)` — the receiver is ONE ordinary leading argument whatever it is (a written group, a brace block, a list, a property, a call result, a selection, a capture of a spread), so its item count never satisfies arity (`(1, 2).F` against two fixed parameters fails) and a fixed parameter binds it whole (`F(*middle, last)` gives `last` the whole pair). A collecting parameter then applies the collector supply-boundary law exactly as for the written call: a receiver that is the collector's entire segment and is one lone non-spread sequence value opens one level (`(1, 2).Collect` is `[1, 2]`, `().Collect` is `[]`, `(1, 2, 3).Mean` is 2, `(1, 2, 3).Scale(10)` binds `values = [1, 2, 3]` after the suffix takes 10), while a list stays exact (`[1, 2].Collect` is `[[1, 2]]`, `[1, 2, 3].Mean` is the numeric element rejection) and a receiver beside another written item is collected exactly (`(1, 2).Collect(3)` is `[(1, 2), 3]`). The spread marker opens a receiver into final items: `R*.F(args)` is `F(R*, args)`, so `[(1, 2)]*.Collect` collects the pair as one exact item.",
         },
         new()
         {
@@ -1252,9 +1267,11 @@ public static class LanguageSpecCorpus
                 new SpecProbe("F(x, *y, z) = x + y.sum + z\nA = 1, 2, 3, 4, 5\nF(A)", "err arity"),
                 new SpecProbe("F(x, *y, z) = y\nF(1, 2, 3, 4, 5)", "ok raw=L[2, 3, 4] n=1"),
                 new SpecProbe("F(x, *y, z) = y\nF(1, 2)", "ok raw=L[] n=1"),
+                new SpecProbe("F(x, *y, z) = y\nF(1, (2, 3), 4)", "ok raw=L[2, 3] n=1"),
+                new SpecProbe("F(x, *y, z) = y\nF(1, (2, 3), 5, 4)", "ok raw=L[S[2, 3], 5] n=1"),
             ],
             IncludeInGeneratorPrompt = true,
-            Explanation = "Mixed fixed/collecting parameter lists bind the call's argument supply: fixed captures take the front and back, and the collecting parameter collects the middle as one list (possibly `[]`). A plain call does not implicitly open a single sequence argument, so `F(A)` fails.",
+            Explanation = "Mixed fixed/collecting parameter lists bind the call's argument supply: fixed captures take the front and back first, and the collecting parameter then consumes the middle segment by the collector supply-boundary law — several remaining slots are collected exactly (possibly `[]`), and a lone remaining non-spread sequence value opens one level (`F(1, (2, 3), 4)` binds `y = [2, 3]`, while `F(1, (2, 3), 5, 4)` binds `y = [(2, 3), 5]`). Fixed positions never open a sequence argument: `F(A)` supplies one slot against two fixed parameters and fails.",
         },
         new()
         {
@@ -1262,10 +1279,18 @@ public static class LanguageSpecCorpus
             Category = "variadic-calls",
             Source = "Arg = 1, 2, 3\n\nHead(first, *rest) = first\nTail(first, *rest) = rest\nInit(*init, last) = init\nLast(*init, last) = last\n\nHead(1, (2, 3))\nTail(1, (2, 3))\nInit((1, 2), 3)\nLast(Arg, 3)",
             Outcome = SpecOutcome.Evaluates,
-            ExpectedDisplay = "1\n[(2, 3)]\n[(1, 2)]\n3",
-            ExpectedRaw = "S[1, L[S[2, 3]], L[S[1, 2]], 3]",
+            ExpectedDisplay = "1\n[2, 3]\n[1, 2]\n3",
+            ExpectedRaw = "S[1, L[2, 3], L[1, 2], 3]",
             ExpectedEmittedCount = 4,
-            Explanation = "Grouped arguments are single slots: a collected segment of one grouped value is the one-element list holding it (never the value itself), and fixed captures bind whole argument boundaries.",
+            Probes =
+            [
+                new SpecProbe("Tail(first, *rest) = rest\nTail(1, (2, 3), 4)", "ok raw=L[S[2, 3], 4] n=1"),
+                new SpecProbe("Init(*init, last) = init\nInit((1, 2), 3, 4)", "ok raw=L[S[1, 2], 3] n=1"),
+                new SpecProbe("Init(*init, last) = init\nInit([1, 2], 3)", "ok raw=L[L[1, 2]] n=1"),
+                new SpecProbe("Head(first, *rest) = first\nArg = 1, 2, 3\nHead(Arg)", "ok raw=S[1, 2, 3] n=1"),
+                new SpecProbe("Tail(first, *rest) = rest\nArg = 1, 2, 3\nTail(Arg)", "ok raw=L[] n=1"),
+            ],
+            Explanation = "Grouped arguments are single slots, and fixed captures bind whole argument boundaries first (`Head(1, (2, 3))` binds `first = 1`, `Last(Arg, 3)` binds `last = 3`, `Head(Arg)` binds the whole sequence). The segment left to the collecting parameter is then read by the collector supply-boundary law: a lone grouped sequence there opens one level (`Tail(1, (2, 3))` is `[2, 3]`, `Init((1, 2), 3)` is `[1, 2]`), while two or more remaining slots are collected exactly (`Tail(1, (2, 3), 4)` is `[(2, 3), 4]`) and a list never opens (`Init([1, 2], 3)` is `[[1, 2]]`).",
         },
         new()
         {
@@ -1308,9 +1333,10 @@ public static class LanguageSpecCorpus
             ExpectedEmittedCount = 2,
             Probes =
             [
-                new SpecProbe("Arg = (1, 2), (3, 4)\nMany(*values) = values.count\nMany(Arg)", "ok raw=1 n=1"),
+                new SpecProbe("Arg = (1, 2), (3, 4)\nMany(*values) = values.count\nMany(Arg)", "ok raw=2 n=1"),
+                new SpecProbe("Arg = (1, 2), (3, 4)\nMany(*values) = values.count\nMany(Arg, 0)", "ok raw=2 n=1"),
             ],
-            Explanation = "Segment collection is not recursive flattening: `Many(Arg*)` supplies the two nested pairs as two collected elements, the unspread `Many(Arg)` is one collected element, and `atoms` is the explicit recursive projection.",
+            Explanation = "Segment collection is not recursive flattening: `Many(Arg*)` supplies the two nested pairs as two collected elements; the unspread `Many(Arg)` is one written sequence slot that the collector supply-boundary law opens exactly one level — the same two pairs, never their four atoms — and `atoms` is the explicit recursive projection.",
         },
         new()
         {
@@ -1318,10 +1344,17 @@ public static class LanguageSpecCorpus
             Category = "variadic-calls",
             Source = "CountValues(*values) = values.count\nCountSequenceValue((*values)) = values.count\n\nCountValues()\nCountValues(1, 2, 3)\nCountValues((1, 2, 3))\nCountSequenceValue((1, 2, 3))",
             Outcome = SpecOutcome.Evaluates,
-            ExpectedDisplay = "0\n3\n1\n3",
-            ExpectedRaw = "S[0, 3, 1, 3]",
+            ExpectedDisplay = "0\n3\n3\n3",
+            ExpectedRaw = "S[0, 3, 3, 3]",
             ExpectedEmittedCount = 4,
-            Explanation = "Top-level `*values` collects the call's argument slots — a grouped `(1, 2, 3)` is ONE collected element — while the sequence-value pattern `(*values)` consumes exactly one grouped argument and opens it during binding, collecting its three items.",
+            Probes =
+            [
+                new SpecProbe("CountValues(*values) = values.count\nCountValues((1, 2, 3), 4)", "ok raw=2 n=1"),
+                new SpecProbe("CountSequenceValue((*values)) = values.count\nCountSequenceValue((1, 2, 3), 4)", "err arity"),
+                new SpecProbe("CountValues(*values) = values.count\nCountValues([1, 2, 3])", "ok raw=1 n=1"),
+                new SpecProbe("CountSequenceValue((*values)) = values.count\nCountSequenceValue([1, 2, 3])", "ok raw=3 n=1"),
+            ],
+            Explanation = "Top-level `*values` collects the call's argument slots: a lone grouped `(1, 2, 3)` is ONE written slot that the collector supply-boundary law opens one level (count 3), while two slots stay two (`CountValues((1, 2, 3), 4)` counts 2) and a list stays one exact item. The sequence-value pattern `(*values)` instead consumes exactly one structured argument — a sequence value or a list — and opens it during binding (`CountSequenceValue([1, 2, 3])` counts 3), so a second argument is an arity error.",
         },
         new()
         {
@@ -2242,20 +2275,27 @@ public static class LanguageSpecCorpus
             Category = "collection-builtins",
             Source = "Collect(*items) = items\n\n[7].map(Collect)\n[(1, 2)].map(Collect)\n[[1, 2]].map(Collect)",
             Outcome = SpecOutcome.Evaluates,
-            ExpectedDisplay = "[[7]]\n[[(1, 2)]]\n[[[1, 2]]]",
-            ExpectedRaw = "S[L[L[7]], L[L[S[1, 2]]], L[L[L[1, 2]]]]",
+            ExpectedDisplay = "[[7]]\n[[1, 2]]\n[[[1, 2]]]",
+            ExpectedRaw = "S[L[L[7]], L[L[1, 2]], L[L[L[1, 2]]]]",
             ExpectedEmittedCount = 3,
             Probes =
             [
                 new SpecProbe("Collect(*items) = items\n[[]].map(Collect)", "ok raw=L[L[L[]]] n=1"),
-                new SpecProbe("Collect(*items) = items\n[()].map(Collect)", "ok raw=L[L[S[]]] n=1"),
+                new SpecProbe("Collect(*items) = items\n[()].map(Collect)", "ok raw=L[L[]] n=1"),
+                new SpecProbe("Collect(*items) = items\n[((1, 2), 3)].map(Collect)", "ok raw=L[L[S[1, 2], 3]] n=1"),
                 new SpecProbe("Collect(*items) = items\nmap((7, 8), Collect)", "ok raw=L[L[7], L[8]] n=1"),
                 new SpecProbe("IsSingleSeven(*items) = items == [7]\n[7, 8].filter(IsSingleSeven)", "ok raw=L[7] n=1"),
+                new SpecProbe("IsPair(*items) = items.count == 2\n((1, 2), 3, (4, 5), [6, 7]).filter(IsPair).count", "ok raw=2 n=1"),
                 new SpecProbe("R(*items, acc) = items == [10]\nreduce([10], R, 99)", "ok raw=true n=1"),
+                new SpecProbe("R(*items, acc) = items\nreduce([(1, 2)], R, 99)", "ok raw=L[1, 2] n=1"),
+                new SpecProbe("R(*items, acc) = items\nreduce([()], R, 99)", "ok raw=L[] n=1"),
+                new SpecProbe("R(*items, acc) = items\nreduce([[1, 2]], R, 99)", "ok raw=L[L[1, 2]] n=1"),
+                new SpecProbe("R(*items, acc) = items\nreduce([((1, 2), 3)], R, 99)", "ok raw=L[S[1, 2], 3] n=1"),
                 new SpecProbe("R(*items) = items\nreduce([10], R, 99)", "ok raw=L[10, 99] n=1"),
+                new SpecProbe("Acc(x, *acc) = acc\nreduce([9], Acc, ((1, 2), 3))", "ok raw=L[S[1, 2], 3] n=1"),
             ],
             IncludeInGeneratorPrompt = true,
-            Explanation = "A single-collecting map/filter callback receives each iterated element as ONE collected slot: `items` is the exact list `[element]`, preserving the element's kind (scalar, sequence value, or nested list). Reducers supply element and accumulator slots, so a genuine single-collecting reducer collects both as `[element, accumulator]`; an element-side collecting parameter before a fixed accumulator still observes `[element]`.",
+            Explanation = "A single-collecting map/filter callback receives each iterated element as ONE written slot of the callback call, so the collector supply-boundary law applies exactly as for a written call: a scalar or a nested list is one collected item (`[7]`, `[[1, 2]]`), while a sequence element opens exactly one level (`[(1, 2)].map(Collect)` binds `items = [1, 2]`, an empty sequence element binds `[]`, and `((1, 2), 3)` binds `[(1, 2), 3]`). Reducers supply element and accumulator slots, so a genuine single-collecting reducer collects both as `[element, accumulator]`; an element-side collecting parameter before a fixed accumulator receives one written slot and applies the same law (a sequence opens one level, a scalar or list stays `[element]`), and an accumulator-side collector collects the accumulator's own one-level slots exactly (`((1, 2), 3)` stays `[(1, 2), 3]`).",
         },
         new()
         {
@@ -2723,26 +2763,30 @@ public static class LanguageSpecCorpus
         {
             Id = "selection-forms-agree",
             Category = "equality-and-indexing",
-            Source = "Coll(*xs) = xs\nPairs = (1, 2), (3, 4)\nfirst(Pairs).Coll\nPairs:0.Coll\n(Pairs:0)*.Coll",
+            Source = "Coll(*xs) = xs\nPairs = (1, 2), (3, 4)\nfirst(Pairs).Coll\nPairs:0.Coll\n(Pairs:0)*.Coll\nPairs:0.Coll(3)",
             Outcome = SpecOutcome.Evaluates,
-            ExpectedDisplay = "[(1, 2)]\n[(1, 2)]\n[1, 2]",
-            ExpectedRaw = "S[L[S[1, 2]], L[S[1, 2]], L[1, 2]]",
-            ExpectedEmittedCount = 3,
+            ExpectedDisplay = "[1, 2]\n[1, 2]\n[1, 2]\n[(1, 2), 3]",
+            ExpectedRaw = "S[L[1, 2], L[1, 2], L[1, 2], L[S[1, 2], 3]]",
+            ExpectedEmittedCount = 4,
             Probes =
             [
-                new SpecProbe("Coll(*xs) = xs\nA = ((), 1)\nA:0.Coll", "ok raw=L[S[]] n=1"),
-                new SpecProbe("Coll(*xs) = xs\nA = ((), 1)\nfirst(A).Coll", "ok raw=L[S[]] n=1"),
-                new SpecProbe("Coll(*xs) = xs\nA = (1, ())\nlast(A).Coll", "ok raw=L[S[]] n=1"),
+                new SpecProbe("Coll(*xs) = xs\nA = ((), 1)\nA:0.Coll", "ok raw=L[] n=1"),
+                new SpecProbe("Coll(*xs) = xs\nA = ((), 1)\nfirst(A).Coll", "ok raw=L[] n=1"),
+                new SpecProbe("Coll(*xs) = xs\nA = (1, ())\nlast(A).Coll", "ok raw=L[] n=1"),
+                new SpecProbe("Coll(*xs) = xs\nA = ((), 1)\nA:0.Coll(3)", "ok raw=L[S[], 3] n=1"),
                 new SpecProbe("Coll(*xs) = xs\nA = ((), 1)\n(A:0)*.Coll", "ok raw=L[] n=1"),
                 new SpecProbe("Coll(*xs) = xs\nA = ([], 1)\nfirst(A).Coll", "ok raw=L[L[]] n=1"),
                 new SpecProbe("Coll(*xs) = xs\nA = ([], 1)\n(A:0)*.Coll", "ok raw=L[] n=1"),
                 new SpecProbe("Coll(*xs) = xs\nA = (3, [1, 2])\nlast(A).Coll", "ok raw=L[L[1, 2]] n=1"),
                 new SpecProbe("Coll(*xs) = xs\nA = (3, (1, 2))\n(last(A))*.Coll", "ok raw=L[1, 2] n=1"),
-                new SpecProbe("Coll(*xs) = xs\nE = ()\nE.Coll", "ok raw=L[S[]] n=1"),
-                new SpecProbe("Coll(*xs) = xs\nE = ()\nColl(E)", "ok raw=L[S[]] n=1"),
+                new SpecProbe("Coll(*xs) = xs\nA = (3, (1, 2))\nlast(A).Coll", "ok raw=L[1, 2] n=1"),
+                new SpecProbe("Coll(*xs) = xs\nA = (((1, 2), 3), 9)\nA:0.Coll", "ok raw=L[S[1, 2], 3] n=1"),
+                new SpecProbe("Coll(*xs) = xs\nE = ()\nE.Coll", "ok raw=L[] n=1"),
+                new SpecProbe("Coll(*xs) = xs\nE = ()\nColl(E)", "ok raw=L[] n=1"),
+                new SpecProbe("Coll(*xs) = xs\nV = (1, 2)\nV.Coll", "ok raw=L[1, 2] n=1"),
             ],
             IncludeInGeneratorPrompt = true,
-            Explanation = "`first(A)`, `last(A)`, and `A:i` are the same selection: each returns the selected value through the ordinary value boundary, and dot-call passes that value as the ordinary leading argument, so a collecting dotted receiver collects the selected pair as one item, a selected `()` is one collected item (`[()]`, exactly like the written argument `Coll(())`), and a selected `[]` stays one exact list. Only the spread marker opens a selected sequence or list — and a spread `()` supplies nothing.",
+            Explanation = "`first(A)`, `last(A)`, and `A:i` are the same selection: each returns the selected value through the ordinary value boundary, and dot-call passes that value as the ordinary leading argument. Later collector behavior depends only on that value and how it entered the call supply, never on selection provenance: a selected pair is one written slot that the collector supply-boundary law opens one level (`[1, 2]`, exactly like `V.Coll` on a property holding the pair), a selected `()` opens to nothing (`[]`, like `Coll(())`), a selected `[]` stays one exact list, and beside another written argument the selected value is collected exactly (`Pairs:0.Coll(3)` is `[(1, 2), 3]`). The spread marker opens a selected sequence or list into final items — and a spread `()` supplies nothing.",
         },
         new()
         {
@@ -2766,11 +2810,13 @@ public static class LanguageSpecCorpus
             ExpectedEmittedCount = 1,
             Probes =
             [
-                new SpecProbe("Coll(*xs) = xs\nx = ((), ())\nx:0.Coll", "ok raw=L[S[]] n=1"),
-                new SpecProbe("Coll(*xs) = xs\nx = ((), ())\nfirst(x).Coll", "ok raw=L[S[]] n=1"),
+                new SpecProbe("Coll(*xs) = xs\nx = ((), ())\nx:0.Coll", "ok raw=L[] n=1"),
+                new SpecProbe("Coll(*xs) = xs\nx = ((), ())\nfirst(x).Coll", "ok raw=L[] n=1"),
+                new SpecProbe("Coll(*xs) = xs\nx = ((), ())\nx:0.Coll(1)", "ok raw=L[S[], 1] n=1"),
                 new SpecProbe("Coll(*xs) = xs\nx = ((), ())\n(x:0)*.Coll", "ok raw=L[] n=1"),
+                new SpecProbe("One(a) = 1\nx = ((), ())\nx:0.One", "ok raw=1 n=1"),
             ],
-            Explanation = "Selecting a `()` item shows one `()` row (a non-spread root row is always one visible slot): the empty value is a real selectable item, and past the selection boundary it is simply `()` — one argument value when passed (dot-call passes a value: `x:0.Coll` is `Coll(x:0)`, `[()]`) and zero items when spread, whatever route selected it.",
+            Explanation = "Selecting a `()` item shows one `()` row (a non-spread root row is always one visible slot): the empty value is a real selectable item, and past the selection boundary it is simply `()` — one argument value when passed (dot-call passes a value: `x:0.One` binds it, and `x:0.Coll(1)` collects `[(), 1]`), opened to nothing when it is a collector's whole lone written segment (`x:0.Coll` is `[]`, like `Coll(())`), and zero items when spread, whatever route selected it.",
         },
         new()
         {

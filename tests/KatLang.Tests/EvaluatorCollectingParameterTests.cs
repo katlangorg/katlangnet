@@ -12,19 +12,34 @@ public class EvaluatorCollectingParameterTests
     // â”€â”€ Grace operator end-to-end tests â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     [Fact]
-    public void Eval_CollectingParameter_DotCallReceiverIsOneCapturedItem()
+    public void Eval_CollectingParameter_DotCallReceiverOpensOneLevelAtTheLoneCollector()
     {
         // Dot-call passes a value: the receiver is the one leading argument of
-        // `Collect(Arg)`, so the collecting parameter collects the one-element
-        // list [(1, 2, 3)]. The fluent spread receiver (below) supplies the
-        // items as ordinary slots — `Arg*.Collect` is `Collect(Arg*)`.
+        // `Collect(Arg)` — a written sequence value that is the lone collector's
+        // whole segment, so the collector supply-boundary law opens it one
+        // level: [1, 2, 3] (count 3). A list receiver stays one exact item, and
+        // beside a written argument the sequence is one collected item.
         AssertEval(
             """
             Arg = 1, 2, 3
             Collect(*list) = list
             Arg.Collect.count
             """,
+            3);
+        AssertEval(
+            """
+            Arg = [1, 2, 3]
+            Collect(*list) = list
+            Arg.Collect.count
+            """,
             1);
+        AssertEval(
+            """
+            Arg = 1, 2, 3
+            Collect(*list) = list
+            Arg.Collect(0).count
+            """,
+            2);
     }
 
     [Fact]
@@ -38,15 +53,16 @@ public class EvaluatorCollectingParameterTests
             """,
             3);
 
-        // The parenthesized spread is a capture — one sequence value — so it is
-        // one collected item, exactly like the bare named receiver.
+        // The parenthesized spread is a capture — one written sequence value —
+        // which the lone collector opens one level again, exactly like the bare
+        // named receiver.
         AssertEval(
             """
             Arg = 1, 2, 3
             Collect(*list) = list
             (Arg*).Collect.count
             """,
-            1);
+            3);
     }
 
     [Fact]
@@ -188,19 +204,26 @@ public class EvaluatorCollectingParameterTests
     }
 
     [Fact]
-    public void Eval_CollectingParameter_NestedInlineTupleDotCall_ReceiverIsOneCollectedItem()
+    public void Eval_CollectingParameter_NestedInlineTupleDotCall_ReceiverOpensOneLevel()
     {
         // The nested capture `((10, 20, 30))` is one sequence value, and so is
-        // the single group `(10, 20, 30)`: dot-call passes a value, so after the
-        // suffix binds 5 the collector collects [(10, 20, 30)] and the numeric
-        // `values.sum` fails on the sequence-valued element. The fluent spread
-        // forms above supply the three items as ordinary slots.
-        var source = """
+        // the single group `(10, 20, 30)`: dot-call passes a value, the suffix
+        // binds 5 first, and the lone written sequence left to the collector
+        // opens one level — 65, exactly like the fluent spread forms above. A
+        // genuinely nested receiver `((10, 20), 30)` opens exactly ONE level,
+        // so the inner pair stays one element and the numeric `values.sum` fails.
+        AssertEval(
+            """
             TotalWithFee(*values, fee) = values.sum + fee
             ((10, 20, 30)).TotalWithFee(5)
-            """;
+            """,
+            65);
 
-        var result = EvalFull(source);
+        var result = EvalFull(
+            """
+            TotalWithFee(*values, fee) = values.sum + fee
+            ((10, 20), 30).TotalWithFee(5)
+            """);
         Assert.True(result.IsError, $"Expected failure but got: {(result.IsOk ? result.Value : null)}");
         Assert.IsType<EvalError.BadArity>(Innermost(result.Error));
         Assert.Contains(
@@ -223,10 +246,12 @@ public class EvaluatorCollectingParameterTests
     [Fact]
     public void Eval_CollectingParameter_SpreadReceiverExpandsReceiverItems()
     {
-        // Only the spread marker opens a receiver: `(10, 20, 30)*.Collect` is
-        // `Collect(10, 20, 30)`, so the collecting parameter collects
-        // [10, 20, 30]; the plain inline group `(10, 20, 30).Collect` passes ONE
-        // sequence value and collects [(10, 20, 30)].
+        // The spread marker opens a receiver into final items:
+        // `(10, 20, 30)*.Collect` is `Collect(10, 20, 30)`, so the collecting
+        // parameter collects [10, 20, 30]; the plain inline group
+        // `(10, 20, 30).Collect` passes ONE written sequence value, which the
+        // lone collector opens one level to the same three items, while a list
+        // receiver stays one exact item.
         AssertEvalSequenceModes(
             """
             Collect(*list) = list.count
@@ -237,6 +262,12 @@ public class EvaluatorCollectingParameterTests
             """
             Collect(*list) = list.count
             (10, 20, 30).Collect
+            """,
+            3);
+        AssertEvalSequenceModes(
+            """
+            Collect(*list) = list.count
+            [10, 20, 30].Collect
             """,
             1);
     }
@@ -384,11 +415,14 @@ public class EvaluatorCollectingParameterTests
     [Fact]
     public void Eval_SequenceValueCollectingParameter_RespectsExplicitCallSiteGroupingDepth()
     {
-        // Top-level variadic (1): the grouped argument is one collected item, so
-        // both call forms count 1. Pattern callees (2, 3) open their declared
-        // grouping depth against the written argument: a matching depth exposes
-        // the written items (3, or 2 for the two-item groups), while an extra
-        // written level around a depth-1 pattern leaves one nested item.
+        // Top-level variadic (1): the grouped argument is ONE written sequence
+        // slot that the lone collector opens one level (the redundant extra
+        // grouping normalizes away first), so both call forms count 3. Pattern
+        // callees (2, 3) open their declared grouping depth against the written
+        // argument, and the items a pattern opens are FINAL: a matching depth
+        // exposes the written items (3, or 2 for the two-item groups), while an
+        // extra written level around a depth-1 pattern leaves one nested item
+        // that the nested collector never reopens.
         AssertEval(
             """
             CountSequenceValue1(*values) = values.count
@@ -405,7 +439,7 @@ public class EvaluatorCollectingParameterTests
             CountSequenceValue2(((1, 2), 3))
             CountSequenceValue2((1, (2, 3)))
             """,
-            1, 1, 3, 1, 1, 3, 3, 2, 2);
+            3, 3, 3, 1, 1, 3, 3, 2, 2);
     }
 
     [Fact]

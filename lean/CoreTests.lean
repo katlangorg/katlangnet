@@ -23,3 +23,4 @@ import CoreTests.NameOwnership
 import CoreTests.ValueDemand
 import CoreTests.ComparisonChains
 import CoreTests.SelectionValueBoundary
+import CoreTests.CollectorSupplyBoundary

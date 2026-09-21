@@ -406,22 +406,38 @@ public class DotCallHigherOrderParameterTests
     [Fact]
     public void CollectingCallee_ParameterChannelKeepsReceiverSegmentRule()
     {
-        // A named parameter receiver supplies its value-boundary count (one
-        // item), so the collecting callee collects one slot in both spellings.
+        // A named parameter receiver is ONE written slot of the callback call in
+        // both spellings, so the collecting callee applies the collector
+        // supply-boundary law to it: a sequence value opens one level, a list
+        // stays one item, and a second written argument keeps the value whole.
         AssertResult(
             """
             Collect(*items) = items
             K(a, t) = a.t
             K((1, 2), Collect)
             """,
-            List(Seq(Atom(1), Atom(2))));
+            List(Atom(1), Atom(2)));
         AssertResult(
             """
             Collect(*items) = items
             K(a, t) = t(a)
             K((1, 2), Collect)
             """,
-            List(Seq(Atom(1), Atom(2))));
+            List(Atom(1), Atom(2)));
+        AssertResult(
+            """
+            Collect(*items) = items
+            K(a, t) = a.t
+            K([1, 2], Collect)
+            """,
+            List(List(Atom(1), Atom(2))));
+        AssertResult(
+            """
+            Collect(*items) = items
+            K(a, t) = a.t(3)
+            K((1, 2), Collect)
+            """,
+            List(Seq(Atom(1), Atom(2)), Atom(3)));
     }
 
     // ── E. Optimizer coherence: fusion must observe the parameter channel ───

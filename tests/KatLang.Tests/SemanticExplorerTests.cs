@@ -275,11 +275,15 @@ public class SemanticExplorerTests
         AssertSame(findings, "LexicalDotMismatch", valueId, captured, "dotAccess", "dotAccessCall", "captureCall");
         AssertSame(findings, "BoundaryReentryChange", valueId, captured, "identity", "identityTwice", "propChain", "fixed", "root", "seqWrapSolo");
 
-        // Collecting binding COLLECTS: a single-collecting callee binds its ONE grouped
-        // argument as the one-element exact list holding the value
-        // (`F(*x) = x` with `F(V)` observes `[V]`), never the value itself —
-        // the old grouped/singleton coincidence is gone for every value kind.
-        var expectedCollectedOne = new Result.ListValue([capturedValue]);
+        // Collecting binding COLLECTS by the collector supply-boundary law: a
+        // single-collecting callee receives its ONE grouped argument as one
+        // WRITTEN slot that is the collector's whole segment, so a sequence value
+        // opens exactly one level (`F(*x) = x` with `F(V)` observes `[v1, …, vn]`,
+        // `()` observes `[]`) while every other value — an exact list included —
+        // is the one-element exact list holding it, never the value itself.
+        var expectedCollectedOne = capturedValue is Result.SequenceValue writtenSequence
+            ? new Result.ListValue(writtenSequence.Items)
+            : new Result.ListValue([capturedValue]);
         foreach (var template in new[] { "collecting", "collectingViaProp" })
         {
             var observation = Obs(template, valueId);
@@ -291,6 +295,19 @@ public class SemanticExplorerTests
                     "BoundaryReentryChange", observation.CaseId,
                     $"expected the collecting parameter to collect {SemanticExplorerHarness.Neutral(expectedCollectedOne)} n=1, observed {observation.Neutral}"));
             }
+        }
+
+        // DOT-CALL PASSES A VALUE: each dotted spelling observes exactly what its
+        // written rewrite observes — `x.F` as `F(x)`, `(v).F` as `F((v))`, and the
+        // fluent `x*.F` as `F(x*)` — for every value, `()` included.
+        foreach (var (dotted, written) in new[]
+        {
+            ("dotCollectingViaProp", "collectingViaProp"),
+            ("literalDotCollecting", "collecting"),
+            ("fluentSpreadCollecting", "collectingSpread"),
+        })
+        {
+            AssertSame(findings, "LexicalDotMismatch", valueId, Obs(written, valueId), dotted);
         }
 
         // The spread call `F(V*)` collects the spread items as an
@@ -723,14 +740,20 @@ public class SemanticExplorerTests
         { "x = ((1, 2), (3, 4))\n(first(x))*", "ok raw=S[1, 2] n=2" },
         { "x = ((), ())\nx:0", "ok raw=S[] n=1" },
         { "x = ((), ())\nfirst(x)", "ok raw=S[] n=1" },
-        // DOT-CALL PASSES A VALUE: the selected `()` is ONE collected item in the
-        // dotted spelling exactly as in the written call; only the spread opens it.
-        { "Coll(*xs) = xs\nx = ((), 1)\nfirst(x).Coll", "ok raw=L[S[]] n=1" },
-        { "Coll(*xs) = xs\nx = ((), 1)\nx:0.Coll", "ok raw=L[S[]] n=1" },
-        { "Coll(*xs) = xs\nx = ((), 1)\nColl(x:0)", "ok raw=L[S[]] n=1" },
+        // DOT-CALL PASSES A VALUE and the COLLECTOR SUPPLY-BOUNDARY LAW binds it:
+        // the selected `()` is ONE written slot in the dotted spelling exactly as
+        // in the written call, and as the lone collector's whole segment it opens
+        // to nothing (like the spread); beside another argument it is one item,
+        // and a selected list stays exact.
+        { "Coll(*xs) = xs\nx = ((), 1)\nfirst(x).Coll", "ok raw=L[] n=1" },
+        { "Coll(*xs) = xs\nx = ((), 1)\nx:0.Coll", "ok raw=L[] n=1" },
+        { "Coll(*xs) = xs\nx = ((), 1)\nColl(x:0)", "ok raw=L[] n=1" },
+        { "Coll(*xs) = xs\nx = ((), 1)\nColl(x:0, 1)", "ok raw=L[S[], 1] n=1" },
         { "Coll(*xs) = xs\nx = ((), 1)\n(x:0)*.Coll", "ok raw=L[] n=1" },
         { "Coll(*xs) = xs\nx = ([], 1)\nx:0.Coll", "ok raw=L[L[]] n=1" },
-        { "Coll(*xs) = xs\n(1, 2).Coll", "ok raw=L[S[1, 2]] n=1" },
+        { "Coll(*xs) = xs\n(1, 2).Coll", "ok raw=L[1, 2] n=1" },
+        { "Coll(*xs) = xs\n(1, 2).Coll(3)", "ok raw=L[S[1, 2], 3] n=1" },
+        { "Coll(*xs) = xs\n[1, 2].Coll", "ok raw=L[L[1, 2]] n=1" },
         { "Coll(*xs) = xs\n(1, 2)*.Coll", "ok raw=L[1, 2] n=1" },
         { "P = (), 99\nP", "ok raw=S[S[], 99] n=1" },
         { "F(*a) = a\nF(1, 2, 3)", "ok raw=L[1, 2, 3] n=1" },

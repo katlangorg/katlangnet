@@ -143,9 +143,12 @@ public class EvaluatorSpreadTests
     public void Eval_SequenceSpreadAfterSequenceConstruct_AppliesToImmediateExpression()
     {
         // The inner `*` binds to `b` only, so both forms supply the ONE
-        // sequence-valued argument (1, 2) and the collecting parameter collects [(1, 2)].
-        // (Had the spread applied to the whole group — `X((a, b)*)` — the
-        // call would supply two arguments and collect [1, 2] instead.)
+        // sequence-valued argument (1, 2); as the lone collector's whole segment
+        // it opens one level and the collecting parameter collects [1, 2] — the
+        // same list the whole-group spread `X((a, b)*)` collects, but through a
+        // different route (one written slot versus two final items), which the
+        // trailing-argument form below keeps observable: `X((a, b*), 3)` collects
+        // [(1, 2), 3] while `X((a, b)*, 3)` collects [1, 2, 3].
         var concise = EvalFull(
             """
             X(*values) = values
@@ -169,9 +172,22 @@ public class EvaluatorSpreadTests
         Assert.True(Result.ValueComparer.Equals(sequenceValueResult.Value, concise.Value));
         Assert.True(
             Result.ValueComparer.Equals(
-                ListValue(SequenceValue(Atom(1), Atom(2))),
+                ListValue(Atom(1), Atom(2)),
                 concise.Value),
-            $"Expected [(1, 2)] but got {concise.Value}");
+            $"Expected [1, 2] but got {concise.Value}");
+
+        var besideConcise = EvalFull("X(*values) = values\na = 1\nb = 2\nX((a, b*), 3)");
+        Assert.True(
+            Result.ValueComparer.Equals(
+                ListValue(SequenceValue(Atom(1), Atom(2)), Atom(3)),
+                besideConcise.Value),
+            $"Expected [(1, 2), 3] but got {besideConcise.Value}");
+        var besideWholeSpread = EvalFull("X(*values) = values\na = 1\nb = 2\nX((a, b)*, 3)");
+        Assert.True(
+            Result.ValueComparer.Equals(
+                ListValue(Atom(1), Atom(2), Atom(3)),
+                besideWholeSpread.Value),
+            $"Expected [1, 2, 3] but got {besideWholeSpread.Value}");
     }
 
     // C. Spread emits immediate results
@@ -689,16 +705,30 @@ public class EvaluatorSpreadTests
     [InlineData("Sum((1, 2, 3))")]
     [InlineData("Seq = (1, 2, 3)\nSum(Seq)")]
     [InlineData("Seq = 1, 2, 3\nSum(Seq)")]
-    public void Eval_SingleVariadic_GroupedArgumentIsOneCollectedItem(string call)
-        // Each call supplies ONE sequence-valued argument, and the collecting binding
-        // collects the supplied slots as the one-element list [(1, 2, 3)] — the
-        // old grouped/opened display coincidence is intentionally gone.
+    public void Eval_SingleVariadic_GroupedArgumentOpensOneLevelAtTheLoneCollector(string call)
+        // Each call supplies ONE written sequence-valued argument; it is the lone
+        // collector's whole segment, so the collector supply-boundary law opens it
+        // one level and the collecting binding collects [1, 2, 3] (count 3).
         => AssertEval(
             $$"""
             Sum(*values) = values.count
             {{call}}
             """,
-            1m);
+            3m);
+
+    [Theory]
+    [InlineData("Sum((1, 2, 3), 0)")]
+    [InlineData("Seq = (1, 2, 3)\nSum(Seq, 0)")]
+    [InlineData("Sum([1, 2, 3])")]
+    public void Eval_SingleVariadic_GroupedArgumentBesideAnotherOrAListStaysOneItem(string call)
+        // A sequence value beside another slot, or a lone list, is collected
+        // exactly: the law rewrites only a segment that is ONE written sequence.
+        => AssertEval(
+            $$"""
+            Sum(*values) = values.count
+            {{call}}
+            """,
+            call.Contains(", 0)") ? 2m : 1m);
 
     [Theory]
     [InlineData("Sum(1, 2, 3)")]
@@ -706,7 +736,7 @@ public class EvaluatorSpreadTests
     public void Eval_SingleVariadic_InlineCommaOrNewlineBindsItemSupply(string call)
         // Inline commas and newlines inside the open argument list both supply
         // three argument slots, collected into the exact list [1, 2, 3].
-        // The grouped form `Sum((1, 2, 3))` supplies one slot and counts 1. (`Sum(1 2 3)` is the SYN-07A separator error.)
+        // (`Sum(1 2 3)` is the SYN-07A separator error.)
         => AssertEval(
             $$"""
             Sum(*values) = values.count
@@ -739,16 +769,31 @@ public class EvaluatorSpreadTests
 
     [Theory]
     [InlineData("F((1, 2, 3), 99)")]
-    public void Eval_VariadicWithSuffix_SequenceArgumentStaysOneCollectedItem(string call)
+    public void Eval_VariadicWithSuffix_SequenceArgumentOpensAfterSuffixAllocation(string call)
         // F((1, 2, 3), 99) supplies one sequence-valued argument plus the suffix:
-        // the collecting parameter collects [(1, 2, 3)] (count 1) and last binds 99. Ordinary
-        // calls never implicitly open sequence arguments.
+        // last binds 99 from the back FIRST, and the lone written sequence left to
+        // the collector opens one level (count 3) — the collector supply-boundary
+        // law reads the segment after fixed allocation.
         => AssertEval(
             $$"""
             F(*values, last) = values.count, last
             {{call}}
             """,
-            1m,
+            3m,
+            99m);
+
+    [Theory]
+    [InlineData("F((1, 2, 3), 4, 99)")]
+    [InlineData("F([1, 2, 3], 99)")]
+    public void Eval_VariadicWithSuffix_SequenceBesideAnotherOrAListStaysOneCollectedItem(string call)
+        // A sequence value beside another middle slot, or a lone list, is collected
+        // exactly after the suffix takes 99.
+        => AssertEval(
+            $$"""
+            F(*values, last) = values.count, last
+            {{call}}
+            """,
+            call.Contains("4, 99") ? 2m : 1m,
             99m);
 
     [Theory]

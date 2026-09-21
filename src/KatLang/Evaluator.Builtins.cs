@@ -353,9 +353,12 @@ public static partial class Evaluator
         if (callee.Output.Count == 0)
             return new EvalError.MissingOutput();
 
+        // Accumulator state slots are already the opened accumulator
+        // (Result.ToItems), so every slot here is a FINAL item: the collector
+        // collects the presented slots exactly, like loop state.
         var countedPatternEnvR = BindCountedParameterPatternList(
             callee.ParameterPatterns,
-            args,
+            FinalCallbackInputs(args),
             ctx,
             (required, actual) => new EvalError.ArityMismatch(required, actual));
         if (countedPatternEnvR.IsError)

@@ -247,9 +247,12 @@ public class StarSyntaxTests
         { "values = (1, 2)\n(values *)", "(1, 2)", new SourceSpan(2, 2, 2, 10), "values*" },
         { "values = (1, 2)\n[values *]", "[(1, 2)]", new SourceSpan(2, 2, 2, 10), "values*" },
         { "values = (1, 2)\n{ values * }", "(1, 2)", new SourceSpan(2, 3, 2, 11), "values*" },
-        { "F(*items) = items\nvalues = (1, 2)\nF(values *)", "[(1, 2)]", new SourceSpan(3, 3, 3, 11), "values*" },
+        // The recovered tree keeps the plain operand `values` as a written slot,
+        // which the lone collector opens one level (collector supply-boundary law):
+        // `[1, 2]` — beside `3` the pair stays one collected item.
+        { "F(*items) = items\nvalues = (1, 2)\nF(values *)", "[1, 2]", new SourceSpan(3, 3, 3, 11), "values*" },
         { "F(*items) = items\nvalues = (1, 2)\nF(values *, 3)", "[(1, 2), 3]", new SourceSpan(3, 3, 3, 11), "values*" },
-        { "F(*items) = items\nvalues = (1, 2)\nF(values *\n)", "[(1, 2)]", new SourceSpan(3, 3, 3, 11), "values*" },
+        { "F(*items) = items\nvalues = (1, 2)\nF(values *\n)", "[1, 2]", new SourceSpan(3, 3, 3, 11), "values*" },
         { "values = (1, 2)\nvalues *\nB = 5\nB", "(1, 2)\n5", new SourceSpan(2, 1, 2, 9), "values*" },
         { "values = (1, 2)\nvalues *\n.count", "2", new SourceSpan(2, 1, 2, 9), "values*" },
         { "values = (1, 2)\nX = values *\nY = 5\nX", "(1, 2)", new SourceSpan(2, 5, 2, 13), "values*" },
@@ -787,17 +790,26 @@ public class StarSyntaxTests
     [Fact]
     public void CollectBoundaries_SpreadVersusUnspreadArguments()
     {
+        // Lists open only under the spread marker; a lone written SEQUENCE
+        // argument is the collector's whole segment and opens one level by the
+        // collector supply-boundary law (`()` to nothing), coinciding with its
+        // spread, while beside another slot it is collected exactly.
         const string declarations = "Collect(*items) = items\n";
         Assert.Equal("[[1, 2]]", Display(declarations + "Collect([1, 2])"));
         Assert.Equal("[1, 2]", Display(declarations + "Collect([1, 2]*)"));
-        Assert.Equal("[(1, 2)]", Display(declarations + "Collect((1, 2))"));
+        Assert.Equal("[1, 2]", Display(declarations + "Collect((1, 2))"));
         Assert.Equal("[1, 2]", Display(declarations + "Collect((1, 2)*)"));
-        Assert.Equal("[()]", Display(declarations + "Collect(())"));
+        Assert.Equal("[(1, 2), 3]", Display(declarations + "Collect((1, 2), 3)"));
+        Assert.Equal("[1, 2, 3]", Display(declarations + "Collect((1, 2)*, 3)"));
+        Assert.Equal("[]", Display(declarations + "Collect(())"));
         Assert.Equal("[]", Display(declarations + "Collect(()*)"));
+        Assert.Equal("[(), 3]", Display(declarations + "Collect((), 3)"));
         Assert.Equal("[[]]", Display(declarations + "Collect([])"));
         Assert.Equal("[]", Display(declarations + "Collect([]*)"));
-        // One-boundary spread only: nested structures are not flattened.
+        // One-boundary spread only: nested structures are not flattened, and a
+        // spread-produced sequence value is a FINAL item even when it is alone.
         Assert.Equal("[[1, 2]]", Display(declarations + "Collect([[1, 2]]*)"));
+        Assert.Equal("[(1, 2)]", Display(declarations + "Collect([(1, 2)]*)"));
     }
 
     [Fact]
@@ -811,9 +823,12 @@ public class StarSyntaxTests
         Assert.Equal("[1, 2, 3]", Display(declarations + "Forward(1, 2, 3)"));
         Assert.Equal("[[1, 2]]", Display(declarations + "Forward([1, 2])"));
         Assert.Equal("[1, 2]", Display(declarations + "Forward([1, 2]*)"));
-        Assert.Equal("[(1, 2)]", Display(declarations + "Forward((1, 2))"));
+        // Forward's own collector opens a lone written sequence one level; the
+        // spread then re-supplies exactly that collected list as final items.
+        Assert.Equal("[1, 2]", Display(declarations + "Forward((1, 2))"));
         Assert.Equal("[1, 2]", Display(declarations + "Forward((1, 2)*)"));
-        Assert.Equal("[()]", Display(declarations + "Forward(())"));
+        Assert.Equal("[(1, 2), 3]", Display(declarations + "Forward((1, 2), 3)"));
+        Assert.Equal("[]", Display(declarations + "Forward(())"));
         Assert.Equal("[]", Display(declarations + "Forward(()*)"));
         Assert.Equal("[[]]", Display(declarations + "Forward([])"));
         Assert.Equal("[]", Display(declarations + "Forward([]*)"));
@@ -977,14 +992,23 @@ public class StarSyntaxTests
         //            argument whose value is the captured sequence — dot-call
         //            passes a value, so `(A*).F` is `F((A*))`.
         //
-        // On a collecting callable the direct call collects the spread SLOTS,
-        // while the capture receiver is collected as ONE item. No callee
-        // inspection is involved on either route...
+        // On a collecting callable the direct call collects the spread SLOTS as
+        // final items, while the capture receiver is ONE written slot that the
+        // collector supply-boundary law then binds: a captured multi-item
+        // supply is a sequence value that opens one level (so the two routes
+        // coincide here), whereas a captured LONE structured item is exposed by
+        // singleton capture and opens where the final spread item stays exact.
+        // No callee inspection is involved on either route...
         const string collecting = "F(*v) = v\nA = (1, 2)\n";
         Assert.Equal("[1, 2]", Display(collecting + "A*.F"));
         Assert.Equal("[1, 2]", Display(collecting + "F(A*)"));
-        Assert.Equal("[(1, 2)]", Display(collecting + "(A*).F"));
-        Assert.Equal("[(1, 2)]", Display(collecting + "F((A*))"));
+        Assert.Equal("[1, 2]", Display(collecting + "(A*).F"));
+        Assert.Equal("[1, 2]", Display(collecting + "F((A*))"));
+        Assert.Equal("[(1, 2), 3]", Display(collecting + "(A*).F(3)"));
+        Assert.Equal("[1, 2, 3]", Display(collecting + "A*.F(3)"));
+        const string loneRow = "F(*v) = v\nB = [(1, 2)]\n";
+        Assert.Equal("[(1, 2)]", Display(loneRow + "B*.F"));
+        Assert.Equal("[1, 2]", Display(loneRow + "(B*).F"));
 
         // ...and they are equally different at a FIXED-arity builtin: three
         // argument slots do not fit `count(collection)`, while the captured

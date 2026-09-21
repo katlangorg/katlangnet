@@ -2047,6 +2047,7 @@ public static partial class Evaluator
                 if (suppliedR.IsError)
                     return suppliedR.Error;
 
+                // Explicit spread produces FINAL supply items (SupplyOrigin.FinalItem).
                 foreach (var value in CountedTopLevelValues(suppliedR.Value))
                     inputs.Add(new ParameterPatternInput(value, Algorithm: null, ValueError: null, ExplicitSequenceValueItems: null));
 
@@ -2060,17 +2061,24 @@ public static partial class Evaluator
                 includeExplicitSequenceValueItems).ConfigureAwait(false);
             if (preparedR.IsOk)
             {
+                // A non-spread slot is ONE written slot (SupplyOrigin.WrittenSlot).
                 inputs.Add(new ParameterPatternInput(
                     preparedR.Value.Counted.Value,
                     maybeAlg,
                     ValueError: null,
-                    preparedR.Value.ExplicitSequenceValueItems));
+                    preparedR.Value.ExplicitSequenceValueItems,
+                    SupplyOrigin.WrittenSlot));
                 continue;
             }
 
             if (maybeAlg is not null)
             {
-                inputs.Add(new ParameterPatternInput(Value: null, maybeAlg, preparedR.Error, ExplicitSequenceValueItems: null));
+                inputs.Add(new ParameterPatternInput(
+                    Value: null,
+                    maybeAlg,
+                    preparedR.Error,
+                    ExplicitSequenceValueItems: null,
+                    SupplyOrigin.WrittenSlot));
                 continue;
             }
 
@@ -2815,7 +2823,7 @@ public static partial class Evaluator
                     {
                         var countedPatternEnvR = BindCountedParameterPatternList(
                             callee.ParameterPatterns,
-                            args,
+                            WrittenCallbackInputs(args),
                             ctx,
                             (required, actual) => new EvalError.ArityMismatch(required, actual));
                         if (countedPatternEnvR.IsError)
@@ -2927,7 +2935,7 @@ public static partial class Evaluator
 
         var countedPatternEnvR = BindCountedParameterPatternList(
             callee.ParameterPatterns,
-            args,
+            FinalCallbackInputs(args),
             ctx,
             (required, actual) => new EvalError.ArityMismatch(required, actual));
         if (countedPatternEnvR.IsError)

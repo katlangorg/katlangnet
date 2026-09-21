@@ -40,11 +40,21 @@ public static class CountedMatrixCorpus
         "P2 = 10, 20\n" +
         "P3 = 1, 2, 3\n";
 
-    /// <summary>Counts the argument slots a call actually received.</summary>
+    /// <summary>
+    /// Counts the items a lone collecting parameter binds for the call's
+    /// argument slots: exactly the slots, except that ONE lone written
+    /// (non-spread) sequence slot opens one level — the collector
+    /// supply-boundary law (<c>collectorSupply</c>). Cases whose point is that
+    /// a call received exactly ONE slot pair it with <see cref="OneSlot"/>.
+    /// </summary>
     public const string ArgCount = "ArgCount(*args) = args.count\n";
+
+    /// <summary>Accepts exactly one argument slot (any value, `()` included); every other slot count is an arity error.</summary>
+    public const string OneSlot = "OneSlot(a) = 1\n";
 
     private const string P = Producers;
     private const string AC = ArgCount;
+    private const string OS = OneSlot;
 
     /// <summary>
     /// Consumers that must additionally show an explicit capture-boundary
@@ -333,16 +343,20 @@ public static class CountedMatrixCorpus
             "spreading an operand with no defined output is the spread-specific error (evalSequenceSpreadOperandItems)"),
 
         // ── Call argument slots (shared assembly) ────────────────────────────
-        // ArgCount(*args) = args.count observes exactly how many argument slots
-        // the call received (collect wraps precisely the assigned slots).
+        // ArgCount(*args) = args.count observes the collector's supply for the
+        // call's argument slots: exactly the assigned slots, except that ONE
+        // lone written sequence slot opens one level (collectorSupply). Where a
+        // case pins that the call received exactly ONE slot, OneSlot(a) = 1
+        // proves the slot count (any other count is an arity error) and
+        // ArgCount shows what the collector then binds.
         Raw("args/none", CallArgumentSlots, Zero, WrittenRows,
             AC + "ArgCount()",
             "0", 1,
             "an empty argument list supplies zero slots"),
         Raw("args/named-empty-is-one", CallArgumentSlots, Zero, NamedReference,
-            P + AC + "ArgCount(P0)",
-            "1", 1,
-            "a written slot reifies to exactly ONE argument even when its value is ()"),
+            P + AC + OS + "OneSlot(P0), ArgCount(P0)",
+            "S[1, 0]", 2,
+            "a written slot reifies to exactly ONE argument even when its value is () (OneSlot binds it); as the lone collector's whole segment the written () opens to zero collected items"),
         Raw("args/spread-empty-is-zero", CallArgumentSlots, Zero, SpreadMarker,
             P + AC + "ArgCount(P0*)",
             "0", 1,
@@ -356,9 +370,9 @@ public static class CountedMatrixCorpus
             "1", 1,
             "spreading an atom supplies the same single slot"),
         Raw("args/named-two-is-one", CallArgumentSlots, Two, NamedReference,
-            P + AC + "ArgCount(P2)",
-            "1", 1,
-            "a named two-output producer is ONE argument (value boundary); no implicit opening"),
+            P + AC + OS + "OneSlot(P2), ArgCount(P2)",
+            "S[1, 2]", 2,
+            "a named two-output producer is ONE argument (value boundary; OneSlot binds it whole); the lone collector then opens that written sequence slot one level to two items"),
         Raw("args/spread-two", CallArgumentSlots, Two, SpreadMarker,
             P + AC + "ArgCount(P2*)",
             "2", 1,
@@ -368,13 +382,13 @@ public static class CountedMatrixCorpus
             "3", 1,
             "spread of a three-item sequence supplies three slots"),
         Raw("args/captured-two-is-one", CallArgumentSlots, Two, CaptureWrapped,
-            AC + "ArgCount((10, 20))",
-            "1", 1,
-            "a capture is one argument slot containing one sequence value"),
+            AC + OS + "OneSlot((10, 20)), ArgCount((10, 20))",
+            "S[1, 2]", 2,
+            "a capture is one argument slot containing one sequence value; the lone collector opens that written slot one level"),
         Raw("args/brace-two-is-one", CallArgumentSlots, Two, BraceWrapped,
-            AC + "ArgCount({10, 20})",
-            "1", 1,
-            "a zero-declaration brace argument reifies at the one-slot value boundary"),
+            AC + OS + "OneSlot({10, 20}), ArgCount({10, 20})",
+            "S[1, 2]", 2,
+            "a zero-declaration brace argument reifies at the one-slot value boundary; its sequence value opens one level at the lone collector"),
         Raw("args/list-is-one", CallArgumentSlots, Many, WrittenRows,
             AC + "ArgCount([1, 2, 3])",
             "1", 1,
@@ -477,8 +491,8 @@ public static class CountedMatrixCorpus
             "zero assigned slots collect the empty exact list (collectSegment [] = [])"),
         Shape("collect/exact-single-empty", CollectingParameter, Zero, NamedReference,
             P + "Items(*i) = i\nItems(P0)",
-            "L[S[]]", 1,
-            "one () slot collects [()], never erased — F(()) and F(()*) stay observably different"),
+            "L[]", 1,
+            "one lone written () slot is the collector's whole segment and opens to zero items (collector supply-boundary law) — F(()) and F(()*) coincide here, while beside another slot the () stays one visible item (collect/exact-many-mixed)"),
         Shape("collect/exact-one", CollectingParameter, One, NamedReference,
             P + "Items(*i) = i\nItems(P1)",
             "L[#]", 1,
@@ -489,12 +503,20 @@ public static class CountedMatrixCorpus
             "two spread slots collect a two-element list"),
         Shape("collect/exact-seq-opaque", CollectingParameter, Two, NamedReference,
             P + "Items(*i) = i\nItems(P2)",
-            "L[S[#, #]]", 1,
-            "a named producer is one collected slot holding the whole sequence"),
+            "L[#, #]", 1,
+            "a named sequence producer is ONE written slot; as the lone collector's whole segment it opens one level (collector supply-boundary law): [10, 20], exactly like Items(P2*)"),
+        Shape("collect/exact-seq-beside", CollectingParameter, Two, NamedReference,
+            P + "Items(*i) = i\nItems(P2, P1)",
+            "L[S[#, #], #]", 1,
+            "beside another slot the same sequence value is collected exactly: the law rewrites only a segment that is ONE lone written sequence slot"),
+        Shape("collect/exact-list-opaque", CollectingParameter, Two, WrittenRows,
+            "Items(*i) = i\nItems([10, 20])",
+            "L[L[#, #]]", 1,
+            "a lone written LIST never opens at the collector: [[10, 20]]"),
         Shape("collect/exact-captured", CollectingParameter, Two, CaptureWrapped,
             "Items(*i) = i\nItems((10, 20))",
-            "L[S[#, #]]", 1,
-            "a captured pair is one collected slot"),
+            "L[#, #]", 1,
+            "a captured pair is one written sequence slot; the lone collector opens it one level"),
         Shape("collect/exact-many-mixed", CollectingParameter, Many, NamedReference,
             P + "Items(*i) = i\nItems(P0, P2, P1)",
             "L[S[], S[#, #], #]", 1,
@@ -537,8 +559,12 @@ public static class CountedMatrixCorpus
             "one collected slot forwards one argument"),
         Raw("fwd/empty-item-roundtrip", CollectingForwarding, Zero, NamedReference,
             P + AC + "Fwd(*items) = ArgCount(items*)\nFwd(P0)",
-            "1", 1,
-            "a collected () slot round-trips as one argument — [()]* supplies the () item"),
+            "0", 1,
+            "the lone written () opens at the collector to zero items, and forwarding re-supplies exactly the collected list: []* supplies nothing (spread(collect xs) = xs on the collected list)"),
+        Raw("fwd/lone-seq-roundtrip", CollectingForwarding, Two, NamedReference,
+            P + AC + "Fwd(*items) = ArgCount(items*)\nFwd(P2)",
+            "2", 1,
+            "the lone written sequence opens at the collector to [10, 20]; forwarding re-supplies those two items as final slots, which the target collects exactly"),
         Raw("fwd/two", CollectingForwarding, Two, SpreadMarker,
             P + AC + "Fwd(*items) = ArgCount(items*)\nFwd(P2*)",
             "2", 1,
@@ -688,30 +714,37 @@ public static class CountedMatrixCorpus
 
         // ── Dot receiver: dot-call passes a value ────────────────────────────
         // Historical case IDs and the DotReceiverSegment category stay stable;
-        // their names do not describe a runtime segment or its former supply rule.
+        // their names do not describe a runtime segment or its former supply
+        // rule. `R.Collect` is `Collect(R)`: the receiver is ONE written slot,
+        // and the lone collector binds it through the collector supply-boundary
+        // law (a written sequence value opens one level; a list stays one item).
         Raw("dot/written-group-many", DotReceiverSegment, Many, WrittenRows,
             "Collect(*items) = items.count\n(10, 20, 30).Collect",
-            "1", 1,
-            "a WRITTEN group receiver is ONE argument value: the collector collects [(10, 20, 30)] — Collect((10, 20, 30))"),
+            "3", 1,
+            "a WRITTEN group receiver is ONE argument value — Collect((10, 20, 30)) — whose lone written sequence slot the collector opens one level: [10, 20, 30]"),
         Raw("dot/written-group-empty", DotReceiverSegment, Zero, WrittenRows,
             "Collect(*items) = items.count\n().Collect",
+            "0", 1,
+            "the written empty group is one argument value (never a missing argument: arity is satisfied) whose lone written () opens at the collector to zero items"),
+        Raw("dot/written-list-many", DotReceiverSegment, Many, WrittenRows,
+            "Collect(*items) = items.count\n[10, 20, 30].Collect",
             "1", 1,
-            "the written empty group is one visible argument value: [()] — never a missing argument"),
+            "a written LIST receiver is one argument value that never opens at the collector: [[10, 20, 30]]"),
         Raw("dot/written-group-one", DotReceiverSegment, One, WrittenRows,
             "Collect(*items) = items.count\n(7).Collect",
             "1", 1,
             "a one-row group is its item: one collected value"),
         Raw("dot/named-two-supplies-one", DotReceiverSegment, Two, NamedReference,
             P + "Collect(*items) = items.count\nP2.Collect",
-            "1", 1,
-            "a NAMED receiver is one argument value, exactly like Collect(P2)"),
+            "2", 1,
+            "a NAMED receiver is one argument value, exactly like Collect(P2): one written sequence slot, opened one level by the lone collector"),
         Raw("dot/named-empty-supplies-zero", DotReceiverSegment, Zero, NamedReference,
             P + "Collect(*items) = items.count\nP0.Collect",
-            "1", 1,
-            "a named () receiver is one argument value ([()]), exactly like Collect(P0): valueCount 0 is a value-boundary count, never a zero-argument supply"),
+            "0", 1,
+            "a named () receiver is one argument value, exactly like Collect(P0); the lone written () opens at the collector to zero items (valueCount 0 is a value-boundary count, never a zero-argument supply — OneSlot(P0) binds it)"),
         Raw("dot/captured-empty-supplies-one", DotReceiverSegment, Zero, CaptureWrapped,
             P + "Collect(*items) = items.count\n(P0).Collect",
-            "1", 1,
+            "0", 1,
             "parens around a named reference KEEP a capture layer (ShouldUnwrapParenthesizedPrimary), and the capture is the same one () value — agrees with dot/named-empty-supplies-zero and dot/written-group-empty"),
         Raw("dot/named-one", DotReceiverSegment, One, NamedReference,
             P + "Collect(*items) = items.count\nP1.Collect",
@@ -719,16 +752,16 @@ public static class CountedMatrixCorpus
             "a named atom receiver is one argument value"),
         Raw("dot/captured-named", DotReceiverSegment, Two, CaptureWrapped,
             P + "Collect(*items) = items.count\n(P2).Collect",
-            "1", 1,
-            "a capture around a named producer is one written value"),
+            "2", 1,
+            "a capture around a named producer is one written value — the same sequence, opened one level at the lone collector"),
         Raw("dot/captured-spread", DotReceiverSegment, Two, CaptureWrapped,
             P + "Collect(*items) = items.count\n(P2*).Collect",
-            "1", 1,
-            "(P2*) is a capture — ONE sequence value — so it is one collected item; only the fluent P2*.Collect supplies two"),
+            "2", 1,
+            "(P2*) is a capture — ONE written sequence value — which the lone collector opens one level; the fluent P2*.Collect supplies the same two items as final slots"),
         Raw("dot/brace-two", DotReceiverSegment, Two, BraceWrapped,
             "Collect(*items) = items.count\n{10, 20}.Collect",
-            "1", 1,
-            "a written brace receiver is one argument value (its output sequence)"),
+            "2", 1,
+            "a written brace receiver is one argument value (its output sequence), opened one level at the lone collector"),
         Raw("dot/fixed-binds-capture", DotReceiverSegment, Two, WrittenRows,
             "Second(a, b) = b\n(10, 20).Second(5)",
             "5", 1,
@@ -799,12 +832,16 @@ public static class CountedMatrixCorpus
             "explicit spread opens the selected element: three argument slots"),
         Raw("idx/many-value-receiver-probe", IndexSelection, Many, NamedReference,
             "Coll(*xs) = xs.count\nT = (1, 2, 3), (4, 5, 6)\nT:1.Coll",
-            "1", 1,
-            "the selected value is one ordinary dot-call argument (a collecting parameter collects [(4, 5, 6)])"),
+            "3", 1,
+            "the selected value is one ordinary dot-call argument — a written sequence slot that the lone collector opens one level ([4, 5, 6]), exactly as for a property holding that value"),
         Raw("idx/first-agrees", IndexSelection, Many, NamedReference,
             "Coll(*xs) = xs.count\nT = (1, 2, 3), (4, 5, 6)\nfirst(T).Coll",
-            "1", 1,
-            "first(T) is the same selection as T:0: one ordinary dot-call argument"),
+            "3", 1,
+            "first(T) is the same selection as T:0: one ordinary dot-call argument, bound by the same collector law"),
+        Raw("idx/many-value-receiver-beside-probe", IndexSelection, Many, NamedReference,
+            "Coll(*xs) = xs.count\nT = (1, 2, 3), (4, 5, 6)\nT:1.Coll(0)",
+            "2", 1,
+            "beside a written argument the selected value is collected exactly as ONE item: Coll(T:1, 0) collects [(4, 5, 6), 0]"),
         Shape("idx/empty-element", IndexSelection, Zero, NamedReference,
             "S2 = (), 5\nS2:0",
             "S[]", 1,
@@ -814,9 +851,9 @@ public static class CountedMatrixCorpus
             "0", 1,
             "spreading the selected () supplies zero slots — the 0-count is real"),
         Raw("idx/empty-element-slot-probe", IndexSelection, Zero, WrittenRows,
-            AC + "S2 = (), 5\nArgCount(S2:0)",
-            "1", 1,
-            "unspread, the selected () still reifies as ONE written argument slot"),
+            AC + OS + "S2 = (), 5\nOneSlot(S2:0), ArgCount(S2:0)",
+            "S[1, 0]", 2,
+            "unspread, the selected () still reifies as ONE written argument slot (OneSlot binds it); the lone collector opens that written () to zero items"),
         Raw("idx/list-target", IndexSelection, One, WrittenRows,
             "[10, 20, 30]:0",
             "10", 1,
@@ -997,8 +1034,12 @@ public static class CountedMatrixCorpus
             "a single-collecting callback keeps each element as ONE collected slot"),
         Raw("cb/collecting-callback-pair", CallbackContract, Two, WrittenRows,
             "CC(*i) = i.count\n[(1, 2)].map(CC)",
+            "L[2]", 1,
+            "a whole callback item is ONE written slot of the callback call, so the single-collecting callback opens a sequence element one level (collector supply-boundary law)"),
+        Raw("cb/collecting-callback-list", CallbackContract, Two, WrittenRows,
+            "CC(*i) = i.count\n[[1, 2]].map(CC)",
             "L[1]", 1,
-            "a sequence element is still ONE collected slot for a single-collecting callback"),
+            "a list element stays ONE collected slot for a single-collecting callback: lists never open at the collector"),
         Raw("cb/mixed-callback-rows", CallbackContract, Many, WrittenRows,
             "F(x, *y, z) = y.count\n((1, 2, 3, 4), (5, 6, 7)).map(F)",
             "L[2, 1]", 1,

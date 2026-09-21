@@ -525,8 +525,11 @@ public class ImplicitArgumentResolverTests
     {
         // The implicit spread decision is made from the SOURCE binding kind:
         // `Use.items` is an ordinary fixed parameter, so the synthesized call
-        // is `Target(items)` — one argument — and the callee's collecting parameter collects
-        // exactly one slot. The destination being collecting must not open it.
+        // is `Target(items)` — ONE written argument. A list stays one collected
+        // slot (the destination being collecting must not open it), while a
+        // sequence value is the lone collector's whole segment and opens one
+        // level by the collector supply-boundary law — as it would for the
+        // explicitly written `Target(items)`.
         var source = """
             Target(*items) = items
             Use(items) = Target
@@ -543,8 +546,7 @@ public class ImplicitArgumentResolverTests
             Use((1, 2))
             """;
         var sequenceList = Assert.IsType<Result.ListValue>(EvalValue(sequenceSource));
-        var sequenceElement = Assert.IsType<Result.SequenceValue>(Assert.Single(sequenceList.Items));
-        Assert.Equal([new Result.Atom(1), new Result.Atom(2)], sequenceElement.Items, Result.ValueComparer);
+        Assert.Equal([new Result.Atom(1), new Result.Atom(2)], sequenceList.Items, Result.ValueComparer);
 
         var scalarSource = """
             Target(*items) = items
@@ -827,8 +829,10 @@ public class ImplicitArgumentResolverTests
     [Fact]
     public void Eval_MathArgument_FixedSourceIntoCollectingCallee_AgreesWithUnwrappedValuePosition()
     {
-        // End-to-end K1-03: `Math.Abs` is the identity on the correct result 1, so any
-        // divergence from the unwrapped control is a front-end divergence.
+        // End-to-end K1-03: `Math.Abs` is the identity on the correct result 3 (the
+        // forwarded `A(xs)` passes the sequence value as ONE written argument that the
+        // lone collector opens one level), so any divergence from the unwrapped
+        // control is a front-end divergence.
         AssertEval(
             """
             A(*xs) = xs.count
@@ -836,13 +840,21 @@ public class ImplicitArgumentResolverTests
             K = B, Math.Abs(A)
             K((1, 2, 3))
             """,
-            1, 2, 3, 1);
+            1, 2, 3, 3);
         AssertEval(
             """
             A(*xs) = xs.count
             B(xs) = xs
             K = B, A
             K((1, 2, 3))
+            """,
+            1, 2, 3, 3);
+        AssertEval(
+            """
+            A(*xs) = xs.count
+            B(xs) = xs
+            K = B, Math.Abs(A)
+            K([1, 2, 3])
             """,
             1, 2, 3, 1);
     }
@@ -1191,16 +1203,18 @@ public class ImplicitArgumentResolverTests
     [Fact]
     public void Eval_MathArgument_FixedAndCollectingCallers_ProduceTheirOwnResults()
     {
-        // The same separation, end to end: the fixed caller's collecting destination collects
-        // ONE slot, the collecting caller re-supplies its three collected items.
+        // The same separation, end to end: the fixed caller forwards ONE written slot —
+        // a list stays one collected item, a sequence value opens one level at the
+        // lone collector — while the collecting caller re-supplies its three
+        // collected items as final slots.
         AssertEval(
             """
             Target(*zs) = zs.count
             FixedCaller(zs) = Math.Abs(Target)
             CollectingCaller(*zs) = Math.Abs(Target)
-            FixedCaller((1, 2, 3)), CollectingCaller(1, 2, 3)
+            FixedCaller([1, 2, 3]), FixedCaller((1, 2, 3)), CollectingCaller(1, 2, 3)
             """,
-            1, 3);
+            1, 3, 3);
     }
 
     [Fact]

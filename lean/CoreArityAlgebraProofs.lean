@@ -520,23 +520,23 @@ theorem collect_lone_list_ne_collect_items (ys : Supply) :
 /-! ## Binding checks -/
 
 theorem collecting_tail :
-    bindArgs [Pat.name "x", Pat.collecting "rest"] [Val.atom 1, Val.atom 2, Val.atom 3]
+    bindArgs [Pat.name "x", Pat.collecting "rest"] (written [Val.atom 1, Val.atom 2, Val.atom 3])
       = some [("x", Val.atom 1), ("rest", Val.list [Val.atom 2, Val.atom 3])] := by
   decide
 
 theorem collecting_empty :
-    bindArgs [Pat.name "x", Pat.collecting "rest"] [Val.atom 1]
+    bindArgs [Pat.name "x", Pat.collecting "rest"] (written [Val.atom 1])
       = some [("x", Val.atom 1), ("rest", Val.list [])] := by
   decide
 
 theorem collecting_head :
-    bindArgs [Pat.collecting "head", Pat.name "last"] [Val.atom 1, Val.atom 2, Val.atom 3]
+    bindArgs [Pat.collecting "head", Pat.name "last"] (written [Val.atom 1, Val.atom 2, Val.atom 3])
       = some [("head", Val.list [Val.atom 1, Val.atom 2]), ("last", Val.atom 3)] := by
   decide
 
 theorem collecting_middle :
     bindArgs [Pat.name "first", Pat.collecting "middle", Pat.name "last"]
-        [Val.atom 1, Val.atom 2, Val.atom 3, Val.atom 4]
+        (written [Val.atom 1, Val.atom 2, Val.atom 3, Val.atom 4])
       = some [("first", Val.atom 1),
               ("middle", Val.list [Val.atom 2, Val.atom 3]),
               ("last", Val.atom 4)] := by
@@ -545,31 +545,133 @@ theorem collecting_middle :
 /-- A one-item collected segment stays a one-element list: no singleton collapse
 (the pre-list model bound `rest = 2` here; exact collection binds `[2]`). -/
 theorem collecting_singleton_collected :
-    bindArgs [Pat.name "x", Pat.collecting "rest"] [Val.atom 1, Val.atom 2]
+    bindArgs [Pat.name "x", Pat.collecting "rest"] (written [Val.atom 1, Val.atom 2])
       = some [("x", Val.atom 1), ("rest", Val.list [Val.atom 2])] := by
   decide
 
-theorem call_bind_collecting_does_not_open_lone_sequence :
-    bindArgs [Pat.name "x", Pat.collecting "rest"] [Val.seq [Val.atom 1, Val.atom 2, Val.atom 3]]
+/-! ### The collector supply-boundary law (September 2026)
+
+A collector consumes its allocated segment exactly, except that one lone
+non-spread (written) sequence value may fuse with the collector's own supply
+boundary — exactly one level. Lists stay exact, final (explicit-spread) items
+are already final, and fixed positions are allocated BEFORE the rule looks at
+the collector's segment. -/
+
+/-- `Coll((1, 2))`: the lone written sequence slot opens one level. -/
+theorem collector_lone_written_sequence_opens :
+    bindArgs [Pat.collecting "xs"] (written [Val.seq [Val.atom 1, Val.atom 2]])
+      = some [("xs", Val.list [Val.atom 1, Val.atom 2])] := by
+  decide
+
+/-- `Coll(())`: the same rule, no emptiness special case — `()` has no items. -/
+theorem collector_lone_written_empty_sequence_is_empty :
+    bindArgs [Pat.collecting "xs"] (written [Val.seq []])
+      = some [("xs", Val.list [])] := by
+  decide
+
+/-- `Coll(((1, 2), 3))`: exactly one level — the inner pair stays one item. -/
+theorem collector_opening_is_one_level :
+    bindArgs [Pat.collecting "xs"] (written [Val.seq [Val.seq [Val.atom 1, Val.atom 2], Val.atom 3]])
+      = some [("xs", Val.list [Val.seq [Val.atom 1, Val.atom 2], Val.atom 3])] := by
+  decide
+
+/-- `Coll((1, 2), 3)`: a segment of several supplied items is collected exactly. -/
+theorem collector_many_items_are_exact :
+    bindArgs [Pat.collecting "xs"] (written [Val.seq [Val.atom 1, Val.atom 2], Val.atom 3])
+      = some [("xs", Val.list [Val.seq [Val.atom 1, Val.atom 2], Val.atom 3])] := by
+  decide
+
+/-- `Coll((), 3)`: the empty sequence beside another item is one exact item. -/
+theorem collector_empty_sequence_beside_item_is_exact :
+    bindArgs [Pat.collecting "xs"] (written [Val.seq [], Val.atom 3])
+      = some [("xs", Val.list [Val.seq [], Val.atom 3])] := by
+  decide
+
+/-- `Coll([1, 2])` / `Coll([])`: lists are exact values and never open. -/
+theorem collector_lone_list_is_exact :
+    bindArgs [Pat.collecting "xs"] (written [Val.list [Val.atom 1, Val.atom 2]])
+      = some [("xs", Val.list [Val.list [Val.atom 1, Val.atom 2]])]
+    ∧ bindArgs [Pat.collecting "xs"] (written [Val.list []])
+      = some [("xs", Val.list [Val.list []])] := by
+  decide
+
+/-- `Coll([(1, 2)]*)`: the item explicit spread produced is final — collected
+unchanged even as the lone item. -/
+theorem collector_explicit_spread_item_is_final :
+    bindArgs [Pat.collecting "xs"] (final [Val.seq [Val.atom 1, Val.atom 2]])
+      = some [("xs", Val.list [Val.seq [Val.atom 1, Val.atom 2]])] := by
+  decide
+
+/-- `F(*xs, z)` with `F((1, 2), 3)`: the suffix allocates first, leaving the
+collector one written sequence slot, which opens — `xs = [1, 2]`, `z = 3`. -/
+theorem collector_opens_after_suffix_allocation :
+    bindArgs [Pat.collecting "xs", Pat.name "z"] (written [Val.seq [Val.atom 1, Val.atom 2], Val.atom 3])
+      = some [("xs", Val.list [Val.atom 1, Val.atom 2]), ("z", Val.atom 3)] := by
+  decide
+
+/-- `F(*xs, z)` with `F((1, 2), 3, 4)`: the collector's segment holds two items
+after the suffix allocates `4`, so it is collected exactly. -/
+theorem collector_multi_item_segment_after_suffix_is_exact :
+    bindArgs [Pat.collecting "xs", Pat.name "z"]
+        (written [Val.seq [Val.atom 1, Val.atom 2], Val.atom 3, Val.atom 4])
+      = some [("xs", Val.list [Val.seq [Val.atom 1, Val.atom 2], Val.atom 3]), ("z", Val.atom 4)] := by
+  decide
+
+/-- `F(*xs, z)` with `F([(1, 2)]*, 3)`: explicit-spread provenance survives
+allocation — the lone final item is collected unchanged. -/
+theorem collector_final_lone_item_after_suffix_is_exact :
+    bindArgs [Pat.collecting "xs", Pat.name "z"]
+        [(Val.seq [Val.atom 1, Val.atom 2], Origin.final), (Val.atom 3, Origin.written)]
+      = some [("xs", Val.list [Val.seq [Val.atom 1, Val.atom 2]]), ("z", Val.atom 3)] := by
+  decide
+
+/-- `F(x, *rest)` with `F(1, (2, 3))`: the prefix allocates first, then the lone
+written sequence opens — `rest = [2, 3]`; with `F(1, (2, 3), 4)` the two-item
+segment is exact. -/
+theorem collector_opens_after_prefix_allocation :
+    bindArgs [Pat.name "x", Pat.collecting "rest"] (written [Val.atom 1, Val.seq [Val.atom 2, Val.atom 3]])
+      = some [("x", Val.atom 1), ("rest", Val.list [Val.atom 2, Val.atom 3])]
+    ∧ bindArgs [Pat.name "x", Pat.collecting "rest"]
+        (written [Val.atom 1, Val.seq [Val.atom 2, Val.atom 3], Val.atom 4])
+      = some [("x", Val.atom 1), ("rest", Val.list [Val.seq [Val.atom 2, Val.atom 3], Val.atom 4])] := by
+  decide
+
+/-- `F(x, *middle, z)`: both fixed ends allocate first. `F(0, (1, 2), 3)` opens
+the lone middle sequence; `F(0, (1, 2), 3, 4)` collects the two-item middle
+exactly. -/
+theorem collector_opens_after_both_ends_allocate :
+    bindArgs [Pat.name "x", Pat.collecting "middle", Pat.name "z"]
+        (written [Val.atom 0, Val.seq [Val.atom 1, Val.atom 2], Val.atom 3])
+      = some [("x", Val.atom 0), ("middle", Val.list [Val.atom 1, Val.atom 2]), ("z", Val.atom 3)]
+    ∧ bindArgs [Pat.name "x", Pat.collecting "middle", Pat.name "z"]
+        (written [Val.atom 0, Val.seq [Val.atom 1, Val.atom 2], Val.atom 3, Val.atom 4])
+      = some [("x", Val.atom 0), ("middle", Val.list [Val.seq [Val.atom 1, Val.atom 2], Val.atom 3]), ("z", Val.atom 4)] := by
+  decide
+
+/-- `F(x, *rest)` with `F((1, 2, 3))`: the lone slot is allocated to the FIXED
+prefix, which binds it whole; the collector's segment is empty. A fixed
+parameter never inherits the collector opening. -/
+theorem call_fixed_prefix_takes_lone_sequence :
+    bindArgs [Pat.name "x", Pat.collecting "rest"] (written [Val.seq [Val.atom 1, Val.atom 2, Val.atom 3]])
       = some [("x", Val.seq [Val.atom 1, Val.atom 2, Val.atom 3]), ("rest", Val.list [])] := by
   decide
 
 -- Assignment deconstruction is an unpacking receiver: a single stored sequence
 -- or list value is opened and matched element-by-element. Calls
--- (`bindArgs`) do NOT open. These checks pin that contrast.
+-- (`bindArgs`) open nothing for a fixed pattern. These checks pin that contrast.
 
 /-- `Add(A)` / call parameter binding: a single sequence-valued argument against
 two fixed parameters is an arity error — the call binder does not open `A`. -/
 theorem args_fixed_single_sequence_rejected :
     bindArgs [Pat.name "x", Pat.name "y"]
-      [Val.seq [Val.atom 1, Val.atom 2]]
+      (written [Val.seq [Val.atom 1, Val.atom 2]])
       = none := by
   decide
 
 /-- The list twin: `Add(A)` with a stored list is an arity error too. -/
 theorem args_fixed_single_list_rejected :
     bindArgs [Pat.name "x", Pat.name "y"]
-      [Val.list [Val.atom 1, Val.atom 2]]
+      (written [Val.list [Val.atom 1, Val.atom 2]])
       = none := by
   decide
 
@@ -628,29 +730,62 @@ theorem deconstruct_collecting_explicit_spread :
 sequence value the two modes disagree, so they are not the same function. -/
 theorem deconstruct_opens_where_args_preserves :
     bindDeconstruct [Pat.name "x", Pat.name "y"] [Val.seq [Val.atom 1, Val.atom 2]]
-      ≠ bindArgs [Pat.name "x", Pat.name "y"] [Val.seq [Val.atom 1, Val.atom 2]] := by
+      ≠ bindArgs [Pat.name "x", Pat.name "y"] (written [Val.seq [Val.atom 1, Val.atom 2]]) := by
   decide
 
 theorem fixed_arity_mismatch_rejected :
-    bindArgs [Pat.name "x", Pat.name "y"] [Val.atom 1] = none := by
+    bindArgs [Pat.name "x", Pat.name "y"] (written [Val.atom 1]) = none := by
   decide
 
 theorem fixed_arity_surplus_rejected :
-    bindArgs [Pat.name "x", Pat.name "y"] [Val.atom 1, Val.atom 2, Val.atom 3] = none := by
+    bindArgs [Pat.name "x", Pat.name "y"] (written [Val.atom 1, Val.atom 2, Val.atom 3]) = none := by
   decide
 
 theorem two_collecting_bindings_rejected :
     bindPats [Pat.collecting "a", Pat.collecting "b"] [Val.atom 1, Val.atom 2] = none := by
   decide
 
+theorem values_written (xs : Supply) : values (written xs) = xs := by
+  simp [values, written, Function.comp_def]
+
+theorem values_final (xs : Supply) : values (final xs) = xs := by
+  simp [values, final, Function.comp_def]
+
+/-- A segment of final items is never the fusing shape. -/
+theorem loneWrittenSeq?_final : ∀ zs : Supply, loneWrittenSeq? (final zs) = none
+  | [] => rfl
+  | [z] => by cases z <;> rfl
+  | _ :: _ :: _ => by simp [final, loneWrittenSeq?]
+
+/-- Final items never fuse with the collector boundary: on a supply of final
+items (`F(A*)`) the call binder is exactly the shared binder. -/
+theorem fuseCollectorSegment_final (ps : List Pat) (xs : Supply) :
+    fuseCollectorSegment ps (final xs) = xs := by
+  unfold fuseCollectorSegment
+  cases ps.findIdx? Pat.isCollecting with
+  | none => exact values_final xs
+  | some i =>
+    have hseg : ((final xs).drop i).take ((final xs).length - (ps.drop (i + 1)).length - i)
+        = final ((xs.drop i).take (xs.length - (ps.drop (i + 1)).length - i)) := by
+      simp [final, List.map_take, List.map_drop]
+    dsimp only
+    rw [hseg, loneWrittenSeq?_final]
+    exact values_final xs
+
+theorem bindArgs_final (ps : List Pat) (xs : Supply) :
+    bindArgs ps (final xs) = bindPats ps xs := by
+  unfold bindArgs
+  rw [fuseCollectorSegment_final]
+
 /--
 The lone collecting pattern models both the single collecting parameter
 `F(*items)` and the lone-collecting assignment `*x = 1, 2, 3`, which
-reaches this binder through the deconstruction receiver.
+reaches this binder through the deconstruction receiver. Over FINAL items
+(the items an explicit spread produced) the collector is exact.
 -/
 theorem variadic_is_lone_collecting (xs : Supply) :
-    bindArgs [Pat.collecting "x"] xs = some [("x", collect xs)] := by
-  unfold bindArgs
+    bindArgs [Pat.collecting "x"] (final xs) = some [("x", collect xs)] := by
+  rw [bindArgs_final]
   simp [bindPats, bindFixed, Pat.isCollecting, Pat.key, List.filter_cons, List.filter_nil,
         List.take_length, List.drop_length]
 
@@ -809,36 +944,43 @@ theorem bindPats_lone_collecting (r : String) (xs : Supply) :
 
 /-! ## Receiver theorems
 
-The concrete checks above pin the call/deconstruction contrast on specific
-values. The theorems below establish the contrast in general, split exactly
-on the `loneStructure` predicate:
+The concrete checks above pin the call/deconstruction relation on specific
+values. The theorems below establish it in general. Two receiver-specific
+supply preparations feed the ONE shared binder `bindPats`: deconstruction
+opens a lone structure of either kind (`openLoneStructure`), and a call fuses
+a collector's lone WRITTEN sequence slot with the collector's own boundary
+(`fuseCollectorSegment` — the collector supply-boundary law). Hence:
 
-* `receivers_agree_outside_lone_structure` — on every supply with
-  `loneStructure xs = false` the two receivers are the SAME function, so the
-  entire receiver asymmetry is confined to the lone-structure case;
+* `receivers_agree_outside_lone_structure` — on every FINAL supply (the items
+  an explicit spread produced, `F(A*)`) with `loneStructure xs = false` the two
+  receivers are the SAME function; final items never fuse
+  (`fuseCollectorSegment_final`), so the call receiver IS the shared binder
+  there (`bindArgs_final`);
 * `deconstruct_singleton_eq_args_items` — on a single-value supply the
   deconstruction receiver binds exactly what the CALL receiver binds on the
-  value's immediate item view. This is a receiver-level equation, not an
-  unrestricted surface equivalence with a written deconstruction RHS spread:
-  the surface spread passes through `capture` before deconstruction sees its
-  single shared value (`deconstruct_spread_capture_can_open_further` pins the
-  boundary-sensitive counterexample);
-* `receivers_never_same_on_lone_structure` — on every lone-structure supply
-  (`[Val.seq ys]` and `[Val.list ys]` alike) the two receivers NEVER both
-  succeed with the same environment, for any pattern list. The corollaries
-  `receivers_never_agree_on_lone_seq` / `receivers_never_agree_on_lone_list`
-  are the per-kind instances. This unified statement replaces the pre-list
-  characterization (`agree_on_lone_seq_iff_lone_rest`), whose lone-collecting
-  agreement depended on the canonical-capture coincidence: exact segment
-  collection distinguishes the grouped argument (`rest = [A]`) from the
-  spread items (`rest = [a1, …]`), so even the lone-collecting shape disagrees;
-* the theorem is deliberately about shared SUCCESS, not Option inequality:
-  both receivers can fail identically on a lone structure (see the example
-  after the corollaries), so `bindArgs ps xs ≠ bindDeconstruct ps xs` would
-  be false as a general lone-structure claim;
-* `lone_collecting_disagrees_on_lone_list` — the concrete lone-collecting disagreement on
-  a lone LIST supply (there both modes DO succeed, so the Option values
-  really differ).
+  value's immediate item view supplied as final items (`F(v*)`). This is a
+  receiver-level equation, not an unrestricted surface equivalence with a
+  written deconstruction RHS spread (`deconstruct_spread_capture_can_open_further`);
+* `receivers_never_same_on_lone_list` — on a lone LIST the call receiver, which
+  never opens a list (`fuseCollectorSegment_written_lone_list`), and the
+  deconstruction receiver, which opens it, never both succeed with the same
+  environment, for any pattern list;
+* `receivers_never_same_on_lone_seq_with_fixed` — on a lone written SEQUENCE the
+  same holds for every pattern list EXCEPT the lone collecting pattern
+  (`fuseCollectorSegment_written_singleton`): a fixed position binds the whole
+  sequence on the call side and a member of its items on the other;
+* `receivers_agree_on_lone_seq_lone_collecting` — the lone collecting pattern is
+  exactly where the two preparations coincide on a lone written sequence: the
+  collector's supply boundary fuses with the sequence, so `Coll(A)` and
+  `*x = A` bind the same `collect ys`. (Under the pre-2026 exact-supply call
+  binder the lone-collecting shape disagreed; the collector supply-boundary law
+  restores the agreement for sequences — and for sequences only.)
+* the shared-success statements are deliberately about shared SUCCESS, not
+  Option inequality: both receivers can fail identically on a lone structure
+  (see the example after the corollaries);
+* `lone_collecting_disagrees_on_lone_list` — the concrete lone-collecting
+  disagreement on a lone LIST supply (there both modes DO succeed, so the
+  Option values really differ).
 -/
 
 /-- The deconstruction receiver's implicit opening of a single-value supply is
@@ -847,23 +989,25 @@ provides (`structureItems?` with the one-item scalar fallback). -/
 theorem openLoneStructure_singleton (v : Val) : openLoneStructure [v] = items v :=
   structureItems?_getD_eq_items v
 
-/-- Localization: outside the lone-structure shape the call and deconstruction
-receivers agree — deconstruction's extra behaviour is confined to
-`loneStructure` supplies. -/
+/-- Localization: outside the lone-structure shape the call receiver on final
+items and the deconstruction receiver agree — deconstruction's extra behaviour
+is confined to `loneStructure` supplies. -/
 theorem receivers_agree_outside_lone_structure (ps : List Pat) (xs : Supply)
     (h : loneStructure xs = false) :
-    bindDeconstruct ps xs = bindArgs ps xs := by
-  unfold bindDeconstruct bindArgs
+    bindDeconstruct ps xs = bindArgs ps (final xs) := by
+  rw [bindArgs_final]
+  unfold bindDeconstruct
   rw [openLoneStructure_of_not_loneStructure h]
 
 /-- Receiver/item-view equation: on a single-value supply, deconstruction binds
-exactly what a call binds on the value's immediate item view. A written spread
-on an assignment RHS additionally passes through `capture`; the next theorem
-pins why this equation must not be presented as an unrestricted surface
-rewrite. -/
+exactly what a call binds on the value's immediate item view supplied as final
+items. A written spread on an assignment RHS additionally passes through
+`capture`; the next theorem pins why this equation must not be presented as an
+unrestricted surface rewrite. -/
 theorem deconstruct_singleton_eq_args_items (ps : List Pat) (v : Val) :
-    bindDeconstruct ps [v] = bindArgs ps (items v) := by
-  unfold bindDeconstruct bindArgs
+    bindDeconstruct ps [v] = bindArgs ps (final (items v)) := by
+  rw [bindArgs_final]
+  unfold bindDeconstruct
   rw [openLoneStructure_singleton]
 
 /-- Surface-capture boundary counterexample. Let `A = [(1, 2)]`. Bare
@@ -882,41 +1026,156 @@ theorem deconstruct_spread_capture_can_open_further :
         some [("x", Val.atom 1), ("y", Val.atom 2)] := by
   decide
 
-/-- `variadic_is_lone_collecting`, generalized to an arbitrary collecting-binding name. -/
+/-- `variadic_is_lone_collecting`, generalized to an arbitrary collecting-binding
+name: over final items the collector is exact. -/
 theorem bindArgs_lone_collecting (r : String) (xs : Supply) :
-    bindArgs [Pat.collecting r] xs = some [(r, collect xs)] := by
-  unfold bindArgs
+    bindArgs [Pat.collecting r] (final xs) = some [(r, collect xs)] := by
+  rw [bindArgs_final]
   simp [bindPats, bindFixed, Pat.isCollecting, Pat.key, List.filter_cons, List.filter_nil,
         List.take_length, List.drop_length]
 
-/-- Grouped/spread DISTINCTION for a single collecting parameter: `F(A)` with
-a stored sequence `A` binds `rest = [A]` (one collected argument), while
-`F(A*)` binds `rest = [a1, …, an]` (the collected spread items) — always
-different bindings. Supersedes the obsolete paper theorem
-`variadic_capture_unchanged_by_spread`. -/
-theorem variadic_collect_distinguishes_spread (r : String) (ys : Supply) :
-    bindArgs [Pat.collecting r] [Val.seq ys]
-      ≠ bindArgs [Pat.collecting r] (items (Val.seq ys)) := by
-  rw [bindArgs_lone_collecting, bindArgs_lone_collecting]
+/-- A lone written SEQUENCE at the lone collecting pattern fuses with the
+collector's supply boundary: `Coll(A)` with `A = (a1, …, an)` binds
+`rest = [a1, …, an]`. -/
+theorem fuseCollectorSegment_written_lone_seq (r : String) (ys : Supply) :
+    fuseCollectorSegment [Pat.collecting r] (written [Val.seq ys]) = ys := by
+  simp [fuseCollectorSegment, written, values, loneWrittenSeq?,
+    show List.findIdx? Pat.isCollecting [Pat.collecting r] = some 0 from rfl]
+
+theorem bindArgs_lone_collecting_written_seq (r : String) (ys : Supply) :
+    bindArgs [Pat.collecting r] (written [Val.seq ys]) = some [(r, collect ys)] := by
+  unfold bindArgs
+  rw [fuseCollectorSegment_written_lone_seq, bindPats_lone_collecting]
+
+/-- Every segment cut from a lone written list slot is either empty or that
+one list slot — never the fusing shape. -/
+theorem loneWrittenSeq?_of_lone_list (ys : Supply) (i k : Nat) :
+    loneWrittenSeq? (((written [Val.list ys]).drop i).take k) = none := by
+  cases i with
+  | zero =>
+    cases k with
+    | zero => rfl
+    | succ k => rfl
+  | succ i =>
+    simp [written, loneWrittenSeq?]
+
+theorem fuseCollectorSegment_written_lone_list (ps : List Pat) (ys : Supply) :
+    fuseCollectorSegment ps (written [Val.list ys]) = [Val.list ys] := by
+  unfold fuseCollectorSegment
+  cases ps.findIdx? Pat.isCollecting with
+  | none => exact values_written _
+  | some i =>
+    dsimp only
+    rw [loneWrittenSeq?_of_lone_list]
+    exact values_written _
+
+theorem bindArgs_lone_collecting_written_list (r : String) (ys : Supply) :
+    bindArgs [Pat.collecting r] (written [Val.list ys]) = some [(r, collect [Val.list ys])] := by
+  unfold bindArgs
+  rw [fuseCollectorSegment_written_lone_list, bindPats_lone_collecting]
+
+/-- A pattern list whose collector sits at index 0 with nothing after it IS the
+lone collecting pattern. -/
+theorem lone_collecting_of_shape (ps : List Pat)
+    (hidx : ps.findIdx? Pat.isCollecting = some 0) (hlen : (ps.drop 1).length = 0) :
+    ∃ r, ps = [Pat.collecting r] := by
+  cases ps with
+  | nil => simp at hidx
+  | cons p ps' =>
+    cases ps' with
+    | cons q ps'' => simp at hlen
+    | nil =>
+      cases p with
+      | name x => simp [List.findIdx?_cons, Pat.isCollecting] at hidx
+      | collecting r => exact ⟨r, rfl⟩
+
+theorem fuseCollectorSegment_written_singleton (ps : List Pat) (v : Val)
+    (hnot : ∀ r, ps ≠ [Pat.collecting r]) :
+    fuseCollectorSegment ps (written [v]) = [v] := by
+  unfold fuseCollectorSegment
+  cases hidx : ps.findIdx? Pat.isCollecting with
+  | none => exact values_written _
+  | some i =>
+    dsimp only
+    cases i with
+    | succ i =>
+      -- The lone slot precedes the collector: the segment is empty.
+      simp [written, values, loneWrittenSeq?]
+    | zero =>
+      generalize hs : (ps.drop (0 + 1)).length = s
+      cases s with
+      | succ s =>
+        -- A suffix pattern takes the lone slot: the segment is empty.
+        simp [written, values, loneWrittenSeq?]
+      | zero =>
+        exfalso
+        obtain ⟨r, hr⟩ := lone_collecting_of_shape ps hidx (by simpa using hs)
+        exact hnot r hr
+
+/-- The written-slot form of `variadic_is_lone_collecting`: a lone written
+value binds the collector to `collect (collectorSupply (written [v]))` — the
+sequence's items, or the value itself. -/
+theorem bindArgs_lone_collecting_written (r : String) (v : Val) :
+    bindArgs [Pat.collecting r] (written [v])
+      = some [(r, collect (collectorSupply (written [v])))] := by
+  cases v with
+  | seq ys =>
+    rw [bindArgs_lone_collecting_written_seq]
+    simp [collectorSupply, written, loneWrittenSeq?]
+  | list ys =>
+    rw [bindArgs_lone_collecting_written_list]
+    simp [collectorSupply, written, loneWrittenSeq?, values]
+  | atom n =>
+    have hfuse : fuseCollectorSegment [Pat.collecting r] (written [Val.atom n]) = [Val.atom n] := by
+      simp [fuseCollectorSegment, written, values, loneWrittenSeq?,
+        show List.findIdx? Pat.isCollecting [Pat.collecting r] = some 0 from rfl]
+    unfold bindArgs
+    rw [hfuse, bindPats_lone_collecting]
+    simp [collectorSupply, written, loneWrittenSeq?, values]
+
+/-- Grouped/spread COINCIDENCE for a lone SEQUENCE argument at a single
+collecting parameter: `F(A)` with a stored sequence `A` and `F(A*)` bind the
+same `rest = [a1, …, an]` — the collector supply-boundary law makes the lone
+written sequence stand for the collector's whole supply. -/
+theorem variadic_collect_written_seq_eq_spread (r : String) (ys : Supply) :
+    bindArgs [Pat.collecting r] (written [Val.seq ys])
+      = bindArgs [Pat.collecting r] (final (items (Val.seq ys))) := by
+  rw [bindArgs_lone_collecting_written_seq, bindArgs_lone_collecting]
+  rfl
+
+/-- Grouped/spread DISTINCTION for a lone LIST argument: `F(A)` with a stored
+list binds `rest = [A]` (one exact item) while `F(A*)` binds `rest = [a1, …, an]`
+— lists never open implicitly. -/
+theorem variadic_collect_distinguishes_spread_list (r : String) (ys : Supply) :
+    bindArgs [Pat.collecting r] (written [Val.list ys])
+      ≠ bindArgs [Pat.collecting r] (final (items (Val.list ys))) := by
+  rw [bindArgs_lone_collecting_written_list, bindArgs_lone_collecting]
   intro he
-  have hv : collect [Val.seq ys] = collect (items (Val.seq ys)) := by
+  have hv : collect [Val.list ys] = collect (items (Val.list ys)) := by
     have := Option.some.inj he
     have hpair := List.cons.inj this
     have := congrArg Prod.snd hpair.1
     simpa [items] using this
-  exact collect_lone_seq_ne_collect_items ys (by simpa [items] using hv)
+  exact collect_lone_list_ne_collect_items ys hv
 
-/-- Exact bound value, grouped side: `F(A)` binds `r` to `collect [A]` — the
-one-element list holding the grouped argument. -/
+/-- Exact bound value, grouped SEQUENCE side: `F(A)` binds `r` to `collect ys` —
+the exact list of `A`'s items (the lone written sequence opened one level). -/
 theorem variadic_collect_value_grouped (r : String) (ys : Supply) :
-    bindArgs [Pat.collecting r] [Val.seq ys]
-      = some [(r, Val.list [Val.seq ys])] :=
-  bindArgs_lone_collecting r [Val.seq ys]
+    bindArgs [Pat.collecting r] (written [Val.seq ys])
+      = some [(r, Val.list ys)] :=
+  bindArgs_lone_collecting_written_seq r ys
+
+/-- Exact bound value, grouped LIST side: `F(A)` binds `r` to `collect [A]` —
+the one-element list holding the list argument. -/
+theorem variadic_collect_value_grouped_list (r : String) (ys : Supply) :
+    bindArgs [Pat.collecting r] (written [Val.list ys])
+      = some [(r, Val.list [Val.list ys])] :=
+  bindArgs_lone_collecting_written_list r ys
 
 /-- Exact bound value, spread side: `F(A*)` binds `r` to `collect ys` — the
 exact list of `A`'s stored items. -/
 theorem variadic_collect_value_spread (r : String) (ys : Supply) :
-    bindArgs [Pat.collecting r] (items (Val.seq ys))
+    bindArgs [Pat.collecting r] (final (items (Val.seq ys)))
       = some [(r, Val.list ys)] :=
   bindArgs_lone_collecting r ys
 
@@ -941,40 +1200,30 @@ private theorem list_payload_not_self (ys : List Val) (hkind : Val) (hpay : [hki
       have hw : hkind = w := (List.cons.inj hpay).1
       exact absurd hw.symm (hmem w List.mem_cons_self)
 
-/-- The engine of the unified lone-structure theorem: for a single-value call
-supply `[v]` and ANY deconstruction supply `ys` avoiding `v` (no member of
-`ys` equals `v` — instantiated with a structure's own payload, which cannot
-contain the structure), the call binder on `[v]` and the shared binder on
-`ys` never both succeed with the same environment, for every pattern list.
-Each successful agreement would force some member of `ys` to BE `v` (fixed
-positions bind `v` on the call side and members of `ys` on the other) or
-force `[v] = ys` (the lone-collecting shape collects both sides), contradicting the
-avoidance premise. -/
-private theorem receivers_never_same_on_singleton (ps : List Pat) (v : Val)
-    (ys : Supply) (hmem : ∀ w ∈ ys, w ≠ v) :
-    ¬ ∃ env, bindArgs ps [v] = some env ∧ bindPats ps ys = some env := by
+/-- The engine of the lone-structure theorems, over the shared binder: for a
+single-value supply `[v]` and ANY supply `ys` avoiding `v` (no member of `ys`
+equals `v` — instantiated with a structure's own payload, which cannot
+contain the structure), the shared binder on `[v]` and on `ys` never both
+succeed with the same environment, for every pattern list OTHER than the lone
+collecting pattern. Each successful agreement would force some member of `ys`
+to BE `v` (fixed positions bind `v` on the singleton side and members of `ys`
+on the other), contradicting the avoidance premise; the lone collecting shape
+is excluded because there both sides collect their whole supply, which the
+call receiver's fusion makes a genuine agreement for sequences. -/
+private theorem bindPats_never_same_on_singleton (ps : List Pat) (v : Val)
+    (ys : Supply) (hmem : ∀ w ∈ ys, w ≠ v) (hnot : ∀ r, ps ≠ [Pat.collecting r]) :
+    ¬ ∃ env, bindPats ps [v] = some env ∧ bindPats ps ys = some env := by
   rintro ⟨env, hA, hD⟩
   cases ps with
   | nil =>
-    simp [bindArgs, bindPats] at hA
+    simp [bindPats] at hA
   | cons p ps1 =>
     cases ps1 with
     | nil =>
       cases p with
-      | collecting r =>
-        rw [bindArgs_lone_collecting] at hA
-        rw [show bindPats [Pat.collecting r] ys = bindArgs [Pat.collecting r] ys from rfl,
-            bindArgs_lone_collecting] at hD
-        rw [← hA] at hD
-        have hv : collect ys = collect [v] := by
-          have := Option.some.inj hD
-          have hpair := List.cons.inj this
-          simpa using congrArg Prod.snd hpair.1
-        have hpay : [v] = ys := by
-          simpa [collect] using hv.symm
-        exact list_payload_not_self ys v hpay hmem
+      | collecting r => exact hnot r rfl
       | name x =>
-        have eA : bindArgs [Pat.name x] [v]
+        have eA : bindPats [Pat.name x] [v]
             = some [(x, v)] := rfl
         rw [eA] at hA
         cases ys with
@@ -1006,9 +1255,9 @@ private theorem receivers_never_same_on_singleton (ps : List Pat) (v : Val)
         | name x =>
           cases q with
           | name y =>
-            simp [bindArgs, bindPats, Pat.isCollecting, List.filter_nil] at hA
+            simp [bindPats, Pat.isCollecting, List.filter_nil] at hA
           | collecting r =>
-            have eA : bindArgs [Pat.name x, Pat.collecting r] [v]
+            have eA : bindPats [Pat.name x, Pat.collecting r] [v]
                 = some [(x, v), (r, Val.list [])] := rfl
             rw [eA] at hA
             cases ys with
@@ -1033,9 +1282,9 @@ private theorem receivers_never_same_on_singleton (ps : List Pat) (v : Val)
         | collecting r =>
           cases q with
           | collecting b =>
-            simp [bindArgs, bindPats, Pat.isCollecting, List.filter_cons, List.filter_nil] at hA
+            simp [bindPats, Pat.isCollecting, List.filter_cons, List.filter_nil] at hA
           | name y =>
-            have eA : bindArgs [Pat.collecting r, Pat.name y] [v]
+            have eA : bindPats [Pat.collecting r, Pat.name y] [v]
                 = some [(r, Val.list []), (y, v)] := rfl
             rw [eA] at hA
             cases ys with
@@ -1078,56 +1327,78 @@ private theorem receivers_never_same_on_singleton (ps : List Pat) (v : Val)
         have hnone : bindPats (p :: q :: s :: ps3) [v] = none := by
           apply bindPats_none_of_undersupplied
           simp
-        rw [bindArgs] at hA
         rw [hnone] at hA
         cases hA
 
-/-- Receiver non-coincidence on a lone structure, in full generality: for
-EVERY pattern list and BOTH structure kinds (`[Val.seq ys]` and
-`[Val.list ys]`), the call receiver and the deconstruction receiver never
-both succeed with the same environment. The pre-list model's lone-collecting
-agreement was a canonical-capture coincidence; exact segment collection removes
-it. (Shared success is the strongest correct claim: both receivers CAN fail
-identically on a lone structure, so plain Option inequality would be false —
-see the example below.) -/
-theorem receivers_never_same_on_lone_structure (ps : List Pat) (xs : Supply)
-    (h : loneStructure xs = true) :
-    ¬ ∃ env, bindArgs ps xs = some env ∧ bindDeconstruct ps xs = some env := by
-  cases xs with
-  | nil => exact Bool.noConfusion h
-  | cons a t =>
-    cases t with
-    | cons b t2 => exact Bool.noConfusion h
+/-- Receiver non-coincidence on a lone LIST, in full generality: for EVERY
+pattern list the call receiver (which never opens a list) and the
+deconstruction receiver (which opens it) never both succeed with the same
+environment. (Shared success is the strongest correct claim: both receivers
+CAN fail identically on a lone structure — see the example below.) -/
+theorem receivers_never_same_on_lone_list (ps : List Pat) (ys : List Val) :
+    ¬ ∃ env, bindArgs ps (written [Val.list ys]) = some env
+        ∧ bindDeconstruct ps [Val.list ys] = some env := by
+  unfold bindArgs
+  rw [fuseCollectorSegment_written_lone_list]
+  simp only [bindDeconstruct, openLoneStructure_singleList]
+  rintro ⟨env, hA, hD⟩
+  cases hps : ps with
+  | nil =>
+    rw [hps] at hA
+    simp [bindPats] at hA
+  | cons p ps' =>
+    cases ps' with
     | nil =>
-      cases a with
-      | atom n => exact Bool.noConfusion h
-      | seq ys =>
-        simp only [bindDeconstruct, openLoneStructure_singleSeq]
-        exact receivers_never_same_on_singleton ps (Val.seq ys) ys
-          (fun w hw => mem_ne_seq hw)
-      | list ys =>
-        simp only [bindDeconstruct, openLoneStructure_singleList]
-        exact receivers_never_same_on_singleton ps (Val.list ys) ys
-          (fun w hw => mem_ne_list hw)
+      cases p with
+      | collecting r =>
+        rw [hps] at hA hD
+        rw [bindPats_lone_collecting] at hA hD
+        rw [← hA] at hD
+        have hv : collect ys = collect [Val.list ys] := by
+          have := Option.some.inj hD
+          have hpair := List.cons.inj this
+          simpa using congrArg Prod.snd hpair.1
+        have hpay : [Val.list ys] = ys := by
+          simpa [collect] using hv.symm
+        exact list_payload_not_self ys (Val.list ys) hpay (fun w hw => mem_ne_list hw)
+      | name x =>
+        rw [hps] at hA hD
+        exact bindPats_never_same_on_singleton [Pat.name x] (Val.list ys) ys
+          (fun w hw => mem_ne_list hw) (fun r h => by cases h) ⟨env, hA, hD⟩
+    | cons q ps'' =>
+      rw [hps] at hA hD
+      exact bindPats_never_same_on_singleton (p :: q :: ps'') (Val.list ys) ys
+        (fun w hw => mem_ne_list hw) (fun r h => by cases h) ⟨env, hA, hD⟩
 
-/-- Sequence-kind corollary of `receivers_never_same_on_lone_structure`. -/
-theorem receivers_never_agree_on_lone_seq (ps : List Pat) (ys : List Val) :
-    ¬ ∃ env, bindArgs ps [Val.seq ys] = some env
-        ∧ bindDeconstruct ps [Val.seq ys] = some env :=
-  receivers_never_same_on_lone_structure ps [Val.seq ys] (loneStructure_lone_seq ys)
+/-- Receiver non-coincidence on a lone written SEQUENCE for every pattern list
+that contains a fixed position (every list other than the lone collecting
+pattern): a fixed position binds the whole sequence on the call side and one
+of its items on the deconstruction side, so the two receivers never both
+succeed with the same environment. -/
+theorem receivers_never_same_on_lone_seq_with_fixed (ps : List Pat) (ys : List Val)
+    (hnot : ∀ r, ps ≠ [Pat.collecting r]) :
+    ¬ ∃ env, bindArgs ps (written [Val.seq ys]) = some env
+        ∧ bindDeconstruct ps [Val.seq ys] = some env := by
+  unfold bindArgs
+  rw [fuseCollectorSegment_written_singleton ps (Val.seq ys) hnot]
+  simp only [bindDeconstruct, openLoneStructure_singleSeq]
+  exact bindPats_never_same_on_singleton ps (Val.seq ys) ys (fun w hw => mem_ne_seq hw) hnot
 
-/-- List-kind corollary of `receivers_never_same_on_lone_structure`. -/
-theorem receivers_never_agree_on_lone_list (ps : List Pat) (ys : List Val) :
-    ¬ ∃ env, bindArgs ps [Val.list ys] = some env
-        ∧ bindDeconstruct ps [Val.list ys] = some env :=
-  receivers_never_same_on_lone_structure ps [Val.list ys] (loneStructure_lone_list ys)
+/-- On a lone written SEQUENCE the lone collecting pattern is exactly where the
+call and deconstruction receivers coincide: `Coll(A)` and `*x = A` both bind
+`collect ys`. -/
+theorem receivers_agree_on_lone_seq_lone_collecting (r : String) (ys : List Val) :
+    bindArgs [Pat.collecting r] (written [Val.seq ys])
+      = bindDeconstruct [Pat.collecting r] [Val.seq ys] := by
+  rw [bindArgs_lone_collecting_written_seq, bindDeconstruct, openLoneStructure_singleSeq,
+      bindPats_lone_collecting]
 
-/-- Why the lone-structure theorem is stated over shared SUCCESS: both
+/-- Why the lone-structure theorems are stated over shared SUCCESS: both
 receivers can fail identically on a lone structure. Two fixed names against a
 lone one-item sequence value fail on both sides (arity 2 vs 1 either way), so
 option-level inequality would be a false general claim. -/
 example :
-    bindArgs [Pat.name "x", Pat.name "y"] [Val.seq [Val.atom 1]]
+    bindArgs [Pat.name "x", Pat.name "y"] (written [Val.seq [Val.atom 1]])
       = bindDeconstruct [Pat.name "x", Pat.name "y"] [Val.seq [Val.atom 1]] := by
   decide
 
@@ -1136,11 +1407,10 @@ the one supplied argument (`rest = [[1, 2]]`-style nesting), while
 deconstruction opens the lone list and collects its items — never the same
 binding. -/
 theorem lone_collecting_disagrees_on_lone_list (r : String) (ys : List Val) :
-    bindArgs [Pat.collecting r] [Val.list ys]
+    bindArgs [Pat.collecting r] (written [Val.list ys])
       ≠ bindDeconstruct [Pat.collecting r] [Val.list ys] := by
-  rw [bindArgs_lone_collecting, bindDeconstruct, openLoneStructure_singleList,
-      show bindPats [Pat.collecting r] ys = bindArgs [Pat.collecting r] ys from rfl,
-      bindArgs_lone_collecting]
+  rw [bindArgs_lone_collecting_written_list, bindDeconstruct, openLoneStructure_singleList,
+      bindPats_lone_collecting]
   intro he
   have hv : collect [Val.list ys] = collect ys := by
     have := Option.some.inj he

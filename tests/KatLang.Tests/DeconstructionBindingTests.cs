@@ -667,13 +667,16 @@ public class DeconstructionBindingTests
     [Fact]
     public void SingleVariadicCall_ConsumesItemSupply()
     {
-        // Single-variadic `Sum(*values)` collects the supplied argument slots as one
-        // exact list. A single grouped argument is ONE collected element, so the
-        // numeric `.sum` fails on it; item-supplying calls (inline slots or
-        // explicit spread) sum the collected items.
-        AssertEvalError<EvalError.BadArity>("c = 1, 2, 3\nSum(*values) = values.sum\nSum(c)");
+        // Single-variadic `Sum(*values)` collects the segment allocated to it. A
+        // single grouped SEQUENCE argument is the collector's whole segment and
+        // opens one level (sum 6, like the spread and the inline slots); a
+        // single LIST argument is one exact collected element, so the numeric
+        // `.sum` fails on it; beside another slot the sequence is one element.
+        AssertAtoms("c = 1, 2, 3\nSum(*values) = values.sum\nSum(c)", 6);
         AssertAtoms("c = 1, 2, 3\nSum(*values) = values.sum\nSum(c*)", 6);
         AssertAtoms("Sum(*values) = values.sum\nSum(1, 2, 3)", 6);
+        AssertEvalError<EvalError.BadArity>("Sum(*values) = values.sum\nSum([1, 2, 3])");
+        AssertEvalError<EvalError.BadArity>("c = 1, 2, 3\nSum(*values) = values.sum\nSum(c, 0)");
     }
 
     [Fact]
@@ -686,17 +689,22 @@ public class DeconstructionBindingTests
     // ─────────────────── Aspect 2: unified item-supply binding ─────────────────
 
     [Fact]
-    public void SingleVariadic_GroupedArgumentDiffersFromItemSupply()
+    public void SingleVariadic_GroupedSequenceOpensOneLevel_ListStaysExact()
     {
-        // G(*x) = x.sum exposes the call boundary: plain A and grouped
-        // `(1, 2, 3, 4, 5)` each supply ONE sequence-valued argument, so the
-        // collected list holds one non-numeric element and .sum fails. A* and
-        // inline items supply five arguments, collected as [1..5] with sum 15.
+        // G(*x) = x.sum exposes the collector boundary: plain A and grouped
+        // `(1, 2, 3, 4, 5)` each supply ONE written sequence-valued argument,
+        // which — as the lone collector's whole segment — opens one level (sum
+        // 15, like A* and the inline items). A list argument never opens
+        // implicitly, so its one non-numeric element fails `.sum`, and a
+        // sequence beside another slot is one non-numeric element too.
         const string g = "A = 1, 2, 3, 4, 5\nG(*x) = x.sum\n";
-        AssertEvalError<EvalError.BadArity>(g + "G(A)");
+        AssertAtoms(g + "G(A)", 15);
         AssertAtoms(g + "G(A*)", 15);
         AssertAtoms("G(*x) = x.sum\nG(1, 2, 3, 4, 5)", 15);
-        AssertEvalError<EvalError.BadArity>("G(*x) = x.sum\nG((1, 2, 3, 4, 5))");
+        AssertAtoms("G(*x) = x.sum\nG((1, 2, 3, 4, 5))", 15);
+        AssertEvalError<EvalError.BadArity>("G(*x) = x.sum\nG([1, 2, 3, 4, 5])");
+        AssertAtoms("G(*x) = x.sum\nG([1, 2, 3, 4, 5]*)", 15);
+        AssertEvalError<EvalError.BadArity>(g + "G(A, 0)");
     }
 
     [Fact]
@@ -743,10 +751,12 @@ public class DeconstructionBindingTests
     [Fact]
     public void RepeatedSingletonBoundary_DoesNotImplicitlyOpenCallArgument()
     {
-        // Redundant unary grouping normalizes the value, but calls still
-        // receive one argument unless explicit spread is written — the single-variadic
-        // shape collects one non-numeric element and fails like the mixed shapes.
-        AssertEvalError<EvalError.BadArity>("G(*x) = x.sum\nG(((1, 2, 3, 4, 5)))");
+        // Redundant unary grouping normalizes the value, and calls still
+        // receive ONE argument unless explicit spread is written: the lone
+        // collecting shape opens that one written sequence one level (sum 15,
+        // like the spread), while the mixed shapes bind their fixed positions
+        // to the whole value and fail.
+        AssertAtoms("G(*x) = x.sum\nG(((1, 2, 3, 4, 5)))", 15);
         AssertAtoms("G(*x) = x.sum\nG(((1, 2, 3, 4, 5))*)", 15);
         AssertEvalError<EvalError.TypeMismatch>("F(*x, y) = x.sum + y\nF(((1, 2, 3, 4, 5)))");
         AssertAtoms("F(*x, y) = x.sum + y\nF(((1, 2, 3, 4, 5))*)", 15);

@@ -32,9 +32,11 @@ public class ChainedDotExecutionPathTests
     [InlineData("K = {\n Need = z\n Step = Lib.Sub.Q + Need\n Step\n}\nK(5)", "12")]
     [InlineData("t(x) = 99\nOuter(t) = {\n Inner = Lib.Sub.t\n Inner\n}\nOuter({x + 1})", "4")]
     [InlineData("Collect(*items) = items\nLib.Sub.Q.Collect", "[7]")]
-    [InlineData("Collect(*items) = items\n(1, 2, 3).Collect.count", "1")]
+    [InlineData("Collect(*items) = items\n(1, 2, 3).Collect.count", "3")]
     [InlineData("Collect(*items) = items\n(1, 2, 3)*.Collect.count", "3")]
-    [InlineData("Collect(*items) = items\n((1, 2, 3)).Collect.count", "1")]
+    [InlineData("Collect(*items) = items\n((1, 2, 3)).Collect.count", "3")]
+    [InlineData("Collect(*items) = items\n(1, 2, 3).Collect(4).count", "2")]
+    [InlineData("Collect(*items) = items\n[1, 2, 3].Collect.count", "1")]
     public async Task ChainMatrix_MatchesGenericOptimizedAndSuspendingEvaluation(string tail, string expected)
     {
         var source = Lib + tail;

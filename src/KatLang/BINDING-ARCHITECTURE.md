@@ -83,11 +83,12 @@ Optimized loops own:
 ## Receiver semantics separation
 
 - Ordinary dot-call receiver injection is call-site syntax only: DOT-CALL PASSES A VALUE, so `BuildLexicalReceiverCallArgs` places the ORIGINAL receiver expression as the ordinary first slot of the written call's argument bundle (`R.F(args)` is `F(R, args)`, `R*.F(args)` is `F(R*, args)`) and hands it to the same `EvalResolvedCallCounted` funnel every written call uses. Receiver assembly never inspects the resolved callee, and the binder never learns that a slot was a receiver — there is no receiver segment, no receiver supply, and no receiver metadata (`CallArgumentAssembly` and `ParameterPatternInput.CollectingSegmentEmittedCount` were deleted in September 2026 and must not return).
-- The binder applies its ordinary rules to that slot: fixed prefix/suffix allocation first (one slot is one input for arity), fixed positions bind the slot's value, a flat top-level collecting position collects it as ONE item, and only a written spread slot (`R*`) contributes several slots — expanded by the shared assembler before any binding, like every other spread slot.
+- The binder applies its ordinary rules to that slot: fixed prefix/suffix allocation first (one slot is one input for arity), fixed positions bind the slot's value, a flat top-level collecting position applies the collector supply-boundary law to its allocated segment (`CollectorSupply`: a segment that is exactly ONE written sequence slot opens one level, every other segment — several items, a list, a scalar, a final item — is collected exactly), and only a written spread slot (`R*`) contributes several slots — expanded by the shared assembler before any binding, like every other spread slot, and marked FINAL so the law never opens a spread-produced item.
+- The only origin information the binder receives is the per-slot `SupplyOrigin` (`WrittenSlot` for a non-spread written argument, marked by `BuildCallArgumentInputs`, or a whole callback item, marked by callback supply construction; `FinalItem` for already-established items — explicit-spread items, pattern-opened items, flat-callback row slots, loop state slots, reducer accumulator slots). It rides on `ParameterPatternInput` / `CountedPatternInput`, is read by `CollectorSupply` alone, and never enters a `CountedResult` or any result value.
 - The collection-builtin post-binding collection view is builtin runtime behavior.
 - Neither behavior belongs in a future `BindingPolicy`.
 
-A future model must not carry receiver information at all: the receiver is indistinguishable from a written argument once assembled.
+A future model must not carry receiver information at all: the receiver is indistinguishable from a written argument once assembled. It may carry slot provenance (`SupplyOrigin`), because that is a property of how a slot entered the supply, not of what produced its value.
 
 ## Future `BindingInput`
 

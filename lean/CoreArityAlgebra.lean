@@ -21,7 +21,14 @@ arity algebra used in the paper. It distinguishes:
   deconstruction-specific lone-structure opening of a supply,
   `openLoneStructure`, and its characterizing predicate `loneStructure`;
 - the shared fixed/collecting binder `bindPats`, consumed by ordinary call binding
-  (`bindArgs`) and by deconstruction binding (`bindDeconstruct`).
+  (`bindArgs`) and by deconstruction binding (`bindDeconstruct`);
+- the call supply `CallSupply` — each supplied item with its `Origin`
+  (a non-spread written slot, or an item explicit spread already produced) —
+  and the COLLECTOR SUPPLY-BOUNDARY LAW `collectorSupply` /
+  `fuseCollectorSegment` that `bindArgs` applies to the collector's
+  allocated segment (September 2026): a lone written sequence slot stands for
+  the collector's whole supply, exactly one level; everything else is
+  collected exactly.
 
 Proofs and executable checks are kept in CoreArityAlgebraProofs.lean.
 
@@ -58,10 +65,21 @@ openLoneStructure               deconstruction receiver opening of a lone
                                 bound `collection` argument
 loneStructure                   artifact-local characterization of the one
                                 supply shape openLoneStructure rewrites
+Origin / CallSupply             SupplyOrigin (`writtenSlot` / `finalItem`) on
+                                ParameterPatternInput / VariadicItem, recorded by
+                                collectVariadicCallItems
+collectorSupply                 collectorSupply (the collector supply-boundary
+                                law on the allocated segment)
+fuseCollectorSegment            the same law expressed as a call-supply
+                                preparation: the full model applies
+                                collectorSupply inside bindParameterPatternList
+                                to the segment it allocated, which is the same
+                                segment this preparation rewrites
 Pat / bindArgs / bindDeconstruct / bindPats
                                 bindParameterPatternList fixed/collecting-binding model;
-                                bindDeconstruct adds the deconstruction-receiver
-                                lone-structure opening
+                                bindArgs adds the collector supply-boundary law
+                                on the collector's segment, bindDeconstruct the
+                                deconstruction-receiver lone-structure opening
 
 This file is not a full semantics of KatLang. It isolates only the arity
 machinery used by the paper.
@@ -235,8 +253,10 @@ underlies the collection builtins' post-binding collection view. Those are
 two runtime code paths with the same one-boundary behaviour, unified here as
 one operation — not a claim that assignment deconstruction and collection
 builtins share one runtime call path. It is NOT applied by call-argument
-binding (`bindArgs`): a stored sequence or list value is re-spread for a call
-only by an explicit spread.
+binding (`bindArgs`): a call opens a lone written SEQUENCE only where it is a
+collector's entire allocated segment (`fuseCollectorSegment`), never a lone
+list and never for a fixed pattern; otherwise a stored value is re-spread for
+a call only by an explicit spread.
 
 (Before exact list values entered the algebra this operation was named
 `openLoneSequence` and opened lone sequence values only.)
@@ -247,11 +267,14 @@ def openLoneStructure : Supply -> Supply
 
 /--
 Characterizes exactly the supplies `openLoneStructure` rewrites: a single
-openable structure value — `[Val.seq ys]` or `[Val.list ys]`. On every supply
-with `loneStructure xs = false` the call and deconstruction receivers agree
-(`receivers_agree_outside_lone_structure`); on every supply with
-`loneStructure xs = true` they never share a successful binding
-(`receivers_never_same_on_lone_structure`).
+openable structure value — `[Val.seq ys]` or `[Val.list ys]`. On every FINAL
+supply with `loneStructure xs = false` the call and deconstruction receivers
+agree (`receivers_agree_outside_lone_structure`); on a lone written LIST they
+never share a successful binding (`receivers_never_same_on_lone_list`), on a
+lone written SEQUENCE they never share one for any pattern list with a fixed
+position (`receivers_never_same_on_lone_seq_with_fixed`) and coincide exactly
+at the lone collecting pattern (`receivers_agree_on_lone_seq_lone_collecting`),
+where the collector supply-boundary law opens the sequence one level.
 -/
 def loneStructure : Supply -> Bool
   | [v] => (structureItems? v).isSome
@@ -295,27 +318,113 @@ def bindPats (ps : List Pat) (xs : Supply) : Option Env :=
                      :: bindFixed back backVals)
   | _ => none
 
-/-- Call-argument binding consumes the call's item supply exactly as supplied.
+/--
+The supply origin of one call-argument slot — the ONE provenance fact the
+collector supply-boundary law reads (full model: `SupplyOrigin`).
 
-A lone collecting pattern is valid here: it models the single collecting
-parameter, `bindArgs [Pat.collecting x] xs`. The lone-collecting surface
-assignment `*x = 1, 2, 3` is the deconstruction receiver's instance of the same shape (see `bindDeconstruct`).
+- `written`: a non-spread written argument slot (a written argument, the
+  extension dot-call receiver, a whole callback item). It is one value; when
+  it is the collector's ENTIRE allocated segment and holds a sequence value,
+  that sequence may fuse with the collector's supply boundary.
+- `final`: an item that a boundary opening already produced — an explicit
+  spread item, a callback row slot, a sequence-value pattern item, a
+  loop-state slot, a reducer accumulator slot. Final items are collected
+  exactly.
+
+This is slot provenance, never result provenance: `written [Val.seq ys]`
+(`Coll((1, 2))`) and `final [Val.seq ys]` (`Coll([(1, 2)]*)`) hold the same
+value and bind differently, while every origin of that value — a literal, a
+property, a call result, a selection — is the same written slot.
 -/
-def bindArgs (ps : List Pat) (xs : Supply) : Option Env :=
-  bindPats ps xs
+inductive Origin where
+  | written
+  | final
+  deriving Repr, DecidableEq
+
+/-- A call's argument supply: each supplied item with its origin. -/
+abbrev CallSupply := List (Val × Origin)
+
+/-- The supply of non-spread written slots (`F(a, b, c)`). -/
+def written (xs : Supply) : CallSupply := xs.map (fun v => (v, Origin.written))
+
+/-- The supply of final items (`F(A*)`: the items explicit spread produced). -/
+def final (xs : Supply) : CallSupply := xs.map (fun v => (v, Origin.final))
+
+/-- The values of a call supply, origins forgotten. -/
+def values (xs : CallSupply) : Supply := xs.map Prod.fst
+
+/-- The one shape the collector supply-boundary law rewrites: a segment that is
+exactly one written slot holding a sequence value, projected to its items. -/
+def loneWrittenSeq? : CallSupply -> Option Supply
+  | [(Val.seq ys, Origin.written)] => some ys
+  | _ => none
+
+/--
+THE COLLECTOR SUPPLY-BOUNDARY LAW, on the segment allocated to a collecting
+binding: several supplied items are collected exactly as supplied; ONE lone
+non-spread sequence value may stand for the collector's whole supply, so its
+immediate items are the supply — exactly one level (`collectorSupply
+(written [Val.seq ys]) = ys`, hence `Coll((1, 2))` is `[1, 2]`,
+`Coll(((1, 2), 3))` is `[(1, 2), 3]`, and `Coll(())` is `[]` by the same rule);
+lists are exact values and never open here; a final item is collected
+unchanged even when it is the lone item (`Coll([(1, 2)]*)` is `[(1, 2)]`).
+-/
+def collectorSupply (segment : CallSupply) : Supply :=
+  match loneWrittenSeq? segment with
+  | some ys => ys
+  | none => values segment
+
+/--
+The collector supply-boundary law as a call-supply preparation for the shared
+binder: locate the collector's allocated segment exactly as `bindPats` will
+(`i` fixed patterns before it, `suffixCount` after it); when that segment is
+exactly ONE slot holding a written sequence value, replace the slot by the
+sequence's items; every other supply — no collector, an under-supplied call,
+a segment of several items, a lone list, a lone atom, a lone final item —
+keeps its values unchanged. Because front/back allocation is decided by
+counts, `bindPats ps (fuseCollectorSegment ps xs)` allocates the same fixed
+items as the unfused supply and gives the collector `collectorSupply` of its
+segment — which is exactly what the full model does inside
+`bindParameterPatternList` after allocation.
+-/
+def fuseCollectorSegment (ps : List Pat) (xs : CallSupply) : Supply :=
+  match ps.findIdx? Pat.isCollecting with
+  | none => values xs
+  | some i =>
+      let suffixCount := (ps.drop (i + 1)).length
+      let segment := (xs.drop i).take (xs.length - suffixCount - i)
+      match loneWrittenSeq? segment with
+      | some ys => values (xs.take i) ++ ys ++ values (xs.drop (xs.length - suffixCount))
+      | none => values xs
+
+/-- Call-argument binding: fixed front/back captures bind the supplied values
+unchanged, and the collector consumes its allocated segment through the
+collector supply-boundary law (`fuseCollectorSegment`), so
+`bindArgs [Pat.collecting x] (written [Val.seq ys])` binds `x` to
+`collect ys` while `bindArgs [Pat.collecting x] (final [Val.seq ys])` binds it
+to `collect [Val.seq ys]`. A lone collecting pattern is valid here: it models
+the single collecting parameter. The lone-collecting surface assignment
+`*x = 1, 2, 3` is the deconstruction receiver's instance of the same shape
+(see `bindDeconstruct`).
+-/
+def bindArgs (ps : List Pat) (xs : CallSupply) : Option Env :=
+  bindPats ps (fuseCollectorSegment ps xs)
 
 /--
 Assignment deconstruction applies lone-structure opening before the shared
 fixed/collecting binder: a lone sequence- or list-valued right-hand side `A` is
 opened into its items and matched element-by-element, so `x, y, z = A` splits
 `A`. At this receiver boundary, `bindDeconstruct ps [A]` therefore binds the
-same immediate supply that `bindArgs ps (items A)` receives. This is not an
-unrestricted surface rewrite from `x, y = A` to `x, y = A*`: a written
+same immediate supply that `bindArgs ps (final (items A))` receives. This is
+not an unrestricted surface rewrite from `x, y = A` to `x, y = A*`: a written
 deconstruction RHS is captured before this receiver runs, and that capture can
 erase a singleton sequence boundary before the receiver opens again (pinned by
 `deconstruct_spread_capture_can_open_further`). The opening remains
-deconstruction-specific: ordinary call binding (`bindArgs`) does not perform
-it, so `Add(A)` stays one argument while `Add(A*)` opens.
+deconstruction-specific: ordinary call binding (`bindArgs`) opens nothing for
+a FIXED pattern (`Add(A)` stays one argument while `Add(A*)` opens) and never
+opens a lone LIST; only a collector's lone written sequence slot fuses with
+the collector's own boundary (`fuseCollectorSegment`), which is why
+`Coll(A)` and `*x = A` agree for a sequence `A` and differ for a list.
 -/
 def bindDeconstruct (ps : List Pat) (xs : Supply) : Option Env :=
   bindPats ps (openLoneStructure xs)

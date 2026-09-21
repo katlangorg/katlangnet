@@ -309,10 +309,11 @@ def graceDotExtraArgs : Bool :=
 #guard graceDotExtraArgs
 
 -- Dot-call passes a value, and Grace inherits that unchanged: a NAMED
--- receiver and a WRITTEN GROUP receiver are each ONE collected item (count
--- 1), and only the spread marker supplies the rows (count 2). A written group
--- is not eligible for postfix Grace; the executable named edge remains the
--- same ordinary dot.
+-- receiver and a WRITTEN GROUP receiver are each ONE written argument slot —
+-- a sequence value that is the lone collector's whole segment, so the
+-- collector supply-boundary law opens it one level (count 2), exactly as the
+-- spread marker supplies the rows (count 2). A written group is not eligible
+-- for postfix Grace; the executable named edge remains the same ordinary dot.
 def graceDotCountItemsAlg : Algorithm :=
   algWithParameters [{ name := "items", kind := .collecting }] [] [] [
     .dotCall (.param "items") "count" none
@@ -324,18 +325,18 @@ def graceDotCountItemsRoot (edge : KatLang.Expr) : KatLang.Expr :=
     ("CountItems", graceDotCountItemsAlg)
   ] [edge])
 
-def namedReceiverSuppliesOneItem : Bool :=
+def namedReceiverOpensOneLevelAtLoneCollector : Bool :=
   match runFlat (graceDotCountItemsRoot
     (.dotCall (.resolve "S") "CountItems" none)) with
-  | Except.ok [1] => true
+  | Except.ok [2] => true
   | _ => false
 
-#guard namedReceiverSuppliesOneItem
+#guard namedReceiverOpensOneLevelAtLoneCollector
 
 def writtenGroupReceiverIsOneItemAndSpreadSuppliesRows : Bool :=
   (match runFlat (graceDotCountItemsRoot
     (.dotCall (.capture [.num 1, .num 2]) "CountItems" none)) with
-  | Except.ok [1] => true
+  | Except.ok [2] => true
   | _ => false) &&
   (match runFlat (graceDotCountItemsRoot
     (.dotCall (.sequenceSpread (.capture [.num 1, .num 2])) "CountItems" none)) with
@@ -420,17 +421,19 @@ def userCollectingDotCallCountItemsRoot : Algorithm :=
 
 -- Ordinary dot-call receiver injection — dot-call passes a value:
 -- `(1, 2).CountItems` is `CountItems((1, 2))`, the written group is ONE
--- argument, so `items = [(1, 2)]` and `items.count` is 1. Only the spread
--- marker supplies the rows: `(1, 2)*.CountItems` is `CountItems(1, 2)`,
--- `items = [1, 2]`, count 2.
-def userCollectingDotCallReceiverIsOneItem : Bool :=
+-- argument slot; as the lone collector's whole segment the sequence value
+-- opens one level (collector supply-boundary law), so `items = [1, 2]` and
+-- `items.count` is 2 — exactly the written call's binding. The spread marker
+-- supplies the rows as final items: `(1, 2)*.CountItems` is
+-- `CountItems(1, 2)`, `items = [1, 2]`, count 2.
+def userCollectingDotCallReceiverBindsLikeWrittenCall : Bool :=
   (match runFlat (.algorithmExpr userCollectingDotCallCountItemsRoot) with
-  | Except.ok [1] => true
+  | Except.ok [2] => true
   | _ => false) &&
   (match runFlat (.algorithmExpr (algPrivate [] [] [("CountItems", userCollectingDotCallCountItemsAlg)] [
     .call (.resolve "CountItems") [.capture [.num 1, .num 2]]
   ])) with
-  | Except.ok [1] => true
+  | Except.ok [2] => true
   | _ => false) &&
   (match runFlat (.algorithmExpr (algPrivate [] [] [("CountItems", userCollectingDotCallCountItemsAlg)] [
     .dotCall (.sequenceSpread (.capture [.num 1, .num 2])) "CountItems" none
@@ -438,7 +441,7 @@ def userCollectingDotCallReceiverIsOneItem : Bool :=
   | Except.ok [2] => true
   | _ => false)
 
-#guard userCollectingDotCallReceiverIsOneItem
+#guard userCollectingDotCallReceiverBindsLikeWrittenCall
 
 def userCollectingDotCallMeanAlg : Algorithm :=
   algWithParameters [{ name := "vector", kind := .collecting }] [] [] [
@@ -452,14 +455,22 @@ def userCollectingDotCallMeanRoot : Algorithm :=
 
 -- `(1, 2)*.Mean` is `Mean(1, 2)`: the spread supplies the rows as ordinary
 -- slots, `vector = [1, 2]`, and `vector.sum` is 3. The unspread `(1, 2).Mean`
--- is `Mean((1, 2))` — `vector = [(1, 2)]` — and the numeric sum rejects the
--- sequence element (dot-call passes a value; spread opens a value).
+-- is `Mean((1, 2))` — one written sequence slot that is the lone collector's
+-- whole segment, opened one level to the same `vector = [1, 2]` (dot-call
+-- passes a value; the collector law opens a lone written sequence). A LIST
+-- receiver never opens: `[1, 2].Mean` binds `vector = [[1, 2]]` and the
+-- numeric sum rejects the list element.
 def userCollectingDotCallSpreadReceiverSumsSuppliedItems : Bool :=
   (match runFlat (.algorithmExpr userCollectingDotCallMeanRoot) with
   | Except.ok [3] => true
   | _ => false) &&
   (match runFlat (.algorithmExpr (algPrivate [] [] [("Mean", userCollectingDotCallMeanAlg)] [
     .dotCall (.capture [.num 1, .num 2]) "Mean" none
+  ])) with
+  | Except.ok [3] => true
+  | _ => false) &&
+  (match runFlat (.algorithmExpr (algPrivate [] [] [("Mean", userCollectingDotCallMeanAlg)] [
+    .dotCall (.listLiteral [.num 1, .num 2]) "Mean" none
   ])) with
   | Except.error err => innermostIsBadArity err
   | _ => false)
@@ -551,14 +562,16 @@ def flatCollectingSlotCountValuesRoot : Algorithm :=
   ]
 
 -- `Count(Values)` with a multi-output property supplies ONE argument boundary
--- (a property reference is a value boundary), so the collecting parameter collects
--- `args = [(10, 20)]` and the count is 1; `Count(Values*)` supplies 2 items.
-def flatCollectingSlotMultiOutputPropertyIsOneCapturedSlot : Bool :=
+-- (a property reference is a value boundary): one written slot holding the
+-- sequence value `(10, 20)`. It is the lone collector's whole segment, so the
+-- collector supply-boundary law opens it one level — `args = [10, 20]`,
+-- count 2 — exactly what `Count(Values*)` supplies as final items.
+def flatCollectingSlotMultiOutputPropertyOpensOneLevel : Bool :=
   match runFlat (.algorithmExpr flatCollectingSlotCountValuesRoot) with
-  | Except.ok [1] => true
+  | Except.ok [2] => true
   | _ => false
 
-#guard flatCollectingSlotMultiOutputPropertyIsOneCapturedSlot
+#guard flatCollectingSlotMultiOutputPropertyOpensOneLevel
 
 def flatCollectingSlotSequenceValuePairAlg : Algorithm :=
   alg [] [] [] [.capture [.num 10, .num 20]]
@@ -568,14 +581,15 @@ def flatCollectingSlotCountSequenceValuePairRoot : Algorithm :=
     .call (.resolve "Count") [.resolve "Pair"]
   ]
 
--- A visible sequence-value property is likewise ONE captured argument slot:
--- `Count(Pair)` collects `args = [(10, 20)]`, so the count is 1.
-def flatCollectingSlotVisibleSequenceValueIsOneCapturedSlot : Bool :=
+-- A visible sequence-value property is likewise ONE written argument slot
+-- that opens one level at the lone collector: `Count(Pair)` collects
+-- `args = [10, 20]`, so the count is 2.
+def flatCollectingSlotVisibleSequenceValueOpensOneLevel : Bool :=
   match runFlat (.algorithmExpr flatCollectingSlotCountSequenceValuePairRoot) with
-  | Except.ok [1] => true
+  | Except.ok [2] => true
   | _ => false
 
-#guard flatCollectingSlotVisibleSequenceValueIsOneCapturedSlot
+#guard flatCollectingSlotVisibleSequenceValueOpensOneLevel
 
 def flatCollectingSlotSumAlg : Algorithm :=
   algWithParameters [
@@ -590,15 +604,16 @@ def flatCollectingSlotSumNormalRoot : Algorithm :=
     .call (.resolve "Sum") [.resolve "Values", .num 7]
   ]
 
--- `Sum(Values, 7)`: the suffix takes `last = 7` and the collecting parameter collects the one
--- grouped argument (`values = [(10, 20)]`), so `values.sum` hits the numeric
--- element constraint. `Sum(Values*, 7)` below is the item-supplying form.
-def flatCollectingSlotGroupedMiddleArgumentIsNumericConstraintError : Bool :=
-  match runResult (.algorithmExpr flatCollectingSlotSumNormalRoot) with
-  | Except.error err => innermostIsBadArity err
+-- `Sum(Values, 7)`: the suffix takes `last = 7` FIRST, and the segment left
+-- to the collector is the one written sequence slot `(10, 20)`, which opens
+-- one level — `values = [10, 20]`, so the sum is 37, exactly as for the
+-- item-supplying `Sum(Values*, 7)`.
+def flatCollectingSlotGroupedMiddleArgumentOpensAfterSuffix : Bool :=
+  match runFlat (.algorithmExpr flatCollectingSlotSumNormalRoot) with
+  | Except.ok [37] => true
   | _ => false
 
-#guard flatCollectingSlotGroupedMiddleArgumentIsNumericConstraintError
+#guard flatCollectingSlotGroupedMiddleArgumentOpensAfterSuffix
 
 def flatCollectingSlotSumExplicitRoot : Algorithm :=
   algPrivate [] [] [("Values", flatCollectingSlotValuesAlg), ("Sum", flatCollectingSlotSumAlg)] [
@@ -617,9 +632,10 @@ def flatCollectingSlotSumSingleNormalRoot : Algorithm :=
     .call (.resolve "Sum") [.resolve "Values"]
   ]
 
--- Sum(*values, last) receives one sequence-valued argument. Call-argument
--- binding does not implicitly open it, so `last` receives the sequence value and
--- the old numeric body no longer succeeds.
+-- Sum(*values, last) receives one sequence-valued argument. Fixed positions
+-- are allocated before the collector law reads its segment, so `last`
+-- receives the sequence value whole (the collector's segment is empty) and
+-- the numeric body fails.
 def flatCollectingSlotNormalSegmentDoesNotSatisfySuffixBySpreading : Bool :=
   match runResult (.algorithmExpr flatCollectingSlotSumSingleNormalRoot) with
   | Except.error err => innermostIsAnyTypeMismatch err
@@ -646,11 +662,11 @@ def flatCollectingSlotSumDotSuffixRoot : Algorithm :=
     .dotCall (.resolve "Values") "Sum" (some [.num 7])
   ]
 
--- `Values.Sum(7)` is `Sum(Values, 7)`: the receiver is one leading argument
--- slot, so the grouped-middle numeric-constraint error matches the plain call.
+-- `Values.Sum(7)` is `Sum(Values, 7)`: the receiver is one leading written
+-- slot, so the same collector-segment opening gives 37, matching the plain call.
 def flatCollectingSlotDotReceiverWithSuffixMatchesGroupedCall : Bool :=
-  match runResult (.algorithmExpr flatCollectingSlotSumDotSuffixRoot) with
-  | Except.error err => innermostIsBadArity err
+  match runFlat (.algorithmExpr flatCollectingSlotSumDotSuffixRoot) with
+  | Except.ok [37] => true
   | _ => false
 
 #guard flatCollectingSlotDotReceiverWithSuffixMatchesGroupedCall
@@ -814,14 +830,18 @@ def explicitCallSiteSequenceValueMatrixRoot : Algorithm :=
     .call (.resolve "CountSequenceValue2") [explicitCallSiteSequenceValueRightNested]
   ]
 
--- CountSequenceValue1 (flat collecting) collects the ONE grouped argument, so both
--- written depths count 1. CountSequenceValue2/3 (sequence-value patterns) open
--- exactly as many written grouping levels as they declare: at matching depth
--- the spread items collect to a three-element collected list (count 3), while one
--- EXTRA written level leaves a single grouped item in the collected list (count 1).
+-- CountSequenceValue1 (flat collecting) receives ONE written sequence slot
+-- that is the lone collector's whole segment, so the collector supply-boundary
+-- law opens it one level at both written depths (the redundant grouping
+-- normalizes away first): count 3. CountSequenceValue2/3 (sequence-value
+-- patterns) open exactly as many written grouping levels as they declare, and
+-- the items a pattern opens are FINAL: at matching depth the items collect to
+-- a three-element collected list (count 3), while one EXTRA written level
+-- leaves a single grouped item in the collected list (count 1) — the collector
+-- law never opens a pattern-opened item a second time.
 def sequenceValueCollectingParameterRespectsExplicitCallSiteSequenceValueDepth : Bool :=
   match runFlat (.algorithmExpr explicitCallSiteSequenceValueMatrixRoot) with
-  | Except.ok [1, 1, 3, 1, 1, 3, 3, 2, 2] => true
+  | Except.ok [3, 3, 3, 1, 1, 3, 3, 2, 2] => true
   | _ => false
 
 #guard sequenceValueCollectingParameterRespectsExplicitCallSiteSequenceValueDepth

@@ -14,10 +14,12 @@ namespace KatLang.Tests;
 /// <c>F(R*, args)</c> — same value, same emitted count, same error kind, and the same
 /// outcome under the generic, the optimized, and the async strategies. The receiver's
 /// origin (literal, group, brace block, property, call result, conditional, selection)
-/// never changes the argument it supplies, a dot receiver is never opened merely because
-/// the first parameter collects, and the receiver is evaluated exactly once, first.
-/// Together with the selection rule: selection chooses a value, dot-call passes a value,
-/// spread opens a value.</para>
+/// never changes the argument it supplies, a collecting callee binds the receiver by the
+/// collector supply-boundary law exactly as it binds the written argument (a lone
+/// sequence-valued receiver opens one level, a list stays exact — see
+/// <see cref="CollectorSupplyBoundaryTests"/>), and the receiver is evaluated exactly
+/// once, first. Together with the selection rule: selection chooses a value, dot-call
+/// passes a value, spread opens a value.</para>
 ///
 /// <para>Lean: <c>callLexicalWithReceiverCounted</c> dispatches
 /// <c>prepareLexicalDotCallArgs</c> through the one <c>evalResolvedCallCounted</c>; laws
@@ -164,23 +166,36 @@ public class DotCallValueBoundaryTests
         }
     }
 
-    // ── The receiver is never opened implicitly; spread opens exactly one boundary ──
+    // ── The receiver is one written slot bound by the collector law; spread opens exactly one boundary ──
 
     [Theory]
     [MemberData(nameof(Receivers))]
-    public void CollectingCallee_CollectsTheReceiverAsOneItem_AndSpreadOpensOneBoundary(string receiver)
+    public void CollectingCallee_BindsTheReceiverByTheCollectorLaw_AndSpreadOpensOneBoundary(string receiver)
     {
-        // Unspread: `Coll(R)` is `[R]` for every receiver value — including `()`
-        // (one written slot) — and the dotted spelling is that same list.
+        // Unspread: `R.Coll` is `Coll(R)` — one written slot at a lone collector, so the
+        // collector supply-boundary law decides: a sequence-valued receiver (`()` and
+        // `P` included) opens one level to its items, every other value is the one
+        // collected item. Beside a written argument the receiver is collected exactly.
         var value = KatLangEngine.Run(Definitions + receiver);
         var receiverValue = Assert.IsType<RunResult.Success>(value).Value;
+        var expectedCollected = receiverValue is Result.SequenceValue sequence
+            ? sequence.Items
+            : [receiverValue];
         var collected = Assert.IsType<RunResult.Success>(KatLangEngine.Run(DottedSource(receiver, "Coll", "", spread: false)));
         var collectedList = Assert.IsType<Result.ListValue>(collected.Value);
-        var item = Assert.Single(collectedList.Items);
-        Assert.True(Result.ValueComparer.Equals(receiverValue, item),
-            $"`{receiver}.Coll` collected {collected.ToDisplayString()} instead of the one receiver value");
+        Assert.Equal(expectedCollected.Count, collectedList.Items.Count);
+        for (var i = 0; i < expectedCollected.Count; i++)
+            Assert.True(Result.ValueComparer.Equals(expectedCollected[i], collectedList.Items[i]),
+                $"`{receiver}.Coll` collected {collected.ToDisplayString()} instead of the collector-law binding");
 
-        // Spread: exactly one boundary — the receiver's SpreadItems view.
+        var beside = Assert.IsType<RunResult.Success>(KatLangEngine.Run(DottedSource(receiver, "Coll", "(9)", spread: false)));
+        var besideList = Assert.IsType<Result.ListValue>(beside.Value);
+        Assert.Equal(2, besideList.Items.Count);
+        Assert.True(Result.ValueComparer.Equals(receiverValue, besideList.Items[0]),
+            $"`{receiver}.Coll(9)` collected {beside.ToDisplayString()} instead of the exact receiver value beside 9");
+
+        // Spread: exactly one boundary — the receiver's SpreadItems view, collected
+        // exactly as final items (a lone spread-produced sequence value stays one item).
         var spreadCollected = Assert.IsType<RunResult.Success>(KatLangEngine.Run(DottedSource(receiver, "Coll", "", spread: true)));
         var spreadList = Assert.IsType<Result.ListValue>(spreadCollected.Value);
         var expectedItems = receiverValue.SpreadItems();
@@ -426,7 +441,10 @@ public class DotCallValueBoundaryTests
     [InlineData("", "range(1, 4)", "4")]
     public void FilterCount_ActuallyFuses_AndKeepsCallbackValues(string definitions, string receiver, string expected)
     {
-        var prefix = definitions + "\nKeep(x) = x.Coll == [x]\nColl(*xs) = xs\n";
+        // The predicate observes the callback item through a collecting dotted receiver
+        // beside a written argument, so the item is collected EXACTLY and compared with
+        // the written list `[x, 9]` — the fused path must see the same item value.
+        var prefix = definitions + "\nKeep(x) = x.Coll(9) == [x, 9]\nColl(*xs) = xs\n";
         var dotted = prefix + receiver + ".filter(Keep).count";
         var direct = prefix + "count(filter(" + receiver + ", Keep))";
         var sequence = new SequencePipelineDiagnostics();
@@ -439,10 +457,14 @@ public class DotCallValueBoundaryTests
     }
 
     [Fact]
-    public async Task PlannedLoop_AndHigherOrderFallback_PreserveTheReceiverBoundary()
+    public async Task PlannedLoop_AndHigherOrderFallback_ApplyTheCollectorLawLikeDirectCalls()
     {
+        // `Apply(r, f) = r.f` is `f(r)`: the receiver parameter is ONE written slot of
+        // the callback call, so a sequence-valued receiver opens one level at the lone
+        // collector (`()` to zero items, `(1, 2)` to two) while a list stays one item —
+        // identically inside the planned loop, the generic path, and the async twin.
         const string definitions = "Coll(*xs) = xs\nApply(r, f) = r.f\n";
-        foreach (var receiver in new[] { "()", "(1, 2)", "[]", "[1, 2]" })
+        foreach (var (receiver, expected) in new[] { ("()", "0"), ("(1, 2)", "6"), ("[]", "3"), ("[1, 2]", "3") })
         {
             var prefix = definitions + $"Step(n) = n + count(Apply({receiver}, Coll))\n";
             var source = prefix + "repeat(Step, 3, 0)";
@@ -454,7 +476,7 @@ public class DotCallValueBoundaryTests
             var (asyncResult, _) = await AsyncEvaluationHarness.Complete(
                 Evaluator.RunCountedObservedAsync(ast, zeroArgPropertyResultCache: cache));
             Assert.True(planned.IsOk);
-            Assert.Equal("3", Assert.IsType<Result.Atom>(planned.Value.Value).Value.ToString());
+            Assert.Equal(expected, Assert.IsType<Result.Atom>(planned.Value.Value).Value.ToString());
             Assert.Equal(AsyncEvaluationHarness.NeutralOf(generic), AsyncEvaluationHarness.NeutralOf(planned));
             Assert.Equal(AsyncEvaluationHarness.NeutralOf(generic), AsyncEvaluationHarness.NeutralOf(asyncResult));
             Assert.Equal(1, loop.GetSnapshot().OptimizedLoopHits);

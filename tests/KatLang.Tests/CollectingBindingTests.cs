@@ -163,8 +163,15 @@ public class CollectingBindingTests
         AssertCollects(inspect + "Inspect(1, 2, 3)", List(Atom(1), Atom(2), Atom(3)));
         AssertCollects(inspect + "Inspect([1, 2])", List(List(Atom(1), Atom(2))));
         AssertCollects(inspect + "Inspect([1, 2]*)", List(Atom(1), Atom(2)));
-        AssertCollects(inspect + "Inspect((1, 2))", List(Seq(Atom(1), Atom(2))));
+        // The collector supply-boundary law: a lone written sequence value is the
+        // collector's whole segment and opens one level; beside another slot it
+        // is collected exactly, and the opening is never recursive.
+        AssertCollects(inspect + "Inspect((1, 2))", List(Atom(1), Atom(2)));
         AssertCollects(inspect + "Inspect((1, 2)*)", List(Atom(1), Atom(2)));
+        AssertCollects(inspect + "Inspect((1, 2), 3)", List(Seq(Atom(1), Atom(2)), Atom(3)));
+        AssertCollects(inspect + "Inspect(((1, 2), 3))", List(Seq(Atom(1), Atom(2)), Atom(3)));
+        // A spread-produced item is final, even when it is the lone item.
+        AssertCollects(inspect + "Inspect([(1, 2)]*)", List(Seq(Atom(1), Atom(2))));
     }
 
     [Theory]
@@ -173,19 +180,24 @@ public class CollectingBindingTests
     [InlineData("CountArgs(1, 2)", 2)]
     [InlineData("CountArgs([10, 20])", 1)]
     [InlineData("CountArgs([10, 20]*)", 2)]
-    [InlineData("CountArgs((10, 20))", 1)]
+    [InlineData("CountArgs((10, 20))", 2)]
     [InlineData("CountArgs((10, 20)*)", 2)]
-    public void VariadicCounting_ObservesSuppliedSlots(string call, decimal expected)
+    [InlineData("CountArgs((10, 20), 30)", 2)]
+    [InlineData("CountArgs(((10, 20), 30))", 2)]
+    [InlineData("CountArgs([(10, 20)]*)", 1)]
+    public void VariadicCounting_ObservesTheCollectorSupply(string call, decimal expected)
         => AssertCollects("CountArgs(*items) = items.count\n" + call, Atom(expected));
 
-    // ── Empty-structure arguments: unspread stays a visible slot, spread vanishes ─
+    // ── Empty-structure arguments: a lone written `()` opens to nothing, `[]` stays exact ─
 
     [Fact]
-    public void CollectingCapture_EmptyStructureArgumentsAreVisibleSlotsUntilSpread()
+    public void CollectingCapture_EmptyStructureArgumentsFollowTheCollectorLaw()
     {
         const string inspect = "Inspect(*items) = items\n";
-        AssertCollects(inspect + "Inspect(())", List(Seq()));
+        AssertCollects(inspect + "Inspect(())", List());
+        AssertCollects(inspect + "Inspect((), 3)", List(Seq(), Atom(3)));
         AssertCollects(inspect + "Inspect(()*)", List());
+        AssertCollects(inspect + "Inspect(()*, 3)", List(Atom(3)));
         AssertCollects(inspect + "Inspect([])", List(List()));
         AssertCollects(inspect + "Inspect([]*)", List());
     }
@@ -202,16 +214,21 @@ public class CollectingBindingTests
     }
 
     [Fact]
-    public void MixedPatterns_GroupedMiddleStaysOneCollectedSlotUntilSpread()
+    public void MixedPatterns_GroupedMiddleOpensOneLevelWhenItIsTheWholeSegment()
     {
-        // Direct user call: the grouped middle argument is ONE collected slot
-        // preserving its boundary; explicit spread supplies the operand's items.
+        // Direct user call: the fixed prefix and suffix are allocated first, and a
+        // lone grouped middle argument is then the collector's whole segment, so
+        // it opens one level — exactly like the explicit spread — while a grouped
+        // argument beside another middle slot is collected exactly.
         AssertCollects(
             "Middle(first, *middle, last) = middle\nMiddle(10, (20, 30), 40)",
-            List(Seq(Atom(20), Atom(30))));
+            List(Atom(20), Atom(30)));
         AssertCollects(
             "Middle(first, *middle, last) = middle\nMiddle(10, (20, 30)*, 40)",
             List(Atom(20), Atom(30)));
+        AssertCollects(
+            "Middle(first, *middle, last) = middle\nMiddle(10, (20, 30), 35, 40)",
+            List(Seq(Atom(20), Atom(30)), Atom(35)));
         AssertCollects(
             "Middle(first, *middle, last) = middle\nMiddle(10, [20, 30], 40)",
             List(List(Atom(20), Atom(30))));
@@ -231,8 +248,11 @@ public class CollectingBindingTests
         AssertCollects(defs + "Forward(1, 2)", List(Atom(1), Atom(2)));
         AssertCollects(defs + "Forward([1, 2])", List(List(Atom(1), Atom(2))));
         AssertCollects(defs + "Forward([1, 2]*)", List(Atom(1), Atom(2)));
-        AssertCollects(defs + "Forward((1, 2))", List(Seq(Atom(1), Atom(2))));
+        // The lone written pair opens at Forward's collector; the spread then
+        // re-supplies exactly the collected [1, 2] as final items.
+        AssertCollects(defs + "Forward((1, 2))", List(Atom(1), Atom(2)));
         AssertCollects(defs + "Forward((1, 2)*)", List(Atom(1), Atom(2)));
+        AssertCollects(defs + "Forward((1, 2), 3)", List(Seq(Atom(1), Atom(2)), Atom(3)));
     }
 
     [Fact]
@@ -246,16 +266,18 @@ public class CollectingBindingTests
     // ── Implicit forwarding: spread decided by the SOURCE binding kind ──────
     // The implicit-argument resolver re-spreads a forwarded value only when the
     // caller-side binding is itself a collecting binding's exact list. An ordinary source
-    // parameter always forwards as ONE argument, even into a collecting
-    // destination.
+    // parameter always forwards as ONE written argument, even into a collecting
+    // destination — where the collector supply-boundary law then applies (a
+    // forwarded sequence value opens one level, a list stays one item).
 
     [Fact]
     public void ImplicitForwarding_OrdinarySourceParameterIsOneArgument()
     {
         const string defs = "Target(*items) = items\nUse(items) = Target\n";
         AssertCollects(defs + "Use([1, 2])", List(List(Atom(1), Atom(2))));
-        AssertCollects(defs + "Use((1, 2))", List(Seq(Atom(1), Atom(2))));
+        AssertCollects(defs + "Use((1, 2))", List(Atom(1), Atom(2)));
         AssertCollects(defs + "Use(7)", List(Atom(7)));
+        AssertCollects("Target(*items) = items\nUse(items, z) = Target\nUse((1, 2), 3)", List(Atom(1), Atom(2)));
     }
 
     [Fact]
@@ -381,13 +403,16 @@ public class CollectingBindingTests
     }
 
     [Fact]
-    public void SingleVariadicMapCallback_PreservesElementKindExactly()
+    public void SingleVariadicMapCallback_BindsEachElementByTheCollectorLaw()
     {
+        // A whole callback item is ONE written slot of the callback call: list
+        // elements stay exact, sequence elements open one level.
         const string defs = "Collect(*items) = items\n";
         AssertCollects(defs + "[[1, 2]].map(Collect)", List(List(List(Atom(1), Atom(2)))));
-        AssertCollects(defs + "[(1, 2)].map(Collect)", List(List(Seq(Atom(1), Atom(2)))));
+        AssertCollects(defs + "[(1, 2)].map(Collect)", List(List(Atom(1), Atom(2))));
+        AssertCollects(defs + "[((1, 2), 3)].map(Collect)", List(List(Seq(Atom(1), Atom(2)), Atom(3))));
         AssertCollects(defs + "[[]].map(Collect)", List(List(List())));
-        AssertCollects(defs + "[()].map(Collect)", List(List(Seq())));
+        AssertCollects(defs + "[()].map(Collect)", List(List()));
     }
 
     [Fact]
@@ -476,13 +501,15 @@ public class CollectingBindingTests
     // ── Receiver distinction ────────────────────────────────────────────────
 
     [Fact]
-    public void CallReceiver_PreservesArgumentBoundaries()
+    public void CallReceiver_KeepsListsExact_AndOpensALoneSequenceOneLevel()
     {
         const string defs = "Inspect(*items) = items\nA = [1, 2, 3]\nB = (1, 2, 3)\n";
         AssertCollects(defs + "Inspect(A)", List(List(Atom(1), Atom(2), Atom(3))));
         AssertCollects(defs + "Inspect(A*)", List(Atom(1), Atom(2), Atom(3)));
-        AssertCollects(defs + "Inspect(B)", List(Seq(Atom(1), Atom(2), Atom(3))));
+        AssertCollects(defs + "Inspect(B)", List(Atom(1), Atom(2), Atom(3)));
         AssertCollects(defs + "Inspect(B*)", List(Atom(1), Atom(2), Atom(3)));
+        AssertCollects(defs + "Inspect(B, 0)", List(Seq(Atom(1), Atom(2), Atom(3)), Atom(0)));
+        AssertCollects(defs + "Inspect(B*, 0)", List(Atom(1), Atom(2), Atom(3), Atom(0)));
     }
 
     [Fact]
@@ -500,18 +527,22 @@ public class CollectingBindingTests
     }
 
     [Fact]
-    public void InlineGroupDottedReceiver_IsOneCollectedSlot()
+    public void InlineGroupDottedReceiver_IsOneWrittenSlotBoundByTheCollectorLaw()
     {
         // An inline group receiver is one sequence value and, like every
-        // receiver, the ONE leading argument: the collector collects [(1, 2)].
-        // Only the spread marker supplies the items — `(1, 2)*.Inspect` is
-        // `Inspect(1, 2)`.
+        // receiver, the ONE leading argument — `(1, 2).Inspect` is
+        // `Inspect((1, 2))` — so the lone collector opens it one level to
+        // [1, 2], exactly like the spread `(1, 2)*.Inspect` = `Inspect(1, 2)`;
+        // beside a written argument the group is one collected item.
         AssertCollects(
             "Inspect(*items) = items\n(1, 2).Inspect",
-            List(Seq(Atom(1), Atom(2))));
+            List(Atom(1), Atom(2)));
         AssertCollects(
             "Inspect(*items) = items\n(1, 2)*.Inspect",
             List(Atom(1), Atom(2)));
+        AssertCollects(
+            "Inspect(*items) = items\n(1, 2).Inspect(3)",
+            List(Seq(Atom(1), Atom(2)), Atom(3)));
     }
 
     [Fact]
@@ -622,7 +653,7 @@ public class CollectingBindingTests
         { "Inspect(*items) = items\nInspect()", "[]" },
         { "Inspect(*items) = items\nInspect(7)", "[7]" },
         { "Inspect(*items) = items\nInspect([1, 2])", "[[1, 2]]" },
-        { "Inspect(*items) = items\nInspect((1, 2))", "[(1, 2)]" },
+        { "Inspect(*items) = items\nInspect((1, 2), 3)", "[(1, 2), 3]" },
         { "first, *rest = [1, 2, 3]\nrest", "[2, 3]" },
         // forwarding path: the re-collected list must be just as protected
         { "Target(*items) = items\nForward(*items) = Target(items*)\nForward([1, 2])", "[[1, 2]]" },
