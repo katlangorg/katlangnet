@@ -40,17 +40,6 @@ public static partial class Evaluator
     }
 
     /// <summary>
-    /// Evaluate <c>target:selector</c> through the shared one-level projected
-    /// selection semantics.
-    /// Construction preserves structure; selection projects content.
-    /// This helper is the single owner of index-expression error spans: every
-    /// error it returns carries the full <c>target:selector</c> span unless it
-    /// already carries a more specific inner one (<see cref="WithSpan"/> only
-    /// fills a missing span, so a selector sub-expression such as
-    /// <c>1 div 0</c> keeps its own). Callers therefore need no wrapping of
-    /// their own, and plain and counted evaluation report identical spans.
-    /// </summary>
-    /// <summary>
     /// Lean: <c>resultToExpr</c>. Reify a normalized result as an expression that
     /// evaluates back to the same shape.
     /// </summary>

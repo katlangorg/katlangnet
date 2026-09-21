@@ -84,7 +84,7 @@ public static class ConcurrencyCorpus
 
     public const string Scalar = "6 * 7";
 
-    /// <summary>Capture/spread interplay with index projection.</summary>
+    /// <summary>Capture/spread interplay with index selection.</summary>
     public const string CaptureSpread = "S = 1, (2, 3), 4\nS*, (S:1)*";
 
     /// <summary>Per-call brace scopes: each call mints fresh scope contexts

@@ -406,7 +406,7 @@ def builtinSpreadListFollowsFixedArity : Bool :=
 #guard builtinSpreadListFollowsFixedArity
 
 -- Indexing returns the selected element exactly as stored: selecting a list
--- ITEM from a sequence preserves the list (projection does not erase
+-- ITEM from a sequence preserves the list (selection never erases
 -- listness).
 def indexingPreservesSelectedList : Bool :=
   match runResult (.algorithmExpr (algPrivate [] []
@@ -449,7 +449,7 @@ def listIndexingNestedElementStaysList : Bool :=
 
 #guard listIndexingNestedElementStaysList
 
--- Chained projection peels one boundary per `:`: `[[1, 2], [3, 4]]:1:0` is `3`.
+-- Chained selection peels one boundary per `:`: `[[1, 2], [3, 4]]:1:0` is `3`.
 def listIndexingChainedSelectsOneLevelAtATime : Bool :=
   match runResult (.algorithmExpr (alg [] [] []
     [.index (.index (.listLiteral
@@ -459,23 +459,34 @@ def listIndexingChainedSelectsOneLevelAtATime : Bool :=
 
 #guard listIndexingChainedSelectsOneLevelAtATime
 
--- A selected SEQUENCE element inside a list projects one level with its item
--- count, exactly like the sequence-target twin; a selected `()` element stays
--- one visible empty row at root.
-def listIndexingSequenceElementProjectsCounted : Bool :=
+-- A selected SEQUENCE element inside a list is ONE intact value with emitted
+-- count 1 (selection is a value boundary), exactly like the sequence-target
+-- twin; only the explicit spread of the selection supplies its two items; a
+-- selected `()` element stays one visible empty row at root.
+def listIndexingSequenceElementIsOneValue : Bool :=
   (match runCountedProgram (.algorithmExpr (alg [] [] []
       [.index (.listLiteral
         [.capture [.num 1, .num 2],
          .capture [.num 3, .num 4]]) (.num 0)])) with
+   | .ok (Result.sequenceValue [Result.atom 1, Result.atom 2], 1) => true | _ => false) &&
+  (match runCountedProgram (.algorithmExpr (alg [] [] []
+      [.index (.capture
+        [.capture [.num 1, .num 2],
+         .capture [.num 3, .num 4]]) (.num 0)])) with
+   | .ok (Result.sequenceValue [Result.atom 1, Result.atom 2], 1) => true | _ => false) &&
+  (match runCountedProgram (.algorithmExpr (alg [] [] []
+      [.sequenceSpread (.index (.listLiteral
+        [.capture [.num 1, .num 2],
+         .capture [.num 3, .num 4]]) (.num 0))])) with
    | .ok (Result.sequenceValue [Result.atom 1, Result.atom 2], 2) => true | _ => false) &&
   (match runCountedProgram (.algorithmExpr (alg [] [] []
       [.index (.listLiteral [.emptySequence 0]) (.num 0)])) with
    | .ok (Result.sequenceValue [], 1) => true | _ => false)
 
-#guard listIndexingSequenceElementProjectsCounted
+#guard listIndexingSequenceElementIsOneValue
 
--- Empty and out-of-range list projection is the existing out-of-range
--- projection error: `[]:0`, `[1, 2]:2`, and `[1, 2]:100` are badIndex, and a
+-- Empty and out-of-range list selection is the existing out-of-range
+-- index error: `[]:0`, `[1, 2]:2`, and `[1, 2]:100` are badIndex, and a
 -- negative selector stays badIndex for list targets too. A selector beyond
 -- the C# host int range (3000000000) is an ordinary out-of-range badIndex in
 -- the unbounded-Int model — the twin of the C# int-cast guard — for both

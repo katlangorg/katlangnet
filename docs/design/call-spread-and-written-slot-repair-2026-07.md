@@ -70,8 +70,10 @@ sequence/list structure, emitted counts, written-slot reification, and binding o
 **Rule.** A non-spread expression occupying one written value slot — a
 list-literal element or a written sequence-value pattern argument item —
 contributes exactly ONE persistent value (the value its counted supply
-denotes), even when the expression emitted zero or many items (index
-projections, loop results, counted callback parameters). Only an explicit
+denotes), even when the expression emitted zero or many items (loop results;
+in July 2026 also index projections and counted callback parameters, which
+since September 2026 are value boundaries themselves — selection never emits
+a supply). Only an explicit
 `spread(value)` / `value.spread` slot
 opens a value into the surrounding slots. Owner:
 `EvalExplicitSequenceValueExprSlots` / `evalExplicitSequenceValueExprSlots`
@@ -90,8 +92,11 @@ opens a value into the surrounding slots. Owner:
 This matches what capture (`z = (S:0, 5)`), call arguments (`G(S:0, 5)`),
 root rows beside other rows, and deconstruction always did. Root/body output
 rows and loop step outputs are NOT written value slots and keep their
-multi-item emission semantics (the lone-root projection display rule is
-unchanged).
+multi-item emission semantics. *(The July 2026 "lone-root projection display
+rule" — a lone `S:0` root row displaying its projected items — was removed in
+September 2026: selection is a value boundary, so `S:0` is one row everywhere.
+The "Before" column above is the pre-F02 state; `[S:0, 5]` is `[(1, 2), 5]` under
+both F02 and the current rule.)*
 
 ## 3. Reduce initial accumulator is one written slot (F09)
 
@@ -196,7 +201,8 @@ colliding with the element separator. Display-only; no Lean impact.
   `call-spread-into-conditional-clauses`,
   `call-spread-dispatches-before-clause-selection`,
   `call-spread-into-patterned-callee`,
-  `list-written-slot-reifies-projection`,
+  `list-written-slot-reifies-projection` (renamed
+  `list-written-slot-reifies-selection` in September 2026),
   `reduce-empty-initial-is-one-value`.
 - New real-model theorems: `bindCallableArguments_mixed_fixed_only_empty_segment`,
   `bindCallableArguments_mixed_below_fixed_minimum_fails`.

@@ -714,15 +714,18 @@ public class ZeroArgPropertyResultCacheTests
     [Fact]
     public void LoopOptimizer_MultiEmissionHandoff_DoesNotReplayCompletedIterationPropertyAccess()
     {
+        // The explicit spread `(S:0)*` is the multi-emitting state expression: selection
+        // alone is a value boundary (`S:0` is ONE state slot), so only the spread grows the
+        // generic state-slot vector and forces the mid-iteration handoff under test.
         var repeatSource = """
             Tick = 42
             S = ((1, 2), (3, 4))
-            repeat({a + b + Tick, S:0}, 1, 0, 0)
+            repeat({a + b + Tick, (S:0)*}, 1, 0, 0)
             """;
         var whileSource = """
             Tick = 42
             S = ((1, false), (2, 2))
-            while({a + Tick, S:0}, 9)
+            while({a + Tick, (S:0)*}, 9)
             """;
 
         foreach (var source in new[] { repeatSource, whileSource })

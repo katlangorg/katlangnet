@@ -1210,8 +1210,9 @@ namespace Result
       A list value stays OPAQUE here: it is one item, so non-spread consumers
       (boundary re-counting, call binding) treat a list as a single exact
       value. Only the spread marker (`spreadItems`), deconstruction binding
-      (`structureItems?`), the indexing `:` projection target view
-      (`projectionItems`), and the post-binding builtin collection view
+      (`structureItems?`), the indexing `:` TARGET position view
+      (`projectionItems` — the target's positions, never the selected
+      element), and the post-binding builtin collection view
       (`builtinCollectionItems`, applied to the bound `collection` argument)
       open a list boundary. -/
   def toItems : Result -> List Result
@@ -1240,17 +1241,6 @@ namespace Result
     | listValue rs => some rs
     | _ => none
 
-  /-- Construction preserves structure; selection projects content.
-      Project one selected value to the top-level content it denotes at the
-      current boundary, without recursively flattening nested sequence elements.
-
-      Atoms and strings stay atomic. Sequence values project exactly one level
-      to their immediate members, and the accompanying count records how many
-      top-level values that projection emits. -/
-  def projectSelectedContent (selected : Result) : Result × Nat :=
-    let items := selected.toItems
-    (normalize (sequenceValue items), items.length)
-
   /-- Count emitted top-level values when a result is already in hand.
       Empty results emit 0. Any non-empty atomic, string, or sequence value
       counts as one value. List values ALWAYS count as one visible value,
@@ -1264,24 +1254,32 @@ namespace Result
     | sequenceValue [] => 0
     | _ => 1
 
-  /-- Projection target view for indexing `:`: a sequence value or exact list
-      value opens to its immediate elements; every other value follows
-      `toItems`. This opens the TARGET boundary only — the selected element
-      itself is returned exactly as stored, so a nested list element stays one
-      opaque list. C#: `Result.ProjectionItems`. -/
+  /-- Selectable-position view of an indexing `:` TARGET: a sequence value or
+      exact list value offers its immediate elements as positions; every other
+      value follows `toItems` (a scalar offers itself as the single position).
+      This view decides WHICH positions exist and never opens the selected
+      element, which `select?` returns exactly as stored (a nested list element
+      stays one opaque list, a nested sequence element one sequence value).
+      C#: `Result.ProjectionItems`. -/
   def projectionItems : Result -> List Result
     | listValue rs => rs
     | r => r.toItems
 
-  /-- Construction preserves structure; selection projects content.
-      `:` selects one top-level item from a sequence or exact list target and
-      projects that item's content one level: atoms stay atomic, sequence
-      values yield their immediate members, and nested sequence and list
-      values remain intact. -/
-  def select? (r : Result) (i : Nat) : Option (Result × Nat) :=
-    match r.projectionItems[i]? with
-    | some selected => some (projectSelectedContent selected)
-    | none => none
+  /-- SELECTION IS A VALUE BOUNDARY (September 2026): `:` selects one
+      top-level position of a sequence or exact list target and returns the
+      stored element as ONE value — it never opens it. A selected sequence
+      value stays one sequence value, a selected list stays one exact list, and
+      the selected value's origin is forgotten: the `.index` arm of
+      `evalCounted` re-counts it through the ordinary value boundary
+      (`Result.valueCount`), so `()` selected through any route emits zero
+      values and everything else emits one. Only the spread marker
+      (`spreadItems`) opens a selected value. `first`/`last`
+      (`evalFirstCounted`/`evalLastCounted`) and higher-order callback items
+      (`countedSequenceCallbackItem`) select through the same rule. Laws:
+      `select_is_a_value_boundary`, `first_is_select_zero`, `last_is_select_last`
+      in `KatLangArityLaws.lean`. C#: `Result.Index`. -/
+  def select? (r : Result) (i : Nat) : Option Result :=
+    r.projectionItems[i]?
 end Result
 
 /-- Counted evaluation result: the normalized value paired with the number of
@@ -1343,13 +1341,15 @@ namespace AlgEnv
     env.filter (fun entry => !names.contains entry.fst)
 end AlgEnv
 
-/-- Counted parameter environment for callback-bound values that must preserve
-    expression-level emitted counts, for example higher-order sequence items
-    projected through the same one-level rule as `:`. Collecting bindings
-    also record their bound value here; since collecting binding collects ONE exact
+/-- Counted parameter environment for callback-bound values: higher-order
+    sequence items (selected values re-counted through `countedSequenceCallbackItem`,
+    so a `()` item carries emitted count 0 and every other item count 1) and the
+    accumulator / row slots bound beside them. Collecting bindings also record
+    their bound value here; since collecting binding collects ONE exact
     immutable list value, those entries always carry emitted count 1 and agree
     with ordinary value-environment lookup (there is no separate raw-supply
-    forwarding environment). -/
+    forwarding environment). Since selection became a value boundary
+    (September 2026) every entry's count is `Result.valueCount` of its value. -/
 abbrev CountedParamEnv := Assoc Ident (Prod Result Nat)
 
 namespace CountedParamEnv
@@ -2820,15 +2820,16 @@ def countedArgAlgorithm (arg : CountedResult) : Algorithm :=
     expression-level emitted count is already known.
 
     A final explicit argument may still unpack its value across the remaining
-    parameters, matching `callee(S:i)` and preserving the one-level projected
-    callback item rule without changing global call semantics. -/
+    parameters (the flat-callback row convention: a lone sequence element opens
+    into row slots, a list element stays opaque) without changing global call
+    semantics; each unpacked slot is re-counted as one plain value. -/
 def unpackCountedArg (arg : CountedResult) : List CountedResult :=
   unpackArgs arg.fst |>.map (fun value => (value, Result.valueCount value))
 
-/-- Bind callback parameters through counted argument semantics.
-    This preserves the difference between a projected callback item that emits
-    several top-level values and an ordinary sequence value that still emits one.
-    The bound parameter remains a parameter value, not a callable algorithm. -/
+/-- Bind callback parameters through counted argument semantics: each bound
+    parameter keeps its counted view (a `()` item emits zero values, every other
+    item one — selection is a value boundary) and remains a parameter value,
+    not a callable algorithm. -/
 partial def bindCountedCallbackParams (ps : List Ident) (args : List CountedResult)
     : EvalM CountedParamEnv := do
   let rec collect
@@ -2937,8 +2938,8 @@ partial def bindCountedParameterPatternList (patterns : List ParameterPattern)
     collecting parameter. The callback argument supply keeps the established
     flat-callback row convention: when fewer argument slots are supplied than
     top-level parameters, the final supplied argument opens into its items
-    (matching `callee(S:i)`; exact lists stay opaque), exactly as
-    `bindCountedCallbackParams` does for fixed-only flat callees. The resulting
+    (a lone sequence element into row slots; exact lists stay opaque), exactly
+    as `bindCountedCallbackParams` does for fixed-only flat callees. The resulting
     slots then bind through the shared prefix/collecting/suffix binder, so the collecting
     parameter COLLECTS its allocated slots as one list.
     C#: `BindCountedCallbackParameterPatternList`. -/
@@ -3699,12 +3700,17 @@ def splitContSlots (outputSlots : List Result) : EvalM (List Result × Bool) := 
           (booleanRequiredMessage "while continuation flag (the step's last output)" last))
     | none => .error Error.badArity
 
-/-- Higher-order callbacks keep the collected item value shape for pattern
-    matching, while the counted callback-param view still uses the same
-    one-level projection rule as `S:i` for callback param operations like
-    `x.count`. -/
+/-- The counted view of one iterated collection item as the callback receives
+    it. A callback item is a SELECTED value, so it crosses the same ordinary
+    value boundary as `S:i` / `first` / `last` (`reCountValueBoundary`): the
+    item keeps its stored shape (a nested sequence or list stays one value for
+    pattern matching and for every count-sensitive reader inside the body — a
+    bare `x` output row, `x.Coll` on a collecting receiver, the map/reduce
+    single-element checks), a `()` item emits zero values, and only an explicit
+    spread `x*` opens it. Law: `callback_item_is_a_value_boundary`.
+    C#: `CountedSequenceCallbackItem`. -/
 def countedSequenceCallbackItem (item : CountedResult) : CountedResult :=
-  Result.projectSelectedContent item.fst
+  reCountValueBoundary item
 
 def isCacheableZeroArgPropertyAlgorithm (a : Algorithm) : Bool :=
   (Algorithm.params a).isEmpty
@@ -4000,28 +4006,25 @@ def evalDistinctCounted (items : List Result) : EvalM CountedResult := do
   let distinctItems := dedupList items
   pure (makeCollectionListResult distinctItems)
 
-/-- Evaluate `first(collection)`.
-    `first` evaluates the full top-level sequence and
-    returns its first top-level element unchanged.
-
-    Atoms, strings, and sequence values each count as one top-level element.
-    Sequence values are preserved whole rather than flattened. The collection
-    must be non-empty. -/
+/-- Evaluate `first(collection)`: SELECT the first top-level collection
+    element. The element is returned exactly as stored and re-counted through
+    the ordinary value boundary (`Result.valueCount`), exactly like
+    `collection:0` — a selected sequence or list stays one value, a selected
+    `()` emits zero values, and only an explicit spread opens the selection.
+    The collection must be non-empty. Law: `first_is_select_zero`.
+    C#: `EvalFirstCounted`. -/
 def evalFirstCounted (items : List Result) : EvalM CountedResult := do
   match items with
-  | first :: _ => pure (first, 1)
+  | first :: _ => pure (first, Result.valueCount first)
   | [] => .error Error.badArity
 
-/-- Evaluate `last(collection)`.
-    `last` evaluates the full top-level sequence and
-    returns its last top-level element unchanged.
-
-    Atoms, strings, and sequence values each count as one top-level element.
-    Sequence values are preserved whole rather than flattened. The collection
-    must be non-empty. -/
+/-- Evaluate `last(collection)`: SELECT the last top-level collection element
+    through the same value boundary as `evalFirstCounted` and
+    `collection:(count - 1)`. The collection must be non-empty.
+    Law: `last_is_select_last`. C#: `EvalLastCounted`. -/
 def evalLastCounted (items : List Result) : EvalM CountedResult := do
   match items.getLast? with
-  | some last => pure (last, 1)
+  | some last => pure (last, Result.valueCount last)
   | none => .error Error.badArity
 
 /-- Evaluate `take(collection, count)`.
@@ -5129,9 +5132,9 @@ mutual
       that preserve their emitted top-level counts.
 
       This is the shared callback-binding path for higher-order sequence
-      builtins. It mirrors ordinary call semantics for final-argument
-      unpacking while making the projected callback item behave like `S:i`
-      inside the callback body. -/
+      builtins. It retains the flat-callback row convention for final-argument
+      unpacking; the callback item itself is a selected value, so inside the
+      callback body it behaves exactly like `S:i` — one value, never opened. -/
   partial def evalResolvedCallbackCallCounted (callee : Algorithm)
       (args : List CountedResult)
       (ctx : EvalCtx) (env : ValEnv) (calleeName : String := "conditional")
@@ -5173,7 +5176,7 @@ mutual
             let newCtx <- ctx.bindParameters names [] bindings.countedParamEnv
             evalAlgOutputCounted callee newCtx env
           else do
-            -- Fixed-only flat callback binding projects each callback item into
+            -- Fixed-only flat callback binding allocates each selected item to
             -- slots and binds those slots to the algorithm's flat parameter
             -- names (the final item is unpacked across any remaining names);
             -- it does not apply item-supply singleton-boundary normalization.
@@ -5183,8 +5186,8 @@ mutual
             let newCtx <- ctx.bindParameters (Algorithm.params callee) [] countedParamEnv
             evalAlgOutputCounted callee newCtx env
 
-  /-- Non-counted wrapper for callback calls that still preserve projected item
-      emitted counts internally where later operations depend on them. -/
+  /-- Non-counted wrapper for callback calls (the value projection of
+      `evalResolvedCallbackCallCounted`). -/
   partial def evalResolvedCallbackCall (callee : Algorithm)
       (args : List CountedResult)
       (ctx : EvalCtx) (env : ValEnv) (calleeName : String := "conditional")
@@ -6056,7 +6059,7 @@ mutual
 
       This keeps plain-call boundary preservation unchanged while making
       `receiver.builtin(...)` operate on the same top-level collection that
-      `receiver:i` and higher-order callback projection observe. -/
+      `receiver:i` selects from and higher-order callbacks iterate. -/
   partial def evalSequenceBuiltinDotReceiverCounted (receiver : Expr) (ctx : EvalCtx)
       (env : ValEnv) : EvalM CountedResult := do
     let value <- eval receiver ctx env
@@ -6488,10 +6491,11 @@ mutual
       therefore fails compilation here until it is given a counted arm — the
       structural guard against silently reintroducing plain-owned semantics.
 
-      Calls, name resolution, and collection builtins are value boundaries: they
-      emit `Result.valueCount` of the result value (one value for a non-empty
-      result), so a multi-output body/collection is observed as one sequence
-      value and only a caller-site spread `value*` re-spreads it.
+      Calls, name resolution, collection builtins, and SELECTION (`.index`,
+      like `first`/`last`) are value boundaries: they emit `Result.valueCount`
+      of the result value (one value for a non-empty result), so a
+      multi-output body/collection or a selected sequence/list is observed as
+      one value and only a caller-site spread `value*` re-spreads it.
       Block expressions count as one sequence value when non-empty. `sequenceConstruct`
       emits one constructed sequence value. `sequenceSpread`
       emits the immediate spread items of its operand. All other value expressions emit either zero values (empty
@@ -6554,8 +6558,13 @@ mutual
         if n < 0 then
           .error Error.badIndex
         else
+          -- SELECTION IS A VALUE BOUNDARY: the selected element is returned
+          -- exactly as stored and re-counted like any other plain value
+          -- (`Result.valueCount`) — a selected sequence or list is ONE value, a
+          -- selected `()` emits zero values, and only an explicit spread opens
+          -- it. C#: the Index case of `EvalExpressionSpineCounted`.
           match Result.select? ar (Int.toNat n) with
-          | some projected => pure projected
+          | some selected => pure (selected, Result.valueCount selected)
           | none => .error Error.badIndex
     | .dotMember o n fallback argsOpt => withCtx (CtxMsg.dotCall o n) do
         evalDotCallCounted o n fallback argsOpt ctx env

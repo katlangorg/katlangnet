@@ -195,9 +195,9 @@ public static partial class Evaluator
     }
 
     /// <summary>
-    /// Counted callback-parameter environment for projected higher-order items.
-    /// These bindings preserve both the normalized value and the emitted
-    /// top-level count so callback params behave like <c>S:i</c>.
+    /// Counted callback-parameter environment for selected higher-order items.
+    /// Each item carries its ordinary value-boundary count: zero for <c>()</c>,
+    /// otherwise one, just like <c>S:i</c>.
     /// </summary>
     private static CountedResult? LookupCountedParam(CountedParamEnv env, string name)
     {

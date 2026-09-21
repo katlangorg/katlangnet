@@ -14,11 +14,11 @@ This is bounded differential validation over the Lean-guarded partition,
 not a formal verification of the evaluators.
 
 Partition (machine-checked by the `specCaseIds.length` guard below):
-- specification surface cases: 280
+- specification surface cases: 281
 - excluded parse-level cases (Lean has no surface parser): 38
 - excluded C#-only cases (each carries an explicit reason in the corpus): 15
-- Lean-guarded cases: 227
-- probe observations (C#-only by design): 664
+- Lean-guarded cases: 228
+- probe observations (C#-only by design): 678
 - internal-node cases live in the semantic-explorer corpus, not here: see
   lean/SemanticExplorerCases.lean
 
@@ -849,15 +849,20 @@ def case_index_selects_atom : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Nums" (alg [] [] [] [.num 10, .num 20, .num 30, .num 40, .num 50])] [(.index (.resolve "Nums") (.num 2))])
 #guard obs case_index_selects_atom == "ok raw=30 n=1"
 
--- index-projects-one-level [equality-and-indexing]: Pairs = (1, 2), (3, 4) \n Pairs:0
-def case_index_projects_one_level : Expr :=
+-- index-selects-one-value [equality-and-indexing]: Pairs = (1, 2), (3, 4) \n Pairs:0
+def case_index_selects_one_value : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Pairs" (alg [] [] [] [(.capture [.num 1, .num 2]), (.capture [.num 3, .num 4])])] [(.index (.resolve "Pairs") (.num 0))])
-#guard obs case_index_projects_one_level == "ok raw=S[1, 2] n=2"
+#guard obs case_index_selects_one_value == "ok raw=S[1, 2] n=1"
+
+-- selection-forms-agree [equality-and-indexing]: Coll(*xs) = xs \n Pairs = (1, 2), (3, 4) \n first(Pairs).Coll \n Pairs:0.Coll \n (Pairs:0)*.Coll
+def case_selection_forms_agree : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Pairs" (alg [] [] [] [(.capture [.num 1, .num 2]), (.capture [.num 3, .num 4])]), privateProp "Coll" (algWithParameters [{ name := "xs", kind := .collecting }] [] [] [.param "xs"])] [(.dotCall (.call (.resolve "first") [.resolve "Pairs"]) "Coll" none), (.dotCall (.index (.resolve "Pairs") (.num 0)) "Coll" none), (.call (.resolve "Coll") [(.sequenceSpread (.index (.resolve "Pairs") (.num 0)))])])
+#guard obs case_selection_forms_agree == "ok raw=S[L[S[1, 2]], L[S[1, 2]], L[1, 2]] n=3"
 
 -- index-nested-stays-intact [equality-and-indexing]: Bags = ((1, 2), (3, 4)), ((5, 6), (7, 8)) \n Bags:0 \n Bags:0:1
 def case_index_nested_stays_intact : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Bags" (alg [] [] [] [(.capture [(.capture [.num 1, .num 2]), (.capture [.num 3, .num 4])]), (.capture [(.capture [.num 5, .num 6]), (.capture [.num 7, .num 8])])])] [(.index (.resolve "Bags") (.num 0)), (.index (.index (.resolve "Bags") (.num 0)) (.num 1))])
-#guard obs case_index_nested_stays_intact == "ok raw=S[S[S[1, 2], S[3, 4]], S[3, 4]] n=4"
+#guard obs case_index_nested_stays_intact == "ok raw=S[S[S[1, 2], S[3, 4]], S[3, 4]] n=2"
 
 -- index-empty-item-visible [equality-and-indexing]: x = ((), ()) \n x:0
 def case_index_empty_item_visible : Expr :=
@@ -1049,10 +1054,10 @@ def case_list_elements_preserve_boundaries : Expr :=
   .algorithmExpr (alg [] [] [privateProp "A" (alg [] [] [] [(.listLiteral [.num 1, .num 2])]), privateProp "B" (alg [] [] [] [(.listLiteral [.num 3, .num 4])])] [(.listLiteral [.resolve "A", .resolve "B"]), (.listLiteral [(.sequenceSpread (.resolve "A")), (.sequenceSpread (.resolve "B"))]), (.listLiteral [.resolve "A", (.sequenceSpread (.resolve "B"))])])
 #guard obs case_list_elements_preserve_boundaries == "ok raw=S[L[L[1, 2], L[3, 4]], L[1, 2, 3, 4], L[L[1, 2], 3, 4]] n=3"
 
--- list-written-slot-reifies-projection [lists]: S = ((1, 2), (3, 4)) \n  \n [S:0, 5] \n [S:0*, 5]
-def case_list_written_slot_reifies_projection : Expr :=
+-- list-written-slot-reifies-selection [lists]: S = ((1, 2), (3, 4)) \n  \n [S:0, 5] \n [S:0*, 5]
+def case_list_written_slot_reifies_selection : Expr :=
   .algorithmExpr (alg [] [] [privateProp "S" (alg [] [] [] [(.capture [(.capture [.num 1, .num 2]), (.capture [.num 3, .num 4])])])] [(.listLiteral [(.index (.resolve "S") (.num 0)), .num 5]), (.listLiteral [(.sequenceSpread (.index (.resolve "S") (.num 0))), .num 5])])
-#guard obs case_list_written_slot_reifies_projection == "ok raw=S[L[S[1, 2], 5], L[1, 2, 5]] n=2"
+#guard obs case_list_written_slot_reifies_selection == "ok raw=S[L[S[1, 2], 5], L[1, 2, 5]] n=2"
 
 -- list-empty-spread-neutral [lists]: [1, []*, 2] \n [1, ()*, 2]
 def case_list_empty_spread_neutral : Expr :=
@@ -1234,7 +1239,7 @@ def case_grace_in_redundant_group_keeps_the_capture_boundary : Expr :=
   .algorithmExpr (alg [] [] [privateProp "F" (alg ["a", "b"] [] [] [(.binary .add (.param "b") (.dotCall (.capture [.param "a"]) "V" none))]), privateProp "V" (alg ["x"] [] [] [(.binary .mul (.param "x") (.num 2))])] [(.call (.resolve "F") [.num 5, .num 1])])
 #guard obs case_grace_in_redundant_group_keeps_the_capture_boundary == "ok raw=11 n=1"
 
--- 227 canonical Lean-guarded specification cases.
+-- 228 canonical Lean-guarded specification cases.
 
 /--
 Machine-checked Lean-guarded partition count: the id list is built by the
@@ -1392,7 +1397,8 @@ def specCaseIds : List String := [
   "reduce-empty-initial-is-one-value",
   "eq-structural-nested",
   "index-selects-atom",
-  "index-projects-one-level",
+  "index-selects-one-value",
+  "selection-forms-agree",
   "index-nested-stays-intact",
   "index-empty-item-visible",
   "index-out-of-range",
@@ -1432,7 +1438,7 @@ def specCaseIds : List String := [
   "list-spread-edges",
   "list-literal-spread-elements",
   "list-elements-preserve-boundaries",
-  "list-written-slot-reifies-projection",
+  "list-written-slot-reifies-selection",
   "list-empty-spread-neutral",
   "list-call-boundary",
   "list-lone-deconstruction",
@@ -1470,6 +1476,6 @@ def specCaseIds : List String := [
   "ownership-open-head-between-opener-and-settling-level-charges-the-capture",
   "grace-in-redundant-group-keeps-the-capture-boundary"
 ]
-#guard specCaseIds.length == 227
+#guard specCaseIds.length == 228
 
 end LanguageSpecCases

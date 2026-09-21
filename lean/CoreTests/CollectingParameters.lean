@@ -628,11 +628,12 @@ def preparedAlgorithmOutputRetainsWrittenSlots : Bool :=
 
 #guard preparedAlgorithmOutputRetainsWrittenSlots
 
-/-- Discriminator: a multi-emitting single output row stays ONE written slot in the
-    prepared view. `((1, 2), (3, 4)):0` re-emits the selected pair with count 2, so
-    recovering the slot view by decomposing the combined counted value would present
-    `[1, 2]`; the retained accumulator keeps the one written slot `[(1, 2)]`. -/
-def preparedAlgorithmOutputKeepsMultiEmittingSlotWhole : Bool :=
+/-- Discriminator: a single selection output row is ONE written slot in the
+    prepared view AND one emitted value. Selection is a value boundary, so
+    `((1, 2), (3, 4)):0` emits the selected pair with count 1 (never re-emitted
+    as two values); the retained accumulator keeps the one written slot
+    `[(1, 2)]`. The multi-emitting non-spread discriminator is the loop below. -/
+def preparedAlgorithmOutputKeepsSelectedSlotWhole : Bool :=
   let pairOfPairs := KatLang.Expr.capture [
     .capture [.num 1, .num 2],
     .capture [.num 3, .num 4]
@@ -641,12 +642,47 @@ def preparedAlgorithmOutputKeepsMultiEmittingSlotWhole : Bool :=
   let ctx : KatLang.EvalCtx := { callStack := [KatLang.preludeAlg] }
   match (KatLang.evalAlgOutputPreparedCore output ctx []).run KatLang.EvalState.empty with
   | .ok ({
+      counted := (.sequenceValue [.atom 1, .atom 2], 1),
+      outputSlots := [.sequenceValue [.atom 1, .atom 2]]
+    }, _) => true
+  | _ => false
+
+#guard preparedAlgorithmOutputKeepsSelectedSlotWhole
+
+/-- A non-spread multi-slot loop result still occupies one written slot even
+    though its emitted count is two. Selection no longer exercises this distinction. -/
+def preparedAlgorithmOutputKeepsMultiSlotLoopWhole : Bool :=
+  let loop := KatLang.Expr.call (resolve "repeat")
+    [.algorithmExpr (alg ["a", "b"] [] [] [.param "a", .param "b"]), .num 1, .num 1, .num 2]
+  let ctx : KatLang.EvalCtx := { callStack := [KatLang.preludeAlg] }
+  let output := KatLang.wireToCaller ctx (alg [] [] [] [loop])
+  match (KatLang.evalAlgOutputPreparedCore output ctx []).run KatLang.EvalState.empty with
+  | .ok ({
       counted := (.sequenceValue [.atom 1, .atom 2], 2),
       outputSlots := [.sequenceValue [.atom 1, .atom 2]]
     }, _) => true
   | _ => false
 
-#guard preparedAlgorithmOutputKeepsMultiEmittingSlotWhole
+#guard preparedAlgorithmOutputKeepsMultiSlotLoopWhole
+
+/-- Discriminator: a multi-emitting single output row — the explicit spread of the
+    selected pair, `(((1, 2), (3, 4)):0)*` — supplies two slots with count 2, so
+    the slot view lists both items; only the spread opens the selection. -/
+def preparedAlgorithmOutputSpreadOfSelectionSuppliesItems : Bool :=
+  let pairOfPairs := KatLang.Expr.capture [
+    .capture [.num 1, .num 2],
+    .capture [.num 3, .num 4]
+  ]
+  let output := alg [] [] [] [.sequenceSpread (.index pairOfPairs (.num 0))]
+  let ctx : KatLang.EvalCtx := { callStack := [KatLang.preludeAlg] }
+  match (KatLang.evalAlgOutputPreparedCore output ctx []).run KatLang.EvalState.empty with
+  | .ok ({
+      counted := (.sequenceValue [.atom 1, .atom 2], 2),
+      outputSlots := [.atom 1, .atom 2]
+    }, _) => true
+  | _ => false
+
+#guard preparedAlgorithmOutputSpreadOfSelectionSuppliesItems
 
 def sequenceValueSingletonFirstAlg : Algorithm :=
   algWithParameterPatterns [
@@ -654,7 +690,7 @@ def sequenceValueSingletonFirstAlg : Algorithm :=
   ] [] [] [.param "x"]
 
 /-- End-to-end: the patterned call consumes the retained written slot — the singleton
-    pattern binds the whole selected pair even though the projection re-emits count 2
+    pattern binds the whole selected pair (one value: selection is a value boundary)
     inside the written group. (The C# surface parser folds redundant parentheses
     around a lone postfix expression, so this written group is exercised on the AST
     channel, mirroring `PatternedCallSingleEvaluationTests`.) -/

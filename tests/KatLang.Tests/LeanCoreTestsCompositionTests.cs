@@ -30,6 +30,7 @@ public class LeanCoreTestsCompositionTests
         "NameOwnership",
         "ValueDemand",
         "ComparisonChains",
+        "SelectionValueBoundary",
     ];
 
     [Fact]

@@ -14,8 +14,8 @@ public enum CountedConsumer
 {
     /// <summary>Root program output rows (Lean <c>evalOutputRowsPreparedCore</c>): a
     /// non-spread row is one visible slot (emitted clamps up to 1, so a `()` row is
-    /// visible); a spread row contributes its true supply count; index projections and
-    /// loop results re-emit multi-counts through a single row.</summary>
+    /// visible); a spread row contributes its true supply count; loop results re-emit
+    /// multi-counts through a single row (a selection is one value, never re-emitted).</summary>
     RootOutputRows,
 
     /// <summary>Property definition bodies: body rows accumulate like output rows, and
@@ -88,10 +88,12 @@ public enum CountedConsumer
     /// call `F(A*)` — the receiver is an item supply, not a segment.</summary>
     FluentSpreadReceiver,
 
-    /// <summary>Indexing `:` (Lean <c>Result.select?</c>): the target opens through
-    /// <c>projectionItems</c>; the selected element re-emits its projected item count
-    /// (a selected list element stays one opaque list).</summary>
-    IndexProjection,
+    /// <summary>Indexing `:` (Lean <c>Result.select?</c>): the target's positions are
+    /// its <c>projectionItems</c>; the selected element is returned exactly as stored and
+    /// re-counted as ONE plain value (SELECTION IS A VALUE BOUNDARY — a selected sequence
+    /// or list is never opened, a selected `()` re-counts to 0). `first`/`last` select
+    /// through the same rule.</summary>
+    IndexSelection,
 
     /// <summary>Post-binding builtin collection view (Lean
     /// <c>builtinCollectionItems</c>): the ONE bound collection argument opens one

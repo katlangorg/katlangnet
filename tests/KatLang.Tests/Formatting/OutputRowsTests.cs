@@ -163,7 +163,7 @@ public class OutputRowsTests
         foreach (var source in new[]
         {
             "7", "1, 2, 3", "(1, 2)", "1, (2, 3)", "[1, 2]", "''", "()", "[]",
-            "E = ()\nE*", "S = ((1, 2), (3, 4))\nS:0",
+            "E = ()\nE*", "S = ((1, 2), (3, 4))\nS:0", "repeat({a, b}, 1, 1, 2)",
         })
         {
             var success = Success(source);
@@ -179,13 +179,14 @@ public class OutputRowsTests
     }
 
     [Fact]
-    public void MultiItemProjectionAlongsideAnotherExpression_PreservesDisplayRows()
+    public void MultiSlotLoopResultAlongsideAnotherExpression_PreservesDisplayRows()
     {
-        var success = Success("S = ((1, 2), (3, 4))\nS:0\n5");
+        var success = Success("repeat({a, b}, 1, 1, 2)\n5");
 
-        // EmittedCount is a literal arity count (three here), but canonical
-        // display uses it only to select the multi-row view. The combined value
-        // retains the projected sequence as one top-level display row.
+        // EmittedCount is a literal arity count (three here: the two-slot loop
+        // state plus one row), but canonical display uses it only to select the
+        // multi-row view. The combined value retains the loop state as one
+        // top-level display row.
         Assert.Equal(3, success.EmittedCount);
         Assert.Equal(2, success.OutputRows.Count);
         Assert.Equal("(1, 2)", OutputFormatters.Exact.Format(new RunResult.Success(
@@ -197,12 +198,40 @@ public class OutputRowsTests
     }
 
     [Fact]
-    public void LoneMultiItemProjection_UsesItsEmittedArityAsSeparateRows()
+    public void LoneMultiSlotLoopResult_UsesItsEmittedArityAsSeparateRows()
     {
-        var success = Success("S = ((1, 2), (3, 4))\nS:0");
+        var success = Success("repeat({a, b}, 1, 1, 2)");
 
         Assert.Equal(2, success.EmittedCount);
         Assert.Equal([new Result.Atom(1), new Result.Atom(2)], success.OutputRows);
         Assert.Equal($"1{Environment.NewLine}2", success.ToDisplayString());
+    }
+
+    [Fact]
+    public void LoneSelection_IsOneRow_ForEveryOrigin()
+    {
+        // SELECTION IS A VALUE BOUNDARY: a lone selected sequence value is one
+        // root row however it was selected, exactly like the same value read
+        // from a property. Only an explicit spread opens it into rows.
+        foreach (var source in new[]
+        {
+            "S = ((1, 2), (3, 4))\nS:0",
+            "S = ((1, 2), (3, 4))\nfirst(S)",
+            "S = ((3, 4), (1, 2))\nlast(S)",
+            "S = ((1, 2), (3, 4))\nX = S:0\nX",
+        })
+        {
+            var success = Success(source);
+            Assert.Equal(1, success.EmittedCount);
+            var row = Assert.Single(success.OutputRows);
+            Assert.True(Result.ValueComparer.Equals(
+                new Result.SequenceValue([new Result.Atom(1), new Result.Atom(2)]), row));
+            Assert.Equal("(1, 2)", success.ToDisplayString());
+        }
+
+        var spread = Success("S = ((1, 2), (3, 4))\n(S:0)*");
+        Assert.Equal(2, spread.EmittedCount);
+        Assert.Equal([new Result.Atom(1), new Result.Atom(2)], spread.OutputRows);
+        Assert.Equal($"1{Environment.NewLine}2", spread.ToDisplayString());
     }
 }

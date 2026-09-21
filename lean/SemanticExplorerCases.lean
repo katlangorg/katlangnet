@@ -5076,7 +5076,7 @@ def case_index0__lbt_bf : Expr :=
 -- index0__lpbt_1: x = [(true, 1)] \n x:0
 def case_index0__lpbt_1 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.listLiteral [(.capture [.boolLiteral true, .num 1])])])] [(.index (.resolve "x") (.num 0))])
-#guard obs case_index0__lpbt_1 == "ok raw=S[true, 1] n=2"
+#guard obs case_index0__lpbt_1 == "ok raw=S[true, 1] n=1"
 
 -- index0__p1: x = (1) \n x:0
 def case_index0__p1 : Expr :=
@@ -5111,12 +5111,12 @@ def case_index0__p1e : Expr :=
 -- index0__p12_3: x = ((1, 2), 3) \n x:0
 def case_index0__p12_3 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [(.capture [.num 1, .num 2]), .num 3])])] [(.index (.resolve "x") (.num 0))])
-#guard obs case_index0__p12_3 == "ok raw=S[1, 2] n=2"
+#guard obs case_index0__p12_3 == "ok raw=S[1, 2] n=1"
 
 -- index0__p12_34: x = ((1, 2), (3, 4)) \n x:0
 def case_index0__p12_34 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [(.capture [.num 1, .num 2]), (.capture [.num 3, .num 4])])])] [(.index (.resolve "x") (.num 0))])
-#guard obs case_index0__p12_34 == "ok raw=S[1, 2] n=2"
+#guard obs case_index0__p12_34 == "ok raw=S[1, 2] n=1"
 
 -- index0__pe_12: x = ((), (1, 2)) \n x:0
 def case_index0__pe_12 : Expr :=
@@ -5126,12 +5126,12 @@ def case_index0__pe_12 : Expr :=
 -- index0__ppe1_2: x = (((), 1), 2) \n x:0
 def case_index0__ppe1_2 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [(.capture [(.emptySequence 0), .num 1]), .num 2])])] [(.index (.resolve "x") (.num 0))])
-#guard obs case_index0__ppe1_2 == "ok raw=S[S[], 1] n=2"
+#guard obs case_index0__ppe1_2 == "ok raw=S[S[], 1] n=1"
 
 -- index0__p12_e: x = ((1, 2), ()) \n x:0
 def case_index0__p12_e : Expr :=
   .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [(.capture [.num 1, .num 2]), (.emptySequence 0)])])] [(.index (.resolve "x") (.num 0))])
-#guard obs case_index0__p12_e == "ok raw=S[1, 2] n=2"
+#guard obs case_index0__p12_e == "ok raw=S[1, 2] n=1"
 
 -- index0__ppe: x = (()) \n x:0
 def case_index0__ppe : Expr :=
@@ -5181,7 +5181,7 @@ def case_index0__l_e : Expr :=
 -- index0__l_p12: x = [(1, 2)] \n x:0
 def case_index0__l_p12 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.listLiteral [(.capture [.num 1, .num 2])])])] [(.index (.resolve "x") (.num 0))])
-#guard obs case_index0__l_p12 == "ok raw=S[1, 2] n=2"
+#guard obs case_index0__l_p12 == "ok raw=S[1, 2] n=1"
 
 -- index0__p_l12: x = ([1, 2], 3) \n x:0
 def case_index0__p_l12 : Expr :=
@@ -5286,12 +5286,12 @@ def case_index1__p12_3 : Expr :=
 -- index1__p12_34: x = ((1, 2), (3, 4)) \n x:1
 def case_index1__p12_34 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [(.capture [.num 1, .num 2]), (.capture [.num 3, .num 4])])])] [(.index (.resolve "x") (.num 1))])
-#guard obs case_index1__p12_34 == "ok raw=S[3, 4] n=2"
+#guard obs case_index1__p12_34 == "ok raw=S[3, 4] n=1"
 
 -- index1__pe_12: x = ((), (1, 2)) \n x:1
 def case_index1__pe_12 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [(.emptySequence 0), (.capture [.num 1, .num 2])])])] [(.index (.resolve "x") (.num 1))])
-#guard obs case_index1__pe_12 == "ok raw=S[1, 2] n=2"
+#guard obs case_index1__pe_12 == "ok raw=S[1, 2] n=1"
 
 -- index1__ppe1_2: x = (((), 1), 2) \n x:1
 def case_index1__ppe1_2 : Expr :=
@@ -7456,7 +7456,7 @@ def case_mapId__lbt_bf : Expr :=
 -- mapId__lpbt_1: M(a) = a \n map([(true, 1)], M)
 def case_mapId__lpbt_1 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "M" (alg ["a"] [] [] [.param "a"])] [(.call (.resolve "map") [(.listLiteral [(.capture [.boolLiteral true, .num 1])]), .resolve "M"])])
-#guard obs case_mapId__lpbt_1 == "err arity"
+#guard obs case_mapId__lpbt_1 == "ok raw=L[S[true, 1]] n=1"
 
 -- mapId__p1: M(a) = a \n map((1), M)
 def case_mapId__p1 : Expr :=
@@ -7491,12 +7491,12 @@ def case_mapId__p1e : Expr :=
 -- mapId__p12_3: M(a) = a \n map(((1, 2), 3), M)
 def case_mapId__p12_3 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "M" (alg ["a"] [] [] [.param "a"])] [(.call (.resolve "map") [(.capture [(.capture [.num 1, .num 2]), .num 3]), .resolve "M"])])
-#guard obs case_mapId__p12_3 == "err arity"
+#guard obs case_mapId__p12_3 == "ok raw=L[S[1, 2], 3] n=1"
 
 -- mapId__p12_34: M(a) = a \n map(((1, 2), (3, 4)), M)
 def case_mapId__p12_34 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "M" (alg ["a"] [] [] [.param "a"])] [(.call (.resolve "map") [(.capture [(.capture [.num 1, .num 2]), (.capture [.num 3, .num 4])]), .resolve "M"])])
-#guard obs case_mapId__p12_34 == "err arity"
+#guard obs case_mapId__p12_34 == "ok raw=L[S[1, 2], S[3, 4]] n=1"
 
 -- mapId__pe_12: M(a) = a \n map(((), (1, 2)), M)
 def case_mapId__pe_12 : Expr :=
@@ -7506,7 +7506,7 @@ def case_mapId__pe_12 : Expr :=
 -- mapId__ppe1_2: M(a) = a \n map((((), 1), 2), M)
 def case_mapId__ppe1_2 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "M" (alg ["a"] [] [] [.param "a"])] [(.call (.resolve "map") [(.capture [(.capture [(.emptySequence 0), .num 1]), .num 2]), .resolve "M"])])
-#guard obs case_mapId__ppe1_2 == "err arity"
+#guard obs case_mapId__ppe1_2 == "ok raw=L[S[S[], 1], 2] n=1"
 
 -- mapId__p12_e: M(a) = a \n map(((1, 2), ()), M)
 def case_mapId__p12_e : Expr :=
@@ -7561,7 +7561,7 @@ def case_mapId__l_e : Expr :=
 -- mapId__l_p12: M(a) = a \n map([(1, 2)], M)
 def case_mapId__l_p12 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "M" (alg ["a"] [] [] [.param "a"])] [(.call (.resolve "map") [(.listLiteral [(.capture [.num 1, .num 2])]), .resolve "M"])])
-#guard obs case_mapId__l_p12 == "err arity"
+#guard obs case_mapId__l_p12 == "ok raw=L[S[1, 2]] n=1"
 
 -- mapId__p_l12: M(a) = a \n map(([1, 2], 3), M)
 def case_mapId__p_l12 : Expr :=
@@ -9436,7 +9436,7 @@ def case_special__eqSpreadSeqLiteral : Expr :=
 -- special__loopSpreadHistoryFlat: Step((*history), previous) = (history*, previous + 1), previous + 1 \n Step.repeat(2, (1, 2), 2):0
 def case_special__loopSpreadHistoryFlat : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Step" (algWithParameterPatterns [.sequenceValue [.capture { name := "history", kind := .collecting }], .capture { name := "previous" }] [] [] [(.capture [(.sequenceSpread (.param "history")), (.binary .add (.param "previous") (.num 1))]), (.binary .add (.param "previous") (.num 1))])] [(.index (.dotCall (.resolve "Step") "repeat" (some [.num 2, (.capture [.num 1, .num 2]), .num 2])) (.num 0))])
-#guard obs case_special__loopSpreadHistoryFlat == "ok raw=S[1, 2, 3, 4] n=4"
+#guard obs case_special__loopSpreadHistoryFlat == "ok raw=S[1, 2, 3, 4] n=1"
 
 -- special__ifBranchSeq: if(true, (1, 2), 3)
 def case_special__ifBranchSeq : Expr :=

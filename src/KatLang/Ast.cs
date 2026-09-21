@@ -52,12 +52,13 @@ public sealed record ComparisonLink(ComparisonOp Op, Expr Operand);
 /// values are not atoms either.
 /// <c>filter(collection, predicate)</c> keeps the original top-level sequence
 /// items whose predicate returns the Boolean value <c>true</c> (a number,
-/// string, sequence, or list predicate result is a value-kind error) after
-/// seeing each callback item through the same one-level projection rule as
-/// <c>S:i</c>, then materializes the kept items as one exact list value.
+/// string, sequence, or list predicate result is a value-kind error); each
+/// callback item is a SELECTED value that crosses the same ordinary value
+/// boundary as <c>S:i</c> (one value, never opened), and the kept items are
+/// materialized as one exact list value.
 /// <c>map(collection, mapper)</c> maps top-level sequence items left to right;
-/// each callback item follows the same one-level projection rule as
-/// <c>S:i</c>, <c>mapper(element)</c> must return exactly one mapped
+/// each callback item is a selected value under the same value-boundary rule
+/// as <c>S:i</c>, <c>mapper(element)</c> must return exactly one mapped
 /// element, and sequence/list mapped outputs are preserved whole as exact
 /// elements of one list result.
 /// <c>count(collection)</c> counts the top-level sequence items exposed by direct
@@ -106,8 +107,8 @@ public sealed record ComparisonLink(ComparisonOp Op, Expr Operand);
 /// flattened. (Lean's Int-only core approximates the mean with truncation
 /// toward zero.)
 /// <c>reduce(collection, reducer, initial)</c> folds top-level sequence items left
-/// to right; the current callback item follows the same one-level projection
-/// rule as <c>S:i</c>, <c>reducer(element, accumulator)</c> must return exactly
+/// to right; the current callback item is a selected value under the same
+/// value-boundary rule as <c>S:i</c>, <c>reducer(element, accumulator)</c> must return exactly
 /// one next accumulator value, and sequence-value accumulators are preserved whole.
 /// </summary>
 public enum BuiltinId { @if, @while, @repeat, @atoms, @range, @filter, @map, @order, @orderDesc, @count, @contains, @first, @last, @distinct, @take, @skip, @min, @max, @sum, @avg, @reduce }
@@ -568,7 +569,7 @@ public closed record Expr
     /// </summary>
     public sealed record Comparison(Expr First, IReadOnlyList<ComparisonLink> Links) : Expr;
 
-    /// <summary>Output selection. <c>Index(a, i)</c> selects top-level item <c>i</c> from evaluated output of <c>a</c> and projects that item's content one level.</summary>
+    /// <summary>Output selection. <c>Index(a, i)</c> selects top-level item <c>i</c> of the evaluated target <c>a</c> and returns it as ONE value (selection is a value boundary: the item is never opened; <c>*</c> opens it).</summary>
     public sealed record Index(Expr Target, Expr Selector) : Expr;
 
     /// <summary>

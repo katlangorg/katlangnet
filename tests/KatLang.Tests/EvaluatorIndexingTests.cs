@@ -36,7 +36,7 @@ public class EvaluatorIndexingTests
         => AssertEval("(1, 2, 3):0", 1);
 
     [Fact]
-    public void Eval_Index_NamedAtomicSelection_ProjectsAtom()
+    public void Eval_Index_NamedAtomicSelection_ReturnsAtom()
         => AssertEval(
             """
             A = 7, 8
@@ -72,7 +72,7 @@ public class EvaluatorIndexingTests
         => AssertEval("((1, 2), (3, 4)):1:0", 3);
 
     [Fact]
-    public void Eval_Index_SequenceValueSelection_ProjectsTopLevelContent()
+    public void Eval_Index_SequenceValueSelection_ReturnsStoredValue()
     {
         var result = EvalFull(
             """
@@ -98,7 +98,7 @@ public class EvaluatorIndexingTests
             2);
 
     [Fact]
-    public void Eval_Index_NestedSequenceValueSelection_ProjectsOneLevelOnly()
+    public void Eval_Index_NestedSequenceValueSelection_PreservesNestedValue()
     {
         var result = EvalFull(
             """
@@ -113,7 +113,7 @@ public class EvaluatorIndexingTests
     }
 
     [Fact]
-    public void Eval_Index_NestedSequenceValueSelection_CountsProjectedContentOneLevelAtATime()
+    public void Eval_Index_NestedSequenceValueSelection_CountOpensTheSelectedValue()
         => AssertEval(
             """
             A = ((1, 2), (3, 4)), ((5, 6), (7, 8))
@@ -124,7 +124,7 @@ public class EvaluatorIndexingTests
             2);
 
     [Fact]
-    public void Eval_Index_ChainedSequenceValueSelection_ProjectsEachStep()
+    public void Eval_Index_ChainedSequenceValueSelection_SelectsEachStep()
     {
         var result = EvalFull(
             """
@@ -314,7 +314,7 @@ public class EvaluatorIndexingTests
     }
 
     /// <summary>
-    /// EvalIndexSelectionCounted owns the index-expression span, so plain and
+    /// The Index case of EvalExpressionSpineCounted owns the index-expression span, so plain and
     /// counted evaluation must report the identical error kind and span.
     /// </summary>
     private static void AssertIndexErrorAgreesAcrossEvaluators(string source)

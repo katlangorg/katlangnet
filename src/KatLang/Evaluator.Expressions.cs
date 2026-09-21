@@ -67,8 +67,7 @@ public static partial class Evaluator
     /// preflight bounds how many such layers a path can alternate through).
     ///
     /// <para>Per-kind semantics preserved here (previously the recursive
-    /// <c>Eval</c> cases and the <c>EvalIndexSelectionCounted</c> /
-    /// <c>EvalListLiteralCounted</c> helpers):</para>
+    /// <c>Eval</c> cases and the former per-kind counted helpers):</para>
     /// <list type="bullet">
     ///   <item><b>Unary</b>: non-scalar values, including <c>()</c>, are rejected; strings are a
     ///   <see cref="EvalError.TypeMismatch"/> at the unary expression's span; operand
@@ -85,9 +84,10 @@ public static partial class Evaluator
     ///   an error does (later operands are not evaluated). Lean:
     ///   <c>evalComparisonCounted</c>.</item>
     ///   <item><b>Index</b>: target then selector; every child or coercion error gains
-    ///   the index expression's span when it has none; the selected item re-emits its
-    ///   PROJECTED count (<c>S:0</c> re-emits, never re-counts). Lean:
-    ///   <c>evalIndexSelectionCounted</c>.</item>
+    ///   the index expression's span when it has none; the selected item is returned as
+    ///   stored and RE-COUNTED as one plain value (selection is a value boundary:
+    ///   <c>S:0</c> never opens the selected sequence or list, and a selected <c>()</c>
+    ///   emits zero values). Lean: the <c>.index</c> arm of <c>evalCounted</c>.</item>
     ///   <item><b>ListLiteral</b>: element slots follow the written-parentheses
     ///   expression-list slot rules (<see cref="EvalExplicitSequenceValueExprSlots"/>);
     ///   elements are stored EXACTLY (no singleton erasure, no empty-nesting collapse),
@@ -271,11 +271,16 @@ public static partial class Evaluator
                         break;
                     }
 
-                    var selected = frame.FirstValue!.SelectProjected((int)n);
+                    // SELECTION IS A VALUE BOUNDARY: the selected element is
+                    // returned exactly as stored and re-counted like any other
+                    // plain value (Result.ValueCount) — a selected sequence or
+                    // list is ONE value, a selected `()` emits zero values, and
+                    // only an explicit spread opens it. Lean: the `.index` arm
+                    // of `evalCounted`.
+                    var selected = frame.FirstValue!.Index((int)n);
                     completed = selected is null
                         ? new EvalError.BadIndex() { Span = frame.Node.Span }
-                        : EvalResult<CountedResult>.Ok(new CountedResult(
-                            selected.Value.Value, selected.Value.EmittedCount));
+                        : CountValue(selected);
                     break;
                 }
 
@@ -415,7 +420,7 @@ public static partial class Evaluator
     /// shared by both dispatcher spellings (the plain <see cref="Eval"/> arm
     /// projects its value, so the dual-view rules exist once).
     /// Dual-view lookup order (Lean: <c>evalCounted</c> Param(x)):
-    /// 1. Counted callback-param env (projected higher-order item meaning)
+    /// 1. Counted callback-param env (the callback item / collecting binding as bound)
     /// 2. ValEnv (ordinary value meaning)
     /// 3. AlgEnv fallback (algorithm meaning): the ONE zero-argument value-demand
     ///    law (<see cref="ZeroArgumentValueDemandRejection"/>) — a 0-param

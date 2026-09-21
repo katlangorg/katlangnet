@@ -787,7 +787,8 @@ public class ResultToExprSharedValueGraphTests
     /// result reference into 2^<paramref name="duplicationDepth"/> emitted slots in only
     /// <paramref name="duplicationDepth"/> loop steps. Grouping <c>B*</c> makes those slots one
     /// sequence-valued collection item; using builtin <c>while</c> as the reducer routes the
-    /// item's multi-emission counted value through ONE <c>CountedArgAlgorithm</c> wrapper.
+    /// item (one sequence value — selection is a value boundary) through ONE
+    /// <c>CountedArgAlgorithm</c> wrapper.
     /// </summary>
     private static string MultiEmissionDagProgram(
         string body,
@@ -892,13 +893,16 @@ public class ResultToExprSharedValueGraphTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public void MultiEmissionWrapper_ReusesOneMemoAcrossEveryRepeatedRoot(bool optimize)
+    public void SequenceItemWrapper_ReusesOneMemoAcrossEveryRepeatedReference(bool optimize)
     {
         // F21 review finding: the initial F20 patch gave each emitted root its own top-level
         // ResultToExpr call. B contains 32 references to the SAME depth-20 DAG, so that scope
         // performed 32 * 20 = 640 unbudgeted expansions. One CountedArgAlgorithm construction is
-        // one conversion operation: its root set now shares one completed-node memo and expands
-        // the deep graph exactly once. The wrapper's old zero-parameter arity error is unchanged.
+        // one conversion operation: its root set shares one completed-node memo and expands
+        // the deep graph exactly once. Since selection became a value boundary the callback
+        // item `(B*)` reaches the wrapper as ONE sequence root (never re-emitted as 32 rows),
+        // so the scope expands that sequence node plus the depth-20 chain once: depth + 1.
+        // The wrapper's old zero-parameter arity error is unchanged.
         var run = ObserveSource(
             MultiEmissionDagProgram("[(B*)].reduce(while, 1)"),
             optimize);
@@ -906,17 +910,19 @@ public class ResultToExprSharedValueGraphTests
         Assert.True(run.IsError);
         Assert.IsType<EvalError.ArityMismatch>(run.InnermostError);
         Assert.Equal(1, run.Reifications);
-        Assert.Equal(ShallowDepth, run.Expansions);
+        Assert.Equal(ShallowDepth + 1, run.Expansions);
     }
 
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public void MultiEmissionWrapper_ReusesSharedDescendantAcrossDistinctRoots(bool optimize)
+    public void SequenceItemWrapper_ReusesSharedDescendantAcrossDistinctElements(bool optimize)
     {
-        // The two emitted list roots are reference-distinct, but both contain the exact same A
-        // reference. The wrapper scope expands root L, A, then root R: depth + 2 total. Recreating
-        // a memo per emitted root would expand A twice and observe 2 * (depth + 1).
+        // The two list elements are reference-distinct, but both contain the exact same A
+        // reference. The callback item is the ONE sequence value S = ([A, 1], [A, 2]) (selection
+        // is a value boundary, so the wrapper holds one root), and the wrapper scope expands S,
+        // element L, A, then element R: depth + 3 total. Recreating a memo per element would
+        // expand A twice and observe 2 * (depth + 1) + 1.
         var run = ObserveSource(
             DagProgram("[([A, 1], [A, 2])].reduce(while, 1)", ShallowDepth),
             optimize);
@@ -924,7 +930,7 @@ public class ResultToExprSharedValueGraphTests
         Assert.True(run.IsError);
         Assert.IsType<EvalError.ArityMismatch>(run.InnermostError);
         Assert.Equal(1, run.Reifications);
-        Assert.Equal(ShallowDepth + 2, run.Expansions);
+        Assert.Equal(ShallowDepth + 3, run.Expansions);
     }
 
     [Fact]

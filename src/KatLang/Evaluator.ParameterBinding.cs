@@ -684,8 +684,8 @@ public static partial class Evaluator
         // WRITTEN-SLOT REIFICATION: a non-spread expression occupying one
         // written slot contributes exactly ONE persistent value — the value its
         // counted supply denotes — regardless of how many items the expression
-        // emitted (zero, one, or many; a counted-multi supply such as an index
-        // projection is already represented by one structural value). Only an
+        // emitted (zero, one, or many; a counted-multi supply such as a loop
+        // result is already represented by one structural value). Only an
         // explicit spread supplies the value's items into the surrounding item slots.
         return expr is Expr.SequenceSpread
             ? EvalResult<IReadOnlyList<Result>>.Ok(CountedTopLevelValues(countedR.Value))

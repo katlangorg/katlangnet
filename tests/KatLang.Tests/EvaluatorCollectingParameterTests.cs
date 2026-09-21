@@ -788,7 +788,7 @@ public class EvaluatorCollectingParameterTests
     }
 
     [Fact]
-    public void Eval_PatternedCallback_SequenceValueCollectingCaptureKeepsProjectedCountedItems()
+    public void Eval_PatternedCallback_SequenceValueCollectingCaptureKeepsStoredItems()
     {
         AssertEvalSequenceModes(
             """

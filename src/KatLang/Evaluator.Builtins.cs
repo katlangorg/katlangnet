@@ -129,11 +129,11 @@ public static partial class Evaluator
     // same structural value with emitted count <see cref="Result.ValueCount"/>
     // (0 for the empty sequence value, otherwise 1). A multi-output body therefore
     // becomes one sequence value at the boundary; only an explicit caller-site
-    // `spread` re-spreads it (via ToItems, which reads the value, not this count).
+    // `spread` re-spreads it (via SpreadItems, which reads the value, not this count).
     //
     // This re-counts without normalizing or rebuilding the value; ordinary value
     // construction has already normalized redundant unary empty structure.
-    // It is applied only to public result boundaries, never to internal
+    // Selection and callback items cross this same value boundary. Never apply it to
     // body/root output accumulation (EvalAlgOutputCountedCore) or to multi-slot
     // while/repeat loop state, both of which must keep their multi-item counts.
     // (Collecting bindings need no re-count: CollectSegment stores one exact list with
@@ -1357,10 +1357,13 @@ public static partial class Evaluator
     }
 
     /// <summary>
-    /// Evaluate <c>first(collection)</c> by returning the first top-level
-    /// collection element unchanged.
-    /// Atoms, strings, and sequence values each count as one top-level element;
-    /// sequence values are preserved whole, and the collection must be non-empty.
+    /// Evaluate <c>first(collection)</c> by SELECTING the first top-level
+    /// collection element: the element is returned exactly as stored and
+    /// re-counted through the ordinary value boundary (<see cref="CountValue(Result)"/>),
+    /// exactly like <c>collection:0</c> — a selected sequence or list stays one
+    /// value, a selected <c>()</c> emits zero values, and only an explicit
+    /// spread opens the selection. The collection must be non-empty.
+    /// Lean: <c>evalFirstCounted</c>.
     /// </summary>
     private static EvalResult<CountedResult> EvalFirstCounted(
         IReadOnlyList<Result> items)
@@ -1368,14 +1371,15 @@ public static partial class Evaluator
         if (items.Count == 0)
             return new EvalError.BadArity();
 
-        return EvalResult<CountedResult>.Ok(new CountedResult(items[0], 1));
+        return CountValue(items[0]);
     }
 
     /// <summary>
-    /// Evaluate <c>last(collection)</c> by returning the last top-level
-    /// collection element unchanged.
-    /// Atoms, strings, and sequence values each count as one top-level element;
-    /// sequence values are preserved whole, and the collection must be non-empty.
+    /// Evaluate <c>last(collection)</c> by SELECTING the last top-level
+    /// collection element through the same value boundary as
+    /// <see cref="EvalFirstCounted"/> and <c>collection:(count - 1)</c>.
+    /// The collection must be non-empty.
+    /// Lean: <c>evalLastCounted</c>.
     /// </summary>
     private static EvalResult<CountedResult> EvalLastCounted(
         IReadOnlyList<Result> items)
@@ -1383,7 +1387,7 @@ public static partial class Evaluator
         if (items.Count == 0)
             return new EvalError.BadArity();
 
-        return EvalResult<CountedResult>.Ok(new CountedResult(items[^1], 1));
+        return CountValue(items[^1]);
     }
 
     /// <summary>

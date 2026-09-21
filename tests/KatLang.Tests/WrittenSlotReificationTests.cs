@@ -9,11 +9,11 @@ namespace KatLang.Tests;
 /// occupying one syntactic value slot — a list-literal element, a written
 /// pattern argument item, or the reduce initial accumulator — contributes
 /// exactly ONE persistent value, even when the expression's counted supply
-/// emitted zero or many items (index projections, loop results, counted
-/// callback parameters). Only an explicit spread supplies the value's items into the
+/// emitted zero or many items (loop results; a selection or a callback parameter
+/// is already one value). Only an explicit spread supplies the value's items into the
 /// surrounding slots. This matches every sibling receiver (capture, call
 /// arguments, root rows beside other rows, deconstruction). Lean twins: the
-/// <c>list-written-slot-reifies-projection</c> and
+/// <c>list-written-slot-reifies-selection</c> and
 /// <c>reduce-empty-initial-is-one-value</c> LanguageSpec cases.
 /// </summary>
 public class WrittenSlotReificationTests
@@ -110,8 +110,8 @@ public class WrittenSlotReificationTests
     [Fact]
     public void ListLiteral_CallbackParameter_ReifiesAsOneElementPerSlot()
     {
-        // A counted callback parameter re-emits its projected count, but each
-        // written list slot still reifies it as one value.
+        // A callback parameter is one selected value (never re-emitted), and each
+        // written list slot reifies it as one value.
         AssertEvaluates(
             "((1, 2), (3, 4)).map({[x, x]})",
             List(

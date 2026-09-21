@@ -643,9 +643,10 @@ theorem deconstruct_collecting_single_sequence_opens :
 Exact list values (`Result.listValue`) join the deconstruction opening rule but
 remain opaque at ordinary value and call boundaries: `Result.toItems` keeps a
 list as one item, while the spread marker (`Result.spreadItems`), the
-deconstruction pattern (`Result.structureItems?`), the indexing `:` projection
-target view (`Result.projectionItems`), and the post-binding builtin collection
-view open one list boundary in their documented contexts. The laws below pin
+deconstruction pattern (`Result.structureItems?`), the indexing `:` TARGET
+position view (`Result.projectionItems` — the selected element itself is never
+opened), and the post-binding builtin collection view open one list boundary
+in their documented contexts. The laws below pin
 each decision over the real model, mirroring the sequence laws above.
 -/
 
@@ -662,28 +663,28 @@ theorem spreadItems_sequenceValue (xs : List Result) :
 
 /-- The non-spread item view keeps a list OPAQUE: a list is one item, so
 value boundaries and call binding never open it. (Indexing `:` opens its
-TARGET through `projectionItems` and the post-binding builtin collection
-view opens the bound list through `builtinCollectionItems`, not through
-`toItems` — see `projectionItems_listValue` and
+TARGET's positions through `projectionItems` and the post-binding builtin
+collection view opens the bound list through `builtinCollectionItems`, not
+through `toItems` — see `projectionItems_listValue` and
 `builtinCollectionItems_list` below.) -/
 theorem toItems_listValue_opaque (xs : List Result) :
     (Result.listValue xs).toItems = [Result.listValue xs] := rfl
 
-/-- The indexing `:` projection target view opens a list target to its
-immediate elements, exactly like a sequence target. -/
+/-- The indexing `:` target position view offers a list target's immediate
+elements as positions, exactly like a sequence target. -/
 theorem projectionItems_listValue (xs : List Result) :
     (Result.listValue xs).projectionItems = xs := rfl
 
-/-- Projection on sequence targets is unchanged by the list extension. -/
+/-- Positions of sequence targets are unchanged by the list extension. -/
 theorem projectionItems_sequenceValue (xs : List Result) :
     (Result.sequenceValue xs).projectionItems = xs := rfl
 
-/-- The empty list has no projectable positions (`[]:0` is out of range). -/
+/-- The empty list has no selectable positions (`[]:0` is out of range). -/
 theorem projectionItems_empty_list :
     (Result.listValue []).projectionItems = [] := rfl
 
-/-- Scalar projection targets are unchanged: an atom offers itself as the
-single position, so `7:0` stays `7`. -/
+/-- Scalar targets are unchanged: an atom offers itself as the single
+position, so `7:0` stays `7`. -/
 theorem projectionItems_atom (n : Int) :
     (Result.atom n).projectionItems = [Result.atom n] := rfl
 
@@ -691,16 +692,14 @@ theorem projectionItems_atom (n : Int) :
 `[1, 2, 3]:0` is `1`. -/
 theorem select_list_first :
     Result.select? (Result.listValue [Result.atom 1, Result.atom 2, Result.atom 3]) 0
-      = some (Result.atom 1, 1) := by
-  simp [Result.select?, Result.projectionItems, Result.projectSelectedContent,
-    Result.toItems, Result.normalize]
+      = some (Result.atom 1) := by
+  simp [Result.select?, Result.projectionItems]
 
 /-- `[1, 2, 3]:2` selects the upper-bound element. -/
 theorem select_list_last :
     Result.select? (Result.listValue [Result.atom 1, Result.atom 2, Result.atom 3]) 2
-      = some (Result.atom 3, 1) := by
-  simp [Result.select?, Result.projectionItems, Result.projectSelectedContent,
-    Result.toItems, Result.normalize]
+      = some (Result.atom 3) := by
+  simp [Result.select?, Result.projectionItems]
 
 /-- A selected LIST element stays one exact opaque list:
 `[[1, 2], [3, 4]]:0` is `[1, 2]`, never flattened or reopened. -/
@@ -709,33 +708,31 @@ theorem select_nested_list_element_stays_list :
       (Result.listValue
         [Result.listValue [Result.atom 1, Result.atom 2],
          Result.listValue [Result.atom 3, Result.atom 4]]) 0
-      = some (Result.listValue [Result.atom 1, Result.atom 2], 1) := by
-  simp [Result.select?, Result.projectionItems, Result.projectSelectedContent,
-    Result.toItems, Result.normalize]
+      = some (Result.listValue [Result.atom 1, Result.atom 2]) := by
+  simp [Result.select?, Result.projectionItems]
 
-/-- Chained projection peels one boundary per `:`:
+/-- Chained selection peels one boundary per `:`:
 `[[1, 2], [3, 4]]:1:0` is `3`. -/
 theorem select_list_chained :
     (Result.select?
       (Result.listValue
         [Result.listValue [Result.atom 1, Result.atom 2],
          Result.listValue [Result.atom 3, Result.atom 4]]) 1).bind
-      (fun projected => Result.select? projected.fst 0)
-      = some (Result.atom 3, 1) := by
-  simp [Result.select?, Result.projectionItems, Result.projectSelectedContent,
-    Result.toItems, Result.normalize]
+      (fun selected => Result.select? selected 0)
+      = some (Result.atom 3) := by
+  simp [Result.select?, Result.projectionItems]
 
-/-- A selected SEQUENCE element inside a list projects one level with its
-item count, exactly like selecting it from a sequence target. -/
-theorem select_sequence_element_in_list_projects :
+/-- A selected SEQUENCE element inside a list is returned exactly as stored —
+ONE intact sequence value, never its members — exactly like selecting it from
+a sequence target. -/
+theorem select_sequence_element_in_list_stays_sequence :
     Result.select?
       (Result.listValue [Result.sequenceValue [Result.atom 1, Result.atom 2]]) 0
-      = some (Result.sequenceValue [Result.atom 1, Result.atom 2], 2) := by
-  simp [Result.select?, Result.projectionItems, Result.projectSelectedContent,
-    Result.toItems, Result.normalize]
+      = some (Result.sequenceValue [Result.atom 1, Result.atom 2]) := by
+  simp [Result.select?, Result.projectionItems]
 
-/-- Out-of-range list projection is a miss (`[]:0` and `[1, 2]:2` are the
-existing projection out-of-range error). -/
+/-- Out-of-range list selection is a miss (`[]:0` and `[1, 2]:2` are the
+existing index out-of-range error). -/
 theorem select_empty_list_out_of_range :
     Result.select? (Result.listValue []) 0 = none := by
   simp [Result.select?, Result.projectionItems]
@@ -743,6 +740,109 @@ theorem select_empty_list_out_of_range :
 theorem select_list_past_end_out_of_range :
     Result.select? (Result.listValue [Result.atom 1, Result.atom 2]) 2 = none := by
   simp [Result.select?, Result.projectionItems]
+
+/-
+## Selection laws (selection is a value boundary)
+
+SELECTION CHOOSES A VALUE; SPREAD OPENS A VALUE (September 2026). `A:i`,
+`first(A)`, and `last(A)` return the selected element exactly as stored and
+re-count it through the ONE ordinary value boundary (`Result.valueCount`):
+a selected sequence value or exact list is one emitted value, a selected `()`
+emits zero values, and the selected value's origin is forgotten. No selection
+form opens what it selects — only the spread marker (`Result.spreadItems`)
+does, exactly one boundary. Higher-order callback items are selected values
+under the same rule (`countedSequenceCallbackItem`).
+-/
+
+/-- `select?` never rebuilds, normalizes, or opens the selected element: it
+IS the stored element at that position of the target's position view. -/
+theorem select_is_stored_element (r : Result) (i : Nat) :
+    Result.select? r i = r.projectionItems[i]? := rfl
+
+/-- A selected sequence element from a sequence target is the stored
+sequence value itself (never its members). -/
+theorem select_sequence_element_stays_sequence (xs ys : List Result) :
+    Result.select? (Result.sequenceValue (Result.sequenceValue xs :: ys)) 0
+      = some (Result.sequenceValue xs) := by
+  simp [Result.select?, Result.projectionItems, Result.toItems]
+
+/-- A selected `()` element is the empty sequence value itself, which the
+value boundary counts as ZERO emitted values — whatever route selected it. -/
+theorem select_empty_element_recounts_to_zero (ys : List Result) :
+    (Result.select? (Result.sequenceValue (Result.sequenceValue [] :: ys)) 0).map
+        Result.valueCount
+      = some 0 := by
+  simp [Result.select?, Result.projectionItems, Result.toItems, Result.valueCount]
+
+/-- A selected `[]` element is ONE exact list value at the value boundary:
+the empty list and the empty sequence value are deliberately distinct. -/
+theorem select_empty_list_element_recounts_to_one (ys : List Result) :
+    (Result.select? (Result.sequenceValue (Result.listValue [] :: ys)) 0).map
+        Result.valueCount
+      = some 1 := by
+  simp [Result.select?, Result.projectionItems, Result.toItems, Result.valueCount]
+
+/-- The counted result of a selection is the value-boundary re-count of the
+stored element — the exact pair the `.index` arm of `evalCounted` emits
+(`(selected, Result.valueCount selected)`), which is what `reCountValueBoundary`
+produces for every other value boundary WHATEVER count the value carried
+before: the selected value's origin is forgotten. (The `.index` arm itself
+lives in the partial evaluator block; CoreTests `SelectionValueBoundary` pins
+it executably.) -/
+theorem select_is_a_value_boundary (selected : Result) (n : Nat) :
+    reCountValueBoundary (selected, n) = (selected, Result.valueCount selected) := rfl
+
+/-- `first(A)` is the selection `A:0` under the same value boundary: for every
+non-empty collection view `x :: xs`, `evalFirstCounted` yields exactly
+`(x, valueCount x)` — the pair the `.index` arm of `evalCounted` emits for
+`select? (sequenceValue (x :: xs)) 0`. -/
+theorem first_is_select_zero (x : Result) (xs : List Result) (s : EvalState) :
+    (evalFirstCounted (x :: xs)).run s
+      = (Except.ok ((x, Result.valueCount x), s) : Except Error (CountedResult × EvalState))
+    ∧ Result.select? (Result.sequenceValue (x :: xs)) 0 = some x := by
+  constructor
+  · rfl
+  · simp [Result.select?, Result.projectionItems, Result.toItems]
+
+/-- `last(A)` is the selection `A:(count - 1)` under the same value boundary:
+for every non-empty collection view `xs ++ [x]`, `evalLastCounted` yields
+`(x, valueCount x)` and `select?` at the last position yields `x`. -/
+theorem last_is_select_last (x : Result) (xs : List Result) (s : EvalState) :
+    (evalLastCounted (xs ++ [x])).run s
+      = (Except.ok ((x, Result.valueCount x), s) : Except Error (CountedResult × EvalState))
+    ∧ Result.select? (Result.sequenceValue (xs ++ [x])) xs.length = some x := by
+  constructor
+  · simp only [evalLastCounted, List.getLast?_concat]
+    rfl
+  · simp [Result.select?, Result.projectionItems, Result.toItems]
+
+/-- `first` and `last` never carry a count of their own: `first(())` and
+`last(())` are the collection-arity rejection. -/
+theorem first_empty_is_badArity (s : EvalState) :
+    (evalFirstCounted []).run s = (Except.error Error.badArity : Except Error (CountedResult × EvalState)) := rfl
+
+theorem last_empty_is_badArity (s : EvalState) :
+    (evalLastCounted []).run s = (Except.error Error.badArity : Except Error (CountedResult × EvalState)) := rfl
+
+/-- A higher-order callback item is a selected value: whatever count the
+iteration supplied, the callback observes the value-boundary re-count. -/
+theorem callback_item_is_a_value_boundary (item : Result) (n : Nat) :
+    countedSequenceCallbackItem (item, n) = (item, Result.valueCount item) := rfl
+
+/-- Explicit spread of a selected sequence element opens exactly ONE boundary:
+the immediate members, intact. -/
+theorem spread_of_selected_sequence_opens_one_boundary (xs ys : List Result) :
+    (Result.select? (Result.sequenceValue (Result.sequenceValue xs :: ys)) 0).map
+        Result.spreadItems
+      = some xs := by
+  simp [Result.select?, Result.projectionItems, Result.toItems, Result.spreadItems]
+
+/-- Explicit spread of a selected list element opens exactly ONE boundary. -/
+theorem spread_of_selected_list_opens_one_boundary (xs ys : List Result) :
+    (Result.select? (Result.sequenceValue (Result.listValue xs :: ys)) 0).map
+        Result.spreadItems
+      = some xs := by
+  simp [Result.select?, Result.projectionItems, Result.toItems, Result.spreadItems]
 
 /-- The deconstruction structure view opens a received list to its items. -/
 theorem structureItems_listValue (xs : List Result) :

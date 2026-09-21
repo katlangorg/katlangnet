@@ -360,17 +360,32 @@ public class DotCallCollectingReceiverTests
         Assert.True(Result.ValueComparer.Equals(raw.Value, ordinary.Value));
     }
 
-    // ── G. Counted projection receivers ─────────────────────────────────────
+    // ── G. Selection receivers ──────────────────────────────────────────────
 
     [Fact]
-    public void ProjectionGroupReceiver_SuppliesTheProjectedCountedItems()
+    public void SelectionReceiver_SuppliesTheSelectedValueAsOneItem()
     {
-        // `S:0` re-emits the projected count, so the receiver's raw counted
-        // supply is the two projected items; the direct call's written slot
-        // reifies them back into ONE sequence value.
+        // SELECTION IS A VALUE BOUNDARY: `S:0` (and `first(S)`) is the selected
+        // pair as ONE value, so the receiver segment supplies exactly one item
+        // — the same item a direct call's written slot supplies — and only an
+        // explicit spread of the selection supplies its two items.
         const string defs = "S = ((1, 2), (3, 4))\nCollect(*items) = items\n";
-        AssertResult(defs + "(S:0).Collect", List(Atom(1), Atom(2)));
+        AssertResult(defs + "(S:0).Collect", List(Seq(Atom(1), Atom(2))));
+        AssertResult(defs + "S:0.Collect", List(Seq(Atom(1), Atom(2))));
+        AssertResult(defs + "first(S).Collect", List(Seq(Atom(1), Atom(2))));
         AssertResult(defs + "Collect(S:0)", List(Seq(Atom(1), Atom(2))));
+        AssertResult(defs + "(S:0)*.Collect", List(Atom(1), Atom(2)));
+        AssertResult(defs + "S:0*.Collect", List(Atom(1), Atom(2)));
+        AssertResult(defs + "first(S)*.Collect", List(Atom(1), Atom(2)));
+
+        // A selected `()` supplies zero items, exactly like the `()` value read
+        // from a property; a selected `[]` is one exact list item.
+        const string emptyDefs = "E = ((), 1)\nL = ([], 1)\nCollect(*items) = items\n";
+        AssertResult(emptyDefs + "E:0.Collect", List());
+        AssertResult(emptyDefs + "first(E).Collect", List());
+        AssertResult(emptyDefs + "L:0.Collect", List(List()));
+        AssertResult(emptyDefs + "first(L).Collect", List(List()));
+        AssertResult(emptyDefs + "(L:0)*.Collect", List());
     }
 
     // ── H. Plain expression-spine path parity ───────────────────────────────

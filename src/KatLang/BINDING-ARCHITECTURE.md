@@ -55,7 +55,7 @@ Generic loop machinery owns:
 
 Callbacks own:
 
-- projected callback items
+- callback items recounted at the ordinary value boundary
 - counted callback input
 - reducer accumulator threading
 - callback result shape validation
@@ -129,7 +129,7 @@ Reopen generic loop-step executor migration only if a collection-level `BindingI
 
 Patterned binding is intentionally not migrated to a new policy abstraction yet. `CallableBindingPlan` already describes patterned shape as data: sequence-value nodes, recursive nodes, capture names and sources, top-level versus nested variadics, and arity facts. It must remain non-executable.
 
-The remaining patterned behavior is executor-owned runtime policy: explicit argument evaluation timing, explicit block-to-sequence-value item extraction, top-level algorithm-channel binding, nested algorithm suppression during sequence-value recursion, loop value-only state-slot semantics, counted callback projection, singleton sequence-value scalar fallback, and arity or wrong-shape diagnostic selection.
+The remaining patterned behavior is executor-owned runtime policy: explicit argument evaluation timing, explicit block-to-sequence-value item extraction, top-level algorithm-channel binding, nested algorithm suppression during sequence-value recursion, loop value-only state-slot semantics, callback item value-boundary recounting, singleton sequence-value scalar fallback, and arity or wrong-shape diagnostic selection.
 
 `ParameterPatternInput` remains the patterned binder's own input model. The flat collecting loop path binds plain `Result` slots through the generic `BindCallableArguments`; there is deliberately no slot wrapper there to grow explicit sequence-value items or counted callback policy.
 
@@ -143,9 +143,9 @@ Collecting parameter kinds are never discarded on any callback route (July 2026 
 
 `UsesPatternBinding` remains for now because callbacks, evaluated loop slots, and loop fallbacks still share that runtime helper. Do not partially migrate only the callback call site to `CallableBindingPlan.RequiresPatternedBinding`.
 
-Callbacks receive already-evaluated `CountedResult` values; sequence-value callback items preserve structure through callback item projection; reducer accumulator input is shaped differently from ordinary element input; `EmittedCount` threads through counted callback paths; callbacks do not allow algorithm-channel binding; and callback diagnostics are selected and wrapped by the relevant executor call site. Counted and uncounted binders are not unified now because `CountedResult` versus `Result` is a structural difference, not accidental duplication.
+Callbacks receive already-evaluated `CountedResult` values; callback items preserve their stored value and carry its ordinary value-boundary count (zero for `()`, one otherwise); reducer accumulator input is shaped differently from ordinary element input; `EmittedCount` threads through counted callback paths; callbacks do not allow algorithm-channel binding; and callback diagnostics are selected and wrapped by the relevant executor call site. Counted and uncounted binders are not unified now because `CountedResult` versus `Result` is a structural difference, not accidental duplication.
 
-The flat collecting loop path binds plain `Result` slots and has no slot wrapper to widen: it intentionally offers no place for explicit sequence-value items, reducer accumulator policy, or callback projection policy, and none should be added to support callbacks. (The former `BindingInputSlot` wrapper once carried a variadic-slot emitted count for raw capture-supply forwarding; exact list collection made that metadata obsolete, and the wrapper itself followed in September 2026.)
+The flat collecting loop path binds plain `Result` slots and has no slot wrapper to widen: it intentionally offers no place for explicit sequence-value items, reducer accumulator policy, or callback item recounting policy, and none should be added to support callbacks. (The former `BindingInputSlot` wrapper once carried a variadic-slot emitted count for raw capture-supply forwarding; exact list collection made that metadata obsolete, and the wrapper itself followed in September 2026.)
 
 Reopen callback binding unification only if `UsesPatternBinding`'s evaluated-loop-slot and loop-fallback consumers are migrated so the helper can be retired in one coherent pass; a new callback family appears outside the current executor paths; a second non-executor consumer needs the same callback binding logic; a real callback bug requires unification to fix correctly; Lean callback semantics change and force a C# refactor; or a real `BindingPolicy` abstraction already exists with multiple concrete consumers.
 
@@ -153,7 +153,7 @@ Reopen callback binding unification only if `UsesPatternBinding`'s evaluated-loo
 
 Builtin runtime binding integration is deferred. Builtin metadata is already unified: `BuiltinRegistry`, `SequenceBuiltinMetadata`, `CallableSignature`, and `CallableBindingPlan` describe builtin surface shape. The remaining builtin runtime binding stays executor-owned because builtins operate on already-evaluated collected sequence sources, not ordinary pre-evaluation callable argument slots.
 
-`CallableBindingPlan` may describe builtin signatures, but it does not own builtin source collection, receiver normalization, empty policy, numeric validation, callback projection, or diagnostic wrapping. No shared input-slot wrapper exists for builtin runtime binding, and none should be introduced to carry source-boundary information, empty-policy state, callback projection policy, or dot-call receiver policy. Collection builtins are ordinary fixed-arity callables (`count(collection)`, `take(collection, count)`): their binder checks the exact argument count directly and applies the post-binding one-level collection view to the bound collection argument — there is no variadic layout, no suffix-from-the-back binding, and no pre-binding opening.
+`CallableBindingPlan` may describe builtin signatures, but it does not own builtin source collection, receiver normalization, empty policy, numeric validation, callback item recounting, or diagnostic wrapping. No shared input-slot wrapper exists for builtin runtime binding, and none should be introduced to carry source-boundary information, empty-policy state, callback item recounting policy, or dot-call receiver policy. Collection builtins are ordinary fixed-arity callables (`count(collection)`, `take(collection, count)`): their binder checks the exact argument count directly and applies the post-binding one-level collection view to the bound collection argument — there is no variadic layout, no suffix-from-the-back binding, and no pre-binding opening.
 
 The builtin runtime families are plain builtin calls, dot-call builtin calls, collection builtins, numeric/math builtins, map/filter/reduce higher-order builtins, structural builtins such as `count`, `atoms`, `first`, `last`, `take`, `skip`, `order`, and `distinct`, builtin-as-callback, and dot-receiver injection. `count` counts its one bound collection's viewed items and `atoms` recursively collects atoms through both sequence and list boundaries into one exact list; these remain distinct semantic operations. The spread marker (`value*`) is the one-level boundary-opening mechanism and is not an ordinary builtin call.
 

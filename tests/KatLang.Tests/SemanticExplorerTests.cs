@@ -387,13 +387,16 @@ public class SemanticExplorerTests
                 $"expected {SemanticExplorerHarness.Neutral(expectedSplice)}, observed {spreadInSeq.Neutral}"));
         }
 
-        // Indexing: one-level projection with the documented root row bump
-        // (a non-spread output slot always contributes at least one row).
+        // Indexing is a VALUE BOUNDARY: `x:i` returns the selected element
+        // exactly as stored and re-counts it as one plain value, so a lone
+        // root row always shows exactly ONE row — a selected sequence or list
+        // is never opened, and the documented root bump keeps a selected `()`
+        // visible as one row. Only the spread marker opens a selected value.
         foreach (var (template, index) in new[] { ("index0", 0), ("index1", 1), ("indexBig", 9) })
         {
             var observation = Obs(template, valueId);
-            var projected = capturedValue.SelectProjected(index);
-            if (projected is null)
+            var selected = capturedValue.Index(index);
+            if (selected is null)
             {
                 if (observation.Outcome != "err" || observation.ErrorCategory != "index")
                 {
@@ -403,13 +406,13 @@ public class SemanticExplorerTests
                 }
             }
             else if (observation.Outcome != "ok"
-                || !Result.ValueComparer.Equals(observation.Value, projected.Value.Value)
-                || observation.Emitted != Math.Max(1, projected.Value.EmittedCount))
+                || !Result.ValueComparer.Equals(observation.Value, selected)
+                || observation.Emitted != 1)
             {
                 findings.Add(new Finding(
                     "IndexingInstability", observation.CaseId,
-                    $"expected raw {SemanticExplorerHarness.Neutral(projected.Value.Value)} " +
-                    $"n={Math.Max(1, projected.Value.EmittedCount)}, observed {observation.Neutral}"));
+                    $"expected raw {SemanticExplorerHarness.Neutral(selected)} " +
+                    $"n=1, observed {observation.Neutral}"));
             }
         }
 
@@ -447,13 +450,13 @@ public class SemanticExplorerTests
                 $"expected error on non-numeric items, observed {order.Neutral}"));
         }
 
-        // The identity map callback `M(a) = a` binds each supply item through
-        // ordinary counted callback projection: a scalar or exact list item is
-        // one bound value and maps to itself, while a sequence-valued item
-        // projects to a different count and fails the strict single-element
-        // transform contract (empty `()` items project zero values).
+        // The identity map callback `M(a) = a` binds each supply item as ONE
+        // selected value (selection is a value boundary): every non-empty item
+        // — scalar, exact list, or nested sequence value — is one bound value
+        // and maps to itself, while an empty `()` item is the documented empty
+        // transform result and fails the strict single-element contract.
         var mapId = Obs("mapId", valueId);
-        var mapIdBindsOneValuePerItem = builtinSupply.All(static i => i is Result.Atom or Result.Bool or Result.Str or Result.ListValue);
+        var mapIdBindsOneValuePerItem = builtinSupply.All(static i => i is not Result.SequenceValue { Items.Count: 0 });
         if (mapIdBindsOneValuePerItem)
         {
             ExpectExactList(findings, mapId, builtinSupply);
@@ -711,8 +714,18 @@ public class SemanticExplorerTests
         { "take([1, 2, 3])", "err arity" },
         { "take([1, 2, 3], 0)", "ok raw=L[] n=1" },
         { "take([[1, 2], [3, 4]], 1)", "ok raw=L[L[1, 2]] n=1" },
-        { "x = ((1, 2), (3, 4))\nx:0", "ok raw=S[1, 2] n=2" },
+        // SELECTION IS A VALUE BOUNDARY: a selected pair is ONE value (n=1) however
+        // it is selected; only the spread marker opens it.
+        { "x = ((1, 2), (3, 4))\nx:0", "ok raw=S[1, 2] n=1" },
+        { "x = ((1, 2), (3, 4))\nfirst(x)", "ok raw=S[1, 2] n=1" },
+        { "x = ((3, 4), (1, 2))\nlast(x)", "ok raw=S[1, 2] n=1" },
+        { "x = ((1, 2), (3, 4))\n(x:0)*", "ok raw=S[1, 2] n=2" },
+        { "x = ((1, 2), (3, 4))\n(first(x))*", "ok raw=S[1, 2] n=2" },
         { "x = ((), ())\nx:0", "ok raw=S[] n=1" },
+        { "x = ((), ())\nfirst(x)", "ok raw=S[] n=1" },
+        { "Coll(*xs) = xs\nx = ((), 1)\nfirst(x).Coll", "ok raw=L[] n=1" },
+        { "Coll(*xs) = xs\nx = ((), 1)\nx:0.Coll", "ok raw=L[] n=1" },
+        { "Coll(*xs) = xs\nx = ([], 1)\nx:0.Coll", "ok raw=L[L[]] n=1" },
         { "P = (), 99\nP", "ok raw=S[S[], 99] n=1" },
         { "F(*a) = a\nF(1, 2, 3)", "ok raw=L[1, 2, 3] n=1" },
         // SYN-01: `()` carries no numeric scalar value, so an ordering operator

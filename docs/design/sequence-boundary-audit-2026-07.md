@@ -46,7 +46,8 @@ collection-producing builtins (`order`, `orderDesc`, `distinct`, `take`,
 1. Root/body output accumulation: a spread slot contributes its spread item
    count (possibly 0); a **non-spread slot contributes `max(1, emitted)`** —
    so `()` stays one visible row, and a supply-emitting expression such as
-   `x:0` emits several rows at root.
+   a multi-slot loop result emits several rows at root. *(September 2026:
+   indexing no longer emits a supply — see **Indexing** below.)*
 2. `while`/`repeat` multi-slot loop state.
 3. The strict single-value `map`/`reduce` callback contract (multi-output or
    `()`-valued callback results are errors, not grouped values).
@@ -81,11 +82,22 @@ is not read from any atom view at all: only a Boolean value is a condition,
 `[].spread` contribute zero items, an atom spreads to itself, a sequence or list
 supplies its immediate items, and nested values stay intact.
 
-**Indexing.** `x:i` selects one top-level item and projects its content one
-level, emitting `(projectedValue, itemCount)` — a *supply*, not a value. The
-supply is observable only at root/body output rows (with the `max(1, n)`
-non-spread bump); every other receiver (argument slot, sequence literal,
-capture) re-materializes it as one value.
+**Indexing / selection (revised September 2026).** SELECTION IS A VALUE
+BOUNDARY: `x:i`, `first(x)`, and `last(x)` select one top-level item of the
+target's position view and return it exactly as stored, re-counted through the
+ordinary value boundary — `(selected, valueCount selected)`. A selected
+sequence or list is one value at EVERY receiver (a lone root row, a collecting
+dotted receiver segment, a loop-step row, a callback body), a selected `()`
+re-counts to zero values (like any `()` value; the root bump still shows it as
+one row), and a selected `[]` is one exact list. Only the spread marker opens a
+selected value, one boundary. Higher-order callback items are selected values
+under the same rule. *(Superseded: the original audit modeled `x:i` as a
+"selection projects content" supply `(projectedValue, itemCount)` observable
+at root rows and dotted collecting receivers; that projection — Lean
+`projectSelectedContent`, C# `SelectProjected`/`ProjectIteratedContent` — was
+removed. The matrix rows and §3/§4 notes below that mention the projection
+supply describe the July 2026 model; the current rule is
+`docs/design/language-rules/sequences-lists-and-calls.md` § Value boundaries.)*
 
 **Equality.** `==`/`!=` compare evaluated raw structure (`BEq` / 
 `Result.ValueComparer`), no normalization at comparison time, mixed kinds
@@ -150,8 +162,8 @@ observable count at root; notes):
 | spread in seq `(V.spread, 99)` | items+1 | shallow combine | 1 | `(().spread, 99)` = `99` (singleton collapse) |
 | `count(V)` / `V.count` | 1 fixed collection arg | `items(V).count` | 1 | collection view opens one bound sequence/list boundary |
 | `count(V.spread)` | `items(V).count` ordinary args | count or `E:arity` | 1 / — | succeeds only when spread supplies exactly one argument |
-| `x:0` (item = pair) | — | projected item content | `max(1, k)` | supply at root; 1 value everywhere else |
-| `x:0` (item = `()`) | — | `S[]` | 1 | projection count 0, root bump to 1 row |
+| `x:0` (item = pair) | — | the stored pair, one value | 1 | selection is a value boundary (Sept 2026; was a `max(1, k)` supply at root) |
+| `x:0` (item = `()`) | — | `S[]` | 1 | value count 0, root bump to 1 row |
 | `x:9` / `x:-1` | — | `E:index` / parse error | — | negative selector rejected at parse (C#) |
 | `==` / `!=` | 2 values | `true`/`false` | 1 | structural, reflexive, path-independent |
 | re-entry `I(x)`, `P = R` | 1 | unchanged | 1 | validated across double re-entry |
@@ -168,9 +180,10 @@ observable count at root; notes):
 2. **Should lexical zero-arg access and structural dot access re-count
    identically?** They already do (validated: `capture`/`captureCall`/
    `dotAccess`/`dotAccessCall` agree on every corpus value).
-3. **Which operations may preserve an internal item supply?** Exactly the four
-   documented non-boundaries (§1) plus `:` projection *between* evaluation and
-   the next boundary. No others were found in the sweep.
+3. **Which operations may preserve an internal item supply?** Exactly the
+   documented non-boundaries (§1). *(July 2026: also `:` projection between
+   evaluation and the next boundary — removed September 2026, when selection
+   became a value boundary.)* No others were found in the sweep.
 4. **Which must expose a captured value?** Every property/call/builtin result,
    argument slot, sequence-literal item, and stored binding.
 5. **Where is capture/normalization applied?** Deep `normalize` at written
@@ -210,11 +223,12 @@ observable count at root; notes):
     Validated by `UnexpectedFlattening` on nested values incl. `((), (1, 2))`,
     `(((), 1), 2)`, and exact nested list elements.
 14. **Are root output, property access, function return, builtin return one
-    rule?** One rule + the four *documented* exceptions of §1. The only
-    subtle interaction is `:` projection emitting a supply that root rows
-    display opened while every other receiver re-materializes — this is the
-    documented "selection projects content" rule meeting the documented
-    "root output is not a value boundary" rule, not a special case of either.
+    rule?** One rule + the *documented* exceptions of §1. *(July 2026 note,
+    superseded: `:` projection emitted a supply that root rows displayed
+    opened while every other receiver re-materialized it — "selection
+    projects content" meeting "root output is not a value boundary". Since
+    September 2026 selection is a value boundary, so this interaction no
+    longer exists.)*
 
 ## 4. Findings classification
 
@@ -254,9 +268,10 @@ supplies.)
 documented rules. Candidates examined and resolved as rule-consistent:
 
 - `count(take(V, 1)) != 1` (see §3.11) — consequence of two documented rules.
-- `x:0` emitting several root rows while `G(x:0)` passes one argument —
-  documented projection/supply semantics vs written-slot argument rule.
-- `x:0` on a `()` item shows one `()` row (projection count 0, root bump) —
+- *(July 2026, superseded)* `x:0` emitting several root rows while `G(x:0)`
+  passed one argument — the former projection/supply semantics vs the
+  written-slot argument rule. Since September 2026 `x:0` is one root row too.
+- `x:0` on a `()` item shows one `()` row (value count 0, root bump) —
   same rule that keeps a non-spread `()` visible.
 
 **Intentional behavior (documented):** singleton-paren transparency;
@@ -339,7 +354,7 @@ parse-level set) is enforced by
 
 | Suite / artifact | Exact count | Included | Excluded | Source of truth |
 |---|---:|---|---|---|
-| Surface corpus (= C# semantic report surface section) | 2,038 | 1,836 template cases (54 receiver templates x 34 values) + 202 specials; outcomes 1,740 ok / 257 err / 41 parse-error | internal-node cases; anchor pins | `SemanticExplorerCorpus.AllCases()`; report `partition.surfaceCases` |
+| Surface corpus (= C# semantic report surface section) | 2,038 | 1,836 template cases (54 receiver templates x 34 values) + 202 specials; outcomes 1,745 ok / 252 err / 41 parse-error | internal-node cases; anchor pins | `SemanticExplorerCorpus.AllCases()`; report `partition.surfaceCases` |
 | Lean-representable surface differential | 1,997 | the 2,038 above minus the 41 parse-level cases (34 `indexNeg__*` + seven deliberate parse-error specials, the builtin open target `open count, Lib` among them since the final audit of September 2026) | parse-level cases (Lean has no surface parser) | report `partition.leanRepresentable`; artifact header/footer |
 | Internal `SequenceConstruct` corpus | 14 | direct-AST `internal__sc_*` cases | everything source-driven | `SemanticExplorerCorpus.InternalNodeCases()`; report `partition.internalNodeCases` |
 | Generated Lean case guards | 2,011 | 1,997 surface + 14 internal-node (one `#guard` per case), plus two partition-count guards | nothing (header states the split) | `SemanticExplorerCases.lean` header/footer |
@@ -419,9 +434,9 @@ to keep it and enforce it):**
 > Every property/call/builtin result, argument slot, sequence-literal item,
 > and stored binding is a *value* boundary: one value, count `valueCount`.
 > Item supplies exist only inside root/body output accumulation and loop
-> state; only a written `spread(value)` / `value.spread` intrinsic (or the documented openers: deconstruction RHS
-> and `:` projection) may open one layer of a value into a surrounding
-> supply. Collection builtins first bind one ordinary fixed `collection`
+> state; only a written spread `value*` (or the documented opener:
+> deconstruction RHS) may open one layer of a value into a surrounding
+> supply — selection (`:`, `first`, `last`) chooses a value and never opens it. Collection builtins first bind one ordinary fixed `collection`
 > value, then apply their separate post-binding one-level view.
 > Sequence-centered arity construction erases exactly the unwritable
 > boundaries (singleton wrap, redundant empty nesting) and nothing else;

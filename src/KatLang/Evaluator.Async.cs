@@ -1156,11 +1156,13 @@ public static partial class Evaluator
                             break;
                         }
 
-                        var selected = frames[top].FirstValue!.SelectProjected((int)n);
+                        // MIRROR of the sync Index case: selection is a value
+                        // boundary — the stored element, re-counted as one plain
+                        // value (Result.ValueCount), never opened.
+                        var selected = frames[top].FirstValue!.Index((int)n);
                         completed = selected is null
                             ? new EvalError.BadIndex() { Span = frames[top].Node.Span }
-                            : EvalResult<CountedResult>.Ok(new CountedResult(
-                                selected.Value.Value, selected.Value.EmittedCount));
+                            : CountValue(selected);
                         break;
                     }
 

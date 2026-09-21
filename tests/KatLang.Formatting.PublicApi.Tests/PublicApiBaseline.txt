@@ -1889,8 +1889,6 @@ public closed record KatLang.Result : System.IEquatable<KatLang.Result>
   method   public System.Collections.Generic.IReadOnlyList<System.Numerics.Decimal128> LanguageAtoms()
   method   public KatLang.Result Normalize()
   method   protected virtual bool PrintMembers(System.Text.StringBuilder builder)
-  method   public (KatLang.Result Value, int EmittedCount) ProjectIteratedContent()
-  method   public (KatLang.Result Value, int EmittedCount)? SelectProjected(int i)
   method   public System.Numerics.Decimal128? SingleAtomicNumber()
   method   public System.Collections.Generic.IReadOnlyList<KatLang.Result> SpreadItems()
   method   public System.Collections.Generic.IReadOnlyList<KatLang.Result>? StructureItems()

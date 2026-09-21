@@ -388,8 +388,8 @@ The spread star on a list-valued expression opens exactly ONE list boundary (`[]
 Indexing:
     expr:index
 
-Indexing is zero-based. It selects one top-level item from a sequence or exact list target and projects that selected item's content one level. Nested sequence and list elements are not recursively flattened, and a selected list element is returned exactly as stored.
-The index operator projects one level per hop. Use exactly as many `:` selections as the output shape requires.
+Indexing is zero-based. It selects one top-level item from a sequence or exact list target and returns it as ONE value — selection is a value boundary, so a selected sequence value or list is never opened (`Pairs = (1, 2), (3, 4)` makes `Pairs:0` the one value `(1, 2)`; write `(Pairs:0)*` or `Pairs:0*` to open it), a selected `()` is simply `()`, and `first(A)` / `last(A)` are the same selection as `A:0` / `A:(A.count - 1)`. Nested sequence and list elements are not recursively flattened, and a selected list element is returned exactly as stored.
+The index operator selects one level per hop. Use exactly as many `:` selections as the output shape requires.
 If a result is a pair/state such as `(candidate, found)` or `candidate, found`, use `:0` or `:1` directly.
 For a final accumulator/state from `reduce` or `repeat`, select fields directly too: use `...:1` for the second field of `(n, found)` or `n, found`, not `...:0:1`.
 Chain another `:i` only when the previous selection still returns a sequence value. Do not add a defensive `:0` before selecting a known state field.
@@ -716,7 +716,7 @@ Direct consumers:
 
 `avg(collection)` / `collection.avg` returns the decimal arithmetic mean of the numeric top-level items (the total divided by the count), so `avg((1, 2))` is `1.5`, `avg((-1, -2))` is `-1.5`, and `avg((1, 2, 3))` is `2`. For numeric values it is equivalent to `sum(collection) / count(collection)` (apart from `avg`'s empty/non-numeric validation), so use `avg` freely for fractional means. Ordinary `/` is decimal division (`7 / 2` is `3.5`), `div` is truncating integer division, and `mod` is the remainder.
 
-Sequence values are preserved as whole top-level items unless selection `:` projects them or a builtin explicitly says otherwise. Use a spread star `value*` to open exactly one outer sequence-value boundary from one value into the surrounding output, argument, or item supply; it does not turn one fixed-call argument expression into several parameters. Do not recursively flatten nested sequence values.
+Sequence values are preserved as whole top-level items unless a builtin explicitly says otherwise (selection `:`, `first`, and `last` return them whole). Use a spread star `value*` to open exactly one outer sequence-value boundary from one value into the surrounding output, argument, or item supply; it does not turn one fixed-call argument expression into several parameters. Do not recursively flatten nested sequence values.
 
 Do not generate `content(...)`; it is no longer a builtin. Use a spread star `x*` when opening a sequence into the surrounding item supply, and use `atoms(x)` only when recursive atom projection is intended.
 
@@ -731,7 +731,7 @@ Callbacks:
 
 `filter` predicate must return a Boolean value (`true` keeps, `false` rejects); a number, a string, a list (including any collection-builtin result), a sequence value, or a multi-output result is a type error.
 `map` mapper must return exactly one mapped element; one sequence value or one exact list value is allowed.
-Callback items are projected one level, like selecting an item from a top-level sequence; a list item arrives as one opaque list argument. `filter` keeps the original item when the predicate returns `true`; `map` replaces each item with the mapper output (exactly one element, where one sequence or list value is allowed) and returns the mapped items as one exact list value. Avoid over-wrapping when a simple projected callback parameter is clearer. Callbacks with a collecting parameter collect exact lists like ordinary calls: a single-collecting-parameter map/filter callback keeps each element as ONE collected slot (`[7].map(Collect)` binds `items = [7]`, giving `[[7]]`; `[(1, 2)].map(Collect)` gives `[[(1, 2)]]`), while a multi-parameter flat callback opens a lone sequence element into row slots first and then collects the middle (`[(1, 2, 3, 4)].map(F)` with `F(first, *middle, last)` binds `middle = [2, 3]`, agreeing with `F((first, *middle, last))`). Reduce supplies element and accumulator slots, so `R(*items) = items` collects `[element, accumulator]`, while a reducer collecting parameter before a fixed accumulator observes `[element]`.
+Callback items are selected values — one intact value each, exactly what `S:i` returns (a nested sequence item stays one sequence value; a list item arrives as one opaque list argument); only an explicit spread `(x)*` opens an item. `filter` keeps the original item when the predicate returns `true`; `map` replaces each item with the mapper output (exactly one element, where one sequence or list value is allowed) and returns the mapped items as one exact list value. Avoid over-wrapping when a simple callback parameter is clearer. Callbacks with a collecting parameter collect exact lists like ordinary calls: a single-collecting-parameter map/filter callback keeps each element as ONE collected slot (`[7].map(Collect)` binds `items = [7]`, giving `[[7]]`; `[(1, 2)].map(Collect)` gives `[[(1, 2)]]`), while a multi-parameter flat callback opens a lone sequence element into row slots first and then collects the middle (`[(1, 2, 3, 4)].map(F)` with `F(first, *middle, last)` binds `middle = [2, 3]`, agreeing with `F((first, *middle, last))`). Reduce supplies element and accumulator slots, so `R(*items) = items` collects `[element, accumulator]`, while a reducer collecting parameter before a fixed accumulator observes `[element]`.
 
 `reduce(collection, reducer, initial)` is a left fold called conceptually as `reducer(element, accumulator)`. It takes exactly three arguments — the initial accumulator is required, so `reduce((1, 2, 3), Add)` is a two-argument arity error. The dotted `collection.reduce(Add)` form recognizes a visibly parameterized reducer and adds a targeted missing-initial hint; the plain form remains an ordinary arity error. Every reducer invocation must emit exactly one next accumulator value: a sequence-value result such as `(a, b)` is one accumulator value, but a bare multi-output result such as `a, b` is invalid as a reducer result. Accumulator binding follows the reducer's parameter pattern: a normal parameter receives one structural accumulator value, while a top-level collecting accumulator parameter binds the current accumulator's top-level slots. Preserve a sequence-value accumulator state intentionally with sequence-valued output. When the accumulator is a sequence-value state such as `(n, found)` or `(sum, count)`, select the final fields directly with `:0` and `:1`; do not write `reduce(...):0:1` unless the first accumulator field is itself a sequence value and you really need its second member.
 
@@ -1075,7 +1075,7 @@ Idiomatic structure:
 
 === BEGIN GENERATED: katlang-spec-examples (DO NOT EDIT BY HAND) ===
 
-Verified reference examples (94 of the 280-case canonical language specification,
+Verified reference examples (96 of the 281-case canonical language specification,
 tests/KatLang.Tests/LanguageSpec/LanguageSpecCorpus.cs). Every program and expected
 output below is executed against the KatLang engine and (where representable)
 guarded against the Lean model on every build. Treat these as ground truth for the
@@ -1694,6 +1694,27 @@ Regenerate this block from the repo root with:
   Displays:
     (1, 2, 3, 4)
 
+[index-selects-one-value] SELECTION IS A VALUE BOUNDARY: `:` returns the selected item as ONE value without opening it, so a selected sequence value is one root row — exactly what `first(Pairs)` or a property holding the same value shows. Only an explicit spread `(Pairs:0)*` opens the selected value into its items.
+
+    Pairs = (1, 2), (3, 4)
+    Pairs:0
+
+  Displays:
+    (1, 2)
+
+[selection-forms-agree] `first(A)`, `last(A)`, and `A:i` are the same selection: each returns the selected value through the ordinary value boundary, so a collecting dotted receiver collects the selected pair as one item, a selected `()` supplies zero items (like any `()` value), and a selected `[]` stays one exact list. Only the spread marker opens a selected sequence or list.
+
+    Coll(*xs) = xs
+    Pairs = (1, 2), (3, 4)
+    first(Pairs).Coll
+    Pairs:0.Coll
+    (Pairs:0)*.Coll
+
+  Displays:
+    [(1, 2)]
+    [(1, 2)]
+    [1, 2]
+
 [output-rows-interleave-definitions] Output rows may be interleaved with property definitions: property resolution uses the complete property set of the algorithm, not textual order.
 
     A = 3
@@ -1818,7 +1839,7 @@ Regenerate this block from the repo root with:
   Displays:
     1
 
-[list-index-nested-element-stays-exact] A selected list element is returned exactly as stored — one opaque list, never flattened or converted — while a selected sequence element projects one level as usual; chaining `:` selects one level at a time.
+[list-index-nested-element-stays-exact] A selected list element is returned exactly as stored — one opaque list, never flattened or converted — and a selected sequence element is likewise one intact value; chaining `:` selects one level at a time.
 
     Rows = [[1, 2], [3, 4]]
     Rows:0
@@ -1860,7 +1881,7 @@ Regenerate this block from the repo root with:
     [1, 2, 3]
     [0, 1, 2, 3, 4]
 
-[list-written-slot-reifies-projection] A non-spread expression occupying one written slot contributes exactly ONE persistent value: `S:0` is a two-item projection, but as a list element it is the pair `(1, 2)` — matching capture, call arguments, and every other written-slot receiver. Only an explicit spread `(S:0)*` opens the projected value into the surrounding slots.
+[list-written-slot-reifies-selection] A non-spread expression occupying one written slot contributes exactly ONE persistent value: the selection `S:0` is the pair `(1, 2)` as a list element, exactly as at a capture, a call argument, and every other receiver. Only an explicit spread `S:0*` opens the selected value into the surrounding slots.
 
     S = ((1, 2), (3, 4))
 

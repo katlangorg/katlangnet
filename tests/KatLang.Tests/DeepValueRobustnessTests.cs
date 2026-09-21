@@ -85,7 +85,7 @@ public class DeepValueRobustnessTests
         => AssertEval(DeepListProgram("A.count"), 1);
 
     [Fact]
-    public void DeepIndexSelectionNormalizesProjectedValue()
+    public void DeepIndexSelectionPreservesStoredValue()
         => AssertEval(DeepListProgram("A:0"), 0);
 
     [Fact]

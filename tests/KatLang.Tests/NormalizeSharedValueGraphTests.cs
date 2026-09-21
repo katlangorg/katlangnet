@@ -820,8 +820,10 @@ public class NormalizeSharedValueGraphTests
     [Fact]
     public void IteratingSharedValues_DoesNotExpandNormalizeByPath()
     {
-        // The other production entry into the same projection: higher-order iteration projects each
-        // iterated item through Result.ProjectIteratedContent -> Result.FromItems.
+        // The other production entry that once normalized selected values: higher-order iteration
+        // passed each iterated item through the former projection -> Result.FromItems. Selection is
+        // now a value boundary (the item is passed exactly as stored), and this pins that the
+        // callback path still never expands the shared graph by traversal path.
         var expr = new Expr.AlgorithmExpr(
             SourceProvenance.ParseValid(DagProgram("Id(q) = q\nmap((A, A), Id).count")).Root);
 

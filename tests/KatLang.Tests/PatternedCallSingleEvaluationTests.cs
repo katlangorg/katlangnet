@@ -288,26 +288,29 @@ public class PatternedCallSingleEvaluationTests
         Assert.Equal(12, observed.Items);
     }
 
-    [Fact]
-    public void MultiEmittingSingleSlot_StaysOneWrittenItemInThePreparedView()
+    [Theory]
+    [InlineData("S:0")]
+    [InlineData("repeat({a, b}, 1, 1, 2)")]
+    public void SelectionOrMultiSlotLoop_StaysOneWrittenItemInThePreparedView(string expression)
     {
-        // Accumulator-vs-decomposition discriminator: `S:0` re-emits a two-item
-        // counted supply, yet it occupies ONE written output slot of its group,
-        // so the singleton pattern binds the whole selected pair. Recovering the
-        // slot view by decomposing the combined counted value (count 2) would
-        // wrongly present two items and fail the one-capture pattern. Surface
+        // Accumulator-vs-decomposition discriminator: `S:0` is the selected pair as
+        // ONE value (selection is a value boundary) occupying ONE written output
+        // slot of its group, so the singleton pattern binds the whole selected pair.
+        // The loop result still emits TWO values from one non-spread expression:
+        // it preserves the original regression's count-versus-written-slot distinction.
+        // Recovering the slot view by decomposing the combined value would wrongly
+        // present two items and fail the one-capture pattern. Surface
         // syntax folds redundant parentheses around a lone postfix expression,
         // so this written group is built on the host AST channel — the same
         // channel the empty-output-block regression uses.
-        var parsed = Parser.Parse("S = ((1, 2), (3, 4))\nF((x)) = x\nF((9))");
-        Assert.False(parsed.HasErrors);
-        var projectionBlock = new Expr.AlgorithmExpr(new Algorithm.User(
+        var parsed = SourceProvenance.ParseValid("S = ((1, 2), (3, 4))\nF((x)) = x\n" + expression);
+        var selectionBlock = new Expr.AlgorithmExpr(new Algorithm.User(
             Parent: null,
             ParameterPatterns: [],
             Opens: [],
             Properties: [],
-            Output: [new Expr.Index(new Expr.Resolve("S"), new Expr.Num(0))]));
-        OutputBundle callArgs = [projectionBlock];
+            Output: parsed.Root.Output));
+        OutputBundle callArgs = [selectionBlock];
         var root = parsed.Root with
         {
             Output = [new Expr.Call(new Expr.Resolve("F"), callArgs)],

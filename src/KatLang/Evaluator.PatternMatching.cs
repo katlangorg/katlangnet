@@ -321,9 +321,9 @@ public static partial class Evaluator
     }
 
     /// <summary>
-    /// Ordinary call-style unpacking for a pre-evaluated explicit callback
-    /// argument. A final explicit arg may still unpack across the remaining
-    /// parameters, matching <c>callee(S:i)</c>.
+    /// The flat-callback row convention for a pre-evaluated callback argument:
+    /// a final sequence-valued argument may unpack across remaining parameters;
+    /// exact lists stay opaque. Ordinary direct calls keep one slot per argument.
     /// </summary>
     private static IReadOnlyList<CountedResult> UnpackCountedArg(CountedResult arg)
         => UnpackArgs(arg.Value)
@@ -331,9 +331,8 @@ public static partial class Evaluator
             .ToList();
 
     /// <summary>
-    /// Bind callback parameters while preserving the projected emitted count of
-    /// the iterated item. This keeps callback params behaving like <c>S:i</c>
-    /// without making them callable algorithms.
+    /// Bind callback parameters with the item's ordinary value-boundary count,
+    /// just like <c>S:i</c>, without making them callable algorithms.
     /// </summary>
     private static EvalResult<CountedParamEnv> BindCountedCallbackParams(
         IReadOnlyList<string> paramNames,
@@ -372,7 +371,7 @@ public static partial class Evaluator
     /// collecting parameter. The callback argument supply keeps the established
     /// flat-callback row convention: when fewer argument slots are supplied
     /// than top-level parameters, the final supplied argument opens into its
-    /// items (matching <c>callee(S:i)</c>; exact lists stay opaque), exactly
+    /// items (sequence rows only; exact lists stay opaque), exactly
     /// as <see cref="BindCountedCallbackParams"/> does for fixed-only flat
     /// callees. The resulting slots then bind through the shared
     /// prefix/collecting/suffix binder, so the collecting parameter COLLECTS its allocated
@@ -543,16 +542,19 @@ public static partial class Evaluator
     }
 
     /// <summary>
-    /// Higher-order callbacks keep the collected item value shape for pattern
-    /// matching, while the counted callback-param view still uses the same
-    /// one-level projection rule as <c>S:i</c> for callback param operations
-    /// like <c>x.count</c>.
+    /// The counted view of one iterated collection item as the callback
+    /// receives it. A callback item is a SELECTED value, so it crosses the same
+    /// ordinary value boundary as <c>S:i</c> / <c>first</c> / <c>last</c>
+    /// (<see cref="ReCountValueBoundary(CountedResult)"/>): the item keeps its
+    /// stored shape (a nested sequence or list stays one value for pattern
+    /// matching and for every count-sensitive reader inside the body — a bare
+    /// <c>x</c> output row, <c>x.Coll</c> on a collecting receiver, the
+    /// map/reduce single-element checks), a <c>()</c> item emits zero values,
+    /// and only an explicit spread <c>x*</c> opens it.
+    /// Lean: <c>countedSequenceCallbackItem</c>.
     /// </summary>
     private static CountedResult CountedSequenceCallbackItem(CountedResult item)
-    {
-        var projected = item.Value.ProjectIteratedContent();
-        return new CountedResult(projected.Value, projected.EmittedCount);
-    }
+        => ReCountValueBoundary(item);
 
     /// <summary>
     /// Evaluate a resolved algorithm against pre-evaluated callback arguments
@@ -664,10 +666,9 @@ public static partial class Evaluator
                         return EvalAlgOutputCounted(callee, collectingCtx, valEnv);
                     }
 
-                    // Fixed-only flat callback binding projects each callback item
-                    // into slots and binds those slots to the algorithm's flat
-                    // parameter names (the final item is unpacked across any
-                    // remaining names); it does not apply item-supply
+                    // Fixed-only flat callback binding keeps each selected item
+                    // whole unless the final sequence row must unpack across
+                    // remaining parameter names; it does not apply item-supply
                     // singleton-boundary normalization. Scalar callback
                     // deconstruction stays deferred so the counted callback path
                     // keeps Lean/C# parity.
@@ -683,9 +684,8 @@ public static partial class Evaluator
     }
 
     /// <summary>
-    /// Non-counted wrapper for callback dispatch that still preserves projected
-    /// item emitted counts internally where downstream operations depend on
-    /// them.
+    /// The value projection of counted callback dispatch. Callback items retain
+    /// their ordinary value-boundary counts inside the counted implementation.
     /// </summary>
     private static EvalResult<Result> EvalResolvedCallbackCall(
         Algorithm callee,

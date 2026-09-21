@@ -182,7 +182,7 @@ public static class ReceiverLaws
         [ReceiverLaw.PROPERTY_CALL_EQUIVALENT_VALUE] =
             "AGENTS.md A vs A() cache rule (same value, cache bypass only); C# ZeroArgPropertyResultCacheTests.ExplicitZeroArgCallBypassesCache",
         [ReceiverLaw.CALLBACK_ELEMENT_IS_ONE_INVOCATION_VALUE] =
-            "KatLang.lean countedSequenceCallbackItem (Result.projectSelectedContent); tutorial map contract (item behaves like S:i, nested values stay intact)",
+            "KatLang.lean countedSequenceCallbackItem (reCountValueBoundary: a callback item is a selected value, one intact value); tutorial map contract (item is what S:i returns, nested values stay intact)",
         [ReceiverLaw.CALLBACK_COLLECTING_COLLECTS_ONE_SLOT] =
             "KatLang.lean bindCountedCallbackParameterPatternList (lone element stays one collected slot); sequence-boundary audit: [7].map(Collect) collects items = [7]",
         [ReceiverLaw.CALLBACK_FLAT_ROW_CONVENTION] =

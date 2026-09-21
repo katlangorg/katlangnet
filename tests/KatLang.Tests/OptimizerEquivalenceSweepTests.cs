@@ -295,6 +295,19 @@ public class OptimizerEquivalenceSweepTests
             ("spread-while-output", "S(x) = { (x - 1, x > 0)* }\nwhile(S, 3)"),
             ("zero-emission-step", "S(x) = ()\nrepeat(S, 2, 1)"),
             ("zero-emission-while", "S(x) = (), 0\nwhile(S, 1)"),
+            // SELECTION IS A VALUE BOUNDARY: an unspread selection is ONE state slot
+            // in both strategies (a selected pair, a selected `()`, a selected list),
+            // `first`/`last` agree with the index form, and only the explicit spread
+            // grows the state-slot vector (the generic handover).
+            ("selection-pair-one-slot", "P = ((1, 2), (3, 4))\nS(x, y) = P:0, y + 1\nrepeat(S, 2, 0, 0)"),
+            ("selection-first-one-slot", "P = ((1, 2), (3, 4))\nS(x, y) = first(P), y + 1\nrepeat(S, 2, 0, 0)"),
+            ("selection-last-one-slot", "P = ((3, 4), (1, 2))\nS(x, y) = last(P), y + 1\nrepeat(S, 2, 0, 0)"),
+            ("selection-empty-one-slot", "P = (), 5\nS(x, y) = P:0, y + 1\nrepeat(S, 2, 0, 0)"),
+            ("selection-list-one-slot", "P = [1, 2], 5\nS(x, y) = P:0, y + 1\nrepeat(S, 2, 0, 0)"),
+            ("selection-spread-grows-state", "P = ((1, 2), (3, 4))\nS(x, y) = (P:0)*, y + 1\nrepeat(S, 1, 0, 0)"),
+            ("selection-as-continuation", "P = ((1, false), (2, 2))\nS(x) = x + 1, P:0\nwhile(S, 9)"),
+            ("selection-in-callback-loop", "Step(x) = x\nM(a) = repeat(Step, 2, a)\nmap(((1, 2), 3), M)"),
+            ("selection-callback-item-count", "Coll(*xs) = xs\nF(a) = a.Coll\nS(x) = map(((1, 2), 3), F)\nrepeat(S, 1, 0)"),
         };
 
         var sweep = new SweepResult();

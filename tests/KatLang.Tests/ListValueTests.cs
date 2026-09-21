@@ -788,11 +788,11 @@ public class ListValueTests
         => AssertEvalCounted("[[1, 2], [3, 4]]:1", 1, ListValue(Atom(3), Atom(4)));
 
     [Fact]
-    public void Indexing_ChainedListProjection_SelectsOneLevelAtATime()
+    public void Indexing_ChainedListSelection_SelectsOneLevelAtATime()
         => AssertEvalCounted("[[1, 2], [3, 4]]:1:0", 1, Atom(3));
 
     [Fact]
-    public void Indexing_DeepChainedListProjection_PeelsOneBoundaryPerColon()
+    public void Indexing_DeepChainedListSelection_PeelsOneBoundaryPerColon()
     {
         AssertEvalCounted("A = [[[7]]]\nA:0", 1, ListValue(ListValue(Atom(7))));
         AssertEvalCounted("A = [[[7]]]\nA:0:0", 1, ListValue(Atom(7)));
@@ -800,12 +800,15 @@ public class ListValueTests
     }
 
     [Fact]
-    public void Indexing_SequenceElementInsideList_ProjectsLikeSequenceTarget()
+    public void Indexing_SequenceElementInsideList_SelectsOneValueLikeSequenceTarget()
     {
-        // A selected sequence element projects one level, so the counted pair
-        // matches the sequence-target twin exactly.
-        AssertEvalCounted("((1, 2), (3, 4)):0", 2, SequenceValue(Atom(1), Atom(2)));
-        AssertEvalCounted("[(1, 2), (3, 4)]:0", 2, SequenceValue(Atom(1), Atom(2)));
+        // SELECTION IS A VALUE BOUNDARY: a selected sequence element is ONE
+        // intact value (count 1) from a list target exactly as from the
+        // sequence-target twin; only an explicit spread opens it.
+        AssertEvalCounted("((1, 2), (3, 4)):0", 1, SequenceValue(Atom(1), Atom(2)));
+        AssertEvalCounted("[(1, 2), (3, 4)]:0", 1, SequenceValue(Atom(1), Atom(2)));
+        AssertEvalCounted("([(1, 2), (3, 4)]:0)*", 2, SequenceValue(Atom(1), Atom(2)));
+        AssertEvalCounted("first([(1, 2), (3, 4)])", 1, SequenceValue(Atom(1), Atom(2)));
     }
 
     [Fact]
@@ -820,9 +823,9 @@ public class ListValueTests
     }
 
     [Fact]
-    public void Indexing_SelectedEmptySequenceElement_ProjectsToEmpty()
+    public void Indexing_SelectedEmptySequenceElement_IsPlainEmpty()
     {
-        // A selected `()` element projects one level to the empty result;
+        // A selected `()` element is simply `()` (zero values at the value boundary);
         // the root output row keeps it as one visible `()` row, matching the
         // sequence-target twin exactly.
         AssertEvalCounted("((), 1):0", 1, SequenceValue());
@@ -883,7 +886,7 @@ public class ListValueTests
     }
 
     [Fact]
-    public void Indexing_ProjectedValue_IsOrdinaryVariadicArgument()
+    public void Indexing_SelectedValue_IsOrdinaryVariadicArgument()
     {
         // The projected element is one supplied argument, collected as the one
         // element of the collecting binding's exact list.

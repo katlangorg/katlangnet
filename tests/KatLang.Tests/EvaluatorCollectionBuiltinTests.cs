@@ -326,15 +326,16 @@ public class EvaluatorCollectionBuiltinTests
         // T is the exact list [(1, 2)]: display, count(T), T.count, equality, and
         // indexing all observe the same one-element list value. Lists are not
         // equal to sequences, and `:` indexing selects the stored element
-        // exactly (T:0 is the kept `(1, 2)` element, projected one level like
-        // any selected sequence element).
+        // exactly (T:0 is the kept `(1, 2)` element as ONE value — selection is
+        // a value boundary — so it emits one value like any selected element).
         AssertEvalCounted("T = take(((1, 2), (3, 4)), 1)\nT", 1, ListValue(SequenceValue(Atom(1), Atom(2))));
         AssertEval("T = take(((1, 2), (3, 4)), 1)\ncount(T)", 1);
         AssertEval("T = take(((1, 2), (3, 4)), 1)\nT.count", 1);
         AssertEvalBool("T = take(((1, 2), (3, 4)), 1)\nT == (1, 2)", false);
         AssertEvalBool("T = take(((1, 2), (3, 4)), 1)\nT == ((1, 2))", false);
         AssertEvalBool("T = take(((1, 2), (3, 4)), 1)\nT == [(1, 2)]", true);
-        AssertEvalCounted("T = take(((1, 2), (3, 4)), 1)\nT:0", 2, SequenceValue(Atom(1), Atom(2)));
+        AssertEvalCounted("T = take(((1, 2), (3, 4)), 1)\nT:0", 1, SequenceValue(Atom(1), Atom(2)));
+        AssertEvalCounted("T = take(((1, 2), (3, 4)), 1)\nfirst(T)", 1, SequenceValue(Atom(1), Atom(2)));
     }
 
     [Fact]

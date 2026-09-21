@@ -131,9 +131,11 @@ public closed record RunResult
         ///
         /// <para>The evaluator's exact emitted-slot count is used here as a
         /// zero/one/many discriminator, not as this view's indexable count. A
-        /// projected expression may emit several slots inside one combined
+        /// multi-slot loop result may emit several slots inside one combined
         /// top-level display row, so <c>OutputRows.Count</c> need not equal that
-        /// internal arity count. <see cref="OutputRows"/> is authoritative for
+        /// internal arity count. (Selection — <c>A:i</c>, <c>first</c>,
+        /// <c>last</c> — is a value boundary and emits its selected value as
+        /// one row.) <see cref="OutputRows"/> is authoritative for
         /// presentation.</para>
         /// </summary>
         public IReadOnlyList<Result> OutputRows => EmittedCount switch

@@ -697,7 +697,7 @@ public class EvaluatorSequenceCallbackTests
     }
 
     [Fact]
-    public void Eval_Reduce_SequenceValueReceiver_DotCall_ProjectsCurrentItemLikeSelection()
+    public void Eval_Reduce_SequenceValueReceiver_DotCall_ReceivesCurrentItemAsSelectedValue()
     {
         var source = """
             AddItemCount(item, acc) = item.count + acc
@@ -709,7 +709,7 @@ public class EvaluatorSequenceCallbackTests
     }
 
     [Fact]
-    public void Eval_Reduce_ProjectedSelection_PlainAndDotCallAgree()
+    public void Eval_Reduce_SelectedValue_PlainAndDotCallAgree()
     {
         var source = """
             Add = x + total
@@ -739,7 +739,7 @@ public class EvaluatorSequenceCallbackTests
     }
 
     [Fact]
-    public void Eval_Reduce_CurrentItem_ProjectsOneLevelOnly()
+    public void Eval_Reduce_CurrentItem_PreservesNestedValue()
     {
         var source = """
             Signature(current, acc) = acc * 100 + current.count * 10 + (current:0).count
@@ -753,7 +753,7 @@ public class EvaluatorSequenceCallbackTests
     }
 
     [Fact]
-    public void Eval_Reduce_Accumulator_DoesNotAutoProject()
+    public void Eval_Reduce_Accumulator_DoesNotAutoOpen()
     {
         var source = """
             Signature(current, acc) = (acc:0 * 100 + current.count * 10 + acc.count, acc.count)
@@ -883,7 +883,7 @@ public class EvaluatorSequenceCallbackTests
             reduce((1, 2, 3), Step, 0)
             """;
 
-        // A reducer collecting parameter in element position collects the projected item as
+        // A reducer collecting parameter in element position collects the selected item as
         // [element] each step; the accumulator stays a separate fixed slot.
         AssertEvalSequenceModes(source, 30);
 
@@ -1110,7 +1110,7 @@ public class EvaluatorSequenceCallbackTests
     }
 
     [Fact]
-    public void Eval_Map_SequenceValueReceiver_DotCall_ProjectsCallbackItemLikeSelection()
+    public void Eval_Map_SequenceValueReceiver_DotCall_ReceivesCallbackItemAsSelectedValue()
     {
         var source = """
             TakeFirst(x) = x:0
@@ -1122,7 +1122,7 @@ public class EvaluatorSequenceCallbackTests
     }
 
     [Fact]
-    public void Eval_SequenceBuiltinDotCall_UsesReceiverTopLevelItemsAndProjectedCallbackCounts()
+    public void Eval_SequenceBuiltinDotCall_UsesReceiverTopLevelItemsAndCallbackCollectionCounts()
     {
         var source = """
             Items = range(1, 3), 7
@@ -1136,7 +1136,7 @@ public class EvaluatorSequenceCallbackTests
     }
 
     [Fact]
-    public void Eval_SequenceBuiltinDotCall_FilterAndSelectionUseProjectedCallbackItems()
+    public void Eval_SequenceBuiltinDotCall_FilterAndSelectionUseStoredCallbackItems()
     {
         var source = """
             Items = range(1, 3), 7
@@ -1146,7 +1146,7 @@ public class EvaluatorSequenceCallbackTests
 
         // range(1, 3) is an exact list item bound whole to the callback param:
         // `x:0` selects its first stored element (1), while the scalar item 7
-        // projects to itself, so the map materializes [1, 7]. filter keeps the
+        // selects itself, so the map materializes [1, 7]. filter keeps the
         // one list item whose opened count is 3, and .count reports the
         // kept-item count 1.
         AssertEval(source, 1, 7, 1);
@@ -1168,7 +1168,7 @@ public class EvaluatorSequenceCallbackTests
     }
 
     [Fact]
-    public void Eval_Map_CallbackItem_FirstProjectionMatchesSelection()
+    public void Eval_Map_CallbackItem_FirstSelectionMatchesIndexing()
     {
         var source = """
             TakeFirst(report) = report:0
@@ -1179,7 +1179,7 @@ public class EvaluatorSequenceCallbackTests
     }
 
     [Fact]
-    public void Eval_Map_SequenceValuePairs_ProjectOneLevelOnly()
+    public void Eval_Map_SequenceValuePairs_SelectEachFirstElement()
     {
         var source = """
             TakeFirst(x) = x:0
@@ -1190,7 +1190,7 @@ public class EvaluatorSequenceCallbackTests
     }
 
     [Fact]
-    public void Eval_Filter_PracticalSafeReportStyle_UsesProjectedCallbackReport()
+    public void Eval_Filter_PracticalSafeReportStyle_UsesStoredCallbackReport()
     {
         var source = """
             IsSafe(report) =
@@ -1215,7 +1215,7 @@ public class EvaluatorSequenceCallbackTests
     }
 
     [Fact]
-    public void Eval_HigherOrder_DotCall_IndexedSequenceValueReceiver_ProjectsOneLevel()
+    public void Eval_HigherOrder_DotCall_IndexedSequenceValueReceiver_OpensAtTheBuiltin()
     {
         var source = """
             TopLevelItemCount(item) = item.count

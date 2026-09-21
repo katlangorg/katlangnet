@@ -1317,8 +1317,11 @@ public class EvaluatorLoopTests
     }
 
     [Fact]
-    public void Eval_LoopPlanner_CountedCallbackParameterSequenceValueMultiEmitShapeFallsBack()
+    public void Eval_LoopPlanner_CountedCallbackParameterSequenceValueShapeFallsBack()
     {
+        // The callback item `(1, 2)` reaches the loop body as a counted parameter holding ONE
+        // sequence value (selection is a value boundary: the item is never re-emitted as two
+        // values), and the planner declines sequence-valued counted parameters.
         var source = """
             Pred(item) = {
                 Step = if(true, k + 1, item), k <= 1
@@ -1340,18 +1343,28 @@ public class EvaluatorLoopTests
         Assert.Equal(2, loopStats.CountedParameterReferencesFallbacks);
         Assert.Contains(
             loopStats.FallbackReasons,
-            reason => reason.Key == "unsupported counted parameter value shape: item (counted parameter emitted multiple values (2))");
+            reason => reason.Key == "unsupported counted parameter value shape: item (counted parameter is a sequence value: (1, 2))");
+        Assert.Contains(
+            loopStats.FallbackReasons,
+            reason => reason.Key == "unsupported counted parameter value shape: item (counted parameter is a sequence value: (3, 4))");
 
-        var plan = AssertSingleLoopPlan(loopStats, "Pred.Step.while");
-        var output = AssertLoopExpression(plan, "output", 0);
-        Assert.False(output.Planned);
-        Assert.Equal(
-            "unsupported if false branch: unsupported counted parameter value shape: item (counted parameter emitted multiple values (2))",
-            output.FallbackReason);
+        // The decline names the bound value, so each iterated pair yields its own plan
+        // diagnostic (the diagnostic key includes the expression fallback reason).
+        var plans = loopStats.LoopPlans.Where(plan => plan.Identity == "Pred.Step.while").ToList();
+        Assert.Equal(2, plans.Count);
+        foreach (var (plan, pair) in plans.Zip(new[] { "(1, 2)", "(3, 4)" }))
+        {
+            Assert.True(plan.Optimized, $"Expected optimized loop plan, got fallback: {plan.FallbackReason}");
+            var output = AssertLoopExpression(plan, "output", 0);
+            Assert.False(output.Planned);
+            Assert.Equal(
+                $"unsupported if false branch: unsupported counted parameter value shape: item (counted parameter is a sequence value: {pair})",
+                output.FallbackReason);
 
-        var continuation = AssertLoopExpression(plan, "continuation", null);
-        Assert.True(continuation.Planned);
-        Assert.Equal("LessOrEqual(StateSlot(k), Const(1))", continuation.PlanSummary);
+            var continuation = AssertLoopExpression(plan, "continuation", null);
+            Assert.True(continuation.Planned);
+            Assert.Equal("LessOrEqual(StateSlot(k), Const(1))", continuation.PlanSummary);
+        }
     }
 
     [Fact]
@@ -1652,46 +1665,92 @@ public class EvaluatorLoopTests
     public void Eval_OptimizedLoop_MultiEmittingStateExpression_MatchesGenericPath()
     {
         // A state expression whose counted supply emits more than one value
-        // (an index projection here) grows the generic state-slot vector; the
-        // optimizer must observe the identical value shape (it finishes the
-        // current iteration once, then hands its assembled state slots to the
-        // generic evaluator when an expression does not emit exactly one value).
+        // (an explicit spread of a selected pair here) grows the generic
+        // state-slot vector; the optimizer must observe the identical value
+        // shape (it finishes the current iteration once, then hands its
+        // assembled state slots to the generic evaluator when an expression
+        // does not emit exactly one value).
         AssertEvalLoopModes(
             """
             S = (1, 2), (3, 4)
-            repeat({S:0, a + b}, 1, 0, 0)
+            repeat({(S:0)*, a + b}, 1, 0, 0)
             """,
             1, 2, 0);
 
         AssertEvalResultLoopModes(
             """
             S = (1, 2), (3, 4)
-            repeat({S:0, a + b}, 1, 0, 0)
+            repeat({(S:0)*, a + b}, 1, 0, 0)
             """,
             ResultFromAtoms(1, 2, 0));
 
-        // The first iteration stays on the scalar fast path; only the second
-        // projection grows from one emitted item to two. This pins handoff
-        // from the already-advanced state rather than from the initial state.
+        // The first iteration stays on the scalar fast path (spreading the
+        // selected atom supplies one item); only the second spread grows from
+        // one emitted item to two. This pins handoff from the already-advanced
+        // state rather than from the initial state.
         AssertEvalResultLoopModes(
             """
             S = 1, (2, 3)
-            repeat({a + 1, S:(a + b - b)}, 2, 0, 9)
+            repeat({a + 1, (S:(a + b - b))*}, 2, 0, 9)
             """,
             ResultFromAtoms(2, 2, 3));
     }
 
     [Fact]
-    public void Eval_OptimizedLoop_MultiEmittingContinuation_MatchesGenericPath()
+    public void Eval_OptimizedLoop_SelectionIsOneStateSlot_MatchesGenericPath()
     {
-        // A while continuation expression emitting more than one value changes
-        // which generic slot is the continuation flag; the optimizer must
-        // defer to generic semantics (state (1, false) means the last item, false,
-        // stops the loop and the pre-iteration state is returned).
-        AssertEvalLoopModes(
+        // SELECTION IS A VALUE BOUNDARY: an unspread selection is exactly ONE
+        // state slot in both modes, whatever it selected — a selected pair
+        // stays one structured slot and never grows the state-slot vector.
+        AssertEvalResultLoopModes(
+            """
+            S = (1, 2), (3, 4)
+            repeat({S:0, a + b}, 1, 0, 0)
+            """,
+            Result.FromItems([Result.FromItems([new Result.Atom(1), new Result.Atom(2)]), new Result.Atom(0)]));
+
+        AssertEvalResultLoopModes(
+            """
+            S = (1, 2), (3, 4)
+            repeat({first(S), a + b}, 1, 0, 0)
+            """,
+            Result.FromItems([Result.FromItems([new Result.Atom(1), new Result.Atom(2)]), new Result.Atom(0)]));
+
+        // A selected `()` re-counts to zero values, but a non-spread output row is
+        // still one visible state slot in both modes.
+        AssertEvalResultLoopModes(
+            """
+            S = (), 5
+            repeat({S:0, a + b}, 1, 0, 0)
+            """,
+            Result.FromItems([new Result.SequenceValue([]), new Result.Atom(0)]));
+
+        // A selected pair as the continuation is not a Boolean in either mode
+        // (it is one value, never the two slots `1, false`).
+        var (generic, optimized) = AssertEvalFailsInBothLoopModes(
             """
             S = (1, false), (2, 2)
             while({a + 1, S:0}, 9)
+            """);
+        Assert.IsType<EvalError.TypeMismatch>(Innermost(generic));
+        Assert.IsType<EvalError.TypeMismatch>(Innermost(optimized));
+        Assert.Equal(
+            KatLangError.FromEvalError(generic).Message,
+            KatLangError.FromEvalError(optimized).Message);
+    }
+
+    [Fact]
+    public void Eval_OptimizedLoop_MultiEmittingContinuation_MatchesGenericPath()
+    {
+        // A while continuation expression emitting more than one value (the
+        // explicit spread of a selected pair) changes which generic slot is the
+        // continuation flag; the optimizer must defer to generic semantics
+        // (the spread items `1, false` make the last item, false, stop the loop
+        // and the pre-iteration state is returned).
+        AssertEvalLoopModes(
+            """
+            S = (1, false), (2, 2)
+            while({a + 1, (S:0)*}, 9)
             """,
             9);
     }
@@ -1739,12 +1798,13 @@ public class EvaluatorLoopTests
             KatLangError.FromEvalError(generic).Message,
             KatLangError.FromEvalError(optimized).Message);
 
-        // One scalar iteration succeeds before the second iteration grows the
-        // state from two slots to three; the next bind then fails identically.
+        // One scalar iteration succeeds before the second iteration's spread
+        // grows the state from two slots to three; the next bind then fails
+        // identically.
         var (laterGeneric, laterOptimized) = AssertEvalFailsInBothLoopModes(
             """
             S = 1, (2, 3)
-            repeat({a + 1, S:(a + b - b)}, 3, 0, 9)
+            repeat({a + 1, (S:(a + b - b))*}, 3, 0, 9)
             """);
         var laterGenericArity = Assert.IsType<EvalError.ArityMismatch>(Innermost(laterGeneric));
         var laterOptimizedArity = Assert.IsType<EvalError.ArityMismatch>(Innermost(laterOptimized));

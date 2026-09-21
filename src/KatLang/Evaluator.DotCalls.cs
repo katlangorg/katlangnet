@@ -51,7 +51,7 @@ public static partial class Evaluator
     /// Any extra dot-call arguments still follow the plain-call argument path.
     /// This keeps plain-call boundary preservation unchanged while making
     /// <c>receiver.builtin(...)</c> operate on the same top-level collection
-    /// that <c>receiver:i</c> and higher-order callback projection observe.
+    /// that <c>receiver:i</c> selects from and higher-order callbacks iterate.
     /// </summary>
     private static EvalResult<CountedResult> EvalSequenceBuiltinDotReceiverCounted(
         Expr receiver,

@@ -1528,7 +1528,7 @@ public static class LanguageSpecCorpus
             Probes =
             [
                 new SpecProbe("count(((1, 2), (3, 4)))", "ok raw=2 n=1"),
-                new SpecProbe("x = ((1, 2), (3, 4))\nx:0", "ok raw=S[1, 2] n=2"),
+                new SpecProbe("x = ((1, 2), (3, 4))\nx:0", "ok raw=S[1, 2] n=1"),
                 new SpecProbe("x = ((1, 2), (3, 4))\nx == ((1, 2), (3, 4))", "ok raw=true n=1"),
             ],
             Explanation = "Non-unary nested structure is never flattened: a pair of pairs keeps both boundaries.",
@@ -2225,7 +2225,7 @@ public static class LanguageSpecCorpus
             ExpectedDisplay = "[(2, 1), (4, 3)]",
             ExpectedRaw = "L[S[2, 1], S[4, 3]]",
             ExpectedEmittedCount = 1,
-            Explanation = "Sequence-value callback items are projected one level to the callback's parameters; the callback must return exactly one value per item, and each captured result stays one exact list element (never flattened).",
+            Explanation = "Each callback item is one selected value. The separate flat-callback row convention unpacks a sequence row across Swap's two parameters; a one-parameter callback receives the whole row. Each callback must return exactly one value, preserved as one exact list element.",
         },
         new()
         {
@@ -2560,7 +2560,7 @@ public static class LanguageSpecCorpus
             ExpectedDisplay = "0\n0\n5\n3\n8\n6\n2\n5",
             ExpectedRaw = "S[0, 0, 5, 3, 8, 6, 2, 5]",
             ExpectedEmittedCount = 8,
-            Explanation = "`count` counts top-level items after the builtin collection binding opens a single grouped value: `()` counts 0, spreads splice before counting, nested pairs count as whole items, and a projected item counts its own contents.",
+            Explanation = "`count` counts top-level items after the builtin collection binding opens a single grouped value: `()` counts 0, spreads splice before counting, nested pairs count as whole items, and a selected sequence item counts its own members once `count` opens it.",
         },
         new()
         {
@@ -2691,19 +2691,47 @@ public static class LanguageSpecCorpus
         },
         new()
         {
-            Id = "index-projects-one-level",
+            Id = "index-selects-one-value",
             Category = "equality-and-indexing",
             Source = "Pairs = (1, 2), (3, 4)\nPairs:0",
             Outcome = SpecOutcome.Evaluates,
-            ExpectedDisplay = "1\n2",
+            ExpectedDisplay = "(1, 2)",
             ExpectedRaw = "S[1, 2]",
-            ExpectedEmittedCount = 2,
+            ExpectedEmittedCount = 1,
             Probes =
             [
                 new SpecProbe("Pairs = (1, 2), (3, 4)\n(Pairs:0).count", "ok raw=2 n=1"),
                 new SpecProbe("G(a) = a\nPairs = (1, 2), (3, 4)\nG(Pairs:0)", "ok raw=S[1, 2] n=1"),
+                new SpecProbe("Pairs = (1, 2), (3, 4)\nfirst(Pairs)", "ok raw=S[1, 2] n=1"),
+                new SpecProbe("Pairs = (1, 2), (3, 4)\nX = Pairs:0\nX", "ok raw=S[1, 2] n=1"),
+                new SpecProbe("Pairs = (1, 2), (3, 4)\n(Pairs:0)*", "ok raw=S[1, 2] n=2"),
+                new SpecProbe("Pairs = (1, 2), (3, 4)\nPairs:0*", "ok raw=S[1, 2] n=2"),
             ],
-            Explanation = "Selection projects the selected item's content one level: a selected sequence value emits its immediate members (two root rows here), while any other receiver re-materializes them as one value.",
+            IncludeInGeneratorPrompt = true,
+            Explanation = "SELECTION IS A VALUE BOUNDARY: `:` returns the selected item as ONE value without opening it, so a selected sequence value is one root row — exactly what `first(Pairs)` or a property holding the same value shows. Only an explicit spread `(Pairs:0)*` opens the selected value into its items.",
+        },
+        new()
+        {
+            Id = "selection-forms-agree",
+            Category = "equality-and-indexing",
+            Source = "Coll(*xs) = xs\nPairs = (1, 2), (3, 4)\nfirst(Pairs).Coll\nPairs:0.Coll\n(Pairs:0)*.Coll",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "[(1, 2)]\n[(1, 2)]\n[1, 2]",
+            ExpectedRaw = "S[L[S[1, 2]], L[S[1, 2]], L[1, 2]]",
+            ExpectedEmittedCount = 3,
+            Probes =
+            [
+                new SpecProbe("Coll(*xs) = xs\nA = ((), 1)\nA:0.Coll", "ok raw=L[] n=1"),
+                new SpecProbe("Coll(*xs) = xs\nA = ((), 1)\nfirst(A).Coll", "ok raw=L[] n=1"),
+                new SpecProbe("Coll(*xs) = xs\nA = (1, ())\nlast(A).Coll", "ok raw=L[] n=1"),
+                new SpecProbe("Coll(*xs) = xs\nA = ([], 1)\nfirst(A).Coll", "ok raw=L[L[]] n=1"),
+                new SpecProbe("Coll(*xs) = xs\nA = ([], 1)\n(A:0)*.Coll", "ok raw=L[] n=1"),
+                new SpecProbe("Coll(*xs) = xs\nA = (3, [1, 2])\nlast(A).Coll", "ok raw=L[L[1, 2]] n=1"),
+                new SpecProbe("Coll(*xs) = xs\nA = (3, (1, 2))\n(last(A))*.Coll", "ok raw=L[1, 2] n=1"),
+                new SpecProbe("Coll(*xs) = xs\nE = ()\nE.Coll", "ok raw=L[] n=1"),
+            ],
+            IncludeInGeneratorPrompt = true,
+            Explanation = "`first(A)`, `last(A)`, and `A:i` are the same selection: each returns the selected value through the ordinary value boundary, so a collecting dotted receiver collects the selected pair as one item, a selected `()` supplies zero items (like any `()` value), and a selected `[]` stays one exact list. Only the spread marker opens a selected sequence or list.",
         },
         new()
         {
@@ -2713,9 +2741,8 @@ public static class LanguageSpecCorpus
             Outcome = SpecOutcome.Evaluates,
             ExpectedDisplay = "((1, 2), (3, 4))\n(3, 4)",
             ExpectedRaw = "S[S[S[1, 2], S[3, 4]], S[3, 4]]",
-            ExpectedEmittedCount = 4,
-            Notes = "Root emitted count is 4 (each projection emits 2) while the accumulated root value has two items — display rows follow the value items; the projection supply is observable only for a lone root row.",
-            Explanation = "Projection is one-level only and does not recursively flatten: nested pairs stay intact, and chaining `:` repeats the one-level step.",
+            ExpectedEmittedCount = 2,
+            Explanation = "Selection is one-level only and never opens what it selects: nested pairs stay intact, each selection is one root row, and chaining `:` repeats the one-level step.",
         },
         new()
         {
@@ -2726,7 +2753,12 @@ public static class LanguageSpecCorpus
             ExpectedDisplay = "()",
             ExpectedRaw = "S[]",
             ExpectedEmittedCount = 1,
-            Explanation = "Selecting a `()` item shows one `()` row: the empty value is a real selectable item.",
+            Probes =
+            [
+                new SpecProbe("Coll(*xs) = xs\nx = ((), ())\nx:0.Coll", "ok raw=L[] n=1"),
+                new SpecProbe("Coll(*xs) = xs\nx = ((), ())\nfirst(x).Coll", "ok raw=L[] n=1"),
+            ],
+            Explanation = "Selecting a `()` item shows one `()` row (a non-spread root row is always one visible slot): the empty value is a real selectable item, and past the selection boundary it is simply `()` — zero items at a value boundary, whatever route selected it.",
         },
         new()
         {
@@ -2746,7 +2778,7 @@ public static class LanguageSpecCorpus
             ExpectedDisplay = "true",
             ExpectedRaw = "true",
             ExpectedEmittedCount = 1,
-            Explanation = "A captured projection re-materializes as the canonical selected value and compares structurally equal to the written literal.",
+            Explanation = "A stored selection is the selected value itself and compares structurally equal to the written literal.",
         },
 
         // ==================== parser-layout ====================
@@ -3325,10 +3357,10 @@ public static class LanguageSpecCorpus
             [
                 new SpecProbe("[[1, 2]]:0 == [1, 2]", "ok raw=true n=1"),
                 new SpecProbe("[[1, 2]]:0 == (1, 2)", "ok raw=false n=1"),
-                new SpecProbe("[(1, 2), (3, 4)]:0", "ok raw=S[1, 2] n=2"),
+                new SpecProbe("[(1, 2), (3, 4)]:0", "ok raw=S[1, 2] n=1"),
             ],
             IncludeInGeneratorPrompt = true,
-            Explanation = "A selected list element is returned exactly as stored — one opaque list, never flattened or converted — while a selected sequence element projects one level as usual; chaining `:` selects one level at a time.",
+            Explanation = "A selected list element is returned exactly as stored — one opaque list, never flattened or converted — and a selected sequence element is likewise one intact value; chaining `:` selects one level at a time.",
         },
         new()
         {
@@ -3430,7 +3462,7 @@ public static class LanguageSpecCorpus
         },
         new()
         {
-            Id = "list-written-slot-reifies-projection",
+            Id = "list-written-slot-reifies-selection",
             Category = "lists",
             Source = "S = ((1, 2), (3, 4))\n\n[S:0, 5]\n[S:0*, 5]",
             Outcome = SpecOutcome.Evaluates,
@@ -3443,7 +3475,7 @@ public static class LanguageSpecCorpus
                 new SpecProbe("S = ((1, 2), (3, 4))\nF((x, y)) = if(x == (1, 2), 1, 0) + y\nF((S:0, 5))", "ok raw=6 n=1"),
                 new SpecProbe("S = ((1, 2), (3, 4))\nF((x, y, z)) = x + y + z\nF((S:0*, 5))", "ok raw=8 n=1"),
             ],
-            Explanation = "A non-spread expression occupying one written slot contributes exactly ONE persistent value: `S:0` is a two-item projection, but as a list element it is the pair `(1, 2)` — matching capture, call arguments, and every other written-slot receiver. Only an explicit spread `(S:0)*` opens the projected value into the surrounding slots.",
+            Explanation = "A non-spread expression occupying one written slot contributes exactly ONE persistent value: the selection `S:0` is the pair `(1, 2)` as a list element, exactly as at a capture, a call argument, and every other receiver. Only an explicit spread `S:0*` opens the selected value into the surrounding slots.",
             IncludeInGeneratorPrompt = true,
         },
         new()

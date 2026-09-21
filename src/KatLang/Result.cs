@@ -727,8 +727,9 @@ public closed record Result
     /// A list value stays OPAQUE here: it is one item, so non-spread consumers
     /// (boundary re-counting, call binding) treat a list as a single exact
     /// value. Only the spread marker (<see cref="SpreadItems"/>), deconstruction
-    /// binding, the indexing <c>:</c> projection target view
-    /// (<see cref="ProjectionItems"/>), and the builtin collection-item view
+    /// binding, the indexing <c>:</c> TARGET position view
+    /// (<see cref="ProjectionItems"/> — the target's positions, never the
+    /// selected element), and the builtin collection-item view
     /// (the bound collection argument after ordinary fixed binding) open a
     /// list boundary.
     /// Lean: <c>Result.toItems</c>.
@@ -779,23 +780,13 @@ public closed record Result
     }
 
     /// <summary>
-    /// Construction preserves structure; selection projects content.
-    /// Project one selected value to the top-level content it denotes at the
-    /// current boundary, without recursively flattening nested sequence elements.
-    /// Lean: <c>Result.projectSelectedContent</c>.
-    /// </summary>
-    private static (Result Value, int EmittedCount) ProjectSelectedContent(Result selected)
-    {
-        var items = selected.ToItems();
-        return (FromItems(items), items.Count);
-    }
-
-    /// <summary>
-    /// Projection target view for indexing <c>:</c>: a sequence value or exact
-    /// list value opens to its immediate elements; every other value follows
-    /// <see cref="ToItems"/>. This opens the TARGET boundary only — the
-    /// selected element itself is returned exactly as stored, so a nested
-    /// list element stays one opaque list.
+    /// Selectable-position view of an indexing <c>:</c> TARGET: a sequence
+    /// value or exact list value offers its immediate elements as positions;
+    /// every other value follows <see cref="ToItems"/> (a scalar offers itself
+    /// as the single position). This view decides WHICH positions exist; it
+    /// never opens the selected element, which <see cref="Index"/> returns
+    /// exactly as stored (a nested list stays one opaque list, a nested
+    /// sequence value stays one sequence value).
     /// Lean: <c>Result.projectionItems</c>.
     /// </summary>
     private IReadOnlyList<Result> ProjectionItems()
@@ -808,37 +799,23 @@ public closed record Result
     }
 
     /// <summary>
-    /// Construction preserves structure; selection projects content.
-    /// <c>:</c> selects one top-level item from a sequence or exact list
-    /// target and projects that item's content one level: atoms stay atomic,
-    /// sequence values yield their immediate members, and nested sequence and
-    /// list values remain intact.
-    /// Lean: <c>Result.select?</c>.
-    /// </summary>
-    public (Result Value, int EmittedCount)? SelectProjected(int i)
-    {
-        var sourceItems = ProjectionItems();
-        return i >= 0 && i < sourceItems.Count
-            ? ProjectSelectedContent(sourceItems[i])
-            : null;
-    }
-
-    /// <summary>
-    /// Construction preserves structure; selection projects content.
-    /// Higher-order sequence iteration uses the same one-level projection rule
-    /// for each iterated item as <c>:</c> uses for a selected item.
-    /// Lean: callback item projection via <c>Result.projectSelectedContent</c>.
-    /// </summary>
-    public (Result Value, int EmittedCount) ProjectIteratedContent()
-        => ProjectSelectedContent(this);
-
-    /// <summary>
-    /// One-level projected selection result for <c>:</c>.
+    /// SELECTION IS A VALUE BOUNDARY: <c>:</c> selects one top-level position
+    /// of a sequence or exact list target and returns the stored element as
+    /// ONE value — it never opens it. A selected sequence value stays one
+    /// sequence value, a selected list stays one exact list, and the selected
+    /// value's origin is forgotten: the evaluator re-counts it through the
+    /// ordinary value boundary (<see cref="ValueCount"/>), so <c>()</c>
+    /// selected through any route emits zero values and everything else
+    /// emits one. Only the spread marker (<see cref="SpreadItems"/>) opens a
+    /// selected value. <c>first(A)</c> and <c>last(A)</c> select through the
+    /// same rule. Returns <c>null</c> when <paramref name="i"/> is not a
+    /// position of the target.
     /// Lean: <c>Result.select?</c>.
     /// </summary>
     public Result? Index(int i)
     {
-        return SelectProjected(i)?.Value;
+        var positions = ProjectionItems();
+        return i >= 0 && i < positions.Count ? positions[i] : null;
     }
 
     /// <summary>
