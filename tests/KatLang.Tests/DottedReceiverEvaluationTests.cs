@@ -21,6 +21,15 @@ namespace KatLang.Tests;
 /// run-scoped <see cref="EvaluationObservations.CountedArgumentReificationCount"/> counter
 /// (see the lazy-reification section below).</para>
 ///
+/// <para>Since dot-call passes the receiver as the ORDINARY leading argument, there is no
+/// separate receiver-preparation path at all: <c>A.F(B)</c> assembles the argument slots of
+/// <c>F(A, B)</c> through the one call funnel, so every charge — steps, item slots, string
+/// units, dynamic depth — is the written call's charge. In particular a bare named receiver
+/// of a collection builtin is demanded exactly like the written argument (<c>V.count</c> and
+/// <c>count(V)</c> both demand the property's algorithm directly and never consult the
+/// zero-argument property cache), while the captured receiver <c>(V).count</c> reads the
+/// cached value.</para>
+///
 /// <para>Resource counts are the primary evidence here; nothing asserts elapsed time.</para>
 /// </summary>
 public class DottedReceiverEvaluationTests
@@ -362,10 +371,9 @@ public class DottedReceiverEvaluationTests
     public void ValueOnlyDotReceivers_MatchPlainCallsOnValueCountErrorsAndCharges(string receiver)
     {
         // Success AND failure cases live in this matrix (`().first` and `'text'.sum` are
-        // arity errors; both forms must agree on the category). Steps are asserted
-        // separately: a zero-argument property receiver charges its property-access
-        // invocation on the dot path only, a pre-existing accounting difference outside
-        // this matrix's relation.
+        // arity errors; both forms must agree on the category). EVERY observation agrees,
+        // steps and dynamic depth included: the dotted receiver is the written argument,
+        // so a zero-argument property receiver is demanded exactly as `count(R)` demands it.
         foreach (var (plain, dotted) in new (string, string)[]
         {
             ("count(R)", "R.count"),
@@ -378,12 +386,8 @@ public class DottedReceiverEvaluationTests
             var a = Observe($"R = {receiver}\n{plain}");
             var b = Observe($"R = {receiver}\n{dotted}");
 
-            Assert.Equal(a.Outcome, b.Outcome);
-            Assert.Equal(a.Emitted, b.Emitted);
-            Assert.Equal(a.Items, b.Items);
-            Assert.Equal(a.StringChars, b.StringChars);
+            Assert.Equal(a, b);
             Assert.Equal(0, a.Reifications);
-            Assert.Equal(0, b.Reifications);
         }
     }
 
@@ -434,22 +438,25 @@ public class DottedReceiverEvaluationTests
     // ── Frozen generic-path accounting ───────────────────────────────────────
 
     [Theory]
-    [InlineData("V = range(1, 10)\nV.count", 1, 10, "ok:10")]
-    [InlineData("V = range(1, 10)\nV().count", 1, 10, "ok:10")]
-    [InlineData("V = range(1, 10)\ncount(V())", 1, 10, "ok:10")]
-    [InlineData("V = range(1, 10)\nV.take(3)", 1, 13, "ok:L[1, 2, 3]")]
-    [InlineData("D(x) = x * 2\nV = range(1, 3)\nV.map(D)", 4, 6, "ok:L[2, 4, 6]")]
-    public void GenericDotPath_ChargesExactlyTheFrozenWork(string source, long steps, long items, string outcome)
+    [InlineData("V = range(1, 10)\nV.count", "V = range(1, 10)\ncount(V)", 0, 10, "ok:10")]
+    [InlineData("V = range(1, 10)\n(V).count", "V = range(1, 10)\ncount((V))", 1, 10, "ok:10")]
+    [InlineData("V = range(1, 10)\nV().count", "V = range(1, 10)\ncount(V())", 1, 10, "ok:10")]
+    [InlineData("V = range(1, 10)\nV.take(3)", "V = range(1, 10)\ntake(V, 3)", 0, 13, "ok:L[1, 2, 3]")]
+    [InlineData("D(x) = x * 2\nV = range(1, 3)\nV.map(D)", "D(x) = x * 2\nV = range(1, 3)\nmap(V, D)", 3, 6, "ok:L[2, 4, 6]")]
+    public void GenericDotPath_ChargesExactlyTheFrozenWork(string dotted, string plain, long steps, long items, string outcome)
     {
-        // These absolute charges were captured from the EAGER implementation and verified
-        // unchanged by the lazy-receiver change: a zero-argument builtin property, an
-        // explicit-call receiver, a suffix argument, and a higher-order builtin evaluate
-        // their receiver exactly once and charge identical steps and item slots.
-        var run = Observe(source);
+        // These absolute charges are the WRITTEN call's charges, frozen: a bare zero-argument
+        // property receiver is demanded directly by the builtin's collection slot and charges
+        // no property-access step (exactly like the written argument), a captured or
+        // explicit-call receiver charges its one read/invocation, a suffix argument and a
+        // higher-order builtin evaluate their receiver exactly once — and the dotted spelling
+        // charges precisely what its rewrite charges.
+        var run = Observe(dotted);
         Assert.Equal(outcome, run.Outcome);
         Assert.Equal(steps, run.Steps);
         Assert.Equal(items, run.Items);
         Assert.Equal(0, run.Reifications);
+        Assert.Equal(run, Observe(plain));
     }
 
     [Theory]
@@ -502,14 +509,15 @@ public class DottedReceiverEvaluationTests
     }
 
     [Fact]
-    public void FluentSpreadCall_BypassesDotReceiverPreparation()
+    public void FluentSpreadCall_SuppliesOrdinaryArgumentSlots()
     {
         // A*.count lowers to count(A*), so it supplies three ordinary arguments and fails
-        // fixed arity without ever entering SequenceBuiltinDotReceiverArgs. Parenthesized
-        // (A*).count is the capture-receiver case covered by the direct theory above.
+        // fixed arity like the written call. Parenthesized (A*).count is the
+        // capture-receiver case covered by the direct theory above.
         var run = Observe("A = (1, 2, 3)\nA*.count", optimize: false);
         Assert.Equal("err:arity", run.Outcome);
         Assert.Equal(0, run.Reifications);
+        Assert.Equal(run, Observe("A = (1, 2, 3)\ncount(A*)", optimize: false));
     }
 
     [Theory]
@@ -573,23 +581,41 @@ public class DottedReceiverEvaluationTests
     [Fact]
     public void LargeReceiver_SupportsRepeatedDotCallsWithoutReification()
     {
-        var run = Observe("R = range(1, 2000)\nR.count + R.sum + R.count + R.max");
+        // 2000 + 2001000 + 2000 + 2000, without any expression-tree reconstruction. A bare
+        // named receiver is demanded by each builtin's collection slot exactly like the
+        // written argument, so the four dotted calls materialize the range four times
+        // (8000 slots) — precisely the written spelling's charge — while the captured
+        // receiver reads the property in value position and is served from the
+        // zero-argument property cache after its first read (2000 slots).
+        var dotted = Observe("R = range(1, 2000)\nR.count + R.sum + R.count + R.max");
+        var written = Observe("R = range(1, 2000)\ncount(R) + sum(R) + count(R) + max(R)");
+        var captured = Observe("R = range(1, 2000)\n(R).count + (R).sum + (R).count + (R).max");
 
-        // 2000 + 2001000 + 2000 + 2000; the receiver is materialized once (2000 slots)
-        // and reused by all four dot calls without any expression-tree reconstruction.
-        Assert.Equal("ok:2007000", run.Outcome);
-        Assert.Equal(2000, run.Items);
-        Assert.Equal(0, run.Reifications);
+        Assert.Equal("ok:2007000", dotted.Outcome);
+        Assert.Equal(8000, dotted.Items);
+        Assert.Equal(0, dotted.Reifications);
+        Assert.Equal(dotted, written);
+
+        Assert.Equal("ok:2007000", captured.Outcome);
+        Assert.Equal(2000, captured.Items);
+        Assert.Equal(0, captured.Reifications);
     }
 
     [Fact]
     public void DeeplyNestedReceiver_SupportsRepeatedDotCallsWithoutReification()
     {
         var nested = new string('[', 40) + "7" + new string(']', 40);
-        var run = Observe($"N = {nested}\nN.count + N.count");
+        var dotted = Observe($"N = {nested}\nN.count + N.count");
+        var written = Observe($"N = {nested}\ncount(N) + count(N)");
+        var captured = Observe($"N = {nested}\n(N).count + (N).count");
 
-        Assert.Equal("ok:2", run.Outcome);
-        Assert.Equal(40, run.Items);
-        Assert.Equal(0, run.Reifications);
+        Assert.Equal("ok:2", dotted.Outcome);
+        Assert.Equal(80, dotted.Items);
+        Assert.Equal(0, dotted.Reifications);
+        Assert.Equal(dotted, written);
+
+        Assert.Equal("ok:2", captured.Outcome);
+        Assert.Equal(40, captured.Items);
+        Assert.Equal(0, captured.Reifications);
     }
 }

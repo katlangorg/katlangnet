@@ -413,9 +413,10 @@ def ifSpreadGroupedOperandOpensIntoThreeArguments : Bool :=
 -- dot-call projection parity guards
 --------------------------------------------------------------------------------
 -- `evalDotCallCounted` is the canonical owner of dot-call dispatch — receiver
--- resolution, structural lookup, lexical fallback with receiver injection,
--- zero-arg property access, conditional value-position dispatch, and the
--- receiver-spreading rules — and `evalDotCall` is its Result projection.
+-- resolution, structural lookup, lexical fallback with the receiver passed as
+-- the ordinary leading argument (dot-call passes a value), zero-arg property
+-- access, and conditional value-position dispatch — and `evalDotCall` is its
+-- Result projection.
 -- These guards pin representative projection parity
 --   evalDotCall target name args == Prod.fst <$> evalDotCallCounted target name args
 -- from identical initial state: equal Result values on success, equal error
@@ -454,7 +455,8 @@ def dotCallParityProg : Algorithm :=
     ("G", dotCallParitySingletonSequenceValueAlg)
   ] [.num 0]
 
--- Inline `(…)` receivers expose their top-level output items.
+-- Inline `(…)` receivers are one sequence value each; the collection
+-- builtins open that one bound collection argument one level.
 def dotCallParityData123 : KatLang.Expr := .capture [.num 1, .num 2, .num 3]
 def dotCallParityData312 : KatLang.Expr := .capture [.num 3, .num 1, .num 2]
 def dotCallParityDataMixedSigns : KatLang.Expr :=
@@ -524,25 +526,31 @@ def dotCallParityCases : List DotCallParityCase :=
     -- spread: Pair.NItems == NItems(Pair) collects `values = [Pair]`, count 1.
     { label := "B/sequenceValue-receiver-one-slot", target := resolve "Pair", name := "NItems",
       expectedAtoms := some [1] },
-    -- C: explicit spread of a multi-output property spreads its emitted top-level
-    -- values into the single-collecting `NItems(*values)` item supply: (Values*).NItems
-    -- binds the two values, count 2.
+    -- C: the spread receiver `Values*.NItems` is the written spread call
+    -- `NItems(Values*)`: the two emitted values are ordinary slots, count 2;
+    -- the CAPTURED spread `(Values*).NItems` is `NItems((Values*))`, one
+    -- sequence value, count 1.
     { label := "C/spread-multi-output-receiver",
+      target := sequenceSpread (resolve "Values"), name := "NItems",
+      expectedAtoms := some [2] },
+    { label := "C2/captured-spread-multi-output-receiver",
       target := sequenceSpreadReceiver (resolve "Values"), name := "NItems",
+      expectedAtoms := some [1] },
+    -- D: the same for a sequence-valued property: `Pair*.NItems` supplies the
+    -- two elements (count 2), `(Pair*).NItems` captures them back (count 1).
+    { label := "D/spread-sequenceValue-receiver",
+      target := sequenceSpread (resolve "Pair"), name := "NItems",
       expectedAtoms := some [2] },
-    -- D: explicit spread of a sequence-valued property opens it into the item
-    -- supply the same way: (Pair*).NItems binds the two elements, count 2.
-    { label := "D/spread-sequenceValue-receiver-stays-sequenceValue",
+    { label := "D2/captured-spread-sequenceValue-receiver",
       target := sequenceSpreadReceiver (resolve "Pair"), name := "NItems",
-      expectedAtoms := some [2] },
+      expectedAtoms := some [1] },
     -- E: leading variadic with suffix: Pair.BeforeLastCount(99) collects the
     -- sequence-value receiver as one collected element, count 1.
     { label := "E/leading-variadic-with-suffix", target := resolve "Pair",
       name := "BeforeLastCount", argsOpt := dotCallArgs [.num 99],
       expectedAtoms := some [1] },
-    -- F/G: a receiver is ONE segment for arity checking regardless of its
-    -- supply (the segment supply is consumed only by an allocated collector),
-    -- so a fixed-arity callee receives the grouped-spread receiver as ONE
+    -- F/G: a receiver is ONE argument for arity checking whatever it holds,
+    -- so a fixed-arity callee receives the captured-spread receiver as ONE
     -- slot and under-binds — for the multi-output and the sequence-valued
     -- property alike.
     { label := "F/spread-fixed-arity-multi-output",

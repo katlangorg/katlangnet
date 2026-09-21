@@ -181,43 +181,46 @@ public class EvaluatorDotCallTests
     }
 
     [Fact]
-    public void Eval_UserDefinedVariadicDotCallReceiver_CountsReceiverSupplyItems()
+    public void Eval_UserDefinedVariadicDotCallReceiver_CountsTheReceiverAsOneItem()
     {
-        // The receiver is ONE leading argument segment for allocation, and a
-        // flat top-level collecting parameter allocated that segment consumes
-        // its evaluated top-level SUPPLY. The inline group `(1, 2)` emits its
-        // row supply (two items), so the collecting parameter collects [1, 2].
+        // Dot-call passes a value: the receiver is the ONE leading argument of
+        // `CountItems((1, 2))`, so the collecting parameter collects the one
+        // sequence value, [(1, 2)]. Only the spread marker opens the receiver:
+        // `(1, 2)*.CountItems` is `CountItems(1, 2)` and collects [1, 2].
         var source = """
             CountItems(*items) = items.count
             (1, 2).CountItems
             """;
 
-        AssertEval(source, 2);
+        AssertEval(source, 1);
+        AssertEval("CountItems(*items) = items.count\n(1, 2)*.CountItems", 2);
+        AssertEval("CountItems(*items) = items.count\nCountItems((1, 2))", 1);
     }
 
     [Fact]
     public void Eval_UserDefinedVariadicDotCallReceiver_SpreadReceiverBindsItemsForBody()
     {
-        // The parenthesized-spread receiver is a capture whose supply is the
-        // spread items, so the collecting parameter collects [1, 2] and the
-        // numeric body works. (Spread is no longer required for this: the
-        // plain inline group `(1, 2).Mean` supplies the same two row items.)
+        // The fluent spread receiver supplies the receiver's items as ordinary
+        // argument slots — `(1, 2)*.Mean` is `Mean(1, 2)` — so the collecting
+        // parameter collects [1, 2] and the numeric body works. The
+        // parenthesized spread `((1, 2)*)` is a CAPTURE receiver instead: one
+        // sequence value, collected as [(1, 2)], whose sum is not numeric.
         var source = """
             Mean(*vector) = vector.sum
-            ((1, 2)*).Mean
+            (1, 2)*.Mean
             """;
 
         AssertEval(source, 3);
+        AssertEvalFails("Mean(*vector) = vector.sum\n((1, 2)*).Mean");
     }
 
     [Fact]
     public void Eval_UserDefinedVariadicDotCallReceiver_PreservesSingleGroupedValueBeforeSuffixAllocation()
     {
-        // The named receiver is the only supplied segment, and segment
-        // allocation happens before collector consumption: the fixed suffix
-        // `last` takes the segment as its VALUE (the sequence (10, 20)), the
-        // collecting parameter collects [], and the numeric body fails. Use
-        // the direct spread call `Sum(Values*)` to supply separate slots.
+        // The receiver is the only supplied argument of `Sum(Values)`: the
+        // fixed suffix `last` binds it (the sequence (10, 20)), the collecting
+        // parameter collects [], and the numeric body fails. Spread the
+        // receiver — `Values*.Sum`, i.e. `Sum(Values*)` — to supply separate slots.
         var source = """
             Values = 10, 20
             Sum(*values, last) = values.sum + last
@@ -227,28 +230,22 @@ public class EvaluatorDotCallTests
         AssertEvalFails(source);
     }
 
-    // Dot-call receiver law: a lexical dot-call receiver is ONE leading
-    // argument segment. Segments are allocated to parameters first (arity
-    // check plus fixed prefix/suffix binding from front and back) — the
-    // receiver's item count never satisfies arity. A fixed parameter binds
-    // the segment's VALUE; only a flat TOP-LEVEL collecting parameter
-    // allocated the segment consumes the receiver's evaluated top-level
-    // SUPPLY (one level, never recursive). The supply is the receiver's raw
-    // counted evaluation: an inline group `(1, 2, 3)` or zero-parameter brace
-    // block emits its row items, while a NAMED property receiver is a value
-    // boundary and supplies one item (zero for an empty-sequence property);
-    // exact lists stay opaque. So Pair = (10, 20) and Values = 10, 20 both
-    // supply one item as receivers, and `(Values*)` — a capture of the spread
-    // — supplies the spread items through the same general rule (there is no
-    // callee-shape special case for spread receivers anymore).
-    // Lean: CoreTests dot-call receiver guards.
+    // Dot-call receiver law: dot-call passes a value. For extension-call
+    // fallback, `R.F(args)` assembles exactly the argument slots of
+    // `F(R, args)`: the receiver is ONE ordinary leading argument whatever its
+    // shape (a named property, an inline group `(1, 2, 3)`, a brace block, a
+    // capture of a spread `(Values*)`, a selection, a call result), it never
+    // satisfies arity by its item count, and a collecting parameter collects
+    // it as ONE item. Only the spread marker opens a receiver: the fluent
+    // `Values*.F(args)` is `F(Values*, args)`, whose spread items are ordinary
+    // slots. Lean: CoreTests dot-call receiver guards.
 
     [Fact]
     public void Eval_SequenceValueReceiver_LeadingFlatVariadic_IsOneReceiverArgument()
     {
-        // A named property receiver is a value boundary: its supply is one
-        // item, so the collecting parameter collects the one-element list
-        // [(10, 20)]. (An inline group receiver would supply its row items.)
+        // The receiver is the one leading argument of `NItems(Pair)`, so the
+        // collecting parameter collects the one-element list [(10, 20)] — for
+        // a named property, an inline group, or a brace-block receiver alike.
         var source = """
             NItems(*values) = values.count
             Pair = (10, 20)
@@ -256,20 +253,24 @@ public class EvaluatorDotCallTests
             """;
 
         AssertEval(source, 1);
+        AssertEval("NItems(*values) = values.count\n(10, 20).NItems", 1);
+        AssertEval("NItems(*values) = values.count\n{10, 20}.NItems", 1);
     }
 
     [Fact]
-    public void Eval_SequenceValueReceiverSpread_BindsSpreadSlotsAsItemSupply()
+    public void Eval_SequenceValueReceiverSpread_FluentSpreadSuppliesSlots_CaptureIsOneValue()
     {
-        // (Pair*) is a capture of the spread: the receiver segment's supply is
-        // the two spread items, so the collector consumes [10, 20] (count 2).
-        var source = """
-            NItems(*values) = values.count
-            Pair = (10, 20)
-            (Pair*).NItems
-            """;
+        // The fluent spread `Pair*.NItems` is `NItems(Pair*)`: the two spread
+        // items are ordinary slots, collected as [10, 20] (count 2). The
+        // parenthesized `(Pair*)` is a CAPTURE receiver — one sequence value
+        // (10, 20) — so `(Pair*).NItems` is `NItems((Pair*))` and collects
+        // [(10, 20)] (count 1).
+        const string define = "NItems(*values) = values.count\nPair = (10, 20)\n";
 
-        AssertEval(source, 2);
+        AssertEval(define + "Pair*.NItems", 2);
+        AssertEval(define + "NItems(Pair*)", 2);
+        AssertEval(define + "(Pair*).NItems", 1);
+        AssertEval(define + "NItems((Pair*))", 1);
     }
 
     [Fact]
@@ -287,19 +288,18 @@ public class EvaluatorDotCallTests
     }
 
     [Fact]
-    public void Eval_SequenceValueReceiverSpreadWithSuffix_OverSuppliesVariadicByDeconstruction()
+    public void Eval_SequenceValueReceiverSpreadWithSuffix_FluentSpreadSuppliesSlots_CaptureIsOneValue()
     {
-        // Two segments: the receiver and 99. The fixed suffix `last` binds 99
-        // from the back; the receiver segment is allocated to the collecting
-        // parameter, which consumes its supply — the two spread items — so the
-        // collected list is [10, 20] (count 2).
-        var source = """
-            BeforeLastCount(*values, last) = values.count
-            Pair = (10, 20)
-            (Pair*).BeforeLastCount(99)
-            """;
+        // `Pair*.BeforeLastCount(99)` is `BeforeLastCount(10, 20, 99)`: the
+        // fixed suffix `last` binds 99 from the back and the collecting
+        // parameter collects [10, 20] (count 2). The capture `(Pair*)` is one
+        // value, so `(Pair*).BeforeLastCount(99)` collects [(10, 20)] (count 1).
+        const string define = "BeforeLastCount(*values, last) = values.count\nPair = (10, 20)\n";
 
-        AssertEval(source, 2);
+        AssertEval(define + "Pair*.BeforeLastCount(99)", 2);
+        AssertEval(define + "BeforeLastCount(Pair*, 99)", 2);
+        AssertEval(define + "(Pair*).BeforeLastCount(99)", 1);
+        AssertEval(define + "BeforeLastCount((Pair*), 99)", 1);
     }
 
     [Fact]
@@ -333,11 +333,10 @@ public class EvaluatorDotCallTests
     [Fact]
     public void Eval_MultiOutputReceiver_DotCallMatchesCanonicalCalls()
     {
-        // Each dot-call agrees with its canonical-call twin here. The named
-        // receiver supplies one value-boundary item, matching the one written
-        // argument slot (rest collects [(10, 20)], count 1); the capture-of-
-        // spread receiver's supply is the two spread items, matching the two
-        // spread slots of the direct call (rest collects [10, 20], count 2).
+        // Each dot-call agrees with its canonical-call twin: the receiver is
+        // the one written argument (the collector collects [(10, 20)], count
+        // 1), the fluent spread receiver supplies the two spread slots (count
+        // 2), and the capture of the spread is again one written value.
         var define = """
             NItems(*values) = values.count
             Values = 10, 20
@@ -345,8 +344,10 @@ public class EvaluatorDotCallTests
             """;
         AssertEval(define + "Values.NItems", 1);
         AssertEval(define + "NItems(Values)", 1);
-        AssertEval(define + "(Values*).NItems", 2);
+        AssertEval(define + "Values*.NItems", 2);
         AssertEval(define + "NItems(Values*)", 2);
+        AssertEval(define + "(Values*).NItems", 1);
+        AssertEval(define + "NItems((Values*))", 1);
     }
 
     [Fact]
@@ -357,15 +358,17 @@ public class EvaluatorDotCallTests
             Values = 10, 20
 
             """;
-        // Each dot-call agrees with its canonical-call twin here. The ordinary
-        // forms pass one sequence-valued segment plus the suffix (rest collects
-        // [(10, 20)], count 1); in the spread forms the suffix binds 99 and the
-        // collector consumes the receiver segment's spread-item supply — the
-        // same items the direct spread call supplies as slots (count 2).
+        // Each dot-call agrees with its canonical-call twin: the ordinary forms
+        // pass one sequence value plus the suffix (the collector collects
+        // [(10, 20)], count 1); the fluent spread forms supply the two spread
+        // slots before the suffix (count 2); the capture of the spread is one
+        // value again (count 1).
         AssertEval(define + "Values.BeforeLastCount(99)", 1);
         AssertEval(define + "BeforeLastCount(Values, 99)", 1);
-        AssertEval(define + "(Values*).BeforeLastCount(99)", 2);
+        AssertEval(define + "Values*.BeforeLastCount(99)", 2);
         AssertEval(define + "BeforeLastCount(Values*, 99)", 2);
+        AssertEval(define + "(Values*).BeforeLastCount(99)", 1);
+        AssertEval(define + "BeforeLastCount((Values*), 99)", 1);
     }
 
     [Fact]
@@ -383,26 +386,28 @@ public class EvaluatorDotCallTests
     }
 
     [Fact]
-    public void Eval_SpreadMultiOutputReceiver_StaysOneSegmentAtSuffixAllocation()
+    public void Eval_CapturedSpreadReceiver_IsOneValueAtSuffixAllocation()
     {
-        // The two forms now differ. In the direct call, spread supplies 10 and
-        // 20 as separate slots before allocation, so `last` binds 20 and the
-        // collecting parameter captures [10]. The spread RECEIVER is still ONE
-        // segment: with no other arguments the fixed suffix `last` takes that
-        // segment's VALUE — the captured sequence (10, 20) — the collector
-        // gets nothing, and the numeric body fails. A receiver's supply feeds
-        // only a collecting parameter the segment is allocated to; it never
-        // fans out across fixed parameters.
+        // Spread supplies 10 and 20 as separate slots, so `last` binds 20 and
+        // the collecting parameter collects [10] — in the direct call and in
+        // the fluent dotted spelling alike. The CAPTURED spread `(Values*)` is
+        // one value: with no other arguments the fixed suffix `last` takes it
+        // (the sequence (10, 20)), the collector collects [], and the numeric
+        // body fails — exactly as the written `Sum((Values*))` fails.
         var define = """
             Sum(*values, last) = values.sum + last
             Values = 10, 20
 
             """;
         AssertEval(define + "Sum(Values*)", 30);
+        AssertEval(define + "Values*.Sum", 30);
 
-        var receiverResult = EvalFull(define + "(Values*).Sum");
-        Assert.True(receiverResult.IsError, $"Expected failure but got: {(receiverResult.IsOk ? receiverResult.Value : null)}");
-        Assert.IsType<EvalError.TypeMismatch>(Innermost(receiverResult.Error));
+        foreach (var captured in new[] { "(Values*).Sum", "Sum((Values*))" })
+        {
+            var receiverResult = EvalFull(define + captured);
+            Assert.True(receiverResult.IsError, $"Expected failure but got: {(receiverResult.IsOk ? receiverResult.Value : null)}");
+            Assert.IsType<EvalError.TypeMismatch>(Innermost(receiverResult.Error));
+        }
     }
 
     [Fact]

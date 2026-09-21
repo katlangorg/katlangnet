@@ -1070,6 +1070,33 @@ public static partial class Evaluator
             $"internal sequence metadata for {BuiltinDisplayName(builtin)} {detail}",
             new EvalError.BadArity());
 
+    /// <summary>
+    /// Bind the ONE <c>collection</c> argument of a collection builtin from its
+    /// prepared call item and open it through the post-binding collection view.
+    /// A VALUE position demands the item: a callable-shaped item (a parameterized
+    /// algorithm, a clause family) is the zero-argument value-demand rejection
+    /// (<see cref="SequenceBuiltinValueDemandError"/>), a value's retained
+    /// evaluation error surfaces as is. The one-level builtin collection view
+    /// applies AFTER binding, to the bound collection value only: a lone
+    /// sequence or exact list value opens to its immediate items, and any other
+    /// value is a one-element collection (<c>count(7)</c> is 1). Opening is never
+    /// recursive — nested sequence/list elements stay intact as single items.
+    /// Shared by generic collection-builtin binding and by the sequence-pipeline
+    /// optimizer's receiver adapter, so the dotted receiver of <c>R.filter(P)</c>
+    /// (the ordinary first argument of <c>filter(R, P)</c>) is demanded and opened
+    /// identically under both strategies.
+    /// Lean: <c>bindSequenceBuiltinArguments</c> (the collection-item step) /
+    /// <c>builtinCollectionItems</c>.
+    /// </summary>
+    private static EvalResult<IReadOnlyList<Result>> BindSequenceBuiltinCollectionArgument(
+        VariadicCallItem collectionItem)
+    {
+        if (collectionItem.Value is null)
+            return SequenceBuiltinValueDemandError(collectionItem) ?? new EvalError.BadArity();
+
+        return EvalResult<IReadOnlyList<Result>>.Ok(BuiltinCollectionItems(collectionItem.Value));
+    }
+
     private static EvalResult<BoundSequenceBuiltinArguments> BindSequenceBuiltinArguments(
         BuiltinId builtin,
         SequenceBuiltinMetadata metadata,
@@ -1101,16 +1128,9 @@ public static partial class Evaluator
             };
         }
 
-        var collectionItem = items[0];
-        if (collectionItem.Value is null)
-            return SequenceBuiltinValueDemandError(collectionItem) ?? new EvalError.BadArity();
-
-        // The one-level builtin collection view applies AFTER binding, to the
-        // bound collection value only: a lone sequence or exact list value
-        // opens to its immediate items, and any other value is a one-element
-        // collection (`count(7)` is 1). Opening is never recursive — nested
-        // sequence/list elements stay intact as single items.
-        var collectionValues = BuiltinCollectionItems(collectionItem.Value);
+        var collectionValuesR = BindSequenceBuiltinCollectionArgument(items[0]);
+        if (collectionValuesR.IsError) return collectionValuesR.Error;
+        var collectionValues = collectionValuesR.Value;
 
         var collected = new CollectedSequenceBuiltinInput(collectionValues);
         var preparedInputR = PrepareSequenceBuiltinInput(builtin, metadata, collected);

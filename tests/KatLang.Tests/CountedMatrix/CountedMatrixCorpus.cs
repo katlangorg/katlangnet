@@ -11,7 +11,7 @@ namespace KatLang.Tests.CountedMatrix;
 /// <para>KatLang's core cardinality distinction: an ALGORITHM emits zero or
 /// more outputs; a SEQUENCE is one value containing zero or more values.
 /// Outputs stay separate slots only inside written rows, spread supplies,
-/// receiver segments, and loop state; crossing any value boundary (a named
+/// and loop state; crossing any value boundary (a named
 /// reference, call, capture, brace, `if`, structural dot access) turns N
 /// outputs into ONE sequence value. Every case here pins, for one consumer and
 /// one producer cardinality, how many slots/values must be observed — with the
@@ -22,7 +22,7 @@ namespace KatLang.Tests.CountedMatrix;
 /// <c>P0</c> emits 0 outputs, <c>P1</c> one, <c>P2</c> two, <c>P3</c> three.
 /// A named reference to a producer is itself a value boundary — `P2` is ONE
 /// sequence value — so cases reach direct multi-output consumption through
-/// written rows, explicit spread (`P2*`), written group/brace receivers, and
+/// written rows, explicit spread (`P2*`, including the fluent receiver `P2*.F`), and
 /// loop state, and contrast each with the captured form.</para>
 ///
 /// <para>Observation is counts and structural cardinality only: the root
@@ -686,59 +686,61 @@ public static class CountedMatrixCorpus
             "1", 1,
             "the family singleton pattern binds a scalar whole"),
 
-        // ── Dot receiver segment ─────────────────────────────────────────────
+        // ── Dot receiver: dot-call passes a value ────────────────────────────
+        // Historical case IDs and the DotReceiverSegment category stay stable;
+        // their names do not describe a runtime segment or its former supply rule.
         Raw("dot/written-group-many", DotReceiverSegment, Many, WrittenRows,
             "Collect(*items) = items.count\n(10, 20, 30).Collect",
-            "3", 1,
-            "a WRITTEN group receiver supplies its raw row emission to an allocated flat collector"),
+            "1", 1,
+            "a WRITTEN group receiver is ONE argument value: the collector collects [(10, 20, 30)] — Collect((10, 20, 30))"),
         Raw("dot/written-group-empty", DotReceiverSegment, Zero, WrittenRows,
             "Collect(*items) = items.count\n().Collect",
-            "0", 1,
-            "the written empty group supplies zero items"),
+            "1", 1,
+            "the written empty group is one visible argument value: [()] — never a missing argument"),
         Raw("dot/written-group-one", DotReceiverSegment, One, WrittenRows,
             "Collect(*items) = items.count\n(7).Collect",
             "1", 1,
-            "a one-row group supplies one item"),
+            "a one-row group is its item: one collected value"),
         Raw("dot/named-two-supplies-one", DotReceiverSegment, Two, NamedReference,
             P + "Collect(*items) = items.count\nP2.Collect",
             "1", 1,
-            "a NAMED receiver evaluates at its value boundary and supplies ONE item"),
+            "a NAMED receiver is one argument value, exactly like Collect(P2)"),
         Raw("dot/named-empty-supplies-zero", DotReceiverSegment, Zero, NamedReference,
             P + "Collect(*items) = items.count\nP0.Collect",
-            "0", 1,
-            "a named () receiver supplies zero items (valueCount 0)"),
+            "1", 1,
+            "a named () receiver is one argument value ([()]), exactly like Collect(P0): valueCount 0 is a value-boundary count, never a zero-argument supply"),
         Raw("dot/captured-empty-supplies-one", DotReceiverSegment, Zero, CaptureWrapped,
             P + "Collect(*items) = items.count\n(P0).Collect",
             "1", 1,
-            "parens around a named reference KEEP a capture layer (ShouldUnwrapParenthesizedPrimary): the written group supplies its one visible () row — contrast dot/named-empty-supplies-zero and dot/written-group-empty"),
+            "parens around a named reference KEEP a capture layer (ShouldUnwrapParenthesizedPrimary), and the capture is the same one () value — agrees with dot/named-empty-supplies-zero and dot/written-group-empty"),
         Raw("dot/named-one", DotReceiverSegment, One, NamedReference,
             P + "Collect(*items) = items.count\nP1.Collect",
             "1", 1,
-            "a named atom receiver supplies one item"),
+            "a named atom receiver is one argument value"),
         Raw("dot/captured-named", DotReceiverSegment, Two, CaptureWrapped,
             P + "Collect(*items) = items.count\n(P2).Collect",
             "1", 1,
-            "a capture around a named producer supplies its one written slot"),
+            "a capture around a named producer is one written value"),
         Raw("dot/captured-spread", DotReceiverSegment, Two, CaptureWrapped,
             P + "Collect(*items) = items.count\n(P2*).Collect",
-            "2", 1,
-            "(P2*) is a capture whose raw supply is the spread items: two"),
+            "1", 1,
+            "(P2*) is a capture — ONE sequence value — so it is one collected item; only the fluent P2*.Collect supplies two"),
         Raw("dot/brace-two", DotReceiverSegment, Two, BraceWrapped,
             "Collect(*items) = items.count\n{10, 20}.Collect",
-            "2", 1,
-            "a written brace receiver supplies its raw row emission"),
+            "1", 1,
+            "a written brace receiver is one argument value (its output sequence)"),
         Raw("dot/fixed-binds-capture", DotReceiverSegment, Two, WrittenRows,
             "Second(a, b) = b\n(10, 20).Second(5)",
             "5", 1,
-            "a fixed parameter allocated the receiver segment binds its ONE captured value"),
+            "a fixed parameter binds the receiver's ONE captured value: Second((10, 20), 5)"),
         Err("dot/one-segment-arity", DotReceiverSegment, Two, WrittenRows,
             "TwoP(a, b) = 1\n(10, 20).TwoP",
             "arity",
-            "the receiver is ONE segment: its item count never satisfies arity"),
+            "the receiver is ONE argument: its item count never satisfies arity"),
         Raw("dot/grouped-spread-receiver", DotReceiverSegment, Many, CaptureWrapped,
             P + "Mid2(*mid, last) = (mid.count, last.count)\n(P3*).Mid2",
             "S[0, 3]", 1,
-            "(A*).F stays ONE segment: the fixed suffix binds the whole captured value, the collector gets nothing"),
+            "(A*).F is Mid2((A*)): the fixed suffix binds the whole captured value, the collector collects []"),
         Shape("dot/structural-zero-arg", DotReceiverSegment, Two, NamedReference,
             "Obj = {V = 10, 20\n0}\nObj.V",
             "S[#, #]", 1,
@@ -798,11 +800,11 @@ public static class CountedMatrixCorpus
         Raw("idx/many-value-receiver-probe", IndexSelection, Many, NamedReference,
             "Coll(*xs) = xs.count\nT = (1, 2, 3), (4, 5, 6)\nT:1.Coll",
             "1", 1,
-            "as a dot receiver segment the selection supplies exactly one item (a collecting parameter collects [(4, 5, 6)])"),
+            "the selected value is one ordinary dot-call argument (a collecting parameter collects [(4, 5, 6)])"),
         Raw("idx/first-agrees", IndexSelection, Many, NamedReference,
             "Coll(*xs) = xs.count\nT = (1, 2, 3), (4, 5, 6)\nfirst(T).Coll",
             "1", 1,
-            "first(T) is the same selection as T:0: one item on the receiver segment"),
+            "first(T) is the same selection as T:0: one ordinary dot-call argument"),
         Shape("idx/empty-element", IndexSelection, Zero, NamedReference,
             "S2 = (), 5\nS2:0",
             "S[]", 1,

@@ -107,9 +107,10 @@ def ordinaryCountAlg : Algorithm :=
   ]
 
 -- Supplying a NAMED property's items to the variadic mean uses the explicit
--- spread call `Mean(Arg*)` or the grouped-spread receiver `(Arg*).Mean` (whose
--- segment supply is the spread items); both agree with the builtin sum/count
--- pipeline. (A stored receiver `Arg.Mean` supplies one item — see below.)
+-- spread call `Mean(Arg*)` or the spread receiver `Arg*.Mean` (which IS
+-- `Mean(Arg*)`); both agree with the builtin sum/count pipeline. (A stored
+-- receiver `Arg.Mean` is `Mean(Arg)`, one item — see below; the captured
+-- spread `(Arg*).Mean` is `Mean((Arg*))`, one item again.)
 def variadicMeanMatchesBuiltinSumCount : Bool :=
   match runFlat (.algorithmExpr (algPrivate [] [] [
     ("Arg", alg [] [] [] [.num 1, .num 2, .num 3]),
@@ -121,7 +122,7 @@ def variadicMeanMatchesBuiltinSumCount : Bool :=
     ])
   ] [
     .call (resolve "Mean") [sequenceSpread (resolve "Arg")],
-    .dotCall (.capture [sequenceSpread (resolve "Arg")]) "Mean" none,
+    .dotCall (sequenceSpread (resolve "Arg")) "Mean" none,
     resolve "Direct"
   ])) with
   | Except.ok [2, 2, 2] => true
@@ -169,15 +170,15 @@ def ordinaryAndVariadicCountStayStructurallyDifferent : Bool :=
 
 #guard ordinaryAndVariadicCountStayStructurallyDifferent
 
--- Scaling a named property's ITEMS uses the grouped-spread receiver
--- `(Arg*).Scale(10)`: the suffix takes the factor, and the collector consumes
--- the receiver segment's supply (Arg's three spread items).
+-- Scaling a named property's ITEMS uses the spread receiver `Arg*.Scale(10)`
+-- — `Scale(Arg*, 10)`: the suffix takes the factor, and the collector collects
+-- Arg's three spread items as ordinary slots.
 def variadicBeforeSuffixSupportsDotCall : Bool :=
   match runFlat (.algorithmExpr (algPrivate [] [] [
     ("Arg", alg [] [] [] [.num 1, .num 2, .num 3]),
     ("Scale", variadicScaleAlg)
   ] [
-    .dotCall (.capture [sequenceSpread (resolve "Arg")])
+    .dotCall (sequenceSpread (resolve "Arg"))
       "Scale" (some [.num 10])
   ])) with
   | Except.ok [10, 20, 30] => true
@@ -185,15 +186,15 @@ def variadicBeforeSuffixSupportsDotCall : Bool :=
 
 #guard variadicBeforeSuffixSupportsDotCall
 
--- TotalWithFee(*values, fee) is a deconstruction parameter list. The inline
--- block receiver exposes its three top-level items (10, 20, 30), so with the
--- suffix the call supplies four items; the variadic captures [10, 20, 30] and
--- `fee` binds 5, giving sum 60 + 5 = 65.
+-- TotalWithFee(*values, fee) is a deconstruction parameter list. The spread
+-- group receiver `(10, 20, 30)*.TotalWithFee(5)` is `TotalWithFee(10, 20, 30, 5)`:
+-- the call supplies four slots, the variadic collects [10, 20, 30] and `fee`
+-- binds 5, giving sum 60 + 5 = 65.
 def variadicInlineTupleDotCallWithSuffixCapturesReceiverItems : Bool :=
   match runResult (.algorithmExpr (algPrivate [] [] [
     ("TotalWithFee", variadicTotalWithFeeAlg)
   ] [
-    .dotCall (.capture [sequenceSpread1230])
+    .dotCall sequenceSpread1230
       "TotalWithFee" (some [.num 5])
   ])) with
   | Except.ok (.atom 65) => true
@@ -201,10 +202,10 @@ def variadicInlineTupleDotCallWithSuffixCapturesReceiverItems : Bool :=
 
 #guard variadicInlineTupleDotCallWithSuffixCapturesReceiverItems
 
--- `Data.TotalWithFee(5)` supplies the named receiver's value-boundary segment
--- (one item), so the collecting parameter collects `values = [(10, 20, 30)]`
--- and `values.sum` hits the numeric element constraint — unlike the written
--- group receivers above, whose raw row supply feeds the collector.
+-- `Data.TotalWithFee(5)` is `TotalWithFee(Data, 5)`: the named receiver is one
+-- argument, so the collecting parameter collects `values = [(10, 20, 30)]`
+-- and `values.sum` hits the numeric element constraint — only the spread
+-- receiver above supplies the items.
 def collectingNamedMultiOutputDotCallWithSuffixIsGroupedArgument : Bool :=
   match runResult (.algorithmExpr (algPrivate [] [] [
     ("Data", alg [] [] [] [.num 10, .num 20, .num 30]),
@@ -217,9 +218,10 @@ def collectingNamedMultiOutputDotCallWithSuffixIsGroupedArgument : Bool :=
 
 #guard collectingNamedMultiOutputDotCallWithSuffixIsGroupedArgument
 
--- The named receiver's segment supply is one item (numeric-constraint error),
--- while the written grouped-spread receiver `(Data*)` supplies its three raw
--- row items: emission, not spelling, decides what the collector consumes.
+-- The named receiver is one argument (numeric-constraint error), the spread
+-- receiver `Data*.TotalWithFee(5)` supplies its three items as ordinary slots
+-- (65), and the CAPTURED spread `(Data*).TotalWithFee(5)` is one argument again
+-- (the same numeric-constraint error): only the spread marker opens a receiver.
 def variadicInlineTupleSpreadReceiverDiffersFromNamedReceiver : Bool :=
   let named :=
     match runResult (.algorithmExpr (algPrivate [] [] [
@@ -235,12 +237,22 @@ def variadicInlineTupleSpreadReceiverDiffersFromNamedReceiver : Bool :=
       ("Data", alg [] [] [] [.num 10, .num 20, .num 30]),
       ("TotalWithFee", variadicTotalWithFeeAlg)
     ] [
-      .dotCall (.capture [sequenceSpread1230])
+      .dotCall (sequenceSpread (resolve "Data"))
         "TotalWithFee" (some [.num 5])
     ])) with
     | Except.ok [65] => true
     | _ => false
-  named && spreadReceiver
+  let capturedSpreadReceiver :=
+    match runResult (.algorithmExpr (algPrivate [] [] [
+      ("Data", alg [] [] [] [.num 10, .num 20, .num 30]),
+      ("TotalWithFee", variadicTotalWithFeeAlg)
+    ] [
+      .dotCall (.capture [sequenceSpread (resolve "Data")])
+        "TotalWithFee" (some [.num 5])
+    ])) with
+    | Except.error err => innermostIsBadArity err
+    | _ => false
+  named && spreadReceiver && capturedSpreadReceiver
 
 #guard variadicInlineTupleSpreadReceiverDiffersFromNamedReceiver
 
@@ -290,7 +302,7 @@ def sequenceBuiltinInlineTupleDotCallBehaviorUnchanged : Bool :=
 
 #guard sequenceBuiltinInlineTupleDotCallBehaviorUnchanged
 
--- `((Arg*).Scale(10), Arg.map{n * 10})*`: a spread over the
+-- `(Arg*.Scale(10), Arg.map{n * 10})*`: a spread over the
 -- constructed pair of the spread-receiver variadic scale and the builtin map;
 -- both produce the same scaled items.
 def variadicScaleMatchesBuiltinMap : Bool :=
@@ -303,7 +315,7 @@ def variadicScaleMatchesBuiltinMap : Bool :=
   ] [
     sequenceSpread
       (.sequenceConstruct
-        (.dotCall (.capture [sequenceSpread (resolve "Arg")])
+        (.dotCall (sequenceSpread (resolve "Arg"))
           "Scale" (some [.num 10]))
         builtinMap)
   ])) with

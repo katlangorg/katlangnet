@@ -308,11 +308,11 @@ def graceDotExtraArgs : Bool :=
 
 #guard graceDotExtraArgs
 
--- Receiver-segment supply is ordinary dot semantics, so Grace inherits
--- it unchanged: a WRITTEN GROUP receiver supplies its rows to the flat
--- collecting parameter (count 2), while a NAMED receiver supplies one item
--- (count 1). A written group is not eligible for postfix Grace; the executable
--- named edge remains the same ordinary dot.
+-- Dot-call passes a value, and Grace inherits that unchanged: a NAMED
+-- receiver and a WRITTEN GROUP receiver are each ONE collected item (count
+-- 1), and only the spread marker supplies the rows (count 2). A written group
+-- is not eligible for postfix Grace; the executable named edge remains the
+-- same ordinary dot.
 def graceDotCountItemsAlg : Algorithm :=
   algWithParameters [{ name := "items", kind := .collecting }] [] [] [
     .dotCall (.param "items") "count" none
@@ -332,13 +332,21 @@ def namedReceiverSuppliesOneItem : Bool :=
 
 #guard namedReceiverSuppliesOneItem
 
-def writtenGroupReceiverSegmentSupplyContrast : Bool :=
-  match runFlat (graceDotCountItemsRoot
+def writtenGroupReceiverIsOneItemAndSpreadSuppliesRows : Bool :=
+  (match runFlat (graceDotCountItemsRoot
     (.dotCall (.capture [.num 1, .num 2]) "CountItems" none)) with
+  | Except.ok [1] => true
+  | _ => false) &&
+  (match runFlat (graceDotCountItemsRoot
+    (.dotCall (.sequenceSpread (.capture [.num 1, .num 2])) "CountItems" none)) with
   | Except.ok [2] => true
-  | _ => false
+  | _ => false) &&
+  (match runFlat (graceDotCountItemsRoot
+    (.dotCall (.sequenceSpread (.resolve "S")) "CountItems" none)) with
+  | Except.ok [2] => true
+  | _ => false)
 
-#guard writtenGroupReceiverSegmentSupplyContrast
+#guard writtenGroupReceiverIsOneItemAndSpreadSuppliesRows
 
 -- Chaining composes by ordinary rules: `a~.t.string` is the ordinary chain
 -- `a.t.string` — an ordinary `.string` dot on the first edge's result.
@@ -410,17 +418,27 @@ def userCollectingDotCallCountItemsRoot : Algorithm :=
     .dotCall (.capture [.num 1, .num 2]) "CountItems" none
   ]
 
--- Ordinary dot-call receiver injection under the general segment rule:
--- `(1, 2).CountItems` injects the written group as ONE leading segment, and
--- the collecting parameter allocated that segment consumes the segment's raw
--- row supply, so `items = [1, 2]` and `items.count` is 2. (A direct call
--- `CountItems((1, 2))` still collects the one written grouped argument.)
-def userCollectingDotCallReceiverSuppliesRowItems : Bool :=
-  match runFlat (.algorithmExpr userCollectingDotCallCountItemsRoot) with
+-- Ordinary dot-call receiver injection — dot-call passes a value:
+-- `(1, 2).CountItems` is `CountItems((1, 2))`, the written group is ONE
+-- argument, so `items = [(1, 2)]` and `items.count` is 1. Only the spread
+-- marker supplies the rows: `(1, 2)*.CountItems` is `CountItems(1, 2)`,
+-- `items = [1, 2]`, count 2.
+def userCollectingDotCallReceiverIsOneItem : Bool :=
+  (match runFlat (.algorithmExpr userCollectingDotCallCountItemsRoot) with
+  | Except.ok [1] => true
+  | _ => false) &&
+  (match runFlat (.algorithmExpr (algPrivate [] [] [("CountItems", userCollectingDotCallCountItemsAlg)] [
+    .call (.resolve "CountItems") [.capture [.num 1, .num 2]]
+  ])) with
+  | Except.ok [1] => true
+  | _ => false) &&
+  (match runFlat (.algorithmExpr (algPrivate [] [] [("CountItems", userCollectingDotCallCountItemsAlg)] [
+    .dotCall (.sequenceSpread (.capture [.num 1, .num 2])) "CountItems" none
+  ])) with
   | Except.ok [2] => true
-  | _ => false
+  | _ => false)
 
-#guard userCollectingDotCallReceiverSuppliesRowItems
+#guard userCollectingDotCallReceiverIsOneItem
 
 def userCollectingDotCallMeanAlg : Algorithm :=
   algWithParameters [{ name := "vector", kind := .collecting }] [] [] [
@@ -429,19 +447,24 @@ def userCollectingDotCallMeanAlg : Algorithm :=
 
 def userCollectingDotCallMeanRoot : Algorithm :=
   algPrivate [] [] [("Mean", userCollectingDotCallMeanAlg)] [
-    .dotCall (.capture [.num 1, .num 2]) "Mean" none
+    .dotCall (.sequenceSpread (.capture [.num 1, .num 2])) "Mean" none
   ]
 
--- `(1, 2).Mean` binds `vector = [1, 2]` — the collector consumes the written
--- group receiver's row supply — so `vector.sum` is 3. This is the headline
--- correction of the general segment rule (formerly the receiver was one
--- captured sequence element and the sum hit the numeric constraint).
-def userCollectingDotCallReceiverSumsSuppliedItems : Bool :=
-  match runFlat (.algorithmExpr userCollectingDotCallMeanRoot) with
+-- `(1, 2)*.Mean` is `Mean(1, 2)`: the spread supplies the rows as ordinary
+-- slots, `vector = [1, 2]`, and `vector.sum` is 3. The unspread `(1, 2).Mean`
+-- is `Mean((1, 2))` — `vector = [(1, 2)]` — and the numeric sum rejects the
+-- sequence element (dot-call passes a value; spread opens a value).
+def userCollectingDotCallSpreadReceiverSumsSuppliedItems : Bool :=
+  (match runFlat (.algorithmExpr userCollectingDotCallMeanRoot) with
   | Except.ok [3] => true
-  | _ => false
+  | _ => false) &&
+  (match runFlat (.algorithmExpr (algPrivate [] [] [("Mean", userCollectingDotCallMeanAlg)] [
+    .dotCall (.capture [.num 1, .num 2]) "Mean" none
+  ])) with
+  | Except.error err => innermostIsBadArity err
+  | _ => false)
 
-#guard userCollectingDotCallReceiverSumsSuppliedItems
+#guard userCollectingDotCallSpreadReceiverSumsSuppliedItems
 
 def userNonCollectingDotCallCountOneAlg : Algorithm :=
   alg ["value"] [] [] [

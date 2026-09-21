@@ -621,13 +621,13 @@ public class EvaluatorUserCallTests
     [Fact]
     public void VariadicUserProperty_MatchesBuiltinSumAndCount()
     {
-        // The item-supplying call forms (spread argument, spread receiver)
-        // feed the collecting parameter the items the builtins see.
+        // The item-supplying call forms (spread argument, fluent spread
+        // receiver) feed the collecting parameter the items the builtins see.
         AssertEvalSequenceModes(
             """
             Arg = 1, 2, 3
             Mean(*values) = values.sum / values.count
-            Mean(Arg*), (Arg*).Mean
+            Mean(Arg*), Arg*.Mean
             """,
             2, 2);
     }
@@ -652,7 +652,7 @@ public class EvaluatorUserCallTests
             """
             Arg = (1, 2), (3, 4)
             CountViaVariadic(*values) = values.count
-            CountViaVariadic(Arg*), (Arg*).CountViaVariadic, Arg.count
+            CountViaVariadic(Arg*), Arg*.CountViaVariadic, Arg.count
             """,
             2, 2, 2);
     }
@@ -677,7 +677,7 @@ public class EvaluatorUserCallTests
             """
             Arg = 1, 2, 3
             Scale(*values, factor) = values.map{n * factor}
-            (Arg*).Scale(10), Arg.map{n * 10}
+            Arg*.Scale(10), Arg.map{n * 10}
             """,
             10, 20, 30, 10, 20, 30);
     }
@@ -689,7 +689,7 @@ public class EvaluatorUserCallTests
             """
             Arg = 1, 2, 3, 4, 5
             KeepBetween(*values, minValue, maxValue) = values.filter{n >= minValue and n <= maxValue}
-            (Arg*).KeepBetween(2, 4), Arg.filter{n >= 2 and n <= 4}
+            Arg*.KeepBetween(2, 4), Arg.filter{n >= 2 and n <= 4}
             """,
             2, 3, 4, 2, 3, 4);
     }
@@ -701,7 +701,7 @@ public class EvaluatorUserCallTests
             """
             Arg = 1, 2, 3, 4
             TakeFirst(*values, itemCount) = values.take(itemCount)
-            (Arg*).TakeFirst(2), Arg.take(2)
+            Arg*.TakeFirst(2), Arg.take(2)
             """,
             1, 2, 1, 2);
     }
@@ -713,7 +713,7 @@ public class EvaluatorUserCallTests
             """
             Arg = 1, 2, 3, 4
             SkipFirst(*values, itemCount) = values.skip(itemCount)
-            (Arg*).SkipFirst(2), Arg.skip(2)
+            Arg*.SkipFirst(2), Arg.skip(2)
             """,
             3, 4, 3, 4);
     }

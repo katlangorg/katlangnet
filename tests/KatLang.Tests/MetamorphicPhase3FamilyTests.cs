@@ -561,32 +561,43 @@ public class MetamorphicPhase3FamilyTests
 
     /// <summary>
     /// MEASURED cache-surface fact, pinned so the template table cannot quietly claim otherwise:
-    /// a bare property reference in an ordinary call ARGUMENT position records no zero-argument
-    /// property cache request at all, while the SAME property used as a dotted receiver does.
+    /// a bare property reference in a builtin's collection slot records no zero-argument property
+    /// cache request at all — in the written spelling <c>sum(MmA)</c> and, because dot-call passes
+    /// the receiver as the ordinary leading argument, in the dotted spelling <c>MmA.sum</c> alike —
+    /// while the captured receiver <c>(MmA).sum</c> reads the property in value position and is
+    /// served from the cache on its second use.
     ///
-    /// <para>Both forms produce identical values, so this is a missed reuse rather than a defect —
-    /// the repository documents the cache as something property-style access <i>may</i> use. It is
-    /// recorded here because the cached-versus-rebuilt family would otherwise silently claim a
-    /// reuse it demonstrably does not get, and because a future change in either direction should
-    /// be a deliberate, visible one.</para>
+    /// <para>All three forms produce identical values, so this is a missed reuse rather than a
+    /// defect — the repository documents the cache as something property-style access <i>may</i>
+    /// use. It is recorded here because the cached-versus-rebuilt family would otherwise silently
+    /// claim a reuse it demonstrably does not get, because the two spellings of the builtin call
+    /// must never drift apart again, and because a future change in either direction should be a
+    /// deliberate, visible one.</para>
     /// </summary>
     [Fact]
-    public void ArgumentPositionPropertyReference_DoesNotConsultTheCache()
+    public void BuiltinCollectionSlot_DoesNotConsultTheCache_InEitherSpelling()
     {
         var argument = ObserveWithEvidence("MmA = range(1, 6)\nsum(MmA), sum(MmA)", enableOptimizations: true);
         var receiver = ObserveWithEvidence("MmA = range(1, 6)\nMmA.sum, MmA.sum", enableOptimizations: true);
+        var captured = ObserveWithEvidence("MmA = range(1, 6)\n(MmA).sum, (MmA).sum", enableOptimizations: true);
 
         var argumentCache = Assert.IsType<MetamorphicCacheEvidence>(argument.CacheEvidence);
         var receiverCache = Assert.IsType<MetamorphicCacheEvidence>(receiver.CacheEvidence);
+        var capturedCache = Assert.IsType<MetamorphicCacheEvidence>(captured.CacheEvidence);
 
         Assert.Equal(0, argumentCache.Requests);
         Assert.Equal(0, argumentCache.Hits);
-        Assert.Equal(2, receiverCache.Requests);
-        Assert.Equal(1, receiverCache.Hits);
+        Assert.Equal(0, receiverCache.Requests);
+        Assert.Equal(0, receiverCache.Hits);
+        Assert.Equal(2, capturedCache.Requests);
+        Assert.Equal(1, capturedCache.Hits);
 
-        // The values are the same either way; only the reuse differs.
-        Assert.Equal(receiver.Semantic.Structure, argument.Semantic.Structure);
-        Assert.Equal(receiver.Semantic.EmittedCount, argument.Semantic.EmittedCount);
+        // The values are the same in every spelling; only the reuse differs.
+        Assert.Equal(receiver.Semantic, argument.Semantic);
+        Assert.Equal(captured.Semantic.Structure, argument.Semantic.Structure);
+        Assert.Equal(captured.Semantic.EmittedCount, argument.Semantic.EmittedCount);
+        Assert.Equal(receiver.MaterializedItems, argument.MaterializedItems);
+        Assert.Equal(receiver.EvaluationSteps, argument.EvaluationSteps);
     }
 
     /// <summary>A cumulative budget cannot bind equally on the two forms, so those modes are rejected by name.</summary>

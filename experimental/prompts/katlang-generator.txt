@@ -573,7 +573,7 @@ For ordinary/user-defined properties, when `B` is NOT a structural member of `A`
 allocates its arguments like:
     B(A, C, D)
 
-This is not an unconditional rewrite: when `B` IS a structural member of `A`, `A.B(C, D)` calls that member with `C` and `D` alone (`Obj = { public B(c) = c + 1 }` makes `Obj.B(5)` return `6` even beside a visible `B(a, c)`). The fallback preserves `A` as one leading argument segment rather than spreading `A`'s outputs into fixed parameters: the receiver never satisfies extra fixed-parameter arity, and a fixed parameter binds the receiver as one value. The one supply rule: a flat top-level COLLECTING parameter allocated the receiver segment consumes the receiver's evaluated top-level supply, so a written group receiver feeds it item by item — `Mean(*Vector) = Vector.sum / Vector.count` supports both `Mean(1, 2, 3)` and `(1, 2, 3).Mean` — while a named property receiver supplies its one stored value (`Arg.Mean` passes `Arg` whole; use `Arg*.Mean` to supply its items).
+This is not an unconditional rewrite: when `B` IS a structural member of `A`, `A.B(C, D)` calls that member with `C` and `D` alone (`Obj = { public B(c) = c + 1 }` makes `Obj.B(5)` return `6` even beside a visible `B(a, c)`). For the fallback, DOT-CALL PASSES A VALUE: `A` is one ordinary leading argument, never spread into fixed parameters — the receiver never satisfies extra fixed-parameter arity, a fixed parameter binds it as one value, and a collecting parameter collects it as ONE item whatever it is (a property, a written group, a list, a call result). To hand a receiver's items to a collecting helper, spread the receiver: with `Mean(*Vector) = Vector.sum / Vector.count`, write `Mean(1, 2, 3)`, `(1, 2, 3)*.Mean`, or `Arg*.Mean`; `(1, 2, 3).Mean` and `Arg.Mean` pass ONE sequence value (`Vector = [(1, 2, 3)]`) and the numeric sum fails.
 
 Examples:
     Add = a + b
@@ -603,7 +603,7 @@ Chained access is property-first at EVERY level: a receiver that is itself an ar
 
 A member name the receiver does not declare is NOT an error by itself, and a statically known receiver (`Math`, a block, a module) gets no special treatment: `Math.Ceiling(x)` has no structural `Ceiling`, so it is the lexical fallback `Ceiling(Math, x)` — valid when a `Ceiling(a, b)` is visible, and otherwise an enclosing algorithm with inferred inputs infers `Ceiling` as an implicit parameter (the program then needs an argument for it; the report names the receiver, explains the fallback, and suggests `Math.Ceil`). Spell members exactly as the receiver declares them (`Math.Ceil`, `Math.Floor`, `Math.Sqrt`) and never rely on a misspelling being rejected as a missing member.
 
-GRACE WITH DOTCALL: `a~.f(args)` is ordinary postfix Grace on the bare receiver name followed by an ORDINARY DOT EDGE; `a.~f(args)` is ordinary dot with prefix Grace on the participating member/fallback occurrence. Base semantic occurrence order is receiver, participating fallback, then written arguments: `K = a.f` infers `(a, f)`, while both graced two-name forms infer `(f, a)` through the ONE general Grace pass. Runtime fallback still invokes `f(a, args)`, but that assembly does not order the enclosing signature. Postfix Grace requires its receiver operand to be one bare name, so `(x + y)~.t`, `f(x)~.t`, `[x, y]~.t`, `5~.t`, and a second `~.` in `a~.t~.u` reject; prefix member Grace remains valid with a compound receiver because it decorates the bare member name. Call arguments are unrestricted (`a~.t(b, c)` and `a.~t(b, c)` infer `(t, a, b, c)`). Grace NEVER changes member selection or any other executable semantics: with a free receiver `o`, `Read = o~.V` then `Read(Obj)` reads Obj's structural `V` exactly like `Obj.V` (write `V(Obj)` to reach a lexical `V`), `x~.string` keeps the dot-only intrinsic, `S~.count` (free `S`) keeps the dotted builtin view, and receiver-segment supply is unchanged. A member participates in inference when fallback MAY be selected, but not when structural resolution is certain and not in a CLOSED explicit list. A marker that could reorder nothing is an ERROR, never a no-op: `Obj~.V` on a bound property, `Obj.~V` on a member Obj is known to declare, `x.~string` on the intrinsic, `S.~count` on a builtin, and any marker under an explicit parameter list. Grace must attach directly to its bare name: `a ~ .t` and `a.~ t` are attachment errors; use `a~.t` and `a.~t`. A grace-marked `open` target is rejected (`open M~.C`).
+GRACE WITH DOTCALL: `a~.f(args)` is ordinary postfix Grace on the bare receiver name followed by an ORDINARY DOT EDGE; `a.~f(args)` is ordinary dot with prefix Grace on the participating member/fallback occurrence. Base semantic occurrence order is receiver, participating fallback, then written arguments: `K = a.f` infers `(a, f)`, while both graced two-name forms infer `(f, a)` through the ONE general Grace pass. Runtime fallback still invokes `f(a, args)`, but that assembly does not order the enclosing signature. Postfix Grace requires its receiver operand to be one bare name, so `(x + y)~.t`, `f(x)~.t`, `[x, y]~.t`, `5~.t`, and a second `~.` in `a~.t~.u` reject; prefix member Grace remains valid with a compound receiver because it decorates the bare member name. Call arguments are unrestricted (`a~.t(b, c)` and `a.~t(b, c)` infer `(t, a, b, c)`). Grace NEVER changes member selection or any other executable semantics: with a free receiver `o`, `Read = o~.V` then `Read(Obj)` reads Obj's structural `V` exactly like `Obj.V` (write `V(Obj)` to reach a lexical `V`), `x~.string` keeps the dot-only intrinsic, `S~.count` (free `S`) keeps the ordinary builtin call, and the receiver stays the ordinary leading argument (dot-call passes a value). A member participates in inference when fallback MAY be selected, but not when structural resolution is certain and not in a CLOSED explicit list. A marker that could reorder nothing is an ERROR, never a no-op: `Obj~.V` on a bound property, `Obj.~V` on a member Obj is known to declare, `x.~string` on the intrinsic, `S.~count` on a builtin, and any marker under an explicit parameter list. Grace must attach directly to its bare name: `a ~ .t` and `a.~ t` are attachment errors; use `a~.t` and `a.~t`. A grace-marked `open` target is rejected (`open M~.C`).
 
 Collection builtins are ordinary fixed-arity callables such as `count(collection)`, `map(collection, mapper)`, and `take(collection, count)`. Each receives ONE collection object plus its fixed controls; after binding, a single grouped sequence value OR exact list value is opened one outer boundary as the collection (a builtin-collection rule; user-defined collecting parameters do NOT open a single sequence or list argument). A dot-call receiver fills the collection parameter:
     (1, 2, 3).sum
@@ -615,7 +615,8 @@ Collection builtins are ordinary fixed-arity callables such as `count(collection
     take((1, 2, 3), 2)
     Scale(*values, factor) = values.map{n * factor}
     Scale(Arg*, 10)    # spread the items into the collecting parameter; Scale(Arg, 10) binds values = [Arg]
-    (1, 2, 3).Scale(10)    # a written group receiver supplies its rows: values = [1, 2, 3], factor = 10
+    (1, 2, 3)*.Scale(10)    # the spread receiver supplies its rows: values = [1, 2, 3], factor = 10
+    # (1, 2, 3).Scale(10) passes ONE sequence value: values = [(1, 2, 3)], and the numeric callback fails
     Values = 10, 20
     Sum(*values, last) = values.sum + last
     Sum(Values*, 7)    # 37: spread opens two value slots, then 7 fills last
@@ -1388,7 +1389,7 @@ Regenerate this block from the repo root with:
     [(1, 2)]
     [1, 2]
 
-[variadic-receiver-distinction] An unspread structure is one argument slot — `Inspect(A)` collects `[A]` (count 1) for lists and sequence values alike, and a NAMED dotted receiver `A.Inspect` supplies the same one item (a stored property receiver's segment supply is its value-boundary count) — while explicit spread supplies the immediate items (`Inspect(A*)` collects `[1, 2, 3]`, count 3). A WRITTEN group receiver is different: see `dot-receiver-segment-supply`.
+[variadic-receiver-distinction] An unspread structure is one argument slot — `Inspect(A)` collects `[A]` (count 1) for lists and sequence values alike, and the dotted receiver `A.Inspect` is exactly that written argument (dot-call passes a value: `A.Inspect` is `Inspect(A)`) — while explicit spread supplies the immediate items (`Inspect(A*)` collects `[1, 2, 3]`, count 3, and the fluent `A*.Inspect` is `Inspect(A*)`). A written group receiver is one value too: see `dot-receiver-passes-a-value`.
 
     Inspect(*items) = items
     A = [1, 2, 3]
@@ -1400,12 +1401,12 @@ Regenerate this block from the repo root with:
     [[1, 2, 3]]
     [1, 2, 3]
 
-[dot-receiver-segment-supply] A lexical dot-call receiver is ONE leading segment for arity checking and fixed prefix/suffix allocation — its item count never satisfies arity, and a fixed parameter binds the receiver as one value. A flat top-level collecting parameter that is allocated the segment consumes the segment's evaluated top-level supply: a WRITTEN group receiver supplies its raw rows (`(1, 2, 3).Mean` averages the three items; `((1, 2)).Collect` keeps the extra written boundary; `().Collect` supplies zero items), while exact lists stay opaque. Direct calls are unchanged: `Mean((1, 2, 3))` still collects one grouped argument.
+[dot-receiver-passes-a-value] Dot-call passes a value: for extension-call fallback, `R.F(args)` is exactly `F(R, args)` — the receiver is ONE ordinary leading argument whatever it is (a written group, a brace block, a list, a property, a call result, a selection, a capture of a spread), so its item count never satisfies arity, a fixed parameter binds it whole, and a collecting parameter collects it as one item (`(1, 2).Collect` is `[(1, 2)]`, `().Collect` is `[()]`, `[1, 2].Collect` is `[[1, 2]]`). Only the spread marker opens a receiver: `R*.F(args)` is `F(R*, args)`, so `(1, 2, 3)*.Mean` averages the three items and `(1, 2)*.Collect` collects `[1, 2]`.
 
     Mean(*Vector) = Vector.sum / Vector.count
 
     Mean(1, 2, 3)
-    (1, 2, 3).Mean
+    (1, 2, 3)*.Mean
 
   Displays:
     2
@@ -1610,7 +1611,7 @@ Regenerate this block from the repo root with:
 
   Rejected by the parser: "a parenthesized group is a captured value, not an algorithm ..."
 
-[dot-call-structural-member-is-not-a-lexical-rewrite] Dot syntax is property-first. `Obj` declares its own `B`, so `Obj.B(5)` calls that member with the one argument `5` and injects no receiver; the visible two-parameter `B(a, c)` is never considered, although `B(Obj, 5)` is a well-formed two-argument call. Only a receiver WITHOUT the member takes the lexical fallback, where `A.B(C)` allocates arguments like `B(A, C)` with the receiver as one leading segment — `3.B(5)` is `B(3, 5)`.
+[dot-call-structural-member-is-not-a-lexical-rewrite] Dot syntax is property-first. `Obj` declares its own `B`, so `Obj.B(5)` calls that member with the one argument `5` and injects no receiver; the visible two-parameter `B(a, c)` is never considered, although `B(Obj, 5)` is a well-formed two-argument call. Only a receiver WITHOUT the member takes the lexical fallback, where `A.B(C)` allocates arguments like `B(A, C)` with the receiver as one ordinary leading argument — `3.B(5)` is `B(3, 5)`.
 
     B(a, c) = a * 100 + c
     Obj = {
@@ -1702,7 +1703,7 @@ Regenerate this block from the repo root with:
   Displays:
     (1, 2)
 
-[selection-forms-agree] `first(A)`, `last(A)`, and `A:i` are the same selection: each returns the selected value through the ordinary value boundary, so a collecting dotted receiver collects the selected pair as one item, a selected `()` supplies zero items (like any `()` value), and a selected `[]` stays one exact list. Only the spread marker opens a selected sequence or list.
+[selection-forms-agree] `first(A)`, `last(A)`, and `A:i` are the same selection: each returns the selected value through the ordinary value boundary, and dot-call passes that value as the ordinary leading argument, so a collecting dotted receiver collects the selected pair as one item, a selected `()` is one collected item (`[()]`, exactly like the written argument `Coll(())`), and a selected `[]` stays one exact list. Only the spread marker opens a selected sequence or list — and a spread `()` supplies nothing.
 
     Coll(*xs) = xs
     Pairs = (1, 2), (3, 4)

@@ -519,21 +519,39 @@ public class ZeroArgPropertyResultCacheTests
     }
 
     [Fact]
-    public void Evaluator_ZeroArgPropertyCaching_DotReceiverUsesLexicalShapedAccessKind()
+    public void Evaluator_ZeroArgPropertyCaching_BareDotReceiverIsDemandedLikeTheWrittenBuiltinArgument()
+    {
+        // Dot-call passes the receiver as the ordinary leading argument, so a bare named
+        // receiver of a collection builtin is demanded exactly like the written argument:
+        // `Values.count` and `count(Values)` both demand the algorithm directly through the
+        // zero-argument value-demand law and neither read nor store its cache entry.
+        var dotted = RunCached("Values = range(1, 5)\nValues.count + Values.count");
+        var written = RunCached("Values = range(1, 5)\ncount(Values) + count(Values)");
+
+        Assert.False(dotted.Result.IsError);
+        Assert.False(written.Result.IsError);
+        Assert.Equal([10m], dotted.Result.Value.ToAtoms());
+        Assert.Equal([10m], written.Result.Value.ToAtoms());
+        Assert.Equal(0, dotted.Snapshot.TotalRequests);
+        Assert.Equal(0, written.Snapshot.TotalRequests);
+        Assert.Equal(0, dotted.Snapshot.Stores);
+        Assert.Equal(0, written.Snapshot.Stores);
+    }
+
+    [Fact]
+    public void Evaluator_ZeroArgPropertyCaching_CapturedDotReceiverUsesLexicalShapedAccessKind()
     {
         var source = """
             Values = range(1, 5)
-            Values.count + Values.count
+            (Values).count + (Values).count
             """;
-        var cache = new RunScopedZeroArgPropertyResultCache();
-
-        var result = Evaluator.Run(new Expr.AlgorithmExpr(SourceProvenance.ParseValid(source).Root), cache);
-        var snapshot = cache.GetSnapshot();
-        // The semantic point is the access SHAPE: a sequence-builtin dot
-        // receiver reads `Values` through lexical resolution, never through
+        var (result, snapshot) = RunCached(source);
+        // The semantic point is the access SHAPE: a captured receiver reads
+        // `Values` in value position through lexical resolution, never through
         // structural owner keying. Plain Run reaches the cache through the
         // counted lexical wiring point (plain = value projection of counted,
-        // M8); totals unchanged, and the structural kinds stay quiet.
+        // M8); the second read is served from the entry, and the structural
+        // kinds stay quiet.
         var countedLexical = snapshot.GetAccessKind(ZeroArgPropertyAccessKind.CountedLexical);
         var structural = snapshot.GetAccessKind(ZeroArgPropertyAccessKind.Structural);
         var countedStructural = snapshot.GetAccessKind(ZeroArgPropertyAccessKind.CountedStructural);
@@ -551,6 +569,13 @@ public class ZeroArgPropertyResultCacheTests
         Assert.Equal(0, structural.Requests);
         Assert.Equal(0, countedStructural.Requests);
         AssertLiveEvaluationUsesOnlyCountedAccessKinds(snapshot);
+    }
+
+    private static (EvalResult<Result> Result, ZeroArgPropertyResultCacheSnapshot Snapshot) RunCached(string source)
+    {
+        var cache = new RunScopedZeroArgPropertyResultCache();
+        var result = Evaluator.Run(new Expr.AlgorithmExpr(SourceProvenance.ParseValid(source).Root), cache);
+        return (result, cache.GetSnapshot());
     }
 
     [Fact]

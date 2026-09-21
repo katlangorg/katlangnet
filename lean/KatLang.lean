@@ -2455,24 +2455,6 @@ def unpackArgs (r : Result) : List Result :=
   | .sequenceValue rs => rs
   | .listValue _ => [r]
 
-/-- How a call's argument bundle was assembled: ordinary written argument
-    slots, or a lexical dot-call bundle whose FIRST slot is the injected
-    receiver segment. The injected receiver is always ONE leading segment for
-    arity checking and prefix/suffix allocation (never pre-expanded), is
-    evaluated through the raw counted receiver-segment path, and carries its
-    evaluated top-level supply (`ParameterPatternInput.collectingSegmentCount?`)
-    so only a flat top-level collecting parameter allocated the segment
-    consumes the supply items. Receiver assembly never inspects the resolved
-    callee. C#: `CallArgumentAssembly`. -/
-inductive CallArgumentAssembly where
-  | ordinaryArguments
-  | injectedDotReceiverLeading
-  deriving Repr, BEq
-
-def CallArgumentAssembly.isInjectedDotReceiverLeading : CallArgumentAssembly -> Bool
-  | .injectedDotReceiverLeading => true
-  | .ordinaryArguments => false
-
 /-- Bind algorithm-typed parameters: zip parameter names with algorithms.
     Only includes entries where the argument resolved to an algorithm.
     Result entries are skipped (they go through bindParams / ValEnv). -/
@@ -2485,21 +2467,19 @@ def bindAlgParams (ps : List Ident) (algs : List (Option Algorithm)) : AlgEnv :=
     | some alg => (p, alg) :: bindAlgParams ps' as'
     | none     => bindAlgParams ps' as'
 
-/-- One call argument segment prepared for parameter binding. Every segment
-    has a value view (`value?`); an injected dot-call receiver segment
-    additionally carries `collectingSegmentCount?` — the raw emitted count of
-    its counted evaluation — as an EPHEMERAL collecting supply view. A fixed
-    parameter always binds the value view; only a flat top-level collecting
-    parameter that is allocated the segment consumes the supply view
-    (one level, never recursive). The field is data-only and never propagated
-    into nested pattern inputs, parameter environments, or collected lists.
+/-- One call argument slot prepared for parameter binding: its value view
+    (`value?`), its algorithm view where resolvable, a retained value error,
+    and — for patterned callees — the written item view of a group. Every
+    slot is exactly ONE argument whatever spelling supplied it: a written
+    argument, an explicit spread item, or an extension dot-call receiver
+    (DOT-CALL PASSES A VALUE, September 2026: `R.F(args)` assembles exactly
+    the slots of `F(R, args)`; no slot carries a raw supply of its own).
     C#: `ParameterPatternInput` (via `VariadicCallItem`). -/
 structure VariadicItem where
   value? : Option Result := none
   algorithm? : Option Algorithm := none
   error? : Option Error := none
   explicitItems? : Option (List Result) := none
-  collectingSegmentCount? : Option Nat := none
   deriving Repr
 
 structure FlatFixedCallSlot where
@@ -2521,7 +2501,6 @@ structure ParameterPatternInput where
   algorithm? : Option Algorithm := none
   error? : Option Error := none
   explicitSequenceValueItems? : Option (List Result) := none
-  collectingSegmentCount? : Option Nat := none
   deriving Repr
 
 structure ParameterPatternBindings where
@@ -2549,8 +2528,7 @@ def variadicItemToPatternInput (item : VariadicItem) : ParameterPatternInput :=
   { value? := item.value?,
     algorithm? := item.algorithm?,
     error? := item.error?,
-    explicitSequenceValueItems? := item.explicitItems?,
-    collectingSegmentCount? := item.collectingSegmentCount? }
+    explicitSequenceValueItems? := item.explicitItems? }
 
 /-- Compatibility fallback for manually constructed core conditionals.
   Surface clause elaboration should already route eligible single-branch
@@ -4125,14 +4103,15 @@ def evalAvgCounted (numbers : List Int) : EvalM CountedResult := do
       let total := values.foldl (fun acc n => acc + n) 0
       pure (Result.atom (total.tdiv (Int.ofNat values.length)), 1)
 
-/-- Assemble the argument bundle for ordinary lexical dot-call fallback:
-    `receiver.F(C, D)` calls `F` with the ORIGINAL receiver expression as one
-    injected leading segment followed by the written extra arguments.
-    Assembly is independent of the resolved callee: the receiver is never
-    pre-expanded, never unwrapped, and no parameter shape is inspected. The
-    paired `CallArgumentAssembly.injectedDotReceiverLeading` marker makes the
-    receiver one segment for allocation whose evaluated top-level supply only
-    a flat top-level collecting parameter consumes.
+/-- Assemble the argument bundle for extension dot-call fallback: DOT-CALL
+    PASSES A VALUE — `receiver.F(C, D)` is exactly the bundle of the written
+    call `F(receiver, C, D)`, the ORIGINAL receiver expression as the ordinary
+    first argument slot followed by the written extra arguments. Assembly is
+    independent of the resolved callee: the receiver is never pre-expanded,
+    never unwrapped, never given a supply of its own, and no parameter shape
+    is inspected; a spread receiver is the ordinary spread slot `F(R*, …)`.
+    Laws: `dot_receiver_is_ordinary_leading_argument`,
+    `spread_dot_receiver_is_ordinary_spread_argument` (`KatLangArityLaws.lean`).
     C#: `BuildLexicalReceiverCallArgs`. -/
 def prepareLexicalDotCallArgs (receiver : Expr) (extraArgs : Option OutputBundle)
     : OutputBundle :=
@@ -4738,17 +4717,12 @@ mutual
                 match input.value? with
                 | some value => do
                     let values <- collectValues rest
-                    -- A segment allocated to the flat top-level collecting
-                    -- position consumes its evaluated top-level supply (one
-                    -- level, never recursive): an injected dot-call receiver
-                    -- segment contributes its emitted items, while every
-                    -- ordinary segment contributes its one reified value.
-                    -- Fixed prefix/suffix and nested pattern positions ignore
-                    -- the supply view (they bind the value view).
-                    match input.collectingSegmentCount? with
-                    | some segmentCount =>
-                        pure (countedTopLevelValues (value, segmentCount) ++ values)
-                    | none => pure (value :: values)
+                    -- Every slot allocated to the flat top-level collecting
+                    -- position contributes its ONE reified value — a written
+                    -- argument, an explicit spread item, and an extension
+                    -- dot-call receiver alike (dot-call passes a value; only
+                    -- the spread marker opens one). Nothing is opened here.
+                    pure (value :: values)
                 | none =>
                     -- A collecting binding collects VALUES. A callable-shaped
                     -- argument (builtin, clause family, or parameterized
@@ -5653,28 +5627,9 @@ mutual
     let out <- applyBuiltinCountedResolved b args ctx env
     pure out.fst
 
-  partial def evalVariadicCallItemCounted (e : Expr) (ctx : EvalCtx)
-      (env : ValEnv) (exposeInlineBlockTopLevel : Bool)
-      : EvalM CountedResult := do
-    if exposeInlineBlockTopLevel then
-      match e with
-      -- A grouped receiver keeps its multi-item emitted count as the injected
-      -- leading argument segment (no value-boundary re-count), for both the
-      -- capture form and a zero-parameter scoped block.
-      | .capture rows =>
-          evalCaptureCountedCore rows ctx env
-      | .algorithmExpr a =>
-          let wired := wireToCaller ctx a
-          if (Algorithm.params wired).length = 0 then
-            evalAlgOutputCounted wired ctx env
-          else
-            evalCounted e ctx env
-      | _ =>
-          evalCounted e ctx env
-    else
-      evalCounted e ctx env
-
-  /-- Evaluate one non-expanded call argument. Patterned calls additionally need the written
+  /-- Evaluate one non-expanded call argument at its VALUE boundary (every
+      non-spread slot — written argument or extension dot-call receiver alike —
+      reifies to exactly one value). Patterned calls additionally need the written
       output-slot view of a capture or zero-parameter `algorithmExpr`; obtain both products from
       the corresponding prepared-output evaluator in one pass. A multi-parameter algorithm
       remains on the ordinary dual algorithm/value fallback and is not forced to manufacture explicit items.
@@ -5683,32 +5638,25 @@ mutual
       transparent args wrapper was an empty caller-wired level, so lookup
       behavior is unchanged by its removal). -/
   partial def evalVariadicCallItemPrepared (e : Expr) (ctx : EvalCtx)
-      (env : ValEnv) (exposeInlineBlockTopLevel : Bool)
-      (includeExplicitItems : Bool) : EvalM PreparedCallArgumentEvaluation := do
+      (env : ValEnv) (includeExplicitItems : Bool) : EvalM PreparedCallArgumentEvaluation := do
     if includeExplicitItems then
       match e with
       | .capture rows => do
           let prepared <- evalCapturePreparedCore rows ctx env
-          let counted :=
-            if exposeInlineBlockTopLevel then prepared.counted
-            else reCountValueBoundary prepared.counted
-          pure { counted := counted, explicitItems? := some prepared.outputSlots }
+          pure { counted := reCountValueBoundary prepared.counted, explicitItems? := some prepared.outputSlots }
       | .algorithmExpr a =>
           let wired := wireToCaller ctx a
           if (Algorithm.params wired).length = 0 then do
             let prepared <- evalAlgOutputPreparedCore wired ctx env
-            let counted :=
-              if exposeInlineBlockTopLevel then prepared.counted
-              else reCountValueBoundary prepared.counted
-            pure { counted := counted, explicitItems? := some prepared.outputSlots }
+            pure { counted := reCountValueBoundary prepared.counted, explicitItems? := some prepared.outputSlots }
           else do
-            let counted <- evalVariadicCallItemCounted e ctx env exposeInlineBlockTopLevel
+            let counted <- evalCounted e ctx env
             pure { counted := counted }
       | _ => do
-          let counted <- evalVariadicCallItemCounted e ctx env exposeInlineBlockTopLevel
+          let counted <- evalCounted e ctx env
           pure { counted := counted }
     else do
-      let counted <- evalVariadicCallItemCounted e ctx env exposeInlineBlockTopLevel
+      let counted <- evalCounted e ctx env
       pure { counted := counted }
 
   /-- Shared call argument-slot assembly used by EVERY callable shape (flat
@@ -5720,21 +5668,22 @@ mutual
       argument supply is formed BEFORE any arity checking, clause selection,
       conditional dispatch, or pattern binding — the callee's internal
       representation never influences the meaning of caller-side spread.
-      An injected dot-call receiver segment
-      (`CallArgumentAssembly.injectedDotReceiverLeading`) stays ONE segment
-      for allocation — never pre-expanded — and retains its raw counted supply
-      (`collectingSegmentCount?`) for the flat top-level collecting position.
+      DOT-CALL PASSES A VALUE: an extension dot-call receiver reaches this
+      assembly as the ordinary FIRST slot of `F(R, args)`
+      (`prepareLexicalDotCallArgs`) — one reified value like any written
+      argument, never a supply of its own; only a spread receiver `R*` (the
+      fluent form lowers to `F(R*, args)`) opens one boundary, exactly as a
+      written spread slot does.
       When `includeExplicitItems` is set (patterned callees), a non-spread
       capture or zero-parameter `algorithmExpr` also records its written item
       slots for sequence-value pattern binding. C#: `BuildCallArgumentInputs`. -/
   partial def collectVariadicCallItems (args : OutputBundle)
       (ctx : EvalCtx) (env : ValEnv)
-      (assembly : CallArgumentAssembly := .ordinaryArguments)
       (includeExplicitItems : Bool := false)
       : EvalM (List VariadicItem) := do
     let maybeAlgs <- tryResolveArgAlgs args ctx
     let rec appendCounted (counted : CountedResult) (maybeAlg : Option Algorithm) (expand : Bool)
-        (isReceiver : Bool) (explicitItems : Option (List Result)) (acc : List VariadicItem) : List VariadicItem :=
+        (explicitItems : Option (List Result)) (acc : List VariadicItem) : List VariadicItem :=
       if expand then
         let expanded := (countedTopLevelValues counted).map (fun value =>
           { value? := some value : VariadicItem })
@@ -5742,43 +5691,42 @@ mutual
       else
         { value? := some counted.fst,
           algorithm? := maybeAlg,
-          explicitItems? := explicitItems,
-          collectingSegmentCount? := if isReceiver then some counted.snd else none : VariadicItem } :: acc
-    let shouldExpand (e : Expr) (isReceiver : Bool) : Bool :=
+          explicitItems? := explicitItems : VariadicItem } :: acc
+    let shouldExpand (e : Expr) : Bool :=
       match e with
-      | .sequenceSpread _ => !isReceiver
+      | .sequenceSpread _ => true
       | _ => false
-    let rec loop : List Expr -> List (Option Algorithm) -> Bool -> List VariadicItem -> EvalM (List VariadicItem)
-      | [], _, _, acc => pure acc.reverse
-      | e :: es, ma :: mas, isReceiver, acc => do
-          let expand := shouldExpand e isReceiver
-          match <- evalAttempt (evalVariadicCallItemPrepared e ctx env isReceiver
+    let rec loop : List Expr -> List (Option Algorithm) -> List VariadicItem -> EvalM (List VariadicItem)
+      | [], _, acc => pure acc.reverse
+      | e :: es, ma :: mas, acc => do
+          let expand := shouldExpand e
+          match <- evalAttempt (evalVariadicCallItemPrepared e ctx env
               (includeExplicitItems && !expand)) with
           | .ok prepared =>
-            loop es mas false
-              (appendCounted prepared.counted ma expand isReceiver prepared.explicitItems? acc)
+            loop es mas
+              (appendCounted prepared.counted ma expand prepared.explicitItems? acc)
           | .error err =>
             match ma with
-            | some alg => loop es mas false ({ algorithm? := some alg, error? := some err : VariadicItem } :: acc)
+            | some alg => loop es mas ({ algorithm? := some alg, error? := some err : VariadicItem } :: acc)
             | none => .error err
-      | e :: es, [], isReceiver, acc => do
-          let expand := shouldExpand e isReceiver
-          match <- evalAttempt (evalVariadicCallItemPrepared e ctx env isReceiver
+      | e :: es, [], acc => do
+          let expand := shouldExpand e
+          match <- evalAttempt (evalVariadicCallItemPrepared e ctx env
               (includeExplicitItems && !expand)) with
           | .ok prepared =>
-            loop es [] false
-              (appendCounted prepared.counted none expand isReceiver prepared.explicitItems? acc)
+            loop es []
+              (appendCounted prepared.counted none expand prepared.explicitItems? acc)
           | .error err => .error err
-    loop args maybeAlgs assembly.isInjectedDotReceiverLeading []
+    loop args maybeAlgs []
 
   /-- Bind a call to an item-supply parameter list (any top-level variadic).
       The call argument supply is already the receiver for parameter binding: a
       plain sequence-valued argument contributes one item, while explicit spread
       contributes the operand's items. -/
   partial def bindDeconstructionUserCall (callee : Algorithm) (args : OutputBundle)
-      (ctx : EvalCtx) (env : ValEnv) (assembly : CallArgumentAssembly := .ordinaryArguments)
+      (ctx : EvalCtx) (env : ValEnv)
       : EvalM (ValEnv × CountedParamEnv × AlgEnv) := do
-    let items <- collectVariadicCallItems args ctx env assembly
+    let items <- collectVariadicCallItems args ctx env
     let inputs := items.map variadicItemToPatternInput
     let bindings <- bindParameterPatternList (Algorithm.parameterPatterns callee) inputs true
     pure (bindings.argEnv, bindings.countedParamEnv, bindings.algEnv)
@@ -5850,9 +5798,9 @@ mutual
         pure [out.fst]
 
   partial def bindPatternedUserCall (callee : Algorithm) (args : OutputBundle)
-      (ctx : EvalCtx) (env : ValEnv) (assembly : CallArgumentAssembly := .ordinaryArguments)
+      (ctx : EvalCtx) (env : ValEnv)
       : EvalM (ValEnv × CountedParamEnv × AlgEnv) := do
-    let items <- collectVariadicCallItems args ctx env assembly
+    let items <- collectVariadicCallItems args ctx env
       (includeExplicitItems := true)
     let inputs := items.map variadicItemToPatternInput
     let bindings <- bindParameterPatternList (Algorithm.parameterPatterns callee) inputs true
@@ -5930,13 +5878,13 @@ mutual
       therefore becomes one sequence value (count 1); only a caller-site spread
       `value*` re-spreads it. -/
   partial def evalUserCallCounted (callee : Algorithm) (args : OutputBundle)
-      (ctx : EvalCtx) (env : ValEnv) (assembly : CallArgumentAssembly := .ordinaryArguments)
+      (ctx : EvalCtx) (env : ValEnv)
       : EvalM CountedResult := do
     if (Algorithm.output callee).isEmpty then
       .error Error.missingOutput
     else if Algorithm.requiresPatternBinding callee then do
           let (argEnv, countedParamEnv, algBindings) <-
-            bindPatternedUserCall callee args ctx env assembly
+            bindPatternedUserCall callee args ctx env
           let shadowedEnv := ValEnv.shadow env (Algorithm.params callee)
           let newCtx <- ctx.bindParameters (Algorithm.params callee) algBindings countedParamEnv
           reCountValueBoundary <$> evalAlgOutputCounted callee newCtx (argEnv ++ shadowedEnv)
@@ -5944,7 +5892,7 @@ mutual
       | some _ =>
           -- Any top-level variadic binds the supplied call argument supply.
           let (argEnv, countedParamEnv, algBindings) <-
-            bindDeconstructionUserCall callee args ctx env assembly
+            bindDeconstructionUserCall callee args ctx env
           let shadowedEnv := ValEnv.shadow env (Algorithm.params callee)
           let newCtx <- ctx.bindParameters (Algorithm.params callee) algBindings countedParamEnv
           reCountValueBoundary <$> evalAlgOutputCounted callee newCtx (argEnv ++ shadowedEnv)
@@ -5963,9 +5911,9 @@ mutual
       algorithm-only argument surfaces its value-evaluation error.
       C#: `EvalConditionalCallArguments`. -/
   partial def evalConditionalCallArguments (args : OutputBundle)
-      (ctx : EvalCtx) (env : ValEnv) (assembly : CallArgumentAssembly)
+      (ctx : EvalCtx) (env : ValEnv)
       : EvalM (List Result) := do
-    let items <- collectVariadicCallItems args ctx env assembly
+    let items <- collectVariadicCallItems args ctx env
     items.mapM (fun item =>
       match item.value? with
       | some value => pure value
@@ -5997,8 +5945,8 @@ mutual
       `if` and plain calls. -/
   partial def evalConditionalCallCounted (callee : Algorithm) (args : OutputBundle)
       (ctx : EvalCtx) (env : ValEnv) (calleeName : String := "conditional")
-      (assembly : CallArgumentAssembly := .ordinaryArguments) : EvalM CountedResult := do
-    let argResults <- evalConditionalCallArguments args ctx env assembly
+      : EvalM CountedResult := do
+    let argResults <- evalConditionalCallArguments args ctx env
     if callee.hasDuplicateBranchPatterns then
       .error Error.duplicateBranchPattern
     else
@@ -6018,8 +5966,8 @@ mutual
       compositional. -/
   partial def evalResolvedCall (callee : Algorithm) (args : OutputBundle)
       (ctx : EvalCtx) (env : ValEnv) (calleeName : String := "conditional")
-      (assembly : CallArgumentAssembly := .ordinaryArguments) : EvalM Result := do
-    let out <- evalResolvedCallCounted callee args ctx env calleeName assembly
+      : EvalM Result := do
+    let out <- evalResolvedCallCounted callee args ctx env calleeName
     pure out.fst
 
   /-- Dispatch an already-resolved callee in counted evaluation — the
@@ -6027,16 +5975,16 @@ mutual
       projection). -/
   partial def evalResolvedCallCounted (callee : Algorithm) (args : OutputBundle)
       (ctx : EvalCtx) (env : ValEnv) (calleeName : String := "conditional")
-      (assembly : CallArgumentAssembly := .ordinaryArguments) : EvalM CountedResult := do
+      : EvalM CountedResult := do
     match callee with
     | .builtin b => do
       let argAlgs <- resolveArgAlgsWithSequenceSpread args ctx env
       applyBuiltinCountedResolved b argAlgs ctx env
     | .conditional _ _ _ _ =>
       match flatBinderUserEquivalent? callee with
-      | some simple => evalUserCallCounted simple args ctx env assembly
-      | none => evalConditionalCallCounted callee args ctx env calleeName assembly
-    | _ => evalUserCallCounted callee args ctx env assembly
+      | some simple => evalUserCallCounted simple args ctx env
+      | none => evalConditionalCallCounted callee args ctx env calleeName
+    | _ => evalUserCallCounted callee args ctx env
 
   /-- Context-aware counted call evaluation for expression position — the
       CANONICAL expression-position call dispatch (`evalCallExpr` is its value
@@ -6046,84 +5994,41 @@ mutual
     let callee <- withCtx (CtxMsg.call f) <| resolveAlg f ctx
     withCtx (CtxMsg.call f) <| evalResolvedCallCounted callee args ctx env (openExprName f)
 
-  /-- Sequence builtins in dot-call form evaluate the receiver to ONE value,
-      re-counted to `Result.valueCount`, and pass it as the ordinary fixed
-      `collection` argument (the post-binding collection view opens it,
-      exactly as for the plain call form).
-
-      A direct inline receiver block first exposes its inner algorithm output
-      count, which strips exactly one receiver-scoping block layer for forms
-      like `(1, 2, 3).take(2)` while still keeping `((1, 2, 3)).take(2)` and
-      named sequence-valued helpers intact. Any extra dot-call arguments
-      still follow the plain-call argument path.
-
-      This keeps plain-call boundary preservation unchanged while making
-      `receiver.builtin(...)` operate on the same top-level collection that
-      `receiver:i` selects from and higher-order callbacks iterate. -/
-  partial def evalSequenceBuiltinDotReceiverCounted (receiver : Expr) (ctx : EvalCtx)
-      (env : ValEnv) : EvalM CountedResult := do
-    let value <- eval receiver ctx env
-    pure (value, Result.valueCount value)
-
-  partial def sequenceBuiltinDotReceiverArgs (receiver : Expr) (ctx : EvalCtx)
-      (env : ValEnv) : EvalM (List ResolvedArgumentAlgorithm) := do
-    let receiverOut <- evalSequenceBuiltinDotReceiverCounted receiver ctx env
-    pure [{ algorithm := countedArgAlgorithm receiverOut, spreadsSequence := false }]
-
-  partial def trySequenceBuiltinDotCall
-      (name : Ident) (receiver : Expr) (extraArgs : Option OutputBundle)
-      (ctx : EvalCtx) (env : ValEnv) : EvalM (Option (Builtin × List ResolvedArgumentAlgorithm)) := do
-    match <- evalAttempt (resolveAlg (.resolve name) ctx) with
-    | .ok (.builtin b) =>
-        match sequenceBuiltinMetadata? b with
-        | some _ =>
-            let receiverArgAlgs <- sequenceBuiltinDotReceiverArgs receiver ctx env
-            let extraArgAlgs <-
-              match extraArgs with
-              | some args => resolveArgAlgsWithSequenceSpread args ctx env
-              | none => pure []
-            match b, extraArgAlgs with
-            | .reduceBuiltin, [missingInitialReducer] =>
-                if (Algorithm.params missingInitialReducer.algorithm).isEmpty then
-                  pure (some (b, receiverArgAlgs ++ extraArgAlgs))
-                else
-                  .error reduceInitialAccumulatorRequiresValueError
-            | _, _ =>
-                pure (some (b, receiverArgAlgs ++ extraArgAlgs))
-        | none =>
-            pure none
-    | _ =>
-        pure none
-
-  /-- Counted lexical fallback with receiver injection.
-      The injected receiver is one leading argument segment.
+  /-- Counted extension-call fallback: DOT-CALL PASSES A VALUE (September
+      2026). `R.F(args)` resolves the callee and dispatches exactly
+      `F(R, args)` — the receiver expression becomes the ordinary FIRST
+      written argument slot of the ONE shared call assembly
+      (`prepareLexicalDotCallArgs` + `evalResolvedCallCounted`), so every
+      callable shape (builtin, flat, collecting, patterned, clause family)
+      binds, demands, caches, orders, charges, and rejects the receiver
+      exactly as it would that written argument: a builtin's `collection`
+      slot demands a named receiver through the zero-argument value-demand law
+      like `count(A)` does, a collecting parameter collects the receiver as
+      one item (`(1, 2).Coll` is `[(1, 2)]`, `().Coll` is `[()]`), and only a
+      spread receiver — the fluent `R*.F` form, which the parser lowers to
+      `F(R*)` — opens a boundary. There is no dotted receiver view, no raw
+      receiver supply, and no builtin-specific receiver placement.
 
       The STORED lexical-fallback identity decides the callee channel — the
       front-end's Param-vs-Resolve decision is CONSUMED here, never
-      reconstructed from runtime environments:
-      - a `.resolve` fallback takes the ordinary name-based path, including
-        the dotted sequence-builtin receiver view;
-      - any other fallback (normally `.param`) resolves through canonical
-        `resolveAlg`, so a parameter shadows a same-name builtin exactly as in
-        plain-call position. Non-name hand-built fallbacks are outside the
-        post-elaboration contract and follow their ordinary `resolveAlg`
-        behavior defensively. -/
+      reconstructed from runtime environments: a `.resolve` fallback takes the
+      ordinary name-based path, and any other fallback (normally `.param`)
+      resolves through canonical `resolveAlg`, so a parameter shadows a
+      same-name builtin exactly as in plain-call position. Non-name hand-built
+      fallbacks are outside the post-elaboration contract and follow their
+      ordinary `resolveAlg` behavior defensively.
+      C#: `CallLexicalWithReceiverCounted`. -/
   partial def callLexicalWithReceiverCounted (name : Ident) (receiver : Expr)
       (fallback : Expr)
       (extraArgs : Option OutputBundle) (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult := do
+    let combinedArgs := prepareLexicalDotCallArgs receiver extraArgs
     match fallback with
     | .resolve fallbackName =>
-      match <- trySequenceBuiltinDotCall fallbackName receiver extraArgs ctx env with
-      | some (b, args) =>
-        applyBuiltinCountedResolved b args ctx env
-      | none =>
-        let callee <- resolveAlg (.resolve fallbackName) ctx
-        let combinedArgs := prepareLexicalDotCallArgs receiver extraArgs
-        evalResolvedCallCounted callee combinedArgs ctx env fallbackName .injectedDotReceiverLeading
+      let callee <- resolveAlg (.resolve fallbackName) ctx
+      evalResolvedCallCounted callee combinedArgs ctx env fallbackName
     | other =>
       let callee <- resolveAlg other ctx
-      let combinedArgs := prepareLexicalDotCallArgs receiver extraArgs
-      evalResolvedCallCounted callee combinedArgs ctx env name .injectedDotReceiverLeading
+      evalResolvedCallCounted callee combinedArgs ctx env name
 
   /-- The `.string` intrinsic is a ZERO-parameter member. A written argument
       list is assembled exactly like every call's (each written slot evaluated
@@ -6157,7 +6062,13 @@ mutual
         - If no args and 0-param → value access
         - If no args and has params → arity mismatch error
         - If args → direct argument binding (no receiver injection)
-      - No property → lexical fallback (receiver injection)
+      - No property → extension fallback (`callLexicalWithReceiverCounted`):
+        DOT-CALL PASSES A VALUE — `a.f(args)` is exactly the call
+        `f(a, args)`, the receiver being the ordinary first argument slot
+        (never a supply of its own; only the spread receiver `a*.f`, lowered
+        to `f(a*)`, opens a boundary). Dot resolution therefore has three
+        classes — structural member access, the intrinsic `.string`, and
+        extension fallback — and only the third one injects the receiver.
 
       When receiver resolution returns notAnAlgorithm (e.g. numeric literal
       target), value-based intrinsics are checked before lexical fallback.
@@ -6587,9 +6498,9 @@ mutual
       the emitted-count metadata (`reCountValueBoundary` is value-preserving).
       The CoreTests call projection parity guards pin this equivalence. -/
   partial def evalUserCall (callee : Algorithm) (args : OutputBundle)
-      (ctx : EvalCtx) (env : ValEnv) (assembly : CallArgumentAssembly := .ordinaryArguments)
+      (ctx : EvalCtx) (env : ValEnv)
       : EvalM Result := do
-    let out <- evalUserCallCounted callee args ctx env assembly
+    let out <- evalUserCallCounted callee args ctx env
     pure out.fst
 
   /-- Conditional call evaluation with plain Result output.
@@ -6600,8 +6511,8 @@ mutual
       call projection parity guards pin this equivalence. -/
   partial def evalConditionalCall (callee : Algorithm) (args : OutputBundle)
       (ctx : EvalCtx) (env : ValEnv) (calleeName : String := "conditional")
-      (assembly : CallArgumentAssembly := .ordinaryArguments) : EvalM Result := do
-    let out <- evalConditionalCallCounted callee args ctx env calleeName assembly
+      : EvalM Result := do
+    let out <- evalConditionalCallCounted callee args ctx env calleeName
     pure out.fst
 
   /-- Context-aware direct call evaluation for expression position with plain

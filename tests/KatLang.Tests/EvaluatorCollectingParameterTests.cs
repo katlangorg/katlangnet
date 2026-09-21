@@ -14,10 +14,10 @@ public class EvaluatorCollectingParameterTests
     [Fact]
     public void Eval_CollectingParameter_DotCallReceiverIsOneCapturedItem()
     {
-        // A named property receiver is a value boundary, so its supply is one
-        // item and the collecting parameter collects the one-element list
-        // [(1, 2, 3)]. Explicit receiver spread (below) supplies the items —
-        // as would an inline group receiver, whose supply is its row items.
+        // Dot-call passes a value: the receiver is the one leading argument of
+        // `Collect(Arg)`, so the collecting parameter collects the one-element
+        // list [(1, 2, 3)]. The fluent spread receiver (below) supplies the
+        // items as ordinary slots — `Arg*.Collect` is `Collect(Arg*)`.
         AssertEval(
             """
             Arg = 1, 2, 3
@@ -34,9 +34,19 @@ public class EvaluatorCollectingParameterTests
             """
             Arg = 1, 2, 3
             Collect(*list) = list
-            (Arg*).Collect.count
+            Arg*.Collect.count
             """,
             3);
+
+        // The parenthesized spread is a capture — one sequence value — so it is
+        // one collected item, exactly like the bare named receiver.
+        AssertEval(
+            """
+            Arg = 1, 2, 3
+            Collect(*list) = list
+            (Arg*).Collect.count
+            """,
+            1);
     }
 
     [Fact]
@@ -54,13 +64,14 @@ public class EvaluatorCollectingParameterTests
     [Fact]
     public void Eval_CollectingParameter_PreservesNestedSequenceValues()
     {
-        // The spread receiver supplies the two pair items, and each stays one
-        // opaque sequence value inside the collected list: [(1, 2), (3, 4)].
+        // The spread receiver supplies the two pair items as ordinary slots, and
+        // each stays one opaque sequence value inside the collected list:
+        // [(1, 2), (3, 4)].
         AssertEval(
             """
             Arg = (1, 2), (3, 4)
             Collect(*list) = list
-            (Arg*).Collect.count
+            Arg*.Collect.count
             """,
             2);
     }
@@ -130,12 +141,13 @@ public class EvaluatorCollectingParameterTests
     [Fact]
     public void Eval_CollectingParameter_BeforeSuffix_SupportsSequenceStyleScale()
     {
-        // The spread receiver supplies the items; the suffix binds the factor.
+        // The spread receiver supplies the items as ordinary slots; the suffix
+        // binds the factor.
         AssertEval(
             """
             Arg = 1, 2, 3
             Scale(*values, factor) = values.map{n * factor}
-            (Arg*).Scale(10)
+            Arg*.Scale(10)
             """,
             10, 20, 30);
     }
@@ -146,7 +158,7 @@ public class EvaluatorCollectingParameterTests
         AssertEvalSequenceModes(
             """
             TotalWithFee(*values, fee) = values.sum + fee
-            ((10, 20, 30)*).TotalWithFee(5)
+            (10, 20, 30)*.TotalWithFee(5)
             """,
             65);
     }
@@ -158,7 +170,7 @@ public class EvaluatorCollectingParameterTests
             """
             TotalWithFee(*values, fee) = values.sum + fee
             Data = 10, 20, 30
-            (Data*).TotalWithFee(5)
+            Data*.TotalWithFee(5)
             """,
             65);
     }
@@ -170,7 +182,7 @@ public class EvaluatorCollectingParameterTests
             """
             TotalWithFee(*values, fee) = values.sum + fee
             Data = 10, 20, 30
-            (Data*).TotalWithFee(5), ((10, 20, 30)*).TotalWithFee(5)
+            Data*.TotalWithFee(5), (10, 20, 30)*.TotalWithFee(5)
             """,
             65, 65);
     }
@@ -178,11 +190,11 @@ public class EvaluatorCollectingParameterTests
     [Fact]
     public void Eval_CollectingParameter_NestedInlineTupleDotCall_ReceiverIsOneCollectedItem()
     {
-        // The nested capture `((10, 20, 30))` emits ONE row — the inner
-        // sequence value — so the receiver segment's supply is one item: after
-        // the suffix binds 5, the collector collects [(10, 20, 30)] and the
-        // numeric `values.sum` fails on the sequence-valued element. The
-        // single-group forms above supply the three items.
+        // The nested capture `((10, 20, 30))` is one sequence value, and so is
+        // the single group `(10, 20, 30)`: dot-call passes a value, so after the
+        // suffix binds 5 the collector collects [(10, 20, 30)] and the numeric
+        // `values.sum` fails on the sequence-valued element. The fluent spread
+        // forms above supply the three items as ordinary slots.
         var source = """
             TotalWithFee(*values, fee) = values.sum + fee
             ((10, 20, 30)).TotalWithFee(5)
@@ -211,16 +223,22 @@ public class EvaluatorCollectingParameterTests
     [Fact]
     public void Eval_CollectingParameter_SpreadReceiverExpandsReceiverItems()
     {
-        // The general receiver rule: the collector consumes the receiver
-        // segment's supply. Here the capture-of-spread supplies the three
-        // items, so the collecting parameter collects [10, 20, 30] — exactly
-        // as the plain inline group `(10, 20, 30).Collect` would.
+        // Only the spread marker opens a receiver: `(10, 20, 30)*.Collect` is
+        // `Collect(10, 20, 30)`, so the collecting parameter collects
+        // [10, 20, 30]; the plain inline group `(10, 20, 30).Collect` passes ONE
+        // sequence value and collects [(10, 20, 30)].
         AssertEvalSequenceModes(
             """
             Collect(*list) = list.count
-            ((10, 20, 30)*).Collect
+            (10, 20, 30)*.Collect
             """,
             3);
+        AssertEvalSequenceModes(
+            """
+            Collect(*list) = list.count
+            (10, 20, 30).Collect
+            """,
+            1);
     }
 
     [Fact]
@@ -238,7 +256,7 @@ public class EvaluatorCollectingParameterTests
             """
             Arg = 1, 2, 3, 4, 5
             Between(*values, min, max) = values.filter{n >= min and n <= max}
-            (Arg*).Between(2, 4)
+            Arg*.Between(2, 4)
             """,
             2, 3, 4);
     }
@@ -278,13 +296,13 @@ public class EvaluatorCollectingParameterTests
     [Fact]
     public void Eval_CollectingParameter_SpreadReceiverDotCallCapturesRangeItems()
     {
-        // The parenthesized-spread receiver opens the range list's one boundary,
-        // supplying its items to the collecting parameter.
+        // The fluent spread receiver opens the range list's one boundary,
+        // supplying its items to the collecting parameter as ordinary slots.
         AssertEval(
             """
             Arg = range(1, 3)
             Qmean(*values) = values.sum / values.count
-            (Arg*).Qmean
+            Arg*.Qmean
             """,
             2);
     }

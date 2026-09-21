@@ -488,23 +488,29 @@ public class CollectingBindingTests
     [Fact]
     public void DottedReceiver_IsOneCollectedSlot()
     {
-        // A named property receiver is a value boundary supplying ONE item,
-        // and the exact list stays opaque: the collector collects [[1, 2]].
+        // Dot-call passes a value: a named property receiver is the ONE
+        // leading argument, and the exact list stays opaque, so the collector
+        // collects [[1, 2]] — exactly what `Inspect(A)` collects.
         AssertCollects(
             "Inspect(*items) = items\nA = [1, 2]\nA.Inspect",
             List(List(Atom(1), Atom(2))));
+        AssertCollects(
+            "Inspect(*items) = items\nA = [1, 2]\nA*.Inspect",
+            List(Atom(1), Atom(2)));
     }
 
     [Fact]
-    public void InlineGroupDottedReceiver_CollectorConsumesRowSupply()
+    public void InlineGroupDottedReceiver_IsOneCollectedSlot()
     {
-        // The dot-call receiver is ONE leading argument segment; a flat
-        // top-level collecting parameter allocated that segment consumes the
-        // segment's evaluated top-level supply. The inline group `(1, 2)`
-        // emits its two row items, so the collector collects [1, 2] — unlike
-        // the named receiver above, whose value boundary supplies one item.
+        // An inline group receiver is one sequence value and, like every
+        // receiver, the ONE leading argument: the collector collects [(1, 2)].
+        // Only the spread marker supplies the items — `(1, 2)*.Inspect` is
+        // `Inspect(1, 2)`.
         AssertCollects(
             "Inspect(*items) = items\n(1, 2).Inspect",
+            List(Seq(Atom(1), Atom(2))));
+        AssertCollects(
+            "Inspect(*items) = items\n(1, 2)*.Inspect",
             List(Atom(1), Atom(2)));
     }
 

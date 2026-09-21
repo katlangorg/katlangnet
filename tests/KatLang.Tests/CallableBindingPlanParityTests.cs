@@ -331,22 +331,27 @@ public class CallableBindingPlanParityTests
         AssertTopLevelNodes(variadicPlan, "Variadic(list:Explicit:top)");
         AssertArity(variadicPlan, min: 0, max: null, hasTopLevelVariadic: true);
 
-        // Runtime receiver law (outside the plan): the receiver is ONE
-        // leading argument segment, and a flat top-level collecting parameter
-        // allocated that segment consumes the receiver's evaluated top-level
-        // SUPPLY. An inline group receiver supplies its row items, so both the
-        // plain group and the capture-of-spread collect [10, 20, 30] — no
-        // callee-shape inspection is involved.
+        // Runtime receiver law (outside the plan): dot-call passes a value, so
+        // the receiver is the ONE ordinary leading argument — an inline group
+        // and the capture of a spread are each one collected item — and only
+        // the fluent spread supplies the items as slots. No callee-shape
+        // inspection is involved.
         AssertEval(
             """
             Collect(*list) = list.count
             (10, 20, 30).Collect
             """,
-            3);
+            1);
         AssertEval(
             """
             Collect(*list) = list.count
             ((10, 20, 30)*).Collect
+            """,
+            1);
+        AssertEval(
+            """
+            Collect(*list) = list.count
+            (10, 20, 30)*.Collect
             """,
             3);
     }

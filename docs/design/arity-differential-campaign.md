@@ -89,23 +89,33 @@ of the plain algebra:
 
    > **Superseded (August 2026, compositional dot-call collecting receiver
    > binding).** The spelling- and callee-dependent exception above was
-   > REPLACED by the general segment rule
-   > **`COLLECTOR_CONSUMES_ALLOCATED_SEGMENT_SUPPLY`**: every lexical
-   > dot-call receiver is one leading segment carrying its raw counted
-   > supply (`ParameterPatternInput.CollectingSegmentEmittedCount` / Lean
-   > `collectingSegmentCount?`), and a flat top-level collecting parameter
-   > allocated the segment consumes that supply — no receiver-spelling
-   > recognition, no callee inspection, allocation always before
-   > consumption. `(A*).F` reaches a collector with the same results
-   > through the general rule; written group receivers now feed collectors
-   > too (`(1, 2, 3).Mean` averages the items); and at a fixed suffix the
-   > grouped receiver stays one segment where the old exception
-   > pre-expanded. The recognizers named above are deleted; the relational
-   > family `grouped-receiver-exception` was re-derived under the general
-   > law, and the new `dot-inline-collect` / `dot-nested-collect` /
-   > `dot-list-literal-collect` / `dot-seg-*` matrix templates pin the
-   > written-receiver sides. See `SEMANTIC-ALIGNMENT.md` and the
-   > `KatLangArityLaws` `dot_receiver_segment_*` bridge laws.
+   > REPLACED by a general "segment" rule (`COLLECTOR_CONSUMES_ALLOCATED_SEGMENT_SUPPLY`):
+   > every lexical dot-call receiver was one leading segment carrying its raw
+   > counted supply, consumed by a flat top-level collecting parameter, so a
+   > written group receiver fed a collector its rows (`(1, 2, 3).Mean` averaged
+   > the items) and a named `()` receiver supplied zero items.
+   >
+   > **Superseded again (September 2026, dot-call passes a value).** The
+   > segment rule is GONE with its carrier (`CollectingSegmentEmittedCount` /
+   > `collectingSegmentCount?`), its Lean laws (`dot_receiver_segment_*`), and
+   > the oracle's `StoredReceiverSegmentSupply`. The receiver of an
+   > extension dot-call is the ORDINARY leading argument of the written call
+   > (`R.F(args)` ≡ `F(R, args)`; law **`DOTTED_CALL_EQUALS_DIRECT_REWRITE`**),
+   > so it is ONE collected item whatever it is (`(1, 2, 3).Mean` binds
+   > `[(1, 2, 3)]`; `().Gather` collects `[()]` exactly like `Gather(())`),
+   > and only the spread marker supplies items (`R*.F` ≡ `F(R*)`, law
+   > **`FLUENT_SPREAD_RECEIVER_IS_LEXICAL_CALL`**; the capture `(R*).F` ≡
+   > `F((R*))` is **`GROUPED_SPREAD_RECEIVER_CAPTURES`** for every callee,
+   > collectors included). The relational family is now
+   > `grouped-receiver-capture` (grouped vs fluent DIFFER except on
+   > singleton supplies; grouped vs written argument and grouped vs stored
+   > capture always AGREE; the non-leading `Mid3` case agrees), the
+   > `direct-vs-dotted` family always agrees, and the written-receiver
+   > templates are `dot-inline-collect` / `dot-nested-collect` /
+   > `dot-list-literal-collect` / `dot-written-fixed-prefix` /
+   > `dot-written-suffix-whole` / `dot-written-suffix-collected` /
+   > `dot-empty-collect`. See `SEMANTIC-ALIGNMENT.md` "Dot-call passes a
+   > value" and the `KatLangArityLaws` `dot_receiver_*` bridge laws.
 2. **Loop init arity floor** — `repeat`/`while` require at least one initial
    state slot, so a zero-item spread in init position (`Snap.repeat(1, ()*)`)
    is an ordinary arity rejection after spreading.

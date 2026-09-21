@@ -306,10 +306,9 @@ public static partial class Evaluator
     private static EvalResult<IReadOnlyList<Result>> EvalConditionalCallArguments(
         OutputBundle args,
         EvalCtx ctx,
-        ValEnv valEnv,
-        CallArgumentAssembly argumentAssembly)
+        ValEnv valEnv)
     {
-        var inputsR = BuildCallArgumentInputs(args, ctx, valEnv, argumentAssembly);
+        var inputsR = BuildCallArgumentInputs(args, ctx, valEnv);
         if (inputsR.IsError) return inputsR.Error;
 
         var argResults = new List<Result>(inputsR.Value.Count);
@@ -356,8 +355,7 @@ public static partial class Evaluator
         Algorithm callee, OutputBundle args,
         EvalCtx ctx,
         ValEnv valEnv,
-        CallDiagnosticName calleeName,
-        CallArgumentAssembly argumentAssembly = CallArgumentAssembly.OrdinaryArguments)
+        CallDiagnosticName calleeName)
     {
         // Charged dynamic invocation boundary; this counted core owns the
         // boundary for both counted evaluation and its plain projection.
@@ -366,7 +364,7 @@ public static partial class Evaluator
 
         try
         {
-            return EvalConditionalCallCountedCore(callee, args, ctx, valEnv, calleeName, argumentAssembly);
+            return EvalConditionalCallCountedCore(callee, args, ctx, valEnv, calleeName);
         }
         finally
         {
@@ -378,10 +376,9 @@ public static partial class Evaluator
         Algorithm callee, OutputBundle args,
         EvalCtx ctx,
         ValEnv valEnv,
-        CallDiagnosticName calleeName,
-        CallArgumentAssembly argumentAssembly)
+        CallDiagnosticName calleeName)
     {
-        var argResultsR = EvalConditionalCallArguments(args, ctx, valEnv, argumentAssembly);
+        var argResultsR = EvalConditionalCallArguments(args, ctx, valEnv);
         if (argResultsR.IsError) return argResultsR.Error;
         var argResults = argResultsR.Value;
 
@@ -445,7 +442,6 @@ public static partial class Evaluator
         Algorithm callee, OutputBundle args,
         EvalCtx ctx,
         ValEnv valEnv,
-        CallArgumentAssembly argumentAssembly,
         CallDiagnosticName calleeName)
     {
         // Charged dynamic invocation boundary (see EvaluationBudget) — the SAME enter
@@ -457,7 +453,7 @@ public static partial class Evaluator
 
         using (level)
         {
-            return EvalUserCallCountedCore(callee, args, ctx, valEnv, argumentAssembly, calleeName);
+            return EvalUserCallCountedCore(callee, args, ctx, valEnv, calleeName);
         }
     }
 
@@ -465,7 +461,6 @@ public static partial class Evaluator
         Algorithm callee, OutputBundle args,
         EvalCtx ctx,
         ValEnv valEnv,
-        CallArgumentAssembly argumentAssembly,
         CallDiagnosticName calleeName)
     {
         if (callee.Output.Count == 0)
@@ -475,7 +470,7 @@ public static partial class Evaluator
         // run-scoped bind. The projected value is re-counted at this value boundary exactly as the
         // helper body's `Param(xi)` result would be (`ReCountValueBoundary`): count = ValueCount().
         if (callee is Algorithm.User { AssignmentDeconstructionTarget: { } target } deconstructionHelper
-            && TryProjectSharedDeconstructionTarget(deconstructionHelper, target, args, ctx, valEnv, calleeName, argumentAssembly) is { } sharedTarget)
+            && TryProjectSharedDeconstructionTarget(deconstructionHelper, target, args, ctx, valEnv, calleeName) is { } sharedTarget)
         {
             return sharedTarget.IsError
                 ? sharedTarget.Error
@@ -487,7 +482,7 @@ public static partial class Evaluator
 
         if (bindingPlan.RequiresPatternedBinding)
         {
-            var bindingsR = BindPatternedUserCall(callee, args, ctx, valEnv, calleeName, argumentAssembly);
+            var bindingsR = BindPatternedUserCall(callee, args, ctx, valEnv, calleeName);
             if (bindingsR.IsError) return bindingsR.Error;
 
             var bindings = bindingsR.Value;
@@ -497,7 +492,7 @@ public static partial class Evaluator
 
         if (IsDeconstructionUserCallShape(signature))
         {
-            var bindingsR = BindDeconstructionUserCall(callee, args, ctx, valEnv, calleeName, argumentAssembly);
+            var bindingsR = BindDeconstructionUserCall(callee, args, ctx, valEnv, calleeName);
             if (bindingsR.IsError) return bindingsR.Error;
 
             var bindings = bindingsR.Value;
@@ -533,8 +528,7 @@ public static partial class Evaluator
         OutputBundle args,
         EvalCtx ctx,
         ValEnv valEnv,
-        CallDiagnosticName calleeName,
-        CallArgumentAssembly argumentAssembly = CallArgumentAssembly.OrdinaryArguments)
+        CallDiagnosticName calleeName)
     {
         if (callee is Algorithm.Builtin(var builtinId))
         {
@@ -549,18 +543,16 @@ public static partial class Evaluator
                 args,
                 ctx,
                 valEnv,
-                argumentAssembly,
                 calleeName);
 
         if (callee is Algorithm.Conditional)
-            return EvalConditionalCallCounted(callee, args, ctx, valEnv, calleeName, argumentAssembly);
+            return EvalConditionalCallCounted(callee, args, ctx, valEnv, calleeName);
 
         return EvalUserCallCounted(
             callee,
             args,
             ctx,
             valEnv,
-            argumentAssembly,
             calleeName);
     }
 }

@@ -251,6 +251,36 @@ public class TutorialSemanticContractTests
         RunFailure("B(a, c) = a * 100 + c\n(3, 4).B(5)", KatLangErrorCode.TypeMismatch);
     }
 
+    // ── "Dotted Receivers and Collecting Parameters": dot-call passes a value, spread opens a value ──
+
+    [Fact]
+    public void DottedReceiver_IsTheWrittenArgument_AndOnlyTheSpreadMarkerOpensIt()
+    {
+        // The headline example: the spread receiver supplies the items of `Mean(1, 2, 3)`,
+        // while the unspread group is ONE sequence value that the numeric sum rejects.
+        const string mean = "Mean(*Vector) = Vector.sum / Vector.count\n";
+        Assert.Equal("2\n2", Display(mean + "Mean(1, 2, 3)\n(1, 2, 3)*.Mean"));
+        RunFailure(mean + "(1, 2, 3).Mean", KatLangErrorCode.ArityMismatch);
+
+        // The receiver's origin never matters, `()` included: the dotted spelling and the
+        // written call collect the same one item, and only the spread supplies nothing.
+        const string collect = "E = ()\nCollectMany(*items) = items\n";
+        Assert.Equal("[()]\n[()]\n[]", Display(collect + "E.CollectMany\nCollectMany(E)\nE*.CollectMany"));
+        Assert.Equal("[()]", Display(collect + "().CollectMany"));
+        Assert.Equal("()", Display("E = ()\nCollect(list) = list\nE.Collect"));
+        Assert.Equal("0", Display("E = ()\nE.count"));
+
+        // A fixed parameter binds the receiver whole; the spread receiver fills fixed slots.
+        Assert.Equal("(1, 2)", Display("F(first, *middle, last) = first\n(1, 2).F(9)"));
+        RunFailure("F(first, *middle, last) = first\n(1, 2).F", KatLangErrorCode.ArityMismatch);
+        Assert.Equal("1", Display("F(first, *middle, last) = first\n(1, 2)*.F"));
+
+        // Parentheses around a spread capture it back into one value.
+        Assert.Equal("1\n3\n1", Display(
+            "Arg = 1, 2, 3\nCollectMany(*list) = list\n"
+            + "Arg.CollectMany.count\nArg*.CollectMany.count\n(Arg*).CollectMany.count"));
+    }
+
     // ── "Calls Return One Value": the boundary, its two edge cases, and the consumers that are not boundaries ──
 
     [Fact]

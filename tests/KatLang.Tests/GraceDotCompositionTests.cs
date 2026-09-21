@@ -694,23 +694,26 @@ public class GraceDotCompositionTests
         AssertResult("count(x) = 99\nS = 1, 2, 3\nS.count", Atom(99));
         AssertResult("count(x) = 99\nS = 1, 2, 3\nK = v~.count\nK(S)", Atom(99));
 
-        // The dotted-receiver view stays DIFFERENT from the direct call — that
-        // distinction belongs to DotCall, not to Grace.
+        // Dot-call passes a value: the dotted receiver IS the direct call's
+        // argument, and Grace changes nothing about that.
         AssertResult("S = 1, 2, 3\nK = v~.count\nK(S)", Atom(3));
         AssertResult("S = 1, 2, 3\ncount(S)", Atom(3));
         AssertResult("Collect(*items) = items\nS = 1, 2, 3\nK = v~.Collect\nK(S)", List(Seq(Atom(1), Atom(2), Atom(3))));
-        AssertResult("Collect(*items) = items\n(1, 2, 3).Collect", List(Atom(1), Atom(2), Atom(3)));
+        AssertResult("Collect(*items) = items\n(1, 2, 3).Collect", List(Seq(Atom(1), Atom(2), Atom(3))));
+        AssertResult("Collect(*items) = items\n(1, 2, 3)*.Collect", List(Atom(1), Atom(2), Atom(3)));
     }
 
     [Fact]
-    public void SpecialForm_ReceiverSegmentSupply_IsSharedByBothSpellings()
+    public void SpecialForm_ReceiverValue_IsSharedByBothSpellings()
     {
-        // Receiver-segment supply is ordinary dot semantics, so Grace
-        // inherits it unchanged: a WRITTEN GROUP receiver supplies its rows to
-        // a flat collecting parameter, while a NAMED receiver supplies one
-        // item. A group is not a Grace-eligible receiver, so only the named
-        // form has both spellings — and they agree exactly.
-        AssertResult("Mean(*Vector) = Vector.sum / Vector.count\n(1, 2, 2.718).Mean", Atom(1.906m));
+        // The receiver is the ordinary leading argument (dot-call passes a
+        // value), so Grace inherits that unchanged: a WRITTEN GROUP receiver
+        // and a NAMED receiver are each ONE collected item, and only the
+        // spread marker supplies items. A group is not a Grace-eligible
+        // receiver, so only the named form has both spellings — and they agree
+        // exactly.
+        AssertResult("Mean(*Vector) = Vector.sum / Vector.count\n(1, 2, 2.718)*.Mean", Atom(1.906m));
+        AssertResult("Collect(*items) = items\n(1, 2, 3).Collect", List(Seq(Atom(1), Atom(2), Atom(3))));
         AssertResult("Collect(*items) = items\nS = 1, 2, 3\nS.Collect", List(Seq(Atom(1), Atom(2), Atom(3))));
         AssertResult("Collect(*items) = items\nS = 1, 2, 3\nK = v~.Collect\nK(S)", List(Seq(Atom(1), Atom(2), Atom(3))));
         AssertGraceIneffective("Collect(*items) = items\nS = 1, 2, 3\nS~.Collect", "S", "it already resolves to a property");

@@ -1776,8 +1776,7 @@ public static partial class Evaluator
         OutputBundle args,
         EvalCtx ctx,
         ValEnv valEnv,
-        CallDiagnosticName calleeName,
-        CallArgumentAssembly argumentAssembly = CallArgumentAssembly.OrdinaryArguments)
+        CallDiagnosticName calleeName)
     {
         if (callee is Algorithm.Builtin(var builtinId))
         {
@@ -1792,18 +1791,16 @@ public static partial class Evaluator
                 args,
                 ctx,
                 valEnv,
-                argumentAssembly,
                 calleeName).ConfigureAwait(false);
 
         if (callee is Algorithm.Conditional)
-            return await EvalConditionalCallCountedAsync(callee, args, ctx, valEnv, calleeName, argumentAssembly).ConfigureAwait(false);
+            return await EvalConditionalCallCountedAsync(callee, args, ctx, valEnv, calleeName).ConfigureAwait(false);
 
         return await EvalUserCallCountedAsync(
             callee,
             args,
             ctx,
             valEnv,
-            argumentAssembly,
             calleeName).ConfigureAwait(false);
     }
 
@@ -1812,7 +1809,6 @@ public static partial class Evaluator
         Algorithm callee, OutputBundle args,
         EvalCtx ctx,
         ValEnv valEnv,
-        CallArgumentAssembly argumentAssembly,
         CallDiagnosticName calleeName)
     {
         // Charged dynamic invocation boundary (see EvaluationBudget) — the SAME enter
@@ -1822,7 +1818,7 @@ public static partial class Evaluator
 
         using (level)
         {
-            return await EvalUserCallCountedCoreAsync(callee, args, ctx, valEnv, argumentAssembly, calleeName).ConfigureAwait(false);
+            return await EvalUserCallCountedCoreAsync(callee, args, ctx, valEnv, calleeName).ConfigureAwait(false);
         }
     }
 
@@ -1831,7 +1827,6 @@ public static partial class Evaluator
         Algorithm callee, OutputBundle args,
         EvalCtx ctx,
         ValEnv valEnv,
-        CallArgumentAssembly argumentAssembly,
         CallDiagnosticName calleeName)
     {
         if (callee.Output.Count == 0)
@@ -1839,7 +1834,7 @@ public static partial class Evaluator
 
         if (callee is Algorithm.User { AssignmentDeconstructionTarget: { } target } deconstructionHelper
             && await TryProjectSharedDeconstructionTargetAsync(
-                deconstructionHelper, target, args, ctx, valEnv, calleeName, argumentAssembly).ConfigureAwait(false) is { } sharedTarget)
+                deconstructionHelper, target, args, ctx, valEnv, calleeName).ConfigureAwait(false) is { } sharedTarget)
         {
             return sharedTarget.IsError
                 ? sharedTarget.Error
@@ -1851,7 +1846,7 @@ public static partial class Evaluator
 
         if (bindingPlan.RequiresPatternedBinding)
         {
-            var bindingsR = await BindPatternedUserCallAsync(callee, args, ctx, valEnv, calleeName, argumentAssembly).ConfigureAwait(false);
+            var bindingsR = await BindPatternedUserCallAsync(callee, args, ctx, valEnv, calleeName).ConfigureAwait(false);
             if (bindingsR.IsError) return bindingsR.Error;
 
             var bindings = bindingsR.Value;
@@ -1861,7 +1856,7 @@ public static partial class Evaluator
 
         if (IsDeconstructionUserCallShape(signature))
         {
-            var bindingsR = await BindDeconstructionUserCallAsync(callee, args, ctx, valEnv, calleeName, argumentAssembly).ConfigureAwait(false);
+            var bindingsR = await BindDeconstructionUserCallAsync(callee, args, ctx, valEnv, calleeName).ConfigureAwait(false);
             if (bindingsR.IsError) return bindingsR.Error;
 
             var bindings = bindingsR.Value;
@@ -1892,8 +1887,7 @@ public static partial class Evaluator
         OutputBundle args,
         EvalCtx ctx,
         ValEnv valEnv,
-        CallDiagnosticName calleeName,
-        CallArgumentAssembly argumentAssembly)
+        CallDiagnosticName calleeName)
     {
         var execution = new DeconstructionBindingExecution(
             target.Group,
@@ -1906,7 +1900,7 @@ public static partial class Evaluator
             execution,
             async () =>
             {
-                var bindingsR = await BindPatternedUserCallAsync(helper, args, ctx, valEnv, calleeName, argumentAssembly).ConfigureAwait(false);
+                var bindingsR = await BindPatternedUserCallAsync(helper, args, ctx, valEnv, calleeName).ConfigureAwait(false);
                 if (bindingsR.IsError)
                     return bindingsR.Error;
 
@@ -1945,8 +1939,7 @@ public static partial class Evaluator
         Algorithm callee, OutputBundle args,
         EvalCtx ctx,
         ValEnv valEnv,
-        CallDiagnosticName calleeName,
-        CallArgumentAssembly argumentAssembly = CallArgumentAssembly.OrdinaryArguments)
+        CallDiagnosticName calleeName)
     {
         // Charged dynamic invocation boundary; this counted core owns the
         // boundary for both counted evaluation and its plain projection.
@@ -1955,7 +1948,7 @@ public static partial class Evaluator
 
         try
         {
-            return await EvalConditionalCallCountedCoreAsync(callee, args, ctx, valEnv, calleeName, argumentAssembly).ConfigureAwait(false);
+            return await EvalConditionalCallCountedCoreAsync(callee, args, ctx, valEnv, calleeName).ConfigureAwait(false);
         }
         finally
         {
@@ -1968,10 +1961,9 @@ public static partial class Evaluator
         Algorithm callee, OutputBundle args,
         EvalCtx ctx,
         ValEnv valEnv,
-        CallDiagnosticName calleeName,
-        CallArgumentAssembly argumentAssembly)
+        CallDiagnosticName calleeName)
     {
-        var argResultsR = await EvalConditionalCallArgumentsAsync(args, ctx, valEnv, argumentAssembly).ConfigureAwait(false);
+        var argResultsR = await EvalConditionalCallArgumentsAsync(args, ctx, valEnv).ConfigureAwait(false);
         if (argResultsR.IsError) return argResultsR.Error;
         var argResults = argResultsR.Value;
 
@@ -1996,10 +1988,9 @@ public static partial class Evaluator
     private static async ValueTask<EvalResult<IReadOnlyList<Result>>> EvalConditionalCallArgumentsAsync(
         OutputBundle args,
         EvalCtx ctx,
-        ValEnv valEnv,
-        CallArgumentAssembly argumentAssembly)
+        ValEnv valEnv)
     {
-        var inputsR = await BuildCallArgumentInputsAsync(args, ctx, valEnv, argumentAssembly).ConfigureAwait(false);
+        var inputsR = await BuildCallArgumentInputsAsync(args, ctx, valEnv).ConfigureAwait(false);
         if (inputsR.IsError) return inputsR.Error;
 
         var argResults = new List<Result>(inputsR.Value.Count);
@@ -2037,7 +2028,6 @@ public static partial class Evaluator
         OutputBundle args,
         EvalCtx ctx,
         ValEnv valEnv,
-        CallArgumentAssembly argumentAssembly = CallArgumentAssembly.OrdinaryArguments,
         bool includeExplicitSequenceValueItems = false)
     {
         var maybeAlgsR = TryResolveArgAlgs(args, ctx);
@@ -2050,9 +2040,8 @@ public static partial class Evaluator
         {
             var argExpr = args[index];
             var maybeAlg = index < maybeAlgs.Count ? maybeAlgs[index] : null;
-            var isDotReceiverSegment = IsInjectedDotReceiverSegment(argumentAssembly, index);
 
-            if (argExpr is Expr.SequenceSpread && !isDotReceiverSegment)
+            if (argExpr is Expr.SequenceSpread)
             {
                 var suppliedR = await EvalCountedAsync(argExpr, ctx, valEnv).ConfigureAwait(false);
                 if (suppliedR.IsError)
@@ -2068,7 +2057,6 @@ public static partial class Evaluator
                 argExpr,
                 ctx,
                 valEnv,
-                isDotReceiverSegment,
                 includeExplicitSequenceValueItems).ConfigureAwait(false);
             if (preparedR.IsOk)
             {
@@ -2076,10 +2064,7 @@ public static partial class Evaluator
                     preparedR.Value.Counted.Value,
                     maybeAlg,
                     ValueError: null,
-                    preparedR.Value.ExplicitSequenceValueItems,
-                    CollectingSegmentEmittedCount: isDotReceiverSegment
-                        ? preparedR.Value.Counted.EmittedCount
-                        : null));
+                    preparedR.Value.ExplicitSequenceValueItems));
                 continue;
             }
 
@@ -2100,7 +2085,6 @@ public static partial class Evaluator
         Expr argExpr,
         EvalCtx ctx,
         ValEnv valEnv,
-        bool isDotReceiverSegment,
         bool includeExplicitSequenceValueItems)
     {
         if (includeExplicitSequenceValueItems && argExpr is Expr.Capture(var captureBody))
@@ -2109,11 +2093,8 @@ public static partial class Evaluator
             var capturePreparedR = WithSpan(captureSpan, await EvalCapturePreparedCoreAsync(captureBody, ctx, valEnv).ConfigureAwait(false));
             if (capturePreparedR.IsError) return capturePreparedR.Error;
 
-            var captureCounted = PrepareCallArgumentBoundaryCount(
-                capturePreparedR.Value.Counted,
-                isDotReceiverSegment);
             return EvalResult<PreparedCallArgumentEvaluation>.Ok(new(
-                captureCounted,
+                ReCountValueBoundary(capturePreparedR.Value.Counted),
                 capturePreparedR.Value.OutputSlots));
         }
 
@@ -2126,40 +2107,16 @@ public static partial class Evaluator
                 var preparedR = WithSpan(blockSpan, await EvalAlgOutputPreparedCoreAsync(wired, ctx, valEnv).ConfigureAwait(false));
                 if (preparedR.IsError) return preparedR.Error;
 
-                var counted = PrepareCallArgumentBoundaryCount(
-                    preparedR.Value.Counted,
-                    isDotReceiverSegment);
                 return EvalResult<PreparedCallArgumentEvaluation>.Ok(new(
-                    counted,
+                    ReCountValueBoundary(preparedR.Value.Counted),
                     preparedR.Value.OutputSlots));
             }
         }
 
-        var evaluatedR = isDotReceiverSegment
-            ? await EvalDotReceiverCallSegmentCountedAsync(argExpr, ctx, valEnv).ConfigureAwait(false)
-            : await EvalCountedAsync(argExpr, ctx, valEnv).ConfigureAwait(false);
+        var evaluatedR = await EvalCountedAsync(argExpr, ctx, valEnv).ConfigureAwait(false);
         return evaluatedR.IsError
             ? evaluatedR.Error
             : EvalResult<PreparedCallArgumentEvaluation>.Ok(new(evaluatedR.Value, null));
-    }
-
-    /// <summary>MIRROR OF <see cref="EvalDotReceiverCallSegmentCounted"/> — keep in lock-step.</summary>
-    private static async ValueTask<EvalResult<CountedResult>> EvalDotReceiverCallSegmentCountedAsync(
-        Expr receiver,
-        EvalCtx ctx,
-        ValEnv valEnv)
-    {
-        if (receiver is Expr.Capture(var captureBody))
-            return WithSpan(PreferExpressionSpan(receiver.Span, captureBody), await EvalCaptureCountedCoreAsync(captureBody, ctx, valEnv).ConfigureAwait(false));
-
-        if (receiver is Expr.AlgorithmExpr(var algorithm))
-        {
-            var wired = WireToCaller(ctx, algorithm);
-            if (wired.ParameterCount == 0)
-                return WithSpan(PreferExpressionSpan(receiver.Span, wired.Output), await EvalAlgOutputCountedCoreAsync(wired, ctx, valEnv).ConfigureAwait(false));
-        }
-
-        return await EvalCountedAsync(receiver, ctx, valEnv).ConfigureAwait(false);
     }
 
     /// <summary>MIRROR OF <see cref="BindPatternedUserCall"/> — keep in lock-step.</summary>
@@ -2168,8 +2125,7 @@ public static partial class Evaluator
         OutputBundle args,
         EvalCtx ctx,
         ValEnv valEnv,
-        CallDiagnosticName calleeName,
-        CallArgumentAssembly argumentAssembly = CallArgumentAssembly.OrdinaryArguments)
+        CallDiagnosticName calleeName)
     {
         if (callee is Algorithm.User { AssignmentDeconstructionTarget: not null })
             ctx.Observations?.RecordDeconstructionFullBind();
@@ -2178,7 +2134,6 @@ public static partial class Evaluator
             args,
             ctx,
             valEnv,
-            argumentAssembly,
             includeExplicitSequenceValueItems: true).ConfigureAwait(false);
         if (inputsR.IsError) return inputsR.Error;
 
@@ -2216,10 +2171,9 @@ public static partial class Evaluator
         OutputBundle args,
         EvalCtx ctx,
         ValEnv valEnv,
-        CallDiagnosticName calleeName,
-        CallArgumentAssembly argumentAssembly = CallArgumentAssembly.OrdinaryArguments)
+        CallDiagnosticName calleeName)
     {
-        var inputsR = await BuildCallArgumentInputsAsync(args, ctx, valEnv, argumentAssembly).ConfigureAwait(false);
+        var inputsR = await BuildCallArgumentInputsAsync(args, ctx, valEnv).ConfigureAwait(false);
         if (inputsR.IsError) return inputsR.Error;
 
         return BindParameterPatternList(
@@ -3355,25 +3309,19 @@ public static partial class Evaluator
         EvalCtx ctx,
         ValEnv valEnv)
     {
-        // Stored-fallback consumption — see CallLexicalWithReceiverCounted.
+        // Stored-fallback consumption — see CallLexicalWithReceiverCounted. DOT-CALL
+        // PASSES A VALUE: the receiver is the ordinary first argument of `F(R, args)`.
         if (dotCall.EffectiveLexicalFallback is not Expr.Resolve(var fallbackName))
             return await CallLexicalFallbackCalleeWithReceiverCountedAsync(dotCall, ctx, valEnv).ConfigureAwait(false);
 
-        var sequenceDotCallR = await TryBuildSequenceBuiltinDotCallAsync(fallbackName, dotCall.Target, dotCall.Args, ctx, valEnv).ConfigureAwait(false);
-        if (sequenceDotCallR.IsError) return sequenceDotCallR.Error;
-        if (sequenceDotCallR.Value is { } sequenceDotCall)
-            return await ApplyBuiltinCountedResolvedAsync(sequenceDotCall.Builtin, sequenceDotCall.Args, ctx, valEnv).ConfigureAwait(false);
-
         var calleeR = ResolveNamedAlgorithm(fallbackName, span: null, ctx);
         if (calleeR.IsError) return calleeR.Error;
-        var combinedArgs = BuildLexicalReceiverCallArgs(dotCall.Target, dotCall.Args);
         return await EvalResolvedCallCountedAsync(
             calleeR.Value,
-            combinedArgs,
+            BuildLexicalReceiverCallArgs(dotCall.Target, dotCall.Args),
             ctx,
             valEnv,
-            CallDiagnosticName.FromKnown(fallbackName),
-            CallArgumentAssembly.InjectedDotReceiverLeading).ConfigureAwait(false);
+            CallDiagnosticName.FromKnown(fallbackName)).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -3395,88 +3343,7 @@ public static partial class Evaluator
             BuildLexicalReceiverCallArgs(dotCall.Target, dotCall.Args),
             ctx,
             valEnv,
-            CallDiagnosticName.FromKnown(dotCall.Name),
-            CallArgumentAssembly.InjectedDotReceiverLeading).ConfigureAwait(false);
-    }
-
-    /// <summary>MIRROR OF <see cref="TryBuildSequenceBuiltinDotCall"/> — keep in lock-step.</summary>
-    private static async ValueTask<EvalResult<SequenceBuiltinDotCall?>> TryBuildSequenceBuiltinDotCallAsync(
-        string name,
-        Expr receiver,
-        OutputBundle? extraArgs,
-        EvalCtx ctx,
-        ValEnv valEnv)
-    {
-        var calleeR = ResolveNamedAlgorithm(name, span: null, ctx);
-        if (calleeR.IsError
-            || calleeR.Value is not Algorithm.Builtin(var builtin)
-            || GetSequenceBuiltinMetadata(builtin) is null)
-        {
-            return EvalResult<SequenceBuiltinDotCall?>.Ok(null);
-        }
-
-        var receiverArgAlgsR = await SequenceBuiltinDotReceiverArgsAsync(receiver, ctx, valEnv).ConfigureAwait(false);
-        if (receiverArgAlgsR.IsError) return receiverArgAlgsR.Error;
-
-        var argAlgs = new List<ResolvedArgumentAlgorithm>(receiverArgAlgsR.Value);
-
-        if (extraArgs is not null)
-        {
-            var extraArgAlgsR = ResolveArgAlgsWithSequenceSpread(extraArgs, ctx, valEnv);
-            if (extraArgAlgsR.IsError) return extraArgAlgsR.Error;
-            if (builtin == BuiltinId.@reduce
-                && extraArgAlgsR.Value is [{ Algorithm: { Params.Count: > 0 } reducerAlgorithm }])
-            {
-                return ReduceInitialAccumulatorRequiresValueError(reducerAlgorithm);
-            }
-
-            argAlgs.AddRange(extraArgAlgsR.Value);
-        }
-
-        return EvalResult<SequenceBuiltinDotCall?>.Ok(
-            new SequenceBuiltinDotCall(builtin, argAlgs));
-    }
-
-    /// <summary>MIRROR OF <see cref="SequenceBuiltinDotReceiverArgs"/> — keep in lock-step.</summary>
-    private static async ValueTask<EvalResult<IReadOnlyList<ResolvedArgumentAlgorithm>>> SequenceBuiltinDotReceiverArgsAsync(
-        Expr receiver,
-        EvalCtx ctx,
-        ValEnv valEnv)
-    {
-        var receiverR = await EvalSequenceBuiltinDotReceiverCountedAsync(receiver, ctx, valEnv).ConfigureAwait(false);
-        if (receiverR.IsError) return receiverR.Error;
-
-        // Prepared-value-only carry — see the synchronous twin.
-        return EvalResult<IReadOnlyList<ResolvedArgumentAlgorithm>>.Ok(
-            [new ResolvedArgumentAlgorithm(Algorithm: null, SpreadsSequence: false)
-            {
-                PreparedValue = receiverR.Value,
-            }]);
-    }
-
-    /// <summary>MIRROR OF <see cref="EvalSequenceBuiltinDotReceiverCounted"/> — keep in lock-step.</summary>
-    private static async ValueTask<EvalResult<CountedResult>> EvalSequenceBuiltinDotReceiverCountedAsync(
-        Expr receiver,
-        EvalCtx ctx,
-        ValEnv valEnv)
-    {
-        // The receiver is this builtin call's collection ARGUMENT and consumes one
-        // depth-only argument-evaluation level — identical protocol to the synchronous twin.
-        if (ctx.Budget.TryEnterArgumentEvaluation() is { } limitError)
-            return limitError;
-        try
-        {
-            // The synchronous twin evaluates with plain Eval and re-counts to
-            // ValueCount; the counted twin's value projection is the same value.
-            var valueCountedR = await EvalCountedAsync(receiver, ctx, valEnv).ConfigureAwait(false);
-            return valueCountedR.IsError
-                ? valueCountedR.Error
-                : EvalResult<CountedResult>.Ok(new CountedResult(valueCountedR.Value.Value, valueCountedR.Value.Value.ValueCount()));
-        }
-        finally
-        {
-            ctx.Budget.ExitInvocation();
-        }
+            CallDiagnosticName.FromKnown(dotCall.Name)).ConfigureAwait(false);
     }
 
     /// <summary>MIRROR OF <see cref="EvalDotStringReceiverAlgOutput"/> — keep in lock-step.</summary>

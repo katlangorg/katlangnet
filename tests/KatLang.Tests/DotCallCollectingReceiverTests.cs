@@ -1,20 +1,24 @@
 namespace KatLang.Tests;
 
 /// <summary>
-/// Focused regression matrix for the dot-call receiver binding law. A lexical
-/// dot-call receiver (<c>recv.F(extra...)</c> falling back to lexical
-/// <c>F</c>) is injected as ONE leading argument segment. Segments are
-/// allocated to parameters first — arity check plus fixed prefix/suffix
-/// binding from front and back — and the receiver's item count never
-/// satisfies arity. A fixed parameter binds the segment's VALUE; if and only
-/// if the segment is allocated to a flat TOP-LEVEL collecting parameter does
-/// the collector consume the segment's evaluated top-level SUPPLY items (one
-/// level, never recursive). The receiver's supply is its raw counted
-/// evaluation: an inline group <c>(1, 2, 3)</c> or zero-parameter brace block
-/// emits its row supply, a named property receiver emits its value-boundary
-/// count (one item, zero for an empty-sequence property), and exact lists
-/// stay opaque (one item). Direct calls are unchanged: a written argument
-/// slot always reifies one value.
+/// Focused regression matrix for the extension dot-call receiver rule:
+/// DOT-CALL PASSES A VALUE. A dot-call receiver that falls back to a lexical
+/// callable (<c>recv.F(extra...)</c> → <c>F(recv, extra...)</c>) is the ordinary
+/// FIRST written argument of that call — one reified value, never a supply of
+/// its own — so a collecting parameter collects it as ONE item (<c>(1, 2).Coll</c>
+/// is <c>[(1, 2)]</c>, <c>().Coll</c> is <c>[()]</c>, <c>[].Coll</c> is
+/// <c>[[]]</c>), fixed parameters bind it whole, and arity counts it as one
+/// argument. Only the spread marker opens a receiver: the fluent
+/// <c>recv*.F(extra...)</c> is exactly <c>F(recv*, extra...)</c>. The receiver's
+/// origin — literal, group, brace block, property, call result, conditional,
+/// selection — never changes the argument it supplies. Collection builtins in
+/// dot form bind the receiver as their ordinary <c>collection</c> argument and
+/// then open it through their own post-binding collection view (builtin
+/// semantics, not dot-call opening). The metamorphic invariant family lives in
+/// <see cref="DotCallValueBoundaryTests"/>; Lean: <c>callLexicalWithReceiverCounted</c>,
+/// <c>CoreTests/DotReceiverSegments.lean</c>, the laws
+/// <c>dot_receiver_is_ordinary_leading_argument</c> /
+/// <c>spread_dot_receiver_is_ordinary_spread_argument</c>.
 /// </summary>
 public class DotCallCollectingReceiverTests
 {
@@ -58,115 +62,123 @@ public class DotCallCollectingReceiverTests
             $"Expected {expected} but got {actual}{Environment.NewLine}Source:{Environment.NewLine}{source}");
     }
 
-    // ── A. Collecting mean: direct call and dot-call receiver agree ─────────
-
-    [Fact]
-    public void Mean_DirectCallCollectsSuppliedSlots()
-        => AssertResult(
-            """
-            Mean(*Vector) = Vector.sum / Vector.count
-            Mean(1, 2, 2.718)
-            """,
-            Atom(1.906m));
-
-    [Fact]
-    public void Mean_InlineGroupReceiverSuppliesRowItems()
-        => AssertResult(
-            """
-            Mean(*Vector) = Vector.sum / Vector.count
-            (1, 2, 2.718).Mean
-            """,
-            Atom(1.906m));
-
-    // ── B. Receiver supply boundaries and cardinality (Collect(*items)) ─────
-
     private const string CollectDef = "Collect(*items) = items\n";
 
     private const string CollectWithValuesDef = CollectDef + "Values = 1, 2, 3\n";
 
-    [Fact]
-    public void InlineGroupReceiver_SuppliesItsRowItems()
-        => AssertResult(CollectDef + "(1, 2).Collect", List(Atom(1), Atom(2)));
+    // ── A. The expected table: receiver.Coll / receiver*.Coll ───────────────
 
     [Fact]
-    public void NestedGroupReceiver_SuppliesOneInnerSequenceItem()
-        // The nested capture emits ONE row — the inner sequence value — so the
-        // collector consumes a one-item supply. Never recursive.
-        => AssertResult(CollectDef + "((1, 2)).Collect", List(Seq(Atom(1), Atom(2))));
+    public void EmptySequenceReceiver_IsOneCollectedItem_AndSpreadSuppliesNothing()
+    {
+        // `()` has value-boundary count 0, but a written argument is one SLOT
+        // whose value is `()` — and the dotted spelling is that written argument.
+        AssertResult(CollectDef + "Collect(())", List(Seq()));
+        AssertResult(CollectDef + "().Collect", List(Seq()));
+        AssertResult(CollectDef + "Collect(()*)", List());
+        AssertResult(CollectDef + "()*.Collect", List());
+    }
 
     [Fact]
-    public void EmptyGroupReceiver_SuppliesZeroItems()
-        => AssertResult(CollectDef + "().Collect", List());
+    public void ScalarReceiver_IsOneCollectedItem()
+    {
+        AssertResult(CollectDef + "Collect(1)", List(Atom(1)));
+        AssertResult(CollectDef + "1.Collect", List(Atom(1)));
+        AssertResult(CollectDef + "1*.Collect", List(Atom(1)));
+        AssertResult(CollectDef + "'ab'.Collect", List(Str("ab")));
+    }
 
     [Fact]
-    public void ExactListReceiver_StaysOneOpaqueItem()
-        => AssertResult(CollectDef + "[1, 2].Collect", List(List(Atom(1), Atom(2))));
+    public void SequenceReceiver_IsOneCollectedItem_AndSpreadOpensIt()
+    {
+        AssertResult(CollectDef + "Collect((1, 2))", List(Seq(Atom(1), Atom(2))));
+        AssertResult(CollectDef + "(1, 2).Collect", List(Seq(Atom(1), Atom(2))));
+        AssertResult(CollectDef + "Collect((1, 2)*)", List(Atom(1), Atom(2)));
+        AssertResult(CollectDef + "(1, 2)*.Collect", List(Atom(1), Atom(2)));
+    }
 
     [Fact]
-    public void FluentSpreadListReceiver_LowersToDirectSpreadCall()
-        // `[1, 2]*.Collect` is the fluent chain: it lowers to Collect([1, 2]*)
-        // where the spread opens the one list boundary into two slots.
-        => AssertResult(CollectDef + "[1, 2]*.Collect", List(Atom(1), Atom(2)));
+    public void EmptyListReceiver_IsOneExactListItem_AndSpreadSuppliesNothing()
+    {
+        AssertResult(CollectDef + "Collect([])", List(List()));
+        AssertResult(CollectDef + "[].Collect", List(List()));
+        AssertResult(CollectDef + "Collect([]*)", List());
+        AssertResult(CollectDef + "[]*.Collect", List());
+    }
 
     [Fact]
-    public void MixedGroupReceiver_KeepsNestedSequenceItemOpaque()
-        // The supply is consumed one level deep: the group's two rows are the
-        // atom 1 and the nested sequence value (2, 3), collected exactly.
-        => AssertResult(
-            CollectDef + "(1, (2, 3)).Collect",
-            List(Atom(1), Seq(Atom(2), Atom(3))));
+    public void ListReceiver_IsOneExactListItem_AndSpreadOpensIt()
+    {
+        AssertResult(CollectDef + "Collect([1, 2])", List(List(Atom(1), Atom(2))));
+        AssertResult(CollectDef + "[1, 2].Collect", List(List(Atom(1), Atom(2))));
+        AssertResult(CollectDef + "Collect([1, 2]*)", List(Atom(1), Atom(2)));
+        AssertResult(CollectDef + "[1, 2]*.Collect", List(Atom(1), Atom(2)));
+    }
+
+    // ── B. Receiver origin never changes the argument ───────────────────────
 
     [Fact]
-    public void SpreadJoinGroupReceiver_SuppliesSpreadItemsAndSlot()
-        // The group's row supply is Values's three spread items plus 7.
-        => AssertResult(
-            CollectWithValuesDef + "(Values*, 7).Collect",
-            List(Atom(1), Atom(2), Atom(3), Atom(7)));
+    public void GroupReceivers_AreOneValue_NeverTheirRows()
+    {
+        // A written group is a capture: ONE value, exactly as the direct call's
+        // written argument `Collect((1, 2))`. Nesting adds nothing: `((1, 2))`
+        // is the same one value.
+        AssertResult(CollectDef + "((1, 2)).Collect", List(Seq(Atom(1), Atom(2))));
+        AssertResult(CollectDef + "(1, (2, 3)).Collect", List(Seq(Atom(1), Seq(Atom(2), Atom(3)))));
+        AssertResult(CollectWithValuesDef + "(Values*, 7).Collect", List(Seq(Atom(1), Atom(2), Atom(3), Atom(7))));
+        AssertResult(CollectWithValuesDef + "((Values*, 7)).Collect", List(Seq(Atom(1), Atom(2), Atom(3), Atom(7))));
+
+        // `(Values*)` captures the spread supply as one value; only the fluent
+        // `Values*.Collect` — the call `Collect(Values*)` — supplies the items.
+        AssertResult(CollectWithValuesDef + "(Values*).Collect", List(Seq(Atom(1), Atom(2), Atom(3))));
+        AssertResult(CollectWithValuesDef + "Values*.Collect", List(Atom(1), Atom(2), Atom(3)));
+    }
 
     [Fact]
-    public void NestedSpreadJoinGroupReceiver_SuppliesOneCapturedItem()
-        // The extra parentheses capture the spread-join into ONE sequence
-        // value, so the outer group's row supply is that single item.
-        => AssertResult(
-            CollectWithValuesDef + "((Values*, 7)).Collect",
-            List(Seq(Atom(1), Atom(2), Atom(3), Atom(7))));
+    public void BraceBlockReceiver_IsOneValue()
+        // A zero-parameter brace block is one value — exactly the written
+        // argument `Collect({1, 2, 3})`.
+        => AssertResult(CollectDef + "{1, 2, 3}.Collect", List(Seq(Atom(1), Atom(2), Atom(3))));
 
     [Fact]
-    public void CaptureOfSpreadReceiver_SuppliesSpreadItems()
-        // `(Values*)` works through the same general rule — a capture whose
-        // row supply is the spread items. No callee-shape special case.
-        => AssertResult(
-            CollectWithValuesDef + "(Values*).Collect",
-            List(Atom(1), Atom(2), Atom(3)));
+    public void NamedPropertyReceiver_IsOneValue()
+    {
+        AssertResult(CollectWithValuesDef + "Values.Collect", List(Seq(Atom(1), Atom(2), Atom(3))));
+        AssertResult(CollectWithValuesDef + "Collect(Values)", List(Seq(Atom(1), Atom(2), Atom(3))));
+
+        // `V = ()` has value-boundary count 0, yet it is one written argument
+        // whose value is `()` — `V.Collect` is `Collect(V)`, never zero arguments.
+        AssertResult(CollectDef + "V = ()\nV.Collect", List(Seq()));
+        AssertResult(CollectDef + "V = ()\nCollect(V)", List(Seq()));
+        AssertResult(CollectDef + "V = ()\nV*.Collect", List());
+    }
 
     [Fact]
-    public void NamedPropertyReceiver_SuppliesOneValueBoundaryItem()
-        // A property result boundary is a value boundary: the receiver's
-        // supply is ONE item, the sequence value (1, 2, 3). UNCHANGED.
-        => AssertResult(
-            CollectWithValuesDef + "Values.Collect",
-            List(Seq(Atom(1), Atom(2), Atom(3))));
+    public void CallConditionalAndSelectionReceivers_AreOneValue()
+    {
+        const string defs = CollectDef + "Fz(x) = ()\nA = ((1, 2), 3)\nB = ((), 1)\nC = ([1, 2], 3)\n";
+        AssertResult(defs + "Fz(1).Collect", List(Seq()));
+        AssertResult(defs + "Collect(Fz(1))", List(Seq()));
+        AssertResult(defs + "if(true, (), 1).Collect", List(Seq()));
+        AssertResult(defs + "Collect(if(true, (), 1))", List(Seq()));
+        AssertResult(defs + "Fz(1)*.Collect", List());
+
+        AssertResult(defs + "A:0.Collect", List(Seq(Atom(1), Atom(2))));
+        AssertResult(defs + "first(A).Collect", List(Seq(Atom(1), Atom(2))));
+        AssertResult(defs + "(A:0)*.Collect", List(Atom(1), Atom(2)));
+        AssertResult(defs + "(first(A))*.Collect", List(Atom(1), Atom(2)));
+        AssertResult(defs + "B:0.Collect", List(Seq()));
+        AssertResult(defs + "first(B).Collect", List(Seq()));
+        AssertResult(defs + "(B:0)*.Collect", List());
+        AssertResult(defs + "C:0.Collect", List(List(Atom(1), Atom(2))));
+        AssertResult(defs + "first(C).Collect", List(List(Atom(1), Atom(2))));
+        AssertResult(defs + "(C:0)*.Collect", List(Atom(1), Atom(2)));
+    }
+
+    // ── C. Fixed parameters, allocation, and callee shapes ──────────────────
 
     [Fact]
-    public void FluentSpreadNamedReceiver_SuppliesSpreadItems()
-        // Fluent chain again: `Values*.Collect` is Collect(Values*).
-        => AssertResult(
-            CollectWithValuesDef + "Values*.Collect",
-            List(Atom(1), Atom(2), Atom(3)));
-
-    [Fact]
-    public void DirectCall_GroupedArgumentStaysOneCollectedItem()
-        // The receiver law changes nothing about direct calls: a written
-        // argument slot reifies ONE value, so the grouped argument is one
-        // collected item.
-        => AssertResult(CollectDef + "Collect((1, 2))", List(Seq(Atom(1), Atom(2))));
-
-    // ── C. Fixed parameters and builtins are unchanged ──────────────────────
-
-    [Fact]
-    public void FixedParameterReceiver_BindsTheSegmentValue()
-        // The segment is allocated to the fixed parameter, which binds the
-        // segment's VALUE — the whole sequence — never its supply items.
+    public void FixedParameterReceiver_BindsTheWholeValue()
         => AssertResult(
             """
             F(x) = [x]
@@ -175,29 +187,19 @@ public class DotCallCollectingReceiverTests
             List(Seq(Atom(1), Atom(2))));
 
     [Fact]
-    public void BuiltinDotCallReceivers_AreUnchanged()
-    {
-        AssertResult("(1, 2, 3).count", Atom(3));
-        AssertResult("(1, 2, 3).take(2)", List(Atom(1), Atom(2)));
-    }
-
-    // ── D. Segment allocation happens before collector consumption ──────────
-
-    [Fact]
-    public void CollectingWithSuffix_SuffixAllocatesBeforeReceiverSupplyIsConsumed()
-        // Two segments: the receiver and 10. The suffix binds 10 from the
-        // back; the collector consumes the receiver's three-item row supply.
+    public void CollectingWithSuffix_ReceiverIsOneCollectedItem()
+        // Two arguments: the receiver and 10. The suffix binds 10 from the
+        // back; the collector collects the receiver as ONE item, exactly as
+        // `Scale((1, 2, 3), 10)` does.
         => AssertResult(
             """
             Scale(*values, factor) = values, factor
             (1, 2, 3).Scale(10)
             """,
-            Seq(List(Atom(1), Atom(2), Atom(3)), Atom(10)));
+            Seq(List(Seq(Atom(1), Atom(2), Atom(3))), Atom(10)));
 
     [Fact]
-    public void PrefixCollectingSuffix_ReceiverSegmentBindsThePrefixValue()
-        // Segments [receiver, 9]: `first` binds the receiver's VALUE (1, 2),
-        // `last` binds 9, and the collector gets an empty middle.
+    public void PrefixCollectingSuffix_ReceiverBindsThePrefixValue()
         => AssertResult(
             """
             F(first, *middle, last) = [first], middle, [last]
@@ -206,10 +208,11 @@ public class DotCallCollectingReceiverTests
             Seq(List(Seq(Atom(1), Atom(2))), List(), List(Atom(9))));
 
     [Fact]
-    public void PrefixCollectingSuffix_ReceiverItemCountNeverSatisfiesArity()
+    public void PrefixCollectingSuffix_ReceiverIsOneArgumentForArity()
     {
-        // One segment cannot bind two fixed parameters, even though the
-        // receiver's supply holds two items: arity counts segments.
+        // One argument cannot bind two fixed parameters, even though the
+        // receiver holds two items: arity counts arguments, and the receiver
+        // is one — exactly as in `F((1, 2))`.
         var arity = SourceProvenance.ParseValid(
             """
             F(first, *middle, last) = [first], middle, [last]
@@ -221,9 +224,7 @@ public class DotCallCollectingReceiverTests
     }
 
     [Fact]
-    public void CollectingSuffix_LoneReceiverSegmentBindsTheSuffixValue()
-        // The only segment is allocated to the fixed suffix, which binds its
-        // VALUE; the collector gets nothing.
+    public void CollectingSuffix_LoneReceiverBindsTheSuffixValue()
         => AssertResult(
             """
             F(*middle, last) = middle, [last]
@@ -233,9 +234,6 @@ public class DotCallCollectingReceiverTests
 
     [Fact]
     public void PrefixCollectingSuffix_ExtraArgumentsAllocateAroundTheCollector()
-        // Segments [receiver, 3, 4, 5]: `a` binds the receiver value, `z`
-        // binds 5, and the middle segments 3 and 4 are ordinary collected
-        // slots (only the RECEIVER segment contributes supply items).
         => AssertResult(
             """
             F(a, *mid, z) = [a], mid, [z]
@@ -243,38 +241,63 @@ public class DotCallCollectingReceiverTests
             """,
             Seq(List(Seq(Atom(1), Atom(2))), List(Atom(3), Atom(4)), List(Atom(5))));
 
-    // ── E. Structured safeguards stay intact ────────────────────────────────
-
     [Fact]
-    public void SequenceValueCollectingPattern_KeepsOneBoundaryDestructuring()
+    public void SequenceValueCollectingPattern_DestructuresTheReceiverValue()
     {
-        // The nested pattern `((*values))` is not a flat top-level collector:
-        // the receiver segment binds as ONE value and the pattern opens
-        // exactly one boundary — direct and dot forms agree.
-        AssertResult(
-            """
-            CountSequenceValue((*values)) = values.count
-            CountSequenceValue((1, 2, 3))
-            """,
-            Atom(3));
         AssertResult(
             """
             CountSequenceValue((*values)) = values.count
             (1, 2, 3).CountSequenceValue
             """,
             Atom(3));
-    }
-
-    [Fact]
-    public void SequenceValuePattern_DestructuresTheReceiverValue()
-        // Patterned callee: the receiver segment binds whole and the pattern
-        // destructures it — x = 1, y = [2, 3], z = 4.
-        => AssertResult(
+        AssertResult(
             """
             F((x, *y, z)) = [x], y, [z]
             (1, 2, 3, 4).F
             """,
             Seq(List(Atom(1)), List(Atom(2), Atom(3)), List(Atom(4))));
+    }
+
+    [Fact]
+    public void PatternedBraceBlockReceiver_IsOneValue()
+        // Repeating the fixed suffix name selects patterned binding; the
+        // receiver is still one argument, so the top-level collector collects
+        // the one block value.
+        => AssertResult(
+            """
+            CollectChecked(*items, marker, marker) = items
+            {1, 2, 3}.CollectChecked(9, 9)
+            """,
+            List(Seq(Atom(1), Atom(2), Atom(3))));
+
+    [Fact]
+    public void FunctionShapedReceiver_ReportsTheCollectingTypeMismatch()
+    {
+        var mismatch = SourceProvenance.ParseValid(
+            """
+            Collect(*items) = items
+            F(x) = x
+            F.Collect
+            """).ExpectEvaluationError<EvalError.TypeMismatch>();
+
+        Assert.Contains("Collecting parameter `*items` collects values", mismatch.Message, StringComparison.Ordinal);
+        Assert.Contains("a supplied argument is a callable", mismatch.Message, StringComparison.Ordinal);
+    }
+
+    // ── D. Builtins, callbacks, and unrelated binders stay as they are ──────
+
+    [Fact]
+    public void BuiltinDotCallReceivers_BindAsTheCollectionArgument()
+    {
+        // The receiver is the builtin's ordinary `collection` argument; the
+        // builtin's own post-binding view opens it (builtin semantics, not
+        // dot-call opening).
+        AssertResult("(1, 2, 3).count", Atom(3));
+        AssertResult("(1, 2, 3).take(2)", List(Atom(1), Atom(2)));
+        AssertResult("V = ()\nV.count", Atom(0));
+        AssertResult("().count", Atom(0));
+        AssertResult("[].count", Atom(0));
+    }
 
     [Fact]
     public void SingleCollectingMapCallback_KeepsEachElementAsOneCollectedSlot()
@@ -304,115 +327,18 @@ public class DotCallCollectingReceiverTests
             """,
             List(Atom(1), Atom(2), Atom(3)));
 
-    [Fact]
-    public void FunctionShapedReceiver_ReportsTheCollectingTypeMismatch()
-    {
-        var mismatch = SourceProvenance.ParseValid(
-            """
-            Collect(*items) = items
-            F(x) = x
-            F.Collect
-            """).ExpectEvaluationError<EvalError.TypeMismatch>();
-
-        Assert.Contains("Collecting parameter `*items` collects values", mismatch.Message, StringComparison.Ordinal);
-        Assert.Contains("a supplied argument is a callable", mismatch.Message, StringComparison.Ordinal);
-    }
-
-    // ── F. Scalar, string, and brace-block receivers ────────────────────────
+    // ── E. Plain expression-spine path parity ───────────────────────────────
 
     [Fact]
-    public void ScalarReceiver_SuppliesItselfAsOneItem()
-        => AssertResult(CollectDef + "7.Collect", List(Atom(7)));
-
-    [Fact]
-    public void StringReceiver_SuppliesItselfAsOneItem()
-        => AssertResult(CollectDef + "'ab'.Collect", List(Str("ab")));
-
-    [Fact]
-    public void BraceBlockReceiver_SuppliesItsRowItems()
-        // A zero-parameter brace-block receiver emits its row supply exactly
-        // like an inline group.
-        => AssertResult(CollectDef + "{1, 2, 3}.Collect", List(Atom(1), Atom(2), Atom(3)));
-
-    [Fact]
-    public void PatternedBraceBlockReceiver_PreservesRawSupplyForTopLevelCollector()
-        // Repeating the fixed suffix name selects patterned binding, while the
-        // top-level collector still consumes the injected receiver segment's
-        // raw three-row supply.
-        => AssertResult(
-            """
-            CollectChecked(*items, marker, marker) = items
-            {1, 2, 3}.CollectChecked(9, 9)
-            """,
-            List(Atom(1), Atom(2), Atom(3)));
-
-    [Fact]
-    public void PreparedArgumentBoundary_RecountsOnlyOrdinarySegments()
-    {
-        var raw = new Evaluator.CountedResult(Seq(Atom(1), Atom(2), Atom(3)), EmittedCount: 3);
-
-        var receiver = Evaluator.PrepareCallArgumentBoundaryCount(raw, isDotReceiverSegment: true);
-        var ordinary = Evaluator.PrepareCallArgumentBoundaryCount(raw, isDotReceiverSegment: false);
-
-        Assert.Equal(3, receiver.EmittedCount);
-        Assert.Equal(1, ordinary.EmittedCount);
-        Assert.True(Result.ValueComparer.Equals(raw.Value, receiver.Value));
-        Assert.True(Result.ValueComparer.Equals(raw.Value, ordinary.Value));
-    }
-
-    // ── G. Selection receivers ──────────────────────────────────────────────
-
-    [Fact]
-    public void SelectionReceiver_SuppliesTheSelectedValueAsOneItem()
-    {
-        // SELECTION IS A VALUE BOUNDARY: `S:0` (and `first(S)`) is the selected
-        // pair as ONE value, so the receiver segment supplies exactly one item
-        // — the same item a direct call's written slot supplies — and only an
-        // explicit spread of the selection supplies its two items.
-        const string defs = "S = ((1, 2), (3, 4))\nCollect(*items) = items\n";
-        AssertResult(defs + "(S:0).Collect", List(Seq(Atom(1), Atom(2))));
-        AssertResult(defs + "S:0.Collect", List(Seq(Atom(1), Atom(2))));
-        AssertResult(defs + "first(S).Collect", List(Seq(Atom(1), Atom(2))));
-        AssertResult(defs + "Collect(S:0)", List(Seq(Atom(1), Atom(2))));
-        AssertResult(defs + "(S:0)*.Collect", List(Atom(1), Atom(2)));
-        AssertResult(defs + "S:0*.Collect", List(Atom(1), Atom(2)));
-        AssertResult(defs + "first(S)*.Collect", List(Atom(1), Atom(2)));
-
-        // A selected `()` supplies zero items, exactly like the `()` value read
-        // from a property; a selected `[]` is one exact list item.
-        const string emptyDefs = "E = ((), 1)\nL = ([], 1)\nCollect(*items) = items\n";
-        AssertResult(emptyDefs + "E:0.Collect", List());
-        AssertResult(emptyDefs + "first(E).Collect", List());
-        AssertResult(emptyDefs + "L:0.Collect", List(List()));
-        AssertResult(emptyDefs + "first(L).Collect", List(List()));
-        AssertResult(emptyDefs + "(L:0)*.Collect", List());
-    }
-
-    // ── H. Plain expression-spine path parity ───────────────────────────────
-
-    [Fact]
-    public void BinaryOperandDotCall_UsesTheSameReceiverSupplyRule()
+    public void BinaryOperandDotCall_UsesTheSameReceiverRule()
         // The dot call sits inside a binary operand (the plain iterative
-        // expression spine), not on a root output row: the receiver still
-        // supplies its three row items, so 1 + 2 = 3.
+        // expression spine), not on a root output row: the receiver is still
+        // one value, so the mean of the ONE collected item (the sequence value,
+        // opened by `sum`/`count` of the collected list) needs the spread form.
         => AssertResult(
             """
             Mean(*V) = V.sum / V.count
-            1 + (1, 2, 3).Mean
+            1 + (1, 2, 3)*.Mean
             """,
             Atom(3));
-
-    // ── I. Empty named receiver ─────────────────────────────────────────────
-
-    [Fact]
-    public void EmptySequenceNamedReceiver_SuppliesZeroItems()
-        // `V = ()` is a value boundary with emitted count 0: the receiver
-        // segment's supply is empty, matching `().Collect`.
-        => AssertResult(
-            """
-            Collect(*items) = items
-            V = ()
-            V.Collect
-            """,
-            List());
 }

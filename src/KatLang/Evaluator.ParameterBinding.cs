@@ -46,25 +46,6 @@ public static partial class Evaluator
         Result.ListValue _ => [r],
     };
 
-    /// <summary>
-    /// How a call's argument bundle was assembled: ordinary written argument
-    /// slots, or a lexical dot-call bundle whose FIRST slot is the injected
-    /// receiver segment. The injected receiver is always ONE leading segment
-    /// for arity checking and prefix/suffix allocation (never pre-expanded),
-    /// is evaluated through the raw counted receiver-segment path
-    /// (<see cref="EvalDotReceiverCallSegmentCounted"/>), and carries its
-    /// evaluated top-level supply so a flat top-level collecting parameter
-    /// allocated the segment consumes the supply items
-    /// (<see cref="ParameterPatternInput.CollectingSegmentEmittedCount"/>).
-    /// Receiver assembly never inspects the resolved callee.
-    /// Lean: <c>CallArgumentAssembly</c>.
-    /// </summary>
-    internal enum CallArgumentAssembly
-    {
-        OrdinaryArguments,
-        InjectedDotReceiverLeading,
-    }
-
     private readonly record struct VariadicCallItem(
         Result? Value,
         Algorithm? Algorithm,
@@ -162,23 +143,21 @@ public static partial class Evaluator
         CountedResult CountedValue);
 
     /// <summary>
-    /// One call argument segment prepared for parameter binding. Every segment
-    /// has a value view (<see cref="Value"/>); an injected dot-call receiver
-    /// segment additionally carries <see cref="CollectingSegmentEmittedCount"/> —
-    /// the raw emitted count of its counted evaluation — as an EPHEMERAL
-    /// collecting supply view. A fixed parameter always binds the value view;
-    /// only a flat top-level collecting parameter that is allocated the segment
-    /// consumes the supply view (one-level, never recursive). The field is
-    /// data-only and never propagated into nested pattern inputs, parameter
-    /// environments, or collected lists.
+    /// One call argument slot prepared for parameter binding: its value view
+    /// (<see cref="Value"/>), its algorithm view where resolvable, a retained
+    /// value error, and — for patterned callees — the written item view of a
+    /// group. Every slot is exactly ONE argument whatever spelling supplied it:
+    /// a written argument, an explicit spread item, or an extension dot-call
+    /// receiver (DOT-CALL PASSES A VALUE, September 2026: <c>R.F(args)</c>
+    /// assembles exactly the slots of <c>F(R, args)</c>; no slot carries a raw
+    /// supply of its own).
     /// Lean: <c>ParameterPatternInput</c>.
     /// </summary>
     private readonly record struct ParameterPatternInput(
         Result? Value,
         Algorithm? Algorithm,
         EvalError? ValueError,
-        IReadOnlyList<Result>? ExplicitSequenceValueItems,
-        int? CollectingSegmentEmittedCount = null);
+        IReadOnlyList<Result>? ExplicitSequenceValueItems);
 
     private static bool HasStructuredParameterPattern(Algorithm algorithm)
         => algorithm.ParameterPatterns.Any(static parameter => parameter is SequenceValueParameterPattern);
@@ -947,16 +926,12 @@ public static partial class Evaluator
                 return input.ValueError ?? new EvalError.BadArity();
             }
 
-            // A segment allocated to the flat top-level collecting position
-            // consumes its evaluated top-level supply (one level, never
-            // recursive): an injected dot-call receiver segment contributes its
-            // emitted items, while every ordinary segment contributes its one
-            // reified value. Fixed prefix/suffix and nested pattern positions
-            // ignore the supply view (they bind the value view above).
-            if (input.CollectingSegmentEmittedCount is { } segmentEmittedCount)
-                capturedValues.AddRange(CountedTopLevelValues(new CountedResult(input.Value, segmentEmittedCount)));
-            else
-                capturedValues.Add(input.Value);
+            // Every slot allocated to the flat top-level collecting position
+            // contributes its ONE reified value — a written argument, an
+            // explicit spread item, and an extension dot-call receiver alike
+            // (dot-call passes a value; only the spread marker opens one).
+            // Nothing is opened here.
+            capturedValues.Add(input.Value);
         }
 
         var captureR = CreateCollectingCapture(ctx, collectingCapture.Name, capturedValues, collectingCapture.Span);
@@ -976,8 +951,7 @@ public static partial class Evaluator
         OutputBundle args,
         EvalCtx ctx,
         ValEnv valEnv,
-        CallDiagnosticName calleeName,
-        CallArgumentAssembly argumentAssembly = CallArgumentAssembly.OrdinaryArguments)
+        CallDiagnosticName calleeName)
     {
         // Passive, run-scoped observation: this is the one path that binds a deconstruction helper's
         // shared N-capture pattern in both the old per-target and new shared-bind implementations, so
@@ -990,7 +964,6 @@ public static partial class Evaluator
             args,
             ctx,
             valEnv,
-            argumentAssembly,
             includeExplicitSequenceValueItems: true);
         if (inputsR.IsError) return inputsR.Error;
 
@@ -1068,8 +1041,7 @@ public static partial class Evaluator
         OutputBundle args,
         EvalCtx ctx,
         ValEnv valEnv,
-        CallDiagnosticName calleeName,
-        CallArgumentAssembly argumentAssembly)
+        CallDiagnosticName calleeName)
     {
         var execution = new DeconstructionBindingExecution(
             target.Group,
@@ -1087,7 +1059,7 @@ public static partial class Evaluator
             execution,
             () =>
             {
-                var bindingsR = BindPatternedUserCall(helper, args, ctx, valEnv, calleeName, argumentAssembly);
+                var bindingsR = BindPatternedUserCall(helper, args, ctx, valEnv, calleeName);
                 if (bindingsR.IsError)
                     return bindingsR.Error;
 
@@ -1140,17 +1112,18 @@ public static partial class Evaluator
     /// argument supply is formed BEFORE any arity checking, clause selection,
     /// conditional dispatch, or pattern binding — the callee's internal
     /// representation never influences the meaning of caller-side spread.
-    /// An injected dot-call receiver segment
-    /// (<see cref="CallArgumentAssembly.InjectedDotReceiverLeading"/>) stays
-    /// ONE segment for allocation — never pre-expanded — and retains its raw
-    /// counted supply for the flat top-level collecting position.
+    /// DOT-CALL PASSES A VALUE: an extension dot-call receiver reaches this
+    /// assembly as the ordinary FIRST slot of <c>F(R, args)</c>
+    /// (<see cref="BuildLexicalReceiverCallArgs"/>) — one reified value like
+    /// any written argument, never a supply of its own; only a spread receiver
+    /// <c>R*</c> (the fluent form lowers to <c>F(R*, args)</c>) opens one
+    /// boundary, exactly as a written spread slot does.
     /// Lean: <c>collectVariadicCallItems</c>.
     /// </summary>
     private static EvalResult<IReadOnlyList<ParameterPatternInput>> BuildCallArgumentInputs(
         OutputBundle args,
         EvalCtx ctx,
         ValEnv valEnv,
-        CallArgumentAssembly argumentAssembly = CallArgumentAssembly.OrdinaryArguments,
         bool includeExplicitSequenceValueItems = false)
     {
         var maybeAlgsR = TryResolveArgAlgs(args, ctx);
@@ -1167,9 +1140,8 @@ public static partial class Evaluator
         {
             var argExpr = args[index];
             var maybeAlg = index < maybeAlgs.Count ? maybeAlgs[index] : null;
-            var isDotReceiverSegment = IsInjectedDotReceiverSegment(argumentAssembly, index);
 
-            if (argExpr is Expr.SequenceSpread && !isDotReceiverSegment)
+            if (argExpr is Expr.SequenceSpread)
             {
                 var suppliedR = EvalCounted(argExpr, ctx, valEnv);
                 if (suppliedR.IsError)
@@ -1185,7 +1157,6 @@ public static partial class Evaluator
                 argExpr,
                 ctx,
                 valEnv,
-                isDotReceiverSegment,
                 includeExplicitSequenceValueItems);
             if (preparedR.IsOk)
             {
@@ -1193,10 +1164,7 @@ public static partial class Evaluator
                     preparedR.Value.Counted.Value,
                     maybeAlg,
                     ValueError: null,
-                    preparedR.Value.ExplicitSequenceValueItems,
-                    CollectingSegmentEmittedCount: isDotReceiverSegment
-                        ? preparedR.Value.Counted.EmittedCount
-                        : null));
+                    preparedR.Value.ExplicitSequenceValueItems));
                 continue;
             }
 
@@ -1213,17 +1181,19 @@ public static partial class Evaluator
     }
 
     /// <summary>
-    /// Evaluates one non-expanded call argument. Patterned calls need an additional written-slot
+    /// Evaluates one non-expanded call argument at its VALUE boundary (every non-spread
+    /// slot — written argument or extension dot-call receiver alike — reifies to exactly
+    /// one value). Patterned calls need an additional written-slot
     /// view for a capture or a zero-parameter AlgorithmExpr; that view is captured by the
     /// corresponding prepared-output evaluator during the SAME output pass that constructs the
     /// counted argument value. Multi-parameter algorithms stay on the ordinary dual-channel
     /// fallback and are never forced merely to request explicit pattern items.
+    /// Lean: <c>evalVariadicCallItemPrepared</c>.
     /// </summary>
     private static EvalResult<PreparedCallArgumentEvaluation> PrepareCallArgumentEvaluation(
         Expr argExpr,
         EvalCtx ctx,
         ValEnv valEnv,
-        bool isDotReceiverSegment,
         bool includeExplicitSequenceValueItems)
     {
         if (includeExplicitSequenceValueItems && argExpr is Expr.Capture(var captureBody))
@@ -1234,11 +1204,8 @@ public static partial class Evaluator
             var capturePreparedR = WithSpan(captureSpan, EvalCapturePreparedCore(captureBody, ctx, valEnv));
             if (capturePreparedR.IsError) return capturePreparedR.Error;
 
-            var captureCounted = PrepareCallArgumentBoundaryCount(
-                capturePreparedR.Value.Counted,
-                isDotReceiverSegment);
             return EvalResult<PreparedCallArgumentEvaluation>.Ok(new(
-                captureCounted,
+                ReCountValueBoundary(capturePreparedR.Value.Counted),
                 capturePreparedR.Value.OutputSlots));
         }
 
@@ -1251,53 +1218,16 @@ public static partial class Evaluator
                 var preparedR = WithSpan(blockSpan, EvalAlgOutputPreparedCore(wired, ctx, valEnv));
                 if (preparedR.IsError) return preparedR.Error;
 
-                var counted = PrepareCallArgumentBoundaryCount(
-                    preparedR.Value.Counted,
-                    isDotReceiverSegment);
                 return EvalResult<PreparedCallArgumentEvaluation>.Ok(new(
-                    counted,
+                    ReCountValueBoundary(preparedR.Value.Counted),
                     preparedR.Value.OutputSlots));
             }
         }
 
-        var evaluatedR = isDotReceiverSegment
-            ? EvalDotReceiverCallSegmentCounted(argExpr, ctx, valEnv)
-            : EvalCounted(argExpr, ctx, valEnv);
+        var evaluatedR = EvalCounted(argExpr, ctx, valEnv);
         return evaluatedR.IsError
             ? evaluatedR.Error
             : EvalResult<PreparedCallArgumentEvaluation>.Ok(new(evaluatedR.Value, null));
-    }
-
-    internal static CountedResult PrepareCallArgumentBoundaryCount(
-        CountedResult counted,
-        bool isDotReceiverSegment)
-        => isDotReceiverSegment ? counted : ReCountValueBoundary(counted);
-
-    private static bool IsInjectedDotReceiverSegment(
-        CallArgumentAssembly argumentAssembly,
-        int index)
-        => argumentAssembly == CallArgumentAssembly.InjectedDotReceiverLeading
-        && index == 0;
-
-    private static EvalResult<CountedResult> EvalDotReceiverCallSegmentCounted(
-        Expr receiver,
-        EvalCtx ctx,
-        ValEnv valEnv)
-    {
-        // A grouped receiver keeps its multi-item emitted count as the injected
-        // leading argument segment (no value-boundary re-count), for both the
-        // capture form and a zero-parameter scoped block.
-        if (receiver is Expr.Capture(var captureBody))
-            return WithSpan(PreferExpressionSpan(receiver.Span, captureBody), EvalCaptureCountedCore(captureBody, ctx, valEnv));
-
-        if (receiver is Expr.AlgorithmExpr(var algorithm))
-        {
-            var wired = WireToCaller(ctx, algorithm);
-            if (wired.ParameterCount == 0)
-                return WithSpan(PreferExpressionSpan(receiver.Span, wired.Output), EvalAlgOutputCounted(wired, ctx, valEnv));
-        }
-
-        return EvalCounted(receiver, ctx, valEnv);
     }
 
     private static EvalError VariadicBindingArityMismatch(
@@ -1353,10 +1283,9 @@ public static partial class Evaluator
         OutputBundle args,
         EvalCtx ctx,
         ValEnv valEnv,
-        CallDiagnosticName calleeName,
-        CallArgumentAssembly argumentAssembly = CallArgumentAssembly.OrdinaryArguments)
+        CallDiagnosticName calleeName)
     {
-        var inputsR = BuildCallArgumentInputs(args, ctx, valEnv, argumentAssembly);
+        var inputsR = BuildCallArgumentInputs(args, ctx, valEnv);
         if (inputsR.IsError) return inputsR.Error;
 
         // A deconstruction parameter list always carries a collecting binding, so a

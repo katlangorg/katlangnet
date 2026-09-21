@@ -77,15 +77,17 @@ public enum CountedConsumer
     /// <c>evalConditionalCallCounted</c> + <c>reCountValueBoundary</c>).</summary>
     ClauseFamilyDispatch,
 
-    /// <summary>Ordinary lexical dot-call receiver: ONE leading argument segment; a
-    /// WRITTEN group/brace receiver carries its raw row emission as segment supply, a
-    /// NAMED receiver supplies `valueCount` items (zero for `()`); only a flat
-    /// top-level collecting parameter allocated the segment consumes the supply (Lean
-    /// <c>evalVariadicCallItemCounted</c> + <c>collectingSegmentCount?</c>).</summary>
+    /// <summary>Ordinary lexical dot-call receiver — DOT-CALL PASSES A VALUE: the
+    /// receiver is the ONE ordinary leading argument of the extension call (Lean
+    /// <c>prepareLexicalDotCallArgs</c> through the one <c>evalResolvedCallCounted</c>
+    /// funnel), so a written group/brace receiver, a named receiver, a capture, and
+    /// `()` are each one argument value; a collecting parameter collects it as ONE
+    /// item and only the spread marker (<see cref="FluentSpreadReceiver"/>) opens it.
+    /// The category name is historical; runtime receiver segments no longer exist.</summary>
     DotReceiverSegment,
 
     /// <summary>Fluent spread receiver `A*.F`: parse-time lowering to the lexical
-    /// call `F(A*)` — the receiver is an item supply, not a segment.</summary>
+    /// call `F(A*)` — an ordinary spread argument slot.</summary>
     FluentSpreadReceiver,
 
     /// <summary>Indexing `:` (Lean <c>Result.select?</c>): the target's positions are

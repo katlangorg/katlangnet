@@ -723,9 +723,15 @@ public class SemanticExplorerTests
         { "x = ((1, 2), (3, 4))\n(first(x))*", "ok raw=S[1, 2] n=2" },
         { "x = ((), ())\nx:0", "ok raw=S[] n=1" },
         { "x = ((), ())\nfirst(x)", "ok raw=S[] n=1" },
-        { "Coll(*xs) = xs\nx = ((), 1)\nfirst(x).Coll", "ok raw=L[] n=1" },
-        { "Coll(*xs) = xs\nx = ((), 1)\nx:0.Coll", "ok raw=L[] n=1" },
+        // DOT-CALL PASSES A VALUE: the selected `()` is ONE collected item in the
+        // dotted spelling exactly as in the written call; only the spread opens it.
+        { "Coll(*xs) = xs\nx = ((), 1)\nfirst(x).Coll", "ok raw=L[S[]] n=1" },
+        { "Coll(*xs) = xs\nx = ((), 1)\nx:0.Coll", "ok raw=L[S[]] n=1" },
+        { "Coll(*xs) = xs\nx = ((), 1)\nColl(x:0)", "ok raw=L[S[]] n=1" },
+        { "Coll(*xs) = xs\nx = ((), 1)\n(x:0)*.Coll", "ok raw=L[] n=1" },
         { "Coll(*xs) = xs\nx = ([], 1)\nx:0.Coll", "ok raw=L[L[]] n=1" },
+        { "Coll(*xs) = xs\n(1, 2).Coll", "ok raw=L[S[1, 2]] n=1" },
+        { "Coll(*xs) = xs\n(1, 2)*.Coll", "ok raw=L[1, 2] n=1" },
         { "P = (), 99\nP", "ok raw=S[S[], 99] n=1" },
         { "F(*a) = a\nF(1, 2, 3)", "ok raw=L[1, 2, 3] n=1" },
         // SYN-01: `()` carries no numeric scalar value, so an ordering operator

@@ -182,6 +182,18 @@ public static class SemanticExplorerCorpus
             v => $"F(*a) = a\nF({v.Source}*)"),
         new("collectingViaProp",
             v => $"F(*a) = a\nx = {v.Source}\nF(x)"),
+        // DOT-CALL PASSES A VALUE: the extension-call receiver is the ordinary
+        // leading argument, so `x.F` is `F(x)` (one collected item for every
+        // value, `()` included), `(v).F` is `F((v))`, and only the fluent
+        // spread `x*.F` — `F(x*)` — supplies the value's items as slots. The
+        // three templates differentially pin the rule, per value, against the
+        // written spellings `collectingViaProp` / `collecting` / `collectingSpread`.
+        new("dotCollectingViaProp",
+            v => $"F(*a) = a\nx = {v.Source}\nx.F"),
+        new("literalDotCollecting",
+            v => $"F(*a) = a\n({v.Source}).F"),
+        new("fluentSpreadCollecting",
+            v => $"F(*a) = a\nx = {v.Source}\nx*.F"),
         new("mixed_h",
             v => $"F(h, *t) = h\nF({v.Source}*)"),
         new("mixed_t",

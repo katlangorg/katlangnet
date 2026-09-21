@@ -369,7 +369,7 @@ public class Decimal128InverseTrigTests
         const string source =
             "CosInputs = [1 - 1e-30, -1 + 1e-33, 0.9999000000000000000000000000000001, 0.9999, 0.5]\n"
             + "SinInputs = [1 - 1e-30, -1 + 1e-33, -0.9999000000000000000000000000000001, 0.9999, -0.5]\n"
-            + "CosInputs.map(acos)\nSinInputs.map(Math.Asin)";
+            + "(CosInputs).map(acos)\n(SinInputs).map(Math.Asin)";
         var program = Program(source);
 
         var flat = Evaluator.RunFlat(program);

@@ -140,7 +140,7 @@ public class SequencePreparationParityTests
     [InlineData("range(1, 3).filter((D)).count", "Mark()", 1)]
     [InlineData("count(filter(range(1, 3), (D)))", "Mark()", 1)]
     [InlineData("count(filter(range(1 / 0, 3), (D)))", "Mark()", 1)]
-    [InlineData("range(1 / 0, 3).filter((D)).count", "Mark()", 0)]
+    [InlineData("range(1 / 0, 3).filter((D)).count", "Mark()", 1)]
     [InlineData("E.filter((D)).count", "Mark() / 0", 1)]
     [InlineData("E.filter((D)).count", "{Mark(), range(1, 5)}", 1)]
     [InlineData("count(filter(E, (D)))", "Mark()", 1)]

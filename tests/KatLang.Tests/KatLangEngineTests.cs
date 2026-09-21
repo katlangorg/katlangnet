@@ -870,34 +870,41 @@ public class KatLangEngineTests
     }
 
     [Fact]
-    public void RunResult_ToDisplayString_VariadicDotCallReceiver_ShowsReceiverSupplyListResult()
+    public void RunResult_ToDisplayString_VariadicDotCallReceiver_ShowsOneCollectedValue()
     {
-        // A call boundary always returns one value. The receiver is one
-        // leading argument segment, and the collecting parameter it is
-        // allocated to consumes the segment's supply: the inline group emits
-        // its three row items, so the collected list is [10, 20, 30],
-        // displayed as a single row.
+        // A call boundary always returns one value, and dot-call passes a
+        // value: the inline group is the ONE leading argument of
+        // `Collect((10, 20, 30))`, so the collected list is [(10, 20, 30)],
+        // displayed as a single row. The fluent spread receiver supplies the
+        // three items as ordinary slots instead.
         var result = KatLangEngine.Run(
             """
             Collect(*list) = list
             (10, 20, 30).Collect
             """);
 
-        Assert.Equal("[10, 20, 30]", result.ToDisplayString());
+        Assert.Equal("[(10, 20, 30)]", result.ToDisplayString());
+
+        var spread = KatLangEngine.Run(
+            """
+            Collect(*list) = list
+            (10, 20, 30)*.Collect
+            """);
+
+        Assert.Equal("[10, 20, 30]", spread.ToDisplayString());
     }
 
     [Fact]
     public void RunResult_ToDisplayString_VariadicDotCallReceiverSpread_OpensIntoRows()
     {
-        // The capture-of-spread receiver supplies the same three items through
-        // the general receiver-supply rule, so the collected list is
-        // [10, 20, 30]; the explicit caller-site spread then re-spreads the
-        // returned list into the surrounding item supply, displaying separate
-        // rows.
+        // The fluent spread receiver supplies the three items as ordinary
+        // argument slots, so the collected list is [10, 20, 30]; the explicit
+        // caller-site spread then re-spreads the returned list into the
+        // surrounding item supply, displaying separate rows.
         var result = KatLangEngine.Run(
             """
             Collect(*list) = list
-            ((10, 20, 30)*).Collect*
+            (10, 20, 30)*.Collect*
             """);
 
         Assert.Equal(Lines("10", "20", "30"), result.ToDisplayString());

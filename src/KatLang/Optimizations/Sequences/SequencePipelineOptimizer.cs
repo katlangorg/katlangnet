@@ -160,8 +160,8 @@ internal static class SequencePipelineOptimizer
         //
         // The generic spelling evaluates this pipeline's collection argument through
         // one depth-only argument-evaluation level and runs the filter callbacks
-        // INSIDE it (`Evaluator.EvalSequenceBuiltinDotReceiverCounted`, or the
-        // plain-call argument funnel). A fused pipeline that elided that level would
+        // INSIDE it (the ordinary builtin argument funnel for both spellings).
+        // A fused pipeline that elided that level would
         // let the same program survive a depth limit the generic strategy rejects,
         // and which strategy runs depends on which UNRELATED budgets the caller
         // configured — so an unrelated, non-binding `MaxStringLength` would decide a
@@ -415,9 +415,8 @@ internal static class SequencePipelineOptimizer
     // expression unchanged when it is not a spread. This is a recognition
     // helper, not a general semantic rewrite: chained spread can open more than
     // one list boundary (`[[7]]**` differs from one layer).
-    // Callers either use the peeled form only to identify an unsupported
-    // filter/count candidate, or to identify a builtin range source whose flat
-    // scalar result is unchanged by additional spread layers.
+    // Callers use the peeled form only to identify an unsupported
+    // filter/count candidate for diagnostics, never to execute it.
     private static Expr UnwrapSpread(Expr expression)
     {
         while (expression is Expr.SequenceSpread(var supplied))
@@ -459,6 +458,17 @@ internal static class SequencePipelineOptimizer
             return FilterCountRecognitionStatus.Fallback;
         }
 
+        // DOT-CALL PASSES A VALUE: a spread receiver (host-built; the fluent
+        // `R*.filter(P)` lowers to the plain call `filter(R*, P)`) supplies its
+        // items as ordinary argument slots, which changes the supplied argument
+        // count of the fixed `filter(collection, predicate)` signature — an
+        // ordinary arity error the generic evaluator must report.
+        if (syntax.Source is Expr.SequenceSpread)
+        {
+            RecordFilterCountFallback(diagnostics, diagnosticPlan, "spread receiver supplies ordinary argument slots");
+            return FilterCountRecognitionStatus.Fallback;
+        }
+
         // The probe consumes the ORIGINAL filter dot-edge node, so the
         // elaborated fact (the lexical-fallback identity) gates
         // fusion exactly as they gate generic dispatch.
@@ -477,11 +487,10 @@ internal static class SequencePipelineOptimizer
         // iterates `syntax.Source`. Doing it here — before any source evaluation —
         // is what enforces the no-double-evaluation invariant: every fallback
         // (unsupported shape, predicate resolution failure) happens while the
-        // source is still untouched, so the generic evaluator re-runs the source
-        // exactly once. Generic dot evaluation also evaluates the dot receiver
-        // (source) before resolving the filter predicate, so a predicate-resolution
-        // fallback here preserves the generic receiver-first error ordering: if the
-        // source would also fail, the generic re-run reports the source error first.
+        // source is still untouched, so the generic evaluator evaluates the source
+        // exactly once. Both spellings resolve the ordinary argument algorithms
+        // before evaluating their values, so a resolution fallback leaves error
+        // ordering to that same generic funnel.
         var predicateArgsR = services.ResolveArgumentAlgorithms(syntax.DotFilterArgs);
         if (predicateArgsR.IsError)
         {
@@ -595,12 +604,9 @@ internal static class SequencePipelineOptimizer
         out BuiltinRangeSourceSyntax rangeSource,
         out string fallbackReason)
     {
-        // Recognized plain sources are bare expressions (a spread filter
-        // argument is an ordinary arity error and never reaches this probe).
-        // A DOT receiver can still be a spread expression; spreading a range
-        // list into the receiver value re-groups the same items, so fusing on
-        // the peeled call stays value-equivalent there.
-        source = UnwrapSpread(source);
+        // Both callers reject spread slots before this probe: a spread supplies
+        // separate ordinary arguments, so it cannot be peeled into a collection
+        // argument merely because its operand is a range call.
 
         if (source is not Expr.Call(var function, var callArgs))
         {
@@ -659,11 +665,12 @@ internal static class SequencePipelineOptimizer
                     directRangeSource.Span));
             if (rangeR.IsError)
             {
-                // Plain call-item assembly evaluates ALL slots before inspecting the
-                // collection's retained error. Dot receiver failure returns earlier.
-                // The source error still wins, including over a later sticky limit.
-                if (preparation.Syntax.Form == FilterCountPipelineForm.PlainCountPlainFilter)
-                    _ = Evaluator.PrepareFilterPredicateArgument(preparation.Predicate, ctx, valEnv);
+                // Call-item assembly evaluates ALL slots before inspecting the
+                // collection's retained error — in BOTH spellings, because a dot
+                // receiver is the ordinary first argument of `filter(R, P)` (dot-call
+                // passes a value). The source error still wins, including over a
+                // later sticky limit.
+                _ = Evaluator.PrepareFilterPredicateArgument(preparation.Predicate, ctx, valEnv);
                 result = rangeR.Error;
                 return FilterCountRecognitionStatus.Error;
             }
@@ -682,6 +689,9 @@ internal static class SequencePipelineOptimizer
                 services.EvaluateDotReceiverIterationItems(preparation.Syntax.Source));
             if (sourceItemsR.IsError)
             {
+                // Same slot-assembly parity as the direct-range branch: the generic
+                // path prepares the predicate slot even after the receiver slot failed.
+                _ = Evaluator.PrepareFilterPredicateArgument(preparation.Predicate, ctx, valEnv);
                 result = sourceItemsR.Error;
                 return FilterCountRecognitionStatus.Error;
             }

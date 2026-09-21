@@ -1029,7 +1029,7 @@ X.order*
 
 Three things are intentionally **not** value boundaries and keep emitting multiple top-level items: root program output (`1, 2, 3` still shows three rows), explicit caller-site spread (`value*`), and the multi-slot loop state of `while`/`repeat` — a step's several output slots become the next iteration's separate state slots, and the finished loop hands its final slots to the surrounding context the same way (`Step.repeat(1, 0, 0)` with `Step = a + 1, b + 1` shows two root rows, while `R = Step.repeat(1, 0, 0)` captures them as the one value `(1, 1)`). Scalar/reduction builtins (`count`, `sum`, `avg`, `min`, `max`, `contains`, `first`, `last`, `reduce`) already return one value and are unchanged. A `map`/`reduce` callback must still return exactly one element; a multi-output callback body is an error, not a silently-grouped value.
 
-What a call returns is a separate question from how a dot-call receiver is handed to the callee's parameters. In an ordinary lexical dot call the receiver is one leading argument segment: a fixed parameter allocated that segment binds the receiver's one value, while a flat top-level collecting parameter allocated it consumes the receiver's evaluated supply instead (see [Dotted Receivers and Collecting Parameters](#dotted-receivers-and-collecting-parameters)). The value boundary described here is about what the call itself produces.
+What a call returns is a separate question from how a dot-call receiver is handed to the callee's parameters, and the answer there is the same kind of rule: **dot-call passes a value**. In an ordinary lexical dot call the receiver is one ordinary leading argument — `R.F(args)` is exactly `F(R, args)` — so a fixed parameter binds it whole, a collecting parameter collects it as one item, and only the spread marker (`R*.F(args)`, which is `F(R*, args)`) opens it (see [Dotted Receivers and Collecting Parameters](#dotted-receivers-and-collecting-parameters)). The value boundary described here is about what the call itself produces.
 
 ### Zero-Parameter Property Caching
 
@@ -1102,7 +1102,7 @@ Host-backed properties follow the same rule. Every independent evaluation starts
 
 A recursive read entered before any result is stored still evaluates the body. The first successful completion supplies the cache entry; reads already in progress finish with their own results and do not replace it.
 
-The guarantee concerns property-value reads: a bare `A` in value position, `(A)`, `A + 0`, a user call argument `F(A)`, and the receiver of a dotted collection builtin (`A.sum`, `A.count`) all read A's cached value. Passing a name as an ALGORITHM argument follows the receiving callable's rules instead, and every builtin VALUE slot demands the algorithm directly rather than reading the property: `if(true, A, 0)`, the direct-call collection arguments `sum(A)`, `count(A)`, `take(A, n)`, `first(A)`, `atoms(A)`, `range(A, A)`, a loop's initial state and `repeat` count, the `reduce` initial accumulator, and the `.string` receiver (`A.string`) each evaluate A's body again and neither read nor store its entry, while `if(true, (A), 0)`, `sum((A))`, and `(A).string` capture the property read and use A's cache. Where a property draws randomness or calls a host operation this is observable — `A.sum` reuses A's draw, `sum(A)` draws again — so read such a property through its cached spellings.
+The guarantee concerns property-value reads: a bare `A` in value position, `(A)`, `A + 0`, a user call argument `F(A)` (and its dotted spelling `A.F`, which is the same call), all read A's cached value. Passing a name as an ALGORITHM argument follows the receiving callable's rules instead, and every builtin VALUE slot demands the algorithm directly rather than reading the property: `if(true, A, 0)`, the collection arguments `sum(A)`, `count(A)`, `take(A, n)`, `first(A)`, `atoms(A)`, `range(A, A)` — in the dotted spelling exactly as in the written one, because `A.sum` IS `sum(A)` — a loop's initial state and `repeat` count, the `reduce` initial accumulator, and the `.string` receiver (`A.string`) each evaluate A's body again and neither read nor store its entry, while `if(true, (A), 0)`, `sum((A))`, `(A).sum`, and `(A).string` capture the property read and use A's cache. Where a property draws randomness or calls a host operation this is observable — `(A).sum` reuses A's draw, `sum(A)` and `A.sum` draw again — so read such a property through its cached spellings. (Whether a builtin's value slot should read the cache at all is a documented open design question; today the two spellings of a builtin call agree, and the captured spelling is the cached one.)
 
 A property body may produce several items, but property-style access is a value boundary: the caller observes them as one sequence value. Caller-site spread (`value*`) turns that value back into separate output rows:
 
@@ -1512,7 +1512,7 @@ Add(3, 7)      # 10
 
 Use direct multi-argument syntax, or put one scalar receiver before the dot and the remaining arguments after the property name, when a user-defined algorithm expects several fixed parameters.
 
-For that lexical fallback, `A.B(C, D)` allocates its arguments exactly like `B(A, C, D)`: the receiver is one leading argument segment, never a supply of `A`'s top-level values spread before `C` and `D`. This is a rule about the fallback, not an unconditional rewrite of dot syntax. Dot syntax is **property-first**: when `B` is a structural member of the receiver's algorithm, `A.B(C, D)` calls that member with `C` and `D` alone and no receiver is injected — even if a lexical `B` that could accept `(A, C, D)` is visible — and a written group receiver feeds a collecting parameter item by item (see [Dotted Receivers and Collecting Parameters](#dotted-receivers-and-collecting-parameters)):
+For that lexical fallback, `A.B(C, D)` assembles its arguments exactly like `B(A, C, D)`: the receiver is one ordinary leading argument, never a supply of `A`'s top-level values spread before `C` and `D` — write `A*.B(C, D)`, which is `B(A*, C, D)`, when you mean the items. This is a rule about the fallback, not an unconditional rewrite of dot syntax. Dot syntax is **property-first**: when `B` is a structural member of the receiver's algorithm, `A.B(C, D)` calls that member with `C` and `D` alone and no receiver is injected — even if a lexical `B` that could accept `(A, C, D)` is visible (see [Dotted Receivers and Collecting Parameters](#dotted-receivers-and-collecting-parameters) for how the fallback's receiver binds):
 
 <!-- spec:dot-call-structural-member-is-not-a-lexical-rewrite -->
 ```
@@ -1551,7 +1551,7 @@ Scale(1, 2, 3, 10)
 
 Both item-supplying call forms agree: `factor` binds `10` from the back, `*values` collects the three front slots as `values = [1, 2, 3]`, the body's `map` call materializes the mapped items as the one list value `[10, 20, 30]`, and the call boundary returns that single value unchanged (see [Calls Return One Value](#calls-return-one-value)). Caller-site spread such as `Scale(Arg*, 10)*` opens the result into the flat items `10`, `20`, `30`.
 
-An UNSPREAD structured argument is one collected slot, not an item supply: `Scale(Arg, 10)` (and the dotted `Arg.Scale(10)`, whose named receiver supplies its one stored value) binds `values = [Arg]` — a one-element list holding the whole sequence — so the numeric `map` callback fails on the sequence element. To supply a stored property's items, spread them (`Scale(Arg*, 10)`); a WRITTEN group receiver supplies its rows directly (`(1, 2, 3).Scale(10)` binds `values = [1, 2, 3]` — see [Dotted Receivers and Collecting Parameters](#dotted-receivers-and-collecting-parameters)). A lone collecting parameter such as `Helper(*values)` is the degenerate lone-collecting-binding case of the same item-supply binding (see [Collecting Explicit Parameters](#collecting-explicit-parameters)).
+An UNSPREAD structured argument is one collected slot, not an item supply: `Scale(Arg, 10)` (and the dotted `Arg.Scale(10)`, which is the same call) binds `values = [Arg]` — a one-element list holding the whole sequence — so the numeric `map` callback fails on the sequence element. To supply a property's items, spread them: `Scale(Arg*, 10)`, or the fluent `Arg*.Scale(10)`, which is `Scale(Arg*, 10)`. A written group receiver is one value like any other receiver (`(1, 2, 3).Scale(10)` binds `values = [(1, 2, 3)]`; `(1, 2, 3)*.Scale(10)` binds `values = [1, 2, 3]` — see [Dotted Receivers and Collecting Parameters](#dotted-receivers-and-collecting-parameters)). A lone collecting parameter such as `Helper(*values)` is the degenerate lone-collecting-binding case of the same item-supply binding (see [Collecting Explicit Parameters](#collecting-explicit-parameters)).
 
 **Resolution rule:** KatLang first checks whether the property name exists as a structural property of the target algorithm. If found, it calls that property. If not found, it falls back to the same callable resolution a plain call would use, with the receiver as the leading argument. The rule applies at every level of a chained dot expression: a receiver that is itself an argumentless dot access such as `Lib.Sub` is navigated to `Sub`'s algorithm first, so `Lib.Sub.Q` reads `Sub`'s own `Q` whenever `Sub` has one (see [Chained Dot Access](#chained-dot-access)).
 
@@ -1724,7 +1724,7 @@ Repeated markers use ordinary weight arithmetic. `a~~.t` is two postfix markers 
 
 Grace still applies only to **one bare name occurrence**. Consequently `(x + y)~.t`, `f(x)~.t`, `[x, y]~.t`, `5~.t`, and `a~.t~.u` reject because postfix Grace would decorate a compound receiver at the failing edge. By contrast, `(x + y).~t` is valid: its prefix Grace decorates the bare fallback name `t`, not the receiver. Ordinary ungraced dot retains full receiver generality (`(x + y).t` and `(1, 2, 3).Mean` are unchanged).
 
-Everything else is ordinary DotCall behavior: `.string` (`v~.string` with a free `v`), dotted sequence builtins (`S~.count` with a free `S`), and receiver-segment supply all use the same runtime paths as their ungraced forms. Prefix member Grace on a member that can never join the implicit parameters — the dot-only `.string` intrinsic (`v.~string`) or a builtin such as `count` in `S.~count` — is rejected as ineffective, like any marker on an already-bound name. Chaining an ordinary dot afterward is fine — `a~.t.string` has the same executable body as `a.t.string`.
+Everything else is ordinary DotCall behavior: `.string` (`v~.string` with a free `v`), dotted sequence builtins (`S~.count` with a free `S`), and the receiver-as-leading-argument rule all use the same runtime paths as their ungraced forms. Prefix member Grace on a member that can never join the implicit parameters — the dot-only `.string` intrinsic (`v.~string`) or a builtin such as `count` in `S.~count` — is rejected as ineffective, like any marker on an already-bound name. Chaining an ordinary dot afterward is fine — `a~.t.string` has the same executable body as `a.t.string`.
 
 The markers follow the marker attachment law: postfix Grace is written directly attached to its name (`a~.t`, or `a~ .t` — the space before a same-line dot is ordinary whitespace before a postfix continuation), while a detached `a ~ .t` or `a ~.t` is an error rather than Grace on `a`. Prefix member Grace must begin directly after the dot and be attached to the member name (`a.~t`; `a.~ t` is an error). A grace-marked target is not a valid `open` target: `open M~.C` is rejected because `open` consumes structural algorithm identity and has no parameter inference to reorder.
 
@@ -2146,7 +2146,7 @@ Forward([1, 2])
 
 `Forward(1, 2)` collects `[1, 2]`, the spread re-supplies `1` and `2`, and `Target` re-collects the same list — the round trip is exact, including for the empty call (`Forward()` is `[]`) and structured arguments (`Forward([1, 2])` collects the list as one element and forwards it as one element). The [fluent supply chain](#spread-with-the-postfix-star) writes the same forwarding left to right: `Forward(*items) = items*.Target` is exactly equivalent to `Forward(*items) = Target(items*)` — the spread items become the arguments of the lexical call `Target(...)`. Passing the collected list WITHOUT spread passes one list argument: with `TargetOne(item) = item`, `ForwardAsOne(*items) = TargetOne(items)` gives `ForwardAsOne(1, 2)` → `[1, 2]` — the whole collected list bound to the fixed parameter. The same works for feeding collection builtins: `Qmean(*args) = args.sum / args.count` divides the sum of the collected list by its element count, so `Qmean(2, 4, 6)` is `4`.
 
-Ordinary (non-collecting) parameters bind the receiver value itself, while a collecting parameter collects a NAMED property receiver as ONE list element (a stored receiver supplies its one value) — the two shapes are observably different:
+Ordinary (non-collecting) parameters bind the receiver value itself, while a collecting parameter collects the receiver as ONE list element (dot-call passes a value: `Arg.CollectMany` is `CollectMany(Arg)`) — the two shapes are observably different:
 
 ```
 Arg = 1, 2, 3
@@ -2164,18 +2164,18 @@ Arg.CollectMany.count
 1
 ```
 
-`Arg.Collect` binds `list = (1, 2, 3)`, so `count` opens the sequence (3 items); `Arg.CollectMany` binds `list = [(1, 2, 3)]` — a named property receiver supplies its one stored value — so its count is 1. To supply the stored items instead, spread them: the fluent `Arg*.CollectMany.count` and the grouped receiver `(Arg*).CollectMany.count` are both `3`.
+`Arg.Collect` binds `list = (1, 2, 3)`, so `count` opens the sequence (3 items); `Arg.CollectMany` binds `list = [(1, 2, 3)]` — the receiver is the one written argument of `CollectMany(Arg)` — so its count is 1. To supply the stored items instead, spread them: the fluent `Arg*.CollectMany.count` is `CollectMany(Arg*).count`, `3`. Parentheses around the spread capture it back into one value, so `(Arg*).CollectMany.count` is `1` again, exactly like `CollectMany((Arg*))`.
 
 #### Dotted Receivers and Collecting Parameters
 
-A **written group receiver** is different: the receiver of an ordinary dot call's lexical fallback is one leading segment whose evaluated top-level supply a flat top-level collecting parameter consumes, so writing the rows inline supplies them individually. This is what makes dotted aggregates read naturally:
+**Dot-call passes a value. Spread opens a value.** For the extension-call fallback, `R.F(args)` is exactly `F(R, args)`: the receiver is one ordinary leading argument whatever it is — a property, a written group, a brace block, a list, a call result, a selection — so a collecting parameter collects it as ONE item. To hand the receiver's items to the collector, spread the receiver: `R*.F(args)` is `F(R*, args)`. This is what makes dotted aggregates read naturally:
 
-<!-- spec:dot-receiver-segment-supply -->
+<!-- spec:dot-receiver-passes-a-value -->
 ```
 Mean(*Vector) = Vector.sum / Vector.count
 
 Mean(1, 2, 3)
-(1, 2, 3).Mean
+(1, 2, 3)*.Mean
 ```
 
 **Results:**
@@ -2184,9 +2184,9 @@ Mean(1, 2, 3)
 2
 ```
 
-`(1, 2, 3).Mean` supplies the written rows `1`, `2`, `3` to the collector (`Vector = [1, 2, 3]`), exactly like the flat call `Mean(1, 2, 3)`. The receiver is still ONE segment for arity and for fixed parameters: with `F(first, *middle, last)`, `(1, 2).F(9)` binds `first = (1, 2)` whole (fixed parameters bind the receiver's one captured value), and `(1, 2).F` is an arity error — the receiver's item count never satisfies fixed-parameter arity. An extra written boundary survives as one item (`((1, 2)).CollectMany` collects `[(1, 2)]`), the empty receiver supplies nothing (`().CollectMany` collects `[]`), and exact lists stay opaque (`[1, 2].CollectMany` collects `[[1, 2]]`). Direct calls are unchanged: a written argument slot always reifies to one value, so `CollectMany((1, 2, 3))` still collects `[(1, 2, 3)]`. The [graced source](#grace-with-dot-calls) `S~.Mean` is the same ordinary dot edge with frontend-only Grace on `S`, so it keeps the same one-segment receiver behavior and raw-supply rule (a written group is not a valid postfix-Grace operand).
+`(1, 2, 3)*.Mean` spreads the written group into the three argument slots of `Mean(1, 2, 3)` (`Vector = [1, 2, 3]`). Without the star, `(1, 2, 3).Mean` is `Mean((1, 2, 3))`: the group is one sequence value, the collector collects `Vector = [(1, 2, 3)]`, and the numeric `sum` fails on the sequence element. The receiver is always ONE argument for arity and for fixed parameters: with `F(first, *middle, last)`, `(1, 2).F(9)` binds `first = (1, 2)` whole, `(1, 2).F` is an arity error — the receiver's item count never satisfies fixed-parameter arity — and `(1, 2)*.F` binds `first = 1`, `last = 2`. An extra written boundary changes nothing (`((1, 2)).CollectMany` collects `[(1, 2)]`, like `(1, 2).CollectMany`), the empty receiver is one visible empty value (`().CollectMany` collects `[()]`, exactly like `CollectMany(())`), and exact lists stay opaque (`[1, 2].CollectMany` collects `[[1, 2]]`; `[1, 2]*.CollectMany` collects `[1, 2]`). The [graced source](#grace-with-dot-calls) `S~.Mean` is the same ordinary dot edge with frontend-only Grace on `S`, so it keeps the same one-argument receiver rule (a written group is not a valid postfix-Grace operand).
 
-A named receiver follows the same segment rule, and that rule is what decides the named empty case:
+Because the receiver is an ordinary argument, its origin never matters — a property holding `()` is passed exactly like the literal:
 
 ```
 E = ()
@@ -2194,15 +2194,17 @@ CollectMany(*items) = items
 
 E.CollectMany
 CollectMany(E)
+E*.CollectMany
 ```
 
 **Results:**
 ```
-[]
 [()]
+[()]
+[]
 ```
 
-`E` returns the value `()` at every ordinary boundary — `E.count` is `0`, and `(1, E(), 2)` keeps it as a visible item. In `E.CollectMany` the receiver segment carries that evaluated value together with its supply, which for `()` is zero items, and the collecting parameter allocated the segment consumes the supply: `items = []`. In the direct call `CollectMany(E)` the written argument slot reifies to the one value `()`, so `items = [()]`. A fixed parameter allocated the receiver segment binds the value instead — `Collect(list) = list` gives `E.Collect` the value `()` — and a collection builtin's fixed `collection` parameter binds it too (`E.count` is `count(E)`, which is `0`). The consumption is specific to a collecting parameter allocated the receiver segment: it is not a rule about names, and it is not the property returning nothing.
+`E` returns the value `()` at every ordinary boundary — `E.count` is `0`, and `(1, E(), 2)` keeps it as a visible item. `E.CollectMany` and `CollectMany(E)` are the same call, and a written argument holding `()` is one visible item, so both collect `items = [()]`; only the spread `E*.CollectMany` (that is, `CollectMany(E*)`) opens the empty value into zero slots, `items = []`. A fixed parameter binds the value — `Collect(list) = list` gives `E.Collect` the value `()` — and a collection builtin's fixed `collection` parameter binds it too (`E.count` is `count(E)`, which is `0`). A property's value count of zero is a fact about the value boundary, never a missing argument.
 
 A parameter list may contain fixed and collecting parameters. When a parameter list has two or more parameters and one of them is a collecting parameter, the collecting parameter may appear at the front, middle, or end. Fixed parameters before it bind from the front, fixed parameters after it bind from the back, and the collecting parameter collects the remaining middle slots (possibly zero) as one list. The supplied items are the call argument slots: a bare argument supplies one slot (a stored sequence value is one slot, not opened), and only an explicit spread opens a sequence value into separate slots:
 
@@ -3998,7 +4000,7 @@ Every form below is decided purely syntactically; the receiver of the supply dec
 | `A*.F` | Supply `A*`'s items to `F` — exactly `F(A*)` |
 | `A*.F*` | Call `F(A*)`, then spread `F`'s one result value |
 | `A**.F` | Repeated (capture-law) spread supplies the arguments — exactly `F(A**)` |
-| `(A*).F` | Capture the spread supply as one sequence value, then dot-call `F` on that value |
+| `(A*).F` | Capture the spread supply as one sequence value, then dot-call `F` on that one value — exactly `F((A*))` |
 | `A*:0` | Invalid — selection cannot be applied directly to an item supply (targeted parse error) |
 | `(A*):0` | Capture the spread supply into one sequence value, then select from it |
 
@@ -4239,7 +4241,7 @@ F(A*)
 6
 ```
 
-`F(A)` without the spread is an arity error (one argument for three parameters), and `F([]*)` supplies zero arguments. An ordinary dotted call `A.F(9)` passes the whole list `A` as one leading receiver segment. The graced source `A~.F(9)` is the same ordinary dot edge with frontend-only postfix Grace on `A`, so it keeps the same receiver segment and list opacity.
+`F(A)` without the spread is an arity error (one argument for three parameters), and `F([]*)` supplies zero arguments. An ordinary dotted call `A.F(9)` passes the whole list `A` as one leading argument — it is `F(A, 9)`. The graced source `A~.F(9)` is the same ordinary dot edge with frontend-only postfix Grace on `A`, so it keeps the same one-argument receiver and list opacity.
 
 Multi-target **deconstruction**, by contrast, is an unpacking receiver: a right-hand side that is exactly one list value opens the list and matches its elements — the same rule that already opens a lone sequence value, and the same bindings the explicit spread `x, y, z = [1, 2, 3]*` produces. (The two written forms coincide except for one exotic shape: a singleton list whose lone element is itself a sequence or list, such as `[(1, 2)]`, where the spread form re-groups through a capture boundary and opens one level further.)
 

@@ -13,10 +13,11 @@ open KatLang (resolve param num)
 -- boundary (`Result.valueCount`) — `()` emits zero values, everything else
 -- (a sequence value, an exact list, a scalar) emits ONE. The selected value's
 -- origin is forgotten, so every count-sensitive consumer (a lone root row, a
--- collecting dotted receiver segment, a loop-step output row, the map/reduce
--- single-element checks, a callback parameter) sees exactly what it would see
--- for a property holding the same value. Only the spread marker `*` OPENS a
--- selected sequence or list — one boundary, per the ordinary spread law.
+-- collecting dotted receiver — the ordinary leading argument, since dot-call
+-- passes a value — a loop-step output row, the map/reduce single-element
+-- checks, a callback parameter) sees exactly what it would see for a property
+-- holding the same value. Only the spread marker `*` OPENS a selected
+-- sequence or list — one boundary, per the ordinary spread law.
 --
 -- Lean: `Result.select?` + the `.index` arm of `evalCounted`,
 -- `evalFirstCounted`/`evalLastCounted`, `countedSequenceCallbackItem`; laws in
@@ -47,12 +48,15 @@ def selectionReduceItemAlg : Algorithm :=
   alg ["x", "acc"] [] [] [.param "x"]
 
 /-- The semantic table of the rule: (selected value, `selection.Coll`,
-    `(selection)*.Coll`). `()` and `[]` are deliberately distinct rows: an
-    empty SEQUENCE value emits zero items at a value boundary while an empty
-    LIST is one exact value. -/
+    `selection*.Coll`). `()` and `[]` are deliberately distinct rows: an
+    empty SEQUENCE value emits zero values at a value boundary (so it spreads
+    to nothing) while an empty LIST is one exact value; both are ONE collected
+    item when passed unspread, because dot-call passes a value (`().Coll` is
+    `[()]`, exactly like the written argument `Coll(())`) and only the spread
+    marker opens a receiver. -/
 def selectionTable : List (KatLang.Expr × Result × Result) :=
   [ (.emptySequence 0,
-      .listValue [],
+      .listValue [.sequenceValue []],
       .listValue []),
     (.num 1,
       .listValue [.atom 1],
@@ -120,22 +124,32 @@ def sameOutcome {A : Type} [BEq A] : Except Error A -> Except Error A -> Bool
   | _, _ => false
 
 -- Through the collecting dotted receiver: `selection.Coll` keeps the selected
--- value whole (one item; a selected `()` supplies zero items, a selected `[]`
--- one exact list), `(selection)*.Coll` / `selection*.Coll` open exactly one
--- boundary, and the direct call `Coll(selection)` passes one written slot
--- exactly like `Coll(V)` on a property holding the same value.
+-- value whole (ONE collected item — a selected `()` and a selected `[]`
+-- alike), and it is exactly the written call `Coll(selection)` (dot-call
+-- passes a value), which passes the same one slot as `Coll(V)` on a property
+-- holding the same value; `selection*.Coll` / `Coll(selection*)` open exactly
+-- one boundary, while the CAPTURE of the spread `(selection*).Coll` is one
+-- value again.
 def everySelectionFormKeepsTheSelectedValueWholeAndSpreadOpensIt : Bool :=
   selectionTable.all fun (selected, expectedColl, expectedSpreadColl) =>
     (selectionForms selected).all fun (collection, selection) =>
       resultIs expectedColl
         (runSelectionProgram collection [] (.dotCall selection "Coll" none)) &&
+      resultIs expectedColl
+        (runSelectionProgram collection [] (.call (resolve "Coll") [selection])) &&
+      resultIs expectedColl
+        (runSelectionProgram collection [("V", alg [] [] [] [selected])] (.call (resolve "Coll") [resolve "V"])) &&
+      resultIs expectedColl
+        (runSelectionProgram collection [("V", alg [] [] [] [selected])] (.dotCall (resolve "V") "Coll" none)) &&
       resultIs expectedSpreadColl
-        (runSelectionProgram collection [] (.dotCall (.capture [.sequenceSpread selection]) "Coll" none)) &&
+        (runSelectionProgram collection [] (.dotCall (.sequenceSpread selection) "Coll" none)) &&
       resultIs expectedSpreadColl
         (runSelectionProgram collection [] (.call (resolve "Coll") [.sequenceSpread selection])) &&
-      sameOutcome
-        (runSelectionProgram collection [("V", alg [] [] [] [selected])] (.call (resolve "Coll") [selection]))
-        (runSelectionProgram collection [("V", alg [] [] [] [selected])] (.call (resolve "Coll") [resolve "V"]))
+      (match expectedSpreadColl with
+       | .listValue items =>
+           resultIs (.listValue [Result.normalize (Result.sequenceValue items)])
+             (runSelectionProgram collection [] (.dotCall (.capture [.sequenceSpread selection]) "Coll" none))
+       | _ => false)
 
 #guard everySelectionFormKeepsTheSelectedValueWholeAndSpreadOpensIt
 
@@ -147,8 +161,12 @@ def storedSelectionBehavesExactlyLikeTheBareSelection : Bool :=
       let stored := [("X", alg [] [] [] [selection]), ("Id", selectionIdAlg)]
       resultIs expectedColl
         (runSelectionProgram collection stored (.dotCall (resolve "X") "Coll" none)) &&
+      resultIs expectedColl
+        (runSelectionProgram collection stored (.call (resolve "Coll") [resolve "X"])) &&
       resultIs expectedSpreadColl
         (runSelectionProgram collection stored (.call (resolve "Coll") [.sequenceSpread (resolve "X")])) &&
+      resultIs expectedSpreadColl
+        (runSelectionProgram collection stored (.dotCall (.sequenceSpread (resolve "X")) "Coll" none)) &&
       resultIs expectedColl
         (runSelectionProgram collection stored (.dotCall (.call (resolve "Id") [selection]) "Coll" none))
 
@@ -226,9 +244,9 @@ def mapTransformAndReduceStepSeeTheSelectionAsOneValue : Bool :=
 #guard mapTransformAndReduceStepSeeTheSelectionAsOneValue
 
 -- A higher-order callback item is a selected value with the same boundary:
--- inside the callback it is ONE value on every count-sensitive path (a
--- collecting dotted receiver `x.Coll`, a bare `x` output row, the
--- single-element checks), and only an explicit spread `(x)*` opens it.
+-- inside the callback it is ONE value on every count-sensitive path (the
+-- collecting dotted receiver `x.Coll` — i.e. `Coll(x)` — a bare `x` output
+-- row, the single-element checks), and only an explicit spread `(x)*` opens it.
 def callbackItemIsASelectedValueWithTheSameBoundary : Bool :=
   selectionTable.all fun (selected, expectedColl, expectedSpreadColl) =>
     let collection := alg [] [] [] [.capture [selected, .num 9]]   -- A = (V, 9)
@@ -258,9 +276,12 @@ def callbackItemIsASelectedValueWithTheSameBoundary : Bool :=
 #guard callbackItemIsASelectedValueWithTheSameBoundary
 
 -- The motivating examples: `()` selected from a sequence, read from a
--- property, returned by a call, or chosen by `if` is simply `()` — zero items
--- on a collecting receiver — and no route preserves "one element was selected";
--- `[]` selected through any route stays one exact list item.
+-- property, returned by a call, or chosen by `if` is simply `()` — ONE
+-- collected item when passed (dot-call passes a value: `().Coll` is `[()]`
+-- like the written `Coll(())`) and zero items when spread — and no route
+-- preserves "one element was selected" or turns the value-boundary count 0
+-- into a missing argument; `[]` selected through any route stays one exact
+-- list item.
 def emptySelectedThroughAnyRouteIsPlainEmpty : Bool :=
   let props := [("Coll", selectionCollAlg),
                 ("A", alg [] [] [] [.capture [.emptySequence 0, .num 1]]),
@@ -270,6 +291,7 @@ def emptySelectedThroughAnyRouteIsPlainEmpty : Bool :=
                 ("L", alg [] [] [] [.capture [.listLiteral [], .num 1]])]
   let run (out : KatLang.Expr) := runResult (.algorithmExpr (algPrivate [] [] props [out]))
   let coll (receiver : KatLang.Expr) := run (.dotCall receiver "Coll" none)
+  let written (argument : KatLang.Expr) := run (.call (resolve "Coll") [argument])
   [ coll (.index (resolve "A") (.num 0)),
     coll (.call (resolve "first") [resolve "A"]),
     coll (.index (resolve "B") (.num 1)),
@@ -277,11 +299,22 @@ def emptySelectedThroughAnyRouteIsPlainEmpty : Bool :=
     coll (resolve "E"),
     coll (.call (resolve "Fz") [.num 1]),
     coll (.call (resolve "if") [.boolLiteral true, .emptySequence 0, .num 1]),
-    run (.call (resolve "Coll") [.sequenceSpread (.index (resolve "A") (.num 0))]),
-    run (.call (resolve "Coll") [.sequenceSpread (.call (resolve "first") [resolve "A"])]),
-    run (.call (resolve "Coll") [.sequenceSpread (.index (resolve "L") (.num 0))]) ].all (resultIs (.listValue [])) &&
+    coll (.emptySequence 0),
+    written (.index (resolve "A") (.num 0)),
+    written (.call (resolve "first") [resolve "A"]),
+    written (resolve "E"),
+    written (.call (resolve "Fz") [.num 1]),
+    written (.emptySequence 0) ].all (resultIs (.listValue [.sequenceValue []])) &&
+  [ written (.sequenceSpread (.index (resolve "A") (.num 0))),
+    written (.sequenceSpread (.call (resolve "first") [resolve "A"])),
+    written (.sequenceSpread (resolve "E")),
+    written (.sequenceSpread (.emptySequence 0)),
+    coll (.sequenceSpread (.index (resolve "A") (.num 0))),
+    coll (.sequenceSpread (resolve "E")),
+    written (.sequenceSpread (.index (resolve "L") (.num 0))) ].all (resultIs (.listValue [])) &&
   [ coll (.index (resolve "L") (.num 0)),
-    coll (.call (resolve "first") [resolve "L"]) ].all (resultIs (.listValue [.listValue []]))
+    coll (.call (resolve "first") [resolve "L"]),
+    written (.index (resolve "L") (.num 0)) ].all (resultIs (.listValue [.listValue []]))
 
 #guard emptySelectedThroughAnyRouteIsPlainEmpty
 

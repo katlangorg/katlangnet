@@ -973,23 +973,22 @@ public class StarSyntaxTests
         //   A*.F   — the spread stays a SUPPLY. The fluent dot lowers to the
         //            lexical call `F(A*)`, so the items become argument SLOTS.
         //   (A*).F — the parentheses are a CAPTURE receiver
-        //            (`capture : Supply -> Value`): one leading argument
-        //            SEGMENT whose value is the captured sequence and whose
-        //            raw supply is the capture's row items.
+        //            (`capture : Supply -> Value`): ONE ordinary leading
+        //            argument whose value is the captured sequence — dot-call
+        //            passes a value, so `(A*).F` is `F((A*))`.
         //
-        // On a collecting callable they coincide by the general segment rule:
-        // the direct call collects the spread SLOTS, while the capture
-        // receiver's segment is allocated to the flat top-level collecting
-        // parameter, which consumes the segment's SUPPLY — the same items. No
-        // callee inspection is involved on either route...
+        // On a collecting callable the direct call collects the spread SLOTS,
+        // while the capture receiver is collected as ONE item. No callee
+        // inspection is involved on either route...
         const string collecting = "F(*v) = v\nA = (1, 2)\n";
         Assert.Equal("[1, 2]", Display(collecting + "A*.F"));
-        Assert.Equal("[1, 2]", Display(collecting + "(A*).F"));
+        Assert.Equal("[1, 2]", Display(collecting + "F(A*)"));
+        Assert.Equal("[(1, 2)]", Display(collecting + "(A*).F"));
+        Assert.Equal("[(1, 2)]", Display(collecting + "F((A*))"));
 
-        // ...but they are decisively different at a FIXED-arity builtin,
-        // which is the observation that pins the distinction: three argument
-        // slots do not fit `count(collection)`, while the captured sequence
-        // value is exactly one collection argument.
+        // ...and they are equally different at a FIXED-arity builtin: three
+        // argument slots do not fit `count(collection)`, while the captured
+        // sequence value is exactly one collection argument.
         const string counted = "A = (1, 2, 3)\n";
         Assert.Equal("3", Display(counted + "(A*).count"));
         var fluentError = Assert.Single(FailureErrors(counted + "A*.count"));

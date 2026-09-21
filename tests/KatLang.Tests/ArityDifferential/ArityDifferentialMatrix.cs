@@ -324,19 +324,18 @@ public static class ArityDifferentialMatrix
 
         if (m == SpreadMultiplicity.Zero)
         {
-            // T9: dotted zero-arg on a collecting callee — the receiver is one
-            // leading segment; the collector allocated the segment consumes
-            // its evaluated top-level supply. A stored property receiver
-            // supplies its value-boundary count: one item, or zero for `()`.
-            var segmentSupply = StoredReceiverSegmentSupply(shape.Value);
-            var collected = Collect(segmentSupply);
+            // T9: dotted zero-arg on a collecting callee — dot-call passes a
+            // value: `V.Gather` is `Gather(V)`, so the collector collects the
+            // one stored value, `()` included (a written non-spread slot is one
+            // argument value).
+            var collected = Collect([shape.Value]);
             b.Add("dot-collect", ReceiverKind.DottedCall, BindingForm.Collect, shape, m,
                 $"V = {shape.Literal}\n{GatherDef}\nV.Gather",
-                ReceiverLaw.COLLECTOR_CONSUMES_ALLOCATED_SEGMENT_SUPPLY,
+                ReceiverLaw.DOTTED_CALL_EQUALS_DIRECT_REWRITE,
                 Ok(collected, 1),
                 baseTrace.Append(
-                    $"receiver segment: value {shape.Value.Neutral}, stored-value supply {SupplyNeutral(segmentSupply)} (valueCount view); "
-                    + $"collector consumes the supply: {collected.Neutral}"));
+                    $"V.Gather = Gather(V): the receiver is ONE written slot holding {shape.Value.Neutral}; "
+                    + $"collect([V]) = {collected.Neutral}"));
 
             // T12: dotted fixed-arity with an extra argument.
             var pair = OracleVal.List(shape.Value, OracleVal.Atom(9));
@@ -346,7 +345,7 @@ public static class ArityDifferentialMatrix
                 Ok(pair, 1),
                 baseTrace.Append($"V.Pair2(9) = Pair2(V, 9) -> {pair.Neutral} (receiver is ONE leading argument boundary)"));
 
-            AddDotReceiverSegmentCases(b, shape);
+            AddDotWrittenReceiverCases(b, shape);
             return;
         }
 
@@ -373,123 +372,125 @@ public static class ArityDifferentialMatrix
                 .Append($"(V{stars}) captures the supply as ONE value {captured.Neutral}")
                 .Append($"fixed receiver parameters keep the receiver one boundary: Pair2({captured.Neutral}, 9) -> {groupedPair.Neutral}"));
 
-        // T11b: grouped spread receiver on a collecting callee — the general
-        // segment rule: the written capture receiver's raw supply is the
-        // spread chain's items, and the collector allocated the segment
-        // consumes exactly that supply. Same outcome as the fluent form, with
-        // no callee inspection and no spelling recognition.
+        // T11b: grouped spread receiver on a collecting callee — the capture
+        // is ONE value and dot-call passes a value, so `(V*).Gather` is
+        // `Gather((V*))`: the collector collects the captured sequence as one
+        // item. Only the fluent form (T10) supplies the items; no callee
+        // inspection and no spelling recognition is involved.
+        var groupedCollected = Collect([captured]);
         b.Add("dot-grouped-collecting", ReceiverKind.DottedCall, BindingForm.Collect, shape, m,
             $"V = {shape.Literal}\n{GatherDef}\n(V{stars}).Gather",
-            ReceiverLaw.COLLECTOR_CONSUMES_ALLOCATED_SEGMENT_SUPPLY,
-            Ok(fluentCollected, 1),
+            ReceiverLaw.GROUPED_SPREAD_RECEIVER_CAPTURES,
+            Ok(groupedCollected, 1),
             baseTrace
-                .Append($"(V{stars}) is one receiver segment: value {Capture(supply).Neutral}, raw row supply {SupplyNeutral(supply)}")
-                .Append($"the collector allocated the segment consumes the supply: collect(supply) = {fluentCollected.Neutral}"),
-            notes: "General segment rule (no receiver-spelling recognition, no callee inspection): "
-                + "a written group receiver supplies its raw row emission to an allocated collector.");
+                .Append($"(V{stars}) captures the supply as ONE value {captured.Neutral}")
+                .Append($"(V{stars}).Gather = Gather((V{stars})): collect([{captured.Neutral}]) = {groupedCollected.Neutral}"),
+            notes: "Dot-call passes a value: a capture receiver is one collected item; "
+                + "the fluent spread receiver is the item-supplying spelling.");
     }
 
     /// <summary>
-    /// T13 family: WRITTEN inline receiver segments at zero spread
-    /// multiplicity — the general segment rule observed from every side:
-    /// inline group supply consumption, nested-group boundary preservation,
-    /// empty receiver, exact-list opacity, and allocation-before-consumption
-    /// with fixed prefix/suffix parameters.
+    /// T13 family: WRITTEN receivers at zero spread multiplicity — dot-call
+    /// passes a value, observed from every side: an inline group, a nested
+    /// group, an exact-list literal, and the empty group are each ONE written
+    /// slot (one argument value), a fixed prefix/suffix parameter binds that
+    /// value whole, and a collecting parameter collects it as one item.
     /// </summary>
-    private static void AddDotReceiverSegmentCases(Builder b, ValueShape shape)
+    private static void AddDotWrittenReceiverCases(Builder b, ValueShape shape)
     {
         var m = SpreadMultiplicity.Zero;
 
-        // T13a: inline group receiver — the capture's raw row supply reaches
-        // the collector. Each non-spread written row is ONE slot even when its
-        // value is the empty sequence (the visible-empty row rule,
-        // RootNonSpreadRow), so the stored-V row contributes V itself.
+        // T13a: inline group receiver — the group is one captured sequence
+        // value (each non-spread written row is one row of the capture, the
+        // visible-empty row rule included), and `(V, 9).Gather` is
+        // `Gather((V, 9))`: the collector collects that one value.
         var inlineSupply = new[] { shape.Value, OracleVal.Atom(9) };
-        var inlineCollected = Collect(inlineSupply);
+        var innerCaptured = Capture(inlineSupply);
+        var inlineCollected = Collect([innerCaptured]);
         b.Add("dot-inline-collect", ReceiverKind.DottedCall, BindingForm.Collect, shape, m,
             $"V = {shape.Literal}\n{GatherDef}\n(V, 9).Gather",
-            ReceiverLaw.COLLECTOR_CONSUMES_ALLOCATED_SEGMENT_SUPPLY,
+            ReceiverLaw.DOTTED_CALL_EQUALS_DIRECT_REWRITE,
             Ok(inlineCollected, 1),
             [
                 $"V = {shape.Value.Neutral} (stored canonical value)",
-                $"inline receiver (V, 9): raw row supply {SupplyNeutral(inlineSupply)} (each non-spread row is one visible slot)",
-                $"collector consumes the segment supply: {inlineCollected.Neutral}",
+                $"inline receiver (V, 9): rows {SupplyNeutral(inlineSupply)} capture to ONE value {innerCaptured.Neutral}",
+                $"(V, 9).Gather = Gather((V, 9)): collect([{innerCaptured.Neutral}]) = {inlineCollected.Neutral}",
             ]);
 
-        // T13b: nested group receiver — the inner written group reifies to ONE
-        // item of the outer supply; nesting adds exactly one boundary.
-        var innerCaptured = Capture(inlineSupply);
-        var nestedCollected = Collect([innerCaptured]);
+        // T13b: nested group receiver — redundant grouping around one written
+        // value is the same value (a singleton capture is its item), so the
+        // nested spelling collects exactly what the inline group collects.
         b.Add("dot-nested-collect", ReceiverKind.DottedCall, BindingForm.Collect, shape, m,
             $"V = {shape.Literal}\n{GatherDef}\n((V, 9)).Gather",
-            ReceiverLaw.COLLECTOR_CONSUMES_ALLOCATED_SEGMENT_SUPPLY,
-            Ok(nestedCollected, 1),
+            ReceiverLaw.DOTTED_CALL_EQUALS_DIRECT_REWRITE,
+            Ok(inlineCollected, 1),
             [
-                $"inner group (V, 9) reifies to ONE outer row item {innerCaptured.Neutral}",
-                $"outer receiver supply [{innerCaptured.Neutral}]; collector consumes it: {nestedCollected.Neutral}",
+                $"inner group (V, 9) is ONE value {innerCaptured.Neutral}; the outer singleton capture is that value",
+                $"((V, 9)).Gather = Gather(((V, 9))): collect([{innerCaptured.Neutral}]) = {inlineCollected.Neutral}",
             ]);
 
-        // T13c: exact-list literal receiver — a list is one opaque supply item
-        // (only explicit spread opens it), so the collector collects the list.
+        // T13c: exact-list literal receiver — a list is one opaque value (only
+        // explicit spread opens it), so the collector collects the list.
         var listReceiver = OracleVal.List(shape.Value, OracleVal.Atom(9));
         var listCollected = Collect([listReceiver]);
         b.Add("dot-list-literal-collect", ReceiverKind.DottedCall, BindingForm.Collect, shape, m,
             $"V = {shape.Literal}\n{GatherDef}\n[V, 9].Gather",
-            ReceiverLaw.COLLECTOR_CONSUMES_ALLOCATED_SEGMENT_SUPPLY,
+            ReceiverLaw.DOTTED_CALL_EQUALS_DIRECT_REWRITE,
             Ok(listCollected, 1),
             [
-                $"list-literal receiver [V, 9] = {listReceiver.Neutral}: one value, supply of one opaque item",
-                $"collect([{listReceiver.Neutral}]) = {listCollected.Neutral} (lists never open implicitly)",
+                $"list-literal receiver [V, 9] = {listReceiver.Neutral}: one value",
+                $"[V, 9].Gather = Gather([V, 9]): collect([{listReceiver.Neutral}]) = {listCollected.Neutral} (lists never open implicitly)",
             ]);
 
-        // T13d: allocation before consumption, fixed prefix — the receiver
-        // segment allocated to the FIXED first parameter binds its one
-        // captured value; its supply view is ignored.
+        // T13d: fixed prefix — the receiver is the first written slot, so the
+        // FIXED first parameter binds its one captured value.
         var prefixResult = OracleVal.List(innerCaptured, OracleVal.List(), OracleVal.Atom(2));
-        b.Add("dot-seg-fixed-prefix", ReceiverKind.DottedCall, BindingForm.Capture, shape, m,
+        b.Add("dot-written-fixed-prefix", ReceiverKind.DottedCall, BindingForm.Capture, shape, m,
             $"V = {shape.Literal}\n{Mid3Def}\n(V, 9).Mid3(2)",
-            ReceiverLaw.COLLECTOR_CONSUMES_ALLOCATED_SEGMENT_SUPPLY,
+            ReceiverLaw.DOTTED_CALL_EQUALS_DIRECT_REWRITE,
             Ok(prefixResult, 1),
             [
-                $"segments [receiver, 2]; fixed first takes the receiver's one captured value {innerCaptured.Neutral}",
+                $"(V, 9).Mid3(2) = Mid3((V, 9), 2): slots [{innerCaptured.Neutral}, 2]; fixed first takes {innerCaptured.Neutral}",
                 $"mid collects the empty middle segment; last = 2 -> {prefixResult.Neutral}",
             ]);
 
         // T13e/T13f: suffix allocation from the back — with only the receiver
-        // segment, the fixed suffix binds the receiver's captured value
-        // (supply ignored); with one extra argument, the suffix takes the
-        // extra and the collector consumes the receiver segment's supply.
+        // slot, the fixed suffix binds the receiver's captured value; with one
+        // extra argument, the suffix takes the extra and the collector
+        // collects the receiver as ONE item.
         var suffixWhole = OracleVal.List(OracleVal.List(), innerCaptured);
-        b.Add("dot-seg-suffix-whole", ReceiverKind.DottedCall, BindingForm.Capture, shape, m,
+        b.Add("dot-written-suffix-whole", ReceiverKind.DottedCall, BindingForm.Capture, shape, m,
             $"V = {shape.Literal}\n{Suffix2Def}\n(V, 9).Suffix2",
-            ReceiverLaw.COLLECTOR_CONSUMES_ALLOCATED_SEGMENT_SUPPLY,
+            ReceiverLaw.DOTTED_CALL_EQUALS_DIRECT_REWRITE,
             Ok(suffixWhole, 1),
             [
-                $"one segment; suffix last binds the receiver's one captured value {innerCaptured.Neutral} (supply ignored at a fixed position)",
+                $"(V, 9).Suffix2 = Suffix2((V, 9)): one slot; suffix last binds {innerCaptured.Neutral}",
                 $"init collects the empty middle segment -> {suffixWhole.Neutral}",
             ]);
 
-        var suffixConsumed = OracleVal.List(Collect(inlineSupply), OracleVal.Atom(5));
-        b.Add("dot-seg-suffix-consumed", ReceiverKind.DottedCall, BindingForm.Collect, shape, m,
+        var suffixCollected = OracleVal.List(inlineCollected, OracleVal.Atom(5));
+        b.Add("dot-written-suffix-collected", ReceiverKind.DottedCall, BindingForm.Collect, shape, m,
             $"V = {shape.Literal}\n{Suffix2Def}\n(V, 9).Suffix2(5)",
-            ReceiverLaw.COLLECTOR_CONSUMES_ALLOCATED_SEGMENT_SUPPLY,
-            Ok(suffixConsumed, 1),
+            ReceiverLaw.DOTTED_CALL_EQUALS_DIRECT_REWRITE,
+            Ok(suffixCollected, 1),
             [
-                "segments [receiver, 5]; suffix last = 5 from the back BEFORE any supply consumption",
-                $"the collector is allocated the receiver segment and consumes its supply {SupplyNeutral(inlineSupply)} -> {suffixConsumed.Neutral}",
+                $"(V, 9).Suffix2(5) = Suffix2((V, 9), 5): slots [{innerCaptured.Neutral}, 5]; suffix last = 5 from the back",
+                $"init collects the one remaining slot: collect([{innerCaptured.Neutral}]) = {inlineCollected.Neutral} -> {suffixCollected.Neutral}",
             ]);
 
-        // T13g: the empty written group receiver supplies ZERO items (pinned
-        // once, on the empty-seq shape — the source has no V occurrence).
+        // T13g: the empty written group receiver is ONE written slot holding
+        // `()` — a visible empty value, never a missing argument (pinned once,
+        // on the empty-seq shape — the source has no V occurrence).
         if (shape.Id == "empty-seq")
         {
+            var emptyCollected = Collect([OracleVal.Seq()]);
             b.Add("dot-empty-collect", ReceiverKind.DottedCall, BindingForm.Collect, shape, m,
                 $"V = {shape.Literal}\n{GatherDef}\n().Gather",
-                ReceiverLaw.COLLECTOR_CONSUMES_ALLOCATED_SEGMENT_SUPPLY,
-                Ok(Collect([]), 1),
+                ReceiverLaw.DOTTED_CALL_EQUALS_DIRECT_REWRITE,
+                Ok(emptyCollected, 1),
                 [
-                    "() receiver: value S[], supply [] (emitted count 0)",
-                    "collector consumes the zero-item supply: L[]",
+                    "() receiver: value S[], one written slot (valueCount 0 is a value-boundary count, not a slot count)",
+                    $"().Gather = Gather(()): collect([S[]]) = {emptyCollected.Neutral}",
                 ]);
         }
     }
@@ -985,16 +986,12 @@ public static class ArityDifferentialMatrix
                 var arg = ArgText(m);
                 var trace = SupplyTrace(shape, m);
 
-                // R1a: direct vs dotted, collecting callee. Under the segment
-                // rule the two spellings coincide except for the zero-supply
-                // stored receiver: a written argument slot reifies `()` to one
-                // collected item, while the receiver segment's evaluated
-                // supply is empty.
+                // R1a: direct vs dotted, collecting callee. Dot-call passes a
+                // value: `V.Gather` is `Gather(V)` (the stored `()` is one
+                // collected item in BOTH spellings) and `V*.Gather` is
+                // `Gather(V*)`, so the two spellings always coincide.
                 var dotted = m == SpreadMultiplicity.Zero ? "V.Gather" : $"V{new string('*', (int)m)}.Gather";
                 var collected = Ok(Collect(supply), 1);
-                var dottedCollected = m == SpreadMultiplicity.Zero
-                    ? Ok(Collect(StoredReceiverSegmentSupply(shape.Value)), 1)
-                    : collected;
                 cases.Add(new RelationalCase
                 {
                     Id = $"adr-direct-vs-dotted-collect--{shape.Id}--s{(int)m}",
@@ -1003,14 +1000,14 @@ public static class ArityDifferentialMatrix
                     Multiplicity = m,
                     LeftSource = $"V = {shape.Literal}\n{GatherDef}\nGather({arg})",
                     RightSource = $"V = {shape.Literal}\n{GatherDef}\n{dotted}",
-                    ExpectAgreement = collected.Neutral == dottedCollected.Neutral,
+                    ExpectAgreement = true,
                     PrimaryLaw = m == SpreadMultiplicity.Zero
-                        ? ReceiverLaw.COLLECTOR_CONSUMES_ALLOCATED_SEGMENT_SUPPLY
-                        : ReceiverLaw.DOTTED_CALL_EQUALS_DIRECT_REWRITE,
+                        ? ReceiverLaw.DOTTED_CALL_EQUALS_DIRECT_REWRITE
+                        : ReceiverLaw.FLUENT_SPREAD_RECEIVER_IS_LEXICAL_CALL,
                     ExpectedLeft = collected,
-                    ExpectedRight = dottedCollected,
+                    ExpectedRight = collected,
                     AlgebraTrace = trace
-                        .Append($"written slot: collect(supply) = {Collect(supply).Neutral}; dotted receiver segment supply = {(m == SpreadMultiplicity.Zero ? SupplyNeutral(StoredReceiverSegmentSupply(shape.Value)) : SupplyNeutral(supply))}")
+                        .Append($"{dotted} assembles the slots of Gather({arg}): collect(supply) = {Collect(supply).Neutral} in both spellings")
                         .ToArray(),
                 });
 
@@ -1160,92 +1157,90 @@ public static class ArityDifferentialMatrix
                 },
             });
 
-            // R7: the dot-receiver segment rule, from four sides.
+            // R7: the grouped (capture) receiver, from four sides — dot-call
+            // passes a value, so `(V*).F` is `F((V*))` for every callee.
             var itemsOnce = Items(shape.Value);
             var capturedOnce = Capture(itemsOnce);
             var fluentResult = Ok(Collect(itemsOnce), 1);
+            var groupedResult = Ok(Collect([capturedOnce]), 1);
 
-            // R7a: the grouped and fluent spread receivers coincide on a
-            // collecting callee — by the GENERAL segment rule: the fluent form
-            // supplies the spread items as argument slots, while the grouped
-            // form is one receiver segment whose raw supply is those same
-            // items, consumed by the allocated collector.
+            // R7a: the grouped and fluent spread receivers are DIFFERENT
+            // receivers on a collecting callee: the fluent form supplies the
+            // spread items as argument slots, while the grouped form captures
+            // them into ONE value that the collector collects as one item.
+            // They coincide exactly on singleton supplies (the capture of one
+            // item is the item).
             cases.Add(new RelationalCase
             {
                 Id = $"adr-grouped-vs-fluent-collecting--{shape.Id}--s1",
-                Family = "grouped-receiver-exception",
+                Family = "grouped-receiver-capture",
                 ShapeId = shape.Id,
                 Multiplicity = SpreadMultiplicity.One,
                 LeftSource = $"V = {shape.Literal}\n{GatherDef}\n(V*).Gather",
                 RightSource = $"V = {shape.Literal}\n{GatherDef}\nV*.Gather",
-                ExpectAgreement = true,
-                PrimaryLaw = ReceiverLaw.COLLECTOR_CONSUMES_ALLOCATED_SEGMENT_SUPPLY,
-                ExpectedLeft = fluentResult,
+                ExpectAgreement = groupedResult.Neutral == fluentResult.Neutral,
+                PrimaryLaw = ReceiverLaw.GROUPED_SPREAD_RECEIVER_CAPTURES,
+                ExpectedLeft = groupedResult,
                 ExpectedRight = fluentResult,
                 AlgebraTrace = new[]
                 {
-                    $"(V*) is one receiver segment with raw supply {SupplyNeutral(itemsOnce)}; the allocated collector consumes it",
-                    $"V*.Gather lowers to Gather(V*): the same items as ordinary argument slots — both {fluentResult.Neutral}",
+                    $"(V*) captures the supply {SupplyNeutral(itemsOnce)} as ONE value {capturedOnce.Neutral}; (V*).Gather = Gather((V*)) = {groupedResult.Neutral}",
+                    $"V*.Gather lowers to Gather(V*): the items as ordinary argument slots — {fluentResult.Neutral}",
                 },
             });
 
-            // R7b: receiver segments and written argument slots stay
-            // different receivers — the same grouped spread WRITTEN AS AN
-            // ARGUMENT reifies to one captured value.
-            var writtenArgResult = Ok(Collect([capturedOnce]), 1);
+            // R7b: the grouped receiver IS the written grouped argument — the
+            // same capture written as an argument collects the same one value.
             cases.Add(new RelationalCase
             {
                 Id = $"adr-grouped-receiver-vs-written-arg--{shape.Id}--s1",
-                Family = "grouped-receiver-exception",
+                Family = "grouped-receiver-capture",
                 ShapeId = shape.Id,
                 Multiplicity = SpreadMultiplicity.One,
                 LeftSource = $"V = {shape.Literal}\n{GatherDef}\n(V*).Gather",
                 RightSource = $"V = {shape.Literal}\n{GatherDef}\nGather((V*))",
-                ExpectAgreement = fluentResult.Neutral == writtenArgResult.Neutral,
-                PrimaryLaw = ReceiverLaw.COLLECTOR_CONSUMES_ALLOCATED_SEGMENT_SUPPLY,
-                ExpectedLeft = fluentResult,
-                ExpectedRight = writtenArgResult,
+                ExpectAgreement = true,
+                PrimaryLaw = ReceiverLaw.DOTTED_CALL_EQUALS_DIRECT_REWRITE,
+                ExpectedLeft = groupedResult,
+                ExpectedRight = groupedResult,
                 AlgebraTrace = new[]
                 {
-                    $"receiver segment supply {SupplyNeutral(itemsOnce)} is consumed; the written argument slot reifies to ONE value {capturedOnce.Neutral}",
-                    "the two coincide exactly on singleton supplies (capture of one item is the item)",
+                    $"the receiver is the written argument slot: both reify (V*) to ONE value {capturedOnce.Neutral}",
+                    $"collect([{capturedOnce.Neutral}]) = {groupedResult.Neutral} in both spellings",
                 },
             });
 
-            // R7c: the segment supply is the receiver's EVALUATED emission —
-            // a STORED capture of the same supply evaluates at its value
-            // boundary (one item, or zero for `()`), while the written group
-            // receiver emits its raw row supply.
-            var storedSupply = StoredReceiverSegmentSupply(capturedOnce);
-            var storedReceiverResult = Ok(Collect(storedSupply), 1);
+            // R7c: origin independence — a STORED capture of the same supply
+            // is the same value, so the stored receiver and the written group
+            // receiver collect the same one item (`()` included: a stored
+            // empty sequence is one written slot, not zero).
             cases.Add(new RelationalCase
             {
                 Id = $"adr-grouped-receiver-vs-stored-capture--{shape.Id}--s1",
-                Family = "grouped-receiver-exception",
+                Family = "grouped-receiver-capture",
                 ShapeId = shape.Id,
                 Multiplicity = SpreadMultiplicity.One,
                 LeftSource = $"V = {shape.Literal}\n{GatherDef}\nX = (V*)\nX.Gather",
                 RightSource = $"V = {shape.Literal}\n{GatherDef}\n(V*).Gather",
-                ExpectAgreement = storedReceiverResult.Neutral == fluentResult.Neutral,
-                PrimaryLaw = ReceiverLaw.COLLECTOR_CONSUMES_ALLOCATED_SEGMENT_SUPPLY,
-                ExpectedLeft = storedReceiverResult,
-                ExpectedRight = fluentResult,
+                ExpectAgreement = true,
+                PrimaryLaw = ReceiverLaw.DOTTED_CALL_EQUALS_DIRECT_REWRITE,
+                ExpectedLeft = groupedResult,
+                ExpectedRight = groupedResult,
                 AlgebraTrace = new[]
                 {
-                    $"X stores the capture {capturedOnce.Neutral}; a stored receiver's segment supply is its valueCount view {SupplyNeutral(storedSupply)}",
-                    $"the written group receiver emits its raw row supply {SupplyNeutral(itemsOnce)} — emission, not spelling, decides",
+                    $"X stores the capture {capturedOnce.Neutral}; X.Gather = Gather(X) collects [{capturedOnce.Neutral}]",
+                    $"the written group receiver is the same value — origin never decides: both {groupedResult.Neutral}",
                 },
             });
 
-            // R7d: a NON-leading collecting callee allocates the receiver
-            // segment to the FIXED first parameter, which binds the captured
-            // value and ignores the supply view — so the grouped receiver and
-            // the written grouped argument agree.
+            // R7d: a NON-leading collecting callee binds the receiver to the
+            // FIXED first parameter as one captured value — so the grouped
+            // receiver and the written grouped argument agree here too.
             var mid3Result = Ok(OracleVal.List(capturedOnce, OracleVal.List(), OracleVal.Atom(9)), 1);
             cases.Add(new RelationalCase
             {
                 Id = $"adr-grouped-receiver-non-leading--{shape.Id}--s1",
-                Family = "grouped-receiver-exception",
+                Family = "grouped-receiver-capture",
                 ShapeId = shape.Id,
                 Multiplicity = SpreadMultiplicity.One,
                 LeftSource = $"V = {shape.Literal}\n{Mid3Def}\n(V*).Mid3(9)",
@@ -1256,7 +1251,7 @@ public static class ArityDifferentialMatrix
                 ExpectedRight = mid3Result,
                 AlgebraTrace = new[]
                 {
-                    "the receiver segment is allocated to the FIXED first parameter, which binds the one captured value (supply ignored)",
+                    "the receiver is the first written slot; the FIXED first parameter binds the one captured value",
                     $"Mid3({capturedOnce.Neutral}, 9): first = {capturedOnce.Neutral}, mid = L[], last = 9",
                 },
             });

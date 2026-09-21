@@ -1202,13 +1202,13 @@ public static class LanguageSpecCorpus
                 new SpecProbe("CountArgs(*items) = items.count\nCountArgs((10, 20)*)", "ok raw=2 n=1"),
             ],
             IncludeInGeneratorPrompt = true,
-            Explanation = "An unspread structure is one argument slot — `Inspect(A)` collects `[A]` (count 1) for lists and sequence values alike, and a NAMED dotted receiver `A.Inspect` supplies the same one item (a stored property receiver's segment supply is its value-boundary count) — while explicit spread supplies the immediate items (`Inspect(A*)` collects `[1, 2, 3]`, count 3). A WRITTEN group receiver is different: see `dot-receiver-segment-supply`.",
+            Explanation = "An unspread structure is one argument slot — `Inspect(A)` collects `[A]` (count 1) for lists and sequence values alike, and the dotted receiver `A.Inspect` is exactly that written argument (dot-call passes a value: `A.Inspect` is `Inspect(A)`) — while explicit spread supplies the immediate items (`Inspect(A*)` collects `[1, 2, 3]`, count 3, and the fluent `A*.Inspect` is `Inspect(A*)`). A written group receiver is one value too: see `dot-receiver-passes-a-value`.",
         },
         new()
         {
-            Id = "dot-receiver-segment-supply",
+            Id = "dot-receiver-passes-a-value",
             Category = "variadic-calls",
-            Source = "Mean(*Vector) = Vector.sum / Vector.count\n\nMean(1, 2, 3)\n(1, 2, 3).Mean",
+            Source = "Mean(*Vector) = Vector.sum / Vector.count\n\nMean(1, 2, 3)\n(1, 2, 3)*.Mean",
             Outcome = SpecOutcome.Evaluates,
             ExpectedDisplay = "2\n2",
             ExpectedRaw = "S[2, 2]",
@@ -1216,17 +1216,26 @@ public static class LanguageSpecCorpus
             Probes =
             [
                 new SpecProbe("Mean(*Vector) = Vector.sum / Vector.count\nMean(1, 2, 2.718)", "ok raw=1.906 n=1"),
-                new SpecProbe("Mean(*Vector) = Vector.sum / Vector.count\n(1, 2, 2.718).Mean", "ok raw=1.906 n=1"),
-                new SpecProbe("Collect(*items) = items\n(1, 2).Collect", "ok raw=L[1, 2] n=1"),
+                new SpecProbe("Mean(*Vector) = Vector.sum / Vector.count\n(1, 2, 2.718)*.Mean", "ok raw=1.906 n=1"),
+                new SpecProbe("Collect(*items) = items\n(1, 2).Collect", "ok raw=L[S[1, 2]] n=1"),
+                new SpecProbe("Collect(*items) = items\nCollect((1, 2))", "ok raw=L[S[1, 2]] n=1"),
+                new SpecProbe("Collect(*items) = items\n(1, 2)*.Collect", "ok raw=L[1, 2] n=1"),
                 new SpecProbe("Collect(*items) = items\n((1, 2)).Collect", "ok raw=L[S[1, 2]] n=1"),
-                new SpecProbe("Collect(*items) = items\n().Collect", "ok raw=L[] n=1"),
+                new SpecProbe("Collect(*items) = items\n().Collect", "ok raw=L[S[]] n=1"),
+                new SpecProbe("Collect(*items) = items\n()*.Collect", "ok raw=L[] n=1"),
                 new SpecProbe("Collect(*items) = items\n[1, 2].Collect", "ok raw=L[L[1, 2]] n=1"),
-                new SpecProbe("Scale(*values, factor) = values, factor\n(1, 2, 3).Scale(10)", "ok raw=S[L[1, 2, 3], 10] n=1"),
+                new SpecProbe("Collect(*items) = items\n[1, 2]*.Collect", "ok raw=L[1, 2] n=1"),
+                new SpecProbe("Collect(*items) = items\n{1, 2}.Collect", "ok raw=L[S[1, 2]] n=1"),
+                new SpecProbe("Collect(*items) = items\nA = (1, 2)\n(A*).Collect", "ok raw=L[S[1, 2]] n=1"),
+                new SpecProbe("Scale(*values, factor) = values, factor\n(1, 2, 3).Scale(10)", "ok raw=S[L[S[1, 2, 3]], 10] n=1"),
+                new SpecProbe("Scale(*values, factor) = values, factor\n(1, 2, 3)*.Scale(10)", "ok raw=S[L[1, 2, 3], 10] n=1"),
                 new SpecProbe("F(first, *middle, last) = first\n(1, 2).F", "err arity"),
+                new SpecProbe("F(first, *middle, last) = first\n(1, 2)*.F", "ok raw=1 n=1"),
                 new SpecProbe("F(*middle, last) = middle, last\n(1, 2).F", "ok raw=S[L[], S[1, 2]] n=1"),
+                new SpecProbe("F(*middle, last) = middle, last\n(1, 2)*.F", "ok raw=S[L[1], 2] n=1"),
             ],
             IncludeInGeneratorPrompt = true,
-            Explanation = "A lexical dot-call receiver is ONE leading segment for arity checking and fixed prefix/suffix allocation — its item count never satisfies arity, and a fixed parameter binds the receiver as one value. A flat top-level collecting parameter that is allocated the segment consumes the segment's evaluated top-level supply: a WRITTEN group receiver supplies its raw rows (`(1, 2, 3).Mean` averages the three items; `((1, 2)).Collect` keeps the extra written boundary; `().Collect` supplies zero items), while exact lists stay opaque. Direct calls are unchanged: `Mean((1, 2, 3))` still collects one grouped argument.",
+            Explanation = "Dot-call passes a value: for extension-call fallback, `R.F(args)` is exactly `F(R, args)` — the receiver is ONE ordinary leading argument whatever it is (a written group, a brace block, a list, a property, a call result, a selection, a capture of a spread), so its item count never satisfies arity, a fixed parameter binds it whole, and a collecting parameter collects it as one item (`(1, 2).Collect` is `[(1, 2)]`, `().Collect` is `[()]`, `[1, 2].Collect` is `[[1, 2]]`). Only the spread marker opens a receiver: `R*.F(args)` is `F(R*, args)`, so `(1, 2, 3)*.Mean` averages the three items and `(1, 2)*.Collect` collects `[1, 2]`.",
         },
         new()
         {
@@ -2021,11 +2030,11 @@ public static class LanguageSpecCorpus
                 new SpecProbe("B(a, c) = a * 100 + c\nObj = {\n    B(c) = c + 1\n}\nObj.B(5)", "ok raw=6 n=1"),
                 // A receiver without the member takes the fallback, injecting its VALUE as the leading argument.
                 new SpecProbe("B(a, c) = a * 100 + c\nObj = {\n    public Q = 1\n    3\n}\nObj.B(5)", "ok raw=305 n=1"),
-                // The fallback allocates like B(A, C): the receiver is one segment, never spread across fixed parameters.
+                // The fallback allocates like B(A, C): the receiver is one ordinary argument, never spread across fixed parameters.
                 new SpecProbe("B(a, c) = a * 100 + c\n(3, 4).B(5)", "err type"),
             ],
             IncludeInGeneratorPrompt = true,
-            Explanation = "Dot syntax is property-first. `Obj` declares its own `B`, so `Obj.B(5)` calls that member with the one argument `5` and injects no receiver; the visible two-parameter `B(a, c)` is never considered, although `B(Obj, 5)` is a well-formed two-argument call. Only a receiver WITHOUT the member takes the lexical fallback, where `A.B(C)` allocates arguments like `B(A, C)` with the receiver as one leading segment — `3.B(5)` is `B(3, 5)`.",
+            Explanation = "Dot syntax is property-first. `Obj` declares its own `B`, so `Obj.B(5)` calls that member with the one argument `5` and injects no receiver; the visible two-parameter `B(a, c)` is never considered, although `B(Obj, 5)` is a well-formed two-argument call. Only a receiver WITHOUT the member takes the lexical fallback, where `A.B(C)` allocates arguments like `B(A, C)` with the receiver as one ordinary leading argument — `3.B(5)` is `B(3, 5)`.",
         },
         new()
         {
@@ -2721,17 +2730,19 @@ public static class LanguageSpecCorpus
             ExpectedEmittedCount = 3,
             Probes =
             [
-                new SpecProbe("Coll(*xs) = xs\nA = ((), 1)\nA:0.Coll", "ok raw=L[] n=1"),
-                new SpecProbe("Coll(*xs) = xs\nA = ((), 1)\nfirst(A).Coll", "ok raw=L[] n=1"),
-                new SpecProbe("Coll(*xs) = xs\nA = (1, ())\nlast(A).Coll", "ok raw=L[] n=1"),
+                new SpecProbe("Coll(*xs) = xs\nA = ((), 1)\nA:0.Coll", "ok raw=L[S[]] n=1"),
+                new SpecProbe("Coll(*xs) = xs\nA = ((), 1)\nfirst(A).Coll", "ok raw=L[S[]] n=1"),
+                new SpecProbe("Coll(*xs) = xs\nA = (1, ())\nlast(A).Coll", "ok raw=L[S[]] n=1"),
+                new SpecProbe("Coll(*xs) = xs\nA = ((), 1)\n(A:0)*.Coll", "ok raw=L[] n=1"),
                 new SpecProbe("Coll(*xs) = xs\nA = ([], 1)\nfirst(A).Coll", "ok raw=L[L[]] n=1"),
                 new SpecProbe("Coll(*xs) = xs\nA = ([], 1)\n(A:0)*.Coll", "ok raw=L[] n=1"),
                 new SpecProbe("Coll(*xs) = xs\nA = (3, [1, 2])\nlast(A).Coll", "ok raw=L[L[1, 2]] n=1"),
                 new SpecProbe("Coll(*xs) = xs\nA = (3, (1, 2))\n(last(A))*.Coll", "ok raw=L[1, 2] n=1"),
-                new SpecProbe("Coll(*xs) = xs\nE = ()\nE.Coll", "ok raw=L[] n=1"),
+                new SpecProbe("Coll(*xs) = xs\nE = ()\nE.Coll", "ok raw=L[S[]] n=1"),
+                new SpecProbe("Coll(*xs) = xs\nE = ()\nColl(E)", "ok raw=L[S[]] n=1"),
             ],
             IncludeInGeneratorPrompt = true,
-            Explanation = "`first(A)`, `last(A)`, and `A:i` are the same selection: each returns the selected value through the ordinary value boundary, so a collecting dotted receiver collects the selected pair as one item, a selected `()` supplies zero items (like any `()` value), and a selected `[]` stays one exact list. Only the spread marker opens a selected sequence or list.",
+            Explanation = "`first(A)`, `last(A)`, and `A:i` are the same selection: each returns the selected value through the ordinary value boundary, and dot-call passes that value as the ordinary leading argument, so a collecting dotted receiver collects the selected pair as one item, a selected `()` is one collected item (`[()]`, exactly like the written argument `Coll(())`), and a selected `[]` stays one exact list. Only the spread marker opens a selected sequence or list — and a spread `()` supplies nothing.",
         },
         new()
         {
@@ -2755,10 +2766,11 @@ public static class LanguageSpecCorpus
             ExpectedEmittedCount = 1,
             Probes =
             [
-                new SpecProbe("Coll(*xs) = xs\nx = ((), ())\nx:0.Coll", "ok raw=L[] n=1"),
-                new SpecProbe("Coll(*xs) = xs\nx = ((), ())\nfirst(x).Coll", "ok raw=L[] n=1"),
+                new SpecProbe("Coll(*xs) = xs\nx = ((), ())\nx:0.Coll", "ok raw=L[S[]] n=1"),
+                new SpecProbe("Coll(*xs) = xs\nx = ((), ())\nfirst(x).Coll", "ok raw=L[S[]] n=1"),
+                new SpecProbe("Coll(*xs) = xs\nx = ((), ())\n(x:0)*.Coll", "ok raw=L[] n=1"),
             ],
-            Explanation = "Selecting a `()` item shows one `()` row (a non-spread root row is always one visible slot): the empty value is a real selectable item, and past the selection boundary it is simply `()` — zero items at a value boundary, whatever route selected it.",
+            Explanation = "Selecting a `()` item shows one `()` row (a non-spread root row is always one visible slot): the empty value is a real selectable item, and past the selection boundary it is simply `()` — one argument value when passed (dot-call passes a value: `x:0.Coll` is `Coll(x:0)`, `[()]`) and zero items when spread, whatever route selected it.",
         },
         new()
         {

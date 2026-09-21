@@ -570,13 +570,20 @@ public class EvaluatorSequenceCallbackTests
     }
 
     [Fact]
-    public void Eval_Reduce_DotCallParameterizedInitialAccumulator_ReportsCallSiteWithHint()
+    public void Eval_Reduce_DotCallShapes_ReportExactlyWhatTheWrittenCallReports()
     {
+        // Dot-call passes the receiver as the ordinary leading argument, so the
+        // dotted two-argument shape `Values.reduce(Add)` is `reduce(Values, Add)`:
+        // the same plain arity error as the written call (no dot-only hint), and
+        // the fully supplied dotted form reports the same initial-accumulator hint
+        // as the written one — positioned at the dotted call site.
+        AssertEvalFailsWithArityMismatch("Add = x + total\nValues = 1, 2, 3\nValues.reduce(Add)", expected: 3, actual: 2);
+
         var result = EvalFull(
             """
             Add = x + total
             Values = 1, 2, 3
-            Values.reduce(Add)
+            Values.reduce({a + b}, Add)
             """);
         if (result.IsOk)
             Assert.Fail($"Expected evaluation failure but got: {result.Value}");
@@ -585,10 +592,14 @@ public class EvaluatorSequenceCallbackTests
         Assert.Equal(3, Assert.NotNull(formatted.Span).Start.Line);
         Assert.Equal(1, Assert.NotNull(formatted.Span).Start.Column);
         Assert.Contains("`reduce` is `reduce(collection, reducer, initial)`", formatted.Message);
-        Assert.Contains("'x' and 'total'", formatted.Message);
+        Assert.Contains("still needs 'x' and 'total'", formatted.Message);
         Assert.Contains("add an initial accumulator", formatted.Message);
         Assert.DoesNotContain("Unknown name: x", formatted.Message);
         Assert.DoesNotContain("Bad arity", formatted.Message);
+
+        var written = KatLangError.FromEvalError(
+            EvalFull("Add = x + total\nValues = 1, 2, 3\nreduce(Values, {a + b}, Add)").Error);
+        Assert.Equal(written.Message, formatted.Message);
     }
 
     [Fact]

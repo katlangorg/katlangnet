@@ -18,7 +18,7 @@ Partition (machine-checked by the `specCaseIds.length` guard below):
 - excluded parse-level cases (Lean has no surface parser): 38
 - excluded C#-only cases (each carries an explicit reason in the corpus): 15
 - Lean-guarded cases: 228
-- probe observations (C#-only by design): 678
+- probe observations (C#-only by design): 690
 - internal-node cases live in the semantic-explorer corpus, not here: see
   lean/SemanticExplorerCases.lean
 
@@ -409,10 +409,10 @@ def case_variadic_receiver_distinction : Expr :=
   .algorithmExpr (alg [] [] [privateProp "A" (alg [] [] [] [(.listLiteral [.num 1, .num 2, .num 3])]), privateProp "Inspect" (algWithParameters [{ name := "items", kind := .collecting }] [] [] [.param "items"])] [(.call (.resolve "Inspect") [.resolve "A"]), (.call (.resolve "Inspect") [(.sequenceSpread (.resolve "A"))])])
 #guard obs case_variadic_receiver_distinction == "ok raw=S[L[L[1, 2, 3]], L[1, 2, 3]] n=2"
 
--- dot-receiver-segment-supply [variadic-calls]: Mean(*Vector) = Vector.sum / Vector.count \n  \n Mean(1, 2, 3) \n (1, 2, 3).Mean
-def case_dot_receiver_segment_supply : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "Mean" (algWithParameters [{ name := "Vector", kind := .collecting }] [] [] [(.binary .div (.dotCall (.param "Vector") "sum" none) (.dotCall (.param "Vector") "count" none))])] [(.call (.resolve "Mean") [.num 1, .num 2, .num 3]), (.dotCall (.capture [.num 1, .num 2, .num 3]) "Mean" none)])
-#guard obs case_dot_receiver_segment_supply == "ok raw=S[2, 2] n=2"
+-- dot-receiver-passes-a-value [variadic-calls]: Mean(*Vector) = Vector.sum / Vector.count \n  \n Mean(1, 2, 3) \n (1, 2, 3)*.Mean
+def case_dot_receiver_passes_a_value : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Mean" (algWithParameters [{ name := "Vector", kind := .collecting }] [] [] [(.binary .div (.dotCall (.param "Vector") "sum" none) (.dotCall (.param "Vector") "count" none))])] [(.call (.resolve "Mean") [.num 1, .num 2, .num 3]), (.call (.resolve "Mean") [(.sequenceSpread (.capture [.num 1, .num 2, .num 3]))])])
+#guard obs case_dot_receiver_passes_a_value == "ok raw=S[2, 2] n=2"
 
 -- mixed-collecting-parameter [variadic-calls]: F(x, *y, z) = x + y.sum + z \n F(1, 2, 3, 4, 5)
 def case_mixed_collecting_parameter : Expr :=
@@ -1309,7 +1309,7 @@ def specCaseIds : List String := [
   "variadic-forwarding-list-spread",
   "implicit-forwarding-source-kind",
   "variadic-receiver-distinction",
-  "dot-receiver-segment-supply",
+  "dot-receiver-passes-a-value",
   "mixed-collecting-parameter",
   "mixed-front-back-family",
   "collecting-minimum-arity",

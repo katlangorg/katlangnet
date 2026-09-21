@@ -13,7 +13,7 @@ namespace KatLang.Tests;
 /// boundary (<c>Result.valueCount</c>) — <c>()</c> emits zero values, everything else
 /// (a sequence value, an exact list, a scalar) emits ONE. The selected value's origin is
 /// forgotten, so every count-sensitive consumer (a lone root row, a collecting dotted
-/// receiver segment, a loop-step output row, the map/reduce single-element checks, a
+/// receiver, a loop-step output row, the map/reduce single-element checks, a
 /// callback parameter) sees exactly what it would see for a property holding the same
 /// value. Only the spread marker <c>*</c> OPENS a selected sequence or list — one boundary,
 /// per the ordinary spread law.</para>
@@ -33,12 +33,15 @@ public class SelectionValueBoundaryTests
     /// The semantic table of the rule: one representative per selected-value kind, with
     /// the collecting-receiver observation of the bare selection and of its explicit
     /// spread. <c>()</c> and <c>[]</c> are deliberately distinct rows: an empty SEQUENCE
-    /// value emits zero items at a value boundary while an empty LIST is one exact value.
+    /// value emits zero values at a value boundary (so it spreads to nothing) while an
+    /// empty LIST is one exact value; both are ONE collected item when passed unspread,
+    /// because dot-call passes a value (<c>().Coll</c> is <c>[()]</c>, exactly like the
+    /// written argument <c>Coll(())</c>) and only the spread marker opens a receiver.
     /// </summary>
     public static TheoryData<string, string, string> SelectedValueTable => new()
     {
         // selected value   selection.Coll      (selection)*.Coll
-        { "()",             "[]",               "[]" },
+        { "()",             "[()]",             "[]" },
         { "1",              "[1]",              "[1]" },
         { "'s'",            "[s]",              "[s]" },
         { "true",           "[true]",           "[true]" },
@@ -98,12 +101,11 @@ public class SelectionValueBoundaryTests
             // Fluent spread receiver spelling: `selection*.Coll` is `Coll(selection*)`.
             Assert.Equal(expectedSpreadColl, Display(defs + selection + "*.Coll"));
 
-            // The direct call passes the selected value as ONE written slot — exactly
-            // the slot a property holding the same value supplies (a written `()`
-            // argument is one visible slot, `[()]`, unlike the receiver segment).
-            Assert.Equal(
-                Display(defs + "V = " + selected + "\nColl(V)"),
-                Display(defs + "Coll(" + selection + ")"));
+            // The direct call passes the selected value as ONE written slot — the very
+            // same slot the dotted spelling supplies (dot-call passes a value: `R.Coll`
+            // is `Coll(R)` for every receiver, `()` included).
+            Assert.Equal(expectedColl, Display(defs + "Coll(" + selection + ")"));
+            Assert.Equal(expectedColl, Display(defs + "V = " + selected + "\nColl(V)"));
         }
     }
 
@@ -122,20 +124,20 @@ public class SelectionValueBoundaryTests
 
             // Redundant parentheses around a selection are pure grouping (the parser
             // unwraps them — `Parser.ShouldUnwrapParenthesizedPrimary`), so the grouped
-            // selection is the bare selection. (A parenthesized NAME `(X)` deliberately
-            // keeps its capture layer as a written group receiver, which is the
-            // pre-existing capture-vs-name receiver distinction, not a selection rule.)
+            // selection is the bare selection; a parenthesized NAME `(X)` keeps its
+            // capture layer (structural identity suppression), and since dot-call
+            // passes a value that layer changes nothing about the argument either.
             Assert.Equal(expectedColl, Display(defs + "(" + selection + ").Coll"));
+            Assert.Equal(expectedColl, Display(defs + "(X).Coll"));
 
             // Passing the selected value through another ordinary value boundary
             // (a call) changes nothing.
             Assert.Equal(expectedColl, Display(defs + "Id(v) = v\nId(" + selection + ").Coll"));
 
-            // A written brace receiver supplies its raw rows (a `()` row stays one
-            // visible slot); the selection row behaves exactly like the literal row.
-            Assert.Equal(
-                Display(defs + "{" + selected + "}.Coll"),
-                Display(defs + "{" + selection + "}.Coll"));
+            // A written brace receiver is one value (dot-call passes a value), so the
+            // selection row and the literal row agree — and both are the one item.
+            Assert.Equal(expectedColl, Display(defs + "{" + selection + "}.Coll"));
+            Assert.Equal(expectedColl, Display(defs + "{" + selected + "}.Coll"));
         }
     }
 
@@ -143,15 +145,27 @@ public class SelectionValueBoundaryTests
     public void EmptySequence_SelectedThroughAnyRoute_IsPlainEmpty()
     {
         // The motivating examples: `()` selected from a sequence, read from a property,
-        // returned by a call, or chosen by `if` is simply `()` — zero items on a
-        // collecting receiver. No route preserves "one element was selected".
+        // returned by a call, or chosen by `if` is simply `()` — ONE collected item when
+        // passed (dot-call passes a value: `().Coll` is `[()]` like `Coll(())`) and zero
+        // items when spread. No route preserves "one element was selected", and no route
+        // turns the value-boundary count 0 into a missing argument.
         const string defs = Coll + "A = ((), 1)\nE = ()\nFz(x) = ()\nB = (1, ())\n";
         foreach (var program in new[]
         {
             "A:0.Coll", "first(A).Coll", "B:1.Coll", "last(B).Coll",
-            "E.Coll", "Fz(1).Coll", "if(true, (), 1).Coll",
-            "(A:0)*.Coll", "(first(A))*.Coll", "(last(B))*.Coll",
+            "E.Coll", "Fz(1).Coll", "if(true, (), 1).Coll", "().Coll",
+            "Coll(A:0)", "Coll(first(A))", "Coll(E)", "Coll(Fz(1))", "Coll(())",
             "X = A:0\nX.Coll", "Y = first(A)\nY.Coll", "Z = last(B)\nZ.Coll",
+        })
+        {
+            Assert.Equal("[()]", Display(defs + program));
+        }
+
+        foreach (var program in new[]
+        {
+            "(A:0)*.Coll", "(first(A))*.Coll", "(last(B))*.Coll", "A:0*.Coll",
+            "E*.Coll", "Fz(1)*.Coll", "()*.Coll",
+            "Coll((A:0)*)", "Coll(E*)", "Coll(()*)",
         })
         {
             Assert.Equal("[]", Display(defs + program));
@@ -415,7 +429,7 @@ public class SelectionValueBoundaryTests
     }
 
     [Theory]
-    [InlineData("()", "[]")]
+    [InlineData("()", "[()]")]
     [InlineData("(1, 2)", "[(1, 2)]")]
     [InlineData("[]", "[[]]")]
     [InlineData("[1, 2]", "[[1, 2]]")]

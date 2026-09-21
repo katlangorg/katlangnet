@@ -9,7 +9,7 @@ using KatLang.Optimizations.Sequences;
 namespace KatLang;
 
 /// <summary>
-/// Dot-call evaluation: sequence-builtin dot receivers, sequence-pipeline recognition, lexical receiver injection, and structural-first dot-call dispatch (the "DotCall evaluation" section).
+/// Dot-call evaluation: sequence-pipeline recognition, ordinary lexical receiver injection, and structural-first dot-call dispatch (the "DotCall evaluation" section).
 /// Part of the <see cref="Evaluator"/> partial class; the central state, lookup and open resolution,
 /// the built-in prelude, and the run entry points remain in <c>Evaluator.cs</c>.
 /// </summary>
@@ -35,122 +35,18 @@ public static partial class Evaluator
         ValEnv valEnv)
         => ProjectCountedValue(EvalDotCallCounted(dotCall, ctx, valEnv));
 
-    private readonly record struct SequenceBuiltinDotCall(
-        BuiltinId Builtin,
-        IReadOnlyList<ResolvedArgumentAlgorithm> Args);
-
     /// <summary>
-    /// Sequence builtins in dot-call form evaluate the receiver to ONE value,
-    /// re-counted to <c>Result.ValueCount</c>, and pass it as the ordinary
-    /// fixed <c>collection</c> argument (the post-binding collection view
-    /// opens it, exactly as for the plain call form).
-    /// A direct inline receiver block first exposes its inner algorithm output
-    /// count, which strips exactly one receiver-scoping block layer for forms
-    /// like <c>(1, 2, 3).take(2)</c> while still keeping
-    /// <c>((1, 2, 3)).take(2)</c> and named sequence-valued helpers intact.
-    /// Any extra dot-call arguments still follow the plain-call argument path.
-    /// This keeps plain-call boundary preservation unchanged while making
-    /// <c>receiver.builtin(...)</c> operate on the same top-level collection
-    /// that <c>receiver:i</c> selects from and higher-order callbacks iterate.
-    /// </summary>
-    private static EvalResult<CountedResult> EvalSequenceBuiltinDotReceiverCounted(
-        Expr receiver,
-        EvalCtx ctx,
-        ValEnv valEnv)
-    {
-        // The receiver is this builtin call's collection ARGUMENT, so it consumes
-        // one depth-only argument-evaluation level exactly like the plain-call
-        // spelling's argument funnel (EvalArgumentAlgOutputCounted). This keeps the
-        // plain/dot work observations identical — including PeakDepth — and bounds
-        // a self-referential receiver (`A = A.count`) by the same deterministic
-        // depth limit instead of the machine-dependent stack backstop.
-        if (ctx.Budget.TryEnterArgumentEvaluation() is { } limitError)
-            return limitError;
-        try
-        {
-            var valueR = Eval(receiver, ctx, valEnv);
-            return valueR.IsError
-                ? valueR.Error
-                : EvalResult<CountedResult>.Ok(new CountedResult(valueR.Value, valueR.Value.ValueCount()));
-        }
-        finally
-        {
-            ctx.Budget.ExitInvocation();
-        }
-    }
-
-    private static EvalResult<IReadOnlyList<ResolvedArgumentAlgorithm>> SequenceBuiltinDotReceiverArgs(
-        Expr receiver,
-        EvalCtx ctx,
-        ValEnv valEnv)
-    {
-        var receiverR = EvalSequenceBuiltinDotReceiverCounted(receiver, ctx, valEnv);
-        if (receiverR.IsError) return receiverR.Error;
-
-        // The receiver has just been evaluated — exactly once — to dispatch on it. Carry
-        // that counted result forward as the argument's PREPARED value only: the value
-        // channel reads it directly and must never reconstruct or re-evaluate it. No
-        // algorithm channel is built here — reifying the result as an expression tree
-        // (CountedArgAlgorithm → ResultToExpr) costs O(receiver size), and the ordinary
-        // value path (`A.count`, `A.take(2)`, `A.map(F)`) never consumes it because
-        // PreparedValue short-circuits evaluation. If an algorithm-only consumer does
-        // request the channel, ResolveArgumentAlgorithm / PrepareSequenceBuiltinSuffixArg
-        // synthesize the legacy counted-value wrapper lazily at that point.
-        return EvalResult<IReadOnlyList<ResolvedArgumentAlgorithm>>.Ok(
-            [new ResolvedArgumentAlgorithm(Algorithm: null, SpreadsSequence: false)
-            {
-                PreparedValue = receiverR.Value,
-            }]);
-    }
-
-    private static EvalResult<SequenceBuiltinDotCall?> TryBuildSequenceBuiltinDotCall(
-        string name,
-        Expr receiver,
-        OutputBundle? extraArgs,
-        EvalCtx ctx,
-        ValEnv valEnv)
-    {
-        var calleeR = ResolveNamedAlgorithm(name, span: null, ctx);
-        if (calleeR.IsError
-            || calleeR.Value is not Algorithm.Builtin(var builtin)
-            || GetSequenceBuiltinMetadata(builtin) is null)
-        {
-            return EvalResult<SequenceBuiltinDotCall?>.Ok(null);
-        }
-
-        var receiverArgAlgsR = SequenceBuiltinDotReceiverArgs(receiver, ctx, valEnv);
-        if (receiverArgAlgsR.IsError) return receiverArgAlgsR.Error;
-
-        var argAlgs = new List<ResolvedArgumentAlgorithm>(receiverArgAlgsR.Value);
-
-        if (extraArgs is not null)
-        {
-            var extraArgAlgsR = ResolveArgAlgsWithSequenceSpread(extraArgs, ctx, valEnv);
-            if (extraArgAlgsR.IsError) return extraArgAlgsR.Error;
-            if (builtin == BuiltinId.@reduce
-                && extraArgAlgsR.Value is [{ Algorithm: { Params.Count: > 0 } reducerAlgorithm }])
-            {
-                return ReduceInitialAccumulatorRequiresValueError(reducerAlgorithm);
-            }
-
-            argAlgs.AddRange(extraArgAlgsR.Value);
-        }
-
-        return EvalResult<SequenceBuiltinDotCall?>.Ok(
-            new SequenceBuiltinDotCall(builtin, argAlgs));
-    }
-
-    /// <summary>
-    /// Assemble the argument bundle for ordinary lexical dot-call fallback:
-    /// <c>receiver.F(C, D)</c> calls <c>F</c> with the ORIGINAL receiver
-    /// expression as one injected leading segment followed by the written
-    /// extra arguments. Assembly is independent of the resolved callee: the
-    /// receiver is never pre-expanded, never unwrapped, and no parameter
-    /// shape is inspected. The paired
-    /// <see cref="CallArgumentAssembly.InjectedDotReceiverLeading"/> marker
-    /// makes the receiver one segment for allocation whose evaluated
-    /// top-level supply only a flat top-level collecting parameter consumes.
-    /// Lean: <c>prepareLexicalDotCallArgs</c>.
+    /// Assemble the argument bundle for extension dot-call fallback: DOT-CALL
+    /// PASSES A VALUE — <c>receiver.F(C, D)</c> is exactly the bundle of the
+    /// written call <c>F(receiver, C, D)</c>, the ORIGINAL receiver expression
+    /// as the ordinary first argument slot followed by the written extra
+    /// arguments. Assembly is independent of the resolved callee: the receiver
+    /// is never pre-expanded, never unwrapped, never given a supply of its
+    /// own, and no parameter shape is inspected; a spread receiver is the
+    /// ordinary spread slot <c>F(R*, …)</c>.
+    /// Lean: <c>prepareLexicalDotCallArgs</c> (laws
+    /// <c>dot_receiver_is_ordinary_leading_argument</c>,
+    /// <c>spread_dot_receiver_is_ordinary_spread_argument</c>).
     /// </summary>
     private static OutputBundle BuildLexicalReceiverCallArgs(
         Expr receiver,
@@ -247,26 +143,43 @@ public static partial class Evaluator
     }
 
     /// <summary>
-    /// Semantic dot-receiver item collection shared with the sequence optimizer;
-    /// this preserves the generic dot-call sequence builtin boundary rules.
+    /// Semantic dot-receiver item collection shared with the sequence optimizer.
+    /// DOT-CALL PASSES A VALUE: the receiver of <c>R.filter(P)</c> is the
+    /// builtin's ordinary <c>collection</c> argument — exactly the first written
+    /// argument of <c>filter(R, P)</c> — so it is resolved and demanded through
+    /// the ONE builtin argument funnel the generic path uses
+    /// (<see cref="ResolveArgAlgsWithSequenceSpread"/> +
+    /// <see cref="BindSequenceBuiltinCollectionArgument"/>): a named property is
+    /// demanded through the zero-argument value-demand law (never the property
+    /// cache), a parameterized receiver is the collection-argument demand
+    /// rejection, and the bound value opens through the shared post-binding
+    /// collection view. The fused and generic strategies therefore evaluate,
+    /// charge, and reject the receiver identically.
     /// </summary>
     private static EvalResult<IReadOnlyList<CountedResult>> EvaluateDotReceiverIterationItemsForSequenceOptimizer(
         Expr receiver,
         EvalCtx ctx,
         ValEnv valEnv)
     {
-        var receiverR = EvalSequenceBuiltinDotReceiverCounted(receiver, ctx, valEnv);
-        if (receiverR.IsError)
-            return receiverR.Error;
+        var receiverArgsR = ResolveArgAlgsWithSequenceSpread(OutputBundle.TakeOwnership([receiver]), ctx, valEnv);
+        if (receiverArgsR.IsError)
+            return receiverArgsR.Error;
 
-        // Mirror the generic builtin collection binding: the receiver value is
-        // the bound collection, so exactly one outer sequence OR list boundary
-        // is opened by the shared builtin collection-item view; any other value
-        // supplies itself as one item.
-        var items = BuiltinCollectionItems(receiverR.Value.Value);
+        var itemsR = BuildCallableCallItems(receiverArgsR.Value, ctx, valEnv);
+        if (itemsR.IsError)
+            return itemsR.Error;
+
+        // A spread receiver never reaches this adapter (the optimizer declines it),
+        // so the receiver is exactly one call item — the collection argument.
+        if (itemsR.Value.Count != 1)
+            return new EvalError.ArityMismatch(1, itemsR.Value.Count);
+
+        var collectionValuesR = BindSequenceBuiltinCollectionArgument(itemsR.Value[0]);
+        if (collectionValuesR.IsError)
+            return collectionValuesR.Error;
 
         return EvalResult<IReadOnlyList<CountedResult>>.Ok(
-            items
+            collectionValuesR.Value
                 .Select(static item => new CountedResult(item, item.ValueCount()))
                 .ToList());
     }
@@ -285,8 +198,8 @@ public static partial class Evaluator
         // Depth parity with the generic strategy: the fused pipeline consumes this
         // `range(...)` call as the FILTER's collection argument, which the generic
         // spelling evaluates inside one depth-only argument-evaluation level
-        // (EvalSequenceBuiltinDotReceiverCounted for the dotted form, the builtin
-        // argument funnel for the plain one). The generic-source adapter
+        // (the builtin argument funnel for both the dotted form, whose receiver is the
+        // ordinary collection argument, and the plain one). The generic-source adapter
         // (EvaluateDotReceiverIterationItemsForSequenceOptimizer) already charges its
         // equivalent level; charging it here too keeps every fused source shape on the
         // same dynamic depth as the generic path, so a `MaxDepth` verdict cannot depend
@@ -348,7 +261,8 @@ public static partial class Evaluator
     /// fallback identity (normally <see cref="Expr.Param"/>; an invalid
     /// host-built expression follows its ordinary <c>ResolveAlg</c> behavior)
     /// and call with
-    /// the receiver as one injected leading segment. This is pure consumption
+    /// the receiver as the ordinary leading argument (dot-call passes a
+    /// value). This is pure consumption
     /// of the front-end's Param-vs-Resolve decision — no runtime environment
     /// is probed to reconstruct it. Kept out of
     /// <see cref="CallLexicalWithReceiverCounted"/> so its temporaries never
@@ -367,8 +281,7 @@ public static partial class Evaluator
             BuildLexicalReceiverCallArgs(dotCall.Target, dotCall.Args),
             ctx,
             valEnv,
-            CallDiagnosticName.FromKnown(dotCall.Name),
-            CallArgumentAssembly.InjectedDotReceiverLeading);
+            CallDiagnosticName.FromKnown(dotCall.Name));
     }
 
     /// <summary>
@@ -518,8 +431,14 @@ public static partial class Evaluator
     ///    - No args + has params → arity mismatch error
     ///    - Has args → delegate to <see cref="EvalResolvedCallCounted"/>
     ///      (dual-view binding, no receiver injection)
-    /// 3. No property → lexical fallback (receiver injection via
-    ///    <see cref="CallLexicalWithReceiverCounted"/>)
+    /// 3. No property → extension fallback (<see cref="CallLexicalWithReceiverCounted"/>):
+    ///    DOT-CALL PASSES A VALUE — <c>a.f(args)</c> is exactly the call
+    ///    <c>f(a, args)</c>, the receiver being the ordinary first argument slot
+    ///    (never a supply of its own; only the spread receiver <c>a*.f</c>, lowered
+    ///    by the parser to <c>f(a*)</c>, opens a boundary). Dot resolution therefore
+    ///    has three classes — structural member access (2), the intrinsic
+    ///    <c>.string</c> (1), and extension fallback (3) — and only the third
+    ///    injects the receiver.
     /// When receiver resolution returns notAnAlgorithm (e.g. numeric literal target),
     /// value-based intrinsics are checked before lexical fallback.
     /// (The graced sources <c>a~.f</c> / <c>a.~f</c> arrive here as the SAME
@@ -616,15 +535,25 @@ public static partial class Evaluator
     }
 
     /// <summary>
-    /// Counted lexical fallback with receiver injection — the ONE lexical
-    /// receiver-injection implementation (the plain dot-call spelling reaches
-    /// it through <see cref="EvalDotCallCounted"/> and the value projection).
-    /// The injected receiver remains one argument expression for flat fixed
-    /// user calls; sequence builtin dot-call expansion is handled before the
-    /// resolved-call path. DotCall lexical fallback to <c>while</c> and
-    /// <c>repeat</c> keeps explicit init arguments intact; the loop builtin
-    /// turns each init argument into one initial state slot after structural
-    /// property lookup has had priority.
+    /// Counted extension-call fallback — the ONE receiver-injection
+    /// implementation (the plain dot-call spelling reaches it through
+    /// <see cref="EvalDotCallCounted"/> and the value projection).
+    /// DOT-CALL PASSES A VALUE (September 2026): <c>R.F(args)</c> resolves the
+    /// callee and dispatches exactly <c>F(R, args)</c> — the receiver
+    /// expression becomes the ordinary FIRST written argument slot of the ONE
+    /// shared call assembly (<see cref="BuildLexicalReceiverCallArgs"/> +
+    /// <see cref="EvalResolvedCallCounted"/>), so every callable shape
+    /// (builtin, flat, collecting, patterned, clause family) binds, demands,
+    /// caches, orders, charges, and rejects the receiver exactly as it would
+    /// that written argument: a builtin's <c>collection</c> slot demands a
+    /// named receiver through the zero-argument value-demand law like
+    /// <c>count(A)</c> does, <c>while</c>/<c>repeat</c> take the receiver as
+    /// their step algorithm, a collecting parameter collects the receiver as
+    /// one item (<c>(1, 2).Coll</c> is <c>[(1, 2)]</c>, <c>().Coll</c> is
+    /// <c>[()]</c>), and only a spread receiver — the fluent <c>R*.F</c> form,
+    /// which the parser lowers to <c>F(R*)</c> — opens a boundary. There is no
+    /// dotted receiver view, no raw receiver supply, and no builtin-specific
+    /// receiver placement.
     /// Lean: <c>callLexicalWithReceiverCounted</c> (the Lean plain path is the
     /// projection <c>evalDotCall</c>, so only the counted helper exists).
     /// </summary>
@@ -645,20 +574,13 @@ public static partial class Evaluator
         if (dotCall.EffectiveLexicalFallback is not Expr.Resolve(var fallbackName))
             return CallLexicalFallbackCalleeWithReceiverCounted(dotCall, ctx, valEnv);
 
-        var sequenceDotCallR = TryBuildSequenceBuiltinDotCall(fallbackName, dotCall.Target, dotCall.Args, ctx, valEnv);
-        if (sequenceDotCallR.IsError) return sequenceDotCallR.Error;
-        if (sequenceDotCallR.Value is { } sequenceDotCall)
-            return ApplyBuiltinCountedResolved(sequenceDotCall.Builtin, sequenceDotCall.Args, ctx, valEnv);
-
         var calleeR = ResolveNamedAlgorithm(fallbackName, span: null, ctx);
         if (calleeR.IsError) return calleeR.Error;
-        var combinedArgs = BuildLexicalReceiverCallArgs(dotCall.Target, dotCall.Args);
         return EvalResolvedCallCounted(
             calleeR.Value,
-            combinedArgs,
+            BuildLexicalReceiverCallArgs(dotCall.Target, dotCall.Args),
             ctx,
             valEnv,
-            CallDiagnosticName.FromKnown(fallbackName),
-            CallArgumentAssembly.InjectedDotReceiverLeading);
+            CallDiagnosticName.FromKnown(fallbackName));
     }
 }

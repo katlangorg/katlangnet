@@ -33,7 +33,7 @@ Flat collecting user calls own:
 - argument item construction
 - counted top-level expansion
 - algorithm/value error propagation
-- dot receiver segment injection (one leading segment; supply consumed only at the flat top-level collecting position)
+- nothing dot-specific: an extension dot-call receiver is an ordinary leading argument slot of the shared assembler (dot-call passes a value)
 
 Patterned/sequence-value executor owns:
 
@@ -67,7 +67,6 @@ Builtins own:
 - callback invocation
 - numeric policy
 - empty policy
-- builtin dot receiver normalization
 
 Conditionals own:
 
@@ -83,12 +82,12 @@ Optimized loops own:
 
 ## Receiver semantics separation
 
-- Ordinary dot-call receiver injection is call-site syntax/runtime data: the receiver rides as ONE leading segment (`CallArgumentAssembly.InjectedDotReceiverLeading`), and the segment's evaluated top-level supply is carried as data-only input metadata (`ParameterPatternInput.CollectingSegmentEmittedCount`). Receiver assembly never inspects the resolved callee.
-- The binder applies the segment rule: fixed prefix/suffix allocation first (the segment is one input for arity), fixed positions bind the segment's value, and only a flat top-level collecting position consumes the segment's supply (one level, never recursive; nested pattern inputs never receive the metadata).
+- Ordinary dot-call receiver injection is call-site syntax only: DOT-CALL PASSES A VALUE, so `BuildLexicalReceiverCallArgs` places the ORIGINAL receiver expression as the ordinary first slot of the written call's argument bundle (`R.F(args)` is `F(R, args)`, `R*.F(args)` is `F(R*, args)`) and hands it to the same `EvalResolvedCallCounted` funnel every written call uses. Receiver assembly never inspects the resolved callee, and the binder never learns that a slot was a receiver — there is no receiver segment, no receiver supply, and no receiver metadata (`CallArgumentAssembly` and `ParameterPatternInput.CollectingSegmentEmittedCount` were deleted in September 2026 and must not return).
+- The binder applies its ordinary rules to that slot: fixed prefix/suffix allocation first (one slot is one input for arity), fixed positions bind the slot's value, a flat top-level collecting position collects it as ONE item, and only a written spread slot (`R*`) contributes several slots — expanded by the shared assembler before any binding, like every other spread slot.
 - The collection-builtin post-binding collection view is builtin runtime behavior.
 - Neither behavior belongs in a future `BindingPolicy`.
 
-If future models need to carry receiver information, they should carry it as descriptive input data only (as `CollectingSegmentEmittedCount` does); they should not decide what receiver semantics to apply.
+A future model must not carry receiver information at all: the receiver is indistinguishable from a written argument once assembled.
 
 ## Future `BindingInput`
 
@@ -101,7 +100,6 @@ Good candidates:
 - explicit sequence-value items
 - emitted count
 - source/provenance
-- receiver-segment supply metadata as descriptive data (realized today as `ParameterPatternInput.CollectingSegmentEmittedCount`)
 
 `BindingInput` must not decide what to do. Executors consume it; they keep semantic ownership.
 
@@ -109,7 +107,7 @@ Good candidates:
 
 Flat collecting user-call binding and generic `Algorithm.User` loop-step evaluated-slot binding share the one collecting materialization `CreateCollectingCapture` (`collectSegment`); the loop path selects a `FlatCollectingBindingLayout` and allocates its already-evaluated `Result` slots through the generic `BindCallableArguments` directly (September 2026: the `BindingInputSlot` wrapper that once adapted them, with its `BindItemsToFlatCollectingLayout` adapter, was removed as a dead abstraction — its user-call-item constructor had no caller, and its consumers guarded states it never produced — so `BindCallableArguments` has exactly one consumer), while a user call with a collecting parameter binds through the shared pattern binder `BindParameterPatternList` (`collectSegment`). This is the intended flat collecting migration boundary for the current architecture.
 
-The remaining differences are executor-owned. User calls still own argument expression evaluation, counted top-level expansion, algorithm/value/error channels, dot-call receiver segment injection and supply consumption, callable diagnostics, and `UserCallBindings`. Generic loop binding still owns already-evaluated value-only slots, declaration-order projection of the collecting capture, loop-state diagnostics, and `EvaluatedSlotBindings` (loop-state slots never carry receiver-segment metadata).
+The remaining differences are executor-owned. User calls still own argument expression evaluation, counted top-level expansion, algorithm/value/error channels, callable diagnostics, and `UserCallBindings` (a dot-call receiver is simply the first written slot of that assembly). Generic loop binding still owns already-evaluated value-only slots, declaration-order projection of the collecting capture, loop-state diagnostics, and `EvaluatedSlotBindings`.
 
 `TryGetLegacyFlatCollectingBindingLayout` remains for non-`Algorithm.User` loop steps where no `CallableBindingPlan` is available. `VariadicCallItem` remains as the collection-builtin argument-evaluation carrier because builtins own different empty/error policy, control preparation, callback invocation, and post-binding collection semantics.
 
@@ -153,11 +151,11 @@ Reopen callback binding unification only if `UsesPatternBinding`'s evaluated-loo
 
 Builtin runtime binding integration is deferred. Builtin metadata is already unified: `BuiltinRegistry`, `SequenceBuiltinMetadata`, `CallableSignature`, and `CallableBindingPlan` describe builtin surface shape. The remaining builtin runtime binding stays executor-owned because builtins operate on already-evaluated collected sequence sources, not ordinary pre-evaluation callable argument slots.
 
-`CallableBindingPlan` may describe builtin signatures, but it does not own builtin source collection, receiver normalization, empty policy, numeric validation, callback item recounting, or diagnostic wrapping. No shared input-slot wrapper exists for builtin runtime binding, and none should be introduced to carry source-boundary information, empty-policy state, callback item recounting policy, or dot-call receiver policy. Collection builtins are ordinary fixed-arity callables (`count(collection)`, `take(collection, count)`): their binder checks the exact argument count directly and applies the post-binding one-level collection view to the bound collection argument — there is no variadic layout, no suffix-from-the-back binding, and no pre-binding opening.
+`CallableBindingPlan` may describe builtin signatures, but it does not own builtin source collection, empty policy, numeric validation, callback item recounting, or diagnostic wrapping. No shared input-slot wrapper exists for builtin runtime binding, and none should be introduced to carry source-boundary information, empty-policy state, callback item recounting policy, or dot-call receiver policy. Collection builtins are ordinary fixed-arity callables (`count(collection)`, `take(collection, count)`): their binder checks the exact argument count directly and applies the post-binding one-level collection view to the bound collection argument — there is no variadic layout, no suffix-from-the-back binding, and no pre-binding opening.
 
-The builtin runtime families are plain builtin calls, dot-call builtin calls, collection builtins, numeric/math builtins, map/filter/reduce higher-order builtins, structural builtins such as `count`, `atoms`, `first`, `last`, `take`, `skip`, `order`, and `distinct`, builtin-as-callback, and dot-receiver injection. `count` counts its one bound collection's viewed items and `atoms` recursively collects atoms through both sequence and list boundaries into one exact list; these remain distinct semantic operations. The spread marker (`value*`) is the one-level boundary-opening mechanism and is not an ordinary builtin call.
+The builtin runtime families are plain builtin calls (a dotted builtin call `A.count` is the plain call `count(A)` reached through the dot edge — not a family of its own), collection builtins, numeric/math builtins, map/filter/reduce higher-order builtins, structural builtins such as `count`, `atoms`, `first`, `last`, `take`, `skip`, `order`, and `distinct`, and builtin-as-callback. `count` counts its one bound collection's viewed items and `atoms` recursively collects atoms through both sequence and list boundaries into one exact list; these remain distinct semantic operations. The spread marker (`value*`) is the one-level boundary-opening mechanism and is not an ordinary builtin call.
 
-The executor-owned builtin policies are dot-call receiver injection, receiver boundary preservation, explicit spread expansion from evaluated arguments, fixed argument-count checking, the post-binding one-level collection view of the bound collection argument, control-argument preparation, callback shaping for map/filter/reduce, numeric validation, empty-input behavior, builtin shadowing checks, and per-builtin diagnostic context wrapping. Dot-call receiver injection remains runtime-owned and outside `CallableBindingPlan`; per-builtin diagnostic context remains executor-owned and user-facing.
+The executor-owned builtin policies are explicit spread expansion from evaluated arguments, fixed argument-count checking, the post-binding one-level collection view of the bound collection argument, control-argument preparation, callback shaping for map/filter/reduce, numeric validation, empty-input behavior, builtin shadowing checks, and per-builtin diagnostic context wrapping. Dot-call receiver injection is call-site assembly (the receiver becomes the ordinary first argument before any builtin logic runs) and stays outside `CallableBindingPlan`; per-builtin diagnostic context remains executor-owned and user-facing.
 
 Reopen builtin runtime binding integration only if a second non-executor consumer of builtin source-collection or empty-policy logic appears; a future `SequenceBuiltinInput` or equivalent substrate is introduced for another reason; a shared input-slot model gains emitted-count and source-boundary representation for another concrete migration; a new builtin family forces redesign; Lean builtin semantics change and require a corresponding C# refactor; or a real builtin binding bug requires unification to fix correctly.
 
@@ -175,7 +173,7 @@ Reopen only when a concrete consumer appears, such as accepted guard-expression 
 
 Call argument-slot assembly is now centralized: `BuildCallArgumentInputs` (Lean `collectVariadicCallItems`) serves EVERY callable shape — flat fixed, flat/mixed variadic, patterned, and multi-clause conditional. It evaluates each written slot exactly once, left to right, reifies every non-spread slot as exactly one argument value (with the dual algorithm channel where resolvable), and expands every explicit spread slot by one value boundary BEFORE any arity checking, clause selection, or pattern binding. For a `Capture` or zero-parameter `AlgorithmExpr` sent to a patterned callee, the corresponding prepared-output pass returns both the combined counted value and a read-only explicit-slot view over the same evaluated values; binding never evaluates the expression again or reconstructs the view from the combined value. The July 2026 call-spread repair introduced the shared assembler after an audit found spread expansion implemented in only two of four per-shape assemblers (patterned and conditional callees silently received a spread argument as one closed value).
 
-Per-shape binding after assembly remains executor-owned: flat fixed positional binding, the item-supply prefix/collecting/suffix binder (which consumes an injected receiver segment's supply at the flat top-level collecting position), `ParameterPattern` binding (which additionally consumes the explicit written-item channel for capture and zero-parameter AlgorithmExpr arguments), and conditional branch matching. Counted-param shadowing, dot-call receiver segment marking, and algorithm/value dual binding live in the shared assembly and its consumers. Do not reintroduce per-shape argument evaluation loops; changes to slot semantics belong in the shared assembler in BOTH languages.
+Per-shape binding after assembly remains executor-owned: flat fixed positional binding, the item-supply prefix/collecting/suffix binder, `ParameterPattern` binding (which additionally consumes the explicit written-item channel for capture and zero-parameter AlgorithmExpr arguments), and conditional branch matching. Counted-param shadowing and algorithm/value dual binding live in the shared assembly and its consumers; a dot-call receiver enters the assembly as the ordinary first written slot (`BuildLexicalReceiverCallArgs`) and is never marked. Do not reintroduce per-shape argument evaluation loops; changes to slot semantics belong in the shared assembler in BOTH languages.
 
 ## `BindingPolicy` deferred
 

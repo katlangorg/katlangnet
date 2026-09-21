@@ -1145,21 +1145,8 @@ public class MetamorphicPhase2FamilyTests
         Assert.True(MetamorphicComparator.WorkIsComparable(realLeft, realRight));
         Assert.Equal(realLeft.MaterializedItems, realRight.MaterializedItems);
 
-        // (3) A RESOURCE abort. Minimized campaign reproducer (payload 01 00 04 00 01 01 10 01 02):
-        // both forms stop on the SAME string-budget error with the SAME payload, but the ordinary
-        // call materialized its initial accumulator before forcing the receiver while the dotted
-        // call prepares the receiver first — so the counters captured at the abort differ (2 vs 0).
-        const string ordinary = "MmR = 'ab'\nreduce(MmR, contains, [1, 2])";
-        const string dotted = "MmR = 'ab'\nMmR.reduce(contains, [1, 2])";
-        var limits = new EvaluationLimits { MaxMaterializedStringChars = 1 };
-
-        Assert.True(MetamorphicExecutor.TryObserve(ordinary, limits, false, out var left, out _));
-        Assert.True(MetamorphicExecutor.TryObserve(dotted, limits, false, out var right, out _));
-
-        // The structured resource outcome IS still compared
-        Assert.Equal(left.Semantic, right.Semantic);
-        Assert.True(left.Semantic.IsResourceLimit);
-        Assert.Equal("StringMaterializationLimitExceeded", left.Semantic.ErrorCategory);
+        // (3) A RESOURCE abort. The structured resource outcome IS still compared (a different
+        // payload is a semantic mismatch)...
         Assert.Equal(
             MetamorphicMismatchKind.SemanticErrorPayload,
             MetamorphicComparator.Compare(
@@ -1167,8 +1154,34 @@ public class MetamorphicPhase2FamilyTests
                 Failed("StringMaterializationLimitExceeded", isResourceLimit: true, items: 0, payload: "limit=1"),
                 Failed("StringMaterializationLimitExceeded", isResourceLimit: true, items: 0, payload: "limit=2"))!.Kind);
 
-        // but... the partial counters are not.
-        Assert.NotEqual(left.MaterializedItems, right.MaterializedItems);
+        // ...but the partial counters are not: the numbers of an aborted run describe the prefix
+        // that happened to precede the abort, so two runs stopped by the same limit with
+        // different partial work are neither comparable nor reported.
+        var abortedLeft = Failed("StringMaterializationLimitExceeded", isResourceLimit: true, items: 2, payload: "limit=1");
+        var abortedRight = Failed("StringMaterializationLimitExceeded", isResourceLimit: true, items: 0, payload: "limit=1");
+        Assert.False(MetamorphicComparator.WorkIsComparable(abortedLeft, abortedRight));
+        Assert.Null(MetamorphicComparator.Compare(
+            MetamorphicTemplates.Build(MetamorphicDecoder.Decode([0x01, 0, 4, 0, 1, 1, 0x10, 1, 2])), abortedLeft, abortedRight));
+
+        // The historical campaign reproducer (payload 01 00 04 00 01 01 10 01 02) once showed
+        // the ordinary and dotted spellings aborting with DIFFERENT partial counters (2 vs 0),
+        // because the dotted call prepared its receiver through a separate segment path before
+        // the written arguments. Dot-call now passes the receiver as the ordinary leading
+        // argument — `MmR.reduce(contains, [1, 2])` assembles exactly the slots of
+        // `reduce(MmR, contains, [1, 2])`, in the same order — so the two spellings stop on the
+        // same string-budget error AND with the same partial work; the gate still exempts the
+        // aborted pair, because the exemption is a property of aborted runs, not of the pair.
+        const string ordinary = "MmR = 'ab'\nreduce(MmR, contains, [1, 2])";
+        const string dotted = "MmR = 'ab'\nMmR.reduce(contains, [1, 2])";
+        var limits = new EvaluationLimits { MaxMaterializedStringChars = 1 };
+
+        Assert.True(MetamorphicExecutor.TryObserve(ordinary, limits, false, out var left, out _));
+        Assert.True(MetamorphicExecutor.TryObserve(dotted, limits, false, out var right, out _));
+        Assert.Equal(left.Semantic, right.Semantic);
+        Assert.True(left.Semantic.IsResourceLimit);
+        Assert.Equal("StringMaterializationLimitExceeded", left.Semantic.ErrorCategory);
+        Assert.Equal(left.MaterializedItems, right.MaterializedItems);
+        Assert.Equal(left.MaterializedStringChars, right.MaterializedStringChars);
         Assert.False(MetamorphicComparator.WorkIsComparable(left, right));
         Assert.Null(MetamorphicComparator.Compare(
             MetamorphicTemplates.Build(MetamorphicDecoder.Decode([0x01, 0, 4, 0, 1, 1, 0x10, 1, 2])), left, right));
@@ -1185,9 +1198,10 @@ public class MetamorphicPhase2FamilyTests
     [Fact]
     public void NoObservableOutcomeEverDiffersBetweenOrdinaryAndDottedFormsUnderAnyBudgetPair()
     {
-        // The evidence behind the gate above: across every trusted builtin, every receiver, and
+        // The evidence behind the relation: across every trusted builtin, every receiver, and
         // the whole (item budget x string budget) grid, the two spellings always agree on what a
-        // program can observe. Only the partial counters of an aborted run ever differ.
+        // program can observe — and, because dot-call passes the receiver as the ordinary leading
+        // argument, even on the partial work counted up to an abort.
         var builtins = MetamorphicTables.Builtins
             .Where(b => b.SuffixKind is MetamorphicSuffixKind.None)
             .Select(b => (Ordinary: $"{b.Name}(MmR)", Dotted: $"MmR.{b.Name}"))
@@ -1207,6 +1221,8 @@ public class MetamorphicPhase2FamilyTests
                         Assert.True(MetamorphicExecutor.TryObserve(left, limits, false, out var a, out _));
                         Assert.True(MetamorphicExecutor.TryObserve(right, limits, false, out var b, out _));
                         Assert.Equal(a.Semantic, b.Semantic);
+                        Assert.Equal(a.MaterializedItems, b.MaterializedItems);
+                        Assert.Equal(a.MaterializedStringChars, b.MaterializedStringChars);
                     }
             }
     }

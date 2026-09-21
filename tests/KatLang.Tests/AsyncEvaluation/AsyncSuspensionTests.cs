@@ -31,7 +31,13 @@ public class AsyncSuspensionTests
         { "reduce-callback", "Base = 100\nZero = 0\nR(el, acc) = acc + el + Zero\n[1, 2, 3].reduce(R, Base * 1)" },
         { "deconstruction", "Src = (1, (2, 3), 4)\nx, y, z = Src\ny" },
         { "structural-dot", "Lib = {public V = 41}\nLib.V + 1" },
-        { "lexical-dot-fallback", "A = (1, 2, 3)\nA.count" },
+        // A bare named receiver of a BUILTIN is that builtin's written argument (dot-call
+        // passes a value), demanded through the argument funnel like `count(A)` — so the
+        // extension-fallback seam is exercised through a USER callee, whose parameter
+        // binding reads the receiver property in value position, and through the
+        // captured receiver `(A).count`, which reads the cached value.
+        { "lexical-dot-fallback", "A = (1, 2, 3)\nTotal(v) = v.count\nA.Total" },
+        { "captured-dot-receiver", "A = (1, 2, 3)\n(A).count" },
         { "fluent-spread", "A = (1, 2, 3)\nTotal(*v) = v.sum\nA*.Total" },
         { "spread-capture", "A = (1, 2)\nB = (A*, A*)\nB.count" },
         { "clause-family", "F(0) = Zero\nF(n) = NonZero\nZero = 100\nNonZero = 200\nF(0), F(7)" },

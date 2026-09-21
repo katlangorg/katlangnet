@@ -28,8 +28,8 @@ internal sealed record MetamorphicCacheSource(
 ///
 /// <code>
 /// left (cached)    MmA = range(1, 6)                 right (rebuilt)  MmA1 = range(1, 6)
-///                  MmA.count, MmA.count                               MmA2 = range(1, 6)
-///                                                                     MmA1.count, MmA2.count
+///                  (MmA).count, (MmA).count                           MmA2 = range(1, 6)
+///                                                                     (MmA1).count, (MmA2).count
 /// </code>
 ///
 /// <para><b>Equivalence argument.</b> KatLang is pure, so binding one property and using it twice
@@ -44,7 +44,11 @@ internal sealed record MetamorphicCacheSource(
 /// so the case is only admitted when the run PROVES it: the cached side must record at least
 /// <c>uses - 1</c> hits, and the rebuilt side must record none at all. Distinct property names
 /// have distinct binding identities, so the rebuilt side cannot accidentally share an entry —
-/// and the evidence gate turns that from an argument into a measurement.</para>
+/// and the evidence gate turns that from an argument into a measurement. The uses therefore
+/// read the property in VALUE position — bare, or as the captured receiver <c>(MmA).count</c> —
+/// because a builtin's collection slot demands a named property's algorithm directly and never
+/// consults the cache, in the written spelling <c>count(MmA)</c> exactly as in the dotted
+/// spelling <c>MmA.count</c> (dot-call passes the receiver as the ordinary leading argument).</para>
 ///
 /// <para><b>Directional work.</b> The cache exists to do less, so the relation is
 /// <see cref="MetamorphicOperationalRelation.WorkNeverIncreases"/>: the cached side may charge
@@ -67,6 +71,13 @@ internal static class MetamorphicCacheTemplate
     private const string Property = MetamorphicTables.NamePrefix + "A";
     private const string Placeholder = "$";
 
+    /// <summary>
+    /// The property read in value position as a captured receiver: <c>(MmA).count</c> reads the
+    /// cache, whereas the bare receiver <c>MmA.count</c> — like the written argument
+    /// <c>count(MmA)</c> — is demanded directly by the builtin's collection slot.
+    /// </summary>
+    private const string Captured = "(" + Placeholder + ")";
+
     /// <summary>How many times the value is used. Both counts exercise a real reuse.</summary>
     internal static readonly ImmutableArray<int> ReuseCounts = [2, 3];
 
@@ -79,32 +90,34 @@ internal static class MetamorphicCacheTemplate
     [
         new("cached-atom", "7", Placeholder),
         new("cached-string", "'abcd'", Placeholder),
-        new("cached-list", "[1, 2, 3]", Placeholder + ".count"),
-        new("cached-sequence", "(1, 2, 3)", Placeholder + ".count"),
-        new("cached-empty-list", "[]", Placeholder + ".count"),
-        new("cached-empty-sequence", "()", Placeholder + ".count"),
-        new("cached-nested-collection", "[[1, 2], [3, 4]]", Placeholder + ".count"),
-        new("cached-list-of-sequences", "[(1, 2), (3, 4)]", Placeholder + ".first"),
-        new("cached-string-list", "['abc', 'de']", Placeholder + ".count"),
-        new("cached-mixed-collection", "[1, 'ab', [2, 3]]", Placeholder + ".count"),
-        // MEASURED, not assumed: a bare property reference in an ordinary call ARGUMENT position
-        // records no zero-argument property cache request at all, while the SAME property used as
-        // a dotted receiver does (see the two entries below). Both forms produce identical values;
-        // the difference is purely a missed reuse, and the repository documents the cache as
-        // something property-style access "may" use rather than must. The template is kept — the
-        // pair is still a valid cached-versus-rebuilt comparison — but it does not claim reuse it
-        // demonstrably does not get. Pinned by
-        // MetamorphicPhase3FamilyTests.ArgumentPositionPropertyReference_DoesNotConsultTheCache.
+        new("cached-list", "[1, 2, 3]", Captured + ".count"),
+        new("cached-sequence", "(1, 2, 3)", Captured + ".count"),
+        new("cached-empty-list", "[]", Captured + ".count"),
+        new("cached-empty-sequence", "()", Captured + ".count"),
+        new("cached-nested-collection", "[[1, 2], [3, 4]]", Captured + ".count"),
+        new("cached-list-of-sequences", "[(1, 2), (3, 4)]", Captured + ".first"),
+        new("cached-string-list", "['abc', 'de']", Captured + ".count"),
+        new("cached-mixed-collection", "[1, 'ab', [2, 3]]", Captured + ".count"),
+        // MEASURED, not assumed: a bare property reference in a builtin's collection slot records
+        // no zero-argument property cache request at all — the slot demands the property's
+        // algorithm directly — and since dot-call passes the receiver as that ordinary leading
+        // argument, the dotted spelling `MmA.sum` records none either (the two entries below).
+        // Both forms produce identical values; the difference from the captured `(MmA).sum` is
+        // purely a missed reuse, and the repository documents the cache as something
+        // property-style access "may" use rather than must. The templates are kept — each pair is
+        // still a valid cached-versus-rebuilt comparison — but they do not claim reuse they
+        // demonstrably do not get. Pinned by
+        // MetamorphicPhase3FamilyTests.BuiltinCollectionSlot_DoesNotConsultTheCache_InEitherSpelling.
         new("argument-position-property", "range(1, 6)", "sum(" + Placeholder + ")", RequiresReuseEvidence: false),
-        new("cached-receiver-sum", "range(1, 6)", Placeholder + ".sum"),
-        new("cached-dotted-receiver", "range(1, 6)", Placeholder + ".take(2)"),
-        new("cached-callback-input", "[1, 2, 3]", Placeholder + ".map(" + MetamorphicTables.DoubleCallback + ")"),
-        new("cached-filter-chain", "range(1, 8)", Placeholder + ".filter(" + MetamorphicTables.BigCallback + ").count"),
+        new("dotted-receiver-property", "range(1, 6)", Placeholder + ".sum", RequiresReuseEvidence: false),
+        new("cached-dotted-receiver", "range(1, 6)", Captured + ".take(2)"),
+        new("cached-callback-input", "[1, 2, 3]", Captured + ".map(" + MetamorphicTables.DoubleCallback + ")"),
+        new("cached-filter-chain", "range(1, 8)", Captured + ".filter(" + MetamorphicTables.BigCallback + ").count"),
         new("cached-multi-output-property", "1, 2, 3", Placeholder),
-        new("cached-string-projection", "range(1, 4)", Placeholder + ".count.string"),
+        new("cached-string-projection", "range(1, 4)", Captured + ".count.string"),
         // Reuse happens first, then the run fails: proves an error later in the program does not
         // retroactively change what the cache already served.
-        new("error-after-reuse", "range(1, 4)", Placeholder + ".count", TrailingRow: "min([])"),
+        new("error-after-reuse", "range(1, 4)", Captured + ".count", TrailingRow: "min([])"),
         // The property itself fails, so no second access is ever reached. Kept because "an
         // erroring property is not stored and both forms report the same error" is a real
         // contract, and the template says so rather than claiming reuse it cannot have.

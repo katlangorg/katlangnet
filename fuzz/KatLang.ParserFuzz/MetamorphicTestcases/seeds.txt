@@ -118,10 +118,10 @@ family=optimizer-generic-parity bytes=05 00 01 01 00 00 0c 00 desc=REJECTED: a c
 family=optimizer-generic-parity bytes=05 00 02 01 01 00 19 00 desc=generous explicit limits with both optimizers active
 
 # ── Phase 3 Group B: a reused zero-argument property against the rebuilt form ──────────────
-family=cached-property-reuse bytes=06 00 00 01 01 00 0b 01 00 desc=cached range consumed through the dotted receiver, three uses
+family=cached-property-reuse bytes=06 00 00 01 01 00 0b 01 00 desc=dotted-receiver reference: measured NOT to consult the cache, like the written argument
 family=cached-property-reuse bytes=06 00 00 01 01 00 06 00 00 desc=cached nested collection, two uses
 family=cached-property-reuse bytes=06 00 00 01 01 00 01 01 00 desc=cached string value reused three times
-family=cached-property-reuse bytes=06 00 00 01 01 00 0c 01 00 desc=cached value used repeatedly as a dotted receiver
+family=cached-property-reuse bytes=06 00 00 01 01 00 0c 01 00 desc=cached value used repeatedly as a captured dotted receiver
 family=cached-property-reuse bytes=06 00 00 01 01 00 0d 00 00 desc=cached collection passed to a callback builtin
 family=cached-property-reuse bytes=06 00 00 01 01 00 0f 01 00 desc=multi-output property reified as one cached value
 family=cached-property-reuse bytes=06 00 00 01 01 00 0a 01 00 desc=argument-position reference: measured NOT to consult the cache
