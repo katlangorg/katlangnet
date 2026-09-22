@@ -3217,6 +3217,28 @@ public static class LanguageSpecCorpus
         },
         new()
         {
+            Id = "output-less-argument-is-not-an-omitted-argument",
+            Category = "errors",
+            Source = "Coll(*xs) = xs\nColl({})",
+            Outcome = SpecOutcome.EvalError,
+            ExpectedErrorCategory = "missingOutput",
+            Probes =
+            [
+                new SpecProbe("Coll(*xs) = xs\nColl()", "ok raw=L[] n=1"),
+                new SpecProbe("Coll(*xs) = xs\nColl(())", "ok raw=L[] n=1"),
+                new SpecProbe("Coll(*xs) = xs\nEmpty = ()\nColl(Empty*)", "ok raw=L[] n=1"),
+                new SpecProbe("Coll(*xs) = xs\nColl([])", "ok raw=L[L[]] n=1"),
+                new SpecProbe("Coll(*xs) = xs\nColl({}*)", "err spreadMissingOutput"),
+                new SpecProbe("Coll(*xs) = xs\nColl(1, {}, 3)", "err missingOutput"),
+                new SpecProbe("F(x) = x\nF()", "err arity"),
+                new SpecProbe("F(x) = x\nF({})", "err missingOutput"),
+                new SpecProbe("F(x) = x\nF([])", "ok raw=L[] n=1"),
+                new SpecProbe("F(x) = x\nF(())", "ok raw=S[] n=1"),
+            ],
+            Explanation = "A collector legally accepts zero supplied items, which is exactly why an ordinary written argument that produced no output must not be read as \"nothing was supplied\": `Coll({})` is an error, never `Coll()`. The four situations stay distinct — an OMITTED argument is an arity failure (`F()`), a written argument with no output is that argument's failure (`F({})`, `Coll({})`), a legitimate empty value is one ordinary value (`F([])`, `F(())`, `Coll(())`, `Coll([])`), and an explicit spread supplying zero items is a legal supply (`Coll(Empty*)`). The distinction follows slot provenance, never the final supplied-item count.",
+        },
+        new()
+        {
             Id = "scalar-op-rejects-sequence",
             Category = "errors",
             Source = "(1, 2) + 1",

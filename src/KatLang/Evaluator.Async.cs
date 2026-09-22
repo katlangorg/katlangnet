@@ -2055,7 +2055,7 @@ public static partial class Evaluator
         foreach (var input in inputsR.Value)
         {
             if (input.Value is null)
-                return input.ValueError ?? new EvalError.BadArity();
+                return SurfacedSlotValueError(input);
 
             argResults.Add(input.Value);
         }
@@ -2121,7 +2121,10 @@ public static partial class Evaluator
                     evaluatedR.Value.Value,
                     maybeAlg,
                     ValueError: null,
-                    SupplyOrigin.WrittenSlot));
+                    SupplyOrigin.WrittenSlot)
+                {
+                    Source = argExpr,
+                });
                 continue;
             }
 
@@ -2131,11 +2134,14 @@ public static partial class Evaluator
                     Value: null,
                     maybeAlg,
                     evaluatedR.Error,
-                    SupplyOrigin.WrittenSlot));
+                    SupplyOrigin.WrittenSlot)
+                {
+                    Source = argExpr,
+                });
                 continue;
             }
 
-            return evaluatedR.Error;
+            return BlameWrittenArgumentSlot(argExpr, evaluatedR.Error);
         }
 
         return EvalResult<IReadOnlyList<ParameterPatternInput>>.Ok(inputs);

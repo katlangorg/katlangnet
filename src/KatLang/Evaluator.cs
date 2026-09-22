@@ -1057,6 +1057,50 @@ public static partial class Evaluator
         return WithSpan(span, result);
     }
 
+    /// <summary>
+    /// THE ONE WRITTEN-ARGUMENT BLAME (F5). A written argument that was required to
+    /// supply a value and produced no output is that ARGUMENT's failure: the error is
+    /// attributed to the written expression and positioned at it, so no enclosing call
+    /// or dot-call frame can claim it and render "Cannot call '<c>callee</c>' because it
+    /// has no defined output" for a callee that is perfectly well formed
+    /// (<c>count({ })</c>, <c>Coll({ })</c>, <c>if(c, { }, 2)</c>, <c>F(1 + { })</c>).
+    ///
+    /// <para>This is the unnamed half of the blame rule a NAMED argument already gets
+    /// from its own evaluation (<see cref="WithPropertyContextOnMissingOutput{T}"/>,
+    /// <c>WithParameterContextOnMissingOutput</c>); it applies to every other written
+    /// shape. The structured kind and payload are unchanged — the innermost error stays
+    /// <see cref="EvalError.MissingOutput"/> — and the span is attached only when the
+    /// error has none, so a failing SUB-expression keeps its own precise location while
+    /// the description names the argument the reader has to change.</para>
+    ///
+    /// <para>Distinctions this rule must not erase: an OMITTED argument is an arity
+    /// failure before any of this (<c>F()</c>), a legitimate empty value is a value
+    /// (<c>F([])</c>, <c>F(())</c>), and an explicit spread supplying zero items is a
+    /// legal supply, not a missing output (<c>Coll(Empty*)</c>) — a spread operand
+    /// without output is its own <see cref="EvalError.SpreadMissingOutput"/>.</para>
+    /// </summary>
+    private static EvalError BlameWrittenArgumentForMissingOutput(Expr source, EvalError error)
+        => error is EvalError.MissingOutput
+            ? AtSpanIfMissing(
+                new EvalError.WithContext(new ArgumentEvaluationContext(OpenExprName(source)), error),
+                source.Span)
+            : error;
+
+    /// <summary>
+    /// <see cref="BlameWrittenArgumentForMissingOutput"/> for a written call-argument
+    /// SLOT, which is evaluated as an ordinary expression
+    /// (<c>BuildCallArgumentInputs</c>). A NAME occurrence therefore already made its
+    /// own blame decision during that evaluation — including the deliberate diagnostic
+    /// TRANSPARENCY of the parser's hoisted deconstruction source, whose bare
+    /// <see cref="EvalError.MissingOutput"/> must keep bubbling to the written
+    /// assignment target (<see cref="Algorithm.IsSyntheticDeconstructionFrame"/>) — so
+    /// only a shape that cannot self-blame is attributed here.
+    /// </summary>
+    private static EvalError BlameWrittenArgumentSlot(Expr source, EvalError error)
+        => source is Expr.Resolve or Expr.Param
+            ? error
+            : BlameWrittenArgumentForMissingOutput(source, error);
+
     private static EvalResult<T> MissingImplicitArguments<T>(Algorithm wired, SourceSpan? span)
         => MissingImplicitArgumentsError(wired, span);
 

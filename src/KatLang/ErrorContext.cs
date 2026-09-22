@@ -45,6 +45,31 @@ public sealed record ParameterEvaluationContext(string ParameterName) : ErrorCon
     public override string ToLegacyString() => $"while evaluating parameter {ParameterName}";
 }
 
+/// <summary>
+/// A WRITTEN CALL ARGUMENT that was required to supply a value and whose
+/// expression produced no output. The failure belongs to that argument — never to
+/// the callee, whose own call context still encloses this frame — and never reads
+/// as though the caller had omitted the argument.
+///
+/// <para>This is the unnamed half of the same blame rule
+/// <see cref="PropertyEvaluationContext"/> and <see cref="ParameterEvaluationContext"/>
+/// carry for a named argument: a brace block, a capture, a call, a selection, or an
+/// operator expression has no name to report, so the written argument is described by
+/// its own diagnostic spelling (<c>{...}</c>, <c>(1, {...})</c>, <c>1 + {...}</c>) and
+/// positioned at the expression that produced nothing.</para>
+///
+/// <para>PUBLIC because <see cref="ErrorContext"/> is consumer-exhaustive: a host may
+/// switch over its variants with no catch-all arm and have the compiler prove the
+/// switch complete, and <see cref="EvalError"/> is the one closed root that
+/// deliberately keeps a non-public variant. Adding a frame to this hierarchy is
+/// therefore a reviewed public-surface addition, exactly as
+/// <see cref="ParameterEvaluationContext"/> was.</para>
+/// </summary>
+public sealed record ArgumentEvaluationContext(string ArgumentDescription) : ErrorContext
+{
+    public override string ToLegacyString() => $"while evaluating argument {ArgumentDescription}";
+}
+
 public sealed record ProgramEvaluationContext() : ErrorContext
 {
     public override string ToLegacyString() => "while evaluating program output";

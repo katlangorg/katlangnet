@@ -77,6 +77,21 @@ public sealed record KatLang.Algorithm.User : KatLang.Algorithm, System.IEquatab
   operator public static bool op_Equality(KatLang.Algorithm.User? left, KatLang.Algorithm.User? right)
   operator public static bool op_Inequality(KatLang.Algorithm.User? left, KatLang.Algorithm.User? right)
 
+public sealed record KatLang.ArgumentEvaluationContext : KatLang.ErrorContext, System.IEquatable<KatLang.ArgumentEvaluationContext>
+  ctor     public ArgumentEvaluationContext(string ArgumentDescription)
+  property public string ArgumentDescription { get; init; }
+  property protected override System.Type EqualityContract { get; }
+  method   public virtual KatLang.ArgumentEvaluationContext <Clone>$()
+  method   public void Deconstruct(out string ArgumentDescription)
+  method   public bool Equals(KatLang.ArgumentEvaluationContext? other)
+  method   public override bool Equals(object? obj)
+  method   public sealed override bool Equals(KatLang.ErrorContext? other)
+  method   public override int GetHashCode()
+  method   protected override bool PrintMembers(System.Text.StringBuilder builder)
+  method   public override string ToLegacyString()
+  operator public static bool op_Equality(KatLang.ArgumentEvaluationContext? left, KatLang.ArgumentEvaluationContext? right)
+  operator public static bool op_Inequality(KatLang.ArgumentEvaluationContext? left, KatLang.ArgumentEvaluationContext? right)
+
 public abstract class KatLang.AstWalker
   ctor     protected AstWalker()
   property protected virtual bool VisitsExplicitParameterDeclarations { get; }

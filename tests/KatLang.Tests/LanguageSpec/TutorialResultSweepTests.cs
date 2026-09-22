@@ -46,6 +46,18 @@ public class TutorialResultSweepTests
                     "**Result:** error — `A` has no defined output.",
                     KatLangErrorCode.MissingOutput),
                 new(
+                    "F(x) = x\nF()",
+                    "**Result:** error — `F(x)` expects one argument, and none was written.",
+                    KatLangErrorCode.ArityMismatch),
+                new(
+                    "count({})",
+                    "**Result:** error — the argument `{...}` has no defined output.",
+                    KatLangErrorCode.MissingOutput),
+                new(
+                    "Coll(*xs) = xs\nColl({})",
+                    "**Result:** error — the argument `{...}` has no defined output.",
+                    KatLangErrorCode.MissingOutput),
+                new(
                     "Math.Ceiling(2.1)",
                     "**Result:** error — `Math` has no member `Ceiling`, so the call fell back to a lexical `Ceiling(Math, 2.1)`; no such callable is visible, so `Ceiling` became an implicit parameter of the program, and the report names the receiver, explains the fallback, and suggests `Math.Ceil`.",
                     KatLangErrorCode.UnresolvedImplicitParams),

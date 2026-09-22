@@ -316,7 +316,7 @@ public static partial class Evaluator
         foreach (var input in inputsR.Value)
         {
             if (input.Value is null)
-                return input.ValueError ?? new EvalError.BadArity();
+                return SurfacedSlotValueError(input);
 
             argResults.Add(input.Value);
         }

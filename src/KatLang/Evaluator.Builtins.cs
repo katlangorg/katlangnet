@@ -2072,13 +2072,15 @@ public static partial class Evaluator
     /// callee's: a NAMED argument (`sum(L)`, `if(1, L, 0)`) is reported through the same
     /// property context a value-position read of `L` attaches
     /// (<see cref="WithPropertyContextOnMissingOutput{T}"/>), so the enclosing call context
-    /// renders "Property 'L' has no defined output" instead of blaming the callee.
+    /// renders "Property 'L' has no defined output" instead of blaming the callee, and
+    /// every OTHER written shape is blamed as the written argument it is
+    /// (<see cref="BlameWrittenArgumentForMissingOutput"/>).
     /// </summary>
     private static EvalResult<CountedResult> BlameDemandedArgumentForMissingOutput(
         Expr? source,
         EvalResult<CountedResult> result)
     {
-        if (!result.IsError || result.Error is not EvalError.MissingOutput)
+        if (!result.IsError || result.Error is not EvalError.MissingOutput || source is null)
             return result;
 
         return source switch
@@ -2091,7 +2093,11 @@ public static partial class Evaluator
             // A PARAMETER read in the slot (`F(a) = sum(a)` with an output-less argument):
             // the parameter's failure, exactly as a value-position read reports it.
             Expr.Param(var name) => WithSpan<CountedResult>(source.Span, new EvalError.WithContext(new ParameterEvaluationContext(name), result.Error)),
-            _ => result,
+            // F5: a written block, capture, call, selection, or operator expression has no
+            // name to report. Blaming the written argument is what keeps `count({ })` from
+            // reading as though `count` itself had no output — or as though the source had
+            // been the argumentless `count()`.
+            _ => BlameWrittenArgumentForMissingOutput(source, result.Error),
         };
     }
 

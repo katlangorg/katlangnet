@@ -176,7 +176,24 @@ public static partial class Evaluator
         Result? Value,
         Algorithm? Algorithm,
         EvalError? ValueError,
-        SupplyOrigin Origin = SupplyOrigin.FinalItem);
+        SupplyOrigin Origin = SupplyOrigin.FinalItem)
+    {
+        /// <summary>
+        /// The written argument expression this slot was assembled from, retained for the
+        /// ONE written-argument blame (<see cref="BlameWrittenArgumentSlot"/>) when a
+        /// demand later surfaces <see cref="ValueError"/>. This is the user-call twin of
+        /// <see cref="ResolvedArgumentAlgorithm.Source"/>: diagnostic identity only, never
+        /// consulted for binding, and <c>null</c> for a slot no single written expression
+        /// produced (an explicit spread's items, a pattern-opened item, a loop state slot,
+        /// a reducer accumulator slot).
+        ///
+        /// <para>Retaining the node rather than a rendered description is what keeps the
+        /// deferred path free: a slot whose value is never demanded (<c>F(x, y) = x</c>
+        /// called as <c>F(1, { })</c>) costs nothing, because the description is rendered
+        /// only where an error actually surfaces.</para>
+        /// </summary>
+        public Expr? Source { get; init; }
+    }
 
     /// <summary>
     /// COLLECTOR SUPPLY-BOUNDARY LAW (September 2026). The supply a collecting
@@ -750,8 +767,22 @@ public static partial class Evaluator
         if (input.Value is { } value)
             return EvalResult<IReadOnlyList<Result>>.Ok(value.StructureItems() ?? [value]);
 
-        return input.ValueError ?? new EvalError.BadArity();
+        return SurfacedSlotValueError(input);
     }
+
+    /// <summary>
+    /// Raises a written slot's retained value error at the demand that needs its VALUE,
+    /// blaming the written argument when the slot produced no output at all (F5 — the ONE
+    /// <see cref="BlameWrittenArgumentSlot"/>). Every other retained error is raised
+    /// exactly as before, and a slot with no retained error at all is the binder's own
+    /// <see cref="EvalError.BadArity"/>.
+    /// </summary>
+    private static EvalError SurfacedSlotValueError(ParameterPatternInput input)
+        => input.ValueError is not { } valueError
+            ? new EvalError.BadArity()
+            : input.Source is { } source
+                ? BlameWrittenArgumentSlot(source, valueError)
+                : valueError;
 
     /// <summary>
     /// Arity mismatch produced by binding one nested sequence-value parameter
@@ -797,7 +828,7 @@ public static partial class Evaluator
                     }
 
                     if (input.Value is null && (!allowAlgorithmBindings || input.Algorithm is null))
-                        return input.ValueError ?? new EvalError.BadArity();
+                        return SurfacedSlotValueError(input);
 
                     return EvalResult<UserCallBindings>.Ok(new UserCallBindings(valueBindings, [], algorithmBindings));
                 }
@@ -996,7 +1027,10 @@ public static partial class Evaluator
                         "Pass a value, or call the callable so its result is collected.");
                 }
 
-                return input.ValueError ?? new EvalError.BadArity();
+                // A collector accepts zero SUPPLIED items, but an ordinary written argument
+                // that produced no output never becomes "nothing was supplied": it is that
+                // argument's failure (F5), so `Coll({ })` can never collapse to `Coll()`.
+                return SurfacedSlotValueError(input);
             }
 
             // Every slot allocated to the flat top-level collecting position
@@ -1241,21 +1275,32 @@ public static partial class Evaluator
                     evaluatedR.Value.Value,
                     maybeAlg,
                     ValueError: null,
-                    SupplyOrigin.WrittenSlot));
+                    SupplyOrigin.WrittenSlot)
+                {
+                    Source = argExpr,
+                });
                 continue;
             }
 
             if (maybeAlg is not null)
             {
+                // The failure is RETAINED, not raised: an argument nobody demands is not an
+                // error (`F(x, y) = x` called as `F(1, { })` is 1). The written expression
+                // travels with it so the demand that does surface it can blame the argument.
                 inputs.Add(new ParameterPatternInput(
                     Value: null,
                     maybeAlg,
                     evaluatedR.Error,
-                    SupplyOrigin.WrittenSlot));
+                    SupplyOrigin.WrittenSlot)
+                {
+                    Source = argExpr,
+                });
                 continue;
             }
 
-            return evaluatedR.Error;
+            // No algorithm channel to defer behind: this slot can only fail the call, so
+            // blame the written argument here (F5).
+            return BlameWrittenArgumentSlot(argExpr, evaluatedR.Error);
         }
 
         return EvalResult<IReadOnlyList<ParameterPatternInput>>.Ok(inputs);

@@ -1275,6 +1275,68 @@ A == ()
 
 **Result:** `true`
 
+#### A written argument that produces no output
+
+KatLang keeps four situations apart. Writing no argument is an arity error when the callable requires one:
+
+```
+F(x) = x
+F()
+```
+
+**Result:** error — `F(x)` expects one argument, and none was written.
+
+When a written argument must supply a value and its expression produces no output, the error identifies that **argument** — never as though you had left it out, and never as the callee's fault:
+
+```
+count({})
+```
+
+**Result:** error — the argument `{...}` has no defined output.
+
+Fixed parameters keep lazy value demand: `F(x, y) = x` called as `F(1, {})` still returns `1`, because the body never demands `y`. If the body reads `y`, the error names the argument bound to `y` and points to that parameter read. Unselected `if` branches and callback algorithms keep their existing demand rules.
+
+This matters most for a collector, which legally accepts zero supplied items. `Coll()` collects nothing and succeeds; `Coll({})` is an error, because an argument *was* written and produced nothing:
+
+```
+Coll(*xs) = xs
+Coll()
+```
+
+**Result:** `[]`
+
+```
+Coll(*xs) = xs
+Coll({})
+```
+
+**Result:** error — the argument `{...}` has no defined output.
+
+An **empty value** is a value, so it is an ordinary argument — zero output values and one empty value are not the same thing:
+
+```
+Coll(*xs) = xs
+Coll(())
+Coll([])
+```
+
+**Results:**
+
+```
+[]
+[[]]
+```
+
+And an explicit **spread** that opens to zero items is a legal supply, exactly like writing no argument:
+
+```
+Coll(*xs) = xs
+Empty = ()
+Coll(Empty*)
+```
+
+**Result:** `[]`
+
 #### `()` is a value, not an operator identity
 
 `()` is an ordinary operand. It carries neither a numeric scalar value nor a Boolean value, so the arithmetic and ordering operators reject it exactly as they reject any other non-scalar operand, and the logical operators reject it as a non-Boolean operand — on either side, and whichever operand is empty:

@@ -405,6 +405,12 @@ public sealed class KatLangError
             return true;
         }
 
+        if (error is EvalError.WithContext { ErrorContext: ArgumentEvaluationContext argumentContext, Inner: EvalError.MissingOutput })
+        {
+            message = FormatArgumentMissingOutput(argumentContext.ArgumentDescription);
+            return true;
+        }
+
         if (error is EvalError.WithContext { ErrorContext: ProgramEvaluationContext, Inner: EvalError.MissingOutput })
         {
             message = FormatProgramMissingOutput();
@@ -810,6 +816,14 @@ public sealed class KatLangError
     /// </summary>
     private static string FormatParameterMissingOutput(string parameterName)
         => $"Parameter '{parameterName}' has no defined output: the argument bound to it is an algorithm without an output expression.\nAdd an output expression to that argument, or use `()` if the empty sequence value was intended.";
+
+    /// <summary>
+    /// A WRITTEN argument that had to supply a value and produced none. It names the
+    /// argument the reader has to change — never the callee, and never the argumentless
+    /// spelling of the call: <c>count({ })</c> is not <c>count()</c>.
+    /// </summary>
+    private static string FormatArgumentMissingOutput(string argumentDescription)
+        => $"The argument `{argumentDescription}` has no defined output.\nAdd an output expression to that argument, or use `()` if the empty sequence value was intended.";
 
     private static string FormatParameterList(IReadOnlyList<string> names)
         => names.Count == 1
