@@ -687,7 +687,7 @@ public static partial class Evaluator
             return EvalResult<CountedResult?>.Ok(null);
 
         var resolvedAlgorithm = ChildOf(alg, binding.Value);
-        var span = binding.DeclarationSpans.FirstOrDefault();
+        var span = binding.FirstDeclarationSpan;
         // A named top-level property read is an ordinary zero-argument value demand, so
         // the ONE law decides and shapes its report: a callable that cannot accept zero
         // supplied arguments is the property-context mismatch naming its true minimum
@@ -1650,7 +1650,7 @@ public static partial class Evaluator
         // the SAME enter helper and scoped release as the synchronous twin
         // (Evaluator.BudgetScopes.cs), disposed on every completion path including
         // exceptional unwind through a suspended seam await.
-        if (TryEnterDynamicInvocation(ctx, binding.DeclarationSpans.FirstOrDefault(), out var level) is { } limitError)
+        if (TryEnterDynamicInvocation(ctx, binding.FirstDeclarationSpan, out var level) is { } limitError)
             return limitError;
 
         using (level)

@@ -1334,6 +1334,21 @@ public sealed record Property(
     public IReadOnlyList<SourceSpan> DeclarationSpans { get; init; } = [];
 
     /// <summary>
+    /// The property's canonical declaration anchor: its FIRST declared name occurrence, or
+    /// <c>null</c> when it has none. Absence is the ordinary state of a property no document
+    /// wrote — a deconstruction's hoisted source, a prelude or host-operation binding, a
+    /// module's locationless import view, a host-built node — and a collection of spans spells
+    /// it as emptiness, so reading the anchor must translate that emptiness into the nullable
+    /// absence the location model uses. <c>DeclarationSpans.FirstOrDefault()</c> does NOT: the
+    /// element type is a value type, so an empty list yields <c>default(SourceSpan)</c>, which
+    /// a <see cref="SourceSpan"/>? then carries as a PRESENT location at the invalid
+    /// coordinates <c>0:0</c> — a fabricated position that renders as <c>[0:0]</c> and blocks
+    /// the attach-if-missing law from ever supplying a real enclosing one.
+    /// </summary>
+    internal SourceSpan? FirstDeclarationSpan
+        => DeclarationSpans.Count == 0 ? null : DeclarationSpans[0];
+
+    /// <summary>
     /// For <see cref="PropertyExposure.LocalOnlyCapturedAncestorParameters"/>: the names of
     /// the inputs the value requires that only an enclosing owner's call binds (sorted,
     /// distinct). Elaborated properties also retain exact owner positions internally so

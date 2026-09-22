@@ -27,8 +27,8 @@ internal static class ImportSite
     /// direct value is a spliced module root, otherwise null (the enclosing site stays).
     /// </summary>
     internal static SourceSpan? OfProperty(Property property)
-        => property.Value is Algorithm.User { IsModuleElaborated: true } && property.DeclarationSpans.Count > 0
-            ? property.DeclarationSpans[0]
+        => property.Value is Algorithm.User { IsModuleElaborated: true }
+            ? property.FirstDeclarationSpan
             : null;
 
     /// <summary>

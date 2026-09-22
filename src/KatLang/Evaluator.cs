@@ -3018,7 +3018,7 @@ public static partial class Evaluator
             return EvalResult<CountedResult?>.Ok(null);
 
         var resolvedAlgorithm = ChildOf(alg, binding.Value);
-        var span = binding.DeclarationSpans.FirstOrDefault();
+        var span = binding.FirstDeclarationSpan;
         // A named top-level property read is an ordinary zero-argument value demand, so
         // the ONE law decides and shapes its report: a callable that cannot accept zero
         // supplied arguments is the property-context mismatch naming its true minimum

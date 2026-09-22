@@ -319,7 +319,7 @@ public static partial class Evaluator
         EvalCtx ctx,
         ValEnv valEnv)
     {
-        if (TryEnterDynamicInvocation(ctx, binding.DeclarationSpans.FirstOrDefault(), out var level) is { } limitError)
+        if (TryEnterDynamicInvocation(ctx, binding.FirstDeclarationSpan, out var level) is { } limitError)
             return limitError;
 
         using (level)

@@ -672,7 +672,7 @@ public static class KatLangEngine
         foreach (var property in root.Properties)
         {
             if (property.Name == name)
-                return property.DeclarationSpans.FirstOrDefault();
+                return property.FirstDeclarationSpan;
         }
 
         return null;

@@ -50,7 +50,7 @@ internal static partial class LoopOptimizer
                     tempIndex,
                     parameterNames,
                     tempR.Plan,
-                    property.DeclarationSpans.FirstOrDefault(),
+                    property.FirstDeclarationSpan,
                     property);
                 plans.Add(plan);
                 diagnostics?.Add(new LoopTempDiagnosticSnapshot(
