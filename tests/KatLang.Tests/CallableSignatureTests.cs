@@ -248,6 +248,64 @@ public class CallableSignatureTests
     }
 
     [Fact]
+    public void ArityFacts_GroupBesideCollector_IsTheBinderMinimumWithUnboundedMax()
+    {
+        // The collector decision is about the CURRENT pattern level and nothing else: a
+        // grouped pattern beside a collecting parameter is one required slot, exactly as a
+        // plain capture beside it is. The classification used to require "no grouped pattern
+        // at this level" and reported these signatures as fixed arity 2, disagreeing with
+        // the binder that accepts `G((1, 2))` and rejects `G()` with minimum 1.
+        var groupThenCollector = SignatureFor("G((a, b), *rest) = a", "G");
+        Assert.Equal("G((a, b), *rest)", groupThenCollector.DisplayText);
+        Assert.True(groupThenCollector.HasSequenceValueParameterPattern);
+        Assert.Equal(1, groupThenCollector.ArityFacts.MinTopLevelArgumentCount);
+        Assert.Null(groupThenCollector.ArityFacts.MaxTopLevelArgumentCount);
+        Assert.True(groupThenCollector.ArityFacts.HasTopLevelCollecting);
+        Assert.Equal(1, groupThenCollector.ArityFacts.TopLevelCollectingCount);
+        Assert.False(groupThenCollector.AcceptsItemCount(0));
+        Assert.True(groupThenCollector.AcceptsItemCount(1));
+        Assert.True(groupThenCollector.AcceptsItemCount(9));
+
+        var collectorThenGroup = SignatureFor("H(*rest, (a, b)) = a", "H");
+        Assert.Equal("H(*rest, (a, b))", collectorThenGroup.DisplayText);
+        Assert.Equal(1, collectorThenGroup.ArityFacts.MinTopLevelArgumentCount);
+        Assert.Null(collectorThenGroup.ArityFacts.MaxTopLevelArgumentCount);
+        Assert.False(collectorThenGroup.AcceptsItemCount(0));
+        Assert.True(collectorThenGroup.AcceptsItemCount(1));
+        Assert.True(collectorThenGroup.AcceptsItemCount(9));
+
+        // A callable whose only top-level pattern is a group is still exact arity 1 even
+        // when that group holds a collector — the collector belongs to the nested level.
+        var nestedCollector = SignatureFor("P((x, *r)) = x", "P");
+        Assert.Equal(1, nestedCollector.ArityFacts.MinTopLevelArgumentCount);
+        Assert.Equal(1, nestedCollector.ArityFacts.MaxTopLevelArgumentCount);
+        Assert.False(nestedCollector.ArityFacts.HasTopLevelCollecting);
+        Assert.False(nestedCollector.AcceptsItemCount(0));
+        Assert.True(nestedCollector.AcceptsItemCount(1));
+        Assert.False(nestedCollector.AcceptsItemCount(2));
+    }
+
+    [Fact]
+    public void RuntimeArityDiagnostic_GroupBesideCollector_UsesTheCollectingWording()
+    {
+        Assert.Equal(
+            "Callable `G((a, b), *rest)` expects at least 1 argument, but was called with 0 arguments.",
+            FormatEvalError(
+                """
+                G((a, b), *rest) = a
+                G()
+                """));
+
+        Assert.Equal(
+            "Callable `H(*rest, (a, b))` expects at least 1 argument, but was called with 0 arguments.",
+            FormatEvalError(
+                """
+                H(*rest, (a, b)) = a
+                H()
+                """));
+    }
+
+    [Fact]
     public void FromAlgorithm_SequenceValueVariadicSignature_DoesNotBecomeTopLevelVariadic()
     {
         var signature = SignatureFor("CountSequenceValue((*values)) = values.count", "CountSequenceValue");

@@ -247,6 +247,92 @@ public class CallableBindingPlanParityTests
     }
 
     [Fact]
+    public void GroupBesideCollectorShape_MatchesRuntimeItemSupplyBinding()
+    {
+        // A grouped pattern beside a collector is still item supply AT THIS LEVEL: the group
+        // consumes one supplied slot, the collector none. The plan, the signature facts, and
+        // the binder must all say min 1 / unbounded.
+        var plan = PlanFor("G((a, b), *rest) = a + b + rest.count", "G");
+
+        AssertPlanDisplay(plan, "G((a, b), *rest)");
+        AssertTopLevelNodes(plan, "SequenceValue(Capture(a:Explicit), Capture(b:Explicit))", "Variadic(rest:Explicit:top)");
+        AssertCaptures(plan, "a:Explicit", "b:Explicit", "*rest:Explicit");
+        AssertArity(plan, min: 1, max: null, hasTopLevelVariadic: true);
+        Assert.True(plan.RequiresPatternedBinding);
+
+        AssertEval(
+            """
+            G((a, b), *rest) = a + b + rest.count
+            G((1, 2))
+            """,
+            3);
+
+        AssertEval(
+            """
+            G((a, b), *rest) = a + b + rest.count
+            G((1, 2), 7, 8)
+            """,
+            5);
+
+        var message = AssertEvalFails(
+            """
+            G((a, b), *rest) = a + b + rest.count
+            G()
+            """);
+        Assert.Equal("Callable `G((a, b), *rest)` expects at least 1 argument, but was called with 0 arguments.", message);
+
+        // The symmetric shape behaves identically.
+        var suffixGroup = PlanFor("H(*rest, (a, b)) = a + b + rest.count", "H");
+        AssertPlanDisplay(suffixGroup, "H(*rest, (a, b))");
+        AssertArity(suffixGroup, min: 1, max: null, hasTopLevelVariadic: true);
+
+        AssertEval(
+            """
+            H(*rest, (a, b)) = a + b + rest.count
+            H(9, (1, 2))
+            """,
+            4);
+    }
+
+    [Fact]
+    public void NestedCollectorShape_MatchesRuntimeNestedBinding()
+    {
+        // The nested list of `(x, *r)` accepts one value or more; the callable itself accepts
+        // exactly one argument. The two decisions are independent, and both agree with the
+        // runtime: `P(())` reaches the NESTED minimum, `P(1, 2)` the top-level maximum.
+        var plan = PlanFor("P((x, *r)) = x + r.count", "P");
+        var nested = Assert.IsType<SequenceValueBindingNode>(Assert.Single(plan.TopLevelPatternList.Nodes)).Children;
+
+        AssertArity(plan, min: 1, max: 1, hasTopLevelVariadic: false);
+        Assert.Equal(1, nested.MinSlotCount);
+        Assert.Null(nested.MaxSlotCount);
+        Assert.True(nested.HasCollectingAtThisLevel);
+
+        AssertEval(
+            """
+            P((x, *r)) = x + r.count
+            P((5, 6, 7))
+            """,
+            7);
+
+        Assert.Equal(
+            "Sequence-value parameter pattern `(x, *r)` expects at least 1 value, but received 0 values.",
+            AssertEvalFails(
+                """
+                P((x, *r)) = x + r.count
+                P(())
+                """));
+
+        Assert.Equal(
+            "Callable `P((x, *r))` expects 1 argument, but was called with 2 arguments.",
+            AssertEvalFails(
+                """
+                P((x, *r)) = x + r.count
+                P(1, 2)
+                """));
+    }
+
+    [Fact]
     public void SequenceValueVariadicShape_IsNestedAndRuntimeDoesNotTreatItAsTopLevelVariadic()
     {
         var plan = PlanFor("CountSequenceValue((*values)) = values.count", "CountSequenceValue");

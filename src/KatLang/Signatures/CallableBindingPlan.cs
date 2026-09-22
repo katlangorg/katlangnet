@@ -155,8 +155,21 @@ public sealed record PatternListBindingPlan
 
     public IReadOnlyList<CallableBindingNode> Suffix { get; }
 
+    /// <summary>
+    /// The MINIMUM number of supplied slots this pattern level accepts, decided at THIS
+    /// level alone by the binder's own rule
+    /// (<see cref="ParameterPattern.MinimumSuppliedSlots"/>): one slot per pattern, minus one
+    /// when this level holds a collecting capture. Nested captures are never flattened into
+    /// it: <c>P((x, *r))</c> declares ONE top-level pattern, so the top level is exactly one
+    /// slot while the group's own level is one slot or more.
+    /// </summary>
     public int MinSlotCount { get; }
 
+    /// <summary>
+    /// The MAXIMUM number of supplied slots this pattern level accepts: <c>null</c>
+    /// (unbounded) when this level holds a collecting capture — whatever else the level
+    /// contains, a grouped pattern included — otherwise the exact pattern count.
+    /// </summary>
     public int? MaxSlotCount { get; }
 
     public bool HasCollectingAtThisLevel => CollectingCapture is not null;
@@ -208,18 +221,18 @@ public sealed record PatternListBindingPlan
             suffix = [];
         }
 
-        // Mirror CallableSignatureDiagnostics.GetArityFacts: a top-level list with one or
-        // more plain captures and one collecting binding accepts the fixed
-        // captures plus any number of collected items, so it has a fixed-count minimum
-        // and an unbounded maximum. Collection builtins have fixed signatures and do not
-        // enter this pattern-list branch.
-        var isItemSupplyShape = isTopLevel
-            && collectingCount == 1
-            && nodes.Count >= 1
-            && nodes.All(static node => node is CaptureBindingNode or CollectingCaptureBindingNode);
-
-        var minSlotCount = isItemSupplyShape ? nodes.Count - 1 : nodes.Count;
-        int? maxSlotCount = isItemSupplyShape ? null : nodes.Count;
+        // The ONE per-level arity rule, the same one the binder applies at this level
+        // (ParameterPattern.MinimumSuppliedSlots, read by BindParameterPatternList itself):
+        // every pattern here consumes ONE supplied slot whatever it contains — a
+        // sequence-value group is one slot the binder opens afterwards — and a COLLECTING
+        // capture here consumes NONE and lifts the upper bound. The decision is LEVEL-LOCAL:
+        // `isTopLevel` classifies the collecting NODE, never the arity, nested captures are
+        // never flattened into this level's counts, and a grouped pattern beside a collector
+        // does not make the collector fixed. So `G((a, b), *rest)` is min 1 / unbounded at the
+        // top level, and the nested list of `P((x, *r))` is min 1 / unbounded while `P` itself
+        // stays min 1 / max 1. Collection builtins are flat fixed lists and take the exact arm.
+        var minSlotCount = ParameterPattern.MinimumSuppliedSlots(parameterPatterns);
+        int? maxSlotCount = collectingIndex >= 0 ? null : nodes.Count;
 
         return new PatternListBindingPlan(
             nodes,
@@ -231,6 +244,12 @@ public sealed record PatternListBindingPlan
             collectingCount);
     }
 
+    /// <summary>
+    /// This level's arity facts. Applied by <see cref="CallableBindingPlan.FromSignature"/>
+    /// to the TOP-LEVEL list, where it must equal
+    /// <see cref="CallableSignatureDiagnostics.GetArityFacts"/> — both state the same
+    /// per-level binder rule, so a divergence is a defect and fails loudly there.
+    /// </summary>
     internal CallableArityFacts ToTopLevelArityFacts()
         => new(
             MinSlotCount,

@@ -217,8 +217,13 @@ public class CallableBindingPlanQueryTests
             hasOnlyFlatFixedTopLevelCaptures: false,
             hasTopLevelVariadic: true,
             hasNestedVariadic: true,
-            min: 2,
-            max: 2);
+            // Arity is decided at THIS level only: the group `(*inner)` consumes one
+            // supplied slot and the top-level collector `*outer` consumes none, so the
+            // binder's minimum is 1 and the maximum is unbounded — a grouped pattern
+            // beside a collector does not make the collector fixed
+            // (CallableArityFactsPerLevelTests).
+            min: 1,
+            max: null);
         Assert.NotNull(plan.TopLevelCollectingCapture);
         Assert.Equal("outer", plan.TopLevelCollectingCapture.Name);
         Assert.False(plan.TryGetFlatFixedLayout(out _));

@@ -159,6 +159,52 @@ public class CallableBindingPlanTests
     }
 
     [Fact]
+    public void FromSignature_NestedPatternList_AppliesTheArityRuleAtItsOwnLevel()
+    {
+        // The per-level rule is not gated on "top level": the nested list of a grouped
+        // pattern that holds a collector is min 1 / unbounded, while the callable itself
+        // stays exact arity 1 because it declares ONE top-level pattern.
+        var plan = PlanFor("P((x, *r)) = x", "P");
+        var topLevel = plan.TopLevelPatternList;
+
+        Assert.Equal(1, topLevel.MinSlotCount);
+        Assert.Equal(1, topLevel.MaxSlotCount);
+        Assert.False(topLevel.HasCollectingAtThisLevel);
+        Assert.True(topLevel.HasCollectingInDescendants);
+
+        var nested = Assert.IsType<SequenceValueBindingNode>(Assert.Single(topLevel.Nodes)).Children;
+        AssertCapture(nested.Nodes[0], "x", CallableParameterSource.Explicit);
+        AssertVariadic(nested.Nodes[1], "r", CallableParameterSource.Explicit, isTopLevel: false);
+        Assert.Equal(1, nested.MinSlotCount);
+        Assert.Null(nested.MaxSlotCount);
+        Assert.True(nested.HasCollectingAtThisLevel);
+        Assert.Equal(1, nested.CollectingCountAtThisLevel);
+    }
+
+    [Fact]
+    public void FromSignature_GroupBesideTopLevelCollector_IsItemSupplyAtTheTopLevel()
+    {
+        // `(a, b)` consumes one supplied slot and `*rest` consumes none, so the top level is
+        // min 1 / unbounded — exactly what the binder accepts — and FromSignature's own
+        // consistency check ties the plan to CallableSignatureDiagnostics.GetArityFacts.
+        var plan = PlanFor("G((a, b), *rest) = a", "G");
+        var topLevel = plan.TopLevelPatternList;
+
+        Assert.Equal("G((a, b), *rest)", plan.DisplayText);
+        Assert.Equal(1, topLevel.MinSlotCount);
+        Assert.Null(topLevel.MaxSlotCount);
+        Assert.True(topLevel.HasCollectingAtThisLevel);
+        Assert.Equal(1, topLevel.CollectingCountAtThisLevel);
+        Assert.Equal(CallableSignatureDiagnostics.GetArityFacts(plan.Signature), plan.ArityFacts);
+
+        // The group's own level has no collector, so it is exact.
+        var nested = Assert.IsType<SequenceValueBindingNode>(topLevel.Nodes[0]).Children;
+        Assert.Equal(2, nested.MinSlotCount);
+        Assert.Equal(2, nested.MaxSlotCount);
+        Assert.False(nested.HasCollectingAtThisLevel);
+    }
+
+    [Fact]
     public void FromSignature_ExplicitClosedPlan_ExcludesUnresolvedFreeName()
     {
         var plan = PlanFor("F((x, y)) = x + y + z", "F", allowErrors: true);
@@ -213,6 +259,9 @@ public class CallableBindingPlanTests
             PlanFor("PairSum((x, y)) = x + y", "PairSum").Signature,
             PlanFor("CountValues(*values) = values.count", "CountValues").Signature,
             PlanFor("CountSequenceValue((*values)) = values.count", "CountSequenceValue").Signature,
+            PlanFor("G((a, b), *rest) = a", "G").Signature,
+            PlanFor("H(*rest, (a, b)) = a", "H").Signature,
+            PlanFor("P((x, *r)) = x", "P").Signature,
             CallableSignature.FromBuiltin(BuiltinId.map),
             CallableSignature.FromBuiltin(BuiltinId.count),
         };

@@ -417,10 +417,10 @@ public closed record ParameterPattern
     /// </list>
     /// So <c>Only(*xs)</c> accepts zero supplied slots while <c>Head(x, *rest)</c>,
     /// <c>Tail(*rest, z)</c>, <c>P((x, *rest))</c> and <c>Pair(x, y)</c> each require at
-    /// least one. This is deliberately NOT
-    /// <see cref="CallableArityFacts.MinTopLevelArgumentCount"/>, whose item-supply
-    /// classification excludes signatures that mix a group with a collector; the binder,
-    /// not that classification, is the authority here.
+    /// least one. The arity metadata reads THIS rule rather than re-deriving it:
+    /// <see cref="CallableArityFacts.MinTopLevelArgumentCount"/> and
+    /// <see cref="PatternListBindingPlan.MinSlotCount"/> are both computed from it, so the
+    /// binder minimum, the signature facts, and the binding plan agree at every level.
     /// Lean: <c>ParameterPattern.minimumSuppliedSlots</c>.
     /// </summary>
     internal static int MinimumSuppliedSlots(IReadOnlyList<ParameterPattern> patterns)

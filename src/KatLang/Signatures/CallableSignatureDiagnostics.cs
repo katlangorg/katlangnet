@@ -15,44 +15,33 @@ public sealed record CallableArityFacts(
 
 public static class CallableSignatureDiagnostics
 {
+    /// <summary>
+    /// The arity the BINDER accepts for this signature's top-level parameter list,
+    /// read from that list ALONE. The minimum is the binder's own rule
+    /// (<see cref="ParameterPattern.MinimumSuppliedSlots"/>, which
+    /// <c>BindParameterPatternList</c> itself enforces): every pattern at this level
+    /// consumes ONE supplied slot whatever it contains — a sequence-value group is one
+    /// slot the binder opens afterwards — and a COLLECTING capture at this level consumes
+    /// NONE, because it collects whatever the fixed prefix and suffix leave over (an empty
+    /// leftover is the exact empty list). A collecting capture at this level therefore also
+    /// lifts the upper bound; without one the count is exact.
+    /// The decision is LEVEL-LOCAL: nested captures are never flattened into it, and a
+    /// grouped pattern beside a collector does not make the collector fixed
+    /// (<c>G((a, b), *rest)</c> is min 1, unbounded max — exactly what <c>G()</c>,
+    /// <c>G((1, 2))</c>, and <c>G((1, 2), 3, 4)</c> do at run time).
+    /// <see cref="PatternListBindingPlan"/> applies the same rule at every level.
+    /// </summary>
     public static CallableArityFacts GetArityFacts(CallableSignature signature)
     {
-        var topLevelCollectingCount = signature.ParameterPatterns.Count(IsTopLevelCollectingCapture);
-        var slotCount = signature.ParameterPatterns.Count;
-
-        // A user item-supply signature — plain top-level captures containing one
-        // collecting binding — binds the fixed captures and lets the
-        // collecting binding capture any number of items, so it accepts at
-        // least the fixed-binding count and has no upper bound. A single
-        // collecting parameter `G(*x)` is the degenerate case with min 0.
-        // Fixed-only, sequence-value, and builtin sequence signatures keep
-        // their exact top-level slot count.
-        if (IsItemSupplySignature(signature, topLevelCollectingCount))
-        {
-            return new CallableArityFacts(
-                slotCount - 1,
-                MaxTopLevelArgumentCount: null,
-                HasTopLevelCollecting: true,
-                TopLevelCollectingCount: topLevelCollectingCount);
-        }
+        var parameterPatterns = signature.ParameterPatterns;
+        var topLevelCollectingCount = parameterPatterns.Count(IsTopLevelCollectingCapture);
 
         return new CallableArityFacts(
-            slotCount,
-            slotCount,
-            topLevelCollectingCount > 0,
-            topLevelCollectingCount);
+            ParameterPattern.MinimumSuppliedSlots(parameterPatterns),
+            MaxTopLevelArgumentCount: topLevelCollectingCount > 0 ? null : parameterPatterns.Count,
+            HasTopLevelCollecting: topLevelCollectingCount > 0,
+            TopLevelCollectingCount: topLevelCollectingCount);
     }
-
-    // A top-level collecting signature consumes an item supply (a user-defined
-    // shape such as `Inspect(*items)` or `Scale(*values, factor)`): the
-    // fixed captures bind and the collecting parameter accepts any number of
-    // argument slots (collected as one list at binding time),
-    // so min = fixed count and max is unbounded. Collection builtins are NOT
-    // item-supply signatures — they use one fixed `collection` parameter.
-    private static bool IsItemSupplySignature(CallableSignature signature, int topLevelCollectingCount)
-        => topLevelCollectingCount == 1
-            && signature.ParameterPatterns.Count >= 1
-            && !signature.HasSequenceValueParameterPattern;
 
     public static int TopLevelCollectingIndex(CallableSignature signature)
     {
