@@ -388,27 +388,34 @@ public class CollectionMaterializationLimitsTests
     [Fact]
     public void CumulativeBudget_CachedPropertyReuse_DoesNotRepayExistingSlots()
     {
-        // `Values` read in value position (the captured receiver) is materialized once and
-        // then served from the zero-argument property cache, so later reads do not re-charge
-        // the slots it already created. Rebuilding an equal collection each time does, and
-        // runs out of the same budget.
+        // `Values` read in VALUE position (the body of the receiver property `V`) is
+        // materialized once and then served from the zero-argument property cache, so
+        // later reads do not re-charge the slots it already created. Rebuilding an equal
+        // collection each time does, and runs out of the same budget.
         Assert.False(Eval(
-            "Values = range(1, 10)\n(Values).count + (Values).count + (Values).count + (Values).count",
+            "Values = range(1, 10)\nV = Values\nV.count + V.count + V.count + V.count",
             Total(30)).IsError);
 
         Assert.IsType<EvalError.MaterializationLimitExceeded>(ErrorOf(
             "range(1, 10).count + range(1, 10).count + range(1, 10).count + range(1, 10).count",
             Total(30)));
 
-        // A bare named receiver of a collection builtin is the builtin's ordinary written
+        // A named receiver of a collection builtin is the builtin's ordinary written
         // argument (dot-call passes a value): `Values.count`, like `count(Values)`, demands
         // the property's algorithm directly, so every use re-materializes the range and the
-        // same budget runs out in both spellings.
+        // same budget runs out in both spellings — and in the redundantly grouped ones,
+        // because parentheses group syntax and never route a demand through the cache.
         Assert.IsType<EvalError.MaterializationLimitExceeded>(ErrorOf(
             "Values = range(1, 10)\nValues.count + Values.count + Values.count + Values.count",
             Total(30)));
         Assert.IsType<EvalError.MaterializationLimitExceeded>(ErrorOf(
             "Values = range(1, 10)\ncount(Values) + count(Values) + count(Values) + count(Values)",
+            Total(30)));
+        Assert.IsType<EvalError.MaterializationLimitExceeded>(ErrorOf(
+            "Values = range(1, 10)\n(Values).count + (Values).count + (Values).count + (Values).count",
+            Total(30)));
+        Assert.IsType<EvalError.MaterializationLimitExceeded>(ErrorOf(
+            "Values = range(1, 10)\ncount((Values)) + count((Values)) + count((Values)) + count((Values))",
             Total(30)));
     }
 

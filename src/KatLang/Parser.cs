@@ -3110,7 +3110,7 @@ public sealed class Parser
         {
             if (expr is Expr.Capture)
             {
-                // A parenthesized group is a captured VALUE boundary, not an
+                // A surviving multi-slot or spread group is a VALUE boundary, not an
                 // algorithm: `open` consumes algorithm/namespace identity, and
                 // a capture never exposes the identity of what it encloses.
                 ReportOpenFormError(CapturedOpenTargetDiagnostic, expr);
@@ -3185,9 +3185,12 @@ public sealed class Parser
 
             case Expr.AlgorithmExpr or Expr.Capture:
                 // Inline algorithm targets stay as-is and are valid open
-                // forms. A capture target such as `open (M)` also stays as-is
-                // structurally, but the open-form validation that follows
-                // rejects it: a capture is a value boundary, not an algorithm.
+                // forms. A capture target — a group with several slots or a
+                // lone spread slot (`open (A, B)`, `open (A*)`; a redundant
+                // group such as `open (M)` is simply `open M` by the time it
+                // is parsed) — also stays as-is structurally, but the
+                // open-form validation that follows rejects it: a capture is a
+                // value boundary, not an algorithm.
                 return expr;
 
             default:
@@ -3200,7 +3203,7 @@ public sealed class Parser
     /// Lean: Expr.openForm? — only AlgorithmExpr, Resolve, and
     /// argumentless DotCall post-elaboration. Spread is NOT an open form (a
     /// spread-marked target such as `open A*` is rejected here), and a
-    /// Capture is NOT an open form (`open (M)` is a captured value target,
+    /// Capture is NOT an open form (`open (M, M)` is a captured value target,
     /// rejected with the targeted captured-open diagnostic above).
     /// DotCall with args is NOT a valid open form.
     /// load calls (Call(Resolve("load"), _)) are allowed as *surface* open forms because
@@ -3646,11 +3649,38 @@ public sealed class Parser
         // explanation names the cause and distinguishes the possible repairs.
         rhs = RejectMisplacedSpreadOperand(
             rhs,
-            op == BinaryOp.Mul && rhs is Expr.SequenceSpread { Span: { } rhsSpan } && rhsSpan.Start.Line > operatorToken.Line
+            op == BinaryOp.Mul && rhs is Expr.SequenceSpread && IsLineFinalOperator(operatorToken)
                 ? LineFinalStarContinuationDiagnostic
                 : MisplacedSpreadDiagnostic);
         var binary = BinaryFrom(op, lhs, rhs);
         return GuardExpressionChainDepth(binary, operatorToken, lhs, rhs);
+    }
+
+    /// <summary>
+    /// True when the operand written after <paramref name="operatorToken"/> begins on a
+    /// later physical line — the operator is the last significant token of its line.
+    /// Decided from the TOKEN stream (the operand's first significant token), never from
+    /// the operand node's span: a grouped operand such as <c>(</c> newline <c>B)</c>
+    /// begins at its parenthesis whatever span the unwrapped node carries (a bare name
+    /// keeps its identifier span, see <see cref="WithGroupExtent"/>). The operator is a
+    /// real lexer token, so its index is recovered by a binary search over the strictly
+    /// increasing token positions; only the rare misplaced-spread rejection pays for it.
+    /// </summary>
+    private bool IsLineFinalOperator(Token operatorToken)
+    {
+        var low = 0;
+        var high = _tokens.Count - 1;
+        while (low < high)
+        {
+            var middle = low + ((high - low) >> 1);
+            if (_tokens[middle].Position < operatorToken.Position)
+                low = middle + 1;
+            else
+                high = middle;
+        }
+
+        var operandIndex = NextSignificantIndex(low + 1);
+        return _tokens[operandIndex].Line > operatorToken.Line;
     }
 
     // The precedence of every operator token the precedence-climbing loop
@@ -4173,12 +4203,10 @@ public sealed class Parser
     /// No transparent argument <see cref="Algorithm"/> is created — the
     /// receiver-owning call consumes the bundle directly and each slot
     /// evaluates in the caller's lexical context.
-    /// Ordinary parentheses still mean ordinary parenthesized expression syntax. For scalar and other
-    /// single-expression cases, <c>((expr))</c> behaves like <c>(expr)</c>.
-    /// When an inner parenthesized expression survives as a
-    /// <see cref="Expr.Capture"/>, the parser preserves the extra outer layer
-    /// so dot-call receiver normalization can distinguish <c>(1, 2).count</c>
-    /// from <c>((1, 2)).count</c> without changing ordinary evaluation.
+    /// Ordinary parentheses inside the list mean ordinary parenthesized expression
+    /// syntax: a slot written <c>((expr))</c> is the slot <c>expr</c> (redundant
+    /// grouping is erased by <see cref="IsRedundantGrouping"/>), while <c>(a, b)</c>
+    /// is one sequence-valued slot.
     /// </summary>
     private OutputBundle ParseCallArgs()
     {
@@ -4232,39 +4260,29 @@ public sealed class Parser
 
     // ── Primary expressions ─────────────────────────────────────────────────
 
-    private static bool ShouldUnwrapParenthesizedPrimary(ParsedAlgorithmBody body)
-    {
+    /// <summary>
+    /// PARENTHESES GROUP SYNTAX; THEY DO NOT INTRODUCE A SEMANTIC BOUNDARY. A
+    /// parenthesized group whose content is exactly ONE non-spread expression slot
+    /// is redundant grouping: it is that expression — whatever its kind (a name, a
+    /// graced name, a literal, a call, a dot edge, a selection, a list, a block, a
+    /// nested group, `()`), so <c>(E)</c> and <c>((E))</c> elaborate to the very
+    /// node <c>E</c> does, and no downstream layer (binding, caching, dot-call
+    /// receivers, patterned calls, optimizers) can observe the parentheses. The
+    /// only groups that survive as an <see cref="Expr.Capture"/> are the ones whose
+    /// parentheses DO something: several written slots (<c>(1, 2)</c>, a sequence
+    /// value) and a lone spread slot (<c>(A*)</c>, the capture of an item supply
+    /// into one value — <c>capture : Supply -> Value</c>; a spread is a slot-level
+    /// construct, not a value expression, so its group is not redundant). This
+    /// decision never depends on the kind of the inner expression.
+    /// </summary>
+    private static bool IsRedundantGrouping(ParsedAlgorithmBody body)
         // Declarations inside parentheses are a parse error (reported at the
         // declaration by the parenthesized body parser), so parts carrying
-        // opens or properties only reach this point during error recovery.
-        // Keeping an algorithm layer preserves the parsed declarations for
-        // downstream tooling instead of silently discarding them.
-        if (body.HasDeclarations || body.Output.Count != 1)
-            return false;
-
-        return body.Output[0] switch
-        {
-            Expr.SequenceConstruct => false,
-            Expr.SequenceSpread => false,
-            Expr.EmptySequence => false,
-            // A parenthesized reference keeps its capture layer so sequence dot-call
-            // receiver normalization can observe `(items).builtin` vs the bare name.
-            Expr.Resolve => false,
-            // A graced name keeps the plain name's capture boundary WHATEVER its weight:
-            // Grace is a front-end ordering annotation the detector strips, so the
-            // elaborated tree of `(~x).M` / `Apply((~g))` / `(~a)(b)` must be the
-            // marker-free program's (`(x).M` is a capture receiver, `Apply((g))` a
-            // capture rejection, `(a)(b)` two same-line items). Unwrapping the graced
-            // form let a marker change selection — the one thing Grace never does.
-            Expr.Grace => false,
-            // Redundant parentheses around a scope-owning algorithm expression
-            // normalize away (`({...})` is `{...}`); a nested capture keeps its
-            // written boundary (`((1, 2))` stays two layers).
-            Expr.AlgorithmExpr => true,
-            Expr.Capture => false,
-            _ => true,
-        };
-    }
+        // opens or properties only reach this point during error recovery;
+        // they keep a scope-owning recovery tree for downstream tooling.
+        => !body.HasDeclarations
+            && body.Output.Count == 1
+            && body.Output[0] is not Expr.SequenceSpread;
 
     /// <summary>
     /// Gives an expression unwrapped from redundant grouping parentheses the group's full
@@ -4276,9 +4294,17 @@ public sealed class Parser
     /// `((1))` spans all five characters. The span is the ONLY thing that changes: the copy
     /// keeps every other init-only fact of the node, and a registered operator/postfix chain
     /// depth is transferred to it so the chain guard keeps counting through the group.
+    /// A NAME OCCURRENCE is the one exception: the span of an <see cref="Expr.Resolve"/>
+    /// (and of the graced occurrence <see cref="Expr.Grace"/> wraps) IS the identifier
+    /// occurrence the semantic model builds reference, hover, and rename sites from,
+    /// so <c>(a)</c> keeps the exact span of <c>a</c> — a source-position fact only;
+    /// the node is the same either way.
     /// </summary>
     private Expr WithGroupExtent(Expr inner, SourceSpan groupSpan)
     {
+        if (inner is Expr.Resolve or Expr.Grace)
+            return inner;
+
         var widened = inner with { Span = groupSpan };
         if (_expressionChainDepths.TryGetValue(inner, out var chainDepth))
             _expressionChainDepths[widened] = chainDepth;
@@ -4343,23 +4369,16 @@ public sealed class Parser
                     Expect(TokenKind.RParen);
 
                     // Empty parentheses `()` construct the empty sequence value.
-                    // Repeated ordinary parentheses around it are redundant grouping
-                    // and normalize to the same empty sequence value.
-                    if (!body.HasDeclarations)
-                    {
-                        if (body.Output.Count == 0)
-                            return EmptySequenceFrom(start);
-                        if (body.Output.Count == 1 && body.Output[0] is Expr.EmptySequence)
-                            return EmptySequenceFrom(start);
-                    }
+                    if (!body.HasDeclarations && body.Output.Count == 0)
+                        return EmptySequenceFrom(start);
 
-                    // Ordinary parenthesized expressions usually unwrap to the inner
-                    // expression. Preserve an extra capture layer so sequence
-                    // dot-call receiver normalization can observe
-                    // `(items).builtin` vs `((items)).builtin`. The unwrapped
-                    // expression keeps its meaning but takes the group's full
-                    // written extent as its source span (see WithGroupExtent).
-                    if (ShouldUnwrapParenthesizedPrimary(body))
+                    // PARENTHESES GROUP SYNTAX: a group of exactly one non-spread
+                    // slot is the slot's expression itself, whatever its kind
+                    // (`(x)` is `x`, `((1, 2))` is `(1, 2)`, `(())` is `()`), so
+                    // no later layer can tell the group from its content. The
+                    // unwrapped expression keeps its meaning and takes the group's
+                    // full written extent as its source span (see WithGroupExtent).
+                    if (IsRedundantGrouping(body))
                         return WithGroupExtentFrom(body.Output[0], start);
 
                     // Declarations inside parentheses are a parse error (reported

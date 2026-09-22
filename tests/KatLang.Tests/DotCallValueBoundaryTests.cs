@@ -248,11 +248,22 @@ public class DotCallValueBoundaryTests
         var direct = Assert.IsType<RunResult.Success>(KatLangEngine.Run("R = random(1, 1000000)\nsum(R)", seeded));
         Assert.Equal(direct.ToDisplayString(), dotted.ToDisplayString());
 
-        // The captured spelling reads the cached property value in both forms.
-        var dottedCaptured = Assert.IsType<RunResult.Success>(KatLangEngine.Run("R = random(1, 1000000)\n(R).sum == R", seeded));
-        var directCaptured = Assert.IsType<RunResult.Success>(KatLangEngine.Run("R = random(1, 1000000)\nsum((R)) == R", seeded));
-        Assert.Equal("true", dottedCaptured.ToDisplayString());
-        Assert.Equal("true", directCaptured.ToDisplayString());
+        // PARENTHESES GROUP SYNTAX: the redundantly grouped spellings are the same
+        // direct demand — `(R).sum` IS `sum(R)` — so they agree with the bare
+        // spellings draw for draw (a fresh draw, never the cached property value).
+        var bare = Assert.IsType<RunResult.Success>(KatLangEngine.Run("R = random(1, 1000000)\nsum(R) == R", seeded));
+        var dottedGrouped = Assert.IsType<RunResult.Success>(KatLangEngine.Run("R = random(1, 1000000)\n(R).sum == R", seeded));
+        var directGrouped = Assert.IsType<RunResult.Success>(KatLangEngine.Run("R = random(1, 1000000)\nsum((R)) == R", seeded));
+        Assert.Equal("false", bare.ToDisplayString());
+        Assert.Equal(bare.ToDisplayString(), dottedGrouped.ToDisplayString());
+        Assert.Equal(bare.ToDisplayString(), directGrouped.ToDisplayString());
+
+        // A genuine VALUE-position read (the body of a receiver property) is served
+        // from the cache, grouped or not.
+        var viaProperty = Assert.IsType<RunResult.Success>(KatLangEngine.Run("R = random(1, 1000000)\nV = R\nV.sum == R", seeded));
+        var viaPropertyGrouped = Assert.IsType<RunResult.Success>(KatLangEngine.Run("R = random(1, 1000000)\nV = R\n(V).sum == R", seeded));
+        Assert.Equal("true", viaProperty.ToDisplayString());
+        Assert.Equal("true", viaPropertyGrouped.ToDisplayString());
 
         // A user call reads its argument through the value environment in both
         // spellings, so the cached draw is shared.

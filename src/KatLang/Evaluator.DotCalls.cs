@@ -344,9 +344,10 @@ public static partial class Evaluator
     /// <see cref="ResolveAlg"/>'s memberless wrapper, so the chain continues
     /// by value (<c>3.A.B</c> stays <c>B(A(3))</c>). An argument-bearing edge
     /// is a call, hence a value, and never navigates; a capture receiver keeps
-    /// suppressing structural identity (<c>(Obj).V</c> falls back — and since
-    /// the parser keeps a capture layer only around a bare name,
-    /// <c>(Lib.Sub).Q</c> is simply <c>Lib.Sub.Q</c>).
+    /// suppressing structural identity (<c>(A, B).V</c> and <c>(A*).V</c> fall
+    /// back — a redundant group never reaches the evaluator, so <c>(Obj).V</c>
+    /// and <c>(Lib.Sub).Q</c> are simply <c>Obj.V</c> and <c>Lib.Sub.Q</c>:
+    /// parentheses group syntax and never change which receiver is navigated).
     /// <para>The resolution is identity navigation only: no intermediate edge
     /// is evaluated, so a parameterized or output-less container navigates
     /// exactly as it does at the first level (<c>F.Q</c> works while <c>F</c>

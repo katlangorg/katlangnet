@@ -181,7 +181,8 @@ public class StaticOpenOwnershipBoundaryTests
     }
 
     [Theory]
-    [InlineData("(Lib)")]
+    [InlineData("(Lib, Lib)")]
+    [InlineData("(Lib*)")]
     // The comma closes the spread before the next output row (SYN-07B).
     [InlineData("Lib*, { public P = 7 }")]
     [InlineData("Lib()")]
@@ -189,6 +190,22 @@ public class StaticOpenOwnershipBoundaryTests
     {
         var parsed = Parser.Parse("Lib = { public X = 7 }\nF(Lib) = {\nopen " + target + "\n1\n}\nF(3)");
         Assert.Equal(DiagnosticCode.BadOpenForm, Assert.Single(parsed.Diagnostics).Code);
+    }
+
+    [Theory]
+    [InlineData("(Lib)")]
+    [InlineData("((Lib))")]
+    [InlineData("(Lib).X")]
+    public void RedundantlyGroupedOpenTarget_IsClassifiedExactlyLikeTheBareName(string target)
+    {
+        // PARENTHESES GROUP SYNTAX: `open (Lib)` IS `open Lib`, so its head is the
+        // parameter `Lib` of the opening algorithm and the static-open ownership rule
+        // reports OpenTargetIsParameter at the head — never a captured-target rejection.
+        var parsed = Parser.Parse("Lib = { public X = 7 }\nF(Lib) = {\nopen " + target + "\n1\n}\nF(3)");
+        var diagnostic = Assert.Single(parsed.Diagnostics);
+        Assert.Equal(DiagnosticCode.OpenTargetIsParameter, diagnostic.Code);
+        var column = 6 + target.IndexOf("Lib", StringComparison.Ordinal);
+        Assert.Equal(new SourceSpan(3, column, 3, column + 3), diagnostic.Span);
     }
 
     [Fact]

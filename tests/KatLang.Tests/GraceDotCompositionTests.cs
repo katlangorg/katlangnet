@@ -956,13 +956,19 @@ public class GraceDotCompositionTests
     }
 
     [Fact]
-    public void Eligibility_CaptureReceiver_IsRejected_OrdinaryCaptureUnchanged()
+    public void Eligibility_GroupedReceiver_IsRejected_GroupedAndCaptureReceiversUnchanged()
     {
-        // Parentheses never smuggle an expression into Grace.
+        // A marker after a closing parenthesis is not attached to a bare name, so
+        // parentheses never smuggle an expression into Grace (the attachment law).
         AssertParseFails(StructuralSplit + "\n(Obj)~.V", GraceEligibilityFragment);
-        // The ordinary capture receiver keeps its established semantics: a
-        // capture has no structural identity, so the lexical `V` wins.
-        AssertResult(StructuralSplit + "\n(Obj).V", Atom(99));
+        AssertParseFails(StructuralSplit + "\n(Obj*)~.V", GraceEligibilityFragment);
+        // PARENTHESES GROUP SYNTAX: `(Obj).V` IS `Obj.V`, so the structural member wins
+        // exactly as in the bare spelling ...
+        AssertResult(StructuralSplit + "\n(Obj).V", Atom(42));
+        AssertResult(StructuralSplit + "\nObj.V", Atom(42));
+        // ... while a genuine capture receiver (a lone spread slot) has no structural
+        // identity, so the lexical `V` wins there.
+        AssertResult(StructuralSplit + "\n(Obj*).V", Atom(99));
     }
 
     [Fact]

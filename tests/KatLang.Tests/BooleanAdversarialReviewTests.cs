@@ -144,6 +144,10 @@ public class BooleanAdversarialReviewTests
                 ? HostOperation.CreateAsync("Flag", async (_, _) => { await Task.Yield(); return Produce(); })
                 : HostOperation.Create("Flag", (_, _) => Produce());
             var options = new RunOptions { HostOperations = HostOperations.Create(operation) };
+            // The three value-position reads share ONE host evaluation through the
+            // zero-argument property cache; the `if` condition is a builtin value slot,
+            // which demands the property directly (a second host call) — and redundant
+            // parentheses around it change nothing (parentheses group syntax).
             const string source = "Flag, Flag, not Flag, if((Flag), true, false)";
             var result = asynchronous
                 ? await KatLangEngine.RunAsync(source, options)
@@ -151,7 +155,7 @@ public class BooleanAdversarialReviewTests
             var success = Assert.IsType<RunResult.Success>(result);
             Assert.Equal("S[true, true, false, true]", SemanticExplorerHarness.Neutral(success.Value));
             Assert.Empty(success.Atoms);
-            Assert.Equal(1, calls);
+            Assert.Equal(2, calls);
         }
         Assert.Equal("", KatLangEngine.EvaluateToString("true"));
         Assert.Equal("", await KatLangEngine.EvaluateToStringAsync("false"));

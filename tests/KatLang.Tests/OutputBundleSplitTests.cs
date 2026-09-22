@@ -10,8 +10,11 @@ namespace KatLang.Tests;
 ///
 /// <para>Every test here either pins the structural shape of the elaborated
 /// AST or pins an observable behavior of the permanent model
-/// (<c>(Obj).V</c> capture-receiver suppression, captured open targets being
-/// rejected, higher-order argument channels).</para>
+/// (<c>(A, B).V</c> / <c>(A*).V</c> capture-receiver suppression, captured open
+/// targets being rejected, higher-order argument channels). PARENTHESES GROUP
+/// SYNTAX (September 2026): a group of exactly one non-spread slot is never a
+/// capture — <c>(x)</c> IS <c>x</c> — so every capture-boundary pin below uses a
+/// group whose parentheses do something (several slots, or a lone spread).</para>
 /// </summary>
 public class OutputBundleSplitTests
 {
@@ -60,19 +63,34 @@ public class OutputBundleSplitTests
     }
 
     [Fact]
-    public void RedundantParens_NormalizeExactlyAsBefore()
+    public void RedundantParens_AreErasedWhateverTheInnerKind()
     {
-        // (1) unwraps; () is the empty sequence; ({1}) / (({1})) normalize to
-        // the brace algorithm; ((1, 2)) keeps its written capture boundary.
+        // A group of exactly one non-spread slot is that slot's expression: (1)
+        // unwraps, () is the empty sequence and (()) the same node, ({1}) / (({1}))
+        // are the brace algorithm, (x) is the name, (x.M) the dot edge, (F(1)) the
+        // call, ([1]) the list, and ((1, 2)) is the ONE capture (1, 2) — no capture
+        // layer ever survives around a single slot, so no later layer can tell a
+        // group from its content.
         Assert.IsType<Expr.Num>(Assert.Single(ParseValidRoot("(1)").Output));
         Assert.IsType<Expr.EmptySequence>(Assert.Single(ParseValidRoot("()").Output));
         Assert.IsType<Expr.EmptySequence>(Assert.Single(ParseValidRoot("(())").Output));
         Assert.IsType<Expr.AlgorithmExpr>(Assert.Single(ParseValidRoot("({1})").Output));
         Assert.IsType<Expr.AlgorithmExpr>(Assert.Single(ParseValidRoot("(({1}))").Output));
+        Assert.IsType<Expr.Resolve>(Assert.Single(ParseValidRoot("x = 1\n(x)").Output));
+        Assert.IsType<Expr.Resolve>(Assert.Single(ParseValidRoot("x = 1\n(((x)))").Output));
+        Assert.IsType<Expr.DotCall>(Assert.Single(ParseValidRoot("x = { public M = 1 }\n(x.M)").Output));
+        Assert.IsType<Expr.Call>(Assert.Single(ParseValidRoot("F(a) = a\n(F(1))").Output));
+        Assert.IsType<Expr.ListLiteral>(Assert.Single(ParseValidRoot("([1])").Output));
+        Assert.IsType<Expr.Index>(Assert.Single(ParseValidRoot("A = 1, 2\n(A:0)").Output));
 
         var nested = Assert.IsType<Expr.Capture>(Assert.Single(ParseValidRoot("((1, 2))").Output));
-        var inner = Assert.IsType<Expr.Capture>(Assert.Single(nested.Body));
-        Assert.Equal(2, inner.Body.Count);
+        Assert.Equal(2, nested.Body.Count);
+        Assert.All(nested.Body, row => Assert.IsType<Expr.Num>(row));
+
+        // The groups whose parentheses DO something survive: several slots, and a
+        // lone spread (the capture of an item supply into one value).
+        var spread = Assert.IsType<Expr.Capture>(Assert.Single(ParseValidRoot("A = 1, 2\n((A*))").Output));
+        Assert.IsType<Expr.SequenceSpread>(Assert.Single(spread.Body));
     }
 
     [Fact]
@@ -205,7 +223,7 @@ public class OutputBundleSplitTests
     [InlineData("A = 1, 2, 3\n((A)).count", 3)]
     [InlineData("A = 1, 2, 3\n(A*).count", 3)]
     [InlineData("A = 1, 2, 3\n((A*)).count", 3)]
-    public void CaptureCardinality_MatchesPreSplitBehavior(string source, decimal expected)
+    public void CaptureCardinality_IsUnchangedByRedundantGrouping(string source, decimal expected)
     {
         var value = Eval(source);
         Assert.Equal(expected, Assert.IsType<Result.Atom>(value).Value);
@@ -256,25 +274,34 @@ public class OutputBundleSplitTests
         Assert.True(Result.ValueComparer.Equals(viaBlock.Value.Value, viaCapture.Value.Value));
     }
 
-    // ── Capture is not algorithm identity ────────────────────────────────────
+    // ── Capture is not algorithm identity; redundant grouping is not a capture ──
 
     [Fact]
-    public void GroupedNamedAlgorithm_StaysSuppressedOnTheValueChannel()
+    public void GroupedNamedAlgorithm_CrossesTheHigherOrderBoundaryLikeTheBareName()
     {
-        // (Increment) is a capture: evaluating it as the argument VALUE calls
-        // the one-parameter property with zero arguments. Increment's callable
-        // identity never crosses the capture boundary.
-        var error = Innermost(EvalError("Apply = f(9)\nIncrement = x + 1\nApply((Increment))"));
-        var arity = Assert.IsType<EvalError.ArityMismatch>(error);
-        Assert.Equal(1, arity.Expected);
-        Assert.Equal(0, arity.Actual);
+        // PARENTHESES GROUP SYNTAX: `(Increment)` IS `Increment`, so the grouped
+        // argument carries Increment's callable identity exactly like the bare name —
+        // at every redundant depth.
+        foreach (var spelling in new[] { "Increment", "(Increment)", "(((Increment)))" })
+            Assert.Equal(10, Assert.IsType<Result.Atom>(Eval($"Apply = f(9)\nIncrement = x + 1\nApply({spelling})")).Value);
+        foreach (var spelling in new[] { "Zero", "(Zero)", "((Zero))" })
+            Assert.Equal(0, Assert.IsType<Result.Atom>(Eval($"Zero = 0\nCall0 = f()\nCall0({spelling})")).Value);
     }
 
     [Fact]
-    public void GroupedZeroParameterAlgorithm_IsAValueNotACallable()
+    public void GenuineCaptureArgument_StaysSuppressedOnTheValueChannel()
     {
-        var error = Innermost(EvalError("Zero = 0\nCall0 = f()\nCall0((Zero))"));
-        Assert.IsType<EvalError.NotAnAlgorithm>(error);
+        // A group whose parentheses DO something is a capture: evaluating
+        // `(Increment, Increment)` as the argument VALUE calls the one-parameter
+        // property with zero arguments, and no callable identity crosses the
+        // capture boundary.
+        var error = Innermost(EvalError("Apply = f(9)\nIncrement = x + 1\nApply((Increment, Increment))"));
+        var arity = Assert.IsType<EvalError.ArityMismatch>(error);
+        Assert.Equal(1, arity.Expected);
+        Assert.Equal(0, arity.Actual);
+
+        Assert.IsType<EvalError.NotAnAlgorithm>(Innermost(EvalError("Zero = 0\nCall0 = f()\nCall0((Zero, Zero))")));
+        Assert.IsType<EvalError.NotAnAlgorithm>(Innermost(EvalError("Zero = 0\nCall0 = f()\nCall0((Zero*))")));
     }
 
     [Fact]
@@ -287,16 +314,29 @@ public class OutputBundleSplitTests
     }
 
     [Fact]
+    public void GroupedReceiver_NavigatesStructurallyLikeTheBareName()
+    {
+        // (Obj).V IS Obj.V: parentheses never change which receiver is navigated,
+        // so the grouped spelling reads the member structurally at every depth —
+        // including under a closed explicit parameter list, where the old capture
+        // receiver used to leave `V` an unresolvable lexical name.
+        foreach (var receiver in new[] { "Obj", "(Obj)", "((Obj))" })
+        {
+            Assert.Equal(7, Assert.IsType<Result.Atom>(Eval($"Obj = {{public V = 7}}\n{receiver}.V")).Value);
+            Assert.Equal(7, Assert.IsType<Result.Atom>(Eval($"Obj = {{public V = 7}}\nQ(z) = {receiver}.V\nQ(0)")).Value);
+            Assert.Equal(7, Assert.IsType<Result.Atom>(Eval($"V(v) = v + 1\nObj = {{public V = 7}}\n{receiver}.V")).Value);
+        }
+    }
+
+    [Fact]
     public void CaptureReceiver_FailsStructuralLookup_AndInjectsIntoLexicalFallback()
     {
-        // (Obj).V: the capture exposes no members, so structural lookup fails
-        // and the lexical fallback resolves V lexically. The edge is inside a
+        // (Obj, Obj).V: a genuine capture exposes no members, so structural lookup
+        // fails and the lexical fallback resolves V lexically. The edge is inside a
         // CLOSED explicit parameter list, so the unresolvable fallback stays a
         // lexical name (it is not promoted to an implicit parameter) and the
-        // structured error is UnknownName("V") — the engine's dot-call context
-        // renders it as "Property 'V' was not found on `(inline library)`...",
-        // never as a member of Obj.
-        var missing = Innermost(EvalError("Obj = {public V = 7}\nQ(z) = (Obj).V\nQ(0)"));
+        // structured error is UnknownName("V"), never a member of Obj.
+        var missing = Innermost(EvalError("Obj = {public V = 7}\nQ(z) = (Obj, Obj).V\nQ(0)"));
         var unknown = Assert.IsType<EvalError.UnknownName>(missing);
         Assert.Equal("V", unknown.Name);
 
@@ -304,22 +344,22 @@ public class OutputBundleSplitTests
         // leading argument: V(receiverValue). Obj has properties but NO output,
         // so evaluating the capture receiver reports Obj's missing output —
         // proof the fallback call was taken (structural access Obj.V works).
-        var fallback = EvalError("V(v) = v + 1\nObj = {public V = 7}\n(Obj).V");
+        var fallback = EvalError("V(v) = v + 1\nObj = {public V = 7}\n(Obj, Obj).V");
         Assert.IsType<EvalError.MissingOutput>(Innermost(fallback));
+        var spreadFallback = EvalError("V(v) = v + 1\nObj = {public V = 7}\n(Obj*).V");
+        Assert.IsType<EvalError.SpreadMissingOutput>(Innermost(spreadFallback));
 
         var structural = Eval("Obj = {public V = 7}\nObj.V");
         Assert.Equal(7, Assert.IsType<Result.Atom>(structural).Value);
     }
 
     /// <summary>
-    /// Final audit (September 2026): a GRACED name inside redundant parentheses kept the
-    /// capture boundary only at net weight zero; any other weight unwrapped the group to
-    /// the bare graced name, so `(~obj).V` navigated structurally where `(obj).V` is a
-    /// capture receiver, and `(~a)(b)` became a call where `(a)(b)` is the same-line
-    /// separator error — a Grace marker changing selection. Grace is stripped before
-    /// evaluation, so the elaborated tree of a graced spelling must equal the marker-free
-    /// program's; the group therefore keeps the plain name's capture boundary whatever the
-    /// marker's weight.
+    /// Grace never changes selection: Grace is stripped before evaluation, so the
+    /// elaborated tree of a graced spelling must equal the marker-free program's.
+    /// With parentheses grouping syntax, `(~obj).V`, `(obj~).V`, `(obj).V`, and
+    /// `obj.V` all elaborate to the ONE ordinary dot edge on the parameter `obj`
+    /// (structural member first, lexical fallback second) — the marker's weight
+    /// only orders parameters, and the group is erased whatever the weight.
     /// </summary>
     [Theory]
     [InlineData("(~obj)")]
@@ -327,33 +367,43 @@ public class OutputBundleSplitTests
     [InlineData("(~~obj)")]
     [InlineData("(~obj~)")]
     [InlineData("(obj)")]
-    public void GracedNameInRedundantParentheses_KeepsThePlainNamesCaptureBoundary(string receiver)
+    [InlineData("obj")]
+    public void GracedNameInRedundantParentheses_ElaboratesLikeThePlainName(string receiver)
     {
         var parsed = SourceProvenance.ParseValid($"V = 99\nM = {{ public V = 5 }}\nF = {receiver}.V\nF(M)");
         var body = Assert.IsType<Algorithm.User>(parsed.Root.Properties.Single(p => p.Name == "F").Value);
         var edge = Assert.IsType<Expr.DotCall>(Assert.Single(body.Output));
-        Assert.IsType<Expr.Capture>(edge.Target);
+        Assert.Equal("obj", Assert.IsType<Expr.Param>(edge.Target).Name);
         Assert.Equal(["obj"], body.Params);
 
-        // Same executable meaning as the plain spelling: the capture exposes no
-        // members, so the edge is the lexical fallback V(receiverValue) — and M has
-        // properties but no output, so the fallback call reports M's missing output.
-        Assert.IsType<EvalError.MissingOutput>(Innermost(EvalError($"V = 99\nM = {{ public V = 5 }}\nF = {receiver}.V\nF(M)")));
+        // Same executable meaning as the plain spelling: the bound receiver M declares
+        // V, so the edge navigates structurally to M's own member.
+        Assert.Equal(5, Assert.IsType<Result.Atom>(Eval($"V = 99\nM = {{ public V = 5 }}\nF = {receiver}.V\nF(M)")).Value);
     }
 
     [Theory]
-    [InlineData("(~a)(b)")]
-    [InlineData("(a)(b)")]
-    public void GracedNameInRedundantParentheses_IsNeverACallTarget(string source)
+    [InlineData("(~a)(b)", -1)]
+    [InlineData("(a~)(b)", 1)]
+    [InlineData("(a)(b)", 0)]
+    [InlineData("a(b)", 0)]
+    public void GracedNameInRedundantParentheses_IsACallTargetLikeThePlainName(string source, int weight)
     {
-        // `(a)(b)` is two same-line items (a capture is not a callable target); a
-        // marker inside the group does not turn it into the call `a(b)`.
+        // `(a)` IS the callable name `a`, so `(a)(b)` is the call `a(b)` exactly as
+        // the bare spelling is, and a marker inside the group is ordinary Grace on
+        // the callee occurrence (`(~a)(b)` is `~a(b)`).
         var parsed = Parser.ParseSyntax(source);
-        var diagnostic = Assert.Single(parsed.Diagnostics);
-        Assert.Equal(DiagnosticCode.UnseparatedSameLineItem, diagnostic.Code);
+        Assert.Empty(parsed.Diagnostics);
         var root = Assert.IsType<Algorithm.User>(parsed.Root);
-        Assert.Equal(2, root.Output.Count);
-        Assert.IsType<Expr.Capture>(root.Output[0]);
+        var call = Assert.IsType<Expr.Call>(Assert.Single(root.Output));
+        if (weight == 0)
+            Assert.Equal("a", Assert.IsType<Expr.Resolve>(call.Function).Name);
+        else
+        {
+            var grace = Assert.IsType<Expr.Grace>(call.Function);
+            Assert.Equal(weight, grace.Weight);
+            Assert.Equal("a", Assert.IsType<Expr.Resolve>(grace.Inner).Name);
+        }
+        Assert.Equal("b", Assert.IsType<Expr.Resolve>(Assert.Single(call.Args)).Name);
     }
 
     [Fact]
@@ -361,19 +411,24 @@ public class OutputBundleSplitTests
     {
         // `open` consumes algorithm/namespace identity, and a capture is a
         // value boundary that never exposes the identity of what it encloses,
-        // so a parenthesized open target is rejected at parse time with the
-        // targeted captured-open diagnostic — exactly like a spread-marked
-        // target. Direct and brace-normalized targets still open.
+        // so a GENUINELY grouped open target (several slots, or a lone spread)
+        // is rejected at parse time with the targeted captured-open diagnostic —
+        // exactly like a spread-marked target. Direct, brace-normalized, and
+        // redundantly grouped name targets all open: `open (M)` IS `open M`.
         var direct = Eval("M = {public C = 5}\nR = {open M\nC}\nR");
         Assert.Equal(5, Assert.IsType<Result.Atom>(direct).Value);
 
         var braceNormalized = Eval("R = {open ({public C = 6})\nC}\nR");
         Assert.Equal(6, Assert.IsType<Result.Atom>(braceNormalized).Value);
 
+        foreach (var spelling in new[] { "open (M)", "open ((M))" })
+            Assert.Equal(5, Assert.IsType<Result.Atom>(Eval($"M = {{public C = 5}}\nR = {{{spelling}\nC}}\nR")).Value);
+
         foreach (var source in new[]
         {
-            "M = {public C = 5}\nR = {open (M)\nC}\nR",
-            "M = {public C = 5}\nR = {open ((M))\nC}\nR",
+            "M = {public C = 5}\nR = {open (M, M)\nC}\nR",
+            "M = {public C = 5}\nR = {open ((M, M))\nC}\nR",
+            "M = {public C = 5}\nR = {open (M*)\nC}\nR",
         })
         {
             var parsed = SourceProvenance.ParseAllowingDiagnostics(source);
@@ -403,17 +458,17 @@ public class OutputBundleSplitTests
     public void OpenDottedTarget_RedundantParenthesesNormalizeAway_AndACaptureTargetStaysRejected()
     {
         // K5-R2 — the boundary KatLang.ebnf's ValidatedOpenExpression documents.
-        // Parentheses around a dotted open path are redundant grouping:
-        // Parser.ShouldUnwrapParenthesizedPrimary erases them before open-form
-        // validation, so `open (M.N)` and `open ((M.N))` reach elaboration as
-        // the very same open as `open M.N` — an argumentless DotCall with no
-        // Capture layer anywhere — and evaluate identically. A bare name keeps
-        // its capture layer instead (the sibling above), so `open (M)` stays a
-        // targeted BadOpenForm parse error.
+        // Parentheses around a dotted open path — or around its receiver — are
+        // redundant grouping: Parser.IsRedundantGrouping erases them before
+        // open-form validation, so `open (M.N)`, `open ((M.N))`, and `open (M).N`
+        // reach elaboration as the very same open as `open M.N` — an argumentless
+        // DotCall with no Capture layer anywhere — and evaluate identically. A
+        // multi-slot group is a capture, so `open (M, M)` is a targeted
+        // BadOpenForm parse error.
         const string Library = "M = { public N = { public X = 7 } }\n";
         var plain = SourceProvenance.ParseValid(Library + "R = { open M.N\n  X }\nR");
 
-        foreach (var spelling in new[] { "open M.N", "open (M.N)", "open ((M.N))", "open (((((M.N)))))" })
+        foreach (var spelling in new[] { "open M.N", "open (M.N)", "open ((M.N))", "open (((((M.N)))))", "open (M).N", "open ((M)).N" })
         {
             var source = Library + "R = { " + spelling + "\n  X }\nR";
             var parsed = SourceProvenance.ParseValid(source);
@@ -440,7 +495,7 @@ public class OutputBundleSplitTests
             Assert.Equal(7, Assert.IsType<Result.Atom>(Eval(source)).Value);
         }
 
-        const string RejectedSource = "M = { public X = 7 }\nR = { open (M)\n  X }\nR";
+        const string RejectedSource = "M = { public X = 7 }\nR = { open (M, M)\n  X }\nR";
         var syntax = Parser.ParseSyntax(RejectedSource);
         var parsedRejection = SourceProvenance.ParseAllowingDiagnostics(RejectedSource);
         foreach (var diagnostics in new[] { syntax.Diagnostics, parsedRejection.Diagnostics })
@@ -449,14 +504,17 @@ public class OutputBundleSplitTests
             Assert.Equal(DiagnosticCode.BadOpenForm, diagnostic.Code);
             Assert.Contains("captured value", diagnostic.Message);
             Assert.Contains("open M", diagnostic.Message);
-            Assert.Equal(new SourceSpan(2, 12, 2, 15), diagnostic.Span);
+            Assert.Equal(new SourceSpan(2, 12, 2, 18), diagnostic.Span);
         }
     }
 
     [Theory]
     [InlineData("M", "M = { public X = 7 }")]
+    [InlineData("(M)", "M = { public X = 7 }")]
+    [InlineData("(((M)))", "M = { public X = 7 }")]
     [InlineData("{ public X = 7 }", "")]
     [InlineData("((({ public X = 7 })))", "")]
+    [InlineData("(M).N", "M = { public N = { public X = 7 } }")]
     [InlineData("(M.N).P", "M = { public N = { public P = { public X = 7 } } }")]
     [InlineData("(((M.N).P))", "M = { public N = { public P = { public X = 7 } } }")]
     [InlineData("({ public N = { public X = 7 } }).N", "")]
@@ -465,9 +523,8 @@ public class OutputBundleSplitTests
         => Assert.Equal(7, Assert.IsType<Result.Atom>(Eval(library + "\nR = { open " + target + "\nX }\nR")).Value);
 
     [Theory]
-    [InlineData("(M)")]
-    [InlineData("((M))")]
     [InlineData("(M, M)")]
+    [InlineData("((M, M))")]
     [InlineData("()")]
     [InlineData("((()))")]
     [InlineData("1")]
@@ -488,8 +545,8 @@ public class OutputBundleSplitTests
     }
 
     [Theory]
-    [InlineData("(M).N")]
-    [InlineData("((M).N)")]
+    [InlineData("(M, M).N")]
+    [InlineData("((M, M).N)")]
     [InlineData("(M*).N")]
     [InlineData("1.N")]
     [InlineData("('url').N")]
@@ -497,7 +554,8 @@ public class OutputBundleSplitTests
     {
         // Parse-time open validation checks the outer DotCall. Resolving its
         // receiver is a later operation, so the grammar must not claim these
-        // are parser rejections or normalize a receiver capture away.
+        // are parser rejections or normalize a genuine receiver capture away
+        // (a redundant group around the receiver IS the receiver: `(M).N` is `M.N`).
         var parsed = Parser.ParseSyntax("open " + target);
         Assert.Empty(parsed.Diagnostics);
         var dot = Assert.IsType<Expr.DotCall>(Assert.Single(parsed.Root.Opens));

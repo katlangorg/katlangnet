@@ -2027,8 +2027,7 @@ public static partial class Evaluator
     private static async ValueTask<EvalResult<IReadOnlyList<ParameterPatternInput>>> BuildCallArgumentInputsAsync(
         OutputBundle args,
         EvalCtx ctx,
-        ValEnv valEnv,
-        bool includeExplicitSequenceValueItems = false)
+        ValEnv valEnv)
     {
         var maybeAlgsR = TryResolveArgAlgs(args, ctx);
         if (maybeAlgsR.IsError) return maybeAlgsR.Error;
@@ -2049,24 +2048,21 @@ public static partial class Evaluator
 
                 // Explicit spread produces FINAL supply items (SupplyOrigin.FinalItem).
                 foreach (var value in CountedTopLevelValues(suppliedR.Value))
-                    inputs.Add(new ParameterPatternInput(value, Algorithm: null, ValueError: null, ExplicitSequenceValueItems: null));
+                    inputs.Add(new ParameterPatternInput(value, Algorithm: null, ValueError: null));
 
                 continue;
             }
 
-            var preparedR = await PrepareCallArgumentEvaluationAsync(
-                argExpr,
-                ctx,
-                valEnv,
-                includeExplicitSequenceValueItems).ConfigureAwait(false);
-            if (preparedR.IsOk)
+            // Every non-spread slot is evaluated at its VALUE boundary through the
+            // ONE EvalCountedAsync (see the sync twin's rationale).
+            var evaluatedR = await EvalCountedAsync(argExpr, ctx, valEnv).ConfigureAwait(false);
+            if (evaluatedR.IsOk)
             {
                 // A non-spread slot is ONE written slot (SupplyOrigin.WrittenSlot).
                 inputs.Add(new ParameterPatternInput(
-                    preparedR.Value.Counted.Value,
+                    evaluatedR.Value.Value,
                     maybeAlg,
                     ValueError: null,
-                    preparedR.Value.ExplicitSequenceValueItems,
                     SupplyOrigin.WrittenSlot));
                 continue;
             }
@@ -2076,55 +2072,15 @@ public static partial class Evaluator
                 inputs.Add(new ParameterPatternInput(
                     Value: null,
                     maybeAlg,
-                    preparedR.Error,
-                    ExplicitSequenceValueItems: null,
+                    evaluatedR.Error,
                     SupplyOrigin.WrittenSlot));
                 continue;
             }
 
-            return preparedR.Error;
+            return evaluatedR.Error;
         }
 
         return EvalResult<IReadOnlyList<ParameterPatternInput>>.Ok(inputs);
-    }
-
-    /// <summary>MIRROR OF <see cref="PrepareCallArgumentEvaluation"/> — keep in lock-step.</summary>
-    private static async ValueTask<EvalResult<PreparedCallArgumentEvaluation>> PrepareCallArgumentEvaluationAsync(
-        Expr argExpr,
-        EvalCtx ctx,
-        ValEnv valEnv,
-        bool includeExplicitSequenceValueItems)
-    {
-        if (includeExplicitSequenceValueItems && argExpr is Expr.Capture(var captureBody))
-        {
-            var captureSpan = PreferExpressionSpan(argExpr.Span, captureBody);
-            var capturePreparedR = WithSpan(captureSpan, await EvalCapturePreparedCoreAsync(captureBody, ctx, valEnv).ConfigureAwait(false));
-            if (capturePreparedR.IsError) return capturePreparedR.Error;
-
-            return EvalResult<PreparedCallArgumentEvaluation>.Ok(new(
-                ReCountValueBoundary(capturePreparedR.Value.Counted),
-                capturePreparedR.Value.OutputSlots));
-        }
-
-        if (includeExplicitSequenceValueItems && argExpr is Expr.AlgorithmExpr(var algorithm))
-        {
-            var wired = WireToCaller(ctx, algorithm);
-            if (wired.ParameterCount == 0)
-            {
-                var blockSpan = PreferExpressionSpan(argExpr.Span, wired.Output);
-                var preparedR = WithSpan(blockSpan, await EvalAlgOutputPreparedCoreAsync(wired, ctx, valEnv).ConfigureAwait(false));
-                if (preparedR.IsError) return preparedR.Error;
-
-                return EvalResult<PreparedCallArgumentEvaluation>.Ok(new(
-                    ReCountValueBoundary(preparedR.Value.Counted),
-                    preparedR.Value.OutputSlots));
-            }
-        }
-
-        var evaluatedR = await EvalCountedAsync(argExpr, ctx, valEnv).ConfigureAwait(false);
-        return evaluatedR.IsError
-            ? evaluatedR.Error
-            : EvalResult<PreparedCallArgumentEvaluation>.Ok(new(evaluatedR.Value, null));
     }
 
     /// <summary>MIRROR OF <see cref="BindPatternedUserCall"/> — keep in lock-step.</summary>
@@ -2138,11 +2094,7 @@ public static partial class Evaluator
         if (callee is Algorithm.User { AssignmentDeconstructionTarget: not null })
             ctx.Observations?.RecordDeconstructionFullBind();
 
-        var inputsR = await BuildCallArgumentInputsAsync(
-            args,
-            ctx,
-            valEnv,
-            includeExplicitSequenceValueItems: true).ConfigureAwait(false);
+        var inputsR = await BuildCallArgumentInputsAsync(args, ctx, valEnv).ConfigureAwait(false);
         if (inputsR.IsError) return inputsR.Error;
 
         var bindingsR = BindParameterPatternList(

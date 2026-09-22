@@ -725,7 +725,7 @@ The step outputs `(new_a, new_b, new_sum, limit, continue_flag)`. The init provi
 ## Calls and Sequence Values
 
 - `F(5)` — one argument. `F(3, 4)` — two arguments. `F{a + b}` — an algorithm-block argument with parameters `a` and `b`.
-- Ordinary parentheses construct sequence values. `((expr))` is just nested sequence-value construction, not special syntax.
+- Parentheses group syntax; they do not introduce a semantic boundary. A group of exactly one non-spread expression is that expression, whatever its kind: `(x)` is `x`, `(F(1))` is `F(1)`, `(Obj.X)` is `Obj.X`, `(A:0)` is `A:0`, `((1, 2))` is `(1, 2)`, `(())` is `()` — the same value, count, binding, caching, receiver, and spread in every position (`(A).count` is `A.count`, `(Obj).X` is `Obj.X`, `F((A))` is `F(A)`, `(F)(1)` is `F(1)`). Only a group of several slots (`(1, 2)`, a sequence value) or of a lone spread (`(A*)`, the capture of the spread items) does something. Never add parentheses expecting them to change a call's binding, a pattern's matching, or a property read.
 - `while`/`repeat` initial state preserves explicit argument boundaries:
     - `Step.while(x, 0)` starts with two state slots
     - `Step.repeat(n, x, 0)` starts with two state slots
@@ -1110,7 +1110,7 @@ Pattern matching operates on the full call-argument shape, not on isolated param
 - `Else(0, (20, 30))` — argument shape is `(0, (20, 30))`. Literal `1` does not match `0`, so first branch fails. Second branch matches: binder `c` matches `0`, sequence-value pattern `(a, b)` matches `(20, 30)`.
 - `Else(1, 20, 30)` — argument shape is `(1, 20, 30)`, a flat 3-slot output sequence. Neither branch matches because both require a 2-element sequence value with a nested sequence value at position 1. Do not treat differently shaped calls as equivalent.
 
-The generator must ensure that the call-site argument shape matches the branch patterns. Do not introduce extra parentheses unless the intended pattern shape requires it.
+The generator must ensure that the call-site argument shape matches the branch patterns. Do not introduce extra parentheses unless the intended pattern shape requires it — a sequence-value pattern needs ONE argument that opens to the pattern's items, and redundant parentheses around that argument change nothing (`Else(1, ((20, 30)))` is `Else(1, (20, 30))`, and a stored `P = 20, 30` passed as `Else(1, P)` or `Else(1, (P))` matches the same branch).
 
 ### Catch-all branches
 
@@ -1547,7 +1547,7 @@ Without trailing output, `Order` has no direct result — use `Order.Total(25, 4
 
 === BEGIN GENERATED: katlang-spec-examples (DO NOT EDIT BY HAND) ===
 
-Verified reference examples (96 of the 281-case canonical language specification,
+Verified reference examples (97 of the 282-case canonical language specification,
 tests/KatLang.Tests/LanguageSpec/LanguageSpecCorpus.cs). Every program and expected
 output below is executed against the KatLang engine and (where representable)
 guarded against the Lean model on every build. Treat these as ground truth for the
@@ -1885,6 +1885,33 @@ Regenerate this block from the repo root with:
     2
     2
 
+[parentheses-group-syntax] Parentheses group syntax; they do not introduce a semantic boundary. A group of exactly one non-spread expression is that expression — `(S)`, `((S))`, `(L)`, `(E)`, `(A):0`, `(Obj).V`, `(Inc)(1)` mean `S`, `L`, `E`, `A:0`, `Obj.V`, `Inc(1)` — with the same value, the same emitted count, the same binding, the same caching, the same selection, the same dot-call receiver, the same spread, and the same error kind. Normalization never stops at a parenthesis (`((S))` is the pair, `(())` is `()`). Only a group whose parentheses do something is a sequence-valued capture: several slots (`((1, 2), 3)` is the pair beside 3) or a lone spread (`(A*)` captures the spread items into one value). Pattern parentheses are call-shape syntax (`F((a, b))` takes one argument that opens to two items), never a runtime boundary. Selection chooses a value, dot-call passes a value, spread opens a value — and parentheses group syntax.
+
+    Collect(*items) = items
+    S = 1, 2
+    L = [1, 2]
+    E = ()
+
+    Collect(S), Collect((S)), Collect(((S)))
+    Collect(L), Collect((L))
+    Collect(E), Collect((E))
+    S.Collect, (S).Collect, ((S)).Collect
+    E*.Collect, (E)*.Collect
+
+  Displays:
+    [1, 2]
+    [1, 2]
+    [1, 2]
+    [[1, 2]]
+    [[1, 2]]
+    []
+    []
+    [1, 2]
+    [1, 2]
+    [1, 2]
+    []
+    []
+
 [mixed-collecting-parameter] Mixed fixed/collecting parameter lists bind the call's argument supply: fixed captures take the front and back first, and the collecting parameter then consumes the middle segment by the collector supply-boundary law — several remaining slots are collected exactly (possibly `[]`), and a lone remaining non-spread sequence value opens one level (`F(1, (2, 3), 4)` binds `y = [2, 3]`, while `F(1, (2, 3), 5, 4)` binds `y = [(2, 3), 5]`). Fixed positions never open a sequence argument: `F(A)` supplies one slot against two fixed parameters and fails.
 
     F(x, *y, z) = x + y.sum + z
@@ -2071,13 +2098,13 @@ Regenerate this block from the repo root with:
   Displays:
     7
 
-[open-capture-target-rejected] `open` consumes algorithm identity, and a capture is a value boundary that never exposes the identity of what it encloses: `open (M)` is rejected at parse time. Open the algorithm directly (`open M`), or use a brace block — parentheses around a brace block normalize away, so `open ({ ... })` still opens the block.
+[open-capture-target-rejected] `open` consumes algorithm identity, and a capture is a value boundary that never exposes the identity of what it encloses: `open (M, M)` — a group of several slots — is rejected at parse time, as is `open (M*)`. Redundant parentheses are not a capture: parentheses group syntax, so `open (M)` and `open ((M))` are exactly `open M`, and parentheses around a brace block normalize away too, so `open ({ ... })` still opens the block.
 
     M = {
         public C = 5
     }
     R = {
-        open (M)
+        open (M, M)
         C
     }
     R

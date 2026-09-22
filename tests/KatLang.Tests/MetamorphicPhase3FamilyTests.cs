@@ -575,29 +575,44 @@ public class MetamorphicPhase3FamilyTests
     /// deliberate, visible one.</para>
     /// </summary>
     [Fact]
-    public void BuiltinCollectionSlot_DoesNotConsultTheCache_InEitherSpelling()
+    public void BuiltinCollectionSlot_DoesNotConsultTheCache_InAnySpelling()
     {
         var argument = ObserveWithEvidence("MmA = range(1, 6)\nsum(MmA), sum(MmA)", enableOptimizations: true);
         var receiver = ObserveWithEvidence("MmA = range(1, 6)\nMmA.sum, MmA.sum", enableOptimizations: true);
-        var captured = ObserveWithEvidence("MmA = range(1, 6)\n(MmA).sum, (MmA).sum", enableOptimizations: true);
+        var grouped = ObserveWithEvidence("MmA = range(1, 6)\n(MmA).sum, (MmA).sum", enableOptimizations: true);
+        var groupedArgument = ObserveWithEvidence("MmA = range(1, 6)\nsum((MmA)), sum((MmA))", enableOptimizations: true);
+        var blockRow = ObserveWithEvidence("MmA = range(1, 6)\n{MmA}.sum, {MmA}.sum", enableOptimizations: true);
 
         var argumentCache = Assert.IsType<MetamorphicCacheEvidence>(argument.CacheEvidence);
         var receiverCache = Assert.IsType<MetamorphicCacheEvidence>(receiver.CacheEvidence);
-        var capturedCache = Assert.IsType<MetamorphicCacheEvidence>(captured.CacheEvidence);
+        var groupedCache = Assert.IsType<MetamorphicCacheEvidence>(grouped.CacheEvidence);
+        var groupedArgumentCache = Assert.IsType<MetamorphicCacheEvidence>(groupedArgument.CacheEvidence);
+        var blockRowCache = Assert.IsType<MetamorphicCacheEvidence>(blockRow.CacheEvidence);
 
         Assert.Equal(0, argumentCache.Requests);
         Assert.Equal(0, argumentCache.Hits);
         Assert.Equal(0, receiverCache.Requests);
         Assert.Equal(0, receiverCache.Hits);
-        Assert.Equal(2, capturedCache.Requests);
-        Assert.Equal(1, capturedCache.Hits);
+        // PARENTHESES GROUP SYNTAX: `(MmA).sum` IS `MmA.sum` and `sum((MmA))` IS `sum(MmA)`
+        // — a direct demand in every spelling; only a genuine VALUE-position read (here the
+        // row of a brace-block receiver) goes through the cache.
+        Assert.Equal(0, groupedCache.Requests);
+        Assert.Equal(0, groupedCache.Hits);
+        Assert.Equal(0, groupedArgumentCache.Requests);
+        Assert.Equal(0, groupedArgumentCache.Hits);
+        Assert.Equal(2, blockRowCache.Requests);
+        Assert.Equal(1, blockRowCache.Hits);
 
         // The values are the same in every spelling; only the reuse differs.
         Assert.Equal(receiver.Semantic, argument.Semantic);
-        Assert.Equal(captured.Semantic.Structure, argument.Semantic.Structure);
-        Assert.Equal(captured.Semantic.EmittedCount, argument.Semantic.EmittedCount);
+        Assert.Equal(grouped.Semantic, argument.Semantic);
+        Assert.Equal(groupedArgument.Semantic, argument.Semantic);
+        Assert.Equal(blockRow.Semantic.Structure, argument.Semantic.Structure);
+        Assert.Equal(blockRow.Semantic.EmittedCount, argument.Semantic.EmittedCount);
         Assert.Equal(receiver.MaterializedItems, argument.MaterializedItems);
         Assert.Equal(receiver.EvaluationSteps, argument.EvaluationSteps);
+        Assert.Equal(grouped.MaterializedItems, argument.MaterializedItems);
+        Assert.Equal(grouped.EvaluationSteps, argument.EvaluationSteps);
     }
 
     /// <summary>A cumulative budget cannot bind equally on the two forms, so those modes are rejected by name.</summary>

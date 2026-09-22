@@ -28,8 +28,8 @@ internal sealed record MetamorphicCacheSource(
 ///
 /// <code>
 /// left (cached)    MmA = range(1, 6)                 right (rebuilt)  MmA1 = range(1, 6)
-///                  (MmA).count, (MmA).count                           MmA2 = range(1, 6)
-///                                                                     (MmA1).count, (MmA2).count
+///                  {MmA}.count, {MmA}.count                           MmA2 = range(1, 6)
+///                                                                     {MmA1}.count, {MmA2}.count
 /// </code>
 ///
 /// <para><b>Equivalence argument.</b> KatLang is pure, so binding one property and using it twice
@@ -45,10 +45,12 @@ internal sealed record MetamorphicCacheSource(
 /// <c>uses - 1</c> hits, and the rebuilt side must record none at all. Distinct property names
 /// have distinct binding identities, so the rebuilt side cannot accidentally share an entry —
 /// and the evidence gate turns that from an argument into a measurement. The uses therefore
-/// read the property in VALUE position — bare, or as the captured receiver <c>(MmA).count</c> —
-/// because a builtin's collection slot demands a named property's algorithm directly and never
-/// consults the cache, in the written spelling <c>count(MmA)</c> exactly as in the dotted
-/// spelling <c>MmA.count</c> (dot-call passes the receiver as the ordinary leading argument).</para>
+/// read the property in VALUE position — bare, or as the row of a brace-block receiver
+/// <c>{MmA}.count</c> — because a builtin's collection slot demands a named property's algorithm
+/// directly and never consults the cache, in the written spelling <c>count(MmA)</c> exactly as
+/// in the dotted spelling <c>MmA.count</c> (dot-call passes the receiver as the ordinary leading
+/// argument) and exactly as in the redundantly grouped spelling <c>(MmA).count</c> (parentheses
+/// group syntax; they do not introduce a semantic boundary).</para>
 ///
 /// <para><b>Directional work.</b> The cache exists to do less, so the relation is
 /// <see cref="MetamorphicOperationalRelation.WorkNeverIncreases"/>: the cached side may charge
@@ -72,11 +74,13 @@ internal static class MetamorphicCacheTemplate
     private const string Placeholder = "$";
 
     /// <summary>
-    /// The property read in value position as a captured receiver: <c>(MmA).count</c> reads the
-    /// cache, whereas the bare receiver <c>MmA.count</c> — like the written argument
-    /// <c>count(MmA)</c> — is demanded directly by the builtin's collection slot.
+    /// The property read in value position as the row of a brace-block receiver:
+    /// <c>{MmA}.count</c> reads the cache (the block's row is an ordinary value-position access),
+    /// whereas the bare receiver <c>MmA.count</c> — like the written argument <c>count(MmA)</c>
+    /// and the redundantly grouped <c>(MmA).count</c>, which IS <c>MmA.count</c> — is demanded
+    /// directly by the builtin's collection slot.
     /// </summary>
-    private const string Captured = "(" + Placeholder + ")";
+    private const string Captured = "{" + Placeholder + "}";
 
     /// <summary>How many times the value is used. Both counts exercise a real reuse.</summary>
     internal static readonly ImmutableArray<int> ReuseCounts = [2, 3];
@@ -101,15 +105,17 @@ internal static class MetamorphicCacheTemplate
         // MEASURED, not assumed: a bare property reference in a builtin's collection slot records
         // no zero-argument property cache request at all — the slot demands the property's
         // algorithm directly — and since dot-call passes the receiver as that ordinary leading
-        // argument, the dotted spelling `MmA.sum` records none either (the two entries below).
-        // Both forms produce identical values; the difference from the captured `(MmA).sum` is
-        // purely a missed reuse, and the repository documents the cache as something
-        // property-style access "may" use rather than must. The templates are kept — each pair is
-        // still a valid cached-versus-rebuilt comparison — but they do not claim reuse they
-        // demonstrably do not get. Pinned by
-        // MetamorphicPhase3FamilyTests.BuiltinCollectionSlot_DoesNotConsultTheCache_InEitherSpelling.
+        // argument, the dotted spelling `MmA.sum` records none either, nor does the redundantly
+        // grouped `(MmA).sum` (parentheses group syntax; the three entries below). All forms
+        // produce identical values; the difference from the block-row read `{MmA}.sum` is purely
+        // a missed reuse, and the repository documents the cache as something property-style
+        // access "may" use rather than must. The templates are kept — each pair is still a valid
+        // cached-versus-rebuilt comparison — but they do not claim reuse they demonstrably do
+        // not get. Pinned by
+        // MetamorphicPhase3FamilyTests.BuiltinCollectionSlot_DoesNotConsultTheCache_InAnySpelling.
         new("argument-position-property", "range(1, 6)", "sum(" + Placeholder + ")", RequiresReuseEvidence: false),
         new("dotted-receiver-property", "range(1, 6)", Placeholder + ".sum", RequiresReuseEvidence: false),
+        new("grouped-receiver-property", "range(1, 6)", "(" + Placeholder + ").sum", RequiresReuseEvidence: false),
         new("cached-dotted-receiver", "range(1, 6)", Captured + ".take(2)"),
         new("cached-callback-input", "[1, 2, 3]", Captured + ".map(" + MetamorphicTables.DoubleCallback + ")"),
         new("cached-filter-chain", "range(1, 8)", Captured + ".filter(" + MetamorphicTables.BigCallback + ").count"),

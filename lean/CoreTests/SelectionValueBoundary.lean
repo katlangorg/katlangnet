@@ -35,7 +35,8 @@ def selectionCollAlg : Algorithm :=
 def selectionIdAlg : Algorithm :=
   alg ["x"] [] [] [.param "x"]
 
--- Wrap(x) = (x)
+-- Wrap(x) = (x) — a host-AST shape: the parser writes `(x)` as `x`
+-- (parentheses group syntax), and Lean's single-row capture is that value.
 def selectionWrapAlg : Algorithm :=
   alg ["x"] [] [] [.capture [.param "x"]]
 

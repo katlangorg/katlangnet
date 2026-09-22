@@ -413,57 +413,67 @@ public class EvaluatorCollectingParameterTests
     }
 
     [Fact]
-    public void Eval_SequenceValueCollectingParameter_RespectsExplicitCallSiteGroupingDepth()
+    public void Eval_SequenceValueCollectingParameter_IgnoresRedundantCallSiteGrouping()
     {
-        // Top-level variadic (1): the grouped argument is ONE written sequence
-        // slot that the lone collector opens one level (the redundant extra
-        // grouping normalizes away first), so both call forms count 3. Pattern
-        // callees (2, 3) open their declared grouping depth against the written
-        // argument, and the items a pattern opens are FINAL: a matching depth
-        // exposes the written items (3, or 2 for the two-item groups), while an
-        // extra written level around a depth-1 pattern leaves one nested item
-        // that the nested collector never reopens.
+        // PARENTHESES GROUP SYNTAX: a group of one non-spread slot is that slot, so
+        // `((1, 2, 3))` IS the sequence value `(1, 2, 3)` at every depth. The lone
+        // top-level collector (1) opens the one written sequence slot one level
+        // (count 3), and the pattern callee (2) opens the argument's VALUE one level
+        // — the same three items whatever grouping the call site wrote. A pattern
+        // never sees a "written level": non-unary structure is what it opens, so
+        // `((1, 2), 3)` and `(1, (2, 3))` count 2.
         AssertEval(
             """
             CountSequenceValue1(*values) = values.count
             CountSequenceValue2((*values)) = values.count
-            CountSequenceValue3(((*values))) = values.count
 
             CountSequenceValue1((1, 2, 3))
             CountSequenceValue1(((1, 2, 3)))
             CountSequenceValue2((1, 2, 3))
             CountSequenceValue2(((1, 2, 3)))
             CountSequenceValue2((((1, 2, 3))))
-            CountSequenceValue3(((1, 2, 3)))
-            CountSequenceValue3((((1, 2, 3))))
             CountSequenceValue2(((1, 2), 3))
             CountSequenceValue2((1, (2, 3)))
             """,
-            3, 3, 3, 1, 1, 3, 3, 2, 2);
+            3, 3, 3, 3, 3, 2, 2);
     }
 
     [Fact]
-    public void Eval_NestedSequenceValueCollectingParameter_RejectsTooShallowExplicitSequenceValue()
+    public void Eval_NestedSequenceValueCollectingParameter_OpensOneRealBoundaryPerLevel()
     {
-        var result = EvalFull(
+        // A nested pattern `((*values))` opens two boundaries: the argument must open
+        // to exactly ONE item that itself opens. Unary sequence structure never
+        // survives normalization (`(((1, 2, 3)))` IS `(1, 2, 3)`), so only a
+        // one-element LIST can supply a real outer structural level. Scalars also
+        // bind via the ordinary one-item fallback (no sequence wrapper is created).
+        AssertEval(
             """
             CountSequenceValue3(((*values))) = values.count
-            CountSequenceValue3((1, 2, 3))
-            """);
+            CountSequenceValue3([(1, 2, 3)])
+            CountSequenceValue3([[1, 2, 3]])
+            """,
+            3, 3);
 
-        Assert.True(result.IsError);
-        var arity = Assert.IsType<EvalError.ArityMismatch>(Innermost(result.Error));
-        Assert.Equal(1, arity.Expected);
-        Assert.Equal(3, arity.Actual);
+        foreach (var argument in new[] { "(1, 2, 3)", "((1, 2, 3))", "(((1, 2, 3)))" })
+        {
+            var result = EvalFull(
+                "CountSequenceValue3(((*values))) = values.count\n"
+                + $"CountSequenceValue3({argument})");
+
+            Assert.True(result.IsError);
+            var arity = Assert.IsType<EvalError.ArityMismatch>(Innermost(result.Error));
+            Assert.Equal(1, arity.Expected);
+            Assert.Equal(3, arity.Actual);
+        }
     }
 
     [Fact]
-    public void Eval_SequenceValueCollectingParameter_ExplicitPropertyReferenceGroupingIsSourceBacked()
+    public void Eval_SequenceValueCollectingParameter_GroupedPropertyReferenceIsTheReference()
     {
         // The bare reference supplies Inner's canonical value, which the pattern
-        // opens into its three items. Writing extra grouping around the
-        // reference adds one written level, so the pattern's single opening
-        // leaves Inner itself as the one collected item.
+        // opens into its three items — and redundant grouping around the
+        // reference is the reference: `(Inner)` and `((Inner))` supply exactly the
+        // same value, never a "written level" for the pattern to consume.
         AssertEval(
             """
             Inner = (1, 2, 3)
@@ -473,14 +483,14 @@ public class EvaluatorCollectingParameterTests
             CountSequenceValue2((Inner))
             CountSequenceValue2(((Inner)))
             """,
-            3, 1, 1);
+            3, 3, 3);
     }
 
     [Fact]
     public void Eval_SequenceValueParameterBinding_ParenthesizedScalarPropertyItemIsNotAnOrphanSequenceValue()
     {
-        // `(A)` is one written grouping level around a single already-evaluated
-        // item, so the bound item is the scalar 5 itself — never a
+        // `(A)` is erased to `A`, whose value occupies one item beside 6,
+        // so the bound item is the scalar 5 itself — never a
         // literal-unwritable orphan sequence value displaying as `(5)`.
         var result = EvalFull(
             """
@@ -512,8 +522,8 @@ public class EvaluatorCollectingParameterTests
     [Fact]
     public void Eval_SequenceValueParameterBinding_ParenthesizedSequencePropertyItemStaysOneCanonicalItem()
     {
-        // With A = (1, 2), the written grouping `(A)` supplies the canonical
-        // value (1, 2) as one item — not an orphan ((1, 2)) — matching
+        // With A = (1, 2), redundant `(A)` is `A` and supplies the canonical
+        // value (1, 2) as one item beside 6 — not an orphan ((1, 2)) — matching
         // assignment deconstruction of the same right-hand side.
         var result = EvalFull(
             """
@@ -585,39 +595,32 @@ public class EvaluatorCollectingParameterTests
     }
 
     [Fact]
-    public void Eval_SequenceValueParameterBinding_LiteralWrappedPairArgumentReportsWrittenSlotArity()
+    public void Eval_SequenceValueParameterBinding_LiteralWrappedPairArgumentOpensLikeThePair()
     {
-        // `((1, 2))` is one written grouping level around the canonical item
-        // (1, 2): the sequence-value pattern receives exactly ONE written slot,
-        // so binding (x, y) reports arity 2 vs 1 — it neither mints an orphan
-        // ((1, 2)) nor silently opens the single written item.
-        AssertEvalFailsWithArityMismatch(
+        // `((1, 2))` IS the canonical pair (1, 2) — parentheses group syntax — so the
+        // sequence-value pattern (x, y) opens it and binds x = 1, at every redundant
+        // depth and beside a trailing fixed argument; no written slot survives for
+        // the pattern to reject, and no orphan ((1, 2)) is ever minted.
+        AssertEval(
             """
             Wrap((x, y)) = x
+            KeepFirst((x, y), z) = x + z
+            Wrap((1, 2))
             Wrap(((1, 2)))
-            """,
-            expected: 2,
-            actual: 1);
-
-        // Redundant deeper grouping normalizes away shallowly at each level
-        // and still writes exactly one slot.
-        AssertEvalFailsWithArityMismatch(
-            """
-            Wrap((x, y)) = x
             Wrap((((1, 2))))
-            """,
-            expected: 2,
-            actual: 1);
-
-        // A trailing fixed argument binds normally; the pattern slot itself
-        // still reads one written item.
-        AssertEvalFailsWithArityMismatch(
-            """
-            KeepFirst((x, y), z) = x
             KeepFirst(((1, 2)), 3)
             """,
-            expected: 2,
-            actual: 1);
+            1, 1, 1, 4);
+
+        // The pattern still demands exactly two items: a grouped three-item value is
+        // the same arity error whatever the grouping depth.
+        foreach (var argument in new[] { "(1, 2, 3)", "((1, 2, 3))" })
+        {
+            AssertEvalFailsWithArityMismatch(
+                "Wrap((x, y)) = x\n" + $"Wrap({argument})",
+                expected: 2,
+                actual: 3);
+        }
     }
 
     [Fact]
@@ -638,16 +641,24 @@ public class EvaluatorCollectingParameterTests
     }
 
     [Fact]
-    public void Eval_SequenceValueParameterBinding_SingleCapturePatternBindsWrappedPairAsCanonicalItem()
+    public void Eval_SequenceValueParameterBinding_SingletonPatternOpensTheArgumentValue()
     {
-        // IdSeq((x)) consumes the single written slot of ((1, 2)), and that
-        // slot is the canonical (1, 2) — the shallow singleton-erasing combiner
-        // never materializes a literal-unwritable orphan ((1, 2)) around it.
-        // The structural comparison pins the exact shape.
+        // A singleton sequence-value pattern `(x)` opens the argument's VALUE to
+        // exactly one item: a pair opens to two (arity error, in every redundant
+        // grouping), while a one-element list opens to its element — the canonical
+        // (1, 2), never a literal-unwritable orphan ((1, 2)).
+        foreach (var argument in new[] { "(1, 2)", "((1, 2))", "(((1, 2)))" })
+        {
+            AssertEvalFailsWithArityMismatch(
+                "IdSeq((x)) = x\n" + $"IdSeq({argument})",
+                expected: 1,
+                actual: 2);
+        }
+
         var result = EvalFull(
             """
             IdSeq((x)) = x
-            IdSeq(((1, 2)))
+            IdSeq([(1, 2)])
             """);
 
         if (result.IsError)
@@ -662,7 +673,7 @@ public class EvaluatorCollectingParameterTests
         AssertEvalResults(
             """
             IdSeq((x)) = x
-            R = IdSeq(((1, 2)))
+            R = IdSeq([((1, 2))])
             R, count(R), R.count, R == (1, 2), R == ((1, 2)), R:0
             """,
             ResultFromAtoms(1, 2), new Result.Atom(2), new Result.Atom(2), new Result.Bool(true), new Result.Bool(true), new Result.Atom(1));
@@ -704,7 +715,7 @@ public class EvaluatorCollectingParameterTests
         const string singleCaptureRepro =
             """
             IdSeq((x)) = x
-            IdSeq(((1, 2)))
+            IdSeq([((1, 2))])
             """;
         AssertEvalResultLoopModes(singleCaptureRepro, ResultFromAtoms(1, 2));
         AssertEvalResultSequenceModes(singleCaptureRepro, ResultFromAtoms(1, 2));

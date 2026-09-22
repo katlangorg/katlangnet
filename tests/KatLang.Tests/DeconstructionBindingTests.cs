@@ -787,22 +787,23 @@ public class DeconstructionBindingTests
     }
 
     [Fact]
-    public void LiteralWrappedPair_DeconstructionOpensWhilePatternCallReadsWrittenSlots()
+    public void LiteralWrappedPair_OpensTheSameWayInDeconstructionAndPatternCalls()
     {
         // Assignment deconstruction is an unpacking receiver: ((1, 2))
         // evaluates once to the canonical (1, 2) and its items match the
         // targets element-by-element.
         AssertAtoms("x, y = ((1, 2))\nx, y", 1, 2);
 
-        // A sequence-value parameter pattern reads the inline-written
-        // argument's slots instead: ((1, 2)) writes one item, so binding
-        // (x, y) arity-errors rather than opening the single written item.
-        var arity = AssertEvalError<EvalError.ArityMismatch>("F((x, y)) = x\nF(((1, 2)))");
-        Assert.Equal(2, arity.Expected);
-        Assert.Equal(1, arity.Actual);
+        // A sequence-value parameter pattern opens the argument's VALUE the same
+        // way (pattern parentheses are call-shape syntax, never a runtime
+        // boundary): ((1, 2)) IS (1, 2), so (x, y) binds 1 and 2 — the redundant
+        // group no longer leaves "one written item" for the pattern to reject.
+        AssertAtoms("F((x, y)) = x\nF(((1, 2)))", 1);
+        AssertAtoms("F((x, y)) = x\nF((1, 2))", 1);
 
         // The same value stored in a property opens canonically at the call.
         AssertAtoms("A = ((1, 2))\nF((x, y)) = x\nF(A)", 1);
+        AssertAtoms("A = ((1, 2))\nF((x, y)) = x\nF((A))", 1);
     }
 
     [Fact]

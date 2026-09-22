@@ -1154,10 +1154,15 @@ public class StarSyntaxTests
     [InlineData("A = 1, 2\nB = 3, 4\nA* B*")]
     [InlineData("A = 1, 2\n1 + A*")]
     [InlineData("A * (\nB)*")]
+    [InlineData("A * (\n1)*")]
+    [InlineData("A * ((\nB))*")]
     public void SameLineSpreadOperand_KeepsTheGenericScalarOperandWording(string source)
     {
-        // The tailored wording is only for a spread that starts on a LATER line than
-        // its `*`; a same-line spread operand is the ordinary misplaced spread.
+        // The tailored wording is only for a spread whose operand STARTS on a later
+        // line than its `*`; a same-line spread operand is the ordinary misplaced
+        // spread. The decision is made from the token stream — the operand's first
+        // written token, here the `(` on the operator's line — never from the
+        // unwrapped node's span (a grouped bare name keeps its identifier span).
         var error = SingleError(source);
         Assert.Equal(DiagnosticCode.MisplacedSpread, error.Code);
         Assert.DoesNotContain("earlier line", error.Message);

@@ -369,12 +369,11 @@ public class ParserNestingDepthTests
 
             case GraceRunShape.PrefixRunInGroup:
                 {
-                    // A graced name keeps the plain name's capture boundary: `(~~~x)` is the
-                    // capture `(x)` with the marker run inside, never an unwrapped name.
+                    // Parentheses group syntax: `(~~~x)` is the graced name `~~~x` itself —
+                    // the redundant group is erased and the marker run keeps its weight.
                     Assert.Empty(result.Diagnostics);
                     Assert.Empty(root.Properties);
-                    var capture = Assert.IsType<Expr.Capture>(Assert.Single(root.Output));
-                    var grace = Assert.IsType<Expr.Grace>(Assert.Single(capture.Body));
+                    var grace = Assert.IsType<Expr.Grace>(Assert.Single(root.Output));
                     Assert.Equal(-k, grace.Weight);
                     Assert.Equal("x", Assert.IsType<Expr.Resolve>(grace.Inner).Name);
                     break;

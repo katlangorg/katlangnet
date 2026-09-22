@@ -276,10 +276,6 @@ public static partial class Evaluator
         CountedResult Counted,
         IReadOnlyList<Result> OutputSlots);
 
-    private readonly record struct PreparedCallArgumentEvaluation(
-        CountedResult Counted,
-        IReadOnlyList<Result>? ExplicitSequenceValueItems);
-
     internal readonly record struct CountedRootProgramResult(
         CountedResult Output,
         CountedResult? TopLevelProperty);

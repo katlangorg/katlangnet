@@ -69,13 +69,13 @@ public class SemanticExplorerTests
     }
 
     /// <summary>
-    /// Golden pins of the parser's redundant-parenthesis normalization as it
-    /// reaches the DERIVED Lean corpus text (expected strings hand-written,
-    /// never produced by the encoder): wrappers erased by
-    /// <c>Parser.ShouldUnwrapParenthesizedPrimary</c> must not surface as
-    /// phantom <c>.capture</c> nodes, while each surviving written wrapper
-    /// around an already-captured value contributes exactly one more capture
-    /// boundary.
+    /// Golden pins of the parser's redundant-parenthesis erasure as it reaches
+    /// the DERIVED Lean corpus text (expected strings hand-written, never
+    /// produced by the encoder): PARENTHESES GROUP SYNTAX — every group of one
+    /// non-spread slot is erased by <c>Parser.IsRedundantGrouping</c> and must
+    /// not surface as a phantom <c>.capture</c> node, whatever the inner kind
+    /// and however deep the redundant nesting, while a multi-slot group is
+    /// exactly ONE capture boundary.
     /// </summary>
     [Fact]
     public void DerivedLeanPrograms_MirrorParserParenthesisNormalization()
@@ -88,17 +88,18 @@ public class SemanticExplorerTests
         Assert.Equal(".algorithmExpr (alg [] [] [] [.num 1])", cases["root__pp1"].LeanProgram);
         Assert.Equal(".algorithmExpr (alg [] [] [] [(.listLiteral [.num 1])])", cases["root__pl1"].LeanProgram);
 
-        // Multi-item grouping survives, and each additional wrapper around an
-        // already-captured value contributes one more Capture boundary.
+        // Multi-item grouping survives as ONE capture; redundant wrappers around
+        // it are erased at every depth (`(((1, 2)))` IS `(1, 2)`).
         Assert.Equal(".algorithmExpr (alg [] [] [] [(.capture [.num 1, .num 2])])", cases["root__p12"].LeanProgram);
-        Assert.Equal(
-            ".algorithmExpr (alg [] [] [] [(.capture [(.capture [(.capture [.num 1, .num 2])])])])",
-            cases["root__ppp12"].LeanProgram);
+        Assert.Equal(".algorithmExpr (alg [] [] [] [(.capture [.num 1, .num 2])])", cases["root__ppp12"].LeanProgram);
 
         Assert.DoesNotContain(".capture", cases["seqWrapSolo__n1"].LeanProgram);
-        Assert.Contains(
-            ".capture [(.capture [.num 1, .num 2])]",
-            cases["seqWrapSolo__p12"].LeanProgram);
+        Assert.Equal(cases["root__p12"].LeanProgram, cases["seqWrapSolo__p12"].LeanProgram);
+
+        // A grouped NAME is the name: the capture-receiver template and the
+        // bare-name template derive the very same program modulo the property read.
+        Assert.DoesNotContain(".capture", cases["literalDotCollecting__n1"].LeanProgram);
+        Assert.DoesNotContain(".capture", cases["literalDotCount__l12"].LeanProgram);
     }
 
     // ----- Finding computation ------------------------------------------------

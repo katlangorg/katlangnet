@@ -14,11 +14,11 @@ This is bounded differential validation over the Lean-guarded partition,
 not a formal verification of the evaluators.
 
 Partition (machine-checked by the `specCaseIds.length` guard below):
-- specification surface cases: 281
+- specification surface cases: 282
 - excluded parse-level cases (Lean has no surface parser): 38
 - excluded C#-only cases (each carries an explicit reason in the corpus): 15
-- Lean-guarded cases: 228
-- probe observations (C#-only by design): 730
+- Lean-guarded cases: 229
+- probe observations (C#-only by design): 755
 - internal-node cases live in the semantic-explorer corpus, not here: see
   lean/SemanticExplorerCases.lean
 
@@ -414,6 +414,11 @@ def case_dot_receiver_passes_a_value : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Mean" (algWithParameters [{ name := "Vector", kind := .collecting }] [] [] [(.binary .div (.dotCall (.param "Vector") "sum" none) (.dotCall (.param "Vector") "count" none))])] [(.call (.resolve "Mean") [.num 1, .num 2, .num 3]), (.call (.resolve "Mean") [(.sequenceSpread (.capture [.num 1, .num 2, .num 3]))]), (.dotCall (.capture [.num 1, .num 2, .num 3]) "Mean" none)])
 #guard obs case_dot_receiver_passes_a_value == "ok raw=S[2, 2, 2] n=3"
 
+-- parentheses-group-syntax [item-supply-vs-value]: Collect(*items) = items \n S = 1, 2 \n L = [1, 2] \n E = () \n  \n Collect(S), Collect((S)), Collect(((S))) \n Collect(L), Collect((L)) \n Collect(E), Collect((E)) \n S.Collect, (S).Collect, ((S)).Collect \n E*.Collect, (E)*.Collect
+def case_parentheses_group_syntax : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "S" (alg [] [] [] [.num 1, .num 2]), privateProp "L" (alg [] [] [] [(.listLiteral [.num 1, .num 2])]), privateProp "E" (alg [] [] [] [(.emptySequence 0)]), privateProp "Collect" (algWithParameters [{ name := "items", kind := .collecting }] [] [] [.param "items"])] [(.call (.resolve "Collect") [.resolve "S"]), (.call (.resolve "Collect") [.resolve "S"]), (.call (.resolve "Collect") [.resolve "S"]), (.call (.resolve "Collect") [.resolve "L"]), (.call (.resolve "Collect") [.resolve "L"]), (.call (.resolve "Collect") [.resolve "E"]), (.call (.resolve "Collect") [.resolve "E"]), (.dotCall (.resolve "S") "Collect" none), (.dotCall (.resolve "S") "Collect" none), (.dotCall (.resolve "S") "Collect" none), (.call (.resolve "Collect") [(.sequenceSpread (.resolve "E"))]), (.call (.resolve "Collect") [(.sequenceSpread (.resolve "E"))])])
+#guard obs case_parentheses_group_syntax == "ok raw=S[L[1, 2], L[1, 2], L[1, 2], L[L[1, 2]], L[L[1, 2]], L[], L[], L[1, 2], L[1, 2], L[1, 2], L[], L[]] n=12"
+
 -- mixed-collecting-parameter [variadic-calls]: F(x, *y, z) = x + y.sum + z \n F(1, 2, 3, 4, 5)
 def case_mixed_collecting_parameter : Expr :=
   .algorithmExpr (alg [] [] [privateProp "F" (algWithParameters [{ name := "x" }, { name := "y", kind := .collecting }, { name := "z" }] [] [] [(.binary .add (.binary .add (.param "x") (.dotCall (.param "y") "sum" none)) (.param "z"))])] [(.call (.resolve "F") [.num 1, .num 2, .num 3, .num 4, .num 5])])
@@ -449,10 +454,10 @@ def case_ordinary_sequence_pattern_opens_sequence_or_list : Expr :=
   .algorithmExpr (alg [] [] [privateProp "PairSum" (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [(.binary .add (.param "x") (.param "y"))])] [(.call (.resolve "PairSum") [(.capture [.num 2, .num 3])]), (.call (.resolve "PairSum") [(.listLiteral [.num 2, .num 3])])])
 #guard obs case_ordinary_sequence_pattern_opens_sequence_or_list == "ok raw=S[5, 5] n=2"
 
--- redundant-call-parens-canonical [variadic-calls]: Inner = (1, 2, 3) \n CountSequenceValue((*values)) = values.count \n NestedCount(((*values))) = values.count \n  \n CountSequenceValue(Inner) \n CountSequenceValue((Inner)) \n CountSequenceValue(((1, 2, 3))) \n NestedCount(((1, 2, 3))) \n NestedCount((((1, 2, 3))))
+-- redundant-call-parens-canonical [variadic-calls]: Inner = (1, 2, 3) \n CountSequenceValue((*values)) = values.count \n NestedCount(((*values))) = values.count \n  \n CountSequenceValue(Inner) \n CountSequenceValue((Inner)) \n CountSequenceValue(((1, 2, 3))) \n NestedCount([(1, 2, 3)]) \n NestedCount(([[1, 2, 3]]))
 def case_redundant_call_parens_canonical : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "Inner" (alg [] [] [] [(.capture [.num 1, .num 2, .num 3])]), privateProp "CountSequenceValue" (algWithParameterPatterns [.sequenceValue [.capture { name := "values", kind := .collecting }]] [] [] [(.dotCall (.param "values") "count" none)]), privateProp "NestedCount" (algWithParameterPatterns [.sequenceValue [.sequenceValue [.capture { name := "values", kind := .collecting }]]] [] [] [(.dotCall (.param "values") "count" none)])] [(.call (.resolve "CountSequenceValue") [.resolve "Inner"]), (.call (.resolve "CountSequenceValue") [(.capture [.resolve "Inner"])]), (.call (.resolve "CountSequenceValue") [(.capture [(.capture [.num 1, .num 2, .num 3])])]), (.call (.resolve "NestedCount") [(.capture [(.capture [.num 1, .num 2, .num 3])])]), (.call (.resolve "NestedCount") [(.capture [(.capture [(.capture [.num 1, .num 2, .num 3])])])])])
-#guard obs case_redundant_call_parens_canonical == "ok raw=S[3, 1, 1, 3, 3] n=5"
+  .algorithmExpr (alg [] [] [privateProp "Inner" (alg [] [] [] [(.capture [.num 1, .num 2, .num 3])]), privateProp "CountSequenceValue" (algWithParameterPatterns [.sequenceValue [.capture { name := "values", kind := .collecting }]] [] [] [(.dotCall (.param "values") "count" none)]), privateProp "NestedCount" (algWithParameterPatterns [.sequenceValue [.sequenceValue [.capture { name := "values", kind := .collecting }]]] [] [] [(.dotCall (.param "values") "count" none)])] [(.call (.resolve "CountSequenceValue") [.resolve "Inner"]), (.call (.resolve "CountSequenceValue") [.resolve "Inner"]), (.call (.resolve "CountSequenceValue") [(.capture [.num 1, .num 2, .num 3])]), (.call (.resolve "NestedCount") [(.listLiteral [(.capture [.num 1, .num 2, .num 3])])]), (.call (.resolve "NestedCount") [(.listLiteral [(.listLiteral [.num 1, .num 2, .num 3])])])])
+#guard obs case_redundant_call_parens_canonical == "ok raw=S[3, 3, 3, 3, 3] n=5"
 
 -- call-spread-into-conditional-clauses [variadic-calls]: F(0, 0) = 100 \n F(x, y) = x + y \n A = (1, 2) \n F(A*)
 def case_call_spread_into_conditional_clauses : Expr :=
@@ -491,7 +496,7 @@ def case_call_spread_into_patterned_callee : Expr :=
 
 -- wrapped-pair-collapses [sequence-construction]: ((1, 2))
 def case_wrapped_pair_collapses : Expr :=
-  .algorithmExpr (alg [] [] [] [(.capture [(.capture [.num 1, .num 2])])])
+  .algorithmExpr (alg [] [] [] [(.capture [.num 1, .num 2])])
 #guard obs case_wrapped_pair_collapses == "ok raw=S[1, 2] n=1"
 
 -- pair-of-pairs-preserved [sequence-construction]: ((1, 2), (3, 4))
@@ -541,12 +546,12 @@ def case_dot_access_value_boundary : Expr :=
 
 -- open-local-only-through-capture-row [access-boundaries]: Outer(p) = { \n     open Lib \n     Lib = { public G = { Q = p + 1 \n     (Q) } } \n     G \n } \n Outer(1)
 def case_open_local_only_through_capture_row : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "Outer" (alg ["p"] [.resolve "Lib"] [privateProp "Lib" (alg [] [] [{ (publicLocalProp "G" (.localCapturedAncestorParams ["p"]) (alg [] [] [{ (privateLocalProp "Q" (.localCapturedAncestorParams ["p"]) (alg [] [] [] [(.binary .add (.param "p") (.num 1))])) with requiredOwnerDepths := some [("p", some 2)] }] [(.capture [.resolve "Q"])])) with requiredOwnerDepths := some [("p", some 1)] }] [])] [.resolve "G"])] [(.call (.resolve "Outer") [.num 1])])
+  .algorithmExpr (alg [] [] [privateProp "Outer" (alg ["p"] [.resolve "Lib"] [privateProp "Lib" (alg [] [] [{ (publicLocalProp "G" (.localCapturedAncestorParams ["p"]) (alg [] [] [{ (privateLocalProp "Q" (.localCapturedAncestorParams ["p"]) (alg [] [] [] [(.binary .add (.param "p") (.num 1))])) with requiredOwnerDepths := some [("p", some 2)] }] [.resolve "Q"])) with requiredOwnerDepths := some [("p", some 1)] }] [])] [.resolve "G"])] [(.call (.resolve "Outer") [.num 1])])
 #guard obs case_open_local_only_through_capture_row == "ok raw=2 n=1"
 
 -- open-self-contained-beside-same-named-sibling [access-boundaries]: Outer(p) = { \n     open Lib \n     Lib = { \n         public G = { Q = 7 \n         (Q) } \n         Q = p + 1 \n     } \n     G \n } \n Outer(1)
 def case_open_self_contained_beside_same_named_sibling : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "Outer" (alg ["p"] [.resolve "Lib"] [privateProp "Lib" (alg [] [] [publicProp "G" (alg [] [] [privateProp "Q" (alg [] [] [] [.num 7])] [(.capture [.resolve "Q"])]), { (privateLocalProp "Q" (.localCapturedAncestorParams ["p"]) (alg [] [] [] [(.binary .add (.param "p") (.num 1))])) with requiredOwnerDepths := some [("p", some 1)] }] [])] [.resolve "G"])] [(.call (.resolve "Outer") [.num 1])])
+  .algorithmExpr (alg [] [] [privateProp "Outer" (alg ["p"] [.resolve "Lib"] [privateProp "Lib" (alg [] [] [publicProp "G" (alg [] [] [privateProp "Q" (alg [] [] [] [.num 7])] [.resolve "Q"]), { (privateLocalProp "Q" (.localCapturedAncestorParams ["p"]) (alg [] [] [] [(.binary .add (.param "p") (.num 1))])) with requiredOwnerDepths := some [("p", some 1)] }] [])] [.resolve "G"])] [(.call (.resolve "Outer") [.num 1])])
 #guard obs case_open_self_contained_beside_same_named_sibling == "ok raw=7 n=1"
 
 -- zero-param-block-higher-order [access-boundaries]: Call0 = f() \n Call0({42})
@@ -619,15 +624,15 @@ def case_dot_chain_local_only_member_is_not_a_fallback : Expr :=
   .algorithmExpr (alg [] [] [privateProp "G" (alg ["x"] [] [{ (publicLocalProp "Sub" (.localCapturedAncestorParams ["x"]) (alg [] [] [publicProp "Q" (alg [] [] [] [.num 1])] [.param "x"])) with requiredOwnerDepths := some [("x", some 0)] }] [.num 0]), privateProp "Q" (alg ["v"] [] [] [.num 99])] [(.dotCall (.dotCall (.resolve "G") "Sub" none) "Q" none)])
 #guard obs case_dot_chain_local_only_member_is_not_a_fallback == "err localOnlyProperty"
 
--- capture-suppresses-higher-order-identity [access-boundaries]: Apply = f(9) \n Increment(x) = x + 1 \n Apply((Increment))
+-- capture-suppresses-higher-order-identity [access-boundaries]: Apply = f(9) \n Increment(x) = x + 1 \n Apply((Increment, Increment))
 def case_capture_suppresses_higher_order_identity : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "Apply" (alg ["f"] [] [] [(.call (.param "f") [.num 9])]), privateProp "Increment" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))])] [(.call (.resolve "Apply") [(.capture [.resolve "Increment"])])])
+  .algorithmExpr (alg [] [] [privateProp "Apply" (alg ["f"] [] [] [(.call (.param "f") [.num 9])]), privateProp "Increment" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))])] [(.call (.resolve "Apply") [(.capture [.resolve "Increment", .resolve "Increment"])])])
 #guard obs case_capture_suppresses_higher_order_identity == "err arity"
 
--- capture-suppresses-structural-members [access-boundaries]: V(x) = 99 \n Obj = { \n     public V = 7 \n     0 \n } \n  \n Obj.V \n (Obj).V
+-- capture-suppresses-structural-members [access-boundaries]: V(x) = 99 \n Obj = { \n     public V = 7 \n     0 \n } \n  \n Obj.V \n (Obj).V \n (Obj*).V
 def case_capture_suppresses_structural_members : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "Obj" (alg [] [] [publicProp "V" (alg [] [] [] [.num 7])] [.num 0]), privateProp "V" (alg ["x"] [] [] [.num 99])] [(.dotCall (.resolve "Obj") "V" none), (.dotCall (.capture [.resolve "Obj"]) "V" none)])
-#guard obs case_capture_suppresses_structural_members == "ok raw=S[7, 99] n=2"
+  .algorithmExpr (alg [] [] [privateProp "Obj" (alg [] [] [publicProp "V" (alg [] [] [] [.num 7])] [.num 0]), privateProp "V" (alg ["x"] [] [] [.num 99])] [(.dotCall (.resolve "Obj") "V" none), (.dotCall (.resolve "Obj") "V" none), (.dotCall (.capture [(.sequenceSpread (.resolve "Obj"))]) "V" none)])
+#guard obs case_capture_suppresses_structural_members == "ok raw=S[7, 7, 99] n=3"
 
 -- output-dotted-access-ordinary [access-boundaries]: A = { \n     Output = 9 \n } \n  \n A.Output
 def case_output_dotted_access_ordinary : Expr :=
@@ -1234,12 +1239,12 @@ def case_ownership_open_head_between_opener_and_settling_level_charges_the_captu
   .algorithmExpr (alg [] [] [privateProp "Outer" (alg ["p"] [] [{ (privateLocalProp "Mid" (.localCapturedAncestorParams ["p"]) (alg [] [] [privateProp "Lib" (alg [] [] [{ (publicLocalProp "X" (.localCapturedAncestorParams ["p"]) (alg [] [] [] [.param "p"])) with requiredOwnerDepths := some [("p", some 2)] }] []), { (privateLocalProp "Inner" (.localCapturedAncestorParams ["p"]) (alg [] [.resolve "Lib"] [] [.resolve "X"])) with requiredOwnerDepths := some [("p", some 1)] }] [.resolve "Inner"])) with requiredOwnerDepths := some [("p", some 0)] }] [.resolve "Mid"])] [(.dotCall (.resolve "Outer") "Mid" none)])
 #guard obs case_ownership_open_head_between_opener_and_settling_level_charges_the_capture == "err localOnlyProperty"
 
--- grace-in-redundant-group-keeps-the-capture-boundary [name-resolution]: V(x) = x * 2 \n F = b + (~a).V \n F(5, 1)
-def case_grace_in_redundant_group_keeps_the_capture_boundary : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "F" (alg ["a", "b"] [] [] [(.binary .add (.param "b") (.dotCall (.capture [.param "a"]) "V" none))]), privateProp "V" (alg ["x"] [] [] [(.binary .mul (.param "x") (.num 2))])] [(.call (.resolve "F") [.num 5, .num 1])])
-#guard obs case_grace_in_redundant_group_keeps_the_capture_boundary == "ok raw=11 n=1"
+-- grace-in-redundant-group-is-grace-on-the-name [name-resolution]: V(x) = x * 2 \n F = b + (~a).V \n F(5, 1)
+def case_grace_in_redundant_group_is_grace_on_the_name : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["a", "b"] [] [] [(.binary .add (.param "b") (.dotCall (.param "a") "V" none))]), privateProp "V" (alg ["x"] [] [] [(.binary .mul (.param "x") (.num 2))])] [(.call (.resolve "F") [.num 5, .num 1])])
+#guard obs case_grace_in_redundant_group_is_grace_on_the_name == "ok raw=11 n=1"
 
--- 228 canonical Lean-guarded specification cases.
+-- 229 canonical Lean-guarded specification cases.
 
 /--
 Machine-checked Lean-guarded partition count: the id list is built by the
@@ -1310,6 +1315,7 @@ def specCaseIds : List String := [
   "implicit-forwarding-source-kind",
   "variadic-receiver-distinction",
   "dot-receiver-passes-a-value",
+  "parentheses-group-syntax",
   "mixed-collecting-parameter",
   "mixed-front-back-family",
   "collecting-minimum-arity",
@@ -1474,8 +1480,8 @@ def specCaseIds : List String := [
   "dot-string-intrinsic-rejects-arguments",
   "ownership-open-provided-captured-member-read-by-sibling-is-local-only",
   "ownership-open-head-between-opener-and-settling-level-charges-the-capture",
-  "grace-in-redundant-group-keeps-the-capture-boundary"
+  "grace-in-redundant-group-is-grace-on-the-name"
 ]
-#guard specCaseIds.length == 228
+#guard specCaseIds.length == 229
 
 end LanguageSpecCases

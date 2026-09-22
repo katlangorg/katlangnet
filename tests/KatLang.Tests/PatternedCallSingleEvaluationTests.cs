@@ -3,9 +3,11 @@ using KatLang.Evaluation.Caching;
 namespace KatLang.Tests;
 
 /// <summary>
-/// Regression coverage for the prepared call-argument path: a zero-parameter parenthesized
-/// block supplied to a patterned callee produces its combined value and explicit written-slot
-/// view in one left-to-right evaluation.
+/// Regression coverage for the patterned call-argument path: a parenthesized group or a
+/// zero-parameter block supplied to a patterned callee is evaluated exactly once, left to
+/// right, and the sequence-value pattern opens that ONE value (parentheses group syntax;
+/// pattern parentheses are call-shape syntax, never a runtime boundary — there is no
+/// separate written-slot view of an argument).
 /// </summary>
 public class PatternedCallSingleEvaluationTests
 {
@@ -192,8 +194,10 @@ public class PatternedCallSingleEvaluationTests
             Seq(Atom(1), Atom(2), Atom(3))
         },
         { "F((x)) = x\nF((7))", Atom(7) },
-        { "A = ()\nF((x)) = x\nF((A))", Seq() },
+        { "A = ()\nF((*items)) = items\nF((A))", List() },
         { "A = ()\nF((*items)) = items.count\nF((A*))", Atom(0) },
+        { "A = [[1, 2]]\nF((*items)) = items\nF((A*))", List(Atom(1), Atom(2)) },
+        { "S = 1, 2\nF((a, b)) = a + b\nF({S})", Atom(3) },
         {
             "S = ((1, 2), (3, 4))\nF((x, y)) = (x, y)\nF((S:0, 5))",
             Seq(Seq(Atom(1), Atom(2)), Atom(5))
@@ -291,18 +295,16 @@ public class PatternedCallSingleEvaluationTests
     [Theory]
     [InlineData("S:0")]
     [InlineData("repeat({a, b}, 1, 1, 2)")]
-    public void SelectionOrMultiSlotLoop_StaysOneWrittenItemInThePreparedView(string expression)
+    public void SelectionOrMultiSlotLoop_IsOneValueThatThePatternOpens(string expression)
     {
-        // Accumulator-vs-decomposition discriminator: `S:0` is the selected pair as
-        // ONE value (selection is a value boundary) occupying ONE written output
-        // slot of its group, so the singleton pattern binds the whole selected pair.
-        // The loop result still emits TWO values from one non-spread expression:
-        // it preserves the original regression's count-versus-written-slot distinction.
-        // Recovering the slot view by decomposing the combined value would wrongly
-        // present two items and fail the one-capture pattern. Surface
-        // syntax folds redundant parentheses around a lone postfix expression,
-        // so this written group is built on the host AST channel — the same
-        // channel the empty-output-block regression uses.
+        // The argument is ONE value however it was produced — a selected pair
+        // (selection is a value boundary) or a loop result emitting two values — and a
+        // zero-parameter block around it is one written slot whose value the
+        // sequence-value pattern opens (parentheses group syntax; a block or group
+        // never carries a second, written-slot view of its rows). The pair opens to
+        // two items, so the singleton pattern `(x)` is the arity error 1 vs 2 in every
+        // spelling: the host-built block argument, the direct expression, and the
+        // grouped expression alike.
         var parsed = SourceProvenance.ParseValid("S = ((1, 2), (3, 4))\nF((x)) = x\n" + expression);
         var selectionBlock = new Expr.AlgorithmExpr(new Algorithm.User(
             Parent: null,
@@ -315,17 +317,29 @@ public class PatternedCallSingleEvaluationTests
         {
             Output = [new Expr.Call(new Expr.Resolve("F"), callArgs)],
         };
+        var direct = SourceProvenance.ParseValid("S = ((1, 2), (3, 4))\nF((x)) = x\nF(" + expression + ")").Root;
+        var grouped = SourceProvenance.ParseValid("S = ((1, 2), (3, 4))\nF((x)) = x\nF((" + expression + "))").Root;
 
+        foreach (var program in new[] { root, direct, grouped })
         foreach (var optimize in new[] { false, true })
         {
             var (result, _) = Evaluator.RunCountedObserved(
-                new Expr.AlgorithmExpr(root),
+                new Expr.AlgorithmExpr(program),
                 enableOptimizations: optimize);
 
-            Assert.True(result.IsOk, Failure($"prepared written-slot view (optimize: {optimize})", result));
-            AssertSemanticallyEqual(Seq(Atom(1), Atom(2)), result.Value.Value);
-            Assert.Equal(1, result.Value.EmittedCount);
+            Assert.True(result.IsError, $"expected the singleton pattern to reject the pair (optimize: {optimize})");
+            var arity = Assert.IsType<EvalError.ArityMismatch>(Innermost(result.Error));
+            Assert.Equal(1, arity.Expected);
+            Assert.Equal(2, arity.Actual);
         }
+
+        // A one-element list opens to exactly one item, which the singleton pattern binds.
+        var (bound, _) = Evaluator.RunCountedObserved(
+            new Expr.AlgorithmExpr(SourceProvenance.ParseValid("S = ((1, 2), (3, 4))\nF((x)) = x\nF([" + expression + "])").Root),
+            enableOptimizations: false);
+        Assert.True(bound.IsOk, Failure("one-element list", bound));
+        AssertSemanticallyEqual(Seq(Atom(1), Atom(2)), bound.Value.Value);
+        Assert.Equal(1, bound.Value.EmittedCount);
     }
 
     [Fact]

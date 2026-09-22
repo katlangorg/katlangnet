@@ -144,7 +144,7 @@ Written value V (canonical raw after capture / survives?):
 | `((1, 2), (3, 4))` | `S[S[1, 2], S[3, 4]]` | yes |
 | `(())` | `S[]` | no (canonicalizes, documented) |
 | `((1))` | `1` | no |
-| `(((1, 2)))` | `S[1, 2]` | no (written slot still counts one argument at call sites) |
+| `(((1, 2)))` | `S[1, 2]` | no (one argument at call sites; since September 2026 the parser erases the redundant groups outright — parentheses group syntax — so this IS `(1, 2)` at every consumer, patterned callees included) |
 
 Receiver rows (columns: input `V`; supplied arity seen internally; output raw;
 observable count at root; notes):

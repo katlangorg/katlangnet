@@ -557,9 +557,10 @@ def sequenceValuePairFirstAlg : Algorithm :=
     .sequenceValue [.capture { name := "x" }, .capture { name := "y" }]
   ] [] [] [.param "x"]
 
-/-- Regression: `F(((A), 6))` with `A = 5`. The written grouping `(A)` is one
-    grouping level around a single already-evaluated item, so pattern binding
-    receives the scalar `5` itself -- never a literal-unwritable orphan
+/-- Regression: `F(((A), 6))` with `A = 5` — the source program reaches Lean as
+    `F((A, 6))` (the C# parser erases the redundant group), and a host-built
+    single capture `capture [A]` inside the pair evaluates to the scalar `5`
+    itself, so pattern binding receives `5` -- never a literal-unwritable orphan
     sequence value `(5)` that would compare unequal to `5`. Mirrors assignment
     deconstruction of the same right-hand side. -/
 def sequenceValuePatternParenScalarPropertyItemIsNotOrphan : Bool :=
@@ -579,8 +580,9 @@ def sequenceValuePatternParenScalarPropertyItemIsNotOrphan : Bool :=
 
 #guard sequenceValuePatternParenScalarPropertyItemIsNotOrphan
 
-/-- Regression: `F(((A), 6))` with `A = (1, 2)`. The grouped property reference
-    supplies the canonical `(1, 2)` as one item -- not an orphan `((1, 2))`. -/
+/-- Regression: `F(((A), 6))` with `A = (1, 2)`. The (host-built) grouped
+    property reference supplies the canonical `(1, 2)` as one item -- not an
+    orphan `((1, 2))` -- exactly as the bare `A` in `F((A, 6))` does. -/
 def sequenceValuePatternParenSequencePropertyItemStaysCanonical : Bool :=
   match runResult (.algorithmExpr (algPrivate [] [] [
     ("A", alg [] [] [] [.num 1, .num 2]),
@@ -723,12 +725,41 @@ def sequenceValueSingletonFirstAlg : Algorithm :=
     .sequenceValue [.capture { name := "x" }]
   ] [] [] [.param "x"]
 
-/-- End-to-end: the patterned call consumes the retained written slot — the singleton
-    pattern binds the whole selected pair (one value: selection is a value boundary)
-    inside the written group. (The C# surface parser folds redundant parentheses
-    around a lone postfix expression, so this written group is exercised on the AST
-    channel, mirroring `PatternedCallSingleEvaluationTests`.) -/
-def sequenceValueSingletonPatternKeepsMultiEmittingWrittenSlotWhole : Bool :=
+/-- End-to-end (PARENTHESES GROUP SYNTAX, September 2026): a sequence-value
+    pattern opens the argument's VALUE, never a written slot. The selected pair is
+    ONE value (selection is a value boundary) that opens to two items, so the
+    singleton pattern `F((x)) = x` rejects `F(S:0)` with `arityMismatch 1 2` — and
+    a host-built single capture around the selection (`capture [S:0]`, the shape
+    the C# parser no longer writes because `(S:0)` IS `S:0`) is the very same
+    rejection: no capture depth restores a written slot for the pattern to bind.
+    Mirrors `PatternedCallSingleEvaluationTests`. -/
+def sequenceValueSingletonPatternOpensTheSelectedValue : Bool :=
+  let s : Algorithm := alg [] [] [] [
+    .capture [.num 1, .num 2],
+    .capture [.num 3, .num 4]
+  ]
+  let direct := runResult (.algorithmExpr (algPrivate [] [] [
+    ("S", s), ("F", sequenceValueSingletonFirstAlg)
+  ] [
+    .call (resolve "F") [.index (resolve "S") (.num 0)]
+  ]))
+  let grouped := runResult (.algorithmExpr (algPrivate [] [] [
+    ("S", s), ("F", sequenceValueSingletonFirstAlg)
+  ] [
+    .call (resolve "F") [.capture [.index (resolve "S") (.num 0)]]
+  ]))
+  (match direct with
+   | Except.error err => innermostIsArityMismatch 1 2 err
+   | _ => false) &&
+  (match grouped with
+   | Except.error err => innermostIsArityMismatch 1 2 err
+   | _ => false)
+
+#guard sequenceValueSingletonPatternOpensTheSelectedValue
+
+/-- The one-element LIST is what opens to exactly one item: `F([S:0])` binds the
+    whole selected pair. -/
+def sequenceValueSingletonPatternBindsTheOneListElement : Bool :=
   match runResult (.algorithmExpr (algPrivate [] [] [
     ("S", alg [] [] [] [
       .capture [.num 1, .num 2],
@@ -736,51 +767,49 @@ def sequenceValueSingletonPatternKeepsMultiEmittingWrittenSlotWhole : Bool :=
     ]),
     ("F", sequenceValueSingletonFirstAlg)
   ] [
-    .call (resolve "F") [
-      .capture [.index (resolve "S") (.num 0)]
-    ]
+    .call (resolve "F") [.listLiteral [.index (resolve "S") (.num 0)]]
   ])) with
   | Except.ok (.sequenceValue [.atom 1, .atom 2]) => true
   | _ => false
 
-#guard sequenceValueSingletonPatternKeepsMultiEmittingWrittenSlotWhole
+#guard sequenceValueSingletonPatternBindsTheOneListElement
 
-/-- Regression: `F(((1, 2)))` with `F((x, y)) = x`. The inline-written argument
-    `((1, 2))` is one written grouping level around the canonical item
-    `(1, 2)`, so the pattern receives exactly ONE written slot and reports
-    `arityMismatch 2 1`. Written slots stay authoritative for inline-written
-    pattern arguments: binding neither mints an orphan `((1, 2))` nor silently
-    opens the single written item. -/
-def sequenceValuePatternLiteralWrappedPairReportsWrittenSlotArity : Bool :=
-  match runResult (.algorithmExpr (algPrivate [] [] [("F", sequenceValuePairFirstAlg)] [
-    .call (resolve "F") [
-      .capture [
-        .capture [.num 1, .num 2]
-      ]
-    ]
-  ])) with
-  | Except.error err => innermostIsArityMismatch 2 1 err
-  | Except.ok _ => false
+/-- PARENTHESES GROUP SYNTAX (September 2026): `F(((1, 2)))` with
+    `F((x, y)) = x` IS `F((1, 2))` — the C# parser erases the redundant group, so
+    the source program reaches Lean as `.call F [.capture [1, 2]]` and the pattern
+    opens the pair's VALUE: `x = 1`. A host-built single capture around the pair
+    (`capture [capture [1, 2]]`, a shape no source produces) evaluates to the very
+    same value and binds identically — binding never sees written slots, so no
+    capture depth can change it. -/
+def sequenceValuePatternLiteralWrappedPairOpensLikeThePair : Bool :=
+  let source := runResult (.algorithmExpr (algPrivate [] [] [("F", sequenceValuePairFirstAlg)] [
+    .call (resolve "F") [.capture [.num 1, .num 2]]
+  ]))
+  let hostGrouped := runResult (.algorithmExpr (algPrivate [] [] [("F", sequenceValuePairFirstAlg)] [
+    .call (resolve "F") [.capture [.capture [.num 1, .num 2]]]
+  ]))
+  let hostDeeplyGrouped := runResult (.algorithmExpr (algPrivate [] [] [("F", sequenceValuePairFirstAlg)] [
+    .call (resolve "F") [.capture [.capture [.capture [.num 1, .num 2]]]]
+  ]))
+  (match source with | Except.ok (.atom 1) => true | _ => false) &&
+  (match hostGrouped with | Except.ok (.atom 1) => true | _ => false) &&
+  (match hostDeeplyGrouped with | Except.ok (.atom 1) => true | _ => false)
 
-#guard sequenceValuePatternLiteralWrappedPairReportsWrittenSlotArity
+#guard sequenceValuePatternLiteralWrappedPairOpensLikeThePair
 
-/-- Regression: redundant grouping depth normalizes away shallowly at each
-    level, so `F((((1, 2))))` still writes exactly one slot -- the canonical
-    `(1, 2)` -- and reports the same `arityMismatch 2 1`. -/
-def sequenceValuePatternDeeplyWrappedPairReportsWrittenSlotArity : Bool :=
-  match runResult (.algorithmExpr (algPrivate [] [] [("F", sequenceValuePairFirstAlg)] [
-    .call (resolve "F") [
-      .capture [
-        .capture [
-          .capture [.num 1, .num 2]
-        ]
-      ]
-    ]
-  ])) with
-  | Except.error err => innermostIsArityMismatch 2 1 err
-  | Except.ok _ => false
+/-- The pattern still demands exactly two items: a three-item value is the
+    `arityMismatch 2 3` whatever grouping surrounds it. -/
+def sequenceValuePatternThreeItemValueReportsValueArity : Bool :=
+  let source := runResult (.algorithmExpr (algPrivate [] [] [("F", sequenceValuePairFirstAlg)] [
+    .call (resolve "F") [.capture [.num 1, .num 2, .num 3]]
+  ]))
+  let hostGrouped := runResult (.algorithmExpr (algPrivate [] [] [("F", sequenceValuePairFirstAlg)] [
+    .call (resolve "F") [.capture [.capture [.num 1, .num 2, .num 3]]]
+  ]))
+  (match source with | Except.error err => innermostIsArityMismatch 2 3 err | _ => false) &&
+  (match hostGrouped with | Except.error err => innermostIsArityMismatch 2 3 err | _ => false)
 
-#guard sequenceValuePatternDeeplyWrappedPairReportsWrittenSlotArity
+#guard sequenceValuePatternThreeItemValueReportsValueArity
 
 /-- Regression: `A = ((1, 2))` normalizes at property construction to
     `(1, 2)`; `F(A)` then opens the stored canonical sequence value for the
@@ -804,66 +833,107 @@ def sequenceValuePairFirstWithFixedSuffixAlg : Algorithm :=
     .capture { name := "z" }
   ] [] [] [.param "x"]
 
-/-- Regression: `KeepFirst(((1, 2)), 3)` with `KeepFirst((x, y), z) = x`. The
-    trailing fixed argument binds normally; the sequence-value pattern still
-    receives one written slot for `((1, 2))` and reports `arityMismatch 2 1`. -/
-def sequenceValuePatternWrappedPairWithFixedSuffixReportsWrittenSlotArity : Bool :=
-  match runResult (.algorithmExpr (algPrivate [] [] [("F", sequenceValuePairFirstWithFixedSuffixAlg)] [
-    .call (resolve "F") [
-      .capture [
-        .capture [.num 1, .num 2]
-      ],
-      .num 3
-    ]
-  ])) with
-  | Except.error err => innermostIsArityMismatch 2 1 err
-  | Except.ok _ => false
+/-- `KeepFirst(((1, 2)), 3)` with `KeepFirst((x, y), z) = x` IS
+    `KeepFirst((1, 2), 3)`: the trailing fixed argument binds normally and the
+    sequence-value pattern opens the pair's value (`x = 1`) — in the source shape
+    and in the host-built single-capture shape alike. -/
+def sequenceValuePatternWrappedPairWithFixedSuffixOpensLikeThePair : Bool :=
+  let source := runResult (.algorithmExpr (algPrivate [] [] [("F", sequenceValuePairFirstWithFixedSuffixAlg)] [
+    .call (resolve "F") [.capture [.num 1, .num 2], .num 3]
+  ]))
+  let hostGrouped := runResult (.algorithmExpr (algPrivate [] [] [("F", sequenceValuePairFirstWithFixedSuffixAlg)] [
+    .call (resolve "F") [.capture [.capture [.num 1, .num 2]], .num 3]
+  ]))
+  (match source with | Except.ok (.atom 1) => true | _ => false) &&
+  (match hostGrouped with | Except.ok (.atom 1) => true | _ => false)
 
-#guard sequenceValuePatternWrappedPairWithFixedSuffixReportsWrittenSlotArity
+#guard sequenceValuePatternWrappedPairWithFixedSuffixOpensLikeThePair
 
 def sequenceValueSingleCaptureAlg : Algorithm :=
   algWithParameterPatterns [
     .sequenceValue [.capture { name := "x" }]
   ] [] [] [.param "x"]
 
-/-- Regression: `IdSeq(((1, 2)))` with `IdSeq((x)) = x`. The one-capture
-    sequence pattern consumes the single written slot, and that slot is the
-    CANONICAL item `(1, 2)`: the shallow singleton-erasing combiner never
-    materializes a literal-unwritable orphan `((1, 2))` around it. The
-    structural match pins the exact shape. -/
-def sequenceValuePatternSingleCaptureBindsWrappedPairAsCanonicalItem : Bool :=
+/-- `IdSeq(((1, 2)))` with `IdSeq((x)) = x` IS `IdSeq((1, 2))`: the singleton
+    sequence-value pattern opens the pair's value to TWO items and rejects it
+    (`arityMismatch 1 2`) — in the source shape and in the host-built
+    single-capture shape alike, because binding never sees written slots. -/
+def sequenceValuePatternSingleCaptureRejectsThePair : Bool :=
+  let source := runResult (.algorithmExpr (algPrivate [] [] [("F", sequenceValueSingleCaptureAlg)] [
+    .call (resolve "F") [.capture [.num 1, .num 2]]
+  ]))
+  let hostGrouped := runResult (.algorithmExpr (algPrivate [] [] [("F", sequenceValueSingleCaptureAlg)] [
+    .call (resolve "F") [.capture [.capture [.num 1, .num 2]]]
+  ]))
+  (match source with | Except.error err => innermostIsArityMismatch 1 2 err | _ => false) &&
+  (match hostGrouped with | Except.error err => innermostIsArityMismatch 1 2 err | _ => false)
+
+#guard sequenceValuePatternSingleCaptureRejectsThePair
+
+/-- `IdSeq([(1, 2)])`: a one-element list opens to exactly one item, and that item
+    is the CANONICAL pair `(1, 2)` — never a literal-unwritable orphan `((1, 2))`.
+    The structural match pins the exact shape. -/
+def sequenceValuePatternSingleCaptureBindsTheListElementAsCanonicalItem : Bool :=
   match runResult (.algorithmExpr (algPrivate [] [] [("F", sequenceValueSingleCaptureAlg)] [
-    .call (resolve "F") [
-      .capture [
-        .capture [.num 1, .num 2]
-      ]
-    ]
+    .call (resolve "F") [.listLiteral [.capture [.num 1, .num 2]]]
   ])) with
   | Except.ok (.sequenceValue [.atom 1, .atom 2]) => true
   | _ => false
 
-#guard sequenceValuePatternSingleCaptureBindsWrappedPairAsCanonicalItem
+#guard sequenceValuePatternSingleCaptureBindsTheListElementAsCanonicalItem
 
 def sequenceValueSingleCaptureCountAlg : Algorithm :=
   algWithParameterPatterns [
     .sequenceValue [.capture { name := "x" }]
   ] [] [] [.dotCall (.param "x") "count" none]
 
-/-- Regression: the canonically bound item observes consistently -- `x.count`
-    for the `IdSeq(((1, 2)))` binding is 2, matching the structural shape
-    `(1, 2)` (an orphan `((1, 2))` would count 1). -/
-def sequenceValuePatternSingleCaptureWrappedPairCountsItems : Bool :=
+/-- The canonically bound item observes consistently -- `x.count` for the
+    `IdSeq([(1, 2)])` binding is 2, matching the structural shape `(1, 2)` (an
+    orphan `((1, 2))` would count 1). -/
+def sequenceValuePatternSingleCaptureListElementCountsItems : Bool :=
   match runFlat (.algorithmExpr (algPrivate [] [] [("F", sequenceValueSingleCaptureCountAlg)] [
-    .call (resolve "F") [
-      .capture [
-        .capture [.num 1, .num 2]
-      ]
-    ]
+    .call (resolve "F") [.listLiteral [.capture [.num 1, .num 2]]]
   ])) with
   | Except.ok [2] => true
   | _ => false
 
-#guard sequenceValuePatternSingleCaptureWrappedPairCountsItems
+#guard sequenceValuePatternSingleCaptureListElementCountsItems
+
+/-- PARENTHESES GROUP SYNTAX (September 2026): a sequence-value pattern opens the
+    argument's VALUE — the two argument shapes whose former written-slot view
+    differed from the value view now bind by the value alone.
+    `P((A*))` with `A = [[1, 2]]` and `P((*xs)) = xs`: the capture of the lone
+    spread item is the list `[1, 2]` (one item normalizes to itself), which the
+    pattern opens — `xs = [1, 2]`, exactly as `P([1, 2])` and `P(A*)`.
+    `F({S})` with `S = 1, 2` and `F((a, b)) = a + b`: the single-row block's value
+    is the pair, which the pattern opens — `3`, exactly as `F(S)` and `F((S))`. -/
+def sequenceValuePatternOpensTheValueOfSpreadCapturesAndBlocks : Bool :=
+  let collector := algWithParameterPatterns [
+    .sequenceValue [.capture { name := "xs", kind := .collecting }]
+  ] [] [] [.param "xs"]
+  let pairSum := algWithParameterPatterns [
+    .sequenceValue [.capture { name := "a" }, .capture { name := "b" }]
+  ] [] [] [.binary .add (.param "a") (.param "b")]
+  let a := alg [] [] [] [.listLiteral [.listLiteral [.num 1, .num 2]]]
+  let s := alg [] [] [] [.num 1, .num 2]
+  let collected (argument : KatLang.Expr) : Bool :=
+    match runResult (.algorithmExpr (algPrivate [] [] [("A", a), ("P", collector)]
+      [.call (resolve "P") [argument]])) with
+    | Except.ok (.listValue [.atom 1, .atom 2]) => true
+    | _ => false
+  let summed (argument : KatLang.Expr) : Bool :=
+    match runResult (.algorithmExpr (algPrivate [] [] [("S", s), ("F", pairSum)]
+      [.call (resolve "F") [argument]])) with
+    | Except.ok (.atom 3) => true
+    | _ => false
+  collected (.capture [.sequenceSpread (.resolve "A")]) &&
+  collected (.sequenceSpread (.resolve "A")) &&
+  collected (.listLiteral [.num 1, .num 2]) &&
+  summed (.algorithmExpr (alg [] [] [] [.resolve "S"])) &&
+  summed (.resolve "S") &&
+  summed (.capture [.num 1, .num 2])
+
+#guard sequenceValuePatternOpensTheValueOfSpreadCapturesAndBlocks
 
 /-- Guard: the shallow combiner never drops empty-sequence siblings.
     `F(((), ()))` writes two items, so the pair pattern binds both empties
@@ -878,6 +948,29 @@ def sequenceValuePatternTwoEmptySiblingItemsBindPositionally : Bool :=
   | _ => false
 
 #guard sequenceValuePatternTwoEmptySiblingItemsBindPositionally
+
+/-- Ordinary nested parameter patterns retain scalar one-item fallback. Only a
+    list retains a unary structural boundary; scalars need no such boundary.
+    This is user-call binding, not the separate scalar callback policy. -/
+def nestedParameterPatternKeepsScalarFallback : Bool :=
+  let collector := algWithParameterPatterns [
+    .sequenceValue [.sequenceValue [.capture { name := "xs", kind := .collecting }]]
+  ] [] [] [.param "xs"]
+  let call (argument : KatLang.Expr) :=
+    runResult (.algorithmExpr (algPrivate [] [] [("P", collector)]
+      [.call (resolve "P") [argument]]))
+  (match call (.num 7) with
+   | .ok (.listValue [.atom 7]) => true | _ => false) &&
+  (match call (.boolLiteral true) with
+   | .ok (.listValue [.bool true]) => true | _ => false) &&
+  (match call (.stringLiteral "s") with
+   | .ok (.listValue [.str "s"]) => true | _ => false) &&
+  (match call (.listLiteral [.emptySequence 0]) with
+   | .ok (.listValue []) => true | _ => false) &&
+  (match call (.capture [.num 1, .num 2]) with
+   | .error error => innermostIsArityMismatch 1 2 error | _ => false)
+
+#guard nestedParameterPatternKeepsScalarFallback
 
 def sequenceValueCollectingIsNotTopLevelVariadic : Bool :=
   let sequenceValueCall :=
@@ -1740,8 +1833,8 @@ def restPrefixSumAlg : Algorithm :=
     .binary .add (.dotCall (.param "x") "sum" none) (.param "y")
   ]
 
--- `(((1, 2, 3, 4, 5)))` is a doubly-nested singleton sequence value: a capture
--- whose single row is a capture of the five items.
+-- Host-built single-row capture around the five-item capture. The source
+-- `(((1, 2, 3, 4, 5)))` now parses directly to the inner capture.
 def nestedSingletonFive : KatLang.Expr :=
   .capture [.capture [.num 1, .num 2, .num 3, .num 4, .num 5]]
 

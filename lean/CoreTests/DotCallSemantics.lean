@@ -816,46 +816,57 @@ def explicitCallSiteSequenceValueCountSequenceValue3Alg : Algorithm :=
 def explicitCallSiteSequenceValueMatrixRoot : Algorithm :=
   algPrivate [] [] [
     ("CountSequenceValue1", explicitCallSiteSequenceValueCountSequenceValue1Alg),
-    ("CountSequenceValue2", explicitCallSiteSequenceValueCountSequenceValue2Alg),
-    ("CountSequenceValue3", explicitCallSiteSequenceValueCountSequenceValue3Alg)
+    ("CountSequenceValue2", explicitCallSiteSequenceValueCountSequenceValue2Alg)
   ] [
     .call (.resolve "CountSequenceValue1") [explicitCallSiteSequenceValue123 0],
     .call (.resolve "CountSequenceValue1") [explicitCallSiteSequenceValue123 1],
     .call (.resolve "CountSequenceValue2") [explicitCallSiteSequenceValue123 0],
     .call (.resolve "CountSequenceValue2") [explicitCallSiteSequenceValue123 1],
     .call (.resolve "CountSequenceValue2") [explicitCallSiteSequenceValue123 2],
-    .call (.resolve "CountSequenceValue3") [explicitCallSiteSequenceValue123 1],
-    .call (.resolve "CountSequenceValue3") [explicitCallSiteSequenceValue123 2],
     .call (.resolve "CountSequenceValue2") [explicitCallSiteSequenceValueLeftNested],
     .call (.resolve "CountSequenceValue2") [explicitCallSiteSequenceValueRightNested]
   ]
 
--- CountSequenceValue1 (flat collecting) receives ONE written sequence slot
--- that is the lone collector's whole segment, so the collector supply-boundary
--- law opens it one level at both written depths (the redundant grouping
--- normalizes away first): count 3. CountSequenceValue2/3 (sequence-value
--- patterns) open exactly as many written grouping levels as they declare, and
--- the items a pattern opens are FINAL: at matching depth the items collect to
--- a three-element collected list (count 3), while one EXTRA written level
--- leaves a single grouped item in the collected list (count 1) — the collector
--- law never opens a pattern-opened item a second time.
-def sequenceValueCollectingParameterRespectsExplicitCallSiteSequenceValueDepth : Bool :=
+-- PARENTHESES GROUP SYNTAX (September 2026). The C# parser erases every
+-- redundant group, so the source `CountSequenceValue2(((1, 2, 3)))` reaches
+-- Lean as `.call … [.capture [1, 2, 3]]`; the nested single captures built here
+-- (`explicitCallSiteSequenceValue123 1/2`) are host-AST shapes that evaluate to
+-- the very same value `(1, 2, 3)`. CountSequenceValue1 (flat collecting)
+-- receives ONE written sequence slot that is the lone collector's whole
+-- segment, so the collector supply-boundary law opens it one level (count 3),
+-- and CountSequenceValue2 (a sequence-value pattern) opens the argument's VALUE
+-- one level (count 3) — there is no written-slot view for a group depth to
+-- change, at any depth. Non-unary structure is preserved: `((1, 2), 3)` and
+-- `(1, (2, 3))` count 2.
+def sequenceValueCollectingParameterIgnoresRedundantCallSiteGrouping : Bool :=
   match runFlat (.algorithmExpr explicitCallSiteSequenceValueMatrixRoot) with
-  | Except.ok [3, 3, 3, 1, 1, 3, 3, 2, 2] => true
+  | Except.ok [3, 3, 3, 3, 3, 2, 2] => true
   | _ => false
 
-#guard sequenceValueCollectingParameterRespectsExplicitCallSiteSequenceValueDepth
+#guard sequenceValueCollectingParameterIgnoresRedundantCallSiteGrouping
 
-def nestedSequenceValueCollectingParameterRejectsTooShallowExplicitSequenceValue : Bool :=
-  match runResult (.algorithmExpr (algPrivate [] [] [
-    ("CountSequenceValue3", explicitCallSiteSequenceValueCountSequenceValue3Alg)
-  ] [
-    .call (.resolve "CountSequenceValue3") [explicitCallSiteSequenceValue123 0]
-  ])) with
-  | Except.error err => innermostIsArityMismatch 1 3 err
-  | _ => false
+-- A nested pattern `((*values))` opens two REAL boundaries: the argument must
+-- open to exactly one item that itself opens. A sequence value never can
+-- (unary sequence structure does not survive normalization), so `(1, 2, 3)`
+-- opens to three items against the one nested pattern at every host-built
+-- capture depth (`arityMismatch 1 3`), while a one-element list supplies the
+-- outer level.
+def nestedSequenceValueCollectingParameterOpensOneRealBoundaryPerLevel : Bool :=
+  let root (argument : KatLang.Expr) : Algorithm :=
+    algPrivate [] [] [
+      ("CountSequenceValue3", explicitCallSiteSequenceValueCountSequenceValue3Alg)
+    ] [.call (.resolve "CountSequenceValue3") [argument]]
+  let rejects (depth : Nat) : Bool :=
+    match runResult (.algorithmExpr (root (explicitCallSiteSequenceValue123 depth))) with
+    | Except.error err => innermostIsArityMismatch 1 3 err
+    | _ => false
+  let listOpens : Bool :=
+    match runFlat (.algorithmExpr (root (.listLiteral [explicitCallSiteSequenceValue123 0]))) with
+    | Except.ok [3] => true
+    | _ => false
+  rejects 0 && rejects 1 && rejects 2 && listOpens
 
-#guard nestedSequenceValueCollectingParameterRejectsTooShallowExplicitSequenceValue
+#guard nestedSequenceValueCollectingParameterOpensOneRealBoundaryPerLevel
 
 def explicitPropertyReferenceSequenceValueRoot : Algorithm :=
   algPrivate [] [] [
@@ -867,16 +878,16 @@ def explicitPropertyReferenceSequenceValueRoot : Algorithm :=
     .call (.resolve "CountSequenceValue2") [.capture [.capture [.resolve "Inner"]]]
   ]
 
--- A bare property reference opens through the deconstruction pattern
--- (count 3), while each written parenthes level around it is one grouped item
--- for the pattern's collecting binding (count 1): written grouping is not erased by segment
--- collection.
-def explicitPropertyReferenceSequenceValueIsSourceBacked : Bool :=
+-- A property reference opens through the pattern (count 3), and a host-built
+-- single capture around it (`capture [Inner]` — the source `(Inner)` IS
+-- `Inner` after parsing) is the very same value with the very same binding
+-- (count 3 at every depth): grouping is never a written level.
+def explicitPropertyReferenceGroupingIsErased : Bool :=
   match runFlat (.algorithmExpr explicitPropertyReferenceSequenceValueRoot) with
-  | Except.ok [3, 1, 1] => true
+  | Except.ok [3, 3, 3] => true
   | _ => false
 
-#guard explicitPropertyReferenceSequenceValueIsSourceBacked
+#guard explicitPropertyReferenceGroupingIsErased
 
 -- Test 4: Ambiguous ordinary-dot lexical fallback via opens (error case)
 -- Two opens both export G → ambiguousOpen error

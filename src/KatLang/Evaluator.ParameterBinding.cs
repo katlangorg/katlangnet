@@ -165,8 +165,7 @@ public static partial class Evaluator
     /// <summary>
     /// One call argument slot prepared for parameter binding: its value view
     /// (<see cref="Value"/>), its algorithm view where resolvable, a retained
-    /// value error, its <see cref="SupplyOrigin"/>, and — for patterned callees —
-    /// the written item view of a group. Every slot is exactly ONE argument
+    /// value error, and its <see cref="SupplyOrigin"/>. Every slot is exactly ONE argument
     /// whatever spelling supplied it: a written argument, an explicit spread
     /// item, or an extension dot-call receiver (DOT-CALL PASSES A VALUE,
     /// September 2026: <c>R.F(args)</c> assembles exactly the slots of
@@ -177,7 +176,6 @@ public static partial class Evaluator
         Result? Value,
         Algorithm? Algorithm,
         EvalError? ValueError,
-        IReadOnlyList<Result>? ExplicitSequenceValueItems,
         SupplyOrigin Origin = SupplyOrigin.FinalItem);
 
     /// <summary>
@@ -686,13 +684,17 @@ public static partial class Evaluator
         EvalCtx ctx,
         ValEnv valEnv)
     {
-        // A nested written grouping level materializes exactly one item,
-        // combined with the same shallow singleton-erasing rule as ordinary
-        // capture evaluation (CombineOutputSlots). A singleton group such as
-        // `(A)` IS its single already-evaluated item and an all-spread-empty
-        // group is `()` — never a literal-unwritable orphan such as `(5)`.
-        // Both node kinds keep this written-slot view: a capture body directly,
-        // and a zero-parameter scoped block through its algorithm.
+        // A nested capture element (a multi-slot group `((1, 2), 3)`, a lone
+        // spread group `(A*)`, or a host-built single-row capture — the parser
+        // writes `(A)` as `A`) materializes exactly one element, combined with
+        // the same shallow singleton-erasing rule as ordinary capture
+        // evaluation (CombineOutputSlots): a lone row IS its already-evaluated
+        // value and an all-spread-empty group is `()` — never a
+        // literal-unwritable orphan such as `(5)`. This is the same value
+        // EvalCounted produces for the node, unfolded one level so nested
+        // groups recurse through this family (see the stack backstop note on
+        // EvalExplicitSequenceValueRowSlots); a zero-parameter scoped block
+        // element unfolds through its algorithm the same way.
         if (expr is Expr.Capture(var captureBody))
         {
             var nestedItemsR = EvalExplicitSequenceValueRowSlots(captureBody, ctx, valEnv);
@@ -727,17 +729,24 @@ public static partial class Evaluator
             : EvalResult<IReadOnlyList<Result>>.Ok([countedR.Value.Value]);
     }
 
+    /// <summary>
+    /// The items a sequence-value parameter pattern binds against: the slot's VALUE,
+    /// opened one level. PATTERN PARENTHESES ARE CALL-SHAPE SYNTAX, NOT A RUNTIME
+    /// BOUNDARY (September 2026): a received sequence value or exact list value opens to
+    /// its immediate items (Lean: <c>Result.structureItems?</c> — the deconstruction
+    /// receiver opens ONE lone structure boundary of either kind, so
+    /// <c>x, y, z = [1, 2, 3]</c> binds like <c>x, y, z = [1, 2, 3]*</c>), and any other
+    /// value is a one-item supply for the prefix/collecting/suffix matcher. Nothing about
+    /// how the slot was WRITTEN survives here: <c>F((1, 2))</c>, <c>F(S)</c> with
+    /// <c>S = 1, 2</c>, <c>F(((1, 2)))</c>, <c>F({S})</c>, and <c>F((S*))</c> all bind the
+    /// value <c>(1, 2)</c>. (The former written-slot view, which let a group's own written
+    /// rows override its value, is gone: parentheses group syntax and never suspend
+    /// normalization.) Lean: the <c>.sequenceValue</c> arm of <c>bindParameterPattern</c>.
+    /// </summary>
     private static EvalResult<IReadOnlyList<Result>> GetSequenceValuePatternItems(ParameterPatternInput input)
     {
-        if (input.ExplicitSequenceValueItems is not null)
-            return EvalResult<IReadOnlyList<Result>>.Ok(input.ExplicitSequenceValueItems);
-
-        // A received sequence value or exact list value opens to its immediate
-        // items (Lean: Result.structureItems?): the deconstruction receiver
-        // opens ONE lone structure boundary of either kind, so
-        // `x, y, z = [1, 2, 3]` binds like `x, y, z = [1, 2, 3]*`.
-        if (input.Value?.StructureItems() is { } structureItems)
-            return EvalResult<IReadOnlyList<Result>>.Ok(structureItems);
+        if (input.Value is { } value)
+            return EvalResult<IReadOnlyList<Result>>.Ok(value.StructureItems() ?? [value]);
 
         return input.ValueError ?? new EvalError.BadArity();
     }
@@ -811,7 +820,7 @@ public static partial class Evaluator
                     if (itemsR.IsError) return itemsR.Error;
 
                     var nestedInputs = itemsR.Value
-                        .Select(static item => new ParameterPatternInput(item, Algorithm: null, ValueError: null, ExplicitSequenceValueItems: null))
+                        .Select(static item => new ParameterPatternInput(item, Algorithm: null, ValueError: null))
                         .ToList();
                     return BindParameterPatternList(
                         group.Items,
@@ -1022,11 +1031,7 @@ public static partial class Evaluator
         if (callee is Algorithm.User { AssignmentDeconstructionTarget: not null })
             ctx.Observations?.RecordDeconstructionFullBind();
 
-        var inputsR = BuildCallArgumentInputs(
-            args,
-            ctx,
-            valEnv,
-            includeExplicitSequenceValueItems: true);
+        var inputsR = BuildCallArgumentInputs(args, ctx, valEnv);
         if (inputsR.IsError) return inputsR.Error;
 
         var bindingsR = BindParameterPatternList(
@@ -1185,8 +1190,7 @@ public static partial class Evaluator
     private static EvalResult<IReadOnlyList<ParameterPatternInput>> BuildCallArgumentInputs(
         OutputBundle args,
         EvalCtx ctx,
-        ValEnv valEnv,
-        bool includeExplicitSequenceValueItems = false)
+        ValEnv valEnv)
     {
         var maybeAlgsR = TryResolveArgAlgs(args, ctx);
         if (maybeAlgsR.IsError) return maybeAlgsR.Error;
@@ -1211,24 +1215,25 @@ public static partial class Evaluator
 
                 // Explicit spread produces FINAL supply items (SupplyOrigin.FinalItem).
                 foreach (var value in CountedTopLevelValues(suppliedR.Value))
-                    inputs.Add(new ParameterPatternInput(value, Algorithm: null, ValueError: null, ExplicitSequenceValueItems: null));
+                    inputs.Add(new ParameterPatternInput(value, Algorithm: null, ValueError: null));
 
                 continue;
             }
 
-            var preparedR = PrepareCallArgumentEvaluation(
-                argExpr,
-                ctx,
-                valEnv,
-                includeExplicitSequenceValueItems);
-            if (preparedR.IsOk)
+            // Every non-spread slot is evaluated at its VALUE boundary through the
+            // ONE EvalCounted — a capture, a block, a name, a call, and a literal
+            // alike. No callee shape receives a second, written-slot view of a
+            // slot (PARENTHESES GROUP SYNTAX, September 2026: a patterned callee
+            // opens the slot's value in GetSequenceValuePatternItems, never the
+            // rows a group was written with).
+            var evaluatedR = EvalCounted(argExpr, ctx, valEnv);
+            if (evaluatedR.IsOk)
             {
                 // A non-spread slot is ONE written slot (SupplyOrigin.WrittenSlot).
                 inputs.Add(new ParameterPatternInput(
-                    preparedR.Value.Counted.Value,
+                    evaluatedR.Value.Value,
                     maybeAlg,
                     ValueError: null,
-                    preparedR.Value.ExplicitSequenceValueItems,
                     SupplyOrigin.WrittenSlot));
                 continue;
             }
@@ -1238,66 +1243,15 @@ public static partial class Evaluator
                 inputs.Add(new ParameterPatternInput(
                     Value: null,
                     maybeAlg,
-                    preparedR.Error,
-                    ExplicitSequenceValueItems: null,
+                    evaluatedR.Error,
                     SupplyOrigin.WrittenSlot));
                 continue;
             }
 
-            return preparedR.Error;
+            return evaluatedR.Error;
         }
 
         return EvalResult<IReadOnlyList<ParameterPatternInput>>.Ok(inputs);
-    }
-
-    /// <summary>
-    /// Evaluates one non-expanded call argument at its VALUE boundary (every non-spread
-    /// slot — written argument or extension dot-call receiver alike — reifies to exactly
-    /// one value). Patterned calls need an additional written-slot
-    /// view for a capture or a zero-parameter AlgorithmExpr; that view is captured by the
-    /// corresponding prepared-output evaluator during the SAME output pass that constructs the
-    /// counted argument value. Multi-parameter algorithms stay on the ordinary dual-channel
-    /// fallback and are never forced merely to request explicit pattern items.
-    /// Lean: <c>evalVariadicCallItemPrepared</c>.
-    /// </summary>
-    private static EvalResult<PreparedCallArgumentEvaluation> PrepareCallArgumentEvaluation(
-        Expr argExpr,
-        EvalCtx ctx,
-        ValEnv valEnv,
-        bool includeExplicitSequenceValueItems)
-    {
-        if (includeExplicitSequenceValueItems && argExpr is Expr.Capture(var captureBody))
-        {
-            // The caller context owns the value evaluation and its
-            // explicit-slot view (argument bundles have no scope of their own).
-            var captureSpan = PreferExpressionSpan(argExpr.Span, captureBody);
-            var capturePreparedR = WithSpan(captureSpan, EvalCapturePreparedCore(captureBody, ctx, valEnv));
-            if (capturePreparedR.IsError) return capturePreparedR.Error;
-
-            return EvalResult<PreparedCallArgumentEvaluation>.Ok(new(
-                ReCountValueBoundary(capturePreparedR.Value.Counted),
-                capturePreparedR.Value.OutputSlots));
-        }
-
-        if (includeExplicitSequenceValueItems && argExpr is Expr.AlgorithmExpr(var algorithm))
-        {
-            var wired = WireToCaller(ctx, algorithm);
-            if (wired.ParameterCount == 0)
-            {
-                var blockSpan = PreferExpressionSpan(argExpr.Span, wired.Output);
-                var preparedR = WithSpan(blockSpan, EvalAlgOutputPreparedCore(wired, ctx, valEnv));
-                if (preparedR.IsError) return preparedR.Error;
-
-                return EvalResult<PreparedCallArgumentEvaluation>.Ok(new(
-                    ReCountValueBoundary(preparedR.Value.Counted),
-                    preparedR.Value.OutputSlots));
-            }
-        }
-
-        var evaluatedR = EvalCounted(argExpr, ctx, valEnv);
-        return evaluatedR.IsError
-            ? evaluatedR.Error
-            : EvalResult<PreparedCallArgumentEvaluation>.Ok(new(evaluatedR.Value, null));
     }
 
     private static EvalError VariadicBindingArityMismatch(

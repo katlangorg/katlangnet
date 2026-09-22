@@ -272,22 +272,43 @@ public class DotCallHigherOrderParameterTests
     }
 
     [Fact]
-    public void CaptureArgument_SuppressesCallableIdentityInBothSpellings()
+    public void GroupedArgument_CarriesCallableIdentityInBothSpellings()
     {
-        // `(Inc)` is a capture: the algorithm channel sees only a
-        // zero-parameter value thunk, so both spellings fail evaluating the
-        // thunk's bare `Inc` output row identically.
-        var dotError = AssertBothEvaluatorsFail(
+        // PARENTHESES GROUP SYNTAX: `(Inc)` IS `Inc`, so the grouped argument binds
+        // `t` on the algorithm channel exactly like the bare name in both spellings.
+        AssertResult(
             """
             Inc(x) = x + 1
             K(a, t) = a.t
             K(7, (Inc))
+            """,
+            new Result.Atom(8));
+        AssertResult(
+            """
+            Inc(x) = x + 1
+            K(a, t) = t(a)
+            K(7, ((Inc)))
+            """,
+            new Result.Atom(8));
+    }
+
+    [Fact]
+    public void CaptureArgument_SuppressesCallableIdentityInBothSpellings()
+    {
+        // `(Inc, Inc)` is a genuine capture: the algorithm channel sees only a
+        // zero-parameter value thunk, so both spellings fail evaluating the
+        // thunk's bare `Inc` output rows identically.
+        var dotError = AssertBothEvaluatorsFail(
+            """
+            Inc(x) = x + 1
+            K(a, t) = a.t
+            K(7, (Inc, Inc))
             """);
         var plainError = AssertBothEvaluatorsFail(
             """
             Inc(x) = x + 1
             K(a, t) = t(a)
-            K(7, (Inc))
+            K(7, (Inc, Inc))
             """);
         Assert.IsType<EvalError.ArityMismatch>(dotError);
         Assert.IsType<EvalError.ArityMismatch>(plainError);

@@ -293,10 +293,12 @@ public class GraceEffectivenessTests
     {
         Assert.Equal(["y", "x"], ParamsOf(declaration));
         Assert.Equal(expected, Display(declaration + "\nK(2, 1)"));
+        // The cancelling run survives parsing as a weight-0 Grace node (so the
+        // effectiveness check still sees it); redundant parentheses around it are
+        // erased, so `(~x~)` is the very node `~x~` is.
         var syntax = Parser.ParseSyntax("(~x~)");
         Assert.False(syntax.HasErrors);
-        var group = Assert.IsType<Expr.Capture>(syntax.Root.Output[0]);
-        Assert.Equal(0, Assert.IsType<Expr.Grace>(Assert.Single(group.Body)).Weight);
+        Assert.Equal(0, Assert.IsType<Expr.Grace>(Assert.Single(syntax.Root.Output)).Weight);
     }
 
     [Fact]

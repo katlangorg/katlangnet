@@ -1254,6 +1254,41 @@ public static class LanguageSpecCorpus
         },
         new()
         {
+            Id = "parentheses-group-syntax",
+            Category = "item-supply-vs-value",
+            Source = "Collect(*items) = items\nS = 1, 2\nL = [1, 2]\nE = ()\n\nCollect(S), Collect((S)), Collect(((S)))\nCollect(L), Collect((L))\nCollect(E), Collect((E))\nS.Collect, (S).Collect, ((S)).Collect\nE*.Collect, (E)*.Collect",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "[1, 2]\n[1, 2]\n[1, 2]\n[[1, 2]]\n[[1, 2]]\n[]\n[]\n[1, 2]\n[1, 2]\n[1, 2]\n[]\n[]",
+            ExpectedRaw = "S[L[1, 2], L[1, 2], L[1, 2], L[L[1, 2]], L[L[1, 2]], L[], L[], L[1, 2], L[1, 2], L[1, 2], L[], L[]]",
+            ExpectedEmittedCount = 12,
+            Probes =
+            [
+                // Selection, dot access, and calls: the group is the expression.
+                new SpecProbe("A = (1, 2), (3, 4)\n(A):0 == A:0, ((A)):1 == A:1", "ok raw=S[true, true] n=2"),
+                new SpecProbe("Obj = {\n    public V = 7\n}\n(Obj).V, ((Obj)).V", "ok raw=S[7, 7] n=2"),
+                new SpecProbe("Apply(f) = f(9)\nInc(x) = x + 1\nApply((Inc))", "ok raw=10 n=1"),
+                new SpecProbe("Inc(x) = x + 1\n(Inc)(1), ((Inc))(2)", "ok raw=S[2, 3] n=2"),
+                // Storage and stored reads agree with the direct value.
+                new SpecProbe("S = 1, 2\nX = S\nY = (S)\nX == Y, (X) == Y, count(Y), (Y).count", "ok raw=S[true, true, 2, 2] n=4"),
+                // Nested sequence and list values keep exactly their structure.
+                new SpecProbe("N = ((1, 2), 3)\nCollect(*items) = items\nCollect((N)), [(N)], ((N)):0", "ok raw=S[L[S[1, 2], 3], L[S[S[1, 2], 3]], S[1, 2]] n=3"),
+                new SpecProbe("N = [[1, 2], 3]\nCollect(*items) = items\nCollect((N)), [(N)], ((N)):0", "ok raw=S[L[L[L[1, 2], 3]], L[L[L[1, 2], 3]], L[1, 2]] n=3"),
+                // A selected empty sequence stays a selected `()` however it is grouped.
+                new SpecProbe("A = ((), 1)\nCollect(*items) = items\nCollect((first(A))), Collect(((A:0))), ((first(A)))*.Collect", "ok raw=S[L[], L[], L[]] n=3"),
+                // Only the groups whose parentheses DO something are captures.
+                new SpecProbe("Collect(*items) = items\nCollect((1, 2), 3), Collect(((1, 2), 3))", "ok raw=S[L[S[1, 2], 3], L[S[1, 2], 3]] n=2"),
+                new SpecProbe("A = [[1, 2]]\nCollect(*items) = items\nCollect((A*)), Collect(A*)", "ok raw=S[L[L[1, 2]], L[L[1, 2]]] n=2"),
+                new SpecProbe("A = [(1, 2)]\nCollect(*items) = items\n(A*).Collect, A*.Collect", "ok raw=S[L[1, 2], L[S[1, 2]]] n=2"),
+                // Error kinds agree between the spellings.
+                new SpecProbe("Two(a, b) = a + b\nTwo(((1, 2)))", "err arity"),
+                new SpecProbe("Two(a, b) = a + b\nTwo((1, 2))", "err arity"),
+                new SpecProbe("Inc(x) = x + 1\ncount((Inc))", "err arity"),
+            ],
+            IncludeInGeneratorPrompt = true,
+            Explanation = "Parentheses group syntax; they do not introduce a semantic boundary. A group of exactly one non-spread expression is that expression — `(S)`, `((S))`, `(L)`, `(E)`, `(A):0`, `(Obj).V`, `(Inc)(1)` mean `S`, `L`, `E`, `A:0`, `Obj.V`, `Inc(1)` — with the same value, the same emitted count, the same binding, the same caching, the same selection, the same dot-call receiver, the same spread, and the same error kind. Normalization never stops at a parenthesis (`((S))` is the pair, `(())` is `()`). Only a group whose parentheses do something is a sequence-valued capture: several slots (`((1, 2), 3)` is the pair beside 3) or a lone spread (`(A*)` captures the spread items into one value). Pattern parentheses are call-shape syntax (`F((a, b))` takes one argument that opens to two items), never a runtime boundary. Selection chooses a value, dot-call passes a value, spread opens a value — and parentheses group syntax.",
+        },
+        new()
+        {
             Id = "mixed-collecting-parameter",
             Category = "variadic-calls",
             Source = "F(x, *y, z) = x + y.sum + z\nF(1, 2, 3, 4, 5)",
@@ -1384,17 +1419,22 @@ public static class LanguageSpecCorpus
         {
             Id = "redundant-call-parens-canonical",
             Category = "variadic-calls",
-            Source = "Inner = (1, 2, 3)\nCountSequenceValue((*values)) = values.count\nNestedCount(((*values))) = values.count\n\nCountSequenceValue(Inner)\nCountSequenceValue((Inner))\nCountSequenceValue(((1, 2, 3)))\nNestedCount(((1, 2, 3)))\nNestedCount((((1, 2, 3))))",
+            Source = "Inner = (1, 2, 3)\nCountSequenceValue((*values)) = values.count\nNestedCount(((*values))) = values.count\n\nCountSequenceValue(Inner)\nCountSequenceValue((Inner))\nCountSequenceValue(((1, 2, 3)))\nNestedCount([(1, 2, 3)])\nNestedCount(([[1, 2, 3]]))",
             Outcome = SpecOutcome.Evaluates,
-            ExpectedDisplay = "3\n1\n1\n3\n3",
-            ExpectedRaw = "S[3, 1, 1, 3, 3]",
+            ExpectedDisplay = "3\n3\n3\n3\n3",
+            ExpectedRaw = "S[3, 3, 3, 3, 3]",
             ExpectedEmittedCount = 5,
             Probes =
             [
                 new SpecProbe("NestedCount(((*values))) = values.count\nNestedCount((1, 2, 3))", "err arity"),
+                new SpecProbe("NestedCount(((*values))) = values.count\nNestedCount(((1, 2, 3)))", "err arity"),
+                new SpecProbe("NestedCount(((*values))) = values\nNestedCount(7), NestedCount(((7))), NestedCount(true), NestedCount('s')", "ok raw=S[L[7], L[7], L[true], L['s']] n=4"),
+                new SpecProbe("NestedCount(((*values))) = values\nNestedCount([()]), NestedCount(([(1, 2)]))", "ok raw=S[L[], L[1, 2]] n=2"),
                 new SpecProbe("CountSequenceValue((*values)) = values.count\nCountSequenceValue(((1, 2), 3))", "ok raw=2 n=1"),
+                new SpecProbe("S = 1, 2\nF((a, b)) = a + b\nF({S})", "ok raw=3 n=1"),
+                new SpecProbe("A = [[1, 2]]\nP((*xs)) = xs\nP((A*))", "ok raw=L[1, 2] n=1"),
             ],
-            Explanation = "A pattern-shaped callee consumes written grouping levels: a bare reference opens to its three items, while ONE extra written level around the argument leaves a single grouped item, which the collecting parameter collects exactly (`[Inner]`, count 1). Levels beyond the first stay redundant (unary sequence structure normalizes during value construction), and the declared nested pattern depth consumes matching written depth.",
+            Explanation = "Parentheses group syntax; they do not introduce a semantic boundary. A pattern-shaped callee opens the argument's VALUE: `Inner`, `(Inner)`, and `((1, 2, 3))` are all the sequence value `(1, 2, 3)`, so the collecting parameter collects its three items in every spelling — a redundant group is never a written level for the pattern to consume, and a single-row block `{S}` or a captured spread `(A*)` is likewise just its value. A nested pattern `((*values))` opens two real boundaries, and unary sequence structure never survives normalization, so a one-element list (`[(1, 2, 3)]`, `[[1, 2, 3]]`) supplies the outer structural level. Scalars also bind through the ordinary one-item fallback at each level, without creating a unary sequence; `(1, 2, 3)` and `((1, 2, 3))` open to three items against the one nested pattern and are the same arity error. Non-unary structure is preserved: `((1, 2), 3)` counts 2.",
         },
         new()
         {
@@ -1995,47 +2035,52 @@ public static class LanguageSpecCorpus
         {
             Id = "open-capture-target-rejected",
             Category = "access-boundaries",
-            Source = "M = {\n    public C = 5\n}\nR = {\n    open (M)\n    C\n}\nR",
+            Source = "M = {\n    public C = 5\n}\nR = {\n    open (M, M)\n    C\n}\nR",
             Outcome = SpecOutcome.ParseError,
             ExpectedParseDiagnosticFragment = "a parenthesized group is a captured value, not an algorithm",
             ExpectedDiagnosticCode = DiagnosticCode.BadOpenForm,
             Probes =
             [
                 new SpecProbe("M = {\n    public C = 5\n}\nR = {\n    open M\n    C\n}\nR", "ok raw=5 n=1"),
+                new SpecProbe("M = {\n    public C = 5\n}\nR = {\n    open (M)\n    C\n}\nR", "ok raw=5 n=1"),
+                new SpecProbe("M = {\n    public C = 5\n}\nR = {\n    open ((M))\n    C\n}\nR", "ok raw=5 n=1"),
                 new SpecProbe("R = {\n    open ({public C = 6})\n    C\n}\nR", "ok raw=6 n=1"),
             ],
             IncludeInGeneratorPrompt = true,
-            Explanation = "`open` consumes algorithm identity, and a capture is a value boundary that never exposes the identity of what it encloses: `open (M)` is rejected at parse time. Open the algorithm directly (`open M`), or use a brace block — parentheses around a brace block normalize away, so `open ({ ... })` still opens the block.",
+            Explanation = "`open` consumes algorithm identity, and a capture is a value boundary that never exposes the identity of what it encloses: `open (M, M)` — a group of several slots — is rejected at parse time, as is `open (M*)`. Redundant parentheses are not a capture: parentheses group syntax, so `open (M)` and `open ((M))` are exactly `open M`, and parentheses around a brace block normalize away too, so `open ({ ... })` still opens the block.",
         },
         new()
         {
             Id = "capture-suppresses-higher-order-identity",
             Category = "access-boundaries",
-            Source = "Apply = f(9)\nIncrement(x) = x + 1\nApply((Increment))",
+            Source = "Apply = f(9)\nIncrement(x) = x + 1\nApply((Increment, Increment))",
             Outcome = SpecOutcome.EvalError,
             ExpectedErrorCategory = "arity",
             Probes =
             [
                 new SpecProbe("Apply = f(9)\nIncrement(x) = x + 1\nApply(Increment)", "ok raw=10 n=1"),
-                new SpecProbe("Apply = f(9)\nIncrement(x) = x + 1\nApply(((Increment)))", "err arity"),
+                new SpecProbe("Apply = f(9)\nIncrement(x) = x + 1\nApply((Increment))", "ok raw=10 n=1"),
+                new SpecProbe("Apply = f(9)\nIncrement(x) = x + 1\nApply(((Increment)))", "ok raw=10 n=1"),
+                new SpecProbe("Apply = f(9)\nIncrement(x) = x + 1\nApply((Increment*))", "err arity"),
             ],
-            Explanation = "A capture supplies only a zero-parameter value thunk on the algorithm channel. Grouping a named callable therefore suppresses its callable identity instead of forwarding it to the higher-order parameter.",
+            Explanation = "A capture — a group of several slots such as `(Increment, Increment)`, or a lone spread `(Increment*)` — supplies only a zero-parameter value thunk on the algorithm channel, so it suppresses the enclosed callable identity, and evaluating its rows demands `Increment` with zero arguments. Redundant parentheses are not a capture: parentheses group syntax, so `Apply((Increment))` and `Apply(((Increment)))` forward Increment's callable identity exactly like `Apply(Increment)`.",
         },
         new()
         {
             Id = "capture-suppresses-structural-members",
             Category = "access-boundaries",
-            Source = "V(x) = 99\nObj = {\n    public V = 7\n    0\n}\n\nObj.V\n(Obj).V",
+            Source = "V(x) = 99\nObj = {\n    public V = 7\n    0\n}\n\nObj.V\n(Obj).V\n(Obj*).V",
             Outcome = SpecOutcome.Evaluates,
-            ExpectedDisplay = "7\n99",
-            ExpectedRaw = "S[7, 99]",
-            ExpectedEmittedCount = 2,
+            ExpectedDisplay = "7\n7\n99",
+            ExpectedRaw = "S[7, 7, 99]",
+            ExpectedEmittedCount = 3,
             Probes =
             [
                 new SpecProbe("F2(x, y) = x + y\nX = 3\n(X).F2(4)", "ok raw=7 n=1"),
-                new SpecProbe("Obj = {public V = 7}\nQ(z) = (Obj).V\nQ(0)", "err unknownName"),
+                new SpecProbe("Obj = {public V = 7}\nQ(z) = (Obj).V\nQ(0)", "ok raw=7 n=1"),
+                new SpecProbe("Obj = {public V = 7\n0}\nQ(z) = (Obj*).V\nQ(0)", "err unknownName"),
             ],
-            Explanation = "A capture receiver has no structural members: `Obj.V` reads Obj's own property, while `(Obj).V` falls back lexically and injects the captured receiver as the leading argument. With no lexical member name in sight the fallback has nowhere to go — inside a closed parameter list that is an unknown-name error, and in an implicitly parameterized body the member becomes an inferred parameter instead.",
+            Explanation = "Parentheses group syntax: `(Obj).V` IS `Obj.V`, so both read Obj's own property. A genuine capture receiver — a lone spread `(Obj*)` or a group of several slots — has no structural members, so `(Obj*).V` falls back lexically and injects the captured value as the leading argument. With no lexical member name in sight the fallback has nowhere to go — inside a closed parameter list that is an unknown-name error, and in an implicitly parameterized body the member becomes an inferred parameter instead.",
         },
         new()
         {
@@ -4684,7 +4729,7 @@ public static class LanguageSpecCorpus
         },
         new()
         {
-            Id = "grace-in-redundant-group-keeps-the-capture-boundary",
+            Id = "grace-in-redundant-group-is-grace-on-the-name",
             Category = "name-resolution",
             Source = "V(x) = x * 2\nF = b + (~a).V\nF(5, 1)",
             Outcome = SpecOutcome.Evaluates,
@@ -4695,11 +4740,12 @@ public static class LanguageSpecCorpus
             [
                 // Without the marker the occurrence order `(b, a)` decides.
                 new SpecProbe("V(x) = x * 2\nF = b + (a).V\nF(5, 1)", "ok raw=7 n=1"),
-                // The group is a CAPTURE receiver whatever the marker: an algorithm-valued
-                // argument is captured for its value (1), never navigated for its member V.
-                new SpecProbe("Obj = {\n    public V = 7\n    1\n}\nV(x) = x * 2\nF = (~a).V\nF(Obj)", "ok raw=2 n=1"),
+                // The group is the name itself whatever the marker: an algorithm-valued
+                // argument is navigated for its own member V, exactly as `a.V` navigates it.
+                new SpecProbe("Obj = {\n    public V = 7\n    1\n}\nV(x) = x * 2\nF = (~a).V\nF(Obj)", "ok raw=7 n=1"),
+                new SpecProbe("Obj = {\n    public V = 7\n    1\n}\nV(x) = x * 2\nF = a.V\nF(Obj)", "ok raw=7 n=1"),
             ],
-            Explanation = "Grace is a parameter-order annotation and never changes selection: `(~a).V` orders `a` before `b` exactly like `~a` would, and the redundant parentheses keep the plain name's capture boundary — the receiver is the captured value of `a`, so `.V` falls back to the lexical `V` with the captured value as its leading argument, exactly as `(a).V` does. The marker is stripped before evaluation; it can never turn a capture receiver into structural member access.",
+            Explanation = "Parentheses group syntax, and Grace is a parameter-order annotation that never changes selection: `(~a).V` is `~a.V` — it orders `a` before `b` exactly like `~a` would, and the edge is the ordinary structural-first dot edge on `a`, so a bound algorithm's own `V` is read and a number falls back to the lexical `V(x)`, exactly as `a.V` and `(a).V` do. The marker is stripped before evaluation; it can never change which receiver is navigated.",
         },
         new()
         {

@@ -1945,7 +1945,7 @@ public static partial class Evaluator
             case Expr.Capture:
                 // A capture is a value boundary, never algorithm/namespace
                 // identity: `open` consumes algorithm identity, so a captured
-                // target such as `open (M)` is not openable. The parser
+                // target such as `open (M, M)` is not openable. The parser
                 // rejects this form in source; this arm is the prebuilt-AST
                 // defense, mirroring the spread arm above.
                 return new EvalError.BadOpenForm("captured value groups cannot be opened") { Span = expr.Span };
@@ -2066,9 +2066,11 @@ public static partial class Evaluator
 
             // Capture is not algorithm identity: the algorithm channel sees
             // only a zero-parameter value thunk over the bundle, exactly as
-            // the pre-split transparent wrapper behaved. `(F)(1)` therefore
-            // stays an arity error and `Apply((Increment))` never receives
-            // Increment's callable identity.
+            // the pre-split transparent wrapper behaved. `Apply((Inc, Dec))`
+            // therefore never receives either callable identity, while the
+            // redundant group `Apply((Increment))` IS `Apply(Increment)` — the
+            // parser erases it before this node exists (parentheses group
+            // syntax; they do not introduce a semantic boundary).
             Expr.Capture(var captureBody) => EvalResult<Algorithm>.Ok(CaptureValueThunk(captureBody, ctx)),
 
             Expr.Resolve(var name) => ResolveNamedAlgorithm(name, expr.Span, ctx),

@@ -59,8 +59,8 @@ public class DeclarationHeadLineRuleTests
 
         Assert.Empty(raw.Root.Properties);
         Assert.Equal("Foo", Assert.IsType<Expr.Resolve>(raw.Root.Output[0]).Name);
-        var group = Assert.IsType<Expr.Capture>(raw.Root.Output[1]);
-        Assert.Equal("x", Assert.IsType<Expr.Resolve>(Assert.Single(group.Body)).Name);
+        // The grouped row `(x)` is the name `x` itself (parentheses group syntax).
+        Assert.Equal("x", Assert.IsType<Expr.Resolve>(raw.Root.Output[1]).Name);
     }
 
     [Theory]

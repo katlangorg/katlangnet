@@ -45,6 +45,16 @@ incidental drift.
 
 ### August 2026 correction: one evaluation also supplies patterned written items
 
+> **SUPERSEDED (September 2026 — parentheses group syntax).** The explicit written-slot
+> VIEW this section introduces no longer exists: `explicitItems?` / `ExplicitSequenceValueItems`,
+> `evalVariadicCallItemPrepared`, and `PrepareCallArgumentEvaluation` were deleted, and a
+> sequence-value pattern opens the argument's VALUE alone (`Result.structureItems?`). The
+> parser also erases every redundant group (a group of exactly one non-spread slot is that
+> slot), so `F((B))` is `F(B)` and `F(((1, 2)))` is `F((1, 2))`. What survives of this section is
+> its single-evaluation guarantee — every slot is still evaluated exactly once — and the
+> `PreparedAlgorithmOutput` slot list, now used only by the loop machinery. See
+> `docs/design/language-rules/syntax.md` § Parentheses group syntax.
+
 The shared stage's “evaluate each written slot” rule means **exactly once, left to right**.
 The original patterned implementation violated that contract for a zero-parameter
 parenthesized block: it first evaluated the block to obtain the ordinary counted/combined

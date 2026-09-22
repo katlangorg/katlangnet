@@ -563,27 +563,43 @@ public class ParserTests
         Assert.Equal(1, num.Value);
     }
 
-    [Fact]
-    public void Parse_ParenthesizedReference_PreservesBlockLayer()
+    [Theory]
+    [InlineData("(Inner)")]
+    [InlineData("((Inner))")]
+    [InlineData("( ( Inner ) )")]
+    public void Parse_ParenthesizedReference_IsTheReference(string source)
     {
-        var result = Parser.ParseSyntax("(Inner)");
+        // PARENTHESES GROUP SYNTAX: a group of exactly one non-spread slot is that
+        // slot's expression, whatever its kind — a bare name included. `(Inner)` and
+        // `((Inner))` are the very node `Inner` is (no Capture layer survives), and the
+        // name keeps its exact identifier span (the occurrence the semantic model
+        // builds its sites from), whatever grouping surrounds it.
+        var result = Parser.ParseSyntax(source);
 
         Assert.False(result.HasErrors);
-        var capture = Assert.IsType<Expr.Capture>(result.Root.Output[0]);
-        var inner = Assert.IsType<Expr.Resolve>(Assert.Single(capture.Body));
+        var inner = Assert.IsType<Expr.Resolve>(Assert.Single(result.Root.Output));
         Assert.Equal("Inner", inner.Name);
+        var column = source.IndexOf("Inner", StringComparison.Ordinal) + 1;
+        Assert.Equal(new SourceSpan(1, column, 1, column + "Inner".Length), inner.Span);
     }
 
     [Fact]
-    public void Parse_DoubleParenthesizedReference_PreservesNestedBlockLayer()
+    public void Parse_OnlyMultiSlotAndSpreadGroups_SurviveAsCaptures()
     {
-        var result = Parser.ParseSyntax("((Inner))");
+        // The groups whose parentheses DO something keep a Capture node: several
+        // written slots (a sequence value) and a lone spread slot (the capture of an
+        // item supply into one value). Redundant grouping around either is erased.
+        static Expr.Capture SingleCapture(string source)
+        {
+            var result = Parser.ParseSyntax(source);
+            Assert.False(result.HasErrors);
+            return Assert.IsType<Expr.Capture>(Assert.Single(result.Root.Output));
+        }
 
-        Assert.False(result.HasErrors);
-        var outer = Assert.IsType<Expr.Capture>(result.Root.Output[0]);
-        var inner = Assert.IsType<Expr.Capture>(Assert.Single(outer.Body));
-        var reference = Assert.IsType<Expr.Resolve>(Assert.Single(inner.Body));
-        Assert.Equal("Inner", reference.Name);
+        Assert.Equal(2, SingleCapture("(A, B)").Body.Count);
+        Assert.Equal(2, SingleCapture("((A, B))").Body.Count);
+        Assert.IsType<Expr.SequenceSpread>(Assert.Single(SingleCapture("(A*)").Body));
+        Assert.IsType<Expr.SequenceSpread>(Assert.Single(SingleCapture("((A*))").Body));
     }
 
     [Theory]
@@ -883,14 +899,15 @@ public class ParserTests
     }
 
     [Fact]
-    public void Parse_DoubleParenthesizedSequenceSpread_PreservesOuterBlockLayer()
+    public void Parse_DoubleParenthesizedSequenceSpread_IsTheSpreadCapture()
     {
+        // `(A*)` is the capture of a supply (its parentheses do something); the
+        // outer pair of `((A*))` is redundant grouping and is erased.
         var result = Parser.ParseSyntax("((A*))");
 
         Assert.False(result.HasErrors);
-        var outer = Assert.IsType<Expr.Capture>(result.Root.Output[0]);
-        var inner = Assert.IsType<Expr.Capture>(Assert.Single(outer.Body));
-        Assert.IsType<Expr.SequenceSpread>(Assert.Single(inner.Body));
+        var capture = Assert.IsType<Expr.Capture>(result.Root.Output[0]);
+        Assert.IsType<Expr.SequenceSpread>(Assert.Single(capture.Body));
     }
 
     [Fact]
@@ -918,14 +935,16 @@ public class ParserTests
     }
 
     [Fact]
-    public void Parse_NestedCommaGroup_BehaviorUnchanged()
+    public void Parse_NestedCommaGroup_IsTheCommaGroup()
     {
+        // The redundant outer group around a sequence value is erased: `((1, 2))`
+        // is the capture `(1, 2)` itself, spanning the full written extent.
         var result = Parser.ParseSyntax("((1, 2))");
 
         Assert.False(result.HasErrors);
-        var outer = Assert.IsType<Expr.Capture>(result.Root.Output[0]);
-        var inner = Assert.IsType<Expr.Capture>(Assert.Single(outer.Body));
-        Assert.Equal(2, inner.Body.Count);
+        var capture = Assert.IsType<Expr.Capture>(result.Root.Output[0]);
+        Assert.Equal(2, capture.Body.Count);
+        Assert.Equal(new SourceSpan(1, 1, 1, 9), capture.Span);
     }
 
     [Fact]
@@ -1846,7 +1865,8 @@ public class ParserTests
         Assert.Equal(3, Assert.NotNull(diagnostic.Span).Start.Line);
         Assert.Empty(split.Root.Properties);
         Assert.Equal("F", Assert.IsType<Expr.Resolve>(split.Root.Output[0]).Name);
-        Assert.IsType<Expr.Capture>(split.Root.Output[1]);
+        // The grouped row `(x)` is the name `x` (parentheses group syntax).
+        Assert.Equal("x", Assert.IsType<Expr.Resolve>(split.Root.Output[1]).Name);
     }
 
     [Fact]
@@ -2113,8 +2133,8 @@ public class ParserTests
         var body = Assert.IsType<Algorithm.User>(property.Value);
         Assert.Equal("Identity", Assert.IsType<Expr.Resolve>(Assert.Single(body.Output)).Name);
         Assert.Equal(2, result.Root.Output.Count);
-        var row = Assert.IsType<Expr.Capture>(result.Root.Output[0]);
-        Assert.Equal("A", Assert.IsType<Expr.Resolve>(Assert.Single(row.Body)).Name);
+        // The grouped row `(A)` is the name `A` itself (parentheses group syntax).
+        Assert.Equal("A", Assert.IsType<Expr.Resolve>(result.Root.Output[0]).Name);
         Assert.Equal("A", Assert.IsType<Expr.Resolve>(result.Root.Output[1]).Name);
     }
 
@@ -2338,8 +2358,9 @@ public class ParserTests
     }
 
     [Theory]
-    [InlineData("(F) (1)", true)]
     [InlineData("(F)\n(1)", false)]
+    [InlineData("(1, 2)(3)", true)]
+    [InlineData("(1, 2) (3)", true)]
     [InlineData("(1 + 2)(3)", true)]
     [InlineData("(1 + 2) (3)", true)]
     [InlineData("(1 + 2)\n(3)", false)]
@@ -2348,7 +2369,8 @@ public class ParserTests
         // Sequence values and arithmetic results are not callable targets, so
         // a following '(' never becomes a call: on a new line it is the next
         // row, and on the same line it is the SYN-07A separator error
-        // (recovered as the next slot, still never a call).
+        // (recovered as the next slot, still never a call). A newline never
+        // continues a closed expression into a call, callable target or not.
         var result = Parser.ParseSyntax(source);
 
         Assert.Equal(
@@ -2356,6 +2378,25 @@ public class ParserTests
             result.Diagnostics.Select(static d => d.Code));
         Assert.Equal(2, result.Root.Output.Count);
         Assert.DoesNotContain(result.Root.Output, static expr => expr is Expr.Call);
+    }
+
+    [Theory]
+    [InlineData("(F)(1)")]
+    [InlineData("(F) (1)")]
+    [InlineData("((F))(1)")]
+    [InlineData("(~F)(1)")]
+    public void Parse_GroupedCallableName_IsACallLikeTheBareName(string source)
+    {
+        // PARENTHESES GROUP SYNTAX: `(F)` is the callable name `F`, so a same-line
+        // call delimiter after the group is the call `F(1)` exactly as after the bare
+        // name (a graced callee keeps its Grace annotation: `(~F)(1)` is `~F(1)`).
+        var result = Parser.ParseSyntax(source);
+
+        Assert.False(result.HasErrors);
+        var call = Assert.IsType<Expr.Call>(Assert.Single(result.Root.Output));
+        var callee = call.Function is Expr.Grace(var inner, _) ? inner : call.Function;
+        Assert.Equal("F", Assert.IsType<Expr.Resolve>(callee).Name);
+        Assert.Equal(1, Assert.IsType<Expr.Num>(Assert.Single(call.Args)).Value);
     }
 
     [Fact]
@@ -2584,17 +2625,16 @@ public class ParserTests
     }
 
     [Fact]
-    public void Parse_DotCall_DoubleParenSequenceValueReceiver_PreservesOuterBlockLayer()
+    public void Parse_DotCall_DoubleParenSequenceValueReceiver_IsTheSequenceValueReceiver()
     {
+        // `((1, 2, 3)).count` and `(1, 2, 3).count` are the same dot edge on the same
+        // capture receiver: the redundant outer group is erased (parentheses group syntax).
         var result = Parser.ParseSyntax("((1, 2, 3)).count");
 
         Assert.False(result.HasErrors);
         var dotCall = Assert.IsType<Expr.DotCall>(result.Root.Output[0]);
-        var outer = Assert.IsType<Expr.Capture>(dotCall.Target);
-        Assert.Single(outer.Body);
-
-        var inner = Assert.IsType<Expr.Capture>(outer.Body[0]);
-        Assert.Equal(3, inner.Body.Count);
+        var receiver = Assert.IsType<Expr.Capture>(dotCall.Target);
+        Assert.Equal(3, receiver.Body.Count);
         Assert.Null(dotCall.Args);
     }
 

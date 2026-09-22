@@ -488,7 +488,7 @@ internal static class ElaboratedScopeLookup
 
             case Expr.Capture:
                 // RECOVERY TOLERANCE: the parser rejects capture open targets
-                // (`open (M)` is a captured value, not an algorithm — the
+                // (`open (M, M)` is a captured value, not an algorithm — the
                 // evaluator's open resolution errors with BadOpenForm), so a
                 // capture open reaches frontend lookup only through a
                 // diagnostic-bearing recovery tree. It contributes no names —

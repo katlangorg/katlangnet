@@ -7,7 +7,10 @@ namespace KatLang.Tests;
 /// `(1)` is located as `(1)`, never merely as `1` — and nested redundant groups
 /// accumulate their outer extent. Only the span changes: AST shape, grouping
 /// semantics, arity normalization, and evaluation are untouched, and the children
-/// of the unwrapped node keep their own spans.
+/// of the unwrapped node keep their own spans. The one exception is a NAME
+/// occurrence (`(x)`, `(~x)`): its span IS the identifier occurrence the semantic
+/// model builds its sites from, so it never widens (see
+/// <see cref="UnwrappedName_KeepsItsExactIdentifierSpan"/>).
 /// </summary>
 public class GroupedExpressionSpanTests
 {
@@ -71,15 +74,11 @@ public class GroupedExpressionSpanTests
     }
 
     [Fact]
-    public void SurvivingCaptureLayers_AreUnchanged()
+    public void SurvivingCaptures_SpanTheirParentheses_AndRedundantGroupsAroundThemAccumulate()
     {
-        // A reference keeps its capture layer (`(x)`) and a group of several slots is
-        // a capture: both already spanned their parentheses, and the inner nodes keep
-        // their own spans exactly as before.
-        var capture = Assert.IsType<Expr.Capture>(SingleRow("(x)"));
-        Assert.Equal(new SourceSpan(1, 1, 1, 4), capture.Span);
-        Assert.Equal(new SourceSpan(1, 2, 1, 3), Assert.Single(capture.Body).Span);
-
+        // A group of several slots is a capture spanning its parentheses, with the inner
+        // nodes keeping their own spans; a redundant group around it is erased and the
+        // capture takes the outer extent (parentheses group syntax).
         var pair = Assert.IsType<Expr.Capture>(SingleRow("(1, 2)"));
         Assert.Equal(new SourceSpan(1, 1, 1, 7), pair.Span);
         Assert.Equal(new SourceSpan(1, 2, 1, 3), pair.Body[0].Span);
@@ -87,10 +86,34 @@ public class GroupedExpressionSpanTests
 
         var nestedPair = Assert.IsType<Expr.Capture>(SingleRow("((1, 2))"));
         Assert.Equal(new SourceSpan(1, 1, 1, 9), nestedPair.Span);
-        Assert.Equal(new SourceSpan(1, 2, 1, 8), Assert.IsType<Expr.Capture>(Assert.Single(nestedPair.Body)).Span);
+        Assert.Equal(2, nestedPair.Body.Count);
+        Assert.Equal(new SourceSpan(1, 3, 1, 4), nestedPair.Body[0].Span);
+
+        var spread = Assert.IsType<Expr.Capture>(SingleRow("((x*))"));
+        Assert.Equal(new SourceSpan(1, 1, 1, 7), spread.Span);
+        Assert.Equal(new SourceSpan(1, 3, 1, 5), Assert.IsType<Expr.SequenceSpread>(Assert.Single(spread.Body)).Span);
 
         var empty = Assert.IsType<Expr.EmptySequence>(SingleRow("(())"));
         Assert.Equal(new SourceSpan(1, 1, 1, 5), empty.Span);
+    }
+
+    [Theory]
+    [InlineData("(x)", 2)]
+    [InlineData("((x))", 3)]
+    [InlineData("( x )", 3)]
+    [InlineData("(~x)", 3)]
+    public void UnwrappedName_KeepsItsExactIdentifierSpan(string source, int nameColumn)
+    {
+        // The one exception to the group extent: a NAME occurrence is the identifier the
+        // semantic model builds reference, hover, and rename sites from, so `(x)` is the
+        // node `x` with the exact span of `x` (a graced occurrence keeps the marker run's
+        // own span around the same inner name).
+        var row = SingleRow(source);
+        var name = row is Expr.Grace(var inner, _) ? inner : row;
+        Assert.Equal("x", Assert.IsType<Expr.Resolve>(name).Name);
+        Assert.Equal(new SourceSpan(1, nameColumn, 1, nameColumn + 1), name.Span);
+        if (row is Expr.Grace)
+            Assert.Equal(new SourceSpan(1, nameColumn - 1, 1, nameColumn + 1), row.Span);
     }
 
     [Fact]
@@ -186,5 +209,22 @@ public class GroupedExpressionSpanTests
         Assert.Equal(new SourceSpan(1, 1, 1, 2), reference.ResolvedDeclaration!.Span);
         Assert.Null(model.FindResolutionAt(new SourcePosition(2, 1)));
         Assert.Null(model.FindResolutionAt(new SourcePosition(2, 2)));
+    }
+
+    [Theory]
+    [InlineData("(Value)", 2)]
+    [InlineData("((Value))", 3)]
+    [InlineData("(((Value)))", 4)]
+    public void GroupedName_NavigationLocatesTheIdentifierAndExcludesParentheses(string spelling, int column)
+    {
+        var parsed = SourceProvenance.ParseValid("Value = 7\n" + spelling);
+        var model = KatLang.Semantics.SemanticModelBuilder.Build(parsed.Root);
+        var reference = model.FindResolutionAt(new SourcePosition(2, column));
+        Assert.NotNull(reference);
+        Assert.Equal(KatLang.Semantics.IdentifierClassification.PropertyReference, reference.Classification);
+        Assert.Equal(new SourceSpan(1, 1, 1, 6), reference.ResolvedDeclaration!.Span);
+        for (var i = 1; i <= spelling.Length; i++)
+            if (spelling[i - 1] is '(' or ')')
+                Assert.Null(model.FindResolutionAt(new SourcePosition(2, i)));
     }
 }

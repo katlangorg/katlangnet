@@ -727,9 +727,10 @@ public class DotCallFallbackExposureTests
     }
 
     [Fact]
-    public void CaptureReceiver_SuppressesStructuralIdentity_FallbackMarks()
-        // A capture receiver never exposes structural members, so the ordinary
-        // edge's Param fallback is unconditional and marks the capture.
+    public void GroupedReceiver_ClassifiesAndResolvesExactlyLikeTheBareReceiver()
+        // PARENTHESES GROUP SYNTAX: `(Obj).t` IS `Obj.t`, so the structural winner
+        // stays exported and the member is read structurally — never the captured
+        // parameter `t` (contrast the genuine capture receiver below).
         => AssertExposureAndResult(
             """
             Obj = {
@@ -738,6 +739,27 @@ public class DotCallFallbackExposureTests
             }
             Outer(t) = {
                 P = (Obj).t
+                P
+            }
+            Outer({x+1})
+            """,
+            PropertyExposure.Exported,
+            "42",
+            "Outer", "P");
+
+    [Fact]
+    public void CaptureReceiver_SuppressesStructuralIdentity_FallbackMarks()
+        // A GENUINE capture receiver (a lone spread slot) never exposes structural
+        // members, so the ordinary edge's Param fallback is unconditional and
+        // marks the capture.
+        => AssertExposureAndResult(
+            """
+            Obj = {
+                public t = 42
+                0
+            }
+            Outer(t) = {
+                P = (Obj*).t
                 P
             }
             Outer({x+1})

@@ -366,10 +366,14 @@ public class Decimal128InverseTrigTests
     [Fact]
     public async Task EndpointBand_AgreesAcrossFlatCountedAndAsyncDispatch()
     {
+        // The receiver properties read the input lists in VALUE position, so the async
+        // zero-argument property cache seam is exercised (a builtin's collection slot
+        // demands its named receiver directly, grouped or not).
         const string source =
             "CosInputs = [1 - 1e-30, -1 + 1e-33, 0.9999000000000000000000000000000001, 0.9999, 0.5]\n"
             + "SinInputs = [1 - 1e-30, -1 + 1e-33, -0.9999000000000000000000000000000001, 0.9999, -0.5]\n"
-            + "(CosInputs).map(acos)\n(SinInputs).map(Math.Asin)";
+            + "Cos = CosInputs\nSin = SinInputs\n"
+            + "Cos.map(acos)\nSin.map(Math.Asin)";
         var program = Program(source);
 
         var flat = Evaluator.RunFlat(program);

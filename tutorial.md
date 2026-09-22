@@ -1102,7 +1102,7 @@ Host-backed properties follow the same rule. Every independent evaluation starts
 
 A recursive read entered before any result is stored still evaluates the body. The first successful completion supplies the cache entry; reads already in progress finish with their own results and do not replace it.
 
-The guarantee concerns property-value reads: a bare `A` in value position, `(A)`, `A + 0`, a user call argument `F(A)` (and its dotted spelling `A.F`, which is the same call), all read A's cached value. Passing a name as an ALGORITHM argument follows the receiving callable's rules instead, and every builtin VALUE slot demands the algorithm directly rather than reading the property: `if(true, A, 0)`, the collection arguments `sum(A)`, `count(A)`, `take(A, n)`, `first(A)`, `atoms(A)`, `range(A, A)` — in the dotted spelling exactly as in the written one, because `A.sum` IS `sum(A)` — a loop's initial state and `repeat` count, the `reduce` initial accumulator, and the `.string` receiver (`A.string`) each evaluate A's body again and neither read nor store its entry, while `if(true, (A), 0)`, `sum((A))`, `(A).sum`, and `(A).string` capture the property read and use A's cache. Where a property draws randomness or calls a host operation this is observable — `(A).sum` reuses A's draw, `sum(A)` and `A.sum` draw again — so read such a property through its cached spellings. (Whether a builtin's value slot should read the cache at all is a documented open design question; today the two spellings of a builtin call agree, and the captured spelling is the cached one.)
+The guarantee concerns property-value reads: a bare `A` in value position, `A + 0`, `A == A`, a list element `[A]`, a user call argument `F(A)` (and its dotted spelling `A.F`, which is the same call), all read A's cached value. Passing a name as an ALGORITHM argument follows the receiving callable's rules instead, and every builtin VALUE slot demands the algorithm directly rather than reading the property: `if(true, A, 0)`, the collection arguments `sum(A)`, `count(A)`, `take(A, n)`, `first(A)`, `atoms(A)`, `range(A, A)` — in the dotted spelling exactly as in the written one, because `A.sum` IS `sum(A)` — a loop's initial state and `repeat` count, the `reduce` initial accumulator, and the `.string` receiver (`A.string`) each evaluate A's body again and neither read nor store its entry. Parentheses change none of this, because parentheses group syntax and never introduce a boundary: `(A)` is `A`, so `if(true, (A), 0)`, `sum((A))`, `(A).sum`, and `(A).string` are the same direct demands as their bare spellings. Where a property draws randomness or calls a host operation this is observable — `sum(A)`, `sum((A))`, and `A.sum` all draw again, while `A == A` compares one cached draw with itself — so read such a property through a genuine value position (for example a helper property `V = A`, whose own demand reads `A` from the cache: `V.sum` reuses A's draw). (Whether a builtin's value slot should read the cache at all is a documented open design question; today every spelling of a builtin call agrees, grouped or not.)
 
 A property body may produce several items, but property-style access is a value boundary: the caller observes them as one sequence value. Caller-site spread (`value*`) turns that value back into separate output rows:
 
@@ -1632,7 +1632,7 @@ B(3.A)
 50
 ```
 
-The number `3` has no structural `A`, so `3.A` is `A(3)`; that result has no `B`, so `3.A.B` is `B(A(3))`. Structural access ignores `public` (a private intermediate member is still navigated) and selects every declared member: a local-only member is navigated like any other from a context inside the owner of what it captures, and from outside that owner — or when the member is defined only inside conditional branches — the edge is the same structural error that accessing it directly reports, never a fallback to a visible extension. A written call such as `Lib.Sub()` is a value, so a member after it is resolved by extension fallback on that value, while parentheses around a single dot expression are ordinary grouping (`(Lib.Sub).Q` is `Lib.Sub.Q`).
+The number `3` has no structural `A`, so `3.A` is `A(3)`; that result has no `B`, so `3.A.B` is `B(A(3))`. Structural access ignores `public` (a private intermediate member is still navigated) and selects every declared member: a local-only member is navigated like any other from a context inside the owner of what it captures, and from outside that owner — or when the member is defined only inside conditional branches — the edge is the same structural error that accessing it directly reports, never a fallback to a visible extension. A written call such as `Lib.Sub()` is a value, so a member after it is resolved by extension fallback on that value, while parentheses around a receiver or a single dot expression are ordinary grouping (`(Lib).Sub` is `Lib.Sub` and `(Lib.Sub).Q` is `Lib.Sub.Q` — parentheses never change which receiver is navigated).
 
 ### Dot Members and Implicit Parameters
 
@@ -2082,12 +2082,13 @@ PairSum([2, 3])
 ```
 
 Call arguments are evaluated exactly once, from left to right, before arity checking or
-pattern binding. A parenthesized argument sent to a sequence-value pattern has two views—the
-combined sequence value and its explicit written items—but both come from that same evaluation.
-This matters for nondeterministic expressions such as `Math.Random(...)`, for failures and their
-source context, and for host evaluation budgets; parentheses never cause an argument to run again.
-Nested parentheses still contribute one grouped written item, and only an explicit postfix spread
-contributes the evaluated value's immediate items.
+pattern binding. A sequence-value pattern opens the argument's VALUE — the pattern parentheses
+describe the call shape (one argument that opens to so many items), never a runtime boundary —
+and that value comes from that one evaluation. This matters for nondeterministic expressions
+such as `Math.Random(...)`, for failures and their source context, and for host evaluation
+budgets; parentheses never cause an argument to run again. Redundant parentheses around an
+argument change nothing (`PairSum(((2, 3)))` is `PairSum((2, 3))`), and only an explicit postfix
+spread contributes the evaluated value's immediate items as separate arguments.
 
 A top-level collecting parameter (`*name`) instead consumes an **item supply**: it COLLECTS the argument slots allocated to it as one [list](#lists). Zero slots collect `[]`, one scalar or list slot collects `[item]` (never erased to the item), and many slots collect `[item1, item2, ...]`. A callable with a collecting parameter can therefore accept a variable number of argument items — it is variadic in that sense. The one refinement is the **collector supply-boundary rule**: a collecting parameter consumes its allocated argument supply; multiple supplied items are collected exactly; if its entire segment is one lone non-spread sequence value, that sequence may provide the collector's whole supply, opening exactly one level; lists remain exact; and items already produced by explicit spread are final supplied items. A lone collecting parameter is the simplest case — its segment is the whole supply:
 
@@ -2367,8 +2368,9 @@ CountSequenceValue((1, 2, 3))
 
 In `CountValues`, top-level `*values` collects the call's argument slots: `CountValues()` collects the empty supply `[]` (count `0`), `CountValues(1, 2, 3)` collects the three slots as `values = [1, 2, 3]` (count `3`), and `CountValues((1, 2, 3))` supplies ONE sequence-valued argument — the lone collector's whole segment, which the collector rule opens one level to `values = [1, 2, 3]` (count `3`). The two forms differ where the grouped value is not the collector's whole segment: `CountValues((1, 2, 3), 4)` collects two slots (count `2`) while `CountSequenceValue((1, 2, 3), 4)` is an arity error, and `CountValues([1, 2, 3])` keeps the list as one collected item (count `1`) while `CountSequenceValue([1, 2, 3])` opens it (count `3`). In `CountSequenceValue`, the outer sequence-value pattern consumes one parent-level argument slot, opens it, and `*values` collects that structure's immediate contents. The builtin `count(collection)` has no collecting parameter: it is an ordinary fixed-arity callable that takes exactly one collection argument, so with `Values = 1, 2, 3`, `count(Values)` is `3` while `count(1, 2, 3)` and `count(Values*)` are arity errors (see [Counting: `count`](#counting-count)); fixed-only user calls likewise preserve their exact call shape.
 
-A pattern-shaped callee consumes written grouping levels at the call site. A bare reference supplies the stored value for the pattern to open, while ONE extra written level of parentheses leaves a single grouped item — which the nested collecting parameter collects exactly, because the items a pattern opens are final supplied items and are never reopened. Levels beyond that stay redundant ([sequence normalization](#sequence-normalization) removes unary sequence structure during value construction), and a nested pattern consumes matching written depth:
+A pattern-shaped callee opens the argument's value, never a written grouping level. Parentheses group syntax; they do not introduce a semantic boundary: a bare reference, the same reference in redundant parentheses, and a literal in redundant parentheses all supply the same sequence value, and the pattern opens that value once. A nested pattern opens one more REAL boundary, which unary sequence structure can never supply ([sequence normalization](#sequence-normalization) removes it during value construction), so a one-element list supplies the outer structural level. Scalars also work through the ordinary one-item fallback at each pattern level: `CountSequenceValue3(7)` returns 1 without creating a unary sequence. The structured examples are:
 
+<!-- spec:redundant-call-parens-canonical -->
 ```
 Inner = (1, 2, 3)
 CountSequenceValue((*values)) = values.count
@@ -2377,20 +2379,20 @@ NestedCount(((*values))) = values.count
 CountSequenceValue(Inner)
 CountSequenceValue((Inner))
 CountSequenceValue(((1, 2, 3)))
-NestedCount(((1, 2, 3)))
-NestedCount((((1, 2, 3))))
+NestedCount([(1, 2, 3)])
+NestedCount(([[1, 2, 3]]))
 ```
 
 **Results:**
 ```
 3
-1
-1
+3
+3
 3
 3
 ```
 
-`CountSequenceValue(Inner)` opens the stored sequence into its three items. `CountSequenceValue((Inner))` supplies one written grouping level whose single item is `Inner`, so `values = [Inner]` (count `1`), and `CountSequenceValue(((1, 2, 3)))` is the same shape. `NestedCount` declares a second pattern level, so it consumes the extra written level and still opens down to the three items — and a fourth written level around it stays redundant. Two further distinctions remain observable. First, a nested pattern still needs at least its explicit sequence-value level: `NestedCount((1, 2, 3))` is an arity error, because the pattern expects one nested sequence-value argument but the spread items supply three. Second, non-unary structure is preserved: `CountSequenceValue(((1, 2), 3))` reports `2`, because the sequence value's items are `(1, 2)` and `3`.
+`CountSequenceValue(Inner)` opens the stored sequence into its three items, and `CountSequenceValue((Inner))` and `CountSequenceValue(((1, 2, 3)))` open exactly the same value — `(Inner)` is `Inner`, and `((1, 2, 3))` is `(1, 2, 3)`. `NestedCount` declares a second pattern level, so its argument must open to ONE item that itself opens: the one-element lists `[(1, 2, 3)]` and `[[1, 2, 3]]` do, and the redundant parentheses around the second one change nothing. Two further distinctions remain observable. First, a sequence value can never satisfy the nested level: `NestedCount((1, 2, 3))` and `NestedCount(((1, 2, 3)))` are the same arity error, because the value opens to three items where the outer pattern expects one. Second, non-unary structure is preserved: `CountSequenceValue(((1, 2), 3))` reports `2`, because the sequence value's items are `(1, 2)` and `3`.
 
 Destructuring is recursive by syntax, but each sequence-value pattern opens only one value boundary. A collecting binding consumes siblings only at its own pattern level:
 
@@ -3516,7 +3518,7 @@ Fib.repeat(10, 0, 1) : 0
 
 ## Higher-Order Algorithms
 
-> **Core idea:** pass a named algorithm or a brace algorithm when a caller expects a callable. Parentheses create a value grouping, so they deliberately suppress callable identity.
+> **Core idea:** pass a named algorithm or a brace algorithm when a caller expects a callable. A group of several slots or of a spread captures a value and so suppresses callable identity; redundant parentheses around one expression are only grouping and change nothing.
 
 An algorithm can accept another algorithm as an argument and call it. This is how you write generic, reusable computation patterns.
 
@@ -3571,7 +3573,7 @@ Call0({42})
 
 **Result:** `42`
 
-Grouping is different: parentheses capture a *value*, and a captured value never carries the algorithm identity of what it encloses, so `Apply((Increment))` and `Call0((Const))` fail even though the bare names work. (Parentheses directly around a brace block are redundant grouping, so `Call0(({42}))` behaves exactly like `Call0({42})`.)
+A genuine capture is different: a parenthesized group of several slots, or of a spread, captures a *value*, and a captured value never carries the algorithm identity of what it encloses, so `Apply((Increment, Increment))` and `Call0((Const*))` fail even though the bare names work. Redundant parentheses are not a capture — parentheses group syntax and never introduce a boundary — so `Apply((Increment))` is exactly `Apply(Increment)`, `Call0((Const))` is `Call0(Const)`, and `Call0(({42}))` behaves exactly like `Call0({42})`.
 
 ### A Parameter Always Means This Call's Argument
 
@@ -3913,9 +3915,9 @@ Spread projects only one immediate level. Each spread contributes its spread ite
 
 ### Capture Parentheses
 
-> **Parentheses around a supply-producing expression perform capture — they are not always redundant grouping.**
+> **Parentheses group syntax; they do not introduce a semantic boundary. Around a supply-producing expression they perform capture — that is the one case where the parentheses do something.**
 
-Around an ordinary single value, parentheses are redundant grouping: `(7)` is `7` and `([1, 2])` is `[1, 2]`. Around a spread, they are the capture receiver (`capture : Supply → Value`): the supplied items materialize as ONE canonical sequence value through [sequence normalization](#sequence-normalization) — two or more items become a sequence holding them, exactly one item becomes that item's normalized value, and an empty supply becomes `()`. Capture is an operation on a supply that was actually produced; it does not turn a body with no output rows into `()`, which stays the error described in [Calls Return One Value](#calls-return-one-value). The pair below is the clearest picture of the Value/Supply distinction:
+Around an ordinary single expression, parentheses are redundant grouping and the group *is* that expression, whatever its kind: `(7)` is `7`, `([1, 2])` is `[1, 2]`, `(A)` is `A`, `(Obj.X)` is `Obj.X`, `(F(1))` is `F(1)`, `(A:0)` is `A:0`, `((1, 2))` is `(1, 2)`, and `(())` is `()`. Nothing downstream can tell the group from its content — not a call's argument binding, not a collecting or patterned parameter, not a stored property, not the zero-argument property cache, not a dot-call receiver (`(Obj).X` reads Obj's own `X` exactly like `Obj.X`), not a spread (`(A)*` is `A*`), and not a call delimiter (`(F)(1)` is `F(1)`). Around a spread, they are the capture receiver (`capture : Supply → Value`): the supplied items materialize as ONE canonical sequence value through [sequence normalization](#sequence-normalization) — two or more items become a sequence holding them, exactly one item becomes that item's normalized value, and an empty supply becomes `()`. Capture is an operation on a supply that was actually produced; it does not turn a body with no output rows into `()`, which stays the error described in [Calls Return One Value](#calls-return-one-value). The pair below is the clearest picture of the Value/Supply distinction:
 
 <!-- spec:spread-capture-count -->
 ```
@@ -4754,7 +4756,7 @@ Double(5)
 open LibA, LibB
 ```
 
-String targets use single quotes and mix freely with names: `open 'https://example.org/lib.kat', LibA`. Comma is the only separator — `open A ; B` and `open A B` are parse errors asking for a comma, never two targets. An open target must provide algorithm identity: a parenthesized target such as `open (LibA)` is a parse error, because parentheses capture a value and a captured value never exposes the algorithm inside it — open the algorithm directly, or use a brace block (`open ({ ... })` works because parentheses directly around braces are redundant grouping). The first target must begin on the same line as `open`. Comma keeps its normal explicit line-continuation behavior, so a long list may span lines with a trailing or leading comma:
+String targets use single quotes and mix freely with names: `open 'https://example.org/lib.kat', LibA`. Comma is the only separator — `open A ; B` and `open A B` are parse errors asking for a comma, never two targets. An open target must provide algorithm identity: a genuinely grouped target such as `open (LibA, LibB)` or `open (LibA*)` is a parse error, because a group of several slots or of a spread captures a value and a captured value never exposes the algorithm inside it — name each algorithm directly, or use a brace block. Redundant parentheses are only grouping, so `open (LibA)` is exactly `open LibA` and `open ({ ... })` opens the block. The first target must begin on the same line as `open`. Comma keeps its normal explicit line-continuation behavior, so a long list may span lines with a trailing or leading comma:
 
 ```
 open LibA,

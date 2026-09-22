@@ -539,19 +539,22 @@ public class ZeroArgPropertyResultCacheTests
     }
 
     [Fact]
-    public void Evaluator_ZeroArgPropertyCaching_CapturedDotReceiverUsesLexicalShapedAccessKind()
+    public void Evaluator_ZeroArgPropertyCaching_ValuePositionReceiverUsesLexicalShapedAccessKind()
     {
         var source = """
             Values = range(1, 5)
-            (Values).count + (Values).count
+            V = Values
+            V.count + V.count
             """;
         var (result, snapshot) = RunCached(source);
-        // The semantic point is the access SHAPE: a captured receiver reads
+        // The semantic point is the access SHAPE: the receiver property's body reads
         // `Values` in value position through lexical resolution, never through
-        // structural owner keying. Plain Run reaches the cache through the
-        // counted lexical wiring point (plain = value projection of counted,
-        // M8); the second read is served from the entry, and the structural
-        // kinds stay quiet.
+        // structural owner keying (the builtin's collection slot demands `V` itself
+        // directly, in the bare spelling exactly as in the redundantly grouped
+        // `(V).count` — parentheses group syntax). Plain Run reaches the cache
+        // through the counted lexical wiring point (plain = value projection of
+        // counted, M8); the second read is served from the entry, and the
+        // structural kinds stay quiet.
         var countedLexical = snapshot.GetAccessKind(ZeroArgPropertyAccessKind.CountedLexical);
         var structural = snapshot.GetAccessKind(ZeroArgPropertyAccessKind.Structural);
         var countedStructural = snapshot.GetAccessKind(ZeroArgPropertyAccessKind.CountedStructural);

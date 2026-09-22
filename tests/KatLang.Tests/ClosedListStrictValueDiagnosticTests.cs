@@ -300,7 +300,7 @@ public class ClosedListStrictValueDiagnosticTests
     /// runtime.
     /// </summary>
     [Theory]
-    [InlineData("A = q + 1\nF(CALLER) = Math.Abs((A))\nF(7)")]
+    [InlineData("A = q + 1\nF(CALLER) = Math.Abs((A, A))\nF(7)")]
     [InlineData("A = q + 1\nF(CALLER) = Id(Math.Abs(A))\nId(v) = v\nF(7)")]
     public void PositionsThatNeverLift_AreNotAttributedToTheClosedList(string template)
     {
@@ -310,6 +310,23 @@ public class ClosedListStrictValueDiagnosticTests
         // ... and with no explicit list at all the reference is not lifted either, so the
         // caller's interface was never the reason.
         AssertNotDiagnosed(template.Replace("F(CALLER)", "F", StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    /// PARENTHESES GROUP SYNTAX: redundant parentheses around the strict-value argument
+    /// leave it the very same registry-strict position, so `Math.Abs((A))` is diagnosed
+    /// exactly like `Math.Abs(A)` (a genuine capture `(A, A)` is a different, non-lifting
+    /// position — see <see cref="PositionsThatNeverLift_AreNotAttributedToTheClosedList"/>).
+    /// </summary>
+    [Theory]
+    [InlineData("Math.Abs((A))")]
+    [InlineData("Math.Abs(((A)))")]
+    public void RedundantParentheses_DoNotChangeTheStrictValuePosition(string demand)
+    {
+        var diagnostic = SingleBlocked($"A = q + 1\nF(x) = {demand}\nF(7)");
+        Assert.Contains("'A'", diagnostic.Message, StringComparison.Ordinal);
+        Assert.Contains("'q'", diagnostic.Message, StringComparison.Ordinal);
+        AssertNotDiagnosed($"A = q + 1\nF(q) = {demand}\nF(7)");
     }
 
     /// <summary>

@@ -52,27 +52,31 @@ ValidatedOpenExpression = ? an Expression not starting with a string token and s
                      call (which requires asynchronous load elaboration).
                      Grace on an open path and call-like dot edges are rejected.
                      These are AST constraints, not a separate dotted-name
-                     grammar: parentheses around a dotted expression, brace
-                     algorithm, or load call normalize away, at every nesting
-                     level. Thus open (M.N), open ((M.N)), open (M.N).P,
+                     grammar: redundant parentheses around a name, a dotted
+                     expression, a brace algorithm, or a load call are erased
+                     by the parser (PARENTHESES GROUP SYNTAX — a group of
+                     exactly one non-spread slot IS that slot, see Primary),
+                     at every nesting level. Thus open (M), open ((M)),
+                     open (M.N), open ((M.N)), open (M).N, open (M.N).P,
                      open ({ public X = 1 }), open ({ public N = {} }.N),
                      and open (load('url')) reach the same forms as their
                      ungrouped counterparts. A dot receiver still has to
                      resolve to an openable algorithm at evaluation time;
                      passing the outer-form check alone does not establish it
-                     (e.g. open (M).N passes that parser check). The head
+                     (e.g. open (A, B).N passes that parser check). The head
                      name of a bare or dotted target is classified by the
                      front end through ordinary lexical ownership: when the
                      nearest binding is a parameter of the opening algorithm
                      or of an enclosing one, the head is not a static open
                      target and the program is rejected
                      (OpenTargetIsParameter) — open never searches past a
-                     parameter for a farther same-named declaration.
-                     Bare names open directly, but open (M), open ((M)),
-                     open (A, B), and open (A*) retain a captured VALUE and
+                     parameter for a farther same-named declaration, and
+                     open (Lib) is classified exactly like open Lib. Only a
+                     group whose parentheses DO something is a capture:
+                     open (A, B) and open (A*) retain a captured VALUE and
                      receive the targeted BadOpenForm diagnostic. Empty groups,
                      literals, lists, and spread/supply forms are not open
-                     forms, even if redundant grouping normalizes away:
+                     forms, even if redundant grouping is erased:
                      open (()), open (1), open ('url'), open A*, and
                      open (A*.N) are rejected. String sugar applies only when
                      the target starts with the bare string token, which is
@@ -627,14 +631,35 @@ GraceIdentifier = { "~" } Identifier { "~" } ;
                      detection with the reason, never a silent no-op; the
                      recovery tree strips the marker like every other Grace. *)
 ParenBundleExpr = "(" ExpressionAlgorithm ")" ;
-                  (* Empty parentheses "()" construct the empty sequence value,
-                     displayed as (). Ordinary repeated parentheses around the empty
-                     sequence are redundant grouping and normalize to "()". Thus
-                     "()", "(())", and "((()))" denote the same empty sequence value
-                     in surface KatLang. Parentheses still create useful sequence
-                     structure for multi-item expressions such as "(1, 2)" and
-                     preserve meaningful nested non-empty sequence values such as
-                     "(1, (2, 3))". By contrast "{}" is an empty no-output body
+                  (* PARENTHESES GROUP SYNTAX; THEY DO NOT INTRODUCE A SEMANTIC
+                     BOUNDARY. Empty parentheses "()" construct the empty
+                     sequence value, displayed as (). A group whose content is
+                     exactly ONE non-spread expression slot is redundant
+                     grouping and IS that expression, whatever its kind: the
+                     parser produces the very node the ungrouped expression
+                     produces (Parser.IsRedundantGrouping; the node takes the
+                     group's extent as its span, except that a name keeps its
+                     identifier span). Thus "(x)" is "x", "(F(1))" is "F(1)",
+                     "(Obj.X)" is "Obj.X", "(A:0)" is "A:0", "([1, 2])" is
+                     "[1, 2]", "({ ... })" is "{ ... }", "((1, 2))" is "(1, 2)",
+                     and "()", "(())", "((()))" all denote the same empty
+                     sequence value — and no later layer (binding, caching,
+                     dot-call receivers, patterned calls, optimizers) can
+                     observe the parentheses. A same-line call delimiter after
+                     a grouped callable name is a call ("(F)(1)" is "F(1)"),
+                     and "(a.b)(1)" is call syntax on the dot RESULT while
+                     "a.b(1)" is the member edge with arguments (see PostfixOp).
+                     Only a group whose parentheses DO something survives as
+                     a capture node: several written slots ("(1, 2)", a
+                     sequence value with useful structure, preserving nested
+                     non-empty sequence values such as "(1, (2, 3))") or a
+                     lone spread slot ("(A*)", the capture of an item supply
+                     into one value). Pattern parentheses (ClauseDefinition,
+                     Pattern) describe the call SHAPE a branch or parameter
+                     list requires; they never create a runtime value
+                     boundary, and a sequence-value pattern opens its
+                     argument's VALUE, never the group it was written with.
+                     By contrast "{}" is an empty no-output body
                      (BraceAlgorithmExpr), not a value. *)
 BraceAlgorithmExpr = "{" Algorithm "}" ;
 ListLiteral     = "[" [ ExpressionList ] "]" ;

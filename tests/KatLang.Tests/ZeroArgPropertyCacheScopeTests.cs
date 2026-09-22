@@ -364,7 +364,10 @@ public class ZeroArgPropertyCacheScopeTests
     [InlineData("B(), B()", "100,100,100,100", 1)]
     [InlineData("B, B(), B", "100,100,100,100,100,100", 1)]
     [InlineData("if(true, A, 0), A", "100,200", 2)]
-    [InlineData("if(true, (A), 0), A", "100,100", 1)]
+    // PARENTHESES GROUP SYNTAX: `(A)` in the builtin's value slot IS `A` there — the
+    // same direct demand, never a cached value-position read.
+    [InlineData("if(true, (A), 0), A", "100,200", 2)]
+    [InlineData("if(true, ((A)), 0), A", "100,200", 2)]
     public Task ExplicitCallMatrix_ExactHostCountsAcrossExecutionPaths(string output, string expected, int calls)
         => AssertHostCounterPaths("A = Data()\nB = A, A\n" + output, expected, calls);
 

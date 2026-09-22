@@ -139,13 +139,12 @@ public class SelectionValueBoundaryTests
             Assert.Equal(expectedColl, Display(defs + "X.Coll"));
             Assert.Equal(expectedSpreadColl, Display(defs + "X*.Coll"));
 
-            // Redundant parentheses around a selection are pure grouping (the parser
-            // unwraps them — `Parser.ShouldUnwrapParenthesizedPrimary`), so the grouped
-            // selection is the bare selection; a parenthesized NAME `(X)` keeps its
-            // capture layer (structural identity suppression), and since dot-call
-            // passes a value that layer changes nothing about the argument either.
+            // Redundant parentheses are pure grouping (the parser erases them —
+            // `Parser.IsRedundantGrouping`: parentheses group syntax), so the grouped
+            // selection is the bare selection and the grouped NAME `(X)` is `X`.
             Assert.Equal(expectedColl, Display(defs + "(" + selection + ").Coll"));
             Assert.Equal(expectedColl, Display(defs + "(X).Coll"));
+            Assert.Equal(expectedColl, Display(defs + "((X)).Coll"));
 
             // Passing the selected value through another ordinary value boundary
             // (a call) changes nothing.

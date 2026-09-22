@@ -240,7 +240,7 @@ public static partial class Evaluator
         EvalResult<EvaluatedSlotBindings> BindPatternedSlots()
         {
             var inputs = evaluatedSlots
-                .Select(static slot => new ParameterPatternInput(slot, Algorithm: null, ValueError: null, ExplicitSequenceValueItems: null))
+                .Select(static slot => new ParameterPatternInput(slot, Algorithm: null, ValueError: null))
                 .ToList();
             var bindingsR = BindParameterPatternList(
                 bindingContract.ParameterPatterns,

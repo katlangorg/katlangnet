@@ -137,7 +137,7 @@ public class DiagnosticCodeTests
         { "open-targets-semicolon", "open Math ; Physics\n1", DiagnosticCode.InvalidOpenTargetList },
         { "open-target-on-next-line", "open\nMath", DiagnosticCode.InvalidOpenTargetList },
         { "open-form-number", "open 5\n1", DiagnosticCode.BadOpenForm },
-        { "open-form-capture", "M = {\n public C = 5\n}\nR = {\n open (M)\n C\n}\nR", DiagnosticCode.BadOpenForm },
+        { "open-form-capture", "M = {\n public C = 5\n}\nR = {\n open (M, M)\n C\n}\nR", DiagnosticCode.BadOpenForm },
         { "open-form-grace", "M = {public C = 1}\nR = {\n open ~M\n C\n}\nR", DiagnosticCode.BadOpenForm },
         { "open-form-call-dot", "M = {public C = {public D = 1}}\nR = {\n open M.C(1)\n 2\n}\nR", DiagnosticCode.BadOpenForm },
         { "duplicate-branch-pattern", "F(0) = 1\nF(0) = 2\nF(1)", DiagnosticCode.DuplicateBranchPattern },

@@ -439,18 +439,21 @@ public class DottedReceiverEvaluationTests
 
     [Theory]
     [InlineData("V = range(1, 10)\nV.count", "V = range(1, 10)\ncount(V)", 0, 10, "ok:10")]
-    [InlineData("V = range(1, 10)\n(V).count", "V = range(1, 10)\ncount((V))", 1, 10, "ok:10")]
+    [InlineData("V = range(1, 10)\n(V).count", "V = range(1, 10)\ncount((V))", 0, 10, "ok:10")]
+    [InlineData("V = range(1, 10)\n((V)).count", "V = range(1, 10)\ncount(V)", 0, 10, "ok:10")]
+    [InlineData("V = range(1, 10)\nW = V\nW.count", "V = range(1, 10)\nW = V\ncount(W)", 1, 10, "ok:10")]
     [InlineData("V = range(1, 10)\nV().count", "V = range(1, 10)\ncount(V())", 1, 10, "ok:10")]
     [InlineData("V = range(1, 10)\nV.take(3)", "V = range(1, 10)\ntake(V, 3)", 0, 13, "ok:L[1, 2, 3]")]
     [InlineData("D(x) = x * 2\nV = range(1, 3)\nV.map(D)", "D(x) = x * 2\nV = range(1, 3)\nmap(V, D)", 3, 6, "ok:L[2, 4, 6]")]
     public void GenericDotPath_ChargesExactlyTheFrozenWork(string dotted, string plain, long steps, long items, string outcome)
     {
-        // These absolute charges are the WRITTEN call's charges, frozen: a bare zero-argument
+        // These absolute charges are the WRITTEN call's charges, frozen: a named zero-argument
         // property receiver is demanded directly by the builtin's collection slot and charges
-        // no property-access step (exactly like the written argument), a captured or
-        // explicit-call receiver charges its one read/invocation, a suffix argument and a
-        // higher-order builtin evaluate their receiver exactly once — and the dotted spelling
-        // charges precisely what its rewrite charges.
+        // no property-access step (exactly like the written argument) — grouped or not,
+        // because parentheses group syntax — a property whose body READS the collection
+        // property (`W = V`) or an explicit-call receiver charges its one read/invocation, a
+        // suffix argument and a higher-order builtin evaluate their receiver exactly once —
+        // and the dotted spelling charges precisely what its rewrite charges.
         var run = Observe(dotted);
         Assert.Equal(outcome, run.Outcome);
         Assert.Equal(steps, run.Steps);
@@ -581,24 +584,27 @@ public class DottedReceiverEvaluationTests
     [Fact]
     public void LargeReceiver_SupportsRepeatedDotCallsWithoutReification()
     {
-        // 2000 + 2001000 + 2000 + 2000, without any expression-tree reconstruction. A bare
+        // 2000 + 2001000 + 2000 + 2000, without any expression-tree reconstruction. A
         // named receiver is demanded by each builtin's collection slot exactly like the
         // written argument, so the four dotted calls materialize the range four times
-        // (8000 slots) — precisely the written spelling's charge — while the captured
-        // receiver reads the property in value position and is served from the
+        // (8000 slots) — precisely the written spelling's charge, and precisely the
+        // redundantly grouped spelling's charge (parentheses group syntax) — while a
+        // receiver property whose body reads `R` in value position is served from the
         // zero-argument property cache after its first read (2000 slots).
         var dotted = Observe("R = range(1, 2000)\nR.count + R.sum + R.count + R.max");
         var written = Observe("R = range(1, 2000)\ncount(R) + sum(R) + count(R) + max(R)");
-        var captured = Observe("R = range(1, 2000)\n(R).count + (R).sum + (R).count + (R).max");
+        var grouped = Observe("R = range(1, 2000)\n(R).count + (R).sum + (R).count + (R).max");
+        var viaProperty = Observe("R = range(1, 2000)\nV = R\nV.count + V.sum + V.count + V.max");
 
         Assert.Equal("ok:2007000", dotted.Outcome);
         Assert.Equal(8000, dotted.Items);
         Assert.Equal(0, dotted.Reifications);
         Assert.Equal(dotted, written);
+        Assert.Equal(dotted, grouped);
 
-        Assert.Equal("ok:2007000", captured.Outcome);
-        Assert.Equal(2000, captured.Items);
-        Assert.Equal(0, captured.Reifications);
+        Assert.Equal("ok:2007000", viaProperty.Outcome);
+        Assert.Equal(2000, viaProperty.Items);
+        Assert.Equal(0, viaProperty.Reifications);
     }
 
     [Fact]
@@ -607,15 +613,17 @@ public class DottedReceiverEvaluationTests
         var nested = new string('[', 40) + "7" + new string(']', 40);
         var dotted = Observe($"N = {nested}\nN.count + N.count");
         var written = Observe($"N = {nested}\ncount(N) + count(N)");
-        var captured = Observe($"N = {nested}\n(N).count + (N).count");
+        var grouped = Observe($"N = {nested}\n(N).count + (N).count");
+        var viaProperty = Observe($"N = {nested}\nV = N\nV.count + V.count");
 
         Assert.Equal("ok:2", dotted.Outcome);
         Assert.Equal(80, dotted.Items);
         Assert.Equal(0, dotted.Reifications);
         Assert.Equal(dotted, written);
+        Assert.Equal(dotted, grouped);
 
-        Assert.Equal("ok:2", captured.Outcome);
-        Assert.Equal(40, captured.Items);
-        Assert.Equal(0, captured.Reifications);
+        Assert.Equal("ok:2", viaProperty.Outcome);
+        Assert.Equal(40, viaProperty.Items);
+        Assert.Equal(0, viaProperty.Reifications);
     }
 }

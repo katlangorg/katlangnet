@@ -876,9 +876,17 @@ mutual
     --   the shared output-row loop and canonically captures them as one
     --   value. CAPTURE IS NOT ALGORITHM IDENTITY: the algorithm channel sees
     --   only a zero-parameter output thunk over the bundle, never the
-    --   algorithm identity of anything inside it. Redundant parentheses
-    --   normalize away at parse time (C# parser); only meaningful boundaries
-    --   survive as this node. C#: `Expr.Capture`.
+    --   algorithm identity of anything inside it. PARENTHESES GROUP SYNTAX;
+    --   THEY DO NOT INTRODUCE A SEMANTIC BOUNDARY (September 2026): the C#
+    --   parser erases every redundant group — a group of exactly ONE
+    --   non-spread slot is that slot's expression whatever its kind, so
+    --   `(x)`, `(x.M)`, `(F(1))`, `((1, 2))`, and `(())` never reach this
+    --   node — and only a group whose parentheses DO something survives as
+    --   it: several written slots (`(1, 2)`) or a lone spread slot (`(A*)`,
+    --   the capture of an item supply into one value). A host AST may still
+    --   build `capture [e]` directly; its semantics are the ordinary capture
+    --   semantics (one row, captured to one value), never a written-slot
+    --   boundary that a binder or receiver could observe. C#: `Expr.Capture`.
     | capture : List Expr -> Expr
     -- Call/dot-call arguments are an ordered OutputBundle of the ORIGINAL
     -- written argument expressions (spelled `List Expr` inside this mutual
@@ -1297,11 +1305,6 @@ abbrev CountedResult := Prod Result Nat
 structure PreparedAlgorithmOutput where
   counted : CountedResult
   outputSlots : List Result
-  deriving Repr
-
-structure PreparedCallArgumentEvaluation where
-  counted : CountedResult
-  explicitItems? : Option (List Result) := none
   deriving Repr
 
 --------------------------------------------------------------------------------
@@ -2492,8 +2495,7 @@ inductive SupplyOrigin where
 
 /-- One call argument slot prepared for parameter binding: its value view
     (`value?`), its algorithm view where resolvable, a retained value error,
-    its supply origin, and — for patterned callees — the written item view of
-    a group. Every slot is exactly ONE argument whatever spelling supplied it:
+    and its supply origin. Every slot is exactly ONE argument whatever spelling supplied it:
     a written argument, an explicit spread item, or an extension dot-call
     receiver (DOT-CALL PASSES A VALUE, September 2026: `R.F(args)` assembles
     exactly the slots of `F(R, args)`; no slot carries a raw supply of its
@@ -2502,7 +2504,6 @@ structure VariadicItem where
   value? : Option Result := none
   algorithm? : Option Algorithm := none
   error? : Option Error := none
-  explicitItems? : Option (List Result) := none
   origin : SupplyOrigin := .finalItem
   deriving Repr
 
@@ -2524,7 +2525,6 @@ structure ParameterPatternInput where
   value? : Option Result := none
   algorithm? : Option Algorithm := none
   error? : Option Error := none
-  explicitSequenceValueItems? : Option (List Result) := none
   /-- Supply origin (`SupplyOrigin`); `finalItem` unless call assembly
       records a non-spread written slot. -/
   origin : SupplyOrigin := .finalItem
@@ -2562,7 +2562,6 @@ def variadicItemToPatternInput (item : VariadicItem) : ParameterPatternInput :=
   { value? := item.value?,
     algorithm? := item.algorithm?,
     error? := item.error?,
-    explicitSequenceValueItems? := item.explicitItems?,
     origin := item.origin }
 
 /-- Compatibility fallback for manually constructed core conditionals.
@@ -4500,8 +4499,10 @@ def resolveAlg (e : Expr) (ctx : EvalCtx) : EvalM Algorithm :=
   | .algorithmExpr a => pure (wireToCaller ctx a)
   -- Capture is not algorithm identity: the algorithm channel sees only a
   -- zero-parameter value thunk over the bundle, exactly as the pre-split
-  -- transparent wrapper behaved. `(F)(1)` therefore stays an arity error and
-  -- `Apply((Increment))` never receives Increment's callable identity.
+  -- transparent wrapper behaved. `Apply((Inc, Dec))` therefore never receives
+  -- either callable identity (`f(9)` on the thunk is an arity error), while
+  -- the redundant group `Apply((Increment))` IS `Apply(Increment)` — the
+  -- parser erases it before this node exists (parentheses group syntax).
   -- C#: `CaptureValueThunk`.
   | .capture rows => pure (wireToCaller ctx (Algorithm.mk none [] [] [] rows))
   | .resolve n =>
@@ -4557,9 +4558,10 @@ def resolveAlg (e : Expr) (ctx : EvalCtx) : EvalM Algorithm :=
     `string` intrinsic — and resolves to `resolveAlg`'s memberless wrapper, so
     the chain continues by value (`3.A.B` stays `B(A(3))`). An argument-bearing
     edge is a call, hence a value, and never navigates; a capture receiver
-    keeps suppressing structural identity (`(Obj).V` falls back — the C#
-    parser keeps a capture layer only around a bare name, so the source
-    `(Lib.Sub).Q` is simply `Lib.Sub.Q`).
+    keeps suppressing structural identity (`(A, B).V` and `(A*).V` fall back —
+    a redundant group never reaches this node, so the sources `(Obj).V` and
+    `(Lib.Sub).Q` are simply `Obj.V` and `Lib.Sub.Q`: parentheses group
+    syntax and never change which receiver is navigated).
 
     The resolution is identity navigation only: no intermediate edge is
     evaluated, so a parameterized or output-less container navigates exactly
@@ -4712,20 +4714,23 @@ mutual
               pure { argEnv := argEnv, countedParamEnv := [], algEnv := algEnv }
         | .collecting => .error Error.badArity
     | .sequenceValue items => do
+        -- PATTERN PARENTHESES ARE CALL-SHAPE SYNTAX, NOT A RUNTIME BOUNDARY: a
+        -- sequence-value pattern consumes ONE argument slot and opens that
+        -- slot's VALUE (September 2026). A received sequence value or exact
+        -- list value opens to its immediate items (`Result.structureItems?`)
+        -- — the deconstruction receiver opens ONE lone structure boundary of
+        -- either kind, so `x, y, z = [1, 2, 3]` binds like
+        -- `x, y, z = [1, 2, 3]*` — and any other value is a one-item supply
+        -- for the prefix/collecting/suffix matcher. Nothing about how the slot
+        -- was WRITTEN survives here: `F((1, 2))`, `F(S)` with `S = 1, 2`,
+        -- `F(((1, 2)))`, `F({S})`, and `F((S*))` all bind the value `(1, 2)`
+        -- (the former written-slot view, which let a group's own written
+        -- rows override the value, is gone: parentheses group syntax and
+        -- never suspend normalization).
         let sequenceValueItems? :=
-          match input.explicitSequenceValueItems? with
-          | some sequenceValueItems => some sequenceValueItems
-          | none =>
-            match input.value? with
-            -- A received sequence value or exact list value opens to its
-            -- immediate items (`Result.structureItems?`): the deconstruction
-            -- receiver opens ONE lone structure boundary of either kind, so
-            -- `x, y, z = [1, 2, 3]` binds like `x, y, z = [1, 2, 3]*`.
-            -- A non-grouped scalar is a one-item supply for the
-            -- prefix/collecting/suffix matcher (the same normalization the call-parameter
-            -- deconstruction path applies).
-            | some value => some ((Result.structureItems? value).getD [value])
-            | none => none
+          match input.value? with
+          | some value => some ((Result.structureItems? value).getD [value])
+          | none => none
         match sequenceValueItems? with
         | none => .error (input.error?.getD Error.badArity)
         | some sequenceValueItems =>
@@ -5714,38 +5719,6 @@ mutual
     let out <- applyBuiltinCountedResolved b args ctx env
     pure out.fst
 
-  /-- Evaluate one non-expanded call argument at its VALUE boundary (every
-      non-spread slot — written argument or extension dot-call receiver alike —
-      reifies to exactly one value). Patterned calls additionally need the written
-      output-slot view of a capture or zero-parameter `algorithmExpr`; obtain both products from
-      the corresponding prepared-output evaluator in one pass. A multi-parameter algorithm
-      remains on the ordinary dual algorithm/value fallback and is not forced to manufacture explicit items.
-      Argument slots evaluate directly in the CALLER's context: the bundle owns
-      no scope, so there is no argument-level lexical frame (the pre-Track-B
-      transparent args wrapper was an empty caller-wired level, so lookup
-      behavior is unchanged by its removal). -/
-  partial def evalVariadicCallItemPrepared (e : Expr) (ctx : EvalCtx)
-      (env : ValEnv) (includeExplicitItems : Bool) : EvalM PreparedCallArgumentEvaluation := do
-    if includeExplicitItems then
-      match e with
-      | .capture rows => do
-          let prepared <- evalCapturePreparedCore rows ctx env
-          pure { counted := reCountValueBoundary prepared.counted, explicitItems? := some prepared.outputSlots }
-      | .algorithmExpr a =>
-          let wired := wireToCaller ctx a
-          if (Algorithm.params wired).length = 0 then do
-            let prepared <- evalAlgOutputPreparedCore wired ctx env
-            pure { counted := reCountValueBoundary prepared.counted, explicitItems? := some prepared.outputSlots }
-          else do
-            let counted <- evalCounted e ctx env
-            pure { counted := counted }
-      | _ => do
-          let counted <- evalCounted e ctx env
-          pure { counted := counted }
-    else do
-      let counted <- evalCounted e ctx env
-      pure { counted := counted }
-
   /-- Shared call argument-slot assembly used by EVERY callable shape (flat
       fixed, flat/mixed variadic, patterned, and multi-clause conditional):
       each written argument slot is evaluated exactly once, left to right; every non-spread slot is
@@ -5761,16 +5734,20 @@ mutual
       argument, never a supply of its own; only a spread receiver `R*` (the
       fluent form lowers to `F(R*, args)`) opens one boundary, exactly as a
       written spread slot does.
-      When `includeExplicitItems` is set (patterned callees), a non-spread
-      capture or zero-parameter `algorithmExpr` also records its written item
-      slots for sequence-value pattern binding. C#: `BuildCallArgumentInputs`. -/
+      Every non-spread slot is evaluated at its VALUE boundary through the ONE
+      `evalCounted` (a capture, a block, a name, a call, and a literal alike):
+      argument slots evaluate directly in the CALLER's context — the bundle
+      owns no scope, so there is no argument-level lexical frame — and no
+      callee shape receives a second, written-slot view of a slot (PARENTHESES
+      GROUP SYNTAX, September 2026: a patterned callee opens the slot's value
+      in `bindParameterPattern`, never the rows a group was written with).
+      C#: `BuildCallArgumentInputs`. -/
   partial def collectVariadicCallItems (args : OutputBundle)
       (ctx : EvalCtx) (env : ValEnv)
-      (includeExplicitItems : Bool := false)
       : EvalM (List VariadicItem) := do
     let maybeAlgs <- tryResolveArgAlgs args ctx
     let rec appendCounted (counted : CountedResult) (maybeAlg : Option Algorithm) (expand : Bool)
-        (explicitItems : Option (List Result)) (acc : List VariadicItem) : List VariadicItem :=
+        (acc : List VariadicItem) : List VariadicItem :=
       if expand then
         -- Explicit spread produces FINAL supply items (`SupplyOrigin.finalItem`).
         let expanded := (countedTopLevelValues counted).map (fun value =>
@@ -5780,7 +5757,6 @@ mutual
         -- A non-spread slot is ONE written slot (`SupplyOrigin.writtenSlot`).
         { value? := some counted.fst,
           algorithm? := maybeAlg,
-          explicitItems? := explicitItems,
           origin := .writtenSlot : VariadicItem } :: acc
     let shouldExpand (e : Expr) : Bool :=
       match e with
@@ -5790,22 +5766,18 @@ mutual
       | [], _, acc => pure acc.reverse
       | e :: es, ma :: mas, acc => do
           let expand := shouldExpand e
-          match <- evalAttempt (evalVariadicCallItemPrepared e ctx env
-              (includeExplicitItems && !expand)) with
-          | .ok prepared =>
-            loop es mas
-              (appendCounted prepared.counted ma expand prepared.explicitItems? acc)
+          match <- evalAttempt (evalCounted e ctx env) with
+          | .ok counted =>
+            loop es mas (appendCounted counted ma expand acc)
           | .error err =>
             match ma with
             | some alg => loop es mas ({ algorithm? := some alg, error? := some err, origin := .writtenSlot : VariadicItem } :: acc)
             | none => .error err
       | e :: es, [], acc => do
           let expand := shouldExpand e
-          match <- evalAttempt (evalVariadicCallItemPrepared e ctx env
-              (includeExplicitItems && !expand)) with
-          | .ok prepared =>
-            loop es []
-              (appendCounted prepared.counted none expand prepared.explicitItems? acc)
+          match <- evalAttempt (evalCounted e ctx env) with
+          | .ok counted =>
+            loop es [] (appendCounted counted none expand acc)
           | .error err => .error err
     loop args maybeAlgs []
 
@@ -5857,13 +5829,12 @@ mutual
   partial def evalExplicitSequenceValueExprSlots (expr : Expr) (ctx : EvalCtx) (env : ValEnv)
       : EvalM (List Result) := do
     match expr with
-    -- A nested written grouping level materializes exactly one item, combined
+    -- A nested capture or zero-parameter block materializes exactly one item, combined
     -- with the same shallow singleton-erasing rule as ordinary capture
-    -- evaluation (`combineOutputSlots`). A singleton group such as `(A)` IS
-    -- its single already-evaluated item and an all-spread-empty group is `()`
-    -- -- never a literal-unwritable orphan such as `(5)`. Both node kinds keep
-    -- this written-slot view: a capture body directly, and a zero-parameter
-    -- scoped block through its algorithm.
+    -- evaluation (`combineOutputSlots`). A host-built single-row capture IS
+    -- its already-evaluated item (source `(A)` is erased to `A` by the parser),
+    -- and an all-spread-empty capture is `()`, never an orphan such as `(5)`.
+    -- This is list-element reification, not an extra pattern-argument view.
     | .capture rows => do
         let items <- evalExplicitSequenceValueRowSlots rows ctx env
         pure [combineOutputSlots items]
@@ -5891,7 +5862,6 @@ mutual
       (ctx : EvalCtx) (env : ValEnv)
       : EvalM (ValEnv × CountedParamEnv × AlgEnv) := do
     let items <- collectVariadicCallItems args ctx env
-      (includeExplicitItems := true)
     let inputs := items.map variadicItemToPatternInput
     let bindings <- bindParameterPatternList (Algorithm.parameterPatterns callee) inputs true
     pure (bindings.argEnv, bindings.countedParamEnv, bindings.algEnv)
@@ -6311,7 +6281,8 @@ mutual
       explicit spread slot opens its operand's immediate items into the list
       being constructed (an empty spread contributes no elements), a non-spread
       slot is one element even when it evaluates to the empty sequence value
-      `()`, and a nested capture or zero-parameter `algorithmExpr` is one written grouping level.
+      `()`, and a nested multi-slot capture or zero-parameter `algorithmExpr` is one element
+      (its own rows combined to one value).
       Unlike sequence construction the collected elements are stored EXACTLY:
       no singleton erasure and no empty-nesting collapse, so `[7]`, `[[7]]`,
       `[]`, and `[()]` are all distinct list values. A list literal always
