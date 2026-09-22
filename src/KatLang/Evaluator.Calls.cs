@@ -49,10 +49,7 @@ public static partial class Evaluator
     /// algorithms for algorithm-consuming builtin arguments (callbacks).
     /// </summary>
     private static bool IsZeroDeclarationBlockValueSlot(Expr expr) => expr is
-        Expr.AlgorithmExpr(var algorithm)
-            && algorithm.ParameterCount == 0
-            && algorithm.Opens.Count == 0
-            && algorithm.Properties.Count == 0;
+        Expr.AlgorithmExpr(Algorithm.User { ParameterPatterns.Count: 0, Opens.Count: 0, Properties.Count: 0 });
 
     private static Algorithm WrapArgExprAsValue(Expr expr, EvalCtx ctx)
         => WireToCaller(

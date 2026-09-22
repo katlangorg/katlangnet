@@ -4581,10 +4581,14 @@ public static class LanguageSpecCorpus
                 // An explicit call is a value; an explicit zero-argument call is the ordinary call arity error.
                 new SpecProbe("Inc(x) = x + 1\nif(true, Inc(4), 0)", "ok raw=5 n=1"),
                 new SpecProbe("Inc(x) = x + 1\nif(true, Inc(), 0)", "err arity"),
-                // Inferred and collecting parameters count exactly like explicit ones.
+                // An inferred parameter counts exactly like an explicit one.
                 new SpecProbe("A = q + 1\nif(true, A, 0)", "err arity"),
-                new SpecProbe("Collect(*xs) = xs\nif(true, Collect, 0)", "err arity"),
+                // A COLLECTING parameter requires no supplied argument, so the bare
+                // callable and its explicit zero-argument call agree (September 2026).
+                new SpecProbe("Collect(*xs) = xs\nif(true, Collect, 0)", "ok raw=L[] n=1"),
                 new SpecProbe("Collect(*xs) = xs\nif(true, Collect(), 0)", "ok raw=L[] n=1"),
+                // A required fixed parameter beside a collector still needs one value.
+                new SpecProbe("Head(x, *rest) = x\nif(true, Head, 0)", "err arity"),
                 // A clause family cannot be accessed as a value at all.
                 new SpecProbe("F(0) = 10\nF(x) = x + 1\nif(true, F, 0)", "err branch"),
                 // A parameter bound only on the callable channel is the same demand.
@@ -4644,6 +4648,50 @@ public static class LanguageSpecCorpus
                 new SpecProbe("Inc(x) = x + 1\nF(g) = g.string\nF(Inc)", "err arity"),
             ],
             Explanation = "`.string` demands its receiver as a zero-argument value, so a receiver that still needs arguments is the ordinary arity error at the receiver and its body is never entered; `Inc(4).string` converts the call's result.",
+        },
+        new()
+        {
+            Id = "zero-argument-demand-follows-actual-call-arity",
+            Category = "variadic-calls",
+            Source = "Only(*xs) = xs\nOnly",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "[]",
+            ExpectedRaw = "L[]",
+            ExpectedEmittedCount = 1,
+            Probes =
+            [
+                // The explicit zero-argument call agrees with the bare demand.
+                new SpecProbe("Only(*xs) = xs\nOnly()", "ok raw=L[] n=1"),
+                // Parentheses group syntax: eligibility cannot depend on grouping.
+                new SpecProbe("Only(*xs) = xs\n(Only)", "ok raw=L[] n=1"),
+                new SpecProbe("Only(*xs) = xs\n((Only))", "ok raw=L[] n=1"),
+                // Every value-demand position agrees, and the dotted and plain builtin
+                // spellings agree with each other.
+                new SpecProbe("Only(*xs) = xs\nif(true, Only, 0)", "ok raw=L[] n=1"),
+                new SpecProbe("Only(*xs) = xs\ncount(Only)", "ok raw=0 n=1"),
+                new SpecProbe("Only(*xs) = xs\nOnly.count", "ok raw=0 n=1"),
+                new SpecProbe("Only(*xs) = xs\n(Only).count", "ok raw=0 n=1"),
+                new SpecProbe("Only(*xs) = xs\nsum(Only)", "ok raw=0 n=1"),
+                new SpecProbe("Only(*xs) = xs\nV = Only()\nV", "ok raw=L[] n=1"),
+                new SpecProbe("Obj = {\n  public M(*xs) = xs\n}\nObj.M", "ok raw=L[] n=1"),
+                // A required fixed parameter beside the collector still needs one value,
+                // in both spellings.
+                new SpecProbe("Head(x, *rest) = x\nHead", "err arity"),
+                new SpecProbe("Head(x, *rest) = x\nHead()", "err arity"),
+                new SpecProbe("Tail(*rest, z) = z\nTail", "err arity"),
+                new SpecProbe("Tail(*rest, z) = z\nTail()", "err arity"),
+                // A nested pattern consumes its one supplied slot: its scalar one-item
+                // fallback binds a value, it does not accept none.
+                new SpecProbe("P((x, *rest)) = x\nP", "err arity"),
+                new SpecProbe("P((x, *rest)) = x\nP()", "err arity"),
+                new SpecProbe("P((*xs)) = xs\nP", "err arity"),
+                new SpecProbe("P((*xs)) = xs\nP(7)", "ok raw=L[7] n=1"),
+                // The ALGORITHM channel is untouched: a callback still receives the
+                // callable, so each element is collected.
+                new SpecProbe("Only(*xs) = xs\nmap((1, 2), Only)", "ok raw=L[L[1], L[2]] n=1"),
+            ],
+            IncludeInGeneratorPrompt = true,
+            Explanation = "A callable may be read as a zero-argument value exactly when an ordinary call with no arguments can bind it. A collecting parameter requires no supplied argument, so `Only` and `Only()` both collect nothing and give `[]`; `Head(x, *rest)` still requires one supplied value, so both of its zero-argument spellings are the same arity error. Callback positions still receive the callable itself.",
         },
         new()
         {

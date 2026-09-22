@@ -593,9 +593,9 @@ public static partial class Evaluator
     private static async ValueTask<EvalResult<Result>> EvalRootProgramValueAsync(Algorithm alg, SourceSpan? span, EvalCtx ctx)
     {
         var wired = WireToCaller(ctx, alg);
-        if (wired.ParameterCount == 0)
+        if (AcceptsZeroSuppliedArguments(wired))
         {
-            var countedR = await EvalAlgOutputCountedCoreAsync(wired, ctx, []).ConfigureAwait(false);
+            var countedR = await EvalZeroArgumentDemandOutputCountedAsync(wired, ctx, []).ConfigureAwait(false);
             var result = countedR.IsError
                 ? countedR.Error
                 : EvalResult<Result>.Ok(countedR.Value.Value);
@@ -620,9 +620,9 @@ public static partial class Evaluator
     private static async ValueTask<EvalResult<CountedResult>> EvalRootProgramCountedAsync(Algorithm alg, SourceSpan? span, EvalCtx ctx)
     {
         var wired = WireToCaller(ctx, alg);
-        if (wired.ParameterCount == 0)
+        if (AcceptsZeroSuppliedArguments(wired))
         {
-            var result = await EvalAlgOutputCountedCoreAsync(wired, ctx, []).ConfigureAwait(false);
+            var result = await EvalZeroArgumentDemandOutputCountedAsync(wired, ctx, []).ConfigureAwait(false);
             if (result.IsError
                 && result.Error is EvalError.MissingOutput
                 && wired is Algorithm.User { Output.Count: 0 })
@@ -648,13 +648,13 @@ public static partial class Evaluator
         string topLevelPropertyName)
     {
         var wired = WireToCaller(ctx, alg);
-        if (wired.ParameterCount != 0)
+        if (!AcceptsZeroSuppliedArguments(wired))
         {
             var blockSpan = span ?? FirstSpan(wired.Output);
             return MissingImplicitArguments<CountedRootProgramResult>(wired, blockSpan);
         }
 
-        var outputR = await EvalAlgOutputCountedCoreAsync(wired, ctx, []).ConfigureAwait(false);
+        var outputR = await EvalZeroArgumentDemandOutputCountedAsync(wired, ctx, []).ConfigureAwait(false);
         if (outputR.IsError)
         {
             if (outputR.Error is EvalError.MissingOutput
@@ -688,14 +688,12 @@ public static partial class Evaluator
 
         var resolvedAlgorithm = ChildOf(alg, binding.Value);
         var span = binding.DeclarationSpans.FirstOrDefault();
-        if (resolvedAlgorithm.ParameterCount != 0)
-        {
-            return WithSpan<CountedResult?>(
-                span,
-                new EvalError.WithContext(
-                    CtxProperty(name),
-                    ZeroArgumentDemandArityMismatch(resolvedAlgorithm)));
-        }
+        // A named top-level property read is an ordinary zero-argument value demand, so
+        // the ONE law decides and shapes its report: a callable that cannot accept zero
+        // supplied arguments is the property-context mismatch naming its true minimum
+        // supply, and a clause family keeps its ordinary dispatch failure.
+        if (ZeroArgumentValueDemandRejection(ZeroArgumentDemandShape.Property, name, span, resolvedAlgorithm) is { } rejection)
+            return rejection;
 
         var propertyR = WithPropertyContextOnMissingOutput(
             name,
@@ -951,7 +949,7 @@ public static partial class Evaluator
         var blockSpan = PreferExpressionSpan(expr.Span, wired.Output);
         if (ZeroArgumentValueDemandRejection(ZeroArgumentDemandShape.Block, name: null, blockSpan, wired) is { } rejection)
             return rejection;
-        return WithSpan(blockSpan, await EvalAlgOutputValueAsync(wired, ctx, valEnv).ConfigureAwait(false));
+        return WithSpan(blockSpan, await EvalZeroArgumentDemandOutputAsync(wired, ctx, valEnv).ConfigureAwait(false));
     }
 
     /// <summary>
@@ -1545,7 +1543,8 @@ public static partial class Evaluator
         if (expr is Expr.AlgorithmExpr(var algorithm))
         {
             var wired = WireToCaller(ctx, algorithm);
-            if (wired.ParameterCount == 0)
+            // MIRROR: only the plain-output arm may bypass zero-supply binding/dispatch.
+            if (!RequiresZeroArgumentSupplyBinding(wired))
             {
                 var nestedItemsR = await EvalExplicitSequenceValueItemsAsync(wired, ctx, valEnv).ConfigureAwait(false);
                 if (nestedItemsR.IsError) return nestedItemsR.Error;
@@ -1563,6 +1562,64 @@ public static partial class Evaluator
             : EvalResult<IReadOnlyList<Result>>.Ok([countedR.Value.Value]);
     }
 
+    // ── Zero-argument demand twins ─────────────────────────────────────────
+
+    /// <summary>
+    /// MIRROR OF <see cref="EvalZeroArgumentDemandOutputCounted"/> — keep in lock-step,
+    /// including the split: the common no-pattern arm delegates straight to the core the
+    /// demand sites awaited before (no extra state machine), and only a collecting-only
+    /// or clause signature enters the binding arm.
+    /// </summary>
+    private static ValueTask<EvalResult<CountedResult>> EvalZeroArgumentDemandOutputCountedAsync(
+        Algorithm algorithm,
+        EvalCtx ctx,
+        ValEnv valEnv)
+        => RequiresZeroArgumentSupplyBinding(algorithm)
+            ? EvalBoundZeroArgumentDemandOutputCountedAsync(algorithm, ctx, valEnv)
+            : EvalAlgOutputCountedCoreAsync(algorithm, ctx, valEnv);
+
+    /// <summary>MIRROR OF <see cref="EvalZeroArgumentDemandOutput"/> — keep in lock-step.</summary>
+    private static ValueTask<EvalResult<Result>> EvalZeroArgumentDemandOutputAsync(
+        Algorithm algorithm,
+        EvalCtx ctx,
+        ValEnv valEnv)
+        => RequiresZeroArgumentSupplyBinding(algorithm)
+            ? ProjectBoundZeroArgumentDemandValueAsync(algorithm, ctx, valEnv)
+            : EvalAlgOutputValueAsync(algorithm, ctx, valEnv);
+
+    /// <summary>MIRROR OF <see cref="EvalBoundZeroArgumentDemandOutputCounted"/> — keep in lock-step.</summary>
+    private static async ValueTask<EvalResult<CountedResult>> EvalBoundZeroArgumentDemandOutputCountedAsync(
+        Algorithm algorithm,
+        EvalCtx ctx,
+        ValEnv valEnv)
+    {
+        if (algorithm is Algorithm.Conditional)
+        {
+            return await EvalConditionalCallCountedAsync(
+                algorithm,
+                OutputBundle.Empty,
+                ctx,
+                valEnv,
+                CallDiagnosticName.FromKnown("conditional")).ConfigureAwait(false);
+        }
+
+        // Binding the EMPTY supply cannot suspend — there are no arguments to evaluate —
+        // so the twins share the one synchronous binder.
+        var bindingsR = BindZeroArgumentSupply(algorithm, ctx);
+        if (bindingsR.IsError) return bindingsR.Error;
+
+        var environments = WithUserCallBindingEnvironments(ctx, bindingsR.Value, valEnv, algorithm.Params);
+        return await EvalAlgOutputCountedCoreAsync(algorithm, environments.Context, environments.ValueEnvironment)
+            .ConfigureAwait(false);
+    }
+
+    private static async ValueTask<EvalResult<Result>> ProjectBoundZeroArgumentDemandValueAsync(
+        Algorithm algorithm,
+        EvalCtx ctx,
+        ValEnv valEnv)
+        => ProjectCountedValue(
+            await EvalBoundZeroArgumentDemandOutputCountedAsync(algorithm, ctx, valEnv).ConfigureAwait(false));
+
     // ── Zero-argument property twins (the async host seam) ──────────────────
 
     /// <summary>MIRROR OF <see cref="EvaluateZeroArgPropertyResult"/> — keep in lock-step.</summary>
@@ -1571,7 +1628,7 @@ public static partial class Evaluator
         EvalCtx ctx,
         ValEnv valEnv)
     {
-        var countedR = await EvalAlgOutputCountedCoreAsync(resolvedAlgorithm, ctx, valEnv).ConfigureAwait(false);
+        var countedR = await EvalZeroArgumentDemandOutputCountedAsync(resolvedAlgorithm, ctx, valEnv).ConfigureAwait(false);
         if (countedR.IsError)
             return countedR.Error;
 
@@ -1723,7 +1780,7 @@ public static partial class Evaluator
 
         using (level)
         {
-            return await EvalAlgOutputValueAsync(algorithm, ctx, valEnv).ConfigureAwait(false);
+            return await EvalZeroArgumentDemandOutputAsync(algorithm, ctx, valEnv).ConfigureAwait(false);
         }
     }
 
@@ -2400,7 +2457,7 @@ public static partial class Evaluator
 
         using (level)
         {
-            return await EvalAlgOutputCountedCoreAsync(algorithm, ctx, valEnv).ConfigureAwait(false);
+            return await EvalZeroArgumentDemandOutputCountedAsync(algorithm, ctx, valEnv).ConfigureAwait(false);
         }
     }
 
@@ -2441,7 +2498,8 @@ public static partial class Evaluator
     private static async ValueTask<EvalResult<IReadOnlyList<VariadicCallItem>>> BuildCallableCallItemsAsync(
         IReadOnlyList<ResolvedArgumentAlgorithm> args,
         EvalCtx ctx,
-        ValEnv valEnv)
+        ValEnv valEnv,
+        SequenceBuiltinMetadata? valueSlots = null)
     {
         var items = new List<VariadicCallItem>();
         foreach (var resolvedArg in args)
@@ -2452,12 +2510,15 @@ public static partial class Evaluator
             // (the shared IsValueShapedArgument classification).
             if (arg is not null && !IsValueShapedArgument(arg))
             {
-                items.Add(new VariadicCallItem(
+                var item = new VariadicCallItem(
                     Value: null,
                     arg,
                     ValueError: null,
                     resolvedArg.PreparedValue,
-                    resolvedArg.Source));
+                    resolvedArg.Source);
+                items.Add(valueSlots is { } metadata && IsSequenceBuiltinValueSlot(metadata, items.Count)
+                    ? await DemandSequenceBuiltinCallItemValueAsync(item, ctx, valEnv).ConfigureAwait(false)
+                    : item);
                 continue;
             }
 
@@ -2504,6 +2565,26 @@ public static partial class Evaluator
         return EvalResult<IReadOnlyList<VariadicCallItem>>.Ok(items);
     }
 
+    /// <summary>MIRROR OF <see cref="DemandSequenceBuiltinCallItemValue"/> — keep in lock-step.</summary>
+    private static async ValueTask<VariadicCallItem> DemandSequenceBuiltinCallItemValueAsync(
+        VariadicCallItem item,
+        EvalCtx ctx,
+        ValEnv valEnv)
+    {
+        if (item.Value is not null
+            || item.ValueError is not null
+            || item.Algorithm is not { } algorithm
+            || !AcceptsZeroArgumentValueDemand(algorithm))
+        {
+            return item;
+        }
+
+        var demandedR = await EvalArgumentAlgOutputCountedAsync(algorithm, ctx, valEnv).ConfigureAwait(false);
+        return demandedR.IsError
+            ? item with { ValueError = BlameDemandedArgumentForMissingOutput(item.Source, demandedR).Error }
+            : item with { Value = demandedR.Value.Value, PreparedValue = demandedR.Value };
+    }
+
     /// <summary>MIRROR OF <see cref="BindSequenceBuiltinArguments"/> — keep in lock-step.</summary>
     private static async ValueTask<EvalResult<BoundSequenceBuiltinArguments>> BindSequenceBuiltinArgumentsAsync(
         BuiltinId builtin,
@@ -2514,7 +2595,7 @@ public static partial class Evaluator
     {
         var descriptor = BuiltinRegistry.GetBuiltin(builtin);
         var signature = descriptor.PlainSignature;
-        var itemsR = await BuildCallableCallItemsAsync(args, ctx, valEnv).ConfigureAwait(false);
+        var itemsR = await BuildCallableCallItemsAsync(args, ctx, valEnv, metadata).ConfigureAwait(false);
         if (itemsR.IsError) return itemsR.Error;
 
         // Collection builtins are ordinary fixed-arity callables — see the synchronous twin.
@@ -2528,7 +2609,8 @@ public static partial class Evaluator
             };
         }
 
-        var collectionItem = items[0];
+        // The `collection` parameter is a VALUE position — see the synchronous twin.
+        var collectionItem = await DemandSequenceBuiltinCallItemValueAsync(items[0], ctx, valEnv).ConfigureAwait(false);
         if (collectionItem.Value is null)
             return SequenceBuiltinValueDemandError(collectionItem) ?? new EvalError.BadArity();
 
@@ -2541,11 +2623,20 @@ public static partial class Evaluator
         var suffixArgs = new List<PreparedSequenceBuiltinSuffixArg>(metadata.SuffixArgs.Count);
         for (var index = 0; index < metadata.SuffixArgs.Count; index++)
         {
+            // A Value / WholeNumber control is a VALUE position, so it is demanded here —
+            // asynchronously, before the shared synchronous preparation reads it (the
+            // preparer's own demand then finds the item already resolved). An Algorithm
+            // control is a CALLBACK slot and is never demanded.
+            var controlItem = items[1 + index];
+            if (metadata.SuffixArgs[index].Kind != SequenceBuiltinSuffixArgKind.Algorithm)
+                controlItem = await DemandSequenceBuiltinCallItemValueAsync(controlItem, ctx, valEnv).ConfigureAwait(false);
+
             var preparedArgR = PrepareSequenceBuiltinSuffixArg(
                 builtin,
                 metadata.SuffixArgs[index],
-                items[1 + index],
-                ctx);
+                controlItem,
+                ctx,
+                valEnv);
             if (preparedArgR.IsError) return preparedArgR.Error;
 
             suffixArgs.Add(preparedArgR.Value);
@@ -3235,17 +3326,26 @@ public static partial class Evaluator
             var wired = ChildOfInContext(targetAlg, prop.Value, ctx);
             if (argsOpt is null)
             {
+                // See the synchronous twin: the ONE law decides, and the rejection names
+                // the member's true minimum supply.
                 var simpleCallee = TryGetFlatBinderUserEquivalent(wired);
                 if (simpleCallee is not null)
-                    return new EvalError.ArityMismatch(simpleCallee.ParameterCount, 0);
+                {
+                    return AcceptsZeroArgumentValueDemand(simpleCallee)
+                        ? ReCountValueBoundary(
+                            await EvalZeroArgPropertyAccessCountedAsync(
+                                targetAlg, prop, ZeroArgPropertyAccessKind.CountedStructural, simpleCallee, ctx, valEnv).ConfigureAwait(false))
+                        : ZeroArgumentDemandArityMismatch(simpleCallee);
+                }
+
+                if (AcceptsZeroArgumentValueDemand(wired))
+                    return ReCountValueBoundary(
+                        await EvalZeroArgPropertyAccessCountedAsync(
+                            targetAlg, prop, ZeroArgPropertyAccessKind.CountedStructural, wired, ctx, valEnv).ConfigureAwait(false));
 
                 if (wired is Algorithm.Conditional)
                     return new EvalError.NoMatchingBranch(name);
 
-                if (wired.ParameterCount == 0)
-                    return ReCountValueBoundary(
-                        await EvalZeroArgPropertyAccessCountedAsync(
-                            targetAlg, prop, ZeroArgPropertyAccessKind.CountedStructural, wired, ctx, valEnv).ConfigureAwait(false));
                 return ZeroArgumentDemandArityMismatch(wired);
             }
 
@@ -3339,7 +3439,7 @@ public static partial class Evaluator
                 return await EvalResolvedAlgOutputForValueDemandAsync(targetAlg, ctx, valEnv).ConfigureAwait(false);
 
             default:
-                return await EvalAlgOutputValueAsync(targetAlg, ctx, valEnv).ConfigureAwait(false);
+                return await EvalZeroArgumentDemandOutputAsync(targetAlg, ctx, valEnv).ConfigureAwait(false);
         }
     }
 
@@ -3405,10 +3505,11 @@ public static partial class Evaluator
         {
             var wired = WireToCaller(ctx, alg);
             var blockSpan = PreferExpressionSpan(expr.Span, wired.Output);
-            if (wired.ParameterCount != 0)
-                return MissingImplicitArguments<IReadOnlyList<Result>>(wired, blockSpan);
+            // See the synchronous twin: a spread operand is a zero-argument value demand.
+            if (ZeroArgumentValueDemandRejection(ZeroArgumentDemandShape.Block, name: null, blockSpan, wired) is { } rejection)
+                return rejection;
 
-            var blockR = await EvalAlgOutputValueAsync(wired, ctx, valEnv).ConfigureAwait(false);
+            var blockR = await EvalZeroArgumentDemandOutputAsync(wired, ctx, valEnv).ConfigureAwait(false);
             if (blockR.IsError)
                 return IsMissingOutputError(blockR.Error)
                     ? SpreadMissingOutput(blockSpan)

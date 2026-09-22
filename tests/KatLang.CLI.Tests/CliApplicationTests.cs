@@ -118,6 +118,18 @@ public sealed class CliApplicationTests
 
     // ── eval ────────────────────────────────────────────────────────────────
 
+    [Theory]
+    [InlineData("Only")]
+    [InlineData("(Only)")]
+    [InlineData("Only()")]
+    public async Task Eval_CollectingOnlyValueDemand_RendersTheExactEmptyList(string row)
+    {
+        var result = await Cli.InvokeAsync("eval", $"Only(*xs) = xs\n{row}");
+        Assert.Equal(Success, result.ExitCode);
+        Assert.Equal("", result.Error);
+        Assert.Equal("[]", result.TrimmedOutput);
+    }
+
     [Fact]
     public async Task Eval_EvaluatesItsArgumentAsSource_NotAsAFileName()
     {

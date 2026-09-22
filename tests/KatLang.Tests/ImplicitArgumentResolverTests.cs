@@ -600,9 +600,13 @@ public class ImplicitArgumentResolverTests
     [Fact]
     public void Eval_SequenceValueOrdinaryCaller_NameMismatchStaysUnresolved()
     {
-        // The callee's parameter name does not match any caller parameter, so
-        // the reference is not rewritten and fails at runtime instead of
-        // silently spreading the ordinary sequence-value parameter.
+        // The callee's parameter name does not match any caller parameter, so the
+        // reference is NOT rewritten and never silently spreads the caller's ordinary
+        // sequence-value parameter. Since September 2026 a collecting parameter requires
+        // no supplied argument, so the unrewritten reference is an ordinary zero-argument
+        // value demand that collects NOTHING: the result is 0. Had the resolver rewritten
+        // `CountValues` into `CountValues(sequenceValue)` it would be 3 — that difference
+        // is what this case pins.
         var result = Eval(
             """
             CountValues(*values) = values.count
@@ -610,10 +614,8 @@ public class ImplicitArgumentResolverTests
             Use((1, 2, 3))
             """);
 
-        Assert.True(result.IsError);
-        var arity = Assert.IsType<EvalError.ArityMismatch>(Innermost(result.Error));
-        Assert.Equal(1, arity.Expected);
-        Assert.Equal(0, arity.Actual);
+        Assert.False(result.IsError, result.IsError ? result.Error.ToString() : null);
+        Assert.Equal([(Decimal128)0], result.Value);
     }
 
     // â”€â”€ Transitive ordering: zero-param intermediaries â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€

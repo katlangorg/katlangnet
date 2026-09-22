@@ -1287,9 +1287,10 @@ BETTER — specific branch first:
 - A SPREAD receiver is the one way to pass a receiver's items: a fluent chain after a spread passes the spread items as the leading call arguments, resolved lexically. `x.Calculate*.Target` means `Target(x.Calculate*)`, and `Arg*.Scale(10)` means `Scale(Arg*, 10)`. Parentheses around the spread capture it back into ONE value: `(Arg*).Scale(10)` is `Scale((Arg*), 10)`.
 - A user-defined property with an explicit collecting parameter (`*values`) consumes its assigned argument segment by the collector supply-boundary rule, and a dot-call receiver is simply the first of those slots. For `Scale(*values, factor) = values.map{n * factor}` with `Arg = 1, 2, 3`, `Scale(Arg*, 10)`, `Arg*.Scale(10)`, `(1, 2, 3)*.Scale(10)`, `Scale(1, 2, 3, 10)`, `Scale(Arg, 10)`, `Arg.Scale(10)`, and `(1, 2, 3).Scale(10)` all scale each item (`values = [1, 2, 3]`; a lone written sequence left to the collector after `factor` binds opens one level). `Scale([1, 2, 3], 10)` supplies ONE list (`values = [[1, 2, 3]]`), so the numeric callback fails — spread a list (`[1, 2, 3]*.Scale(10)`). Multiple sibling grouped values are preserved unless explicitly spread with a postfix star.
 
-## Zero-Parameter Property Calls
+## Zero-Argument Property Calls
 
-- A zero-parameter property read without parentheses, such as `Fun`, reuses its first successful result within the applicable cache scope. Use this form when a cached property-style value is desired. A self-contained property (one that does not read a parameter of an enclosing algorithm) shares its first successfully completed result throughout the evaluation wherever it is read from — repeated calls, `map` callbacks, loop iterations, `open` — so an expensive constant such as `Big = range(1, 100000).sum` referenced inside `F(x) = Big + x` is computed once; a property that captures an enclosing parameter caches within the current binding context (each call, callback, or loop iteration creates a fresh context, even for equal arguments). Structural and opened reads of the same exported declaration share an entry. Independent runs have fresh caches; failed evaluations are never stored. Recursive reads already in progress can finish with their own results but do not replace the first successful entry. Passing a name as an algorithm argument follows the receiver's argument rules rather than forcing a property-value read.
+- A property that accepts zero supplied arguments, read without parentheses as `Fun`, reuses its first successful result within the applicable cache scope. Use this form when a cached property-style value is desired. A self-contained property (one that does not read a parameter of an enclosing algorithm) shares its first successfully completed result throughout the evaluation wherever it is read from — repeated calls, `map` callbacks, loop iterations, `open` — so an expensive constant such as `Big = range(1, 100000).sum` referenced inside `F(x) = Big + x` is computed once; a property that captures an enclosing parameter caches within the current binding context (each call, callback, or loop iteration creates a fresh context, even for equal arguments). Structural and opened reads of the same exported declaration share an entry. Independent runs have fresh caches; failed evaluations are never stored. Recursive reads already in progress can finish with their own results but do not replace the first successful entry. Passing a name as an algorithm argument follows the receiver's argument rules rather than forcing a property-value read.
+- ZERO-ARGUMENT VALUE DEMAND FOLLOWS ACTUAL CALL ARITY: a callable may be read as a zero-argument VALUE exactly when an ordinary call with no arguments can bind it, never merely because it declares no parameter. A collecting parameter requires no supplied argument, so `Only(*xs) = xs` makes `Only` and `Only()` both the empty list `[]`, and the bare name works in every zero-argument value position — an output row, an `if` branch, a collection builtin argument in either spelling (`count(Only)` and `Only.count` are both `0`), an ordinary parameter that reads its argument, a member read such as `Obj.M`, and inside redundant parentheses (`Only`, `(Only)`, `((Only))` agree). A required parameter is still required: `Head(first, *rest)`, `Tail(*rest, last)`, `Pair(x, y)` and a grouped parameter such as `P((x, y))` each need at least one supplied value, so both `Head()` and a bare `Head` are the same arity error, and a group's one-item fallback binds ONE value rather than accepting none. Where a callable is consumed as an ALGORITHM — a `map`/`filter` callback, a loop step, a higher-order argument — it is still the callable (`map((1, 2), Only)` is `[[1], [2]]`). The two value spellings keep their established operational difference: bare `Only` is a property-style read that reuses its cached value, while `Only()` is an explicit call that runs the body each time.
 - An explicit zero-parameter call, such as `Fun()`, bypasses the zero-argument cache for that property itself. It does not recursively force nested property references to bypass their caches. To request fresh nested values, write the nested calls explicitly with `()`: `B = A, A` keeps cached/property-style `A` inside `B()`, while `C = A(), A()` asks for fresh `A` values inside `C()`.
 
 ## Math Usage
@@ -1547,7 +1548,7 @@ Without trailing output, `Order` has no direct result — use `Order.Total(25, 4
 
 === BEGIN GENERATED: katlang-spec-examples (DO NOT EDIT BY HAND) ===
 
-Verified reference examples (97 of the 282-case canonical language specification,
+Verified reference examples (98 of the 283-case canonical language specification,
 tests/KatLang.Tests/LanguageSpec/LanguageSpecCorpus.cs). Every program and expected
 output below is executed against the KatLang engine and (where representable)
 guarded against the Lean model on every build. Treat these as ground truth for the
@@ -2593,5 +2594,13 @@ Regenerate this block from the repo root with:
     repeat(Step, 1, Inc)
 
   Fails with an evaluation error (arity).
+
+[zero-argument-demand-follows-actual-call-arity] A callable may be read as a zero-argument value exactly when an ordinary call with no arguments can bind it. A collecting parameter requires no supplied argument, so `Only` and `Only()` both collect nothing and give `[]`; `Head(x, *rest)` still requires one supplied value, so both of its zero-argument spellings are the same arity error. Callback positions still receive the callable itself.
+
+    Only(*xs) = xs
+    Only
+
+  Displays:
+    []
 
 === END GENERATED: katlang-spec-examples ===

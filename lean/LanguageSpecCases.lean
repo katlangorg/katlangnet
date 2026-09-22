@@ -14,11 +14,11 @@ This is bounded differential validation over the Lean-guarded partition,
 not a formal verification of the evaluators.
 
 Partition (machine-checked by the `specCaseIds.length` guard below):
-- specification surface cases: 282
+- specification surface cases: 283
 - excluded parse-level cases (Lean has no surface parser): 38
 - excluded C#-only cases (each carries an explicit reason in the corpus): 15
-- Lean-guarded cases: 229
-- probe observations (C#-only by design): 755
+- Lean-guarded cases: 230
+- probe observations (C#-only by design): 775
 - internal-node cases live in the semantic-explorer corpus, not here: see
   lean/SemanticExplorerCases.lean
 
@@ -1209,6 +1209,11 @@ def case_dot_string_receiver_is_a_zero_argument_value_demand : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))])] [(.dotCall (.resolve "Inc") "string" none)])
 #guard obs case_dot_string_receiver_is_a_zero_argument_value_demand == "err arity"
 
+-- zero-argument-demand-follows-actual-call-arity [variadic-calls]: Only(*xs) = xs \n Only
+def case_zero_argument_demand_follows_actual_call_arity : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Only" (algWithParameters [{ name := "xs", kind := .collecting }] [] [] [.param "xs"])] [.resolve "Only"])
+#guard obs case_zero_argument_demand_follows_actual_call_arity == "ok raw=L[] n=1"
+
 -- same-arity-user-if-keeps-user-identity [name-resolution]: if(a, b, c) = a + b + c \n if(1, 10, 20) \n 1.if(10, 20)
 def case_same_arity_user_if_keeps_user_identity : Expr :=
   .algorithmExpr (alg [] [] [privateProp "if" (alg ["a", "b", "c"] [] [] [(.binary .add (.binary .add (.param "a") (.param "b")) (.param "c"))])] [(.call (.resolve "if") [.num 1, .num 10, .num 20]), (.dotCall (.num 1) "if" (some [.num 10, .num 20]))])
@@ -1244,7 +1249,7 @@ def case_grace_in_redundant_group_is_grace_on_the_name : Expr :=
   .algorithmExpr (alg [] [] [privateProp "F" (alg ["a", "b"] [] [] [(.binary .add (.param "b") (.dotCall (.param "a") "V" none))]), privateProp "V" (alg ["x"] [] [] [(.binary .mul (.param "x") (.num 2))])] [(.call (.resolve "F") [.num 5, .num 1])])
 #guard obs case_grace_in_redundant_group_is_grace_on_the_name == "ok raw=11 n=1"
 
--- 229 canonical Lean-guarded specification cases.
+-- 230 canonical Lean-guarded specification cases.
 
 /--
 Machine-checked Lean-guarded partition count: the id list is built by the
@@ -1474,6 +1479,7 @@ def specCaseIds : List String := [
   "lazy-slot-demand-is-the-ordinary-zero-argument-demand",
   "lazy-slot-demand-covers-every-builtin-value-slot",
   "dot-string-receiver-is-a-zero-argument-value-demand",
+  "zero-argument-demand-follows-actual-call-arity",
   "same-arity-user-if-keeps-user-identity",
   "parameter-named-if-carries-the-supplied-callable",
   "if-spread-builds-values-before-branch-selection",
@@ -1482,6 +1488,6 @@ def specCaseIds : List String := [
   "ownership-open-head-between-opener-and-settling-level-charges-the-capture",
   "grace-in-redundant-group-is-grace-on-the-name"
 ]
-#guard specCaseIds.length == 229
+#guard specCaseIds.length == 230
 
 end LanguageSpecCases

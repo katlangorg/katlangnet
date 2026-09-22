@@ -177,23 +177,123 @@ public static partial class Evaluator
         ValEnv valEnv)
         => EvalAlgOutputCountedCore(alg, ctx, valEnv);
 
+    /// <summary>Counted twin of <see cref="EvalProgramOutput"/>.</summary>
     private static EvalResult<CountedResult> EvalProgramOutputCounted(
         Algorithm alg,
         EvalCtx ctx,
         ValEnv valEnv)
-        => EvalAlgOutputCountedCore(alg, ctx, valEnv);
+        => EvalZeroArgumentDemandOutputCounted(alg, ctx, valEnv);
 
     // No builtin is valid as a bare zero-argument value; every builtin requires
     // a call. (The empty sequence value is written `()`, not a builtin.)
     private static EvalResult<CountedResult> EvalBuiltinValueCounted(BuiltinId builtin)
         => WrongBuiltinArity(builtin, 0);
 
+    /// <summary>
+    /// Evaluate a callable that the ONE zero-argument value-demand law
+    /// (<see cref="ZeroArgumentValueDemandRejection"/>) has ACCEPTED, as the zero-argument
+    /// value it denotes. This is the demand's evaluation half, the counterpart of that
+    /// law's rejection half, and the ONE funnel every demand site evaluates through:
+    /// <list type="bullet">
+    ///   <item>a callable that declares no top-level pattern is its output, exactly as
+    ///   before — the overwhelmingly common path, untouched;</item>
+    ///   <item>a callable whose pattern list accepts an EMPTY supply (a collecting-only
+    ///   signature such as <c>Only(*xs) = xs</c>) is bound by the ORDINARY binder against
+    ///   the empty supply first, so its collecting parameter holds the exact empty list
+    ///   while the body runs, and the callee's names shadow all three inherited tiers
+    ///   exactly as a written call's do;</item>
+    ///   <item>a clause family that accepts zero supplied arguments dispatches its
+    ///   zero-argument branch through ordinary conditional dispatch, so branch selection,
+    ///   duplicate-pattern rejection and the value boundary are the call's own.</item>
+    /// </list>
+    /// ELIGIBILITY is what the September 2026 rule changed; the CACHE is untouched: a
+    /// property-style demand still reaches this funnel through
+    /// <see cref="GetOrEvaluateZeroArgPropertyResult"/> (the run cache), while
+    /// <c>Only()</c> stays an ordinary call that bypasses it.
+    ///
+    /// <para>FRAME-SIZE DISCIPLINE: nested blocks and property reads recurse through this
+    /// funnel inside the calibrated 1 MiB evaluator envelopes, so the overwhelmingly
+    /// common arm — a callable with no top-level pattern — is a bare delegation to the
+    /// very core the demand sites called before, holding no locals, and the binding arm's
+    /// locals live in a separate non-inlined frame that only a collecting-only or clause
+    /// signature ever enters. Lean: <c>evalZeroArgumentDemandOutputCounted</c>.</para>
+    /// </summary>
+    private static EvalResult<CountedResult> EvalZeroArgumentDemandOutputCounted(
+        Algorithm algorithm,
+        EvalCtx ctx,
+        ValEnv valEnv)
+        => RequiresZeroArgumentSupplyBinding(algorithm)
+            ? EvalBoundZeroArgumentDemandOutputCounted(algorithm, ctx, valEnv)
+            : EvalAlgOutputCountedCore(algorithm, ctx, valEnv);
+
+    /// <summary>Value projection of <see cref="EvalZeroArgumentDemandOutputCounted"/>.</summary>
+    private static EvalResult<Result> EvalZeroArgumentDemandOutput(
+        Algorithm algorithm,
+        EvalCtx ctx,
+        ValEnv valEnv)
+        => RequiresZeroArgumentSupplyBinding(algorithm)
+            ? ProjectCountedValue(EvalBoundZeroArgumentDemandOutputCounted(algorithm, ctx, valEnv))
+            : EvalAlgOutputCore(algorithm, ctx, valEnv);
+
+    /// <summary>
+    /// Whether a zero-argument demand needs more than the callable's plain output: a
+    /// clause family (which DISPATCHES its zero-argument branch) or a parameter list that
+    /// must BIND the empty supply. False for every ordinary zero-parameter property,
+    /// every written value thunk, and every builtin (whose own arity rejection follows).
+    /// </summary>
+    private static bool RequiresZeroArgumentSupplyBinding(Algorithm algorithm)
+        => algorithm is Algorithm.Conditional || algorithm.ParameterPatterns.Count != 0;
+
+    // The demand funnel's binding arm. Kept out of the funnel's own frame (its locals
+    // would otherwise be paid for on the common no-pattern path, which recurses through
+    // nested blocks inside the calibrated stack envelopes).
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private static EvalResult<CountedResult> EvalBoundZeroArgumentDemandOutputCounted(
+        Algorithm algorithm,
+        EvalCtx ctx,
+        ValEnv valEnv)
+    {
+        if (algorithm is Algorithm.Conditional)
+        {
+            return EvalConditionalCallCounted(
+                algorithm,
+                OutputBundle.Empty,
+                ctx,
+                valEnv,
+                CallDiagnosticName.FromKnown("conditional"));
+        }
+
+        var bindingsR = BindZeroArgumentSupply(algorithm, ctx);
+        if (bindingsR.IsError) return bindingsR.Error;
+
+        var environments = WithUserCallBindingEnvironments(ctx, bindingsR.Value, valEnv, algorithm.Params);
+        return EvalAlgOutputCountedCore(algorithm, environments.Context, environments.ValueEnvironment);
+    }
+
+    /// <summary>
+    /// Bind a callable's parameter list against the EMPTY argument supply, through the
+    /// ordinary binder — the same call the demand law's acceptance decision is derived
+    /// from, so the two cannot disagree about what an empty supply binds. Shared by the
+    /// synchronous funnel and its async twin (argument evaluation cannot suspend: there
+    /// are no arguments).
+    /// </summary>
+    private static EvalResult<UserCallBindings> BindZeroArgumentSupply(Algorithm algorithm, EvalCtx ctx)
+        => BindParameterPatternList(
+            algorithm.ParameterPatterns,
+            [],
+            ctx,
+            allowAlgorithmBindings: true,
+            static (required, actual) => new EvalError.ArityMismatch(required, actual));
+
     private static EvalResult<ZeroArgPropertyResult> EvaluateZeroArgPropertyResult(
         Algorithm resolvedAlgorithm,
         EvalCtx ctx,
         ValEnv valEnv)
     {
-        var countedR = EvalAlgOutputCounted(resolvedAlgorithm, ctx, valEnv);
+        // The cached body evaluation goes through the ONE demand funnel, so a newly
+        // eligible collecting-only property (`Only(*xs) = xs`) takes the very same
+        // demand/cache path an ordinary zero-parameter property takes.
+        var countedR = EvalZeroArgumentDemandOutputCounted(resolvedAlgorithm, ctx, valEnv);
         if (countedR.IsError)
             return countedR.Error;
 
@@ -532,10 +632,13 @@ public static partial class Evaluator
         {
             var wired = WireToCaller(ctx, alg);
             var blockSpan = PreferExpressionSpan(expr.Span, wired.Output);
-            if (wired.ParameterCount != 0)
-                return MissingImplicitArguments<IReadOnlyList<Result>>(wired, blockSpan);
+            // A spread operand is demanded for its VALUE with zero arguments, so the ONE
+            // law decides and shapes its report here too: a block whose parameter list
+            // accepts an empty supply is demanded through the shared funnel.
+            if (ZeroArgumentValueDemandRejection(ZeroArgumentDemandShape.Block, name: null, blockSpan, wired) is { } rejection)
+                return rejection;
 
-            var blockR = EvalAlgOutput(wired, ctx, valEnv);
+            var blockR = EvalZeroArgumentDemandOutput(wired, ctx, valEnv);
             if (blockR.IsError)
                 return IsMissingOutputError(blockR.Error)
                     ? SpreadMissingOutput(blockSpan)
@@ -603,7 +706,13 @@ public static partial class Evaluator
 
     /// <summary>Only arguments without callback parameters are eagerly value-evaluated.</summary>
     private static bool IsValueShapedArgument(Algorithm argument)
-        => argument.ParameterCount == 0 && argument.ParameterPatterns.Count == 0;
+        => argument is not Algorithm.Conditional && argument.ParameterPatterns.Count == 0;
+
+    // The collection occupies slot zero; suffix descriptors classify the remaining
+    // bound slots. Surplus arguments are not value positions of this signature.
+    private static bool IsSequenceBuiltinValueSlot(SequenceBuiltinMetadata metadata, int slot)
+        => slot == 0 || slot <= metadata.SuffixArgs.Count
+            && metadata.SuffixArgs[slot - 1].Kind != SequenceBuiltinSuffixArgKind.Algorithm;
 
     /// <summary>
     /// Prepares a filter predicate through the generic call-item and suffix binding
@@ -622,7 +731,7 @@ public static partial class Evaluator
         if (itemsR.IsError) return itemsR.Error;
 
         var descriptor = BuiltinRegistry.GetBuiltin(BuiltinId.@filter).SequenceMetadata!.Value.SuffixArgs[0];
-        var preparedR = PrepareSequenceBuiltinSuffixArg(BuiltinId.@filter, descriptor, itemsR.Value[0], ctx);
+        var preparedR = PrepareSequenceBuiltinSuffixArg(BuiltinId.@filter, descriptor, itemsR.Value[0], ctx, valEnv);
         if (preparedR.IsError) return preparedR.Error;
         return preparedR.Value is PreparedSequenceBuiltinSuffixArg.AlgorithmArg callback
             ? EvalResult<Algorithm>.Ok(callback.AlgorithmValue)
@@ -632,7 +741,8 @@ public static partial class Evaluator
     private static EvalResult<IReadOnlyList<VariadicCallItem>> BuildCallableCallItems(
         IReadOnlyList<ResolvedArgumentAlgorithm> args,
         EvalCtx ctx,
-        ValEnv valEnv)
+        ValEnv valEnv,
+        SequenceBuiltinMetadata? valueSlots = null)
     {
         var items = new List<VariadicCallItem>();
         foreach (var resolvedArg in args)
@@ -652,12 +762,18 @@ public static partial class Evaluator
             // pipeline shares).
             if (arg is not null && !IsValueShapedArgument(arg))
             {
-                items.Add(new VariadicCallItem(
+                var item = new VariadicCallItem(
                     Value: null,
                     arg,
                     ValueError: null,
                     resolvedArg.PreparedValue,
-                    resolvedArg.Source));
+                    resolvedArg.Source);
+                // Binding already knows this emitted slot's role. Demand a VALUE here,
+                // before later slots' eager effects, through the same once-only helper
+                // used below. A callback slot still carries the unexecuted algorithm.
+                items.Add(valueSlots is { } metadata && IsSequenceBuiltinValueSlot(metadata, items.Count)
+                    ? DemandSequenceBuiltinCallItemValue(item, ctx, valEnv)
+                    : item);
                 continue;
             }
 
@@ -719,12 +835,51 @@ public static partial class Evaluator
             ?? (item.Algorithm is { } algorithm ? ZeroArgumentValueDemandError(item.Source, algorithm) : null)
             ?? item.ValueError;
 
+    /// <summary>
+    /// Demand ONE collection-builtin call item that binding has placed in a VALUE
+    /// position. Call-item assembly leaves a callable-shaped CALLBACK item
+    /// unevaluated (a CALLBACK slot must receive the algorithm, never a value — and
+    /// eagerly evaluating a collecting-only callback such as <c>map(xs, Only)</c> would
+    /// run its body an extra time), so the demand happens HERE, once the descriptor has
+    /// decided the slot is a value: an item the ONE law accepts
+    /// (<see cref="AcceptsZeroArgumentValueDemand"/> — a collecting-only signature
+    /// alongside every zero-parameter property) is evaluated through the shared demand
+    /// funnel, charged exactly as the eager value-shaped path charges it, and every other
+    /// item is returned untouched for <see cref="SequenceBuiltinValueDemandError"/> to
+    /// report. An item that was already evaluated, or whose evaluation already failed, is
+    /// never re-entered. Lean: <c>demandSequenceBuiltinCallItemValue</c>.
+    /// </summary>
+    private static VariadicCallItem DemandSequenceBuiltinCallItemValue(
+        VariadicCallItem item,
+        EvalCtx ctx,
+        ValEnv valEnv)
+    {
+        if (item.Value is not null
+            || item.ValueError is not null
+            || item.Algorithm is not { } algorithm
+            || !AcceptsZeroArgumentValueDemand(algorithm))
+        {
+            return item;
+        }
+
+        var demandedR = EvalArgumentAlgOutputCounted(algorithm, ctx, valEnv);
+        return demandedR.IsError
+            ? item with { ValueError = BlameDemandedArgumentForMissingOutput(item.Source, demandedR).Error }
+            : item with { Value = demandedR.Value.Value, PreparedValue = demandedR.Value };
+    }
+
     private static EvalResult<PreparedSequenceBuiltinSuffixArg> PrepareSequenceBuiltinSuffixArg(
         BuiltinId builtin,
         SequenceBuiltinSuffixArgDescriptor descriptor,
         VariadicCallItem item,
-        EvalCtx ctx)
+        EvalCtx ctx,
+        ValEnv valEnv)
     {
+        // A Value / WholeNumber control is a VALUE position, so it is demanded through
+        // the ONE law; an Algorithm control is a CALLBACK slot and is never demanded.
+        if (descriptor.Kind != SequenceBuiltinSuffixArgKind.Algorithm)
+            item = DemandSequenceBuiltinCallItemValue(item, ctx, valEnv);
+
         switch (descriptor.Kind)
         {
             case SequenceBuiltinSuffixArgKind.Algorithm:
@@ -1076,9 +1231,9 @@ public static partial class Evaluator
     /// <summary>
     /// Bind the ONE <c>collection</c> argument of a collection builtin from its
     /// prepared call item and open it through the post-binding collection view.
-    /// A VALUE position demands the item: a callable-shaped item (a parameterized
-    /// algorithm, a clause family) is the zero-argument value-demand rejection
-    /// (<see cref="SequenceBuiltinValueDemandError"/>), a value's retained
+    /// A VALUE position demands the item: a callable that accepts an empty supply
+    /// is evaluated, otherwise it keeps the zero-argument value-demand rejection
+    /// (<see cref="SequenceBuiltinValueDemandError"/>); a value's retained
     /// evaluation error surfaces as is. The one-level builtin collection view
     /// applies AFTER binding, to the bound collection value only: a lone
     /// sequence or exact list value opens to its immediate items, and any other
@@ -1092,8 +1247,14 @@ public static partial class Evaluator
     /// <c>builtinCollectionItems</c>.
     /// </summary>
     private static EvalResult<IReadOnlyList<Result>> BindSequenceBuiltinCollectionArgument(
-        VariadicCallItem collectionItem)
+        VariadicCallItem collectionItem,
+        EvalCtx ctx,
+        ValEnv valEnv)
     {
+        // The `collection` parameter is a VALUE position, so demand the bound item
+        // through the ONE zero-argument value-demand law before reading its value.
+        collectionItem = DemandSequenceBuiltinCallItemValue(collectionItem, ctx, valEnv);
+
         if (collectionItem.Value is null)
             return SequenceBuiltinValueDemandError(collectionItem) ?? new EvalError.BadArity();
 
@@ -1109,7 +1270,7 @@ public static partial class Evaluator
     {
         var descriptor = BuiltinRegistry.GetBuiltin(builtin);
         var signature = descriptor.PlainSignature;
-        var itemsR = BuildCallableCallItems(args, ctx, valEnv);
+        var itemsR = BuildCallableCallItems(args, ctx, valEnv, metadata);
         if (itemsR.IsError) return itemsR.Error;
 
         // A collection builtin is an ordinary fixed-arity callable: exactly one
@@ -1131,7 +1292,7 @@ public static partial class Evaluator
             };
         }
 
-        var collectionValuesR = BindSequenceBuiltinCollectionArgument(items[0]);
+        var collectionValuesR = BindSequenceBuiltinCollectionArgument(items[0], ctx, valEnv);
         if (collectionValuesR.IsError) return collectionValuesR.Error;
         var collectionValues = collectionValuesR.Value;
 
@@ -1146,7 +1307,8 @@ public static partial class Evaluator
                 builtin,
                 metadata.SuffixArgs[index],
                 items[1 + index],
-                ctx);
+                ctx,
+                valEnv);
             if (preparedArgR.IsError) return preparedArgR.Error;
 
             suffixArgs.Add(preparedArgR.Value);
@@ -1783,7 +1945,7 @@ public static partial class Evaluator
 
         using (level)
         {
-            return EvalAlgOutputCounted(algorithm, ctx, valEnv);
+            return EvalZeroArgumentDemandOutputCounted(algorithm, ctx, valEnv);
         }
     }
 
@@ -1810,7 +1972,7 @@ public static partial class Evaluator
 
         using (level)
         {
-            return EvalAlgOutput(algorithm, ctx, valEnv);
+            return EvalZeroArgumentDemandOutput(algorithm, ctx, valEnv);
         }
     }
 
@@ -1871,7 +2033,7 @@ public static partial class Evaluator
                 return EvalResolvedAlgOutputForValueDemand(targetAlg, ctx, valEnv);
 
             default:
-                return EvalAlgOutput(targetAlg, ctx, valEnv);
+                return EvalZeroArgumentDemandOutput(targetAlg, ctx, valEnv);
         }
     }
 

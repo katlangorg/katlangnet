@@ -391,8 +391,37 @@ public class LazySlotZeroArgumentDemandTests
     }
 
     [Fact]
-    public void CollectingParameter_CountsLikeAnExplicitOne()
-        => AssertPropertyZeroArgumentDemand("Collect(*xs) = xs\nif(true, Collect, 0)", "Collect", expectedParameters: 1, line: 2, column: 10);
+    public void CollectingParameter_RequiresNoSuppliedArgument_SoTheSlotIsDemanded()
+    {
+        // September 2026: eligibility is actual call arity, not parameter-list emptiness.
+        // `Collect()` accepts zero supplied arguments, so the bare callable in a VALUE
+        // slot is demanded and collects NOTHING — the same value the explicit call gives.
+        AssertEvaluatesTo(List(), "Collect(*xs) = xs\nif(true, Collect, 0)");
+        AssertEvaluatesTo(List(), "Collect(*xs) = xs\nif(true, Collect(), 0)");
+    }
+
+    [Fact]
+    public void RequiredParameterBesideACollector_StillRejects_ReportingItsMinimumSupply()
+    {
+        // The collector excuses no fixed parameter: `Head()` needs one supplied value, so
+        // the bare demand is rejected with that MINIMUM (1), never the two declared
+        // captures. The suffix and mixed shapes report their own minimums the same way.
+        AssertPropertyZeroArgumentDemand("Head(x, *rest) = x\nif(true, Head, 0)", "Head", expectedParameters: 1, line: 2, column: 10);
+        AssertPropertyZeroArgumentDemand("Tail(*rest, z) = z\nif(true, Tail, 0)", "Tail", expectedParameters: 1, line: 2, column: 10);
+        AssertPropertyZeroArgumentDemand("Mid(x, *r, z) = x\nif(true, Mid, 0)", "Mid", expectedParameters: 2, line: 2, column: 10);
+    }
+
+    [Fact]
+    public void NestedPattern_ConsumesOneSuppliedSlot_EvenWhenItContainsACollector()
+    {
+        // A nested pattern's scalar one-item fallback binds ONE supplied value; it never
+        // means the callable accepts zero. The reported minimum is the SLOT count (1),
+        // not the flattened captures.
+        AssertPropertyZeroArgumentDemand("P((x, y)) = x\nif(true, P, 0)", "P", expectedParameters: 1, line: 2, column: 10);
+        AssertPropertyZeroArgumentDemand("P((x, *rest)) = x\nif(true, P, 0)", "P", expectedParameters: 1, line: 2, column: 10);
+        AssertPropertyZeroArgumentDemand("P((*xs)) = xs\nif(true, P, 0)", "P", expectedParameters: 1, line: 2, column: 10);
+        AssertPropertyZeroArgumentDemand("G((a, b), *rest) = a\nif(true, G, 0)", "G", expectedParameters: 1, line: 2, column: 10);
+    }
 
     [Fact]
     public void TwoParameters_ReportBothExpected()

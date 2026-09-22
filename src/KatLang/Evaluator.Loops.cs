@@ -40,11 +40,19 @@ public static partial class Evaluator
         ValEnv valEnv)
         => EvalAlgOutputCore(alg, ctx, valEnv);
 
+    /// <summary>
+    /// Evaluate a root program algorithm when a result is requested. The root is demanded
+    /// for its value with NOTHING supplied, so it goes through the ONE zero-argument
+    /// demand funnel (<see cref="EvalZeroArgumentDemandOutput"/>): a root declaring no
+    /// parameter pattern is its output exactly as before, and a root whose parameter list
+    /// accepts an EMPTY supply (a collecting-only host-built root) binds that supply
+    /// first. Lean: <c>evalProgramOutput</c>.
+    /// </summary>
     private static EvalResult<Result> EvalProgramOutput(
         Algorithm alg,
         EvalCtx ctx,
         ValEnv valEnv)
-        => EvalAlgOutputCore(alg, ctx, valEnv);
+        => EvalZeroArgumentDemandOutput(alg, ctx, valEnv);
 
     private static EvalResult<IReadOnlyList<Result>> EvalInitialLoopStateSlots(
         IReadOnlyList<ResolvedArgumentAlgorithm> initArgs,

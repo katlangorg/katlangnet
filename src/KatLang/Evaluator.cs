@@ -1046,15 +1046,63 @@ public static partial class Evaluator
     }
 
     /// <summary>
-    /// The arity mismatch for a zero-argument value demand of a parametered
-    /// callable, carrying the callee's inferred-implicit-parameter provenance
-    /// as diagnostic-only notes so the eventual message can point back at the
-    /// unresolved identifiers the parameters came from (see
-    /// <see cref="ImplicitParameterProvenance"/>). Identical to the plain
-    /// mismatch for callees with no inferred parameters.
+    /// ONE zero-supply acceptability rule: whether an ORDINARY call that supplies ZERO
+    /// argument slots can bind this callable. It is derived from the very binder and
+    /// dispatch semantics such a call uses, never from parameter-list emptiness:
+    /// <list type="bullet">
+    ///   <item>a user algorithm accepts iff its top-level pattern list's
+    ///   <see cref="ParameterPattern.MinimumSuppliedSlots"/> is zero — so
+    ///   <c>Only(*xs)</c> accepts (<c>Only()</c> binds <c>xs = []</c>) while
+    ///   <c>Head(x, *rest)</c>, <c>Tail(*rest, z)</c>, <c>P((x, *rest))</c>,
+    ///   <c>P((x))</c> and <c>Pair(x, y)</c> do not. A COLLECTING parameter contributes
+    ///   ZERO required slots; a nested pattern still consumes one, and its scalar
+    ///   one-item fallback binds ONE supplied value, never none;</item>
+    ///   <item>a clause family accepts iff some branch's top-level pattern has arity
+    ///   zero — exactly the branch <see cref="MatchCallBranches"/> selects for an empty
+    ///   argument list. A flat multi-binder core equivalent always has at least two
+    ///   parameters, so it never accepts;</item>
+    ///   <item>a BUILTIN never accepts (<c>sum()</c> is an arity error). Its rejection
+    ///   stays owned by <see cref="EvalBuiltinValueCounted"/>, which is the very report
+    ///   <c>sum()</c> produces, so <see cref="ZeroArgumentValueDemandRejection"/>
+    ///   deliberately does not intercept builtins.</item>
+    /// </list>
+    /// Lean: <c>Algorithm.acceptsZeroSuppliedArguments</c>.
+    /// </summary>
+    internal static bool AcceptsZeroSuppliedArguments(Algorithm algorithm)
+        => algorithm switch
+        {
+            Algorithm.Builtin => false,
+            Algorithm.Conditional conditional =>
+                conditional.Branches.Any(static branch => branch.Pattern.TopLevelArity() == 0),
+            Algorithm.User user => ParameterPattern.MinimumSuppliedSlots(user.ParameterPatterns) == 0,
+        };
+
+    /// <summary>
+    /// The ACCEPTANCE half of the ONE zero-argument value-demand law: <c>true</c> exactly
+    /// when <see cref="ZeroArgumentValueDemandRejection"/> lets the demand proceed. That
+    /// method returns <c>null</c> for precisely these two cases and a report for every
+    /// other, so the halves cannot disagree, and stating it directly keeps the sites that
+    /// only need the DECISION from building (and discarding) a report. It differs from
+    /// <see cref="AcceptsZeroSuppliedArguments"/> only for a BUILTIN, which the law
+    /// deliberately passes through to its own arity rejection. Used by the structurally
+    /// navigated member arm of the dot-call twins and by the collection builtins' value
+    /// slots. Lean: <c>acceptsZeroArgumentValueDemand</c>.
+    /// </summary>
+    internal static bool AcceptsZeroArgumentValueDemand(Algorithm algorithm)
+        => algorithm is Algorithm.Builtin || AcceptsZeroSuppliedArguments(algorithm);
+
+    /// <summary>
+    /// The arity mismatch for a zero-argument value demand of a callable that cannot
+    /// accept an empty supply. <c>Expected</c> is the callable's true MINIMUM supplied
+    /// count (<see cref="ParameterPattern.MinimumSuppliedSlots"/>) — the same count its
+    /// ordinary zero-argument call reports — never the flattened declared capture count,
+    /// which claimed two for <c>Head(x, *rest)</c> and <c>P((x, y))</c> alike. The
+    /// callee's inferred-implicit-parameter provenance rides along as diagnostic-only
+    /// notes so the eventual message can point back at the unresolved identifiers the
+    /// parameters came from (see <see cref="ImplicitParameterProvenance"/>).
     /// </summary>
     private static EvalError.ArityMismatch ZeroArgumentDemandArityMismatch(Algorithm callee)
-        => new(callee.ParameterCount, 0)
+        => new(ParameterPattern.MinimumSuppliedSlots(callee.ParameterPatterns), 0)
         {
             InferredImplicitParameters = ImplicitParameterProvenance.CollectFrom(callee.Parameters),
         };
@@ -1094,16 +1142,26 @@ public static partial class Evaluator
     /// <c>if</c> condition and branches, <c>while</c>/<c>repeat</c> initial state,
     /// the <c>repeat</c> count, <c>atoms</c>, <c>range</c>), and the ordinary-dot
     /// <c>string</c> intrinsic's receiver (<see cref="EvalDotStringReceiverAlgOutput"/>).
-    /// A conditional cannot be accessed as a value
-    /// (<see cref="ConditionalValueAccessError"/>), and an algorithm with parameters
-    /// is not a zero-argument value: a property reports the property-context arity
-    /// mismatch, a parameter or a navigated member the bare one, and a written block
-    /// <see cref="EvalError.UnresolvedImplicitParams"/>. <c>null</c> means the demand
-    /// may proceed to the algorithm's output. The decision is the effective
-    /// signature's alone — a body that would happen to succeed without its parameter
-    /// is rejected all the same — and a builtin CALLBACK slot
-    /// (<c>map</c>/<c>filter</c>/<c>reduce</c> steps, loop steps) supplies arguments
-    /// and never consults this law. Lean: <c>zeroArgumentDemandError?</c>.
+    ///
+    /// <para>ELIGIBILITY IS ARITY, NOT PARAMETER-LIST EMPTINESS (September 2026): a
+    /// callable may satisfy a zero-argument value demand exactly when an ordinary call
+    /// supplying zero arguments can bind it (<see cref="AcceptsZeroSuppliedArguments"/> —
+    /// the binder's own <see cref="ParameterPattern.MinimumSuppliedSlots"/> rule and the
+    /// family's zero-arity branch rule). So <c>Only(*xs) = xs</c> is demandable (a
+    /// collecting parameter requires no supplied slot: <c>Only</c> and <c>Only()</c> both
+    /// accept zero) while <c>Head(x, *rest)</c> still requires one supplied value and is
+    /// rejected. The REPORT names that true minimum.</para>
+    ///
+    /// A conditional that cannot accept zero arguments cannot be accessed as a value
+    /// (<see cref="ConditionalValueAccessError"/>); a property reports the
+    /// property-context arity mismatch, a parameter or a navigated member the bare one,
+    /// and a written block <see cref="EvalError.UnresolvedImplicitParams"/>. <c>null</c>
+    /// means the demand may proceed to the algorithm's zero-argument value
+    /// (<see cref="EvalZeroArgumentDemandOutputCounted"/>, which binds the accepted EMPTY
+    /// supply first). The decision is the effective signature's alone — a body that would
+    /// happen to succeed without its parameter is rejected all the same — and a builtin
+    /// CALLBACK slot (<c>map</c>/<c>filter</c>/<c>reduce</c> steps, loop steps) supplies
+    /// arguments and never consults this law. Lean: <c>zeroArgumentDemandError?</c>.
     /// </summary>
     private static EvalError? ZeroArgumentValueDemandRejection(
         ZeroArgumentDemandShape shape,
@@ -1111,18 +1169,20 @@ public static partial class Evaluator
         SourceSpan? span,
         Algorithm algorithm)
     {
-        if (shape == ZeroArgumentDemandShape.Block)
-        {
-            return algorithm.ParameterCount == 0
-                ? null
-                : MissingImplicitArgumentsError(algorithm, span);
-        }
+        // A builtin is deliberately NOT decided here: its zero-argument rejection is
+        // owned by EvalBuiltinValueCounted (the very error `sum()` reports), and
+        // intercepting it would replace that report with a parameter-list one.
+        if (algorithm is Algorithm.Builtin)
+            return null;
 
-        if (name is not null && ConditionalValueAccessError(name, algorithm) is { } conditionalError)
+        if (AcceptsZeroSuppliedArguments(algorithm))
+            return null;
+
+        if (ConditionalValueAccessError(name ?? "conditional", algorithm) is { } conditionalError)
             return conditionalError with { Span = span };
 
-        if (algorithm.ParameterCount == 0)
-            return null;
+        if (shape == ZeroArgumentDemandShape.Block)
+            return MissingImplicitArgumentsError(algorithm, span);
 
         var arity = ZeroArgumentDemandArityMismatch(algorithm);
         return shape == ZeroArgumentDemandShape.Property
@@ -2826,7 +2886,7 @@ public static partial class Evaluator
     private static EvalResult<Result> EvalRootProgram(Algorithm alg, SourceSpan? span, EvalCtx ctx)
     {
         var wired = WireToCaller(ctx, alg);
-        if (wired.ParameterCount == 0)
+        if (AcceptsZeroSuppliedArguments(wired))
         {
             var result = EvalProgramOutput(wired, ctx, []);
             if (result.IsError
@@ -2849,7 +2909,7 @@ public static partial class Evaluator
     private static EvalResult<CountedResult> EvalRootProgramCounted(Algorithm alg, SourceSpan? span, EvalCtx ctx)
     {
         var wired = WireToCaller(ctx, alg);
-        if (wired.ParameterCount == 0)
+        if (AcceptsZeroSuppliedArguments(wired))
         {
             var result = EvalProgramOutputCounted(wired, ctx, []);
             if (result.IsError
@@ -2876,7 +2936,7 @@ public static partial class Evaluator
         string topLevelPropertyName)
     {
         var wired = WireToCaller(ctx, alg);
-        if (wired.ParameterCount != 0)
+        if (!AcceptsZeroSuppliedArguments(wired))
         {
             var blockSpan = span ?? FirstSpan(wired.Output);
             return MissingImplicitArguments<CountedRootProgramResult>(wired, blockSpan);
@@ -2915,14 +2975,12 @@ public static partial class Evaluator
 
         var resolvedAlgorithm = ChildOf(alg, binding.Value);
         var span = binding.DeclarationSpans.FirstOrDefault();
-        if (resolvedAlgorithm.ParameterCount != 0)
-        {
-            return WithSpan<CountedResult?>(
-                span,
-                new EvalError.WithContext(
-                    CtxProperty(name),
-                    ZeroArgumentDemandArityMismatch(resolvedAlgorithm)));
-        }
+        // A named top-level property read is an ordinary zero-argument value demand, so
+        // the ONE law decides and shapes its report: a callable that cannot accept zero
+        // supplied arguments is the property-context mismatch naming its true minimum
+        // supply, and a clause family keeps its ordinary dispatch failure.
+        if (ZeroArgumentValueDemandRejection(ZeroArgumentDemandShape.Property, name, span, resolvedAlgorithm) is { } rejection)
+            return rejection;
 
         var propertyR = WithPropertyContextOnMissingOutput(
             name,

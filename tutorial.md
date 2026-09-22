@@ -2110,6 +2110,53 @@ G(1, 2, 3, 4, 5)
 
 Both forms supply five numeric argument slots, collected as `x = [1, 2, 3, 4, 5]`; `x.sum` opens the bound list and adds its elements. An UNSPREAD structure is one argument slot: `G(A)` and `G((1, 2, 3, 4, 5))` each supply ONE sequence-valued slot. Because that lone non-spread sequence value is the collector's entire segment, it provides the collector's whole supply, opening exactly one level — `x = [1, 2, 3, 4, 5]` again, so `G(A)` is also `15` and `G(*x) = x.count` reports `5` for `G(A)` as for `G(A*)`. The opening is one level and never recursive: `G(((1, 2), 3))` collects `[(1, 2), 3]`. Beside another argument the sequence is collected exactly — `G(*x) = x.count` reports `2` for `G(A, 0)`, with `x = [(1, 2, 3, 4, 5), 0]`. Lists remain exact: `G([1, 2, 3, 4, 5])` collects `x = [[1, 2, 3, 4, 5]]`, which the numeric `sum` element constraint rejects, while the explicit spread `G([1, 2, 3, 4, 5]*)` sums to `15`. Items already produced by explicit spread are final supplied items: `G([(1, 2)]*)` collects `[(1, 2)]`, the spread-produced pair kept exact. An empty call `G()` collects `x = []`.
 
+Because a collecting parameter requires no supplied argument, a callable whose whole
+parameter list is one collecting parameter accepts an empty call — and therefore reads as an
+ordinary value too. **A callable may be read as a zero-argument value exactly when an ordinary
+call with no arguments can bind it**, so the bare name and the empty call agree:
+
+```
+Only(*xs) = xs
+
+Only()
+Only   # valid value demand
+```
+
+**Results:**
+```
+[]
+[]
+```
+
+Both spellings collect nothing, so both are the empty list. The bare name works wherever
+KatLang already reads a value with no arguments — an output row, an `if` branch, a collection
+builtin argument in either spelling (`count(Only)` and `Only.count` are both `0`), an ordinary
+parameter that reads its argument, and a member read such as `Obj.M`. Redundant parentheses
+change nothing: `Only`, `(Only)` and `((Only))` are the same value expression.
+
+The two spellings differ only in the operational rule they already had: the bare name is a
+property-style read, so repeated reads reuse the value in the property's applicable cache scope, while `Only()`
+is an explicit call and runs the body each time (see
+[Zero-Parameter Property Caching](#zero-parameter-property-caching)).
+
+A required parameter is still required. A collecting parameter excuses only itself:
+
+```
+Head(first, *rest) = first
+
+Head()
+```
+
+**Result:** error — `Head` needs one supplied value, so a call with none cannot bind it.
+
+`Head` needs one supplied value, so `Head()` is an arity error — and so is reading `Head` as a
+value, with the same "expects 1 parameter" report. The same holds for `Tail(*rest, last)` and
+for a grouped parameter such as `Pair((x, y))`, which consumes one supplied argument whatever
+its group contains: a group's one-item fallback binds ONE value, it never accepts none. And
+where a callable is used as an algorithm rather than as a value — a `map` or `filter` callback,
+a loop step, a higher-order argument — it is still the callable itself, so
+`map((1, 2), Only)` is `[[1], [2]]`.
+
 The collect marker and the spread marker have opposite meanings and are never interchangeable — they match the semantic directions `collect : Supply → ListValue` and `spread : Value → Supply`. Prefix `*name` in a binding position is a **collecting binding**: it collects its matched items into an exact list, and when it appears in a parameter list it is called a **collecting parameter**. Postfix `value*` is instead a **spread expression** that contributes the operand's items to the surrounding item supply. Both markers must be directly attached to what they modify: `*items` is a collecting binding while `* items` is an error, and `value*` is a spread while `value *` is an error. Which of the three meanings a star has is decided by position, never by spacing: a `*` followed by a valid right operand — on the same line or on the next — is always the multiplication operator, however it is spaced, and a `*` that nothing can follow (a comma, a closing delimiter, the end of the program, or a definition comes next) is the spread marker — which must then be attached. Whitespace therefore never turns one valid operation into another; it only separates the valid `value*` from the rejected `value *`.
 
 Multiple sibling sequence values are **not** auto-flattened — they are preserved unless you open them explicitly with a spread marker. With `A = 1, 2` and `B = 3, 4`, `G(A, B)` collects `x = [(1, 2), (3, 4)]` (count 2), while `G(A*, B*)` collects `x = [1, 2, 3, 4]` (count 4):

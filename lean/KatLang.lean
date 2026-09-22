@@ -163,6 +163,24 @@ namespace ParameterPattern
       | .capture parameter => parameter.kind == ParameterKind.collecting
       | _ => false)
 
+  /-- The MINIMUM number of supplied argument slots a parameter-pattern list
+      accepts — the ONE rule `bindParameterPatternList` (and its counted twin)
+      enforces, factored out so no other layer can re-derive it:
+
+      * every pattern consumes exactly ONE supplied slot, whatever it contains —
+        a sequence-value group is one slot that the binder opens afterwards, so
+        nested structure never changes the count at this level;
+      * a collecting capture at THIS level consumes NONE: it collects whatever
+        slots are left over after the fixed prefix and suffix bind, and an empty
+        leftover is the exact empty list (`collectSegment [] = []`).
+
+      So `Only(*xs)` accepts zero supplied slots, while `Head(x, *rest)`,
+      `Tail(*rest, z)`, `P((x, *rest))` and `Pair(x, y)` each require at least
+      one. A list with two collecting captures is a rejected signature, never a
+      lower minimum. C#: `ParameterPattern.MinimumSuppliedSlots`. -/
+  def minimumSuppliedSlots (patterns : List ParameterPattern) : Nat :=
+    if hasCollectingCaptureAtCurrentLevel patterns then patterns.length - 1 else patterns.length
+
   def hasRepeatedCaptureNames (patterns : List ParameterPattern) : Bool :=
     let names := (patterns.flatMap captures).map (fun parameter => parameter.name)
     names.length != names.eraseDups.length
@@ -2586,6 +2604,34 @@ def flatBinderUserEquivalent? (callee : Algorithm) : Option Algorithm :=
       | none => none
   | _ => none
 
+/-- ONE zero-supply acceptability rule: whether an ORDINARY call that supplies
+    ZERO argument slots can bind this callable. It is derived from the very
+    binder/dispatch semantics such a call uses, never from parameter-list
+    emptiness:
+
+    * a user algorithm accepts iff its top-level pattern list's
+      `ParameterPattern.minimumSuppliedSlots` is zero — so `Only(*xs)` accepts
+      (`Only()` binds `xs = []`) while `Head(x, *rest)`, `Tail(*rest, z)`,
+      `P((x, *rest))`, `P((x))` and `Pair(x, y)` do not. A COLLECTING parameter
+      contributes ZERO required slots; a nested pattern still consumes one, and
+      its scalar one-item fallback binds ONE supplied value, never none;
+    * a clause family accepts iff some branch's top-level pattern has arity
+      zero — exactly the branch `matchCallBranches` selects for an empty
+      argument list. A flat multi-binder core equivalent
+      (`flatBinderUserEquivalent?`) always has at least two parameters, so it
+      never accepts;
+    * a BUILTIN never accepts (`sum()` is an arity error). Its rejection stays
+      owned by `evalBuiltinValueCounted` / `builtinArityError b 0`, which is the
+      very report `sum()` produces, so `zeroArgumentDemandError?` deliberately
+      does not intercept builtins.
+
+    C#: `Evaluator.AcceptsZeroSuppliedArguments`. -/
+def Algorithm.acceptsZeroSuppliedArguments : Algorithm -> Bool
+  | .builtin _ => false
+  | .conditional _ _ branches _ =>
+      branches.any (fun branch => Pattern.topLevelArity branch.pattern == 0)
+  | a => ParameterPattern.minimumSuppliedSlots (Algorithm.parameterPatterns a) == 0
+
 /-- Value-position access to a conditional algorithm cannot select a branch,
     so it must fail instead of silently forcing the conditional's empty output
     list. Mirrors the no-argument dot-call dispatch: a flat multi-binder core
@@ -2949,14 +2995,19 @@ partial def bindCountedParameterPatternList (patterns : List ParameterPattern)
         let rest <- bindPairs patterns' inputs'
         merge current rest
     | _, _ => .error (Error.arityMismatch patterns.length inputs.length)
+  -- The accepted supply is the ONE minimum-supply rule
+  -- (`ParameterPattern.minimumSuppliedSlots`): without a collecting capture
+  -- every pattern needs its own slot, so the count is EXACT; with one the
+  -- minimum is a lower bound and the collector takes whatever is left over.
   match findCollecting patterns 0 with
   | none =>
-      if patterns.length != inputs.length then
-        .error (Error.arityMismatch patterns.length inputs.length)
+      let required := ParameterPattern.minimumSuppliedSlots patterns
+      if inputs.length != required then
+        .error (Error.arityMismatch required inputs.length)
       else
         bindPairs patterns inputs
   | some (collectingIndex, collectingParameter) =>
-      let required := patterns.length - 1
+      let required := ParameterPattern.minimumSuppliedSlots patterns
       if inputs.length < required then
         .error (Error.arityMismatch required inputs.length)
       else
@@ -3458,7 +3509,21 @@ end CtxMsg
     `algorithmExpr` arms of `evalCounted`, every lazy builtin VALUE slot (the `if`
     condition and branches, `while`/`repeat` initial state, the `repeat` count,
     `atoms`, `range` — `evalArgumentValueCounted`), and the ordinary-dot `string`
-    intrinsic's receiver. Only the report's shape depends on the source:
+    intrinsic's receiver.
+
+    ELIGIBILITY IS ARITY, NOT PARAMETER-LIST EMPTINESS (September 2026): a
+    callable may satisfy a zero-argument value demand exactly when an ordinary
+    call supplying zero arguments can bind it
+    (`Algorithm.acceptsZeroSuppliedArguments` — the binder's own
+    `ParameterPattern.minimumSuppliedSlots` rule, the family's zero-arity branch
+    rule). So `Only(*xs) = xs` is demandable (a collecting parameter requires no
+    supplied slot: `Only` and `Only()` both accept zero) while `Head(x, *rest)`
+    still requires one supplied value and is rejected. The REPORT names the true
+    minimum supply — `minimumSuppliedSlots`, never the flattened declared capture
+    count — so `Head` reports 1 and `P((x, y))` reports 1, exactly the counts
+    `Head()` / `P()` report.
+
+    Only the report's shape depends on the source:
     - a lexical property reference `X` (`.resolve`): a conditional cannot be
       accessed as a value (`conditionalValueAccessError?`), and a parameterized
       property is `withContext (property X) (arityMismatch k 0)`;
@@ -3467,23 +3532,48 @@ end CtxMsg
       rule, then the bare `arityMismatch k 0`;
     - a written brace block (`.algorithmExpr`): `unresolvedImplicitParams`;
     - an anonymous or value-reified argument (`none`): the bare `arityMismatch`.
-    `none` means the demand may proceed to the algorithm's output. A builtin
-    CALLBACK slot (`map`/`filter`/`reduce` steps, loop steps) supplies arguments
-    and never consults this law. C#: `ZeroArgumentValueDemandError`. -/
+    `none` means the demand may proceed to the algorithm's zero-argument value
+    (`evalZeroArgumentDemandOutputCounted`, which binds the accepted EMPTY supply
+    first). A builtin CALLBACK slot (`map`/`filter`/`reduce` steps, loop steps)
+    supplies arguments and never consults this law. C#:
+    `ZeroArgumentValueDemandError`. -/
 def zeroArgumentDemandError? (source? : Option Expr) (a : Algorithm) : Option Error :=
-  let arity := Error.arityMismatch (Algorithm.params a).length 0
-  let named (name : Ident) (reject : Error) : Option Error :=
-    match conditionalValueAccessError? name a with
-    | some err => some err
-    | none => if (Algorithm.params a).length = 0 then none else some reject
-  match source? with
-  | some (.resolve n) => named n (Error.withContext (CtxMsg.property n) arity)
-  | some (.param x) => named x arity
-  | some (.dotMember _ n _ _) => named n arity
-  | some (.algorithmExpr _) =>
-      if (Algorithm.params a).length = 0 then none
-      else some (Error.unresolvedImplicitParams (Algorithm.params a))
-  | _ => if (Algorithm.params a).length = 0 then none else some arity
+  match a with
+  | .builtin _ =>
+      -- A builtin is deliberately NOT decided here: its zero-argument rejection
+      -- is owned by `evalBuiltinValueCounted` (`builtinArityError b 0` — the very
+      -- error `sum()` reports), and intercepting it would replace that report
+      -- with a parameter-list one.
+      none
+  | _ =>
+    if Algorithm.acceptsZeroSuppliedArguments a then none
+    else
+      let arity :=
+        Error.arityMismatch
+          (ParameterPattern.minimumSuppliedSlots (Algorithm.parameterPatterns a)) 0
+      let named (name : Ident) (reject : Error) : Error :=
+        (conditionalValueAccessError? name a).getD reject
+      match source? with
+      | some (.resolve n) => some (named n (Error.withContext (CtxMsg.property n) arity))
+      | some (.param x) => some (named x arity)
+      | some (.dotMember _ n _ _) => some (named n arity)
+      | some (.algorithmExpr _) =>
+          some (named "conditional" (Error.unresolvedImplicitParams (Algorithm.params a)))
+      | _ => some (named "conditional" arity)
+
+/-- The ACCEPTANCE half of the ONE zero-argument value-demand law, read off the
+    law itself so the two halves can never disagree: `true` exactly when
+    `zeroArgumentDemandError?` lets the demand proceed. It differs from
+    `Algorithm.acceptsZeroSuppliedArguments` only for a BUILTIN, which the law
+    deliberately passes through to its own arity rejection
+    (`evalBuiltinValueCounted`) — the law
+    `zero_argument_value_demand_accepts_exactly_zero_supply_callables` in
+    `KatLangArityLaws.lean` proves the two agree everywhere else. Used by the
+    demand sites that decide the same question without building a report: the
+    structurally navigated member arm of `evalDotCallCounted` and the collection
+    builtins' value slots. C#: `AcceptsZeroArgumentValueDemand`. -/
+def acceptsZeroArgumentValueDemand (a : Algorithm) : Bool :=
+  (zeroArgumentDemandError? none a).isNone
 
 --------------------------------------------------------------------------------
 -- Open resolution structures
@@ -3697,10 +3787,8 @@ def shouldWrapArgExprAsValue : Expr -> Bool
     parameters, properties, or opens still resolve as algorithms for
     algorithm-consuming builtin arguments (callbacks). -/
 def zeroDeclarationBlockValueSlot : Expr -> Bool
-  | .algorithmExpr alg =>
-      (Algorithm.params alg).isEmpty
-        && (Algorithm.opens alg).isEmpty
-        && (Algorithm.props alg).isEmpty
+  | .algorithmExpr (.mk _ patterns opens props _ _) =>
+      patterns.isEmpty && opens.isEmpty && props.isEmpty
   | _ => false
 
 def isLiftableArgResolutionError : Error → Bool
@@ -3767,8 +3855,19 @@ def splitContSlots (outputSlots : List Result) : EvalM (List Result × Bool) := 
 def countedSequenceCallbackItem (item : CountedResult) : CountedResult :=
   reCountValueBoundary item
 
+/-- A property-style access reuses the per-run cache exactly when the demanded
+    callable is one the ONE zero-argument value-demand law ACCEPTS
+    (`Algorithm.acceptsZeroSuppliedArguments`), so a newly eligible
+    collecting-only property (`Only(*xs) = xs`) takes the very same demand/cache
+    path an ordinary zero-parameter property takes — eligibility is what the
+    September 2026 rule widened, cache POLICY is unchanged, and `Only()` remains
+    an ordinary call that bypasses the entry. A builtin never accepts, so it
+    keeps flowing to its own arity rejection uncached, exactly as before.
+    C#: the zero-argument property access path
+    (`GetOrEvaluateZeroArgPropertyResult`), entered by callers only after the
+    law accepted. -/
 def isCacheableZeroArgPropertyAlgorithm (a : Algorithm) : Bool :=
-  (Algorithm.params a).isEmpty
+  Algorithm.acceptsZeroSuppliedArguments a
 
 /-- The cache key of one property-style access (see `ZeroArgPropertyCacheKey`
     for the law it encodes): an exported binding's key carries no environment
@@ -4775,14 +4874,19 @@ mutual
       decreasing_by
         all_goals simp_wf
         all_goals omega
+    -- The accepted supply is the ONE minimum-supply rule
+    -- (`ParameterPattern.minimumSuppliedSlots`): without a collecting capture
+    -- every pattern needs its own slot, so the count is EXACT; with one the
+    -- minimum is a lower bound and the collector takes whatever is left over.
     match findCollecting patterns 0 with
     | none =>
-        if patterns.length != inputs.length then
-          .error (Error.arityMismatch patterns.length inputs.length)
+        let required := ParameterPattern.minimumSuppliedSlots patterns
+        if inputs.length != required then
+          .error (Error.arityMismatch required inputs.length)
         else
           bindPairs patterns inputs
     | some (collectingIndex, collectingParameter) =>
-        let required := patterns.length - 1
+        let required := ParameterPattern.minimumSuppliedSlots patterns
         if inputs.length < required then
           .error (Error.arityMismatch required inputs.length)
         else
@@ -4950,9 +5054,13 @@ mutual
   partial def evalAlgOutput (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) : EvalM Result :=
     evalAlgOutputCore a ctx env
 
-  /-- Evaluate a root program algorithm when a result is requested. -/
+  /-- Evaluate a root program algorithm when a result is requested. The root is
+      demanded for its value with NOTHING supplied, so it goes through the ONE
+      zero-argument demand funnel: a root declaring no parameter pattern is its
+      output exactly as before, and a root whose parameter list accepts an EMPTY
+      supply (a collecting-only host-built root) binds that supply first. -/
   partial def evalProgramOutput (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) : EvalM Result :=
-    evalAlgOutputCore a ctx env
+    evalZeroArgumentDemandOutput a ctx env
 
   partial def evalAlgOutputSlots (a : Algorithm) (ctx : EvalCtx) (env : ValEnv)
       (preserveSequenceSpreadExpressionBoundaries : Bool := false)
@@ -5119,21 +5227,66 @@ mutual
       : EvalM CountedResult :=
     evalAlgOutputCountedCore a ctx env
 
+  /-- Evaluate a callable that the ONE zero-argument value-demand law
+      (`zeroArgumentDemandError?`) has ACCEPTED, as the zero-argument value it
+      denotes. This is the demand's evaluation half, the counterpart of that
+      law's rejection half, and the ONE funnel every demand site evaluates
+      through:
+
+      * a callable that declares no top-level pattern is its output, exactly as
+        before — the overwhelmingly common path, untouched;
+      * a callable whose pattern list accepts an EMPTY supply (a collecting-only
+        signature such as `Only(*xs) = xs`) is bound by the ORDINARY binder
+        against the empty supply first, so its collecting parameter holds the
+        exact empty list `[]` while the body runs, and the callee's names shadow
+        all three inherited tiers exactly as a written call's do;
+      * a clause family that accepts zero supplied arguments dispatches its
+        zero-argument branch through ordinary conditional dispatch, so branch
+        selection, duplicate-pattern rejection and the value boundary are the
+        call's own.
+
+      ELIGIBILITY is what this rule changes; the CACHE is untouched: a
+      property-style demand still reaches this funnel through
+      `evalZeroArgPropertyAccessCounted` (the run cache), while `Only()` stays an
+      ordinary call that bypasses it. C#:
+      `EvalZeroArgumentDemandOutputCounted`. -/
+  partial def evalZeroArgumentDemandOutputCounted (a : Algorithm)
+      (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult := do
+    match a with
+    | .conditional _ _ _ _ => evalConditionalCallCounted a [] ctx env
+    | _ =>
+      if (Algorithm.parameterPatterns a).isEmpty then
+        evalAlgOutputCounted a ctx env
+      else do
+        let bindings <- bindParameterPatternList (Algorithm.parameterPatterns a) [] true
+        let names := Algorithm.params a
+        let newCtx <- ctx.bindParameters names bindings.algEnv bindings.countedParamEnv
+        let shadowedEnv := ValEnv.shadow env names
+        evalAlgOutputCounted a newCtx (bindings.argEnv ++ shadowedEnv)
+
+  /-- Value projection of `evalZeroArgumentDemandOutputCounted`.
+      C#: `EvalZeroArgumentDemandOutput`. -/
+  partial def evalZeroArgumentDemandOutput (a : Algorithm) (ctx : EvalCtx) (env : ValEnv)
+      : EvalM Result := do
+    let counted <- evalZeroArgumentDemandOutputCounted a ctx env
+    pure counted.fst
+
   /-- Demand a builtin argument slot for its VALUE with zero explicit arguments.
       The ONE zero-argument value-demand law (`zeroArgumentDemandError?`) decides
       from the resolved algorithm's effective signature BEFORE any body is
       entered — a selected `if` branch, a loop's initial state, the `repeat`
-      count, and the `atoms`/`range` arguments reject a parameterized algorithm
-      exactly like value-position access does (`if(1, Inc, 0)` with `Inc(x)` is
-      the property arity error, never `unknownName x` from inside `Inc`), while a
-      zero-parameter algorithm (a property, a captured-binding thunk, a written
-      value) evaluates its output as before. Laziness is untouched: a slot is
+      count, and the `atoms`/`range` arguments reject a callable that cannot
+      accept zero supplied arguments exactly like value-position access does
+      (`if(1, Inc, 0)` with `Inc(x)` is the property arity error, never
+      `unknownName x` from inside `Inc`), while a callable that CAN (a property,
+      a captured-binding thunk, a written value, a collecting-only signature)
+      evaluates through the shared demand funnel. Laziness is untouched: a slot is
       demanded only when the builtin selects it. C#: `EvalResolvedArgumentCounted`. -/
   partial def evalArgumentValueCounted (arg : ResolvedArgumentAlgorithm)
       (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult :=
     match zeroArgumentDemandError? arg.source? arg.algorithm with
     | some err => .error err
-    | none => evalAlgOutputCounted arg.algorithm ctx env
+    | none => evalZeroArgumentDemandOutputCounted arg.algorithm ctx env
 
   /-- Value projection of `evalArgumentValueCounted`. C#: `EvalResolvedArgument`. -/
   partial def evalArgumentValue (arg : ResolvedArgumentAlgorithm)
@@ -5154,14 +5307,14 @@ mutual
       match ZeroArgPropertyCache.lookup state.zeroArgPropertyCache key with
       | some cached => pure cached
       | none =>
-          let counted <- evalAlgOutputCounted resolvedAlgorithm ctx env
+          let counted <- evalZeroArgumentDemandOutputCounted resolvedAlgorithm ctx env
           let nextState <- get
           set { nextState with
             zeroArgPropertyCache :=
               ZeroArgPropertyCache.insert nextState.zeroArgPropertyCache key counted }
           pure counted
     else
-      evalAlgOutputCounted resolvedAlgorithm ctx env
+      evalZeroArgumentDemandOutputCounted resolvedAlgorithm ctx env
 
   partial def evalZeroArgPropertyAccess
       (accessKind : ZeroArgPropertyAccessKind) (owner : Algorithm)
@@ -5301,12 +5454,16 @@ mutual
 
     partial def collectSequenceCallableCallItems
       (args : List ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env : ValEnv)
+      (valueSlots : SequenceBuiltinMetadata)
       : EvalM (List CallableCallItem) := do
-    let rec loop : List ResolvedArgumentAlgorithm -> EvalM (List CallableCallItem)
-      | [] => pure []
-      | arg :: rest => do
+    let isValueSlot (slot : Nat) : Bool :=
+      slot == 0 || match valueSlots.suffixArgs[slot - 1]? with
+        | some descriptor => descriptor.kind != .algorithm
+        | none => false
+    let rec loop : List ResolvedArgumentAlgorithm -> Nat -> EvalM (List CallableCallItem)
+      | [], _ => pure []
+      | arg :: rest, slot => do
           let alg := arg.algorithm
-          let tail <- loop rest
           -- A callback argument (a callable that declares parameters) is applied
           -- per element by the consuming sequence builtin, never used as a value here.
           -- Its parameters are unbound at this collection point, so evaluating its body
@@ -5315,29 +5472,58 @@ mutual
           -- self-referential thunk, that stray lookup re-enters the same builtin call and
           -- never settles. Keep the algorithm unevaluated so it is applied with bound
           -- parameters later; only value-shaped arguments are materialized eagerly.
-          if !(Algorithm.params alg).isEmpty || !(Algorithm.parameterPatterns alg).isEmpty then
-            pure ({ value? := none, algorithm? := some alg, error? := none, skipMissingValue := false, source? := arg.source? } :: tail)
-          else
-          match <- evalAttempt (evalAlgOutputCounted alg ctx env) with
-          | .ok counted =>
-              if arg.spreadsSequence then
-                match countedTopLevelValues counted with
-                | [] => pure tail
-                | values =>
-                    let head := values.map (fun value =>
-                      { value? := some value, algorithm? := some alg, error? := none, skipMissingValue := false })
-                    pure (head ++ tail)
-              else
-                pure ({ value? := some counted.fst, algorithm? := some alg, error? := none, skipMissingValue := false, source? := arg.source? } :: tail)
-          | .error err =>
-              pure ({ value? := none, algorithm? := some alg, error? := some err, skipMissingValue := false, source? := arg.source? } :: tail)
-    loop args
+          let callableShaped := match alg with
+            | .conditional _ _ _ _ => true
+            | _ => !(Algorithm.parameterPatterns alg).isEmpty
+          let head <-
+            if callableShaped then do
+              let item : CallableCallItem :=
+                { value? := none, algorithm? := some alg, error? := none, skipMissingValue := false, source? := arg.source? }
+              -- The descriptor binds this slot's role before later argument effects.
+              -- Only VALUE positions demand newly eligible callables; callbacks do not.
+              let item <- if isValueSlot slot then demandSequenceBuiltinCallItemValue item ctx env else pure item
+              pure [item]
+            else do
+              match <- evalAttempt (evalZeroArgumentDemandOutputCounted alg ctx env) with
+              | .ok counted =>
+                  if arg.spreadsSequence then
+                    pure ((countedTopLevelValues counted).map (fun value =>
+                      { value? := some value, algorithm? := some alg, error? := none, skipMissingValue := false }))
+                  else
+                    pure [{ value? := some counted.fst, algorithm? := some alg, error? := none, skipMissingValue := false, source? := arg.source? }]
+              | .error err =>
+                  pure [{ value? := none, algorithm? := some alg, error? := some err, skipMissingValue := false, source? := arg.source? }]
+          let tail <- loop rest (slot + head.length)
+          pure (head ++ tail)
+    loop args 0
 
+
+  /-- Demand ONE collection-builtin call item that binding has placed in a VALUE
+      position. Call-item assembly leaves a callable-shaped CALLBACK item
+      unevaluated (a CALLBACK slot must receive the algorithm, never a value), so
+      the demand happens HERE, once the descriptor has decided the slot is a
+      value: an item the ONE law accepts (`acceptsZeroArgumentValueDemand` — a
+      collecting-only signature such as `Only` alongside every zero-parameter
+      property) is evaluated through the shared demand funnel, and every other
+      item is returned untouched for `sequenceBuiltinValueDemandError?` to
+      report. An item that was already evaluated, or whose evaluation already
+      failed, is never re-entered. C#: `DemandSequenceBuiltinCallItemValue`. -/
+  partial def demandSequenceBuiltinCallItemValue (item : CallableCallItem)
+      (ctx : EvalCtx) (env : ValEnv) : EvalM CallableCallItem := do
+    match item.value?, item.error?, item.algorithm? with
+    | none, none, some alg =>
+        if acceptsZeroArgumentValueDemand alg then
+          match <- evalAttempt (evalZeroArgumentDemandOutputCounted alg ctx env) with
+          | .ok counted => pure { item with value? := some counted.fst }
+          | .error err => pure { item with error? := some err }
+        else
+          pure item
+    | _, _, _ => pure item
 
     partial def bindSequenceBuiltinArguments
       (b : Builtin) (metadata : SequenceBuiltinMetadata) (args : List ResolvedArgumentAlgorithm)
       (ctx : EvalCtx) (env : ValEnv) : EvalM BoundSequenceBuiltinArguments := do
-    let items <- collectSequenceCallableCallItems args ctx env
+    let items <- collectSequenceCallableCallItems args ctx env metadata
     -- A collection builtin is an ordinary fixed-arity callable: exactly one
     -- collection argument followed by its fixed control arguments
     -- (`count(collection)`, `take(collection, count)`,
@@ -5353,6 +5539,9 @@ mutual
     match items with
     | [] => .error (Error.arityMismatch expectedArgCount 0)
     | collectionItem :: controlItems => do
+        -- The `collection` parameter is a VALUE position, so demand the bound item
+        -- through the ONE zero-argument value-demand law before reading its value.
+        let collectionItem <- demandSequenceBuiltinCallItemValue collectionItem ctx env
         let collectionValue <-
           match collectionItem.value? with
           | some value => pure value
@@ -5374,6 +5563,13 @@ mutual
             EvalM (List PreparedSequenceBuiltinSuffixArg)
           | [], [] => pure []
           | descriptor :: descriptors, item :: rest => do
+              -- A `.value` / `.wholeNumber` control is a VALUE position, so it is
+              -- demanded through the ONE law; an `.algorithm` control is a
+              -- CALLBACK slot and is never demanded.
+              let item <-
+                match descriptor.kind with
+                | .algorithm => pure item
+                | _ => demandSequenceBuiltinCallItemValue item ctx env
               let prepared <- prepareSequenceBuiltinSuffixArgItem b descriptor item
               let tail <- prepareControls descriptors rest
               pure (prepared :: tail)
@@ -5414,7 +5610,7 @@ mutual
       | some err =>
           if (Algorithm.params initial.algorithm).isEmpty then .error err
           else .error reduceInitialAccumulatorRequiresValueError
-      | none => evalAlgOutputCounted initial.algorithm ctx env
+      | none => evalZeroArgumentDemandOutputCounted initial.algorithm ctx env
     let rec reduceLoop : List CountedResult -> CountedResult -> EvalM CountedResult
       | [], acc => pure acc
       | item :: rest, (accValue, _) => do
@@ -5840,7 +6036,12 @@ mutual
         pure [combineOutputSlots items]
     | .algorithmExpr algorithm => do
         let wired := wireToCaller ctx algorithm
-        if (Algorithm.params wired).length = 0 then
+        -- Only a plain-output algorithm can take the written-slot fast path. A
+        -- captureless pattern still consumes a slot; a family must dispatch.
+        let plainOutput := match wired with
+          | .conditional _ _ _ _ => false
+          | _ => (Algorithm.parameterPatterns wired).isEmpty
+        if plainOutput then
           let items <- evalExplicitSequenceValueItems wired ctx env
           pure [combineOutputSlots items]
         else
@@ -6164,7 +6365,7 @@ mutual
         match zeroArgumentDemandError? (some target) targetAlg with
         | some err => .error err
         | none => pure ()
-        let val <- evalAlgOutput targetAlg ctx env
+        let val <- evalZeroArgumentDemandOutput targetAlg ctx env
         let out <- resultToString val
         pure (out, Result.valueCount out)
       else
@@ -6178,20 +6379,27 @@ mutual
             let wired := childOfInContext targetAlg p.alg ctx
             match argsOpt with
             | none =>
+                -- A structurally navigated member read with NO argument list is an
+                -- ordinary zero-argument value demand, so the ONE law decides
+                -- (`acceptsZeroArgumentValueDemand`) and the rejection names the
+                -- member's true minimum supply (`minimumSuppliedSlots`), never its
+                -- flattened declared capture count.
                 match flatBinderUserEquivalent? wired with
                 | some simple =>
-                    if (Algorithm.params simple).length = 0 then
+                    if acceptsZeroArgumentValueDemand simple then
                       reCountValueBoundary <$> evalZeroArgPropertyAccessCounted .structural targetAlg p simple ctx env
                     else
-                      .error (Error.arityMismatch (Algorithm.params simple).length 0)
+                      .error (Error.arityMismatch
+                        (ParameterPattern.minimumSuppliedSlots (Algorithm.parameterPatterns simple)) 0)
                 | none =>
-                    match wired with
-                    | .conditional _ _ _ _ => .error (Error.noMatchingBranch name)
-                    | _ =>
-                        if (Algorithm.params wired).length = 0 then
-                          reCountValueBoundary <$> evalZeroArgPropertyAccessCounted .structural targetAlg p wired ctx env
-                        else
-                          .error (Error.arityMismatch (Algorithm.params wired).length 0)
+                    if acceptsZeroArgumentValueDemand wired then
+                      reCountValueBoundary <$> evalZeroArgPropertyAccessCounted .structural targetAlg p wired ctx env
+                    else
+                      match wired with
+                      | .conditional _ _ _ _ => .error (Error.noMatchingBranch name)
+                      | _ =>
+                          .error (Error.arityMismatch
+                            (ParameterPattern.minimumSuppliedSlots (Algorithm.parameterPatterns wired)) 0)
             | some args =>
                 evalResolvedCallCounted wired args ctx env name
         | none =>
@@ -6230,8 +6438,13 @@ mutual
               .error err
     | .algorithmExpr a =>
         let wired := wireToCaller ctx a
-        if (Algorithm.params wired).length = 0 then
-          match <- evalAttempt (evalAlgOutput wired ctx env) with
+        -- A spread operand is demanded for its VALUE with zero arguments, so the
+        -- ONE law decides and shapes its report here too: a block whose parameter
+        -- list accepts an empty supply is demanded through the shared funnel.
+        match zeroArgumentDemandError? (some e) wired with
+        | some err => .error err
+        | none =>
+          match <- evalAttempt (evalZeroArgumentDemandOutput wired ctx env) with
           | .ok value =>
               pure value.spreadItems
           | .error err =>
@@ -6239,8 +6452,6 @@ mutual
                 .error Error.spreadMissingOutput
               else
                 .error err
-        else
-          .error (Error.unresolvedImplicitParams (Algorithm.params wired))
     | _ =>
         match <- evalAttempt (eval e ctx env) with
         | .ok value =>
@@ -6487,7 +6698,7 @@ mutual
                     match zeroArgumentDemandError? (some e) alg with
                     | some err => .error err
                     | none => do
-                        let value <- evalAlgOutput alg ctx env
+                        let value <- evalZeroArgumentDemandOutput alg ctx env
                         pure (value, Result.valueCount value)
                 | none => .error (Error.unknownName x)
     | .sequenceConstruct _ _ =>
@@ -6504,7 +6715,7 @@ mutual
         match zeroArgumentDemandError? (some e) wired with
         | some err => .error err
         | none =>
-          let r <- evalAlgOutput wired ctx env
+          let r <- evalZeroArgumentDemandOutput wired ctx env
           pure (r, Result.valueCount r)
     | .capture rows => do
         -- A capture in value position is a value boundary: the body's supply
@@ -7128,7 +7339,12 @@ def runResultM (e : Expr) : EvalM Result := do
   match e with
   | .algorithmExpr a =>
       let wired := wireToCaller ctx a
-      if (Algorithm.params wired).length = 0 then
+      -- The program root is demanded for its value with nothing supplied, so the
+      -- ONE zero-supply rule decides: a root whose parameter list still REQUIRES
+      -- a supplied argument has unresolved implicit parameters, while one that
+      -- accepts an empty supply (a collecting-only host-built root) binds it
+      -- through the shared demand funnel (`evalProgramOutput`).
+      if Algorithm.acceptsZeroSuppliedArguments wired then
         evalProgramOutput wired ctx []
       else
         .error (Error.unresolvedImplicitParams (Algorithm.params wired))

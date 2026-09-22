@@ -243,29 +243,65 @@ public class AlgorithmParameterNamesTests
     }
 
     [Fact]
-    public void ZeroArgumentValueDemand_CountsParameters_NotPatterns()
+    public void ZeroArgumentValueDemand_CountsSuppliedSlots_NotCaptures()
     {
         // The one law site a count-only rewrite could quietly change the meaning of: the
-        // zero-argument value demand asks for the PARAMETER count (Lean:
-        // `(Algorithm.params a).length = 0`), never the pattern count. A parameter list may
-        // have a pattern with zero captures — host-constructible only, the parser rejects
-        // `F(()) = 5` — and such a property is still a zero-argument value: reading `F`
-        // proceeds to its output instead of reporting an arity mismatch.
-        var patternedButParameterless = new Algorithm.User(null, [new SequenceValueParameterPattern([])], [], [], [new Expr.Num(5)]);
-        Assert.Single(patternedButParameterless.ParameterPatterns);
-        Assert.Empty(patternedButParameterless.Params);
-        Assert.Equal(0, patternedButParameterless.ParameterCount);
+        // zero-argument value demand asks what an ordinary zero-argument CALL accepts
+        // (Lean: `Algorithm.acceptsZeroSuppliedArguments`, over
+        // `ParameterPattern.minimumSuppliedSlots`), never the capture count and never
+        // parameter-list emptiness. A parameter list may have a pattern with zero captures
+        // — host-constructible only, the parser rejects `F(()) = 5` — and that pattern
+        // still consumes ONE supplied slot, so `F()` is an arity error and bare `F` is
+        // rejected with exactly the same minimum (September 2026: eligibility follows
+        // actual call arity, so the two spellings can no longer disagree).
+        var patternedButCaptureless = new Algorithm.User(null, [new SequenceValueParameterPattern([])], [], [], [new Expr.Num(5)]);
+        Assert.Single(patternedButCaptureless.ParameterPatterns);
+        Assert.Empty(patternedButCaptureless.Params);
+        Assert.Equal(0, patternedButCaptureless.ParameterCount);
 
-        var root = new Algorithm.User(
-            Parent: null,
-            ParameterPatterns: [],
-            Opens: [],
-            Properties: [new Property("F", patternedButParameterless)],
-            Output: [new Expr.Resolve("F")]);
+        static Algorithm.User RootWith(Algorithm.User callee, Expr row)
+            => new(
+                Parent: null,
+                ParameterPatterns: [],
+                Opens: [],
+                Properties: [new Property("F", callee)],
+                Output: [row]);
 
-        var result = Evaluator.Run(new Expr.AlgorithmExpr(root));
-        Assert.False(result.IsError, result.IsError ? result.Error.ToString() : null);
-        Assert.Equal([5m], result.Value.ToAtoms());
+        var demand = Evaluator.Run(new Expr.AlgorithmExpr(RootWith(patternedButCaptureless, new Expr.Resolve("F"))));
+        var call = Evaluator.Run(new Expr.AlgorithmExpr(RootWith(
+            patternedButCaptureless,
+            new Expr.Call(new Expr.Resolve("F"), OutputBundle.Empty))));
+
+        Assert.True(demand.IsError);
+        Assert.True(call.IsError);
+        Assert.Equal(1, Assert.IsType<EvalError.ArityMismatch>(Innermost(demand.Error)).Expected);
+        Assert.Equal(1, Assert.IsType<EvalError.ArityMismatch>(Innermost(call.Error)).Expected);
+
+        // A list whose ONLY pattern is a collecting capture accepts the empty supply, so
+        // both spellings succeed and agree on the value.
+        var collectingOnly = new Algorithm.User(
+            null,
+            [new CaptureParameterPattern("xs", Kind: ParameterKind.Collecting)],
+            [],
+            [],
+            [new Expr.Param("xs")]);
+
+        var collectingDemand = Evaluator.Run(new Expr.AlgorithmExpr(RootWith(collectingOnly, new Expr.Resolve("F"))));
+        var collectingCall = Evaluator.Run(new Expr.AlgorithmExpr(RootWith(
+            collectingOnly,
+            new Expr.Call(new Expr.Resolve("F"), OutputBundle.Empty))));
+
+        Assert.False(collectingDemand.IsError, collectingDemand.IsError ? collectingDemand.Error.ToString() : null);
+        Assert.False(collectingCall.IsError, collectingCall.IsError ? collectingCall.Error.ToString() : null);
+        Assert.Equal(new Result.ListValue([]), collectingDemand.Value, Result.ValueComparer);
+        Assert.Equal(new Result.ListValue([]), collectingCall.Value, Result.ValueComparer);
+    }
+
+    private static EvalError Innermost(EvalError error)
+    {
+        while (error is EvalError.WithContext context)
+            error = context.Inner;
+        return error;
     }
 
     private sealed class AlgorithmCollector : AstWalker

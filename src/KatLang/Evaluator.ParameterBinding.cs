@@ -706,7 +706,9 @@ public static partial class Evaluator
         if (expr is Expr.AlgorithmExpr(var algorithm))
         {
             var wired = WireToCaller(ctx, algorithm);
-            if (wired.ParameterCount == 0)
+            // Only the plain-output arm may bypass the demand funnel. Zero captures
+            // do not imply zero supplied slots, and a family must dispatch its branch.
+            if (!RequiresZeroArgumentSupplyBinding(wired))
             {
                 var nestedItemsR = EvalExplicitSequenceValueItems(wired, ctx, valEnv);
                 if (nestedItemsR.IsError) return nestedItemsR.Error;
@@ -935,10 +937,16 @@ public static partial class Evaluator
             return AddBindings(boundR.Value);
         }
 
+        // The accepted supply is the ONE minimum-supply rule
+        // (ParameterPattern.MinimumSuppliedSlots): without a collecting capture every
+        // pattern needs its own slot, so the count is EXACT; with one the minimum is a
+        // lower bound and the collector takes whatever is left over.
+        var requiredCount = ParameterPattern.MinimumSuppliedSlots(patterns);
+
         if (collectingIndex < 0)
         {
-            if (patterns.Count != inputs.Count)
-                return arityMismatch(patterns.Count, inputs.Count);
+            if (inputs.Count != requiredCount)
+                return arityMismatch(requiredCount, inputs.Count);
 
             for (var index = 0; index < patterns.Count; index++)
             {
@@ -949,7 +957,6 @@ public static partial class Evaluator
             return EvalResult<UserCallBindings>.Ok(new UserCallBindings(valueBindings, countedBindings, algorithmBindings));
         }
 
-        var requiredCount = patterns.Count - 1;
         if (inputs.Count < requiredCount)
             return arityMismatch(requiredCount, inputs.Count);
 

@@ -755,6 +755,163 @@ theorem collector_binder_final_lone_item_after_suffix_is_exact (items : List Res
     mergePatternAlgEnv, lookupAssoc, CountedParamEnv.lookup, ValEnv.lookup, collectSegment]
   rfl
 
+/-
+## Zero-supply acceptance laws (September 2026)
+
+A callable may satisfy a ZERO-ARGUMENT VALUE DEMAND exactly when an ordinary
+call supplying zero arguments can bind it. Both sides read the ONE rule
+`ParameterPattern.minimumSuppliedSlots`, which is the arity check
+`bindParameterPatternList` itself enforces: every pattern consumes one supplied
+slot, except that a collecting capture at THAT level consumes none.
+
+The laws below pin (1) the rule's values, (2) that the REAL binder accepts
+exactly the parameter lists whose minimum is zero, and (3) that the demand law
+(`zeroArgumentDemandError?`) accepts exactly those callables and reports that
+minimum when it does not.
+-/
+
+theorem minimum_supplied_slots_empty :
+    ParameterPattern.minimumSuppliedSlots [] = 0 := rfl
+
+/-- A collecting parameter contributes ZERO required slots: `Only(*xs)` accepts
+an empty supply. -/
+theorem minimum_supplied_slots_lone_collector (name : Ident) :
+    ParameterPattern.minimumSuppliedSlots
+      [.capture { name := name, kind := .collecting }] = 0 := rfl
+
+theorem minimum_supplied_slots_fixed_list (x y : Ident) :
+    ParameterPattern.minimumSuppliedSlots
+      [.capture { name := x }, .capture { name := y }] = 2 := rfl
+
+/-- `Head(x, *rest)` still requires ONE supplied value — the collector does not
+excuse the fixed prefix. -/
+theorem minimum_supplied_slots_required_prefix (x r : Ident) :
+    ParameterPattern.minimumSuppliedSlots
+      [.capture { name := x }, .capture { name := r, kind := .collecting }] = 1 := rfl
+
+/-- `Tail(*rest, z)` likewise requires ONE supplied value. -/
+theorem minimum_supplied_slots_required_suffix (r z : Ident) :
+    ParameterPattern.minimumSuppliedSlots
+      [.capture { name := r, kind := .collecting }, .capture { name := z }] = 1 := rfl
+
+/-- A nested pattern consumes ONE supplied slot whatever it contains, so a
+collector INSIDE a group never lowers the outer minimum: `P((*xs))` still needs
+one supplied value, and its scalar one-item fallback binds that value rather
+than standing for none. -/
+theorem minimum_supplied_slots_group_is_one_slot (items : List ParameterPattern) :
+    ParameterPattern.minimumSuppliedSlots [.sequenceValue items] = 1 := rfl
+
+/-- `G((a, b), *rest)` requires ONE supplied slot: the group's, since the
+top-level collector requires none. -/
+theorem minimum_supplied_slots_group_then_collector (items : List ParameterPattern) (r : Ident) :
+    ParameterPattern.minimumSuppliedSlots
+      [.sequenceValue items, .capture { name := r, kind := .collecting }] = 1 := rfl
+
+/-- Acceptance is the minimum being zero. -/
+theorem accepts_zero_collecting_only
+    (name : Ident) (op : List Expr) (props : List PropDef) (out : List Expr) :
+    Algorithm.acceptsZeroSuppliedArguments
+      (Algorithm.mk none [.capture { name := name, kind := .collecting }] op props out)
+      = true := rfl
+
+theorem rejects_zero_required_prefix
+    (x r : Ident) (op : List Expr) (props : List PropDef) (out : List Expr) :
+    Algorithm.acceptsZeroSuppliedArguments
+      (Algorithm.mk none
+        [.capture { name := x }, .capture { name := r, kind := .collecting }] op props out)
+      = false := rfl
+
+theorem rejects_zero_required_suffix
+    (r z : Ident) (op : List Expr) (props : List PropDef) (out : List Expr) :
+    Algorithm.acceptsZeroSuppliedArguments
+      (Algorithm.mk none
+        [.capture { name := r, kind := .collecting }, .capture { name := z }] op props out)
+      = false := rfl
+
+/-- A builtin never accepts a zero-argument supply (`sum()` is an arity error);
+its rejection stays owned by `evalBuiltinValueCounted`. -/
+theorem builtin_never_accepts_zero_supply (b : Builtin) :
+    Algorithm.acceptsZeroSuppliedArguments (.builtin b) = false := rfl
+
+/-- Through the REAL binder: a collecting-only parameter list binds the EMPTY
+supply to the exact empty list. This is what makes `Only()` legal, and therefore
+what makes bare `Only` a zero-argument value. -/
+theorem collector_binder_empty_supply_is_empty_list (name : Ident) :
+    runEvalM (bindParameterPatternList
+      [.capture { name := name, kind := .collecting }] [] true)
+      = .ok { argEnv := [(name, collectSegment [])],
+              countedParamEnv := [(name, (collectSegment [], 1))],
+              algEnv := [] } := by
+  simp [bindParameterPatternList, bindParameterPatternList.findCollecting,
+    bindPairs_nil_nil, bindParameterPatternList.collectValues, collectorSupply,
+    ParameterPattern.minimumSuppliedSlots, ParameterPattern.hasCollectingCaptureAtCurrentLevel,
+    runEvalM, mergeEqualValEnv, mergeEqualCountedParamEnv,
+    mergePatternAlgEnv, lookupAssoc, CountedParamEnv.lookup, ValEnv.lookup, collectSegment]
+  rfl
+
+/-- Through the REAL binder: a required fixed parameter beside a collector still
+rejects the empty supply, and reports the MINIMUM (1) rather than the two
+declared captures — the very count the zero-argument demand rejection reports. -/
+theorem collector_binder_empty_supply_rejects_required_prefix (x r : Ident) :
+    runEvalM (bindParameterPatternList
+      [.capture { name := x }, .capture { name := r, kind := .collecting }] [] true)
+      = .error (Error.arityMismatch 1 0) := by
+  simp [bindParameterPatternList, bindParameterPatternList.findCollecting,
+    ParameterPattern.minimumSuppliedSlots, ParameterPattern.hasCollectingCaptureAtCurrentLevel,
+    runEvalM, EvalM.error]
+  rfl
+
+/-- Through the REAL binder: a fixed-only list rejects the empty supply with its
+exact count. -/
+theorem fixed_binder_empty_supply_rejects_with_exact_count (x y : Ident) :
+    runEvalM (bindParameterPatternList
+      [.capture { name := x }, .capture { name := y }] [] true)
+      = .error (Error.arityMismatch 2 0) := by
+  simp [bindParameterPatternList, bindParameterPatternList.findCollecting,
+    ParameterPattern.minimumSuppliedSlots, ParameterPattern.hasCollectingCaptureAtCurrentLevel,
+    runEvalM, EvalM.error]
+  rfl
+
+/-- ELIGIBILITY EQUIVALENCE. Away from builtins (whose rejection the law
+deliberately leaves to `evalBuiltinValueCounted`), the zero-argument value-demand
+law accepts EXACTLY the callables that accept zero supplied arguments. -/
+theorem zero_argument_value_demand_accepts_exactly_zero_supply_callables
+    (a : Algorithm) (h : ∀ b, a ≠ Algorithm.builtin b) :
+    acceptsZeroArgumentValueDemand a = Algorithm.acceptsZeroSuppliedArguments a := by
+  cases a with
+  | builtin b => exact absurd rfl (h b)
+  | mk p ps op pr out id =>
+      unfold acceptsZeroArgumentValueDemand zeroArgumentDemandError?
+      cases Algorithm.acceptsZeroSuppliedArguments (Algorithm.mk p ps op pr out id) <;> simp
+  | conditional p op bs id =>
+      unfold acceptsZeroArgumentValueDemand zeroArgumentDemandError?
+      cases Algorithm.acceptsZeroSuppliedArguments (Algorithm.conditional p op bs id) <;> simp
+
+/-- The demand law accepts a collecting-only callable at a named demand site. -/
+theorem zero_argument_demand_accepts_collecting_only
+    (name propertyName : Ident) (op : List Expr) (props : List PropDef) (out : List Expr) :
+    zeroArgumentDemandError? (some (.resolve propertyName))
+      (Algorithm.mk none [.capture { name := name, kind := .collecting }] op props out)
+      = none := rfl
+
+/-- ... and rejects a required-prefix callable with its true MINIMUM (1), not
+the flattened declared capture count (2). -/
+theorem zero_argument_demand_rejects_required_prefix_with_minimum
+    (x r propertyName : Ident) (op : List Expr) (props : List PropDef) (out : List Expr) :
+    zeroArgumentDemandError? (some (.resolve propertyName))
+      (Algorithm.mk none
+        [.capture { name := x }, .capture { name := r, kind := .collecting }] op props out)
+      = some (Error.withContext (CtxMsg.property propertyName) (Error.arityMismatch 1 0)) := rfl
+
+/-- A nested group is ONE required slot, so `P((x, y))` reports 1 rather than
+its two flattened captures. -/
+theorem zero_argument_demand_rejects_group_with_one_required_slot
+    (x y propertyName : Ident) (op : List Expr) (props : List PropDef) (out : List Expr) :
+    zeroArgumentDemandError? (some (.resolve propertyName))
+      (Algorithm.mk none
+        [.sequenceValue [.capture { name := x }, .capture { name := y }]] op props out)
+      = some (Error.withContext (CtxMsg.property propertyName) (Error.arityMismatch 1 0)) := rfl
+
 /-- A FIXED parameter never inherits the collector opening: `Id((1, 2))` binds
 the sequence whole. -/
 theorem collector_fixed_parameter_binds_value_unchanged (items : List Result) :

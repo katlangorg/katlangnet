@@ -640,7 +640,18 @@ public static class SemanticExplorerCorpus
         Special("ifUnselectedParameterizedBranchStaysLazy", "Inc(x) = x + 1\nif(false, Inc, 7)"),
         Special("ifZeroParameterBranchIsValue", "A = 7\nif(true, A, 0)"),
         Special("ifParameterIgnoringBodyStillArity", "K(x) = 5\nif(true, K, 0)"),
-        Special("ifCollectingCallableSlotIsArity", "Collect(*xs) = xs\nif(true, Collect, 0)"),
+        // September 2026: zero-argument value demand follows ACTUAL call arity, so a
+        // collecting parameter (which requires no supplied argument) is demandable while a
+        // required fixed parameter beside it still is not — and a nested pattern still
+        // consumes its one supplied slot.
+        Special("ifCollectingCallableSlotIsCollectedValue", "Collect(*xs) = xs\nif(true, Collect, 0)"),
+        Special("ifCollectingCallableExplicitCallIsSameValue", "Collect(*xs) = xs\nif(true, Collect(), 0)"),
+        Special("bareCollectingCallableIsAValue", "Only(*xs) = xs\nOnly"),
+        Special("bareCollectingCallableCountAgreesWithDottedForm", "Only(*xs) = xs\ncount(Only), Only.count"),
+        Special("ifRequiredPrefixBesideCollectorIsArity", "Head(x, *rest) = x\nif(true, Head, 0)"),
+        Special("ifRequiredSuffixBesideCollectorIsArity", "Tail(*rest, z) = z\nif(true, Tail, 0)"),
+        Special("ifNestedCollectingPatternIsArity", "P((x, *rest)) = x\nif(true, P, 0)"),
+        Special("collectingCallableStaysACallbackAlgorithm", "Only(*xs) = xs\nmap((1, 2), Only)"),
         Special("ifAlgorithmChannelParameterSlotIsArity", "Inc(x) = x + 1\nApply(g) = if(true, g, 0)\nApply(Inc)"),
         Special("repeatInitialParameterizedSlotIsArity", "Inc(x) = x + 1\nStep(s) = s + 1\nrepeat(Step, 1, Inc)"),
         Special("repeatCountParameterizedSlotIsArity", "Inc(x) = x + 1\nStep(s) = s + 1\nrepeat(Step, Inc, 0)"),

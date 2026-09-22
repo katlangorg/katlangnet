@@ -634,7 +634,7 @@ public static partial class Evaluator
         var blockSpan = PreferExpressionSpan(expr.Span, wired.Output);
         if (ZeroArgumentValueDemandRejection(ZeroArgumentDemandShape.Block, name: null, blockSpan, wired) is { } rejection)
             return rejection;
-        return WithSpan(blockSpan, EvalAlgOutput(wired, ctx, valEnv));
+        return WithSpan(blockSpan, EvalZeroArgumentDemandOutput(wired, ctx, valEnv));
     }
 
     /// <summary>

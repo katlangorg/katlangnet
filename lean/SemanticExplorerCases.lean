@@ -10,11 +10,11 @@ the neutral observation recorded from the C# evaluator. A failing guard is a
 Lean/C# divergence on that case.
 
 Partition (machine-checked by the `*CaseIds.length` guards below):
-- surface corpus cases: 2140
+- surface corpus cases: 2147
 - excluded parse-level cases (Lean has no surface parser): 41
-- Lean-representable surface cases: 2099
+- Lean-representable surface cases: 2106
 - internal-node cases: 14
-- total generated guards: 2113 case guards + 2 count guards
+- total generated guards: 2120 case guards + 2 count guards
 
 Regenerate from the repo root with:
   $env:KATLANG_REGENERATE_SEMANTIC_EXPLORER = "1"
@@ -10533,10 +10533,45 @@ def case_special__ifParameterIgnoringBodyStillArity : Expr :=
   .algorithmExpr (alg [] [] [privateProp "K" (alg ["x"] [] [] [.num 5])] [(.call (.resolve "if") [.boolLiteral true, .resolve "K", .num 0])])
 #guard obs case_special__ifParameterIgnoringBodyStillArity == "err arity"
 
--- special__ifCollectingCallableSlotIsArity: Collect(*xs) = xs \n if(true, Collect, 0)
-def case_special__ifCollectingCallableSlotIsArity : Expr :=
+-- special__ifCollectingCallableSlotIsCollectedValue: Collect(*xs) = xs \n if(true, Collect, 0)
+def case_special__ifCollectingCallableSlotIsCollectedValue : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Collect" (algWithParameters [{ name := "xs", kind := .collecting }] [] [] [.param "xs"])] [(.call (.resolve "if") [.boolLiteral true, .resolve "Collect", .num 0])])
-#guard obs case_special__ifCollectingCallableSlotIsArity == "err arity"
+#guard obs case_special__ifCollectingCallableSlotIsCollectedValue == "ok raw=L[] n=1"
+
+-- special__ifCollectingCallableExplicitCallIsSameValue: Collect(*xs) = xs \n if(true, Collect(), 0)
+def case_special__ifCollectingCallableExplicitCallIsSameValue : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Collect" (algWithParameters [{ name := "xs", kind := .collecting }] [] [] [.param "xs"])] [(.call (.resolve "if") [.boolLiteral true, (.call (.resolve "Collect") []), .num 0])])
+#guard obs case_special__ifCollectingCallableExplicitCallIsSameValue == "ok raw=L[] n=1"
+
+-- special__bareCollectingCallableIsAValue: Only(*xs) = xs \n Only
+def case_special__bareCollectingCallableIsAValue : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Only" (algWithParameters [{ name := "xs", kind := .collecting }] [] [] [.param "xs"])] [.resolve "Only"])
+#guard obs case_special__bareCollectingCallableIsAValue == "ok raw=L[] n=1"
+
+-- special__bareCollectingCallableCountAgreesWithDottedForm: Only(*xs) = xs \n count(Only), Only.count
+def case_special__bareCollectingCallableCountAgreesWithDottedForm : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Only" (algWithParameters [{ name := "xs", kind := .collecting }] [] [] [.param "xs"])] [(.call (.resolve "count") [.resolve "Only"]), (.dotCall (.resolve "Only") "count" none)])
+#guard obs case_special__bareCollectingCallableCountAgreesWithDottedForm == "ok raw=S[0, 0] n=2"
+
+-- special__ifRequiredPrefixBesideCollectorIsArity: Head(x, *rest) = x \n if(true, Head, 0)
+def case_special__ifRequiredPrefixBesideCollectorIsArity : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Head" (algWithParameters [{ name := "x" }, { name := "rest", kind := .collecting }] [] [] [.param "x"])] [(.call (.resolve "if") [.boolLiteral true, .resolve "Head", .num 0])])
+#guard obs case_special__ifRequiredPrefixBesideCollectorIsArity == "err arity"
+
+-- special__ifRequiredSuffixBesideCollectorIsArity: Tail(*rest, z) = z \n if(true, Tail, 0)
+def case_special__ifRequiredSuffixBesideCollectorIsArity : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Tail" (algWithParameters [{ name := "rest", kind := .collecting }, { name := "z" }] [] [] [.param "z"])] [(.call (.resolve "if") [.boolLiteral true, .resolve "Tail", .num 0])])
+#guard obs case_special__ifRequiredSuffixBesideCollectorIsArity == "err arity"
+
+-- special__ifNestedCollectingPatternIsArity: P((x, *rest)) = x \n if(true, P, 0)
+def case_special__ifNestedCollectingPatternIsArity : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "rest", kind := .collecting }]] [] [] [.param "x"])] [(.call (.resolve "if") [.boolLiteral true, .resolve "P", .num 0])])
+#guard obs case_special__ifNestedCollectingPatternIsArity == "err arity"
+
+-- special__collectingCallableStaysACallbackAlgorithm: Only(*xs) = xs \n map((1, 2), Only)
+def case_special__collectingCallableStaysACallbackAlgorithm : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Only" (algWithParameters [{ name := "xs", kind := .collecting }] [] [] [.param "xs"])] [(.call (.resolve "map") [(.capture [.num 1, .num 2]), .resolve "Only"])])
+#guard obs case_special__collectingCallableStaysACallbackAlgorithm == "ok raw=L[L[1], L[2]] n=1"
 
 -- special__ifAlgorithmChannelParameterSlotIsArity: Inc(x) = x + 1 \n Apply(g) = if(true, g, 0) \n Apply(Inc)
 def case_special__ifAlgorithmChannelParameterSlotIsArity : Expr :=
@@ -10588,7 +10623,7 @@ def case_special__repeatParameterizedStepIsCallback : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))])] [(.call (.resolve "repeat") [.resolve "Inc", .num 2, .num 0])])
 #guard obs case_special__repeatParameterizedStepIsCallback == "ok raw=2 n=1"
 
--- 2099 differential cases.
+-- 2106 differential cases.
 
 /--
 Machine-checked surface partition count: the id list is built by the same
@@ -12684,7 +12719,14 @@ def surfaceCaseIds : List String := [
   "special__ifUnselectedParameterizedBranchStaysLazy",
   "special__ifZeroParameterBranchIsValue",
   "special__ifParameterIgnoringBodyStillArity",
-  "special__ifCollectingCallableSlotIsArity",
+  "special__ifCollectingCallableSlotIsCollectedValue",
+  "special__ifCollectingCallableExplicitCallIsSameValue",
+  "special__bareCollectingCallableIsAValue",
+  "special__bareCollectingCallableCountAgreesWithDottedForm",
+  "special__ifRequiredPrefixBesideCollectorIsArity",
+  "special__ifRequiredSuffixBesideCollectorIsArity",
+  "special__ifNestedCollectingPatternIsArity",
+  "special__collectingCallableStaysACallbackAlgorithm",
   "special__ifAlgorithmChannelParameterSlotIsArity",
   "special__repeatInitialParameterizedSlotIsArity",
   "special__repeatCountParameterizedSlotIsArity",
@@ -12696,7 +12738,7 @@ def surfaceCaseIds : List String := [
   "special__reduceParameterIgnoringInitialStillRejected",
   "special__repeatParameterizedStepIsCallback"
 ]
-#guard surfaceCaseIds.length == 2099
+#guard surfaceCaseIds.length == 2106
 
 /-!
 Direct internal-node cases: `Expr.sequenceConstruct` is an INTERNAL node —
@@ -12798,5 +12840,5 @@ def internalNodeCaseIds : List String := [
 #guard internalNodeCaseIds.length == 14
 
 -- 14 internal-node cases.
--- Total: 2113 case guards (2099 surface + 14 internal-node).
+-- Total: 2120 case guards (2106 surface + 14 internal-node).
 end SemanticExplorerCases

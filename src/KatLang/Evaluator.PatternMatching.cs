@@ -272,9 +272,9 @@ public static partial class Evaluator
     }
 
     /// <summary>
-    /// Value-position access to a conditional algorithm cannot select a branch,
-    /// so it must fail instead of silently forcing the conditional's empty
-    /// output list. Mirrors the no-argument dot-call dispatch: a flat
+    /// Report a conditional algorithm's rejected zero-argument demand. Callers
+    /// first route zero-accepting families through ordinary branch dispatch.
+    /// Mirrors the no-argument dot-call dispatch: a flat
     /// multi-binder core equivalent reports its ordinary call arity, and any
     /// other conditional reports NoMatchingBranch. Returns null for
     /// non-conditional algorithms. Lean: <c>conditionalValueAccessError?</c>.
@@ -528,10 +528,11 @@ public static partial class Evaluator
             return AddBindings(boundR.Value);
         }
 
+        var requiredCount = ParameterPattern.MinimumSuppliedSlots(patterns);
         if (collectingIndex < 0)
         {
-            if (patterns.Count != inputs.Count)
-                return arityMismatch(patterns.Count, inputs.Count);
+            if (inputs.Count != requiredCount)
+                return arityMismatch(requiredCount, inputs.Count);
 
             for (var index = 0; index < patterns.Count; index++)
             {
@@ -542,7 +543,6 @@ public static partial class Evaluator
             return EvalResult<CountedParameterPatternBindings>.Ok(new CountedParameterPatternBindings(bindings));
         }
 
-        var requiredCount = patterns.Count - 1;
         if (inputs.Count < requiredCount)
             return arityMismatch(requiredCount, inputs.Count);
 

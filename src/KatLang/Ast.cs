@@ -403,6 +403,29 @@ public closed record ParameterPattern
     public static bool HasCollectingCaptureAtCurrentLevel(IEnumerable<ParameterPattern> patterns)
         => patterns.Count(static pattern => pattern is CaptureParameterPattern { Kind: ParameterKind.Collecting }) > 0;
 
+    /// <summary>
+    /// The MINIMUM number of supplied argument slots a parameter-pattern list accepts —
+    /// the ONE rule <see cref="Evaluator"/>'s <c>BindParameterPatternList</c> enforces,
+    /// factored out here so no other layer re-derives it:
+    /// <list type="bullet">
+    ///   <item>every pattern consumes exactly ONE supplied slot, whatever it contains — a
+    ///   sequence-value group is one slot that the binder opens afterwards, so nested
+    ///   structure never changes the count at this level;</item>
+    ///   <item>a collecting capture at THIS level consumes NONE: it collects whatever
+    ///   slots are left after the fixed prefix and suffix bind, and an empty leftover is
+    ///   the exact empty list.</item>
+    /// </list>
+    /// So <c>Only(*xs)</c> accepts zero supplied slots while <c>Head(x, *rest)</c>,
+    /// <c>Tail(*rest, z)</c>, <c>P((x, *rest))</c> and <c>Pair(x, y)</c> each require at
+    /// least one. This is deliberately NOT
+    /// <see cref="CallableArityFacts.MinTopLevelArgumentCount"/>, whose item-supply
+    /// classification excludes signatures that mix a group with a collector; the binder,
+    /// not that classification, is the authority here.
+    /// Lean: <c>ParameterPattern.minimumSuppliedSlots</c>.
+    /// </summary>
+    internal static int MinimumSuppliedSlots(IReadOnlyList<ParameterPattern> patterns)
+        => patterns.Count - (HasCollectingCaptureAtCurrentLevel(patterns) ? 1 : 0);
+
     public static bool HasMultipleCollectingCapturesAtAnyLevel(IReadOnlyList<ParameterPattern> patterns)
     {
         // Iterative per-level scan: patterns are host-constructible to arbitrary

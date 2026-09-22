@@ -187,8 +187,8 @@ def runCountedProgram (e : KatLang.Expr) : Except KatLang.Error KatLang.CountedR
     (match e with
      | .algorithmExpr a =>
          let wired := KatLang.wireToCaller ctx a
-         if (KatLang.Algorithm.params wired).length = 0 then
-           KatLang.evalAlgOutputCounted wired ctx []
+         if KatLang.Algorithm.acceptsZeroSuppliedArguments wired then
+           KatLang.evalZeroArgumentDemandOutputCounted wired ctx []
          else
            .error (KatLang.Error.unresolvedImplicitParams (KatLang.Algorithm.params wired))
      | _ => KatLang.evalCounted e ctx [])

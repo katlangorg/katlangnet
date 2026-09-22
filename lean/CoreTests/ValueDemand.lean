@@ -2,8 +2,9 @@ import KatLang
 import CoreTests.Common
 
 namespace KatLangTests
-open KatLang (alg algWithParameters algPrivate runFlat runResult Algorithm Error Result)
+open KatLang (alg algWithParameters algWithParameterPatterns algPrivate runFlat runResult Algorithm Error Result)
 open KatLang (resolve param num)
+open KatLang (runEvalM runResultM bindParameterPatternList EvalState)
 
 --------------------------------------------------------------------------------
 -- Zero-argument value demand at builtin VALUE slots (F9)
@@ -103,19 +104,17 @@ def flatOk (out : List KatLang.Expr) (expected : List Int) : Bool :=
 -- `if(1, Inc(4), 0)`: an explicit call is a value.
 #guard flatOk [.call (resolve "if") [.boolLiteral true, .call (resolve "Inc") [.num 4], .num 0]] [5]
 
--- `if(1, Collect, 0)` versus `if(1, Collect(), 0)`: a collecting callable still
--- has a parameter, so it is not a zero-argument value; the explicit empty call is.
-def collectingSlotRejects : Bool :=
-  match runResult (valueDemandRoot [.call (resolve "if") [.boolLiteral true, resolve "Collect", .num 0]]) with
-  | Except.error err => innermostIsArityMismatch 1 0 err && hasContext "while evaluating property Collect" err
-  | _ => false
-#guard collectingSlotRejects
-
-def collectingExplicitCallIsValue : Bool :=
-  match runResult (valueDemandRoot [.call (resolve "if") [.boolLiteral true, .call (resolve "Collect") [], .num 0]]) with
+-- `if(1, Collect, 0)` and `if(1, Collect(), 0)` AGREE (September 2026): a
+-- collecting parameter requires no supplied slot, so `Collect()` accepts zero
+-- supplied arguments and bare `Collect` is therefore a zero-argument value too,
+-- with the collecting parameter bound to the exact empty list.
+def emptyListRow (row : KatLang.Expr) : Bool :=
+  match runResult (valueDemandRoot [row]) with
   | Except.ok (Result.listValue []) => true
   | _ => false
-#guard collectingExplicitCallIsValue
+
+#guard emptyListRow (.call (resolve "if") [.boolLiteral true, resolve "Collect", .num 0])
+#guard emptyListRow (.call (resolve "if") [.boolLiteral true, .call (resolve "Collect") [], .num 0])
 
 -- `ApplyInIf(Inc)`: an algorithm-channel parameter in the slot reports the
 -- parameter arm's bare arity rejection (no property context) — the same report
@@ -209,5 +208,253 @@ def familyDemandKeepsName (row : KatLang.Expr) : Bool :=
 #guard flatOk [.call (resolve "map") [.listLiteral [.num 1, .num 2], resolve "Collect"]] [1, 2]
 #guard expectFlat (runFlat (.algorithmExpr (algPrivate [] [] [("F", valueDemandFamily)]
     [.call (resolve "map") [.listLiteral [.num 0, .num 1], resolve "F"]]))) [10, 2]
+
+--------------------------------------------------------------------------------
+-- Zero-argument value demand follows ACTUAL call arity (September 2026)
+--------------------------------------------------------------------------------
+-- A callable may satisfy a zero-argument value demand IF AND ONLY IF an ordinary
+-- call supplying zero arguments can bind it
+-- (`Algorithm.acceptsZeroSuppliedArguments`, derived from the binder's own
+-- `ParameterPattern.minimumSuppliedSlots` rule and from branch dispatch). A
+-- COLLECTING parameter contributes ZERO required slots, so `Only(*xs)` is
+-- demandable while `Head(x, *rest)` still requires one supplied value. The
+-- rejection reports that true minimum, never the flattened declared capture
+-- count.
+
+/-- `Only(*xs) = xs`. -/
+def onlyAlg : Algorithm :=
+  algWithParameters [{ name := "xs", kind := .collecting }] [] [] [.param "xs"]
+
+/-- `OnlyCount(*xs) = count(xs)`: a collecting-only callable whose zero-argument
+    value is NUMERIC, so the `string` intrinsic's demanded receiver renders. -/
+def onlyCountAlg : Algorithm :=
+  algWithParameters [{ name := "xs", kind := .collecting }] [] []
+    [.call (resolve "count") [.param "xs"]]
+
+/-- `Head(x, *rest) = x`. -/
+def headAlg : Algorithm :=
+  algWithParameters [{ name := "x" }, { name := "rest", kind := .collecting }] [] []
+    [.param "x"]
+
+/-- `Tail(*rest, z) = z`. -/
+def tailAlg : Algorithm :=
+  algWithParameters [{ name := "rest", kind := .collecting }, { name := "z" }] [] []
+    [.param "z"]
+
+/-- `Mid(x, *rest, z) = x`. -/
+def midAlg : Algorithm :=
+  algWithParameters
+    [{ name := "x" }, { name := "rest", kind := .collecting }, { name := "z" }] [] []
+    [.param "x"]
+
+/-- `Pair(x, y) = x`. -/
+def pairAlg : Algorithm := alg ["x", "y"] [] [] [.param "x"]
+
+/-- `Grouped((x, y)) = x`: ONE supplied slot that the pattern opens. -/
+def groupedAlg : Algorithm :=
+  algWithParameterPatterns
+    [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] []
+    [.param "x"]
+
+/-- `GroupedCollecting((x, *rest)) = x`: still ONE supplied slot — a nested
+    collector never lowers the OUTER minimum. -/
+def groupedCollectingAlg : Algorithm :=
+  algWithParameterPatterns
+    [.sequenceValue [.capture { name := "x" }, .capture { name := "rest", kind := .collecting }]]
+    [] [] [.param "x"]
+
+/-- `GroupedOnly((*xs)) = xs`: the nested collector is inside a group, so the
+    callable still requires the ONE slot the group consumes. -/
+def groupedOnlyAlg : Algorithm :=
+  algWithParameterPatterns
+    [.sequenceValue [.capture { name := "xs", kind := .collecting }]] [] [] [.param "xs"]
+
+/-- `GroupThenCollecting((a, b), *rest) = a`: a group plus a top-level collector,
+    so the minimum is ONE — the count the binder enforces, not the two slots and
+    not the three flattened captures. -/
+def groupThenCollectingAlg : Algorithm :=
+  algWithParameterPatterns
+    [ .sequenceValue [.capture { name := "a" }, .capture { name := "b" }]
+    , .capture { name := "rest", kind := .collecting } ] [] [] [.param "a"]
+
+/-- `Captureless(()) = 5`: a host-built pattern with ZERO captures. It still
+    consumes one supplied slot, so neither spelling accepts an empty supply — the
+    decision is the supplied-slot count, never the capture count. -/
+def capturelessAlg : Algorithm :=
+  algWithParameterPatterns [.sequenceValue []] [] [] [.num 5]
+
+/-- `ZeroArityFamily() = 7`: a host-built clause family whose branch pattern has
+    top-level arity ZERO, so `ZeroArityFamily()` genuinely dispatches. -/
+def zeroArityFamily : Algorithm := .conditional none []
+  [ { pattern := .sequenceValue [], body := alg [] [] [] [.num 7] } ] none
+
+def arityRoot (props : List (Prod KatLang.Ident Algorithm)) (out : List KatLang.Expr)
+    : KatLang.Expr :=
+  .algorithmExpr (algPrivate [] [] props out)
+
+def signatureFamilies : List (Prod KatLang.Ident Algorithm) :=
+  [ ("Zero", sevenAlg), ("Only", onlyAlg), ("OnlyCount", onlyCountAlg)
+  , ("Head", headAlg), ("Tail", tailAlg)
+  , ("Mid", midAlg), ("Pair", pairAlg), ("Grouped", groupedAlg)
+  , ("GroupedCollecting", groupedCollectingAlg), ("GroupedOnly", groupedOnlyAlg)
+  , ("GroupThenCollecting", groupThenCollectingAlg), ("Captureless", capturelessAlg)
+  , ("ZeroArityFamily", zeroArityFamily) ]
+
+def demandRow (name : KatLang.Ident) : KatLang.Expr := resolve name
+def zeroCallRow (name : KatLang.Ident) : KatLang.Expr := .call (resolve name) []
+
+def rowSucceeds (row : KatLang.Expr) : Bool :=
+  match runResult (arityRoot signatureFamilies [row]) with
+  | Except.ok _ => true
+  | Except.error _ => false
+
+/-- THE METAMORPHIC LAW. For every signature family: bare-`F` zero-argument
+    demand eligibility agrees with the legality of the ordinary call `F()`. It
+    compares LEGALITY, not cache behavior or evaluation counts, which the rule
+    deliberately leaves alone. -/
+def zeroDemandEligibilityMatchesZeroCallLegality : Bool :=
+  signatureFamilies.all (fun family =>
+    rowSucceeds (demandRow family.fst) == rowSucceeds (zeroCallRow family.fst))
+#guard zeroDemandEligibilityMatchesZeroCallLegality
+
+-- The eligible side: both spellings produce the same value.
+#guard expectFlat (runFlat (arityRoot signatureFamilies [demandRow "Zero"])) [7]
+#guard expectFlat (runFlat (arityRoot signatureFamilies [zeroCallRow "Zero"])) [7]
+#guard expectFlat (runFlat (arityRoot signatureFamilies [demandRow "ZeroArityFamily"])) [7]
+#guard expectFlat (runFlat (arityRoot signatureFamilies [zeroCallRow "ZeroArityFamily"])) [7]
+
+def emptyListRowOf (row : KatLang.Expr) : Bool :=
+  match runResult (arityRoot signatureFamilies [row]) with
+  | Except.ok (Result.listValue []) => true
+  | _ => false
+
+-- A bare collecting-only callable IS a valid value expression, at the root and
+-- everywhere a zero-argument value demand happens.
+#guard emptyListRowOf (demandRow "Only")
+#guard emptyListRowOf (zeroCallRow "Only")
+#guard emptyListRowOf (.call (resolve "if") [.boolLiteral true, demandRow "Only", .num 0])
+-- `Only.count` / `count(Only)` agree, and both see the demanded EMPTY list.
+#guard expectFlat (runFlat (arityRoot signatureFamilies
+    [.call (resolve "count") [demandRow "Only"]])) [0]
+#guard expectFlat (runFlat (arityRoot signatureFamilies
+    [.dotCall (demandRow "Only") "count" none])) [0]
+#guard expectFlat (runFlat (arityRoot signatureFamilies
+    [.call (resolve "count") [zeroCallRow "Only"]])) [0]
+-- The `string` intrinsic receiver is a value-demand position too: the demanded
+-- zero-argument value of a collecting-only callable renders.
+#guard (match runResult (arityRoot signatureFamilies [.dotCall (demandRow "OnlyCount") "string" none]) with
+        | Except.ok (Result.str "0") => true
+        | _ => false)
+#guard expectFlat (runFlat (arityRoot signatureFamilies [demandRow "OnlyCount"])) [0]
+
+/-- The REJECTED side reports the callable's true MINIMUM supplied count — the
+    count its ordinary zero-argument call reports — never the flattened declared
+    capture count (`Head` is 1, not 2; `Grouped` is 1, not 2;
+    `GroupThenCollecting` is 1, not 3). -/
+def demandRejectsWithMinimum (name : KatLang.Ident) (minimum : Nat) : Bool :=
+  match runResult (arityRoot signatureFamilies [demandRow name]) with
+  | Except.error err =>
+      innermostIsArityMismatch minimum 0 err
+        && hasContext s!"while evaluating property {name}" err
+  | _ => false
+
+#guard demandRejectsWithMinimum "Head" 1
+#guard demandRejectsWithMinimum "Tail" 1
+#guard demandRejectsWithMinimum "Mid" 2
+#guard demandRejectsWithMinimum "Pair" 2
+#guard demandRejectsWithMinimum "Grouped" 1
+-- A nested pattern's scalar one-item fallback binds ONE supplied value; it never
+-- means the callable accepts zero.
+#guard demandRejectsWithMinimum "GroupedCollecting" 1
+#guard demandRejectsWithMinimum "GroupedOnly" 1
+#guard demandRejectsWithMinimum "GroupThenCollecting" 1
+-- A pattern with ZERO captures still consumes its supplied slot.
+#guard demandRejectsWithMinimum "Captureless" 1
+
+/-- Each rejected callable's ordinary zero-argument CALL reports the SAME
+    minimum, so the two reports cannot drift. -/
+def zeroCallRejectsWithMinimum (name : KatLang.Ident) (minimum : Nat) : Bool :=
+  match runResult (arityRoot signatureFamilies [zeroCallRow name]) with
+  | Except.error err => innermostIsArityMismatch minimum 0 err
+  | _ => false
+
+#guard zeroCallRejectsWithMinimum "Head" 1
+#guard zeroCallRejectsWithMinimum "Tail" 1
+#guard zeroCallRejectsWithMinimum "Mid" 2
+#guard zeroCallRejectsWithMinimum "Pair" 2
+#guard zeroCallRejectsWithMinimum "Grouped" 1
+#guard zeroCallRejectsWithMinimum "GroupedCollecting" 1
+#guard zeroCallRejectsWithMinimum "GroupedOnly" 1
+#guard zeroCallRejectsWithMinimum "GroupThenCollecting" 1
+#guard zeroCallRejectsWithMinimum "Captureless" 1
+
+-- The ALGORITHM channel is untouched: `map` still receives `Only` as a callback,
+-- so each element is collected, and a callable that cannot accept zero supplied
+-- arguments is still a perfectly good callback.
+#guard expectFlat (runFlat (arityRoot signatureFamilies
+    [.call (resolve "map") [.listLiteral [.num 1, .num 2], resolve "Only"]])) [1, 2]
+#guard expectFlat (runFlat (arityRoot signatureFamilies
+    [.call (resolve "map") [.listLiteral [.num 1, .num 2], resolve "Head"]])) [1, 2]
+
+-- A BUILTIN accepts no zero-argument supply, and its rejection stays the
+-- builtin's own arity error (the very error `sum()` reports) rather than a
+-- parameter-list one.
+#guard (match runResult (arityRoot signatureFamilies [resolve "sum"]) with
+        | Except.error err => innermostIsBadArity err || innermostIsAnyArityMismatch err
+        | _ => false)
+
+-- Host-built zero-capture signatures may not take a plain-output shortcut in
+-- written slots: the empty group needs one argument and a family must dispatch.
+def blockSlotDemandAgrees (a : Algorithm) : Bool :=
+  let plain := runResult (arityRoot [] [.algorithmExpr a])
+  let captured := runResult (arityRoot [] [.capture [.algorithmExpr a]])
+  let listed := runResult (arityRoot [] [.listLiteral [.algorithmExpr a]])
+  match plain, captured, listed with
+  | .ok value, .ok capturedValue, .ok (.listValue [listedValue]) =>
+      value == capturedValue && value == listedValue
+  | .error (.unresolvedImplicitParams []), .error (.unresolvedImplicitParams []),
+      .error (.unresolvedImplicitParams []) => true
+  | _, _, _ => false
+#guard blockSlotDemandAgrees capturelessAlg
+#guard blockSlotDemandAgrees zeroArityFamily
+#guard blockSlotDemandAgrees onlyAlg
+
+-- Connect the acceptance predicate to the ACTUAL binder, independently of body
+-- evaluation and across every user-pattern shape in the hand-authored matrix.
+#guard signatureFamilies.all (fun (_, a) => match a with
+  | .mk _ patterns _ _ _ _ =>
+      let binds := match runEvalM (bindParameterPatternList patterns [] true) with
+        | .ok _ => true
+        | .error _ => false
+      binds == Algorithm.acceptsZeroSuppliedArguments a
+  | _ => true)
+
+-- Cache insertion order exposes evaluation order without host operations. A
+-- newly eligible source is demanded BEFORE the control's ordinary eager attempt.
+def collectingSourceBeforeControl : Bool :=
+  let source := algWithParameters [{ name := "xs", kind := .collecting }] [] [] [resolve "A"]
+  let next := alg [] [] [] [resolve "B"]
+  let program := arityRoot
+    [("A", alg [] [] [] [.listLiteral [.num 7]]), ("B", alg [] [] [] [.num 1]),
+     ("Source", source), ("Next", next)]
+    [.call (resolve "take") [resolve "Source", .call (resolve "Next") []]]
+  match (runResultM program).run EvalState.empty with
+  | .ok (.listValue [.atom 7], state) =>
+      state.zeroArgPropertyCache.map (fun entry => entry.fst.propertyName) == ["A", "B"]
+  | _ => false
+#guard collectingSourceBeforeControl
+
+-- An empty collection never calls its callback. A zero-arity family in that
+-- algorithm slot must therefore leave its body's otherwise cacheable read untouched.
+def unusedZeroArityCallbackIsNotDemanded (inlineBlock : Bool) : Bool :=
+  let family := Algorithm.conditional none []
+    [{ pattern := .sequenceValue [], body := alg [] [] [] [resolve "A"] }] none
+  let program := arityRoot [("A", sevenAlg), ("F", family)]
+    [.call (resolve "map") [.listLiteral [], if inlineBlock then .algorithmExpr family else resolve "F"]]
+  match (runResultM program).run EvalState.empty with
+  | .ok (.listValue [], state) => state.zeroArgPropertyCache.isEmpty
+  | _ => false
+#guard unusedZeroArityCallbackIsNotDemanded false
+#guard unusedZeroArityCallbackIsNotDemanded true
 
 end KatLangTests
