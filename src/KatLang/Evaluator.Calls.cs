@@ -210,10 +210,14 @@ public static partial class Evaluator
     /// The call-context frame around a callee that failed to RESOLVE, keeping the
     /// resolution error's own span. A non-inlined leaf so the span copy lives here, not in
     /// the call-recursion frame of <see cref="EvalCallCountedExpr"/> (frame-size discipline).
+    /// A diagnostically transparent callee attaches no frame, exactly as in
+    /// <see cref="WithCallCtx{T}"/>.
     /// </summary>
     [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
     private static EvalError CalleeResolutionFailure(CallDiagnosticName diagnosticName, EvalCtx ctx, EvalError error)
-        => new EvalError.WithContext(CtxCall(diagnosticName, ctx), error) { Span = error.Span };
+        => diagnosticName.IsDiagnosticallyTransparent
+            ? error
+            : new EvalError.WithContext(CtxCall(diagnosticName, ctx), error) { Span = error.Span };
 
     /// <summary>
     /// Counted expression-position call evaluation — the CANONICAL

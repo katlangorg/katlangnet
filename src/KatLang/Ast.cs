@@ -1447,6 +1447,33 @@ public closed record Algorithm
     // reference identity).
 
     /// <summary>
+    /// The ONE diagnostic-transparency test: true for an algorithm the FRONT END synthesized
+    /// as assignment-deconstruction plumbing rather than one the programmer wrote — the
+    /// hoisted <c>$deconstruct$N</c> right-hand-side source and each target's inline
+    /// projection helper (<see cref="User.IsSyntheticDeconstructionPlumbing"/>). Neither is a
+    /// callable, property, or value the KatLang programmer wrote or can name: both exist only
+    /// because <c>x, *y, z = RHS</c> is elaborated into ordinary properties and calls.
+    ///
+    /// <para>Such a frame is DIAGNOSTICALLY TRANSPARENT: the generic evaluation-context
+    /// enrichment that describes a user-semantic frame ("while evaluating call to F",
+    /// "while evaluating property P") must not describe it. The deconstruction's own shape
+    /// failures are phrased against the WRITTEN pattern by
+    /// <see cref="DeconstructionBindingContext"/>, and every other failure belongs to the
+    /// user-written expression that actually raised it.</para>
+    ///
+    /// <para>Transparency is decided by this STRUCTURAL parser provenance and never by the
+    /// synthetic name's spelling, so a written identifier can never be suppressed for
+    /// resembling one, and a user-authored anonymous algorithm (a host-built inline
+    /// <c>{ ... }</c> callee) is never mistaken for plumbing. Diagnostics only: the
+    /// structured error kind, its payload, and every source span are unchanged, and no
+    /// evaluation semantics depend on it. Not part of the Lean model (Lean's elaborated tree
+    /// is ordinary properties and calls, and Lean does not model C# user-facing context
+    /// rendering).</para>
+    /// </summary>
+    internal static bool IsSyntheticDeconstructionFrame(Algorithm? algorithm)
+        => algorithm is User { IsSyntheticDeconstructionPlumbing: true };
+
+    /// <summary>
     /// Replace the parameter list of a user-defined algorithm by name, keeping the existing
     /// patterns of names already present and appending fresh captures for new names.
     /// Clause elaboration uses this to preserve ignored binders such as
@@ -1841,6 +1868,16 @@ public closed record Algorithm
 
         /// <summary>True for the hoisted right-hand side of an assignment deconstruction; see <see cref="AssignmentDeconstructionRowIndex"/>.</summary>
         internal bool IsAssignmentDeconstructionSource => AssignmentDeconstructionRowIndex is not null;
+
+        /// <summary>
+        /// The two marks above together: true for either algorithm shape the parser
+        /// synthesizes as assignment-deconstruction PLUMBING — the hoisted
+        /// <c>$deconstruct$N</c> source and each target's inline projection helper. Read
+        /// through <see cref="Algorithm.IsSyntheticDeconstructionFrame"/>, which states the
+        /// one diagnostic rule this provenance decides.
+        /// </summary>
+        internal bool IsSyntheticDeconstructionPlumbing
+            => IsAssignmentDeconstructionSource || AssignmentDeconstructionTarget is not null;
 
         /// <summary>
         /// True for a module root spliced into the tree by load elaboration — the mark of

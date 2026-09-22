@@ -840,6 +840,24 @@ public static partial class Evaluator
         public static CallDiagnosticName FromKnown(string name) => new(name, null);
 
         /// <summary>
+        /// True when this callee is a synthetic implementation frame rather than a
+        /// user-semantic one — the parser's assignment-deconstruction target helper, the one
+        /// callee it writes as an <see cref="Expr.AlgorithmExpr"/>. The generic call-context
+        /// enrichment (<see cref="WithCallCtx{T}"/>, <see cref="CalleeResolutionFailure"/>)
+        /// then attaches NOTHING and the error passes through with its own kind, payload, and
+        /// span; the surrounding user-written frames are untouched. See
+        /// <see cref="Algorithm.IsSyntheticDeconstructionFrame"/>.
+        ///
+        /// <para>Derived from the retained callee node rather than stored, for the same
+        /// reason the name itself is: both callers consult it only AFTER an error, so the
+        /// struct stays two references wide on the call-recursion spine (frame-size
+        /// discipline) and a successful call pays nothing.</para>
+        /// </summary>
+        public bool IsDiagnosticallyTransparent
+            => _expression is Expr.AlgorithmExpr(var algorithm)
+                && Algorithm.IsSyntheticDeconstructionFrame(algorithm);
+
+        /// <summary>
         /// A non-rendering placeholder used only to derive the callable's structural binding plan.
         /// Error-bearing signatures are rebuilt with <see cref="Render"/> on the error path.
         /// </summary>
@@ -907,9 +925,15 @@ public static partial class Evaluator
     /// <see cref="WithCtx{T}(ErrorContext, EvalResult{T})"/> for call contexts, with
     /// the context CONSTRUCTED ONLY ON THE ERROR PATH: rendering the callee name is
     /// pure diagnostic work, so a successful call must not pay for it.
+    ///
+    /// <para>A DIAGNOSTICALLY TRANSPARENT callee attaches no frame at all
+    /// (<see cref="CallDiagnosticName.IsDiagnosticallyTransparent"/>): the error passes
+    /// through unchanged — same kind, same payload, same span — so the enclosing
+    /// user-written frames keep their own order and nothing names an evaluator-generated
+    /// helper.</para>
     /// </summary>
     private static EvalResult<T> WithCallCtx<T>(CallDiagnosticName function, EvalCtx ctx, EvalResult<T> result)
-        => result.IsError && !result.Error.IsResourceLimit
+        => result.IsError && !result.Error.IsResourceLimit && !function.IsDiagnosticallyTransparent
             ? new EvalError.WithContext(CtxCall(function, ctx), result.Error) { Span = result.Error.Span }
             : result;
 
@@ -1005,10 +1029,30 @@ public static partial class Evaluator
     private static EvalError AtSpanIfMissing(EvalError error, SourceSpan? span)
         => error.Span is null && span is not null ? error with { Span = span } : error;
 
-    private static EvalResult<T> WithPropertyContextOnMissingOutput<T>(string name, SourceSpan? span, EvalResult<T> result)
+    /// <summary>
+    /// Blame the READ PROPERTY for an output-less value demand ("Property 'P' has no
+    /// defined output"), positioning the report at the reference.
+    ///
+    /// <para><paramref name="resolvedAlgorithm"/> is the algorithm the name resolved to, and
+    /// decides whether there is a user-semantic property to blame at all: the parser's hoisted
+    /// <c>$deconstruct$N</c> deconstruction source is a DIAGNOSTICALLY TRANSPARENT frame
+    /// (<see cref="Algorithm.IsSyntheticDeconstructionFrame"/>), so the failure stays the
+    /// written right-hand side's own output-less error, at the right-hand side's own span,
+    /// instead of naming a property nobody wrote. Pass <c>null</c> where the demanded
+    /// algorithm is not at hand; the frame is then attached as before.</para>
+    /// </summary>
+    private static EvalResult<T> WithPropertyContextOnMissingOutput<T>(
+        string name,
+        SourceSpan? span,
+        Algorithm? resolvedAlgorithm,
+        EvalResult<T> result)
     {
-        if (result.IsError && result.Error is EvalError.MissingOutput)
+        if (result.IsError
+            && result.Error is EvalError.MissingOutput
+            && !Algorithm.IsSyntheticDeconstructionFrame(resolvedAlgorithm))
+        {
             return WithSpan<T>(span, new EvalError.WithContext(CtxProperty(name), result.Error));
+        }
 
         return WithSpan(span, result);
     }
@@ -2985,6 +3029,7 @@ public static partial class Evaluator
         var propertyR = WithPropertyContextOnMissingOutput(
             name,
             span,
+            resolvedAlgorithm,
             EvalZeroArgPropertyAccessCounted(
                 new ResolvedLexicalProperty(alg, binding, resolvedAlgorithm),
                 ctx,

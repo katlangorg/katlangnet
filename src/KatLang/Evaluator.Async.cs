@@ -698,6 +698,7 @@ public static partial class Evaluator
         var propertyR = WithPropertyContextOnMissingOutput(
             name,
             span,
+            resolvedAlgorithm,
             await EvalZeroArgPropertyAccessCountedAsync(
                 new ResolvedLexicalProperty(alg, binding, resolvedAlgorithm),
                 ctx,
@@ -972,7 +973,7 @@ public static partial class Evaluator
         if (ZeroArgumentValueDemandRejection(ZeroArgumentDemandShape.Property, name, span, resolvedR.Value.ResolvedAlgorithm) is { } rejection)
             return rejection;
 
-        var propertyR = WithPropertyContextOnMissingOutput(name, span,
+        var propertyR = WithPropertyContextOnMissingOutput(name, span, resolvedR.Value.ResolvedAlgorithm,
             await EvalZeroArgPropertyAccessCountedAsync(resolvedR.Value, ctx, valEnv).ConfigureAwait(false));
         return propertyR.IsError
             ? propertyR.Error

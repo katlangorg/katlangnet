@@ -507,7 +507,7 @@ public static partial class Evaluator
         if (ZeroArgumentValueDemandRejection(ZeroArgumentDemandShape.Property, name, span, resolvedR.Value.ResolvedAlgorithm) is { } rejection)
             return rejection;
 
-        var propertyR = WithPropertyContextOnMissingOutput(name, span,
+        var propertyR = WithPropertyContextOnMissingOutput(name, span, resolvedR.Value.ResolvedAlgorithm,
             EvalZeroArgPropertyAccessCounted(resolvedR.Value, ctx, valEnv));
         return propertyR.IsError
             ? propertyR.Error

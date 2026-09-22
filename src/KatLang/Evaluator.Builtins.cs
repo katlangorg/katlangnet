@@ -2083,7 +2083,11 @@ public static partial class Evaluator
 
         return source switch
         {
-            Expr.Resolve(var name) => WithPropertyContextOnMissingOutput(name, source.Span, result),
+            // A BUILTIN argument slot is always a written argument, so the resolved
+            // algorithm is never deconstruction plumbing: the parser emits
+            // `Resolve($deconstruct$N)` only as the single argument of that
+            // deconstruction's own target helper, which is an Algorithm.User call.
+            Expr.Resolve(var name) => WithPropertyContextOnMissingOutput(name, source.Span, resolvedAlgorithm: null, result),
             // A PARAMETER read in the slot (`F(a) = sum(a)` with an output-less argument):
             // the parameter's failure, exactly as a value-position read reports it.
             Expr.Param(var name) => WithSpan<CountedResult>(source.Span, new EvalError.WithContext(new ParameterEvaluationContext(name), result.Error)),
