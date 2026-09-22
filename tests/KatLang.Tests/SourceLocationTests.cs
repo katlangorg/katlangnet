@@ -57,19 +57,22 @@ public class SourceLocationTests
         var earlierLine = new SourcePosition(1, 99);
         var laterLine = new SourcePosition(2, 1);
         var sameLineLater = new SourcePosition(2, 8);
+        // A distinct instance equal to `laterLine`: the reflexive comparisons below
+        // are about equal coordinates, not about the same variable on both sides.
+        var sameAsLaterLine = new SourcePosition(2, 1);
 
         Assert.True(earlierLine < laterLine);
         Assert.True(earlierLine <= laterLine);
         Assert.True(laterLine > earlierLine);
         Assert.True(laterLine >= earlierLine);
         Assert.True(laterLine < sameLineLater);
-        Assert.True(laterLine <= laterLine);
-        Assert.True(laterLine >= laterLine);
-        Assert.False(laterLine < laterLine);
-        Assert.False(laterLine > laterLine);
+        Assert.True(laterLine <= sameAsLaterLine);
+        Assert.True(laterLine >= sameAsLaterLine);
+        Assert.False(laterLine < sameAsLaterLine);
+        Assert.False(laterLine > sameAsLaterLine);
         Assert.True(earlierLine.CompareTo(laterLine) < 0);
         Assert.True(sameLineLater.CompareTo(laterLine) > 0);
-        Assert.Equal(0, laterLine.CompareTo(new SourcePosition(2, 1)));
+        Assert.Equal(0, laterLine.CompareTo(sameAsLaterLine));
         Assert.Equal(earlierLine, SourcePosition.Min(laterLine, earlierLine));
         Assert.Equal(sameLineLater, SourcePosition.Max(laterLine, sameLineLater));
 

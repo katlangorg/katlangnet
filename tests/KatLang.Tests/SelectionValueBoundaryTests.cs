@@ -242,7 +242,7 @@ public class SelectionValueBoundaryTests
             // bump keeps a selected `()` visible), and the selected value is never
             // opened into several rows.
             Assert.Equal(literal.EmittedCount, success.EmittedCount);
-            Assert.Equal(1, success.OutputRows.Count);
+            Assert.Single(success.OutputRows);
             Assert.True(Result.ValueComparer.Equals(literal.Value, success.Value));
             Assert.Equal(literalDisplay, success.ToDisplayString());
         }
