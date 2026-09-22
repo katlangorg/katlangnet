@@ -48,6 +48,36 @@ public class CallableBindingPlanParityTests
         return KatLangError.FromEvalError(result.Error).Message;
     }
 
+    /// <summary>
+    /// Asserts the STRUCTURED arity payload and the RENDERED message of the same failure.
+    /// They are two different derivations of one number: the payload carries the binder's own
+    /// <c>ParameterPattern.MinimumSuppliedSlots</c> decision, while the message's expected
+    /// count is rendered from <see cref="CallableArityFacts"/>. Pinning only the string is
+    /// exactly how the two came to disagree before the per-level arity correction — the
+    /// payload said 1 for <c>G((a, b), *rest)</c> while the message said 2
+    /// (<c>CallableArityFactsPerLevelTests</c>).
+    /// </summary>
+    private static void AssertArityFailure(string source, int expected, int actual, string expectedMessage)
+    {
+        var parseResult = Parser.Parse(source);
+        Assert.False(
+            parseResult.HasErrors,
+            string.Join(Environment.NewLine, parseResult.Diagnostics.Select(static diagnostic => diagnostic.Message)));
+
+        var result = Evaluator.Run(new Expr.AlgorithmExpr(parseResult.Root));
+        if (result.IsOk)
+            Assert.Fail($"Expected evaluation failure but got: {result.Value}");
+
+        var innermost = result.Error;
+        while (innermost is EvalError.WithContext context)
+            innermost = context.Inner;
+
+        var mismatch = Assert.IsType<EvalError.ArityMismatch>(innermost);
+        Assert.Equal(expected, mismatch.Expected);
+        Assert.Equal(actual, mismatch.Actual);
+        Assert.Equal(expectedMessage, KatLangError.FromEvalError(result.Error).Message);
+    }
+
     private static Result EvalResult(string source, bool enableLoopOptimization = true)
     {
         var parseResult = Parser.Parse(source);
@@ -274,17 +304,30 @@ public class CallableBindingPlanParityTests
             """,
             5);
 
-        var message = AssertEvalFails(
+        AssertArityFailure(
             """
             G((a, b), *rest) = a + b + rest.count
             G()
-            """);
-        Assert.Equal("Callable `G((a, b), *rest)` expects at least 1 argument, but was called with 0 arguments.", message);
+            """,
+            expected: 1,
+            actual: 0,
+            "Callable `G((a, b), *rest)` expects at least 1 argument, but was called with 0 arguments.");
 
-        // The symmetric shape behaves identically.
+        // The group's OWN level holds two fixed patterns and no collector, so it stays exact.
+        var groupLevel = Assert.IsType<SequenceValueBindingNode>(plan.TopLevelPatternList.Nodes[0]).Children;
+        Assert.Equal(2, groupLevel.MinSlotCount);
+        Assert.Equal(2, groupLevel.MaxSlotCount);
+        Assert.False(groupLevel.HasCollectingAtThisLevel);
+
+        // The symmetric shape behaves identically — collector position does not matter.
         var suffixGroup = PlanFor("H(*rest, (a, b)) = a + b + rest.count", "H");
         AssertPlanDisplay(suffixGroup, "H(*rest, (a, b))");
         AssertArity(suffixGroup, min: 1, max: null, hasTopLevelVariadic: true);
+
+        var suffixGroupLevel = Assert.IsType<SequenceValueBindingNode>(suffixGroup.TopLevelPatternList.Nodes[1]).Children;
+        Assert.Equal(2, suffixGroupLevel.MinSlotCount);
+        Assert.Equal(2, suffixGroupLevel.MaxSlotCount);
+        Assert.False(suffixGroupLevel.HasCollectingAtThisLevel);
 
         AssertEval(
             """
@@ -292,6 +335,15 @@ public class CallableBindingPlanParityTests
             H(9, (1, 2))
             """,
             4);
+
+        AssertArityFailure(
+            """
+            H(*rest, (a, b)) = a + b + rest.count
+            H()
+            """,
+            expected: 1,
+            actual: 0,
+            "Callable `H(*rest, (a, b))` expects at least 1 argument, but was called with 0 arguments.");
     }
 
     [Fact]
@@ -315,21 +367,25 @@ public class CallableBindingPlanParityTests
             """,
             7);
 
-        Assert.Equal(
-            "Sequence-value parameter pattern `(x, *r)` expects at least 1 value, but received 0 values.",
-            AssertEvalFails(
-                """
-                P((x, *r)) = x + r.count
-                P(())
-                """));
+        // The NESTED level's minimum, structured payload and rendered message together.
+        AssertArityFailure(
+            """
+            P((x, *r)) = x + r.count
+            P(())
+            """,
+            expected: 1,
+            actual: 0,
+            "Sequence-value parameter pattern `(x, *r)` expects at least 1 value, but received 0 values.");
 
-        Assert.Equal(
-            "Callable `P((x, *r))` expects 1 argument, but was called with 2 arguments.",
-            AssertEvalFails(
-                """
-                P((x, *r)) = x + r.count
-                P(1, 2)
-                """));
+        // ...and the TOP level's exact maximum, which the nested collector never lifted.
+        AssertArityFailure(
+            """
+            P((x, *r)) = x + r.count
+            P(1, 2)
+            """,
+            expected: 1,
+            actual: 2,
+            "Callable `P((x, *r))` expects 1 argument, but was called with 2 arguments.");
     }
 
     [Fact]

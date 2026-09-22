@@ -288,21 +288,41 @@ public class CallableSignatureTests
     [Fact]
     public void RuntimeArityDiagnostic_GroupBesideCollector_UsesTheCollectingWording()
     {
-        Assert.Equal(
-            "Callable `G((a, b), *rest)` expects at least 1 argument, but was called with 0 arguments.",
-            FormatEvalError(
-                """
-                G((a, b), *rest) = a
-                G()
-                """));
+        // The two numbers are derived independently — the payload from the binder's own
+        // `ParameterPattern.MinimumSuppliedSlots`, the message's expected count from
+        // `CallableArityFacts` — so both are asserted: pinning only the string is how the
+        // two came to disagree before the per-level arity correction.
+        AssertArityDiagnostic(
+            """
+            G((a, b), *rest) = a
+            G()
+            """,
+            expected: 1,
+            actual: 0,
+            "Callable `G((a, b), *rest)` expects at least 1 argument, but was called with 0 arguments.");
 
-        Assert.Equal(
-            "Callable `H(*rest, (a, b))` expects at least 1 argument, but was called with 0 arguments.",
-            FormatEvalError(
-                """
-                H(*rest, (a, b)) = a
-                H()
-                """));
+        AssertArityDiagnostic(
+            """
+            H(*rest, (a, b)) = a
+            H()
+            """,
+            expected: 1,
+            actual: 0,
+            "Callable `H(*rest, (a, b))` expects at least 1 argument, but was called with 0 arguments.");
+    }
+
+    private static void AssertArityDiagnostic(string source, int expected, int actual, string expectedMessage)
+    {
+        var provenance = SourceProvenance.ParseValid(source);
+        var mismatch = provenance.ExpectEvaluationError<EvalError.ArityMismatch>();
+
+        Assert.Equal(expected, mismatch.Expected);
+        Assert.Equal(actual, mismatch.Actual);
+
+        // The same minimum the binder decided is the one the facts render.
+        var name = source[..source.IndexOf('(', StringComparison.Ordinal)];
+        Assert.Equal(SignatureFor(source, name).ArityFacts.MinTopLevelArgumentCount, mismatch.Expected);
+        Assert.Equal(expectedMessage, FormatEvalError(source));
     }
 
     [Fact]
