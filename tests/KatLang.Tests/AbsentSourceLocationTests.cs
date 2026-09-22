@@ -465,4 +465,193 @@ public class AbsentSourceLocationTests
         var declared = spanless with { DeclarationSpans = [new SourceSpan(3, 5, 3, 6), new SourceSpan(9, 1, 9, 2)] };
         Assert.Equal(new SourceSpan(3, 5, 3, 6), declared.FirstDeclarationSpan);
     }
+    // ── 7. A written slot that CAN be located IS located ─────────────────────────────
+
+    /// <summary>
+    /// The complementary half of the rule above: absence is only legitimate when there is
+    /// genuinely nothing to point at. A WRITTEN element of a list literal is precisely
+    /// locatable, and a brace-block element used to report its missing output with NO span
+    /// at all — <c>[1, { }, 3]</c> produced "Algorithm has no defined output." with no
+    /// location, while the very same element inside a parenthesized group was located
+    /// exactly at the block.
+    ///
+    /// <para>The cause was structural, not list-specific: <c>EvalExplicitSequenceValueExprSlots</c>
+    /// is the written-slot dispatcher, and only its two UNFOLDING arms — a nested capture
+    /// and a zero-argument block — bypass <c>EvalCounted</c>, which positions every arm it
+    /// owns. Every other element kind fell through to <c>EvalCounted</c> and was located, so
+    /// only block-shaped (and capture-wrapped block) elements lost the position. Both arms
+    /// now apply the very span rule <c>EvalCounted</c> applies to the same node
+    /// (<c>WithPreferredSpanOf</c> — the written node, else its first positioned row), and
+    /// <c>AtSpanIfMissing</c> keeps a span the inner failure already carries, so a nested
+    /// slot still reports at its own precise location rather than at the enclosing one.</para>
+    /// </summary>
+    public static TheoryData<string, string> LocatableWrittenSlotPrograms => new()
+    {
+        // The repro and its control: the SAME element, in a list and in a group.
+        { "[1, {}, 3]", "{}" },
+        { "(1, {}, 3)", "{}" },
+        // Every position in the list.
+        { "[{}, 2, 3]", "{}" },
+        { "[1, 2, {}]", "{}" },
+        { "[{}]", "{}" },
+        // A block with properties is still one written element.
+        { "[1, { A = 1 }, 3]", "{ A = 1 }" },
+        // Nested: the INNER written slot is blamed, not the enclosing list or group.
+        { "[1, [2, {}], 3]", "{}" },
+        { "(1, [2, {}])", "{}" },
+        { "[1, ({}, 2), 3]", "{}" },
+        { "[[{}]]", "{}" },
+    };
+
+    [Theory]
+    [MemberData(nameof(LocatableWrittenSlotPrograms))]
+    public void AnOutputLessWrittenSlot_IsLocatedAtThatSlot(string source, string writtenSlot)
+    {
+        var error = SingleError(KatLangEngine.Run(source));
+        Assert.Equal(KatLangErrorCode.MissingOutput, error.Code);
+        AssertLegitimateOrAbsent(error, source);
+        Assert.Equal(SpanOfLastOccurrence(source, writtenSlot), error.Span);
+    }
+
+    /// <summary>
+    /// The list and the parenthesized group agree exactly — same kind, same span, same
+    /// rendered message. That equality is the defect's negative: they used to differ only
+    /// because the list path skipped positioning.
+    /// </summary>
+    [Fact]
+    public void ListLiteralAndParenthesizedGroup_LocateTheSameElementIdentically()
+    {
+        var list = SingleError(KatLangEngine.Run("[1, {}, 3]"));
+        var group = SingleError(KatLangEngine.Run("(1, {}, 3)"));
+
+        Assert.Equal(group.Code, list.Code);
+        Assert.Equal(group.Span, list.Span);
+        Assert.Equal(group.Message, list.Message);
+        Assert.Equal(new SourceSpan(1, 5, 1, 7), list.Span);
+    }
+
+    /// <summary>
+    /// Element kinds that were ALREADY located stay located and unchanged: only the two
+    /// unfolding arms were unpositioned, so a name, a call, a spread, and ordinary operator
+    /// failures inside a list keep their own spans.
+    /// </summary>
+    [Theory]
+    [InlineData("L = {}\n[1, L, 3]", KatLangErrorCode.MissingOutput, 2, 5, 2, 6)]
+    [InlineData("[1, {}*, 3]", KatLangErrorCode.SpreadMissingOutput, 1, 5, 1, 7)]
+    [InlineData("[1, 1/0, 3]", KatLangErrorCode.DivisionByZero, 1, 5, 1, 8)]
+    [InlineData("[1, 'a' + 1, 3]", KatLangErrorCode.TypeMismatch, 1, 5, 1, 12)]
+    public void AlreadyLocatedElementKinds_AreUnchanged(
+        string source,
+        KatLangErrorCode code,
+        int startLine,
+        int startColumn,
+        int endLine,
+        int endColumn)
+    {
+        var error = SingleError(KatLangEngine.Run(source));
+        Assert.Equal(code, error.Code);
+        AssertLegitimateOrAbsent(error, source);
+        Assert.Equal(new SourceSpan(startLine, startColumn, endLine, endColumn), error.Span);
+    }
+
+    /// <summary>
+    /// Positioning is a diagnostic property only: legitimate empty VALUES in a list stay
+    /// ordinary successful elements, and nothing about list construction changed.
+    /// </summary>
+    [Theory]
+    [InlineData("[()]", "[()]")]
+    [InlineData("[[]]", "[[]]")]
+    [InlineData("[1, (), 3]", "[1, (), 3]")]
+    [InlineData("[1, 2, 3]", "[1, 2, 3]")]
+    [InlineData("[1, { 2 }, 3]", "[1, 2, 3]")]
+    public void ListsOfLegitimateValues_AreUnaffected(string source, string expectedDisplay)
+        => Assert.Equal(expectedDisplay, Assert.IsType<RunResult.Success>(KatLangEngine.Run(source)).ToDisplayString());
+
+    /// <summary>
+    /// The async twin assembles written slots through the mirrored helper, and the
+    /// optimizers delegate these shapes to the generic strategy, so all four executions
+    /// agree on kind, span, and rendered message.
+    /// </summary>
+    [Theory]
+    [InlineData("[1, {}, 3]")]
+    [InlineData("[1, [2, {}], 3]")]
+    [InlineData("[1, ({}, 2), 3]")]
+    [InlineData("(1, [2, {}])")]
+    public async Task SyncAsyncAndOptimizedExecution_AgreeOnTheLocation(string source)
+    {
+        var ast = new Expr.AlgorithmExpr(EvaluatorTestSupport.ParseValidRoot(source));
+
+        var sync = Evaluator.Run(ast);
+        var async = await Evaluator.RunAsync(ast, new RunScopedAsyncZeroArgPropertyResultCache());
+        var generic = EvaluatorTestSupport.EvalFull(
+            source, enableLoopOptimization: false, enableSequencePipelineOptimization: false);
+        var optimized = EvaluatorTestSupport.EvalFull(
+            source, enableLoopOptimization: true, enableSequencePipelineOptimization: true);
+
+        foreach (var result in new[] { sync, async, generic, optimized })
+            Assert.True(result.IsError, "expected every execution strategy to fail");
+
+        var expected = KatLangError.FromEvalError(sync.Error);
+        Assert.NotNull(expected.Span);
+        foreach (var result in new[] { async, generic, optimized })
+        {
+            var actual = KatLangError.FromEvalError(result.Error);
+            Assert.Equal(expected.Code, actual.Code);
+            Assert.Equal(expected.Span, actual.Span);
+            Assert.Equal(expected.Message, actual.Message);
+        }
+    }
+
+    /// <summary>
+    /// A HOST-built list literal follows the same rule: the element's span is taken from the
+    /// node it was written on, so a host that supplies one gets it back, and a host that
+    /// supplies none still gets genuine absence rather than a fabricated location.
+    /// </summary>
+    [Fact]
+    public void HostBuiltListLiteral_UsesTheElementsOwnSpan_OrKeepsAbsence()
+    {
+        var elementSpan = new SourceSpan(4, 7, 4, 9);
+        var positioned = new Expr.ListLiteral([
+            new Expr.Num(1),
+            new Expr.AlgorithmExpr(new Algorithm.User(null, [], [], [], [])) { Span = elementSpan },
+            new Expr.Num(3),
+        ]);
+
+        var positionedError = KatLangError.FromEvalError(
+            Evaluator.Run(new Expr.AlgorithmExpr(new Algorithm.User(null, [], [], [], [positioned]))).Error);
+        Assert.Equal(KatLangErrorCode.MissingOutput, positionedError.Code);
+        Assert.Equal(elementSpan, positionedError.Span);
+
+        var spanless = new Expr.ListLiteral([
+            new Expr.Num(1),
+            new Expr.AlgorithmExpr(new Algorithm.User(null, [], [], [], [])),
+            new Expr.Num(3),
+        ]);
+
+        var spanlessError = KatLangError.FromEvalError(
+            Evaluator.Run(new Expr.AlgorithmExpr(new Algorithm.User(null, [], [], [], [spanless]))).Error);
+        Assert.Equal(KatLangErrorCode.MissingOutput, spanlessError.Code);
+        // Genuinely nothing to point at: absence stays null, never default(SourceSpan).
+        Assert.Null(spanlessError.Span);
+        Assert.Equal(spanlessError.Message, spanlessError.ToString());
+    }
+
+    /// <summary>
+    /// The written extent of the LAST occurrence of <paramref name="writtenSlot"/> in
+    /// <paramref name="source"/>, as a half-open span. The last occurrence is the innermost
+    /// one for the nested cases, which is exactly the slot the blame must name.
+    /// </summary>
+    private static SourceSpan SpanOfLastOccurrence(string source, string writtenSlot)
+    {
+        var lines = source.Split('\n');
+        for (var index = lines.Length - 1; index >= 0; index--)
+        {
+            var column = lines[index].LastIndexOf(writtenSlot, StringComparison.Ordinal);
+            if (column >= 0)
+                return new SourceSpan(index + 1, column + 1, index + 1, column + 1 + writtenSlot.Length);
+        }
+
+        Assert.Fail($"`{writtenSlot}` does not occur in:\n{source}");
+        throw new InvalidOperationException("unreachable");
+    }
 }

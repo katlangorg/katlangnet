@@ -712,9 +712,18 @@ public static partial class Evaluator
         // groups recurse through this family (see the stack backstop note on
         // EvalExplicitSequenceValueRowSlots); a zero-parameter scoped block
         // element unfolds through its algorithm the same way.
+        // Both unfolding arms POSITION their failure at the written slot with the very
+        // rule EvalCounted applies to the same node, because they are the only two arms
+        // that bypass it: every other slot kind falls through to EvalCounted below and is
+        // positioned there. Without this a written block element reported its missing
+        // output with NO span at all (`[1, { }, 3]`), while the same element inside a
+        // parenthesized group — which reaches EvalCounted's own Capture arm — was located
+        // exactly. AtSpanIfMissing keeps a span the inner failure already carries, so a
+        // nested slot still reports at its own precise location.
         if (expr is Expr.Capture(var captureBody))
         {
-            var nestedItemsR = EvalExplicitSequenceValueRowSlots(captureBody, ctx, valEnv);
+            var nestedItemsR = WithPreferredSpanOf(
+                expr, captureBody, EvalExplicitSequenceValueRowSlots(captureBody, ctx, valEnv));
             if (nestedItemsR.IsError) return nestedItemsR.Error;
 
             return EvalResult<IReadOnlyList<Result>>.Ok([CombineOutputSlots(nestedItemsR.Value)]);
@@ -727,7 +736,10 @@ public static partial class Evaluator
             // do not imply zero supplied slots, and a family must dispatch its branch.
             if (!RequiresZeroArgumentSupplyBinding(wired))
             {
-                var nestedItemsR = EvalExplicitSequenceValueItems(wired, ctx, valEnv);
+                // The block span rule is EvalAlgorithmExprValue's: the written block, else
+                // its first positioned output row.
+                var nestedItemsR = WithPreferredSpanOf(
+                    expr, wired.Output, EvalExplicitSequenceValueItems(wired, ctx, valEnv));
                 if (nestedItemsR.IsError) return nestedItemsR.Error;
 
                 return EvalResult<IReadOnlyList<Result>>.Ok([CombineOutputSlots(nestedItemsR.Value)]);

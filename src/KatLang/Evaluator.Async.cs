@@ -1533,9 +1533,13 @@ public static partial class Evaluator
         EvalCtx ctx,
         ValEnv valEnv)
     {
+        // MIRROR: both unfolding arms position their failure at the written slot.
         if (expr is Expr.Capture(var captureBody))
         {
-            var nestedItemsR = await EvalExplicitSequenceValueRowSlotsAsync(captureBody, ctx, valEnv).ConfigureAwait(false);
+            var nestedItemsR = WithPreferredSpanOf(
+                expr,
+                captureBody,
+                await EvalExplicitSequenceValueRowSlotsAsync(captureBody, ctx, valEnv).ConfigureAwait(false));
             if (nestedItemsR.IsError) return nestedItemsR.Error;
 
             return EvalResult<IReadOnlyList<Result>>.Ok([CombineOutputSlots(nestedItemsR.Value)]);
@@ -1547,7 +1551,10 @@ public static partial class Evaluator
             // MIRROR: only the plain-output arm may bypass zero-supply binding/dispatch.
             if (!RequiresZeroArgumentSupplyBinding(wired))
             {
-                var nestedItemsR = await EvalExplicitSequenceValueItemsAsync(wired, ctx, valEnv).ConfigureAwait(false);
+                var nestedItemsR = WithPreferredSpanOf(
+                    expr,
+                    wired.Output,
+                    await EvalExplicitSequenceValueItemsAsync(wired, ctx, valEnv).ConfigureAwait(false));
                 if (nestedItemsR.IsError) return nestedItemsR.Error;
 
                 return EvalResult<IReadOnlyList<Result>>.Ok([CombineOutputSlots(nestedItemsR.Value)]);
