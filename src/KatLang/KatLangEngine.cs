@@ -5,6 +5,14 @@ using KatLang.Rendering;
 
 namespace KatLang;
 
+/// <summary>
+/// One completed run's display configuration, carried by its <see cref="RunResult"/> so every
+/// rendering surface of that result reads the same values: <see cref="Decimals"/> is the run's
+/// EFFECTIVE display-decimals count (<c>null</c> for canonical full-precision display), decided
+/// once by the engine from the program's <c>DisplayDecimals</c> property and
+/// <see cref="RunOptions.DefaultDisplayDecimals"/>; <see cref="MaxDisplayLength"/> is the run's
+/// display-length bound.
+/// </summary>
 internal readonly record struct DisplayOptions(int? Decimals, int MaxDisplayLength)
 {
     public static DisplayOptions Default { get; } = new(null, EvaluationLimits.MaxSupportedDisplayLength);
@@ -303,7 +311,6 @@ public closed record RunResult
 public static class KatLangEngine
 {
     private const string DisplayDecimalsPropertyName = "DisplayDecimals";
-    private const int MaxDisplayDecimals = 99;
 
     /// <summary>
     /// Parse and evaluate KatLang source code, returning a unified <see cref="RunResult"/>.
@@ -358,7 +365,9 @@ public static class KatLangEngine
         // property are evaluated under the same run-scoped budget, so neither can reset
         // or escape the other's accounting — and they share the run's one random stream
         // (RunOptions.RandomSeed), the output rows drawing first and DisplayDecimals
-        // afterwards, in exactly that evaluation order.
+        // afterwards, in exactly that evaluation order. RunOptions.DefaultDisplayDecimals
+        // takes no part in evaluation: it is consumed afterwards, as a fallback only
+        // (ProjectEvaluationOutcome → ResolveDisplayOptions).
         var evalResult = Evaluator.RunCountedWithTopLevelProperty(
             new Expr.AlgorithmExpr(frontEndResult.ElaboratedRoot),
             DisplayDecimalsPropertyName,
@@ -369,7 +378,12 @@ public static class KatLangEngine
             options?.RandomSeed);
 
         return ProjectEvaluationOutcome(
-            frontEndResult, evalResult, limits, diagnosticDisplayOptions, evaluationCancellationToken);
+            frontEndResult,
+            evalResult,
+            limits,
+            options?.DefaultDisplayDecimals,
+            diagnosticDisplayOptions,
+            evaluationCancellationToken);
     }
 
     /// <summary>
@@ -430,7 +444,8 @@ public static class KatLangEngine
         var zeroArgPropertyResultCache =
             Evaluator.CreateRunScopedZeroArgPropertyResultCache(program, hostOperations);
 
-        // One budget for the whole run, exactly as in Run.
+        // One budget for the whole run, exactly as in Run; the display default is likewise
+        // consumed only afterwards, by the shared projection.
         var evalResult = await Evaluator.RunCountedWithTopLevelPropertyAsync(
             program,
             DisplayDecimalsPropertyName,
@@ -441,7 +456,12 @@ public static class KatLangEngine
             options?.RandomSeed).ConfigureAwait(false);
 
         return ProjectEvaluationOutcome(
-            frontEndResult, evalResult, limits, diagnosticDisplayOptions, evaluationCancellationToken);
+            frontEndResult,
+            evalResult,
+            limits,
+            options?.DefaultDisplayDecimals,
+            diagnosticDisplayOptions,
+            evaluationCancellationToken);
     }
 
     /// <summary>
@@ -467,14 +487,15 @@ public static class KatLangEngine
 
     /// <summary>
     /// Shared post-evaluation projection for <see cref="Run"/> and
-    /// <see cref="RunAsync"/>: error classification, DisplayDecimals handling, bounded
-    /// host-atom projection, and success construction — byte-for-byte the former inline
-    /// body of <see cref="Run"/>.
+    /// <see cref="RunAsync"/>: error classification, display-configuration resolution
+    /// (<see cref="ResolveDisplayOptions"/>), bounded host-atom projection, and success
+    /// construction — byte-for-byte the former inline body of <see cref="Run"/>.
     /// </summary>
     private static RunResult ProjectEvaluationOutcome(
         FrontEndResult frontEndResult,
         EvalResult<Evaluator.CountedRootProgramResult> evalResult,
         EvaluationLimits limits,
+        int? defaultDisplayDecimals,
         DisplayOptions diagnosticDisplayOptions,
         CancellationToken evaluationCancellationToken)
     {
@@ -494,11 +515,13 @@ public static class KatLangEngine
             };
         }
 
-        // The run's configured rendering limit travels with the result, so ToDisplayString
-        // stays bounded without RunResult having to reach back for the RunOptions.
-        var displayOptionsResult = CreateDisplayOptions(
+        // The run's effective display configuration and rendering limit travel with the
+        // result, so ToDisplayString and every formatter stay bounded and agree without
+        // RunResult having to reach back for the RunOptions.
+        var displayOptionsResult = ResolveDisplayOptions(
             evalResult.Value.TopLevelProperty,
             FindTopLevelPropertyDeclarationSpan(frontEndResult.ElaboratedRoot, DisplayDecimalsPropertyName),
+            defaultDisplayDecimals,
             limits.EffectiveMaxDisplayLength);
         if (displayOptionsResult.IsError)
         {
@@ -656,13 +679,35 @@ public static class KatLangEngine
         return null;
     }
 
-    private static EvalResult<DisplayOptions> CreateDisplayOptions(
-        Evaluator.CountedResult? displayDecimals,
+    /// <summary>
+    /// The ONE place a completed run's effective display configuration is decided, shared by
+    /// <see cref="Run"/> and <see cref="RunAsync"/>; the <see cref="RunResult"/> carries the
+    /// outcome, so every rendering surface of that result reads the same value. Precedence:
+    /// <list type="number">
+    ///   <item>a top-level <c>DisplayDecimals</c> property the program DECLARES decides:
+    ///   <paramref name="declaredDisplayDecimals"/> is its evaluated value, validated here, and an
+    ///   invalid value is its own diagnostic whatever the host configured — the default is a
+    ///   fallback, never error recovery (a declared property whose EVALUATION failed never
+    ///   reaches this point: the run has already failed with that error);</item>
+    ///   <item>otherwise <paramref name="defaultDisplayDecimals"/>
+    ///   (<see cref="RunOptions.DefaultDisplayDecimals"/>, range-checked when the options were
+    ///   initialized);</item>
+    ///   <item>otherwise canonical rendering (<c>null</c>).</item>
+    /// </list>
+    /// <para>Absence is structural, never a value: the evaluator's one top-level property
+    /// probe returns <c>null</c> exactly when the root declares no such property, so a declared
+    /// <c>0</c>, a declared invalid value, and no declaration stay three distinct states. The
+    /// default is pure configuration consumed after evaluation — it is never evaluated, so
+    /// nothing about the run but this display value depends on it.</para>
+    /// </summary>
+    private static EvalResult<DisplayOptions> ResolveDisplayOptions(
+        Evaluator.CountedResult? declaredDisplayDecimals,
         SourceSpan? span,
+        int? defaultDisplayDecimals,
         int maxDisplayLength)
     {
-        if (displayDecimals is not { } counted)
-            return EvalResult<DisplayOptions>.Ok(new DisplayOptions(null, maxDisplayLength));
+        if (declaredDisplayDecimals is not { } counted)
+            return EvalResult<DisplayOptions>.Ok(new DisplayOptions(defaultDisplayDecimals, maxDisplayLength));
 
         var value = counted.Value.AsNum();
         if (counted.EmittedCount != 1 || value is null)
@@ -674,8 +719,8 @@ public static class KatLangEngine
         if (!Decimal128.IsInteger(value.Value))
             return DisplayDecimalsError("DisplayDecimals must be an integer.", span);
 
-        if (value.Value > MaxDisplayDecimals)
-            return DisplayDecimalsError($"DisplayDecimals must be between 0 and {MaxDisplayDecimals}.", span);
+        if (value.Value > RunOptions.MaxDisplayDecimals)
+            return DisplayDecimalsError($"DisplayDecimals must be between 0 and {RunOptions.MaxDisplayDecimals}.", span);
 
         // Validated integral and within [0, MaxDisplayDecimals], so the narrowing is exact.
         return EvalResult<DisplayOptions>.Ok(new DisplayOptions((int)value.Value, maxDisplayLength));

@@ -188,7 +188,10 @@ a reproducible stream, not memoization: which calls execute and in what order is
 decided by the ordinary evaluation rules (left-to-right arguments, once-only
 written arguments, lazy `if` branches, the zero-argument property cache, explicit
 `A()` re-evaluation, callbacks in sequence order, output rows before
-`DisplayDecimals`).
+`DisplayDecimals`). A host display default (`RunOptions.DefaultDisplayDecimals`,
+CLI `--display-decimals`) is never evaluated and draws nothing, so configuring
+one never alters the stream; a declared `DisplayDecimals` property keeps its
+stream position whether or not a default is configured.
 
 The exact stream is NOT promised across KatLang versions: it may change when the
 generator, a sampling algorithm, or evaluation semantics deliberately change,

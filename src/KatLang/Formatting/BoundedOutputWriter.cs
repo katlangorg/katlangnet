@@ -27,7 +27,11 @@ public sealed class BoundedOutputWriter
     /// <summary>The underlying bounded sink shared with canonical rendering.</summary>
     internal BoundedDisplayWriter Core => _core;
 
-    /// <summary>The evaluated run's display options (<c>DisplayDecimals</c> and the display limit).</summary>
+    /// <summary>
+    /// The evaluated run's display options: its effective display-decimals count (the
+    /// program's <c>DisplayDecimals</c> property, otherwise <see cref="RunOptions.DefaultDisplayDecimals"/>)
+    /// and its display limit.
+    /// </summary>
     internal DisplayOptions DisplayOptions => _displayOptions;
 
     /// <summary>True once an append was refused; no further output is produced.</summary>
@@ -42,8 +46,9 @@ public sealed class BoundedOutputWriter
 
     /// <summary>
     /// Appends one numeric atom in canonical culture-invariant form, honoring
-    /// the run's <c>DisplayDecimals</c> property exactly like canonical
-    /// display.
+    /// the run's effective display decimals — its <c>DisplayDecimals</c>
+    /// property, otherwise <see cref="RunOptions.DefaultDisplayDecimals"/> —
+    /// exactly like canonical display.
     /// </summary>
     public bool AppendAtom(Decimal128 value)
         => _core.Append(ValueTextRenderer.FormatAtom(value, _displayOptions));

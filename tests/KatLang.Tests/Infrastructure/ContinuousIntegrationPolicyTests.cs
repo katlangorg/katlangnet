@@ -188,6 +188,10 @@ public class ContinuousIntegrationPolicyTests
         Assert.Contains("Invoke-Smoke -Arguments @('eval', '1 + 2')", source, StringComparison.Ordinal);
         Assert.Contains("Invoke-Smoke -Arguments @('eval', 'sin(1.234)')", source, StringComparison.Ordinal);
         Assert.Contains("0.9438182093746337048617510061568276", source, StringComparison.Ordinal);
+        // A value-taking option through the native executable: option parsing and the host
+        // display default survive NativeAOT publication on every platform.
+        Assert.Contains("Invoke-Smoke -Arguments @('eval', '--display-decimals', '2', '1 / 3')", source, StringComparison.Ordinal);
+        Assert.Contains("if ($displayOutput -cne '0.33')", source, StringComparison.Ordinal);
         Assert.Matches(@"(?s)Smoke-test published executable.*?Package and verify release archive", source);
     }
 

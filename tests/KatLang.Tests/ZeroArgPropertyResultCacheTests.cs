@@ -356,6 +356,31 @@ public class ZeroArgPropertyResultCacheTests
     }
 
     [Fact]
+    public void Evaluator_RunCountedWithTopLevelProperty_AbsentPropertyMakesNoCacheRequest()
+    {
+        // The engine's DisplayDecimals channel on a program that declares none: the one probe
+        // reports ABSENCE without touching the cache, so the run's only cache traffic is the
+        // program's own. RunOptions.DefaultDisplayDecimals is consumed after this, never here.
+        var source = """
+            A = Math.RandomInt(0, 10)
+
+            A, A
+            """;
+        var innerCache = new RunScopedZeroArgPropertyResultCache();
+        var cache = new RecordingZeroArgPropertyResultCache(innerCache);
+
+        var result = Evaluator.RunCountedWithTopLevelProperty(
+            new Expr.AlgorithmExpr(SourceProvenance.ParseValid(source).Root),
+            "DisplayDecimals",
+            cache);
+
+        Assert.False(result.IsError);
+        Assert.Null(result.Value.TopLevelProperty);
+        Assert.Equal(["A", "A"], cache.Requests.Select(request => request.Binding.Name));
+        Assert.Equal(1, innerCache.GetSnapshot().Stores);
+    }
+
+    [Fact]
     public void Evaluator_ZeroArgPropertyCaching_PurePropertyStyleAccessStillUsesCache()
     {
         var source = """

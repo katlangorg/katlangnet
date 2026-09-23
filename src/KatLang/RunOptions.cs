@@ -6,6 +6,21 @@ namespace KatLang;
 public sealed class RunOptions
 {
     /// <summary>
+    /// The largest valid display-decimals count: the upper bound of the inclusive range
+    /// <c>0</c> through <c>99</c> shared by a program's top-level <c>DisplayDecimals</c>
+    /// property and <see cref="DefaultDisplayDecimals"/>. It is a VALIDITY bound, not a
+    /// clamping ceiling like the <c>MaxSupported*</c> limits: a count outside the range is
+    /// rejected, never clamped — a program's <c>DisplayDecimals</c> property with a diagnostic,
+    /// <see cref="DefaultDisplayDecimals"/> with <see cref="ArgumentOutOfRangeException"/>.
+    /// Like the public <c>MaxSupported*</c> constants, this is a versioned contract bound,
+    /// not a runtime capability query. Consumers compile the constant into their assemblies;
+    /// if a future release changes the bound, recompile consumers to use the new value.
+    /// </summary>
+    public const int MaxDisplayDecimals = 99;
+
+    private readonly int? _defaultDisplayDecimals;
+
+    /// <summary>
     /// Injected asynchronous code fetcher — the ONE source-loading contract: URL and the
     /// active source-processing cancellation token to source text. Eager downloads receive
     /// <see cref="SourceProcessingCancellationToken"/> unchanged; deferred branch downloads
@@ -115,7 +130,9 @@ public sealed class RunOptions
     /// <para><b>Reproducibility contract.</b> For a given KatLang version: the same program
     /// (loaded module contents and a <c>DisplayDecimals</c> property, which is itself
     /// evaluated, included), the same seed, and the same semantically executed KatLang
-    /// path produce the same random values on every supported platform. Both random
+    /// path produce the same random values on every supported platform. A
+    /// <see cref="DefaultDisplayDecimals"/> host default is never evaluated and draws
+    /// nothing, so configuring one changes no random value. Both random
     /// operations, in every spelling, consume ONE run-scoped stream in actual evaluation
     /// order, so the values depend on which random calls execute and in what order —
     /// removing an earlier random call generally changes every later value (a call can
@@ -142,6 +159,66 @@ public sealed class RunOptions
     /// parsing, module loading, elaboration, or editor semantics.</para>
     /// </summary>
     public long? RandomSeed { get; init; }
+
+    /// <summary>
+    /// Optional host DEFAULT for how many digits after the decimal point displayed numbers
+    /// show: an integer from <c>0</c> through <see cref="MaxDisplayDecimals"/>, or <c>null</c>
+    /// (the default) for none. <c>0</c> is a real setting — no digits after the decimal point,
+    /// so <c>2.5</c> shows as <c>3</c> — distinct from <c>null</c>. The default is the FALLBACK
+    /// of a run's effective display setting, never its authority:
+    /// <list type="number">
+    ///   <item>a top-level <c>DisplayDecimals</c> property the program declares decides — its
+    ///   evaluated value when valid, and its own diagnostic when not: the host default is a
+    ///   fallback, not error recovery, so an invalid declared property still fails the run;</item>
+    ///   <item>otherwise this default, when configured;</item>
+    ///   <item>otherwise canonical full-precision display.</item>
+    /// </list>
+    /// <para><b>Display only.</b> The default selects fixed-point presentation exactly as the
+    /// same count in a <c>DisplayDecimals</c> property would — midpoint rounding away from zero,
+    /// culture-invariant digits, the canonical <c>NaN</c> / <c>Infinity</c> / <c>-Infinity</c>
+    /// spellings, and the signed-zero rule — and nothing else: stored values, calculations,
+    /// comparisons, cached property values, callbacks, control flow,
+    /// <see cref="RunResult.Success.Value"/>, <see cref="RunResult.Success.Atoms"/>, and
+    /// diagnostics are unchanged. The run's result carries its effective setting, so every
+    /// rendering surface of that result agrees under the same display-length bound:
+    /// <see cref="RunResult.ToDisplayString"/> and <see cref="RunResult.RenderDisplay"/>, every
+    /// <see cref="Formatting.OutputFormatter"/> — built-in or custom, through
+    /// <see cref="Formatting.BoundedOutputWriter.AppendAtom"/> — and
+    /// <see cref="KatLangEngine.EvaluateToString(string, RunOptions?)"/>.</para>
+    /// <para><b>Host configuration, not a property.</b> Nothing is injected into the program.
+    /// The default is not a KatLang declaration, so name resolution, shadowing, collisions,
+    /// source spans, diagnostics, and editor tooling see the program exactly as written
+    /// (<see cref="Parser.Parse(string, RunOptions?)"/> and <see cref="Parser.ParseAsync"/>
+    /// ignore this property), and it is never evaluated: it consumes no evaluation budget,
+    /// draws no random value, invokes no host operation, adds no cancellation checkpoint, and
+    /// creates no zero-argument property cache entry. A declared <c>DisplayDecimals</c>
+    /// property keeps its ordinary evaluation — after the program output, under the same
+    /// run budget, random stream, and property cache — whether or not a default is
+    /// configured.</para>
+    /// <para>This is immutable configuration, safe to share across concurrent and sequential
+    /// runs; no run's <c>DisplayDecimals</c> property ever changes it.</para>
+    /// </summary>
+    /// <exception cref="ArgumentOutOfRangeException">
+    /// The value is negative or greater than <see cref="MaxDisplayDecimals"/>. It is thrown
+    /// when the options object is initialized, so an invalid default never reaches a
+    /// synchronous or asynchronous entry point.
+    /// </exception>
+    public int? DefaultDisplayDecimals
+    {
+        get => _defaultDisplayDecimals;
+        init
+        {
+            if (value is < 0 or > MaxDisplayDecimals)
+            {
+                throw new ArgumentOutOfRangeException(
+                    nameof(DefaultDisplayDecimals),
+                    value,
+                    $"Default display decimals must be between 0 and {MaxDisplayDecimals}.");
+            }
+
+            _defaultDisplayDecimals = value;
+        }
+    }
 
     /// <summary>
     /// Optional deterministic evaluation resource limits. When null,

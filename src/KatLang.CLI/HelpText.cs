@@ -6,11 +6,15 @@ namespace KatLang.CLI;
 internal static class HelpText
 {
     // The transport bounds quoted under --allow-loading are HttpSourceDownloader's
-    // MaxResponseBodyBytes and DownloadTimeout; the help test pins them to the constants.
+    // MaxResponseBodyBytes and DownloadTimeout, and the range quoted under
+    // --display-decimals is KatLang's RunOptions.MaxDisplayDecimals; the help tests pin
+    // them to those constants.
     public const string Usage = """
         Usage:
           katlang run <file> [--allow-loading] [--seed <integer>]
+                             [--display-decimals <integer>]
           katlang eval <source> [--allow-loading] [--seed <integer>]
+                                [--display-decimals <integer>]
           katlang check <file> [--allow-loading]
 
         Options:
@@ -34,6 +38,14 @@ internal static class HelpText
                              between invocations. Not valid for check, which does
                              not evaluate. KatLang randomness is not
                              cryptographically secure.
+
+          --display-decimals <integer>
+                             Default number of digits shown after the decimal
+                             point in displayed numbers, from 0 through 99. A
+                             program's own DisplayDecimals property overrides
+                             it. Display only: values, calculations, and
+                             comparisons are unchanged. Not valid for check,
+                             which does not evaluate.
 
           --version          Show the KatLang version.
           --help             Show help.

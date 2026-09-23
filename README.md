@@ -49,7 +49,7 @@ var readable = OutputFormatters.Readable.Format(result); // keeps all (), [] —
 var concise = OutputFormatters.Concise.Format(result);   // hides only provably safe sequence parentheses
 ```
 
-- **exact** is canonical KatLang display: raw unquoted strings, culture-invariant numbers, `DisplayDecimals`, platform newlines, and the bounded-display contract. It is byte-for-byte `ToDisplayString()`.
+- **exact** is canonical KatLang display: raw unquoted strings, culture-invariant numbers, the run's effective display decimals (`DisplayDecimals`, or the host default below), platform newlines, and the bounded-display contract. It is byte-for-byte `ToDisplayString()`.
 - **readable** preserves every sequence parenthesis and list bracket and chooses layout from BOTH preferred line width and structural complexity: a value whose flat text fits can still become multiline when it contains two or more structured children, and a nested multi-pair string/value child renders one pair per line, so nested structure stays visible. Simple flat values remain inline, and independently emitted root outputs are separated by blank lines.
 - **concise** may hide sequence parentheses only where line structure and indentation provably carry the boundary; list brackets and the empty sequence `()` always remain visible, and it never invents colons, bullets, headings, labels, or capitalization — `('neto', 1473.8)` can display as `neto 1473.8`, never `neto: 1473.8`. A one-pair child sequence becomes one line; a safe nested multi-pair child becomes an indented pair block (one pair per line) even when it would fit joined, while a root pair sequence may stay flat — structural line grouping only, never dictionary or record semantics. Width alone never forces a structured value flat, so natural nested results need no spread for presentation (spread discards the parent structure, and the formatter never reconstructs it). With zero root spacing it hides root parentheses only when a nested pair block visibly anchors the block, and with zero indentation it retains multiline child parentheses. The string-delimiter policy controls quoting only: under `StringDelimiterMode.Never`, safe raw labels such as `neto` or `net_salary` still participate in delimiter removal, while an ambiguous raw string (empty, whitespace-bearing, comma-bearing, structural-looking, quote-bearing, numeric-looking, control-bearing, or containing invisible Unicode format characters or unpaired surrogates) makes its containing sequence keep canonical parentheses and separators instead of being quoted or altered.
 
@@ -133,6 +133,25 @@ katlang eval <source> --seed <integer>
 Source compatibility: `Evaluator.Run(expr, null, null, token)` and the corresponding `RunAsync` call are ambiguous between the host-operation and seeded overloads. Use named arguments such as `limits: null, randomSeed: null, cancellationToken: token`, or explicitly type the second argument to select the intended overload. A null `HostOperations` argument is still rejected by the host-operation overload.
 
 `--seed` takes any signed 64-bit integer as the next token (`--seed -5` and `--seed +5` are different seeds; `--seed=5` is not accepted) and is refused by `check`, which does not evaluate. A bare `--` ends the options, so a file or source argument that itself begins with two dashes is written after it (`katlang eval -- "--1"`). For a given KatLang version, the same program (loaded module contents and a `DisplayDecimals` property included), the same seed, and the same evaluated KatLang path produce the same random values on every supported platform, through synchronous and asynchronous entry points alike and regardless of internal optimizer strategy. Both random operations, in every spelling, consume one run-scoped stream in evaluation order, so a seed reproduces a stream — it does not memoize calls, and the ordinary rules (left-to-right arguments, lazy `if` branches, the zero-argument property cache for value reads, explicit `A()` re-evaluation and the builtin value slots that demand a property's algorithm directly — `sum(A)`, `if(true, A, 0)`, `A.string` — see the tutorial's caching section) decide which calls draw. The seed is immutable configuration: reusing one `RunOptions` object replays the stream from its beginning for every run, and concurrent runs sharing it get independent streams. The exact stream may change between KatLang versions when the generator, a sampling algorithm, or evaluation semantics deliberately change; KatLang randomness is not cryptographically secure. The internal generator contract (a SplitMix64 stream with exact bounded-rejection sampling) is documented in `docs/design/seeded-randomness-2026-09.md`.
+
+## Default display decimals
+
+A program's top-level `DisplayDecimals = n` property (an integer from 0 through 99) sets how many digits after the decimal point its displayed numbers show. A host can supply a DEFAULT for programs that declare no such property:
+
+```c#
+var options = new RunOptions { DefaultDisplayDecimals = 3 };
+KatLangEngine.Run("1 / 7", options).ToDisplayString();                      // 0.143
+KatLangEngine.Run("DisplayDecimals = 6\n1 / 7", options).ToDisplayString(); // 0.142857: the program's property wins
+```
+
+The CLI exposes it for the evaluating commands:
+
+```
+katlang eval --display-decimals 3 "1 / 7"
+katlang run --display-decimals 6 program.kat
+```
+
+A run's effective setting is the program's own `DisplayDecimals` property when it declares one, otherwise the host default, otherwise canonical full-precision display. A declared property always decides: an invalid one (`DisplayDecimals = -1`) still fails the run with its own diagnostic instead of falling back to the default. The default is display-only host configuration, not a KatLang property — nothing is added to the program, so name resolution, diagnostics, and editor tooling see the source as written — and it is never evaluated: it consumes no evaluation budget, draws no random value, invokes no host operation, and changes no value, atom, comparison, or control flow. Every rendering surface of the result uses the same effective setting with the same rounding (midpoints away from zero), special-value spellings, and display-length bound: `ToDisplayString`, `RenderDisplay`, the `exact`/`readable`/`concise` and custom formatters, and `EvaluateToString`. `RunOptions.MaxDisplayDecimals` is the shared upper bound; a default outside 0 through 99 throws `ArgumentOutOfRangeException` when the options object is initialized, and the CLI reports it as a usage error — values are rejected, never clamped. Like `--seed`, `--display-decimals` takes its value as the next token (`--display-decimals=2` is not accepted, and a leading sign or zeros such as `+2` or `02` spell the same integer) and is refused by `check`, which does not evaluate.
 
 ## Nuget package
 https://www.nuget.org/packages/KatLang

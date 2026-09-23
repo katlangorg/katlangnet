@@ -46,6 +46,55 @@ public class PublicFormatterExtensionTests
     }
 
     [Fact]
+    public void CustomFormatter_ReceivesTheRunsEffectiveDisplayDecimals()
+    {
+        // BoundedOutputWriter.AppendAtom reads the ONE effective setting the run resolved: the
+        // host default alone, the program's DisplayDecimals alone, and — when both are present
+        // — the program's declaration, exactly as canonical display does.
+        var formatter = new ShapeFormatter();
+        var hostDefault = new RunOptions { DefaultDisplayDecimals = 3 };
+
+        var hostOnly = KatLangEngine.Run("1 / 7", hostDefault);
+        var sourceOnly = KatLangEngine.Run("DisplayDecimals = 6\n1 / 7");
+        var both = KatLangEngine.Run("DisplayDecimals = 6\n1 / 7", hostDefault);
+        var neither = KatLangEngine.Run("1 / 7");
+
+        Assert.Equal("A:0.143", formatter.Format(hostOnly));
+        Assert.Equal("A:0.142857", formatter.Format(sourceOnly));
+        Assert.Equal("A:0.142857", formatter.Format(both));
+        Assert.Equal("A:" + neither.ToDisplayString(), formatter.Format(neither));
+
+        foreach (var run in new[] { hostOnly, sourceOnly, both, neither })
+            Assert.Equal("A:" + run.ToDisplayString(), formatter.RenderDisplay(run).Text);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(RunOptions.MaxDisplayDecimals)]
+    public void CustomFormatter_DisplayDefaultBoundariesAndLimits_UseOnlyPublicApi(int decimals)
+    {
+        var formatter = new ShapeFormatter();
+        var host = new RunOptions { DefaultDisplayDecimals = decimals };
+        var hosted = Assert.IsType<RunResult.Success>(KatLangEngine.Run("0.125", host));
+        var declared = Assert.IsType<RunResult.Success>(KatLangEngine.Run($"DisplayDecimals = {decimals}\n0.125"));
+        var both = Assert.IsType<RunResult.Success>(KatLangEngine.Run($"DisplayDecimals = {decimals}\n0.125",
+            new RunOptions { DefaultDisplayDecimals = decimals == 0 ? 99 : 0 }));
+        var expected = decimals == 0 ? "A:0" : "A:0.125" + new string('0', 96);
+        foreach (var run in new[] { hosted, declared, both })
+            Assert.Equal(expected, formatter.Format(run));
+
+        var bounded = KatLangEngine.Run("0.125", new RunOptions
+        {
+            DefaultDisplayDecimals = decimals,
+            EvaluationLimits = new EvaluationLimits { MaxDisplayLength = 2 },
+        });
+        var rendering = formatter.RenderDisplay(bounded, new OutputFormattingOptions { MaxDisplayLength = 1000 });
+        Assert.True(rendering.LimitExceeded);
+        Assert.Equal(KatLangErrorCode.DisplayLengthLimitExceeded, rendering.LimitError!.Code);
+        Assert.InRange(rendering.Text.Length, 0, 2);
+    }
+
+    [Fact]
     public void CustomFormatter_InheritsSupportedFailureAndNoOutputRendering()
     {
         var formatter = new ShapeFormatter();

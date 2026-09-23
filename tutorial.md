@@ -672,6 +672,14 @@ DisplayDecimals = 2
 
 `DisplayDecimals` must be a single integer from 0 through 99. Negative values, fractional values, strings, and sequence-valued or multi-output values are reported as diagnostics.
 
+A host can also supply a DEFAULT for programs that do not define `DisplayDecimals` — `RunOptions.DefaultDisplayDecimals` in the .NET library, or `--display-decimals <integer>` (0 through 99) on the CLI's `run` and `eval` commands:
+
+```
+katlang eval --display-decimals 3 "1 / 7"
+```
+
+This shows `0.143`. Your program's own `DisplayDecimals` always takes precedence: with `DisplayDecimals = 6` in the source, the same command shows `0.142857`, and an invalid `DisplayDecimals` is still reported as a diagnostic rather than replaced by the default. The default is not a property — your code cannot read it, and it never shadows or collides with your names — and, like `DisplayDecimals`, it changes only how the final output is displayed.
+
 Per-value formatting such as `value.displayDecimals(n)` and `displayDecimals(value, n)` is intentionally not part of this feature. Structured display settings such as `Display = { Decimals = n }` and `Display.Decimals = n` are also intentionally out of scope.
 
 ---

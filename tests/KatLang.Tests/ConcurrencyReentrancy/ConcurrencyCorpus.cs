@@ -196,6 +196,15 @@ public static class ConcurrencyCorpus
     /// <c>EvaluationBudget</c>.</summary>
     public static readonly RunOptions SharedSeededOptions = new() { RandomSeed = 20260914 };
 
+    /// <summary>ONE display-default options instance deliberately aliased into both
+    /// lanes of a display-default case: <see cref="RunOptions.DefaultDisplayDecimals"/>
+    /// is immutable configuration, and the effective setting a program's own
+    /// <c>DisplayDecimals</c> decides lives on that run's result only.</summary>
+    public static readonly RunOptions SharedDisplayDefaultOptions = new() { DefaultDisplayDecimals = 3 };
+
+    /// <summary>Two fractional rows whose display text depends on the run's effective display decimals.</summary>
+    public const string FractionRows = "1 / 7, 2 / 3";
+
     public static IReadOnlyList<ConcurrencyPairCase> PairCases { get; } =
     [
         // ── IndependentRun ──────────────────────────────────────────────────
@@ -551,6 +560,37 @@ public static class ConcurrencyCorpus
             ProgramA = SeededRandomAlt, EntryA = EvalEntryPoint.RunPlain, OptionsA = SharedSeededOptions,
             ProgramB = FailingIndex, EntryB = EvalEntryPoint.RunCounted,
             ExpectedClassA = "ok", ExpectedClassB = "err",
+        },
+
+        // ── DisplayDefault ──────────────────────────────────────────────────
+        new()
+        {
+            Id = "display/two-defaults-same-program",
+            Scenario = ConcurrencyScenario.DisplayDefault,
+            Invariant = "Two concurrent engine runs of the same program with different RunOptions.DefaultDisplayDecimals (2 and 8): each result carries its own effective DisplayOptions (KatLangEngine.ResolveDisplayOptions per run), so each lane displays exactly its own count.",
+            ProgramA = FractionRows, EntryA = EvalEntryPoint.EngineRun, OptionsA = new RunOptions { DefaultDisplayDecimals = 2 },
+            ProgramB = FractionRows, EntryB = EvalEntryPoint.EngineRun, OptionsB = new RunOptions { DefaultDisplayDecimals = 8 },
+            ExpectedClassA = "engine ok n=2 display=0.14\\n0.67",
+            ExpectedClassB = "engine ok n=2 display=0.14285714\\n0.66666667",
+        },
+        new()
+        {
+            Id = "display/shared-default-beside-declared-override",
+            Scenario = ConcurrencyScenario.DisplayDefault,
+            Invariant = "ONE RunOptions { DefaultDisplayDecimals = 3 } instance aliased into two concurrent engine runs, lane B declaring its own DisplayDecimals = 6: the declared property decides only lane B's own result and is never written back into the shared options, so lane A keeps the default.",
+            ProgramA = FractionRows, EntryA = EvalEntryPoint.EngineRun, OptionsA = SharedDisplayDefaultOptions,
+            ProgramB = $"DisplayDecimals = 6\n{FractionRows}", EntryB = EvalEntryPoint.EngineRun, OptionsB = SharedDisplayDefaultOptions,
+            ExpectedClassA = "engine ok n=2 display=0.143\\n0.667",
+            ExpectedClassB = "engine ok n=2 display=0.142857\\n0.666667",
+        },
+        new()
+        {
+            Id = "display/default-beside-seeded-stream",
+            Scenario = ConcurrencyScenario.DisplayDefault,
+            Invariant = "A seeded run with a display default beside the same seeded run without one: the default is consumed after evaluation and draws nothing, so neither lane's stream or display is perturbed by the other.",
+            ProgramA = SeededRandom, EntryA = EvalEntryPoint.EngineRun, OptionsA = new RunOptions { RandomSeed = 20260914, DefaultDisplayDecimals = 4 },
+            ProgramB = SeededRandom, EntryB = EvalEntryPoint.EngineRun, OptionsB = SharedSeededOptions,
+            ExpectedClassA = "engine ok", ExpectedClassB = "engine ok",
         },
     ];
 

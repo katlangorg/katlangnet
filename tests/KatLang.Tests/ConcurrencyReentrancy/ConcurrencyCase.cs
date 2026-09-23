@@ -68,6 +68,14 @@ public enum ConcurrencyScenario
     /// shared generator, so each observes exactly its sequential baseline (and
     /// the recomputed baselines pin that a later run restarts the stream).</summary>
     SeededStream,
+
+    /// <summary><see cref="RunOptions.DefaultDisplayDecimals"/> is immutable host
+    /// configuration resolved into each run's OWN result: concurrent runs with
+    /// different defaults, and runs aliasing ONE options instance while a program
+    /// in the other lane declares its own <c>DisplayDecimals</c>, each display
+    /// exactly their sequential baseline — nothing is written back into the
+    /// options object or any process-wide state.</summary>
+    DisplayDefault,
 }
 
 /// <summary>

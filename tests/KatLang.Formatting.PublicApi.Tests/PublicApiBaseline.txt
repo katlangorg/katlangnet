@@ -1992,8 +1992,10 @@ public sealed record KatLang.Result.Str : KatLang.Result, System.IEquatable<KatL
   operator public static bool op_Inequality(KatLang.Result.Str? left, KatLang.Result.Str? right)
 
 public sealed class KatLang.RunOptions
+  const    public const int MaxDisplayDecimals = 99
   ctor     public RunOptions()
   property public System.Collections.Generic.IEnumerable<string>? AllowedHosts { get; init; }
+  property public int? DefaultDisplayDecimals { get; init; }
   property public System.Func<string, System.Threading.CancellationToken, System.Threading.Tasks.ValueTask<string>>? DownloadCode { get; init; }
   property public System.Threading.CancellationToken EvaluationCancellationToken { get; init; }
   property public KatLang.EvaluationLimits? EvaluationLimits { get; init; }

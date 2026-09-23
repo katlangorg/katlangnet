@@ -106,19 +106,23 @@ public static class CliApplication
             source = fileRead.Source;
         }
 
-        // The ONE place --allow-loading and --seed map onto the KatLang package:
-        // with the loading flag, KatLang gets a downloader and resolves
-        // load / open '<url>' under its own host and module policy; without it,
+        // The ONE place the command options map onto the KatLang package. With
+        // --allow-loading, KatLang gets a downloader and resolves load /
+        // open '<url>' under its own host and module policy; without it,
         // DownloadCode stays null and KatLang itself rejects loading source with
-        // a diagnostic. The seed (run/eval only; the parser refused it for check)
-        // is KatLang's own RunOptions.RandomSeed — the CLI adds no randomness
-        // semantics of its own.
+        // a diagnostic. The evaluation options (run/eval only; the parser refused
+        // them for check) are KatLang's own: --seed is RunOptions.RandomSeed and
+        // --display-decimals is RunOptions.DefaultDisplayDecimals, the fallback a
+        // program's DisplayDecimals property overrides. The CLI adds no randomness
+        // or display semantics of its own: every result below is rendered by the
+        // package from the run's own display configuration.
         var options = new RunOptions
         {
-            DownloadCode = invocation.AllowLoading
+            DownloadCode = invocation.Options.AllowLoading
                 ? loadingDownloader ?? HttpSourceDownloader.Shared.DownloadAsync
                 : null,
-            RandomSeed = invocation.RandomSeed,
+            RandomSeed = invocation.Options.RandomSeed,
+            DefaultDisplayDecimals = invocation.Options.DisplayDecimals,
             SourceProcessingCancellationToken = cancellationToken,
             EvaluationCancellationToken = cancellationToken,
         };
@@ -230,8 +234,16 @@ public static class CliApplication
         {
             error.WriteLine($"{CommandLine.ProgramName}: file not found: '{path}'.");
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException
-                                      or NotSupportedException or ArgumentException)
+        catch (ArgumentException)
+        {
+            // The file API rejects a malformed path SHAPE before touching the file system,
+            // with a message addressed to .NET callers ("... (Parameter 'path')"), so the
+            // CLI words it. The case a command line can reach is an empty path — on
+            // Windows a whitespace-only one too, which the platform treats as empty.
+            var reason = string.IsNullOrWhiteSpace(path) ? "the path is empty" : "the path is not valid";
+            error.WriteLine($"{CommandLine.ProgramName}: cannot read file '{path}': {reason}.");
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or NotSupportedException)
         {
             error.WriteLine($"{CommandLine.ProgramName}: cannot read file '{path}': {ex.Message}");
         }

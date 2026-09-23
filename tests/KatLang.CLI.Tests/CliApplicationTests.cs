@@ -1,4 +1,6 @@
+using System.Globalization;
 using System.Reflection;
+using System.Text;
 
 namespace KatLang.CLI.Tests;
 
@@ -441,6 +443,35 @@ public sealed class CliApplicationTests
     [Theory]
     [InlineData("run")]
     [InlineData("check")]
+    public async Task EmptyFilePath_IsReportedInCliWords(string command)
+    {
+        // The file API rejects an empty path with a message addressed to .NET callers
+        // ("... (Parameter 'path')"); the CLI reports it in its own words instead.
+        var result = await Cli.InvokeAsync(command, "");
+
+        Assert.Equal(Failure, result.ExitCode);
+        Assert.Equal("", result.Output);
+        Assert.Equal("katlang: cannot read file '': the path is empty.", result.TrimmedError);
+    }
+
+    [Theory]
+    [InlineData("run")]
+    [InlineData("check")]
+    public async Task WhitespaceFilePath_NeverLeaksAFrameworkParameterName(string command)
+    {
+        // Windows treats a whitespace-only path as empty; elsewhere it is an ordinary missing
+        // file. Either way the report is the CLI's own.
+        var result = await Cli.InvokeAsync(command, "   ");
+
+        Assert.Equal(Failure, result.ExitCode);
+        Assert.Equal("", result.Output);
+        Assert.StartsWith("katlang: ", result.TrimmedError);
+        Assert.DoesNotContain("(Parameter", result.TrimmedError);
+    }
+
+    [Theory]
+    [InlineData("run")]
+    [InlineData("check")]
     public async Task UnreadableFile_IsReportedCleanly(string command)
     {
         // A directory exists as a path but cannot be read as a file. The path is
@@ -867,6 +898,351 @@ public sealed class CliApplicationTests
         Assert.Contains("--seed <integer>", result.TrimmedOutput);
         Assert.Contains("Not valid for check", result.TrimmedOutput);
         Assert.Contains("random values may differ", result.TrimmedOutput);
+    }
+
+    // ── Display decimals ────────────────────────────────────────────────────
+
+    /// <summary>Fractions, a midpoint, a list, and a sequence, so the count shows everywhere.</summary>
+    private const string FractionSource = "1 / 7, 2 / 3, (2.5, [-2.5])";
+
+    /// <summary>
+    /// The CLI adds no display semantics of its own: <c>--display-decimals</c> is exactly
+    /// <see cref="RunOptions.DefaultDisplayDecimals"/>, so the package's own display under that
+    /// default is the expectation, never a re-implemented rounding.
+    /// </summary>
+    private static string EngineDisplay(string source, RunOptions options)
+        => KatLangEngine.Run(source, options).ToDisplayString().ReplaceLineEndings("\n");
+
+    [Theory]
+    [InlineData("0")]
+    [InlineData("3")]
+    [InlineData("99")]
+    public async Task Eval_DisplayDecimals_IsKatLangsHostDefault(string token)
+    {
+        var decimals = int.Parse(token, CultureInfo.InvariantCulture);
+
+        var result = await Cli.InvokeAsync("eval", FractionSource, "--display-decimals", token);
+
+        Assert.Equal(Success, result.ExitCode);
+        Assert.Equal("", result.Error);
+        Assert.Equal(EngineDisplay(FractionSource, new RunOptions { DefaultDisplayDecimals = decimals }), result.TrimmedOutput);
+    }
+
+    [Fact]
+    public async Task Eval_DisplayDecimals_RendersThroughThePackagesRules()
+    {
+        Assert.Equal("0.143", (await Cli.InvokeAsync("eval", "--display-decimals", "3", "1 / 7")).TrimmedOutput);
+
+        // 0 is a real setting: midpoints round away from zero, like Math.Round.
+        Assert.Equal("3\n-3", (await Cli.InvokeAsync("eval", "2.5, -2.5", "--display-decimals", "0")).TrimmedOutput);
+
+        // Special values keep their spelling; -0 stays -0 while -0.0 takes the places.
+        Assert.Equal(
+            "NaN\nInfinity\n-Infinity\n-0\n-0.00000",
+            (await Cli.InvokeAsync("eval", "Math.Sqrt(-1), 9e6144 * 10, Math.Ln(0), -0, -0.0", "--display-decimals", "5")).TrimmedOutput);
+    }
+
+    [Fact]
+    public async Task OmittedDisplayDecimals_KeepsCanonicalOutput()
+    {
+        var result = await Cli.InvokeAsync("eval", FractionSource);
+
+        Assert.Equal(Success, result.ExitCode);
+        Assert.Equal(KatLangEngine.Run(FractionSource).ToDisplayString().ReplaceLineEndings("\n"), result.TrimmedOutput);
+        Assert.Equal(EngineDisplay(FractionSource, new RunOptions()), result.TrimmedOutput);
+    }
+
+    [Theory]
+    [InlineData("0")]
+    [InlineData("3")]
+    [InlineData("99")]
+    public async Task ProgramsOwnDisplayDecimals_OverridesTheOption(string token)
+    {
+        using var file = new TempSourceFile("DisplayDecimals = 6\n1 / 7\n");
+
+        var eval = await Cli.InvokeAsync("eval", "DisplayDecimals = 6\n1 / 7", "--display-decimals", token);
+        var run = await Cli.InvokeAsync("run", file.Path, "--display-decimals", token);
+
+        Assert.Equal(Success, eval.ExitCode);
+        Assert.Equal("0.142857", eval.TrimmedOutput);
+        Assert.Equal(Success, run.ExitCode);
+        Assert.Equal("0.142857", run.TrimmedOutput);
+    }
+
+    [Fact]
+    public async Task InvalidDisplayDecimalsProperty_StillFails_TheOptionIsNoRecovery()
+    {
+        const string source = "DisplayDecimals = -1\n1 / 7";
+
+        var withOption = await Cli.InvokeAsync("eval", source, "--display-decimals", "3");
+        var without = await Cli.InvokeAsync("eval", source);
+
+        Assert.Equal(Failure, withOption.ExitCode);
+        Assert.Equal("", withOption.Output);
+        Assert.Contains("DisplayDecimals must be a non-negative integer.", withOption.TrimmedError);
+        Assert.Equal(without.ExitCode, withOption.ExitCode);
+        Assert.Equal(without.TrimmedError, withOption.TrimmedError);
+    }
+
+    [Fact]
+    public async Task Run_DisplayDecimals_ReadsAUtf8FileByRelativePathWithSpaces()
+    {
+        // A path RELATIVE to the process's current directory (never changed here), through a
+        // directory and a file name with spaces, holding non-ASCII UTF-8 text.
+        var directory = Path.Combine(Environment.CurrentDirectory, $"katlang cli display {Guid.NewGuid():N}");
+        Directory.CreateDirectory(directory);
+        try
+        {
+            var path = Path.Combine(directory, "display program.kat");
+            File.WriteAllText(path, "'π ≈ 3.14159'\nMath.Pi, 1 / 7\n", new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+            var relative = Path.GetRelativePath(Environment.CurrentDirectory, path);
+            Assert.False(Path.IsPathRooted(relative));
+
+            var result = await Cli.InvokeAsync("run", "--display-decimals", "4", relative);
+
+            Assert.Equal(Success, result.ExitCode);
+            Assert.Equal("", result.Error);
+            // Strings are never touched; every number takes the four places.
+            Assert.Equal("π ≈ 3.14159\n3.1416\n0.1429", result.TrimmedOutput);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Theory]
+    [InlineData("-1")]
+    [InlineData("100")]
+    [InlineData("1.5")]
+    [InlineData("abc")]
+    [InlineData("")]
+    [InlineData(" 5")]
+    [InlineData("5 ")]
+    [InlineData("0x10")]
+    [InlineData("1e1")]
+    [InlineData("1,0")]
+    [InlineData("+")]
+    [InlineData("-")]
+    [InlineData("2147483648")]           // int.MaxValue + 1
+    [InlineData("99999999999999999999")] // beyond long
+    public async Task DisplayDecimals_InvalidValues_AreUsageErrors_BeforeAnyEvaluation(string value)
+    {
+        // `Missing` would be an evaluation diagnostic if the program ran; it never does.
+        var result = await Cli.InvokeAsync("eval", "Missing", "--display-decimals", value);
+
+        Assert.Equal(Failure, result.ExitCode);
+        Assert.Equal("", result.Output);
+        Assert.Equal(
+            $"katlang: option '--display-decimals' requires an integer between 0 and {RunOptions.MaxDisplayDecimals}; got '{value}'.\n"
+            + "Run 'katlang --help' for usage.",
+            result.TrimmedError);
+    }
+
+    [Theory]
+    [InlineData("+2", 2)]
+    [InlineData("02", 2)]
+    [InlineData("-0", 0)]
+    [InlineData("+0", 0)]
+    public async Task DisplayDecimals_AcceptsTheSameIntegerSpellingsAsSeed(string token, int decimals)
+    {
+        var result = await Cli.InvokeAsync("eval", FractionSource, "--display-decimals", token);
+
+        Assert.Equal(Success, result.ExitCode);
+        Assert.Equal(EngineDisplay(FractionSource, new RunOptions { DefaultDisplayDecimals = decimals }), result.TrimmedOutput);
+    }
+
+    [Theory]
+    [InlineData(new[] { "eval", "1", "--display-decimals" }, "option '--display-decimals' requires a value.")]
+    [InlineData(new[] { "eval", "1", "--display-decimals", "--seed", "5" }, "option '--display-decimals' requires a value.")]
+    [InlineData(new[] { "eval", "--display-decimals", "--", "1" }, "option '--display-decimals' requires a value.")]
+    [InlineData(new[] { "eval", "1", "--display-decimals", "2", "--display-decimals", "2" }, "option '--display-decimals' was specified more than once.")]
+    [InlineData(new[] { "eval", "1", "--display-decimals=2" }, "unknown option '--display-decimals=2'.")]
+    [InlineData(new[] { "--help", "--display-decimals", "2" }, "option '--help' cannot be combined with other arguments.")]
+    [InlineData(new[] { "--display-decimals", "2", "--version" }, "option '--version' cannot be combined with other arguments.")]
+    [InlineData(new[] { "eval", "--display-decimals", "2" }, "'eval' requires a <source> argument.")]
+    [InlineData(new[] { "run", "--display-decimals", "2" }, "'run' requires a <file> argument.")]
+    public async Task DisplayDecimals_MalformedInvocations_ReportUsageErrors(string[] args, string expected)
+    {
+        var result = await Cli.InvokeAsync(args);
+
+        Assert.Equal(Failure, result.ExitCode);
+        Assert.Equal("", result.Output);
+        Assert.Equal($"katlang: {expected}\nRun 'katlang --help' for usage.", result.TrimmedError);
+    }
+
+    [Fact]
+    public async Task DisplayDecimals_TriesTheNextToken_NeverSkipsTheCommandToFindOne()
+    {
+        var result = await Cli.InvokeAsync("--display-decimals", "eval", "1");
+
+        Assert.Equal(Failure, result.ExitCode);
+        Assert.Contains(
+            $"option '--display-decimals' requires an integer between 0 and {RunOptions.MaxDisplayDecimals}; got 'eval'.",
+            result.TrimmedError);
+    }
+
+    [Fact]
+    public async Task Check_RefusesDisplayDecimals_BecauseCheckDoesNotEvaluate()
+    {
+        using var file = new TempSourceFile("1 / 7\n");
+        const string refusal = "katlang: option '--display-decimals' is not valid for 'check': check does not evaluate.\n"
+            + "Run 'katlang --help' for usage.";
+
+        foreach (var args in new[]
+                 {
+                     new[] { "check", file.Path, "--display-decimals", "2" },
+                     new[] { "--display-decimals", "0", "check", file.Path },
+                     new[] { "check", "--display-decimals", "99", file.Path, "--allow-loading" },
+                 })
+        {
+            var result = await Cli.InvokeAsync(args);
+
+            Assert.Equal(Failure, result.ExitCode);
+            Assert.Equal("", result.Output);
+            Assert.Equal(refusal, result.TrimmedError);
+        }
+
+        // Without the option, check is exactly as before: silent success.
+        var plain = await Cli.InvokeAsync("check", file.Path);
+        Assert.Equal(Success, plain.ExitCode);
+        Assert.Equal("", plain.Output);
+        Assert.Equal("", plain.Error);
+    }
+
+    [Fact]
+    public async Task Check_MalformedDisplayDecimals_IsReportedBeforeTheApplicabilityRefusal()
+    {
+        using var file = new TempSourceFile("1 / 7\n");
+
+        var result = await Cli.InvokeAsync("check", file.Path, "--display-decimals", "abc");
+
+        Assert.Equal(Failure, result.ExitCode);
+        Assert.Contains("requires an integer between", result.TrimmedError);
+        Assert.DoesNotContain("not valid for 'check'", result.TrimmedError);
+    }
+
+    [Fact]
+    public async Task Check_WithSeedAndDisplayDecimals_RefusesTheSeedFirst()
+    {
+        using var file = new TempSourceFile("1 / 7\n");
+
+        var result = await Cli.InvokeAsync("check", file.Path, "--display-decimals", "2", "--seed", "5");
+
+        Assert.Equal(Failure, result.ExitCode);
+        Assert.Contains("option '--seed' is not valid for 'check'", result.TrimmedError);
+    }
+
+    [Fact]
+    public async Task DisplayDecimals_MayAppearAnywhere_AndComposesWithSeedAndLoading()
+    {
+        using var file = new TempSourceFile(RandomSource);
+        var expected = EngineDisplay(RandomSource, new RunOptions { RandomSeed = 42, DefaultDisplayDecimals = 3 });
+
+        foreach (var args in new[]
+                 {
+                     new[] { "--display-decimals", "3", "--seed", "42", "run", file.Path },
+                     new[] { "run", "--seed", "42", "--display-decimals", "3", file.Path },
+                     new[] { "run", file.Path, "--display-decimals", "3", "--seed", "42" },
+                     new[] { "--seed", "42", "run", file.Path, "--display-decimals", "3", "--allow-loading" },
+                     new[] { "--allow-loading", "--display-decimals", "3", "run", "--seed", "42", "--", file.Path },
+                 })
+        {
+            var result = await Cli.InvokeAsync(args);
+
+            Assert.Equal(Success, result.ExitCode);
+            Assert.Equal("", result.Error);
+            Assert.Equal(expected, result.TrimmedOutput);
+        }
+    }
+
+    [Fact]
+    public async Task DisplayDecimals_ChangesNoSeededValue()
+    {
+        // The same seed draws the same values whatever is displayed: the package's own atoms
+        // are identical, and only the rendered digits differ.
+        var plain = Assert.IsType<RunResult.Success>(KatLangEngine.Run(RandomSource, new RunOptions { RandomSeed = 42 }));
+        var shown = Assert.IsType<RunResult.Success>(
+            KatLangEngine.Run(RandomSource, new RunOptions { RandomSeed = 42, DefaultDisplayDecimals = 3 }));
+        Assert.Equal(plain.Atoms, shown.Atoms);
+
+        var seeded = await Cli.InvokeAsync("eval", RandomSource, "--seed", "42");
+        var seededAndShown = await Cli.InvokeAsync("eval", RandomSource, "--seed", "42", "--display-decimals", "3");
+
+        Assert.Equal(SeededEngineDisplay(RandomSource, 42), seeded.TrimmedOutput);
+        Assert.Equal(shown.ToDisplayString().ReplaceLineEndings("\n"), seededAndShown.TrimmedOutput);
+        Assert.NotEqual(seeded.TrimmedOutput, seededAndShown.TrimmedOutput);
+    }
+
+    [Fact]
+    public async Task DisplayDecimals_AndAllowLoading_AreOrthogonal()
+    {
+        const string url = "https://katlang.org/demo/cli-display-lib.kat";
+        const string source = $"open '{url}'\nThird, Val / 7";
+        var modules = new Dictionary<string, string> { [url] = "public Third = 1 / 3\npublic Val = 1" };
+
+        var loader = new RecordingDownloader(modules);
+        var loaded = await Cli.InvokeWithDownloaderAsync(loader.DownloadAsync, "eval", source, "--allow-loading", "--display-decimals", "2");
+
+        Assert.Equal(Success, loaded.ExitCode);
+        Assert.Equal("0.33\n0.14", loaded.TrimmedOutput);
+        Assert.Equal(url, Assert.Single(loader.RequestedUrls));
+
+        // Loading stays disabled without its flag, display option or no display option.
+        var gated = new RecordingDownloader(modules);
+        var unloaded = await Cli.InvokeWithDownloaderAsync(gated.DownloadAsync, "eval", source, "--display-decimals", "2");
+
+        Assert.Equal(Failure, unloaded.ExitCode);
+        Assert.Equal("", unloaded.Output);
+        Assert.Empty(gated.RequestedUrls);
+        Assert.Contains("module elaboration is unavailable", unloaded.TrimmedError);
+    }
+
+    [Fact]
+    public async Task DoubleDash_KeepsDisplayDecimalsTokensPositional()
+    {
+        using var file = new TempSourceFile("1 / 7\n");
+
+        // An option BEFORE the terminator applies to source after it that begins with two dashes.
+        var dashed = await Cli.InvokeAsync("eval", "--display-decimals", "2", "--", "--1 / 3");
+        Assert.Equal(Success, dashed.ExitCode);
+        Assert.Equal("0.33", dashed.TrimmedOutput);
+
+        // After the terminator the spelling is a positional: a third positional for run ...
+        var run = await Cli.InvokeAsync("run", file.Path, "--", "--display-decimals", "2");
+        Assert.Equal(Failure, run.ExitCode);
+        Assert.Contains("unexpected argument '--display-decimals'.", run.TrimmedError);
+
+        // ... and SOURCE for eval: never an option, never a missing value.
+        var eval = await Cli.InvokeAsync("eval", "--", "--display-decimals");
+        Assert.Equal(Failure, eval.ExitCode);
+        Assert.DoesNotContain("requires a value", eval.TrimmedError);
+        Assert.DoesNotContain("unknown option", eval.TrimmedError);
+        Assert.Contains("implicit parameter", eval.TrimmedError);
+    }
+
+    [Fact]
+    public async Task Help_DocumentsTheDisplayDecimalsOption()
+    {
+        var result = await Cli.InvokeAsync("--help");
+        var help = result.TrimmedOutput;
+
+        Assert.Equal(Success, result.ExitCode);
+        Assert.Contains("katlang run <file> [--allow-loading] [--seed <integer>]\n                     [--display-decimals <integer>]\n", help);
+        Assert.Contains("katlang eval <source> [--allow-loading] [--seed <integer>]\n                        [--display-decimals <integer>]\n", help);
+        Assert.Contains("katlang check <file> [--allow-loading]\n", help + "\n");
+        Assert.DoesNotContain("check <file> [--allow-loading] [--display-decimals", help);
+
+        // The quoted range is KatLang's own, and the text says what the option is — a
+        // display default the program may override — never "significant digits".
+        Assert.Contains($"from 0 through {RunOptions.MaxDisplayDecimals}.", help);
+        Assert.Contains("DisplayDecimals property overrides", help);
+        Assert.Contains("Display only", help);
+        Assert.DoesNotContain("significant", help, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(2, help.Split("Not valid for check").Length - 1);
+
+        // The layout stays within an 80-column terminal.
+        Assert.All(help.Split('\n'), line => Assert.True(line.Length <= 80, $"help line exceeds 80 columns: '{line}'"));
     }
 
     // ── Process boundary behavior ───────────────────────────────────────────

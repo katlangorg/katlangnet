@@ -118,7 +118,10 @@ internal static class ValueTextRenderer
     /// runtime, so the default rendering shows the value's full precision and
     /// quantum exactly as computed (invariant culture: <c>NaN</c>,
     /// <c>Infinity</c>, <c>-Infinity</c>, and <c>-0</c> render literally).
-    /// <c>DisplayDecimals</c> opts into fixed-point presentation; whole numbers
+    /// An effective display-decimals count — a program's <c>DisplayDecimals</c>
+    /// property or the host's <see cref="RunOptions.DefaultDisplayDecimals"/>,
+    /// resolved once per run by the engine — opts into fixed-point presentation
+    /// through this one method, whichever source supplied it; whole numbers
     /// carrying an integral quantum stay plain there, mirroring the previous
     /// scale-zero rule, and a non-finite value keeps its canonical spelling on
     /// this path too — KatLang owns <c>NaN</c> / <c>Infinity</c> /
