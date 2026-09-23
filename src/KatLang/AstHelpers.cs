@@ -229,15 +229,26 @@ internal static class AstHelpers
         return expr;
     }
 
-    // ── Math member shape classification ─────────────────────────────────────
-    // The ONE owner of "is this written expression a Math member spelling?" for
+    // ── Math member classification ───────────────────────────────────────────
+    // The ONE owner of "does this written expression denote a Math member?" for
     // every static consumer (implicit-argument resolution, dependency ordering,
-    // the evaluator's qualified-native gate). Two shapes, one descriptor: the
-    // canonical dot edge `Math.X` and the predefined prelude alias `x`. Both
-    // helpers are SHAPE classification only — they resolve nothing, read no
-    // scope, and dispatch nothing. Callers supply their own ordinary-resolution
-    // shadow predicate (or null when they establish binding themselves), so a
+    // the evaluator's qualified-native gate). Three spellings, one descriptor:
+    // the canonical dot edge `Math.X`, the predefined prelude alias `x`, and the
+    // canonical name `X` provided by an `open Math`. The first two are decided
+    // by SHAPE — they resolve nothing and read no scope, because the prelude is
+    // reached before any open, so a caller-supplied shadow predicate (or null
+    // when the caller establishes binding itself) is all ownership needs and a
     // user-defined `Math` or `sin` never acquires builtin facts from spelling.
+    // The opened spelling needs the open chain, so it is decided by IDENTITY:
+    // parameter detection stamps the verdict (Expr.Resolve.ElaboratedMathMember).
+    // Two questions read these facts differently. The CONSUMER contract — are a
+    // call's arguments strict value positions? — belongs to what the callee IS,
+    // so it reads every spelling (TryGetRegistryProvenMathCalleeFacts), and a dot
+    // edge whose lexical fallback must be selected is the call `x(receiver, args)`
+    // with the same contract (HasRegistryProvenStrictValueFallback). BARE
+    // lifting of a Math function referenced as a value is route-based like every
+    // implicit forwarding — owner-walk properties (the alias) and the qualified
+    // `Math.X`, never a name reached through `open` — so it reads the shapes only.
 
     /// <summary>
     /// The canonical Math-member shape of a dot edge: a written <c>Math.X</c>
@@ -272,7 +283,11 @@ internal static class AstHelpers
     /// the caller's shadow knowledge for the written name — any visible user
     /// property shadows the alias; a parameter reference is an <see cref="Expr.Param"/>
     /// after detection and never matches. The constant alias (<c>pi</c>) carries no
-    /// callable facts and never matches.
+    /// callable facts and never matches. This is the BARE-REFERENCE lifting question,
+    /// which is route-based: the alias is a prelude property reached by the owner walk,
+    /// and a callable reached through <c>open</c> is never implicitly forwarded, so an
+    /// opened canonical name deliberately does not match here (the consumer contract of
+    /// a call is <see cref="TryGetRegistryProvenMathCalleeFacts"/>).
     /// </summary>
     internal static bool TryGetRegistryProvenMathAliasFacts(
         this Expr callee,
@@ -291,6 +306,82 @@ internal static class AstHelpers
     }
 
     /// <summary>
+    /// The opened-spelling identity verdict, decided where the elaborated scope chain exists
+    /// (parameter detection stamps it as <see cref="Expr.Resolve.ElaboratedMathMember"/>): a
+    /// bare canonical Math FUNCTION name (<c>Sin</c>) that the owner walk leaves undecided —
+    /// no parameter or property of any level declares it, the prelude's own members and a
+    /// run's host operations included — and that exactly ONE <c>open</c> of its chain
+    /// provides from the prelude's own <c>Math</c> module (the chain root's <c>Math</c>
+    /// property, by reference, so a user-defined <c>Math</c> or another library exporting
+    /// the name never qualifies). Null otherwise.
+    /// </summary>
+    internal static MathCallableFacts? ResolveOpenedMathMemberFacts(
+        string name,
+        ElaboratedPropertyScope scope,
+        IOwnedParameterBindings parameters)
+    {
+        if (!BuiltinRegistry.TryGetMathMemberFacts(name, out var facts)
+            || ElaboratedScopeLookup.SelectOwnedDeclaration(scope, name, parameters).Kind != OwnedDeclarationKind.None)
+            return null;
+
+        var hits = ElaboratedScopeLookup.LookupOpenPropertyMatches(scope, name);
+        return hits.Count == 1
+            && scope.Root.TryLookupOwnProperty(BuiltinRegistry.MathModuleName) is { } preludeMath
+            && ReferenceEquals(hits[0].Owner, preludeMath.Property.Value)
+                ? facts
+                : null;
+    }
+
+    /// <summary>
+    /// The Math member a CALLEE denotes, by identity — the consumer-contract question
+    /// (are this call's arguments strict value positions?), which belongs to what the callee
+    /// IS, never to how it is written: the qualified native reference or prelude alias by shape
+    /// (<see cref="TryGetRegistryProvenMathAliasFacts"/>), or the canonical name
+    /// (<c>Sin</c>) that parameter detection proved an <c>open Math</c> provides
+    /// (<see cref="Expr.Resolve.ElaboratedMathMember"/>, whose verdict already accounts for
+    /// every binding the owner walk and the open chain see).
+    /// </summary>
+    internal static bool TryGetRegistryProvenMathCalleeFacts(
+        this Expr callee,
+        Func<string, bool>? isPreludeNameShadowed,
+        [NotNullWhen(true)] out MathCallableFacts? facts)
+    {
+        // `(Math.Abs)(value)` is an ordinary Call whose callee is the qualified
+        // native reference. ResolveAlg preserves that callable identity, so its
+        // consumer contract is the same as the argument-bearing dot spelling.
+        // An argument-bearing dot expression is a result wrapper, not this member.
+        if (callee is Expr.DotCall { Args: null } qualified)
+            return qualified.TryGetRegistryProvenCanonicalMathFacts(isPreludeNameShadowed, out facts);
+
+        if (callee is Expr.Resolve { ElaboratedMathMember: { } stamped })
+        {
+            facts = stamped;
+            return true;
+        }
+
+        return callee.TryGetRegistryProvenMathAliasFacts(isPreludeNameShadowed, out facts);
+    }
+
+    /// <summary>
+    /// Whether a dot edge is the call <c>x(receiver, args)</c> of a Math member with
+    /// registry-proven strict-value arguments: its lexical fallback MUST be the selected
+    /// resolution (the scope-aware verdict parameter detection stamped,
+    /// <see cref="Expr.DotCall.ElaboratedFallbackSelection"/>) and the fallback callee
+    /// denotes the member (<see cref="TryGetRegistryProvenMathCalleeFacts"/>). Dotted-call
+    /// equivalence holds through elaboration (<c>A.sin</c> is <c>sin(A)</c>,
+    /// <c>2.pow(A)</c> is <c>pow(2, A)</c>), so the receiver and the written arguments are
+    /// then the same strict value positions the direct call's arguments are. A fallback
+    /// that is only POSSIBLY selected keeps them neutral: a structural member of the
+    /// runtime receiver would consume them instead.
+    /// </summary>
+    internal static bool HasRegistryProvenStrictValueFallback(
+        this Expr.DotCall dotCall,
+        Func<string, bool>? isPreludeNameShadowed = null)
+        => dotCall.ElaboratedFallbackSelection == LexicalFallbackSelection.Always
+            && dotCall.EffectiveLexicalFallback.TryGetRegistryProvenMathCalleeFacts(isPreludeNameShadowed, out var facts)
+            && facts.HasStrictValueArguments;
+
+    /// <summary>
     /// Whether registry facts prove that this dot edge's written arguments are
     /// strict values rather than neutral higher-order argument slots: the edge
     /// has the unshadowed canonical <c>Math.X(...)</c> shape
@@ -304,19 +395,19 @@ internal static class AstHelpers
             && facts.HasStrictValueArguments;
 
     /// <summary>
-    /// The alias-call twin of
+    /// The bare-callee twin of
     /// <see cref="HasRegistryProvenStrictValueArguments(Expr.DotCall, Func{string, bool}?)"/>:
     /// whether registry facts prove that this call's written arguments are strict
-    /// values, because its callee is an unshadowed Math prelude alias
-    /// (<see cref="TryGetRegistryProvenMathAliasFacts"/>) whose facts declare
-    /// strict-value arguments. Both twins read the SAME descriptor facts, so a
-    /// consumer classifying calls through this pair cannot drift between
-    /// <c>sin(...)</c> and <c>Math.Sin(...)</c>.
+    /// values, because its callee denotes a Math member — an unshadowed prelude alias
+    /// or an opened canonical name (<see cref="TryGetRegistryProvenMathCalleeFacts"/>) —
+    /// whose facts declare strict-value arguments. Every twin reads the SAME descriptor
+    /// facts, so a consumer classifying calls through them cannot drift between
+    /// <c>sin(...)</c>, <c>Math.Sin(...)</c>, and <c>Sin(...)</c> under <c>open Math</c>.
     /// </summary>
     internal static bool HasRegistryProvenStrictValueArguments(
         this Expr.Call call,
         Func<string, bool>? isPreludeNameShadowed = null)
-        => call.Function.TryGetRegistryProvenMathAliasFacts(isPreludeNameShadowed, out var facts)
+        => call.Function.TryGetRegistryProvenMathCalleeFacts(isPreludeNameShadowed, out var facts)
             && facts.HasStrictValueArguments;
 
     /// <summary>
@@ -347,8 +438,8 @@ internal static class AstHelpers
     /// mirroring the evaluator's receiver resolution (<c>ResolveDotReceiver</c>;
     /// Lean <c>resolveDotReceiver</c>) so the static view agrees with runtime
     /// dispatch at every level of a chain: on a statically known receiver that
-    /// declares an exported <c>M</c>, the edge IS that member's algorithm; a
-    /// declared local-only or conditional-branch member is a
+    /// declares <c>M</c>, the edge IS that member's algorithm (accessibility is
+    /// checked after selection); a conditional-branch-only member is a
     /// <see cref="StaticStructuralMemberProviderKind.KnownFailure"/> (the
     /// evaluator errors there, never falls back); a known receiver WITHOUT
     /// the member makes the edge a value — its lexical fallback's result —
@@ -404,9 +495,11 @@ internal static class AstHelpers
     /// argumentless, non-<c>string</c> edge, classified over its own receiver's
     /// classification. Structural member lookup is the shared
     /// <see cref="ElaboratedScopeLookup.TryLookupProperty"/> (any visibility —
-    /// structural access ignores <c>public</c>) plus the exposure check the
-    /// evaluator applies, so the front end cannot navigate a member the
-    /// evaluator would refuse.
+    /// structural access ignores <c>public</c>). Exposure takes no part: selection
+    /// never depends on it (K1-08), so a declared local-only member IS the edge's
+    /// selection here exactly as in the evaluator, whose accessibility law then
+    /// decides — per site, after selection — whether the access is refused. Only a
+    /// member defined solely inside conditional branches is a static failure.
     /// </summary>
     private static StaticStructuralMemberProvider ResolveDotEdgeStructuralMemberProvider(
         Expr.DotCall edge,

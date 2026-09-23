@@ -315,6 +315,15 @@ public sealed class HostOperations
         => _operationsByNativeName.TryGetValue(nativeName, out operation);
 
     /// <summary>
+    /// The signature-only wrappers of <see cref="SemanticPreludeAlgorithm"/>, appended to a
+    /// caller-supplied signature-only prelude — the semantic model's process-shared one,
+    /// whose builtin and <c>Math</c> instances its classification is keyed on — so editor
+    /// lookup resolves operation names exactly as parameter detection does.
+    /// </summary>
+    internal Algorithm.User ExtendSemanticPrelude(Algorithm.User prelude)
+        => CreateExtendedPrelude(prelude, Operations, wrapperBody: null);
+
+    /// <summary>
     /// Appends one wrapper property per operation to a prelude built by
     /// <see cref="BuiltinRegistry"/>. The wrapper is the exact shape of a Math member:
     /// a parentless <see cref="Algorithm.User"/> whose parameters are the operation's

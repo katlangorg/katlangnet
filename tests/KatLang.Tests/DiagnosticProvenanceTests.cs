@@ -23,16 +23,6 @@ public class DiagnosticProvenanceTests
         return provenance.ExpectEvaluationError();
     }
 
-    private static IReadOnlyList<string> EditorUnresolved(string source)
-    {
-        var parsed = Parser.Parse(source);
-        Assert.False(parsed.HasErrors, string.Join(" | ", parsed.Diagnostics.Select(d => d.Message)));
-        return SemanticModelBuilder.Build(parsed).IdentifierResolutions
-            .Where(r => r.Classification == IdentifierClassification.Unresolved)
-            .Select(r => r.Occurrence.Name)
-            .ToList();
-    }
-
     private static Result EvaluatesTo(string source)
     {
         var result = SourceProvenance.ParseValid(source).Evaluate();
@@ -41,45 +31,62 @@ public class DiagnosticProvenanceTests
         return result.Value;
     }
 
-    // ── `open` validation is DEMAND-DRIVEN ────────────────────────────────────
+    // ── `open` validity: STATIC in the front end, demand-driven in the evaluator ──
 
     /// <summary>
-    /// An invalid <c>open</c> target is accepted by the parser and never
-    /// diagnosed at runtime unless some name actually falls through to the
-    /// opens. This is not a C# shortcut: Lean reaches <c>resolveAllOpens</c>
-    /// only from <c>lookupOpens</c>, itself only step 3 of <c>lookupLexical</c>,
-    /// so laziness is the modelled semantics.
+    /// Name-resolution audit (#8, September 2026): an <c>open</c> target that resolves to
+    /// nothing is refused by the FRONT END (<see cref="DiagnosticCode.UnresolvedOpenTarget"/>)
+    /// whether or not any name falls through to it — <c>open</c> is resolved statically, and
+    /// Track 13 recorded the former acceptance as the layer disagreement "no layer both
+    /// accepts the program and reports the mistake". The EVALUATOR keeps the modelled lazy
+    /// semantics (Lean reaches <c>resolveAllOpens</c> only from <c>lookupOpens</c>, step 3 of
+    /// <c>lookupLexical</c>): handed the recovery tree regardless, it runs a body that uses
+    /// only owned names exactly as before.
     ///
     /// <para>
-    /// The three target kinds below are all invalid for different reasons —
-    /// missing name, missing dotted member, non-public dotted member — and all
-    /// three evaluate successfully when the body uses only owned names. (A
-    /// BUILTIN head is the exception since the final audit: the front end refuses
-    /// it eagerly like a parameterized provider — see
+    /// The three target kinds below are all invalid for different reasons — missing name,
+    /// missing dotted member, non-public dotted member — and each is reported at the target
+    /// with the reason of the step that fails. (A BUILTIN head keeps its own
+    /// <see cref="DiagnosticCode.IllegalInOpen"/> refusal — see
     /// <see cref="BuiltinOpenTarget_IsRefusedEagerly_ByTheFrontEndAndByKindAtRuntime"/>.)
     /// </para>
     /// </summary>
     [Theory]
-    [InlineData("open Nope\nQ = 5\nQ")]                                               // missing target
-    [InlineData("open Lib.Nope\nLib = {\n    public S = 1\n}\nQ = 5\nQ")]             // missing member
-    [InlineData("open Lib.S\nLib = {\n    S = {\n        public X = 1\n    }\n}\nQ = 5\nQ")] // non-public member
-    public void InvalidOpenTarget_IsNotDiagnosedWhenNoNameFallsThroughToIt(string source)
-        => Assert.Equal(new Result.Atom(5), EvaluatesTo(source));
+    [InlineData("open Nope\nQ = 5\nQ", "no property named 'Nope' is visible here")]                                    // missing target
+    [InlineData("open Lib.Nope\nLib = {\n    public S = 1\n}\nQ = 5\nQ", "'Lib' has no property named 'Nope'")]          // missing member
+    [InlineData("open Lib.S\nLib = {\n    S = {\n        public X = 1\n    }\n}\nQ = 5\nQ", "property 'S' of 'Lib' is not public")] // non-public member
+    public void InvalidOpenTarget_IsRefusedByTheFrontEnd_WhileTheEvaluatorStaysDemandDriven(string source, string reason)
+    {
+        var parsed = SourceProvenance.ParseAllowingDiagnostics(source);
+        var diagnostic = Assert.Single(parsed.Diagnostics);
+        Assert.Equal(DiagnosticCode.UnresolvedOpenTarget, diagnostic.Code);
+        Assert.Contains(reason, diagnostic.Message, StringComparison.Ordinal);
+        Assert.Equal(new SourceSpan(1, 6, 1, 6 + source.Split('\n')[0]["open ".Length..].Length), diagnostic.Span);
+
+        var runtime = Evaluator.Run(new Expr.AlgorithmExpr(parsed.Root));
+        Assert.False(runtime.IsError);
+        Assert.Equal(new Result.Atom(5), runtime.Value);
+    }
 
     /// <summary>
-    /// ... and the SAME declaration fails as soon as a lookup demands the opens.
-    /// Demand, not declaration, is what triggers validation.
+    /// ... and over the same recovery tree the evaluator fails as soon as a lookup demands
+    /// the opens: demand, not declaration, is what triggers its validation.
     /// </summary>
     [Fact]
-    public void TheSameInvalidOpenFailsAsSoonAsALookupDemandsIt()
+    public void TheSameInvalidOpenFailsAtRuntimeAsSoonAsALookupDemandsIt()
     {
-        Assert.IsType<EvalError.UnknownName>(
-            InnermostError("open Nope, Pub\nPub = {\n    public Y = 7\n}\nY"));
+        var demanded = SourceProvenance.ParseAllowingDiagnostics("open Nope, Pub\nPub = {\n    public Y = 7\n}\nY");
+        Assert.Equal(DiagnosticCode.UnresolvedOpenTarget, Assert.Single(demanded.Diagnostics).Code);
+        var demandedRun = Evaluator.Run(new Expr.AlgorithmExpr(demanded.Root));
+        Assert.True(demandedRun.IsError);
+        var innermost = demandedRun.Error;
+        while (innermost is EvalError.WithContext context) innermost = context.Inner;
+        Assert.IsType<EvalError.UnknownName>(innermost);
 
-        // Owned name instead of `Y`: the very same declaration is fine.
-        Assert.Equal(
-            new Result.Atom(5),
-            EvaluatesTo("open Nope, Pub\nPub = {\n    public Y = 7\n}\nQ = 5\nQ"));
+        // Owned name instead of `Y`: the very same recovery tree evaluates.
+        var owned = SourceProvenance.ParseAllowingDiagnostics("open Nope, Pub\nPub = {\n    public Y = 7\n}\nQ = 5\nQ");
+        Assert.Equal(DiagnosticCode.UnresolvedOpenTarget, Assert.Single(owned.Diagnostics).Code);
+        Assert.Equal(new Result.Atom(5), Evaluator.Run(new Expr.AlgorithmExpr(owned.Root)).Value);
     }
 
     [Theory]
@@ -172,19 +179,24 @@ public class DiagnosticProvenanceTests
     }
 
     /// <summary>
-    /// The EDITOR does not agree with the runtime here: the semantic model
-    /// flags every invalid open target eagerly, including in programs that
-    /// evaluate successfully. That is defensible (an editor should warn) but it
-    /// IS a layer disagreement, and it is the clearest input this track has for
-    /// the structured-error ownership audit: today no layer both accepts the
-    /// program and reports the mistake.
+    /// The EDITOR flags every invalid open target eagerly; Track 13 recorded that the front
+    /// end then accepted the same program ("today no layer both accepts the program and reports
+    /// the mistake"). Since the name-resolution audit (#8) the front end reports it too, so the
+    /// editor and the front end agree on the same target.
     /// </summary>
     [Theory]
     [InlineData("open Nope\nQ = 5\nQ", "Nope")]
-    public void EditorFlagsAnInvalidOpenTargetThatTheRuntimeNeverDiagnoses(string source, string flagged)
+    public void EditorAndFrontEndFlagTheSameInvalidOpenTarget(string source, string flagged)
     {
-        Assert.Contains(flagged, EditorUnresolved(source));
-        Assert.Equal(new Result.Atom(5), EvaluatesTo(source));
+        var parsed = SourceProvenance.ParseAllowingDiagnostics(source);
+        var diagnostic = Assert.Single(parsed.Diagnostics);
+        Assert.Equal(DiagnosticCode.UnresolvedOpenTarget, diagnostic.Code);
+
+        var unresolved = Assert.Single(
+            SemanticModelBuilder.Build(parsed.Parsed).IdentifierResolutions,
+            r => r.Classification == IdentifierClassification.Unresolved);
+        Assert.Equal(flagged, unresolved.Occurrence.Name);
+        Assert.Equal(diagnostic.Span, unresolved.Occurrence.Span);
     }
 
     /// <summary>

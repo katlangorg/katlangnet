@@ -30,18 +30,31 @@ namespace KatLang.Tests;
 /// (its helper ignores parser diagnostics), so it passed for an unrelated
 /// reason.
 /// </para>
+///
+/// <para>
+/// <b>Since the name-resolution audit (#8, September 2026)</b> the front end refuses a
+/// target that resolves to nothing STATICALLY (<see cref="DiagnosticCode.UnresolvedOpenTarget"/>)
+/// — the improvement <see cref="ObviousSpelling_NowReportsTheVisibilityErrorDirectly"/> pins —
+/// so a missing or non-public open step is no longer a legal program. Those evaluator branches
+/// stay reachable exactly as before from the elaborated tree the front end still produces (a
+/// diagnostic is added; nothing is rewritten), which is what the witnesses evaluate: the
+/// front end's verdict is asserted first, then the evaluator's own branch.
+/// </para>
 /// </summary>
 public class OpenPathResolutionBranchTests
 {
     private const string PublicProvider = "Pub = {\n    public Y = 7\n}\n";
 
-    private static EvalError EvalError_(string source)
+    private static EvalError EvalError_(string source, DiagnosticCode? expectedFrontEndRejection = null)
     {
-        var parsed = Parser.Parse(source);
-        Assert.False(
-            parsed.HasErrors,
-            "Witness must be a legal program (the branch under test is an EVALUATOR branch): "
-                + string.Join(" | ", parsed.Diagnostics.Select(d => d.Message)));
+        var parsed = SourceProvenance.ParseAllowingDiagnostics(source);
+        if (expectedFrontEndRejection is { } code)
+            Assert.Equal(code, Assert.Single(parsed.Diagnostics).Code);
+        else
+            Assert.False(
+                parsed.HasFrontEndErrors,
+                "Witness must be a legal program (the branch under test is an EVALUATOR branch): "
+                    + string.Join(" | ", parsed.Diagnostics.Select(d => d.Message)));
 
         var result = Evaluator.Run(new Expr.AlgorithmExpr(parsed.Root));
         Assert.True(result.IsError, $"Expected an evaluation failure for:\n{source}");
@@ -52,10 +65,13 @@ public class OpenPathResolutionBranchTests
         return error;
     }
 
-    private static Result EvalOk(string source)
+    private static Result EvalOk(string source, DiagnosticCode? expectedFrontEndRejection = null)
     {
-        var parsed = Parser.Parse(source);
-        Assert.False(parsed.HasErrors, string.Join(" | ", parsed.Diagnostics.Select(d => d.Message)));
+        var parsed = SourceProvenance.ParseAllowingDiagnostics(source);
+        if (expectedFrontEndRejection is { } code)
+            Assert.Equal(code, Assert.Single(parsed.Diagnostics).Code);
+        else
+            Assert.False(parsed.HasFrontEndErrors, string.Join(" | ", parsed.Diagnostics.Select(d => d.Message)));
         var result = Evaluator.Run(new Expr.AlgorithmExpr(parsed.Root));
         if (result.IsError)
             Assert.Fail($"Expected success but got: {KatLangError.FromEvalError(result.Error).Message}");
@@ -75,7 +91,8 @@ public class OpenPathResolutionBranchTests
         var error = EvalError_(
             PublicProvider
             + "Lib = {\n    S = {\n        public X = 101\n    }\n}\n"
-            + "A = {\n    open Lib.S, Pub\n    Y\n}\nA");
+            + "A = {\n    open Lib.S, Pub\n    Y\n}\nA",
+            DiagnosticCode.UnresolvedOpenTarget);
 
         var notPublic = Assert.IsType<EvalError.NotPublicProperty>(error);
         Assert.Equal("Lib", notPublic.ObjectDesc);
@@ -88,7 +105,8 @@ public class OpenPathResolutionBranchTests
         var error = EvalError_(
             PublicProvider
             + "Lib = {\n    public S = {\n        public X = 101\n    }\n}\n"
-            + "A = {\n    open Lib.Nope, Pub\n    Y\n}\nA");
+            + "A = {\n    open Lib.Nope, Pub\n    Y\n}\nA",
+            DiagnosticCode.UnresolvedOpenTarget);
 
         var unknown = Assert.IsType<EvalError.UnknownProperty>(error);
         Assert.Equal("Lib", unknown.ObjectDesc);
@@ -114,51 +132,55 @@ public class OpenPathResolutionBranchTests
     }
 
     /// <summary>
-    /// The pre-emption itself, pinned. The obvious spelling of the same mistake
-    /// never reaches the evaluator: the front end turns the unresolvable name
-    /// into an implicit parameter, so the user sees an implicit-parameter
-    /// diagnostic instead of the visibility error. If a future change made the
-    /// obvious form report the visibility error directly, that is an
-    /// IMPROVEMENT — but it must be a deliberate, reviewed change, not a silent
-    /// drift, and the witnesses above must keep working either way.
+    /// The pre-emption this class was written around is gone, as its original pin
+    /// anticipated ("If a future change made the obvious form report the visibility error
+    /// directly, that is an IMPROVEMENT — but it must be a deliberate, reviewed change"): the
+    /// obvious spelling of the mistake now reports the non-public step at the open target,
+    /// instead of silently promoting the name it would provide to an implicit parameter. The
+    /// elaborated tree behind the rejection is unchanged — `X` is still promoted there — which
+    /// is exactly why the witnesses above keep reaching the evaluator branches.
     /// </summary>
     [Fact]
-    public void ObviousSpelling_IsPreEmptedByImplicitParameterSynthesis()
+    public void ObviousSpelling_NowReportsTheVisibilityErrorDirectly()
     {
-        var error = EvalError_(
-            "Lib = {\n    S = {\n        public X = 101\n    }\n}\n"
-            + "A = {\n    open Lib.S\n    X\n}\nA");
+        const string source = "Lib = {\n    S = {\n        public X = 101\n    }\n}\n"
+            + "A = {\n    open Lib.S\n    X\n}\nA(707)";
+        var parsed = SourceProvenance.ParseAllowingDiagnostics(source);
+        var diagnostic = Assert.Single(parsed.Diagnostics);
+        Assert.Equal(DiagnosticCode.UnresolvedOpenTarget, diagnostic.Code);
+        // The target `Lib.S` on line 7 (`    open Lib.S`).
+        Assert.Equal(new SourceSpan(7, 10, 7, 15), diagnostic.Span);
+        Assert.Contains("property 'S' of 'Lib' is not public", diagnostic.Message, StringComparison.Ordinal);
+        Assert.Equal(KatLangErrorCode.UnresolvedOpenTarget,
+            Assert.Single(Assert.IsType<RunResult.ParseFailure>(KatLangEngine.Run(source)).Errors).Code);
 
-        // Not NotPublicProperty: `X` became an implicit parameter of `A`.
-        Assert.IsNotType<EvalError.NotPublicProperty>(error);
-        Assert.IsType<EvalError.ArityMismatch>(error);
-
-        // Supplying the argument confirms `X` really is a parameter now.
-        Assert.Equal(
-            new Result.Atom(707),
-            EvalOk("Lib = {\n    S = {\n        public X = 101\n    }\n}\n"
-                + "A = {\n    open Lib.S\n    X\n}\nA(707)"));
+        // The recovery tree still promotes `X` (the provider supplies nothing), so evaluating
+        // it — as the witnesses do — reads the supplied argument.
+        Assert.Equal(new Result.Atom(707), EvalOk(source, DiagnosticCode.UnresolvedOpenTarget));
     }
 
     /// <summary>
-    /// Open resolution is LAZY, and that is the second reason the obvious shapes
-    /// miss these branches: a name that resolves by ownership never consults the
-    /// opens, so an illegal open target in the same declaration goes completely
-    /// unvalidated. Pinned because it decides whether a witness works at all.
+    /// The EVALUATOR's open resolution stays LAZY (the modelled semantics: Lean reaches
+    /// <c>resolveAllOpens</c> only when a lookup falls through to the opens), and that is why
+    /// the witnesses pair the bad target with a valid provider: over the elaborated tree, a
+    /// name that resolves by ownership never consults the opens. The FRONT END no longer
+    /// depends on that accident — it refuses the target statically in both programs.
     /// </summary>
     [Fact]
-    public void OpenTargetsAreOnlyValidatedWhenANameFallsThroughToThem()
+    public void EvaluatorValidatesOpenTargetsOnlyWhenANameFallsThroughToThem()
     {
-        // `Q` is owned locally, so the malformed `open Lib.S` is never resolved.
+        // `Q` is owned locally, so the evaluator never resolves the malformed `open Lib.S`.
         Assert.Equal(
             new Result.Atom(5),
             EvalOk("Lib = {\n    S = {\n        public X = 101\n    }\n}\n"
-                + "A = {\n    open Lib.S\n    Q = 5\n    Q\n}\nA"));
+                + "A = {\n    open Lib.S\n    Q = 5\n    Q\n}\nA",
+                DiagnosticCode.UnresolvedOpenTarget));
 
         // The same declaration fails as soon as a name must fall through.
         Assert.IsType<EvalError.NotPublicProperty>(EvalError_(
             PublicProvider
             + "Lib = {\n    S = {\n        public X = 101\n    }\n}\n"
-            + "A = {\n    open Lib.S, Pub\n    Y\n}\nA"));
+            + "A = {\n    open Lib.S, Pub\n    Y\n}\nA",
+            DiagnosticCode.UnresolvedOpenTarget));
     }
 }

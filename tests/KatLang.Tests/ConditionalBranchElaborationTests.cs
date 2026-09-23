@@ -685,16 +685,17 @@ public class ConditionalBranchElaborationTests
         Assert.Equal("Lib", structuralError.PropertyName);
         Assert.Equal(PropertyExposure.LocalOnlyConditionalAlgorithm, structuralError.Exposure);
 
-        // A dotted open through the family provides nothing to the front end (X becomes the
-        // opener's own implicit parameter), and the runtime refuses the open at the family.
-        // Opens resolve lazily, on the first name lookup that consults them, so the runtime
-        // side is pinned on the raw syntax tree, where X is still a bare resolve that forces
-        // open resolution.
+        // A dotted open through the family names no algorithm, so the front end refuses it
+        // statically with the same family-level reason (every open target must resolve,
+        // whether or not a lookup consults it), and the runtime refuses the open at the
+        // family. Opens resolve lazily, on the first name lookup that consults them, so the
+        // runtime side is pinned on the raw syntax tree, where X is still a bare resolve that
+        // forces open resolution.
         const string dottedOpen = "G = {\n    open F.Lib\n    X\n}\nG";
-        // Supplying G's inferred input keeps the root signature empty; without
-        // it, the program reports an unresolved root input before evaluating G.
-        var opener = SourceProvenance.ParseValid(body + dottedOpen + "(7)").Root.Properties.Single(property => property.Name == "G").Value;
-        Assert.Equal(["X"], opener.Params);
+        // Supplying G's input keeps the rejection the only diagnostic.
+        var rejected = Assert.Single(SourceProvenance.ParseAllowingDiagnostics(body + dottedOpen + "(7)").Diagnostics);
+        Assert.Equal(DiagnosticCode.UnresolvedOpenTarget, rejected.Code);
+        Assert.Contains("'Lib' is declared only inside a conditional branch of 'F'", rejected.Message, StringComparison.Ordinal);
         var dotted = Evaluator.RunFlat(new Expr.AlgorithmExpr(SourceProvenance.ParseSyntaxValidRoot(body + dottedOpen)));
         Assert.True(dotted.IsError);
         var dottedError = Assert.IsType<EvalError.LocalOnlyProperty>(EvaluatorTestSupport.Innermost(dotted.Error));

@@ -53,8 +53,16 @@ public class LocalMemberAccessTests
     [InlineData("0")]
     public async Task PrivateDottedOpenMember_IsRejectedByVisibility(string output)
     {
+        // Visibility is decided before any capture question: the front end refuses the
+        // non-public step statically (audit #8), and the evaluator — handed the recovery tree
+        // regardless — refuses the same step with notPublicProperty once a lookup demands it.
         var source = $"open Outer.Lib, Pub\nOuter(n) = {{\n Lib = {{ public X = 1\n {output} }}\n 0\n}}\nPub = {{ public Y = 2 }}\nY";
-        RunFailure(source, KatLangErrorCode.NotPublicProperty);
+        var diagnostic = FrontEndRejection(source, DiagnosticCode.UnresolvedOpenTarget);
+        Assert.Contains("property 'Lib' of 'Outer' is not public", diagnostic.Message, StringComparison.Ordinal);
+        var runtime = Evaluator.Run(new Expr.AlgorithmExpr(SourceProvenance.ParseAllowingDiagnostics(source).Root));
+        var innermost = runtime.Error;
+        while (innermost is EvalError.WithContext context) innermost = context.Inner;
+        Assert.IsType<EvalError.NotPublicProperty>(innermost);
         await AssertSyncAndAsyncAgree(source);
     }
 

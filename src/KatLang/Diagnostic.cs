@@ -51,5 +51,22 @@ public sealed record Diagnostic(
 /// </summary>
 public sealed record ParseResult(Algorithm.User Root, IReadOnlyList<Diagnostic> Diagnostics)
 {
+    private readonly RuntimeStateSlot<HostOperations?> _hostOperations;
+
     public bool HasErrors => Diagnostics.Any(d => d.Severity == DiagnosticSeverity.Error);
+
+    /// <summary>
+    /// The host operations the elaboration resolved names against — ambient prelude members
+    /// that parameter detection, exposure analysis, and the evaluator all see — carried so a
+    /// semantic model built from this result resolves against the SAME prelude
+    /// (<see cref="Semantics.SemanticModelBuilder.Build(ParseResult)"/>): an editor that
+    /// omitted them classified an operation's references as unresolved, and a bare name an
+    /// operation provides as a member of an opened library the evaluator never selects.
+    /// Equality-transparent, so record equality, hashing, and printing are unchanged.
+    /// </summary>
+    internal HostOperations? HostOperations
+    {
+        get => _hostOperations.Value;
+        init => _hostOperations = new(value);
+    }
 }

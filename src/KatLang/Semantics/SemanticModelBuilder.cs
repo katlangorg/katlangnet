@@ -38,8 +38,12 @@ public static class SemanticModelBuilder
     /// unresolved <c>load</c> directive.</exception>
     /// <exception cref="ArgumentException">The elaborated root is structurally unsafe
     /// (see <see cref="Build(Algorithm)"/>); never the case for a parser-produced result.</exception>
+    /// <remarks>A result parsed with <see cref="RunOptions.HostOperations"/> is modeled against
+    /// the same host-extended prelude its elaboration resolved names against, so an operation's
+    /// references classify as prelude members (and complete as visible names) exactly where
+    /// parameter detection and the evaluator select them.</remarks>
     public static SemanticModel Build(ParseResult parseResult)
-        => BuildElaborated(parseResult.Root);
+        => BuildElaborated(parseResult.Root, observations: null, parseResult.HostOperations);
 
     internal static SemanticModel Build(SyntaxParseResult syntaxParseResult)
         => BuildElaborated(syntaxParseResult.Root);
@@ -47,7 +51,10 @@ public static class SemanticModelBuilder
     internal static SemanticModel Build(FrontEndResult frontEndResult)
         => BuildElaborated(frontEndResult.ElaboratedRoot);
 
-    private static SemanticModel BuildElaborated(Algorithm elaboratedRoot, FrontEndTraversalObservations? observations = null)
+    private static SemanticModel BuildElaborated(
+        Algorithm elaboratedRoot,
+        FrontEndTraversalObservations? observations = null,
+        HostOperations? hostOperations = null)
     {
         // Semantic modeling walks the tree recursively, and the public Build overloads
         // accept preconstructed (host-built) roots, so the same non-recursive structural
@@ -73,7 +80,7 @@ public static class SemanticModelBuilder
         }
 
         LoadElaborationGuard.ThrowIfUnresolvedLoad(elaboratedRoot, "Semantic model building");
-        return new Builder(observations).Build(elaboratedRoot);
+        return new Builder(observations, hostOperations).Build(elaboratedRoot);
     }
 
     /// <summary>
@@ -173,9 +180,52 @@ public static class SemanticModelBuilder
         private readonly Dictionary<ScopeFrame, FrameVisits> _visitsByFrame = new(ReferenceEqualityComparer.Instance);
         private readonly FrontEndTraversalObservations? _observations;
 
-        public Builder(FrontEndTraversalObservations? observations)
+        // The prelude this build resolves against: the process-shared one, or — for a parse
+        // configured with host operations — that same prelude extended with the operations'
+        // signature-only wrappers (HostOperations.ExtendSemanticPrelude), exactly the prelude
+        // parameter detection resolved the program against. The builtin, Math, and alias
+        // property objects are the shared ones either way, so their classification is unchanged.
+        private readonly Algorithm.User _preludeAlgorithm;
+        private readonly ScopeFrame _preludeScope;
+        private readonly IReadOnlyList<VisibleSymbol> _preludeSymbols;
+        private readonly IReadOnlySet<string>? _hostOperationNames;
+
+        public Builder(FrontEndTraversalObservations? observations, HostOperations? hostOperations = null)
         {
             _observations = observations;
+            if (hostOperations is null || hostOperations.Operations.Count == 0)
+            {
+                _preludeAlgorithm = PreludeAlgorithm;
+                _preludeScope = PreludeScope;
+                _preludeSymbols = PreludeCatalog.Symbols;
+                return;
+            }
+
+            _hostOperationNames = hostOperations.Operations
+                .Select(static operation => operation.Name)
+                .ToHashSet(StringComparer.Ordinal);
+            _preludeAlgorithm = hostOperations.ExtendSemanticPrelude(PreludeAlgorithm);
+            _preludeScope = new ScopeFrame(
+                parent: null,
+                parameters: new Dictionary<string, SymbolDefinition>(StringComparer.Ordinal),
+                ElaboratedScopeLookup.CreateScope(_preludeAlgorithm));
+            _preludeSymbols = CreatePreludeCatalog(_preludeAlgorithm, _hostOperationNames);
+        }
+
+        /// <summary>
+        /// Whether ordinary lexical dot-call fallback may inject a receiver into a prelude
+        /// member: every runtime prelude builtin, Math member, and alias; a host operation by
+        /// its own signature (it is a runtime prelude member like any other); never a
+        /// front-end-only catalog entry such as <c>load</c>.
+        /// </summary>
+        private static bool? PreludeDotCallSupport(string name, IReadOnlySet<string>? hostOperationNames)
+        {
+            if (BuiltinRegistry.IsRuntimePreludeName(name))
+                return true;
+
+            // Null lets the wrapper's own signature decide (a zero-parameter operation has no
+            // receiver to inject), exactly as for an ordinary property.
+            return hostOperationNames?.Contains(name) == true ? null : false;
         }
 
         private sealed class FrameVisits
@@ -216,7 +266,7 @@ public static class SemanticModelBuilder
         public SemanticModel Build(Algorithm root)
         {
             ModuleProvidedAlgorithmCollector.Collect(root, _moduleProvidedAlgorithms);
-            VisitAlgorithm(root, PreludeScope, extraParameters: null);
+            VisitAlgorithm(root, _preludeScope, extraParameters: null);
 
             var sortedIdentifierOccurrences = _identifierOccurrences
                 .OrderBy(static occurrence => occurrence.Span, SpanComparer.Instance)
@@ -246,7 +296,10 @@ public static class SemanticModelBuilder
                 new Dictionary<DeclarationOccurrence, PropertyInfo>(
                     _propertyInfoByDeclaration,
                     ReferenceEqualityComparer.Instance),
-                sortedScopeVisibilities);
+                sortedScopeVisibilities)
+            {
+                PreludeSymbols = _preludeSymbols,
+            };
         }
 
         private void VisitAlgorithm(
@@ -622,15 +675,15 @@ public static class SemanticModelBuilder
             if (_propertySymbolCache.TryGetValue(property, out var cached))
                 return cached;
 
-            if (!ReferenceEquals(owner, MathAlgorithm) && !ReferenceEquals(owner, PreludeAlgorithm))
+            if (!ReferenceEquals(owner, MathAlgorithm) && !ReferenceEquals(owner, _preludeAlgorithm))
                 return CreatePropertySymbol(owner, property);
 
             var symbol = CreateBuiltinSymbol(
                 property.Name,
                 property.Value,
                 property.IsPublic,
-                supportsLexicalDotCall: ReferenceEquals(owner, PreludeAlgorithm)
-                    ? BuiltinRegistry.IsRuntimePreludeName(property.Name)
+                supportsLexicalDotCall: ReferenceEquals(owner, _preludeAlgorithm)
+                    ? PreludeDotCallSupport(property.Name, _hostOperationNames)
                     : null);
             _propertySymbolCache[property] = symbol;
             return symbol;
@@ -849,7 +902,7 @@ public static class SemanticModelBuilder
                     break;
 
                 case Expr.AlgorithmExpr(var algorithm):
-                    VisitAlgorithm(algorithm, PreludeScope, extraParameters: null, expr.Span);
+                    VisitAlgorithm(algorithm, _preludeScope, extraParameters: null, expr.Span);
                     break;
 
                 case Expr.Capture(var captureBody):
@@ -857,7 +910,7 @@ public static class SemanticModelBuilder
                     // open-target prelude scope, matching the pre-split
                     // transparent wrapper (which added only an empty frame).
                     foreach (var row in captureBody)
-                        VisitExpr(row, PreludeScope);
+                        VisitExpr(row, _preludeScope);
                     break;
 
                 default:
@@ -1747,7 +1800,7 @@ public static class SemanticModelBuilder
 
             for (var frame = scope; frame is not null; frame = frame.Parent)
             {
-                var isPrelude = ReferenceEquals(frame, PreludeScope);
+                var isPrelude = ReferenceEquals(frame, _preludeScope);
 
                 foreach (var (name, symbol) in frame.Parameters)
                 {
@@ -1932,15 +1985,20 @@ public static class SemanticModelBuilder
         }
 
         public static IReadOnlyList<VisibleSymbol> CreatePreludeCatalog()
+            => CreatePreludeCatalog(PreludeAlgorithm, hostOperationNames: null);
+
+        private static IReadOnlyList<VisibleSymbol> CreatePreludeCatalog(
+            Algorithm.User prelude,
+            IReadOnlySet<string>? hostOperationNames)
         {
-            var symbols = new List<VisibleSymbol>(PreludeAlgorithm.Properties.Count);
-            foreach (var property in PreludeAlgorithm.Properties)
+            var symbols = new List<VisibleSymbol>(prelude.Properties.Count);
+            foreach (var property in prelude.Properties)
             {
                 var symbol = CreateBuiltinSymbol(
                     property.Name,
                     property.Value,
                     property.IsPublic,
-                    BuiltinRegistry.IsRuntimePreludeName(property.Name));
+                    PreludeDotCallSupport(property.Name, hostOperationNames));
                 symbols.Add(new VisibleSymbol(
                     property.Name,
                     IdentifierClassification.Builtin,

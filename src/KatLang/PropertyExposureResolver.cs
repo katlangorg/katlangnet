@@ -132,12 +132,21 @@ internal static class PropertyExposureResolver
     public static Algorithm Resolve(Algorithm root)
         => Resolve(root, observations: null);
 
-    internal static Algorithm Resolve(Algorithm root, FrontEndTraversalObservations? observations)
+    /// <param name="hostOperations">The run configuration's host operations, whose ambient
+    /// prelude members the chain must see exactly as parameter detection and the evaluator do
+    /// (the prelude is the outermost owner level, reached before any <c>open</c>): a host
+    /// operation named like an opened member is what a bare reference selects, so charging the
+    /// opened member instead would classify a self-contained property local-only.</param>
+    internal static Algorithm Resolve(
+        Algorithm root,
+        FrontEndTraversalObservations? observations,
+        HostOperations? hostOperations = null)
         => ResolveInScope(
             root,
             new SummaryScope(
                 null,
-                ElaboratedScopeLookup.CreateScope(BuiltinRegistry.CreateSemanticPreludeAlgorithm()),
+                ElaboratedScopeLookup.CreateScope(
+                    hostOperations?.SemanticPreludeAlgorithm ?? BuiltinRegistry.CreateSemanticPreludeAlgorithm()),
                 NoSummaries),
             observations);
 
@@ -426,7 +435,9 @@ internal static class PropertyExposureResolver
     /// head as a PROPERTY of the level's chain (ownership first), then the providers of the
     /// levels the reference escaped (innermost first), then the owning level's own
     /// <c>open</c> targets and its ancestors' — each candidate resolved from the level that
-    /// declares the open, the first one that publicly provides the head deciding. A member
+    /// declares the open, level by level: the first level at which a target publicly provides
+    /// the head decides, its sole provider charging and two or more charging NOTHING (the
+    /// evaluator's ambiguousOpen selects no declaration; list order never picks one). A member
     /// reached by navigation charges its requirement seed expanded from ITS declaring level
     /// outward. Requirement sets are monotone unions, so a reference re-entered through a
     /// cycle of mutually opening libraries contributes nothing new (the least fixed point);
@@ -472,25 +483,37 @@ internal static class PropertyExposureResolver
                     return names;
                 }
 
-                foreach (var candidate in pending.Candidates)
+                // The escaped levels' providers, innermost level first. Each level is ONE open
+                // lookup: the first level at which any target provides the head decides, and
+                // two providers there are the evaluator's ambiguousOpen — the reference then
+                // selects NO declaration and charges nothing. Taking the first-listed provider
+                // made the classification depend on target order (`open A, B` beside a
+                // capturing `A.X` refused `Outer.Y` as local-only while `open B, A` reached the
+                // real ambiguity).
+                var candidates = pending.Candidates;
+                for (var start = 0; start < candidates.Count;)
                 {
-                    switch (candidate)
-                    {
-                        case ResolvedOpenCandidate resolved:
-                            names.UnionWith(ResolveSeed(resolved.Seed, level, site, boundOwners));
-                            return names;
+                    var end = start;
+                    while (end < candidates.Count && candidates[end].ProviderLevel == candidates[start].ProviderLevel)
+                        end++;
 
-                        case UnresolvedOpenCandidate unresolved:
-                            if (TryProvide(level, unresolved.Head, unresolved.PublicSteps, pending, names, site, boundOwners))
-                                return names;
-                            break;
+                    var group = new OpenLevelSettlement();
+                    for (var i = start; i < end; i++)
+                    {
+                        var provided = new HashSet<Requirement>();
+                        group.Offer(Provides(candidates[i], pending, level, provided, site, boundOwners), provided);
                     }
+
+                    if (group.Decides(names))
+                        return names;
+                    start = end;
                 }
 
                 for (var current = level; current is not null; current = current.Parent)
                 {
                     var opens = current.PropertyScope.Opens;
                     HashSet<string>? seen = null;
+                    var group = new OpenLevelSettlement();
                     for (var i = 0; i < opens.Count; i++)
                     {
                         var target = opens[i];
@@ -498,24 +521,30 @@ internal static class PropertyExposureResolver
                         if (!seen.Add(Evaluator.OpenTargetDedupKey(target, i)))
                             continue;
 
+                        var provided = new HashSet<Requirement>();
                         if (target is Expr.AlgorithmExpr(var block))
                         {
                             // An inline target is wired to the prelude: nothing outside it can
                             // be referenced, so only its own requirement names survive.
-                            if (PropertyDependencyGraphBuilder.TryChargeProvidedMember(block, pending, memos) is { } inlineSeed)
+                            var inlineSeed = PropertyDependencyGraphBuilder.TryChargeProvidedMember(block, pending, memos);
+                            if (inlineSeed is not null)
                             {
-                                names.UnionWith(level.Root.ResolveRequirements(inlineSeed.RequiredAncestorOwnedParameterNames));
-                                names.UnionWith(site.ResolveRequirements(inlineSeed.OwnerQualifiedParameters, boundOwners));
-                                return names;
+                                provided.UnionWith(level.Root.ResolveRequirements(inlineSeed.RequiredAncestorOwnedParameterNames));
+                                provided.UnionWith(site.ResolveRequirements(inlineSeed.OwnerQualifiedParameters, boundOwners));
                             }
 
+                            group.Offer(inlineSeed is not null, provided);
                             continue;
                         }
 
-                        if (PropertyDependencyGraphBuilder.TryGetOpenTargetPath(target, out var head, out var steps)
-                            && TryProvide(current, head, steps, pending, names, site, boundOwners))
-                            return names;
+                        group.Offer(
+                            PropertyDependencyGraphBuilder.TryGetOpenTargetPath(target, out var head, out var steps)
+                                && TryProvide(current, head, steps, pending, provided, site, boundOwners),
+                            provided);
                     }
+
+                    if (group.Decides(names))
+                        return names;
                 }
 
                 return names;
@@ -523,6 +552,53 @@ internal static class PropertyExposureResolver
             finally
             {
                 _inProgress.Remove(key);
+            }
+        }
+
+        /// <summary>
+        /// Whether one carried candidate provides the pending head, accumulating its charge into
+        /// <paramref name="provided"/>: a resolved candidate exists only because its target
+        /// provides the head, while an unresolved one is settled here, from the owning level
+        /// outward (no level it escaped declared the head).
+        /// </summary>
+        private bool Provides(OpenCandidate candidate, PendingReference pending, SummaryScope level, HashSet<Requirement> provided, SummaryScope site, IReadOnlySet<Algorithm>? boundOwners)
+            => candidate switch
+            {
+                ResolvedOpenCandidate resolved => Charge(provided, ResolveSeed(resolved.Seed, level, site, boundOwners)),
+                UnresolvedOpenCandidate unresolved => TryProvide(level, unresolved.Head, unresolved.PublicSteps, pending, provided, site, boundOwners),
+            };
+
+        private static bool Charge(HashSet<Requirement> provided, HashSet<Requirement> requirements)
+        {
+            provided.UnionWith(requirements);
+            return true;
+        }
+
+        /// <summary>
+        /// ONE open lookup level's verdict (the evaluator's <c>LookupOpens</c>): every deduplicated
+        /// target of the level is offered; the level decides the lookup as soon as any target
+        /// provides the head — the sole provider's charge when exactly one does, and NOTHING when
+        /// two or more do, because the evaluator then selects no declaration (ambiguousOpen).
+        /// </summary>
+        private sealed class OpenLevelSettlement
+        {
+            private int _providers;
+            private HashSet<Requirement>? _charge;
+
+            public void Offer(bool provides, HashSet<Requirement> charge)
+            {
+                if (!provides)
+                    return;
+
+                _providers++;
+                _charge = charge;
+            }
+
+            public bool Decides(HashSet<Requirement> names)
+            {
+                if (_providers == 1)
+                    names.UnionWith(_charge!);
+                return _providers > 0;
             }
         }
 

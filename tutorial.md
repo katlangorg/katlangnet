@@ -1821,7 +1821,7 @@ When KatLang sees a name, it searches **outward by owning scope** and stops at t
 
 The search is therefore:
 
-1. **The owner walk** — the algorithm containing the reference, then each enclosing algorithm outward, ending at the prelude (the builtins and the `Math` aliases, which form the outermost owner). The first owner that declares the name decides. A property may not share a name with a completed parameter of the **same or an enclosing lexical algorithm**; the front end reports a declaration error.
+1. **The owner walk** — the algorithm containing the reference, then each enclosing algorithm outward, ending at the prelude (the builtins, `Math` and its aliases, and any host operations the running application provides, which form the outermost owner). The first owner that declares the name decides. A property may not share a name with a completed parameter of the **same or an enclosing lexical algorithm**; the front end reports a declaration error.
 2. **Opens** — public properties from `open` targets, checked for the current algorithm first and then upward through the parent chain. Opens are consulted only when the whole owner walk found nothing, which is why an `open` never overrides something you own — and why a builtin name beats an opened one while still losing to anything you declare or bind yourself.
 
 If the name is not found at any of these levels, KatLang treats it as an implicit parameter only when the current algorithm has no explicit parameter list (see [Parameters](#parameters)). Explicit parameter lists are closed, so an unresolved extra name is reported as an error instead.
@@ -1839,7 +1839,7 @@ F(7)
 
 **Result:** `8`
 
-Leaving the list off entirely works too (`F = Math.Abs(A)` infers `q` for you), and so does supplying the argument at the call (`Math.Abs(A(1))`). But writing `F(x) = Math.Abs(A)` is rejected, because `Math.Abs` needs `A`'s value, producing that value needs `A`'s `q`, and `F(x)` declares no `q`: "'A' is required as a value here, but producing that value needs the implicit parameter 'q', which the enclosing explicit parameter list does not declare." Only a *value* demand is checked this way — passing `A` where a callable is wanted, as in `Apply(A)` or `map(abs)`, is unaffected.
+Leaving the list off entirely works too (`F = Math.Abs(A)` infers `q` for you, as does `F = (Math.Abs)(A)` because the qualified reference selects the same Math callable), and so does supplying the argument at the call (`Math.Abs(A(1))`). But writing `F(x) = Math.Abs(A)` is rejected, because `Math.Abs` needs `A`'s value, producing that value needs `A`'s `q`, and `F(x)` declares no `q`: "'A' is required as a value here, but producing that value needs the implicit parameter 'q', which the enclosing explicit parameter list does not declare." Only a *value* demand is checked this way — passing `A` where a callable is wanted, as in `Apply(A)` or `map(abs)`, is unaffected.
 
 ```
 X = 1
@@ -4939,6 +4939,8 @@ open LibA
 ```
 
 A leading `.` likewise continues a dotted target across the line (`open Lib` followed by `.Sub` opens `Lib.Sub`). A plain newline never continues `open`: `open Math` followed by `Math.Pi` on the next line is an open plus a report row. Neither the collect marker nor a spread expression is valid open-target syntax: `open *A` and `open A*` are rejected — use comma for multiple targets. Valid targets are names, argumentless dot-call paths like `Lib.Sub`, single-quoted string URLs, and inline blocks.
+
+A target must name something that exists. Because `open` is resolved statically, `open Nope` (nothing visible is called `Nope`), `open Lib.Missing` (`Lib` declares no `Missing`), and `open Lib.Helper` (`Helper` is private — open paths select public members) are errors reported before the program runs, even when no name is ever looked up through them. The first name of a target resolves through the enclosing declarations and the prelude, never through another open: with `open Outer, Lib`, a `Lib` that only `Outer` provides is not visible to the open list itself.
 
 `open` also works with builtin namespaces like `Math`, letting you use its functions and constants without the `Math.` prefix:
 

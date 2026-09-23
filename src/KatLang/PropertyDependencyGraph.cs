@@ -130,26 +130,39 @@ internal sealed class PendingReferenceSet : IReadOnlyCollection<PendingReference
 /// </summary>
 internal closed class OpenCandidate
 {
-    private protected OpenCandidate() { }
+    private protected OpenCandidate(int providerLevel) => ProviderLevel = providerLevel;
+
+    /// <summary>
+    /// The opener level this candidate's <c>open</c> target is declared at, numbered along the
+    /// reference's escape path (innermost first, ascending). The candidates of ONE level are
+    /// ONE open lookup — the evaluator's <c>LookupOpens</c> (Lean <c>lookupOpenProperties</c>)
+    /// collects every provider of the first level that provides the name and reports two as
+    /// <c>ambiguousOpen</c> — so settlement compares them together and never lets list order
+    /// pick between them. Carried unchanged when a candidate is re-seeded or settled outward.
+    /// </summary>
+    internal int ProviderLevel { get; }
 
     internal abstract string ContentKey { get; }
 }
 
-internal sealed class ResolvedOpenCandidate(PropertyDependencyGraphBuilder.SummarySeed seed) : OpenCandidate
+internal sealed class ResolvedOpenCandidate(PropertyDependencyGraphBuilder.SummarySeed seed, int providerLevel) : OpenCandidate(providerLevel)
 {
     /// <summary>Frozen: never mutated after construction; readers clone before accumulating.</summary>
     public PropertyDependencyGraphBuilder.SummarySeed Seed { get; } = seed;
 
-    internal override string ContentKey => $"resolved({Seed.ContentKey})";
+    /// <summary>The same candidate — same opener level — carrying a re-derived seed.</summary>
+    public ResolvedOpenCandidate WithSeed(PropertyDependencyGraphBuilder.SummarySeed seed) => new(seed, ProviderLevel);
+
+    internal override string ContentKey => $"resolved@{ProviderLevel}({Seed.ContentKey})";
 }
 
-internal sealed class UnresolvedOpenCandidate(string head, IReadOnlyList<string> publicSteps) : OpenCandidate
+internal sealed class UnresolvedOpenCandidate(string head, IReadOnlyList<string> publicSteps, int providerLevel) : OpenCandidate(providerLevel)
 {
     public string Head { get; } = head;
 
     public IReadOnlyList<string> PublicSteps { get; } = publicSteps;
 
-    internal override string ContentKey => "open" + PendingReference.KeyParts([Head, PendingReference.KeyParts(PublicSteps)]);
+    internal override string ContentKey => $"open@{ProviderLevel}" + PendingReference.KeyParts([Head, PendingReference.KeyParts(PublicSteps)]);
 }
 
 /// <summary>
@@ -337,7 +350,7 @@ internal static class PropertyDependencyGraphBuilder
                     if (candidate is not ResolvedOpenCandidate resolved) return candidate;
                     var seed = resolved.Seed.Clone();
                     seed.QualifyParameters(owner);
-                    return new ResolvedOpenCandidate(seed);
+                    return (OpenCandidate)resolved.WithSeed(seed);
                 }).ToArray()));
         }
 
@@ -372,7 +385,7 @@ internal static class PropertyDependencyGraphBuilder
                     {
                         var seed = resolved.Seed.Clone();
                         seed.RemoveRequiredAncestorOwnedParameterNames(stripped, owner);
-                        candidates.Add(new ResolvedOpenCandidate(seed));
+                        candidates.Add(resolved.WithSeed(seed));
                         changed = true;
                     }
                     else
@@ -900,7 +913,7 @@ internal static class PropertyDependencyGraphBuilder
             switch (candidate)
             {
                 case ResolvedOpenCandidate resolved:
-                    candidates.Add(new ResolvedOpenCandidate(ExpandAtLevel(resolved.Seed, level)));
+                    candidates.Add(resolved.WithSeed(ExpandAtLevel(resolved.Seed, level)));
                     break;
 
                 case UnresolvedOpenCandidate unresolved when level.LocalPropertySummaries.ContainsKey(unresolved.Head):
@@ -913,7 +926,7 @@ internal static class PropertyDependencyGraphBuilder
                     // settling level used to be carried past its declaration, so a property
                     // reading `p` through it was classified exported and the run cache
                     // served the first activation's value to every later call).
-                    if (TryResolveLocalHeadCandidate(unresolved.Head, unresolved.PublicSteps, pending, level) is { } settled)
+                    if (TryResolveLocalHeadCandidate(unresolved.Head, unresolved.PublicSteps, pending, level, unresolved.ProviderLevel) is { } settled)
                         candidates.Add(settled);
                     break;
 
@@ -925,7 +938,10 @@ internal static class PropertyDependencyGraphBuilder
 
         if (level.HasOpens)
         {
-            foreach (var candidate in MakeOpenCandidates(pending, level))
+            // This level's providers form the next lookup level of the escape path — ordinals
+            // ascend innermost-first, so the last carried candidate holds the largest one.
+            var providerLevel = pending.Candidates.Count == 0 ? 0 : pending.Candidates[^1].ProviderLevel + 1;
+            foreach (var candidate in MakeOpenCandidates(pending, level, providerLevel))
                 (candidates ??= []).Add(candidate);
         }
 
@@ -949,7 +965,7 @@ internal static class PropertyDependencyGraphBuilder
     /// then carries the charged member seed, relative to this level's parent. A target whose
     /// head is declared farther out is carried unresolved.
     /// </summary>
-    private static IEnumerable<OpenCandidate> MakeOpenCandidates(PendingReference pending, LevelContext level)
+    private static IEnumerable<OpenCandidate> MakeOpenCandidates(PendingReference pending, LevelContext level, int providerLevel)
     {
         var opens = level.Algorithm.Opens;
         HashSet<string>? seen = null;
@@ -966,7 +982,7 @@ internal static class PropertyDependencyGraphBuilder
                 // referenced, so only its own requirement names survive.
                 if (TryChargeProvidedMember(block, pending, level.Memos) is { } inlineSeed)
                     yield return new ResolvedOpenCandidate(new SummarySeed(inlineSeed.RequiredAncestorOwnedParameterNames,
-                        ownerQualifiedParameters: inlineSeed.OwnerQualifiedParameters));
+                        ownerQualifiedParameters: inlineSeed.OwnerQualifiedParameters), providerLevel);
                 continue;
             }
 
@@ -975,11 +991,11 @@ internal static class PropertyDependencyGraphBuilder
 
             if (!level.LocalPropertySummaries.ContainsKey(head))
             {
-                yield return new UnresolvedOpenCandidate(head, steps);
+                yield return new UnresolvedOpenCandidate(head, steps, providerLevel);
                 continue;
             }
 
-            if (TryResolveLocalHeadCandidate(head, steps, pending, level) is { } candidate)
+            if (TryResolveLocalHeadCandidate(head, steps, pending, level, providerLevel) is { } candidate)
                 yield return candidate;
         }
     }
@@ -997,7 +1013,8 @@ internal static class PropertyDependencyGraphBuilder
         string head,
         IReadOnlyList<string> steps,
         PendingReference pending,
-        LevelContext level)
+        LevelContext level,
+        int providerLevel)
     {
         var (providerSeed, providerNavigated) = ChargePath(LocalPropertyValue(level.Algorithm, head), PublicSteps(steps), level.Memos);
         if (providerNavigated < steps.Count)
@@ -1012,7 +1029,7 @@ internal static class PropertyDependencyGraphBuilder
         // ChargePath from the head, so expand the member seed through the same nodes.
         var seed = ExpandThroughNodes(memberSeed, NodePath(LocalPropertyValue(level.Algorithm, head), steps), level.Memos);
         seed.UnionWith(providerSeed);
-        return new ResolvedOpenCandidate(ExpandAtLevel(seed, level));
+        return new ResolvedOpenCandidate(ExpandAtLevel(seed, level), providerLevel);
     }
 
     /// <summary>
@@ -1693,19 +1710,33 @@ internal static class PropertyDependencyGraphBuilder
                 break;
 
             case Expr.DotCall dotCall:
+            {
+                // A lexical fallback that must be selected on a Math member makes the edge the
+                // call `x(receiver, args)` (dotted-call equivalence): the resolver lifts its
+                // receiver and arguments as strict value positions, so they are processing-order
+                // dependencies exactly like the direct call's arguments.
+                var strictFallback = position != SiblingWalkPosition.Transparent
+                    && dotCall.HasRegistryProvenStrictValueFallback(shadow.PreludeNameShadowed);
                 CollectSiblingDependencyIndices(
-                    dotCall.Target, context, shadow, position == SiblingWalkPosition.Transparent ? SiblingWalkPosition.Transparent : SiblingWalkPosition.Callee);
+                    dotCall.Target,
+                    context,
+                    shadow,
+                    position == SiblingWalkPosition.Transparent ? SiblingWalkPosition.Transparent
+                        : strictFallback ? SiblingWalkPosition.Value
+                        : SiblingWalkPosition.Callee);
                 if (dotCall.Args is { } args)
                 {
                     CollectArgumentSiblingDependencyIndices(
                         args,
                         context,
                         shadow,
-                        position != SiblingWalkPosition.Transparent && dotCall.HasRegistryProvenStrictValueArguments(shadow.PreludeNameShadowed)
+                        position != SiblingWalkPosition.Transparent
+                            && (strictFallback || dotCall.HasRegistryProvenStrictValueArguments(shadow.PreludeNameShadowed))
                             ? SiblingWalkPosition.Value
                             : SiblingWalkPosition.Transparent);
                 }
                 break;
+            }
 
             case Expr.Grace(var inner, _):
                 CollectSiblingDependencyIndices(inner, context, shadow, position);

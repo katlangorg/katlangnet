@@ -2135,6 +2135,15 @@ public static class LanguageSpecCorpus
         },
         new()
         {
+            Id = "open-full-spelling-decides-provider-identity",
+            Category = "name-resolution",
+            Source = $"open {new string('N', 520)}A, {new string('N', 520)}B\n{new string('N', 520)}A = {{ public X = 1 }}\n{new string('N', 520)}B = {{ public X = 2 }}\nX",
+            Outcome = SpecOutcome.EvalError,
+            ExpectedErrorCategory = "ambiguousOpen",
+            Explanation = "Named open targets deduplicate by their complete spelling. Distinct names remain distinct providers even when their diagnostic displays abbreviate to the same text; two providers of X are ambiguous in either order.",
+        },
+        new()
+        {
             Id = "open-local-only-member-is-a-second-provider",
             Category = "name-resolution",
             Source = "Pub = {\n    public X = 101\n}\nOuter(p) = {\n    public Lib = {\n        public X = p + 202\n    }\n    0\n}\nA = {\n    open Pub, Outer.Lib\n    X\n}\nA",
@@ -4495,8 +4504,10 @@ public static class LanguageSpecCorpus
                 new SpecProbe("Lib = {\n    public v = 99\n}\nOuter(v) = {\n    open Lib\n    v + 1\n}\nOuter(7)", "ok raw=8 n=1"),
                 // The root is never called: an unresolved root name beside a nested `open` of that
                 // name is the root's unresolved input, reported by evaluation — not a parameter
-                // that cannot be opened.
-                new SpecProbe("Q.X\nM = {\n    open Q\n    1\n}\nM", "err unresolvedImplicitParams"),
+                // that cannot be opened; the nested open reaches its own body's `Q`. (An open whose
+                // only candidate is the root's phantom names nothing and is a static
+                // UnresolvedOpenTarget since audit #8 — StaticOpenOwnershipTests.)
+                new SpecProbe("Q.X\nM = {\n    open Q\n    Q = {\n        public Z = 1\n    }\n    Z\n}\nM", "err unresolvedImplicitParams"),
             ],
             Explanation = "`open` is static, and lexical ownership still applies to its target name. Inside `F` the nearest binding of `Lib` is the parameter `Lib`, so the parameter owns the name; a parameter cannot be opened, and KatLang reports that instead of looking farther outward for the root property `Lib`. Adding or removing that farther declaration changes nothing — `Lib.X` in the same body reads the parameter, and so does `open Lib`.",
         },
@@ -4546,6 +4557,8 @@ public static class LanguageSpecCorpus
                 // Where the reference's parameters CAN be inferred, the math argument is an
                 // ordinary value position and the program simply works.
                 new SpecProbe("A = q + 1\nF(q) = Math.Abs(A)\nF(7)", "ok raw=8 n=1"),
+                new SpecProbe("A = q + 1\nF = (Math.Abs)(A)\nF(7)", "ok raw=8 n=1"),
+                new SpecProbe("F = (Math.Abs)(A)\nA = B + 1\nB = q\nF(7)", "ok raw=8 n=1"),
                 // Ordinary value arguments are unchanged.
                 new SpecProbe("F(x) = Math.Abs(x)\nF(0 - 9)", "ok raw=9 n=1"),
             ],

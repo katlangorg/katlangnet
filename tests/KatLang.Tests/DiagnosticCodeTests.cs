@@ -173,6 +173,9 @@ public class DiagnosticCodeTests
         { "open-target-is-parameter", "Other = { public X = 8 }\nF(Lib) = {\n    open Lib\n    1\n}\nF(Other)", DiagnosticCode.OpenTargetIsParameter },
         { "open-qualified-target-is-parameter", "F(Root) = {\n    open Root.Sub\n    1\n}\nF({ public Sub = { public X = 1 } })", DiagnosticCode.OpenTargetIsParameter },
         { "open-target-is-enclosing-parameter", "Outer(Lib) = {\n    Inner = {\n        open Lib\n        1\n    }\n    Inner\n}\nOuter(1)", DiagnosticCode.OpenTargetIsParameter },
+        { "open-target-unknown-head", "open Nope\n1", DiagnosticCode.UnresolvedOpenTarget },
+        { "open-target-missing-member", "Lib = { public S = 1 }\nA = {\n    open Lib.Missing\n    1\n}\nA", DiagnosticCode.UnresolvedOpenTarget },
+        { "open-target-private-step", "Lib = { Sub = { public X = 1 } }\nA = {\n    open Lib.Sub\n    1\n}\nA", DiagnosticCode.UnresolvedOpenTarget },
         { "load-elaboration-unavailable", "open 'https://katlang.org/lib.kat'\n1", DiagnosticCode.LoadElaborationUnavailable },
     };
 

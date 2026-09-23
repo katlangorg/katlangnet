@@ -161,6 +161,10 @@ public class SemanticExplorerLeanArtifactTests
                 // eagerly by the front end (the same IllegalInOpen rule), so it never reaches
                 // evaluation either.
                 "special__openBuiltinTargetIsIllegal",
+                // Name-resolution audit (#8, September 2026): an open target that resolves to
+                // nothing (here a private dotted step) is refused statically
+                // (UnresolvedOpenTarget), so it never reaches evaluation either.
+                "special__openDottedPathPrivateIntermediate",
             ])
             .OrderBy(id => id, StringComparer.Ordinal)
             .ToList();

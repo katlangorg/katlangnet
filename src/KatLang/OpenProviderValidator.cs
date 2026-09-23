@@ -9,7 +9,10 @@ namespace KatLang;
 /// resolution, which it does not depend on. Targets resolve through the shared static
 /// resolution (<see cref="ElaboratedScopeLookup.ResolveOpenTarget"/>): the head by the
 /// direct lexical chain, dotted steps through public members, an inline block by itself; a
-/// target that resolves to nothing is left to the existing unresolved-name/open diagnostics.
+/// written name path that resolves to nothing is <see cref="DiagnosticCode.UnresolvedOpenTarget"/>
+/// here (a parameter-owned head is parameter detection's <see cref="DiagnosticCode.OpenTargetIsParameter"/>,
+/// an illegal target shape the parser's <see cref="DiagnosticCode.BadOpenForm"/>), so open validity
+/// never depends on whether a lookup happens to consult the target.
 /// Only the RESOLVED provider is judged — a parameterized head of a dotted target is
 /// navigated by identity, and a member of it that captures the head's parameter is the
 /// separate accessibility question decided at each access. The evaluator applies the same
@@ -177,6 +180,8 @@ internal sealed class OpenProviderValidator : AstWalker
     {
         foreach (var target in opens)
         {
+            // Each WRITTEN target is a site the author fixes, so each is reported (a repeated
+            // spelling is one provider to lookup, but two places in the source).
             // A target the document wrote is reported at its own span; an imported one at
             // the import site of the module content it lies in. A spanless target with no
             // site (a host-built tree) is left to the evaluator's own open resolution.
@@ -202,7 +207,21 @@ internal sealed class OpenProviderValidator : AstWalker
             }
 
             if (ElaboratedScopeLookup.ResolveOpenTarget(_scope, target) is not { } provider)
+            {
+                // `open` is static: a target naming nothing is invalid whether or not any
+                // lookup ever consults this level's opens. Left alone, the front end dropped
+                // it (its names became implicit parameters) while the evaluator failed as
+                // soon as a lookup reached the level (Lean `resolveAllOpens`).
+                if (DescribeUnresolvedTarget(target) is { } reason && _reported.Add(target))
+                {
+                    _diagnostics.Add(new Diagnostic(reason, DiagnosticSeverity.Error, span)
+                    {
+                        Code = DiagnosticCode.UnresolvedOpenTarget,
+                    });
+                }
+
                 continue;
+            }
 
             // A prelude builtin (`open count`, `open if`) is a callable, never a namespace: the
             // evaluator refuses it by KIND at open resolution (Lean `resolveAlgForOpen`), so the
@@ -221,6 +240,51 @@ internal sealed class OpenProviderValidator : AstWalker
                 Code = DiagnosticCode.IllegalInOpen,
             });
         }
+    }
+
+    /// <summary>
+    /// Why a written name path provides no algorithm — the step at which the static
+    /// resolution (<see cref="ElaboratedScopeLookup.ResolveOpenTarget"/>) fails, named the way
+    /// the evaluator's open resolution fails there: a head no enclosing declaration or prelude
+    /// member provides (an open head never resolves through another open), a member its
+    /// receiver lacks, declares privately (open paths select public members), or declares only
+    /// inside a conditional branch (a family exposes no members). Null for every target this
+    /// rule does not own: a parameter-owned head (parameter detection reported
+    /// <see cref="DiagnosticCode.OpenTargetIsParameter"/>), an inline block, and the shapes the
+    /// parser rejects as <see cref="DiagnosticCode.BadOpenForm"/>.
+    /// </summary>
+    private string? DescribeUnresolvedTarget(Expr target)
+    {
+        if (!PropertyDependencyGraphBuilder.TryGetOpenTargetPath(target, out var head, out var steps))
+            return null;
+
+        var description = Evaluator.OpenExprName(target);
+        if (ElaboratedScopeLookup.TryLookupDirectLexicalProperty(_scope, head) is not { } headHit)
+        {
+            return $"'{description}' cannot be opened because no property named '{head}' is visible here; " +
+                "the first name of an open target resolves through the enclosing declarations and the prelude, never through another open.";
+        }
+
+        var receiver = headHit.Property.Value;
+        var receiverDescription = head;
+        foreach (var step in steps)
+        {
+            if (ElaboratedScopeLookup.TryLookupPublicProperty(receiver, step) is { } member)
+            {
+                receiver = member.Property.Value;
+                receiverDescription += "." + step;
+                continue;
+            }
+
+            if (ElaboratedScopeLookup.TryLookupProperty(receiver, step) is not null)
+                return $"'{description}' cannot be opened because property '{step}' of '{receiverDescription}' is not public; an open path selects public members only.";
+
+            return receiver.DefinesConditionalBranchProperty(step)
+                ? $"'{description}' cannot be opened because '{step}' is declared only inside a conditional branch of '{receiverDescription}', and a clause family exposes no members."
+                : $"'{description}' cannot be opened because '{receiverDescription}' has no property named '{step}'.";
+        }
+
+        return null;
     }
 
     /// <summary>The bare head of a dotted core open form (`open A.B.C` → `A`), or null for any other target.</summary>

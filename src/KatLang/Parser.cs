@@ -523,7 +523,7 @@ public sealed class Parser
     /// parsing.
     /// </exception>
     public static ParseResult Parse(string source, RunOptions? options)
-        => FrontEndPipeline.Process(source, options).ToParseResult();
+        => FrontEndPipeline.Process(source, options).ToParseResult(options?.HostOperations);
 
     /// <summary>
     /// Asynchronous full pipeline with load elaboration — the canonical parse entry point when
@@ -538,7 +538,7 @@ public sealed class Parser
     /// through the returned task.
     /// </exception>
     public static async Task<ParseResult> ParseAsync(string source, RunOptions? options = null)
-        => (await FrontEndPipeline.ProcessAsync(source, options).ConfigureAwait(false)).ToParseResult();
+        => (await FrontEndPipeline.ProcessAsync(source, options).ConfigureAwait(false)).ToParseResult(options?.HostOperations);
 
     // ── Token access helpers ────────────────────────────────────────────────
 

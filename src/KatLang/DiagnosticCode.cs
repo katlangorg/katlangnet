@@ -322,4 +322,19 @@ public enum DiagnosticCode
     /// navigated by identity like any structural receiver; only the resolved provider counts.
     /// </summary>
     IllegalInOpen = 44,
+
+    /// <summary>
+    /// An <c>open</c> target does not resolve to an algorithm: its first name is not a
+    /// property visible from the opening algorithm (an open target's head resolves through
+    /// the enclosing declarations and the prelude, never through another <c>open</c>), or a
+    /// dotted step names a member its receiver does not declare, declares privately (an
+    /// <c>open</c> path selects public members only), or declares only inside a conditional
+    /// branch (a clause family exposes no members). <c>open</c> is resolved statically, so the
+    /// target is invalid whether or not any name is ever looked up through it; the evaluator
+    /// refuses the same target (unknown name, unknown or non-public property, local-only
+    /// branch member) as soon as a lookup consults the opening level's opens. Reported at the
+    /// open target, after signature completion, beside the <see cref="IllegalInOpen"/>
+    /// provider rule.
+    /// </summary>
+    UnresolvedOpenTarget = 45,
 }

@@ -592,9 +592,14 @@ public static class SemanticExplorerCorpus
             "Lib = {\n    public S = {\n        public X = 101\n    }\n}\nA = {\n    open Lib.S\n    X\n}\nA"),
 
         // A dotted open path requires every member after the lexical head to be
-        // public, so a private intermediate provides nothing.
+        // public. Since the name-resolution audit (#8, September 2026) a target that
+        // resolves to nothing is refused STATICALLY by the front end, whether or not a
+        // lookup consults it (before, it silently provided nothing and `X` became an
+        // implicit parameter), so the case is parse-level and C#-only; both evaluators
+        // still refuse the path (notPublicProperty) as soon as a lookup demands the opens.
         Special("openDottedPathPrivateIntermediate",
-            "Lib = {\n    S = {\n        public X = 101\n    }\n}\nA = {\n    open Lib.S\n    X\n}\nA(707)"),
+            "Lib = {\n    S = {\n        public X = 101\n    }\n}\nA = {\n    open Lib.S\n    X\n}\nA(707)",
+            "Front-end rejection (DiagnosticCode.UnresolvedOpenTarget): a private dotted open step provides no algorithm, so the target is refused before evaluation; the elaborated tree is a recovery tree, and both evaluators refuse the same path with notPublicProperty when a lookup demands the opens."),
 
         // Ownership-first: an owned property always beats an opened one.
         Special("openLocalShadowsOpenedName",

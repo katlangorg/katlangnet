@@ -133,6 +133,7 @@ public sealed class KatLangError
             DiagnosticCode.OpenTargetIsParameter => KatLangErrorCode.OpenTargetIsParameter,
             DiagnosticCode.InvalidNumberLiteral => KatLangErrorCode.InvalidNumberLiteral,
             DiagnosticCode.IllegalInOpen => KatLangErrorCode.IllegalInOpen,
+            DiagnosticCode.UnresolvedOpenTarget => KatLangErrorCode.UnresolvedOpenTarget,
             _ when !Enum.IsDefined(code) => KatLangErrorCode.Unspecified,
             _ => throw new InvalidOperationException(
                 $"Unhandled declared {nameof(DiagnosticCode)} family in {nameof(KatLangError)}: {code}. "

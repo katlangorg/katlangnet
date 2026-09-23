@@ -140,8 +140,9 @@ public class StaticOpenOwnershipTests
         { "F(0) = 0\nF(Lib) = {\n    open Lib\n    X\n}\nF(5)", LibSeven },
         { "F(*Lib) = {\n    open Lib\n    X\n}\nF(1, 2)", LibSeven },
         { "F((Lib, w)) = {\n    open Lib\n    X\n}\nF((1, 2))", LibSeven },
-        // the farther declaration may itself be an OPENED member of the same name
-        { "F(Lib) = {\n    open Libs, Lib\n    X\n}\nF(3)", "Libs = {\n    public Lib = {\n        public X = 7\n    }\n}\n" },
+        // the farther declaration may itself be an OPENED member of the same name (an
+        // enclosing open providing `Lib`; every open target resolves in both variants)
+        { "F(Lib) = {\n    open Lib\n    X\n}\nF(3)", "open Libs\nLibs = {\n    public Lib = {\n        public X = 7\n    }\n}\n" },
     };
 
     [Theory]
@@ -159,9 +160,12 @@ public class StaticOpenOwnershipTests
             without.Diagnostics.Select(d => (d.Code, d.Message, d.Span)),
             with.Diagnostics.Select(d => (d.Code, d.Message, Shift(d.Span, -shift)!)));
 
-        // Same elaborated open heads: the parameter head is a Param at the same (shifted) span.
+        // Same elaborated open heads of the PROGRAM (a prepended declaration may carry an open
+        // of its own): the parameter head is a Param at the same (shifted) span.
         var headsWithout = OpenLists(without.Root).SelectMany(e => e.Opens).Select(OpenHead).ToList();
-        var headsWith = OpenLists(with.Root).SelectMany(e => e.Opens).Select(OpenHead).ToList();
+        var headsWith = OpenLists(with.Root).SelectMany(e => e.Opens).Select(OpenHead)
+            .Where(h => h.Span is not { } span || span.Start.Line > shift)
+            .ToList();
         Assert.Contains(headsWithout, h => h is Expr.Param);
         Assert.Equal(
             headsWithout.Select(h => (h.GetType(), HeadName(h), h.Span)),
@@ -219,16 +223,16 @@ public class StaticOpenOwnershipTests
     /// The program root is never called, so a name the root could not resolve — or a name
     /// forwarding lifted into it — is a phantom input, not a callable parameter. It must keep
     /// its <c>UnresolvedImplicitParams</c> evaluation report and never become a "parameter that
-    /// cannot be opened", whether the <c>open</c> sits in a nested body or in the root itself.
+    /// cannot be opened": a nested <c>open</c> of the same name reaches that body's own
+    /// declaration, whatever the root could not resolve.
     /// </summary>
     public static TheoryData<string, string> RootPhantomOpens => new()
     {
-        { "Q.X\nM = {\n    open Q\n    1\n}\nM", "Q" },
-        { "open Q\nQ.X", "Q" },
+        { "Q.X\nM = {\n    open Q\n    Q = {\n        public Z = 1\n    }\n    Z\n}\nM", "Q" },
         // the F1 shape itself — a nested property of the phantom's name — plus a nested open
-        { "Lib = {\n    public Q = 1\n}\nQ + 1\nM = {\n    open Q\n    1\n}\nM", "Q" },
+        { "Lib = {\n    public Q = 1\n}\nQ + 1\nM = {\n    open Q\n    Q = {\n        public Z = 1\n    }\n    Z\n}\nM", "Q" },
         // a name forwarding lifted into the root
-        { "Need(v) = v\nM = {\n    open v\n    1\n}\nNeed + M", "v" },
+        { "Need(v) = v\nM = {\n    open v\n    v = {\n        public Z = 1\n    }\n    Z\n}\nNeed + M", "v" },
     };
 
     [Theory]
@@ -243,6 +247,27 @@ public class StaticOpenOwnershipTests
         var error = Assert.Single(failure.Errors);
         Assert.Equal(KatLangErrorCode.UnresolvedImplicitParams, error.Code);
         Assert.Contains($"'{name}'", error.Message);
+    }
+
+    /// <summary>
+    /// ... and when the phantom's name is ALL an <c>open</c> could name, the target resolves to
+    /// nothing: the static open-validity rule reports it as the unresolvable target it is
+    /// (<see cref="DiagnosticCode.UnresolvedOpenTarget"/>) — still never a parameter-owned head.
+    /// </summary>
+    [Theory]
+    [InlineData("Q.X\nM = {\n    open Q\n    1\n}\nM", "Q")]
+    [InlineData("open Q\nQ.X", "Q")]
+    [InlineData("Need(v) = v\nM = {\n    open v\n    1\n}\nNeed + M", "v")]
+    public void RootPhantomParameter_OpenOfNothingElse_IsAnUnresolvedTargetNeverAParameter(string source, string name)
+    {
+        var parsed = SourceProvenance.ParseAllowingDiagnostics(source);
+        var diagnostic = Assert.Single(parsed.Diagnostics);
+        Assert.Equal(DiagnosticCode.UnresolvedOpenTarget, diagnostic.Code);
+        Assert.StartsWith($"'{name}' cannot be opened because no property named '{name}' is visible here", diagnostic.Message, StringComparison.Ordinal);
+        Assert.Contains(name, parsed.Root.Params);
+        Assert.DoesNotContain(OpenLists(parsed.Root).SelectMany(e => e.Opens).Select(OpenHead), h => h is Expr.Param);
+        Assert.Equal(KatLangErrorCode.UnresolvedOpenTarget,
+            Assert.Single(Assert.IsType<RunResult.ParseFailure>(KatLangEngine.Run(source)).Errors).Code);
     }
 
     // ── reporting discipline ──────────────────────────────────────────────────

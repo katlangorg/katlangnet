@@ -788,20 +788,38 @@ public static partial class Evaluator
     /// deduplicate targets by the same relation. An INLINE target
     /// (<see cref="Expr.AlgorithmExpr"/> or <see cref="Expr.Capture"/>) is keyed by
     /// its written position, so two structurally identical inline blocks are never
-    /// merged. Every other target — a named resolve, a dotted path, and on the
-    /// tolerant host/recovery paths any other expression — is keyed by its rendered
-    /// open spelling, so repeating one spelling is ONE provider (first occurrence
-    /// wins; consumers compare keys ordinally). The generic arm is deliberate and
-    /// must stay total: <see cref="ResolveAllOpens"/> spells an illegal target's
-    /// <c>BadOpenForm</c> diagnostic with this key, and the key is also the open's
-    /// diagnostic context and ambiguity-provider spelling. A new inline-like open
-    /// form must be added to the positional arm here — nowhere else.
+    /// merged. A named resolve or dotted path uses its COMPLETE spelling, so
+    /// repeating one spelling is ONE provider (first occurrence wins; ordinal
+    /// comparison). Diagnostic rendering is bounded and must never decide this
+    /// identity: distinct long names can have the same abbreviated display.
+    /// Invalid host/recovery forms retain their bounded diagnostic key; validation
+    /// rejects them before lookup. A new inline-like form belongs in the positional
+    /// arm here — nowhere else.
     /// Lean: <c>resolveAllOpens</c>.
     /// </summary>
     internal static string OpenTargetDedupKey(Expr openExpr, int index)
-        => openExpr is Expr.AlgorithmExpr or Expr.Capture
-            ? $"(inline#{index})"
-            : OpenExprName(openExpr);
+    {
+        if (openExpr is Expr.AlgorithmExpr or Expr.Capture)
+            return $"(inline#{index})";
+        if (openExpr is Expr.Resolve(var name))
+            return name;
+
+        // Iterative and linear in the written path, including long components.
+        // No record equality or diagnostic renderer participates in the key.
+        var steps = new Stack<string>();
+        var head = openExpr;
+        while (head is Expr.DotCall { Args: null } edge)
+        {
+            steps.Push(edge.Name);
+            head = edge.Target;
+        }
+        if (head is Expr.Resolve(var headName))
+        {
+            steps.Push(headName);
+            return string.Join(".", steps);
+        }
+        return OpenExprName(openExpr);
+    }
 
     /// <summary>
     /// Renders a compound call-context expression on an actual diagnostic path and records that
@@ -1406,10 +1424,11 @@ public static partial class Evaluator
     }
 
     /// <summary>
-    /// A resolved open: its canonical dedup key, original expression, and resolved algorithm.
-    /// Lean: ResolvedOpen (key, expr, lib).
+    /// A resolved open: its bounded diagnostic name, original expression, and resolved algorithm.
+    /// Deduplication has already used the complete key. Lean's ResolvedOpen uses its
+    /// unbounded spelling for both purposes; C# display limits are presentation policy.
     /// </summary>
-    private readonly record struct ResolvedOpen(string Key, Expr Expr, Algorithm Lib);
+    private readonly record struct ResolvedOpen(string DisplayName, Expr Expr, Algorithm Lib);
 
     /// <summary>
     /// A single hit from open lookup: which provider supplied it, the library, and the child algorithm.
@@ -1434,31 +1453,31 @@ public static partial class Evaluator
 
         // Deduplicate by key (first occurrence wins); inline blocks use positional keys
         var seen = new HashSet<string>();
-        var deduped = new List<(string Key, Expr Expr)>();
+        var deduped = new List<(string DisplayName, Expr Expr)>();
         for (var i = 0; i < alg.Opens.Count; i++)
         {
             var openExpr = alg.Opens[i];
             var key = OpenTargetDedupKey(openExpr, i);
             if (seen.Add(key))
-                deduped.Add((key, openExpr));
+                deduped.Add((openExpr is Expr.AlgorithmExpr or Expr.Capture ? key : OpenExprName(openExpr), openExpr));
         }
 
         // Validate all open expressions first (fail-fast with clear errors)
-        foreach (var (key, openExpr) in deduped)
+        foreach (var (displayName, openExpr) in deduped)
         {
             if (!openExpr.IsCoreOpenForm())
-                return new EvalError.BadOpenForm($"{ExprKind(openExpr)}: {key}");
+                return new EvalError.BadOpenForm($"{ExprKind(openExpr)}: {displayName}");
         }
 
-        // Then resolve (each open wrapped with context using its dedup key)
+        // Then resolve with bounded diagnostic names, separate from dedup identity.
         var result = new List<ResolvedOpen>(deduped.Count);
-        foreach (var (key, openExpr) in deduped)
+        foreach (var (displayName, openExpr) in deduped)
         {
             var libResult = WithCtx(
-                CtxOpen(key),
+                CtxOpen(displayName),
                 ResolveOpen(openExpr, ctx));
             if (libResult.IsError) return libResult.Error;
-            result.Add(new ResolvedOpen(key, openExpr, libResult.Value));
+            result.Add(new ResolvedOpen(displayName, openExpr, libResult.Value));
         }
         return EvalResult<IReadOnlyList<ResolvedOpen>>.Ok(result);
     }
@@ -1497,7 +1516,7 @@ public static partial class Evaluator
         {
             var binding = LookupPublicPropBinding(ri.Lib, name);
             if (binding is not null)
-                hits.Add(new OpenHit(ri.Key, ri.Lib, binding));
+                hits.Add(new OpenHit(ri.DisplayName, ri.Lib, binding));
         }
 
         if (hits.Count == 0)

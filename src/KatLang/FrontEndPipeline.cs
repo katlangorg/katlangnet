@@ -325,15 +325,16 @@ internal static class FrontEndPipeline
         OpenProviderValidator.Validate(implicitResolvedRoot, diagnostics, hostOperations);
         // Declaration/ownership rejections leave a recovery tree whose evaluation would only
         // restate them (a parameter-owned open head is an Expr.Param the evaluator rejects as a
-        // bad open form; a parameterized provider is refused at open resolution): never
-        // evaluate such a tree for additional errors.
+        // bad open form; a parameterized provider and a target naming nothing are refused at
+        // open resolution): never evaluate such a tree for additional errors.
         canEvaluateAfterLoadErrors &= !diagnostics.Any(d =>
             d.Code is DiagnosticCode.ParameterPropertyCollision
                 or DiagnosticCode.OpenTargetIsParameter
-                or DiagnosticCode.IllegalInOpen);
+                or DiagnosticCode.IllegalInOpen
+                or DiagnosticCode.UnresolvedOpenTarget);
 
         cancellationToken.ThrowIfCancellationRequested();
-        var propertyExposedRoot = PropertyExposureResolver.Resolve(implicitResolvedRoot);
+        var propertyExposedRoot = PropertyExposureResolver.Resolve(implicitResolvedRoot, observations: null, hostOperations);
         cancellationToken.ThrowIfCancellationRequested();
 
         // B2c: a tree with deferred module regions is evaluated by the async evaluation
@@ -384,5 +385,7 @@ internal sealed record FrontEndResult(
 {
     public bool HasErrors => Diagnostics.Any(d => d.Severity == DiagnosticSeverity.Error);
 
-    public ParseResult ToParseResult() => new(ElaboratedRoot, Diagnostics);
+    /// <summary>The public parse result, carrying the host operations the elaboration resolved names against.</summary>
+    public ParseResult ToParseResult(HostOperations? hostOperations = null)
+        => new(ElaboratedRoot, Diagnostics) { HostOperations = hostOperations };
 }

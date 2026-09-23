@@ -119,12 +119,10 @@ public class OpenVisibilityCorpusFidelityTests
                 LibPublicSX + ", privateProp \"A\" (alg [] [(.dotCall (.resolve \"Lib\") \"S\" none)] [] [.resolve \"X\"])",
                 ResolveA),
 
-            // A dotted open path requires every member after the lexical head to
-            // be public, so a private intermediate provides nothing.
-            ["openDottedPathPrivateIntermediate"] = Golden(
-                "privateProp \"Lib\" (alg [] [] [privateProp \"S\" (alg [] [] [publicProp \"X\" (alg [] [] [] [.num 101])] [])] []), "
-                    + "privateProp \"A\" (alg [\"X\"] [(.dotCall (.resolve \"Lib\") \"S\" none)] [] [.param \"X\"])",
-                CallA707),
+            // `openDottedPathPrivateIntermediate` has no golden: since the name-resolution
+            // audit (#8, September 2026) a dotted open path through a private member is
+            // refused statically (UnresolvedOpenTarget), so the case is a parse-level C#-only
+            // probe with no derived Lean program (pinned below).
 
             // Ownership-first: an owned property always beats an opened one.
             ["openLocalShadowsOpenedName"] = Golden(

@@ -245,15 +245,18 @@ public class LookupCoherenceTests
             "Lib = {\n    public S = {\n        public X = 101\n    }\n}\nA = {\n    open Lib.S\n    X\n}\nA",
             "X", "ok raw=101 n=1", new Declared("X", 1)),
 
+        // A target that resolves to nothing is refused statically (audit #8,
+        // UnresolvedOpenTarget); the recovery tree still gets nothing from it, so all
+        // three views keep agreeing that `X` is A's implicit parameter.
         new("providers.dottedPathThroughPrivateIntermediateFails",
             "Lib = {\n    S = {\n        public X = 101\n    }\n}\nA = {\n    open Lib.S\n    X\n}\nA(707)",
-            "X", "ok raw=707 n=1", new ImplicitParameter("root.A")),
+            "X", "parseError", new ImplicitParameter("root.A")),
 
         // An open head is resolved by direct lexical lookup only — never through
-        // another open in the same list.
+        // another open in the same list — so `Lib` names nothing the open list can see.
         new("providers.openHeadIsNotVisibleThroughAnotherOpen",
             "Outer = {\n    public Lib = {\n        public X = 101\n    }\n}\nA = {\n    open Outer, Lib\n    X\n}\nA(707)",
-            "X", "ok raw=707 n=1", new ImplicitParameter("root.A")),
+            "X", "parseError", new ImplicitParameter("root.A")),
 
         // ---- scope -----------------------------------------------------------
         new("scope.parentScopeOpenReachesChild",
@@ -422,8 +425,8 @@ public class LookupCoherenceTests
         if (lookupCase.ExpectedRuntime == "parseError")
         {
             // The declaration-level rejections the matrix probes through: a property hiding a
-            // completed parameter, an open target whose head a parameter owns, and an open
-            // target that would need a call to have members.
+            // completed parameter, an open target whose head a parameter owns, an open target
+            // that would need a call to have members, and one that resolves to nothing.
             Assert.Contains(
                 Assert.Single(parsed.Diagnostics).Code,
                 new[]
@@ -431,6 +434,7 @@ public class LookupCoherenceTests
                     DiagnosticCode.ParameterPropertyCollision,
                     DiagnosticCode.OpenTargetIsParameter,
                     DiagnosticCode.IllegalInOpen,
+                    DiagnosticCode.UnresolvedOpenTarget,
                 });
         }
         else

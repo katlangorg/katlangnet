@@ -6871,6 +6871,14 @@ end
     A captured parameter therefore bypasses this probe; ownership selection
     below keeps it from losing to a farther property.
 
+    OPEN TARGETS: `lookupLexical` resolves the level's opens lazily, and a target
+    that resolves to nothing fails that resolution. The surface layer never lets
+    such a failure reach promotion: it refuses every `open` target that resolves
+    to nothing — an unknown head, a missing member, a non-public path step — as a
+    static diagnostic (C# `DiagnosticCode.UnresolvedOpenTarget`), so in an
+    accepted program this probe only ever sees resolvable targets, and its
+    `.error` arm reports genuine lookup failures such as an ambiguous open.
+
     NOTE: This function is used only for ordinary algorithms without an explicit
     parameter-pattern list.  Explicit ordinary algorithms and conditional branch
     bodies do NOT use implicit parameter inference.  Their written pattern in

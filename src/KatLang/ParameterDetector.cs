@@ -2143,6 +2143,8 @@ internal static class ParameterDetector
             Expr.Resolve(var name) when ShouldRewriteAsParam(name, scope, parameters)
                 => RewriteResolveAsParam(name, expr.Span, memo),
 
+            Expr.Resolve resolve => StampOpenedMathMember(resolve, scope, parameters),
+
             Expr.Binary binary => binary with
             {
                 Left = RewriteParams(binary.Left, scope, parameters, memo),
@@ -2188,13 +2190,28 @@ internal static class ParameterDetector
             // slot and processes as an independent algorithm.)
             Expr.Call call => RewriteCall(call, scope, parameters, memo),
 
-            // Intentional leaves: a Resolve that failed the guarded parameter
-            // test above stays an ordinary lexical reference, and the
-            // remaining leaves contain no parameter references to rewrite.
-            Expr.Resolve or Expr.Param or Expr.Num or Expr.StringLiteral or Expr.BoolLiteral
+            // Intentional leaves: they contain no parameter references to rewrite.
+            Expr.Param or Expr.Num or Expr.StringLiteral or Expr.BoolLiteral
                 or Expr.EmptySequence or Expr.NativeCall => expr,
         };
     }
+
+    /// <summary>
+    /// A Resolve that failed the guarded parameter test stays an ordinary lexical reference.
+    /// When it IS a Math member through <c>open Math</c> — the canonical spelling, one
+    /// callable with the alias and the qualified <c>Math.X</c>
+    /// (<see cref="AstHelpers.ResolveOpenedMathMemberFacts"/>) — the verdict is stamped for
+    /// the scope-free static consumers (<see cref="Expr.Resolve.ElaboratedMathMember"/>),
+    /// which recognize the other two spellings by shape; it is decided HERE because only this
+    /// walk holds the elaborated owner chain and its opens.
+    /// </summary>
+    private static Expr StampOpenedMathMember(
+        Expr.Resolve resolve,
+        ElaboratedPropertyScope scope,
+        ParameterOwnership parameters)
+        => AstHelpers.ResolveOpenedMathMemberFacts(resolve.Name, scope, parameters) is { } facts
+            ? resolve with { ElaboratedMathMember = facts }
+            : resolve;
 
     private static Expr RewriteCall(
         Expr.Call call,
@@ -2532,7 +2549,11 @@ internal static class ParameterDetector
             Expr.ListLiteral(var items) => FindResolveSpan(items, name, memo),
             Expr.DotCall d => FindResolveSpan(d.Target, name, memo)
                 ?? (d.Args is not null ? FindResolveSpan(d.Args, name, memo) : null),
-            Expr.AlgorithmExpr(var alg) => FindResolveSpan(alg.Output, name, memo),
+            // A scope-owning block owns its names (CollectFreeParams never enters it): an
+            // occurrence inside it is bound there — by its own property, parameter, or open —
+            // or reported by its own elaboration, never the free occurrence of THIS level.
+            // Descending here positioned `F(n) = { X = 1  X } + X` at the block's bound `X`.
+            Expr.AlgorithmExpr => null,
             Expr.Capture(var captureBody) => FindResolveSpan(captureBody, name, memo),
             Expr.Call(var f, var args) => FindResolveSpan(f, name, memo) ?? FindResolveSpan(args, name, memo),
             // Intentional misses: a Resolve spelling a different name (the

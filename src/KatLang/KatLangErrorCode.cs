@@ -278,4 +278,7 @@ public enum KatLangErrorCode
 
     /// <summary>Front-end <see cref="DiagnosticCode.InvalidNumberLiteral"/>.</summary>
     InvalidNumberLiteral = 66,
+
+    /// <summary>Front-end <see cref="DiagnosticCode.UnresolvedOpenTarget"/>.</summary>
+    UnresolvedOpenTarget = 67,
 }

@@ -468,6 +468,7 @@ public enum KatLang.DiagnosticCode : int
   OpenTargetIsParameter = 42
   InvalidNumberLiteral = 43
   IllegalInOpen = 44
+  UnresolvedOpenTarget = 45
 
 public enum KatLang.DiagnosticSeverity : int
   Hint = 1
@@ -1581,6 +1582,7 @@ public enum KatLang.KatLangErrorCode : int
   UnseparatedSameLineItem = 64
   OpenTargetIsParameter = 65
   InvalidNumberLiteral = 66
+  UnresolvedOpenTarget = 67
 
 public sealed class KatLang.KatLangException : System.Exception
   ctor     public KatLangException(System.Collections.Generic.IReadOnlyList<KatLang.KatLangError> errors)

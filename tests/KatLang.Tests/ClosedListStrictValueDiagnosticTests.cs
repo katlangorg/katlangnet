@@ -330,14 +330,25 @@ public class ClosedListStrictValueDiagnosticTests
     }
 
     /// <summary>
-    /// A dot-call RECEIVER is resolved in algorithm position, so it is not a lifting site in
-    /// any caller either — `A.abs` fails the same way with `F(x)` and with `F(q)`.
+    /// A dot-call RECEIVER whose lexical fallback MUST be selected on a Math member is the
+    /// leading argument of that member's call — dotted-call equivalence holds through
+    /// elaboration (name-resolution audit #8): `A.abs` IS `abs(A)`, so it lifts where the
+    /// direct call lifts and is diagnosed exactly where the closed list blocks that lift.
+    /// (Before, the receiver never lifted in any caller — `A.abs` failed at runtime with both
+    /// `F(x)` and `F(q)` — which is why this position was once measured out of scope.)
     /// </summary>
     [Fact]
-    public void DotCallReceiver_IsNotAttributedToTheClosedList()
+    public void DotCallReceiver_IsTheMathCallsLeadingArgument_AndDiagnosedLikeIt()
     {
-        AssertNotDiagnosed("A = q + 1\nF(x) = A.abs\nF(7)");
+        var diagnostic = SingleBlocked("A = q + 1\nF(x) = A.abs\nF(7)");
+        Assert.Contains("'A'", diagnostic.Message, StringComparison.Ordinal);
+        Assert.Contains("'q'", diagnostic.Message, StringComparison.Ordinal);
+        Assert.Equal(new SourceSpan(2, 8, 2, 9), diagnostic.Span);
         AssertNotDiagnosed("A = q + 1\nF(q) = A.abs\nF(7)");
+        Assert.Equal("8", Assert.IsType<RunResult.Success>(KatLangEngine.Run("A = q + 1\nF(q) = A.abs\nF(7)")).ToDisplayString());
+
+        // A receiver that DECLARES the member keeps the structural resolution: nothing lifts.
+        AssertNotDiagnosed("A = { public abs = 3 }\nF(x) = A.abs\nF(7)");
     }
 
     // ── The rewrite the diagnostic sits on top of ────────────────────────────

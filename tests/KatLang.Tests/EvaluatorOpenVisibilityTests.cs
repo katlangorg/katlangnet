@@ -512,7 +512,8 @@ public class EvaluatorOpenVisibilityTests
     public void Eval_Open_SelfNameInOpenExpression_Fails()
     {
         // "self" is no longer a keyword — it's now just an identifier.
-        // Using it in open position fails because there's no algorithm named "self".
+        // Using it in open position fails because there's no algorithm named "self":
+        // since the name-resolution audit (#8) that is a static front-end rejection.
         var source = """
             HiddenLib = { X = 42 }
             Read = { open self.HiddenLib
@@ -520,7 +521,10 @@ public class EvaluatorOpenVisibilityTests
             }
             Read()
             """;
-        Assert.IsType<EvalError.ArityMismatch>(Innermost(Eval(source).Error));
+        var diagnostic = Assert.Single(SourceProvenance.ParseAllowingDiagnostics(source).Diagnostics);
+        Assert.Equal(DiagnosticCode.UnresolvedOpenTarget, diagnostic.Code);
+        Assert.Contains("no property named 'self'", diagnostic.Message, StringComparison.Ordinal);
+        AssertFrontEndRejectedAndRecoveryTreeAlsoFails(source);
     }
 
     [Fact]
@@ -612,6 +616,10 @@ public class EvaluatorOpenVisibilityTests
         // resolution never runs at all, and the obvious `X` reference is turned
         // into an implicit parameter before evaluation. See
         // OpenPathResolutionBranchTests for the full pre-emption story.
+        //
+        // Name-resolution audit (#8): the front end now refuses the non-public step
+        // statically (UnresolvedOpenTarget), so the evaluator branch is reached from the
+        // elaborated tree the front end still produces.
         var source = """
             Pub = { public Y = 7 }
             Lib = { Sub = { public X = 42 } }
@@ -622,8 +630,10 @@ public class EvaluatorOpenVisibilityTests
             A
             """;
 
-        var result = EvalFull(source);
-        if (result.IsOk)
+        var parsed = SourceProvenance.ParseAllowingDiagnostics(source);
+        Assert.Equal(DiagnosticCode.UnresolvedOpenTarget, Assert.Single(parsed.Diagnostics).Code);
+        var result = Evaluator.Run(new Expr.AlgorithmExpr(parsed.Root));
+        if (!result.IsError)
             Assert.Fail($"Expected NotPublicProperty but got: {result.Value}");
 
         var notPublic = Assert.IsType<EvalError.NotPublicProperty>(Innermost(result.Error));
@@ -675,7 +685,8 @@ public class EvaluatorOpenVisibilityTests
     [Fact]
     public void Eval_Open_PrivateIntermediate_Fails()
     {
-        // Acceptance D: private intermediate on open path
+        // Acceptance D: private intermediate on open path — refused statically since the
+        // name-resolution audit (#8), no longer left to promote `X` to an implicit parameter.
         var source = """
             Lib = { Sub = { public X = 1 } }
             Read = { open Lib.Sub
@@ -683,7 +694,10 @@ public class EvaluatorOpenVisibilityTests
             }
             Read()
             """;
-        Assert.IsType<EvalError.ArityMismatch>(Innermost(Eval(source).Error));
+        var diagnostic = Assert.Single(SourceProvenance.ParseAllowingDiagnostics(source).Diagnostics);
+        Assert.Equal(DiagnosticCode.UnresolvedOpenTarget, diagnostic.Code);
+        Assert.Contains("property 'Sub' of 'Lib' is not public", diagnostic.Message, StringComparison.Ordinal);
+        AssertFrontEndRejectedAndRecoveryTreeAlsoFails(source);
     }
 
     [Fact]

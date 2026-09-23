@@ -448,6 +448,22 @@ def openSelectionIgnoresExposure : Bool :=
 
 #guard openSelectionIgnoresExposure
 
+/-- Open identity uses the complete spelling even beyond diagnostic display limits.
+    Two spellings of the same provider still count twice; repeating one counts once. -/
+def longOpenSpellingsKeepIdentity (duplicate : Bool) : Bool :=
+  let nameStem := String.ofList (List.replicate 520 'N')
+  let left := nameStem ++ "A"
+  let right := nameStem ++ "B"
+  let provider := alg [] [] [publicProp "X" (alg [] [] [] [.num 1])] []
+  let program := alg [] [.resolve left, .resolve (if duplicate then left else right)]
+    [privateProp left provider, privateProp right provider] [.resolve "X"]
+  match runResult (.algorithmExpr program) with
+  | .ok value => duplicate && value == .atom 1
+  | .error err => !duplicate && innermostIsAmbiguousOpen "X" err
+
+#guard longOpenSpellingsKeepIdentity false
+#guard longOpenSpellingsKeepIdentity true
+
 /-- `Lib(p) = { public X = p + 101  X }` / `A = { open Lib  X }`: the provider
     needs a call, and `open` never makes one, so the TARGET is refused — `X` is
     never reinterpreted as an input of `A`, and `Lib` is never instantiated. -/

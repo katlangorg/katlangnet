@@ -213,14 +213,14 @@ public sealed class SemanticModel
     public IReadOnlyList<VisibleSymbol> GetVisibleSymbolsAt(SourcePosition position)
     {
         var scope = FindScopeAt(position);
-        var result = new List<VisibleSymbol>(scope.Symbols.Count + PreludeCatalog.Symbols.Count);
+        var result = new List<VisibleSymbol>(scope.Symbols.Count + PreludeSymbols.Count);
         result.AddRange(scope.Symbols);
 
         var shadowed = new HashSet<string>(StringComparer.Ordinal);
         foreach (var symbol in scope.Symbols)
             shadowed.Add(symbol.Name);
 
-        foreach (var symbol in PreludeCatalog.Symbols)
+        foreach (var symbol in PreludeSymbols)
         {
             if (!shadowed.Contains(symbol.Name))
                 result.Add(symbol);
@@ -228,6 +228,13 @@ public sealed class SemanticModel
 
         return Array.AsReadOnly(result.ToArray());
     }
+
+    /// <summary>
+    /// The prelude names of the prelude this model resolved against: <see cref="PreludeCatalog.Symbols"/>,
+    /// plus the host operations of the parse the model was built from — ambient prelude members
+    /// the owner walk reaches exactly like a builtin.
+    /// </summary>
+    internal IReadOnlyList<VisibleSymbol> PreludeSymbols { get; init; } = PreludeCatalog.Symbols;
 
     /// <summary>
     /// True when <paramref name="candidate"/> is the more deeply nested of two

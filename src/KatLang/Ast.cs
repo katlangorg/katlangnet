@@ -666,7 +666,34 @@ public closed record Expr
     public sealed record ListLiteral(OutputBundle Items) : Expr;
 
     /// <summary>Resolves a named algorithm by lexical lookup.</summary>
-    public sealed record Resolve(string Name) : Expr;
+    public sealed record Resolve(string Name) : Expr
+    {
+        private readonly RuntimeStateSlot<MathCallableFacts?> _elaboratedMathMember;
+
+        /// <summary>
+        /// The front end's IDENTITY verdict for a bare name that the owner walk leaves to the
+        /// <c>open</c> fallback and that exactly one open of its chain provides from the
+        /// prelude's <c>Math</c> module: the registry facts of that Math FUNCTION member,
+        /// stamped by parameter detection (which holds the elaborated scope chain). The opened
+        /// canonical spelling (<c>open Math</c> … <c>Sin(A)</c>) is the same member as the
+        /// alias <c>sin</c> and the qualified <c>Math.Sin</c>, whose SHAPES the static
+        /// consumers recognize without scope; this stamp is how those consumers — implicit
+        /// argument resolution and its sibling-order channel — recognize the third spelling as
+        /// a CALLEE by what it resolves to rather than by how it is written, so its arguments
+        /// are the member's strict value positions
+        /// (<see cref="AstHelpers.TryGetRegistryProvenMathCalleeFacts"/>). It never makes the
+        /// bare name itself liftable: a callable reached through <c>open</c> is never
+        /// implicitly forwarded. <c>null</c> for every other name, a raw parser tree, and a
+        /// host-built one. Decides nothing at runtime; carried in an equality-transparent
+        /// slot, so <c>with</c> copies keep it and record equality, hashing, and printing
+        /// ignore it.
+        /// </summary>
+        internal MathCallableFacts? ElaboratedMathMember
+        {
+            get => _elaboratedMathMember.Value;
+            init => _elaboratedMathMember = new(value);
+        }
+    }
 
     /// <summary>
     /// Dot-call syntax. <c>DotCall(a, "f", args?)</c> represents <c>a.f</c> or <c>a.f(args)</c>

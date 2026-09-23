@@ -1557,26 +1557,13 @@ internal static class ImplicitArgumentResolver
                 break;
 
             case Expr.Call(var func, var callArgs) call:
-                // func: if it's a direct Resolve, it's explicitly called - mark as call position.
-                // Otherwise recurse normally (e.g. Prop target is not in call position).
-                if (func is Expr.Resolve)
+                // Every callee is consumed on the algorithm channel, including
+                // the qualified native reference in `(Math.Abs)(A)`. Its own
+                // parameters are supplied by this call, never implicitly lifted.
+                CollectImplicitDeps(func, paramMap, seen, deps, inCallPosition: true, memo);
+                if (call.HasRegistryProvenStrictValueArguments(paramMap.ContainsKey))
                 {
-                    CollectImplicitDeps(func, paramMap, seen, deps, inCallPosition: true, memo);
-
-                    // A Math-alias call has the SAME registry-proven strict-value
-                    // argument contract as the written `Math.X(...)` dot shape
-                    // (the DotCall arm below), classified by the shared alias-call
-                    // twin: its argument slots are ordinary value positions and
-                    // contribute implicit dependencies. Ordinary neutral call
-                    // arguments contribute none.
-                    if (call.HasRegistryProvenStrictValueArguments(paramMap.ContainsKey))
-                    {
-                        CollectArgumentImplicitDeps(callArgs, paramMap, seen, deps, memo);
-                    }
-                }
-                else
-                {
-                    CollectImplicitDeps(func, paramMap, seen, deps, inCallPosition: false, memo);
+                    CollectArgumentImplicitDeps(callArgs, paramMap, seen, deps, memo);
                 }
                 break;
 
@@ -1622,10 +1609,13 @@ internal static class ImplicitArgumentResolver
                         deps.Add((callableKey, signature));
                 }
 
-                // DotCall target is in algorithm position (resolveAlg, not eval).
-                CollectImplicitDeps(dotCall.Target, paramMap, seen, deps, inCallPosition: true, memo);
+                // DotCall target is in algorithm position (resolveAlg, not eval) — unless the
+                // edge must fall back to a Math member, where it is the leading ARGUMENT of the
+                // call `x(receiver, args)` (dotted-call equivalence) and a strict value position.
+                var strictFallback = dotCall.HasRegistryProvenStrictValueFallback(paramMap.ContainsKey);
+                CollectImplicitDeps(dotCall.Target, paramMap, seen, deps, inCallPosition: !strictFallback, memo);
                 if (dotCall.Args is { } dotArgs
-                    && dotCall.HasRegistryProvenStrictValueArguments(paramMap.ContainsKey))
+                    && (strictFallback || dotCall.HasRegistryProvenStrictValueArguments(paramMap.ContainsKey)))
                 {
                     CollectArgumentImplicitDeps(dotArgs, paramMap, seen, deps, memo);
                 }
@@ -1797,18 +1787,7 @@ internal static class ImplicitArgumentResolver
                 => LiftBareBuiltinDotCall(
                     bareDotCall, bareBuiltinKey, builtinSignature, paramMap, context, memos, inStrictValueDemand),
 
-            // DotCall target is in algorithm position (resolveAlg, not eval).
-            // The stored lexical fallback is a Resolve/Param leaf and needs
-            // no implicit-call rewriting; `with` carries it forward.
-            Expr.DotCall dotCall => dotCall with
-            {
-                Target = RewriteImplicitCalls(dotCall.Target, paramMap, context, inCallPosition: true, memos),
-                Args = dotCall.Args is { } dotArgs
-                    ? dotCall.HasRegistryProvenStrictValueArguments(paramMap.ContainsKey)
-                        ? ProcessValueDemandingArgumentBundle(dotArgs, paramMap, context, memos)
-                        : ProcessArgumentBundle(dotArgs, paramMap, memos)
-                    : null,
-            },
+            Expr.DotCall dotCall => RewriteDotCall(dotCall, paramMap, context, memos),
 
             Expr.Grace(var inner, _) => RewriteImplicitCalls(inner, paramMap, context, inCallPosition, memos, inStrictValueDemand),
 
@@ -1891,10 +1870,10 @@ internal static class ImplicitArgumentResolver
     }
 
     /// <summary>
-    /// The Call arm of <see cref="RewriteImplicitCallsCore"/>. A direct Resolve callee is
-    /// left as written (explicitly called); any other callee recurses normally. A Math-alias
-    /// call shares the written <c>Math.X(...)</c> dot shape's registry-proven strict-value
-    /// argument contract, classified by the shared alias-call twin: its argument slots are
+    /// The Call arm of <see cref="RewriteImplicitCallsCore"/>. Every callee is in algorithm
+    /// position. A resolved Math callable, including a qualified native reference used as
+    /// an ordinary callee, shares the written <c>Math.X(...)</c> dot shape's strict-value
+    /// argument contract, classified by the shared identity helper: its argument slots are
     /// ordinary value positions and lift. Every other call keeps NEUTRAL argument processing
     /// so bare higher-order references survive.
     /// </summary>
@@ -1904,13 +1883,42 @@ internal static class ImplicitArgumentResolver
         ImplicitRewriteContext context,
         ResolverWalkMemos memos)
     {
-        var newFunc = call.Function is Expr.Resolve
-            ? call.Function
-            : RewriteImplicitCalls(call.Function, paramMap, context, inCallPosition: false, memos);
+        var newFunc = RewriteImplicitCalls(call.Function, paramMap, context, inCallPosition: true, memos);
         var newArgs = call.HasRegistryProvenStrictValueArguments(paramMap.ContainsKey)
             ? ProcessValueDemandingArgumentBundle(call.Args, paramMap, context, memos)
             : ProcessArgumentBundle(call.Args, paramMap, memos);
         return new Expr.Call(newFunc, newArgs) { Span = call.Span };
+    }
+
+    /// <summary>
+    /// The DotCall arm of <see cref="RewriteImplicitCallsCore"/>. The target is in algorithm
+    /// position (resolveAlg, not eval) and the written arguments are neutral — except where
+    /// the edge IS a Math member's call: the canonical <c>Math.X(...)</c> shape makes its
+    /// arguments strict value positions, and a lexical fallback that must be selected on a
+    /// Math member makes the edge the call <c>x(receiver, args)</c> (dotted-call
+    /// equivalence holds through elaboration), so the receiver and the arguments lift and
+    /// report exactly as that direct call's arguments do. The stored lexical fallback is a
+    /// Resolve/Param leaf and needs no implicit-call rewriting; <c>with</c> carries it
+    /// forward.
+    /// </summary>
+    private static Expr RewriteDotCall(
+        Expr.DotCall dotCall,
+        Dictionary<string, CallableSignature> paramMap,
+        ImplicitRewriteContext context,
+        ResolverWalkMemos memos)
+    {
+        var strictFallback = dotCall.HasRegistryProvenStrictValueFallback(paramMap.ContainsKey);
+        return dotCall with
+        {
+            Target = strictFallback
+                ? RewriteImplicitCalls(dotCall.Target, paramMap, context, inCallPosition: false, memos, inStrictValueDemand: true)
+                : RewriteImplicitCalls(dotCall.Target, paramMap, context, inCallPosition: true, memos),
+            Args = dotCall.Args is { } dotArgs
+                ? strictFallback || dotCall.HasRegistryProvenStrictValueArguments(paramMap.ContainsKey)
+                    ? ProcessValueDemandingArgumentBundle(dotArgs, paramMap, context, memos)
+                    : ProcessArgumentBundle(dotArgs, paramMap, memos)
+                : null,
+        };
     }
 
     /// <summary>

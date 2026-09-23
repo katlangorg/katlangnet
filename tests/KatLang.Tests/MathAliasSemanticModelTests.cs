@@ -294,10 +294,14 @@ public class MathAliasSemanticModelTests
             string.Join(Environment.NewLine, parseResult.Diagnostics.Select(diagnostic => diagnostic.Message)));
 
         var model = SemanticModelBuilder.Build(parseResult);
-        // Configured host operations currently expose no editor PropertyInfo;
-        // in particular, canonical-looking spelling alone cannot fabricate a
-        // Math alias target.
-        Assert.Null(model.FindPropertyAt(new SourcePosition(1, 1)));
+        // The model resolves against the host-extended prelude the parse used (audit #8),
+        // so the operation is a prelude member with its own PropertyInfo — and
+        // canonical-looking spelling alone still cannot fabricate a Math alias target.
+        var resolution = Assert.IsType<IdentifierResolution>(model.FindResolutionAt(new SourcePosition(1, 1)));
+        Assert.Equal(IdentifierClassification.Builtin, resolution.Classification);
+        var property = Assert.IsType<PropertyInfo>(model.FindPropertyAt(new SourcePosition(1, 1)));
+        Assert.Equal("Sin", property.Name);
+        Assert.Null(property.AliasTarget);
     }
 
     [Fact]
