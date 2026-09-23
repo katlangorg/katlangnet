@@ -3,8 +3,8 @@
 KatLang's random operations — `Math.Random` / `random` and `Math.RandomInt` /
 `randomInt` — draw from ONE run-scoped random stream. A host may seed that stream
 (`RunOptions.RandomSeed`, the direct `Evaluator.Run*` overloads that take a
-`long? randomSeed`, and the CLI's `--seed <integer>`), in which case the run's
-random values are reproducible; without a seed the stream starts from fresh
+`long? randomSeed`, and the CLI's `--random-seed <integer>`), in which case the
+run's random values are reproducible; without a seed the stream starts from fresh
 entropy and evaluation stays nondeterministic. This document pins the INTERNAL
 stream contract exactly, because a seed makes every raw word the evaluator
 consumes observable.
@@ -126,7 +126,7 @@ formed; both samplers are exactly the pre-seeding algorithms.
 The stream is run-scoped MUTABLE state, exactly like the budget counters:
 
 ```
-RunOptions.RandomSeed  (or a direct Evaluator.Run* randomSeed, or CLI --seed)
+RunOptions.RandomSeed  (or a direct Evaluator.Run* randomSeed, or CLI --random-seed)
         ↓
 KatLangEngine / Evaluator entry point
         ↓

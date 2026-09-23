@@ -11,9 +11,9 @@ internal static class HelpText
     // them to those constants.
     public const string Usage = """
         Usage:
-          katlang run <file> [--allow-loading] [--seed <integer>]
+          katlang run <file> [--allow-loading] [--random-seed <integer>]
                              [--display-decimals <integer>]
-          katlang eval <source> [--allow-loading] [--seed <integer>]
+          katlang eval <source> [--allow-loading] [--random-seed <integer>]
                                 [--display-decimals <integer>]
           katlang check <file> [--allow-loading]
 
@@ -29,7 +29,8 @@ internal static class HelpText
                              KatLang's source-length limits still apply to
                              the decoded module text.
 
-          --seed <integer>   Seed KatLang's random operations (Math.Random,
+          --random-seed <integer>
+                             Seed KatLang's random operations (Math.Random,
                              random, Math.RandomInt, randomInt) so that run and
                              eval reproduce the same random values for the same
                              program, seed, and KatLang version. Any signed

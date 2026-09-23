@@ -15,13 +15,13 @@ public class DisplayDecimalsCliReviewTests
         {
             foreach (var (token, expected) in new[] { ("0", "0"), ("1", "0.1"), ("98", "0." + new string('1', 34) + new string('0', 64)), ("99", "0." + new string('1', 34) + new string('0', 65)), ("+2", "0.11"), ("02", "0.11"), ("-0", "0") })
             {
-                var result = await Cli.InvokeAsync("eval", "--display-decimals", token, "--seed", token, "1 / 9");
+                var result = await Cli.InvokeAsync("eval", "--display-decimals", token, "--random-seed", token, "1 / 9");
                 Assert.Equal(0, result.ExitCode);
                 Assert.Equal("", result.Error);
                 Assert.Equal(expected, result.TrimmedOutput);
             }
             foreach (var token in new[] { "٢", "２", "−2", " 2", "2\t", "1e2", "0x10", "1.5", "+", "999999999999999999999999", "-999999999999999999999999" })
-            foreach (var option in new[] { "--seed", "--display-decimals" })
+            foreach (var option in new[] { "--random-seed", "--display-decimals" })
             {
                 var result = await Cli.InvokeAsync("eval", "1", option, token);
                 Assert.Equal(1, result.ExitCode);
@@ -42,7 +42,7 @@ public class DisplayDecimalsCliReviewTests
     [InlineData("--version")]
     public async Task GlobalOptions_RejectEveryCurrentOptionInEitherOrder_ButAllowAnEmptyTerminator(string global)
     {
-        foreach (var option in new[] { new[] { "--allow-loading" }, ["--seed", "0"], ["--display-decimals", "0"] })
+        foreach (var option in new[] { new[] { "--allow-loading" }, ["--random-seed", "0"], ["--display-decimals", "0"] })
         foreach (var args in new[] { option.Prepend(global).ToArray(), option.Append(global).ToArray() })
         {
             var result = await Cli.InvokeAsync(args);
@@ -68,7 +68,7 @@ public class DisplayDecimalsCliReviewTests
     [Theory]
     [InlineData("abc")]
     [InlineData("100")]
-    [InlineData("--seed")]
+    [InlineData("--random-seed")]
     [InlineData("--allow-loading")]
     public async Task BadDisplayOption_PrecedesFileIoAndModuleAcquisition(string token)
     {
@@ -96,7 +96,7 @@ public class DisplayDecimalsCliReviewTests
     {
         const string url = "https://katlang.org/display-audit.kat";
         const string source = "open 'https://katlang.org/display-audit.kat'\nDisplayDecimals = 0\nThird, randomInt(2, 3)";
-        var groups = new[] { new[] { "--display-decimals", "99" }, ["--seed", "123"], ["--allow-loading"] };
+        var groups = new[] { new[] { "--display-decimals", "99" }, ["--random-seed", "123"], ["--allow-loading"] };
         for (var a = 0; a < 3; a++)
         for (var b = 0; b < 3; b++)
         {

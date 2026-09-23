@@ -16,7 +16,7 @@ internal enum CliCommandKind
 /// The command options a command line wrote, each ABSENT by default, so <c>default</c> is
 /// exactly "no command option was written". That is the test <c>--help</c> and
 /// <c>--version</c> use to stand alone, so a new option joins it by being a field here, never
-/// by being listed again. <see cref="RandomSeed"/> (<c>--seed</c>) and
+/// by being listed again. <see cref="RandomSeed"/> (<c>--random-seed</c>) and
 /// <see cref="DisplayDecimals"/> (<c>--display-decimals</c>) configure evaluation and are
 /// present only for the evaluating commands (<c>run</c> and <c>eval</c>).
 /// </summary>
@@ -43,7 +43,7 @@ internal sealed record CommandLineParseResult(CliInvocation? Invocation, string?
 
 /// <summary>
 /// The whole v1 grammar:
-/// <c>katlang (run &lt;file&gt; | eval &lt;source&gt;) [--allow-loading] [--seed &lt;integer&gt;] [--display-decimals &lt;integer&gt;]</c>,
+/// <c>katlang (run &lt;file&gt; | eval &lt;source&gt;) [--allow-loading] [--random-seed &lt;integer&gt;] [--display-decimals &lt;integer&gt;]</c>,
 /// <c>katlang check &lt;file&gt; [--allow-loading]</c>,
 /// plus the standalone <c>--help</c> and <c>--version</c> flags. It is small
 /// enough that a hand-written parser is clearer — and dependency-free — compared
@@ -54,9 +54,9 @@ internal sealed record CommandLineParseResult(CliInvocation? Invocation, string?
 /// independently of their order. Every option may be written at most once. ONLY a
 /// <c>--</c> prefix marks an option; everything after the terminator is positional.</para>
 ///
-/// <para>The value-taking options (<c>--seed</c>, <c>--display-decimals</c>) share ONE value
+/// <para>The value-taking options (<c>--random-seed</c>, <c>--display-decimals</c>) share ONE value
 /// rule (<see cref="TryTakeValue"/>) and ONE integer spelling (<see cref="IntegerValueStyle"/>).
-/// The value is the NEXT token only (<c>--seed=5</c> is an unknown option like any other
+/// The value is the NEXT token only (<c>--random-seed=5</c> is an unknown option like any other
 /// unrecognized <c>--</c> spelling). A following token that is missing, the bare <c>--</c>
 /// terminator, or another <c>--</c> option is a missing value, never consumed; a single-dash
 /// token such as <c>-5</c> is a value (single dashes never introduce options in this CLI), and
@@ -64,8 +64,8 @@ internal sealed record CommandLineParseResult(CliInvocation? Invocation, string?
 /// in the invariant culture with an optional leading sign
 /// (<see cref="NumberStyles.AllowLeadingSign"/>), so <c>+5</c> and <c>05</c> spell 5;
 /// decimals, exponents, hex, digit separators, whitespace, and overflow are rejected, and so is
-/// an integer outside the option's range — <c>--seed</c> accepts every signed 64-bit integer,
-/// <c>--display-decimals</c> exactly KatLang's display-decimals range
+/// an integer outside the option's range — <c>--random-seed</c> accepts every signed 64-bit
+/// integer, <c>--display-decimals</c> exactly KatLang's display-decimals range
 /// (0 through <see cref="RunOptions.MaxDisplayDecimals"/>), never clamped. A value is parsed and
 /// validated where it appears, BEFORE the command it applies to is known, so a malformed value
 /// is reported ahead of <c>check</c>'s refusal of the option.</para>
@@ -75,7 +75,7 @@ internal static class CommandLine
     public const string ProgramName = "katlang";
 
     public const string AllowLoadingOption = "--allow-loading";
-    public const string SeedOption = "--seed";
+    public const string RandomSeedOption = "--random-seed";
     public const string DisplayDecimalsOption = "--display-decimals";
     public const string HelpOption = "--help";
     public const string VersionOption = "--version";
@@ -120,15 +120,15 @@ internal static class CommandLine
 
                     allowLoading = true;
                     break;
-                case SeedOption:
+                case RandomSeedOption:
                     if (randomSeed is not null)
-                        return SpecifiedMoreThanOnce(SeedOption);
+                        return SpecifiedMoreThanOnce(RandomSeedOption);
 
                     if (!TryTakeValue(args, ref index, out var seedText))
-                        return RequiresAValue(SeedOption);
+                        return RequiresAValue(RandomSeedOption);
 
                     if (!long.TryParse(seedText, IntegerValueStyle, CultureInfo.InvariantCulture, out var seed))
-                        return RequiresAnIntegerBetween(SeedOption, long.MinValue, long.MaxValue, seedText);
+                        return RequiresAnIntegerBetween(RandomSeedOption, long.MinValue, long.MaxValue, seedText);
 
                     randomSeed = seed;
                     break;
@@ -211,13 +211,13 @@ internal static class CommandLine
         if (positionals.Count > 2)
             return CommandLineParseResult.Fail($"unexpected argument '{positionals[2]}'.");
 
-        // --seed and --display-decimals configure evaluation; `check` validates without
+        // --random-seed and --display-decimals configure evaluation; `check` validates without
         // evaluating (and so displays nothing), so they have nothing to apply to there and
         // are refused rather than ignored — the seed first when both were written.
         if (kind == CliCommandKind.Check)
         {
             if (randomSeed is not null)
-                return NotValidForCheck(SeedOption);
+                return NotValidForCheck(RandomSeedOption);
 
             if (displayDecimals is not null)
                 return NotValidForCheck(DisplayDecimalsOption);

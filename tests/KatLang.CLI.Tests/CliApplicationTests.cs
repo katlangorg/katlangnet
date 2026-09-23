@@ -43,14 +43,42 @@ public sealed class CliApplicationTests
     [Fact]
     public void Readme_ReportsTheShippedTransportBounds()
     {
+        var readme = File.ReadAllText(RepositoryFile("README.md"));
+        Assert.Contains($"1 MiB ({HttpSourceDownloader.MaxResponseBodyBytes.ToString("N0", System.Globalization.CultureInfo.InvariantCulture)} content bytes)", readme);
+        Assert.Contains($"{HttpSourceDownloader.DownloadTimeout.TotalSeconds:0}-second cancellation deadline", readme);
+    }
+
+    /// <summary>
+    /// The random-seed option has ONE spelling. The pre-release <c>--seed</c> was removed without
+    /// an alias, so a maintained document, generator guidance, or the release smoke naming it would
+    /// teach an option the CLI rejects. The negative tests of this project name it on purpose and
+    /// are not scanned.
+    /// </summary>
+    [Theory]
+    [InlineData("README.md")]
+    [InlineData("tutorial.md")]
+    [InlineData("AGENTS.md")]
+    [InlineData(".github/agents/katlang-generator.agent.md")]
+    [InlineData("experimental/prompts/katlang-generator.txt")]
+    [InlineData(".github/workflows/release.yml")]
+    [InlineData("docs/design/seeded-randomness-2026-09.md")]
+    [InlineData("docs/design/language-rules/evaluator-and-hosting.md")]
+    [InlineData("src/KatLang/SEMANTIC-ALIGNMENT.md")]
+    public void MaintainedDocs_NeverNameTheRemovedSeedSpelling(string relativePath)
+    {
+        var text = File.ReadAllText(RepositoryFile(relativePath));
+
+        Assert.DoesNotContain("--seed", text, StringComparison.Ordinal);
+    }
+
+    private static string RepositoryFile(string relativePath)
+    {
         var directory = new DirectoryInfo(AppContext.BaseDirectory);
         while (directory is not null && !File.Exists(Path.Combine(directory.FullName, "KatLang.slnx")))
             directory = directory.Parent;
         Assert.NotNull(directory);
 
-        var readme = File.ReadAllText(Path.Combine(directory.FullName, "README.md"));
-        Assert.Contains($"1 MiB ({HttpSourceDownloader.MaxResponseBodyBytes.ToString("N0", System.Globalization.CultureInfo.InvariantCulture)} content bytes)", readme);
-        Assert.Contains($"{HttpSourceDownloader.DownloadTimeout.TotalSeconds:0}-second cancellation deadline", readme);
+        return Path.Combine(directory.FullName, relativePath);
     }
 
     [Fact]
@@ -677,7 +705,7 @@ public sealed class CliApplicationTests
         "P = Math.RandomInt(0, 1e30)\nMath.Random(0, 1), random(2, 6), P, P, P(), randomInt(-5, 5)";
 
     /// <summary>
-    /// The CLI adds no randomness semantics of its own: <c>--seed</c> is exactly
+    /// The CLI adds no randomness semantics of its own: <c>--random-seed</c> is exactly
     /// <see cref="RunOptions.RandomSeed"/>, so the package's own seeded display is the
     /// expectation, never a captured literal.
     /// </summary>
@@ -688,14 +716,23 @@ public sealed class CliApplicationTests
 
     [Theory]
     [InlineData("0", 0L)]
+    [InlineData("-0", 0L)]
+    [InlineData("+0", 0L)]
+    [InlineData("1", 1L)]
+    [InlineData("-1", -1L)]
+    [InlineData("+1", 1L)]
+    [InlineData("42", 42L)]
+    [InlineData("-42", -42L)]
+    [InlineData("+42", 42L)]
+    [InlineData("00042", 42L)]
     [InlineData("-5", -5L)]
     [InlineData("+5", 5L)]
     [InlineData("-9223372036854775808", long.MinValue)]
     [InlineData("9223372036854775807", long.MaxValue)]
-    public async Task Eval_Seed_AcceptsEverySignedLongSpelling_AndIsReproducible(string token, long seed)
+    public async Task Eval_RandomSeed_AcceptsEverySignedLongSpelling_AndIsReproducible(string token, long seed)
     {
-        var first = await Cli.InvokeAsync("eval", RandomSource, "--seed", token);
-        var second = await Cli.InvokeAsync("eval", RandomSource, "--seed", token);
+        var first = await Cli.InvokeAsync("eval", RandomSource, "--random-seed", token);
+        var second = await Cli.InvokeAsync("eval", RandomSource, "--random-seed", token);
 
         Assert.Equal(Success, first.ExitCode);
         Assert.Equal("", first.Error);
@@ -704,10 +741,10 @@ public sealed class CliApplicationTests
     }
 
     [Fact]
-    public async Task Seed_PlusAndMinusFive_AreDifferentStreams_AndUnseededRunsDiffer()
+    public async Task RandomSeed_PlusAndMinusFive_AreDifferentStreams_AndUnseededRunsDiffer()
     {
-        var plus = await Cli.InvokeAsync("eval", RandomSource, "--seed", "+5");
-        var minus = await Cli.InvokeAsync("eval", RandomSource, "--seed", "-5");
+        var plus = await Cli.InvokeAsync("eval", RandomSource, "--random-seed", "+5");
+        var minus = await Cli.InvokeAsync("eval", RandomSource, "--random-seed", "-5");
         Assert.Equal(Success, plus.ExitCode);
         Assert.Equal(Success, minus.ExitCode);
         Assert.NotEqual(plus.TrimmedOutput, minus.TrimmedOutput);
@@ -726,13 +763,13 @@ public sealed class CliApplicationTests
     }
 
     [Fact]
-    public async Task Run_Seed_ReproducesTheSameOutput_AndAgreesWithEval()
+    public async Task Run_RandomSeed_ReproducesTheSameOutput_AndAgreesWithEval()
     {
         using var file = new TempSourceFile(RandomSource);
 
-        var first = await Cli.InvokeAsync("run", file.Path, "--seed", "42");
-        var second = await Cli.InvokeAsync("run", file.Path, "--seed", "42");
-        var eval = await Cli.InvokeAsync("eval", RandomSource, "--seed", "42");
+        var first = await Cli.InvokeAsync("run", file.Path, "--random-seed", "42");
+        var second = await Cli.InvokeAsync("run", file.Path, "--random-seed", "42");
+        var eval = await Cli.InvokeAsync("eval", RandomSource, "--random-seed", "42");
 
         Assert.Equal(Success, first.ExitCode);
         Assert.Equal("", first.Error);
@@ -742,32 +779,41 @@ public sealed class CliApplicationTests
     }
 
     [Fact]
-    public async Task Seed_MayAppearAnywhereAmongTheArguments()
+    public async Task RandomSeed_MayAppearAnywhereAmongTheArguments()
     {
         using var file = new TempSourceFile(RandomSource);
+        var expected = SeededEngineDisplay(RandomSource, 7);
 
-        var before = await Cli.InvokeAsync("--seed", "7", "run", file.Path);
-        var between = await Cli.InvokeAsync("run", "--seed", "7", file.Path);
-        var after = await Cli.InvokeAsync("run", file.Path, "--seed", "7");
+        foreach (var args in new[]
+                 {
+                     new[] { "--random-seed", "7", "run", file.Path },
+                     new[] { "run", "--random-seed", "7", file.Path },
+                     new[] { "run", file.Path, "--random-seed", "7" },
+                     new[] { "--random-seed", "7", "run", "--", file.Path },
+                     new[] { "--random-seed", "7", "eval", RandomSource },
+                     new[] { "eval", "--random-seed", "7", RandomSource },
+                     new[] { "eval", RandomSource, "--random-seed", "7" },
+                     new[] { "eval", "--random-seed", "7", "--", RandomSource },
+                 })
+        {
+            var result = await Cli.InvokeAsync(args);
 
-        Assert.Equal(Success, before.ExitCode);
-        Assert.Equal(Success, between.ExitCode);
-        Assert.Equal(Success, after.ExitCode);
-        Assert.Equal(before.TrimmedOutput, between.TrimmedOutput);
-        Assert.Equal(before.TrimmedOutput, after.TrimmedOutput);
-        Assert.Equal(SeededEngineDisplay(RandomSource, 7), before.TrimmedOutput);
+            Assert.Equal(Success, result.ExitCode);
+            Assert.Equal("", result.Error);
+            Assert.Equal(expected, result.TrimmedOutput);
+        }
     }
 
     [Fact]
-    public async Task Seed_AndAllowLoading_AreOrthogonal_OnALoadedRandomModule()
+    public async Task RandomSeed_AndAllowLoading_AreOrthogonal_OnALoadedRandomModule()
     {
         const string url = "https://katlang.org/demo/cli-seed-lib.kat";
         const string module = "public Val = Math.RandomInt(0, 1e30)";
         const string source = $"open '{url}'\nVal, Math.Random(0, 1)";
         var modules = new Dictionary<string, string> { [url] = module };
 
-        var first = await Cli.InvokeWithDownloaderAsync(new RecordingDownloader(modules).DownloadAsync, "eval", source, "--allow-loading", "--seed", "9");
-        var second = await Cli.InvokeWithDownloaderAsync(new RecordingDownloader(modules).DownloadAsync, "--seed", "9", "eval", source, "--allow-loading");
+        var first = await Cli.InvokeWithDownloaderAsync(new RecordingDownloader(modules).DownloadAsync, "eval", source, "--allow-loading", "--random-seed", "9");
+        var second = await Cli.InvokeWithDownloaderAsync(new RecordingDownloader(modules).DownloadAsync, "--random-seed", "9", "eval", source, "--allow-loading");
 
         Assert.Equal(Success, first.ExitCode);
         Assert.Equal("", first.Error);
@@ -781,24 +827,30 @@ public sealed class CliApplicationTests
             first.TrimmedOutput);
 
         // Loading stays disabled without its flag, seed or no seed.
-        var unloaded = await Cli.InvokeWithDownloaderAsync(new RecordingDownloader(modules).DownloadAsync, "eval", source, "--seed", "9");
+        var unloaded = await Cli.InvokeWithDownloaderAsync(new RecordingDownloader(modules).DownloadAsync, "eval", source, "--random-seed", "9");
         Assert.Equal(Failure, unloaded.ExitCode);
         Assert.Contains("module elaboration is unavailable", unloaded.TrimmedError);
     }
 
     [Theory]
-    [InlineData(new[] { "eval", "1", "--seed", "1", "--seed", "2" }, "option '--seed' was specified more than once.")]
-    [InlineData(new[] { "eval", "1", "--seed" }, "option '--seed' requires a value.")]
-    [InlineData(new[] { "eval", "1", "--seed", "--allow-loading" }, "option '--seed' requires a value.")]
-    [InlineData(new[] { "eval", "1", "--seed", "--" }, "option '--seed' requires a value.")]
+    [InlineData(new[] { "eval", "1", "--random-seed", "1", "--random-seed", "2" }, "option '--random-seed' was specified more than once.")]
+    [InlineData(new[] { "eval", "1", "--random-seed", "1", "--random-seed", "1" }, "option '--random-seed' was specified more than once.")]
+    [InlineData(new[] { "eval", "1", "--random-seed" }, "option '--random-seed' requires a value.")]
+    [InlineData(new[] { "eval", "1", "--random-seed", "--allow-loading" }, "option '--random-seed' requires a value.")]
+    [InlineData(new[] { "eval", "1", "--random-seed", "--display-decimals", "2" }, "option '--random-seed' requires a value.")]
+    [InlineData(new[] { "eval", "1", "--random-seed", "--" }, "option '--random-seed' requires a value.")]
     // A following non-option token is always TRIED as the value (single dashes and
     // words alike): the command name is not skipped over to find a number.
-    [InlineData(new[] { "--seed", "eval", "1" }, "option '--seed' requires an integer between -9223372036854775808 and 9223372036854775807; got 'eval'.")]
-    [InlineData(new[] { "eval", "1", "--seed=5" }, "unknown option '--seed=5'.")]
-    [InlineData(new[] { "--help", "--seed", "5" }, "option '--help' cannot be combined with other arguments.")]
-    [InlineData(new[] { "--version", "--seed", "5" }, "option '--version' cannot be combined with other arguments.")]
-    [InlineData(new[] { "--seed", "5", "--help" }, "option '--help' cannot be combined with other arguments.")]
-    public async Task Seed_MalformedInvocations_ReportUsageErrors(string[] args, string expected)
+    [InlineData(new[] { "--random-seed", "eval", "1" }, "option '--random-seed' requires an integer between -9223372036854775808 and 9223372036854775807; got 'eval'.")]
+    // The value is the next token only: a joined value is an unknown option.
+    [InlineData(new[] { "eval", "1", "--random-seed=42" }, "unknown option '--random-seed=42'.")]
+    // After the terminator the spelling is a positional, here the command.
+    [InlineData(new[] { "--", "--random-seed", "42" }, "unknown command '--random-seed'.")]
+    [InlineData(new[] { "--help", "--random-seed", "42" }, "option '--help' cannot be combined with other arguments.")]
+    [InlineData(new[] { "--random-seed", "42", "--help" }, "option '--help' cannot be combined with other arguments.")]
+    [InlineData(new[] { "--version", "--random-seed", "42" }, "option '--version' cannot be combined with other arguments.")]
+    [InlineData(new[] { "--random-seed", "42", "--version" }, "option '--version' cannot be combined with other arguments.")]
+    public async Task RandomSeed_MalformedInvocations_ReportUsageErrors(string[] args, string expected)
     {
         var result = await Cli.InvokeAsync(args);
 
@@ -808,8 +860,34 @@ public sealed class CliApplicationTests
         Assert.Contains("Run 'katlang --help' for usage.", result.TrimmedError);
     }
 
+    /// <summary>
+    /// The pre-release <c>--seed</c> spelling was removed, not aliased: it is an unknown option
+    /// in every form and position, never a seed, never a deprecation warning, and never a second
+    /// spelling of <c>--random-seed</c> (so it is not reported as a repeat of it either).
+    /// </summary>
+    [Theory]
+    [InlineData(new[] { "eval", "1", "--seed", "42" }, "--seed")]
+    [InlineData(new[] { "eval", "1", "--seed" }, "--seed")]
+    [InlineData(new[] { "eval", "1", "--seed=42" }, "--seed=42")]
+    [InlineData(new[] { "--seed", "42", "eval", "1" }, "--seed")]
+    [InlineData(new[] { "run", "missing-seed-audit.kat", "--seed", "42" }, "--seed")]
+    [InlineData(new[] { "check", "missing-seed-audit.kat", "--seed", "42" }, "--seed")]
+    [InlineData(new[] { "eval", "1", "--random-seed", "42", "--seed", "42" }, "--seed")]
+    [InlineData(new[] { "--seed", "42", "--help" }, "--seed")]
+    public async Task RemovedSeedSpelling_IsAnUnknownOption(string[] args, string option)
+    {
+        var result = await Cli.InvokeAsync(args);
+
+        Assert.Equal(Failure, result.ExitCode);
+        Assert.Equal("", result.Output);
+        Assert.Equal($"katlang: unknown option '{option}'.\nRun 'katlang --help' for usage.", result.TrimmedError);
+    }
+
     [Theory]
     [InlineData("abc")]
+    [InlineData("")]
+    [InlineData("+")]
+    [InlineData("-")]
     [InlineData("1.5")]
     [InlineData("1e3")]
     [InlineData("0x10")]
@@ -820,29 +898,38 @@ public sealed class CliApplicationTests
     [InlineData("9223372036854775808")]  // long.MaxValue + 1
     [InlineData("-9223372036854775809")] // long.MinValue - 1
     [InlineData("18446744073709551615")] // ulong.MaxValue
-    public async Task Seed_InvalidValues_AreRejectedWithTheIntegerRangeMessage(string value)
+    public async Task RandomSeed_InvalidValues_AreRejectedWithTheIntegerRangeMessage(string value)
     {
-        var result = await Cli.InvokeAsync("eval", "1", "--seed", value);
+        var result = await Cli.InvokeAsync("eval", "1", "--random-seed", value);
 
         Assert.Equal(Failure, result.ExitCode);
         Assert.Equal("", result.Output);
-        Assert.Contains(
-            $"option '--seed' requires an integer between -9223372036854775808 and 9223372036854775807; got '{value}'.",
+        Assert.Equal(
+            $"katlang: option '--random-seed' requires an integer between -9223372036854775808 and 9223372036854775807; got '{value}'.\n"
+            + "Run 'katlang --help' for usage.",
             result.TrimmedError);
-        Assert.Contains("Run 'katlang --help' for usage.", result.TrimmedError);
     }
 
     [Fact]
-    public async Task Check_RefusesTheSeed_BecauseCheckDoesNotEvaluate()
+    public async Task Check_RefusesTheRandomSeed_BecauseCheckDoesNotEvaluate()
     {
         using var file = new TempSourceFile(RandomSource);
+        const string refusal = "katlang: option '--random-seed' is not valid for 'check': check does not evaluate.\n"
+            + "Run 'katlang --help' for usage.";
 
-        var result = await Cli.InvokeAsync("check", file.Path, "--seed", "5");
+        foreach (var args in new[]
+                 {
+                     new[] { "check", file.Path, "--random-seed", "5" },
+                     new[] { "--random-seed", "0", "check", file.Path },
+                     new[] { "check", "--random-seed", "-1", file.Path, "--allow-loading" },
+                 })
+        {
+            var result = await Cli.InvokeAsync(args);
 
-        Assert.Equal(Failure, result.ExitCode);
-        Assert.Equal("", result.Output);
-        Assert.Contains("option '--seed' is not valid for 'check': check does not evaluate.", result.TrimmedError);
-        Assert.Contains("Run 'katlang --help' for usage.", result.TrimmedError);
+            Assert.Equal(Failure, result.ExitCode);
+            Assert.Equal("", result.Output);
+            Assert.Equal(refusal, result.TrimmedError);
+        }
 
         // The same file still checks cleanly without the option.
         var plain = await Cli.InvokeAsync("check", file.Path);
@@ -850,11 +937,11 @@ public sealed class CliApplicationTests
     }
 
     [Fact]
-    public async Task Check_MalformedSeed_IsReportedBeforeTheApplicabilityRefusal()
+    public async Task Check_MalformedRandomSeed_IsReportedBeforeTheApplicabilityRefusal()
     {
         using var file = new TempSourceFile(RandomSource);
 
-        var result = await Cli.InvokeAsync("check", file.Path, "--seed", "abc");
+        var result = await Cli.InvokeAsync("check", file.Path, "--random-seed", "abc");
 
         Assert.Equal(Failure, result.ExitCode);
         Assert.Contains("requires an integer between", result.TrimmedError);
@@ -862,42 +949,78 @@ public sealed class CliApplicationTests
     }
 
     [Fact]
-    public async Task DoubleDash_KeepsSeedTokensPositional()
+    public async Task DoubleDash_KeepsRandomSeedTokensPositional()
     {
         using var file = new TempSourceFile("1\n");
 
-        // After the terminator `--seed` is a positional: a third positional for run.
-        var run = await Cli.InvokeAsync("run", file.Path, "--", "--seed", "5");
+        // After the terminator `--random-seed` is a positional: a third positional for run.
+        var run = await Cli.InvokeAsync("run", file.Path, "--", "--random-seed", "5");
         Assert.Equal(Failure, run.ExitCode);
-        Assert.Contains("unexpected argument '--seed'.", run.TrimmedError);
+        Assert.Contains("unexpected argument '--random-seed'.", run.TrimmedError);
 
-        // For eval a post-terminator `--seed` is SOURCE (double negation of the
-        // unresolved name `seed`), never an option and never a missing value.
-        var eval = await Cli.InvokeAsync("eval", "--", "--seed");
+        // For eval a post-terminator `--random-seed` is SOURCE, never an option and never a
+        // missing value: the CLI reports exactly what KatLang reports for that text.
+        var eval = await Cli.InvokeAsync("eval", "--", "--random-seed");
         Assert.Equal(Failure, eval.ExitCode);
+        Assert.Equal("", eval.Output);
+        Assert.Equal(KatLangEngine.Run("--random-seed").ToDisplayString().ReplaceLineEndings("\n"), eval.TrimmedError);
         Assert.DoesNotContain("requires a value", eval.TrimmedError);
         Assert.DoesNotContain("unknown option", eval.TrimmedError);
-        Assert.Contains("implicit parameter", eval.TrimmedError);
 
         // And a seed BEFORE the terminator still applies to source after it.
-        var seededSource = await Cli.InvokeAsync("--seed", "3", "eval", "--", "--1 + Math.RandomInt(0, 1e30)");
+        var seededSource = await Cli.InvokeAsync("--random-seed", "3", "eval", "--", "--1 + Math.RandomInt(0, 1e30)");
         Assert.Equal(Success, seededSource.ExitCode);
         Assert.Equal(SeededEngineDisplay("--1 + Math.RandomInt(0, 1e30)", 3), seededSource.TrimmedOutput);
     }
 
+    /// <summary>
+    /// Seeding is host configuration only. Unlike <c>DisplayDecimals</c>, KatLang has no seeding
+    /// property: a program's own <c>RandomSeed</c> is an ordinary declaration that
+    /// <c>--random-seed</c> neither reads nor yields to, and that seeds nothing on its own.
+    /// </summary>
     [Fact]
-    public async Task Help_DocumentsTheSeedOption()
+    public async Task ProgramsOwnRandomSeedProperty_IsOrdinary_OnlyTheOptionSeeds()
+    {
+        const string declared = "RandomSeed = 7\nRandomSeed, Math.RandomInt(0, 1e30)";
+
+        // The property is an ordinary value, and the draw is the option's seed exactly as if
+        // the declaration were absent.
+        var seeded = await Cli.InvokeAsync("eval", declared, "--random-seed", "42");
+        Assert.Equal(Success, seeded.ExitCode);
+        Assert.Equal("", seeded.Error);
+        Assert.Equal(SeededEngineDisplay("7, Math.RandomInt(0, 1e30)", 42), seeded.TrimmedOutput);
+
+        // Without the option the declaration seeds nothing: four draws over 1e30 values agree
+        // only by an accident of probability ~1e-29.
+        var unseeded = new HashSet<string>(StringComparer.Ordinal);
+        for (var i = 0; i < 4; i++)
+        {
+            var result = await Cli.InvokeAsync("eval", declared);
+            Assert.Equal(Success, result.ExitCode);
+            unseeded.Add(result.TrimmedOutput);
+        }
+
+        Assert.True(unseeded.Count > 1, "a declared RandomSeed property seeded an unseeded eval");
+    }
+
+    [Fact]
+    public async Task Help_DocumentsTheRandomSeedOption()
     {
         var result = await Cli.InvokeAsync("--help");
+        var help = result.TrimmedOutput;
 
         Assert.Equal(Success, result.ExitCode);
-        Assert.Contains("katlang run <file> [--allow-loading] [--seed <integer>]", result.TrimmedOutput);
-        Assert.Contains("katlang eval <source> [--allow-loading] [--seed <integer>]", result.TrimmedOutput);
-        Assert.Contains("katlang check <file> [--allow-loading]\n", result.TrimmedOutput + "\n");
-        Assert.DoesNotContain("check <file> [--allow-loading] [--seed", result.TrimmedOutput);
-        Assert.Contains("--seed <integer>", result.TrimmedOutput);
-        Assert.Contains("Not valid for check", result.TrimmedOutput);
-        Assert.Contains("random values may differ", result.TrimmedOutput);
+        Assert.Contains("katlang run <file> [--allow-loading] [--random-seed <integer>]", help);
+        Assert.Contains("katlang eval <source> [--allow-loading] [--random-seed <integer>]", help);
+        Assert.Contains("katlang check <file> [--allow-loading]\n", help + "\n");
+        Assert.DoesNotContain("check <file> [--allow-loading] [--random-seed", help);
+        Assert.Contains("\n  --random-seed <integer>\n                     Seed KatLang's random operations (Math.Random,\n", help);
+        Assert.Contains("Not valid for check", help);
+        Assert.Contains("random values may differ", help);
+
+        // One spelling: the removed `--seed` and a joined `=value` form are never taught.
+        Assert.DoesNotContain("--seed", help);
+        Assert.DoesNotContain("--random-seed=", help);
     }
 
     // ── Display decimals ────────────────────────────────────────────────────
@@ -1054,7 +1177,7 @@ public sealed class CliApplicationTests
 
     [Theory]
     [InlineData(new[] { "eval", "1", "--display-decimals" }, "option '--display-decimals' requires a value.")]
-    [InlineData(new[] { "eval", "1", "--display-decimals", "--seed", "5" }, "option '--display-decimals' requires a value.")]
+    [InlineData(new[] { "eval", "1", "--display-decimals", "--random-seed", "5" }, "option '--display-decimals' requires a value.")]
     [InlineData(new[] { "eval", "--display-decimals", "--", "1" }, "option '--display-decimals' requires a value.")]
     [InlineData(new[] { "eval", "1", "--display-decimals", "2", "--display-decimals", "2" }, "option '--display-decimals' was specified more than once.")]
     [InlineData(new[] { "eval", "1", "--display-decimals=2" }, "unknown option '--display-decimals=2'.")]
@@ -1123,29 +1246,31 @@ public sealed class CliApplicationTests
     }
 
     [Fact]
-    public async Task Check_WithSeedAndDisplayDecimals_RefusesTheSeedFirst()
+    public async Task Check_WithRandomSeedAndDisplayDecimals_RefusesTheSeedFirst()
     {
         using var file = new TempSourceFile("1 / 7\n");
 
-        var result = await Cli.InvokeAsync("check", file.Path, "--display-decimals", "2", "--seed", "5");
+        var result = await Cli.InvokeAsync("check", file.Path, "--display-decimals", "2", "--random-seed", "5");
 
         Assert.Equal(Failure, result.ExitCode);
-        Assert.Contains("option '--seed' is not valid for 'check'", result.TrimmedError);
+        Assert.Contains("option '--random-seed' is not valid for 'check'", result.TrimmedError);
     }
 
     [Fact]
-    public async Task DisplayDecimals_MayAppearAnywhere_AndComposesWithSeedAndLoading()
+    public async Task DisplayDecimals_MayAppearAnywhere_AndComposesWithRandomSeedAndLoading()
     {
         using var file = new TempSourceFile(RandomSource);
         var expected = EngineDisplay(RandomSource, new RunOptions { RandomSeed = 42, DefaultDisplayDecimals = 3 });
 
         foreach (var args in new[]
                  {
-                     new[] { "--display-decimals", "3", "--seed", "42", "run", file.Path },
-                     new[] { "run", "--seed", "42", "--display-decimals", "3", file.Path },
-                     new[] { "run", file.Path, "--display-decimals", "3", "--seed", "42" },
-                     new[] { "--seed", "42", "run", file.Path, "--display-decimals", "3", "--allow-loading" },
-                     new[] { "--allow-loading", "--display-decimals", "3", "run", "--seed", "42", "--", file.Path },
+                     new[] { "--display-decimals", "3", "--random-seed", "42", "run", file.Path },
+                     new[] { "run", "--random-seed", "42", "--display-decimals", "3", file.Path },
+                     new[] { "run", file.Path, "--display-decimals", "3", "--random-seed", "42" },
+                     new[] { "--random-seed", "42", "run", file.Path, "--display-decimals", "3", "--allow-loading" },
+                     new[] { "--allow-loading", "--display-decimals", "3", "run", "--random-seed", "42", "--", file.Path },
+                     new[] { "eval", RandomSource, "--random-seed", "42", "--display-decimals", "3" },
+                     new[] { "eval", RandomSource, "--display-decimals", "3", "--random-seed", "42" },
                  })
         {
             var result = await Cli.InvokeAsync(args);
@@ -1166,8 +1291,8 @@ public sealed class CliApplicationTests
             KatLangEngine.Run(RandomSource, new RunOptions { RandomSeed = 42, DefaultDisplayDecimals = 3 }));
         Assert.Equal(plain.Atoms, shown.Atoms);
 
-        var seeded = await Cli.InvokeAsync("eval", RandomSource, "--seed", "42");
-        var seededAndShown = await Cli.InvokeAsync("eval", RandomSource, "--seed", "42", "--display-decimals", "3");
+        var seeded = await Cli.InvokeAsync("eval", RandomSource, "--random-seed", "42");
+        var seededAndShown = await Cli.InvokeAsync("eval", RandomSource, "--random-seed", "42", "--display-decimals", "3");
 
         Assert.Equal(SeededEngineDisplay(RandomSource, 42), seeded.TrimmedOutput);
         Assert.Equal(shown.ToDisplayString().ReplaceLineEndings("\n"), seededAndShown.TrimmedOutput);
@@ -1228,8 +1353,8 @@ public sealed class CliApplicationTests
         var help = result.TrimmedOutput;
 
         Assert.Equal(Success, result.ExitCode);
-        Assert.Contains("katlang run <file> [--allow-loading] [--seed <integer>]\n                     [--display-decimals <integer>]\n", help);
-        Assert.Contains("katlang eval <source> [--allow-loading] [--seed <integer>]\n                        [--display-decimals <integer>]\n", help);
+        Assert.Contains("katlang run <file> [--allow-loading] [--random-seed <integer>]\n                     [--display-decimals <integer>]\n", help);
+        Assert.Contains("katlang eval <source> [--allow-loading] [--random-seed <integer>]\n                        [--display-decimals <integer>]\n", help);
         Assert.Contains("katlang check <file> [--allow-loading]\n", help + "\n");
         Assert.DoesNotContain("check <file> [--allow-loading] [--display-decimals", help);
 

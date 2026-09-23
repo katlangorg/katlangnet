@@ -370,6 +370,30 @@ public class SeededRandomnessTests
     }
 
     [Fact]
+    public async Task RandomSeedProperty_IsAnOrdinaryProperty_ThatSeedsNothing()
+    {
+        // Seeding is host configuration only. Unlike DisplayDecimals, no top-level property
+        // configures the run, so a program's own RandomSeed is an ordinary declaration: it
+        // parses cleanly, reads as its value, draws nothing, and neither replaces the host's
+        // seed nor seeds an unseeded run.
+        const string unread = "RandomSeed = 7\n" + MixedSpellings;
+        const string read = "RandomSeed = 7\nRandomSeed + 1\n" + MixedSpellings;
+        _ = SourceProvenance.ParseValid(unread);
+        _ = SourceProvenance.ParseValid(read);
+
+        var expected = ExpectedMixedSpellings(Seed);
+        AssertSameAtoms(expected, Atoms(unread, Seed));
+        AssertSameAtoms(expected, (await SuccessAsync(unread, Seed)).Atoms);
+        AssertSameAtoms([D(8), .. expected], Atoms(read, Seed));
+
+        var unseeded = Enumerable.Range(0, 8)
+            .Select(_ => Display(Success("RandomSeed = 7\nMath.RandomInt(0, 1e30)", null)))
+            .Distinct()
+            .Count();
+        Assert.True(unseeded > 1, "a declared RandomSeed property seeded an unseeded run");
+    }
+
+    [Fact]
     public async Task LoadFailure_DoesNotStartSeededEvaluation()
     {
         // The independent oracle makes accidental evaluation observable as division

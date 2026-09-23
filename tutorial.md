@@ -545,11 +545,13 @@ Math.Log(100, 10)
 
 ### Reproducible random values
 
-`Math.Random` and `Math.RandomInt` (and their aliases `random` and `randomInt`) are nondeterministic by default: each run initializes its stream from fresh entropy, so the same program may print different values between runs. A host can instead SEED one evaluation — `RunOptions.RandomSeed` in the .NET library, or `--seed <integer>` on the CLI's `run` and `eval` commands — and then, for a given KatLang version, the same program with the same seed reproduces the same random values on every supported platform:
+`Math.Random` and `Math.RandomInt` (and their aliases `random` and `randomInt`) are nondeterministic by default: each run initializes its stream from fresh entropy, so the same program may print different values between runs. A host can instead SEED one evaluation — `RunOptions.RandomSeed` in the .NET library, or `--random-seed <integer>` on the CLI's `run` and `eval` commands — and then, for a given KatLang version, the same program with the same seed reproduces the same random values on every supported platform:
 
 ```
-katlang eval "Math.RandomInt(1, 7), Math.Random(0, 1)" --seed 42
+katlang eval "Math.RandomInt(1, 7), Math.Random(0, 1)" --random-seed 42
 ```
+
+Seeding is host configuration only: KatLang source has no seeding syntax, and a property named `RandomSeed` is an ordinary property that seeds nothing.
 
 A seed reproduces a *stream*, not individual calls: both random operations, in every spelling, draw from one stream in evaluation order, so the values a call receives depend on which random calls executed before it. The ordinary evaluation rules decide that — arguments evaluate left to right and exactly once, only the selected branch of `if` runs, a zero-parameter property read as a value (`A`, `A.sum`, `F(A)`) is drawn once and reused while an explicit `A()` and every builtin value slot that demands the algorithm directly (`sum(A)`, `if(true, A, 0)`, `A.string` — see [Zero-Parameter Property Caching](#zero-parameter-property-caching)) draw again, callbacks draw in sequence order, and the output rows draw before a `DisplayDecimals` property is evaluated. Removing an earlier random call therefore generally changes the later values. Unseeded evaluation stays nondeterministic, and KatLang randomness is not cryptographically secure.
 
