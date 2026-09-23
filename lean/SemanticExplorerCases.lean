@@ -10,11 +10,11 @@ the neutral observation recorded from the C# evaluator. A failing guard is a
 Lean/C# divergence on that case.
 
 Partition (machine-checked by the `*CaseIds.length` guards below):
-- surface corpus cases: 2147
+- surface corpus cases: 2283
 - excluded parse-level cases (Lean has no surface parser): 41
-- Lean-representable surface cases: 2106
+- Lean-representable surface cases: 2242
 - internal-node cases: 14
-- total generated guards: 2120 case guards + 2 count guards
+- total generated guards: 2256 case guards + 2 count guards
 
 Regenerate from the repo root with:
   $env:KATLANG_REGENERATE_SEMANTIC_EXPLORER = "1"
@@ -62,17 +62,18 @@ partial def errCategory : Error -> String
   | .explicitParamsRequireOutput => "explicitParamsRequireOutput"
   | .unresolvedImplicitParams _ => "unresolvedImplicitParams"
 
-/-- Counted variant of `runResultM`: the same root wiring, but keeping the
+/-- Counted variant of `runResultM`: the same declaration identification and root wiring, but keeping the
     root emitted count (`evalAlgOutputCounted` / `evalCounted`), matching the
     C# `Evaluator.RunCounted` observation. -/
 def runCountedM (e : Expr) : EvalM CountedResult := do
+  let e := (identifyPropertyExpr e).run' 0
   validateExplicitParamOutputInvariantExpr e
   let ctx := { callStack := [preludeAlg], algEnv := [] }
   match e with
   | .algorithmExpr a =>
       let wired := wireToCaller ctx a
-      if (Algorithm.params wired).length = 0 then
-        evalAlgOutputCounted wired ctx []
+      if Algorithm.acceptsZeroSuppliedArguments wired then
+        evalZeroArgumentDemandOutputCounted wired ctx []
       else
         .error (Error.unresolvedImplicitParams (Algorithm.params wired))
   | _ => evalCounted e ctx []
@@ -8083,6 +8084,686 @@ def case_mapId__pl1 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "M" (alg ["a"] [] [] [.param "a"])] [(.call (.resolve "map") [(.listLiteral [.num 1]), .resolve "M"])])
 #guard obs case_mapId__pl1 == "ok raw=L[1] n=1"
 
+-- patternHead__e: P((h, *t)) = [h, t] \n P(())
+def case_patternHead__e : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [(.listLiteral [.param "h", .param "t"])])] [(.call (.resolve "P") [(.emptySequence 0)])])
+#guard obs case_patternHead__e == "err arity"
+
+-- patternHead__n0: P((h, *t)) = [h, t] \n P(0)
+def case_patternHead__n0 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [(.listLiteral [.param "h", .param "t"])])] [(.call (.resolve "P") [.num 0])])
+#guard obs case_patternHead__n0 == "ok raw=L[0, L[]] n=1"
+
+-- patternHead__n1: P((h, *t)) = [h, t] \n P(1)
+def case_patternHead__n1 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [(.listLiteral [.param "h", .param "t"])])] [(.call (.resolve "P") [.num 1])])
+#guard obs case_patternHead__n1 == "ok raw=L[1, L[]] n=1"
+
+-- patternHead__bt: P((h, *t)) = [h, t] \n P(true)
+def case_patternHead__bt : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [(.listLiteral [.param "h", .param "t"])])] [(.call (.resolve "P") [.boolLiteral true])])
+#guard obs case_patternHead__bt == "ok raw=L[true, L[]] n=1"
+
+-- patternHead__bf: P((h, *t)) = [h, t] \n P(false)
+def case_patternHead__bf : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [(.listLiteral [.param "h", .param "t"])])] [(.call (.resolve "P") [.boolLiteral false])])
+#guard obs case_patternHead__bf == "ok raw=L[false, L[]] n=1"
+
+-- patternHead__pbt: P((h, *t)) = [h, t] \n P((true))
+def case_patternHead__pbt : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [(.listLiteral [.param "h", .param "t"])])] [(.call (.resolve "P") [.boolLiteral true])])
+#guard obs case_patternHead__pbt == "ok raw=L[true, L[]] n=1"
+
+-- patternHead__pbt_e: P((h, *t)) = [h, t] \n P((true, ()))
+def case_patternHead__pbt_e : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [(.listLiteral [.param "h", .param "t"])])] [(.call (.resolve "P") [(.capture [.boolLiteral true, (.emptySequence 0)])])])
+#guard obs case_patternHead__pbt_e == "ok raw=L[true, L[S[]]] n=1"
+
+-- patternHead__pbt_1: P((h, *t)) = [h, t] \n P((true, 1))
+def case_patternHead__pbt_1 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [(.listLiteral [.param "h", .param "t"])])] [(.call (.resolve "P") [(.capture [.boolLiteral true, .num 1])])])
+#guard obs case_patternHead__pbt_1 == "ok raw=L[true, L[1]] n=1"
+
+-- patternHead__lbt: P((h, *t)) = [h, t] \n P([true])
+def case_patternHead__lbt : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [(.listLiteral [.param "h", .param "t"])])] [(.call (.resolve "P") [(.listLiteral [.boolLiteral true])])])
+#guard obs case_patternHead__lbt == "ok raw=L[true, L[]] n=1"
+
+-- patternHead__lbt_bf: P((h, *t)) = [h, t] \n P([true, false])
+def case_patternHead__lbt_bf : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [(.listLiteral [.param "h", .param "t"])])] [(.call (.resolve "P") [(.listLiteral [.boolLiteral true, .boolLiteral false])])])
+#guard obs case_patternHead__lbt_bf == "ok raw=L[true, L[false]] n=1"
+
+-- patternHead__lpbt_1: P((h, *t)) = [h, t] \n P([(true, 1)])
+def case_patternHead__lpbt_1 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [(.listLiteral [.param "h", .param "t"])])] [(.call (.resolve "P") [(.listLiteral [(.capture [.boolLiteral true, .num 1])])])])
+#guard obs case_patternHead__lpbt_1 == "ok raw=L[S[true, 1], L[]] n=1"
+
+-- patternHead__p1: P((h, *t)) = [h, t] \n P((1))
+def case_patternHead__p1 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [(.listLiteral [.param "h", .param "t"])])] [(.call (.resolve "P") [.num 1])])
+#guard obs case_patternHead__p1 == "ok raw=L[1, L[]] n=1"
+
+-- patternHead__p12: P((h, *t)) = [h, t] \n P((1, 2))
+def case_patternHead__p12 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [(.listLiteral [.param "h", .param "t"])])] [(.call (.resolve "P") [(.capture [.num 1, .num 2])])])
+#guard obs case_patternHead__p12 == "ok raw=L[1, L[2]] n=1"
+
+-- patternHead__p123: P((h, *t)) = [h, t] \n P((1, 2, 3))
+def case_patternHead__p123 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [(.listLiteral [.param "h", .param "t"])])] [(.call (.resolve "P") [(.capture [.num 1, .num 2, .num 3])])])
+#guard obs case_patternHead__p123 == "ok raw=L[1, L[2, 3]] n=1"
+
+-- patternHead__pee: P((h, *t)) = [h, t] \n P(((), ()))
+def case_patternHead__pee : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [(.listLiteral [.param "h", .param "t"])])] [(.call (.resolve "P") [(.capture [(.emptySequence 0), (.emptySequence 0)])])])
+#guard obs case_patternHead__pee == "ok raw=L[S[], L[S[]]] n=1"
+
+-- patternHead__pe1: P((h, *t)) = [h, t] \n P(((), 1))
+def case_patternHead__pe1 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [(.listLiteral [.param "h", .param "t"])])] [(.call (.resolve "P") [(.capture [(.emptySequence 0), .num 1])])])
+#guard obs case_patternHead__pe1 == "ok raw=L[S[], L[1]] n=1"
+
+-- patternHead__p1e: P((h, *t)) = [h, t] \n P((1, ()))
+def case_patternHead__p1e : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [(.listLiteral [.param "h", .param "t"])])] [(.call (.resolve "P") [(.capture [.num 1, (.emptySequence 0)])])])
+#guard obs case_patternHead__p1e == "ok raw=L[1, L[S[]]] n=1"
+
+-- patternHead__p12_3: P((h, *t)) = [h, t] \n P(((1, 2), 3))
+def case_patternHead__p12_3 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [(.listLiteral [.param "h", .param "t"])])] [(.call (.resolve "P") [(.capture [(.capture [.num 1, .num 2]), .num 3])])])
+#guard obs case_patternHead__p12_3 == "ok raw=L[S[1, 2], L[3]] n=1"
+
+-- patternHead__p12_34: P((h, *t)) = [h, t] \n P(((1, 2), (3, 4)))
+def case_patternHead__p12_34 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [(.listLiteral [.param "h", .param "t"])])] [(.call (.resolve "P") [(.capture [(.capture [.num 1, .num 2]), (.capture [.num 3, .num 4])])])])
+#guard obs case_patternHead__p12_34 == "ok raw=L[S[1, 2], L[S[3, 4]]] n=1"
+
+-- patternHead__pe_12: P((h, *t)) = [h, t] \n P(((), (1, 2)))
+def case_patternHead__pe_12 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [(.listLiteral [.param "h", .param "t"])])] [(.call (.resolve "P") [(.capture [(.emptySequence 0), (.capture [.num 1, .num 2])])])])
+#guard obs case_patternHead__pe_12 == "ok raw=L[S[], L[S[1, 2]]] n=1"
+
+-- patternHead__ppe1_2: P((h, *t)) = [h, t] \n P((((), 1), 2))
+def case_patternHead__ppe1_2 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [(.listLiteral [.param "h", .param "t"])])] [(.call (.resolve "P") [(.capture [(.capture [(.emptySequence 0), .num 1]), .num 2])])])
+#guard obs case_patternHead__ppe1_2 == "ok raw=L[S[S[], 1], L[2]] n=1"
+
+-- patternHead__p12_e: P((h, *t)) = [h, t] \n P(((1, 2), ()))
+def case_patternHead__p12_e : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [(.listLiteral [.param "h", .param "t"])])] [(.call (.resolve "P") [(.capture [(.capture [.num 1, .num 2]), (.emptySequence 0)])])])
+#guard obs case_patternHead__p12_e == "ok raw=L[S[1, 2], L[S[]]] n=1"
+
+-- patternHead__ppe: P((h, *t)) = [h, t] \n P((()))
+def case_patternHead__ppe : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [(.listLiteral [.param "h", .param "t"])])] [(.call (.resolve "P") [(.emptySequence 0)])])
+#guard obs case_patternHead__ppe == "err arity"
+
+-- patternHead__pp1: P((h, *t)) = [h, t] \n P(((1)))
+def case_patternHead__pp1 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [(.listLiteral [.param "h", .param "t"])])] [(.call (.resolve "P") [.num 1])])
+#guard obs case_patternHead__pp1 == "ok raw=L[1, L[]] n=1"
+
+-- patternHead__ppp12: P((h, *t)) = [h, t] \n P((((1, 2))))
+def case_patternHead__ppp12 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [(.listLiteral [.param "h", .param "t"])])] [(.call (.resolve "P") [(.capture [.num 1, .num 2])])])
+#guard obs case_patternHead__ppp12 == "ok raw=L[1, L[2]] n=1"
+
+-- patternHead__le: P((h, *t)) = [h, t] \n P([])
+def case_patternHead__le : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [(.listLiteral [.param "h", .param "t"])])] [(.call (.resolve "P") [(.listLiteral [])])])
+#guard obs case_patternHead__le == "err arity"
+
+-- patternHead__l7: P((h, *t)) = [h, t] \n P([7])
+def case_patternHead__l7 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [(.listLiteral [.param "h", .param "t"])])] [(.call (.resolve "P") [(.listLiteral [.num 7])])])
+#guard obs case_patternHead__l7 == "ok raw=L[7, L[]] n=1"
+
+-- patternHead__l12: P((h, *t)) = [h, t] \n P([1, 2])
+def case_patternHead__l12 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [(.listLiteral [.param "h", .param "t"])])] [(.call (.resolve "P") [(.listLiteral [.num 1, .num 2])])])
+#guard obs case_patternHead__l12 == "ok raw=L[1, L[2]] n=1"
+
+-- patternHead__l12_3: P((h, *t)) = [h, t] \n P([[1, 2], 3])
+def case_patternHead__l12_3 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [(.listLiteral [.param "h", .param "t"])])] [(.call (.resolve "P") [(.listLiteral [(.listLiteral [.num 1, .num 2]), .num 3])])])
+#guard obs case_patternHead__l12_3 == "ok raw=L[L[1, 2], L[3]] n=1"
+
+-- patternHead__lle: P((h, *t)) = [h, t] \n P([[]])
+def case_patternHead__lle : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [(.listLiteral [.param "h", .param "t"])])] [(.call (.resolve "P") [(.listLiteral [(.listLiteral [])])])])
+#guard obs case_patternHead__lle == "ok raw=L[L[], L[]] n=1"
+
+-- patternHead__l_e: P((h, *t)) = [h, t] \n P([()])
+def case_patternHead__l_e : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [(.listLiteral [.param "h", .param "t"])])] [(.call (.resolve "P") [(.listLiteral [(.emptySequence 0)])])])
+#guard obs case_patternHead__l_e == "ok raw=L[S[], L[]] n=1"
+
+-- patternHead__l_p12: P((h, *t)) = [h, t] \n P([(1, 2)])
+def case_patternHead__l_p12 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [(.listLiteral [.param "h", .param "t"])])] [(.call (.resolve "P") [(.listLiteral [(.capture [.num 1, .num 2])])])])
+#guard obs case_patternHead__l_p12 == "ok raw=L[S[1, 2], L[]] n=1"
+
+-- patternHead__p_l12: P((h, *t)) = [h, t] \n P(([1, 2], 3))
+def case_patternHead__p_l12 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [(.listLiteral [.param "h", .param "t"])])] [(.call (.resolve "P") [(.capture [(.listLiteral [.num 1, .num 2]), .num 3])])])
+#guard obs case_patternHead__p_l12 == "ok raw=L[L[1, 2], L[3]] n=1"
+
+-- patternHead__pl1: P((h, *t)) = [h, t] \n P(([1]))
+def case_patternHead__pl1 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [(.listLiteral [.param "h", .param "t"])])] [(.call (.resolve "P") [(.listLiteral [.num 1])])])
+#guard obs case_patternHead__pl1 == "ok raw=L[1, L[]] n=1"
+
+-- patternHeadMap__e: P((h, *t)) = [h, t] \n map([()], P)
+def case_patternHeadMap__e : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [(.listLiteral [.param "h", .param "t"])])] [(.call (.resolve "map") [(.listLiteral [(.emptySequence 0)]), .resolve "P"])])
+#guard obs case_patternHeadMap__e == "err arity"
+
+-- patternHeadMap__n0: P((h, *t)) = [h, t] \n map([0], P)
+def case_patternHeadMap__n0 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [(.listLiteral [.param "h", .param "t"])])] [(.call (.resolve "map") [(.listLiteral [.num 0]), .resolve "P"])])
+#guard obs case_patternHeadMap__n0 == "ok raw=L[L[0, L[]]] n=1"
+
+-- patternHeadMap__n1: P((h, *t)) = [h, t] \n map([1], P)
+def case_patternHeadMap__n1 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [(.listLiteral [.param "h", .param "t"])])] [(.call (.resolve "map") [(.listLiteral [.num 1]), .resolve "P"])])
+#guard obs case_patternHeadMap__n1 == "ok raw=L[L[1, L[]]] n=1"
+
+-- patternHeadMap__bt: P((h, *t)) = [h, t] \n map([true], P)
+def case_patternHeadMap__bt : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [(.listLiteral [.param "h", .param "t"])])] [(.call (.resolve "map") [(.listLiteral [.boolLiteral true]), .resolve "P"])])
+#guard obs case_patternHeadMap__bt == "ok raw=L[L[true, L[]]] n=1"
+
+-- patternHeadMap__bf: P((h, *t)) = [h, t] \n map([false], P)
+def case_patternHeadMap__bf : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [(.listLiteral [.param "h", .param "t"])])] [(.call (.resolve "map") [(.listLiteral [.boolLiteral false]), .resolve "P"])])
+#guard obs case_patternHeadMap__bf == "ok raw=L[L[false, L[]]] n=1"
+
+-- patternHeadMap__pbt: P((h, *t)) = [h, t] \n map([(true)], P)
+def case_patternHeadMap__pbt : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [(.listLiteral [.param "h", .param "t"])])] [(.call (.resolve "map") [(.listLiteral [.boolLiteral true]), .resolve "P"])])
+#guard obs case_patternHeadMap__pbt == "ok raw=L[L[true, L[]]] n=1"
+
+-- patternHeadMap__pbt_e: P((h, *t)) = [h, t] \n map([(true, ())], P)
+def case_patternHeadMap__pbt_e : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [(.listLiteral [.param "h", .param "t"])])] [(.call (.resolve "map") [(.listLiteral [(.capture [.boolLiteral true, (.emptySequence 0)])]), .resolve "P"])])
+#guard obs case_patternHeadMap__pbt_e == "ok raw=L[L[true, L[S[]]]] n=1"
+
+-- patternHeadMap__pbt_1: P((h, *t)) = [h, t] \n map([(true, 1)], P)
+def case_patternHeadMap__pbt_1 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [(.listLiteral [.param "h", .param "t"])])] [(.call (.resolve "map") [(.listLiteral [(.capture [.boolLiteral true, .num 1])]), .resolve "P"])])
+#guard obs case_patternHeadMap__pbt_1 == "ok raw=L[L[true, L[1]]] n=1"
+
+-- patternHeadMap__lbt: P((h, *t)) = [h, t] \n map([[true]], P)
+def case_patternHeadMap__lbt : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [(.listLiteral [.param "h", .param "t"])])] [(.call (.resolve "map") [(.listLiteral [(.listLiteral [.boolLiteral true])]), .resolve "P"])])
+#guard obs case_patternHeadMap__lbt == "ok raw=L[L[true, L[]]] n=1"
+
+-- patternHeadMap__lbt_bf: P((h, *t)) = [h, t] \n map([[true, false]], P)
+def case_patternHeadMap__lbt_bf : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [(.listLiteral [.param "h", .param "t"])])] [(.call (.resolve "map") [(.listLiteral [(.listLiteral [.boolLiteral true, .boolLiteral false])]), .resolve "P"])])
+#guard obs case_patternHeadMap__lbt_bf == "ok raw=L[L[true, L[false]]] n=1"
+
+-- patternHeadMap__lpbt_1: P((h, *t)) = [h, t] \n map([[(true, 1)]], P)
+def case_patternHeadMap__lpbt_1 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [(.listLiteral [.param "h", .param "t"])])] [(.call (.resolve "map") [(.listLiteral [(.listLiteral [(.capture [.boolLiteral true, .num 1])])]), .resolve "P"])])
+#guard obs case_patternHeadMap__lpbt_1 == "ok raw=L[L[S[true, 1], L[]]] n=1"
+
+-- patternHeadMap__p1: P((h, *t)) = [h, t] \n map([(1)], P)
+def case_patternHeadMap__p1 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [(.listLiteral [.param "h", .param "t"])])] [(.call (.resolve "map") [(.listLiteral [.num 1]), .resolve "P"])])
+#guard obs case_patternHeadMap__p1 == "ok raw=L[L[1, L[]]] n=1"
+
+-- patternHeadMap__p12: P((h, *t)) = [h, t] \n map([(1, 2)], P)
+def case_patternHeadMap__p12 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [(.listLiteral [.param "h", .param "t"])])] [(.call (.resolve "map") [(.listLiteral [(.capture [.num 1, .num 2])]), .resolve "P"])])
+#guard obs case_patternHeadMap__p12 == "ok raw=L[L[1, L[2]]] n=1"
+
+-- patternHeadMap__p123: P((h, *t)) = [h, t] \n map([(1, 2, 3)], P)
+def case_patternHeadMap__p123 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [(.listLiteral [.param "h", .param "t"])])] [(.call (.resolve "map") [(.listLiteral [(.capture [.num 1, .num 2, .num 3])]), .resolve "P"])])
+#guard obs case_patternHeadMap__p123 == "ok raw=L[L[1, L[2, 3]]] n=1"
+
+-- patternHeadMap__pee: P((h, *t)) = [h, t] \n map([((), ())], P)
+def case_patternHeadMap__pee : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [(.listLiteral [.param "h", .param "t"])])] [(.call (.resolve "map") [(.listLiteral [(.capture [(.emptySequence 0), (.emptySequence 0)])]), .resolve "P"])])
+#guard obs case_patternHeadMap__pee == "ok raw=L[L[S[], L[S[]]]] n=1"
+
+-- patternHeadMap__pe1: P((h, *t)) = [h, t] \n map([((), 1)], P)
+def case_patternHeadMap__pe1 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [(.listLiteral [.param "h", .param "t"])])] [(.call (.resolve "map") [(.listLiteral [(.capture [(.emptySequence 0), .num 1])]), .resolve "P"])])
+#guard obs case_patternHeadMap__pe1 == "ok raw=L[L[S[], L[1]]] n=1"
+
+-- patternHeadMap__p1e: P((h, *t)) = [h, t] \n map([(1, ())], P)
+def case_patternHeadMap__p1e : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [(.listLiteral [.param "h", .param "t"])])] [(.call (.resolve "map") [(.listLiteral [(.capture [.num 1, (.emptySequence 0)])]), .resolve "P"])])
+#guard obs case_patternHeadMap__p1e == "ok raw=L[L[1, L[S[]]]] n=1"
+
+-- patternHeadMap__p12_3: P((h, *t)) = [h, t] \n map([((1, 2), 3)], P)
+def case_patternHeadMap__p12_3 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [(.listLiteral [.param "h", .param "t"])])] [(.call (.resolve "map") [(.listLiteral [(.capture [(.capture [.num 1, .num 2]), .num 3])]), .resolve "P"])])
+#guard obs case_patternHeadMap__p12_3 == "ok raw=L[L[S[1, 2], L[3]]] n=1"
+
+-- patternHeadMap__p12_34: P((h, *t)) = [h, t] \n map([((1, 2), (3, 4))], P)
+def case_patternHeadMap__p12_34 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [(.listLiteral [.param "h", .param "t"])])] [(.call (.resolve "map") [(.listLiteral [(.capture [(.capture [.num 1, .num 2]), (.capture [.num 3, .num 4])])]), .resolve "P"])])
+#guard obs case_patternHeadMap__p12_34 == "ok raw=L[L[S[1, 2], L[S[3, 4]]]] n=1"
+
+-- patternHeadMap__pe_12: P((h, *t)) = [h, t] \n map([((), (1, 2))], P)
+def case_patternHeadMap__pe_12 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [(.listLiteral [.param "h", .param "t"])])] [(.call (.resolve "map") [(.listLiteral [(.capture [(.emptySequence 0), (.capture [.num 1, .num 2])])]), .resolve "P"])])
+#guard obs case_patternHeadMap__pe_12 == "ok raw=L[L[S[], L[S[1, 2]]]] n=1"
+
+-- patternHeadMap__ppe1_2: P((h, *t)) = [h, t] \n map([(((), 1), 2)], P)
+def case_patternHeadMap__ppe1_2 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [(.listLiteral [.param "h", .param "t"])])] [(.call (.resolve "map") [(.listLiteral [(.capture [(.capture [(.emptySequence 0), .num 1]), .num 2])]), .resolve "P"])])
+#guard obs case_patternHeadMap__ppe1_2 == "ok raw=L[L[S[S[], 1], L[2]]] n=1"
+
+-- patternHeadMap__p12_e: P((h, *t)) = [h, t] \n map([((1, 2), ())], P)
+def case_patternHeadMap__p12_e : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [(.listLiteral [.param "h", .param "t"])])] [(.call (.resolve "map") [(.listLiteral [(.capture [(.capture [.num 1, .num 2]), (.emptySequence 0)])]), .resolve "P"])])
+#guard obs case_patternHeadMap__p12_e == "ok raw=L[L[S[1, 2], L[S[]]]] n=1"
+
+-- patternHeadMap__ppe: P((h, *t)) = [h, t] \n map([(())], P)
+def case_patternHeadMap__ppe : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [(.listLiteral [.param "h", .param "t"])])] [(.call (.resolve "map") [(.listLiteral [(.emptySequence 0)]), .resolve "P"])])
+#guard obs case_patternHeadMap__ppe == "err arity"
+
+-- patternHeadMap__pp1: P((h, *t)) = [h, t] \n map([((1))], P)
+def case_patternHeadMap__pp1 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [(.listLiteral [.param "h", .param "t"])])] [(.call (.resolve "map") [(.listLiteral [.num 1]), .resolve "P"])])
+#guard obs case_patternHeadMap__pp1 == "ok raw=L[L[1, L[]]] n=1"
+
+-- patternHeadMap__ppp12: P((h, *t)) = [h, t] \n map([(((1, 2)))], P)
+def case_patternHeadMap__ppp12 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [(.listLiteral [.param "h", .param "t"])])] [(.call (.resolve "map") [(.listLiteral [(.capture [.num 1, .num 2])]), .resolve "P"])])
+#guard obs case_patternHeadMap__ppp12 == "ok raw=L[L[1, L[2]]] n=1"
+
+-- patternHeadMap__le: P((h, *t)) = [h, t] \n map([[]], P)
+def case_patternHeadMap__le : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [(.listLiteral [.param "h", .param "t"])])] [(.call (.resolve "map") [(.listLiteral [(.listLiteral [])]), .resolve "P"])])
+#guard obs case_patternHeadMap__le == "err arity"
+
+-- patternHeadMap__l7: P((h, *t)) = [h, t] \n map([[7]], P)
+def case_patternHeadMap__l7 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [(.listLiteral [.param "h", .param "t"])])] [(.call (.resolve "map") [(.listLiteral [(.listLiteral [.num 7])]), .resolve "P"])])
+#guard obs case_patternHeadMap__l7 == "ok raw=L[L[7, L[]]] n=1"
+
+-- patternHeadMap__l12: P((h, *t)) = [h, t] \n map([[1, 2]], P)
+def case_patternHeadMap__l12 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [(.listLiteral [.param "h", .param "t"])])] [(.call (.resolve "map") [(.listLiteral [(.listLiteral [.num 1, .num 2])]), .resolve "P"])])
+#guard obs case_patternHeadMap__l12 == "ok raw=L[L[1, L[2]]] n=1"
+
+-- patternHeadMap__l12_3: P((h, *t)) = [h, t] \n map([[[1, 2], 3]], P)
+def case_patternHeadMap__l12_3 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [(.listLiteral [.param "h", .param "t"])])] [(.call (.resolve "map") [(.listLiteral [(.listLiteral [(.listLiteral [.num 1, .num 2]), .num 3])]), .resolve "P"])])
+#guard obs case_patternHeadMap__l12_3 == "ok raw=L[L[L[1, 2], L[3]]] n=1"
+
+-- patternHeadMap__lle: P((h, *t)) = [h, t] \n map([[[]]], P)
+def case_patternHeadMap__lle : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [(.listLiteral [.param "h", .param "t"])])] [(.call (.resolve "map") [(.listLiteral [(.listLiteral [(.listLiteral [])])]), .resolve "P"])])
+#guard obs case_patternHeadMap__lle == "ok raw=L[L[L[], L[]]] n=1"
+
+-- patternHeadMap__l_e: P((h, *t)) = [h, t] \n map([[()]], P)
+def case_patternHeadMap__l_e : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [(.listLiteral [.param "h", .param "t"])])] [(.call (.resolve "map") [(.listLiteral [(.listLiteral [(.emptySequence 0)])]), .resolve "P"])])
+#guard obs case_patternHeadMap__l_e == "ok raw=L[L[S[], L[]]] n=1"
+
+-- patternHeadMap__l_p12: P((h, *t)) = [h, t] \n map([[(1, 2)]], P)
+def case_patternHeadMap__l_p12 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [(.listLiteral [.param "h", .param "t"])])] [(.call (.resolve "map") [(.listLiteral [(.listLiteral [(.capture [.num 1, .num 2])])]), .resolve "P"])])
+#guard obs case_patternHeadMap__l_p12 == "ok raw=L[L[S[1, 2], L[]]] n=1"
+
+-- patternHeadMap__p_l12: P((h, *t)) = [h, t] \n map([([1, 2], 3)], P)
+def case_patternHeadMap__p_l12 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [(.listLiteral [.param "h", .param "t"])])] [(.call (.resolve "map") [(.listLiteral [(.capture [(.listLiteral [.num 1, .num 2]), .num 3])]), .resolve "P"])])
+#guard obs case_patternHeadMap__p_l12 == "ok raw=L[L[L[1, 2], L[3]]] n=1"
+
+-- patternHeadMap__pl1: P((h, *t)) = [h, t] \n map([([1])], P)
+def case_patternHeadMap__pl1 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [(.listLiteral [.param "h", .param "t"])])] [(.call (.resolve "map") [(.listLiteral [(.listLiteral [.num 1])]), .resolve "P"])])
+#guard obs case_patternHeadMap__pl1 == "ok raw=L[L[1, L[]]] n=1"
+
+-- patternPair__e: P((x, y)) = [x, y] \n P(())
+def case_patternPair__e : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [(.listLiteral [.param "x", .param "y"])])] [(.call (.resolve "P") [(.emptySequence 0)])])
+#guard obs case_patternPair__e == "err arity"
+
+-- patternPair__n0: P((x, y)) = [x, y] \n P(0)
+def case_patternPair__n0 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [(.listLiteral [.param "x", .param "y"])])] [(.call (.resolve "P") [.num 0])])
+#guard obs case_patternPair__n0 == "err arity"
+
+-- patternPair__n1: P((x, y)) = [x, y] \n P(1)
+def case_patternPair__n1 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [(.listLiteral [.param "x", .param "y"])])] [(.call (.resolve "P") [.num 1])])
+#guard obs case_patternPair__n1 == "err arity"
+
+-- patternPair__bt: P((x, y)) = [x, y] \n P(true)
+def case_patternPair__bt : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [(.listLiteral [.param "x", .param "y"])])] [(.call (.resolve "P") [.boolLiteral true])])
+#guard obs case_patternPair__bt == "err arity"
+
+-- patternPair__bf: P((x, y)) = [x, y] \n P(false)
+def case_patternPair__bf : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [(.listLiteral [.param "x", .param "y"])])] [(.call (.resolve "P") [.boolLiteral false])])
+#guard obs case_patternPair__bf == "err arity"
+
+-- patternPair__pbt: P((x, y)) = [x, y] \n P((true))
+def case_patternPair__pbt : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [(.listLiteral [.param "x", .param "y"])])] [(.call (.resolve "P") [.boolLiteral true])])
+#guard obs case_patternPair__pbt == "err arity"
+
+-- patternPair__pbt_e: P((x, y)) = [x, y] \n P((true, ()))
+def case_patternPair__pbt_e : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [(.listLiteral [.param "x", .param "y"])])] [(.call (.resolve "P") [(.capture [.boolLiteral true, (.emptySequence 0)])])])
+#guard obs case_patternPair__pbt_e == "ok raw=L[true, S[]] n=1"
+
+-- patternPair__pbt_1: P((x, y)) = [x, y] \n P((true, 1))
+def case_patternPair__pbt_1 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [(.listLiteral [.param "x", .param "y"])])] [(.call (.resolve "P") [(.capture [.boolLiteral true, .num 1])])])
+#guard obs case_patternPair__pbt_1 == "ok raw=L[true, 1] n=1"
+
+-- patternPair__lbt: P((x, y)) = [x, y] \n P([true])
+def case_patternPair__lbt : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [(.listLiteral [.param "x", .param "y"])])] [(.call (.resolve "P") [(.listLiteral [.boolLiteral true])])])
+#guard obs case_patternPair__lbt == "err arity"
+
+-- patternPair__lbt_bf: P((x, y)) = [x, y] \n P([true, false])
+def case_patternPair__lbt_bf : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [(.listLiteral [.param "x", .param "y"])])] [(.call (.resolve "P") [(.listLiteral [.boolLiteral true, .boolLiteral false])])])
+#guard obs case_patternPair__lbt_bf == "ok raw=L[true, false] n=1"
+
+-- patternPair__lpbt_1: P((x, y)) = [x, y] \n P([(true, 1)])
+def case_patternPair__lpbt_1 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [(.listLiteral [.param "x", .param "y"])])] [(.call (.resolve "P") [(.listLiteral [(.capture [.boolLiteral true, .num 1])])])])
+#guard obs case_patternPair__lpbt_1 == "err arity"
+
+-- patternPair__p1: P((x, y)) = [x, y] \n P((1))
+def case_patternPair__p1 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [(.listLiteral [.param "x", .param "y"])])] [(.call (.resolve "P") [.num 1])])
+#guard obs case_patternPair__p1 == "err arity"
+
+-- patternPair__p12: P((x, y)) = [x, y] \n P((1, 2))
+def case_patternPair__p12 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [(.listLiteral [.param "x", .param "y"])])] [(.call (.resolve "P") [(.capture [.num 1, .num 2])])])
+#guard obs case_patternPair__p12 == "ok raw=L[1, 2] n=1"
+
+-- patternPair__p123: P((x, y)) = [x, y] \n P((1, 2, 3))
+def case_patternPair__p123 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [(.listLiteral [.param "x", .param "y"])])] [(.call (.resolve "P") [(.capture [.num 1, .num 2, .num 3])])])
+#guard obs case_patternPair__p123 == "err arity"
+
+-- patternPair__pee: P((x, y)) = [x, y] \n P(((), ()))
+def case_patternPair__pee : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [(.listLiteral [.param "x", .param "y"])])] [(.call (.resolve "P") [(.capture [(.emptySequence 0), (.emptySequence 0)])])])
+#guard obs case_patternPair__pee == "ok raw=L[S[], S[]] n=1"
+
+-- patternPair__pe1: P((x, y)) = [x, y] \n P(((), 1))
+def case_patternPair__pe1 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [(.listLiteral [.param "x", .param "y"])])] [(.call (.resolve "P") [(.capture [(.emptySequence 0), .num 1])])])
+#guard obs case_patternPair__pe1 == "ok raw=L[S[], 1] n=1"
+
+-- patternPair__p1e: P((x, y)) = [x, y] \n P((1, ()))
+def case_patternPair__p1e : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [(.listLiteral [.param "x", .param "y"])])] [(.call (.resolve "P") [(.capture [.num 1, (.emptySequence 0)])])])
+#guard obs case_patternPair__p1e == "ok raw=L[1, S[]] n=1"
+
+-- patternPair__p12_3: P((x, y)) = [x, y] \n P(((1, 2), 3))
+def case_patternPair__p12_3 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [(.listLiteral [.param "x", .param "y"])])] [(.call (.resolve "P") [(.capture [(.capture [.num 1, .num 2]), .num 3])])])
+#guard obs case_patternPair__p12_3 == "ok raw=L[S[1, 2], 3] n=1"
+
+-- patternPair__p12_34: P((x, y)) = [x, y] \n P(((1, 2), (3, 4)))
+def case_patternPair__p12_34 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [(.listLiteral [.param "x", .param "y"])])] [(.call (.resolve "P") [(.capture [(.capture [.num 1, .num 2]), (.capture [.num 3, .num 4])])])])
+#guard obs case_patternPair__p12_34 == "ok raw=L[S[1, 2], S[3, 4]] n=1"
+
+-- patternPair__pe_12: P((x, y)) = [x, y] \n P(((), (1, 2)))
+def case_patternPair__pe_12 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [(.listLiteral [.param "x", .param "y"])])] [(.call (.resolve "P") [(.capture [(.emptySequence 0), (.capture [.num 1, .num 2])])])])
+#guard obs case_patternPair__pe_12 == "ok raw=L[S[], S[1, 2]] n=1"
+
+-- patternPair__ppe1_2: P((x, y)) = [x, y] \n P((((), 1), 2))
+def case_patternPair__ppe1_2 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [(.listLiteral [.param "x", .param "y"])])] [(.call (.resolve "P") [(.capture [(.capture [(.emptySequence 0), .num 1]), .num 2])])])
+#guard obs case_patternPair__ppe1_2 == "ok raw=L[S[S[], 1], 2] n=1"
+
+-- patternPair__p12_e: P((x, y)) = [x, y] \n P(((1, 2), ()))
+def case_patternPair__p12_e : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [(.listLiteral [.param "x", .param "y"])])] [(.call (.resolve "P") [(.capture [(.capture [.num 1, .num 2]), (.emptySequence 0)])])])
+#guard obs case_patternPair__p12_e == "ok raw=L[S[1, 2], S[]] n=1"
+
+-- patternPair__ppe: P((x, y)) = [x, y] \n P((()))
+def case_patternPair__ppe : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [(.listLiteral [.param "x", .param "y"])])] [(.call (.resolve "P") [(.emptySequence 0)])])
+#guard obs case_patternPair__ppe == "err arity"
+
+-- patternPair__pp1: P((x, y)) = [x, y] \n P(((1)))
+def case_patternPair__pp1 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [(.listLiteral [.param "x", .param "y"])])] [(.call (.resolve "P") [.num 1])])
+#guard obs case_patternPair__pp1 == "err arity"
+
+-- patternPair__ppp12: P((x, y)) = [x, y] \n P((((1, 2))))
+def case_patternPair__ppp12 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [(.listLiteral [.param "x", .param "y"])])] [(.call (.resolve "P") [(.capture [.num 1, .num 2])])])
+#guard obs case_patternPair__ppp12 == "ok raw=L[1, 2] n=1"
+
+-- patternPair__le: P((x, y)) = [x, y] \n P([])
+def case_patternPair__le : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [(.listLiteral [.param "x", .param "y"])])] [(.call (.resolve "P") [(.listLiteral [])])])
+#guard obs case_patternPair__le == "err arity"
+
+-- patternPair__l7: P((x, y)) = [x, y] \n P([7])
+def case_patternPair__l7 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [(.listLiteral [.param "x", .param "y"])])] [(.call (.resolve "P") [(.listLiteral [.num 7])])])
+#guard obs case_patternPair__l7 == "err arity"
+
+-- patternPair__l12: P((x, y)) = [x, y] \n P([1, 2])
+def case_patternPair__l12 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [(.listLiteral [.param "x", .param "y"])])] [(.call (.resolve "P") [(.listLiteral [.num 1, .num 2])])])
+#guard obs case_patternPair__l12 == "ok raw=L[1, 2] n=1"
+
+-- patternPair__l12_3: P((x, y)) = [x, y] \n P([[1, 2], 3])
+def case_patternPair__l12_3 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [(.listLiteral [.param "x", .param "y"])])] [(.call (.resolve "P") [(.listLiteral [(.listLiteral [.num 1, .num 2]), .num 3])])])
+#guard obs case_patternPair__l12_3 == "ok raw=L[L[1, 2], 3] n=1"
+
+-- patternPair__lle: P((x, y)) = [x, y] \n P([[]])
+def case_patternPair__lle : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [(.listLiteral [.param "x", .param "y"])])] [(.call (.resolve "P") [(.listLiteral [(.listLiteral [])])])])
+#guard obs case_patternPair__lle == "err arity"
+
+-- patternPair__l_e: P((x, y)) = [x, y] \n P([()])
+def case_patternPair__l_e : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [(.listLiteral [.param "x", .param "y"])])] [(.call (.resolve "P") [(.listLiteral [(.emptySequence 0)])])])
+#guard obs case_patternPair__l_e == "err arity"
+
+-- patternPair__l_p12: P((x, y)) = [x, y] \n P([(1, 2)])
+def case_patternPair__l_p12 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [(.listLiteral [.param "x", .param "y"])])] [(.call (.resolve "P") [(.listLiteral [(.capture [.num 1, .num 2])])])])
+#guard obs case_patternPair__l_p12 == "err arity"
+
+-- patternPair__p_l12: P((x, y)) = [x, y] \n P(([1, 2], 3))
+def case_patternPair__p_l12 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [(.listLiteral [.param "x", .param "y"])])] [(.call (.resolve "P") [(.capture [(.listLiteral [.num 1, .num 2]), .num 3])])])
+#guard obs case_patternPair__p_l12 == "ok raw=L[L[1, 2], 3] n=1"
+
+-- patternPair__pl1: P((x, y)) = [x, y] \n P(([1]))
+def case_patternPair__pl1 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [(.listLiteral [.param "x", .param "y"])])] [(.call (.resolve "P") [(.listLiteral [.num 1])])])
+#guard obs case_patternPair__pl1 == "err arity"
+
+-- patternPairMap__e: P((x, y)) = [x, y] \n map([()], P)
+def case_patternPairMap__e : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [(.listLiteral [.param "x", .param "y"])])] [(.call (.resolve "map") [(.listLiteral [(.emptySequence 0)]), .resolve "P"])])
+#guard obs case_patternPairMap__e == "err arity"
+
+-- patternPairMap__n0: P((x, y)) = [x, y] \n map([0], P)
+def case_patternPairMap__n0 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [(.listLiteral [.param "x", .param "y"])])] [(.call (.resolve "map") [(.listLiteral [.num 0]), .resolve "P"])])
+#guard obs case_patternPairMap__n0 == "err arity"
+
+-- patternPairMap__n1: P((x, y)) = [x, y] \n map([1], P)
+def case_patternPairMap__n1 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [(.listLiteral [.param "x", .param "y"])])] [(.call (.resolve "map") [(.listLiteral [.num 1]), .resolve "P"])])
+#guard obs case_patternPairMap__n1 == "err arity"
+
+-- patternPairMap__bt: P((x, y)) = [x, y] \n map([true], P)
+def case_patternPairMap__bt : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [(.listLiteral [.param "x", .param "y"])])] [(.call (.resolve "map") [(.listLiteral [.boolLiteral true]), .resolve "P"])])
+#guard obs case_patternPairMap__bt == "err arity"
+
+-- patternPairMap__bf: P((x, y)) = [x, y] \n map([false], P)
+def case_patternPairMap__bf : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [(.listLiteral [.param "x", .param "y"])])] [(.call (.resolve "map") [(.listLiteral [.boolLiteral false]), .resolve "P"])])
+#guard obs case_patternPairMap__bf == "err arity"
+
+-- patternPairMap__pbt: P((x, y)) = [x, y] \n map([(true)], P)
+def case_patternPairMap__pbt : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [(.listLiteral [.param "x", .param "y"])])] [(.call (.resolve "map") [(.listLiteral [.boolLiteral true]), .resolve "P"])])
+#guard obs case_patternPairMap__pbt == "err arity"
+
+-- patternPairMap__pbt_e: P((x, y)) = [x, y] \n map([(true, ())], P)
+def case_patternPairMap__pbt_e : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [(.listLiteral [.param "x", .param "y"])])] [(.call (.resolve "map") [(.listLiteral [(.capture [.boolLiteral true, (.emptySequence 0)])]), .resolve "P"])])
+#guard obs case_patternPairMap__pbt_e == "ok raw=L[L[true, S[]]] n=1"
+
+-- patternPairMap__pbt_1: P((x, y)) = [x, y] \n map([(true, 1)], P)
+def case_patternPairMap__pbt_1 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [(.listLiteral [.param "x", .param "y"])])] [(.call (.resolve "map") [(.listLiteral [(.capture [.boolLiteral true, .num 1])]), .resolve "P"])])
+#guard obs case_patternPairMap__pbt_1 == "ok raw=L[L[true, 1]] n=1"
+
+-- patternPairMap__lbt: P((x, y)) = [x, y] \n map([[true]], P)
+def case_patternPairMap__lbt : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [(.listLiteral [.param "x", .param "y"])])] [(.call (.resolve "map") [(.listLiteral [(.listLiteral [.boolLiteral true])]), .resolve "P"])])
+#guard obs case_patternPairMap__lbt == "err arity"
+
+-- patternPairMap__lbt_bf: P((x, y)) = [x, y] \n map([[true, false]], P)
+def case_patternPairMap__lbt_bf : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [(.listLiteral [.param "x", .param "y"])])] [(.call (.resolve "map") [(.listLiteral [(.listLiteral [.boolLiteral true, .boolLiteral false])]), .resolve "P"])])
+#guard obs case_patternPairMap__lbt_bf == "ok raw=L[L[true, false]] n=1"
+
+-- patternPairMap__lpbt_1: P((x, y)) = [x, y] \n map([[(true, 1)]], P)
+def case_patternPairMap__lpbt_1 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [(.listLiteral [.param "x", .param "y"])])] [(.call (.resolve "map") [(.listLiteral [(.listLiteral [(.capture [.boolLiteral true, .num 1])])]), .resolve "P"])])
+#guard obs case_patternPairMap__lpbt_1 == "err arity"
+
+-- patternPairMap__p1: P((x, y)) = [x, y] \n map([(1)], P)
+def case_patternPairMap__p1 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [(.listLiteral [.param "x", .param "y"])])] [(.call (.resolve "map") [(.listLiteral [.num 1]), .resolve "P"])])
+#guard obs case_patternPairMap__p1 == "err arity"
+
+-- patternPairMap__p12: P((x, y)) = [x, y] \n map([(1, 2)], P)
+def case_patternPairMap__p12 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [(.listLiteral [.param "x", .param "y"])])] [(.call (.resolve "map") [(.listLiteral [(.capture [.num 1, .num 2])]), .resolve "P"])])
+#guard obs case_patternPairMap__p12 == "ok raw=L[L[1, 2]] n=1"
+
+-- patternPairMap__p123: P((x, y)) = [x, y] \n map([(1, 2, 3)], P)
+def case_patternPairMap__p123 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [(.listLiteral [.param "x", .param "y"])])] [(.call (.resolve "map") [(.listLiteral [(.capture [.num 1, .num 2, .num 3])]), .resolve "P"])])
+#guard obs case_patternPairMap__p123 == "err arity"
+
+-- patternPairMap__pee: P((x, y)) = [x, y] \n map([((), ())], P)
+def case_patternPairMap__pee : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [(.listLiteral [.param "x", .param "y"])])] [(.call (.resolve "map") [(.listLiteral [(.capture [(.emptySequence 0), (.emptySequence 0)])]), .resolve "P"])])
+#guard obs case_patternPairMap__pee == "ok raw=L[L[S[], S[]]] n=1"
+
+-- patternPairMap__pe1: P((x, y)) = [x, y] \n map([((), 1)], P)
+def case_patternPairMap__pe1 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [(.listLiteral [.param "x", .param "y"])])] [(.call (.resolve "map") [(.listLiteral [(.capture [(.emptySequence 0), .num 1])]), .resolve "P"])])
+#guard obs case_patternPairMap__pe1 == "ok raw=L[L[S[], 1]] n=1"
+
+-- patternPairMap__p1e: P((x, y)) = [x, y] \n map([(1, ())], P)
+def case_patternPairMap__p1e : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [(.listLiteral [.param "x", .param "y"])])] [(.call (.resolve "map") [(.listLiteral [(.capture [.num 1, (.emptySequence 0)])]), .resolve "P"])])
+#guard obs case_patternPairMap__p1e == "ok raw=L[L[1, S[]]] n=1"
+
+-- patternPairMap__p12_3: P((x, y)) = [x, y] \n map([((1, 2), 3)], P)
+def case_patternPairMap__p12_3 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [(.listLiteral [.param "x", .param "y"])])] [(.call (.resolve "map") [(.listLiteral [(.capture [(.capture [.num 1, .num 2]), .num 3])]), .resolve "P"])])
+#guard obs case_patternPairMap__p12_3 == "ok raw=L[L[S[1, 2], 3]] n=1"
+
+-- patternPairMap__p12_34: P((x, y)) = [x, y] \n map([((1, 2), (3, 4))], P)
+def case_patternPairMap__p12_34 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [(.listLiteral [.param "x", .param "y"])])] [(.call (.resolve "map") [(.listLiteral [(.capture [(.capture [.num 1, .num 2]), (.capture [.num 3, .num 4])])]), .resolve "P"])])
+#guard obs case_patternPairMap__p12_34 == "ok raw=L[L[S[1, 2], S[3, 4]]] n=1"
+
+-- patternPairMap__pe_12: P((x, y)) = [x, y] \n map([((), (1, 2))], P)
+def case_patternPairMap__pe_12 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [(.listLiteral [.param "x", .param "y"])])] [(.call (.resolve "map") [(.listLiteral [(.capture [(.emptySequence 0), (.capture [.num 1, .num 2])])]), .resolve "P"])])
+#guard obs case_patternPairMap__pe_12 == "ok raw=L[L[S[], S[1, 2]]] n=1"
+
+-- patternPairMap__ppe1_2: P((x, y)) = [x, y] \n map([(((), 1), 2)], P)
+def case_patternPairMap__ppe1_2 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [(.listLiteral [.param "x", .param "y"])])] [(.call (.resolve "map") [(.listLiteral [(.capture [(.capture [(.emptySequence 0), .num 1]), .num 2])]), .resolve "P"])])
+#guard obs case_patternPairMap__ppe1_2 == "ok raw=L[L[S[S[], 1], 2]] n=1"
+
+-- patternPairMap__p12_e: P((x, y)) = [x, y] \n map([((1, 2), ())], P)
+def case_patternPairMap__p12_e : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [(.listLiteral [.param "x", .param "y"])])] [(.call (.resolve "map") [(.listLiteral [(.capture [(.capture [.num 1, .num 2]), (.emptySequence 0)])]), .resolve "P"])])
+#guard obs case_patternPairMap__p12_e == "ok raw=L[L[S[1, 2], S[]]] n=1"
+
+-- patternPairMap__ppe: P((x, y)) = [x, y] \n map([(())], P)
+def case_patternPairMap__ppe : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [(.listLiteral [.param "x", .param "y"])])] [(.call (.resolve "map") [(.listLiteral [(.emptySequence 0)]), .resolve "P"])])
+#guard obs case_patternPairMap__ppe == "err arity"
+
+-- patternPairMap__pp1: P((x, y)) = [x, y] \n map([((1))], P)
+def case_patternPairMap__pp1 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [(.listLiteral [.param "x", .param "y"])])] [(.call (.resolve "map") [(.listLiteral [.num 1]), .resolve "P"])])
+#guard obs case_patternPairMap__pp1 == "err arity"
+
+-- patternPairMap__ppp12: P((x, y)) = [x, y] \n map([(((1, 2)))], P)
+def case_patternPairMap__ppp12 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [(.listLiteral [.param "x", .param "y"])])] [(.call (.resolve "map") [(.listLiteral [(.capture [.num 1, .num 2])]), .resolve "P"])])
+#guard obs case_patternPairMap__ppp12 == "ok raw=L[L[1, 2]] n=1"
+
+-- patternPairMap__le: P((x, y)) = [x, y] \n map([[]], P)
+def case_patternPairMap__le : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [(.listLiteral [.param "x", .param "y"])])] [(.call (.resolve "map") [(.listLiteral [(.listLiteral [])]), .resolve "P"])])
+#guard obs case_patternPairMap__le == "err arity"
+
+-- patternPairMap__l7: P((x, y)) = [x, y] \n map([[7]], P)
+def case_patternPairMap__l7 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [(.listLiteral [.param "x", .param "y"])])] [(.call (.resolve "map") [(.listLiteral [(.listLiteral [.num 7])]), .resolve "P"])])
+#guard obs case_patternPairMap__l7 == "err arity"
+
+-- patternPairMap__l12: P((x, y)) = [x, y] \n map([[1, 2]], P)
+def case_patternPairMap__l12 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [(.listLiteral [.param "x", .param "y"])])] [(.call (.resolve "map") [(.listLiteral [(.listLiteral [.num 1, .num 2])]), .resolve "P"])])
+#guard obs case_patternPairMap__l12 == "ok raw=L[L[1, 2]] n=1"
+
+-- patternPairMap__l12_3: P((x, y)) = [x, y] \n map([[[1, 2], 3]], P)
+def case_patternPairMap__l12_3 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [(.listLiteral [.param "x", .param "y"])])] [(.call (.resolve "map") [(.listLiteral [(.listLiteral [(.listLiteral [.num 1, .num 2]), .num 3])]), .resolve "P"])])
+#guard obs case_patternPairMap__l12_3 == "ok raw=L[L[L[1, 2], 3]] n=1"
+
+-- patternPairMap__lle: P((x, y)) = [x, y] \n map([[[]]], P)
+def case_patternPairMap__lle : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [(.listLiteral [.param "x", .param "y"])])] [(.call (.resolve "map") [(.listLiteral [(.listLiteral [(.listLiteral [])])]), .resolve "P"])])
+#guard obs case_patternPairMap__lle == "err arity"
+
+-- patternPairMap__l_e: P((x, y)) = [x, y] \n map([[()]], P)
+def case_patternPairMap__l_e : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [(.listLiteral [.param "x", .param "y"])])] [(.call (.resolve "map") [(.listLiteral [(.listLiteral [(.emptySequence 0)])]), .resolve "P"])])
+#guard obs case_patternPairMap__l_e == "err arity"
+
+-- patternPairMap__l_p12: P((x, y)) = [x, y] \n map([[(1, 2)]], P)
+def case_patternPairMap__l_p12 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [(.listLiteral [.param "x", .param "y"])])] [(.call (.resolve "map") [(.listLiteral [(.listLiteral [(.capture [.num 1, .num 2])])]), .resolve "P"])])
+#guard obs case_patternPairMap__l_p12 == "err arity"
+
+-- patternPairMap__p_l12: P((x, y)) = [x, y] \n map([([1, 2], 3)], P)
+def case_patternPairMap__p_l12 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [(.listLiteral [.param "x", .param "y"])])] [(.call (.resolve "map") [(.listLiteral [(.capture [(.listLiteral [.num 1, .num 2]), .num 3])]), .resolve "P"])])
+#guard obs case_patternPairMap__p_l12 == "ok raw=L[L[L[1, 2], 3]] n=1"
+
+-- patternPairMap__pl1: P((x, y)) = [x, y] \n map([([1])], P)
+def case_patternPairMap__pl1 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [(.listLiteral [.param "x", .param "y"])])] [(.call (.resolve "map") [(.listLiteral [(.listLiteral [.num 1])]), .resolve "P"])])
+#guard obs case_patternPairMap__pl1 == "err arity"
+
 -- filterKeep__e: T(a) = true \n filter((), T)
 def case_filterKeep__e : Expr :=
   .algorithmExpr (alg [] [] [privateProp "T" (alg ["a"] [] [] [.boolLiteral true])] [(.call (.resolve "filter") [(.emptySequence 0), .resolve "T"])])
@@ -10623,7 +11304,7 @@ def case_special__repeatParameterizedStepIsCallback : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))])] [(.call (.resolve "repeat") [.resolve "Inc", .num 2, .num 0])])
 #guard obs case_special__repeatParameterizedStepIsCallback == "ok raw=2 n=1"
 
--- 2106 differential cases.
+-- 2242 differential cases.
 
 /--
 Machine-checked surface partition count: the id list is built by the same
@@ -12229,6 +12910,142 @@ def surfaceCaseIds : List String := [
   "mapId__l_p12",
   "mapId__p_l12",
   "mapId__pl1",
+  "patternHead__e",
+  "patternHead__n0",
+  "patternHead__n1",
+  "patternHead__bt",
+  "patternHead__bf",
+  "patternHead__pbt",
+  "patternHead__pbt_e",
+  "patternHead__pbt_1",
+  "patternHead__lbt",
+  "patternHead__lbt_bf",
+  "patternHead__lpbt_1",
+  "patternHead__p1",
+  "patternHead__p12",
+  "patternHead__p123",
+  "patternHead__pee",
+  "patternHead__pe1",
+  "patternHead__p1e",
+  "patternHead__p12_3",
+  "patternHead__p12_34",
+  "patternHead__pe_12",
+  "patternHead__ppe1_2",
+  "patternHead__p12_e",
+  "patternHead__ppe",
+  "patternHead__pp1",
+  "patternHead__ppp12",
+  "patternHead__le",
+  "patternHead__l7",
+  "patternHead__l12",
+  "patternHead__l12_3",
+  "patternHead__lle",
+  "patternHead__l_e",
+  "patternHead__l_p12",
+  "patternHead__p_l12",
+  "patternHead__pl1",
+  "patternHeadMap__e",
+  "patternHeadMap__n0",
+  "patternHeadMap__n1",
+  "patternHeadMap__bt",
+  "patternHeadMap__bf",
+  "patternHeadMap__pbt",
+  "patternHeadMap__pbt_e",
+  "patternHeadMap__pbt_1",
+  "patternHeadMap__lbt",
+  "patternHeadMap__lbt_bf",
+  "patternHeadMap__lpbt_1",
+  "patternHeadMap__p1",
+  "patternHeadMap__p12",
+  "patternHeadMap__p123",
+  "patternHeadMap__pee",
+  "patternHeadMap__pe1",
+  "patternHeadMap__p1e",
+  "patternHeadMap__p12_3",
+  "patternHeadMap__p12_34",
+  "patternHeadMap__pe_12",
+  "patternHeadMap__ppe1_2",
+  "patternHeadMap__p12_e",
+  "patternHeadMap__ppe",
+  "patternHeadMap__pp1",
+  "patternHeadMap__ppp12",
+  "patternHeadMap__le",
+  "patternHeadMap__l7",
+  "patternHeadMap__l12",
+  "patternHeadMap__l12_3",
+  "patternHeadMap__lle",
+  "patternHeadMap__l_e",
+  "patternHeadMap__l_p12",
+  "patternHeadMap__p_l12",
+  "patternHeadMap__pl1",
+  "patternPair__e",
+  "patternPair__n0",
+  "patternPair__n1",
+  "patternPair__bt",
+  "patternPair__bf",
+  "patternPair__pbt",
+  "patternPair__pbt_e",
+  "patternPair__pbt_1",
+  "patternPair__lbt",
+  "patternPair__lbt_bf",
+  "patternPair__lpbt_1",
+  "patternPair__p1",
+  "patternPair__p12",
+  "patternPair__p123",
+  "patternPair__pee",
+  "patternPair__pe1",
+  "patternPair__p1e",
+  "patternPair__p12_3",
+  "patternPair__p12_34",
+  "patternPair__pe_12",
+  "patternPair__ppe1_2",
+  "patternPair__p12_e",
+  "patternPair__ppe",
+  "patternPair__pp1",
+  "patternPair__ppp12",
+  "patternPair__le",
+  "patternPair__l7",
+  "patternPair__l12",
+  "patternPair__l12_3",
+  "patternPair__lle",
+  "patternPair__l_e",
+  "patternPair__l_p12",
+  "patternPair__p_l12",
+  "patternPair__pl1",
+  "patternPairMap__e",
+  "patternPairMap__n0",
+  "patternPairMap__n1",
+  "patternPairMap__bt",
+  "patternPairMap__bf",
+  "patternPairMap__pbt",
+  "patternPairMap__pbt_e",
+  "patternPairMap__pbt_1",
+  "patternPairMap__lbt",
+  "patternPairMap__lbt_bf",
+  "patternPairMap__lpbt_1",
+  "patternPairMap__p1",
+  "patternPairMap__p12",
+  "patternPairMap__p123",
+  "patternPairMap__pee",
+  "patternPairMap__pe1",
+  "patternPairMap__p1e",
+  "patternPairMap__p12_3",
+  "patternPairMap__p12_34",
+  "patternPairMap__pe_12",
+  "patternPairMap__ppe1_2",
+  "patternPairMap__p12_e",
+  "patternPairMap__ppe",
+  "patternPairMap__pp1",
+  "patternPairMap__ppp12",
+  "patternPairMap__le",
+  "patternPairMap__l7",
+  "patternPairMap__l12",
+  "patternPairMap__l12_3",
+  "patternPairMap__lle",
+  "patternPairMap__l_e",
+  "patternPairMap__l_p12",
+  "patternPairMap__p_l12",
+  "patternPairMap__pl1",
   "filterKeep__e",
   "filterKeep__n0",
   "filterKeep__n1",
@@ -12738,7 +13555,7 @@ def surfaceCaseIds : List String := [
   "special__reduceParameterIgnoringInitialStillRejected",
   "special__repeatParameterizedStepIsCallback"
 ]
-#guard surfaceCaseIds.length == 2106
+#guard surfaceCaseIds.length == 2242
 
 /-!
 Direct internal-node cases: `Expr.sequenceConstruct` is an INTERNAL node —
@@ -12840,5 +13657,5 @@ def internalNodeCaseIds : List String := [
 #guard internalNodeCaseIds.length == 14
 
 -- 14 internal-node cases.
--- Total: 2120 case guards (2106 surface + 14 internal-node).
+-- Total: 2256 case guards (2242 surface + 14 internal-node).
 end SemanticExplorerCases

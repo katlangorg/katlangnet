@@ -271,6 +271,22 @@ public static class SemanticExplorerCorpus
             v => $"order({v.Source})"),
         new("mapId",
             v => $"M(a) = a\nmap({v.Source}, M)"),
+        // S3 (September 2026): a callback binds its ONE supplied value exactly as the
+        // ordinary call binds it. Each template of the direct/callback pairs is pinned
+        // against Lean per value — a nested head-plus-collector pattern (the scalar
+        // one-item fallback binds it) and a nested fixed pair (the same fallback is one
+        // item too few) — so a Lean/C# divergence in either binder shows up against its
+        // own spelling; CallbackNestedPatternBindingTests
+        // .ExplorerTemplatePairs_MapEveryValueExactlyAsTheDirectCall relates the two
+        // spellings of each pair value by value.
+        new("patternHead",
+            v => $"P((h, *t)) = [h, t]\nP({v.Source})"),
+        new("patternHeadMap",
+            v => $"P((h, *t)) = [h, t]\nmap([{v.Source}], P)"),
+        new("patternPair",
+            v => $"P((x, y)) = [x, y]\nP({v.Source})"),
+        new("patternPairMap",
+            v => $"P((x, y)) = [x, y]\nmap([{v.Source}], P)"),
         new("filterKeep",
             v => $"T(a) = true\nfilter({v.Source}, T)"),
         new("atoms",

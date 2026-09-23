@@ -720,21 +720,26 @@ public static partial class Evaluator
     /// original callable identity. Used after fusion commits, with caller environments.
     /// A failed collection in a plain call still requires this attempt; its earlier
     /// error takes precedence over this result, just as in BindSequenceBuiltinArguments.
+    /// The predicate keeps its algorithm-channel binding
+    /// (<see cref="ResolvedArgumentAlgorithm.Callable"/>), so a callable forwarded through a
+    /// parameter is invoked exactly as the generic filter invokes it.
     /// </summary>
     internal static EvalResult<Algorithm> PrepareFilterPredicateArgument(
-        Algorithm argument,
+        ResolvedArgumentAlgorithm predicate,
         EvalCtx ctx,
         ValEnv valEnv)
     {
         var itemsR = BuildCallableCallItems(
-            [new ResolvedArgumentAlgorithm(argument, SpreadsSequence: false)], ctx, valEnv);
+            [predicate with { SpreadsSequence = false }],
+            ctx,
+            valEnv);
         if (itemsR.IsError) return itemsR.Error;
 
         var descriptor = BuiltinRegistry.GetBuiltin(BuiltinId.@filter).SequenceMetadata!.Value.SuffixArgs[0];
         var preparedR = PrepareSequenceBuiltinSuffixArg(BuiltinId.@filter, descriptor, itemsR.Value[0], ctx, valEnv);
         if (preparedR.IsError) return preparedR.Error;
         return preparedR.Value is PreparedSequenceBuiltinSuffixArg.AlgorithmArg callback
-            ? EvalResult<Algorithm>.Ok(callback.AlgorithmValue)
+            ? EvalResult<Algorithm>.Ok(callback.InvokedAlgorithm)
             : throw new InvalidOperationException("The filter predicate must be an algorithm argument.");
     }
 
@@ -805,7 +810,8 @@ public static partial class Evaluator
                         arg,
                         ValueError: null,
                         outputR.Value,
-                        resolvedArg.Source));
+                        resolvedArg.Source,
+                        resolvedArg.Callable));
                 }
 
                 continue;
@@ -818,7 +824,8 @@ public static partial class Evaluator
                 Value: null,
                 arg,
                 BlameDemandedArgumentForMissingOutput(resolvedArg.Source, outputR).Error,
-                Source: resolvedArg.Source));
+                Source: resolvedArg.Source,
+                Callable: resolvedArg.Callable));
         }
 
         return EvalResult<IReadOnlyList<VariadicCallItem>>.Ok(items);
@@ -908,6 +915,7 @@ public static partial class Evaluator
                             {
                                 PreparedValue = item.PreparedValue,
                                 Source = item.Source,
+                                Callable = item.Callable,
                             });
                     }
 
@@ -1355,6 +1363,14 @@ public static partial class Evaluator
         return projector(descriptor, args[index]);
     }
 
+    /// <summary>
+    /// The CALLBACK a sequence builtin invokes from an algorithm suffix slot (the
+    /// <c>filter</c> predicate, the <c>map</c> mapper, the <c>reduce</c> reducer): the
+    /// argument's algorithm-channel identity (<see cref="PreparedSequenceBuiltinSuffixArg.AlgorithmArg.InvokedAlgorithm"/>).
+    /// <c>reduce</c>'s <c>initial</c> shares the algorithm metadata kind but is a VALUE slot,
+    /// so it reads the full argument (<see cref="ExpectPreparedAlgorithmSuffixArgFull"/>)
+    /// and demands its value side. Lean: <c>expectPreparedSequenceBuiltinAlgorithmSuffixArg</c>.
+    /// </summary>
     private static EvalResult<Algorithm> ExpectPreparedAlgorithmSuffixArg(
         BuiltinId builtin,
         IReadOnlyList<SequenceBuiltinSuffixArgDescriptor> descriptors,
@@ -1364,7 +1380,7 @@ public static partial class Evaluator
         var argR = ExpectPreparedAlgorithmSuffixArgFull(builtin, descriptors, args, index);
         return argR.IsError
             ? argR.Error
-            : EvalResult<Algorithm>.Ok(argR.Value.AlgorithmValue);
+            : EvalResult<Algorithm>.Ok(argR.Value.InvokedAlgorithm);
     }
 
     private static EvalResult<PreparedSequenceBuiltinSuffixArg.AlgorithmArg> ExpectPreparedAlgorithmSuffixArgFull(
@@ -2102,13 +2118,13 @@ public static partial class Evaluator
     }
 
     /// <summary>
-    /// Returns the argument's algorithm channel. Already evaluated callback data and dotted
-    /// sequence-builtin receivers normally never need one; if an algorithm-only builtin
-    /// position does request it, build the legacy counted-value wrapper at that point rather
-    /// than for every prepared argument.
+    /// The algorithm a loop step INVOKES: the argument's algorithm-channel identity
+    /// (<see cref="ResolvedArgumentAlgorithm.InvokedAlgorithm"/>), so a step forwarded through a
+    /// parameter is the callable itself, never its demanded value. Lean: <c>step.invoked</c>.
+    /// Already evaluated data retains the legacy counted-value wrapper when necessary.
     /// </summary>
-    private static EvalResult<Algorithm> ResolveArgumentAlgorithm(ResolvedArgumentAlgorithm arg, EvalCtx ctx)
-        => arg.Algorithm is { } algorithm
+    private static EvalResult<Algorithm> ResolveInvokedArgumentAlgorithm(ResolvedArgumentAlgorithm arg, EvalCtx ctx)
+        => arg.InvokedAlgorithm is { } algorithm
             ? EvalResult<Algorithm>.Ok(algorithm)
             : arg.PreparedValue is { } prepared
                 ? EvalResult<Algorithm>.Ok(CountedArgAlgorithm(prepared, ctx))
@@ -2195,7 +2211,7 @@ public static partial class Evaluator
 
             case (BuiltinId.@while, _) when args.Count >= 2:
                 {
-                    var stepR = ResolveArgumentAlgorithm(args[0], ctx);
+                    var stepR = ResolveInvokedArgumentAlgorithm(args[0], ctx);
                     if (stepR.IsError) return stepR.Error;
                     var initialStateR = EvalInitialLoopStateSlots(args.Skip(1).ToList(), ctx, valEnv);
                     if (initialStateR.IsError) return initialStateR.Error;
@@ -2204,7 +2220,7 @@ public static partial class Evaluator
 
             case (BuiltinId.@repeat, _) when args.Count >= 3:
                 {
-                    var stepR = ResolveArgumentAlgorithm(args[0], ctx);
+                    var stepR = ResolveInvokedArgumentAlgorithm(args[0], ctx);
                     if (stepR.IsError) return stepR.Error;
                     var countR = EvalResolvedArgument(args[1], ctx, valEnv);
                     if (countR.IsError) return countR.Error;

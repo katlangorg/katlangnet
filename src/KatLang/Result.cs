@@ -764,9 +764,9 @@ public closed record Result
     /// Deconstruction-openable structure view shared by the sequence-value
     /// parameter pattern binders: a received sequence value or exact list
     /// value opens to its immediate items; numbers, Booleans, and strings are not openable
-    /// (the binders apply their own scalar one-item fallback). Call-argument
-    /// argument binding never uses this view — a list argument stays one
-    /// argument.
+    /// (<c>Evaluator.SequenceValuePatternItems</c> adds the ONE scalar one-item fallback
+    /// both binders share). Call-argument binding never uses this view — a list argument
+    /// stays one argument.
     /// Lean: <c>Result.structureItems?</c>.
     /// </summary>
     public IReadOnlyList<Result>? StructureItems()

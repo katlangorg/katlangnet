@@ -219,7 +219,7 @@ public static class ReceiverLaws
         [ReceiverLaw.CALLBACK_FLAT_ROW_CONVENTION] =
             "KatLang.lean bindCountedCallbackParams + unpackArgs (final-arg unpack; lists stay one item); AGENTS.md flat-callback row convention",
         [ReceiverLaw.CALLBACK_NESTED_PATTERN_OPENS_ONE_BOUNDARY] =
-            "KatLang.lean bindCountedParameterPattern .sequenceValue branch (Result.structureItems? with lone-item fallback)",
+            "KatLang.lean bindCountedParameterPattern .sequenceValue branch (Result.sequenceValuePatternItems: structureItems? with the scalar one-item fallback at every group size, the SAME rule bindParameterPattern uses for the ordinary call)",
         [ReceiverLaw.REDUCE_INITIAL_IS_WRITTEN_VALUE_SLOT] =
             "KatLang.lean reduceLoop (reCountValueBoundary initOut); AGENTS.md written-slot reification incl. reduce initial accumulator",
         [ReceiverLaw.LOOP_INIT_ARGS_ARE_WRITTEN_SLOTS] =

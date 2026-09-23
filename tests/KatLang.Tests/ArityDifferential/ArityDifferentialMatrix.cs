@@ -732,25 +732,11 @@ public static class ArityDifferentialMatrix
             }
 
             // T18: nested sequence-value pattern — opens ONE boundary of either
-            // kind. The counted (callback) matcher is deliberately strict on
-            // scalar elements: the scalar fallback exists only for
-            // single-capture patterns (callback deconstruction is deferred),
-            // so a scalar element under the two-capture pattern is rejected.
-            var structure = StructureItems(shape.Value);
-            if (structure is null)
-            {
-                b.Add("cb-map-nested-pattern", ReceiverKind.Callback, BindingForm.Capture, shape, m,
-                    $"NestedCb((x, *y)) = [x, y]\n[{shape.Literal}].map(NestedCb)",
-                    ReceiverLaw.CALLBACK_NESTED_PATTERN_OPENS_ONE_BOUNDARY,
-                    Err(Arity),
-                    baseTrace.Append(
-                        "scalar element: the counted callback matcher's scalar fallback is singleton-pattern-only "
-                        + "(KatLang.lean bindCountedParameterPattern: `if items.length == 1`), so the two-capture pattern rejects"),
-                    notes: "Callback deconstruction for scalar elements is intentionally deferred (documented strictness).");
-                return;
-            }
-
-            var patternSupply = structure;
+            // kind, and binds the callback element exactly as the ordinary call
+            // `NestedCb(element)` would (S3, September 2026): a non-structure
+            // (scalar) element is the ordinary one-item supply for the nested
+            // pattern at every group size, so `(x, *y)` binds x = element, y = [].
+            var patternSupply = StructureItems(shape.Value) ?? [shape.Value];
             var patternEnv = BindPats([OraclePat.Fixed("x"), OraclePat.Collect("y")], patternSupply);
             if (patternEnv is null)
             {
@@ -767,7 +753,7 @@ public static class ArityDifferentialMatrix
                     $"NestedCb((x, *y)) = [x, y]\n[{shape.Literal}].map(NestedCb)",
                     ReceiverLaw.CALLBACK_NESTED_PATTERN_OPENS_ONE_BOUNDARY,
                     Ok(mappedPattern, 1),
-                    baseTrace.Append($"pattern opens ONE boundary: {SupplyNeutral(patternSupply)} -> x = {patternEnv[0].Value.Neutral}, y = {patternEnv[1].Value.Neutral}"));
+                    baseTrace.Append($"pattern opens ONE boundary (a scalar is a one-item supply): {SupplyNeutral(patternSupply)} -> x = {patternEnv[0].Value.Neutral}, y = {patternEnv[1].Value.Neutral}"));
             }
 
             return;

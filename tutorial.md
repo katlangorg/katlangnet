@@ -2219,6 +2219,26 @@ where a callable is used as an algorithm rather than as a value — a `map` or `
 a loop step, a higher-order argument — it is still the callable itself, so
 `map((1, 2), Only)` is `[[1], [2]]`.
 
+This holds when the callable is passed on through a parameter, too. Passing `Only` to a
+parameter binds the parameter to both the callable and its zero-argument value `[]`. A builtin
+position that calls its argument (a `map`, `filter` or `reduce` callback, a `while` or
+`repeat` step) calls the callable, and a position that reads a value reads `[]`:
+
+```
+Only(*xs) = xs
+Apply(f, xs) = xs.map(f)
+Size(f) = count(f)
+
+Apply(Only, [1, 2])
+Size(Only)
+```
+
+**Results:**
+```
+[[1], [2]]
+0
+```
+
 The collect marker and the spread marker have opposite meanings and are never interchangeable — they match the semantic directions `collect : Supply → ListValue` and `spread : Value → Supply`. Prefix `*name` in a binding position is a **collecting binding**: it collects its matched items into an exact list, and when it appears in a parameter list it is called a **collecting parameter**. Postfix `value*` is instead a **spread expression** that contributes the operand's items to the surrounding item supply. Both markers must be directly attached to what they modify: `*items` is a collecting binding while `* items` is an error, and `value*` is a spread while `value *` is an error. Which of the three meanings a star has is decided by position, never by spacing: a `*` followed by a valid right operand — on the same line or on the next — is always the multiplication operator, however it is spaced, and a `*` that nothing can follow (a comma, a closing delimiter, the end of the program, or a definition comes next) is the spread marker — which must then be attached. Whitespace therefore never turns one valid operation into another; it only separates the valid `value*` from the rejected `value *`.
 
 Multiple sibling sequence values are **not** auto-flattened — they are preserved unless you open them explicitly with a spread marker. With `A = 1, 2` and `B = 3, 4`, `G(A, B)` collects `x = [(1, 2), (3, 4)]` (count 2), while `G(A*, B*)` collects `x = [1, 2, 3, 4]` (count 4):
@@ -2477,7 +2497,7 @@ CountSequenceValue((1, 2, 3))
 
 In `CountValues`, top-level `*values` collects the call's argument slots: `CountValues()` collects the empty supply `[]` (count `0`), `CountValues(1, 2, 3)` collects the three slots as `values = [1, 2, 3]` (count `3`), and `CountValues((1, 2, 3))` supplies ONE sequence-valued argument — the lone collector's whole segment, which the collector rule opens one level to `values = [1, 2, 3]` (count `3`). The two forms differ where the grouped value is not the collector's whole segment: `CountValues((1, 2, 3), 4)` collects two slots (count `2`) while `CountSequenceValue((1, 2, 3), 4)` is an arity error, and `CountValues([1, 2, 3])` keeps the list as one collected item (count `1`) while `CountSequenceValue([1, 2, 3])` opens it (count `3`). In `CountSequenceValue`, the outer sequence-value pattern consumes one parent-level argument slot, opens it, and `*values` collects that structure's immediate contents. The builtin `count(collection)` has no collecting parameter: it is an ordinary fixed-arity callable that takes exactly one collection argument, so with `Values = 1, 2, 3`, `count(Values)` is `3` while `count(1, 2, 3)` and `count(Values*)` are arity errors (see [Counting: `count`](#counting-count)); fixed-only user calls likewise preserve their exact call shape.
 
-A pattern-shaped callee opens the argument's value, never a written grouping level. Parentheses group syntax; they do not introduce a semantic boundary: a bare reference, the same reference in redundant parentheses, and a literal in redundant parentheses all supply the same sequence value, and the pattern opens that value once. A nested pattern opens one more REAL boundary, which unary sequence structure can never supply ([sequence normalization](#sequence-normalization) removes it during value construction), so a one-element list supplies the outer structural level. Scalars also work through the ordinary one-item fallback at each pattern level: `CountSequenceValue3(7)` returns 1 without creating a unary sequence. The structured examples are:
+A pattern-shaped callee opens the argument's value, never a written grouping level. Parentheses group syntax; they do not introduce a semantic boundary: a bare reference, the same reference in redundant parentheses, and a literal in redundant parentheses all supply the same sequence value, and the pattern opens that value once. A nested pattern opens one more REAL boundary, which unary sequence structure can never supply ([sequence normalization](#sequence-normalization) removes it during value construction), so a one-element list supplies the outer structural level. Scalars also work through the ordinary one-item fallback at each pattern level: `CountSequenceValue3(7)` returns 1 without creating a unary sequence, and a `map`, `filter`, or `reduce` callback binds a scalar element by the same rule (see [Mapping: `map`](#mapping-map)). The structured examples are:
 
 <!-- spec:redundant-call-parens-canonical -->
 ```
@@ -2942,6 +2962,28 @@ Collect(*items) = items
 ```
 
 A `()` element opens to `[]` and a nested element opens one level only (`[((1, 2), 3)].map(Collect)` is `[[(1, 2), 3]]`). A multi-parameter flat callback instead opens a lone sequence-valued element into row slots first (the same row rule fixed callbacks use), and the shared front/collecting/back allocation then collects the middle: with `F(first, *middle, last) = middle` and `Rows = [(1, 2, 3, 4)]`, `Rows.map(F)` is `[[2, 3]]` — exactly what the nested pattern form `F((first, *middle, last))` produces on sequence rows. Those row slots are final supplied items, so a nested pair among them stays one collected item (`[(1, (2, 3), 4)].map(F)` is `[[(2, 3)]]`). Exact-list elements stay opaque in flat binding (a lone `[1, 2]` element is ONE argument, so a two-parameter flat callback arity-errors); use the nested pattern form `F((x, y))`, which opens sequence AND list rows. The same collection rule reaches `filter` predicates (`IsSingleSeven(*items) = items == [7]` keeps `7` out of `[7, 8]`; `IsPair(*items) = items.count == 2` keeps the pairs of `((1, 2), 3, (4, 5), [6, 7])` — two of them). Reduce supplies two callback slots, element and accumulator, so a reducer whose only parameter is a collecting parameter, `R(*items)`, collects `items = [element, accumulator]`; with `R(*items, acc)`, the collecting parameter before the fixed accumulator receives one written element slot: a sequence element opens one level (`reduce([(1, 2)], R, 99)` with `R(*items, acc) = items` returns `[1, 2]`), while a scalar or list element stays `[element]`, and a collecting parameter on the accumulator side (`Acc(x, *acc)`) collects the accumulator's own one-level slots exactly — those slots are established supply, not written arguments, so `reduce([9], Acc, ((1, 2), 3))` is `[(1, 2), 3]`.
+
+A callback whose parameter is a nested sequence-value pattern binds each element exactly as the ordinary call with that one element binds it. The pattern opens a sequence or list element one level, and any other element (a number, a string, a Boolean) is the ordinary one-item supply at every pattern level. So a scalar element binds `(x, *rest)` with an empty `rest`, just like the direct call:
+
+<!-- spec:callback-nested-pattern-binds-like-call -->
+```
+Head((x, *rest)) = [x, rest]
+
+Head(7)
+[7].map(Head)
+map((7, (8, 9)), Head)
+```
+
+**Results:**
+```
+[7, []]
+[[7, []]]
+[[7, []], [8, [9]]]
+```
+
+One element is still one item: with `Pair((x, y)) = [x, y]`, `[7].map(Pair)` fails with the same pattern arity error as `Pair(7)`. `filter` and `reduce` bind their callback values by the same rules. The operation still decides how many values it supplies (the element for `map` and `filter`, the element and the accumulator for `reduce`) and how often it invokes the callback: never for an empty collection, and once for an empty `()` element.
+
+Direct and forwarded callbacks use the same callable in the callback slot. Forwarding still has ordinary parameter-binding effects: passing a zero-argument-eligible callable can evaluate it once to establish the parameter's value channel. Selecting its callable channel afterward performs no additional value demand. For a host-backed `Cnt(*xs)` that records `xs.count`, mapping two items directly records `[1, 1]`; forwarding it through `Apply(f) = map([5, 6], f)` records `[0, 1, 1]`, including the initial binding demand. Value consumers continue reading the established value channel.
 
 Multi-clause conditional algorithms used as callbacks match the selected element as ONE argument and get no flat-callback row expansion: a flat two-parameter mapper `F(x, y)` works over pair rows, but adding a second clause (making the family conditional) flips the same `Rows.map(F)` to `No matching branch`, because each clause now matches against the single selected element. Write nested sequence-value clause heads — `F((0, y)) = ...`, `F((x, y)) = ...` — when a clause family should destructure rows.
 
@@ -4626,6 +4668,11 @@ Equal(1, 2)  # 0
 ```
 
 This also works inside sequence-value parameter patterns such as `SamePair((x, x))`. Repeated names involving a collecting binding, such as `F(*xs, xs)`, are not supported.
+
+In a single-clause callable an unequal repeated value is an error. It is checked only after every pattern of the parameter list has bound, so when another pattern also fails, that failure is the one reported: with `P(x, x, (a, b)) = a`, `P(1, 2, 7)` reports that `(a, b)` received one value, not that the two `x` values differ. (Around a collecting parameter, the patterns before it are bound and checked first.) The check compares every occurrence with every other, so argument order never changes whether a call binds. A bare callable such as `Inc` (with `Inc(y) = y + 1`) has no value to compare, so a repeated name cannot receive it together with another argument that is also usable as a callable — another bare callable, or a property such as `A = 5` — while a plain value beside it is fine (`P(f, f) = f` binds `P(5, Inc)` to 5).
+
+When two occurrences also carry callables, equal values are not enough: they must identify the same callable, including the same captured lexical activation. With `A(*xs) = 5` and `B(*xs) = 5 + xs.count`, both have the value 5, but `A(1)` is 5 and `B(1)` is 6. Thus `P(f, f) = f(1)` rejects both `P(A, B)` and `P(B, A)`. Repeated references to `B` remain compatible: `P(B, B)` is 6. The rule applies to two occurrences as well as three or more, and successful permutations preserve the complete binding: channel availability, values, counts, and callable identity. Genuine aliases remain compatible: `Both(left, right) = P(left, right)` called through `Share(original) = Both(original, original)` passes the same callable in both occurrences when `Share(B)` runs. Ordinary eager argument-binding effects still occur before these bindings are compared.
+
 
 ### Nested Sequence-Value Patterns
 

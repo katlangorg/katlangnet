@@ -56,17 +56,18 @@ internal static class LeanObsTemplate
           | .explicitParamsRequireOutput => "explicitParamsRequireOutput"
           | .unresolvedImplicitParams _ => "unresolvedImplicitParams"
 
-        /-- Counted variant of `runResultM`: the same root wiring, but keeping the
+        /-- Counted variant of `runResultM`: the same declaration identification and root wiring, but keeping the
             root emitted count (`evalAlgOutputCounted` / `evalCounted`), matching the
             C# `Evaluator.RunCounted` observation. -/
         def runCountedM (e : Expr) : EvalM CountedResult := do
+          let e := (identifyPropertyExpr e).run' 0
           validateExplicitParamOutputInvariantExpr e
           let ctx := { callStack := [preludeAlg], algEnv := [] }
           match e with
           | .algorithmExpr a =>
               let wired := wireToCaller ctx a
-              if (Algorithm.params wired).length = 0 then
-                evalAlgOutputCounted wired ctx []
+              if Algorithm.acceptsZeroSuppliedArguments wired then
+                evalZeroArgumentDemandOutputCounted wired ctx []
               else
                 .error (Error.unresolvedImplicitParams (Algorithm.params wired))
           | _ => evalCounted e ctx []

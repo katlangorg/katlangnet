@@ -33,7 +33,7 @@ internal static class SequencePipelineOptimizer
 
     private readonly record struct FilterCountPipelinePreparation(
         FilterCountPipelineSyntax Syntax,
-        Algorithm Predicate,
+        Evaluator.ResolvedArgumentAlgorithm Predicate,
         Expr? PredicateExpression,
         BuiltinRangeSourceSyntax? DirectRangeSource,
         string DirectRangeFallbackReason);

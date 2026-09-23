@@ -437,7 +437,8 @@ public class SequencePipelineDispatchTests
             ResolveArgumentAlgorithms: _ =>
             {
                 callbacks.Add($"resolve-args@{budget.CurrentDepth}");
-                return EvalResult<IReadOnlyList<Algorithm>>.Ok([predicate]);
+                return EvalResult<IReadOnlyList<Evaluator.ResolvedArgumentAlgorithm>>.Ok(
+                    [new Evaluator.ResolvedArgumentAlgorithm(predicate, SpreadsSequence: false)]);
             },
             ResolveAlgorithm: _ =>
             {

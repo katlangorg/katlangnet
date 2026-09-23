@@ -520,8 +520,11 @@ public class EvaluatorSequencePipelineTests
             GetDotCallLexicalBuiltinFallbackReason: (_, _) => null,
             EvaluateDotReceiverIterationItems: _ =>
                 throw new Xunit.Sdk.XunitException("dot-receiver evaluation must not run for a plain call"),
-            ResolveArgumentAlgorithms: _ => EvalResult<IReadOnlyList<Algorithm>>.Ok(
-                [new Algorithm.User(null, [], [], [], []), new Algorithm.User(null, [], [], [], [])]),
+            ResolveArgumentAlgorithms: _ => EvalResult<IReadOnlyList<Evaluator.ResolvedArgumentAlgorithm>>.Ok(
+                [
+                    new Evaluator.ResolvedArgumentAlgorithm(new Algorithm.User(null, [], [], [], []), SpreadsSequence: false),
+                    new Evaluator.ResolvedArgumentAlgorithm(new Algorithm.User(null, [], [], [], []), SpreadsSequence: false),
+                ]),
             ResolveAlgorithm: _ => EvalResult<Algorithm>.Ok(new Algorithm.Builtin(BuiltinId.@filter)),
             EvaluateRangeCallArguments: (_, _, _) =>
                 throw new Xunit.Sdk.XunitException("range-argument evaluation must not run for a non-range source"));
@@ -580,7 +583,7 @@ public class EvaluatorSequencePipelineTests
                     new List<Evaluator.CountedResult>());
             },
             ResolveArgumentAlgorithms: _ =>
-                EvalResult<IReadOnlyList<Algorithm>>.Err(new EvalError.UnknownName("BadPred")),
+                EvalResult<IReadOnlyList<Evaluator.ResolvedArgumentAlgorithm>>.Err(new EvalError.UnknownName("BadPred")),
             ResolveAlgorithm: _ => EvalResult<Algorithm>.Ok(new Algorithm.Builtin(BuiltinId.@filter)),
             EvaluateRangeCallArguments: (_, _, _) =>
                 throw new Xunit.Sdk.XunitException("range-argument evaluation must not run for a non-range source"));
@@ -635,7 +638,7 @@ public class EvaluatorSequencePipelineTests
             EvaluateDotReceiverIterationItems: _ =>
                 throw new Xunit.Sdk.XunitException("generic dot-receiver iteration must not run for a direct range"),
             ResolveArgumentAlgorithms: _ =>
-                EvalResult<IReadOnlyList<Algorithm>>.Err(new EvalError.UnknownName("BadPred")),
+                EvalResult<IReadOnlyList<Evaluator.ResolvedArgumentAlgorithm>>.Err(new EvalError.UnknownName("BadPred")),
             ResolveAlgorithm: _ => EvalResult<Algorithm>.Ok(new Algorithm.Builtin(BuiltinId.@range)),
             EvaluateRangeCallArguments: (_, _, _) =>
             {

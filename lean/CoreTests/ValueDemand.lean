@@ -457,4 +457,112 @@ def unusedZeroArityCallbackIsNotDemanded (inlineBlock : Bool) : Bool :=
 #guard unusedZeroArityCallbackIsNotDemanded false
 #guard unusedZeroArityCallbackIsNotDemanded true
 
+--------------------------------------------------------------------------------
+-- A forwarded callable keeps its ALGORITHM channel in invoking builtin slots
+--------------------------------------------------------------------------------
+-- A parameter bound to a callable that ALSO satisfies a zero-argument value
+-- demand (`OnlyCount(*xs) = count(xs)`) is bound on BOTH channels. A builtin
+-- VALUE slot reads the bound value; a slot that INVOKES its argument — the
+-- `map` mapper, the `filter` predicate, the `reduce` reducer, a `while` or
+-- `repeat` step — invokes the algorithm-channel binding
+-- (`ResolvedArgumentAlgorithm.invoked`), so forwarding a callback through a
+-- parameter selects the same callable as a direct slot. Ordinary parameter binding
+-- may already have demanded its value; slot selection adds no demand.
+-- Before, every such slot received the demanded
+-- value wrapped as a zero-parameter algorithm and failed with an arity error.
+
+/-- `IsPos(*xs) = count(xs) > 0`. -/
+def isPosCollectingAlg : Algorithm :=
+  algWithParameters [{ name := "xs", kind := .collecting }] [] []
+    [.compare .gt (.call (resolve "count") [.param "xs"]) (.num 0)]
+
+/-- `SumAll(*xs) = sum(xs)`: a reducer over `(item, accumulator)`. -/
+def sumAllAlg : Algorithm :=
+  algWithParameters [{ name := "xs", kind := .collecting }] [] []
+    [.call (resolve "sum") [.param "xs"]]
+
+/-- `CountStep(*s) = count(s) + 1`: a `repeat` step. -/
+def countStepAlg : Algorithm :=
+  algWithParameters [{ name := "s", kind := .collecting }] [] []
+    [.binary .add (.call (resolve "count") [.param "s"]) (.num 1)]
+
+/-- `SumWhile(*s) = sum(s) + 1, sum(s) + 1 < 3`: a `while` step. -/
+def sumWhileAlg : Algorithm :=
+  let next := KatLang.Expr.binary .add (.call (resolve "sum") [.param "s"]) (.num 1)
+  algWithParameters [{ name := "s", kind := .collecting }] [] []
+    [next, .compare .lt next (.num 3)]
+
+/-- `Forward(f, xs) = builtin(xs, f)` for a one-callback collection builtin. -/
+def forwardCallbackAlg (builtin : String) : Algorithm :=
+  alg ["f", "xs"] [] [] [.call (resolve builtin) [.param "xs", .param "f"]]
+
+def forwardingRoot (out : List KatLang.Expr) : KatLang.Expr :=
+  arityRoot
+    [ ("OnlyCount", onlyCountAlg), ("IsPos", isPosCollectingAlg), ("SumAll", sumAllAlg)
+    , ("CountStep", countStepAlg), ("SumWhile", sumWhileAlg), ("Add", reducerAlg)
+    , ("Only", onlyAlg), ("A", sevenAlg)
+    , ("ApplyMap", forwardCallbackAlg "map"), ("ApplyFilter", forwardCallbackAlg "filter")
+    , ("ApplyReduce", alg ["f", "xs"] [] []
+        [.call (resolve "reduce") [.param "xs", .param "f", .num 0]])
+    , ("ApplyRepeat", alg ["g"] [] [] [.call (resolve "repeat") [.param "g", .num 3, .num 9]])
+    , ("ApplyWhile", alg ["g"] [] [] [.call (resolve "while") [.param "g", .num 0]])
+    , ("ApplyCount", alg ["xs"] [] [] [.call (resolve "count") [.param "xs"]])
+    , ("ApplyInitial", alg ["i"] [] []
+        [.call (resolve "reduce") [.listLiteral [.num 1, .num 2], resolve "Add", .param "i"]]) ]
+    out
+
+def oneTwo : KatLang.Expr := .listLiteral [.num 1, .num 2]
+
+/-- The forwarded spelling produces exactly the direct spelling's value. -/
+def forwardedCallbackAgrees (direct forwarded : KatLang.Expr) (expected : List Int) : Bool :=
+  expectFlat (runFlat (forwardingRoot [direct])) expected
+    && expectFlat (runFlat (forwardingRoot [forwarded])) expected
+    && (match runResult (forwardingRoot [direct]), runResult (forwardingRoot [forwarded]) with
+        | .ok d, .ok f => d == f
+        | _, _ => false)
+
+-- Callbacks: `map`, `filter`, `reduce`.
+#guard forwardedCallbackAgrees
+  (.call (resolve "map") [oneTwo, resolve "OnlyCount"])
+  (.call (resolve "ApplyMap") [resolve "OnlyCount", oneTwo]) [1, 1]
+#guard forwardedCallbackAgrees
+  (.call (resolve "filter") [oneTwo, resolve "IsPos"])
+  (.call (resolve "ApplyFilter") [resolve "IsPos", oneTwo]) [1, 2]
+#guard forwardedCallbackAgrees
+  (.call (resolve "reduce") [.listLiteral [.num 1, .num 2, .num 3], resolve "SumAll", .num 0])
+  (.call (resolve "ApplyReduce") [resolve "SumAll", .listLiteral [.num 1, .num 2, .num 3]]) [6]
+-- Loop steps: `repeat` and `while`.
+#guard forwardedCallbackAgrees
+  (.call (resolve "repeat") [resolve "CountStep", .num 3, .num 9])
+  (.call (resolve "ApplyRepeat") [resolve "CountStep"]) [2]
+#guard forwardedCallbackAgrees
+  (.call (resolve "while") [resolve "SumWhile", .num 0])
+  (.call (resolve "ApplyWhile") [resolve "SumWhile"]) [2]
+-- A zero-argument-demand-ineligible callable was never bound on the value
+-- channel and keeps working (`Add` needs two supplied values).
+#guard expectFlat (runFlat (forwardingRoot
+  [.call (resolve "ApplyMap") [resolve "Add", .listLiteral []]])) []
+
+-- VALUE slots keep the value side: the `collection` argument and `reduce`'s
+-- `initial` accumulator read the forwarded parameter's bound value.
+#guard expectFlat (runFlat (forwardingRoot [.call (resolve "ApplyCount") [resolve "Only"]])) [0]
+#guard expectFlat (runFlat (forwardingRoot [.call (resolve "ApplyInitial") [resolve "OnlyCount"]])) [3]
+#guard expectFlat (runFlat (forwardingRoot [.call (resolve "ApplyInitial") [resolve "A"]])) [10]
+
+-- A parameter bound on the VALUE channel only has no algorithm binding, so an
+-- invoking slot still receives its value and rejects it as a zero-parameter
+-- callback — exactly what the direct spelling `map([1, 2], 5)` reports; a
+-- forwarded zero-parameter property is invoked like the direct one and rejected
+-- the same way.
+def invokedRejectsLikeDirect (direct forwarded : KatLang.Expr) : Bool :=
+  match runResult (forwardingRoot [direct]), runResult (forwardingRoot [forwarded]) with
+  | .error d, .error f => innermostIsArityMismatch 0 1 d && innermostIsArityMismatch 0 1 f
+  | _, _ => false
+#guard invokedRejectsLikeDirect
+  (.call (resolve "map") [oneTwo, .num 5])
+  (.call (resolve "ApplyMap") [.num 5, oneTwo])
+#guard invokedRejectsLikeDirect
+  (.call (resolve "map") [oneTwo, resolve "A"])
+  (.call (resolve "ApplyMap") [resolve "A", oneTwo])
+
 end KatLangTests

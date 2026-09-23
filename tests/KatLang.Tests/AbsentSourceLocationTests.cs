@@ -501,6 +501,8 @@ public class AbsentSourceLocationTests
         { "(1, [2, {}])", "{}" },
         { "[1, ({}, 2), 3]", "{}" },
         { "[[{}]]", "{}" },
+        { "P((x, *rest)) = x\nP([1, {}])", "{}" },
+        { "P((x, *rest)) = x\nmap([[1, {}]], P)", "{}" },
     };
 
     [Theory]
@@ -577,6 +579,8 @@ public class AbsentSourceLocationTests
     [InlineData("[1, [2, {}], 3]")]
     [InlineData("[1, ({}, 2), 3]")]
     [InlineData("(1, [2, {}])")]
+    [InlineData("P((x, *rest)) = x\nP([1, {}])")]
+    [InlineData("P((x, *rest)) = x\nmap([[1, {}]], P)")]
     public async Task SyncAsyncAndOptimizedExecution_AgreeOnTheLocation(string source)
     {
         var ast = new Expr.AlgorithmExpr(EvaluatorTestSupport.ParseValidRoot(source));

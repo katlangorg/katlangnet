@@ -1417,6 +1417,134 @@ public static class LanguageSpecCorpus
         },
         new()
         {
+            Id = "binding-failure-outranks-repeated-name-conflict",
+            Category = "variadic-calls",
+            Source = "Bad = 1 / 0\nP(x, x, (a, b)) = a\n\nP(1, 2, Bad)",
+            Outcome = SpecOutcome.EvalError,
+            ExpectedErrorCategory = "div0",
+            Probes =
+            [
+                // Every pattern binds first; the unequal x is only a merge failure.
+                new SpecProbe("P(x, x, (a, b)) = a\nP(1, 2, 7)", "err arity"),
+                // Between different names the innermost merge decides: the (f, f) merge runs first.
+                new SpecProbe("Inc(y) = y + 1\nP(x, x, f, f) = 0\nP(1, 2, Inc, Inc)", "err type"),
+                new SpecProbe("Inc(y) = y + 1\nP(f, f, x, x) = 0\nP(Inc, Inc, 1, 2)", "err arity"),
+                // A conflict inside a nested group is part of binding that group.
+                new SpecProbe("Bad = 1 / 0\nP((x, x), (a, b)) = a\nP((1, 2), Bad)", "err arity"),
+                // Equal repeated values still bind.
+                new SpecProbe("P(x, x, (a, b)) = b\nP(1, 1, (2, 3))", "ok raw=3 n=1"),
+            ],
+            Explanation = "A parameter-pattern list binds EVERY pattern before it checks its repeated names, so a later pattern's failure — here the argument `Bad`, whose value the `(a, b)` pattern must open — is reported instead of the unequal `x`. Between different repeated names, the merge that runs first — the innermost, whose name completes furthest right — decides, and within one merge an unequal value (an arity error) is found before a callable-only repeat (a type error). A conflict inside a nested group belongs to binding that group, and equal repeated values still bind. Callbacks and loop state bind in the same order.",
+        },
+        new()
+        {
+            Id = "repeated-name-binding-is-order-independent",
+            Category = "variadic-calls",
+            Source = "A = 5\nInc(y) = y + 1\nP(f, f, f) = f\n\nP(A, 5, Inc)",
+            Outcome = SpecOutcome.EvalError,
+            ExpectedErrorCategory = "type",
+            Probes =
+            [
+                // Every permutation of the same arguments gives the same verdict.
+                new SpecProbe("A = 5\nInc(y) = y + 1\nP(f, f, f) = f\nP(Inc, 5, A)", "err type"),
+                new SpecProbe("A = 5\nInc(y) = y + 1\nP(f, f, f) = f\nP(5, A, Inc)", "err type"),
+                // Every pair compatible: binds in every order.
+                new SpecProbe("A = 5\nP(f, f, f) = f\nP(A, A, 5)", "ok raw=5 n=1"),
+                new SpecProbe("A = 5\nP(f, f, f) = f\nP(5, A, A)", "ok raw=5 n=1"),
+                // Unequal values outrank a callable-only repeat, in every order.
+                new SpecProbe("A = 5\nB = 6\nInc(y) = y + 1\nP(f, f, f) = f\nP(Inc, B, A)", "err arity"),
+                // Two occurrences keep the pairwise rule: a plain value beside a callable binds.
+                new SpecProbe("Inc(y) = y + 1\nP(f, f) = f\nP(5, Inc)", "ok raw=5 n=1"),
+            ],
+            Explanation = "A repeated parameter name is checked once, after all of its occurrences have bound, by comparing every occurrence with every other: values must be equal, and when two or more arguments reach the name as callables, each of them must also carry a value to compare. `Inc` passed bare has no value, and `A = 5` is also usable as a callable, so `(A, 5, Inc)` fails in every order, while `(A, A, 5)` binds in every order. Argument order never changes whether the call binds.",
+        },
+        new()
+        {
+            Id = "repeated-equal-values-require-one-callable-identity",
+            Category = "variadic-calls",
+            Source = "A(*xs) = 5\nB(*xs) = 5 + xs.count\nP(f, f) = f(1)\nP(A, B)",
+            Outcome = SpecOutcome.EvalError,
+            ExpectedErrorCategory = "type",
+            Probes =
+            [
+                new SpecProbe("A(*xs) = 5\nB(*xs) = 5 + xs.count\nP(f, f) = f(1)\nP(B, A)", "err type"),
+                new SpecProbe("A(*xs) = 5\nB(*xs) = 5 + xs.count\nP(f, *r, f) = f(1)\nP(A, 9, B)", "err type"),
+                new SpecProbe("A = 5\nB = 5\nP(f, f) = f\nP(A, B)", "err type"),
+            ],
+            IncludeInGeneratorPrompt = true,
+            Explanation = "Repeated values must be equal, and repeated callable contributions must carry values and the same callable identity (declaration and captured lexical activations). Equal zero-argument values do not make A and B interchangeable: A(1) is 5 while B(1) is 6. Both argument orders therefore reject, including with just two occurrences. One callable plus an equal value remains valid.",
+        },
+        new()
+        {
+            Id = "repeated-callable-success-preserves-both-channels",
+            Category = "variadic-calls",
+            Source = "B(*xs) = 5 + xs.count\nP(f, f, f, f, f) = [f, f(1), map([7], f)]\nP(B, 5, B, 5, 5)\nP(5, B, 5, 5, B)",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "[5, 6, [6]]\n[5, 6, [6]]",
+            ExpectedRaw = "S[L[5, 6, L[6]], L[5, 6, L[6]]]",
+            ExpectedEmittedCount = 2,
+            Explanation = "Successful permutations retain the same value and callable channels. Repeated references to B are the same callable, so f reads its bound value 5 while f(1) and the mapper invoke B and produce 6. The rule applies uniformly to five occurrences as well as one, two, or three.",
+        },
+        new()
+        {
+            Id = "repeated-genuine-aliases-preserve-complete-binding",
+            Category = "variadic-calls",
+            Source = "A(*xs) = 5 + xs.count\nP(f, f) = [f, f.count, f(1), map([7], f)]\nBoth(left, right) = [P(left, right), P(right, left)]\nShare(original) = Both(original, original)\nShare(A)",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "[[5, 1, 6, [6]], [5, 1, 6, [6]]]",
+            ExpectedRaw = "L[L[5, 1, 6, L[6]], L[5, 1, 6, L[6]]]",
+            ExpectedEmittedCount = 1,
+            IncludeInGeneratorPrompt = true,
+            Explanation = "The parameters left and right are genuine aliases of the one callable A. Both argument orders bind successfully and preserve all channels: f reads 5, its count is 1, and both direct invocation and the callback invoke A. Successful permutations preserve channel availability, values, counts and callable identity. Forwarding retains ordinary eager argument-binding effects.",
+        },
+        new()
+        {
+            Id = "repeated-callable-identity-includes-captured-activation",
+            Category = "variadic-calls",
+            Source = "P(f, f) = f(1)\nOuter(n, previous) = {\n  Inner(*xs) = 5 + n * xs.count\n  if(n == 1, Outer(2, Inner), P(previous, Inner))\n}\nOuter(1, 0)",
+            Outcome = SpecOutcome.EvalError,
+            ExpectedErrorCategory = "type",
+            Explanation = "Two activations of one nested declaration are different callables even when their zero-argument values agree. The earlier Inner captures n=1 and the later Inner captures n=2; selecting either would change f(1), so the repeated binding rejects.",
+        },
+        new()
+        {
+            Id = "repeated-dot-results-have-distinct-wrapper-identities",
+            Category = "variadic-calls",
+            Source = "Obj = { public V = 5 }\nP(f, f) = f\nP(Obj.V, Obj.V)",
+            Outcome = SpecOutcome.EvalError,
+            ExpectedErrorCategory = "type",
+            Explanation = "Each independently resolved dot result supplies a fresh wrapper algorithm, so two equal results do not establish one callable identity. Forwarding one such wrapper twice preserves its identity instead.",
+        },
+        new()
+        {
+            Id = "repeated-forwarded-dot-wrapper-keeps-identity",
+            Category = "variadic-calls",
+            Source = "Obj = { public V = 5 }\nP(f, f) = f()\nPass(g) = P(g, g)\nPass(Obj.V)",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "5",
+            ExpectedRaw = "5",
+            ExpectedEmittedCount = 1,
+            Explanation = "A dot-result wrapper keeps its runtime callable identity through parameter forwarding. Passing that one wrapper twice is compatible and invokes it as the same callable.",
+        },
+        new()
+        {
+            Id = "collecting-pattern-list-merges-after-the-collector",
+            Category = "variadic-calls",
+            Source = "Bad = 1 / 0\nP(x, *rest, x) = x\n\nP(1, Bad, 2)",
+            Outcome = SpecOutcome.EvalError,
+            ExpectedErrorCategory = "div0",
+            Probes =
+            [
+                // The prefix binds and checks its repeated names before the suffix binds.
+                new SpecProbe("Bad = 1 / 0\nP(x, x, *rest, (a, b)) = a\nP(1, 2, Bad)", "err arity"),
+                // The suffix binds before the prefix/suffix check.
+                new SpecProbe("Bad = 1 / 0\nP(x, *rest, x, (a, b)) = a\nP(1, 9, 2, Bad)", "err div0"),
+                new SpecProbe("P(x, *rest, x) = rest\nP(1, 9, 1)", "ok raw=L[9] n=1"),
+            ],
+            Explanation = "With a collecting parameter the fixed prefix binds and checks its repeated names first, then the suffix does the same, then the collector gathers its values; only then are the prefix, the collector, and the suffix checked against each other. So `P(1, Bad, 2)` reports the collected argument's division by zero rather than the unequal `x`, while a conflict inside the prefix is still found before the suffix binds.",
+        },
+        new()
+        {
             Id = "redundant-call-parens-canonical",
             Category = "variadic-calls",
             Source = "Inner = (1, 2, 3)\nCountSequenceValue((*values)) = values.count\nNestedCount(((*values))) = values.count\n\nCountSequenceValue(Inner)\nCountSequenceValue((Inner))\nCountSequenceValue(((1, 2, 3)))\nNestedCount([(1, 2, 3)])\nNestedCount(([[1, 2, 3]]))",
@@ -2359,6 +2487,67 @@ public static class LanguageSpecCorpus
                 new SpecProbe("F(*init, last) = init\n[(1, 2, 3)].map(F)", "ok raw=L[L[1, 2]] n=1"),
             ],
             Explanation = "A multi-parameter flat callback opens the lone sequence element into row slots (the established flat-callback row convention), then the shared prefix/collecting/suffix binder allocates fixed front/back slots and COLLECTS the middle as an exact list — agreeing with the nested sequence-value pattern form `F((first, *middle, last))`.",
+        },
+        new()
+        {
+            Id = "callback-nested-pattern-binds-like-call",
+            Category = "collection-builtins",
+            Source = "Head((x, *rest)) = [x, rest]\n\nHead(7)\n[7].map(Head)\nmap((7, (8, 9)), Head)",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "[7, []]\n[[7, []]]\n[[7, []], [8, [9]]]",
+            ExpectedRaw = "S[L[7, L[]], L[L[7, L[]]], L[L[7, L[]], L[8, L[9]]]]",
+            ExpectedEmittedCount = 3,
+            Probes =
+            [
+                // A scalar is ONE item for the nested pattern — too few for a fixed pair, in the
+                // direct call and the callback alike.
+                new SpecProbe("Pair((x, y)) = [x, y]\nPair(7)", "err arity"),
+                new SpecProbe("Pair((x, y)) = [x, y]\n[7].map(Pair)", "err arity"),
+                // A sequence or list element opens one level, exactly as in the direct call.
+                new SpecProbe("Head((x, *rest)) = [x, rest]\n[[7, 8]].map(Head)", "ok raw=L[L[7, L[8]]] n=1"),
+                new SpecProbe("Last((*init, z)) = z\n[true, (1, 2)].map(Last)", "ok raw=L[true, 2] n=1"),
+                // filter and reduce bind their values through the same rules.
+                new SpecProbe("Big((x, *rest)) = x > 1\n[7, 1].filter(Big)", "ok raw=L[7] n=1"),
+                new SpecProbe("R((x, *rest), acc) = acc + x\nreduce([7, 8], R, 0)", "ok raw=15 n=1"),
+                // The operation decides the invocations: an empty collection runs nothing, while
+                // an empty element is one invocation with the value `()`.
+                new SpecProbe("Head((x, *rest)) = [x, rest]\n[].map(Head)", "ok raw=L[] n=1"),
+                new SpecProbe("Head((x, *rest)) = [x, rest]\n[()].map(Head)", "err arity"),
+            ],
+            Explanation = "A callback binds each value it supplies exactly as the ordinary call supplying that one value does: a nested sequence-value pattern opens a sequence or list value one level, and any other value (a number, string, or Boolean) is the ordinary one-item supply at every pattern level — so a scalar element binds `(x, *rest)` with an empty `rest` and is one item too few for `(x, y)`, just like `Head(7)` and `Pair(7)`. The callback operation still decides how many values it supplies (one element for map and filter, element and accumulator for reduce) and how often it invokes the callback (never for an empty collection).",
+        },
+        new()
+        {
+            Id = "forwarded-callable-keeps-its-algorithm-channel",
+            Category = "collection-builtins",
+            Source = "Cnt(*xs) = xs.count\nSumWhile(*s) = s.sum + 1, s.sum + 1 < 3\nApply(f, xs) = xs.map(f)\nLoop(g) = while(g, 0)\nOuter(xs) = {\n  Inner(g) = xs.map(g)\n  Inner(Cnt)\n}\n\nApply(Cnt, [1, 2])\nLoop(SumWhile)\nOuter([1, 2])",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "[1, 1]\n2\n[1, 1]",
+            ExpectedRaw = "S[L[1, 1], 2, L[1, 1]]",
+            ExpectedEmittedCount = 3,
+            Probes =
+            [
+                // Every invoking slot takes the callable: the plain map, filter (also fused
+                // with count), reduce, and repeat, and a property alias of the callable.
+                new SpecProbe("Cnt(*xs) = xs.count\nApply(f, xs) = map(xs, f)\nApply(Cnt, [1, 2])", "ok raw=L[1, 1] n=1"),
+                new SpecProbe("Big(*xs) = xs.sum > 1\nKeep(f, xs) = xs.filter(f)\nKeep(Big, [1, 2, 3])", "ok raw=L[2, 3] n=1"),
+                new SpecProbe("Big(*xs) = xs.sum > 1\nHits(f, xs) = xs.filter(f).count\nHits(Big, [1, 2, 3])", "ok raw=2 n=1"),
+                new SpecProbe("SumAll(*xs) = xs.sum\nFold(f, xs) = xs.reduce(f, 0)\nFold(SumAll, [1, 2, 3])", "ok raw=6 n=1"),
+                new SpecProbe("CountStep(*s) = s.count + 1\nRun(g) = repeat(g, 3, 9)\nRun(CountStep)", "ok raw=2 n=1"),
+                new SpecProbe("Only(*xs) = xs\nG = Only\nApply(f, xs) = map(xs, f)\nApply(G, [1])", "ok raw=L[L[1]] n=1"),
+                // VALUE slots read the bound value: the collection and reduce's initial
+                // accumulator see the callable's zero-argument value.
+                new SpecProbe("Only(*xs) = xs\nSize(xs) = count(xs)\nSize(Only)", "ok raw=0 n=1"),
+                new SpecProbe("Seven(*xs) = 7\nR(x, acc) = acc + x\nStart(i) = reduce([1, 2], R, i)\nStart(Seven)", "ok raw=10 n=1"),
+                // A value-only argument has no callable to invoke, directly or forwarded.
+                new SpecProbe("Apply(f, xs) = xs.map(f)\nApply(5, [1])", "err arity"),
+                new SpecProbe("[1].map(5)", "err arity"),
+                // A callable whose zero-argument demand fails is bound on the algorithm
+                // channel only, and always worked.
+                new SpecProbe("Z(*xs) = 10 / xs.count\nApply(f, xs) = xs.map(f)\nApply(Z, [1, 2])", "ok raw=L[10, 10] n=1"),
+            ],
+            IncludeInGeneratorPrompt = true,
+            Explanation = "Passing a callable to a parameter binds it as a callable, and also as a value when it can be read with no arguments (`Cnt` reads as `0`). A builtin slot that calls its argument — the map mapper, the filter predicate, the reduce reducer, a while or repeat step — calls the callable, so forwarding `Cnt` through `Apply` selects the same callable as `[1, 2].map(Cnt)`, including from a nested block that captures the parameter. Forwarding retains ordinary eager parameter-binding effects; callback selection adds no further value demand. A slot that reads a value — the collection, reduce's initial accumulator — reads the bound value.",
         },
         new()
         {

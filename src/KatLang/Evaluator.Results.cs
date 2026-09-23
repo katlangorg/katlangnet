@@ -329,12 +329,19 @@ public static partial class Evaluator
         /// eagerly (a value-shaped zero-parameter argument): a value-consuming
         /// position (the reduce initial accumulator) must use THAT result instead of
         /// re-evaluating the algorithm channel — the written slot is evaluated
-        /// exactly once. Genuine callbacks have no prepared value.
+        /// exactly once. Genuine callbacks have no prepared value. <see cref="Callable"/>
+        /// carries a parameter argument's algorithm-channel binding beside its value side
+        /// (<see cref="ResolvedArgumentAlgorithm.Callable"/>); a callback slot invokes
+        /// <see cref="InvokedAlgorithm"/>.
         /// </summary>
         public sealed record AlgorithmArg(KatLang.Algorithm AlgorithmValue) : PreparedSequenceBuiltinSuffixArg
         {
             public CountedResult? PreparedValue { get; init; }
             public Expr? Source { get; init; }
+            public KatLang.Algorithm? Callable { get; init; }
+
+            /// <summary>The callback an invoking slot applies (Lean: <c>ResolvedArgumentAlgorithm.invoked</c>).</summary>
+            public KatLang.Algorithm InvokedAlgorithm => Callable ?? AlgorithmValue;
         }
 
         public sealed record ValueArg(Result ResultValue) : PreparedSequenceBuiltinSuffixArg;

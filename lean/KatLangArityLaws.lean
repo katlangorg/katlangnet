@@ -146,10 +146,9 @@ private theorem take_length_valueInputs (xs : List Result) :
 
 private theorem bindPairs_nil_nil
     (outerPatterns : List ParameterPattern) (outerInputs : List ParameterPatternInput)
-    (allowAlgorithmBindings : Bool)
-    (merge : ParameterPatternBindings -> ParameterPatternBindings -> EvalM ParameterPatternBindings) :
-    bindParameterPatternList.bindPairs outerPatterns outerInputs allowAlgorithmBindings merge [] [] =
-      pure {} := by
+    (allowAlgorithmBindings : Bool) :
+    bindParameterPatternList.bindPairs outerPatterns outerInputs allowAlgorithmBindings [] [] =
+      pure [] := by
   simp [bindParameterPatternList.bindPairs]
 
 /-
@@ -286,8 +285,8 @@ theorem bindParameterPatternList_single_collecting_binds_collect
               algEnv := [] } := by
   simp [bindParameterPatternList, bindParameterPatternList.findCollecting,
     bindPairs_nil_nil, collectValues_valueInputs, collectorSupply_final_items, drop_length_valueInputs, take_length_valueInputs,
-    runEvalM, mergeEqualValEnv, mergeEqualCountedParamEnv,
-    mergePatternAlgEnv, lookupAssoc, CountedParamEnv.lookup, ValEnv.lookup, collectSegment]
+    runEvalM,
+    collectSegment]
   rfl
 
 theorem variadic_single_collecting_binds_collect (xs : List Result) :
@@ -412,8 +411,7 @@ theorem bindParameterPatternList_trailing_collecting_binds_collect
     bindParameterPatternList.bindPairs, bindParameterPattern,
     bindPairs_nil_nil, collectValues_valueInputs, collectorSupply_final_items,
     take_length_valueInputs, drop_length_valueInputs,
-    runEvalM, mergeEqualValEnv, mergeEqualCountedParamEnv,
-    mergePatternAlgEnv, lookupAssoc, CountedParamEnv.lookup, ValEnv.lookup,
+    runEvalM,
     collectSegment]
   rfl
 
@@ -433,8 +431,7 @@ theorem bindParameterPatternList_leading_collecting_binds_collect
   simp [bindParameterPatternList, bindParameterPatternList.findCollecting,
     bindParameterPatternList.bindPairs, bindParameterPattern,
     bindPairs_nil_nil, collectValues_valueInputs, collectorSupply_final_items,
-    runEvalM, mergeEqualValEnv, mergeEqualCountedParamEnv,
-    mergePatternAlgEnv, lookupAssoc, CountedParamEnv.lookup, ValEnv.lookup,
+    runEvalM,
     collectSegment]
   rfl
 
@@ -451,13 +448,11 @@ theorem bindParameterPatternList_middle_collecting_binds_collect
       = .ok { argEnv := [("a", x), ("r", collectSegment mid), ("z", y)],
               countedParamEnv := [("r", (collectSegment mid, 1))],
               algEnv := [] } := by
-  have hlen : ¬ (mid.length + 1 + 1 < 2) := by omega
   simp [bindParameterPatternList, bindParameterPatternList.findCollecting,
     bindParameterPatternList.bindPairs, bindParameterPattern,
     bindPairs_nil_nil, collectValues_valueInputs, collectorSupply_final_items,
-    runEvalM, mergeEqualValEnv, mergeEqualCountedParamEnv,
-    mergePatternAlgEnv, lookupAssoc, CountedParamEnv.lookup, ValEnv.lookup,
-    collectSegment, hlen]
+    runEvalM,
+    collectSegment]
   rfl
 
 /-
@@ -520,8 +515,8 @@ theorem dot_receiver_slot_is_a_written_slot (v : Result) :
               algEnv := [] } := by
   simp [bindParameterPatternList, bindParameterPatternList.findCollecting,
     bindPairs_nil_nil, collectValues_single,
-    runEvalM, mergeEqualValEnv, mergeEqualCountedParamEnv,
-    mergePatternAlgEnv, lookupAssoc, CountedParamEnv.lookup, ValEnv.lookup, collectSegment]
+    runEvalM,
+    collectSegment]
   rfl
 
 /-- With an extra written argument, the fixed suffix binds from the back and
@@ -540,8 +535,8 @@ theorem dot_receiver_with_suffix_is_the_collector_segment (v y : Result) :
   simp [bindParameterPatternList, bindParameterPatternList.findCollecting,
     bindParameterPatternList.bindPairs, bindParameterPattern,
     bindPairs_nil_nil, collectValues_single,
-    runEvalM, mergeEqualValEnv, mergeEqualCountedParamEnv,
-    mergePatternAlgEnv, lookupAssoc, CountedParamEnv.lookup, ValEnv.lookup, collectSegment]
+    runEvalM,
+    collectSegment]
   rfl
 
 /-- A FIXED parameter binds the receiver's one value: with the receiver as the
@@ -558,8 +553,8 @@ theorem dot_receiver_fixed_binds_value (v : Result) :
   simp [bindParameterPatternList, bindParameterPatternList.findCollecting,
     bindParameterPatternList.bindPairs, bindParameterPattern,
     bindPairs_nil_nil, bindParameterPatternList.collectValues,
-    runEvalM, mergeEqualValEnv, mergeEqualCountedParamEnv,
-    mergePatternAlgEnv, lookupAssoc, CountedParamEnv.lookup, ValEnv.lookup, collectSegment]
+    runEvalM,
+    collectSegment]
   rfl
 
 /-- The receiver is ONE input for arity checking whatever it holds: a mixed
@@ -658,8 +653,8 @@ theorem collector_binder_lone_written_sequence_binds_items (items : List Result)
               algEnv := [] } := by
   simp [bindParameterPatternList, bindParameterPatternList.findCollecting,
     bindPairs_nil_nil, collectValues_single, collectorSupply,
-    runEvalM, mergeEqualValEnv, mergeEqualCountedParamEnv,
-    mergePatternAlgEnv, lookupAssoc, CountedParamEnv.lookup, ValEnv.lookup, collectSegment]
+    runEvalM,
+    collectSegment]
   rfl
 
 /-- Through the real binder: the same lone sequence as a FINAL item (explicit
@@ -674,8 +669,8 @@ theorem collector_binder_lone_final_sequence_is_exact (items : List Result) :
               algEnv := [] } := by
   simp [bindParameterPatternList, bindParameterPatternList.findCollecting,
     bindPairs_nil_nil, collectValues_single, collectorSupply,
-    runEvalM, mergeEqualValEnv, mergeEqualCountedParamEnv,
-    mergePatternAlgEnv, lookupAssoc, CountedParamEnv.lookup, ValEnv.lookup, collectSegment]
+    runEvalM,
+    collectSegment]
   rfl
 
 /-- Through the real binder: two written slots are collected exactly even when
@@ -691,8 +686,8 @@ theorem collector_binder_two_written_items_are_exact (items : List Result) (y : 
               algEnv := [] } := by
   simp [bindParameterPatternList, bindParameterPatternList.findCollecting,
     bindPairs_nil_nil, bindParameterPatternList.collectValues, collectorSupply,
-    runEvalM, mergeEqualValEnv, mergeEqualCountedParamEnv,
-    mergePatternAlgEnv, lookupAssoc, CountedParamEnv.lookup, ValEnv.lookup, collectSegment]
+    runEvalM,
+    collectSegment]
   rfl
 
 /-- Through the real binder, AFTER allocation: `F(*xs, z)` with `F((1, 2), 3)`
@@ -711,8 +706,8 @@ theorem collector_binder_opens_after_suffix_allocation (items : List Result) (y 
   simp [bindParameterPatternList, bindParameterPatternList.findCollecting,
     bindParameterPatternList.bindPairs, bindParameterPattern,
     bindPairs_nil_nil, collectValues_single, collectorSupply,
-    runEvalM, mergeEqualValEnv, mergeEqualCountedParamEnv,
-    mergePatternAlgEnv, lookupAssoc, CountedParamEnv.lookup, ValEnv.lookup, collectSegment]
+    runEvalM,
+    collectSegment]
   rfl
 
 /-- Through the real binder, AFTER allocation: `F(*xs, z)` with `F((1, 2), 3, 4)`
@@ -732,8 +727,8 @@ theorem collector_binder_multi_item_segment_after_suffix_is_exact (items : List 
   simp [bindParameterPatternList, bindParameterPatternList.findCollecting,
     bindParameterPatternList.bindPairs, bindParameterPattern,
     bindPairs_nil_nil, bindParameterPatternList.collectValues, collectorSupply,
-    runEvalM, mergeEqualValEnv, mergeEqualCountedParamEnv,
-    mergePatternAlgEnv, lookupAssoc, CountedParamEnv.lookup, ValEnv.lookup, collectSegment]
+    runEvalM,
+    collectSegment]
   rfl
 
 /-- Explicit-spread provenance survives allocation: `F([(1, 2)]*, 3)` leaves the
@@ -751,8 +746,8 @@ theorem collector_binder_final_lone_item_after_suffix_is_exact (items : List Res
   simp [bindParameterPatternList, bindParameterPatternList.findCollecting,
     bindParameterPatternList.bindPairs, bindParameterPattern,
     bindPairs_nil_nil, collectValues_single, collectorSupply,
-    runEvalM, mergeEqualValEnv, mergeEqualCountedParamEnv,
-    mergePatternAlgEnv, lookupAssoc, CountedParamEnv.lookup, ValEnv.lookup, collectSegment]
+    runEvalM,
+    collectSegment]
   rfl
 
 /-
@@ -845,8 +840,8 @@ theorem collector_binder_empty_supply_is_empty_list (name : Ident) :
   simp [bindParameterPatternList, bindParameterPatternList.findCollecting,
     bindPairs_nil_nil, bindParameterPatternList.collectValues, collectorSupply,
     ParameterPattern.minimumSuppliedSlots, ParameterPattern.hasCollectingCaptureAtCurrentLevel,
-    runEvalM, mergeEqualValEnv, mergeEqualCountedParamEnv,
-    mergePatternAlgEnv, lookupAssoc, CountedParamEnv.lookup, ValEnv.lookup, collectSegment]
+    runEvalM,
+    collectSegment]
   rfl
 
 /-- Through the REAL binder: a required fixed parameter beside a collector still
@@ -922,8 +917,8 @@ theorem collector_fixed_parameter_binds_value_unchanged (items : List Result) :
       = .ok { argEnv := [("x", .sequenceValue items)], countedParamEnv := [], algEnv := [] } := by
   simp [bindParameterPatternList, bindParameterPatternList.findCollecting,
     bindParameterPatternList.bindPairs, bindParameterPattern,
-    runEvalM, mergeEqualValEnv, mergeEqualCountedParamEnv,
-    mergePatternAlgEnv]
+    runEvalM,
+    ]
   rfl
 
 /-
@@ -973,8 +968,7 @@ theorem call_variadic_single_sequence_preserved :
               algEnv := [] } := by
   simp [bindParameterPatternList, bindParameterPatternList.findCollecting,
     bindParameterPatternList.bindPairs, bindParameterPatternList.collectValues, collectorSupply,
-    bindParameterPattern, runEvalM, mergeEqualValEnv, mergeEqualCountedParamEnv,
-    mergePatternAlgEnv, lookupAssoc, CountedParamEnv.lookup, ValEnv.lookup,
+    bindParameterPattern, runEvalM,
     collectSegment]
   rfl
 
@@ -992,8 +986,8 @@ theorem deconstruct_fixed_single_sequence_opens :
               countedParamEnv := [], algEnv := [] } := by
   simp [bindParameterPatternList, bindParameterPatternList.findCollecting,
     bindParameterPatternList.bindPairs, bindParameterPattern, runEvalM,
-    Result.structureItems?, mergeEqualValEnv, mergeEqualCountedParamEnv,
-    mergePatternAlgEnv, lookupAssoc, ValEnv.lookup]
+    Result.sequenceValuePatternItems, Result.structureItems?,
+    ]
   rfl
 
 /-- `first, *rest = A`: the deconstruction sequence-value pattern opens `A`, so
@@ -1011,9 +1005,8 @@ theorem deconstruct_collecting_single_sequence_opens :
               algEnv := [] } := by
   simp [bindParameterPatternList, bindParameterPatternList.findCollecting,
     bindParameterPatternList.bindPairs, bindParameterPatternList.collectValues, collectorSupply,
-    bindParameterPattern, runEvalM, Result.structureItems?, mergeEqualValEnv,
-    mergeEqualCountedParamEnv, mergePatternAlgEnv, lookupAssoc,
-    CountedParamEnv.lookup, ValEnv.lookup, collectSegment]
+    bindParameterPattern, runEvalM, Result.sequenceValuePatternItems, Result.structureItems?,
+    collectSegment]
   rfl
 
 /-
@@ -1235,6 +1228,272 @@ theorem structureItems_sequenceValue (xs : List Result) :
 theorem structureItems_atom (n : Int) :
     Result.structureItems? (Result.atom n) = none := rfl
 
+/-
+## Nested-pattern opening (S3, September 2026)
+
+`Result.sequenceValuePatternItems` is the ONE rule by which a sequence-value
+parameter pattern opens the value its slot supplies, shared by the ordinary
+binder (`bindParameterPattern`) and the counted callback binder
+(`bindCountedParameterPattern`, a `partial def`, pinned by the S3 guards in
+`CoreTests/SequenceCallbackBuiltins.lean`). A sequence or list opens one
+level; every other value is ONE item — never zero, never opened further.
+-/
+
+theorem sequence_value_pattern_items_sequence (xs : List Result) :
+    Result.sequenceValuePatternItems (Result.sequenceValue xs) = xs := rfl
+
+theorem sequence_value_pattern_items_list (xs : List Result) :
+    Result.sequenceValuePatternItems (Result.listValue xs) = xs := rfl
+
+theorem sequence_value_pattern_items_scalar_is_one_item (n : Int) (s : String) (b : Bool) :
+    Result.sequenceValuePatternItems (Result.atom n) = [Result.atom n]
+    ∧ Result.sequenceValuePatternItems (Result.str s) = [Result.str s]
+    ∧ Result.sequenceValuePatternItems (Result.bool b) = [Result.bool b] :=
+  ⟨rfl, rfl, rfl⟩
+
+/-- The scalar one-item fallback reaches a multi-item group through the binder
+itself: `P((x, *rest))` with the scalar `n` binds `x = n` and collects the empty
+`rest = []` — one supplied value, so the collector gets none. -/
+theorem nested_pattern_scalar_is_one_item_supply (n : Int) :
+    runEvalM (bindParameterPatternList
+        [.sequenceValue [.capture { name := "x", kind := .normal },
+                         .capture { name := "rest", kind := .collecting }]]
+        [{ value? := some (Result.atom n) }]
+        false)
+      = .ok { argEnv := [("x", Result.atom n), ("rest", Result.listValue [])],
+              countedParamEnv := [("rest", (Result.listValue [], 1))],
+              algEnv := [] } := by
+  simp [bindParameterPatternList, bindParameterPatternList.findCollecting,
+    bindParameterPatternList.bindPairs, bindParameterPatternList.collectValues, collectorSupply,
+    bindParameterPattern, runEvalM, Result.sequenceValuePatternItems, Result.structureItems?,
+    collectSegment]
+  rfl
+
+/-
+## Repeated-name binding is order-independent (September 2026)
+
+A repeated name is decided ONCE per pattern level, when its last contribution joins, by
+`repeatedNameFailure`: every PAIR of its contributions must be compatible (equal values;
+equal counted values; two algorithm-channel bindings only when each carries a value
+and both have the same callable identity).
+The verdict is a function of the MULTISET of contributions, so no permutation of the
+arguments and no grouping of the merges can change it.
+-/
+
+private theorem perm_any_eq {α} {l₁ l₂ : List α} (h : l₁.Perm l₂) (f : α → Bool) :
+    l₁.any f = l₂.any f := by
+  apply Bool.eq_iff_iff.mpr
+  simp only [List.any_eq_true]
+  exact ⟨fun ⟨x, hx, hf⟩ => ⟨x, h.mem_iff.mp hx, hf⟩,
+    fun ⟨x, hx, hf⟩ => ⟨x, h.mem_iff.mpr hx, hf⟩⟩
+
+private theorem pairwise_any_perm {α} {l₁ l₂ : List α} (h : l₁.Perm l₂) (f : α → α → Bool) :
+    l₁.any (fun a => l₁.any (fun b => f a b)) = l₂.any (fun a => l₂.any (fun b => f a b)) := by
+  rw [perm_any_eq h]
+  congr 1
+  funext a
+  exact perm_any_eq h _
+
+theorem repeated_name_failure_is_permutation_invariant (names : List Ident)
+    {contributions permuted : List ParameterPatternBindings} (h : contributions.Perm permuted) :
+    repeatedNameFailure names contributions = repeatedNameFailure names permuted := by
+  have hValue : ∀ name, repeatedNameValueConflict name contributions
+      = repeatedNameValueConflict name permuted := fun name => by
+    simp only [repeatedNameValueConflict]
+    exact pairwise_any_perm (h.filterMap _) _
+  have hCounted : ∀ name, repeatedNameCountedConflict name contributions
+      = repeatedNameCountedConflict name permuted := fun name => by
+    simp only [repeatedNameCountedConflict]
+    exact pairwise_any_perm (h.filterMap _) _
+  have hAlgorithm : ∀ name, repeatedNameAlgorithmConflict name contributions
+      = repeatedNameAlgorithmConflict name permuted := fun name => by
+    simp only [repeatedNameAlgorithmConflict]
+    rw [(h.filter _).length_eq, perm_any_eq (h.filter _)]
+  have hIdentity : ∀ name, repeatedNameCallableIdentityConflict name contributions
+      = repeatedNameCallableIdentityConflict name permuted := fun name => by
+    simp only [repeatedNameCallableIdentityConflict]
+    exact pairwise_any_perm (h.filterMap _) _
+  simp only [repeatedNameFailure, hValue, hCounted, hAlgorithm, hIdentity]
+
+/-- A successful repeated-name verdict also excludes different callable identities.
+    The permutation theorem alone did not constrain the callable kept by the merge. -/
+theorem repeated_name_success_has_no_callable_identity_conflict (names : List Ident)
+    (contributions : List ParameterPatternBindings)
+    (success : repeatedNameFailure names contributions = none) :
+    names.any (fun name => repeatedNameCallableIdentityConflict name contributions) = false := by
+  unfold repeatedNameFailure at success
+  split at success <;> try contradiction
+  split at success <;> try contradiction
+  split at success <;> try contradiction
+  split at success <;> simp_all
+
+/-- Any two callable contributions of a successful name have the same identity.
+    Thus choosing a first callable cannot choose between distinct declarations or
+    captured activations. Declaration identity presumes an identified executable
+    program, just as the evaluator's ownership and cache identities do. -/
+theorem repeated_name_success_callables_agree (names : List Ident)
+    (contributions : List ParameterPatternBindings) (name : Ident)
+    (success : repeatedNameFailure names contributions = none) (member : name ∈ names)
+    (left right : Algorithm)
+    (hl : left ∈ contributions.filterMap (fun c => lookupAssoc name c.algEnv))
+    (hr : right ∈ contributions.filterMap (fun c => lookupAssoc name c.algEnv)) :
+    sameRepeatedCallableIdentity left right = true := by
+  have h := repeated_name_success_has_no_callable_identity_conflict names contributions success
+  have hn : repeatedNameCallableIdentityConflict name contributions = false := by
+    simpa using (List.any_eq_false.mp h) name member
+  unfold repeatedNameCallableIdentityConflict at hn
+  have ha : (contributions.filterMap (fun c => lookupAssoc name c.algEnv)).any
+      (fun right => !sameRepeatedCallableIdentity left right) = false := by
+    simpa using (List.any_eq_false.mp hn) left hl
+  have hp := (List.any_eq_false.mp ha) right hr
+  simpa using hp
+
+private theorem repeated_lookup_append {A} (name : Ident) (xs ys : Assoc Ident A) :
+    lookupAssoc name (xs ++ ys) = (lookupAssoc name xs).orElse (fun _ => lookupAssoc name ys) := by
+  induction xs with
+  | nil => rfl
+  | cons x xs ih =>
+    rcases x with ⟨key, value⟩
+    by_cases h : name = key <;> simp [lookupAssoc, h, ih]
+
+private theorem repeated_lookup_appendFirst {A} (name : Ident) (acc incoming : Assoc Ident A) :
+    lookupAssoc name (appendFirstOccurrences acc incoming) =
+      (lookupAssoc name acc).orElse (fun _ => lookupAssoc name incoming) := by
+  induction incoming generalizing acc with
+  | nil => simp [appendFirstOccurrences, lookupAssoc]
+  | cons entry rest ih =>
+    rcases entry with ⟨key, value⟩
+    simp only [appendFirstOccurrences, List.foldl_cons]
+    split
+    next h =>
+      rw [show rest.foldl _ acc = appendFirstOccurrences acc rest from rfl, ih]
+      by_cases hn : name = key
+      · subst name
+        cases he : lookupAssoc key acc <;> simp_all [lookupAssoc]
+      · simp [lookupAssoc, hn]
+
+    next h =>
+      rw [show rest.foldl _ (acc ++ [(key, value)]) = appendFirstOccurrences (acc ++ [(key, value)]) rest from rfl, ih, repeated_lookup_append]
+      by_cases hn : name = key
+      · subst name
+        cases he : lookupAssoc key acc <;> simp_all [lookupAssoc]
+      · simp [lookupAssoc, hn]
+
+private def repeatedMergeStep (merged contribution : ParameterPatternBindings) : ParameterPatternBindings := {
+  argEnv := appendFirstOccurrences merged.argEnv contribution.argEnv,
+  countedParamEnv := appendFirstOccurrences merged.countedParamEnv contribution.countedParamEnv,
+  algEnv := appendFirstOccurrences merged.algEnv contribution.algEnv }
+
+private theorem repeated_lookup_fold_merge {A} (name : Ident)
+    (project : ParameterPatternBindings → Assoc Ident A)
+    (step : ∀ a b, project (repeatedMergeStep a b) = appendFirstOccurrences (project a) (project b))
+    (cs : List ParameterPatternBindings) (acc : ParameterPatternBindings) :
+    lookupAssoc name (project (cs.foldl repeatedMergeStep acc)) =
+      (lookupAssoc name (project acc)).orElse
+        (fun _ => (cs.filterMap (fun c => lookupAssoc name (project c))).head?) := by
+  induction cs generalizing acc with
+  | nil => simp
+  | cons c cs ih =>
+    simp only [List.foldl_cons, ih, step, repeated_lookup_appendFirst]
+    cases ha : lookupAssoc name (project acc) <;>
+      cases hc : lookupAssoc name (project c) <;> simp [hc]
+
+private theorem repeated_merged_lookup {A} (name : Ident)
+    (project : ParameterPatternBindings → Assoc Ident A)
+    (step : ∀ a b, project (repeatedMergeStep a b) = appendFirstOccurrences (project a) (project b))
+    (empty : project {} = []) (cs : List ParameterPatternBindings) :
+    lookupAssoc name (project (mergeFirstOccurrences cs)) =
+      (cs.filterMap (fun c => lookupAssoc name (project c))).head? := by
+  change lookupAssoc name (project (cs.foldl repeatedMergeStep {})) = _
+  rw [repeated_lookup_fold_merge name project step cs {}, empty]
+  rfl
+
+def RepeatedBindingChannelAgreement {A} (same : A → A → Bool) : Option A → Option A → Prop
+  | none, none => True
+  | some a, some b => same a b = true
+  | _, _ => False
+
+private theorem repeated_first_agrees_of_perm {A} (same : A → A → Bool)
+    {xs ys : List A} (permutation : xs.Perm ys)
+    (compatible : xs.any (fun a => xs.any (fun b => !same a b)) = false) :
+    RepeatedBindingChannelAgreement same xs.head? ys.head? := by
+  cases xs with
+  | nil => have hy := List.perm_nil.mp permutation.symm; subst ys; trivial
+  | cons a xs =>
+    cases ys with
+    | nil => have hx := List.perm_nil.mp permutation; simp at hx
+    | cons b ys =>
+      change same a b = true
+      have hb : b ∈ a :: xs := permutation.mem_iff.mpr (by simp)
+      have ha : (a :: xs).any (fun b => !same a b) = false := by
+        simpa using (List.any_eq_false.mp compatible) a (by simp)
+      simpa using (List.any_eq_false.mp ha) b hb
+
+/-- Successful repeated-name binding preserves availability and contents on all
+    three channels under every contribution permutation. Association-list order
+    is not observable; callable contents are compared by callable identity. -/
+theorem repeated_name_complete_binding_is_permutation_invariant
+    (names : List Ident) (name : Ident) (member : name ∈ names)
+    {contributions permuted : List ParameterPatternBindings}
+    (permutation : contributions.Perm permuted)
+    (success : repeatedNameFailure names contributions = none) :
+    RepeatedBindingChannelAgreement (· == ·)
+      (lookupAssoc name (mergeFirstOccurrences contributions).argEnv)
+      (lookupAssoc name (mergeFirstOccurrences permuted).argEnv) ∧
+    RepeatedBindingChannelAgreement (· == ·)
+      (lookupAssoc name (mergeFirstOccurrences contributions).countedParamEnv)
+      (lookupAssoc name (mergeFirstOccurrences permuted).countedParamEnv) ∧
+    RepeatedBindingChannelAgreement sameRepeatedCallableIdentity
+      (lookupAssoc name (mergeFirstOccurrences contributions).algEnv)
+      (lookupAssoc name (mergeFirstOccurrences permuted).algEnv) := by
+  have compatible :
+      names.any (fun n => repeatedNameValueConflict n contributions) = false ∧
+      names.any (fun n => repeatedNameCountedConflict n contributions) = false ∧
+      names.any (fun n => repeatedNameCallableIdentityConflict n contributions) = false := by
+    unfold repeatedNameFailure at success
+    split at success <;> try contradiction
+    split at success <;> try contradiction
+    split at success <;> try contradiction
+    split at success <;> simp_all
+  refine ⟨?_, ?_, ?_⟩
+  · rw [repeated_merged_lookup name ParameterPatternBindings.argEnv (by intros; rfl) rfl contributions,
+        repeated_merged_lookup name ParameterPatternBindings.argEnv (by intros; rfl) rfl permuted]
+    apply repeated_first_agrees_of_perm _ (permutation.filterMap _)
+    have h := (List.any_eq_false.mp compatible.1) name member
+    simpa [repeatedNameValueConflict] using h
+  · rw [repeated_merged_lookup name ParameterPatternBindings.countedParamEnv (by intros; rfl) rfl contributions,
+        repeated_merged_lookup name ParameterPatternBindings.countedParamEnv (by intros; rfl) rfl permuted]
+    apply repeated_first_agrees_of_perm _ (permutation.filterMap _)
+    have h := (List.any_eq_false.mp compatible.2.1) name member
+    simpa [repeatedNameCountedConflict] using h
+  · rw [repeated_merged_lookup name ParameterPatternBindings.algEnv (by intros; rfl) rfl contributions,
+        repeated_merged_lookup name ParameterPatternBindings.algEnv (by intros; rfl) rfl permuted]
+    apply repeated_first_agrees_of_perm _ (permutation.filterMap _)
+    have h := (List.any_eq_false.mp compatible.2.2) name member
+    simpa [repeatedNameCallableIdentityConflict] using h
+
+-- The canonical instances — `P(f, f, f)` rejects `(Inc, 5, A)` in all six permutations,
+-- `(A, A, 5)` binds in all six, and distinct callable identities reject — are
+-- executable guards (`CoreTests/HigherOrderCalls.lean`, `repeatedNameVerdictIsOrderIndependent`,
+-- `twoOccurrenceRepeatsKeepThePairwiseRule`), since the derived `BEq` on `Result` carries
+-- no lawful lemmas to close a value comparison by proof.
+
+
+/-- ... and it is ONE item, not two: a fixed pair group rejects a scalar with the
+nested group's ordinary arity mismatch (2 required, 1 supplied). -/
+theorem nested_pair_pattern_rejects_scalar_as_one_item (n : Int) :
+    runEvalM (bindParameterPatternList
+        [.sequenceValue [.capture { name := "x", kind := .normal },
+                         .capture { name := "y", kind := .normal }]]
+        [{ value? := some (Result.atom n) }]
+        false)
+      = .error (Error.arityMismatch 2 1) := by
+  simp [bindParameterPatternList, bindParameterPatternList.findCollecting,
+    bindParameterPatternList.bindPairs, bindParameterPattern, runEvalM,
+    Result.sequenceValuePatternItems, Result.structureItems?,
+    ParameterPattern.minimumSuppliedSlots]
+  rfl
+
 /-- The post-binding builtin collection view opens a bound list exactly like a
 bound sequence value: ONE outer boundary, so `count([1, 2, 3])` counts three
 items just as `count((1, 2, 3))` does. Opening is never recursive — nested
@@ -1309,8 +1568,7 @@ theorem call_variadic_single_list_preserved :
               algEnv := [] } := by
   simp [bindParameterPatternList, bindParameterPatternList.findCollecting,
     bindParameterPatternList.bindPairs, bindParameterPatternList.collectValues, collectorSupply,
-    bindParameterPattern, runEvalM, mergeEqualValEnv, mergeEqualCountedParamEnv,
-    mergePatternAlgEnv, lookupAssoc, CountedParamEnv.lookup, ValEnv.lookup,
+    bindParameterPattern, runEvalM,
     collectSegment]
   rfl
 
@@ -1329,8 +1587,8 @@ theorem deconstruct_fixed_single_list_opens :
               countedParamEnv := [], algEnv := [] } := by
   simp [bindParameterPatternList, bindParameterPatternList.findCollecting,
     bindParameterPatternList.bindPairs, bindParameterPattern, runEvalM,
-    Result.structureItems?, mergeEqualValEnv, mergeEqualCountedParamEnv,
-    mergePatternAlgEnv, lookupAssoc, ValEnv.lookup]
+    Result.sequenceValuePatternItems, Result.structureItems?,
+    ]
   rfl
 
 /-- `first, *rest = [1, 2, 3]`: the deconstruction pattern opens the lone
@@ -1348,9 +1606,8 @@ theorem deconstruct_collecting_single_list_opens :
               algEnv := [] } := by
   simp [bindParameterPatternList, bindParameterPatternList.findCollecting,
     bindParameterPatternList.bindPairs, bindParameterPatternList.collectValues, collectorSupply,
-    bindParameterPattern, runEvalM, Result.structureItems?, mergeEqualValEnv,
-    mergeEqualCountedParamEnv, mergePatternAlgEnv, lookupAssoc,
-    CountedParamEnv.lookup, ValEnv.lookup, collectSegment]
+    bindParameterPattern, runEvalM, Result.sequenceValuePatternItems, Result.structureItems?,
+    collectSegment]
   rfl
 
 /-- Lone-list receiver DISAGREEMENT, lone-collecting shape: call binding collects the
@@ -1376,15 +1633,13 @@ theorem lone_collecting_list_call_and_deconstruct_differ :
   constructor
   · simp [bindParameterPatternList, bindParameterPatternList.findCollecting,
       bindParameterPatternList.bindPairs, bindParameterPatternList.collectValues, collectorSupply,
-      runEvalM, mergeEqualValEnv, mergeEqualCountedParamEnv,
-      mergePatternAlgEnv, lookupAssoc, CountedParamEnv.lookup, ValEnv.lookup,
+      runEvalM,
       collectSegment]
     rfl
   · simp [bindParameterPatternList, bindParameterPatternList.findCollecting,
       bindParameterPatternList.bindPairs, bindParameterPatternList.collectValues, collectorSupply,
-      bindParameterPattern, runEvalM, Result.structureItems?, mergeEqualValEnv,
-      mergeEqualCountedParamEnv, mergePatternAlgEnv, lookupAssoc,
-      CountedParamEnv.lookup, ValEnv.lookup, collectSegment]
+      bindParameterPattern, runEvalM, Result.sequenceValuePatternItems, Result.structureItems?,
+      collectSegment]
     rfl
 
 /-- The single-collecting grouped/spread coincidence holds for a lone SEQUENCE
@@ -1411,14 +1666,12 @@ theorem lone_collecting_seq_call_grouped_and_spread_agree :
   constructor
   · simp [bindParameterPatternList, bindParameterPatternList.findCollecting,
       bindParameterPatternList.bindPairs, bindParameterPatternList.collectValues, collectorSupply,
-      runEvalM, mergeEqualValEnv, mergeEqualCountedParamEnv,
-      mergePatternAlgEnv, lookupAssoc, CountedParamEnv.lookup, ValEnv.lookup,
+      runEvalM,
       collectSegment]
     rfl
   · simp [bindParameterPatternList, bindParameterPatternList.findCollecting,
       bindParameterPatternList.bindPairs, bindParameterPatternList.collectValues, collectorSupply,
-      runEvalM, mergeEqualValEnv, mergeEqualCountedParamEnv,
-      mergePatternAlgEnv, lookupAssoc, CountedParamEnv.lookup, ValEnv.lookup,
+      runEvalM,
       collectSegment, Result.spreadItems, Result.toItems]
     rfl
 
@@ -1446,14 +1699,12 @@ theorem lone_collecting_list_call_grouped_and_spread_differ :
   constructor
   · simp [bindParameterPatternList, bindParameterPatternList.findCollecting,
       bindParameterPatternList.bindPairs, bindParameterPatternList.collectValues, collectorSupply,
-      runEvalM, mergeEqualValEnv, mergeEqualCountedParamEnv,
-      mergePatternAlgEnv, lookupAssoc, CountedParamEnv.lookup, ValEnv.lookup,
+      runEvalM,
       collectSegment]
     rfl
   · simp [bindParameterPatternList, bindParameterPatternList.findCollecting,
       bindParameterPatternList.bindPairs, bindParameterPatternList.collectValues, collectorSupply,
-      runEvalM, mergeEqualValEnv, mergeEqualCountedParamEnv,
-      mergePatternAlgEnv, lookupAssoc, CountedParamEnv.lookup, ValEnv.lookup,
+      runEvalM,
       collectSegment, Result.spreadItems]
     rfl
 

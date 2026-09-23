@@ -1082,7 +1082,7 @@ public static partial class Evaluator
     private static EvalError BlameWrittenArgumentForMissingOutput(Expr source, EvalError error)
         => error is EvalError.MissingOutput
             ? AtSpanIfMissing(
-                new EvalError.WithContext(new ArgumentEvaluationContext(OpenExprName(source)), error),
+                new EvalError.WithContext(new ArgumentEvaluationContext(OpenExprName(source)), error) { Span = error.Span },
                 source.Span)
             : error;
 

@@ -1290,7 +1290,7 @@ BETTER — specific branch first:
 ## Zero-Argument Property Calls
 
 - A property that accepts zero supplied arguments, read without parentheses as `Fun`, reuses its first successful result within the applicable cache scope. Use this form when a cached property-style value is desired. A self-contained property (one that does not read a parameter of an enclosing algorithm) shares its first successfully completed result throughout the evaluation wherever it is read from — repeated calls, `map` callbacks, loop iterations, `open` — so an expensive constant such as `Big = range(1, 100000).sum` referenced inside `F(x) = Big + x` is computed once; a property that captures an enclosing parameter caches within the current binding context (each call, callback, or loop iteration creates a fresh context, even for equal arguments). Structural and opened reads of the same exported declaration share an entry. Independent runs have fresh caches; failed evaluations are never stored. Recursive reads already in progress can finish with their own results but do not replace the first successful entry. Passing a name as an algorithm argument follows the receiver's argument rules rather than forcing a property-value read.
-- ZERO-ARGUMENT VALUE DEMAND FOLLOWS ACTUAL CALL ARITY: a callable may be read as a zero-argument VALUE exactly when an ordinary call with no arguments can bind it, never merely because it declares no parameter. A collecting parameter requires no supplied argument, so `Only(*xs) = xs` makes `Only` and `Only()` both the empty list `[]`, and the bare name works in every zero-argument value position — an output row, an `if` branch, a collection builtin argument in either spelling (`count(Only)` and `Only.count` are both `0`), an ordinary parameter that reads its argument, a member read such as `Obj.M`, and inside redundant parentheses (`Only`, `(Only)`, `((Only))` agree). A required parameter is still required: `Head(first, *rest)`, `Tail(*rest, last)`, `Pair(x, y)` and a grouped parameter such as `P((x, y))` each need at least one supplied value, so both `Head()` and a bare `Head` are the same arity error, and a group's one-item fallback binds ONE value rather than accepting none. Where a callable is consumed as an ALGORITHM — a `map`/`filter` callback, a loop step, a higher-order argument — it is still the callable (`map((1, 2), Only)` is `[[1], [2]]`). The two value spellings keep their established operational difference: bare `Only` is a property-style read that reuses its cached value, while `Only()` is an explicit call that runs the body each time.
+- ZERO-ARGUMENT VALUE DEMAND FOLLOWS ACTUAL CALL ARITY: a callable may be read as a zero-argument VALUE exactly when an ordinary call with no arguments can bind it, never merely because it declares no parameter. A collecting parameter requires no supplied argument, so `Only(*xs) = xs` makes `Only` and `Only()` both the empty list `[]`, and the bare name works in every zero-argument value position — an output row, an `if` branch, a collection builtin argument in either spelling (`count(Only)` and `Only.count` are both `0`), an ordinary parameter that reads its argument, a member read such as `Obj.M`, and inside redundant parentheses (`Only`, `(Only)`, `((Only))` agree). A required parameter is still required: `Head(first, *rest)`, `Tail(*rest, last)`, `Pair(x, y)` and a grouped parameter such as `P((x, y))` each need at least one supplied value, so both `Head()` and a bare `Head` are the same arity error, and a group's one-item fallback binds ONE value rather than accepting none. Where a callable is consumed as an ALGORITHM — a `map`/`filter` callback, a loop step, a higher-order argument — it is still the callable (`map((1, 2), Only)` is `[[1], [2]]`), also when it is passed on through a parameter: with `Apply(f, xs) = xs.map(f)`, `Apply(Only, [1, 2])` is `[[1], [2]]` (filter, reduce, and while/repeat steps alike), while a value position that reads the parameter, such as `count(f)`, reads the zero-argument value `[]`. The two value spellings keep their established operational difference: bare `Only` is a property-style read that reuses its cached value, while `Only()` is an explicit call that runs the body each time.
 - An explicit zero-parameter call, such as `Fun()`, bypasses the zero-argument cache for that property itself. It does not recursively force nested property references to bypass their caches. To request fresh nested values, write the nested calls explicitly with `()`: `B = A, A` keeps cached/property-style `A` inside `B()`, while `C = A(), A()` asks for fresh `A` values inside `C()`.
 
 ## Math Usage
@@ -1546,9 +1546,11 @@ Without trailing output, `Order` has no direct result — use `Order.Total(25, 4
     Abs = if(x >= 0, x, -x)
     Abs(-5)
 
+Repeated parameter names use one order-independent compatibility rule: all supplied values must agree, and multiple callable contributions must carry values and identify the same callable (including captured activations). Distinct callables with equal zero-argument values reject even with two occurrences; repeated references to one callable remain valid. Bind every pattern of a range before checking repeats; around a collector, bind and check the prefix, then the suffix, then gather the middle, then compare names shared across the collector. Direct and forwarded invoking slots select the same callable. Forwarding retains ordinary eager parameter-binding effects; selecting the callable adds no value demand. Value slots, including reduce.initial, read the bound value.
+
 === BEGIN GENERATED: katlang-spec-examples (DO NOT EDIT BY HAND) ===
 
-Verified reference examples (98 of the 284-case canonical language specification,
+Verified reference examples (101 of the 295-case canonical language specification,
 tests/KatLang.Tests/LanguageSpec/LanguageSpecCorpus.cs). Every program and expected
 output below is executed against the KatLang engine and (where representable)
 guarded against the Lean model on every build. Treat these as ground truth for the
@@ -1921,6 +1923,26 @@ Regenerate this block from the repo root with:
   Displays:
     15
 
+[repeated-equal-values-require-one-callable-identity] Repeated values must be equal, and repeated callable contributions must carry values and the same callable identity (declaration and captured lexical activations). Equal zero-argument values do not make A and B interchangeable: A(1) is 5 while B(1) is 6. Both argument orders therefore reject, including with just two occurrences. One callable plus an equal value remains valid.
+
+    A(*xs) = 5
+    B(*xs) = 5 + xs.count
+    P(f, f) = f(1)
+    P(A, B)
+
+  Fails with an evaluation error (type).
+
+[repeated-genuine-aliases-preserve-complete-binding] The parameters left and right are genuine aliases of the one callable A. Both argument orders bind successfully and preserve all channels: f reads 5, its count is 1, and both direct invocation and the callback invoke A. Successful permutations preserve channel availability, values, counts and callable identity. Forwarding retains ordinary eager argument-binding effects.
+
+    A(*xs) = 5 + xs.count
+    P(f, f) = [f, f.count, f(1), map([7], f)]
+    Both(left, right) = [P(left, right), P(right, left)]
+    Share(original) = Both(original, original)
+    Share(A)
+
+  Displays:
+    [[5, 1, 6, [6]], [5, 1, 6, [6]]]
+
 [call-spread-into-conditional-clauses] Explicit call-site spread has identical meaning for every callable shape: `F(A*)` supplies A's spread items as ordinary argument slots BEFORE clause selection, so the two-binder clause binds x = 1, y = 2. The unspread `F(A)` supplies ONE closed argument, which no two-argument clause can match.
 
     F(0, 0) = 100
@@ -2159,6 +2181,26 @@ Regenerate this block from the repo root with:
     [[7]]
     [[1, 2]]
     [[[1, 2]]]
+
+[forwarded-callable-keeps-its-algorithm-channel] Passing a callable to a parameter binds it as a callable, and also as a value when it can be read with no arguments (`Cnt` reads as `0`). A builtin slot that calls its argument — the map mapper, the filter predicate, the reduce reducer, a while or repeat step — calls the callable, so forwarding `Cnt` through `Apply` selects the same callable as `[1, 2].map(Cnt)`, including from a nested block that captures the parameter. Forwarding retains ordinary eager parameter-binding effects; callback selection adds no further value demand. A slot that reads a value — the collection, reduce's initial accumulator — reads the bound value.
+
+    Cnt(*xs) = xs.count
+    SumWhile(*s) = s.sum + 1, s.sum + 1 < 3
+    Apply(f, xs) = xs.map(f)
+    Loop(g) = while(g, 0)
+    Outer(xs) = {
+      Inner(g) = xs.map(g)
+      Inner(Cnt)
+    }
+
+    Apply(Cnt, [1, 2])
+    Loop(SumWhile)
+    Outer([1, 2])
+
+  Displays:
+    [1, 1]
+    2
+    [1, 1]
 
 [range-single-value] A one-integer range is the exact one-element list `[3]` — collection-producing builtins always materialize a list, and the one-item boundary is never erased.
 

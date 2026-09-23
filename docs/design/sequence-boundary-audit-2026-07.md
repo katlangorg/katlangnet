@@ -124,7 +124,7 @@ caching cannot change observable counts or structure (validated).
 
 Neutral encoding: `S[...]` = sequence value (raw structure), `n` = emitted
 count at the observed boundary, `E:x` = typed error. Full per-cell data for
-all 2,147 surface cases is in the machine-readable report
+all 2,283 surface cases is in the machine-readable report
 (`SemanticExplorerReport.json`, written next to the test assembly on every
 run) and pinned per-case in `lean/SemanticExplorerCases.lean`. The matrix
 below is the required-values digest; Lean/C# agreement is per the generated
@@ -302,17 +302,25 @@ while lists stay exact (`variadic_collect_distinguishes_spread_list`,
 callbacks with a top-level variadic parameter through the shared prefix/collecting/suffix binder,
 so `[7].map(Collect)` collects `items = [7]`.)*
 
-**Unresolved design choices (pre-existing, unchanged):** sequence-value
-callback deconstruction on scalar elements (still strict; deferred per
-BINDING-ARCHITECTURE.md Phase 26 — flat top-level variadic callbacks now bind
-through the shared binder, but the nested-pattern scalar fallback stays
-singleton-only); zero-item root output displaying as empty text (not
-reconstructable as a program).
+**Unresolved design choices (pre-existing, unchanged):** zero-item root output
+displaying as empty text (not reconstructable as a program).
+
+*(Resolved, September 2026 — S3: sequence-value callback deconstruction on
+scalar elements, formerly listed here as still strict and deferred per
+BINDING-ARCHITECTURE.md Phase 26, now follows the ordinary call. The counted
+callback binder's nested-pattern scalar fallback was singleton-only, so
+`map([7], P)` with `P((x, *rest))` was a bare `badArity` while `P(7)` bound
+`x = 7, rest = []`; both binders now open a pattern's value through the ONE
+rule `Result.sequenceValuePatternItems` / `SequenceValuePatternItems`, so a
+callback binds each supplied value exactly as the ordinary call supplying that
+value does. The `patternHead` / `patternHeadMap` / `patternPair` /
+`patternPairMap` templates below pin each spelling per value, and a C# test
+relates the direct and callback spellings.)*
 
 ## 5. Lean/C# differential results
 
 The generated artifact pins every Lean-representable corpus case
-(**2,106 surface cases** as of this update — the surface corpus minus its 41
+(**2,242 surface cases** as of this update — the surface corpus minus its 41
 parse-level cases such as `(3,)`, `x:-1`, `A.spread == A.spread`, `1 ; 2`, and `open count, Lib`, which
 are C#-only typed outcomes since Lean has no surface parser — plus **14**
 direct internal-node cases; see §5.1 for the full accounting). Encoding
@@ -362,12 +370,12 @@ parse-level set) is enforced by
 
 | Suite / artifact | Exact count | Included | Excluded | Source of truth |
 |---|---:|---|---|---|
-| Surface corpus (= C# semantic report surface section) | 2,147 | 1,938 template cases (57 receiver templates x 34 values) + 209 specials; outcomes 1,852 ok / 254 err / 41 parse-error | internal-node cases; anchor pins | `SemanticExplorerCorpus.AllCases()`; report `partition.surfaceCases` |
-| Lean-representable surface differential | 2,106 | the 2,147 above minus the 41 parse-level cases (34 `indexNeg__*` + seven deliberate parse-error specials, the builtin open target `open count, Lib` among them since the final audit of September 2026) | parse-level cases (Lean has no surface parser) | report `partition.leanRepresentable`; artifact header/footer |
+| Surface corpus (= C# semantic report surface section) | 2,283 | 2,074 template cases (61 receiver templates x 34 values) + 209 specials; outcomes 1,946 ok / 296 err / 41 parse-error | internal-node cases; anchor pins | `SemanticExplorerCorpus.AllCases()`; report `partition.surfaceCases` |
+| Lean-representable surface differential | 2,242 | the 2,283 above minus the 41 parse-level cases (34 `indexNeg__*` + seven deliberate parse-error specials, the builtin open target `open count, Lib` among them since the final audit of September 2026) | parse-level cases (Lean has no surface parser) | report `partition.leanRepresentable`; artifact header/footer |
 | Internal `SequenceConstruct` corpus | 14 | direct-AST `internal__sc_*` cases | everything source-driven | `SemanticExplorerCorpus.InternalNodeCases()`; report `partition.internalNodeCases` |
-| Generated Lean case guards | 2,120 | 2,106 surface + 14 internal-node (one `#guard` per case), plus two partition-count guards | nothing (header states the split) | `SemanticExplorerCases.lean` header/footer |
+| Generated Lean case guards | 2,256 | 2,242 surface + 14 internal-node (one `#guard` per case), plus two partition-count guards | nothing (header states the split) | `SemanticExplorerCases.lean` header/footer |
 | C# semantic report internal-node section | 14 | id, relation, internal + surface observations per case | — | report `internalNodeCases` |
-| Parser/elaboration reachability sweep | 2,147 attempted, 2,106 scanned | every corpus source that parses (post-`FrontEndPipeline` ASTs) | the 41 deliberate parse-error cases (skipped) | `EntireSemanticExplorerCorpus_ParsesWithoutSequenceConstruct` |
+| Parser/elaboration reachability sweep | 2,283 attempted, 2,242 scanned | every corpus source that parses (post-`FrontEndPipeline` ASTs) | the 41 deliberate parse-error cases (skipped) | `EntireSemanticExplorerCorpus_ParsesWithoutSequenceConstruct` |
 | Containment test invocations | 42 | parser theories, corpus sweep, AST-family pins, visitor-preservation facts, direct-node pins, difference facts, and the call-function `NotAnAlgorithm` payload pin | explorer/anchor tests (counted separately) | `dotnet test --filter FullyQualifiedName~SequenceConstructContainmentTests` |
 | Explorer-related test invocations | 44 | 37 explorer/anchor pins + four artifact freshness/comparability/partition/accounting facts + three cross-harness/containment/formatting guards matched by the filter | — | `dotnet test --filter FullyQualifiedName~SemanticExplorer` |
 | Full .NET solution | 6,338 (6,330 main-suite + 8 formatting public-API invocations, as of this audit; the suite grows — the live run is authoritative) | everything incl. all of the above | — | `dotnet test .\KatLang.slnx -p:UseSharedCompilation=false` |
@@ -390,10 +398,10 @@ open-target dedup, inline blocks, dotted paths, ownership-first shadowing,
 nested-scope leakage, builtin collision, and structural dot access to a private
 member, none of which had ANY case in either generated artifact before); the
 generated header, partition guards, JSON report, and table above now agree on
-2,147 surface cases, 41 parse-level exclusions, 2,106 Lean-representable
+2,283 surface cases, 41 parse-level exclusions, 2,242 Lean-representable
 surface cases, and 14 internal-node cases. The September 2026 "zero-argument
 value demand follows actual call arity" change extended the surface corpus with seven specials pinning that a collecting-only callable is a
-zero-argument value while a required fixed parameter beside a collector is not. The September 2026 Boolean review added eight scalar/nested Boolean value forms crossed with all receiver templates, and the September 2026 "dot-call passes a value" correction added the three dotted-collecting templates `dotCollectingViaProp` / `literalDotCollecting` / `fluentSpreadCollecting` (57 templates in all), which differentially pin `x.F == F(x)`, `(v).F == F((v))`, and `x*.F == F(x*)` for every corpus value.
+zero-argument value while a required fixed parameter beside a collector is not. The September 2026 Boolean review added eight scalar/nested Boolean value forms crossed with all receiver templates, and the September 2026 "dot-call passes a value" correction added the three dotted-collecting templates `dotCollectingViaProp` / `literalDotCollecting` / `fluentSpreadCollecting` (57 templates in all), which differentially pin `x.F == F(x)`, `(v).F == F((v))`, and `x*.F == F(x*)` for every corpus value. The September 2026 S3 correction (callback binding uses the ordinary call's nested-pattern rules) added the four templates `patternHead` / `patternHeadMap` / `patternPair` / `patternPairMap` (61 templates in all): each spelling is pinned against Lean for every corpus value — a nested head-plus-collector pattern and a nested fixed pair, called directly and as a `map` callback — and `CallbackNestedPatternBindingTests.ExplorerTemplatePairs_MapEveryValueExactlyAsTheDirectCall` relates the two spellings value by value (`map([v], P)` maps `v` exactly as `P(v)` binds it).
 
 Corpus fidelity note (M11, August 2026): NO corpus Lean program is
 hand-transcribed any more. `LeanAstEncoder` prints the Lean constructor form of

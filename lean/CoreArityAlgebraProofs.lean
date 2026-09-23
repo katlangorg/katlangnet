@@ -804,7 +804,7 @@ positionally), so no name-uniqueness premise is needed: duplicate names in
 this abstract binder simply contribute multiple entries, and surface KatLang
 separately rejects duplicate parameter names before this model is reached.
 (The full model's binder additionally MERGES duplicate bindings with an
-equality check — `mergeEqualValEnv` — which the extraction deliberately
+equality check — `repeatedNameValueConflict` — which the extraction deliberately
 omits; the bridge theorems in `KatLangArityLaws.lean` use distinct names.)
 -/
 

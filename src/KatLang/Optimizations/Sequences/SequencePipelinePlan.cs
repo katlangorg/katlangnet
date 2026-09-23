@@ -61,7 +61,7 @@ internal readonly record struct SequencePipelineInvocation(
 internal readonly record struct SequencePipelineEvaluationServices(
     Func<Expr.DotCall, BuiltinId, string?> GetDotCallLexicalBuiltinFallbackReason,
     Func<Expr, EvalResult<IReadOnlyList<Evaluator.CountedResult>>> EvaluateDotReceiverIterationItems,
-    Func<OutputBundle, EvalResult<IReadOnlyList<Algorithm>>> ResolveArgumentAlgorithms,
+    Func<OutputBundle, EvalResult<IReadOnlyList<Evaluator.ResolvedArgumentAlgorithm>>> ResolveArgumentAlgorithms,
     Func<Expr, EvalResult<Algorithm>> ResolveAlgorithm,
     Func<Expr, OutputBundle, SourceSpan?, EvalResult<Evaluator.InclusiveRange>> EvaluateRangeCallArguments);
 

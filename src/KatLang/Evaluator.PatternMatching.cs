@@ -449,23 +449,20 @@ public static partial class Evaluator
 
             case SequenceValueParameterPattern group:
                 {
-                    // A received sequence value or exact list value opens to its
-                    // immediate items (Lean: Result.structureItems?); the counted
-                    // callback path keeps its stricter singleton-only scalar
-                    // fallback (sequence-value-pattern callback deconstruction of
-                    // scalar elements stays deferred; flat top-level collecting
-                    // callbacks bind via BindCountedCallbackParameterPatternList).
-                    var items = input.Value.StructureItems();
-                    if (items is null && group.Items.Count == 1)
-                        items = [input.Value];
-
-                    if (items is null)
-                        return new EvalError.BadArity();
-
+                    // The callback value opens through the SAME nested-pattern rule
+                    // as the ordinary binder (SequenceValuePatternItems): a sequence
+                    // or list value opens one level, and any other value is a
+                    // one-item supply at every level and for every group size, so
+                    // `map([7], P)` with `P((x, *rest))` binds `x = 7, rest = []`
+                    // exactly like `P(7)`, and `P((x, y))` rejects a scalar with the
+                    // nested group's ordinary ArityMismatch(2, 1) in both
+                    // (September 2026, S3; the callback path formerly fell back only
+                    // for one-item groups). Lean: bindCountedParameterPattern.
+                    //
                     // Pattern-opened items are FINAL supply items: a nested
                     // collecting binding collects them exactly (one boundary
                     // opened, never two).
-                    var nestedInputs = items
+                    var nestedInputs = SequenceValuePatternItems(input.Value)
                         .Select(static item => new CountedPatternInput(
                             new CountedResult(item, item.ValueCount()),
                             SupplyOrigin.FinalItem))
@@ -482,85 +479,54 @@ public static partial class Evaluator
         }
     }
 
+    /// <summary>
+    /// The counted twin of <see cref="BindParameterPatternList"/> — the callback binding path
+    /// (Lean <c>bindCountedParameterPatternList</c>) — with the same order: the arity check;
+    /// every range binds ALL of its patterns before its repeated names are decided; the prefix
+    /// binds and settles before the suffix, the collector is materialized after both, and the
+    /// names shared across the collector are decided last. Each repeated name is decided ONCE,
+    /// symmetrically, when its last contribution joins (counted contributions carry only the
+    /// counted channel, so an unequal repeat is <see cref="EvalError.BadArity"/>). The first
+    /// collecting capture is the list's collector; a second one (host-built only) is a suffix
+    /// pattern that <see cref="BindCountedParameterPattern"/> rejects.
+    /// </summary>
     private static EvalResult<CountedParameterPatternBindings> BindCountedParameterPatternList(
         IReadOnlyList<ParameterPattern> patterns,
         IReadOnlyList<CountedPatternInput> inputs,
         EvalCtx ctx,
         Func<int, int, EvalError> arityMismatch)
     {
-        var collectingIndex = -1;
-        for (var index = 0; index < patterns.Count; index++)
-        {
-            if (patterns[index] is not CaptureParameterPattern { Kind: ParameterKind.Collecting })
-                continue;
-
-            if (collectingIndex >= 0)
-                return new EvalError.BadArity();
-
-            collectingIndex = index;
-        }
-
-        var bindings = new List<(string Name, CountedResult Value)>();
-
-        EvalResult<bool> AddBindings(CountedParameterPatternBindings added)
-        {
-            foreach (var binding in added.CountedBindings)
-            {
-                var existing = LookupCountedParam(bindings, binding.Name);
-                if (existing is not null)
-                {
-                    if (!Result.ValueComparer.Equals(existing.Value.Value, binding.Value.Value))
-                        return new EvalError.BadArity();
-                    continue;
-                }
-
-                bindings.Add(binding);
-            }
-
-            return EvalResult<bool>.Ok(true);
-        }
-
-        EvalResult<bool> BindOne(int patternIndex, int inputIndex)
-        {
-            var boundR = BindCountedParameterPattern(patterns[patternIndex], inputs[inputIndex].Counted, ctx);
-            if (boundR.IsError) return boundR.Error;
-
-            return AddBindings(boundR.Value);
-        }
-
+        var collectingIndex = FirstCollectingCaptureIndex(patterns);
         var requiredCount = ParameterPattern.MinimumSuppliedSlots(patterns);
         if (collectingIndex < 0)
         {
             if (inputs.Count != requiredCount)
                 return arityMismatch(requiredCount, inputs.Count);
 
-            for (var index = 0; index < patterns.Count; index++)
-            {
-                var boundR = BindOne(index, index);
-                if (boundR.IsError) return boundR.Error;
-            }
-
-            return EvalResult<CountedParameterPatternBindings>.Ok(new CountedParameterPatternBindings(bindings));
+            var rangeR = BindCountedParameterPatternRange(patterns, inputs, 0, 0, patterns.Count, ctx, outside: null);
+            if (rangeR.IsError) return rangeR.Error;
+            return EvalResult<CountedParameterPatternBindings>.Ok(
+                new CountedParameterPatternBindings(rangeR.Value.Merged.CountedBindings));
         }
 
         if (inputs.Count < requiredCount)
             return arityMismatch(requiredCount, inputs.Count);
 
-        for (var index = 0; index < collectingIndex; index++)
-        {
-            var boundR = BindOne(index, index);
-            if (boundR.IsError) return boundR.Error;
-        }
-
-        var suffixCount = patterns.Count - collectingIndex - 1;
-        var suffixInputStart = inputs.Count - suffixCount;
-        for (var suffixIndex = 0; suffixIndex < suffixCount; suffixIndex++)
-        {
-            var boundR = BindOne(collectingIndex + 1 + suffixIndex, suffixInputStart + suffixIndex);
-            if (boundR.IsError) return boundR.Error;
-        }
-
         var collectingCapture = (CaptureParameterPattern)patterns[collectingIndex];
+        var suffixStart = collectingIndex + 1;
+        var suffixCount = patterns.Count - suffixStart;
+        var suffixInputStart = inputs.Count - suffixCount;
+
+        var prefixR = BindCountedParameterPatternRange(
+            patterns, inputs, 0, 0, collectingIndex, ctx,
+            new LevelNames(patterns, suffixStart, suffixCount, collectingCapture.Name));
+        if (prefixR.IsError) return prefixR.Error;
+
+        var suffixR = BindCountedParameterPatternRange(
+            patterns, inputs, suffixStart, suffixInputStart, suffixCount, ctx,
+            new LevelNames(patterns, 0, collectingIndex, collectingCapture.Name));
+        if (suffixR.IsError) return suffixR.Error;
+
         var segmentCount = suffixInputStart - collectingIndex;
         var capturedValues = new List<Result>(segmentCount);
         var capturedOrigins = new List<SupplyOrigin>(segmentCount);
@@ -576,14 +542,76 @@ public static partial class Evaluator
         // count 1 (a list is one visible value).
         var capturedResultR = CollectSegment(ctx, CollectorSupply(capturedValues, capturedOrigins), collectingCapture.Span);
         if (capturedResultR.IsError) return capturedResultR.Error;
-        var capturedResult = capturedResultR.Value;
-        var captured = new CountedResult(capturedResult, 1);
-        var captureBindingsR = AddBindings(new CountedParameterPatternBindings(
-            [(collectingCapture.Name, captured)]));
-        if (captureBindingsR.IsError) return captureBindingsR.Error;
+        var collector = new UserCallBindings(
+            [],
+            [(collectingCapture.Name, new CountedResult(capturedResultR.Value, 1))],
+            []);
 
-        return EvalResult<CountedParameterPatternBindings>.Ok(new CountedParameterPatternBindings(bindings));
+        var bindings = new PatternBindingAccumulator();
+        bindings.Add(prefixR.Value.Merged);
+        bindings.Add(suffixR.Value.Merged);
+        bindings.Add(collector);
+        if ((bindings.SawRepeatedName || prefixR.Value.HadRepeatedName || suffixR.Value.HadRepeatedName)
+            && FindCrossRepeatedNameFailure(
+                prefixR.Value,
+                collectingCapture.Name,
+                collector,
+                suffixR.Value,
+                new LevelNames(patterns, suffixStart, suffixCount, extraName: null)) is { } failure)
+        {
+            return failure;
+        }
+
+        return EvalResult<CountedParameterPatternBindings>.Ok(
+            new CountedParameterPatternBindings(bindings.ToBindings().CountedBindings));
     }
+
+    /// <summary>
+    /// Counted twin of <see cref="BindParameterPatternRange"/> (Lean <c>bindPairs</c>): every
+    /// pattern of the range binds, left to right, before the range decides the repeated names
+    /// whose every contribution it holds. Counted contributions are carried as counted-only
+    /// <see cref="UserCallBindings"/> so both binders share one verdict.
+    /// </summary>
+    private static EvalResult<PatternRangeBindings> BindCountedParameterPatternRange(
+        IReadOnlyList<ParameterPattern> patterns,
+        IReadOnlyList<CountedPatternInput> inputs,
+        int patternStart,
+        int inputStart,
+        int count,
+        EvalCtx ctx,
+        LevelNames? outside)
+    {
+        if (count == 0)
+            return EvalResult<PatternRangeBindings>.Ok(new PatternRangeBindings(new UserCallBindings([], [], []), null));
+
+        if (count == 1)
+        {
+            var singleR = BindCountedParameterPattern(patterns[patternStart], inputs[inputStart].Counted, ctx);
+            if (singleR.IsError) return singleR.Error;
+            return EvalResult<PatternRangeBindings>.Ok(new PatternRangeBindings(AsCountedContribution(singleR.Value), null));
+        }
+
+        var bound = new UserCallBindings[count];
+        for (var offset = 0; offset < count; offset++)
+        {
+            var boundR = BindCountedParameterPattern(patterns[patternStart + offset], inputs[inputStart + offset].Counted, ctx);
+            if (boundR.IsError) return boundR.Error;
+            bound[offset] = AsCountedContribution(boundR.Value);
+        }
+
+        var bindings = new PatternBindingAccumulator();
+        foreach (var patternBindings in bound)
+            bindings.Add(patternBindings);
+
+        if (bindings.SawRepeatedName && FindRangeRepeatedNameFailure(bound, outside) is { } failure)
+            return failure;
+
+        return EvalResult<PatternRangeBindings>.Ok(
+            new PatternRangeBindings(bindings.ToBindings(), bound, bindings.SawRepeatedName));
+    }
+
+    private static UserCallBindings AsCountedContribution(CountedParameterPatternBindings bindings)
+        => new([], bindings.CountedBindings, []);
 
     /// <summary>
     /// The counted view of one iterated collection item as the callback
@@ -675,6 +703,10 @@ public static partial class Evaluator
                     {
                         // Whole callback arguments are written slots; the
                         // sequence-value patterns open them and their items are final.
+                        // Each supplied callback value binds exactly as the ordinary
+                        // call `P(V)` binds it: the same slot allocation and the same
+                        // nested-pattern opening (SequenceValuePatternItems), with no
+                        // row expansion.
                         var countedPatternEnvR = BindCountedParameterPatternList(
                             callee.ParameterPatterns,
                             WrittenCallbackInputs(args),
@@ -715,9 +747,10 @@ public static partial class Evaluator
                     // Fixed-only flat callback binding keeps each selected item
                     // whole unless the final sequence row must unpack across
                     // remaining parameter names; it does not apply item-supply
-                    // singleton-boundary normalization. Scalar callback
-                    // deconstruction stays deferred so the counted callback path
-                    // keeps Lean/C# parity.
+                    // singleton-boundary normalization. No nested pattern is
+                    // involved here (a callee with one routes to the patterned
+                    // branch above), so the row convention is the whole callback
+                    // supply-shape policy of this path.
                     var parameterNames = callee.Params;
                     var countedEnvR = BindCountedCallbackParams(parameterNames, args);
                     if (countedEnvR.IsError)

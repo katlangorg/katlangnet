@@ -73,6 +73,8 @@ public class OutputLessArgumentBlameTests
     /// </summary>
     [Theory]
     [InlineData(Collector + "\nColl({ })", "Coll", "{...}")]
+    [InlineData("P((x, *rest)) = [x, rest]\nP({ })", "P", "{...}")]
+    [InlineData("P(x, *rest, x) = x\nP(1, { }, 2)", "P", "{...}")]
     [InlineData("count({ })", "count", "{...}")]
     [InlineData("sum({ })", "sum", "{...}")]
     [InlineData("atoms({ })", "atoms", "{...}")]

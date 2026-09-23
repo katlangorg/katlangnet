@@ -408,11 +408,17 @@ public class SharedValueGraphComplexityTests
     public void SharedGraphRepeatedNamePatternBinding()
     {
         // The second argument binds an already-bound pattern name, which compares the incoming
-        // value structurally against the bound one.
-        AssertEval(DagProgram("Same(v, v) = 1\nSame(A, B)"), 1);
+        // value structurally against the bound one. Select the graph VALUES so the
+        // test exercises deep equality, independently of A/B's distinct callable
+        // identities (equal-valued distinct callables deliberately reject).
+        AssertEval(DagProgram("Same(v, v) = 1\nSame([A]:0, [B]:0)"), 1);
 
         var mismatched = Evaluator.RunFlat(new Expr.AlgorithmExpr(
-            SourceProvenance.ParseValid(DagProgram("Same(v, v) = 1\nSame(A, C)")).Root));
+            SourceProvenance.ParseValid(DagProgram("Same(v, v) = 1\nSame([A]:0, [C]:0)")).Root));
         Assert.True(mismatched.IsError);
+        var error = mismatched.Error;
+        while (error is EvalError.WithContext context)
+            error = context.Inner;
+        Assert.IsType<EvalError.BadArity>(error);
     }
 }

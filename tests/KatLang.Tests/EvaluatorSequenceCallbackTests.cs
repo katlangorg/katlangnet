@@ -940,10 +940,56 @@ public class EvaluatorSequenceCallbackTests
         if (result.IsOk)
             Assert.Fail($"Expected evaluation failure but got: {result.Value}");
 
-        var formatted = KatLangError.FromEvalError(result.Error).Message;
-        Assert.Contains("while evaluating map transform", formatted);
+        // A scalar item is the ordinary one-item supply for `(x, y)` — exactly what the
+        // direct call `PairSum(1)` supplies — so the rejection is the nested group's own
+        // arity mismatch, never a flattened or reinterpreted item (S3). It is raised inside
+        // the map transform frame and renders the same pattern message as the direct call.
+        var direct = EvalFull("PairSum((x, y)) = x + y\nPairSum(1)");
+        AssertNestedGroupArityMismatch(result.Error, "(x, y)", expected: 2, actual: 1);
+        AssertNestedGroupArityMismatch(direct.Error, "(x, y)", expected: 2, actual: 1);
+        AssertHasContext(result.Error, "while evaluating map transform");
+        Assert.Equal(
+            "Sequence-value parameter pattern `(x, y)` expects 2 values, but received 1 value.",
+            KatLangError.FromEvalError(result.Error).Message);
+        Assert.Equal(KatLangError.FromEvalError(direct.Error).Message, KatLangError.FromEvalError(result.Error).Message);
+    }
 
-        Assert.IsType<EvalError.BadArity>(Innermost(result.Error));
+    /// <summary>
+    /// The failure is the nested sequence-value group's own arity rejection
+    /// (<see cref="SequenceValueParameterBindingContext"/> over
+    /// <see cref="EvalError.ArityMismatch"/>) — the same reason the ordinary call reports.
+    /// </summary>
+    private static void AssertNestedGroupArityMismatch(EvalError error, string pattern, int expected, int actual)
+    {
+        var groups = new List<SequenceValueParameterBindingContext>();
+        while (error is EvalError.WithContext context)
+        {
+            if (context.ErrorContext is SequenceValueParameterBindingContext group)
+                groups.Add(group);
+            error = context.Inner;
+        }
+
+        var arity = Assert.IsType<EvalError.ArityMismatch>(error);
+        Assert.Equal(expected, arity.Expected);
+        Assert.Equal(actual, arity.Actual);
+        Assert.Equal(pattern, Assert.Single(groups).PatternDisplayName);
+    }
+
+    /// <summary>
+    /// The structured context chain carries a frame whose legacy text contains
+    /// <paramref name="fragment"/> (the rendered message of a nested-group mismatch
+    /// phrases the pattern alone, so the frame is checked structurally).
+    /// </summary>
+    private static void AssertHasContext(EvalError error, string fragment)
+    {
+        var contexts = new List<string>();
+        while (error is EvalError.WithContext context)
+        {
+            contexts.Add(context.Context);
+            error = context.Inner;
+        }
+
+        Assert.Contains(contexts, context => context.Contains(fragment, StringComparison.Ordinal));
     }
 
     [Fact]
@@ -956,13 +1002,24 @@ public class EvaluatorSequenceCallbackTests
             """,
             1, 2);
 
+        // A scalar item supplies ONE value to the two-item group — the ordinary call's
+        // nested arity rejection, not an equality failure (S3).
         var result = EvalFull(
             """
             Same((x, x)) = x
             map((1, 2), Same)
             """);
         Assert.True(result.IsError);
-        Assert.IsType<EvalError.BadArity>(Innermost(result.Error));
+        AssertNestedGroupArityMismatch(result.Error, "(x, x)", expected: 2, actual: 1);
+
+        // An unequal pair item is still the repeated-binder equality failure.
+        var unequalPair = EvalFull(
+            """
+            Same((x, x)) = x
+            map([(1, 2)], Same)
+            """);
+        Assert.True(unequalPair.IsError);
+        Assert.IsType<EvalError.BadArity>(Innermost(unequalPair.Error));
     }
 
     [Fact]
@@ -1008,10 +1065,13 @@ public class EvaluatorSequenceCallbackTests
         if (result.IsOk)
             Assert.Fail($"Expected evaluation failure but got: {result.Value}");
 
-        var formatted = KatLangError.FromEvalError(result.Error).Message;
-        Assert.Contains("while evaluating map transform", formatted, StringComparison.Ordinal);
+        AssertHasContext(result.Error, "while evaluating map transform");
 
-        Assert.IsType<EvalError.BadArity>(Innermost(result.Error));
+        // `((1, 2, 3))` IS `(1, 2, 3)`, so the first item is the scalar 1: the group's own
+        // ArityMismatch(2, 1), as for `PairSum(1)`. A three-item row item reports (2, 3).
+        AssertNestedGroupArityMismatch(result.Error, "(x, y)", expected: 2, actual: 1);
+        AssertNestedGroupArityMismatch(
+            EvalFull("PairSum((x, y)) = x + y\nmap([(1, 2, 3)], PairSum)").Error, "(x, y)", expected: 2, actual: 3);
     }
 
     [Fact]

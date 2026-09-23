@@ -147,11 +147,15 @@ of the plain algebra:
 2. **Loop init arity floor** — `repeat`/`while` require at least one initial
    state slot, so a zero-item spread in init position (`Snap.repeat(1, ()*)`)
    is an ordinary arity rejection after spreading.
-3. **Counted callback scalar strictness** — the callback pattern matcher's
-   scalar fallback is singleton-pattern-only (`bindCountedParameterPattern`:
-   `if items.length == 1`), so `[7].map(NestedCb)` with `NestedCb((x, *y))`
-   is an arity rejection; callback deconstruction for scalar elements is
-   intentionally deferred.
+3. **Counted callback scalar strictness — RESOLVED (September 2026, S3).**
+   The callback pattern matcher's scalar fallback used to be
+   singleton-pattern-only (`bindCountedParameterPattern`: `if items.length ==
+   1`), so `[7].map(NestedCb)` with `NestedCb((x, *y))` was an arity
+   rejection while the ordinary call `NestedCb(7)` bound `x = 7, y = []`.
+   Both binders now open a nested pattern's value through the ONE rule
+   `Result.sequenceValuePatternItems` / `SequenceValuePatternItems`, so the
+   matrix row `cb-map-nested-pattern` binds a scalar element through the
+   ordinary one-item fallback (`[[7, []]]`) exactly as the direct call does.
 
 ## Relationship to the other corpora
 

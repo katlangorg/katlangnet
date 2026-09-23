@@ -824,7 +824,8 @@ public class BudgetConservationTests
         var services = new SequencePipelineEvaluationServices(
             GetDotCallLexicalBuiltinFallbackReason: (_, _) => null,
             EvaluateDotReceiverIterationItems: _ => throw new InvalidOperationException("fault-injection"),
-            ResolveArgumentAlgorithms: _ => EvalResult<IReadOnlyList<Algorithm>>.Ok([predicate]),
+            ResolveArgumentAlgorithms: _ => EvalResult<IReadOnlyList<Evaluator.ResolvedArgumentAlgorithm>>.Ok(
+                [new Evaluator.ResolvedArgumentAlgorithm(predicate, SpreadsSequence: false)]),
             ResolveAlgorithm: _ => EvalResult<Algorithm>.Ok(new Algorithm.User(null, [], [], [], [])),
             EvaluateRangeCallArguments: (_, _, _) =>
                 throw new Xunit.Sdk.XunitException("range evaluation must not run"));
@@ -881,7 +882,8 @@ public class BudgetConservationTests
             GetDotCallLexicalBuiltinFallbackReason: (_, _) => null,
             EvaluateDotReceiverIterationItems: _ =>
                 throw new Xunit.Sdk.XunitException("generic source must not run for a direct range"),
-            ResolveArgumentAlgorithms: _ => EvalResult<IReadOnlyList<Algorithm>>.Ok([predicate]),
+            ResolveArgumentAlgorithms: _ => EvalResult<IReadOnlyList<Evaluator.ResolvedArgumentAlgorithm>>.Ok(
+                [new Evaluator.ResolvedArgumentAlgorithm(predicate, SpreadsSequence: false)]),
             ResolveAlgorithm: _ => EvalResult<Algorithm>.Ok(new Algorithm.Builtin(BuiltinId.@range)),
             EvaluateRangeCallArguments: (_, _, _) => throw fault());
     }

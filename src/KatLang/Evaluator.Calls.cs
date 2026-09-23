@@ -61,34 +61,6 @@ public static partial class Evaluator
                 Properties: [],
                 Output: [expr]));
 
-    private static bool ShouldWrapBuiltinArgExprAsValue(
-        Expr expr,
-        EvalCtx ctx,
-        ValEnv valEnv)
-        => ShouldWrapArgExprAsValue(expr)
-            || IsZeroDeclarationBlockValueSlot(expr)
-            || expr is Expr.Param(var name)
-                && ParameterHasValue(name, ctx, valEnv);
-
-    private static EvalResult<IReadOnlyList<Algorithm>> ResolveArgAlgs(
-        OutputBundle args,
-        EvalCtx ctx,
-        ValEnv valEnv)
-    {
-        var resolvedR = ResolveArgAlgsWithSequenceSpread(args, ctx, valEnv);
-        if (resolvedR.IsError) return resolvedR.Error;
-
-        var algorithms = new List<Algorithm>(resolvedR.Value.Count);
-        foreach (var arg in resolvedR.Value)
-        {
-            if (arg.Algorithm is null)
-                return new EvalError.BadArity();
-            algorithms.Add(arg.Algorithm);
-        }
-
-        return EvalResult<IReadOnlyList<Algorithm>>.Ok(algorithms);
-    }
-
     private static EvalResult<IReadOnlyList<ResolvedArgumentAlgorithm>> ResolveArgAlgsWithSequenceSpread(
         OutputBundle args,
         EvalCtx ctx,
@@ -102,9 +74,28 @@ public static partial class Evaluator
             // value-demand law, which reports at that expression's span and in its
             // shape (property, parameter, dot receiver, written block).
             var spreadsSequence = argExpr is Expr.SequenceSpread;
-            if (ShouldWrapBuiltinArgExprAsValue(argExpr, ctx, valEnv))
+            if (ShouldWrapArgExprAsValue(argExpr) || IsZeroDeclarationBlockValueSlot(argExpr))
             {
                 result.Add(new ResolvedArgumentAlgorithm(WrapArgExprAsValue(argExpr, ctx), spreadsSequence) { Source = argExpr });
+                continue;
+            }
+
+            // A parameter with a VALUE binding resolves to a wrapper that reads that value, so
+            // a VALUE slot never re-runs the argument's body. Its ALGORITHM-channel binding,
+            // when it has one, rides along for the slots that INVOKE their argument (callbacks
+            // and loop steps: ResolvedArgumentAlgorithm.InvokedAlgorithm). A parameter bound
+            // only on the value channel has no algorithm binding (NotAnAlgorithm) and carries
+            // none. Lean: resolveArgAlgExpr.
+            if (argExpr is Expr.Param(var name) && ParameterHasValue(name, ctx, valEnv))
+            {
+                var callableR = ResolveAlg(argExpr, ctx);
+                if (callableR.IsError && callableR.Error is not EvalError.NotAnAlgorithm)
+                    return callableR.Error;
+                result.Add(new ResolvedArgumentAlgorithm(WrapArgExprAsValue(argExpr, ctx), spreadsSequence)
+                {
+                    Source = argExpr,
+                    Callable = callableR.IsOk ? callableR.Value : null,
+                });
                 continue;
             }
 

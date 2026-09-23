@@ -951,7 +951,9 @@ def sequenceValuePatternTwoEmptySiblingItemsBindPositionally : Bool :=
 
 /-- Ordinary nested parameter patterns retain scalar one-item fallback. Only a
     list retains a unary structural boundary; scalars need no such boundary.
-    This is user-call binding, not the separate scalar callback policy. -/
+    This is user-call binding; callback binding shares the same opening rule
+    (`Result.sequenceValuePatternItems`, pinned for callbacks by the S3 guards
+    in `CoreTests/SequenceCallbackBuiltins.lean`). -/
 def nestedParameterPatternKeepsScalarFallback : Bool :=
   let collector := algWithParameterPatterns [
     .sequenceValue [.sequenceValue [.capture { name := "xs", kind := .collecting }]]
@@ -1623,30 +1625,46 @@ def sequenceValuePatternScalarArgument : Bool :=
 
 #guard sequenceValuePatternScalarArgument
 
--- Parity guard: callback deconstruction is intentionally deferred, so the counted
--- callback path keeps the strict singleton-only scalar fallback that C#
--- `BindCountedParameterPattern` uses. Applying the same sequence-value
--- deconstruction callback to scalar map elements must fail (badArity), NOT silently
--- deconstruct each scalar into first/tail. This keeps the counted callback path from
--- accepting callback deconstruction before the C# path does.
-def sequenceValueDeconstructionCallbackOnScalarFails : Bool :=
-  match runResult (.algorithmExpr (algPrivate [] [] [("F", deconstructSequenceValueFirstTailAlg)] [
-    .call (resolve "map") [
+-- Callback binding of a scalar element follows the ordinary call (S3, September
+-- 2026; mirrors C# DeconstructionBindingTests
+-- .CallbackSequenceValueDeconstruction_OnScalarElement_BindsLikeTheOrdinaryCall):
+-- both binders open a nested pattern's value through the ONE rule
+-- `Result.sequenceValuePatternItems`, so each scalar map element is the ordinary
+-- one-item supply for `(first, *tail)` exactly as in `F(1)` above. The body is one
+-- list value so map's single-value contract cannot mask the binding. (The counted
+-- callback binder formerly fell back only for one-item groups, and this guard
+-- pinned the resulting badArity.)
+def deconstructSequenceValueFirstTailListAlg : Algorithm :=
+  algWithParameterPatterns [
+    .sequenceValue [.capture { name := "first" }, .capture { name := "tail", kind := .collecting }]
+  ] [] [] [
+    .listLiteral [.param "first", .dotCall (.param "tail") "count" none]
+  ]
+
+def sequenceValueDeconstructionCallbackOnScalarBindsLikeCall : Bool :=
+  let program (output : KatLang.Expr) :=
+    .algorithmExpr (algPrivate [] [] [("F", deconstructSequenceValueFirstTailListAlg)] [output])
+  (match runResult (program (.call (resolve "map") [
       sequenceItems [.num 1, .num 2, .num 3],
       .resolve "F"
-    ]
-  ])) with
-  | Except.error err => innermostIsBadArity err
-  | _ => false
+    ])) with
+   | Except.ok (.listValue [
+       .listValue [.atom 1, .atom 0],
+       .listValue [.atom 2, .atom 0],
+       .listValue [.atom 3, .atom 0]]) => true
+   | _ => false) &&
+  (match runResult (program (.call (resolve "F") [.num 1])) with
+   | Except.ok (.listValue [.atom 1, .atom 0]) => true
+   | _ => false)
 
-#guard sequenceValueDeconstructionCallbackOnScalarFails
+#guard sequenceValueDeconstructionCallbackOnScalarBindsLikeCall
 
 -- Aspect 2 callback boundary (positive parity, mirrors C#
 -- DeconstructionBindingTests.CallbackDeconstruction_OnSequenceValueRows_BindsPerRow):
 -- a deconstruction-shaped callback applied per sequence-value row binds x/*y/z
 -- within each row. With Rows = (1, 2, 3), (4, 5, 6) and F(x, *y, z) = x + y.sum + z,
--- Rows.map(F) is 6 and 15. Row callbacks work while scalar-element deconstruction
--- stays strict (see sequenceValueDeconstructionCallbackOnScalarFails above).
+-- Rows.map(F) is 6 and 15. Scalar elements bind like the ordinary call too (see
+-- sequenceValueDeconstructionCallbackOnScalarBindsLikeCall above).
 def deconstructionRowsAlg : Algorithm :=
   alg [] [] [] [
     sequenceItems [.num 1, .num 2, .num 3],

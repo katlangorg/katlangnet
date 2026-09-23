@@ -128,7 +128,7 @@ public static partial class Evaluator
             GetDotCallLexicalBuiltinFallbackReason: (stageDotCall, expectedBuiltin) =>
                 GetDotCallLexicalBuiltinFallbackReason(stageDotCall, expectedBuiltin, ctx),
             EvaluateDotReceiverIterationItems: receiver => EvaluateDotReceiverIterationItemsForSequenceOptimizer(receiver, ctx, valEnv),
-            ResolveArgumentAlgorithms: args => ResolveArgAlgs(args, ctx, valEnv),
+            ResolveArgumentAlgorithms: args => ResolveArgAlgsWithSequenceSpread(args, ctx, valEnv),
             ResolveAlgorithm: expr => ResolveAlg(expr, ctx),
             EvaluateRangeCallArguments: (function, args, callSpan) => EvaluateRangeCallArgumentsForSequenceOptimizer(function, args, callSpan, ctx, valEnv));
 

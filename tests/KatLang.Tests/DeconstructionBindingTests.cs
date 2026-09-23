@@ -807,13 +807,25 @@ public class DeconstructionBindingTests
     }
 
     [Fact]
-    public void CallbackSequenceValueDeconstruction_OnScalarElement_StaysStrict()
-        // Callback deconstruction is deferred: the counted callback path keeps the
-        // strict singleton-only scalar fallback (matching Lean), so a sequence-value
-        // deconstruction callback applied to scalar map elements fails instead of
-        // silently deconstructing each scalar into first/tail.
-        => AssertEvalError<EvalError.BadArity>(
-            "F((first, *tail)) = first, tail.count\nmap((1, 2, 3), F)");
+    public void CallbackSequenceValueDeconstruction_OnScalarElement_BindsLikeTheOrdinaryCall()
+    {
+        // A callback binds each element exactly as the ordinary call `F(element)` binds
+        // that one value (September 2026, S3): a scalar is the ordinary one-item supply for
+        // the nested pattern, so `first` is the scalar and `tail` the empty list — in the
+        // direct call and in every callback alike. The counted callback path used to fall
+        // back only for one-item groups and rejected this shape with BadArity. The body
+        // returns ONE value so map's single-value contract is not what is being tested.
+        const string define = "F((first, *tail)) = [first, tail.count]\n";
+        AssertDisplay(define + "F(1)", "[1, 0]");
+        AssertDisplay(define + "map((1, 2, 3), F)", "[[1, 0], [2, 0], [3, 0]]");
+        AssertDisplay(define + "(1, 2, 3).map(F)", "[[1, 0], [2, 0], [3, 0]]");
+        AssertDisplay(define + "map([7, (8, 9)], F)", "[[7, 0], [8, 1]]");
+        AssertBool("F((first, *tail)) = first > 1\nfilter((1, 2, 3), F) == [2, 3]", true);
+        AssertAtoms("F((first, *tail), acc) = acc + first + tail.count\nreduce((1, 2, 3), F, 0)", 6);
+    }
+
+    private static void AssertDisplay(string source, string expected)
+        => Assert.Equal(expected, Assert.IsType<RunResult.Success>(KatLangEngine.Run(source)).ToDisplayString());
 
     [Fact]
     public void CallbackDeconstruction_OnSequenceValueRows_BindsPerRow()
@@ -823,8 +835,8 @@ public class DeconstructionBindingTests
         // The flat form opens the lone row into slots (the flat-callback row
         // convention) and the shared binder collects y as an exact list; the
         // sequence-value parameter form opens the row through its nested
-        // pattern. Both agree, while scalar-element sequence-value
-        // deconstruction stays strict above.
+        // pattern. Both agree, and scalar elements bind like the ordinary call
+        // above.
         AssertAtoms("Rows = (1, 2, 3), (4, 5, 6)\nF(x, *y, z) = x + y.sum + z\nRows.map(F)", 6, 15);
         AssertAtoms("Rows = (1, 2, 3), (4, 5, 6)\nF((x, *y, z)) = x + y.sum + z\nRows.map(F)", 6, 15);
     }

@@ -14,11 +14,11 @@ This is bounded differential validation over the Lean-guarded partition,
 not a formal verification of the evaluators.
 
 Partition (machine-checked by the `specCaseIds.length` guard below):
-- specification surface cases: 284
+- specification surface cases: 295
 - excluded parse-level cases (Lean has no surface parser): 38
 - excluded C#-only cases (each carries an explicit reason in the corpus): 15
-- Lean-guarded cases: 231
-- probe observations (C#-only by design): 785
+- Lean-guarded cases: 242
+- probe observations (C#-only by design): 821
 - internal-node cases live in the semantic-explorer corpus, not here: see
   lean/SemanticExplorerCases.lean
 
@@ -68,17 +68,18 @@ partial def errCategory : Error -> String
   | .explicitParamsRequireOutput => "explicitParamsRequireOutput"
   | .unresolvedImplicitParams _ => "unresolvedImplicitParams"
 
-/-- Counted variant of `runResultM`: the same root wiring, but keeping the
+/-- Counted variant of `runResultM`: the same declaration identification and root wiring, but keeping the
     root emitted count (`evalAlgOutputCounted` / `evalCounted`), matching the
     C# `Evaluator.RunCounted` observation. -/
 def runCountedM (e : Expr) : EvalM CountedResult := do
+  let e := (identifyPropertyExpr e).run' 0
   validateExplicitParamOutputInvariantExpr e
   let ctx := { callStack := [preludeAlg], algEnv := [] }
   match e with
   | .algorithmExpr a =>
       let wired := wireToCaller ctx a
-      if (Algorithm.params wired).length = 0 then
-        evalAlgOutputCounted wired ctx []
+      if Algorithm.acceptsZeroSuppliedArguments wired then
+        evalZeroArgumentDemandOutputCounted wired ctx []
       else
         .error (Error.unresolvedImplicitParams (Algorithm.params wired))
   | _ => evalCounted e ctx []
@@ -454,6 +455,51 @@ def case_ordinary_sequence_pattern_opens_sequence_or_list : Expr :=
   .algorithmExpr (alg [] [] [privateProp "PairSum" (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [(.binary .add (.param "x") (.param "y"))])] [(.call (.resolve "PairSum") [(.capture [.num 2, .num 3])]), (.call (.resolve "PairSum") [(.listLiteral [.num 2, .num 3])])])
 #guard obs case_ordinary_sequence_pattern_opens_sequence_or_list == "ok raw=S[5, 5] n=2"
 
+-- binding-failure-outranks-repeated-name-conflict [variadic-calls]: Bad = 1 / 0 \n P(x, x, (a, b)) = a \n  \n P(1, 2, Bad)
+def case_binding_failure_outranks_repeated_name_conflict : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Bad" (alg [] [] [] [(.binary .div (.num 1) (.num 0))]), privateProp "P" (algWithParameterPatterns [.capture { name := "x" }, .capture { name := "x" }, .sequenceValue [.capture { name := "a" }, .capture { name := "b" }]] [] [] [.param "a"])] [(.call (.resolve "P") [.num 1, .num 2, .resolve "Bad"])])
+#guard obs case_binding_failure_outranks_repeated_name_conflict == "err div0"
+
+-- repeated-name-binding-is-order-independent [variadic-calls]: A = 5 \n Inc(y) = y + 1 \n P(f, f, f) = f \n  \n P(A, 5, Inc)
+def case_repeated_name_binding_is_order_independent : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "A" (alg [] [] [] [.num 5]), privateProp "Inc" (alg ["y"] [] [] [(.binary .add (.param "y") (.num 1))]), privateProp "P" (alg ["f", "f", "f"] [] [] [.param "f"])] [(.call (.resolve "P") [.resolve "A", .num 5, .resolve "Inc"])])
+#guard obs case_repeated_name_binding_is_order_independent == "err type"
+
+-- repeated-equal-values-require-one-callable-identity [variadic-calls]: A(*xs) = 5 \n B(*xs) = 5 + xs.count \n P(f, f) = f(1) \n P(A, B)
+def case_repeated_equal_values_require_one_callable_identity : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "A" (algWithParameters [{ name := "xs", kind := .collecting }] [] [] [.num 5]), privateProp "B" (algWithParameters [{ name := "xs", kind := .collecting }] [] [] [(.binary .add (.num 5) (.dotCall (.param "xs") "count" none))]), privateProp "P" (alg ["f", "f"] [] [] [(.call (.param "f") [.num 1])])] [(.call (.resolve "P") [.resolve "A", .resolve "B"])])
+#guard obs case_repeated_equal_values_require_one_callable_identity == "err type"
+
+-- repeated-callable-success-preserves-both-channels [variadic-calls]: B(*xs) = 5 + xs.count \n P(f, f, f, f, f) = [f, f(1), map([7], f)] \n P(B, 5, B, 5, 5) \n P(5, B, 5, 5, B)
+def case_repeated_callable_success_preserves_both_channels : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "B" (algWithParameters [{ name := "xs", kind := .collecting }] [] [] [(.binary .add (.num 5) (.dotCall (.param "xs") "count" none))]), privateProp "P" (alg ["f", "f", "f", "f", "f"] [] [] [(.listLiteral [.param "f", (.call (.param "f") [.num 1]), (.call (.resolve "map") [(.listLiteral [.num 7]), .param "f"])])])] [(.call (.resolve "P") [.resolve "B", .num 5, .resolve "B", .num 5, .num 5]), (.call (.resolve "P") [.num 5, .resolve "B", .num 5, .num 5, .resolve "B"])])
+#guard obs case_repeated_callable_success_preserves_both_channels == "ok raw=S[L[5, 6, L[6]], L[5, 6, L[6]]] n=2"
+
+-- repeated-genuine-aliases-preserve-complete-binding [variadic-calls]: A(*xs) = 5 + xs.count \n P(f, f) = [f, f.count, f(1), map([7], f)] \n Both(left, right) = [P(left, right), P(right, left)] \n Share(original) = Both(original, original) \n Share(A)
+def case_repeated_genuine_aliases_preserve_complete_binding : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "A" (algWithParameters [{ name := "xs", kind := .collecting }] [] [] [(.binary .add (.num 5) (.dotCall (.param "xs") "count" none))]), privateProp "P" (alg ["f", "f"] [] [] [(.listLiteral [.param "f", (.dotCall (.param "f") "count" none), (.call (.param "f") [.num 1]), (.call (.resolve "map") [(.listLiteral [.num 7]), .param "f"])])]), privateProp "Both" (alg ["left", "right"] [] [] [(.listLiteral [(.call (.resolve "P") [.param "left", .param "right"]), (.call (.resolve "P") [.param "right", .param "left"])])]), privateProp "Share" (alg ["original"] [] [] [(.call (.resolve "Both") [.param "original", .param "original"])])] [(.call (.resolve "Share") [.resolve "A"])])
+#guard obs case_repeated_genuine_aliases_preserve_complete_binding == "ok raw=L[L[5, 1, 6, L[6]], L[5, 1, 6, L[6]]] n=1"
+
+-- repeated-callable-identity-includes-captured-activation [variadic-calls]: P(f, f) = f(1) \n Outer(n, previous) = { \n   Inner(*xs) = 5 + n * xs.count \n   if(n == 1, Outer(2, Inner), P(previous, Inner)) \n } \n Outer(1, 0)
+def case_repeated_callable_identity_includes_captured_activation : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "P" (alg ["f", "f"] [] [] [(.call (.param "f") [.num 1])]), privateProp "Outer" (alg ["n", "previous"] [] [{ (privateLocalProp "Inner" (.localCapturedAncestorParams ["n"]) (algWithParameters [{ name := "xs", kind := .collecting }] [] [] [(.binary .add (.num 5) (.binary .mul (.param "n") (.dotCall (.param "xs") "count" none)))])) with requiredOwnerDepths := some [("n", some 0)] }] [(.call (.resolve "if") [(.comparison (.param "n") [{ op := .eq, operand := (.num 1) }]), (.call (.resolve "Outer") [.num 2, .resolve "Inner"]), (.call (.resolve "P") [.param "previous", .resolve "Inner"])])])] [(.call (.resolve "Outer") [.num 1, .num 0])])
+#guard obs case_repeated_callable_identity_includes_captured_activation == "err type"
+
+-- repeated-dot-results-have-distinct-wrapper-identities [variadic-calls]: Obj = { public V = 5 } \n P(f, f) = f \n P(Obj.V, Obj.V)
+def case_repeated_dot_results_have_distinct_wrapper_identities : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Obj" (alg [] [] [publicProp "V" (alg [] [] [] [.num 5])] []), privateProp "P" (alg ["f", "f"] [] [] [.param "f"])] [(.call (.resolve "P") [(.dotCall (.resolve "Obj") "V" none), (.dotCall (.resolve "Obj") "V" none)])])
+#guard obs case_repeated_dot_results_have_distinct_wrapper_identities == "err type"
+
+-- repeated-forwarded-dot-wrapper-keeps-identity [variadic-calls]: Obj = { public V = 5 } \n P(f, f) = f() \n Pass(g) = P(g, g) \n Pass(Obj.V)
+def case_repeated_forwarded_dot_wrapper_keeps_identity : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Obj" (alg [] [] [publicProp "V" (alg [] [] [] [.num 5])] []), privateProp "P" (alg ["f", "f"] [] [] [(.call (.param "f") [])]), privateProp "Pass" (alg ["g"] [] [] [(.call (.resolve "P") [.param "g", .param "g"])])] [(.call (.resolve "Pass") [(.dotCall (.resolve "Obj") "V" none)])])
+#guard obs case_repeated_forwarded_dot_wrapper_keeps_identity == "ok raw=5 n=1"
+
+-- collecting-pattern-list-merges-after-the-collector [variadic-calls]: Bad = 1 / 0 \n P(x, *rest, x) = x \n  \n P(1, Bad, 2)
+def case_collecting_pattern_list_merges_after_the_collector : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Bad" (alg [] [] [] [(.binary .div (.num 1) (.num 0))]), privateProp "P" (algWithParameters [{ name := "x" }, { name := "rest", kind := .collecting }, { name := "x" }] [] [] [.param "x"])] [(.call (.resolve "P") [.num 1, .resolve "Bad", .num 2])])
+#guard obs case_collecting_pattern_list_merges_after_the_collector == "err div0"
+
 -- redundant-call-parens-canonical [variadic-calls]: Inner = (1, 2, 3) \n CountSequenceValue((*values)) = values.count \n NestedCount(((*values))) = values.count \n  \n CountSequenceValue(Inner) \n CountSequenceValue((Inner)) \n CountSequenceValue(((1, 2, 3))) \n NestedCount([(1, 2, 3)]) \n NestedCount(([[1, 2, 3]]))
 def case_redundant_call_parens_canonical : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Inner" (alg [] [] [] [(.capture [.num 1, .num 2, .num 3])]), privateProp "CountSequenceValue" (algWithParameterPatterns [.sequenceValue [.capture { name := "values", kind := .collecting }]] [] [] [(.dotCall (.param "values") "count" none)]), privateProp "NestedCount" (algWithParameterPatterns [.sequenceValue [.sequenceValue [.capture { name := "values", kind := .collecting }]]] [] [] [(.dotCall (.param "values") "count" none)])] [(.call (.resolve "CountSequenceValue") [.resolve "Inner"]), (.call (.resolve "CountSequenceValue") [.resolve "Inner"]), (.call (.resolve "CountSequenceValue") [(.capture [.num 1, .num 2, .num 3])]), (.call (.resolve "NestedCount") [(.listLiteral [(.capture [.num 1, .num 2, .num 3])])]), (.call (.resolve "NestedCount") [(.listLiteral [(.listLiteral [.num 1, .num 2, .num 3])])])])
@@ -723,6 +769,16 @@ def case_callback_variadic_collects : Expr :=
 def case_callback_mixed_variadic_rows : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Rows" (alg [] [] [] [(.listLiteral [(.capture [.num 1, .num 2, .num 3, .num 4])])]), privateProp "F" (algWithParameters [{ name := "first" }, { name := "middle", kind := .collecting }, { name := "last" }] [] [] [.param "middle"])] [(.dotCall (.resolve "Rows") "map" (some [.resolve "F"]))])
 #guard obs case_callback_mixed_variadic_rows == "ok raw=L[L[2, 3]] n=1"
+
+-- callback-nested-pattern-binds-like-call [collection-builtins]: Head((x, *rest)) = [x, rest] \n  \n Head(7) \n [7].map(Head) \n map((7, (8, 9)), Head)
+def case_callback_nested_pattern_binds_like_call : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Head" (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "rest", kind := .collecting }]] [] [] [(.listLiteral [.param "x", .param "rest"])])] [(.call (.resolve "Head") [.num 7]), (.dotCall (.listLiteral [.num 7]) "map" (some [.resolve "Head"])), (.call (.resolve "map") [(.capture [.num 7, (.capture [.num 8, .num 9])]), .resolve "Head"])])
+#guard obs case_callback_nested_pattern_binds_like_call == "ok raw=S[L[7, L[]], L[L[7, L[]]], L[L[7, L[]], L[8, L[9]]]] n=3"
+
+-- forwarded-callable-keeps-its-algorithm-channel [collection-builtins]: Cnt(*xs) = xs.count \n SumWhile(*s) = s.sum + 1, s.sum + 1 < 3 \n Apply(f, xs) = xs.map(f) \n Loop(g) = while(g, 0) \n Outer(xs) = { \n   Inner(g) = xs.map(g) \n   Inner(Cnt) \n } \n  \n Apply(Cnt, [1, 2]) \n Loop(SumWhile) \n Outer([1, 2])
+def case_forwarded_callable_keeps_its_algorithm_channel : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Cnt" (algWithParameters [{ name := "xs", kind := .collecting }] [] [] [(.dotCall (.param "xs") "count" none)]), privateProp "SumWhile" (algWithParameters [{ name := "s", kind := .collecting }] [] [] [(.binary .add (.dotCall (.param "s") "sum" none) (.num 1)), (.comparison (.binary .add (.dotCall (.param "s") "sum" none) (.num 1)) [{ op := .lt, operand := (.num 3) }])]), privateProp "Apply" (alg ["f", "xs"] [] [] [(.dotCall (.param "xs") "map" (some [.param "f"]))]), privateProp "Loop" (alg ["g"] [] [] [(.call (.resolve "while") [.param "g", .num 0])]), privateProp "Outer" (alg ["xs"] [] [{ (privateLocalProp "Inner" (.localCapturedAncestorParams ["xs"]) (alg ["g"] [] [] [(.dotCall (.param "xs") "map" (some [.param "g"]))])) with requiredOwnerDepths := some [("xs", some 0)] }] [(.call (.resolve "Inner") [.resolve "Cnt"])])] [(.call (.resolve "Apply") [.resolve "Cnt", (.listLiteral [.num 1, .num 2])]), (.call (.resolve "Loop") [.resolve "SumWhile"]), (.call (.resolve "Outer") [(.listLiteral [.num 1, .num 2])])])
+#guard obs case_forwarded_callable_keeps_its_algorithm_channel == "ok raw=S[L[1, 1], 2, L[1, 1]] n=3"
 
 -- distinct-preserves-first [collection-builtins]: distinct((3, 1, 3, 2, 1, 2))
 def case_distinct_preserves_first : Expr :=
@@ -1254,7 +1310,7 @@ def case_grace_in_redundant_group_is_grace_on_the_name : Expr :=
   .algorithmExpr (alg [] [] [privateProp "F" (alg ["a", "b"] [] [] [(.binary .add (.param "b") (.dotCall (.param "a") "V" none))]), privateProp "V" (alg ["x"] [] [] [(.binary .mul (.param "x") (.num 2))])] [(.call (.resolve "F") [.num 5, .num 1])])
 #guard obs case_grace_in_redundant_group_is_grace_on_the_name == "ok raw=11 n=1"
 
--- 231 canonical Lean-guarded specification cases.
+-- 242 canonical Lean-guarded specification cases.
 
 /--
 Machine-checked Lean-guarded partition count: the id list is built by the
@@ -1333,6 +1389,15 @@ def specCaseIds : List String := [
   "variadic-nested-not-flattened",
   "supply-vs-value-patterns",
   "ordinary-sequence-pattern-opens-sequence-or-list",
+  "binding-failure-outranks-repeated-name-conflict",
+  "repeated-name-binding-is-order-independent",
+  "repeated-equal-values-require-one-callable-identity",
+  "repeated-callable-success-preserves-both-channels",
+  "repeated-genuine-aliases-preserve-complete-binding",
+  "repeated-callable-identity-includes-captured-activation",
+  "repeated-dot-results-have-distinct-wrapper-identities",
+  "repeated-forwarded-dot-wrapper-keeps-identity",
+  "collecting-pattern-list-merges-after-the-collector",
   "redundant-call-parens-canonical",
   "call-spread-into-conditional-clauses",
   "patterned-user-call-is-one-value-boundary",
@@ -1387,6 +1452,8 @@ def specCaseIds : List String := [
   "map-pair-callback",
   "callback-variadic-collects",
   "callback-mixed-variadic-rows",
+  "callback-nested-pattern-binds-like-call",
+  "forwarded-callable-keeps-its-algorithm-channel",
   "distinct-preserves-first",
   "distinct-structural-pairs",
   "take-family-tutorial",
@@ -1494,6 +1561,6 @@ def specCaseIds : List String := [
   "ownership-open-head-between-opener-and-settling-level-charges-the-capture",
   "grace-in-redundant-group-is-grace-on-the-name"
 ]
-#guard specCaseIds.length == 231
+#guard specCaseIds.length == 242
 
 end LanguageSpecCases

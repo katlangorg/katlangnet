@@ -189,6 +189,22 @@ namespace ParameterPattern
     | .capture parameter => parameter.name = name
     | .sequenceValue items => items.any (containsCaptureName name)
 
+  mutual
+    /-- Whether a pattern binds `name` at any depth — the STATIC fact the
+        pattern-list binders read to tell whether every contribution of a
+        repeated name at one level is already known (see
+        `settlePatternRange`). A total twin of `containsCaptureName`, so the
+        binder bridge laws can unfold it. C#: `ParameterPatternBindsName`. -/
+    def bindsName (name : Ident) : ParameterPattern -> Bool
+      | .capture parameter => parameter.name == name
+      | .sequenceValue items => anyBindsName name items
+
+    /-- Whether any pattern of a list binds `name` at any depth. -/
+    def anyBindsName (name : Ident) : List ParameterPattern -> Bool
+      | [] => false
+      | pattern :: rest => bindsName name pattern || anyBindsName name rest
+  end
+
   def topLevelCaptureKind? (name : Ident) : List ParameterPattern -> Option ParameterKind
     | [] => none
     | .capture parameter :: rest =>
@@ -798,6 +814,7 @@ end Pattern
 inductive PropertyIdentity where
   | syntax : Nat -> PropertyIdentity
   | shared : Nat -> PropertyIdentity
+  | runtime : Nat -> PropertyIdentity
   deriving Repr, BEq
 
 mutual
@@ -1258,14 +1275,32 @@ namespace Result
 
   /-- Deconstruction-openable structure view shared by the sequence-value
       parameter pattern binders: a received sequence value or exact list value
-      opens to its immediate items; atoms and strings are not openable (the
-      binders apply their own scalar one-item fallback). Call-argument
-      binding never uses this view — a list argument stays one argument.
-      C#: `GetSequenceValuePatternItems` / `BindCountedParameterPattern`. -/
+      opens to its immediate items; atoms, strings, and Booleans are not
+      openable (`sequenceValuePatternItems` adds the ONE scalar one-item
+      fallback both binders share). Call-argument binding never uses this
+      view — a list argument stays one argument.
+      C#: `Result.StructureItems`. -/
   def structureItems? : Result -> Option (List Result)
     | sequenceValue rs => some rs
     | listValue rs => some rs
     | _ => none
+
+  /-- NESTED-PATTERN OPENING (September 2026, S3): the items a sequence-value
+      parameter pattern binds against, given the ONE value its slot supplies.
+      This is the ONE rule shared by the ordinary binder (`bindParameterPattern`)
+      and the counted callback binder (`bindCountedParameterPattern`), so a
+      callback that supplies one value `V` to a pattern `P` binds exactly as
+      the ordinary call `P(V)` does — callback provenance changes nothing.
+      A sequence value or exact list value opens to its immediate items
+      (`structureItems?`, ONE boundary of either kind); any other value — a
+      number, a string, a Boolean — is a ONE-item supply (the scalar one-item
+      fallback), at every pattern level and for every group size: `(x)`,
+      `(x, *rest)`, `(*xs)`, and `(*init, z)` bind it, while `(x, y)` and
+      `(x, *r, z)` reject it through the nested group's ordinary arity check
+      (one value supplied). The fallback supplies one value, never zero, and
+      it never opens anything further. C#: `Evaluator.SequenceValuePatternItems`. -/
+  def sequenceValuePatternItems (value : Result) : List Result :=
+    (structureItems? value).getD [value]
 
   /-- Count emitted top-level values when a result is already in hand.
       Empty results emit 0. Any non-empty atomic, string, or sequence value
@@ -1459,6 +1494,7 @@ structure EvalState where
   zeroArgPropertyCache : ZeroArgPropertyCache := []
   nextBindingContext : Nat := 1
   lexicalActivations : Array ParameterActivation := #[]
+  nextRuntimeDeclaration : Nat := 0
   deriving Repr
 
 namespace EvalState
@@ -2424,45 +2460,6 @@ partial def bindParams (ps : List Ident) (vs : List Result) : EvalM ValEnv :=
       pure ((p,v)::rest)
   | _, _ => .error (Error.arityMismatch ps.length vs.length)
 
-/-- The three merge helpers below are transparent structural recursion used by
-    pattern binding. They are intentionally `def`s (not `partial def`s) so bridge
-    theorems can unfold the real binder path; each recursion consumes `incoming`,
-    so the behavior is unchanged. -/
-def mergeEqualValEnv (acc incoming : ValEnv) : EvalM ValEnv :=
-  match incoming with
-  | [] => pure acc
-  | (name, value) :: rest =>
-      match acc.lookup name with
-      | some existing =>
-          if existing == value then mergeEqualValEnv acc rest
-          else .error Error.badArity
-      | none => mergeEqualValEnv (acc ++ [(name, value)]) rest
-
-def mergeEqualCountedParamEnv (acc incoming : CountedParamEnv)
-    : EvalM CountedParamEnv :=
-  match incoming with
-  | [] => pure acc
-  | (name, value) :: rest =>
-      match acc.lookup name with
-      | some existing =>
-          if existing.fst == value.fst then mergeEqualCountedParamEnv acc rest
-          else .error Error.badArity
-      | none => mergeEqualCountedParamEnv (acc ++ [(name, value)]) rest
-
-def mergePatternAlgEnv (leftValues rightValues : ValEnv)
-    (acc incoming : AlgEnv) : EvalM AlgEnv :=
-  match incoming with
-  | [] => pure acc
-  | (name, value) :: rest =>
-      match AlgEnv.lookup acc name with
-      | some _ =>
-          if (leftValues.lookup name).isSome && (rightValues.lookup name).isSome then
-            mergePatternAlgEnv leftValues rightValues acc rest
-          else
-            .error (Error.typeMismatch
-              "Repeated bind equality is not supported for algorithm-only arguments")
-      | none => mergePatternAlgEnv leftValues rightValues (acc ++ [(name, value)]) rest
-
 /-- Argument passing rule: a single atom is wrapped in a one-element list;
     a sequence value is unpacked into its elements.  This is the canonical ABI for
     translating an evaluated Result into positional arguments for bindParams.
@@ -2537,6 +2534,9 @@ structure CallableCallItem where
   error? : Option Error := none
   skipMissingValue : Bool := false
   source? : Option Expr := none
+  /-- The parameter's ALGORITHM-channel binding, carried beside the value-side
+      `algorithm?` (`ResolvedArgumentAlgorithm.callable?`). -/
+  callable? : Option Algorithm := none
   deriving Repr
 
 structure ParameterPatternInput where
@@ -2560,6 +2560,118 @@ structure ParameterPatternBindings where
   countedParamEnv : CountedParamEnv := []
   algEnv : AlgEnv := []
   deriving Repr
+
+/-- Whether one pattern's bindings bind `name` on any channel. -/
+def ParameterPatternBindings.binds (bindings : ParameterPatternBindings) (name : Ident) : Bool :=
+  (lookupAssoc name bindings.argEnv).isSome || (lookupAssoc name bindings.countedParamEnv).isSome
+    || (lookupAssoc name bindings.algEnv).isSome
+
+/-- The names one pattern's bindings bind, each once. -/
+def ParameterPatternBindings.names (bindings : ParameterPatternBindings) : List Ident :=
+  (bindings.argEnv.map Prod.fst ++ bindings.countedParamEnv.map Prod.fst
+    ++ bindings.algEnv.map Prod.fst).eraseDups
+
+/-- Append the entries of `incoming` whose name `acc` does not bind yet: the
+    first binding of a name is the one that stays. -/
+def appendFirstOccurrences {A} (acc incoming : Assoc Ident A) : Assoc Ident A :=
+  incoming.foldl (fun merged entry =>
+    if (lookupAssoc entry.1 merged).isSome then merged else merged ++ [entry]) acc
+
+/-- The merged bindings of one pattern level: each name keeps its FIRST binding
+    on each channel. Every repeated name has passed `repeatedNameFailure`
+    before this runs, so discarded entries agree on the complete value/counted
+    channels and callable identity. This storage choice gives no callable
+    positional precedence (`repeated_name_complete_binding_is_permutation_invariant`). -/
+def mergeFirstOccurrences (contributions : List ParameterPatternBindings) : ParameterPatternBindings :=
+  contributions.foldl (fun merged contribution => {
+    argEnv := appendFirstOccurrences merged.argEnv contribution.argEnv,
+    countedParamEnv := appendFirstOccurrences merged.countedParamEnv contribution.countedParamEnv,
+    algEnv := appendFirstOccurrences merged.algEnv contribution.algEnv }) {}
+
+/-- REPEATED-NAME VERDICT, value channel: some PAIR of the values carried by
+    `name`'s contributions differs (every contribution that carries a value must
+    carry an equal one). Stated over all pairs, so it depends only on the
+    multiset of contributions (`repeated_name_failure_is_permutation_invariant`). -/
+def repeatedNameValueConflict (name : Ident) (contributions : List ParameterPatternBindings) : Bool :=
+  let values := contributions.filterMap (fun contribution => lookupAssoc name contribution.argEnv)
+  values.any (fun first => values.any (fun second => !(first == second)))
+
+/-- REPEATED-NAME VERDICT, counted channel: compare the complete counted binding,
+    including emitted count. Ordinary binder inputs use value-boundary counts,
+    but successful merge invariance must not rely on discarding this component. -/
+def repeatedNameCountedConflict (name : Ident) (contributions : List ParameterPatternBindings) : Bool :=
+  let values := contributions.filterMap (fun contribution => lookupAssoc name contribution.countedParamEnv)
+  values.any (fun first => values.any (fun second => !(first == second)))
+
+/-- REPEATED-NAME VERDICT, algorithm channel: when two or more contributions
+    bind `name` on the algorithm channel, EACH of them must also carry a value,
+    because repeated-bind equality compares values and an algorithm-only
+    argument has none. -/
+def repeatedNameAlgorithmConflict (name : Ident) (contributions : List ParameterPatternBindings) : Bool :=
+  let carriers := contributions.filter (fun contribution => (lookupAssoc name contribution.algEnv).isSome)
+  2 ≤ carriers.length && carriers.any (fun contribution => (lookupAssoc name contribution.argEnv).isNone)
+
+/-- Callable identity includes its declaration and the captured lexical activation chain.
+    Comparing identities does not evaluate either algorithm or consult its value cache. -/
+def sameRepeatedCallableIdentity (left right : Algorithm) : Bool :=
+  match left, right with
+  | .builtin a, .builtin b => a == b
+  | .builtin _, _ | _, .builtin _ => false
+  | _, _ =>
+      left.declarationId == right.declarationId &&
+      (match left.parent, right.parent with
+       | none, none => true
+       | some a, some b => sameDeclaringScope a b
+       | _, _ => false) &&
+      compatibleActivations left.parent right.parent &&
+      compatibleActivations right.parent left.parent
+
+/-- Equal values are insufficient when selecting either callable can change an invocation.
+    All callable contributions must have the same identity, even for just two occurrences. -/
+def repeatedNameCallableIdentityConflict (name : Ident) (contributions : List ParameterPatternBindings) : Bool :=
+  let algorithms := contributions.filterMap (fun contribution => lookupAssoc name contribution.algEnv)
+  algorithms.any (fun first => algorithms.any (fun second => !sameRepeatedCallableIdentity first second))
+
+/-- REPEATED-NAME BINDING IS ORDER-INDEPENDENT (September 2026). The failure,
+    if any, of the names that become COMPLETE at one merge — every one of their
+    contributions at this pattern level is in `contributions`. A repeated name
+    binds iff every PAIR of its contributions is compatible under the
+    two-binding rule (equal values; equal complete counted pairs; two algorithm-channel
+    bindings only when both carry a value and have the same callable identity), so the verdict depends on the
+    multiset of contributions and never on their order or on how the merges are
+    grouped: `P(f, f, f)` rejects `(Inc, 5, A)` in every permutation. Two distinct
+    callable identities now reject even if their values agree. Within one merge
+    an unequal value or counted value (`badArity`) is reported before an
+    algorithm-channel conflict (`typeMismatch`). C#: `RepeatedNameAggregate`. -/
+def repeatedNameFailure (names : List Ident) (contributions : List ParameterPatternBindings) : Option Error :=
+  if names.any (fun name => repeatedNameValueConflict name contributions) then some Error.badArity
+  else if names.any (fun name => repeatedNameCountedConflict name contributions) then some Error.badArity
+  else if names.any (fun name => repeatedNameAlgorithmConflict name contributions) then
+    some (Error.typeMismatch "Repeated bind equality is not supported for algorithm-only arguments")
+  else if names.any (fun name => repeatedNameCallableIdentityConflict name contributions) then
+    some (Error.typeMismatch "Repeated bind equality requires the same callable identity")
+  else none
+
+/-- The merges of one bound range (Lean's `bindPairs` order,
+    `merge c₁ (merge c₂ (… cₙ))`): the innermost merge runs first, and a
+    repeated name is decided at the ONE merge where its last contribution
+    joins — the step of its first occurrence in the range — unless the level
+    binds it outside this range too (`outside`: the other range or the
+    collector), in which case the later cross merge decides it with every
+    contribution in hand. `earlier` holds the range's contributions left of the
+    current one. C#: `FindRangeRepeatedNameFailure`. -/
+def settlePatternRange (outside : Ident -> Bool)
+    : List ParameterPatternBindings -> List ParameterPatternBindings -> Option Error
+  | [], _ => none
+  | current :: rest, earlier =>
+      match settlePatternRange outside rest (earlier ++ [current]) with
+      | some error => some error
+      | none =>
+          let completing := current.names.filter (fun name =>
+            rest.any (fun contribution => contribution.binds name)
+              && !earlier.any (fun contribution => contribution.binds name)
+              && !outside name)
+          repeatedNameFailure completing (current :: rest)
 
 /-- Builtin collection-item view of the bound collection argument: opens
   exactly one outer sequence or exact-list boundary to its immediate items;
@@ -2952,28 +3064,20 @@ partial def bindCountedParameterPattern (pattern : ParameterPattern) (input : Co
       | .normal => pure { countedParamEnv := [(parameter.name, input)] }
       | .collecting => .error Error.badArity
   | .sequenceValue items =>
-      let sequenceValueItems? :=
-        -- A received sequence value or exact list value opens to its
-        -- immediate items (`Result.structureItems?`): the deconstruction
-        -- receiver opens ONE lone structure boundary of either kind.
-        match Result.structureItems? input.fst with
-        | some structureItems => some structureItems
-        -- This counted matcher is the callback binding path. Callback
-        -- deconstruction is intentionally deferred; counted callback binding
-        -- remains strict to preserve existing callback semantics and Lean/C#
-        -- parity, so its scalar fallback stays singleton-only to match the C#
-        -- `BindCountedParameterPattern`. The scalar one-item normalization for
-        -- assignment and call-parameter deconstruction lives in the
-        -- non-counted `bindParameterPattern` instead.
-        | none => if items.length == 1 then some [input.fst] else none
-      match sequenceValueItems? with
-      | none => .error Error.badArity
-      | some sequenceValueItems =>
-          -- Pattern-opened items are FINAL supply items: a nested collecting
-          -- binding collects them exactly (one boundary opened, never two).
-          let nestedInputs := sequenceValueItems.map (fun value =>
-            { counted := (value, Result.valueCount value) : CountedPatternInput })
-          bindCountedParameterPatternList items nestedInputs
+      -- This counted matcher is the callback binding path, and it opens the
+      -- callback value through the SAME nested-pattern rule as the ordinary
+      -- binder `bindParameterPattern` (`Result.sequenceValuePatternItems`):
+      -- a sequence or list value opens one level, and any other value is a
+      -- one-item supply at every level and for every group size, so
+      -- `map([7], P)` with `P((x, *rest))` binds `x = 7, rest = []` exactly
+      -- like `P(7)`, and `P((x, y))` rejects a scalar with the nested group's
+      -- ordinary `arityMismatch 2 1` in both (September 2026, S3; the
+      -- callback path formerly fell back only for one-item groups).
+      -- Pattern-opened items are FINAL supply items: a nested collecting
+      -- binding collects them exactly (one boundary opened, never two).
+      let nestedInputs := (Result.sequenceValuePatternItems input.fst).map (fun value =>
+        { counted := (value, Result.valueCount value) : CountedPatternInput })
+      bindCountedParameterPatternList items nestedInputs
 
 partial def bindCountedParameterPatternList (patterns : List ParameterPattern)
   (inputs : List CountedPatternInput) : EvalM CountedParameterPatternBindings := do
@@ -2984,17 +3088,26 @@ partial def bindCountedParameterPatternList (patterns : List ParameterPattern)
         | .collecting => some (index, parameter)
         | .normal => findCollecting rest (index + 1)
     | (.sequenceValue _) :: rest, index => findCollecting rest (index + 1)
-  let merge (left right : CountedParameterPatternBindings)
-      : EvalM CountedParameterPatternBindings := do
-    let countedParamEnv <- mergeEqualCountedParamEnv left.countedParamEnv right.countedParamEnv
-    pure { countedParamEnv := countedParamEnv }
-  let rec bindPairs : List ParameterPattern -> List CountedPatternInput -> EvalM CountedParameterPatternBindings
-    | [], [] => pure {}
+  -- The same binding and merge order as `bindParameterPatternList`: every
+  -- pattern of a range binds before anything merges, and each repeated name
+  -- is decided once, symmetrically, when its last contribution joins
+  -- (`settlePatternRange`); counted contributions carry only the counted
+  -- channel, so an unequal repeat is `badArity`.
+  let asContribution (bindings : CountedParameterPatternBindings) : ParameterPatternBindings :=
+    { countedParamEnv := bindings.countedParamEnv }
+  let rec bindPairs : List ParameterPattern -> List CountedPatternInput -> EvalM (List ParameterPatternBindings)
+    | [], [] => pure []
     | pattern :: patterns', input :: inputs' => do
         let current <- bindCountedParameterPattern pattern input.counted
         let rest <- bindPairs patterns' inputs'
-        merge current rest
+        pure (asContribution current :: rest)
     | _, _ => .error (Error.arityMismatch patterns.length inputs.length)
+  let settle (outside : Ident -> Bool) (bound : List ParameterPatternBindings) : EvalM Unit :=
+    match settlePatternRange outside bound [] with
+    | some error => .error error
+    | none => pure ()
+  let merged (contributions : List ParameterPatternBindings) : CountedParameterPatternBindings :=
+    { countedParamEnv := (mergeFirstOccurrences contributions).countedParamEnv }
   -- The accepted supply is the ONE minimum-supply rule
   -- (`ParameterPattern.minimumSuppliedSlots`): without a collecting capture
   -- every pattern needs its own slot, so the count is EXACT; with one the
@@ -3004,8 +3117,10 @@ partial def bindCountedParameterPatternList (patterns : List ParameterPattern)
       let required := ParameterPattern.minimumSuppliedSlots patterns
       if inputs.length != required then
         .error (Error.arityMismatch required inputs.length)
-      else
-        bindPairs patterns inputs
+      else do
+        let bound <- bindPairs patterns inputs
+        settle (fun _ => false) bound
+        pure (merged bound)
   | some (collectingIndex, collectingParameter) =>
       let required := ParameterPattern.minimumSuppliedSlots patterns
       if inputs.length < required then
@@ -3017,8 +3132,12 @@ partial def bindCountedParameterPatternList (patterns : List ParameterPattern)
         let suffixPatterns := patterns.drop (collectingIndex + 1)
         let suffixInputs := inputs.drop (inputs.length - suffixCount)
         let capturedInputs := (inputs.drop collectingIndex).take (inputs.length - suffixCount - collectingIndex)
-        let prefixBindings <- bindPairs prefixPatterns prefixInputs
-        let suffixBindings <- bindPairs suffixPatterns suffixInputs
+        let prefixBound <- bindPairs prefixPatterns prefixInputs
+        settle (fun name => ParameterPattern.anyBindsName name suffixPatterns
+          || collectingParameter.name == name) prefixBound
+        let suffixBound <- bindPairs suffixPatterns suffixInputs
+        settle (fun name => ParameterPattern.anyBindsName name prefixPatterns
+          || collectingParameter.name == name) suffixBound
         -- Collecting binding COLLECTS the collector supply of its allocated
         -- segment (`collectorSupply`: exact, except that one lone written
         -- sequence slot opens one level) as one exact immutable list value,
@@ -3026,10 +3145,20 @@ partial def bindCountedParameterPatternList (patterns : List ParameterPattern)
         let segment := capturedInputs.map (fun input => (input.counted.fst, input.origin))
         let captured := collectSegment (collectorSupply segment)
         let capturedBinding := (collectingParameter.name, (captured, 1))
-        let collectingBindings : CountedParameterPatternBindings :=
+        let collectingBindings : ParameterPatternBindings :=
           { countedParamEnv := [capturedBinding] }
-        let withCollecting <- merge prefixBindings collectingBindings
-        merge withCollecting suffixBindings
+        let leftSide := prefixBound ++ [collectingBindings]
+        let atCollector := [collectingParameter.name].filter (fun name =>
+          prefixBound.any (fun contribution => contribution.binds name)
+            && !ParameterPattern.anyBindsName name suffixPatterns)
+        match repeatedNameFailure atCollector leftSide with
+        | some error => .error error
+        | none =>
+            let atSuffix := (suffixBound.flatMap ParameterPatternBindings.names).eraseDups.filter
+              (fun name => leftSide.any (fun contribution => contribution.binds name))
+            match repeatedNameFailure atSuffix (leftSide ++ suffixBound) with
+            | some error => .error error
+            | none => pure (merged (leftSide ++ suffixBound))
       end
 
 /-- Callback binding for a flat callee whose top-level parameters include a
@@ -3091,6 +3220,7 @@ structure PreparedSequenceBuiltinInput where
 
 inductive PreparedSequenceBuiltinSuffixArg where
   | algorithm (value : Algorithm) (source? : Option Expr := none)
+      (callable? : Option Algorithm := none)
   | value (value : Result)
   | wholeNumber (value : Int)
   deriving Repr
@@ -3110,7 +3240,22 @@ structure ResolvedArgumentAlgorithm where
       value-reified arguments (prepared callback data, expanded spread items,
       dotted receivers), whose algorithms carry no parameters. -/
   source? : Option Expr := none
+  /-- A parameter argument bound on BOTH channels resolves to its value side
+      (`algorithm`, a wrapper that reads the bound value, so a VALUE slot never
+      re-runs the argument's body) and keeps its ALGORITHM-channel binding here.
+      A slot that INVOKES its argument — a sequence callback or a loop step —
+      calls `invoked`, so `Apply(f, xs) = map(xs, f)` applies the callable `f`
+      exactly as `map(xs, Cnt)` does even when `Cnt` also satisfies a
+      zero-argument value demand. `none` for every other argument, whose
+      `algorithm` already is its algorithm-channel identity. -/
+  callable? : Option Algorithm := none
   deriving Repr
+
+/-- The algorithm an ALGORITHM slot (a sequence callback or a loop step)
+    invokes: a parameter's algorithm-channel binding when it has one, otherwise
+    the resolved algorithm. VALUE slots read `algorithm`. -/
+def ResolvedArgumentAlgorithm.invoked (arg : ResolvedArgumentAlgorithm) : Algorithm :=
+  arg.callable?.getD arg.algorithm
 
 def intPow (b : Int) : Nat -> Int
   | 0 => 1
@@ -3997,7 +4142,7 @@ def prepareSequenceBuiltinSuffixArgItem
   match descriptor.kind with
   | .algorithm =>
     match item.algorithm? with
-    | some alg => pure (.algorithm alg item.source?)
+    | some alg => pure (.algorithm alg item.source? item.callable?)
     | none =>
         match item.error? with
         | some err => .error err
@@ -4057,16 +4202,22 @@ def expectPreparedSequenceBuiltinAlgorithmSuffixArgFull
     (args : List PreparedSequenceBuiltinSuffixArg) (index : Nat) : EvalM ResolvedArgumentAlgorithm :=
   expectPreparedSequenceBuiltinSuffixArgAt b descriptors args index .algorithm fun descriptor arg =>
     match arg with
-    | .algorithm algorithm source? => pure { algorithm := algorithm, source? := source? }
+    | .algorithm algorithm source? callable? =>
+        pure { algorithm := algorithm, source? := source?, callable? := callable? }
     | _ =>
         internalSequenceBuiltinSuffixArgMetadataError b
           s!"prepared suffix argument {index + 1} ({descriptor.name}) did not match metadata kind {sequenceBuiltinSuffixArgKindDesc .algorithm}"
 
+/-- The CALLBACK a sequence builtin invokes from an algorithm suffix slot (the
+    `filter` predicate, the `map` mapper, the `reduce` reducer): the argument's
+    algorithm-channel identity (`ResolvedArgumentAlgorithm.invoked`). `reduce`'s
+    `initial` shares the algorithm metadata kind but is a VALUE slot, so it
+    reads the full argument (`...Full`) and demands its value side. -/
 def expectPreparedSequenceBuiltinAlgorithmSuffixArg
     (b : Builtin) (descriptors : List SequenceBuiltinSuffixArgDescriptor)
     (args : List PreparedSequenceBuiltinSuffixArg) (index : Nat) : EvalM Algorithm := do
   let arg <- expectPreparedSequenceBuiltinAlgorithmSuffixArgFull b descriptors args index
-  pure arg.algorithm
+  pure arg.invoked
 
 def expectPreparedSequenceBuiltinWholeNumberSuffixArg
     (b : Builtin) (descriptors : List SequenceBuiltinSuffixArgDescriptor)
@@ -4589,6 +4740,14 @@ def lookupLexical (a : Algorithm) (name : Ident) (ctx : EvalCtx) : EvalM Algorit
   let resolved <- lookupLexicalProperty a name ctx
   pure resolved.alg
 
+/-- Runtime-created callable wrappers have identities too. C# mints a DeclarationIdentity
+    on every new Algorithm.User; retaining this token through parameter forwarding makes
+    one wrapper forwarded twice different from two separately resolved dot results. -/
+def identifyRuntimeAlgorithm (algorithm : Algorithm) : EvalM Algorithm := do
+  let state <- get
+  set { state with nextRuntimeDeclaration := state.nextRuntimeDeclaration + 1 }
+  pure (algorithm.withDeclarationId (some (.runtime state.nextRuntimeDeclaration)))
+
 def resolveAlg (e : Expr) (ctx : EvalCtx) : EvalM Algorithm :=
   match e with
   | .sequenceConstruct _ _ =>
@@ -4603,7 +4762,7 @@ def resolveAlg (e : Expr) (ctx : EvalCtx) : EvalM Algorithm :=
   -- the redundant group `Apply((Increment))` IS `Apply(Increment)` — the
   -- parser erases it before this node exists (parentheses group syntax).
   -- C#: `CaptureValueThunk`.
-  | .capture rows => pure (wireToCaller ctx (Algorithm.mk none [] [] [] rows))
+  | .capture rows => identifyRuntimeAlgorithm (wireToCaller ctx (Algorithm.mk none [] [] [] rows))
   | .resolve n =>
       match ctx.callStack with
       | a::_ => lookupLexical a n ctx
@@ -4617,7 +4776,7 @@ def resolveAlg (e : Expr) (ctx : EvalCtx) : EvalM Algorithm :=
       -- position resolves through `resolveDotReceiver` below, which navigates
       -- an argumentless chain's exported structural members before falling
       -- back to this memberless wrapper.
-      pure (wireToCaller ctx (Algorithm.ofExpr (.dotMember o n fallback args)))
+      identifyRuntimeAlgorithm (wireToCaller ctx (Algorithm.ofExpr (.dotMember o n fallback args)))
   -- Explicit errors for syntactic forms that cannot resolve to algorithms
   | .param x =>
       -- Higher-order parameter: if x is bound in AlgEnv, return the algorithm.
@@ -4693,20 +4852,36 @@ def resolveDotReceiver (e : Expr) (ctx : EvalCtx) : EvalM Algorithm :=
   | _ => resolveAlg e ctx
 
 
-def resolveArgAlgExpr (e : Expr) (ctx : EvalCtx) (env : ValEnv) : EvalM Algorithm := do
+/-- Resolve one builtin argument expression to its algorithm, paired with the
+    parameter's ALGORITHM-channel binding when the argument is a parameter
+    reference resolved to its value side (`ResolvedArgumentAlgorithm.callable?`).
+    A parameter with a value binding resolves to a wrapper that reads that value,
+    so a VALUE slot never re-runs the argument's body; the algorithm binding rides
+    along for the slots that INVOKE their argument. A parameter bound only on the
+    value channel has no algorithm binding (`resolveAlg` reports `notAnAlgorithm`),
+    so it carries none. -/
+def resolveArgAlgExpr (e : Expr) (ctx : EvalCtx) (env : ValEnv)
+    : EvalM (Algorithm × Option Algorithm) := do
   let shouldUseValueSide <- match e with
     | .param name => do
         let (parameterCtx, values) <- parameterContext name ctx env
         pure ((parameterCtx.countedParamEnv.lookup name).isSome || (values.lookup name).isSome)
     | _ => pure false
-  if shouldWrapArgExprAsValue e || zeroDeclarationBlockValueSlot e || shouldUseValueSide then
-    pure (wireToCaller ctx (Algorithm.ofExpr e))
+  if shouldWrapArgExprAsValue e || zeroDeclarationBlockValueSlot e then
+    pure (wireToCaller ctx (Algorithm.ofExpr e), none)
+  else if shouldUseValueSide then
+    let callable? <-
+      match <- evalAttempt (resolveAlg e ctx) with
+      | .ok a => pure (some a)
+      | .error (.notAnAlgorithm _) => pure none
+      | .error err => .error err
+    pure (wireToCaller ctx (Algorithm.ofExpr e), callable?)
   else
     match <- evalAttempt (resolveAlg e ctx) with
-    | .ok a    => pure a
+    | .ok a    => pure (a, none)
     | .error err =>
       if isLiftableArgResolutionError err then
-        pure (wireToCaller ctx (Algorithm.ofExpr e))
+        pure (wireToCaller ctx (Algorithm.ofExpr e), none)
       else
         .error err
 
@@ -4733,12 +4908,13 @@ def resolveArgAlgExpr (e : Expr) (ctx : EvalCtx) (env : ValEnv) : EvalM Algorith
 def resolveArgAlgsWithSequenceSpread (args : OutputBundle) (ctx : EvalCtx) (env : ValEnv)
     : EvalM (List ResolvedArgumentAlgorithm) :=
   args.mapM (fun e => do
-    let alg <- resolveArgAlgExpr e ctx env
+    let (alg, callable?) <- resolveArgAlgExpr e ctx env
     let spreadsSequence :=
       match e with
       | .sequenceSpread _ => true
       | _ => false
-    pure { algorithm := alg, spreadsSequence := spreadsSequence, source? := some e })
+    pure { algorithm := alg, spreadsSequence := spreadsSequence, source? := some e,
+           callable? := callable? })
 
 /-- Try to resolve each argument expression to an algorithm.
     Returns `some alg` for expressions that resolve, `none` for those that don't
@@ -4825,10 +5001,12 @@ mutual
         -- `F(((1, 2)))`, `F({S})`, and `F((S*))` all bind the value `(1, 2)`
         -- (the former written-slot view, which let a group's own written
         -- rows override the value, is gone: parentheses group syntax and
-        -- never suspend normalization).
+        -- never suspend normalization). The opening is the ONE nested-pattern
+        -- rule `Result.sequenceValuePatternItems`, shared with the counted
+        -- callback binder `bindCountedParameterPattern` (S3).
         let sequenceValueItems? :=
           match input.value? with
-          | some value => some ((Result.structureItems? value).getD [value])
+          | some value => some (Result.sequenceValuePatternItems value)
           | none => none
         match sequenceValueItems? with
         | none => .error (input.error?.getD Error.badArity)
@@ -4852,28 +5030,26 @@ mutual
           | .collecting => some (index, parameter)
           | .normal => findCollecting rest (index + 1)
       | (.sequenceValue _) :: rest, index => findCollecting rest (index + 1)
-    let merge (left right : ParameterPatternBindings)
-        : EvalM ParameterPatternBindings := do
-      let argEnv <- mergeEqualValEnv left.argEnv right.argEnv
-      let countedParamEnv <-
-        mergeEqualCountedParamEnv left.countedParamEnv right.countedParamEnv
-      let algEnv <- mergePatternAlgEnv left.argEnv right.argEnv left.algEnv right.algEnv
-      pure {
-        argEnv := argEnv,
-        countedParamEnv := countedParamEnv,
-        algEnv := algEnv
-      }
-    let rec bindPairs : List ParameterPattern -> List ParameterPatternInput -> EvalM ParameterPatternBindings
-      | [], [] => pure {}
+    -- `bindPairs` binds EVERY pattern of a range, left to right, before
+    -- anything merges: the first binding failure wins over any repeated-name
+    -- conflict of the range (September 2026). `settle` then decides the
+    -- range's repeated names in the merge order (`settlePatternRange`).
+    let rec bindPairs : List ParameterPattern -> List ParameterPatternInput
+        -> EvalM (List ParameterPatternBindings)
+      | [], [] => pure []
       | pattern :: patterns', input :: inputs' => do
           let current <- bindParameterPattern pattern input allowAlgorithmBindings
           let rest <- bindPairs patterns' inputs'
-          merge current rest
+          pure (current :: rest)
       | _, _ => .error (Error.arityMismatch patterns.length inputs.length)
       termination_by ps _ => 2 * sizeOf ps
       decreasing_by
         all_goals simp_wf
         all_goals omega
+    let settle (outside : Ident -> Bool) (bound : List ParameterPatternBindings) : EvalM Unit :=
+      match settlePatternRange outside bound [] with
+      | some error => .error error
+      | none => pure ()
     -- The accepted supply is the ONE minimum-supply rule
     -- (`ParameterPattern.minimumSuppliedSlots`): without a collecting capture
     -- every pattern needs its own slot, so the count is EXACT; with one the
@@ -4883,8 +5059,10 @@ mutual
         let required := ParameterPattern.minimumSuppliedSlots patterns
         if inputs.length != required then
           .error (Error.arityMismatch required inputs.length)
-        else
-          bindPairs patterns inputs
+        else do
+          let bound <- bindPairs patterns inputs
+          settle (fun _ => false) bound
+          pure (mergeFirstOccurrences bound)
     | some (collectingIndex, collectingParameter) =>
         let required := ParameterPattern.minimumSuppliedSlots patterns
         if inputs.length < required then
@@ -4896,8 +5074,15 @@ mutual
           let suffixPatterns := patterns.drop (collectingIndex + 1)
           let suffixInputs := inputs.drop (inputs.length - suffixCount)
           let capturedInputs := (inputs.drop collectingIndex).take (inputs.length - suffixCount - collectingIndex)
-          let prefixBindings <- bindPairs prefixPatterns prefixInputs
-          let suffixBindings <- bindPairs suffixPatterns suffixInputs
+          -- The prefix binds and settles its own repeated names, then the
+          -- suffix; a name the level also binds on the other side of the
+          -- collector (or as the collector) waits for the cross merges below.
+          let prefixBound <- bindPairs prefixPatterns prefixInputs
+          settle (fun name => ParameterPattern.anyBindsName name suffixPatterns
+            || collectingParameter.name == name) prefixBound
+          let suffixBound <- bindPairs suffixPatterns suffixInputs
+          settle (fun name => ParameterPattern.anyBindsName name prefixPatterns
+            || collectingParameter.name == name) suffixBound
           let rec collectValues : List ParameterPatternInput -> EvalM (List (Result × SupplyOrigin))
             | [] => pure []
             | input :: rest =>
@@ -4939,8 +5124,22 @@ mutual
             { argEnv := [(collectingParameter.name, captured)],
               countedParamEnv := [(collectingParameter.name, (captured, 1))],
               algEnv := [] }
-          let withCollecting <- merge prefixBindings collectingBindings
-          merge withCollecting suffixBindings
+          -- Merge the prefix with the collector, then that with the suffix:
+          -- the collector's name completes at the first merge unless the
+          -- suffix binds it too, and every name shared with the suffix
+          -- completes at the second.
+          let leftSide := prefixBound ++ [collectingBindings]
+          let atCollector := [collectingParameter.name].filter (fun name =>
+            prefixBound.any (fun contribution => contribution.binds name)
+              && !ParameterPattern.anyBindsName name suffixPatterns)
+          match repeatedNameFailure atCollector leftSide with
+          | some error => .error error
+          | none =>
+              let atSuffix := (suffixBound.flatMap ParameterPatternBindings.names).eraseDups.filter
+                (fun name => leftSide.any (fun contribution => contribution.binds name))
+              match repeatedNameFailure atSuffix (leftSide ++ suffixBound) with
+              | some error => .error error
+              | none => pure (mergeFirstOccurrences (leftSide ++ suffixBound))
   termination_by 2 * sizeOf patterns + 1
   decreasing_by
     all_goals simp_wf
@@ -5371,7 +5570,10 @@ mutual
         else do
           if Algorithm.requiresPatternBinding callee then do
             -- Whole callback arguments are written slots; the sequence-value
-            -- patterns open them and their items are final.
+            -- patterns open them and their items are final. Each supplied
+            -- callback value binds exactly as the ordinary call `P(V)` binds
+            -- it: the same slot allocation and the same nested-pattern opening
+            -- (`Result.sequenceValuePatternItems`), with no row expansion.
             let inputs := args.map (fun arg => { counted := arg, origin := .writtenSlot : CountedPatternInput })
             let bindings <- bindCountedParameterPatternList (Algorithm.parameterPatterns callee) inputs
             let names := bindings.countedParamEnv.map Prod.fst
@@ -5395,8 +5597,9 @@ mutual
             -- slots and binds those slots to the algorithm's flat parameter
             -- names (the final item is unpacked across any remaining names);
             -- it does not apply item-supply singleton-boundary normalization.
-            -- Scalar callback deconstruction stays deferred so the counted
-            -- callback path keeps Lean/C# parity.
+            -- No nested pattern is involved here (a callee with one routes to
+            -- the patterned branch above), so the row convention is the whole
+            -- callback supply-shape policy of this path.
             let countedParamEnv <- bindCountedCallbackParams (Algorithm.params callee) args
             let newCtx <- ctx.bindParameters (Algorithm.params callee) [] countedParamEnv
             evalAlgOutputCounted callee newCtx env
@@ -5490,9 +5693,9 @@ mutual
                     pure ((countedTopLevelValues counted).map (fun value =>
                       { value? := some value, algorithm? := some alg, error? := none, skipMissingValue := false }))
                   else
-                    pure [{ value? := some counted.fst, algorithm? := some alg, error? := none, skipMissingValue := false, source? := arg.source? }]
+                    pure [{ value? := some counted.fst, algorithm? := some alg, error? := none, skipMissingValue := false, source? := arg.source?, callable? := arg.callable? }]
               | .error err =>
-                  pure [{ value? := none, algorithm? := some alg, error? := some err, skipMissingValue := false, source? := arg.source? }]
+                  pure [{ value? := none, algorithm? := some alg, error? := some err, skipMissingValue := false, source? := arg.source?, callable? := arg.callable? }]
           let tail <- loop rest (slot + head.length)
           pure (head ++ tail)
     loop args 0
@@ -5777,7 +5980,9 @@ mutual
       `repeat` count, `atoms`, `range`) is demanded through
       `evalArgumentValueCounted`, so a parameterized algorithm in a selected slot
       is the ordinary zero-argument arity rejection and never enters its body;
-      ALGORITHM slots (loop steps) take the argument's algorithm as supplied. -/
+      ALGORITHM slots (loop steps) invoke the argument's algorithm-channel
+      identity (`ResolvedArgumentAlgorithm.invoked`), so a step forwarded through
+      a parameter is the callable itself, never its demanded value. -/
   partial def applyBuiltinCounted
       (b : Builtin) (args : List ResolvedArgumentAlgorithm)
       (ctx : EvalCtx) (env : ValEnv)
@@ -5813,7 +6018,7 @@ mutual
             else
             let initialSlots <- evalInitialLoopStateSlots initAlgs ctx env
             let rec loop (stateSlots : List Result) : EvalM (List Result) := do
-              let outputSlots <- runStepSlots step.algorithm ctx env stateSlots
+              let outputSlots <- runStepSlots step.invoked ctx env stateSlots
               let (nextSlots, cont) <- splitContSlots outputSlots
               -- `false` stops (the current state is returned; the producing
               -- iteration's next state is never committed), `true` continues.
@@ -5834,7 +6039,7 @@ mutual
               let initialSlots <- evalInitialLoopStateSlots initAlgs ctx env
               let rec repeatLoop (k : Int) (stateSlots : List Result) : EvalM (List Result) :=
                 if k = 0 then pure stateSlots else do
-                  let outputSlots <- runStepSlots step.algorithm ctx env stateSlots
+                  let outputSlots <- runStepSlots step.invoked ctx env stateSlots
                   repeatLoop (k-1) outputSlots
               let finalSlots <- repeatLoop n initialSlots
               let final := loopStateResult finalSlots

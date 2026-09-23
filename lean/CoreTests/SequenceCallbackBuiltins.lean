@@ -921,4 +921,218 @@ def filterZeroParameterWrapperRetainsArity : Bool :=
 
 #guard filterZeroParameterWrapperRetainsArity
 
+--------------------------------------------------------------------------------
+-- S3 (September 2026): callback binding of ONE supplied value uses the
+-- ordinary call's nested-pattern rules. Both binders open a sequence-value
+-- pattern's value through the ONE rule `Result.sequenceValuePatternItems`
+-- (sequence/list opens one level; any other value is a one-item supply at
+-- every group size), so for every pattern `P` and value `V`, `map([V], P)`
+-- binds `V` exactly as `P(V)` does: same success, same bound values, and the
+-- same innermost binding error. The callback operation still decides how many
+-- values it supplies (map/filter one element, reduce element + accumulator).
+-- Mirrors C# CallbackNestedPatternBindingTests.
+--------------------------------------------------------------------------------
+
+def innermostError : Error -> Error
+  | .withContext _ inner => innermostError inner
+  | error => error
+
+/-- Pattern lists (with the names their one-value list body reports) covering
+    every nested-group shape the one-item fallback distinguishes: one item,
+    head plus collector, collector only, fixed pair, collector plus suffix,
+    head/collector/suffix, a doubly nested collector, a nested group inside a
+    group, and a repeated binder. -/
+def s3CallbackPatterns : List (List KatLang.ParameterPattern × List String) := [
+  ([.sequenceValue [.capture { name := "x" }]], ["x"]),
+  ([.sequenceValue [.capture { name := "x" }, .capture { name := "rest", kind := .collecting }]], ["x", "rest"]),
+  ([.sequenceValue [.capture { name := "xs", kind := .collecting }]], ["xs"]),
+  ([.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]], ["x", "y"]),
+  ([.sequenceValue [.capture { name := "init", kind := .collecting }, .capture { name := "z" }]], ["init", "z"]),
+  ([.sequenceValue [.capture { name := "x" }, .capture { name := "r", kind := .collecting }, .capture { name := "z" }]],
+    ["x", "r", "z"]),
+  ([.sequenceValue [.sequenceValue [.capture { name := "x" }, .capture { name := "r", kind := .collecting }]]],
+    ["x", "r"]),
+  ([.sequenceValue [.capture { name := "a" },
+      .sequenceValue [.capture { name := "b" }, .capture { name := "r", kind := .collecting }]]],
+    ["a", "b", "r"]),
+  ([.sequenceValue [.capture { name := "x" }, .capture { name := "x" }]], ["x"])
+]
+
+/-- Supplied values: scalars of every kind, the empty sequence value, sequence
+    values (flat, nested, with an empty item, with a repeated item), and lists
+    (empty, singleton, pair, singleton holding a pair). -/
+def s3CallbackValues : List KatLang.Expr := [
+  .num 7,
+  .stringLiteral "s",
+  .boolLiteral true,
+  .emptySequence 0,
+  .capture [.num 1, .num 2],
+  .capture [.num 1, .num 2, .num 3],
+  .capture [.capture [.num 1, .num 2], .num 3],
+  .capture [.emptySequence 0, .num 1],
+  .capture [.num 7, .num 7],
+  .listLiteral [],
+  .listLiteral [.num 5],
+  .listLiteral [.num 1, .num 2],
+  .listLiteral [.capture [.num 1, .num 2]]
+]
+
+def s3PatternAlg (patterns : List KatLang.ParameterPattern) (names : List String) : Algorithm :=
+  algWithParameterPatterns patterns [] [] [.listLiteral (names.map KatLang.Expr.param)]
+
+def s3Program (patterns : List KatLang.ParameterPattern) (names : List String)
+    (output : KatLang.Expr) : KatLang.Expr :=
+  .algorithmExpr (algPrivate [] [] [("P", s3PatternAlg patterns names)] [output])
+
+/-- `P(V)` and `map([V], P)` bind the same value alike: equal bound results
+    (the mapped list holds exactly the direct result), or the same innermost
+    binding error (only the outer call/map context differs). -/
+def s3DirectAndMapBindAlike (patterns : List KatLang.ParameterPattern) (names : List String)
+    (value : KatLang.Expr) : Bool :=
+  match runResult (s3Program patterns names (.call (resolve "P") [value])),
+        runResult (s3Program patterns names (.call (resolve "map") [.listLiteral [value], .resolve "P"])) with
+  | .ok direct, .ok (.listValue [mapped]) => direct == mapped
+  | .error direct, .error mapped => reprStr (innermostError direct) == reprStr (innermostError mapped)
+  | _, _ => false
+
+#guard s3CallbackPatterns.all fun (patterns, names) =>
+  s3CallbackValues.all fun value => s3DirectAndMapBindAlike patterns names value
+
+/-- Two outcomes of the same supplied values agree: equal results, or the same
+    innermost error. -/
+def s3SameOutcome (expected actual : Except Error Result) : Bool :=
+  match expected, actual with
+  | .ok e, .ok a => e == a
+  | .error e, .error a => reprStr (innermostError e) == reprStr (innermostError a)
+  | _, _ => false
+
+/-- filter binds its predicate like the call: `filter([V], K)` with an always-true
+    `K(P)` keeps `[V]` exactly when `P(V)` binds, and otherwise fails with the
+    direct call's innermost error. -/
+def s3DirectAndFilterBindAlike (patterns : List KatLang.ParameterPattern) (value : KatLang.Expr) : Bool :=
+  let keep := algWithParameterPatterns patterns [] [] [.boolLiteral true]
+  let program (output : KatLang.Expr) := KatLang.Expr.algorithmExpr (algPrivate [] [] [("K", keep)] [output])
+  match runResult (program (.call (resolve "K") [value])),
+        runResult (program (.call (resolve "filter") [.listLiteral [value], .resolve "K"])) with
+  | .ok _, filtered => s3SameOutcome (runResult (program (.listLiteral [value]))) filtered
+  | .error direct, .error filtered => reprStr (innermostError direct) == reprStr (innermostError filtered)
+  | _, _ => false
+
+/-- reduce supplies the element AND the accumulator: `reduce([V], R, 0)` agrees
+    with the two-argument call `R(V, 0)`; with a top-level collecting accumulator
+    parameter the reducer receives the accumulator's one-level slots instead, so
+    `reduce([V], R, (1, 2))` agrees with `R(V, 1, 2)` — the same supply. -/
+def s3DirectAndReduceBindAlike (patterns : List KatLang.ParameterPattern) (names : List String)
+    (value : KatLang.Expr) : Bool :=
+  let fixedAcc := algWithParameterPatterns (patterns ++ [.capture { name := "acc" }]) [] []
+    [.listLiteral ((names ++ ["acc"]).map KatLang.Expr.param)]
+  let slotAcc := algWithParameterPatterns (patterns ++ [.capture { name := "acc", kind := .collecting }]) [] []
+    [.listLiteral ((names ++ ["acc"]).map KatLang.Expr.param)]
+  let run (reducer : Algorithm) (output : KatLang.Expr) :=
+    runResult (.algorithmExpr (algPrivate [] [] [("R", reducer)] [output]))
+  s3SameOutcome
+      (run fixedAcc (.call (resolve "R") [value, .num 0]))
+      (run fixedAcc (.call (resolve "reduce") [.listLiteral [value], .resolve "R", .num 0])) &&
+  s3SameOutcome
+      (run slotAcc (.call (resolve "R") [value, .num 1, .num 2]))
+      (run slotAcc (.call (resolve "reduce") [.listLiteral [value], .resolve "R", .capture [.num 1, .num 2]]))
+
+#guard s3CallbackPatterns.all fun (patterns, _) =>
+  s3CallbackValues.all fun value => s3DirectAndFilterBindAlike patterns value
+
+#guard s3CallbackPatterns.all fun (patterns, names) =>
+  s3CallbackValues.all fun value => s3DirectAndReduceBindAlike patterns names value
+
+-- The agreement matrix alone would also pass if BOTH paths regressed the same
+-- way, so the characteristic cells are pinned as well: a scalar is ONE item
+-- for `(x, *rest)` (binds, rest empty), for `(*init, z)`, and inside a nested
+-- group; it is one item too few for `(x, y)` — the nested group's ordinary
+-- `arityMismatch 2 1`, never a bare `badArity` — in the direct call and the
+-- callback alike.
+def s3CallbackScalarCells : Bool :=
+  let headRest : List KatLang.ParameterPattern := [.sequenceValue [.capture { name := "x" }, .capture { name := "rest", kind := .collecting }]]
+  let pair : List KatLang.ParameterPattern := [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]]
+  let initLast : List KatLang.ParameterPattern := [.sequenceValue [.capture { name := "init", kind := .collecting }, .capture { name := "z" }]]
+  let nestedHead : List KatLang.ParameterPattern := [.sequenceValue [.sequenceValue [.capture { name := "x" }, .capture { name := "r", kind := .collecting }]]]
+  let groupInGroup : List KatLang.ParameterPattern := [.sequenceValue [.capture { name := "a" },
+      .sequenceValue [.capture { name := "b" }, .capture { name := "r", kind := .collecting }]]]
+  let viaMap (patterns : List KatLang.ParameterPattern) (names : List String) (value : KatLang.Expr) :=
+    runResult (s3Program patterns names (.call (resolve "map") [.listLiteral [value], .resolve "P"]))
+  let direct (patterns : List KatLang.ParameterPattern) (names : List String) (value : KatLang.Expr) :=
+    runResult (s3Program patterns names (.call (resolve "P") [value]))
+  (match viaMap headRest ["x", "rest"] (.num 7) with
+   | .ok (.listValue [.listValue [.atom 7, .listValue []]]) => true | _ => false) &&
+  (match viaMap headRest ["x", "rest"] (.stringLiteral "s") with
+   | .ok (.listValue [.listValue [.str "s", .listValue []]]) => true | _ => false) &&
+  (match viaMap initLast ["init", "z"] (.boolLiteral true) with
+   | .ok (.listValue [.listValue [.listValue [], .bool true]]) => true | _ => false) &&
+  (match viaMap nestedHead ["x", "r"] (.num 7) with
+   | .ok (.listValue [.listValue [.atom 7, .listValue []]]) => true | _ => false) &&
+  (match viaMap groupInGroup ["a", "b", "r"] (.capture [.num 1, .num 2]) with
+   | .ok (.listValue [.listValue [.atom 1, .atom 2, .listValue []]]) => true | _ => false) &&
+  (match viaMap pair ["x", "y"] (.num 7) with
+   | .error err => innermostIsArityMismatch 2 1 err | _ => false) &&
+  (match direct pair ["x", "y"] (.num 7) with
+   | .error err => innermostIsArityMismatch 2 1 err | _ => false)
+
+#guard s3CallbackScalarCells
+
+-- filter and reduce deliver their values through the same counted binder:
+-- `filter([7, 1], P)` keeps 7 with `P((x, *rest)) = x > 1`; reduce binds the
+-- scalar element (`R((x, *rest), acc)`) and the scalar accumulator
+-- (`R(e, (a, *r))`) exactly as the two-argument ordinary call `R(7, 0)` does,
+-- and the element beside a top-level collecting accumulator (`R((a, *r), *acc)`,
+-- the accumulator-slot path) exactly as the ordinary call with the same supply —
+-- the scalar initial `0` has the one slot `[0]`, so that call is again `R(7, 0)`.
+def s3FilterAndReduceBindLikeCalls : Bool :=
+  let headRest : List KatLang.ParameterPattern :=
+    [.sequenceValue [.capture { name := "x" }, .capture { name := "rest", kind := .collecting }]]
+  let keepAboveOne := algWithParameterPatterns headRest [] [] [.compare .gt (.param "x") (.num 1)]
+  let elementReducer := algWithParameterPatterns
+    (headRest ++ [.capture { name := "acc" }]) [] [] [.binary .add (.param "acc") (.param "x")]
+  let accumulatorReducer := algWithParameterPatterns
+    [.capture { name := "e" },
+     .sequenceValue [.capture { name := "a" }, .capture { name := "r", kind := .collecting }]] [] []
+    [.binary .add (.param "e") (.param "a")]
+  let collectingReducer := algWithParameterPatterns
+    [.sequenceValue [.capture { name := "a" }, .capture { name := "r", kind := .collecting }],
+     .capture { name := "acc", kind := .collecting }] [] []
+    [.listLiteral [.param "a", .param "r", .param "acc"]]
+  let run (name : String) (callee : Algorithm) (output : KatLang.Expr) :=
+    runResult (.algorithmExpr (algPrivate [] [] [(name, callee)] [output]))
+  (match run "P" keepAboveOne (.call (resolve "filter") [.listLiteral [.num 7, .num 1], .resolve "P"]) with
+   | .ok (.listValue [.atom 7]) => true | _ => false) &&
+  (match run "R" elementReducer (.call (resolve "reduce") [.listLiteral [.num 7, .num 8], .resolve "R", .num 0]) with
+   | .ok (.atom 15) => true | _ => false) &&
+  (match run "R" elementReducer (.call (resolve "R") [.num 7, .num 0]) with
+   | .ok (.atom 7) => true | _ => false) &&
+  (match run "R" accumulatorReducer (.call (resolve "reduce") [.listLiteral [.num 7], .resolve "R", .num 0]) with
+   | .ok (.atom 7) => true | _ => false) &&
+  (match run "R" accumulatorReducer (.call (resolve "R") [.num 7, .num 0]) with
+   | .ok (.atom 7) => true | _ => false) &&
+  (match run "R" collectingReducer (.call (resolve "reduce") [.listLiteral [.num 7], .resolve "R", .num 0]) with
+   | .ok (.listValue [.atom 7, .listValue [], .listValue [.atom 0]]) => true | _ => false) &&
+  (match run "R" collectingReducer (.call (resolve "R") [.num 7, .num 0]) with
+   | .ok (.listValue [.atom 7, .listValue [], .listValue [.atom 0]]) => true | _ => false)
+
+#guard s3FilterAndReduceBindLikeCalls
+
+-- Invocation count stays the collection operation's: an empty collection runs
+-- the callback zero times even though its body would fail, while a selected
+-- empty value `()` is ONE invocation with that value (it binds `(*xs)` to `[]`,
+-- exactly like `P(())`).
+def s3EmptyCollectionVersusEmptyItem : Bool :=
+  let collector : List KatLang.ParameterPattern := [.sequenceValue [.capture { name := "xs", kind := .collecting }]]
+  let failing := algWithParameterPatterns collector [] [] [.binary .div (.num 1) (.num 0)]
+  let run (callee : Algorithm) (output : KatLang.Expr) :=
+    runResult (.algorithmExpr (algPrivate [] [] [("P", callee)] [output]))
+  (match run failing (.call (resolve "map") [.listLiteral [], .resolve "P"]) with
+   | .ok (.listValue []) => true | _ => false) &&
+  (match run (s3PatternAlg collector ["xs"]) (.call (resolve "map") [.listLiteral [.emptySequence 0], .resolve "P"]) with
+   | .ok (.listValue [.listValue [.listValue []]]) => true | _ => false) &&
+  (match run (s3PatternAlg collector ["xs"]) (.call (resolve "P") [.emptySequence 0]) with
+   | .ok (.listValue [.listValue []]) => true | _ => false)
+
+#guard s3EmptyCollectionVersusEmptyItem
+
 end KatLangTests

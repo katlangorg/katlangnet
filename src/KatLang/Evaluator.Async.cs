@@ -2332,7 +2332,7 @@ public static partial class Evaluator
 
             case (BuiltinId.@while, _) when args.Count >= 2:
                 {
-                    var stepR = ResolveArgumentAlgorithm(args[0], ctx);
+                    var stepR = ResolveInvokedArgumentAlgorithm(args[0], ctx);
                     if (stepR.IsError) return stepR.Error;
                     var initialStateR = await EvalInitialLoopStateSlotsAsync(args.Skip(1).ToList(), ctx, valEnv).ConfigureAwait(false);
                     if (initialStateR.IsError) return initialStateR.Error;
@@ -2341,7 +2341,7 @@ public static partial class Evaluator
 
             case (BuiltinId.@repeat, _) when args.Count >= 3:
                 {
-                    var stepR = ResolveArgumentAlgorithm(args[0], ctx);
+                    var stepR = ResolveInvokedArgumentAlgorithm(args[0], ctx);
                     if (stepR.IsError) return stepR.Error;
                     var countR = await EvalResolvedArgumentValueAsync(args[1], ctx, valEnv).ConfigureAwait(false);
                     if (countR.IsError) return countR.Error;
@@ -2561,7 +2561,8 @@ public static partial class Evaluator
                         arg,
                         ValueError: null,
                         outputR.Value,
-                        resolvedArg.Source));
+                        resolvedArg.Source,
+                        resolvedArg.Callable));
                 }
 
                 continue;
@@ -2573,7 +2574,8 @@ public static partial class Evaluator
                 Value: null,
                 arg,
                 BlameDemandedArgumentForMissingOutput(resolvedArg.Source, outputR).Error,
-                Source: resolvedArg.Source));
+                Source: resolvedArg.Source,
+                Callable: resolvedArg.Callable));
         }
 
         return EvalResult<IReadOnlyList<VariadicCallItem>>.Ok(items);
