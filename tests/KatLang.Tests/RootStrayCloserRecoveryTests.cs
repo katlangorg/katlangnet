@@ -11,7 +11,11 @@ namespace KatLang.Tests;
 /// syntax tree, the elaborated tree, and the SemanticModel. The root body now
 /// reports the token in KatLang terms at its own span, consumes it, and keeps
 /// parsing in the SAME root scope. The document stays invalid; the retained
-/// tree serves diagnostics and editor analysis only, never evaluation.
+/// tree serves diagnostics and editor analysis only, never evaluation. Since the
+/// #9 parser-recovery audit an unmatched <c>]</c> recovers the same way (it used to
+/// take the primary-expression fallback and invent a placeholder output row), and a
+/// closer no open construct is waiting for closes the innermost open construct
+/// instead of being consumed as junk (the delimiter-ownership law in Parser.cs).
 /// </para>
 ///
 /// <para>
@@ -37,10 +41,14 @@ public class RootStrayCloserRecoveryTests
     private const string StrayBraceMessage =
         "Unexpected '}' at the top level. There is no open '{' for it to close.";
 
+    private const string StrayBracketMessage =
+        "Unexpected ']' at the top level. There is no open '[' for it to close.";
+
     private static string MessageFor(char closer) => closer switch
     {
         ')' => StrayParenMessage,
         '}' => StrayBraceMessage,
+        ']' => StrayBracketMessage,
         _ => throw new ArgumentOutOfRangeException(nameof(closer), closer, "Not a stray root closer."),
     };
 
@@ -155,6 +163,7 @@ public class RootStrayCloserRecoveryTests
     [Theory]
     [InlineData(')')]
     [InlineData('}')]
+    [InlineData(']')]
     public void StrayCloserBetweenDeclarations_RetainsEveryLaterRootItem(char closer)
     {
         var source = $"Before = 1\n{closer}\nAfter = 2\nAfter";
@@ -183,7 +192,7 @@ public class RootStrayCloserRecoveryTests
     public static TheoryData<string, string, char> RowBoundaryCases()
     {
         var data = new TheoryData<string, string, char>();
-        foreach (var closer in new[] { ')', '}' })
+        foreach (var closer in new[] { ')', '}', ']' })
         {
             // Position: beginning, between complete root items, line-final, end.
             data.Add("leading", "¤\nBefore = 1\nAfter = 2\nAfter", closer);
@@ -273,7 +282,7 @@ public class RootStrayCloserRecoveryTests
     [Fact]
     public void MixedStrayClosers_EachReportTheirOwnCharacter_AndTheTailSurvives()
     {
-        const string source = "Before = 1\n)}}))\nAfter = 2\nAfter";
+        const string source = "Before = 1\n)}]}))\nAfter = 2\nAfter";
         var parsed = Parser.ParseSyntax(source);
 
         Assert.Equal(
@@ -281,13 +290,14 @@ public class RootStrayCloserRecoveryTests
             {
                 "[UnexpectedToken] 2:1-2:2 " + StrayParenMessage,
                 "[UnexpectedToken] 2:2-2:3 " + StrayBraceMessage,
-                "[UnexpectedToken] 2:3-2:4 " + StrayBraceMessage,
-                "[UnexpectedToken] 2:4-2:5 " + StrayParenMessage,
+                "[UnexpectedToken] 2:3-2:4 " + StrayBracketMessage,
+                "[UnexpectedToken] 2:4-2:5 " + StrayBraceMessage,
                 "[UnexpectedToken] 2:5-2:6 " + StrayParenMessage,
+                "[UnexpectedToken] 2:6-2:7 " + StrayParenMessage,
             },
             parsed.Diagnostics.Select(Describe));
 
-        var controlSyntax = Parser.ParseSyntax("Before = 1\n     \nAfter = 2\nAfter");
+        var controlSyntax = Parser.ParseSyntax("Before = 1\n      \nAfter = 2\nAfter");
         Assert.False(controlSyntax.HasErrors);
         AssertSameRoot(controlSyntax.Root, parsed.Root);
     }
@@ -351,21 +361,20 @@ public class RootStrayCloserRecoveryTests
     }
 
     [Fact]
-    public void MismatchedNestedBraceCloser_KeepsItsDiagnostic_ThenTheOrphansRecoverAtTheRoot()
+    public void MismatchedNestedBraceCloser_ClosesTheBlock_ThenTheOrphanRecoversAtTheRoot()
     {
         // `{ 1 ) 2 }`: the block ends at the FIRST closer and reports the
-        // mismatch exactly as before. That ')' then reaches the root, where it
-        // IS unmatched, and is recovered in place together with the '}' it
-        // orphaned, so `2` and `3` survive as root rows. (Before the recovery
-        // the second diagnostic read "Expected end of input" and both rows were
-        // dropped — the one directly related change to a malformed-nesting shape.)
+        // mismatch. No construct is waiting for that ')', so it closes the block
+        // it was written in (the delimiter-ownership law, #9) instead of becoming
+        // a second, root-level report; the '}' it orphaned reaches the root, where
+        // it IS unmatched, and is recovered in place, so `2` and `3` survive as
+        // root rows.
         var parsed = Parser.ParseSyntax("{ 1 ) 2 }\n3");
 
         Assert.Equal(
             new[]
             {
                 "[UnexpectedToken] 1:5-1:6 Expected '}' but found ')'.",
-                "[UnexpectedToken] 1:5-1:6 " + StrayParenMessage,
                 "[UnexpectedToken] 1:9-1:10 " + StrayBraceMessage,
             },
             parsed.Diagnostics.Select(Describe));
@@ -380,18 +389,17 @@ public class RootStrayCloserRecoveryTests
     }
 
     [Fact]
-    public void MismatchedNestedParenCloser_KeepsItsDiagnostic_ThenTheOrphanRecoversAtTheRoot()
+    public void MismatchedNestedParenCloser_ClosesTheGroup_AndTheLaterSourceSurvives()
     {
-        // `(1 }`: the group reports the mismatch at the '}' (unchanged); the
-        // '}' then reaches the root and is recovered, so the later declaration
-        // and output row survive.
+        // `(1 }`: the group reports the mismatch at the '}', and since nothing is
+        // waiting for a '}', that closer closes the group — one diagnostic — so the
+        // later declaration and output row survive at the root.
         var parsed = Parser.ParseSyntax("(1 }\nB = 2\nB");
 
         Assert.Equal(
             new[]
             {
                 "[UnexpectedToken] 1:4-1:5 Expected ')' but found '}'.",
-                "[UnexpectedToken] 1:4-1:5 " + StrayBraceMessage,
             },
             parsed.Diagnostics.Select(Describe));
 
@@ -479,6 +487,12 @@ public class RootStrayCloserRecoveryTests
     /// whole sweep is bounded by a wall-clock guard so a regression fails with the offending
     /// input instead of hanging the suite; the guard is awaited, never blocked on, so a
     /// diagnostic-count failure inside the sweep surfaces as itself rather than wrapped.
+    /// <para>It also states the delimiter-ownership law's consequence (#9): every closer
+    /// closes at least one open construct, so when a malformed source's delimiters balance
+    /// by COUNT, whatever their kinds (`(1, 2]`, `{ 1 ) 2 }`, `[({[1)}]`), every construct
+    /// it opens is closed within it, and a declaration written after it on a new line stays
+    /// a declaration of the root — no wrong closer can leave a construct open to swallow
+    /// the rest of the document.</para>
     /// </summary>
     [Fact]
     public async Task DelimiterSoup_AlwaysTerminates_WithLinearDiagnostics()
@@ -506,6 +520,14 @@ public class RootStrayCloserRecoveryTests
                     Assert.True(
                         result.Diagnostics.Count <= 2 * length + 1,
                         $"{result.Diagnostics.Count} diagnostics for {length} characters: {Escape(source)}");
+                    if (result.HasErrors && DelimitersBalanceByCount(source))
+                    {
+                        var withSuffix = Parser.ParseSyntax(source + "\nGood = 41\nGood");
+                        var good = Assert.Single(withSuffix.Root.Properties, p => p.Name == "Good");
+                        Assert.True(
+                            Assert.Single(good.DeclarationSpans).Start.Line == source.Count(c => c == '\n') + 2,
+                            $"The declaration after a count-balanced prefix was not kept at the root: {Escape(source)}");
+                    }
                     parsed++;
                 }
             }
@@ -519,6 +541,21 @@ public class RootStrayCloserRecoveryTests
         Assert.Equal(111_110, parsed);
 
         static string Escape(string source) => source.Replace("\n", "\\n", StringComparison.Ordinal);
+
+        // No prefix closes more delimiters than it opened, and the totals match — kinds ignored.
+        static bool DelimitersBalanceByCount(string source)
+        {
+            var depth = 0;
+            foreach (var c in source)
+            {
+                if (c is '(' or '[' or '{')
+                    depth++;
+                else if (c is ')' or ']' or '}' && --depth < 0)
+                    return false;
+            }
+
+            return depth == 0;
+        }
     }
 
     [Fact]
@@ -538,18 +575,31 @@ public class RootStrayCloserRecoveryTests
     }
 
     [Fact]
-    public void CloserNoConstructIsWaitingFor_IsStillRecoveredAsJunk()
+    public void CloserNoConstructIsWaitingFor_ClosesTheInnermostOpenConstruct()
     {
-        // A closer of another kind inside a brace body is not owed by anything: it is
-        // consumed as junk exactly as before, so the block still closes at its own `}`.
+        // A closer of another kind inside a brace body is not owed by anything. It is
+        // never consumed as junk while a construct is open (#9): it closes the block it
+        // was written in — one mismatch diagnostic — so a wrong closer can never leave
+        // the block open to swallow later declarations. What follows it on the line is
+        // explained by that diagnostic, and the block's own `}`, now orphaned, is a
+        // root stray.
         var parsed = Parser.ParseSyntax("A = { 1, ) 2 }\nB = 2\nA, B");
-        Assert.Equal(new[] { "[UnexpectedToken] 1:10-1:11 Unexpected ')'." }, parsed.Diagnostics.Select(Describe));
+        Assert.Equal(
+            new[]
+            {
+                "[UnexpectedToken] 1:10-1:11 Expected '}' but found ')'.",
+                "[UnexpectedToken] 1:14-1:15 " + StrayBraceMessage,
+            },
+            parsed.Diagnostics.Select(Describe));
         var root = Assert.IsType<Algorithm.User>(parsed.Root);
         Assert.Equal(new[] { "A", "B" }, root.Properties.Select(p => p.Name));
-        var block = Assert.IsType<Algorithm.User>(root.Properties[0].Value);
-        Assert.Equal(3, block.Output.Count);
+        var a = Assert.IsType<Algorithm.User>(root.Properties[0].Value);
+        Assert.Equal(2, a.Output.Count);
+        var block = Assert.IsType<Algorithm.User>(Assert.IsType<Expr.AlgorithmExpr>(a.Output[0]).Algorithm);
+        Assert.Equal(2, block.Output.Count); // `1` and the missing slot's placeholder
+        Assert.Equal(2, Assert.IsType<Expr.Num>(a.Output[1]).Value);
 
-        // At the root nothing is owed either: `1, )` reports once and keeps parsing.
+        // At the root nothing is open: `1, )` reports once and keeps parsing.
         var atRoot = Parser.ParseSyntax("1, )\nB = 2\nB");
         Assert.Equal(new[] { "[UnexpectedToken] 1:4-1:5 Unexpected ')'." }, atRoot.Diagnostics.Select(Describe));
         Assert.Equal(new[] { "B" }, Assert.IsType<Algorithm.User>(atRoot.Root).Properties.Select(p => p.Name));
@@ -578,17 +628,18 @@ public class RootStrayCloserRecoveryTests
     }
 
     [Fact]
-    public void StrayClosingBracket_KeepsItsOwnRecoveryPath()
+    public void StrayClosingBracket_RecoversLikeTheOtherRootClosers()
     {
-        // ']' is a different token class: it already recovered through the
-        // primary-expression fallback (a placeholder row) and is out of scope
-        // here. Pinned so the root closer recovery is provably not widened.
+        // ']' used to take the primary-expression fallback at a root row start: a
+        // different message and an invented placeholder OUTPUT ROW. It is now one of
+        // the three closers the root recovers uniformly (#9): reported in KatLang
+        // terms at its own span, consumed, and no row is invented.
         var parsed = Parser.ParseSyntax("Before = 1\n]\nAfter = 2\nAfter");
 
-        Assert.Equal(new[] { "[UnexpectedToken] 2:1-2:2 Unexpected ']'." }, parsed.Diagnostics.Select(Describe));
+        Assert.Equal(new[] { "[UnexpectedToken] 2:1-2:2 " + StrayBracketMessage }, parsed.Diagnostics.Select(Describe));
         var root = Assert.IsType<Algorithm.User>(parsed.Root);
         Assert.Equal(new[] { "Before", "After" }, root.Properties.Select(p => p.Name));
-        Assert.Equal(2, root.Output.Count);
+        Assert.Equal("After", Assert.IsType<Expr.Resolve>(Assert.Single(root.Output)).Name);
     }
 
     // ── Editor information over the recovered tree ──────────────────────────
@@ -596,6 +647,7 @@ public class RootStrayCloserRecoveryTests
     [Theory]
     [InlineData(')')]
     [InlineData('}')]
+    [InlineData(']')]
     public void SemanticModel_DiscoversDeclarationsAndReferencesAfterTheStrayCloser(char closer)
     {
         var source = $"Before = 1\n{closer}\nAfter = Before + 1\nAfter";
@@ -667,10 +719,12 @@ public class RootStrayCloserRecoveryTests
     [Theory]
     [InlineData(')')]
     [InlineData('}')]
+    [InlineData(']')]
     public async Task Engine_RejectsTheDocument_WithoutEvaluatingTheRecoveredRemainder(char closer)
     {
         // A ParseFailure alone does not prove that evaluation never ran: the
-        // engine can evaluate after some load failures for additional diagnostics.
+        // former additional-diagnostic evaluation after load failures returned
+        // ParseFailure even after executing caller effects.
         // Observe execution directly, with a valid control proving the probe is live.
         const string template = "Before = 1\n¤\nAfter = Probe()\nAfter";
         var source = Stray(template, closer);

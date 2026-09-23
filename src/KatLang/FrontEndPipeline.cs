@@ -202,7 +202,6 @@ internal static class FrontEndPipeline
     {
         var diagnostics = new List<Diagnostic>(syntaxResult.Diagnostics);
 
-        var loadDiagnosticStart = diagnostics.Count;
         var loader = new ModuleLoader(
             diagnostics,
             downloadCode,
@@ -211,7 +210,6 @@ internal static class FrontEndPipeline
             cancellationToken);
         var loadElaboratedRoot = await loader.ElaborateAsync(syntaxResult.SyntaxRoot).ConfigureAwait(false);
         cancellationToken.ThrowIfCancellationRequested();
-        var loadDiagnosticsEnd = diagnostics.Count;
 
         // Module elaboration splices independently parsed module trees (each already
         // structurally checked by ParseSyntax) into the host tree, so the COMPOSED root
@@ -239,13 +237,6 @@ internal static class FrontEndPipeline
         return FinalizeElaboration(
             loadElaboratedRoot,
             diagnostics,
-            canEvaluateAfterLoadErrors:
-                !syntaxResult.HasErrors &&
-                !loader.HasSourceProcessingErrors &&
-                diagnostics
-                    .Skip(loadDiagnosticStart)
-                    .Take(loadDiagnosticsEnd - loadDiagnosticStart)
-                    .Any(static d => d.Severity == DiagnosticSeverity.Error),
             hostOperations: hostOperations,
             cancellationToken: cancellationToken,
             hasDeferredModuleRegions: loader.DeferredRegionCount > 0);
@@ -254,7 +245,6 @@ internal static class FrontEndPipeline
     private static FrontEndResult FinalizeElaboration(
         Algorithm loadElaboratedRoot,
         List<Diagnostic> diagnostics,
-        bool canEvaluateAfterLoadErrors = false,
         HostOperations? hostOperations = null,
         CancellationToken cancellationToken = default,
         bool hasDeferredModuleRegions = false)
@@ -323,15 +313,6 @@ internal static class FrontEndPipeline
         // The open PROVIDER rule needs completed signatures (an inferred parameter list is
         // final only now) and nothing from exposure, so it runs here.
         OpenProviderValidator.Validate(implicitResolvedRoot, diagnostics, hostOperations);
-        // Declaration/ownership rejections leave a recovery tree whose evaluation would only
-        // restate them (a parameter-owned open head is an Expr.Param the evaluator rejects as a
-        // bad open form; a parameterized provider and a target naming nothing are refused at
-        // open resolution): never evaluate such a tree for additional errors.
-        canEvaluateAfterLoadErrors &= !diagnostics.Any(d =>
-            d.Code is DiagnosticCode.ParameterPropertyCollision
-                or DiagnosticCode.OpenTargetIsParameter
-                or DiagnosticCode.IllegalInOpen
-                or DiagnosticCode.UnresolvedOpenTarget);
 
         cancellationToken.ThrowIfCancellationRequested();
         var propertyExposedRoot = PropertyExposureResolver.Resolve(implicitResolvedRoot, observations: null, hostOperations);
@@ -342,7 +323,7 @@ internal static class FrontEndPipeline
         // placeholders the tree carries are what route it there and what make the synchronous
         // entry points reject it (DeferredModuleRegion.RequiresAsyncEvaluation walks the tree
         // itself), so no root has to be marked — and no copy of one can lose a mark.
-        return new FrontEndResult(ElaboratedUserRoot(propertyExposedRoot), diagnostics, canEvaluateAfterLoadErrors, hasDeferredModuleRegions);
+        return new FrontEndResult(ElaboratedUserRoot(propertyExposedRoot), diagnostics, hasDeferredModuleRegions);
     }
 
     /// <summary>
@@ -380,7 +361,6 @@ internal sealed record SyntaxParseResult(Algorithm.User Root, IReadOnlyList<Diag
 internal sealed record FrontEndResult(
     Algorithm.User ElaboratedRoot,
     IReadOnlyList<Diagnostic> Diagnostics,
-    bool CanEvaluateAfterLoadErrors = false,
     bool HasDeferredModuleRegions = false)
 {
     public bool HasErrors => Diagnostics.Any(d => d.Severity == DiagnosticSeverity.Error);

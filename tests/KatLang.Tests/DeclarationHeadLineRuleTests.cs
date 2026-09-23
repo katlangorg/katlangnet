@@ -119,11 +119,19 @@ public class DeclarationHeadLineRuleTests
     [Fact]
     public void TrailingCommaThenDeclarationOnTheNextLine_DoesNotAssembleADeconstructionHead()
     {
-        // `x,` keeps the expression list open, so `y` is its next slot — never the
-        // second target of a two-line `x, y = 1, 2` head — and the `=` is stray,
-        // exactly what `1,` newline `y = 2` already did.
-        var raw = AssertRejectedAtStrayEquals("x,\ny = 1, 2", 2, 3);
-        Assert.Empty(raw.Root.Properties);
+        // `x,` never becomes the first target of a two-line `x, y = 1, 2` head. The
+        // next line is a complete one-line head of its own (`y = 1, 2`), and a
+        // declaration head is never an expression-list slot (#9): the dangling comma is
+        // the one error, and `y` stays the property that line declares.
+        var raw = Parser.ParseSyntax("x,\ny = 1, 2");
+        var diagnostic = Assert.Single(raw.Diagnostics);
+        Assert.Equal(DiagnosticCode.UnexpectedToken, diagnostic.Code);
+        Assert.Equal(new SourceSpan(1, 2, 1, 3), diagnostic.Span); // the dangling ','
+        Assert.DoesNotContain(HeadLineRuleFragment, diagnostic.Message, StringComparison.Ordinal);
+        var y = Assert.Single(raw.Root.Properties);
+        Assert.Equal("y", y.Name);
+        Assert.Equal(2, y.Value.Output.Count); // the ordinary property `y = 1, 2`, no deconstruction
+        Assert.Equal("x", Assert.IsType<Expr.Resolve>(raw.Root.Output[0]).Name);
     }
 
     [Fact]
@@ -172,13 +180,21 @@ public class DeclarationHeadLineRuleTests
     [Fact]
     public void DeclarationOnTheLineAfterEquals_IsNotABody()
     {
-        // The body of `A =` continues onto the next line like a trailing operator's
-        // operand, so `B` becomes A's body and its own `=` is stray — exactly like
-        // `A -` newline `B = 1`.
-        var raw = AssertRejectedAtStrayEquals("A =\nB = 1", 2, 3);
-        var a = Assert.Single(raw.Root.Properties);
-        Assert.Equal("A", a.Name);
-        Assert.Equal("B", Assert.IsType<Expr.Resolve>(a.Value.Output[0]).Name);
+        // The body of `A =` may begin on the next line like a trailing operator's
+        // operand, but a declaration head is never an operand or a body (#9): `B = 1`
+        // stays B's declaration, and A's missing body is the one error, reported at
+        // the dangling '=' — exactly like `A -` newline `B = 1`.
+        var raw = Parser.ParseSyntax("A =\nB = 1");
+        var diagnostic = Assert.Single(raw.Diagnostics);
+        Assert.Equal(DiagnosticCode.UnexpectedToken, diagnostic.Code);
+        Assert.Equal(new SourceSpan(1, 3, 1, 4), diagnostic.Span); // A's '='
+        Assert.Equal(new[] { "A", "B" }, raw.Root.Properties.Select(p => p.Name));
+        Assert.IsType<Expr.Num>(Assert.Single(raw.Root.Properties[0].Value.Output)); // the missing body's placeholder
+        Assert.Equal(1, Assert.IsType<Expr.Num>(Assert.Single(raw.Root.Properties[1].Value.Output)).Value);
+
+        var minus = Parser.ParseSyntax("A = 1 -\nB = 1");
+        Assert.Equal(new SourceSpan(1, 7, 1, 8), Assert.Single(minus.Diagnostics).Span); // the dangling '-'
+        Assert.Equal(new[] { "A", "B" }, minus.Root.Properties.Select(p => p.Name));
     }
 
     // ── Retained: explicit continuation after a recognized head ─────────────

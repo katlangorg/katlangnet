@@ -152,8 +152,8 @@ EvalNativeCall / EvalNativeCallAsync → ApplyMathNative(name, args, ctx.Budget.
   independent stream instances initialized from the same seed. No lock exists on
   the source — evaluator access within a run is sequential, even when an async
   continuation resumes on another thread.
-- The engine's additional-error evaluation after an evaluable load failure is
-  its own run and receives the same configured seed (a fresh stream).
+- Every front-end error, including a load failure, prevents evaluator entry and
+  therefore cannot draw from a random stream.
 - `Parser.Parse` / `Parser.ParseAsync` ignore `RandomSeed`; the front end, module
   loading, elaboration, and editor semantics never touch the stream.
 

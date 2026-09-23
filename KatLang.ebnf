@@ -1,7 +1,13 @@
 Program         = Algorithm ;
-                  (* Unmatched root ")" and "}" are invalid syntax. Recovery
+                  (* Unmatched root ")", "]", and "}" are invalid syntax. Recovery
                      reports and skips each token, retaining later items in the
-                     same root scope for editor analysis; the parse stays invalid. *)
+                     same root scope for editor analysis; the parse stays invalid.
+                     Inside an open construct a closer is never skipped: the
+                     innermost construct takes its own closer, leaves one an
+                     enclosing construct is waiting for, and takes a closer
+                     nothing is waiting for as its mismatched closer, so a
+                     wrong closer ("(1, 2]") never leaves a construct open to
+                     swallow the rest of the document. *)
 
 Algorithm       = { AlgorithmItem } ;
 AlgorithmItem   = OpenDeclaration | PropertyDefinition | DeconstructionDefinition | ClauseDefinition | OutputLine ;
@@ -283,7 +289,12 @@ SequenceAtom          = Expression ;
                      = a + b), so the head's ")" and "=" are found where
                      written; a pattern on a later line without a comma is
                      not admitted (parameter lists have no newline separator)
-                     and keeps the closing-delimiter diagnostic. In the multiline contexts
+                     and keeps the closing-delimiter diagnostic, after which the
+                     head's recovery resumes at the head's own ")" (a recognized
+                     clause head never leaks its body). A line ending in an
+                     incomplete expression never takes a declaration head on the
+                     next line as its continuation: "1 +" newline "Good = 41"
+                     reports the dangling "+" and keeps the declaration. In the multiline contexts
                      (root output, brace bodies, parenthesized groups, call
                      argument lists, list literals) a physical newline
                      between complete expressions separates slots without a
@@ -755,4 +766,12 @@ Comment         = /#[^\r\n]*/ ;
                      string literal (the character classes above) but never
                      separates rows or expression-list slots, so "A = 1\rB = 2"
                      is ONE physical line and the same-line separator rule
-                     applies to it. Pinned by LexerTests. *)
+                     applies to it. Pinned by LexerTests.
+                     A character outside every token class above is invalid
+                     source, reported once by the lexer. The following describes
+                     error recovery only, never accepted syntax: like a comment it is
+                     invisible to this grammar, and where the grammar needs a
+                     piece exactly where it stands (an operand, a member name,
+                     an open target, a pattern item, or a separating comma —
+                     never a closer or "="), it stands in one piece at most without a
+                     second report. *)

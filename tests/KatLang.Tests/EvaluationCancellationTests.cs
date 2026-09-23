@@ -499,7 +499,7 @@ public class EvaluationCancellationTests
     }
 
     [Fact]
-    public async Task CancellationEscapesFromEngineAdditionalErrorEvaluation()
+    public async Task InvalidLoadedSource_PreventsEntryIntoCancelledEvaluation()
     {
         const string Source = """
             A = load('https://katlang.org/cancellation/not-katlang.kat')
@@ -515,9 +515,9 @@ public class EvaluationCancellationTests
             DownloadCode = (_, _) => ValueTask.FromResult("<!doctype html><html><body>Not found</body></html>"),
         };
 
-        var thrown = await Assert.ThrowsAsync<OperationCanceledException>(() =>
-            KatLangEngine.RunAsync(Source, options));
-
+        var failure = Assert.IsType<RunResult.ParseFailure>(await KatLangEngine.RunAsync(Source, options));
+        Assert.Contains(failure.Errors, error => error.Code == KatLangErrorCode.InvalidLoadedSource);
+        var thrown = await Assert.ThrowsAsync<OperationCanceledException>(() => KatLangEngine.RunAsync("1", options));
         Assert.Equal(cts.Token, thrown.CancellationToken);
     }
 

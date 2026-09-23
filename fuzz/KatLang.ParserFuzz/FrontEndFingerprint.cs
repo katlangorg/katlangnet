@@ -16,10 +16,10 @@ namespace KatLang.ParserFuzz;
 internal static class FrontEndFingerprint
 {
     /// <summary>Full fingerprint including the frontend-only flag.</summary>
-    public static string Compute(Algorithm root, IReadOnlyList<Diagnostic> diagnostics, bool canEvaluateAfterLoadErrors)
+    public static string Compute(Algorithm root, IReadOnlyList<Diagnostic> diagnostics, bool hasDeferredModuleRegions)
     {
         var sb = new StringBuilder(1024);
-        sb.Append("flag:").Append(canEvaluateAfterLoadErrors ? '1' : '0').Append('\n');
+        sb.Append("flag:").Append(hasDeferredModuleRegions ? '1' : '0').Append('\n');
         AppendDiagnostics(sb, diagnostics);
         sb.Append("root:");
         Alg(sb, root);

@@ -6,7 +6,7 @@ public class SemanticModelTests
 {
     /// <summary>
     /// Final audit (September 2026): the parser's recovery placeholder for a malformed
-    /// binding pattern (`F(*) = …` binds a spanless `_error_` parameter so the clause keeps
+    /// binding pattern (`F(*) = …` binds a spanless synthetic parameter so the clause keeps
     /// its shape) is not source-backed, so the semantic model declares no symbol for it —
     /// it used to surface in completion inside the clause body. The recovery itself is
     /// unchanged: the diagnostic is reported and the clause's real content is analyzed.
@@ -20,14 +20,59 @@ public class SemanticModelTests
         var clause = Assert.Single(parsed.Root.Properties, p => p.Name == "F");
         var written = Assert.IsType<Algorithm.User>(clause.Value);
         Assert.True(written.HasExplicitParameterList);
-        Assert.Contains(written.Parameters, p => p.Span is null);
+        var placeholderName = Assert.Single(written.Parameters, p => p.Span is null).Name;
 
         var model = SemanticModelBuilder.Build(parsed.Parsed);
-        Assert.DoesNotContain(model.GetVisibleSymbolsAt(new SourcePosition(1, 8)), s => s.Name == "_error_");
-        Assert.DoesNotContain(model.GetVisibleSymbolsAt(new SourcePosition(2, 1)), s => s.Name == "_error_");
-        Assert.DoesNotContain(model.ScopeVisibilities.SelectMany(v => v.Symbols), s => s.Name == "_error_");
-        Assert.DoesNotContain(model.Declarations, d => d.Name == "_error_");
-        Assert.DoesNotContain(model.IdentifierResolutions, r => r.Occurrence.Name == "_error_");
+        Assert.DoesNotContain(model.GetVisibleSymbolsAt(new SourcePosition(1, 8)), s => s.Name == placeholderName);
+        Assert.DoesNotContain(model.GetVisibleSymbolsAt(new SourcePosition(2, 1)), s => s.Name == placeholderName);
+        Assert.DoesNotContain(model.ScopeVisibilities.SelectMany(v => v.Symbols), s => s.Name == placeholderName);
+        Assert.DoesNotContain(model.Declarations, d => d.Name == placeholderName);
+        Assert.DoesNotContain(model.IdentifierResolutions, r => r.Occurrence.Name == placeholderName);
+        Assert.DoesNotContain(placeholderName, SingleProperty(model, "F").DisplaySignature);
+        Assert.Equal("F(?)", SingleProperty(model, "F").DisplaySignature);
+    }
+
+    [Fact]
+    public void RecoveryPlaceholderSignatures_KeepSlotsButNeverExposeSyntheticNames()
+    {
+        var parsed = SourceProvenance.ParseAllowingDiagnostics("F((x, @)) = x\nG(0, @) = 1\nG(x, y) = x");
+        var model = SemanticModelBuilder.Build(parsed.Parsed);
+        Assert.Equal("F((x, ?))", SingleProperty(model, "F").DisplaySignature);
+        var branches = SingleProperty(model, "G").ConditionalBranches;
+        Assert.Equal("G(0, ?)", branches[0].HeadText);
+        Assert.Empty(branches[0].BinderNames);
+        Assert.Equal(new[] { "x", "y" }, branches[1].BinderNames);
+    }
+
+    [Theory]
+    [InlineData("F(x @ y) = x\nF(a) = a", "F(a)")]
+    [InlineData("F(x +) = x\nF(a, b) = a", "F(a, b)")]
+    [InlineData("F(x +) = x\nF(y +) = y", "F")]
+    public void RecoveredClause_DoesNotDetermineFamilySignature(string source, string signature)
+    {
+        var parsed = SourceProvenance.ParseAllowingDiagnostics(source);
+        var model = SemanticModelBuilder.Build(parsed.Parsed);
+        Assert.Equal(signature, SingleProperty(model, "F").DisplaySignature);
+    }
+
+    [Fact]
+    public async Task RecoveredClause_DeferredModulePreparationPreservesTheCleanSignature()
+    {
+        var downloads = 0;
+        var parsed = await Parser.ParseAsync(
+            "F(x +) = { open 'https://katlang.org/module.kat'\nx }\nF(a, b) = a",
+            new RunOptions
+            {
+                DownloadCode = (_, _) =>
+                {
+                    downloads++;
+                    return ValueTask.FromResult("public Value = 1");
+                },
+            });
+        Assert.True(parsed.HasErrors);
+        var model = SemanticModelBuilder.Build(parsed);
+        Assert.Equal("F(a, b)", SingleProperty(model, "F").DisplaySignature);
+        Assert.Equal(0, downloads);
     }
 
     [Fact]
@@ -2991,6 +3036,8 @@ public class SemanticModelTests
         Assert.Same(declaration, info.Declaration);
         Assert.Equal(declaration.Span, info.ConditionalBranches[0].HeadSpan);
         Assert.Equal("n", info.Signatures[0].Parameters[0].Name);
+        Assert.Equal("Alias(n, 0)", info.ConditionalBranches[0].HeadText);
+        Assert.Equal(new[] { "n", "k" }, info.ConditionalBranches[1].BinderNames);
         Assert.Null(info.Signatures[0].Parameters[0].Span);
         Assert.Same(info, ResolutionAt(model, 3, 1).ResolvedProperty);
         AssertNoSites(model, "Pick", "n", "k");

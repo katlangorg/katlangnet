@@ -346,13 +346,6 @@ internal sealed partial class ModuleLoader
         return scope;
     }
 
-    /// <summary>
-    /// True when this elaboration emitted a source/module resource-policy diagnostic. Engine runs
-    /// use this to avoid evaluating placeholder AST nodes merely to append unrelated evaluator
-    /// context to a pre-evaluation resource rejection.
-    /// </summary>
-    internal bool HasSourceProcessingErrors { get; private set; }
-
     /// <summary>Run-local state exposed internally for cleanup-invariant regression tests.</summary>
     internal int InProgressModuleCount => _inProgress.Count;
 
@@ -944,7 +937,7 @@ internal sealed partial class ModuleLoader
                 DeferredRegion = new DeferredModuleRegion(this, rawBody, context, depth + 1, _nestedTraversalBase, _importSite),
             };
             DeferredRegionCount++;
-            branches.Add(new CondBranch(branch.Pattern, placeholder));
+            branches.Add(branch with { Body = placeholder });
         }
 
         return branches;
@@ -1835,7 +1828,6 @@ internal sealed partial class ModuleLoader
 
     private void ReportSourceProcessingDiagnostic(Diagnostic diagnostic)
     {
-        HasSourceProcessingErrors = true;
         _sink.Add(diagnostic);
     }
 }

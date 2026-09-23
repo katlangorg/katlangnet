@@ -17,6 +17,7 @@ public sealed class Parser
 {
     private readonly IReadOnlyList<Token> _tokens;
     private readonly List<Diagnostic> _diagnostics;
+    private readonly int _lexicalDiagnosticCount;
 
     // Optional, parse-scoped observer of exact clause-family pattern comparisons. Null for every
     // production parse (no observation requested); a test measuring the indexed duplicate-detection
@@ -54,6 +55,10 @@ public sealed class Parser
     private int _ownedSameLineItemPosition = -1;
     private int _reportedSameLineItemPosition = -1;
 
+    // A skipped run may fill one missing piece, never two. Source traversal is monotone.
+    private int _lastReportedCharacterFill = -1;
+    private int _recoveryBinderCounter;
+
     private Parser(
         IReadOnlyList<Token> tokens,
         List<Diagnostic> diagnostics,
@@ -61,6 +66,7 @@ public sealed class Parser
     {
         _tokens = tokens;
         _diagnostics = diagnostics;
+        _lexicalDiagnosticCount = diagnostics.Count;
         _comparisonObservations = comparisonObservations;
     }
 
@@ -123,8 +129,8 @@ public sealed class Parser
     // that a closer an enclosing construct is waiting for is NEVER consumed as junk
     // (`F(1, )`, `(1 + )`, `[1, ]`, `{1, }`): the owner closes its construct at the
     // written closer and every later declaration stays in the scope it was written
-    // in. A closer no enclosing construct is waiting for (`{ 1, ) }`, a stray `]`
-    // at the root) keeps the junk recovery, exactly as before.
+    // in. A closer no enclosing construct is waiting for closes the innermost
+    // construct as a mismatch; only a root stray is consumed as junk.
     private int _openParens;
     private int _openBrackets;
     private int _openBraces;
@@ -280,6 +286,58 @@ public sealed class Parser
         TokenKind.RBrace => _openBraces > 0,
         _ => false,
     };
+
+    private static bool IsClosingDelimiter(TokenKind kind)
+        => kind is TokenKind.RParen or TokenKind.RBracket or TokenKind.RBrace;
+
+    /// <summary>Whether any delimited construct (group, call arguments, list, brace body) is open.</summary>
+    private bool IsInsideDelimitedConstruct => _openParens + _openBrackets + _openBraces > 0;
+
+    // ── Delimiter ownership (the #9 recovery law) ───────────────────────────
+    // A closing delimiter is resolved by exactly one owner, never consumed as junk
+    // while a construct is open:
+    //   1. Every nested body, list, operand, and head parse ENDS at a closing
+    //      delimiter of any kind and leaves it for the innermost open construct.
+    //   2. That construct resolves it (ExpectCloser): its own closer is consumed; a
+    //      closer an ENCLOSING construct is waiting for is reported and left for that
+    //      owner, which closes there (the constructs in between report their missing
+    //      closers); a closer NO open construct is waiting for is reported as the
+    //      mismatch it is and consumed as this construct's closer (`(1, 2]`).
+    //   3. With no construct open, a closer is a top-level stray, reported and
+    //      consumed in place so later source stays in the root scope.
+    // Consequence: every closer closes at least one open construct, so a region
+    // whose delimiters balance by COUNT (whatever their kinds) closes every construct
+    // it opens, and no later declaration can be swallowed by a wrong closer.
+
+    /// <summary>
+    /// Closes the construct whose own closer is <paramref name="closer"/> (rule 2 of
+    /// the delimiter-ownership law): consumes it when present; otherwise reports the
+    /// missing closer and, when the token found instead is a closing delimiter that no
+    /// enclosing construct is waiting for, consumes it as this construct's closer. An
+    /// owed closer and every non-closer are left in place. Called after the
+    /// production's own owed-closer registration was released, so
+    /// <see cref="IsOwedCloser"/> sees only the enclosing constructs.
+    /// </summary>
+    [System.Runtime.CompilerServices.MethodImpl(LeafFrame)]
+    private void ExpectCloser(TokenKind closer)
+    {
+        if (Current.Kind == closer)
+        {
+            Advance();
+            return;
+        }
+
+        ReportError(
+            DiagnosticCode.UnexpectedToken,
+            $"Expected {DescribeTokenKind(closer)} but found {DescribeTokenKind(Current.Kind)}.");
+        if (IsClosingDelimiter(Current.Kind) && !IsOwedCloser(Current.Kind))
+        {
+            // The mismatched closer closes this construct: its diagnostic above also
+            // explains whatever follows it on the line.
+            Advance();
+            OwnSameLineItem(Current);
+        }
+    }
 
     private void RegisterOwedCloser(TokenKind closer)
     {
@@ -542,14 +600,23 @@ public sealed class Parser
 
     // ── Token access helpers ────────────────────────────────────────────────
 
-    // Comment tokens are kept in the stream for consumers such as colorizers.
-    // The parser skips them transparently so grammar rules never see them.
+    // Two kinds of token stay in the stream for consumers such as colorizers but are
+    // never seen by the grammar: comments, and the characters the lexer could not
+    // recognize (TokenKind.Bad), which the LEXER has already reported. The parser skips
+    // both transparently, so no grammar decision — a continuation, a slot boundary, a
+    // declaration lookahead — ever turns on either (`A @= 1` is the declaration `A = 1`,
+    // `1@ + 2` the sum `1 + 2`), and a reported character is never reported again. Where
+    // a skipped reported character stands in a piece the grammar needs at that point, the
+    // piece is taken to be that character and filled without a second diagnostic (see
+    // TakeReportedCharacterBeforeCurrent). A skipped run fills at most one piece;
+    // a different missing piece still receives its own grammar diagnostic.
+    private static bool IsSkippedByGrammar(TokenKind kind) => kind is TokenKind.Comment or TokenKind.Bad;
 
     private Token Current
     {
         get
         {
-            while (_pos < _tokens.Count - 1 && _tokens[_pos].Kind == TokenKind.Comment)
+            while (_pos < _tokens.Count - 1 && IsSkippedByGrammar(_tokens[_pos].Kind))
                 _pos++;
             return _tokens[_pos];
         }
@@ -558,12 +625,43 @@ public sealed class Parser
     private Token Advance()
     {
         _tokenSteps++;
-        var token = Current; // normalises _pos past any leading comments
+        var token = Current; // normalises _pos past any leading skipped tokens
         if (_pos < _tokens.Count - 1) _pos++;
-        // skip any comment tokens so the next Current call lands on a real token
-        while (_pos < _tokens.Count - 1 && _tokens[_pos].Kind == TokenKind.Comment)
+        // skip any skipped tokens so the next Current call lands on a real token
+        while (_pos < _tokens.Count - 1 && IsSkippedByGrammar(_tokens[_pos].Kind))
             _pos++;
         return token;
+    }
+
+    /// <summary>
+    /// Claims the reported character (a <see cref="TokenKind.Bad"/> token, skipped by the
+    /// grammar) nearest before the current token, or returns null when the skipped run
+    /// contains none, was already used, or fails the optional physical-line requirement.
+    /// A skipped run fills at most one hole. The lexer already reported that
+    /// character, so where the grammar needs a piece exactly there — an operand, a member
+    /// name, an open target, a pattern item, the comma between two items — the piece is
+    /// taken to be the character and filled without a second diagnostic (`(1 + @)`,
+    /// <c>F(x, @) = x</c>, <c>A.@</c>, <c>1 @ 2</c>). Structure is never filled: a missing
+    /// closer or <c>=</c> is still its own error. Only error paths consult this, and each
+    /// call walks only the skipped run in front of the current token.
+    /// </summary>
+    private Token? TakeReportedCharacterBeforeCurrent(int? requiredLine = null)
+    {
+        for (var index = NextSignificantIndex(_pos) - 1; index >= 0 && IsSkippedByGrammar(_tokens[index].Kind); index--)
+        {
+            _tokenSteps++;
+            if (_tokens[index].Kind == TokenKind.Bad)
+            {
+                var token = _tokens[index];
+                if (token.Position <= _lastReportedCharacterFill
+                    || (requiredLine is { } line && token.Line != line))
+                    return null;
+                _lastReportedCharacterFill = token.Position;
+                return token;
+            }
+        }
+
+        return null;
     }
 
     private Token Expect(TokenKind kind)
@@ -656,7 +754,7 @@ public sealed class Parser
         get
         {
             var idx = Math.Max(0, _pos - 1);
-            while (idx > 0 && _tokens[idx].Kind == TokenKind.Comment)
+            while (idx > 0 && IsSkippedByGrammar(_tokens[idx].Kind))
                 idx--;
             return _tokens[idx];
         }
@@ -686,9 +784,9 @@ public sealed class Parser
     // attached to its operand (`a *` with nothing to multiply is a
     // malformed marker, not a spread). A star on a later line never
     // continues — a '*'-led line is collect-marker (binding) syntax or an
-    // error. Comments are
+    // error. Comments (and characters the lexer reported) are
     // semantically invisible for all of these decisions: Current/Advance/
-    // Previous skip comment tokens and no rule may consult skipped comments
+    // Previous skip those tokens and no rule may consult skipped tokens
     // to relax a newline boundary, so `A` newline `-1` and `A # note`
     // newline `-1` parse identically.
 
@@ -733,7 +831,8 @@ public sealed class Parser
 
     // ── Comment-skipping declaration lookahead ──────────────────────────────
     // Offset 0 is the current significant token, offset 1 the next, and so
-    // on; comment tokens are skipped at every step and the walk saturates at
+    // on; comment tokens (and reported characters, see IsSkippedByGrammar) are
+    // skipped at every step and the walk saturates at
     // end of input. Declaration headers may have comments between their
     // tokens. A trailing comment after `P =` leaves the body incomplete, while
     // a trailing comment after `P` leaves a completed name. All declaration lookaheads
@@ -754,15 +853,15 @@ public sealed class Parser
         return _tokens[index];
     }
 
-    // Index-level primitive of the significant-token API: the first
-    // non-comment token index at or after <paramref name="index"/>,
-    // saturating at the final (end-of-file) token. All declaration/clause
-    // lookahead scanning builds on this instead of bespoke raw _tokens[...]
-    // comment loops.
+    // Index-level primitive of the significant-token API: the first index at
+    // or after <paramref name="index"/> whose token the grammar sees (not a
+    // comment, not a reported character), saturating at the final
+    // (end-of-file) token. All declaration/clause lookahead scanning builds on
+    // this instead of bespoke raw _tokens[...] skipping loops.
     private int NextSignificantIndex(int index)
     {
         _tokenSteps++;
-        while (index < _tokens.Count - 1 && _tokens[index].Kind == TokenKind.Comment)
+        while (index < _tokens.Count - 1 && IsSkippedByGrammar(_tokens[index].Kind))
             index++;
         return Math.Min(index, _tokens.Count - 1);
     }
@@ -887,8 +986,8 @@ public sealed class Parser
 
     /// <summary>Records a clause spanning its name token through the last consumed token; false for a duplicate pattern.</summary>
     [System.Runtime.CompilerServices.MethodImpl(LeafFrame)]
-    private bool AddClauseFrom(ClauseGroupBuilder group, Pattern pattern, Algorithm body, Token nameToken)
-        => group.AddClause(pattern, body, MakeSpan(nameToken), nameToken.Span);
+    private bool AddClauseFrom(ClauseGroupBuilder group, Pattern pattern, Algorithm body, Token nameToken, bool headRecovered)
+        => group.AddClause(pattern, body, MakeSpan(nameToken), nameToken.Span, headRecovered);
 
     // ── Algorithm parsing ───────────────────────────────────────────────────
     // Reads property definitions (Name = ...) and output expression lines.
@@ -989,11 +1088,14 @@ public sealed class Parser
         /// Records one clause in written order. Returns <c>false</c> when an
         /// EARLIER clause of this family carried a match-equivalent pattern; the
         /// clause is recorded either way so error recovery keeps a truthful family.
+        /// A clause whose head needed recovery is neither compared with nor
+        /// recorded against the others: its recovered pattern says nothing reliable
+        /// about the family.
         /// </summary>
-        public bool AddClause(Pattern pattern, Algorithm body, SourceSpan clauseSpan, SourceSpan nameSpan)
+        public bool AddClause(Pattern pattern, Algorithm body, SourceSpan clauseSpan, SourceSpan nameSpan, bool headRecovered)
         {
-            var isDistinct = _seenPatterns.Add(pattern);
-            Branches.Add(new CondBranch(pattern, body));
+            var isDistinct = headRecovered || _seenPatterns.Add(pattern);
+            Branches.Add(new CondBranch(pattern, body) { HasRecoveredHead = headRecovered });
             ClauseSpans.Add(clauseSpan);
             NameSpans.Add(nameSpan);
             return isDistinct;
@@ -1019,14 +1121,19 @@ public sealed class Parser
         => CreateAlgorithm(ParseAlgorithmBodyParts(declarationsAllowed: true, atRoot: true));
 
     /// <summary>
-    /// Reports an unmatched <c>)</c> or <c>}</c> at the root in KatLang terms —
-    /// the written character, not the internal token kind — spanning exactly
+    /// Reports an unmatched <c>)</c>, <c>]</c>, or <c>}</c> at the root in KatLang
+    /// terms — the written character, not the internal token kind — spanning exactly
     /// the offending token (the shared <see cref="DiagnosticCode.UnexpectedToken"/>
     /// family: a token that cannot continue the construct being parsed).
     /// </summary>
     private void ReportStrayRootCloser(Token closer)
     {
-        var (written, opener) = closer.Kind == TokenKind.RParen ? (")", "(") : ("}", "{");
+        var (written, opener) = closer.Kind switch
+        {
+            TokenKind.RParen => (")", "("),
+            TokenKind.RBracket => ("]", "["),
+            _ => ("}", "{"),
+        };
         ReportErrorAt(
             DiagnosticCode.UnexpectedToken,
             $"Unexpected '{written}' at the top level. There is no open '{opener}' for it to close.",
@@ -1125,6 +1232,8 @@ public sealed class Parser
 
             var name = Current.StringValue!;
             var nameToken = Current;
+            // The dispatch lookahead recognized this head, so its own ')' is known.
+            TryFindClauseHeadClose(NextSignificantIndex(_pos), out var headCloseIndex);
 
             // Check for conflict: mixing normal and conditional definition
             if (declaredPropertyNames.Contains(name))
@@ -1141,13 +1250,21 @@ public sealed class Parser
             }
 
             Advance(); // consume identifier
+            var headDiagnosticsStart = _diagnostics.Count;
             Expect(TokenKind.LParen);
             var pattern = ParsePattern();
+            SynchronizeToClauseHeadClose(headCloseIndex, headDiagnosticsStart);
             Expect(TokenKind.RParen);
 
-            ValidateCollectingParameterDeclarations(name, pattern, nameToken);
+            pattern = ValidateCollectingParameterDeclarations(pattern, nameToken);
 
             Expect(TokenKind.Equals);
+            // A head that needed any recovery keeps its clause (and its declaration) in
+            // the family, but its recovered pattern is not evidence about the family's
+            // other clauses: it takes part in no cross-clause check (duplicate pattern,
+            // pattern arity, output arity), so a malformed clause never poisons a valid one.
+            var headRecovered = _diagnostics.Count != headDiagnosticsStart
+                || HasLexicalErrorInHead(nameToken, _tokens[headCloseIndex]);
             var body = ParseOutputLine();
 
             if (!clauseGroups.TryGetValue(name, out var group))
@@ -1169,7 +1286,7 @@ public sealed class Parser
 
             // The clause is always recorded (recovery keeps a truthful family); an earlier
             // match-equivalent pattern in the same family additionally reports the duplicate.
-            if (!AddClauseFrom(group, pattern, body, nameToken))
+            if (!AddClauseFrom(group, pattern, body, nameToken, headRecovered))
             {
                 ReportErrorFrom(
                     DiagnosticCode.DuplicateBranchPattern,
@@ -1193,17 +1310,14 @@ public sealed class Parser
         var itemsParsed = false;
         while (Current.Kind != TokenKind.EndOfFile)
         {
-            if (Current.Kind is TokenKind.RParen or TokenKind.RBrace
-                || (Current.Kind == TokenKind.RBracket && IsOwedCloser(TokenKind.RBracket)))
+            if (IsClosingDelimiter(Current.Kind))
             {
-                // A closing delimiter ends every NESTED body: the enclosing
-                // group, block, or argument-list parser owns it and consumes it
-                // (or reports the mismatch). A ']' is a body terminator only
-                // while an enclosing list is waiting for it (`[ (1, ] `): the
-                // group reports its missing ')' and the list closes at the
-                // ']', exactly as the primary parser leaves an OWED closer
-                // unconsumed (see IsOwedCloser) — an unowed ']' is junk the
-                // expression parser reports and skips. The root has no enclosing
+                // A closing delimiter of ANY kind ends every NESTED body (rule 1
+                // of the delimiter-ownership law): the enclosing group, block,
+                // or argument-list parser resolves it — consuming its own
+                // closer, leaving one an enclosing construct owes (`[ (1, ]`),
+                // or taking a closer nothing is waiting for as its own
+                // (`(1, 2]`) — see ExpectCloser. The root has no enclosing
                 // delimiter, so a closer reaching it is unmatched. Recover in
                 // place: report the token at its own span, consume it, and keep
                 // collecting into the SAME parts so the root stays one scope
@@ -1221,25 +1335,12 @@ public sealed class Parser
                 continue;
             }
 
-            // Skip bad tokens for error recovery (the lexer has already reported
-            // the character; the token after it is a recovery-owned boundary).
-            if (Current.Kind == TokenKind.Bad)
-            {
-                Advance();
-                OwnSameLineItem(Current);
-                continue;
-            }
-
-            // Only a real item has a row boundary. A stray ']', '=', or a
-            // malformed 'public' has its own UnexpectedToken recovery below;
-            // recommending a comma before that token would be a cascade.
+            // Only a real item has a row boundary. A stray '=' or a malformed
+            // 'public' has its own UnexpectedToken recovery below; recommending
+            // a comma before that token would be a cascade.
             if (itemsParsed && IsSamePhysicalLineAsPreviousToken()
                 && (CanStartExpression(Current.Kind)
-                    || StartsDeclaration(includeCommaSpanningBindingPatterns: true)
-                    || (Current.Kind == TokenKind.KeywordPublic
-                        && (LookaheadIsPublicPropertyDef()
-                            || LookaheadIsPublicClauseDefinition()
-                            || LookaheadIsPublicOpen()))))
+                    || StartsDeclaration(includeCommaSpanningBindingPatterns: true)))
                 ReportUnseparatedSameLineItem(Current);
             itemsParsed = true;
 
@@ -1405,32 +1506,41 @@ public sealed class Parser
             // Validate uniform top-level pattern arity across conditional branches.
             // Nested internal pattern structure may vary.
             // Also validate uniform top-level output arity across branches.
-            if (condAlg.Branches.Count > 1)
+            // A clause whose head needed recovery takes part in neither check, as the
+            // reference or as a compared branch: its recovered pattern is not what was
+            // meant, so comparing it would report the recovery, not the program.
+            var reference = group.Branches.FindIndex(static branch => !branch.HasRecoveredHead);
+            if (condAlg.Branches.Count > 1 && reference >= 0)
             {
-                var expectedArity = condAlg.Branches[0].Pattern.TopLevelArity();
-                for (int i = 1; i < condAlg.Branches.Count; i++)
+                var referenceLabel = reference == 0 ? "first branch" : $"branch {reference + 1}";
+                var expectedArity = condAlg.Branches[reference].Pattern.TopLevelArity();
+                for (int i = reference + 1; i < condAlg.Branches.Count; i++)
                 {
+                    if (group.Branches[i].HasRecoveredHead)
+                        continue;
                     var branchArity = condAlg.Branches[i].Pattern.TopLevelArity();
                     if (branchArity != expectedArity)
                     {
                         ReportError(
                             DiagnosticCode.BranchArityMismatch,
                             $"All branches of conditional algorithm '{name}' must have the same top-level pattern arity. " +
-                            $"Expected {expectedArity} (from first branch), but branch {i + 1} has arity {branchArity}.",
+                            $"Expected {expectedArity} (from {referenceLabel}), but branch {i + 1} has arity {branchArity}.",
                             spans[i]);
                     }
                 }
 
-                var expectedOutputArity = condAlg.Branches[0].TopLevelOutputArity();
-                for (int i = 1; i < condAlg.Branches.Count; i++)
+                var expectedOutputArity = condAlg.Branches[reference].TopLevelOutputArity();
+                for (int i = reference + 1; i < condAlg.Branches.Count; i++)
                 {
+                    if (group.Branches[i].HasRecoveredHead)
+                        continue;
                     var branchOutputArity = condAlg.Branches[i].TopLevelOutputArity();
                     if (branchOutputArity != expectedOutputArity)
                     {
                         ReportError(
                             DiagnosticCode.BranchOutputArityMismatch,
                             $"All branches of conditional algorithm '{name}' must have the same top-level output arity. " +
-                            $"Expected {expectedOutputArity} (from first branch), but branch {i + 1} has output arity {branchOutputArity}.",
+                            $"Expected {expectedOutputArity} (from {referenceLabel}), but branch {i + 1} has output arity {branchOutputArity}.",
                             spans[i]);
                     }
                 }
@@ -1492,7 +1602,12 @@ public sealed class Parser
     {
         if (item.Position == _ownedSameLineItemPosition || item.Position == _reportedSameLineItemPosition)
             return;
+        // A reported character between the two items stands in the missing comma
+        // (`P = 1 @ 2` keeps both slots in P's body): its lexer diagnostic already
+        // explains this boundary. Every caller reports at the current token.
         _reportedSameLineItemPosition = item.Position;
+        if (item.Position == Current.Position && TakeReportedCharacterBeforeCurrent() is not null)
+            return;
         ReportErrorAt(DiagnosticCode.UnseparatedSameLineItem, message, item);
     }
 
@@ -1597,10 +1712,15 @@ public sealed class Parser
         // next line stays a separate statement/output row.
         if (!IsSamePhysicalLineAsPreviousToken() || !StartsOpenTargetAtom())
         {
-            ReportErrorAt(
-                DiagnosticCode.InvalidOpenTargetList,
-                "Expected an open target after 'open' on the same physical line.",
-                Previous);
+            // A reported character on the `open` line stands in the missing target.
+            if (TakeReportedCharacterBeforeCurrent(requiredLine: Previous.Line) is null)
+            {
+                ReportErrorAt(
+                    DiagnosticCode.InvalidOpenTargetList,
+                    "Expected an open target after 'open' on the same physical line.",
+                    Previous);
+            }
+
             return targets;
         }
 
@@ -1615,10 +1735,15 @@ public sealed class Parser
             var comma = Advance(); // consume ','
             if (!StartsOpenTargetAtom())
             {
-                ReportErrorAt(
-                    DiagnosticCode.InvalidOpenTargetList,
-                    "Expected an open target after ','.",
-                    comma);
+                // A reported character after the comma stands in the missing target.
+                if (TakeReportedCharacterBeforeCurrent() is null)
+                {
+                    ReportErrorAt(
+                        DiagnosticCode.InvalidOpenTargetList,
+                        "Expected an open target after ','.",
+                        comma);
+                }
+
                 break;
             }
             if (ParseOpenTargetAtom() is { } target)
@@ -1628,7 +1753,8 @@ public sealed class Parser
         // Anything else on the same line after a target is a separator
         // mistake, not a following output row.
         if (IsSamePhysicalLineAsPreviousToken()
-            && Current.Kind is not (TokenKind.EndOfFile or TokenKind.RParen or TokenKind.RBrace))
+            && Current.Kind != TokenKind.EndOfFile
+            && !IsClosingDelimiter(Current.Kind))
         {
             if (Current.Kind == TokenKind.Semicolon)
             {
@@ -1641,10 +1767,14 @@ public sealed class Parser
             }
             else
             {
-                ReportErrorAt(
-                    DiagnosticCode.InvalidOpenTargetList,
-                    "Expected ',' between open targets. Open targets are separated by commas.",
-                    Current);
+                // A reported character between the targets stands in the missing comma.
+                if (TakeReportedCharacterBeforeCurrent() is null)
+                {
+                    ReportErrorAt(
+                        DiagnosticCode.InvalidOpenTargetList,
+                        "Expected ',' between open targets. Open targets are separated by commas.",
+                        Current);
+                }
 
                 // A string open target is pure sugar with no postfix
                 // continuations, so a trailing star after one (`open 'url'*`)
@@ -2052,6 +2182,20 @@ public sealed class Parser
                 DiagnosticCode.InvalidCollectingBinding,
                 "A deconstruction binding pattern may contain at most one collecting binding (`*name`).",
                 CombineSpans(firstCollecting.CollectMarkerSpan, firstCollecting.NameSpan) ?? firstCollecting.NameSpan);
+
+            // The recovered pattern keeps that first collecting binding; every later
+            // one becomes an ordinary fixed target, so the synthetic shared pattern
+            // never carries a shape a valid deconstruction cannot have (see
+            // KeepFirstCollectingBindingPerLevel for clause heads).
+            var sawCollecting = false;
+            for (var i = 0; i < targets.Count; i++)
+            {
+                if (targets[i].Kind != ParameterKind.Collecting)
+                    continue;
+                if (sawCollecting)
+                    targets[i] = targets[i] with { Kind = ParameterKind.Normal, CollectMarkerSpan = null };
+                sawCollecting = true;
+            }
         }
 
         var seen = new HashSet<string>(StringComparer.Ordinal);
@@ -2415,9 +2559,13 @@ public sealed class Parser
     /// Used to detect and reject public open declarations.
     /// </summary>
     private bool LookaheadIsPublicOpen()
+        => IsPublicOpenAt(NextSignificantIndex(_pos));
+
+    /// <summary>Index form of <see cref="LookaheadIsPublicOpen"/> for the 'public' at <paramref name="publicIndex"/>.</summary>
+    private bool IsPublicOpenAt(int publicIndex)
     {
-        var next = NextSignificantIndex(_pos + 1); // skip 'public'
-        return _tokens[next].Kind == TokenKind.KeywordOpen && IsHeadToken(next, Current.Line);
+        var next = NextSignificantIndex(publicIndex + 1); // skip 'public'
+        return _tokens[next].Kind == TokenKind.KeywordOpen && IsHeadToken(next, _tokens[publicIndex].Line);
     }
 
     /// <summary>
@@ -2426,10 +2574,14 @@ public sealed class Parser
     /// Used to detect public property definitions.
     /// </summary>
     private bool LookaheadIsPublicPropertyDef()
+        => IsPublicPropertyDefAt(NextSignificantIndex(_pos));
+
+    /// <summary>Index form of <see cref="LookaheadIsPublicPropertyDef"/> for the 'public' at <paramref name="publicIndex"/>.</summary>
+    private bool IsPublicPropertyDefAt(int publicIndex)
     {
-        var next = NextSignificantIndex(_pos + 1); // skip 'public'
+        var next = NextSignificantIndex(publicIndex + 1); // skip 'public'
         return _tokens[next].Kind == TokenKind.Identifier
-            && IsHeadToken(next, Current.Line)
+            && IsHeadToken(next, _tokens[publicIndex].Line)
             && LookaheadIsEqualsFrom(next);
     }
 
@@ -2451,12 +2603,19 @@ public sealed class Parser
     /// mistake instead of reporting a stray <c>'='</c>.
     /// </summary>
     private bool IsReservedLiteralDeclarationHead()
+        => IsReservedLiteralDeclarationHeadAt(NextSignificantIndex(_pos));
+
+    /// <summary>
+    /// Index form of <see cref="IsReservedLiteralDeclarationHead"/>: the reserved-literal
+    /// head (optionally after <c>public</c>) that begins at <paramref name="index"/>.
+    /// </summary>
+    private bool IsReservedLiteralDeclarationHeadAt(int index)
     {
-        var index = _pos;
+        var headLine = _tokens[index].Line;
         if (_tokens[index].Kind == TokenKind.KeywordPublic)
         {
             index = NextSignificantIndex(index + 1);
-            if (!IsHeadToken(index, Current.Line))
+            if (!IsHeadToken(index, headLine))
                 return false;
         }
 
@@ -2478,7 +2637,12 @@ public sealed class Parser
         ReportError(
             DiagnosticCode.UnexpectedToken,
             $"'{spelling}' is the reserved Boolean literal, not a name: it cannot be declared as a property, clause, or parameter, and it cannot be shadowed.");
-        while (Current.Kind is not (TokenKind.Equals or TokenKind.EndOfFile))
+        // Skip exactly the head the lookahead recognized: the literal, then a clause
+        // head's properly nested pattern list through ITS ')' (never stopping at an
+        // '=' inside it, never crossing a closer an enclosing construct owns), then '='.
+        var literalIndex = NextSignificantIndex(_pos);
+        var headEnd = TryFindClauseHeadClose(literalIndex, out var closeIndex) ? closeIndex : literalIndex;
+        while (NextSignificantIndex(_pos) <= headEnd)
             Advance();
         if (Current.Kind == TokenKind.Equals)
             Advance();
@@ -2491,9 +2655,13 @@ public sealed class Parser
     /// Used to detect public clause definitions.
     /// </summary>
     private bool LookaheadIsPublicClauseDefinition()
+        => IsPublicClauseDefinitionAt(NextSignificantIndex(_pos));
+
+    /// <summary>Index form of <see cref="LookaheadIsPublicClauseDefinition"/> for the 'public' at <paramref name="publicIndex"/>.</summary>
+    private bool IsPublicClauseDefinitionAt(int publicIndex)
     {
-        var next = NextSignificantIndex(_pos + 1); // skip 'public'
-        if (_tokens[next].Kind != TokenKind.Identifier || !IsHeadToken(next, Current.Line))
+        var next = NextSignificantIndex(publicIndex + 1); // skip 'public'
+        if (_tokens[next].Kind != TokenKind.Identifier || !IsHeadToken(next, _tokens[publicIndex].Line))
             return false;
         return LookaheadIsParenEqualsAfterName(next);
     }
@@ -2507,32 +2675,105 @@ public sealed class Parser
     /// every already-open delimiter (`F(a,` newline `b) = a + b`).
     /// </summary>
     private bool LookaheadIsParenEqualsAfterName(int nameIndex)
+        => TryFindClauseHeadClose(nameIndex, out _);
+
+    // Reusable expected-closer stack of the clause-head scan (cleared per scan; the
+    // scan never re-enters itself), so the lookahead allocates nothing per call.
+    private readonly List<TokenKind> _clauseHeadClosers = [];
+
+    /// <summary>
+    /// The clause-head scan behind <see cref="LookaheadIsParenEqualsAfterName"/>: true
+    /// when <c>( … ) =</c> follows the name at <paramref name="nameIndex"/> under the
+    /// declaration-head line rule, with <paramref name="closeIndex"/> the index of the
+    /// head's own <c>)</c>. The region between the parentheses must CLOSE WITHIN
+    /// ITSELF: every delimiter opened inside it closes inside it with its own kind. A
+    /// mismatched closer makes this no head: the prospective head itself is an open
+    /// construct even at the root, so no closer inside it is a top-level stray.
+    /// Ordinary delimited parsing then applies ExpectCloser's ownership law. Every
+    /// recognized head is therefore a properly nested region (see ParseClauseDefinition).
+    /// </summary>
+    private bool TryFindClauseHeadClose(int nameIndex, out int closeIndex)
     {
+        closeIndex = -1;
         var next = NextSignificantIndex(nameIndex + 1);
         if (_tokens[next].Kind != TokenKind.LParen || !IsHeadToken(next, _tokens[nameIndex].Line))
             return false;
-        next++; // skip '('
-        var depth = 1;
-        var closeLine = 0;
-        while (depth > 0)
+
+        var closers = _clauseHeadClosers;
+        closers.Clear();
+        closers.Add(TokenKind.RParen);
+        while (true)
         {
-            next = NextSignificantIndex(next);
+            next = NextSignificantIndex(next + 1);
             var kind = _tokens[next].Kind;
-            if (kind == TokenKind.EndOfFile)
-                return false;
-            if (kind == TokenKind.LParen) depth++;
-            else if (kind == TokenKind.RParen)
+            switch (kind)
             {
-                depth--;
-                closeLine = _tokens[next].Line;
+                case TokenKind.EndOfFile:
+                    return false;
+                case TokenKind.LParen:
+                    closers.Add(TokenKind.RParen);
+                    continue;
+                case TokenKind.LBracket:
+                    closers.Add(TokenKind.RBracket);
+                    continue;
+                case TokenKind.LBrace:
+                    closers.Add(TokenKind.RBrace);
+                    continue;
+                case TokenKind.RParen or TokenKind.RBracket or TokenKind.RBrace:
+                    if (closers[^1] != kind)
+                    {
+                        // The prospective HEAD is itself an open construct, including
+                        // at the root. Let ordinary delimited parsing resolve the mismatch;
+                        // scanning past it could steal a later declaration into this head.
+                        return false;
+                    }
+
+                    closers.RemoveAt(closers.Count - 1);
+                    if (closers.Count != 0)
+                        continue;
+                    break;
+                default:
+                    continue;
             }
-            next++;
+
+            break;
         }
-        next = NextSignificantIndex(next);
-        return _tokens[next].Kind == TokenKind.Equals && IsHeadToken(next, closeLine);
+
+        var equals = NextSignificantIndex(next + 1);
+        if (_tokens[equals].Kind != TokenKind.Equals || !IsHeadToken(equals, _tokens[next].Line))
+            return false;
+
+        closeIndex = next;
+        return true;
     }
 
     // ── Pattern parsing (for clause definitions) ────────────────────────────
+
+    // Lexical diagnostics precede all parser diagnostics and are in source order.
+    // A recovered number/string token is no more trustworthy for family comparison
+    // than a parser placeholder. Binary search avoids rescanning all lexical errors
+    // for every clause in a long malformed file.
+    private bool HasLexicalErrorInHead(Token first, Token last)
+    {
+        var low = 0;
+        var high = _lexicalDiagnosticCount;
+        while (low < high)
+        {
+            var middle = low + (high - low) / 2;
+            if (_diagnostics[middle].Span!.Value.Start.CompareTo(first.Span.Start) < 0)
+                low = middle + 1;
+            else
+                high = middle;
+        }
+
+        return low < _lexicalDiagnosticCount
+            && _diagnostics[low].Span!.Value.Start.CompareTo(last.Span.End) < 0;
+    }
+
+    // Like $deconstruct$ names, these are unique per parse and impossible to write
+    // as source identifiers. Their absent spans keep them out of editor symbols;
+    // no downstream consumer classifies recovery by a magic source spelling.
+    private Pattern.Bind RecoveryBinder() => new($"$recovery${_recoveryBinderCounter++}") { IsRecoveryPlaceholder = true };
 
     /// <summary>
     /// Finds the <see cref="SourceSpan"/> of the first <see cref="Expr.Grace"/> node in the list.
@@ -2650,35 +2891,103 @@ public sealed class Parser
             _ => false,
         };
 
-    /// <summary>Reports collecting-binding misuse in a clause head at the clause's name token.</summary>
-    private void ValidateCollectingParameterDeclarations(string propertyName, Pattern pattern, Token nameToken)
+    /// <summary>
+    /// Confines the rest of a recognized clause head to its own region: when the
+    /// pattern grammar stopped before the head's <c>)</c> (the index the dispatch
+    /// lookahead found, <see cref="TryFindClauseHeadClose"/>), the leftover is reported
+    /// ONCE — unless the head already reported an error — and skipped, so the head's <c>)</c> and <c>=</c> are
+    /// found where they were written, the body stays the clause's body, and nothing
+    /// inside the head leaks to the enclosing scope. The region is properly nested, so
+    /// the skip never crosses a closer an enclosing construct is waiting for.
+    /// </summary>
+    [System.Runtime.CompilerServices.MethodImpl(LeafFrame)]
+    private void SynchronizeToClauseHeadClose(int closeIndex, int headDiagnosticsStart)
     {
-        if (pattern.TryGetOrdinaryClauseParameterPatterns() is not { } parameterPatterns)
-        {
-            if (PatternContainsCollectingParameter(pattern))
-            {
-                ReportErrorAt(
-                    DiagnosticCode.InvalidCollectingBinding,
-                    $"Collecting bindings are only supported in ordinary explicit parameter lists for '{propertyName}'.",
-                    nameToken);
-            }
+        if (NextSignificantIndex(_pos) >= closeIndex)
             return;
+
+        if (_diagnostics.Count == headDiagnosticsStart)
+        {
+            ReportError(
+                DiagnosticCode.UnexpectedToken,
+                $"Expected {DescribeTokenKind(TokenKind.RParen)} but found {DescribeTokenKind(Current.Kind)}.");
         }
 
-        if (ParameterPattern.HasMultipleCollectingCapturesAtAnyLevel(parameterPatterns))
+        while (NextSignificantIndex(_pos) < closeIndex)
+            Advance();
+    }
+
+    /// <summary>
+    /// Reports collecting-binding misuse in an ordinary clause head at the clause's name
+    /// token and returns the pattern the recovered tree keeps. A head with more than one
+    /// collecting binding at a pattern level keeps the FIRST at each level; the later
+    /// ones become ordinary fixed bindings, exactly as a malformed collect marker never
+    /// creates a collecting binding — so no recovered tree carries a parameter shape a
+    /// valid program cannot have (the callable binding plans behind editor signatures
+    /// and evaluation reject such a shape outright). Collecting bindings in a
+    /// conditional family are reported once, per branch, by the family validation.
+    /// </summary>
+    private Pattern ValidateCollectingParameterDeclarations(Pattern pattern, Token nameToken)
+    {
+        var recovered = KeepFirstCollectingBindingPerLevel(pattern);
+        if (!ReferenceEquals(recovered, pattern))
         {
             ReportErrorAt(
                 DiagnosticCode.InvalidCollectingBinding,
                 "Only one collecting binding is allowed per pattern level.",
                 nameToken);
+            return recovered;
         }
-        else if (ParameterPattern.HasRepeatedCaptureNameIncludingCollecting(parameterPatterns))
+
+        if (pattern.TryGetOrdinaryClauseParameterPatterns() is not { } parameterPatterns)
+            return pattern;
+
+        if (ParameterPattern.HasRepeatedCaptureNameIncludingCollecting(parameterPatterns))
         {
             ReportErrorAt(
                 DiagnosticCode.InvalidCollectingBinding,
                 "Repeated parameter names cannot include collecting bindings.",
                 nameToken);
         }
+
+        return pattern;
+    }
+
+    /// <summary>
+    /// The recovery shape of a pattern with several collecting bindings at one level:
+    /// the first collecting binding of every sequence-value level is kept, every later
+    /// one becomes an ordinary fixed binding (its collect marker dropped). Recursion
+    /// depth is the pattern's nesting, which the parser's recursion budget bounds.
+    /// </summary>
+    private static Pattern KeepFirstCollectingBindingPerLevel(Pattern pattern)
+    {
+        if (pattern is not Pattern.SequenceValue(var items))
+            return pattern;
+
+        var kept = new List<Pattern>(items.Count);
+        var levelHasCollecting = false;
+        var changed = false;
+        foreach (var item in items)
+        {
+            switch (item)
+            {
+                case Pattern.Bind { ParameterKind: ParameterKind.Collecting } collecting when levelHasCollecting:
+                    kept.Add(collecting with { ParameterKind = ParameterKind.Normal, CollectMarkerSpan = null });
+                    changed = true;
+                    break;
+                case Pattern.Bind { ParameterKind: ParameterKind.Collecting }:
+                    levelHasCollecting = true;
+                    kept.Add(item);
+                    break;
+                default:
+                    var child = KeepFirstCollectingBindingPerLevel(item);
+                    kept.Add(child);
+                    changed |= !ReferenceEquals(child, item);
+                    break;
+            }
+        }
+
+        return changed ? new Pattern.SequenceValue(kept) : pattern;
     }
 
     /// <summary>
@@ -2847,7 +3156,7 @@ public sealed class Parser
                 DiagnosticCode.InvalidCollectMarker,
                 CollectMarkerMissingNameDiagnostic,
                 markerToken, lastStar);
-            return new Pattern.Bind("_error_");
+            return RecoveryBinder();
         }
 
         if (Current.Kind != TokenKind.Identifier)
@@ -2858,14 +3167,12 @@ public sealed class Parser
             // following comma/closing delimiter remains available to the caller.
             // Malformed syntax must not introduce collecting-binding semantics
             // into the recovered tree.
-            if (Current.Kind is not (TokenKind.Comma
-                or TokenKind.RParen
-                or TokenKind.RBrace
-                or TokenKind.EndOfFile)
+            if (Current.Kind is not (TokenKind.Comma or TokenKind.EndOfFile)
+                && !IsClosingDelimiter(Current.Kind)
                 && Current.Line == markerToken.Line)
                 return ParsePatternAtom();
 
-            return new Pattern.Bind("_error_");
+            return RecoveryBinder();
         }
 
         var nameToken = Advance();
@@ -2929,6 +3236,10 @@ public sealed class Parser
                         DiagnosticCode.InvalidGraceMarker,
                         "Grace is not allowed in clause-head patterns.",
                         firstTilde, lastGraceToken);
+                    // A lone run before a pattern boundary (`F(~) = 1`, `F(~, a)`) is
+                    // the whole malformed atom: its diagnostic owns the boundary.
+                    if (Current.Kind is TokenKind.Comma or TokenKind.EndOfFile || IsClosingDelimiter(Current.Kind))
+                        return RecoveryBinder();
                     // Try to parse remaining atom for recovery. `~*name` reaches
                     // the collecting-binding atom below, so the grace error keeps
                     // the collecting binding.
@@ -2951,7 +3262,7 @@ public sealed class Parser
                         // reports the missing number once, and `x` is not
                         // additionally an unseparated pattern item.
                         OwnSameLineItem(Current);
-                        return new Pattern.Bind("_error_");
+                        return RecoveryBinder();
                     }
                     var token = Advance();
                     return new Pattern.LitInt(-token.NumValue);
@@ -3035,11 +3346,57 @@ public sealed class Parser
                     if (CanStartPatternAtom(Current.Kind))
                         throw new InvalidOperationException($"Pattern-atom starter {Current.Kind} has no ParsePatternAtomCore arm.");
 
-                    ReportError(DiagnosticCode.UnexpectedToken, $"Unexpected {DescribeTokenKind(Current.Kind, includeArticle: false)} in a pattern.");
-                    SkipForRecovery(); // the token after it is a recovery-owned boundary
-                    return new Pattern.Bind("_error_");
+                    return RecoverMalformedPatternAtom();
                 }
         }
+    }
+
+    /// <summary>
+    /// Recovery for a token that cannot begin a pattern item inside a recognized clause
+    /// head (a properly nested region, see <see cref="TryFindClauseHeadClose"/>). The
+    /// atom becomes a unique spanless recovery binder, which declares no source name,
+    /// and recovery never leaves the head: a closing delimiter is reported and left in
+    /// place — the head's own <c>)</c> or a nested pattern group's closes its construct
+    /// (<c>F() = 1</c> reports once instead of consuming the head's <c>)</c>); an opening <c>[</c> or
+    /// <c>{</c> is reported and skipped together with the rest of its group, which the
+    /// head encloses (<c>F([a, b]) = …</c> keeps its <c>)</c>, its <c>=</c>, and its body);
+    /// any other token is reported and skipped alone. A missing item a reported character
+    /// stands in (<c>F(x, @) = x</c>: only a closer, a comma, or the end of input follows
+    /// it) is that character: the lexer already reported it, so the binder is filled
+    /// without a second report and the head is still recorded as recovered.
+    /// </summary>
+    [System.Runtime.CompilerServices.MethodImpl(LeafFrame)]
+    private Pattern.Bind RecoverMalformedPatternAtom()
+    {
+        var token = Current;
+        if ((IsClosingDelimiter(token.Kind) || token.Kind is TokenKind.EndOfFile or TokenKind.Comma)
+            && TakeReportedCharacterBeforeCurrent() is not null)
+        {
+            return RecoveryBinder();
+        }
+
+        ReportError(DiagnosticCode.UnexpectedToken, $"Unexpected {DescribeTokenKind(token.Kind, includeArticle: false)} in a pattern.");
+        if (IsClosingDelimiter(token.Kind) || token.Kind == TokenKind.EndOfFile)
+            return RecoveryBinder();
+
+        if (token.Kind is TokenKind.LBracket or TokenKind.LBrace)
+        {
+            var depth = 0;
+            do
+            {
+                if (Current.Kind is TokenKind.LParen or TokenKind.LBracket or TokenKind.LBrace)
+                    depth++;
+                else if (IsClosingDelimiter(Current.Kind))
+                    depth--;
+                Advance();
+            }
+            while (depth > 0 && Current.Kind != TokenKind.EndOfFile);
+            OwnSameLineItem(Current);
+            return RecoveryBinder();
+        }
+
+        SkipForRecovery(); // the token after it is a recovery-owned boundary
+        return RecoveryBinder();
     }
 
     // ── Output line parsing ─────────────────────────────────────────────────
@@ -3370,14 +3727,20 @@ public sealed class Parser
     /// <c>Name = ...</c>, a deconstruction binding pattern
     /// <c>x, *y, z = ...</c> (including the collect-marker-led form
     /// <c>*items = ...</c>), a clause definition <c>Name(pattern) = ...</c>,
-    /// or the invalid-grace property prefix <c>~Name = ...</c>.
-    /// Both boundary consumers — the slot-boundary rule
-    /// (<see cref="StartsNextExpressionListSlot"/>) and open-target
-    /// recovery (<see cref="StartsOpenTargetAtom"/>) — stop before this
-    /// relation, so a following declaration stays intact and its diagnostics
-    /// stay owned by the algorithm loop; encoding the set once keeps the two
-    /// decisions from drifting apart (the open-target copy historically
-    /// missed the binding-pattern form and tore <c>x, y = 1</c> apart).
+    /// the invalid-grace property prefix <c>~Name = ...</c>, a
+    /// <c>public</c>-led head, or a reserved-literal head (<c>true = …</c>,
+    /// <c>false(x) = …</c>) — exactly the forms the loop dispatches as
+    /// declarations. Every boundary consumer stops before this relation — the
+    /// slot-boundary rule (<see cref="StartsNextExpressionListSlot"/>),
+    /// semicolon recovery, open-target recovery
+    /// (<see cref="StartsOpenTargetAtom"/>), the star classifier
+    /// (<see cref="IsPostfixSpreadMarkerStar"/>), and operand recovery
+    /// (<see cref="RecoverAtOperandStart"/>) — so a following declaration stays
+    /// intact and its diagnostics stay owned by the algorithm loop; encoding the
+    /// set once keeps the decisions from drifting apart (the open-target copy
+    /// historically missed the binding-pattern form and tore <c>x, y = 1</c>
+    /// apart, and operand recovery must refuse EXACTLY the heads the list loop
+    /// stops at, or the loop would re-admit a head the operand parse refused).
     ///
     /// <para><paramref name="includeCommaSpanningBindingPatterns"/> gates the
     /// ONE arm whose lookahead scans across commas (the deconstruction
@@ -3394,12 +3757,13 @@ public sealed class Parser
     /// (<c>open A,</c> newline <c>x, y = 1</c> keeps the whole
     /// deconstruction).</para>
     ///
-    /// <para>`public`-led declarations need no arm here: `public` cannot
-    /// start an expression (<see cref="CanStartExpression"/>), so both
-    /// consumers stop before consulting this relation. The Star arm is also
+    /// <para>`public` cannot start an expression (<see cref="CanStartExpression"/>),
+    /// so the slot-boundary and open-target consumers stop before consulting its arm;
+    /// operand recovery is reached AT a `public` after a dangling operator, and its arm
+    /// keeps `1 +` newline `public Good = 41` a public declaration. The Star arm is
     /// unreachable through the expression-start filters (including the star
-    /// classifier's operand filter), but keeps the relation faithful to the
-    /// algorithm loop's own declaration dispatch.</para>
+    /// classifier's operand filter) except in operand recovery, and keeps the relation
+    /// faithful to the algorithm loop's own declaration dispatch.</para>
     /// </summary>
     private bool StartsDeclaration(bool includeCommaSpanningBindingPatterns)
         => StartsDeclarationAt(NextSignificantIndex(_pos), includeCommaSpanningBindingPatterns);
@@ -3424,7 +3788,14 @@ public sealed class Parser
             || (kind == TokenKind.Star
                 && includeCommaSpanningBindingPatterns
                 && LookaheadIsBindingPatternAssignmentFrom(index))
-            || (kind == TokenKind.Tilde && LookaheadThroughTildesToPropertyDefFrom(index));
+            || (kind == TokenKind.Tilde && LookaheadThroughTildesToPropertyDefFrom(index))
+            || (kind == TokenKind.KeywordPublic
+                && (IsPublicOpenAt(index)
+                    || IsPublicPropertyDefAt(index)
+                    || IsPublicClauseDefinitionAt(index)
+                    || IsReservedLiteralDeclarationHeadAt(index)))
+            || (kind is TokenKind.KeywordTrue or TokenKind.KeywordFalse
+                && IsReservedLiteralDeclarationHeadAt(index));
     }
 
     private static bool CanStartExpression(TokenKind kind) => kind switch
@@ -4120,11 +4491,36 @@ public sealed class Parser
             memberGraceAttached &= IsDirectlyAttached(lastMarker, Current);
         }
 
+        // A trailing '.' continues its dot chain onto the next line (`a.` newline
+        // `b`), but a declaration head there is never the member: the dangling dot
+        // is the error, and the declaration keeps its scope (see RecoverAtOperandStart).
+        // A reported character between the dot and what follows stands in the missing
+        // member name (`A.@`): the lexer's diagnostic is the one report.
+        if (memberGraceStart is null
+            && !IsSamePhysicalLineAsPreviousToken()
+            && StartsDeclaration(includeCommaSpanningBindingPatterns: true))
+        {
+            if (TakeReportedCharacterBeforeCurrent() is null)
+            {
+                ReportErrorAt(
+                    DiagnosticCode.UnexpectedToken,
+                    "Expected property name after '.'. The next line begins a declaration, which never continues an expression.",
+                    dotToken);
+            }
+
+            return lhs;
+        }
+
         if (Current.Kind != TokenKind.Identifier)
         {
-            ReportError(DiagnosticCode.UnexpectedToken, "Expected property name after '.'.");
-            // The dangling dot's diagnostic owns whatever follows it on the line.
-            OwnSameLineItem(Current);
+            if (TakeReportedCharacterBeforeCurrent() is null)
+            {
+                ReportError(DiagnosticCode.UnexpectedToken, "Expected property name after '.'.");
+                // An explicit dangling-dot report owns the following boundary. A
+                // silent member fill already used its character and cannot also
+                // supply the comma before an independent next item (`A.@ 1`).
+                OwnSameLineItem(Current);
+            }
             return lhs;
         }
 
@@ -4225,7 +4621,7 @@ public sealed class Parser
                 body = ParseParenthesizedBodyParts();
             }
 
-            Expect(TokenKind.RParen);
+            ExpectCloser(TokenKind.RParen);
             if (!body.HasDeclarations)
                 return OutputBundle.From(body.Output);
 
@@ -4252,7 +4648,7 @@ public sealed class Parser
                 innerAlg = ParseScopedAlgorithm();
             }
 
-            Expect(TokenKind.RBrace);
+            ExpectCloser(TokenKind.RBrace);
             var blockExpr = AlgorithmExprFrom(innerAlg, start);
             return [blockExpr];
         }
@@ -4313,6 +4709,15 @@ public sealed class Parser
 
     private Expr ParsePrimary()
     {
+        // Operand-start recovery, decided before any operand is consumed: a missing
+        // operand a reported character stands in, and a declaration head that a line
+        // ending in an incomplete expression would otherwise swallow (see
+        // RecoverAtOperandStart). Only reached off the common path: a token that
+        // cannot begin an operand, or one on a later line.
+        if ((!CanStartExpression(Current.Kind) || !IsSamePhysicalLineAsPreviousToken())
+            && RecoverAtOperandStart() is { } recovered)
+            return recovered;
+
         switch (Current.Kind)
         {
             case TokenKind.Number:
@@ -4366,7 +4771,7 @@ public sealed class Parser
                         body = ParseParenthesizedBodyParts();
                     }
 
-                    Expect(TokenKind.RParen);
+                    ExpectCloser(TokenKind.RParen);
 
                     // Empty parentheses `()` construct the empty sequence value.
                     if (!body.HasDeclarations && body.Output.Count == 0)
@@ -4409,7 +4814,7 @@ public sealed class Parser
                         alg = ParseScopedAlgorithm();
                     }
 
-                    Expect(TokenKind.RBrace);
+                    ExpectCloser(TokenKind.RBrace);
                     return AlgorithmExprFrom(alg, start);
                 }
 
@@ -4432,7 +4837,7 @@ public sealed class Parser
                             : ParseExpressionListOperand(allowNewlineSeparator: true);
                     }
 
-                    Expect(TokenKind.RBracket);
+                    ExpectCloser(TokenKind.RBracket);
                     return ListLiteralFrom(items, start);
                 }
 
@@ -4520,7 +4925,9 @@ public sealed class Parser
                     // and reach this arm with the '='. Report the repair once; the
                     // token after the '=' is a recovery-owned boundary.
                     var token = Current;
-                    ReportError(DiagnosticCode.UnexpectedToken, StrayEqualsDiagnostic);
+                    ReportError(
+                        DiagnosticCode.UnexpectedToken,
+                        StrayEqualsFollowsSplitHead() ? StrayEqualsDiagnostic : SameLineStrayEqualsDiagnostic);
                     SkipForRecovery();
                     return PlaceholderAt(token); // error placeholder
                 }
@@ -4528,6 +4935,17 @@ public sealed class Parser
             default:
                 {
                     var token = Current;
+                    if (IsClosingDelimiter(token.Kind) && !IsOwedCloser(token.Kind) && IsInsideDelimitedConstruct)
+                    {
+                        // A closer no open construct is waiting for, met while one IS
+                        // open (`(1, ]`, `{1, )}`): the operand is missing, and the
+                        // innermost construct reports this very token as its mismatched
+                        // closer and closes there (ExpectCloser). Consuming it as junk
+                        // would leave the construct open to the end of the file and
+                        // swallow every later declaration into it.
+                        return PlaceholderAt(token); // error placeholder
+                    }
+
                     ReportError(DiagnosticCode.UnexpectedToken, $"Unexpected {DescribeTokenKind(Current.Kind, includeArticle: false)}.");
                     if (IsOwedCloser(token.Kind) || token.Kind == TokenKind.EndOfFile)
                     {
@@ -4539,10 +4957,64 @@ public sealed class Parser
                         return PlaceholderAt(token); // error placeholder
                     }
 
+                    // No construct is open, so a closer here is a top-level stray (rule 3),
+                    // and any other token is junk: consume it.
                     SkipForRecovery(); // the token after it is a recovery-owned boundary
                     return PlaceholderAt(token); // error placeholder
                 }
         }
+    }
+
+    /// <summary>
+    /// Operand-start recovery for <see cref="ParsePrimary"/>; null when the operand
+    /// parses normally from the current token.
+    /// <para>A MISSING OPERAND A REPORTED CHARACTER STANDS IN. The grammar skips the
+    /// characters the lexer reported (<see cref="IsSkippedByGrammar"/>), so an operand
+    /// written after one continues with the token behind it (<c>!true</c> is
+    /// <c>true</c>, <c>1 + @2</c> is <c>1 + 2</c>). When what follows cannot begin the
+    /// operand and the surrounding construct takes it next — a closer, the end of input,
+    /// <c>,</c>, <c>;</c>, or a token continuing the expression on that line
+    /// (<c>(1 + @)</c>, <c>F(1, @)</c>, <c>1 &lt; @ &lt; 2</c>) — the operand is that
+    /// character: a silent placeholder at its span, never a second report. Any other
+    /// follower is left to the ordinary operand path, which consumes it, so a loop that
+    /// hands the same token back to this method always makes progress.</para>
+    /// <para>A DECLARATION HEAD IS NEVER AN OPERAND. When the token that demanded this
+    /// operand ended its line — a trailing binary operator, <c>,</c>, <c>:</c>, prefix
+    /// <c>-</c> or <c>not</c>, or the <c>=</c> of a definition whose body would start on
+    /// the next line — and the next line begins a declaration (<c>1 +</c> newline
+    /// <c>Good = 41</c>, <c>x,</c> newline <c>y = 1, 2</c>, <c>A =</c> newline
+    /// <c>B = 1</c>), the incomplete line is the one error, reported at the token that
+    /// dangles, and the declaration is left intact for the body loop that owns it. Taking
+    /// its name as the operand would tear a correctly written one-line head apart into an
+    /// operand plus a stray <c>=</c> — and no valid program ever has a declaration head in
+    /// operand position, so this changes recovery only. The same relation already keeps a
+    /// declaration out of a star's operand (<see cref="IsPostfixSpreadMarkerStar"/>), a
+    /// semicolon's recovery slot, and a dangling <c>open</c> list. A reported character
+    /// between the dangling token and the declaration stands in the operand the same way,
+    /// so the lexer's report is then the only one.</para>
+    /// </summary>
+    [System.Runtime.CompilerServices.MethodImpl(LeafFrame)]
+    private Expr.Num? RecoverAtOperandStart()
+    {
+        if (!CanStartExpression(Current.Kind)
+            && (IsClosingDelimiter(Current.Kind)
+                || Current.Kind is TokenKind.EndOfFile or TokenKind.Comma or TokenKind.Semicolon
+                || MayContinueClosedExpression(Current.Kind))
+            && TakeReportedCharacterBeforeCurrent() is { } standIn)
+            return PlaceholderAt(standIn);
+
+        if (IsSamePhysicalLineAsPreviousToken() || !StartsDeclaration(includeCommaSpanningBindingPatterns: true))
+            return null;
+
+        if (TakeReportedCharacterBeforeCurrent() is { } reported)
+            return PlaceholderAt(reported);
+
+        var dangling = Previous;
+        ReportErrorAt(
+            DiagnosticCode.UnexpectedToken,
+            $"Expected an expression after {DescribeTokenKind(dangling.Kind)}. The next line begins a declaration, which never continues an expression.",
+            dangling);
+        return new Expr.Num(0) { Span = new SourceSpan(dangling.Span.End, dangling.Span.End) };
     }
 
     /// <summary>
@@ -4562,5 +5034,70 @@ public sealed class Parser
 
     private const string StrayEqualsDiagnostic =
         "Unexpected '='. A declaration head cannot be assembled across a physical newline. Keep `Name =` together, or keep a clause head's name and '(' together and its closing ')' and '=' together. A pattern list inside already-open parentheses and the body after '=' may span lines; deconstruction targets and '=' must share a line.";
+
+    /// <summary>
+    /// The stray-'=' diagnostic for a '=' that follows other content on its own physical
+    /// line (`A = x = 1`, `[A = 1]`, `x, y, = 1, 2`): no newline split a head there, so the
+    /// head-line explanation above would name a cause that is not present.
+    /// </summary>
+    private const string SameLineStrayEqualsDiagnostic =
+        "Unexpected '='. '=' only ends a declaration head written at the start of a row (`Name =`, `Name(pattern) =`, or `x, y =`), so it cannot appear inside an expression. To compare values, use '=='.";
+
+    /// <summary>
+    /// Whether the stray '=' at the current position could have completed a declaration
+    /// head that a physical newline split (the head-line explanation applies): the '='
+    /// begins its line (`A` newline `= 1`, `x, y` newline `= 1, 2`), or it directly
+    /// follows one parenthesized group that begins its line (`Foo` newline
+    /// `(x) = x + 1`). The backward scan stays on the '=' line and stops at an earlier
+    /// '=', so a line of many stray '=' costs linear work in total.
+    /// </summary>
+    private bool StrayEqualsFollowsSplitHead()
+    {
+        var equalsIndex = NextSignificantIndex(_pos);
+        var line = _tokens[equalsIndex].Line;
+        var before = PreviousSignificantIndex(equalsIndex);
+        if (before < 0 || _tokens[before].Line < line)
+            return true;
+        if (_tokens[before].Kind != TokenKind.RParen)
+            return false;
+
+        var depth = 0;
+        for (var index = before; index >= 0 && _tokens[index].Line == line; index = PreviousSignificantIndex(index))
+        {
+            var kind = _tokens[index].Kind;
+            if (kind == TokenKind.Equals)
+                return false;
+            if (kind == TokenKind.RParen)
+            {
+                depth++;
+            }
+            else if (kind == TokenKind.LParen)
+            {
+                depth--;
+                if (depth == 0)
+                {
+                    var start = PreviousSignificantIndex(index);
+                    return start < 0 || _tokens[start].Line < line;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// The nearest index before <paramref name="index"/> whose token the grammar sees (not a
+    /// comment, not a reported character), or -1.
+    /// </summary>
+    private int PreviousSignificantIndex(int index)
+    {
+        for (var i = index - 1; i >= 0; i--)
+        {
+            if (!IsSkippedByGrammar(_tokens[i].Kind))
+                return i;
+        }
+
+        return -1;
+    }
 
 }

@@ -929,13 +929,16 @@ internal static class ImplicitArgumentResolver
                 // of the placeholder carries the region forked with the visible signature map
                 // as it stands HERE — a snapshot, since the property loop keeps extending the
                 // map — one view per family occurrence.
-                branches.Add(new CondBranch(branch.Pattern, branch.Body with
+                branches.Add(branch with
                 {
-                    DeferredRegion = region.WithResolution(new DeferredBranchContext(
-                        new Dictionary<string, CallableSignature>(parentParamMap),
-                        propertyName,
-                        branch.Pattern)),
-                }));
+                    Body = branch.Body with
+                    {
+                        DeferredRegion = region.WithResolution(new DeferredBranchContext(
+                            new Dictionary<string, CallableSignature>(parentParamMap),
+                            propertyName,
+                            branch.Pattern)),
+                    },
+                });
                 continue;
             }
 
@@ -947,7 +950,7 @@ internal static class ImplicitArgumentResolver
             var body = ProcessAlgorithm(
                 branch.Body, parentParamMap, isRoot: false, observations, diagnostics,
                 new ConditionalBranchContext(propertyName, branch.Pattern), run);
-            branches.Add(new CondBranch(branch.Pattern, body));
+            branches.Add(branch with { Body = body });
         }
 
         return conditional with { Opens = newOpens, Branches = branches };

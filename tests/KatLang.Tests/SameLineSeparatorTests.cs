@@ -583,7 +583,6 @@ public class SameLineSeparatorTests
     [Theory]
     // A malformed atom that diagnosed the token after it owns that boundary.
     [InlineData("F(-x) = 1\nF(1)", "UnexpectedToken")]
-    [InlineData("F(a, ] b) = a\nF(1, 2)", "UnexpectedToken")]
     // A star nothing can follow is the atom's own spread-marker diagnostic.
     [InlineData("F(a *) = a\nF(1)", "InvalidCollectMarker")]
     // A star an operand follows is a next collecting binding missing its comma;
@@ -601,6 +600,15 @@ public class SameLineSeparatorTests
         Assert.Equal(
             expectedCodes.Split(';').Select(Enum.Parse<DiagnosticCode>),
             syntax.Diagnostics.Select(static d => d.Code));
+    }
+
+    [Fact]
+    public void MismatchedProspectiveHead_IsAnExpressionWithIndependentlyStrayCloserAndEquals()
+    {
+        var syntax = Parser.ParseSyntax("F(a, ] b) = a\nF(1, 2)");
+        Assert.Empty(syntax.Root.Properties);
+        Assert.Equal(new[] { 6, 9, 11 }, syntax.Diagnostics.Select(d => d.Span!.Value.Start.Column));
+        Assert.All(syntax.Diagnostics, d => Assert.Equal(DiagnosticCode.UnexpectedToken, d.Code));
     }
 
     [Theory]
@@ -785,9 +793,11 @@ public class SameLineSeparatorTests
             var parser = constructor.Invoke([sampleTokens, atomDiagnostics, null]);
             Assert.IsAssignableFrom<Pattern>(parseAtom.Invoke(parser, null));
             // Comments are transparent to Current, so a comment-only stream
-            // reaches the ordinary EOF recovery arm.
+            // reaches the ordinary EOF recovery arm. A bad token is skipped the same
+            // way, and the item it stands in is filled silently: its one report is the
+            // LEXER's.
             var currentKind = kind == TokenKind.Comment ? TokenKind.EndOfFile : kind;
-            Assert.Equal(!startsPattern, atomDiagnostics.Any(d => d.Message ==
+            Assert.Equal(!startsPattern && kind != TokenKind.Bad, atomDiagnostics.Any(d => d.Message ==
                 $"Unexpected {Parser.DescribeTokenKind(currentKind, includeArticle: false)} in a pattern."));
 
             var source = kind == TokenKind.EndOfFile ? "F(1 " : $"F(1 {sample}) = 1";

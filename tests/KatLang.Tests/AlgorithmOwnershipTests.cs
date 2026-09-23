@@ -101,7 +101,7 @@ public class AlgorithmOwnershipTests
     [Fact]
     public void RecoveryBinder_IsTheOnlySpanlessCaptureOfAWrittenList()
     {
-        // `F(*) = …` recovers the malformed item to the spanless `_error_` binder; the list is
+        // `F(*) = …` recovers the malformed item to a spanless synthetic binder; the list is
         // still the WRITTEN one, and the diagnostics that quote parameters skip the binder.
         var parsed = SourceProvenance.ParseAllowingDiagnostics("F(*) = 5\nopen F\n1");
         Assert.Contains(parsed.Diagnostics, d => d.Code == DiagnosticCode.InvalidCollectMarker);
@@ -109,8 +109,8 @@ public class AlgorithmOwnershipTests
         Assert.True(f.HasExplicitParameterList);
         var binder = Assert.Single(f.Parameters);
         Assert.Null(binder.Span);
-        Assert.Equal("_error_", binder.Name);
-        Assert.DoesNotContain("_error_", Evaluator.FormatOpenTargetRequiresArguments("F", f, sourceBacked: true), StringComparison.Ordinal);
+        Assert.False(Lexer.IsValidIdentifier(binder.Name));
+        Assert.DoesNotContain(binder.Name, Evaluator.FormatOpenTargetRequiresArguments("F", f, sourceBacked: true), StringComparison.Ordinal);
     }
 
     [Fact]
@@ -155,7 +155,7 @@ public class AlgorithmOwnershipTests
                     // A deconstruction target helper is synthetic: its written pattern is the
                     // assignment's target list, whose captures carry no name-token span.
                     if (user.AssignmentDeconstructionTarget is null)
-                        Assert.All(user.Parameters, p => Assert.True(p.Span is not null || p.Name == "_error_", $"unlocated written parameter {p.Name} in:\n{source}"));
+                        Assert.All(user.Parameters, p => Assert.True(p.Span is not null || !Lexer.IsValidIdentifier(p.Name), $"unlocated written parameter {p.Name} in:\n{source}"));
                 }
             }
         }

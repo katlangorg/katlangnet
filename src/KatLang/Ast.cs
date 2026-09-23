@@ -224,6 +224,15 @@ public enum ParameterKind
 public sealed record ParameterDeclaration(string Name, SourceSpan? Span = null, ParameterKind Kind = ParameterKind.Normal)
 {
     private readonly RuntimeStateSlot<ImplicitParameterProvenance?> _inferredProvenance;
+    private readonly RuntimeStateSlot<bool> _isRecoveryPlaceholder;
+
+    // A parser-inserted hole, independent of source positions: imported real
+    // parameters are locationless too. Presentation only, never binding semantics.
+    internal bool IsRecoveryPlaceholder
+    {
+        get => _isRecoveryPlaceholder.Value;
+        init => _isRecoveryPlaceholder = new(value);
+    }
 
     /// <summary>Exact span of the source prefix <c>*</c> collect marker, when source-backed.</summary>
     public SourceSpan? CollectMarkerSpan { get; init; }
@@ -891,6 +900,14 @@ public closed record Pattern
     /// <summary>Matches any Result and binds it to the given name.</summary>
     public sealed record Bind(string Name) : Pattern
     {
+        private readonly RuntimeStateSlot<bool> _isRecoveryPlaceholder;
+
+        internal bool IsRecoveryPlaceholder
+        {
+            get => _isRecoveryPlaceholder.Value;
+            init => _isRecoveryPlaceholder = new(value);
+        }
+
         /// <summary>Exact span of the binder identifier when available.</summary>
         public SourceSpan? NameSpan { get; init; }
 
@@ -1032,10 +1049,11 @@ public closed record Pattern
     {
         if (pattern is Bind binder)
         {
-            parameterPattern = new CaptureParameterPattern(binder.Name, binder.NameSpan, binder.ParameterKind)
+            parameterPattern = new CaptureParameterPattern(new ParameterDeclaration(binder.Name, binder.NameSpan, binder.ParameterKind)
             {
                 CollectMarkerSpan = binder.CollectMarkerSpan,
-            };
+                IsRecoveryPlaceholder = binder.IsRecoveryPlaceholder,
+            });
             return true;
         }
 
@@ -1070,10 +1088,11 @@ public closed record Pattern
         if (this is Bind binder)
             return
             [
-                new CaptureParameterPattern(binder.Name, binder.NameSpan, binder.ParameterKind)
+                new CaptureParameterPattern(new ParameterDeclaration(binder.Name, binder.NameSpan, binder.ParameterKind)
                 {
                     CollectMarkerSpan = binder.CollectMarkerSpan,
-                }
+                    IsRecoveryPlaceholder = binder.IsRecoveryPlaceholder,
+                })
             ];
 
         if (this is not SequenceValue(var items))
@@ -1289,6 +1308,17 @@ public closed record Pattern
 /// </summary>
 public sealed record CondBranch(Pattern Pattern, Algorithm Body)
 {
+    private readonly RuntimeStateSlot<bool> _hasRecoveredHead;
+
+    // Parser-only trust metadata for invalid documents. Copies through elaboration
+    // retain it; core equality and evaluation never depend on it. Editor signatures
+    // must choose the same clean reference head as parser family diagnostics.
+    internal bool HasRecoveredHead
+    {
+        get => _hasRecoveredHead.Value;
+        init => _hasRecoveredHead = new(value);
+    }
+
     /// <summary>
     /// Compute the top-level output arity of this branch body.
     /// Lean: <c>Algorithm.topLevelOutputArity</c> / <c>body.output.length</c>.
@@ -1665,7 +1695,7 @@ public closed record Algorithm
         // its source rather than memoizing it away in every frontend visitor.
         var parent = clauses[0].Body.Parent;
         var conditionalBranches = clauses
-            .Select(branch => new CondBranch(branch.Pattern, branch.Body.WithParams([])))
+            .Select(branch => branch with { Body = branch.Body.WithParams([]) })
             .ToList();
 
         return new Conditional(
@@ -2078,7 +2108,17 @@ internal closed record PreEvaluationAstViolation
     private PreEvaluationAstViolation() { }
 
     /// <summary>Lean: <c>Error.explicitParamsRequireOutput</c>.</summary>
-    internal sealed record ExplicitParametersWithoutOutput(SourceSpan? Span) : PreEvaluationAstViolation;
+    internal sealed record ExplicitParametersWithoutOutput(SourceSpan? Span) : PreEvaluationAstViolation
+    {
+        /// <summary>
+        /// The parser's anchor when <see cref="Span"/> is absent although the list was
+        /// written: the first parameter that has a source span, else the enclosing
+        /// property's declaration (a recovered head's first parameter can be the
+        /// spanless recovery binder). Parse diagnostics use it; the evaluator's error
+        /// keeps <see cref="Span"/>.
+        /// </summary>
+        public SourceSpan? WrittenAnchor { get; init; }
+    }
 
     /// <summary>Lean: <c>Error.branchArityMismatch name expected actual</c>.</summary>
     internal sealed record ConditionalBranchArityMismatch(string AlgorithmName, int Expected, int Actual) : PreEvaluationAstViolation;
@@ -2100,7 +2140,10 @@ internal static class AlgorithmValidation
         var walker = new PreEvaluationValidationWalker(stopAfterFirst: false, checkConditionalBranchArities: false);
         walker.VisitAlgorithm(algorithm);
         return [.. walker.Violations.Select(v =>
-            new ExplicitParameterOutputViolation(((PreEvaluationAstViolation.ExplicitParametersWithoutOutput)v).Span))];
+        {
+            var violation = (PreEvaluationAstViolation.ExplicitParametersWithoutOutput)v;
+            return new ExplicitParameterOutputViolation(violation.Span ?? violation.WrittenAnchor);
+        })];
     }
 
     /// <summary>
@@ -2136,6 +2179,11 @@ internal static class AlgorithmValidation
         // reached through an EXPRESSION (block literal, call/dot-call arguments) is
         // validated by the nameless expression walker and gets the default label.
         private string _enclosingPropertyName = AnonymousConditionalName;
+
+        // The enclosing property's declaration anchor, threaded exactly like the name:
+        // the fallback position of an explicit-parameter violation whose parameter list
+        // has no source-backed parameter (see WrittenAnchor).
+        private SourceSpan? _enclosingPropertySpan;
 
         // Reference-identity memo over visited algorithms and expressions. The public
         // AST is host-constructible with SHARED (acyclic) subtrees, and the violation
@@ -2175,7 +2223,9 @@ internal static class AlgorithmValidation
             // enclosing name afterwards: a conditional's opens are visited before
             // its branch bodies, and those bodies must keep the conditional's name.
             var enclosingName = _enclosingPropertyName;
+            var enclosingSpan = _enclosingPropertySpan;
             _enclosingPropertyName = AnonymousConditionalName;
+            _enclosingPropertySpan = null;
 
             if (expr is Expr.SequenceConstruct or Expr.SequenceSpread)
                 VisitFlatOutputExpr(expr);
@@ -2183,6 +2233,7 @@ internal static class AlgorithmValidation
                 base.VisitExpr(expr);
 
             _enclosingPropertyName = enclosingName;
+            _enclosingPropertySpan = enclosingSpan;
         }
 
         private void VisitFlatOutputExpr(Expr expr)
@@ -2234,7 +2285,13 @@ internal static class AlgorithmValidation
                 // The diagnostic points at the first WRITTEN parameter; an inferred signature has no
                 // source-backed declaration to point at.
                 var span = algorithm.HasExplicitParameterList ? algorithm.Parameters.FirstOrDefault()?.Span : null;
-                Violations.Add(new PreEvaluationAstViolation.ExplicitParametersWithoutOutput(span));
+                Violations.Add(new PreEvaluationAstViolation.ExplicitParametersWithoutOutput(span)
+                {
+                    WrittenAnchor = algorithm.HasExplicitParameterList
+                        ? algorithm.Parameters.FirstOrDefault(static parameter => parameter.Span is not null)?.Span
+                            ?? _enclosingPropertySpan
+                        : null,
+                });
                 if (stopAfterFirst)
                     return;
             }
@@ -2247,9 +2304,12 @@ internal static class AlgorithmValidation
             // Lean: validateExplicitParamOutputInvariant prop.alg prop.name — the
             // property's directly-held algorithm is validated under the property name.
             var enclosingName = _enclosingPropertyName;
+            var enclosingSpan = _enclosingPropertySpan;
             _enclosingPropertyName = property.Name;
+            _enclosingPropertySpan = property.FirstDeclarationSpan;
             base.VisitProperty(property);
             _enclosingPropertyName = enclosingName;
+            _enclosingPropertySpan = enclosingSpan;
         }
 
         protected override void VisitConditionalAlgorithm(Algorithm.Conditional algorithm)

@@ -1334,8 +1334,8 @@ public static class SemanticModelBuilder
             => algorithm switch
             {
                 Algorithm.User user => user.ParameterPatterns.Count > 0,
-                Algorithm.Conditional { Branches.Count: > 0 } conditional =>
-                    conditional.Branches[0].Pattern.TopLevelArity() > 0,
+                Algorithm.Conditional conditional =>
+                    ConditionalSignatureHead(conditional)?.TopLevelArity() > 0,
                 Algorithm.Builtin(var builtin) =>
                     BuiltinRegistry.GetBuiltin(builtin).PlainSignature.TopLevelParameterCount > 0,
                 _ => false,
@@ -1349,6 +1349,16 @@ public static class SemanticModelBuilder
             PropertyExposure exposure,
             bool documentLocalSpans)
         {
+            // Recovery binders have no written name. Their parser provenance keeps
+            // them distinct from locationless imported parameters, including when
+            // a host copies an imported body under a document-owned declaration.
+            if (algorithm.Parameters.Any(static parameter => parameter.IsRecoveryPlaceholder))
+            {
+                algorithm = algorithm with
+                {
+                    ParameterPatterns = algorithm.ParameterPatterns.Select(RecoveryDisplayParameter).ToArray(),
+                };
+            }
             var signature = CallableSignature.FromAlgorithm(name, algorithm);
             var parameters = CreateOrdinaryParameters(signature, documentLocalSpans);
             return new PropertyInfo(
@@ -1364,6 +1374,16 @@ public static class SemanticModelBuilder
                 SupportsLexicalDotCall = signature.TopLevelParameterCount > 0,
             };
         }
+
+        private static ParameterPattern RecoveryDisplayParameter(ParameterPattern pattern)
+            => pattern switch
+            {
+                CaptureParameterPattern capture when capture.Parameter.IsRecoveryPlaceholder =>
+                    new CaptureParameterPattern(capture.Parameter with { Name = "?" }),
+                CaptureParameterPattern => pattern,
+                SequenceValueParameterPattern group => new SequenceValueParameterPattern(
+                    group.Items.Select(RecoveryDisplayParameter).ToArray()),
+            };
 
         private static IReadOnlyList<PropertyParameterInfo> CreateOrdinaryParameters(
             CallableSignature signature,
@@ -1435,10 +1455,9 @@ public static class SemanticModelBuilder
             IReadOnlyList<SourceSpan>? declarationSpans,
             bool documentLocalSpans)
         {
-            var arity = algorithm.Branches.Count == 0
-                ? 0
-                : algorithm.Branches[0].Pattern.TopLevelArity();
-            var parameters = CreateConditionalSignatureParameters(algorithm, arity, documentLocalSpans);
+            var head = ConditionalSignatureHead(algorithm);
+            var arity = head?.TopLevelArity() ?? 0;
+            var parameters = CreateConditionalSignatureParameters(head, arity, documentLocalSpans);
             var signatures = new List<PropertySignatureInfo>();
 
             if (arity > 0)
@@ -1466,15 +1485,17 @@ public static class SemanticModelBuilder
             };
         }
 
+        private static Pattern? ConditionalSignatureHead(Algorithm.Conditional algorithm)
+            => algorithm.Branches.FirstOrDefault(static branch => !branch.HasRecoveredHead)?.Pattern;
+
         private static IReadOnlyList<PropertyParameterInfo> CreateConditionalSignatureParameters(
-            Algorithm.Conditional algorithm,
+            Pattern? firstPattern,
             int arity,
             bool documentLocalSpans)
         {
-            if (arity == 0)
+            if (firstPattern is null || arity == 0)
                 return [];
 
-            var firstPattern = algorithm.Branches[0].Pattern;
             IReadOnlyList<Pattern> topLevelPatterns = firstPattern is Pattern.SequenceValue(var items)
                 ? items
                 : [firstPattern];
@@ -1619,10 +1640,30 @@ public static class SemanticModelBuilder
                 SourceSpan? headSpan = declarationSpans is not null && i < declarationSpans.Count
                     ? declarationSpans[i]
                     : null;
+                var binderNames = new List<string>();
+                var displayPattern = DescribeBinders(branch.Pattern);
                 branches.Add(new ConditionalBranchInfo(
-                    ConditionalBranchHeadFormatter.Format(name, branch.Pattern),
+                    ConditionalBranchHeadFormatter.Format(name, displayPattern),
                     headSpan,
-                    branch.Pattern.BoundNames()));
+                    binderNames));
+
+                Pattern DescribeBinders(Pattern pattern)
+                {
+                    switch (pattern)
+                    {
+                        case Pattern.Bind { IsRecoveryPlaceholder: true } binder:
+                            return binder with { Name = "?" };
+                        case Pattern.Bind binder:
+                            binderNames.Add(binder.Name);
+                            return binder;
+                        case Pattern.SequenceValue group:
+                            return new Pattern.SequenceValue(group.Items.Select(DescribeBinders).ToArray());
+                        case Pattern.LitInt or Pattern.LitString or Pattern.LitBool:
+                            return pattern;
+                        default:
+                            throw new InvalidOperationException($"Unhandled pattern: {pattern.GetType().Name}");
+                    }
+                }
             }
 
             return branches;

@@ -84,9 +84,9 @@ internal static class FrontEndInvariants
         CheckDiagnosticPrefix(syntax.Diagnostics, frontend.Diagnostics);
 
         phase = FrontEndPhase.Determinism;
-        var fp1 = FrontEndFingerprint.Compute(frontend.ElaboratedRoot, frontend.Diagnostics, frontend.CanEvaluateAfterLoadErrors);
+        var fp1 = FrontEndFingerprint.Compute(frontend.ElaboratedRoot, frontend.Diagnostics, frontend.HasDeferredModuleRegions);
         var frontendAgain = FrontEndPipeline.Process(source);
-        var fp2 = FrontEndFingerprint.Compute(frontendAgain.ElaboratedRoot, frontendAgain.Diagnostics, frontendAgain.CanEvaluateAfterLoadErrors);
+        var fp2 = FrontEndFingerprint.Compute(frontendAgain.ElaboratedRoot, frontendAgain.Diagnostics, frontendAgain.HasDeferredModuleRegions);
         if (!string.Equals(fp1, fp2, StringComparison.Ordinal))
             throw new FrontEndInvariantException("Non-deterministic frontend result across two Process() calls on the same source.");
 
@@ -96,7 +96,7 @@ internal static class FrontEndInvariants
         {
             _ = FrontEndPipeline.Process(ProbeSourceB);
             var frontendAfterB = FrontEndPipeline.Process(source);
-            var fp3 = FrontEndFingerprint.Compute(frontendAfterB.ElaboratedRoot, frontendAfterB.Diagnostics, frontendAfterB.CanEvaluateAfterLoadErrors);
+            var fp3 = FrontEndFingerprint.Compute(frontendAfterB.ElaboratedRoot, frontendAfterB.Diagnostics, frontendAfterB.HasDeferredModuleRegions);
             if (!string.Equals(fp1, fp3, StringComparison.Ordinal))
                 throw new FrontEndInvariantException("Frontend result for a source changed after processing an unrelated source (leaked cross-parse state).");
         }

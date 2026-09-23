@@ -203,7 +203,7 @@ beyond the available headroom still returns a structured resource error.
   identical outcomes and counters. The twin path must never touch the synchronous seam
   member (asserted).
 - `AsyncEvaluationApiTests` — public fast-path identity (results, errors, limit
-  verdicts, counters, engine projection incl. load-failure additional errors,
+  verdicts, counters, engine projection and load-failure evaluation gating,
   synchronous completion of the returned task).
 - `AsyncSuspensionTests` — construct-family suspension coverage, deterministic
   held-run incompleteness + correct resumption, cache-miss callback exactly-once/no-

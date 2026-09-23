@@ -88,7 +88,6 @@ public class FrontEndPipelineInvariantTests
             + string.Join("; ", second.Diagnostics.Select(d => d.Message)));
         Assert.Equal(Triples(first.Diagnostics), Triples(second.Diagnostics));
         Assert.Equal(PropertyNames(first.ElaboratedRoot), PropertyNames(second.ElaboratedRoot));
-        Assert.Equal(first.CanEvaluateAfterLoadErrors, second.CanEvaluateAfterLoadErrors);
     }
 
     // ── Input independence: an unrelated program between two runs of the same ─

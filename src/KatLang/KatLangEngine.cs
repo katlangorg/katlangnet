@@ -319,9 +319,8 @@ public static class KatLangEngine
     /// </summary>
     /// <exception cref="OperationCanceledException">
     /// The configured source-processing token was cancelled during front-end processing,
-    /// or the configured evaluation token was cancelled before or during evaluation
-    /// (including the additional-error evaluation performed for evaluable load
-    /// failures). Cancellation is never converted into a <see cref="RunResult"/>.
+    /// or the configured evaluation token was cancelled before or during evaluation.
+    /// Cancellation is never converted into a <see cref="RunResult"/>.
     /// </exception>
     /// <exception cref="InvalidOperationException">
     /// <see cref="RunOptions.HostOperations"/> contains an ASYNCHRONOUS operation, or
@@ -350,17 +349,7 @@ public static class KatLangEngine
 
         if (frontEndResult.HasErrors)
         {
-            return FrontEndFailureResult(
-                frontEndResult,
-                diagnosticDisplayOptions,
-                frontEndResult.CanEvaluateAfterLoadErrors
-                    ? EvaluateForAdditionalErrors(
-                        frontEndResult.ElaboratedRoot,
-                        options?.EvaluationLimits,
-                        hostOperations,
-                        evaluationCancellationToken,
-                        options?.RandomSeed)
-                    : []);
+            return FrontEndFailureResult(frontEndResult, diagnosticDisplayOptions);
         }
 
         var zeroArgPropertyResultCache = new RunScopedZeroArgPropertyResultCache();
@@ -431,17 +420,7 @@ public static class KatLangEngine
 
         if (frontEndResult.HasErrors)
         {
-            return FrontEndFailureResult(
-                frontEndResult,
-                diagnosticDisplayOptions,
-                frontEndResult.CanEvaluateAfterLoadErrors
-                    ? await EvaluateForAdditionalErrorsAsync(
-                        frontEndResult.ElaboratedRoot,
-                        options?.EvaluationLimits,
-                        hostOperations,
-                        evaluationCancellationToken,
-                        options?.RandomSeed).ConfigureAwait(false)
-                    : []);
+            return FrontEndFailureResult(frontEndResult, diagnosticDisplayOptions);
         }
 
         // Cache-pairing rule (async-capable cache exactly for asynchronous host-operation
@@ -467,19 +446,18 @@ public static class KatLangEngine
 
     /// <summary>
     /// Shared front-end failure projection for <see cref="Run"/> and
-    /// <see cref="RunAsync"/>: the front end's error diagnostics plus any
-    /// additional-error evaluation results, in that order.
+    /// <see cref="RunAsync"/>. Every front-end error blocks evaluation, including
+    /// errors in downloaded source: evaluating a recovery tree for more diagnostics
+    /// would also execute host operations and consume evaluator resources.
     /// </summary>
     private static RunResult.ParseFailure FrontEndFailureResult(
         FrontEndResult frontEndResult,
-        DisplayOptions diagnosticDisplayOptions,
-        IReadOnlyList<KatLangError> additionalEvaluationErrors)
+        DisplayOptions diagnosticDisplayOptions)
     {
         var parseErrors = frontEndResult.Diagnostics
             .Where(d => d.Severity == DiagnosticSeverity.Error)
             .Select(KatLangError.FromDiagnostic)
             .ToList();
-        parseErrors.AddRange(additionalEvaluationErrors);
 
         return new RunResult.ParseFailure(parseErrors)
         {
@@ -713,50 +691,4 @@ public static class KatLangEngine
             Inner: EvalError.MissingOutput,
         };
 
-    /// <summary>
-    /// The additional-error evaluation after evaluable load failures is its OWN evaluator
-    /// run: it receives the configured seed like the primary run and therefore starts a
-    /// fresh stream from that seed — never a partially consumed one.
-    /// </summary>
-    private static IReadOnlyList<KatLangError> EvaluateForAdditionalErrors(
-        Algorithm root,
-        EvaluationLimits? limits,
-        HostOperations? hostOperations,
-        CancellationToken cancellationToken,
-        long? randomSeed)
-    {
-        var evalResult = Evaluator.RunCounted(
-            new Expr.AlgorithmExpr(root),
-            new RunScopedZeroArgPropertyResultCache(),
-            limits,
-            hostOperations,
-            cancellationToken,
-            randomSeed);
-        if (!evalResult.IsError || IsTopLevelNoProgramOutput(evalResult.Error))
-            return [];
-
-        return [KatLangError.FromEvalError(evalResult.Error)];
-    }
-
-    /// <summary>MIRROR OF <see cref="EvaluateForAdditionalErrors"/> — keep in lock-step.</summary>
-    private static async Task<IReadOnlyList<KatLangError>> EvaluateForAdditionalErrorsAsync(
-        Algorithm root,
-        EvaluationLimits? limits,
-        HostOperations? hostOperations,
-        CancellationToken cancellationToken,
-        long? randomSeed)
-    {
-        var program = new Expr.AlgorithmExpr(root);
-        var evalResult = await Evaluator.RunCountedAsync(
-            program,
-            Evaluator.CreateRunScopedZeroArgPropertyResultCache(program, hostOperations),
-            limits,
-            hostOperations,
-            cancellationToken,
-            randomSeed).ConfigureAwait(false);
-        if (!evalResult.IsError || IsTopLevelNoProgramOutput(evalResult.Error))
-            return [];
-
-        return [KatLangError.FromEvalError(evalResult.Error)];
-    }
 }

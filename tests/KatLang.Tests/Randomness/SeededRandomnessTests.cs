@@ -370,15 +370,10 @@ public class SeededRandomnessTests
     }
 
     [Fact]
-    public async Task AdditionalErrorEvaluation_AfterLoadFailure_RunsUnderTheSeed()
+    public async Task LoadFailure_DoesNotStartSeededEvaluation()
     {
-        // A load failure the front end can still evaluate past selects the separate
-        // additional-error evaluation route; the primary route never starts. It
-        // receives the seed and starts a FRESH
-        // stream from it: the draw is the oracle's FIRST value for the seed, so dividing
-        // by (draw - thatValue) is deterministically the division-by-zero additional
-        // error, while any other pivot yields none. Unseeded, the first outcome would
-        // occur with probability 1e-6.
+        // The independent oracle makes accidental evaluation observable as division
+        // by zero at the first seeded draw. A front-end failure must never get there.
         var pivot = ReferenceRandomOracle.RandomInt(Words(Seed), 0, 1_000_000);
         static string Source(Decimal128 pivot)
             => "A = load('https://katlang.org/seed/not-katlang.kat')\n"
@@ -389,18 +384,19 @@ public class SeededRandomnessTests
             DownloadCode = static (_, _) => ValueTask.FromResult("<!doctype html><html><body>Not found</body></html>"),
         };
 
-        // Advance a previous evaluator run under the SAME options before entering
-        // the error route. Retaining its partially consumed stream would miss pivot.
+        // Prove the seed and expression are live through a valid control.
         var prior = Assert.IsType<RunResult.Success>(
             await KatLangEngine.RunAsync("Math.RandomInt(0, 1000000)", options));
         Assert.Equal(pivot, Assert.Single(prior.Atoms));
 
         var dividing = Assert.IsType<RunResult.ParseFailure>(await KatLangEngine.RunAsync(Source(pivot), options));
-        Assert.Contains(dividing.Errors, static error => error.Message.Contains("Division by zero", StringComparison.Ordinal));
+        Assert.DoesNotContain(dividing.Errors, static error => error.Message.Contains("Division by zero", StringComparison.Ordinal));
         Assert.Equal(dividing.ToDisplayString(), (await KatLangEngine.RunAsync(Source(pivot), options)).ToDisplayString());
 
         var clean = Assert.IsType<RunResult.ParseFailure>(await KatLangEngine.RunAsync(Source(pivot + Decimal128.One), options));
         Assert.DoesNotContain(clean.Errors, static error => error.Message.Contains("Division by zero", StringComparison.Ordinal));
+        var after = Assert.IsType<RunResult.Success>(await KatLangEngine.RunAsync("Math.RandomInt(0, 1000000)", options));
+        Assert.Equal(pivot, Assert.Single(after.Atoms));
     }
 
     private static T Unwrap<T>(EvalResult<T> result)

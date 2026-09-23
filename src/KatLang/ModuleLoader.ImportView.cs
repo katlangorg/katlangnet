@@ -102,7 +102,7 @@ internal sealed partial class ModuleLoader
             var body = Rewrite(branch.Body);
             return ReferenceEquals(pattern, branch.Pattern) && ReferenceEquals(body, branch.Body)
                 ? branch
-                : new CondBranch(pattern, body);
+                : branch with { Pattern = pattern, Body = body };
         }
 
         private Property RewriteProperty(Property property)

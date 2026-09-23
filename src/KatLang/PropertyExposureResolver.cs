@@ -694,10 +694,13 @@ internal static class PropertyExposureResolver
                 // output view of the placeholder carries the region forked with the summary
                 // chain at the branch — the tree's final region, complete with every earlier
                 // context and the recorded validation bindings.
-                rewrittenBranches.Add(new CondBranch(branch.Pattern, branch.Body with
+                rewrittenBranches.Add(branch with
                 {
-                    DeferredRegion = region.WithExposure(new DeferredBranchContext(branchMemos.Scope)),
-                }));
+                    Body = branch.Body with
+                    {
+                        DeferredRegion = region.WithExposure(new DeferredBranchContext(branchMemos.Scope)),
+                    },
+                });
                 continue;
             }
 
@@ -713,7 +716,7 @@ internal static class PropertyExposureResolver
             // owner positions and is classified separately.
             var rewrittenBody = ProcessSharedNestedAlgorithm(branch.Body, branchMemos);
 
-            rewrittenBranches.Add(new CondBranch(branch.Pattern, rewrittenBody));
+            rewrittenBranches.Add(branch with { Body = rewrittenBody });
         }
 
         return algorithm with

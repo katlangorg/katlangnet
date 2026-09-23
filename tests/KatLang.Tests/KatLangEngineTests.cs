@@ -225,13 +225,9 @@ public class KatLangEngineTests
     }
 
     [Fact]
-    public async Task Run_LoadedHtml_ReportsLoadSiteAndFollowingEvaluationError()
+    public async Task Run_LoadedHtml_ReportsLoadSiteWithoutEvaluatingTheCaller()
     {
-        // The follow-on row is inside a CLOSED parameter list so the failed
-        // module's missing member stays a lexical name: at root the dot
-        // edge's may-selected fallback would be inferred as an implicit
-        // parameter instead, and the second error would be about the
-        // unfillable parameter rather than the member.
+        // Even an otherwise evaluable caller must stop at a front-end error.
         var source = """
             A = load('https://katlang.org/libraries2/example.kat')
             Use(z) = A.X
@@ -258,11 +254,6 @@ public class KatLangEngineTests
                 Assert.Contains("returned HTML", error.Message);
                 Assert.Equal(1, Assert.NotNull(error.Span).Start.Line);
                 Assert.Equal(5, Assert.NotNull(error.Span).Start.Column);
-            },
-            error =>
-            {
-                Assert.Contains("Property 'X' was not found on `A`", error.Message);
-                Assert.Contains("visible algorithm or property named 'X'", error.Message);
             });
     }
 

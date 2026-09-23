@@ -218,12 +218,10 @@ public class RunEntryPreparationTests
     }
 
     [Fact]
-    public async Task EngineAdditionalErrorEvaluation_PairsTheCache_ForAsynchronousOperations()
+    public async Task EngineLoadFailure_BlocksEvaluation_WithAsynchronousOperations()
     {
-        // A failing module fetch with an evaluable remainder routes through the
-        // engine's additional-error evaluation; with an asynchronous host-operation
-        // configuration that path must pair an async-capable cache (a mispairing
-        // fails loud as InvalidOperationException instead of projecting errors).
+        // A failing module fetch never enters the evaluator, including when the
+        // configured host operations would require an asynchronous evaluation cache.
         const string source = "open 'https://katlang.org/missing.kat'\nData + (1 / 0)";
         var options = new RunOptions
         {

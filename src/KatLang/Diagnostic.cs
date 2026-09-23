@@ -48,6 +48,9 @@ public sealed record Diagnostic(
 /// unparseable or oversized source is an empty one too), and every elaboration pass returns
 /// the variant it was given — so the root's properties, parameters, and output are readable
 /// without a pattern match.
+/// When <see cref="HasErrors"/> is true this is a recovery tree for diagnostics and
+/// editor queries. Source-based engine entry points reject it without evaluation;
+/// passing <see cref="Root"/> directly to an AST evaluator discards that source gate.
 /// </summary>
 public sealed record ParseResult(Algorithm.User Root, IReadOnlyList<Diagnostic> Diagnostics)
 {

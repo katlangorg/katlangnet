@@ -442,14 +442,17 @@ internal static class ParameterDetector
                     diagnostics: null,
                     observations,
                     run);
-                processedBranches.Add(new CondBranch(branch.Pattern, provisionalBody with
+                processedBranches.Add(branch with
                 {
-                    DeferredRegion = region.WithDetection(new DeferredBranchContext(
-                        branchParentScope,
-                        new HashSet<string>(binderNames),
-                        propertyName,
-                        capturedParameters)),
-                }));
+                    Body = provisionalBody with
+                    {
+                        DeferredRegion = region.WithDetection(new DeferredBranchContext(
+                            branchParentScope,
+                            new HashSet<string>(binderNames),
+                            propertyName,
+                            capturedParameters)),
+                    },
+                });
                 continue;
             }
 
@@ -462,7 +465,7 @@ internal static class ParameterDetector
                 diagnostics,
                 observations,
                 run);
-            processedBranches.Add(new CondBranch(branch.Pattern, processedBody));
+            processedBranches.Add(branch with { Body = processedBody });
         }
 
         return processedConditional with { Branches = processedBranches };

@@ -18,10 +18,11 @@ public class ParserDiagnosticWordingTests
     // A stray '=' names the token and then states the declaration-head line rule
     // (the one repair for `A` newline `= 1` and `Foo` newline `(x) = x + 1`).
     [InlineData("= 1", "Unexpected '='. A declaration head cannot be assembled across a physical newline. Keep `Name =` together, or keep a clause head's name and '(' together and its closing ')' and '=' together. A pattern list inside already-open parentheses and the body after '=' may span lines; deconstruction targets and '=' must share a line.")]
-    [InlineData("1 ]", "Unexpected ']'.")]
+    [InlineData("1 ]", "Unexpected ']' at the top level. There is no open '[' for it to close.")]
     [InlineData("public = 1", "Unexpected 'public'.")]
     [InlineData("1,", "Unexpected end of input.")]
-    [InlineData("1 + @", "Unexpected unrecognized character.")]
+    // A character the lexer reported never reaches this family: the grammar skips it like
+    // a comment (MalformedSourceRecoveryTests pins that law).
     public void UnexpectedTokenFamily_NamesTheWrittenTokenOrEndOfInput(string source, string expectedMessage)
     {
         var result = Parser.ParseSyntax(source);
@@ -95,7 +96,7 @@ public class ParserDiagnosticWordingTests
     [InlineData("(1", "Expected ')' but found end of input.", 3, 3)]
     [InlineData("public = 1", "Unexpected 'public'.", 1, 7)]
     [InlineData("F() = 1", "Unexpected ')' in a pattern.", 3, 4)]
-    [InlineData("1 + @", "Unexpected unrecognized character.", 5, 6)]
+    [InlineData("[1, 2)", "Expected ']' but found ')'.", 6, 7)]
     public void UnexpectedTokenWording_PreservesCodeAndSpan(string source, string message, int column, int endColumn)
     {
         var diagnostic = Assert.Single(Parser.ParseSyntax(source).Diagnostics,
